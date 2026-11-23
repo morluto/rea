@@ -54,6 +54,50 @@ export const mavenPomFixture = `<?xml version="1.0" encoding="UTF-8"?>
 </project>
 `;
 
+/** Maven property keys keep their prefixes even when XML namespace URIs agree. */
+export const qualifiedMavenPropertiesFixture = `<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:a="urn:revisions" xmlns:b="urn:revisions">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>example</groupId>
+  <artifactId>qualified-properties</artifactId>
+  <version>\${a:revision}</version>
+  <properties>
+    <revision>0</revision>
+    <a:revision>11</a:revision>
+    <b:revision>22</b:revision>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>example</groupId>
+      <artifactId>dependency</artifactId>
+      <version>\${b:revision}</version>
+    </dependency>
+  </dependencies>
+</project>
+`;
+
+/** Maven trims ASCII padding but keeps non-ASCII property value characters. */
+export const mavenPropertyValuesFixture = `<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>example</groupId>
+  <artifactId>property-values</artifactId>
+  <version>\${revision}</version>
+  <properties>
+    <revision> &#xA0;1.2.3&#xA0; </revision>
+    <dependency.version>&#xFEFF;2.0&#xFEFF;</dependency.version>
+    <marker>&#xA0;&#xFEFF;</marker>
+    <plain> \tordinary value\n </plain>
+    <blank> \t\n </blank>
+    <mirror> &#xA0;https://fixture-user:fixture-password@example.invalid/repository&#xFEFF; </mirror>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>example</groupId><artifactId>dependency</artifactId>
+      <version>\${dependency.version}</version>
+    </dependency>
+  </dependencies>
+</project>
+`;
+
 /** Tiny Gradle Module Metadata 1.1 document with library and platform variants. */
 export const gradleModuleFixture = `{
   "formatVersion": "1.1",

@@ -359,6 +359,7 @@ const readRegularFileContent = <Value>(
         options.admit?.(stats);
         const bytes = await readBoundedFileBytes(handle, stats.size, {
           ...(options.signal === undefined ? {} : { signal: options.signal }),
+          expectedSize: stats.size,
           cancellationFailure: (reason) =>
             new RegularFileOperationCancelled(reason),
           operationFailure: (cause) => new RegularFileReadFailure(cause),

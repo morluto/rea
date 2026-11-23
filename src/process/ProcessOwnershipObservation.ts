@@ -116,6 +116,7 @@ export const observeOwnedProcessGroups = async (
       host,
       signal,
     );
+    const groupIdSet = new Set(groupIds);
     const candidateProcesses = observationRows.filter((process) => {
       if (retainedPids.has(process.pid)) return true;
       const identity = firstIdentities.get(process.pid);
@@ -123,12 +124,12 @@ export const observeOwnedProcessGroups = async (
         if (processIdentityHasExited(identity)) return false;
         if (
           identity.relation?.state === "observed" &&
-          groupIds.includes(identity.relation.processGroupId)
+          groupIdSet.has(identity.relation.processGroupId)
         )
           return true;
-        return groupIds.includes(process.processGroupId);
+        return groupIdSet.has(process.processGroupId);
       }
-      return groupIds.includes(process.processGroupId);
+      return groupIdSet.has(process.processGroupId);
     });
     const facts = await readProcessOwnershipFacts(
       candidateProcesses,
@@ -141,7 +142,7 @@ export const observeOwnedProcessGroups = async (
       listedRows: processes.length,
       listedPids: new Set(processes.map(({ pid }) => pid)),
       leaderPid: -1,
-      processGroupIds: new Set(groupIds),
+      processGroupIds: groupIdSet,
       scopeFacts: facts,
     });
     const observations = new Map<number, ProcessGroupObservation>(
@@ -152,7 +153,7 @@ export const observeOwnedProcessGroups = async (
       // An initial unreadable membership remains uncertain only while the
       // final native fact does not establish that this candidate has exited.
       if (
-        groupIds.includes(fact.process.processGroupId) &&
+        groupIdSet.has(fact.process.processGroupId) &&
         (fact.identityBefore.state !== "readable" ||
           fact.identityBefore.relation?.state !== "observed")
       )
@@ -165,13 +166,16 @@ export const observeOwnedProcessGroups = async (
         fact.identityAfter.relation?.state === "observed"
           ? fact.identityAfter.relation.processGroupId
           : undefined;
-      const candidateGroups = groupIds.filter(
-        (groupId) =>
-          nativeGroupId === groupId ||
-          (nativeGroupId === undefined &&
-            fact.process.processGroupId === groupId),
-      );
-      for (const groupId of candidateGroups) {
+      const matchedGroupId =
+        nativeGroupId !== undefined
+          ? groupIdSet.has(nativeGroupId)
+            ? nativeGroupId
+            : undefined
+          : groupIdSet.has(fact.process.processGroupId)
+            ? fact.process.processGroupId
+            : undefined;
+      if (matchedGroupId !== undefined) {
+        const groupId = matchedGroupId;
         if (observations.get(groupId)?.state === "unverifiable") continue;
         if (
           fact.state !== "same-generation" ||
@@ -355,6 +359,9 @@ export const observeOwnedProcessLineage = async (
       latestRefreshPids = new Set(refreshed.map(({ pid }) => pid));
     }
   }
+  const refreshDescendantPids = new Set(
+    refreshDescendants.map(({ pid }) => pid),
+  );
   return {
     status: "verified",
     observedAt: new Date().toISOString(),
@@ -368,7 +375,7 @@ export const observeOwnedProcessLineage = async (
           ({ pid }) =>
             (latestRefreshPids === undefined || latestRefreshPids.has(pid)) &&
             !suppressedRefreshPids.has(pid) &&
-            !refreshDescendants.some((descendant) => descendant.pid === pid),
+            !refreshDescendantPids.has(pid),
         ),
         ...refreshDescendants,
       ]
@@ -1300,13 +1307,42 @@ export const createSystemProcessOwnershipHost = (
           return undefined;
         }
       };
+      const LINUX_PROC_INSPECTION_CONCURRENCY = 48;
+
+      const allSettledBounded = async <T, U>(
+        items: readonly T[],
+        concurrency: number,
+        fn: (item: T, index: number) => Promise<U>,
+      ): Promise<PromiseSettledResult<U>[]> => {
+        const results = new Array<PromiseSettledResult<U>>(items.length);
+        if (items.length === 0) return results;
+        let next = 0;
+        const worker = async (): Promise<void> => {
+          while (next < items.length) {
+            const index = next++;
+            try {
+              const value = await fn(items[index]!, index);
+              results[index] = { status: "fulfilled", value };
+            } catch (reason: unknown) {
+              results[index] = { status: "rejected", reason };
+            }
+          }
+        };
+        await Promise.all(
+          Array.from({ length: Math.min(concurrency, items.length) }, worker),
+        );
+        return results;
+      };
+
       const physicalReadFailures: {
         pid: number;
         requestIndex: number;
         cause: unknown;
       }[] = [];
-      const results = await Promise.allSettled(
-        processes.map(async ({ pid }, requestIndex) => {
+      const results = await allSettledBounded(
+        processes,
+        LINUX_PROC_INSPECTION_CONCURRENCY,
+        async ({ pid }, requestIndex) => {
           if (!Number.isSafeInteger(pid) || pid <= 0)
             return [
               pid,
@@ -1515,7 +1551,7 @@ export const createSystemProcessOwnershipHost = (
               { state: "unavailable", reason: errorMessage(cause) } as const,
             ] as const;
           }
-        }),
+        },
       );
       const observations = new Map<number, ProcessIdentityObservation>();
       const failures: { pid: number; requestIndex: number; cause: unknown }[] =
@@ -1612,22 +1648,27 @@ export const createSystemProcessOwnershipHost = (
       ({ pid }) => identities.get(pid)?.state !== "readable",
     );
     if (unreadable.length > 0) {
+      const unreadablePids = new Set(unreadable.map(({ pid }) => pid));
       const stillLive = liveProcesses(await safeListProcesses(signal)).filter(
-        ({ pid }) => unreadable.some((entry) => entry.pid === pid),
+        ({ pid }) => unreadablePids.has(pid),
       );
       const retried = await processIdentities(stillLive, signal);
       identities = new Map([...identities, ...retried]);
       const unresolved = stillLive.filter(
         ({ pid }) => identities.get(pid)?.state !== "readable",
       );
-      const liveAfterRetry = liveProcesses(await safeListProcesses(signal));
-      const stillUnresolved = unresolved.filter(({ pid }) =>
-        liveAfterRetry.some((entry) => entry.pid === pid),
-      );
-      if (stillUnresolved.length > 0)
-        throw new ProcessAdmissionError("identity_snapshot_unavailable", {
-          live_processes: stillUnresolved.length,
-        });
+      if (unresolved.length > 0) {
+        const liveAfterRetryPids = new Set(
+          liveProcesses(await safeListProcesses(signal)).map(({ pid }) => pid),
+        );
+        const stillUnresolved = unresolved.filter(({ pid }) =>
+          liveAfterRetryPids.has(pid),
+        );
+        if (stillUnresolved.length > 0)
+          throw new ProcessAdmissionError("identity_snapshot_unavailable", {
+            live_processes: stillUnresolved.length,
+          });
+      }
     }
     return processes.map(({ pid }) => {
       const observation = identities.get(pid);

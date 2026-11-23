@@ -71,10 +71,6 @@ const failInput = (cause) => {
   process.stdin.pause();
   resolveInput?.();
 };
-process.stdin.once("end", () => {
-  if (completion.kind === "open") completion = { kind: "ended" };
-  resolveInput?.();
-});
 const reader = createCliSessionFrameReader((value) => {
   if (completion.kind !== "open") return;
   chain = chain
@@ -82,6 +78,16 @@ const reader = createCliSessionFrameReader((value) => {
       if (completion.kind !== "failed") await handle(value);
     })
     .catch(failInput);
+});
+process.stdin.once("end", () => {
+  if (completion.kind !== "open") return;
+  try {
+    reader.finish();
+    completion = { kind: "ended" };
+    resolveInput?.();
+  } catch (cause) {
+    failInput(cause);
+  }
 });
 process.stdin.on("data", (chunk) => {
   if (completion.kind !== "open") return;

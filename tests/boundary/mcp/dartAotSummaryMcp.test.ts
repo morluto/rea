@@ -8,8 +8,11 @@ import { createHash } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { FlutterBuildAnalysisService } from "../../../src/application/flutter/FlutterBuildAnalysisService.js";
-import { inspectDartAot } from "../../../src/application/flutter/DartAotInspection.js";
-import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
+import {
+  executeRetainedSummaryOperation,
+  inspectAnalysisView,
+} from "../../../src/application/analysisView/AnalysisViewService.js";
+import { dartAotInspectionInputSchema } from "../../../src/domain/flutter/flutterBuildAnalysis.js";
 import { createFlutterBuildAnalysisProvider } from "../../../src/composition/flutter.js";
 import {
   analysisViewResultSchema,
@@ -246,7 +249,9 @@ it("preserves null snapshot facts and pool lower bounds after exhaustion, reject
         limitations: ["Original uncertainty"],
       },
     );
-  for (const parent of [evidence(), evidence(report, null)]) {
+  for (const stored of [evidence(), evidence(report, null)]) {
+    const parent = parseEvidence(JSON.parse(JSON.stringify(stored)));
+    expect(parent.evidence_id).toBe(stored.evidence_id);
     const summary = await inspectAnalysisView({
       source: { kind: "inline", evidence: parent },
       view: { kind: "summary" },
@@ -256,6 +261,7 @@ it("preserves null snapshot facts and pool lower bounds after exhaustion, reject
       summary.value.normalized_result,
     );
     expect(result.summary.libapp.snapshot_hash).toBeNull();
+    expect(result.summary.libapp).not.toHaveProperty("snapshot_profile");
     expect(result.summary.string_pool.package_uri_count_at_least).toBe(1000);
     expect(result.summary.string_pool.returned_counts.package_uris).toBe(1);
     expect(result.limitations).toEqual(parent.limitations);
@@ -276,6 +282,9 @@ it("preserves null snapshot facts and pool lower bounds after exhaustion, reject
       string_pool: { coverage: "partial", package_uri_count_at_least: 1000 },
       coverage: { total: 1, exhausted: true },
     });
+    expect(page.value.normalized_result).not.toHaveProperty(
+      "libapp.snapshot_profile",
+    );
   }
   expect(
     await inspectAnalysisView({
@@ -313,8 +322,10 @@ it("rejects unavailable retention, invalid delivery and cancellation before prod
   const service = new FlutterBuildAnalysisService(provider);
   const retention = { recordEvidence: undefined, evidenceById: undefined };
   expect(
-    await inspectDartAot(
+    await executeRetainedSummaryOperation(
       service,
+      "inspect_dart_aot",
+      dartAotInspectionInputSchema,
       { path: "/missing.apk", abi: "x86_64", detail: "summary" },
       retention,
     ),
@@ -323,15 +334,19 @@ it("rejects unavailable retention, invalid delivery and cancellation before prod
     error: { _tag: "AnalysisCapabilityUnavailableError" },
   });
   expect(
-    await inspectDartAot(
+    await executeRetainedSummaryOperation(
       service,
+      "inspect_dart_aot",
+      dartAotInspectionInputSchema,
       { path: "/missing.apk", detail: "other" },
       retention,
     ),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
   const reason = Object.freeze({ requested: "dart-stop" });
-  const cancelled = await inspectDartAot(
+  const cancelled = await executeRetainedSummaryOperation(
     service,
+    "inspect_dart_aot",
+    dartAotInspectionInputSchema,
     { path: "/missing.apk", detail: "summary" },
     retention,
     { signal: AbortSignal.abort(reason) },

@@ -44,6 +44,7 @@ describe("compiled Interface Builder graph projection", () => {
         next: { customClass: "BuildViewController" },
       },
       "com.apple.ibtool.document.connections": {
+        earlierSource: [{ type: "segue", destinationId: "next" }],
         button: [
           {
             type: "action",
@@ -54,6 +55,11 @@ describe("compiled Interface Builder graph projection", () => {
         ],
         controller: [
           { type: "outlet", label: "buildButton", destinationId: "button" },
+          {
+            type: "segue",
+            identifier: "reuseSource",
+            destinationId: "earlierSource",
+          },
         ],
       },
       "com.apple.ibtool.document.hierarchy": [
@@ -64,9 +70,11 @@ describe("compiled Interface Builder graph projection", () => {
     const decoded = parseInterfaceBuilderRecords(raw);
     expect(decoded.objects).toHaveLength(3);
     expect(decoded.connections.map(({ kind }) => kind)).toEqual([
+      "segue",
       "action",
       "segue",
       "outlet",
+      "segue",
     ]);
     const result = buildInterfaceBuilderAnalysis({
       targetSha256: hash,
@@ -88,72 +96,23 @@ describe("compiled Interface Builder graph projection", () => {
       artifact_path: "Views/Main.storyboardc/scene.nib/objects.nib",
       artifact_sha256: hash,
     });
-    expect(result.graph.edges).toContainEqual(
-      expect.objectContaining({
-        relation: "segue_to",
-        resolution: "observed",
-      }),
+    const source = result.graph.nodes.find(
+      ({ name }) => name === "earlierSource",
     );
+    const edge = result.graph.edges.find(({ evidence }) =>
+      evidence.some(({ description }) => description === "segue reuseSource"),
+    );
+    expect(edge).toMatchObject({
+      relation: "segue_to",
+      resolution: "observed",
+      to: source?.id,
+    });
     expect(result.graph.coverage).toContainEqual(
       expect.objectContaining({
         facet: "hierarchy:Views/Main.storyboardc/scene.nib/objects.nib",
         status: "complete",
       }),
     );
-  });
-
-  it("keeps missing external destinations as unresolved evidence", () => {
-    const result = buildInterfaceBuilderAnalysis({
-      targetSha256: hash,
-      toolVersion: "test",
-      documents: [
-        {
-          relativePath: "Legacy.nib",
-          archiveSha256: hash,
-          documentKind: "nib",
-          raw: {
-            "com.apple.ibtool.document.objects": {
-              button: { class: "UIButton" },
-            },
-            "com.apple.ibtool.document.connections": {
-              button: [
-                { type: "action", label: "save:", destinationId: "external" },
-              ],
-            },
-          },
-        },
-      ],
-      limits: interfaceBuilderLimitsSchema.parse({ max_objects: 3 }),
-    });
-    expect(result.graph.edges).toContainEqual(
-      expect.objectContaining({
-        relation: "target_action",
-        resolution: "unresolved",
-        reason: "endpoint_omitted_by_object_limit",
-        evidence: [
-          expect.objectContaining({
-            kind: "interface_builder_resource",
-            artifact_path: "Legacy.nib",
-            artifact_sha256: hash,
-          }),
-        ],
-      }),
-    );
-    const retainedNodes = new Set(result.graph.nodes.map(({ id }) => id));
-    expect(
-      result.graph.edges.every(
-        ({ from, to }) =>
-          retainedNodes.has(from) && (to === null || retainedNodes.has(to)),
-      ),
-    ).toBe(true);
-    expect(result.graph.coverage).toContainEqual(
-      expect.objectContaining({
-        facet: "graph_nodes",
-        status: "partial",
-        reason: "max_objects_reached",
-      }),
-    );
-    expect(result.graph.truncated).toBe(true);
   });
 
   it("reads recognized objects from a compiled NSKeyedArchiver object table", () => {
@@ -179,6 +138,73 @@ describe("compiled Interface Builder graph projection", () => {
       },
     ]);
   });
+});
+
+it("keeps an external action destination distinct from an omitted selector", () => {
+  const result = buildInterfaceBuilderAnalysis({
+    targetSha256: hash,
+    toolVersion: "test",
+    documents: [
+      {
+        relativePath: "Legacy.nib",
+        archiveSha256: hash,
+        documentKind: "nib",
+        raw: {
+          "com.apple.ibtool.document.objects": {
+            button: { class: "UIButton" },
+          },
+          "com.apple.ibtool.document.connections": {
+            button: [
+              { type: "action", label: "save:", destinationId: "external" },
+            ],
+          },
+        },
+      },
+    ],
+    limits: interfaceBuilderLimitsSchema.parse({ max_objects: 3 }),
+  });
+  expect(result.graph.edges).toContainEqual(
+    expect.objectContaining({
+      relation: "target_action",
+      resolution: "unresolved",
+      to: null,
+      reason: "endpoint_omitted_by_object_limit",
+      evidence: [
+        expect.objectContaining({
+          kind: "interface_builder_resource",
+          description: "selector save:",
+          artifact_path: "Legacy.nib",
+          artifact_sha256: hash,
+        }),
+      ],
+    }),
+  );
+  const destination = result.graph.edges.find(({ evidence }) =>
+    evidence.some(
+      ({ description }) => description === "action destination external",
+    ),
+  );
+  expect(destination).toMatchObject({
+    relation: "target_action",
+    resolution: "unresolved",
+    to: null,
+    reason: "destination_object_missing_or_external",
+  });
+  const retainedNodes = new Set(result.graph.nodes.map(({ id }) => id));
+  expect(
+    result.graph.edges.every(
+      ({ from, to }) =>
+        retainedNodes.has(from) && (to === null || retainedNodes.has(to)),
+    ),
+  ).toBe(true);
+  expect(result.graph.coverage).toContainEqual(
+    expect.objectContaining({
+      facet: "graph_nodes",
+      status: "partial",
+      reason: "max_objects_reached",
+    }),
+  );
+  expect(result.graph.truncated).toBe(true);
 });
 
 describe("keyed archive objects with unresolved classes", () => {
@@ -508,7 +534,7 @@ describe("Interface Builder graph limits", () => {
 });
 
 it.each([
-  { relativePath: "Main.nib", sourceId: "missing" },
+  { relativePath: "Main.nib", sourceId: "omitted" },
   { relativePath: "Views/:hierarchy:/Main.nib", sourceId: "missing" },
   { relativePath: "Main.nib", sourceId: "missing:hierarchy:source" },
 ])(
@@ -525,6 +551,9 @@ it.each([
           raw: {
             "com.apple.ibtool.document.objects": {
               kept: { class: "UIView" },
+              ...(sourceId === "omitted"
+                ? { omitted: { class: "UIButton" } }
+                : {}),
             },
             "com.apple.ibtool.document.hierarchy": [{ objectID: "kept" }],
             "com.apple.ibtool.document.connections": {
@@ -1197,47 +1226,86 @@ describe("keyed archive unresolved connectors", () => {
   });
 });
 
-it("names the archive once per evidence record", () => {
+it("attributes an omitted segue destination to the object budget and retains archive evidence", () => {
   const relativePath = "Views/Main.storyboardc/scene.nib/objects.nib";
-  const result = buildInterfaceBuilderAnalysis({
-    targetSha256: hash,
-    toolVersion: "test",
-    documents: [
-      {
-        relativePath,
-        archiveSha256: hash,
-        documentKind: "storyboard_scene",
-        raw: {
-          "com.apple.ibtool.document.objects": {
-            controller: { customClass: "StoreViewController" },
-            next: { customClass: "BuildViewController" },
-          },
-          "com.apple.ibtool.document.connections": {
-            controller: [
-              { type: "segue", identifier: "showBuild", destinationId: "next" },
-            ],
-          },
-        },
+  const document = {
+    relativePath,
+    archiveSha256: hash,
+    documentKind: "storyboard_scene" as const,
+    raw: {
+      "com.apple.ibtool.document.objects": {
+        controller: { customClass: "StoreViewController" },
+        next: { customClass: "BuildViewController" },
       },
-    ],
-    limits: interfaceBuilderLimitsSchema.parse({}),
-  });
-  const evidence = [...result.graph.nodes, ...result.graph.edges].flatMap(
+      "com.apple.ibtool.document.connections": {
+        controller: [
+          { type: "segue", identifier: "showBuild", destinationId: "next" },
+          { type: "segue", identifier: "outside", destinationId: "external" },
+        ],
+      },
+    },
+  };
+  const inspect = (max_objects: number) =>
+    buildInterfaceBuilderAnalysis({
+      targetSha256: hash,
+      toolVersion: "test",
+      documents: [document],
+      limits: interfaceBuilderLimitsSchema.parse({ max_objects }),
+    }).graph;
+  const complete = inspect(3);
+  const next = complete.nodes.find(
+    ({ name }) => name === "BuildViewController",
+  );
+  const external = {
+    relation: "segue_to",
+    resolution: "unresolved",
+    to: null,
+    reason: "destination_scene_missing",
+  };
+  expect(complete.edges).toMatchObject([
+    { relation: "segue_to", resolution: "observed", to: next?.id },
+    external,
+  ]);
+  const limited = inspect(2);
+  expect(limited.edges).toMatchObject([
+    {
+      relation: "segue_to",
+      resolution: "unresolved",
+      to: null,
+      reason: "endpoint_omitted_by_object_limit",
+      evidence: complete.edges[0]?.evidence,
+    },
+    external,
+  ]);
+  expect(
+    [complete, limited].map(({ coverage }) =>
+      coverage.find(({ facet }) => facet === `connections:${relativePath}`),
+    ),
+  ).toMatchObject([
+    { status: "complete", reason: null, examined: 2, omitted: 0 },
+    {
+      status: "partial",
+      reason: "object_limit_reached",
+      examined: 2,
+      omitted: 0,
+    },
+  ]);
+  const evidence = [...complete.nodes, ...complete.edges].flatMap(
     (item) => item.evidence,
   );
-  expect(new Set(evidence.map(({ artifact_path }) => artifact_path))).toEqual(
-    new Set([relativePath]),
-  );
-  expect(evidence.map(({ description }) => description)).toEqual(
-    expect.arrayContaining([
-      "compiled document",
-      "object controller",
-      "segue showBuild",
-    ]),
-  );
+  expect(evidence.map(({ description }) => description)).toEqual([
+    "compiled document",
+    "object controller",
+    "object next",
+    "segue showBuild",
+    "segue outside",
+  ]);
   expect(
-    evidence.filter(({ description }) => description.includes(relativePath)),
-  ).toEqual([]);
+    evidence.every(
+      ({ artifact_path, artifact_sha256 }) =>
+        artifact_path === relativePath && artifact_sha256 === hash,
+    ),
+  ).toBe(true);
 });
 
 it("states each object's class, label, and ID once", () => {
@@ -1267,37 +1335,4 @@ it("states each object's class, label, and ID once", () => {
       attributes: { class: "UIButton", title: "Build", objectID: "authored" },
     }),
   ]);
-});
-
-it("attributes connection omissions caused by missing source nodes to the object limit", () => {
-  const result = buildInterfaceBuilderAnalysis({
-    targetSha256: hash,
-    toolVersion: "test",
-    limits: interfaceBuilderLimitsSchema.parse({ max_objects: 1 }),
-    documents: [
-      {
-        relativePath: "Main.nib",
-        archiveSha256: hash,
-        documentKind: "nib",
-        raw: {
-          "com.apple.ibtool.document.objects": {
-            source: { class: "UIButton" },
-            destination: { class: "UIView" },
-          },
-          "com.apple.ibtool.document.connections": {
-            source: [
-              { type: "action", label: "tap:", destinationId: "destination" },
-            ],
-          },
-        },
-      },
-    ],
-  });
-  expect(result.graph.coverage).toContainEqual(
-    expect.objectContaining({
-      facet: "connections:Main.nib",
-      status: "partial",
-      reason: "object_limit_reached",
-    }),
-  );
 });

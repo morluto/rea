@@ -1,4 +1,5 @@
 import { binaryMetadataArchitecture } from "../../domain/binaryMetadataArchitecture.js";
+import { hasDosMzMagic } from "../../domain/dosMz.js";
 import type { BinaryArchitecture } from "../../domain/binaryTargetTypes.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import {
@@ -16,12 +17,16 @@ import {
 } from "../../domain/binaryContainer.js";
 import {
   decodeElfCompressedSection,
+  decodeElfCompressedSectionCooperative,
   decodeElfGnuZlibSection,
   type ElfCompressedSectionResult,
 } from "../../domain/native/elfCompressedSection.js";
+import type { ZstandardFramePause } from "../../domain/compression/zstandardExactFrame.js";
+import { ZstandardFrameAllowanceError } from "../../domain/compression/zstandardFrameAllowance.js";
 import { readMachoImage } from "../../domain/apple/machoImage.js";
 import {
   readElfDirectoryFromBuffer,
+  readElfDirectoryFromBufferCooperative,
   readPeSectionDirectory,
   type NativeSection,
   type NativeSectionDirectory,
@@ -128,19 +133,27 @@ interface Candidate {
 }
 
 /** Select DWARF sections from one thin ELF, PE, or Mach-O image. */
-export const locateDwarfSections = (
+export const locateDwarfSections = async (
   bytes: Buffer,
   maximumDecodedBytes = MAX_DWARF_DECOMPRESSED_SECTION_BYTES,
-): LocatedDwarfImage => {
+  pause?: ZstandardFramePause,
+): Promise<LocatedDwarfImage> => {
   const budget: InflateBudget = { allowance: maximumDecodedBytes, used: 0 };
-  const magic =
-    bytes.length >= 4 ? new BinaryReader(bytes, true, "dwarf").u32(0) : null;
-  if (magic === 0x464c457f) return finish(locateElf(bytes, budget));
-  if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a)
-    return finish(locatePe(bytes, budget));
   if (
     bytes.length >= 4 &&
-    isMachoMagic(new BinaryReader(bytes, false, "dwarf").u32(0))
+    bytes[0] === 0x7f &&
+    bytes[1] === 0x45 &&
+    bytes[2] === 0x4c &&
+    bytes[3] === 0x46
+  )
+    return finish(await locateElf(bytes, budget, pause));
+  if (hasDosMzMagic(bytes)) return finish(locatePe(bytes, budget));
+  if (
+    bytes.length >= 4 &&
+    isMachoMagic(
+      ((bytes[0]! << 24) | (bytes[1]! << 16) | (bytes[2]! << 8) | bytes[3]!) >>>
+        0,
+    )
   )
     return finish(locateMacho(bytes, budget));
   throw new BinaryFormatFailure(
@@ -259,6 +272,12 @@ const admitDecoded = (
         : decoded.requiredBytes + BigInt(budget.used);
     throw new DwarfSectionAllowanceFailure(name, demanded, budget.allowance);
   }
+  if (decoded.state === "configuration") throw decoded.error;
+  if (decoded.state === "work_limit")
+    throw new ZstandardFrameAllowanceError(
+      { maxFrames: decoded.value, source: decoded.source },
+      decoded.offset,
+    );
   if (decoded.state === "malformed") {
     // The owner charges the larger of declared output and compressed input
     // read on failure. Rejected headers never inflate and charge 0.
@@ -413,8 +432,19 @@ const finish = (image: ImageIdentity): LocatedDwarfImage => {
   };
 };
 
-const locateElf = (bytes: Buffer, budget: InflateBudget): ImageIdentity => {
-  const directory = readElfDirectoryFromBuffer(bytes);
+const locateElf = async (
+  bytes: Buffer,
+  budget: InflateBudget,
+  pause?: ZstandardFramePause,
+): Promise<ImageIdentity> => {
+  const directory =
+    pause === undefined
+      ? readElfDirectoryFromBuffer(bytes, "inspect_dwarf_units")
+      : await readElfDirectoryFromBufferCooperative(
+          bytes,
+          pause,
+          "inspect_dwarf_units",
+        );
   if (directory.section_names_limitation !== undefined)
     throw new BinaryFormatFailure(
       "unsupported",
@@ -480,14 +510,24 @@ const locateElf = (bytes: Buffer, budget: InflateBudget): ImageIdentity => {
       continue;
     }
     const decoded = compressed
-      ? decodeElfCompressedSection(
-          stored,
-          section.flags,
-          directory.bits,
-          directory.little,
-          decodeBudget(budget, name),
-          `ELF ${name} section`,
-        )
+      ? pause === undefined
+        ? decodeElfCompressedSection(
+            stored,
+            section.flags,
+            directory.bits,
+            directory.little,
+            decodeBudget(budget, name),
+            `ELF ${name} section`,
+          )
+        : await decodeElfCompressedSectionCooperative(
+            stored,
+            section.flags,
+            directory.bits,
+            directory.little,
+            decodeBudget(budget, name),
+            `ELF ${name} section`,
+            pause,
+          )
       : decodeElfGnuZlibSection(
           stored,
           decodeBudget(budget, name),

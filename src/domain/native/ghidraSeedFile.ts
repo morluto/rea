@@ -37,11 +37,14 @@ export const parseGhidraSeeds = (
 ): Result<readonly GhidraSeedEntry[], ConfigurationError> => {
   const entries: GhidraSeedEntry[] = [];
   const seen = new Set<string>();
-  const lines = text.split("\n");
-  for (const [index, raw] of lines.entries()) {
+  let start = 0;
+  for (let number = 1; start < text.length; number++) {
+    const newline = text.indexOf("\n", start);
+    const end = newline < 0 ? text.length : newline;
+    const raw = text.slice(start, end);
+    start = end + 1;
     const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
     if (line.trim() === "" || line.startsWith("#")) continue;
-    const number = index + 1;
     const fields = line.split("\t");
     if (fields.length < 2 || fields.length > 3)
       return err(

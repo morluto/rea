@@ -1,3 +1,4 @@
+import type { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
 import type { MavenGradleMetadataService } from "../application/java/MavenGradleMetadataService.js";
 
 import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
@@ -20,10 +21,14 @@ import { javascriptSourceAnalysis } from "../composition/javascriptSourceAnalysi
 import { analysisSettingsConstraints } from "./analysisSettingsConstraints.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import type { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
-import { inspectAndroidJniBindings } from "../application/android/AndroidJniInspection.js";
-import { inspectAndroidPackage } from "../application/android/AndroidPackageInspection.js";
-import { inspectAndroidSymbol } from "../application/android/AndroidSymbolInspection.js";
 import {
+  androidJniInspectionInputSchema,
+  androidPackageInspectionInputSchema,
+  androidSymbolInspectionInputSchemas,
+} from "../domain/android/androidAnalysis.js";
+import { dartAotInspectionInputSchema } from "../domain/flutter/flutterBuildAnalysis.js";
+import {
+  executeRetainedSummaryOperation,
   inspectAnalysisView,
   projectRetainedAnalysis,
   requireAnalysisViewRetention,
@@ -56,7 +61,6 @@ import type { PacketCaptureService } from "../application/captures/PacketCapture
 import type { BeamService } from "../application/erlang/BeamService.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import type { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
-import { inspectDartAot } from "../application/flutter/DartAotInspection.js";
 import type { FlutterBuildAnalysisService } from "../application/flutter/FlutterBuildAnalysisService.js";
 import type { GoBinaryService } from "../application/go/GoBinaryService.js";
 import type { GpuCodeObjectsService } from "../application/gpu/GpuCodeObjectsService.js";
@@ -133,7 +137,7 @@ import { toolContract } from "../contracts/toolContracts.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
   readGuidanceSection,
   searchGuidance,
@@ -447,7 +451,7 @@ const viewInputSourceSchema = z.looseObject({
 const analysisViewOverflowSource = (input: unknown): JsonValue | undefined => {
   const parsed = viewInputSourceSchema.safeParse(input);
   return parsed.success && parsed.data.source.kind !== "inline"
-    ? jsonValueSchema.parse(parsed.data.source)
+    ? ownedJsonValueSchema.parse(parsed.data.source)
     : undefined;
 };
 
@@ -455,7 +459,7 @@ const analysisViewOverflowSource = (input: unknown): JsonValue | undefined => {
 const jsonValueResult = <Error>(
   result: Result<unknown, Error>,
 ): Result<JsonValue, Error> =>
-  result.ok ? ok(jsonValueSchema.parse(result.value)) : result;
+  result.ok ? ok(ownedJsonValueSchema.parse(result.value)) : result;
 
 type Bind<Service> = (
   service: Service,
@@ -701,6 +705,12 @@ const SERVICE_TOOL_BINDINGS = {
       "inspect_firmware_regions",
       "extract_firmware",
     ])) satisfies Bind<FirmwareAnalysisService>,
+  uefiAnalysis: ((service) =>
+    contractServiceBindings(service, [
+      "inspect_uefi_firmware",
+      "extract_uefi_firmware",
+      "inspect_uefi_nvram",
+    ])) satisfies Bind<UefiAnalysisService>,
   pcapAnalysis: ((service) => ({
     ...contractServiceBindings(service, ["inspect_pcap_client"]),
     inspect_pcap_capture: {
@@ -714,7 +724,14 @@ const SERVICE_TOOL_BINDINGS = {
     inspect_dart_aot: {
       admission: "sdk",
       run: (input, options) =>
-        inspectDartAot(service, input, retention, options),
+        executeRetainedSummaryOperation(
+          service,
+          "inspect_dart_aot",
+          dartAotInspectionInputSchema,
+          input,
+          retention,
+          options,
+        ),
     },
   })) satisfies Bind<FlutterBuildAnalysisService>,
   androidAnalysis: ((service, retention) => ({
@@ -725,19 +742,34 @@ const SERVICE_TOOL_BINDINGS = {
     inspect_android_package: {
       admission: "sdk",
       run: (input, options) =>
-        inspectAndroidPackage(service, input, retention, options),
+        executeRetainedSummaryOperation(
+          service,
+          "inspect_android_package",
+          androidPackageInspectionInputSchema,
+          input,
+          retention,
+          options,
+        ),
     },
     inspect_android_jni_bindings: {
       admission: "sdk",
       run: (input, options) =>
-        inspectAndroidJniBindings(service, input, retention, options),
+        executeRetainedSummaryOperation(
+          service,
+          "inspect_android_jni_bindings",
+          androidJniInspectionInputSchema,
+          input,
+          retention,
+          options,
+        ),
     },
     inspect_android_class: {
       admission: "sdk",
       run: (input, options) =>
-        inspectAndroidSymbol(
+        executeRetainedSummaryOperation(
           service,
           "inspect_android_class",
+          androidSymbolInspectionInputSchemas.inspect_android_class,
           input,
           retention,
           options,
@@ -746,9 +778,10 @@ const SERVICE_TOOL_BINDINGS = {
     inspect_android_method: {
       admission: "sdk",
       run: (input, options) =>
-        inspectAndroidSymbol(
+        executeRetainedSummaryOperation(
           service,
           "inspect_android_method",
+          androidSymbolInspectionInputSchemas.inspect_android_method,
           input,
           retention,
           options,
@@ -2160,7 +2193,7 @@ const SERVICE_TOOL_BINDINGS = {
     guided_workflows: {
       admission: "application",
       value: async (input) =>
-        jsonValueResult(accessGuidedWorkflows(input, prompts)),
+        jsonValueResult(accessGuidedWorkflows(input, { contracts: prompts })),
     },
   })) satisfies Bind<readonly PromptContract[]>,
 } as const;

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { scheduler } from "node:timers/promises";
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -31,6 +32,8 @@ import {
   zstandardZipFixture,
 } from "../../fixtures/zipZstandard.js";
 import { jniElfFixture } from "../../fixtures/android/jniElf.js";
+import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
+import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 import {
   ArtifactReaderFailure,
   ZipArtifactReader,
@@ -238,6 +241,58 @@ it("keeps the ZIP decoder window's recompression advice in the library failure",
     kind: "limit",
     message: expect.stringContaining(ZIP_ZSTANDARD_WINDOW_CEILING.narrowing!),
   });
+});
+
+it("retains a backed library identity when the ELF section-name frame budget is refused", async () => {
+  const bytes = elfFrameAllowanceFixture();
+  const library = "lib/x86_64/libframe.so";
+  const source = await fixture([
+    [library, bytes],
+    [LIBRARY, jniElfFixture().bytes],
+  ]);
+  const result = await runWithAnalysisOperationSnapshot(
+    { revision: 1, overrides: { "zstd.max_frames": 1 } },
+    () => read(source),
+  );
+  expect(result.libraries).toEqual([
+    expect.objectContaining({
+      path: library,
+      size: bytes.length,
+      sha256: digest(bytes),
+      facts: null,
+      failure: {
+        kind: "capacity",
+        message: expect.stringContaining("zstd.max_frames"),
+      },
+    }),
+    expect.objectContaining({
+      path: LIBRARY,
+      facts: expect.any(Object),
+      failure: null,
+    }),
+  ]);
+  expect(source.resources.hasPending).toBe(false);
+
+  const checkpoints: AndroidJniLibraryCheckpoint[] = [];
+  const close = vi
+    .spyOn(ZipArtifactReader.prototype, "close")
+    .mockRejectedValueOnce(new Error("controlled ZIP close failure"));
+  try {
+    await expect(
+      runWithAnalysisOperationSnapshot(
+        { revision: 1, overrides: { "zstd.max_frames": 1 } },
+        () =>
+          read(source, {}, undefined, undefined, (checkpoint) =>
+            checkpoints.push(checkpoint),
+          ),
+      ),
+    ).rejects.toBeInstanceOf(ProviderCleanupError);
+    expect(checkpoints[0]?.libraries).toEqual(result.libraries);
+    expect(source.resources.hasPending).toBe(true);
+  } finally {
+    close.mockRestore();
+    await source.resources.close();
+  }
 });
 
 it("preserves declared capacity metadata without presenting unread bytes as verified", async () => {
@@ -560,82 +615,109 @@ for (const first of ["caller", "deadline"] as const)
       }
     });
 
-it("keeps completed facts and the interrupted carrier when a later library is cancelled", async () => {
-  const second = "lib/arm64-v8a/libsecond.so",
-    third = "lib/arm64-v8a/libunexamined.so";
-  const bytes = jniElfFixture().bytes;
-  const source = await fixture([
-    [LIBRARY, bytes],
-    [second, bytes],
-    [third, bytes],
-  ]);
-  const controller = new AbortController(),
-    reason = { caller: "stop before second member bytes" };
-  const originalOpen = ZipArtifactReader.prototype.open;
-  const open = vi
-    .spyOn(ZipArtifactReader.prototype, "open")
-    .mockImplementation(async function (
-      this: ZipArtifactReader,
-      entry,
-      signal,
-    ) {
-      if (entry.path === second) {
-        controller.abort(reason);
-        throw new JadxInterruption(reason);
-      }
-      return originalOpen.call(this, entry, signal);
-    });
-  let checkpoint: AndroidJniLibraryCheckpoint | undefined;
-  try {
-    const failure = await read(
-      source,
-      {},
-      controller.signal,
-      undefined,
-      (value) => {
-        checkpoint = value;
-      },
-    ).catch((cause: unknown) => cause);
-    expect(failure).toBeInstanceOf(AnalysisCancelledError);
-    if (!(failure instanceof AnalysisCancelledError)) throw failure;
-    expect(failure.cause).toBe(reason);
-    expect(checkpoint).toMatchObject({
-      scan_state: "interrupted",
-      inventory: {
-        status: "partial",
-        examined_entries: 2,
-        selected_libraries: 2,
-      },
-    });
-    expect(checkpoint?.libraries.map((library) => library.path)).toEqual([
-      LIBRARY,
-      second,
+it.each(["member open", "section names"] as const)(
+  "keeps completed facts and the interrupted carrier when a later library is cancelled during %s",
+  async (stage) => {
+    const parsingNames = stage === "section names";
+    const second = "lib/arm64-v8a/libsecond.so",
+      third = "lib/arm64-v8a/libunexamined.so";
+    const bytes = jniElfFixture().bytes;
+    const secondBytes = parsingNames ? elfFrameAllowanceFixture() : bytes;
+    const source = await fixture([
+      [LIBRARY, bytes],
+      [second, secondBytes],
+      [third, bytes],
     ]);
-    expect(checkpoint?.libraries[0]).toMatchObject({
-      sha256: digest(bytes),
-      size: bytes.length,
-      facts: { tables: expect.any(Array) },
-    });
-    expect(checkpoint?.libraries[1]).toMatchObject({
-      sha256: null,
-      size: null,
-      declared_size: bytes.length,
-      compressed_size: bytes.length,
-      facts: null,
-      failure: { kind: "incomplete" },
-    });
-    expect(checkpoint?.inventory.unknowns.join("\n")).toContain(
-      "unexamined selected occurrences remain unknown",
-    );
-    if (checkpoint === undefined)
-      throw new Error("Missing interrupted scan checkpoint");
-    expect(
-      androidPartialObservationSchema.safeParse(partial(source, checkpoint))
-        .success,
-    ).toBe(true);
-    expect(JSON.parse(JSON.stringify(checkpoint))).toEqual(checkpoint);
-    expect(source.resources.hasPending).toBe(false);
-  } finally {
-    open.mockRestore();
-  }
-});
+    const controller = new AbortController(),
+      reason = { caller: "stop during " + stage };
+    const originalOpen = ZipArtifactReader.prototype.open;
+    const open = vi
+      .spyOn(ZipArtifactReader.prototype, "open")
+      .mockImplementation(async function (
+        this: ZipArtifactReader,
+        entry,
+        signal,
+      ) {
+        if (entry.path === second && !parsingNames) {
+          controller.abort(reason);
+          throw new JadxInterruption(reason);
+        }
+        return originalOpen.call(this, entry, signal);
+      });
+    const yieldToEventLoop = scheduler.yield.bind(scheduler);
+    const pause = parsingNames
+      ? vi.spyOn(scheduler, "yield").mockImplementationOnce(async () => {
+          await yieldToEventLoop();
+          controller.abort(reason);
+        })
+      : undefined;
+    let checkpoint: AndroidJniLibraryCheckpoint | undefined;
+    try {
+      const failure = await read(
+        source,
+        {},
+        controller.signal,
+        undefined,
+        (value) => {
+          checkpoint = value;
+        },
+      ).catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(AnalysisCancelledError);
+      if (!(failure instanceof AnalysisCancelledError)) throw failure;
+      expect(failure.cause).toBe(reason);
+      expect(checkpoint).toMatchObject({
+        scan_state: "interrupted",
+        inventory: {
+          status: "partial",
+          examined_entries: 2,
+          selected_libraries: 2,
+        },
+      });
+      expect(checkpoint?.libraries.map((library) => library.path)).toEqual([
+        LIBRARY,
+        second,
+      ]);
+      expect(checkpoint?.libraries[0]).toMatchObject({
+        sha256: digest(bytes),
+        size: bytes.length,
+        facts: { tables: expect.any(Array) },
+      });
+      expect(checkpoint?.libraries[1]).toMatchObject({
+        sha256: parsingNames ? digest(secondBytes) : null,
+        size: parsingNames ? secondBytes.length : null,
+        declared_size: secondBytes.length,
+        compressed_size: secondBytes.length,
+        facts: null,
+        failure: { kind: "incomplete" },
+      });
+      expect(checkpoint?.inventory.unknowns.join("\n")).toContain(
+        "unexamined selected occurrences remain unknown",
+      );
+      if (checkpoint === undefined)
+        throw new Error("Missing interrupted scan checkpoint");
+      expect(
+        androidPartialObservationSchema.safeParse(partial(source, checkpoint))
+          .success,
+      ).toBe(true);
+      expect(JSON.parse(JSON.stringify(checkpoint))).toEqual(checkpoint);
+      expect(source.resources.hasPending).toBe(false);
+      if (parsingNames) {
+        const retry = await read(source);
+        expect(retry.inventory).toMatchObject({
+          status: "complete",
+          selected_libraries: 3,
+        });
+        expect(retry.libraries[1]).toMatchObject({
+          path: second,
+          sha256: digest(secondBytes),
+          size: secondBytes.length,
+          facts: expect.any(Object),
+          failure: null,
+        });
+      }
+    } finally {
+      pause?.mockRestore();
+      open.mockRestore();
+    }
+  },
+);

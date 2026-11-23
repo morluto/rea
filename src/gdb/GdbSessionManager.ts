@@ -12,15 +12,17 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { ArtifactResourceScope } from "../resources/index.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { commandMayChangeInferiorOutput } from "./GdbCommandClassification.js";
+export { gdbOneShotCommandMayInvalidateDetachProof } from "./GdbCommandClassification.js";
 import {
-  gdbMiConstText,
-  gdbMiResultHeader,
-  gdbMiResultsNamed,
-  parseGdbMiDoneRecord,
-  parseGdbMiResultRecord,
-  type GdbMiValue,
-} from "./GdbMiRecord.js";
+  gdbThreadGroupPids,
+  miQuote,
+  miStringField,
+  verifyGdbInferiorOutputSink,
+} from "./GdbInferiorVerification.js";
+import { gdbMiResultHeader, parseGdbMiDoneRecord } from "./GdbMiRecord.js";
 import {
+  GDB_OBSERVATION_AUTHORITY,
   GDB_PROVIDER_IDENTITY,
   gdbReportedVersion,
   type GdbProviderIdentity,
@@ -38,9 +40,7 @@ import {
 } from "../process/classifyProviderOutcome.js";
 import { snapshotGdbCommandRecords } from "./GdbCommandRecords.js";
 import { randomUUID } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
 import { isUtf8 } from "node:buffer";
-import { readlink, realpath, stat } from "node:fs/promises";
 
 import {
   AnalysisCapabilityUnavailableError,
@@ -94,7 +94,6 @@ import {
   debuggerAdmissionRecovery,
   debuggerResourceConstraintError,
   fixedDeadlineGuidance,
-  readLinuxProcessStartTime,
   OwnedDebuggerDetachFailure,
   incompleteStopFacts,
   stopOwnedDebuggerProcess,
@@ -251,92 +250,6 @@ const truncateUtf8RecordPrefix = (line: string): string => {
   return `${utf8HeadExcerpt(line, budget).text}${RECENT_RECORD_TRUNCATION_MARKER}`;
 };
 
-const containsResultNamed = (value: GdbMiValue, name: string): boolean => {
-  switch (value.kind) {
-    case "const":
-      return false;
-    case "list":
-      return value.values.some((item) => containsResultNamed(item, name));
-    case "tuple":
-    case "result-list":
-      return value.results.some(
-        (result) =>
-          result.name === name || containsResultNamed(result.value, name),
-      );
-  }
-};
-
-/**
- * Read the live PIDs of a complete `-list-thread-groups` reply without
- * guessing. The record must hold exactly one top-level `groups` list of
- * tuples, each with one `id` constant, no nested `groups`, and at most one
- * decimal `pid`; a group without `pid` has no live process.
- */
-export const gdbThreadGroupPids = (
-  mi: string,
-): readonly string[] | undefined => {
-  const parsed = parseGdbMiResultRecord(mi);
-  if (!parsed.ok || parsed.value.resultClass !== "done") return undefined;
-  const groupsValues = gdbMiResultsNamed(parsed.value.results, "groups");
-  const groups = groupsValues[0];
-  if (groupsValues.length !== 1 || groups?.kind !== "list") return undefined;
-  const pids: string[] = [];
-  for (const group of groups.values) {
-    if (group.kind !== "tuple") return undefined;
-    const ids = gdbMiResultsNamed(group.results, "id");
-    if (ids.length !== 1 || ids[0]?.kind !== "const") return undefined;
-    if (containsResultNamed(group, "groups")) return undefined;
-    const pidValues = gdbMiResultsNamed(group.results, "pid");
-    if (pidValues.length === 0) continue;
-    const pid =
-      pidValues.length === 1 && pidValues[0] !== undefined
-        ? gdbMiConstText(pidValues[0])
-        : undefined;
-    if (pid === undefined || !/^[1-9]\d*$/u.test(pid)) return undefined;
-    pids.push(pid);
-  }
-  return pids;
-};
-
-const verifyGdbInferiorOutputSink = async (
-  pid: string,
-  selectedTty: string,
-  rememberIdentity: (identity: OwnedInferiorIdentity) => void,
-): Promise<void> => {
-  // The descriptors live in this host's /proc, whichever host the manager models.
-  if (HOST_PLATFORM.platform !== "linux")
-    throw new Error(
-      "GDB cannot confirm live inferior output descriptors outside Linux /proc.",
-    );
-  const before = await readLinuxProcessStartTime(pid);
-  if (before === null)
-    throw new Error("GDB could not establish the live inferior identity.");
-  const ttyPath = await realpath(selectedTty);
-  const tty = await stat(ttyPath);
-  if ((tty.mode & fsConstants.S_IFMT) !== fsConstants.S_IFCHR)
-    throw new Error("The selected GDB output sink is not a character device.");
-  for (const descriptor of ["1", "2"]) {
-    const descriptorPath = `/proc/${pid}/fd/${descriptor}`;
-    const destination = await readlink(descriptorPath);
-    const observed = await stat(descriptorPath);
-    if (
-      observed.dev !== tty.dev ||
-      observed.ino !== tty.ino ||
-      (observed.mode & fsConstants.S_IFMT) !== fsConstants.S_IFCHR ||
-      (await realpath(destination)) !== ttyPath
-    )
-      throw new Error(
-        `GDB inferior descriptor ${descriptor} no longer points to the selected TTY.`,
-      );
-  }
-  const after = await readLinuxProcessStartTime(pid);
-  if (after !== before)
-    throw new Error(
-      "The GDB inferior identity changed during descriptor readback.",
-    );
-  rememberIdentity({ pid, startTime: before });
-};
-
 class GdbCommandProcessExitError extends Error {
   constructor(readonly partial: GdbCommandResult) {
     super(
@@ -419,13 +332,17 @@ const createGdbSessionEvidence = (
   },
 ): Evidence => {
   const { provenance, unobservedReason } = session.launchFile;
+  const withAuthority = {
+    ...observation,
+    authority: observation.authority ?? GDB_OBSERVATION_AUTHORITY,
+  };
   return createEvidence(
     gdbSessionSubject(session),
     session.provider,
     provenance === undefined
-      ? observation
+      ? withAuthority
       : {
-          ...observation,
+          ...withAuthority,
           parameters: {
             ...observation.parameters,
             launch_provenance: { ...provenance },
@@ -1634,8 +1551,11 @@ export class GdbSessionManager {
       }
       session.promptTail = prompt.slice(-4);
     }
-    const lines: { readonly value: string; readonly invalidUtf8: boolean }[] =
-      [];
+    const lines: {
+      readonly value: string;
+      readonly invalidUtf8: boolean;
+      readonly utf8Bytes: number;
+    }[] = [];
     let offset = 0;
     let framingFailure: string | undefined;
     while (offset < data.byteLength) {
@@ -1677,31 +1597,52 @@ export class GdbSessionManager {
         framingFailure = `GDB emitted an MI line exceeding the ${String(MAX_MI_LINE_BYTES)} byte (16 MiB) protocol limit. This release has no runtime override.`;
         break;
       }
-      this.#appendLineBytes(session, piece);
-      if (newline < 0) break;
-      const record = Buffer.concat(
-        [
-          ...session.bufferChunks,
-          ...(session.bufferTail === undefined
-            ? []
-            : [session.bufferTail.subarray(0, session.bufferTailBytes)]),
-        ],
-        session.bufferBytes,
-      );
+      let record: Buffer;
+      if (
+        newline >= 0 &&
+        session.bufferChunks.length === 0 &&
+        session.bufferTailBytes === 0
+      ) {
+        // Fast path: complete line sits contiguously inside `data`, avoiding a
+        // 64 KiB slab allocation and Buffer.concat copy per line.
+        record = piece;
+      } else {
+        this.#appendLineBytes(session, piece);
+        if (newline < 0) break;
+        if (
+          session.bufferChunks.length === 0 &&
+          session.bufferTail !== undefined
+        ) {
+          record = session.bufferTail.subarray(0, session.bufferTailBytes);
+        } else {
+          record = Buffer.concat(
+            [
+              ...session.bufferChunks,
+              ...(session.bufferTail === undefined
+                ? []
+                : [session.bufferTail.subarray(0, session.bufferTailBytes)]),
+            ],
+            session.bufferBytes,
+          );
+        }
+      }
       const withoutCarriageReturn =
         record.at(-1) === 0x0d ? record.subarray(0, -1) : record;
       const invalidUtf8 = !isUtf8(withoutCarriageReturn);
       const line = withoutCarriageReturn.toString("utf8");
+      const utf8Bytes = invalidUtf8
+        ? Buffer.byteLength(line, "utf8")
+        : withoutCarriageReturn.byteLength;
       session.bufferChunks.length = 0;
       session.bufferTail = undefined;
       session.bufferTailBytes = 0;
       session.bufferBytes = 0;
       if (invalidUtf8) session.invalidUtf8Observed = true;
-      if (line.length > 0) lines.push({ value: line, invalidUtf8 });
+      if (line.length > 0) lines.push({ value: line, invalidUtf8, utf8Bytes });
       offset = newline + 1;
     }
-    for (const { value: line } of lines) {
-      if (Buffer.byteLength(line, "utf8") > MAX_RECENT_MI_LINE_BYTES) {
+    for (const { value: line, utf8Bytes } of lines) {
+      if (utf8Bytes > MAX_RECENT_MI_LINE_BYTES) {
         session.lines.push(truncateUtf8RecordPrefix(line));
         session.recentRecordsTruncated = true;
       } else session.lines.push(line);
@@ -1710,9 +1651,9 @@ export class GdbSessionManager {
       session.lines.splice(0, session.lines.length - 256);
       session.recentRecordsTruncated = true;
     }
-    for (const { value: line, invalidUtf8 } of lines) {
+    for (const { value: line, invalidUtf8, utf8Bytes } of lines) {
       for (const pending of session.pending.values()) {
-        const lineBytes = Buffer.byteLength(line, "utf8") + 1;
+        const lineBytes = utf8Bytes + 1;
         if (
           pending.outputBytes + lineBytes <= pending.outputBudgetBytes &&
           pending.lines.length < MAX_COMMAND_OUTPUT_RECORDS
@@ -2303,96 +2244,6 @@ export class GdbSessionManager {
     }
   }
 }
-
-const miQuote = (value: string): string =>
-  `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("\r", "\\r").replaceAll("\n", "\\n").replaceAll("\t", "\\t")}"`;
-
-/** @internal Decode the only result of a `^done` record, a C-string field. */
-export const miStringField = (
-  record: string,
-  field: string,
-): string | undefined => {
-  const parsed = parseGdbMiDoneRecord(record);
-  if (!parsed.ok) return undefined;
-  const [only, ...rest] = parsed.value.results;
-  return only?.name === field && rest.length === 0
-    ? gdbMiConstText(only.value)
-    : undefined;
-};
-
-// GDB resolves its built-in aliases before abbreviations, so `p` is print, never
-// python. Of the prefixes of the commands classified below, only these four
-// name another command (checked against GDB 18.1).
-const GDB_BUILTIN_ALIASES: ReadonlyMap<string, string> = new Map([
-  ["d", "delete"],
-  ["p", "print"],
-  ["s", "step"],
-  ["t", "thread"],
-]);
-
-/** The first console word, lowercased, with GDB's built-in aliases resolved. */
-const gdbCommandWord = (command: string): string | undefined => {
-  const word = /^\s*([^\s;]+)/u.exec(command)?.[1]?.toLowerCase();
-  return word === undefined
-    ? undefined
-    : (GDB_BUILTIN_ALIASES.get(word) ?? word);
-};
-
-/** @internal Classify commands that can invalidate the configured output sink. */
-export const gdbOneShotCommandMayInvalidateDetachProof = (
-  command: string,
-): boolean => {
-  if (commandMayChangeInferiorOutput(command)) return true;
-  const firstToken = gdbCommandWord(command);
-  if (
-    firstToken !== undefined &&
-    (["source", "define", "alias"].some((name) =>
-      name.startsWith(firstToken),
-    ) ||
-      firstToken === "py" ||
-      "python".startsWith(firstToken))
-  )
-    return true;
-  // One-shot execution cannot establish which shell/GDB context interprets
-  // redirections, nor safely track multiline command definitions.
-  return /[<>]{1,2}|&>|[\r\n;]/u.test(command);
-};
-
-/** @internal Classify commands that can invalidate the configured output sink. */
-export const commandMayChangeInferiorOutput = (command: string): boolean => {
-  // These exact read-only TTY inspections ("show inferior-tty", "help
-  // inferior-tty", MI "-inferior-tty-show") cannot reconfigure the output
-  // sink, so they must not revoke the startup verification. Keep compound
-  // commands and abbreviations under the conservative rules below
-  // (fail-closed).
-  if (
-    /^[ \t]*(?:show|help)[ \t]+inferior-tty[ \t]*$/iu.test(command) ||
-    /^[ \t]*-inferior-tty-show[ \t]*$/iu.test(command)
-  )
-    return false;
-  const setting = /^\s*(?:set|with)\s+(\S+)/iu.exec(command)?.[1];
-  const maySetInferiorTty =
-    setting !== undefined && "inferior-tty".startsWith(setting.toLowerCase());
-  const firstToken = gdbCommandWord(command);
-  const mayBeTtyCommand =
-    firstToken !== undefined && "tty".startsWith(firstToken);
-  const mayDefineAlias =
-    firstToken !== undefined && "alias".startsWith(firstToken);
-  const mayRunWithOutputRedirection =
-    firstToken !== undefined &&
-    ["run", "start", "starti"].some((name) => name.startsWith(firstToken)) &&
-    /[<>]{1,2}|&>/u.test(command.slice(firstToken.length));
-  return (
-    maySetInferiorTty ||
-    mayBeTtyCommand ||
-    mayDefineAlias ||
-    /\binferior-tty\b/iu.test(command) ||
-    /^\s*(?:wit(?:h)?(?:\s|$)|tty(?:\s|$)|source\b|py\w*|define\b)/iu.test(
-      command,
-    ) ||
-    mayRunWithOutputRedirection
-  );
-};
 
 /** Await a serialized command turn, preserving the caller's cancellation reason. */
 const waitForGdbCommandTurn = (

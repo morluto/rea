@@ -257,6 +257,9 @@ The reader admits one active inspection per provider. It enforces a 100,000,000
 byte header ceiling (safetensors counts its declared JSON bytes separately from
 the fixed eight-byte length prefix; GGUF counts the complete header) and a separate 32 MiB
 retained representation budget before retaining rows or expanding strings.
+GGUF checks that a declared string leaves room for the minimum framing of
+later metadata rows, tensor descriptors and array elements before charging
+its representation budget.
 Numeric products use exact integer arithmetic. GGUF follows its four-dimensional
 tensor layout and limits metadata array nesting to 32 frames. Resource refusals
 are typed, rather than returned as complete empty inventories. Cancellation

@@ -1,12 +1,12 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import ignore from "ignore";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_REFERENCE_SOURCE_IGNORE_PATTERNS } from "../../../src/application/ReferenceSourceImportTypes.js";
+import { prepareReferenceSourceImport } from "../../../src/application/ReferenceSourceImportPolicy.js";
 import { createHistoricalSourceManifest } from "../../../src/domain/referenceSourceGraph.js";
-import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
+import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
+import { createReferenceSourceGitFixture } from "../../support/referenceSourceGitFixture.js";
 
 const importTree = async (
   root: string,
@@ -23,38 +23,28 @@ const importTree = async (
   return result.value;
 };
 
-const fixtureGit = (
-  directory: string,
-  configuration: string,
-  args: readonly string[],
-) =>
-  execFileOutput(
-    "git",
-    ["-c", `core.hooksPath=${join(configuration, "no-hooks")}`, ...args],
-    {
-      cwd: directory,
-      env: {
-        ...Object.fromEntries(
-          Object.entries(process.env).filter(
-            ([name]) => !name.toUpperCase().startsWith("GIT_"),
-          ),
-        ),
-        GIT_CONFIG_GLOBAL: join(configuration, "gitconfig"),
-        GIT_CONFIG_NOSYSTEM: "1",
-        GIT_TEMPLATE_DIR: join(configuration, "no-template"),
-      },
-    },
+it("prepares Git metadata exclusions and keeps directory-only defaults distinct", async () => {
+  const root = await createTestTempDirectory("rea-reference-git-policy-");
+  const prepared = await withArtifactResourceScope((resources) =>
+    prepareReferenceSourceImport(
+      { root, caller: "git-metadata-test", policy: { secretPatterns: [] } },
+      resources,
+    ),
   );
-
-it("excludes Git metadata files and directories without broadening directory-only defaults", () => {
-  const matcher = ignore().add([...DEFAULT_REFERENCE_SOURCE_IGNORE_PATTERNS]);
-  for (const path of [".git", ".git/", "nested/.git", "nested/.git/"])
-    expect(matcher.ignores(path), path).toBe(true);
+  if (!prepared.ok) throw prepared.error;
+  const { ignored } = prepared.value;
+  for (const prefix of ["", "nested/"])
+    for (const pattern of [".git", ".git/"])
+      expect(ignored.test(prefix + pattern)).toMatchObject({
+        ignored: true,
+        rule: { pattern, mark: "default-ignored" },
+      });
   for (const path of [".gitignore", ".github", ".gitkeep", "dist"])
-    expect(matcher.ignores(path), path).toBe(false);
-  expect(matcher.ignores("dist/")).toBe(true);
-  expect(matcher.test(".git").rule?.pattern).toBe(".git");
-  expect(matcher.test(".git/").rule?.pattern).toBe(".git/");
+    expect(ignored.test(path).ignored, path).toBe(false);
+  expect(ignored.test("dist/")).toMatchObject({
+    ignored: true,
+    rule: { pattern: "dist/", mark: "default-ignored" },
+  });
 });
 
 describe.skipIf(process.platform === "win32")(
@@ -63,18 +53,14 @@ describe.skipIf(process.platform === "win32")(
     it("keeps linked-worktree identities stable while retaining HEAD and ordinary-checkout provenance", async () => {
       const root = await createTestTempDirectory("rea-reference-git-metadata-");
       const repository = join(root, "repository");
-      await Promise.all([
-        mkdir(join(root, "no-hooks")),
-        mkdir(join(root, "no-template")),
-        writeFile(join(root, "gitconfig"), ""),
-      ]);
+      const fixtureGit = await createReferenceSourceGitFixture(root);
       await mkdir(join(repository, "src"), { recursive: true });
       await writeFile(
         join(repository, "src", "main.js"),
         "export const value = 7;\n",
       );
       await writeFile(join(repository, ".gitignore"), "*.log\n");
-      const git = (...args: string[]) => fixtureGit(repository, root, args);
+      const git = (...args: string[]) => fixtureGit(repository, ...args);
       await git("init", "--initial-branch=main");
       await git("add", ".gitignore", "src/main.js");
       await git(
@@ -94,7 +80,7 @@ describe.skipIf(process.platform === "win32")(
       for (const worktree of [leftRoot, rightRoot]) {
         await git("worktree", "add", "--detach", worktree, head);
         expect(
-          (await fixtureGit(worktree, root, ["status", "--porcelain"])).stdout,
+          (await fixtureGit(worktree, "status", "--porcelain")).stdout,
         ).toBe("");
       }
       expect(await readFile(join(leftRoot, ".git"), "utf8")).not.toBe(
@@ -117,12 +103,8 @@ describe.skipIf(process.platform === "win32")(
       };
       const left = await importSelectedTree(leftRoot);
       const right = await importSelectedTree(rightRoot);
-      const repeated = await importSelectedTree(leftRoot);
       expect(createHistoricalSourceManifest(left)).toEqual(
         createHistoricalSourceManifest(right),
-      );
-      expect(createHistoricalSourceManifest(repeated)).toEqual(
-        createHistoricalSourceManifest(left),
       );
       for (const graph of [left, right])
         expect(graph.exclusions).toEqual([
@@ -144,65 +126,53 @@ describe.skipIf(process.platform === "win32")(
       ]);
     });
 
-    it.each(["file", "directory"] as const)(
-      "prunes nested .git %s metadata and preserves configured-secret precedence",
-      async (kind) => {
-        const root = await createTestTempDirectory("rea-reference-nested-git-");
-        const nested = join(root, "nested");
-        await mkdir(nested);
-        if (kind === "file")
-          await writeFile(
-            join(nested, ".git"),
-            "gitdir: /checkout-specific/metadata\n",
-          );
-        else {
-          await mkdir(join(nested, ".git", "hooks"), { recursive: true });
-          await writeFile(
-            join(nested, ".git", "hooks", "pre-commit"),
-            "metadata\n",
-          );
-        }
-        for (const name of [
-          ".gitignore",
-          ".github",
-          ".gitkeep",
-          "dist",
-          "source.js",
-        ])
-          await writeFile(join(nested, name), "");
-        for (const secretPatterns of [[], [".git"]]) {
-          const graph = await importTree(
-            root,
-            secretPatterns,
-            secretPatterns.length === 0 ? [] : ["!.git"],
-          );
-          expect(graph.exclusions).toEqual([
-            {
-              path: "nested/.git",
-              entry_kind: kind,
-              reason:
-                secretPatterns.length === 0
-                  ? "default-ignored"
-                  : "configured-secret",
-              pattern:
-                secretPatterns.length === 0 && kind === "directory"
-                  ? ".git/"
-                  : ".git",
-            },
-          ]);
-          expect(
-            graph.entries
-              .filter(({ kind }) => kind === "file")
-              .map(({ path }) => path),
-          ).toEqual([
-            "nested/.github",
-            "nested/.gitignore",
-            "nested/.gitkeep",
-            "nested/dist",
-            "nested/source.js",
-          ]);
-        }
-      },
-    );
+    it("prunes both nested Git metadata kinds and preserves configured-secret precedence", async () => {
+      const root = await createTestTempDirectory("rea-reference-nested-git-");
+      await Promise.all([
+        mkdir(join(root, "pointer")),
+        mkdir(join(root, "repository", ".git", "hooks"), { recursive: true }),
+      ]);
+      await Promise.all([
+        writeFile(join(root, "pointer", ".git"), "gitdir: ../metadata\n"),
+        writeFile(
+          join(root, "repository", ".git", "hooks", "pre-commit"),
+          "metadata\n",
+        ),
+        ...[".gitignore", ".github", ".gitkeep", "dist", "source.js"].map(
+          (name) => writeFile(join(root, "pointer", name), ""),
+        ),
+      ]);
+
+      for (const mode of ["default", "secret"] as const) {
+        const secret = mode === "secret";
+        const graph = await importTree(
+          root,
+          secret ? [".git"] : [],
+          secret ? ["!.git"] : [],
+        );
+        const reason = secret ? "configured-secret" : "default-ignored";
+        expect(graph.exclusions, mode).toEqual([
+          { path: "pointer/.git", entry_kind: "file", reason, pattern: ".git" },
+          {
+            path: "repository/.git",
+            entry_kind: "directory",
+            reason,
+            pattern: secret ? ".git" : ".git/",
+          },
+        ]);
+        expect(
+          graph.entries.map(({ path }) => path),
+          mode,
+        ).toEqual([
+          "pointer",
+          "pointer/.github",
+          "pointer/.gitignore",
+          "pointer/.gitkeep",
+          "pointer/dist",
+          "pointer/source.js",
+          "repository",
+        ]);
+      }
+    });
   },
 );

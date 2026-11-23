@@ -24,7 +24,7 @@ it("corroborates a blank custom name with bounded invalid UTF-8 bytes", () => {
     "",
   ].join("\n");
   const parsed = parseWabtOutput(dump, bytes.length, [], [], bytes);
-  expect(parsed.invalidNameEnds).toEqual([13]);
+  expect(parsed.invalidNameEnds).toEqual(new Set([13]));
   expect(parsed.sections).toMatchObject([{ kind: "Custom", description: "" }]);
   const valid = Buffer.from(bytes);
   valid[11] = 0x61;
@@ -49,10 +49,12 @@ it("corroborates a blank custom name with bounded invalid UTF-8 bytes", () => {
 });
 it("retains real WABT section ranges, custom section identity and original header output", async () => {
   const text = await golden();
-  const headers = text.slice(0, text.indexOf("Section Details:\n"));
-  expect(parseWabtOutput(text, 76, ["test"]).sections).toHaveLength(7);
-  expect(parseWabtOutput(text, 76, ["test"]).headers).toBe(headers);
-  expect(parseWabtOutput(text, 76, ["test"]).sections.at(-1)).toEqual({
+  const parsed = parseWabtOutput(text, 76, ["test"]);
+  expect(parsed.sections).toHaveLength(7);
+  expect(parsed.headers).toBe(
+    text.slice(0, text.indexOf("Section Details:\n")),
+  );
+  expect(parsed.sections.at(-1)).toEqual({
     kind: "Custom",
     start: 64,
     end: 76,
@@ -428,41 +430,37 @@ it("retains directive literals and matches their cooked escaped path", () => {
   ]);
 });
 
-it.each(["\n", "\r", "\r\n", "\u2028", "\u2029"])(
-  "retains complete .wasm query and fragment literals containing %j",
-  (separator) => {
+it.each([
+  ["\n", 2],
+  ["\r", 2],
+  ["\r\n", 2],
+  // JSON.stringify leaves LS and PS literal, so they advance the source line.
+  ["\u2028", 3],
+  ["\u2029", 3],
+] as const)(
+  "keeps query and fragment line breaks outside the .wasm path check: %j",
+  (separator, fragmentLine) => {
+    const path = "https://example.invalid/module.wasm";
     const candidates = ["/artifacts/module.wasm", "/other/module.wasm"];
-    for (const qualifier of ["?query=", "#fragment="]) {
-      const value = `https://example.invalid/module.wasm${qualifier}a${separator}b`;
-      const result = associateWasmGlue(
-        `fetch(${JSON.stringify(value)});`,
-        "/artifacts/glue.js",
-        candidates,
-      );
-      expect(result).toEqual({
-        parse_status: "complete",
-        references: [
-          {
-            value,
-            line: 1,
-            column: 6,
-            candidate_paths: candidates,
-            association: "basename-candidates",
-            evidence_kind: "static-literal",
-          },
-        ],
-      });
-    }
-  },
-);
-
-it.each(["\n", "\r", "\r\n", "\u2028", "\u2029"])(
-  "does not accept a path-ending separator without a query or fragment: %j",
-  (separator) => {
-    const value = `https://example.invalid/module.wasm${separator}`;
-    expect(
-      associateWasmGlue(`fetch(${JSON.stringify(value)});`, "/glue.js", []),
-    ).toEqual({ parse_status: "complete", references: [] });
+    const query = `${path}?query=a${separator}b`;
+    const fragment = `${path}#fragment=a${separator}b`;
+    const source = [query, fragment, path + separator]
+      .map((value) => `fetch(${JSON.stringify(value)});`)
+      .join("\n");
+    const result = associateWasmGlue(source, "/artifacts/glue.js", candidates);
+    expect(result).toEqual({
+      parse_status: "complete",
+      references: [
+        { value: query, line: 1 },
+        { value: fragment, line: fragmentLine },
+      ].map((reference) => ({
+        ...reference,
+        column: 6,
+        candidate_paths: candidates,
+        association: "basename-candidates",
+        evidence_kind: "static-literal",
+      })),
+    });
   },
 );
 
@@ -527,4 +525,95 @@ it.each([
       },
     ],
   });
+});
+
+it("parses many sections with large details and matches indexed glue references", () => {
+  let cursor = 8;
+  const rows: string[] = [];
+  const names: string[] = [];
+  for (let i = 0; i < 60; i++) {
+    const start = cursor + 2;
+    const end = start + 16;
+    rows.push(
+      `   Custom start=0x${start.toString(16).padStart(8, "0")} end=0x${end.toString(16).padStart(8, "0")} (size=0x00000010) "s${i}"`,
+    );
+    names.push(`s${i}\0ignored`);
+    cursor = end;
+  }
+  const dump = [
+    "",
+    "module.wasm:\tfile format wasm 0x1",
+    "",
+    "Sections:",
+    "",
+    ...rows,
+    "",
+    "Section Details:",
+    "",
+    "x".repeat(200_000),
+  ].join("\n");
+  const parsed = parseWabtOutput(dump, cursor, names);
+  expect(parsed.sections).toHaveLength(60);
+  expect(parsed.sections[59]).toEqual({
+    kind: "Custom",
+    start: cursor - 16,
+    end: cursor,
+    bytes: 16,
+    description: '"s59"',
+  });
+
+  const candidates = ["/app/a.wasm", "/other/a.wasm", "/other/b.wasm"];
+  const glue = associateWasmGlue(
+    'fetch("A.WASM#frag"); fetch("./a.wasm"); fetch("https://cdn.example/b.WASM?q=1");',
+    "/app/glue.js",
+    candidates,
+  );
+  expect(glue.references).toMatchObject([
+    {
+      value: "A.WASM#frag",
+      association: "unresolved",
+      candidate_paths: [],
+    },
+    {
+      value: "./a.wasm",
+      association: "local-path-candidate",
+      candidate_paths: ["/app/a.wasm"],
+    },
+    {
+      value: "https://cdn.example/b.WASM?q=1",
+      association: "unresolved",
+      candidate_paths: [],
+    },
+  ]);
+  const upperGlue = associateWasmGlue(
+    'fetch("./A.WASM"); fetch("https://cdn.example/a.wasm?q=1");',
+    "/app/glue.js",
+    ["/app/A.WASM", "/other/a.wasm"],
+  );
+  expect(upperGlue.references).toMatchObject([
+    {
+      value: "./A.WASM",
+      association: "local-path-candidate",
+      candidate_paths: ["/app/A.WASM"],
+    },
+    {
+      value: "https://cdn.example/a.wasm?q=1",
+      association: "basename-candidates",
+      candidate_paths: ["/other/a.wasm"],
+    },
+  ]);
+
+  const decorated = associateWasmGlue(
+    'class C { m(@dec("./a.wasm") x) {} }',
+    "/app/glue.js",
+    ["/app/a.wasm"],
+  );
+  expect(decorated.parse_status).toBe("complete");
+  expect(decorated.references).toMatchObject([
+    {
+      value: "./a.wasm",
+      association: "local-path-candidate",
+      candidate_paths: ["/app/a.wasm"],
+    },
+  ]);
 });

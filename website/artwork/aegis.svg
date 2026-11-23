@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <title>How Aegis generates a six-digit code</title>
+  <rect width="1200" height="630" fill="#101923"/>
+  <text x="65" y="93" fill="#83dfff" font-size="24" font-family="DejaVu Sans" font-weight="bold">REA   /   AEGIS</text>
+  <text x="65" y="179" fill="#e8f2f9" font-size="60" font-family="DejaVu Sans" font-weight="bold">The 30-second login code</text>
+  <rect x="65" y="240" width="1070" height="290" rx="16" fill="#1d2b39"/>
+  <text x="110" y="321" fill="#e8f2f9" font-size="38" font-family="DejaVu Sans" font-weight="normal">59 seconds</text>
+  <text x="110" y="397" fill="#4dd2ff" font-size="35" font-family="DejaVu Sans Mono" font-weight="normal">floor(59 / 30)</text>
+  <text x="110" y="464" fill="#e8f2f9" font-size="33" font-family="DejaVu Sans" font-weight="normal">Time block  1</text>
+  <path d="M510 385h100m-20-17 20 17-20 17" stroke="#ff9753" stroke-width="6" fill="none"/>
+  <text x="682" y="321" fill="#e8f2f9" font-size="30" font-family="DejaVu Sans" font-weight="normal">Generated code</text>
+  <text x="678" y="448" fill="#4dd2ff" font-size="95" font-family="DejaVu Sans Mono" font-weight="bold">287082</text>
+</svg>

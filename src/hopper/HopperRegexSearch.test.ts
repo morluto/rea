@@ -39,9 +39,34 @@ vi.mock("../process/RegexMatcher.js", async (importOriginal) => {
   };
 });
 
-it.each(["search_strings", "search_procedures"] as const)(
-  "preserves selected source metadata through the provider's %s regex boundary",
-  async (operation) => {
+it.each([
+  {
+    operation: "search_strings" as const,
+    pattern: "^matched$",
+    expectedMethod: "search_strings" as const,
+    expectedArgs: { pattern: "matched", mode: "literal", case_sensitive: true },
+  },
+  {
+    operation: "search_strings" as const,
+    pattern: "^(?:matched|absent)$",
+    expectedMethod: "list_strings" as const,
+    expectedArgs: {},
+  },
+  {
+    operation: "search_procedures" as const,
+    pattern: "^matched$",
+    expectedMethod: "search_procedures" as const,
+    expectedArgs: { pattern: "matched", mode: "literal", case_sensitive: true },
+  },
+  {
+    operation: "search_procedures" as const,
+    pattern: "^(?:matched|absent)$",
+    expectedMethod: "list_procedures" as const,
+    expectedArgs: {},
+  },
+])(
+  "preserves selected source metadata through the $operation ($expectedMethod) regex boundary",
+  async ({ operation, pattern, expectedMethod, expectedArgs }) => {
     const config = parseConfig({});
     if (!config.ok) throw config.error;
     const metadata =
@@ -84,19 +109,19 @@ it.each(["search_strings", "search_procedures"] as const)(
       sha256: "a".repeat(64),
       kind: "database",
       format: "analysis-database",
+      databaseEngine: "hopper",
     });
     try {
       const result = await client.execute(operation, {
-        pattern: "^matched$",
+        pattern,
         mode: "regex",
         case_sensitive: true,
       });
       expect(result.ok).toBe(true);
       if (result.ok) expect(result.value.result).toEqual([originalSource[1]]);
       expect(callTool).toHaveBeenCalledOnce();
-      expect(callTool.mock.calls[0]?.[0]).toBe(
-        operation === "search_strings" ? "list_strings" : "list_procedures",
-      );
+      expect(callTool.mock.calls[0]?.[0]).toBe(expectedMethod);
+      expect(callTool.mock.calls[0]?.[1]).toEqual(expectedArgs);
       expect(source).toEqual(originalSource);
     } finally {
       await client.close();
@@ -105,9 +130,14 @@ it.each(["search_strings", "search_procedures"] as const)(
   },
 );
 
-it.each(["search_strings", "search_procedures"] as const)(
-  "rejects malformed canonical metadata in the %s inventory",
-  async (operation) => {
+it.each([
+  { operation: "search_strings" as const, pattern: "matched" },
+  { operation: "search_strings" as const, pattern: "^[a-z]+$" },
+  { operation: "search_procedures" as const, pattern: "matched" },
+  { operation: "search_procedures" as const, pattern: "^[a-z]+$" },
+])(
+  "rejects malformed canonical metadata in the $operation ($pattern) inventory",
+  async ({ operation, pattern }) => {
     // The client validates each reply against its method contract.
     const search = new HopperRegexSearch({
       callTool: async (method, _arguments, options) =>
@@ -129,7 +159,7 @@ it.each(["search_strings", "search_procedures"] as const)(
     try {
       expect(
         await search.execute(operation, {
-          pattern: "matched",
+          pattern,
           mode: "regex",
           case_sensitive: true,
         }),
@@ -145,16 +175,25 @@ it.each(["search_strings", "search_procedures"] as const)(
 
 it.each(
   (["search_strings", "search_procedures"] as const).flatMap((operation) =>
-    (["remote", "capability", "timeout", "process"] as const).map((family) => ({
-      operation,
-      family,
-    })),
+    (["remote", "capability", "timeout", "process"] as const).flatMap(
+      (family) =>
+        (["pushdown", "fallback"] as const).map((route) => ({
+          operation,
+          family,
+          route,
+        })),
+    ),
   ),
 )(
-  "attributes $family inventory failure to accepted $operation with live cleanup",
-  async ({ operation, family }) => {
+  "attributes $family $route inventory failure to accepted $operation with live cleanup",
+  async ({ operation, family, route }) => {
     const inventory =
-      operation === "search_strings" ? "list_strings" : "list_procedures";
+      route === "pushdown"
+        ? operation
+        : operation === "search_strings"
+          ? "list_strings"
+          : "list_procedures";
+    const pattern = route === "pushdown" ? "fixture" : "fixture|other";
     const diagnostics = {
       provider_request: { operation: inventory, request_id: 17 },
     };
@@ -212,7 +251,7 @@ it.each(
     });
     try {
       const result = await search.execute(operation, {
-        pattern: "fixture",
+        pattern,
         mode: "regex",
         case_sensitive: false,
       });
@@ -388,6 +427,52 @@ it("returns cancellation when the caller aborts after the regex worker settles",
     expect(result.error.cause).toBe(reason);
   } finally {
     regexMatch.afterSettle = undefined;
+    await search.close();
+  }
+});
+
+it("selects sparse matched inventory rows by direct index without altering row identity or order", async () => {
+  const rows = Array.from({ length: 256 }, (_, index) => ({
+    address: `0x${(0x1000 + index * 4).toString(16)}`,
+    value:
+      index === 3 || index === 127 || index === 250
+        ? `target_hit_${index}`
+        : "unrelated_entry",
+    provider_value: `display_${index}`,
+  }));
+  const calls: { method: string; args: Record<string, unknown> }[] = [];
+  const search = new HopperRegexSearch({
+    callTool: async (method, args) => {
+      calls.push({ method, args });
+      return ok(rows);
+    },
+  });
+  try {
+    const matched = await search.execute("search_strings", {
+      pattern: "^target_hit_\\d+$",
+      mode: "regex",
+      case_sensitive: true,
+    });
+    expect(matched.ok).toBe(true);
+    if (matched.ok) {
+      const selected = matched.value as typeof rows;
+      expect(selected).toHaveLength(3);
+      expect(selected[0]).toBe(rows[3]);
+      expect(selected[1]).toBe(rows[127]);
+      expect(selected[2]).toBe(rows[250]);
+    }
+    expect(calls[0]).toEqual({
+      method: "search_strings",
+      args: { pattern: "target_hit_", mode: "literal", case_sensitive: true },
+    });
+    const empty = await search.execute("search_strings", {
+      pattern: "^[0-9]+$",
+      mode: "regex",
+      case_sensitive: true,
+    });
+    expect(empty).toEqual(ok([]));
+    expect(calls[1]).toEqual({ method: "list_strings", args: {} });
+  } finally {
     await search.close();
   }
 });

@@ -16,7 +16,10 @@ import {
   type FirmwarePartialObservation,
 } from "../domain/firmware/firmwareAnalysis.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -27,7 +30,7 @@ import {
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
@@ -101,9 +104,9 @@ const combineCleanupFailures = (
   failures: readonly AnalysisError[],
 ): AnalysisError | undefined => {
   if (failures.length < 2) return failures[0];
-  return new ProviderCleanupError(
+  return providerCleanupErrorFromFailures(
     "firmware",
-    failures.flatMap((failure) => [...failure.cleanupResources]),
+    failures,
     {
       reason: "Multiple owned firmware resources could not be cleaned",
       failures: failures.map((failure) => ({
@@ -119,8 +122,8 @@ const combineCleanupFailures = (
         reason: failure.diagnostics?.reason ?? failure.message,
       })),
     },
-    { operation: "close_firmware", cause: new AggregateError(failures) },
-  ).bindCleanupDependencies(failures);
+    { operation: "close_firmware" },
+  );
 };
 const waitForPredecessor = (
   predecessor: Promise<void>,
@@ -753,7 +756,7 @@ const completedFirmwareObservation = (
 ): FirmwarePartialObservation => ({
   kind: "firmware",
   result: execution.result,
-  provenance: jsonValueSchema.parse({
+  provenance: ownedJsonValueSchema.parse({
     raw_result: execution.rawResult,
     provider: execution.provider,
     subject: execution.subject,

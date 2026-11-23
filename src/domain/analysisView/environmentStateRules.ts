@@ -7,9 +7,8 @@ import {
 import type { OffsetDateTimeInstant } from "../offsetDateTime.js";
 import type { StateRecordChronology } from "./StateRecordChronology.js";
 import type { ListQuery } from "./environmentStateListQuery.js";
-import { canonicalJson } from "../comparisonSemantics.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import type { JsonValue } from "../jsonValue.js";
+import { equalJsonValues as same, type JsonValue } from "../jsonValue.js";
 import type { StateWritePlan } from "./environmentStateWriteRules.js";
 import {
   respellClock,
@@ -350,15 +349,7 @@ export const setOwnMember = (
   });
 };
 
-/** Equal JSON values; object member order carries no meaning. */
-export const same = (
-  left: JsonValue | undefined,
-  right: JsonValue | undefined,
-): boolean =>
-  left === undefined || right === undefined
-    ? left === right
-    : canonicalJson(left, "Environment state") ===
-      canonicalJson(right, "Environment state");
+export { same };
 
 /** A path segment percent-decoded, or as written when it does not decode. */
 export const decodedSegment = (segment: string): string => {
@@ -450,7 +441,9 @@ export const changesState = (method: string, path: string): boolean =>
   WRITE_METHODS.has(method) && !isQueryPost(method, path);
 
 /** Whether a record may change state: a successful or unanswered request that `changesState` names. */
-export const isStateWrite = (record: StateRecordFacts): boolean =>
+export const isStateWrite = (
+  record: Pick<StateRecordFacts, "method" | "path" | "status">,
+): boolean =>
   changesState(record.method, record.path) &&
   (record.status === null || (record.status >= 200 && record.status < 400));
 
@@ -556,24 +549,6 @@ export const stateValueRetentionBytes = (value: JsonValue): number => {
       ENTRY_BYTES,
     );
   return ENTRY_BYTES;
-};
-
-/** Whether a JSON value nests more than `limit` levels below its root. */
-export const deeperThan = (value: JsonValue, limit: number): boolean => {
-  const pending: { readonly value: JsonValue; readonly depth: number }[] = [
-    { value, depth: 0 },
-  ];
-  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-    if (next.depth > limit) return true;
-    const children = Array.isArray(next.value)
-      ? next.value
-      : isObject(next.value)
-        ? Object.values(next.value)
-        : [];
-    for (const child of children)
-      pending.push({ value: child, depth: next.depth + 1 });
-  }
-  return false;
 };
 
 export const pointerTo = (name: string): string =>
@@ -751,12 +726,15 @@ export const listItems = (
 /** An observed item count, retaining the original value separately for rendering. */
 export const recordedItemCount = (
   value: JsonValue | undefined,
-): number | undefined =>
-  typeof value === "number"
-    ? value
-    : typeof value === "string" && /^\d+$/u.test(value)
-      ? Number(value)
-      : undefined;
+): number | undefined => {
+  if (typeof value === "number")
+    return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+  if (typeof value === "string" && /^\d+$/u.test(value)) {
+    const number = Number(value);
+    return Number.isSafeInteger(number) ? number : undefined;
+  }
+  return undefined;
+};
 
 /** Spell a changed count with the recorded numeric/string type and digit width. */
 export const formatItemCount = (

@@ -44,15 +44,46 @@ import {
   type SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
+import { FirmwareFileAccess } from "./FirmwareFiles.js";
 import {
   firmwareLimiterPath,
   inspectFirmwareExecutable,
 } from "./FirmwareConfiguration.js";
 import {
-  FirmwareFileAccess,
-  inventoryFirmwareOutput,
-} from "./FirmwareFiles.js";
+  checkFirmwareStagingBudget,
+  type FirmwareStagingUsage,
+} from "./FirmwareStagingBudget.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+
+const MIN_STAGING_POLL_MS = 100;
+const MAX_STAGING_POLL_MS = 1_000;
+
+const nextStagingPollDelayMs = (
+  currentMs: number,
+  checkElapsedMs: number,
+  observed: FirmwareStagingUsage,
+  previous: FirmwareStagingUsage | undefined,
+  budget: { readonly bytes: number; readonly entries: number },
+): number => {
+  const scanFloorMs = Math.ceil(checkElapsedMs * 4);
+  const highUtilization =
+    observed.bytes * 4 >= budget.bytes * 3 ||
+    observed.entries * 4 >= budget.entries * 3;
+  if (highUtilization)
+    return Math.min(
+      MAX_STAGING_POLL_MS,
+      Math.max(MIN_STAGING_POLL_MS, scanFloorMs),
+    );
+  const idle =
+    previous !== undefined &&
+    observed.bytes === previous.bytes &&
+    observed.entries === previous.entries;
+  const candidate = idle ? currentMs * 2 : Math.round(currentMs * 1.5);
+  return Math.min(
+    MAX_STAGING_POLL_MS,
+    Math.max(MIN_STAGING_POLL_MS, candidate, scanFloorMs),
+  );
+};
 
 /** Injectable owned launcher for production protocol and lifecycle tests. */
 export type FirmwareLauncher = (
@@ -281,6 +312,8 @@ export const runFirmwareCommand = async (context: {
   };
   let completedFailureObserved = false;
   let diagnosticTruncated = false;
+  const diagnosticController = new AbortController();
+  const waitSignal = AbortSignal.any([signal, diagnosticController.signal]);
   const supervisor = new ProviderProcessSupervisor(
     {
       ...spawned,
@@ -291,8 +324,16 @@ export const runFirmwareCommand = async (context: {
     {
       maxDiagnosticBytes: FIRMWARE_LIMITS.diagnosticBytes,
       onDiagnostic: (event) => {
-        if (event.type === "output" && event.truncated === true)
+        if (event.type === "output" && event.truncated === true) {
           diagnosticTruncated = true;
+          if (!diagnosticController.signal.aborted)
+            diagnosticController.abort(
+              new DOMException(
+                "Firmware diagnostic capture budget exceeded",
+                "AbortError",
+              ),
+            );
+        }
         // Root exit and inherited-pipe closure are different observations.
         // Retain a completed failure before drain or cleanup can be interrupted,
         // while cancellation already present at exit keeps its precedence.
@@ -324,19 +365,34 @@ export const runFirmwareCommand = async (context: {
     }
   };
   try {
-    while (!(await supervisor.waitForOutputClose(100))) {
+    let pollMs = MIN_STAGING_POLL_MS;
+    let previousObserved: FirmwareStagingUsage | undefined;
+    while (!(await supervisor.waitForOutputClose(pollMs, waitSignal))) {
       checkDiagnostics();
       checkInterruption();
-      if (context.outputBudget !== undefined)
-        await inventoryFirmwareOutput(
-          context.outputBudget.root,
-          context.outputBudget.bytes,
-          context.outputBudget.entries,
-          fileSizeBytes,
-          operation,
-          signal,
-          context.deadline,
-        );
+      if (context.outputBudget === undefined) {
+        pollMs = Math.min(MAX_STAGING_POLL_MS, pollMs * 2);
+        continue;
+      }
+      const checkStartedAt = performance.now();
+      const observed = await checkFirmwareStagingBudget({
+        root: context.outputBudget.root,
+        maxBytes: context.outputBudget.bytes,
+        maxEntries: context.outputBudget.entries,
+        fileSizeBytes,
+        operation,
+        signal,
+        deadline: context.deadline,
+      });
+      const checkElapsedMs = Math.max(0, performance.now() - checkStartedAt);
+      pollMs = nextStagingPollDelayMs(
+        pollMs,
+        checkElapsedMs,
+        observed,
+        previousObserved,
+        context.outputBudget,
+      );
+      previousObserved = observed;
     }
     checkDiagnostics();
     checkInterruption();

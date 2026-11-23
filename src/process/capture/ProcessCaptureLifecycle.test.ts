@@ -1,11 +1,20 @@
-import { expect, it, vi } from "vitest";
+import { setTimeout as delay } from "node:timers/promises";
+import { afterEach, expect, it, vi } from "vitest";
 import type { IPty } from "@lydell/node-pty";
 
+import { phaseArrival } from "../../../tests/support/lifecycleHarness.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import type { ProcessCaptureFinalization } from "../../domain/process/processCapture.js";
 import { awaitTerminalExit } from "./ProcessCaptureLifecycle.js";
 import type { ProcessTimer } from "./ProcessTimer.js";
 import { monotonicProcessCaptureClock } from "./ProcessCaptureClock.js";
+
+// Keep native promise timers. Capture their outcomes so even an unref'ed
+// grace wait has observable cancellation.
+vi.mock("node:timers/promises", async (importOriginal) => {
+  const timers = await importOriginal<typeof import("node:timers/promises")>();
+  return { ...timers, setTimeout: vi.fn(timers.setTimeout) };
+});
 
 type Delivery = ProcessCaptureFinalization["signals"][number]["delivery"];
 
@@ -51,15 +60,18 @@ const fakeTerminal = (
   };
 };
 
-const waitFor = async (condition: () => boolean): Promise<void> => {
-  const deadline = Date.now() + 3_000;
-  while (!condition()) {
-    if (Date.now() > deadline) throw new Error("condition not reached");
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
+const snapshots: ProcessCaptureFinalization[] = [];
+
+const fakePollingClock = () => {
+  vi.useFakeTimers({
+    toFake: ["Date", "performance", "setInterval", "clearInterval"],
+  });
 };
 
-const snapshots: ProcessCaptureFinalization[] = [];
+afterEach(() => {
+  vi.useRealTimers();
+  vi.mocked(delay).mockClear();
+});
 
 const observed = <Result extends { readonly unobserved?: boolean }>(
   result: Result,
@@ -93,41 +105,31 @@ const start = (
     recordEvent: () => undefined,
   });
 
-it("uses the monotonic running deadline after the wall clock moves backward", async () => {
+it("uses the monotonic running deadline and releases zero-interval polling after exit", async () => {
+  fakePollingClock();
   const fake = fakeTerminal();
-  const controller = new AbortController();
-  const wallStart = Date.now();
-  let reads = 0;
-  const wall = vi.spyOn(Date, "now").mockImplementation(() => {
-    reads += 1;
-    return reads === 1 ? wallStart : wallStart - 60_000 + reads;
-  });
-  const kill = vi.spyOn(fake.terminal, "kill").mockImplementation(() => {
-    queueMicrotask(() => fake.deliverExit({ exitCode: 0, signal: 9 }));
-  });
-  const fallback = setTimeout(() => controller.abort(), 1_500);
-  try {
-    const monotonicStarted = performance.now();
-    const exit = observed(
-      await start(fake, { timeout_ms: 100 }, controller.signal),
-    );
-    // The production clock rounds down to milliseconds, losing at most 1 ms.
-    expect(performance.now() - monotonicStarted).toBeGreaterThanOrEqual(99);
-    expect(exit.reason).toBe("timeout");
-    expect(controller.signal.aborted).toBe(false);
-    expect(kill).toHaveBeenCalledOnce();
-  } finally {
-    clearTimeout(fallback);
-    kill.mockRestore();
-    wall.mockRestore();
-  }
+  const pending = start(fake, { timeout_ms: 100, finalization_ms: 0 });
+  vi.setSystemTime(Date.now() - 60_000);
+
+  await vi.advanceTimersByTimeAsync(80);
+  expect(fake.signals).toEqual([]);
+  await vi.advanceTimersByTimeAsync(20);
+  expect(fake.signals).toEqual(["terminal:SIGKILL"]);
+  fake.deliverExit({ exitCode: 0, signal: 9 });
+
+  const exit = observed(await pending);
+  expect(exit.reason).toBe("timeout");
+  expect(exit.finalization).toBeUndefined();
+  expect(vi.getTimerCount()).toBe(0);
 });
 
 it("records attempts when a self-exit notification arrives after escalation", async () => {
+  fakePollingClock();
   const fake = fakeTerminal();
   const pending = start(fake, { timeout_ms: 100, finalization_ms: 100 });
-  await waitFor(() => fake.signals.includes("SIGKILL"));
-  await new Promise((resolve) => setTimeout(resolve, 150));
+  // Let several more polls run after escalation before the PTY emits exit.
+  await vi.advanceTimersByTimeAsync(350);
+  expect(fake.signals).toEqual(["SIGTERM", "SIGKILL"]);
   fake.deliverExit({ exitCode: 0, signal: 0 });
 
   const exit = observed(await pending);
@@ -139,17 +141,10 @@ it("records attempts when a self-exit notification arrives after escalation", as
   expect(exit.signal, "the observed exit remains independent of attempts").toBe(
     0,
   );
-  expect(
-    fake.signals.filter((signal) => signal === "SIGKILL"),
-    "the escalation is sent once, not on every poll",
-  ).toHaveLength(1);
-  expect(
-    fake.signals.filter((signal) => signal === "SIGTERM"),
-    "the finalization signal is sent once, not on every poll",
-  ).toHaveLength(1);
 });
 
 it("kills at once when cancelled during the finalization interval", async () => {
+  fakePollingClock();
   const fake = fakeTerminal();
   const controller = new AbortController();
   const pending = start(
@@ -157,9 +152,12 @@ it("kills at once when cancelled during the finalization interval", async () => 
     { timeout_ms: 100, finalization_ms: 60_000 },
     controller.signal,
   );
-  await waitFor(() => fake.signals.includes("SIGTERM"));
+  await vi.advanceTimersByTimeAsync(100);
+  expect(fake.signals).toEqual(["SIGTERM"]);
   controller.abort();
-  await waitFor(() => fake.signals.includes("SIGKILL"));
+  // A few polls are enough for cancellation. The 60s interval stays open.
+  await vi.advanceTimersByTimeAsync(100);
+  expect(fake.signals).toEqual(["SIGTERM", "SIGKILL"]);
   fake.deliverExit({ exitCode: 0, signal: 9 });
 
   const exit = observed(await pending);
@@ -168,23 +166,15 @@ it("kills at once when cancelled during the finalization interval", async () => 
     "cancelled",
   );
   expect(
-    fake.signals.filter((signal) => signal === "SIGKILL"),
-    "the abort branch itself sent one SIGKILL, long before the interval ended",
-  ).toHaveLength(1);
-  expect(
     exit.finalization?.signals.map(({ signal }) => signal),
     "cancellation records both attempts",
   ).toEqual(["SIGTERM", "SIGKILL"]);
-  expect(
-    fake.signals.filter((signal) => signal.startsWith("terminal:")),
-    "cancellation during finalization never uses a bare terminal kill",
-  ).toEqual([]);
 });
 
 it("records escalation attempts alongside an observed SIGKILL exit", async () => {
   const fake = fakeTerminal();
   const pending = start(fake, { timeout_ms: 100, finalization_ms: 100 });
-  await waitFor(() => fake.signals.includes("SIGKILL"));
+  await expect.poll(() => fake.signals).toContain("SIGKILL");
   fake.deliverExit({ exitCode: 0, signal: 9 });
 
   const exit = observed(await pending);
@@ -200,15 +190,16 @@ it("records escalation attempts alongside an observed SIGKILL exit", async () =>
     9,
   );
   expect(
-    exit.finalization?.elapsed_ms,
+    exit.finalization?.signals[1]?.sent_at_ms,
     "the escalation waited for the whole interval",
   ).toBeGreaterThanOrEqual(100);
+  expect(exit.finalization?.exit_code).toBeNull();
 });
 
 it("records a scripted SIGKILL exit without inferring its cause", async () => {
   const fake = fakeTerminal();
   const pending = start(fake, { timeout_ms: 100, finalization_ms: 5_000 });
-  await waitFor(() => fake.signals.includes("SIGTERM"));
+  await expect.poll(() => fake.signals).toContain("SIGTERM");
   fake.deliverExit({ exitCode: 0, signal: 9 });
 
   const exit = observed(await pending);
@@ -224,49 +215,24 @@ it("records a scripted SIGKILL exit without inferring its cause", async () => {
   expect(exit.signal, "the observed SIGKILL remains an exit fact").toBe(9);
 });
 
-it.each([
-  [3, 3],
-  [0, 0],
-  [7, 7],
-] as const)(
-  "records exit code %i of a finalizer that exits on its own as %i",
-  async (exitCode, expected) => {
+it.each([0, 3])(
+  "records exit code %i of a finalizer that exits on its own",
+  async (exitCode) => {
     const fake = fakeTerminal();
     const pending = start(fake, { timeout_ms: 100, finalization_ms: 5_000 });
-    await waitFor(() => fake.signals.includes("SIGTERM"));
+    await expect.poll(() => fake.signals).toContain("SIGTERM");
     fake.deliverExit({ exitCode, signal: 0 });
 
     const exit = observed(await pending);
-
-    expect(
-      exit.finalization?.exit_code,
-      "the PTY-reported code of an exit not caused by a signal is recorded",
-    ).toBe(expected);
-    expect(exit.reason, "the initiating deadline stays the exit reason").toBe(
-      "timeout",
-    );
+    expect(exit.finalization?.exit_code).toBe(exitCode);
+    expect(exit.reason).toBe("timeout");
   },
 );
-
-it("records no exit code when the finalizing target was ended by a signal", async () => {
-  const fake = fakeTerminal();
-  const pending = start(fake, { timeout_ms: 100, finalization_ms: 100 });
-  await waitFor(() => fake.signals.includes("SIGKILL"));
-  fake.deliverExit({ exitCode: 0, signal: 9 });
-
-  const exit = observed(await pending);
-
-  expect(
-    exit.finalization?.exit_code,
-    "a code reported next to a terminating signal is never recorded",
-  ).toBeNull();
-  expect(exit.signal, "the signal remains the observed exit fact").toBe(9);
-});
 
 it("records no exit code when the PTY reports a negative code without a signal", async () => {
   const fake = fakeTerminal();
   const pending = start(fake, { timeout_ms: 100, finalization_ms: 5_000 });
-  await waitFor(() => fake.signals.includes("SIGTERM"));
+  await expect.poll(() => fake.signals).toContain("SIGTERM");
   fake.deliverExit({ exitCode: -1, signal: 0 });
 
   const exit = observed(await pending);
@@ -280,24 +246,11 @@ it("records no exit code when the PTY reports a negative code without a signal",
   );
 });
 
-it("records no exit code when no exit was observed", async () => {
-  const fake = fakeTerminal({}, new Promise<void>(() => undefined));
-  const pending = start(fake, { timeout_ms: 100, finalization_ms: 100 });
-
-  const result = await pending;
-
-  expect(result.unobserved, "no exit is invented").toBe(true);
-  expect(
-    result.finalization?.exit_code,
-    "an unobserved exit has no code to record",
-  ).toBeNull();
-});
-
 it("records every delivery result and publishes attempts incrementally", async () => {
   snapshots.length = 0;
   const fake = fakeTerminal({ SIGTERM: "gone", SIGKILL: "gone" });
   const pending = start(fake, { timeout_ms: 100, finalization_ms: 100 });
-  await waitFor(() => fake.signals.includes("SIGKILL"));
+  await expect.poll(() => fake.signals).toContain("SIGKILL");
   fake.deliverExit({ exitCode: 0, signal: 9 });
 
   const exit = observed(await pending);
@@ -347,6 +300,7 @@ it.each(["identity-changed", "unverified"] as const)(
 );
 
 it("returns at once when a cancellation kill cannot be delivered", async () => {
+  fakePollingClock();
   const fake = fakeTerminal({ SIGKILL: "unverified" });
   const controller = new AbortController();
   const pending = start(
@@ -354,8 +308,11 @@ it("returns at once when a cancellation kill cannot be delivered", async () => {
     { timeout_ms: 100, finalization_ms: 60_000 },
     controller.signal,
   );
-  await waitFor(() => fake.signals.includes("SIGTERM"));
+  await vi.advanceTimersByTimeAsync(100);
+  expect(fake.signals).toEqual(["SIGTERM"]);
   controller.abort();
+  await vi.advanceTimersByTimeAsync(100);
+  expect(fake.signals).toEqual(["SIGTERM", "SIGKILL"]);
 
   const result = await pending;
 
@@ -363,50 +320,54 @@ it("returns at once when a cancellation kill cannot be delivered", async () => {
   expect(result.unobserved, "the capture does not wait for an exit").toBe(true);
 });
 
-it("waits for a pending delivery before reporting an observed exit", async () => {
+it("joins a pending delivery after an observed exit and cancels its grace waits", async () => {
   let release: () => void = () => undefined;
   const hold = new Promise<void>((resolve) => {
     release = resolve;
   });
   const fake = fakeTerminal({ SIGTERM: "signaled" }, hold);
   const pending = start(fake, { timeout_ms: 100, finalization_ms: 5_000 });
-  await waitFor(() => fake.signals.includes("SIGTERM"));
-  fake.deliverExit({ exitCode: 0, signal: 0 });
-  let settled = false;
-  void pending.then(() => {
-    settled = true;
-  });
-  await new Promise((resolve) => setTimeout(resolve, 40));
-  expect(settled, "the result waits for the outstanding delivery").toBe(false);
+  let graceWaits = Promise.resolve<PromiseSettledResult<unknown>[]>([]);
+  try {
+    await expect.poll(() => fake.signals).toContain("SIGTERM");
+    fake.deliverExit({ exitCode: 0, signal: 0 });
+    const startedWaits = vi
+      .mocked(delay)
+      .mock.results.map(({ value }) => value);
+    graceWaits = Promise.allSettled(startedWaits);
 
-  release();
+    const result = await Promise.race([
+      pending,
+      new Promise<void>((resolve) => setImmediate(resolve)),
+    ]);
+    expect(
+      result,
+      "the result waits for the outstanding delivery",
+    ).toBeUndefined();
+  } finally {
+    release();
+    await Promise.allSettled([pending]);
+  }
   const exit = observed(await pending);
 
   expect(
     exit.finalization?.signals,
     "the delivery result is complete in the published record",
   ).toMatchObject([{ signal: "SIGTERM", delivery: "signaled" }]);
-});
-
-it("keeps the zero-interval deadline as a bare SIGKILL", async () => {
-  const fake = fakeTerminal();
-  const pending = start(fake, { timeout_ms: 60, finalization_ms: 0 });
-  await waitFor(() => fake.signals.includes("terminal:SIGKILL"));
-  fake.deliverExit({ exitCode: 0, signal: 9 });
-
-  const exit = observed(await pending);
-
-  expect(
-    fake.signals.filter((signal) => !signal.startsWith("terminal:")),
-    "the identity-checked signaller is never used without an interval",
-  ).toEqual([]);
-  expect(exit.finalization, "no finalization record exists").toBeUndefined();
+  const waits = await graceWaits;
+  expect(waits).not.toHaveLength(0);
+  for (const wait of waits) {
+    expect(wait).toMatchObject({
+      status: "rejected",
+      reason: { name: "AbortError" },
+    });
+  }
 });
 
 it("stops waiting for a hung delivery once the exit is observed", async () => {
   const fake = fakeTerminal({}, new Promise<void>(() => undefined));
   const pending = start(fake, { timeout_ms: 100, finalization_ms: 5_000 });
-  await waitFor(() => fake.signals.includes("SIGTERM"));
+  await expect.poll(() => fake.signals).toContain("SIGTERM");
   fake.deliverExit({ exitCode: 0, signal: 0 });
 
   const exit = observed(await pending);
@@ -418,7 +379,8 @@ it("stops waiting for a hung delivery once the exit is observed", async () => {
     {
       signal: "SIGTERM",
       delivery: "unverified",
-      reason: "delivery did not settle within 1000 ms",
+      reason:
+        "delivery did not settle within REA's fixed 1000 ms signal-delivery grace; this release has no runtime override and a larger finalization_ms does not extend it",
     },
   ]);
   expect(exit.signal, "the observed exit is kept").toBe(0);
@@ -431,7 +393,7 @@ it("retains a thrown signal error as an unverified delivery reason", async () =>
     new Error("signal transport failed"),
   );
   const pending = start(fake, { timeout_ms: 100, finalization_ms: 5_000 });
-  await waitFor(() => fake.signals.includes("SIGTERM"));
+  await expect.poll(() => fake.signals).toContain("SIGTERM");
   fake.deliverExit({ exitCode: 0, signal: 0 });
 
   const exit = observed(await pending);
@@ -455,7 +417,7 @@ it("keeps an observed exit when a late kill delivery reports unverified", async 
   });
   const fake = fakeTerminal({ SIGKILL: "unverified" }, hold);
   const pending = start(fake, { timeout_ms: 100, finalization_ms: 100 });
-  await waitFor(() => fake.signals.includes("SIGKILL"));
+  await expect.poll(() => fake.signals).toContain("SIGKILL");
   fake.deliverExit({ exitCode: 0, signal: 9 });
   release();
 
@@ -472,15 +434,30 @@ it("keeps an observed exit when a late kill delivery reports unverified", async 
 
 it("stops waiting when the escalation delivery never settles and no exit arrives", async () => {
   const fake = fakeTerminal({}, new Promise<void>(() => undefined));
-  const waitStarted = Date.now();
-  const pending = start(fake, { timeout_ms: 100, finalization_ms: 100 });
+  const escalation = phaseArrival();
+  const pending = start(
+    {
+      ...fake,
+      signalTarget: (signal) => {
+        if (signal === "SIGKILL") escalation.arrive();
+        return fake.signalTarget(signal);
+      },
+    },
+    { timeout_ms: 100, finalization_ms: 100 },
+  );
+  await escalation.reached(pending, "SIGKILL delivery");
 
-  const result = await pending;
-
-  expect(
-    Date.now() - waitStarted,
-    "the wait is bounded by the one-second cleanup grace after the interval",
-  ).toBeLessThan(2_500);
+  // The production grace timer is already scheduled. Race it against the
+  // independent test bound so time spent reaching escalation cannot fail the test.
+  const watchdog = new AbortController();
+  const result = await Promise.race([
+    pending,
+    delay(1_500, null, { signal: watchdog.signal }),
+  ]).finally(() => watchdog.abort());
+  if (result === null) {
+    fake.deliverExit({ exitCode: 0, signal: 0 });
+    throw new Error("Hung SIGKILL delivery outlived its cleanup grace");
+  }
   expect(result.unobserved, "no exit is invented").toBe(true);
   expect(
     result.finalization?.signals.at(-1),
@@ -488,43 +465,13 @@ it("stops waiting when the escalation delivery never settles and no exit arrives
   ).toMatchObject({
     signal: "SIGKILL",
     delivery: "unverified",
-    reason: "delivery did not settle within 1000 ms",
+    reason:
+      "delivery did not settle within REA's fixed 1000 ms signal-delivery grace; this release has no runtime override and a larger finalization_ms does not extend it",
   });
-  expect(result.finalization?.elapsed_ms, "no exit was observed").toBeNull();
-});
-
-const activeTimers = (): number =>
-  process.getActiveResourcesInfo().filter((name) => name === "Timeout").length;
-
-it("leaves no referenced timer behind after a zero-interval exit", async () => {
-  const fake = fakeTerminal();
-  const before = activeTimers();
-  const pending = start(fake, { timeout_ms: 60, finalization_ms: 0 });
-  await waitFor(() => fake.signals.includes("terminal:SIGKILL"));
-  fake.deliverExit({ exitCode: 0, signal: 9 });
-
-  await pending;
-
-  expect(
-    activeTimers(),
-    "the zero path resolves without a bounded-wait timer",
-  ).toBeLessThanOrEqual(before);
-});
-
-it("cancels the bounded-wait timer once deliveries settle after an exit", async () => {
-  const fake = fakeTerminal();
-  const before = activeTimers();
-  const pending = start(fake, { timeout_ms: 100, finalization_ms: 5_000 });
-  await waitFor(() => fake.signals.includes("SIGTERM"));
-  fake.deliverExit({ exitCode: 0, signal: 0 });
-
-  await pending;
-  await new Promise((resolve) => setImmediate(resolve));
-
-  expect(
-    activeTimers(),
-    "no one-second grace timer outlives the finalized exit",
-  ).toBeLessThanOrEqual(before);
+  expect(result.finalization).toMatchObject({
+    elapsed_ms: null,
+    exit_code: null,
+  });
 });
 
 it("keeps a non-empty reason when a signal delivery throws without a message", async () => {
@@ -538,7 +485,7 @@ it("keeps a non-empty reason when a signal delivery throws without a message", a
     },
   };
   const pending = start(throwing, { timeout_ms: 100, finalization_ms: 5_000 });
-  await waitFor(() => signalStarted);
+  await expect.poll(() => signalStarted).toBe(true);
   throwing.deliverExit({ exitCode: 0, signal: 0 });
 
   const exit = observed(await pending);

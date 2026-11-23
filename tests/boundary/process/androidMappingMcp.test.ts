@@ -139,7 +139,20 @@ it("annotates class inspection with a caller-selected mapping and reuses one eng
   const first = join(root, "first.txt");
   const second = join(root, "second.txt");
   await writeFile(first, mappingText("com.example.Original"));
-  await writeFile(second, mappingText("com.example.Renamed"));
+  await writeFile(
+    second,
+    [
+      '# {"id":"com.android.tools.r8.mapping","version":"2.2"}',
+      "com.example.Renamed -> fixture.Target:",
+      '    # {"id":"com.android.tools.r8.residualsignature","signature":"()V"}',
+      '    # {"id":"sourceFile","fileName":"Renamed.java"}',
+      "    # An ordinary comment",
+      "    void onCreate(android.os.Bundle) -> onCreate",
+      "    void pick(java.lang.String) -> choose",
+      "    void pick(boolean) -> choose",
+      '    # {"id":"com.android.tools.r8.residualsignature","signature":"(I)V"}',
+    ].join("\n"),
+  );
   const wire = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_android_class",
   );
@@ -155,9 +168,21 @@ it("annotates class inspection with a caller-selected mapping and reuses one eng
   const apkSha256 = createHash("sha256")
     .update(await readFile(apk))
     .digest("hex");
-  for (const [path, original] of [
-    [first, "com.example.Original"],
-    [second, "com.example.Renamed"],
+  for (const [path, original, parameterType, reported, malformed] of [
+    [
+      first,
+      "com.example.Original",
+      "int",
+      { compiler: "R8", pg_map_id: "7f00" },
+      [],
+    ],
+    [
+      second,
+      "com.example.Renamed",
+      "boolean",
+      { map_version: "2.2" },
+      [{ line: 3, reason: "metadata" }],
+    ],
   ] as const) {
     const response = await inspect(path);
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
@@ -183,7 +208,9 @@ it("annotates class inspection with a caller-selected mapping and reuses one eng
           .update(await readFile(path))
           .digest("hex"),
       },
-      reported: { compiler: "R8", pg_map_id: "7f00" },
+      reported,
+      records: { malformed: malformed.length },
+      malformed,
       coverage: { symbols: 4, mapped: 4, ambiguous: 0, unmapped: 0 },
     });
     expect(result.mapping?.symbols[0]?.resolution).toEqual({
@@ -192,8 +219,11 @@ it("annotates class inspection with a caller-selected mapping and reuses one eng
       verified_by: "class",
     });
     expect(result.mapping?.symbols[3]?.resolution).toMatchObject({
-      mapped: { name: "pick", parameter_types: ["int"] },
+      mapped: { name: "pick", parameter_types: [parameterType] },
     });
+    expect(
+      evidence.limitations.some((text) => text.includes("malformed records")),
+    ).toBe(malformed.length > 0);
   }
   expect(launches).toHaveLength(1);
   // Content changes invalidate the mapping without restarting the APK engine.

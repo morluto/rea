@@ -224,3 +224,66 @@ it("is unavailable without memory.events, a covering mount, cgroup v2, or Linux"
     readLinuxCgroupMemoryState({ ...linux, platform: "darwin" }),
   ).resolves.toBeUndefined();
 });
+
+it("does not alias an undecodable cgroup path to a real replacement-character directory", async () => {
+  const root = await createTestTempDirectory("rea-cgroup-non-utf8-");
+  const group = join(root, "group-�");
+  const procCgroupPath = join(root, "proc-self-cgroup");
+  const procMountInfoPath = join(root, "proc-self-mountinfo");
+  const options = {
+    platform: "linux" as const,
+    procCgroupPath,
+    procMountInfoPath,
+  };
+  await mkdir(group);
+  await writeFile(join(group, "memory.events"), events(12));
+  await writeFile(procMountInfoPath, mountInfoRow("/", root));
+  const membership = "0::/group-�\n";
+  await writeFile(procCgroupPath, membership);
+  await expect(readLinuxCgroupMemoryState(options)).resolves.toMatchObject({
+    path: "/group-�",
+    oomKills: 12,
+  });
+  await writeFile(
+    procCgroupPath,
+    Buffer.concat([
+      Buffer.from("0::/group-"),
+      Buffer.from([0xff]),
+      Buffer.from("\n"),
+    ]),
+  );
+  await expect(readLinuxCgroupMemoryState(options)).resolves.toBeUndefined();
+});
+
+it("uses valid cgroup mounts alongside unrelated non-UTF-8 mount records", async () => {
+  const root = await createTestTempDirectory("rea-cgroup-mount-encoding-");
+  const mount = join(root, "mount-�");
+  const procCgroupPath = join(root, "proc-self-cgroup");
+  const procMountInfoPath = join(root, "proc-self-mountinfo");
+  const options = {
+    platform: "linux" as const,
+    procCgroupPath,
+    procMountInfoPath,
+  };
+  await mkdir(mount);
+  await writeFile(join(mount, "memory.events"), events(3));
+  await writeFile(procCgroupPath, "0::/\n");
+  const valid = mountInfoRow("/", mount);
+  const byte = Buffer.from([0xff]);
+  const invalidRow = (row: string) => {
+    const [prefix, suffix] = row.split("�");
+    return Buffer.concat([Buffer.from(prefix!), byte, Buffer.from(suffix!)]);
+  };
+  await writeFile(
+    procMountInfoPath,
+    Buffer.concat([
+      invalidRow(mountInfoRow("/", "/other-�", "ext4")),
+      Buffer.from(`\n${valid}\n`),
+    ]),
+  );
+  await expect(readLinuxCgroupMemoryState(options)).resolves.toMatchObject({
+    oomKills: 3,
+  });
+  await writeFile(procMountInfoPath, invalidRow(valid));
+  await expect(readLinuxCgroupMemoryState(options)).resolves.toBeUndefined();
+});

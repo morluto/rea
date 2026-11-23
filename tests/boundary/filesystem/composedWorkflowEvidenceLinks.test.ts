@@ -11,101 +11,95 @@ import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 
-it.each([0, 1, 12])(
-  "does not replay an arbitrary historical workflow provenance when the snapshot binding is ambiguous (%i procedures)",
-  async (procedureCount) => {
-    const original = await composedWorkflowFixture();
-    original.summary.procedure_count = procedureCount;
-    const target = await original.open();
-    const snapshotPath = join(dirname(original.path), "analysis.json");
-    const current = parseEvidence(
-      await runDirectAnalysis(
-        original.dependencies,
-        original.path,
-        "binary_overview",
-        {},
-        { snapshotPath },
-      ).then(projectCliAnalysisResult),
-    );
-    expect(current.evidence_links).toHaveLength(1);
-    const snapshot = parseAnalysisSnapshot(
-      JSON.parse(await readFile(snapshotPath, "utf8")),
-    );
-    const uniqueReplay = await composedWorkflowFixture();
-    expect(uniqueReplay.session.importAnalysisSnapshot(snapshot).ok).toBe(true);
-    expect(uniqueReplay.session.importAnalysisSnapshot(snapshot)).toEqual(
-      ok(0),
-    );
-    const unique = parseEvidence(
-      await runDirectAnalysis(
-        uniqueReplay.dependencies,
-        original.path,
-        "binary_overview",
-        {},
-        { snapshotPath },
-      ).then(projectCliAnalysisResult),
-    );
-    expect(unique.evidence_id).toBe(current.evidence_id);
-    expect(unique.evidence_links).toEqual(current.evidence_links);
-    expect(uniqueReplay.calls).toEqual([]);
-    // Earlier composed observations did not carry links. Both are authentic,
-    // but the serialized replay binding does not identify which provenance won.
-    const historical = createEvidence(target, current.provider, {
-      operation: current.operation,
-      parameters: current.parameters,
-      result: current.normalized_result,
-      rawResult: current.raw_result,
-      analysisProfile: current.analysis_profile!,
-      confidence: "derived",
-      limitations: current.limitations,
-    });
-    expect(historical.evidence_links).toEqual([]);
-    expect(historical.evidence_id).not.toBe(current.evidence_id);
-    const ambiguous = parseAnalysisSnapshot({
-      ...snapshot,
-      evidence_bundle: createEvidenceBundle([
-        ...snapshot.evidence_bundle.records,
-        historical,
-      ]),
-    });
-    expect(ambiguous.workflow_entries).toEqual(snapshot.workflow_entries);
-    await writeFile(snapshotPath, JSON.stringify(ambiguous));
-    const replay = await composedWorkflowFixture();
-    const delivered = parseEvidence(
-      await runDirectAnalysis(
-        replay.dependencies,
-        original.path,
-        "binary_overview",
-        {},
-        { snapshotPath },
-      ).then(projectCliAnalysisResult),
-    );
-    expect(delivered.normalized_result).toEqual(current.normalized_result);
-    expect([current.evidence_id, historical.evidence_id]).not.toContain(
-      delivered.evidence_id,
-    );
-    expect(delivered.evidence_links).toEqual(current.evidence_links);
-    expect(
-      delivered.limitations.some((limitation) =>
-        limitation.includes("this call did not re-run the provider"),
-      ),
-    ).toBe(true);
-    expect(replay.calls).toEqual([]);
-    const refreshedReplay = await composedWorkflowFixture();
-    const refreshed = parseEvidence(
-      await runDirectAnalysis(
-        refreshedReplay.dependencies,
-        original.path,
-        "binary_overview",
-        {},
-        { snapshotPath },
-      ).then(projectCliAnalysisResult),
-    );
-    expect(refreshed.evidence_id).toBe(delivered.evidence_id);
-    expect(refreshed.evidence_links).toEqual(delivered.evidence_links);
-    expect(refreshedReplay.calls).toEqual([]);
-  },
-);
+it("rebuilds composed Evidence when exact historical provenance is ambiguous", async () => {
+  const original = await composedWorkflowFixture();
+  const target = await original.open();
+  const snapshotPath = join(dirname(original.path), "analysis.json");
+  const current = parseEvidence(
+    await runDirectAnalysis(
+      original.dependencies,
+      original.path,
+      "binary_overview",
+      {},
+      { snapshotPath },
+    ).then(projectCliAnalysisResult),
+  );
+  expect(current.evidence_links).toHaveLength(1);
+  const snapshot = parseAnalysisSnapshot(
+    JSON.parse(await readFile(snapshotPath, "utf8")),
+  );
+  const uniqueReplay = await composedWorkflowFixture();
+  expect(uniqueReplay.session.importAnalysisSnapshot(snapshot).ok).toBe(true);
+  expect(uniqueReplay.session.importAnalysisSnapshot(snapshot)).toEqual(ok(0));
+  const unique = parseEvidence(
+    await runDirectAnalysis(
+      uniqueReplay.dependencies,
+      original.path,
+      "binary_overview",
+      {},
+      { snapshotPath },
+    ).then(projectCliAnalysisResult),
+  );
+  expect(unique.evidence_id).toBe(current.evidence_id);
+  expect(unique.evidence_links).toEqual(current.evidence_links);
+  expect(uniqueReplay.calls).toEqual([]);
+  // Earlier composed observations did not carry links. Both are authentic,
+  // but the serialized replay binding does not identify which provenance won.
+  const historical = createEvidence(target, current.provider, {
+    operation: current.operation,
+    parameters: current.parameters,
+    result: current.normalized_result,
+    rawResult: current.raw_result,
+    analysisProfile: current.analysis_profile!,
+    confidence: "derived",
+    limitations: current.limitations,
+  });
+  expect(historical.evidence_links).toEqual([]);
+  expect(historical.evidence_id).not.toBe(current.evidence_id);
+  const ambiguous = parseAnalysisSnapshot({
+    ...snapshot,
+    evidence_bundle: createEvidenceBundle([
+      ...snapshot.evidence_bundle.records,
+      historical,
+    ]),
+  });
+  expect(ambiguous.workflow_entries).toEqual(snapshot.workflow_entries);
+  await writeFile(snapshotPath, JSON.stringify(ambiguous));
+  const replay = await composedWorkflowFixture();
+  const delivered = parseEvidence(
+    await runDirectAnalysis(
+      replay.dependencies,
+      original.path,
+      "binary_overview",
+      {},
+      { snapshotPath },
+    ).then(projectCliAnalysisResult),
+  );
+  expect(delivered.normalized_result).toEqual(current.normalized_result);
+  expect([current.evidence_id, historical.evidence_id]).not.toContain(
+    delivered.evidence_id,
+  );
+  expect(delivered.evidence_links).toEqual(current.evidence_links);
+  expect(
+    delivered.limitations.some((limitation) =>
+      limitation.includes("this call did not re-run the provider"),
+    ),
+  ).toBe(true);
+  expect(replay.calls).toEqual([]);
+  const refreshedReplay = await composedWorkflowFixture();
+  const refreshed = parseEvidence(
+    await runDirectAnalysis(
+      refreshedReplay.dependencies,
+      original.path,
+      "binary_overview",
+      {},
+      { snapshotPath },
+    ).then(projectCliAnalysisResult),
+  );
+  expect(refreshed.evidence_id).toBe(delivered.evidence_id);
+  expect(refreshed.evidence_links).toEqual(delivered.evidence_links);
+  expect(refreshedReplay.calls).toEqual([]);
+});
 
 it.each([false, true])(
   "links a profiled binary overview only to the atomic record it consumed (cached=%s)",

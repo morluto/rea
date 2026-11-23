@@ -14,7 +14,9 @@ import { observeProcessStartIdentity } from "../../../../src/process/ProcessOwne
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
+  type ProviderProcessHandle,
 } from "../../../../src/process/ProviderProcess.js";
+import { stopTestChild } from "../../../support/process/stopTestChild.js";
 import type { NativeCallTracer } from "../../../../src/native/LldbCallTracer.js";
 import { LldbCallTracer } from "../../../../src/native/LldbCallTracer.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
@@ -86,6 +88,7 @@ it.skipIf(process.platform === "win32")(
   async () => {
     let cleanupFailures = 2;
     let ownedPid: number | undefined;
+    let ownedProcess: ProviderProcessHandle | undefined;
     const tracer = createTracer(async (_exe, _args, options) => {
       const target = spawn(process.execPath, ["-e", "process.exit(0)"], {
         stdio: "ignore",
@@ -100,6 +103,7 @@ it.skipIf(process.platform === "win32")(
         runId: randomUUID(),
         hostEnvironment: options.environment,
       });
+      ownedProcess = launched.process;
       ownedPid = launched.process.pid;
       const supervisor = new ProviderProcessSupervisor({
         ...launched,
@@ -148,6 +152,7 @@ it.skipIf(process.platform === "win32")(
       expect(() => process.kill(pid, 0)).toThrow();
       await expect(access(root)).rejects.toThrow();
     } finally {
+      if (ownedProcess !== undefined) await stopTestChild(ownedProcess);
       await client.close();
     }
   },
