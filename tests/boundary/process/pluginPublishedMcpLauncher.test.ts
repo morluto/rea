@@ -2104,16 +2104,7 @@ describe.skipIf(process.platform === "win32")(
       await writeFile(join(staging, CLEANUP_OWNER), `999999\n${staging}\n`, {
         mode: 0o600,
       });
-      // Enough retained files that real rmSync stays in the startup retry long
-      // enough for SIGTERM to arrive after ownership is installed and before the
-      // tree (and its cleanup-owner marker) finishes disappearing.
-      const partialFiles = 5_000;
-      const probe = join(staging, "partial", "0", "f0");
-      for (let index = 0; index < partialFiles; index += 1) {
-        const dir = join(staging, "partial", String(index % 50));
-        mkdirSync(dir, { recursive: true, mode: 0o700 });
-        writeFileSync(join(dir, `f${String(index)}`), "x", { mode: 0o600 });
-      }
+      await writeFile(join(staging, "residue"), "x", { mode: 0o600 });
       const workspace = await createTestTempDirectory(
         "rea-published-staging-retry-sigterm-",
       );
@@ -2121,6 +2112,14 @@ describe.skipIf(process.platform === "win32")(
       await mkdir(bin);
       const npmEntry = join(bin, "npm-cli.cjs");
       const npmStarted = join(workspace, "npm-started");
+      const cleanupReady = join(workspace, "cleanup-ready");
+      const cleanupRelease = join(workspace, "cleanup-release");
+      const cleanupHold = fileURLToPath(
+        new URL(
+          "../../fixtures/pluginStartupStagingCleanupHold.mjs",
+          import.meta.url,
+        ),
+      );
       await writeFile(
         npmEntry,
         `#!/usr/bin/env node
@@ -2134,20 +2133,18 @@ setInterval(() => {}, 1000);
         ...temp.env,
         PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
         npm_execpath: npmEntry,
+        NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${cleanupHold}`]
+          .filter(Boolean)
+          .join(" "),
+        REA_TEST_PLUGIN_STAGING_CLEANUP_READY_PATH: cleanupReady,
+        REA_TEST_PLUGIN_STAGING_CLEANUP_RELEASE_PATH: cleanupRelease,
       });
-      // Wait until startup retry has begun deleting the retained tree; a signal
-      // before the cancel observer is installed would use the default SIGTERM
-      // disposition and can abandon unmarked residue.
-      const deadline = Date.now() + 15_000;
-      while (child.exitCode === null && Date.now() < deadline) {
-        try {
-          await access(probe);
-          await new Promise((resolve) => setTimeout(resolve, 5));
-        } catch {
-          break;
-        }
-      }
+      // Hold is inside retained-staging rmSync after cancel ownership is
+      // installed; signal first, then release so pending SIGTERM is delivered
+      // on the post-cleanup yield instead of racing past cancel.release().
+      await waitForFile(cleanupReady);
       if (child.exitCode === null) child.kill("SIGTERM");
+      await writeFile(cleanupRelease, "release", { mode: 0o600 });
       const result = await closed;
       expect(result.code).toBe(143);
       expect(result.stdout).toBe("");
