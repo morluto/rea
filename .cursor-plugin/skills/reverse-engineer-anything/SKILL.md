@@ -204,8 +204,8 @@ explicit path or endpoint and do not need it.
   `line_offset` / `line_limit`, or explicit null for all remaining output.
   Window counts are display lines, not annotations or samples. Preserve source digests across pages.
   This reads existing files; it does not acquire hardware signals.
-- Explicit local WebAssembly artifact: `inspect_wasm_artifact`. Supply WABT 1.0.42
-  through `REA_WABT_BIN_DIRECTORY`; retain exact byte/tool identity and decoded WAT.
+- Explicit local WebAssembly artifact: `inspect_wasm_artifact`. Supply WABT `>=1.0.42 <1.1.0`
+  (verified with 1.0.42) through `REA_WABT_BIN_DIRECTORY`; retain exact byte/tool identity and decoded WAT.
   Select JavaScript glue and candidate paths explicitly and preserve URL/path
   ambiguity. No implicit fetch or target execution; WAT is not original source.
   See the [WASM guide](https://github.com/morluto/rea/blob/main/docs/guides/wasm/wasm-artifacts.md).

@@ -170,7 +170,9 @@ describe("target route diagnostics", () => {
         "rea inspect-wasm-artifact",
       );
       expect(projected.remediation.action).toContain("REA_WABT_BIN_DIRECTORY");
-      expect(projected.remediation.action).toContain("WABT 1.0.42");
+      expect(projected.remediation.action).toContain(
+        "WABT >=1.0.42 <1.1.0 (verified with 1.0.42)",
+      );
       expect(await systemDoctorHost().inspectTarget(path)).toMatchObject({
         ok: false,
         classification: "unsupported_target",

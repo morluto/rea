@@ -9,6 +9,7 @@ import { WasmArtifactService } from "../application/wasm/WasmArtifactService.js"
 import {
   wasmArtifactSchema,
   WASM_RESOURCE_DEFAULTS,
+  WABT_ACCEPTED_RANGE,
 } from "../domain/wasm/wasmArtifact.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { PrivateRuntimeRootUnavailableError } from "../domain/privateRuntimeRootUnavailableError.js";
@@ -17,7 +18,7 @@ import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { admitWabtVersion, WABT_ACCEPTED_RANGE } from "./WabtRelease.js";
+import { admitWabtVersion } from "./WabtRelease.js";
 
 /** Classify a raw failure the way the provider does, through WABT's dialect. */
 const wabtFailure = (
