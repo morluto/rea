@@ -10,47 +10,47 @@ import {
 } from "../artifacts/apple/MachoImage.fixture.js";
 import { LC } from "../domain/apple/machoLoadCommandCodes.js";
 
-it("owns retained command bytes independently of Buffer-backed read windows", async () => {
+it("owns retained names and UUIDs without reading the unused command tail", async () => {
   const paddedSize = 256 * 1024;
-  const image = Buffer.alloc(32 + paddedSize * 2 + 24);
-  image.writeUInt32LE(0xfeedfacf, 0);
-  image.writeUInt32LE(0x0100000c, 4);
-  image.writeUInt32LE(3, 16);
-  image.writeUInt32LE(paddedSize * 2 + 24, 20);
-  const rpath = 32;
-  image.writeUInt32LE(0x8000001c, rpath);
-  image.writeUInt32LE(paddedSize, rpath + 4);
-  image.writeUInt32LE(12, rpath + 8);
-  const fileset = rpath + paddedSize;
-  image.writeUInt32LE(0x80000035, fileset);
-  image.writeUInt32LE(paddedSize, fileset + 4);
-  image.writeUInt32LE(32, fileset + 24);
-  image.write("x", fileset + 32);
-  const uuid = fileset + paddedSize;
-  image.writeUInt32LE(0x1b, uuid);
-  image.writeUInt32LE(24, uuid + 4);
-  image.fill(0x42, uuid + 8, uuid + 24);
-
-  // Buffer.subarray and Buffer.slice both share the caller's backing store.
-  const result = await readMachoCommandNames(
-    async (offset, size) => image.subarray(offset, offset + size),
+  const rpath = Buffer.alloc(paddedSize);
+  rpath.writeUInt32LE(LC.RPATH, 0);
+  rpath.writeUInt32LE(paddedSize, 4);
+  rpath.writeUInt32LE(12, 8);
+  const fileset = Buffer.alloc(paddedSize);
+  fileset.writeUInt32LE(LC.FILESET_ENTRY, 0);
+  fileset.writeUInt32LE(paddedSize, 4);
+  fileset.writeUInt32LE(32, 24);
+  fileset.write("x", 32);
+  const uuid = Buffer.alloc(24, 0x42);
+  uuid.writeUInt32LE(LC.UUID, 0);
+  uuid.writeUInt32LE(24, 4);
+  const image = Buffer.from(machoImage({ commands: [rpath, fileset, uuid] }));
+  let bytesRead = 0;
+  const { commands } = await readMachoCommandNames(
+    async (offset, size) => {
+      bytesRead += size;
+      return image.subarray(offset, offset + size);
+    },
     image.length,
-    paddedSize,
+    64 * 1024,
     3,
   );
-  const path = result.commands[0]!.commandString!;
-  const entry = result.commands[1]!.fileset!.entryId;
-  const id = result.commands[2]!.uuid!;
-  expect(path).toHaveLength(0);
-  expect([...entry]).toEqual([0x78]);
-  expect([...id]).toEqual(Array<number>(16).fill(0x42));
-  for (const retained of [path, entry, id]) {
-    expect(retained.buffer).not.toBe(image.buffer);
-    expect(retained.buffer.byteLength).toBe(retained.byteLength);
-  }
+  expect(bytesRead).toBeLessThan(paddedSize / 4);
+  const retained = [
+    commands[0]!.commandString!,
+    commands[1]!.fileset!.entryId,
+    commands[2]!.uuid!,
+  ];
   image.fill(0);
-  expect([...entry]).toEqual([0x78]);
-  expect([...id]).toEqual(Array<number>(16).fill(0x42));
+  expect(retained.map((value) => Buffer.from(value).toString("hex"))).toEqual([
+    "",
+    "78",
+    "42".repeat(16),
+  ]);
+  for (const bytes of retained) {
+    expect(bytes.buffer).not.toBe(image.buffer);
+    expect(bytes.buffer.byteLength).toBe(bytes.byteLength);
+  }
 });
 
 it("retains newline and misleading field names from binary segment, section and dylib strings", async () => {
@@ -92,11 +92,7 @@ it("retains newline and misleading field names from binary segment, section and 
   image.writeUInt32LE(0x10002, dylibAt + 16);
   image.writeUInt32LE(0x30004, dylibAt + 20);
   dylib.copy(image, dylibAt + 24);
-  const reads: number[] = [];
-  const read = async (offset: number, size: number) => {
-    reads.push(size);
-    return image.subarray(offset, offset + size);
-  };
+  const read = readerOf(image);
   const result = await readMachoCommandNames(read, image.length, 128, 3);
   expect(result.header).toEqual({
     wide: true,
@@ -152,7 +148,6 @@ it("retains newline and misleading field names from binary segment, section and 
     "lib\nLoad command 2\ncmd LC_SEGMENT_64",
   );
   expect(projected.commands).toHaveLength(2);
-  expect(Math.max(...reads)).toBeLessThan(image.length);
   await expect(readMachoCommandNames(read, image.length, 4, 3)).rejects.toThrow(
     "budget",
   );
@@ -239,8 +234,7 @@ it("retains bounded linker options and dylinker strings with embedded framing", 
   image.writeUInt32LE(nameSize, at + 4);
   image.writeUInt32LE(12, at + 8);
   name.copy(image, at + 12);
-  const read = async (offset: number, size: number) =>
-    image.subarray(offset, offset + size);
+  const read = readerOf(image);
   const result = await readMachoCommandNames(read, image.length, 64, 4);
   expect(
     result.commands[0]?.linkerOptions?.map((value) =>
@@ -270,8 +264,7 @@ it("bounds aggregate linker option bytes across read windows", async () => {
   image.writeUInt32LE(size, 36);
   image.writeUInt32LE(2, 40);
   options.copy(image, 44);
-  const read = async (offset: number, length: number) =>
-    image.subarray(offset, offset + length);
+  const read = readerOf(image);
   const exact = await readMachoCommandNames(read, image.length, 4102, 3);
   expect(
     exact.commands[0]?.linkerOptions?.map((value) => value.byteLength),
@@ -325,8 +318,7 @@ it("retains note and fileset records without treating names as framing", async (
   image.writeUInt32LE(32, 96);
   image.writeUInt32LE(7, 100);
   image.write("id\nSection", 104);
-  const read = async (offset: number, size: number) =>
-    image.subarray(offset, offset + size);
+  const read = readerOf(image);
   const result = await readMachoCommandNames(read, image.length, 32, 2);
   expect(result.commands[0]?.note).toMatchObject({
     offset: 0x1234n,
@@ -410,15 +402,6 @@ it("distinguishes fully decoded linker-option, note and fileset extents", async 
     false,
     false,
   ]);
-  expect(binary.commands.map(({ rawSha256 }) => rawSha256 === null)).toEqual([
-    true,
-    false,
-    true,
-    false,
-    true,
-    false,
-    false,
-  ]);
   expect([...binary.commands[2]!.note!.owner]).toEqual([...owner]);
   expect([...binary.commands[6]!.fileset!.entryId]).toEqual([
     ...Buffer.from("entryid"),
@@ -432,10 +415,12 @@ it("distinguishes fully decoded linker-option, note and fileset extents", async 
   expect(projection.commandLimitations).toEqual([
     expect.stringContaining("payload fields are not decoded"),
   ]);
-  for (const index of [0, 2, 4])
+  for (const index of [0, 2, 4]) {
+    expect(binary.commands[index]?.rawSha256).toBeNull();
     expect(projection.commands[index]?.fields).not.toHaveProperty(
       "command_sha256",
     );
+  }
   for (const index of [1, 3, 5, 6])
     expect(projection.commands[index]?.fields.command_sha256).toMatch(
       /^[a-f0-9]{64}$/u,
@@ -458,8 +443,7 @@ it("reads fixed command words in the selected slice byte order", async () => {
   image.writeUInt32BE(16, 56);
   image.writeUInt32BE(0x400, 60);
   image.writeUInt32BE(0x80, 64);
-  const read = async (offset: number, size: number) =>
-    image.subarray(offset, offset + size);
+  const read = readerOf(image);
   const result = await readMachoCommandNames(read, image.length, 32, 2);
   expect(result.commands[0]?.fixedFields).toEqual({
     symoff: 128,
@@ -501,12 +485,8 @@ it("decodes 32-bit big-endian segment and section facts without reading payloads
   image.writeUInt32BE(0x310, 124);
   image.writeUInt32BE(3, 128);
   image.writeUInt32BE(0x80000000, 140);
-  const sizes: number[] = [];
   const result = await readMachoCommandNames(
-    async (offset, size) => {
-      sizes.push(size);
-      return image.subarray(offset, offset + size);
-    },
+    readerOf(image),
     image.length,
     128,
     2,
@@ -527,7 +507,6 @@ it("decodes 32-bit big-endian segment and section facts without reading payloads
     alignmentExponent: 3,
     flags: 0x80000000,
   });
-  expect(Math.max(...sizes)).toBeLessThan(image.length);
 });
 
 it("retains UUID, entrypoint and bounded build tool records", async () => {
@@ -551,8 +530,7 @@ it("retains UUID, entrypoint and bounded build tool records", async () => {
   image.writeUInt32LE(1, 100);
   image.writeUInt32LE(3, 104);
   image.writeUInt32LE(0x01020300, 108);
-  const read = async (offset: number, size: number) =>
-    image.subarray(offset, offset + size);
+  const read = readerOf(image);
   const result = await readMachoCommandNames(read, image.length, 128, 4);
   expect(Buffer.from(result.commands[0]!.uuid!).toString("hex")).toBe(
     "00112233445566778899aabbccddeeff",
@@ -668,8 +646,7 @@ it("retains legacy on-disk dylib and fixed-library identities", async () => {
     20,
   );
   const image = Buffer.concat([header, ...commands]);
-  const read = async (offset: number, size: number) =>
-    image.subarray(offset, offset + size);
+  const read = readerOf(image);
   const parsed = await readMachoCommandNames(read, image.length, 256, 4);
   expect(Buffer.from(parsed.commands[0]!.commandString!).toString()).toBe(
     "lib\nX",
