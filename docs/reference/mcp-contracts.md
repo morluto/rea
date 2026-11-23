@@ -943,7 +943,11 @@ every path below when last, so `lib/*/*.so` selects native libraries one ABI
 directory deep, `*` selects root entries, and `assets/**` selects everything
 under `assets/`. Other characters are literal and case-sensitive; `.` names the
 container itself and never matches. All supplied selectors intersect.
-Unrecognized bytes keep kind `unknown`.
+Unrecognized bytes keep kind `unknown`. Optional `order_by`, with `field`
+`declared_size` or `compressed_size` and `direction` `ascending` or
+`descending`, orders the selected rows before paging; unknown sizes come last
+and ties keep inventory order. The container's own `.` row has a size, so add
+`path_globs: ["**"]` to rank only its entries.
 These selectors do not reopen the artifact or resolve filesystem paths.
 `source_complete` records whether the available inventory passes the complete
 graph checks. Exhausting a page from a partial source does not establish that
