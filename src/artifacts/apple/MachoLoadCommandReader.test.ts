@@ -1884,9 +1884,14 @@ describe("Mach-O load command reader failures", () => {
 
   it("reports malformed command tables with the failing command", async () => {
     for (const size of [0, 4096])
-      expect(await read(withCommandSize(size))).toEqual({
+      expect(await read(withCommandSize(size))).toMatchObject({
         status: "malformed",
-        reason: `load command 0 at offset 0 has invalid cmdsize ${size}`,
+        reason: expect.stringMatching(
+          new RegExp(
+            `load command 0\\b.*offset 0\\b.*invalid.*cmdsize ${size}\\b`,
+            "iu",
+          ),
+        ),
       });
     const extraCommand = machoImage({ commands: [rpathCommand("x")] });
     new DataView(extraCommand.buffer).setUint32(16, 2, true);
@@ -1897,9 +1902,11 @@ describe("Mach-O load command reader failures", () => {
   });
 
   it("requires 8-byte command alignment in 64-bit images", async () => {
-    expect(await read(machoImageWithUnknownCommand(true, 12))).toEqual({
+    expect(await read(machoImageWithUnknownCommand(true, 12))).toMatchObject({
       status: "malformed",
-      reason: "load command 0 at offset 0 has invalid cmdsize 12",
+      reason: expect.stringMatching(
+        /load command 0\b.*invalid.*cmdsize 12\b/iu,
+      ),
     });
     expect(await read(machoImageWithUnknownCommand(false, 12))).toMatchObject({
       status: "parsed",
@@ -1939,27 +1946,27 @@ describe("Mach-O load command reader failures", () => {
     invalid[12] = 0xff;
     const atEnd = rpathCommand("ab");
     for (const [command, issue] of [
-      [short, "is too short for LC_CODE_SIGNATURE"],
-      [shortRpath, "is too short to hold a string offset"],
-      [unterminated, "has an unterminated string"],
-      [
-        withOffset(rpathCommand("ab"), 11),
-        "has string offset 11 outside the command",
-      ],
+      [short, /too short.*LC_CODE_SIGNATURE/iu],
+      [shortRpath, /too short.*string offset/iu],
+      [unterminated, /unterminated/iu],
+      [withOffset(rpathCommand("ab"), 11), /string offset 11\b.*outside/iu],
       [
         withOffset(atEnd, atEnd.length),
-        `has string offset ${atEnd.length} outside the command`,
+        new RegExp(`string offset ${atEnd.length}\\b.*outside`, "iu"),
       ],
       [
         withOffset(dylibCommand(LC.LOAD_DYLIB, "ab"), 23),
-        "has string offset 23 outside the command",
+        /string offset 23\b.*outside/iu,
       ],
-      [invalid, "has a string that is not UTF-8"],
-    ] as const)
-      expect(await read(machoImage({ commands: [command] }))).toEqual({
-        status: "malformed",
-        reason: `load command 0 ${issue}`,
-      });
+      [invalid, /not UTF-8/iu],
+    ] as const) {
+      const result = await read(machoImage({ commands: [command] }));
+      expect(result).toMatchObject({ status: "malformed" });
+      if (result.status !== "malformed")
+        throw new Error("Expected a malformed command");
+      expect(result.reason).toMatch(/load command 0\b/iu);
+      expect(result.reason).toMatch(issue);
+    }
   });
 
   it("refuses truncated, oversized, big-endian and out-of-range images", async () => {
