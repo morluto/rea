@@ -93,6 +93,42 @@ page runs a fresh discovery on that device.
 Graph tools accept per-call traversal bounds (`max_depth` and `max_nodes` on
 `get_call_graph` and `trace_call_path`).
 
+### Producer limits
+
+Operations with an owned producer accept an optional
+`producer_limits` object (CLI `--producer-limits`, as JSON text). Each field is
+a positive safe integer that overrides one default for this call only; omitted
+fields keep their defaults, and no restart is needed. Tighter inherited OS
+limits still apply, and these fields do not raise parser, protocol or transport
+limits. Each operation accepts only the fields it enforces; any other key is
+rejected.
+
+| Field                 | Bounds                                                                                       |
+| --------------------- | -------------------------------------------------------------------------------------------- |
+| `input_bytes`         | The selected input copied for the producer                                                   |
+| `output_bytes`        | Retained producer output (combined stdout and stderr where no `diagnostic_bytes` is offered) |
+| `diagnostic_bytes`    | Retained diagnostic (stderr) output                                                          |
+| `command_timeout_ms`  | Wall-clock deadline for each owned command                                                   |
+| `address_space_bytes` | The producer's address-space ceiling                                                         |
+| `file_bytes`          | The largest file the producer may write                                                      |
+| `cpu_seconds`         | The producer's CPU time                                                                      |
+
+| Operations                                                                                              | Fields and defaults                                                                                                                                                                           |
+| ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `inspect_packet_capture`, `inspect_packet_fields`, `decode_signal_recording`, `inspect_signal_decoders` | `input_bytes` 32 MiB, `output_bytes` 4 MiB, `command_timeout_ms` 30000, `address_space_bytes` 1 GiB, `file_bytes` 64 MiB, `cpu_seconds` 30                                                    |
+| `inspect_binary_layout`, `inspect_recorded_crash` (pwntools)                                            | `input_bytes` 32 MiB (or `REA_PWNTOOLS_MAX_INPUT_BYTES`), `output_bytes` 64 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes`, `cpu_seconds` 30 |
+| `inspect_evm_interface`                                                                                 | `input_bytes` 4 MiB, `output_bytes` 16 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes` (16 MiB), `cpu_seconds` 30                             |
+| `inspect_rust_binary`                                                                                   | `input_bytes` 256 MiB, `output_bytes` 8 MiB                                                                                                                                                   |
+
+The pwntools and EVM operations take their wall-clock deadline from a separate
+argument (`pwntools_timeout_ms`, `timeout_ms`) instead of `command_timeout_ms`.
+Packet and signal results report the effective values as `limits`, where an
+inherited OS ceiling can appear as `0`. When pwntools or Rust work exhausts a
+budget, `details.limit` carries `control_kind: "parameter"`,
+`parameter: "producer_limits.<field>"`, `minimum: 1` and
+`applies_at: "next_call"`, as described under [failure and retry](#failure-and-retry);
+the other producers name the field to raise in their remediation.
+
 The same accepted policy must reach acquisition, parsing, worker requests,
 serialization, cached-result admission and generated consumers where those
 stages exist. Desktop state views and emitted AgentEnv Python share one policy;
