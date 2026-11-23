@@ -167,7 +167,7 @@ describe("readWasmModuleImage", () => {
     ],
     ...[1, 2, 3, 4, 5, 6, 7].map(
       (flags) =>
-        [`element flags ${flags}`, section(9, vec([[flags]]))] as const,
+        [`element flags ${flags}`, section(9, vec([[flags, 0, 0]]))] as const,
     ),
     ["global.get offset", section(11, vec([[0x00, 0x23, 0x00, 0x0b, 0x00]]))],
     [
@@ -239,10 +239,39 @@ describe("readWasmModuleImage", () => {
   it("bounds data segment and slot counts", () => {
     // Bodies long enough for the declared counts, so only the cap refuses them.
     const dataCount = WASM_MODULE_LIMITS.dataSegments + 1;
+    // Complete records: a passive data segment is flag 1 and size 0.
+    const passiveData = Array.from({ length: dataCount }, () => [1, 0]).flat();
     const tooManyData = module(
-      section(11, [...u32(dataCount), ...Array<number>(dataCount).fill(0)]),
+      section(11, [...u32(dataCount), ...passiveData]),
     );
     expect(failure(tooManyData)[0]).toBe("limit");
+    // Complete records: a passive element segment is flag 1, kind 0, no slots.
+    const elementCount = WASM_MODULE_LIMITS.elementSegments + 1;
+    const passiveElements = Array.from({ length: elementCount }, () => [
+      1, 0, 0,
+    ]).flat();
+    const tooManyElements = module(
+      section(9, [...u32(elementCount), ...passiveElements]),
+    );
+    expect(failure(tooManyElements)[0]).toBe("limit");
+    // One byte per declared segment is too short for any segment encoding.
+    expect(
+      failure(
+        module(
+          section(11, [...u32(dataCount), ...Array<number>(dataCount).fill(0)]),
+        ),
+      )[0],
+    ).toBe("malformed");
+    expect(
+      failure(
+        module(
+          section(9, [
+            ...u32(elementCount),
+            ...Array<number>(2 * elementCount).fill(0),
+          ]),
+        ),
+      )[0],
+    ).toBe("malformed");
     const slotCount = WASM_MODULE_LIMITS.tableSlots + 1;
     const tooManySlots = module(
       section(9, [
@@ -366,7 +395,7 @@ describe("code bodies and segment counts", () => {
     const count = WASM_MODULE_LIMITS.elementSegments + 1;
     const bytes = module(
       table,
-      section(9, [...u32(count), ...Array<number>(count).fill(0)]),
+      section(9, [...u32(count), ...Array<number>(3 * count).fill(0)]),
     );
     expect(failure(bytes)[0]).toBe("limit");
     expect(failure(module(table, section(9, u32(count))))[0]).toBe("malformed");
