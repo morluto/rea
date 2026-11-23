@@ -147,21 +147,21 @@ export class FridaInstrumentationService {
     const result = await this.#provider.listProcesses(selector);
     if (!result.ok) return result;
     const all = result.value.processes;
-    const hasPaging =
-      paging?.limit !== undefined || paging?.offset !== undefined;
+    const limit = paging?.limit;
+    const hasPaging = limit !== undefined || paging?.offset !== undefined;
     const offset = paging?.offset ?? 0;
-    const processes = !hasPaging
-      ? [...all]
-      : paging?.limit === undefined
-        ? all.slice(offset)
-        : all.slice(offset, offset + paging.limit);
+    const processes = hasPaging
+      ? all
+          .toSorted((left, right) => left.pid - right.pid)
+          .slice(offset, limit === undefined ? undefined : offset + limit)
+      : [...all];
     return ok({
       device_id: result.value.deviceId,
       processes,
       ...(hasPaging
         ? {
             total_processes: all.length,
-            truncated: offset > 0 || processes.length < all.length,
+            truncated: processes.length < all.length,
           }
         : {}),
       cleanup_error: result.value.cleanupError,

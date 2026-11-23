@@ -110,16 +110,13 @@ export const FRIDA_TOOL_CONTRACTS = [
         limit: z
           .int()
           .positive()
-          .max(10_000)
           .optional()
-          .describe(
-            "Maximum number of processes to return; omit to return all",
-          ),
+          .describe("Maximum number of processes to return"),
         offset: z
           .int()
           .nonnegative()
           .optional()
-          .describe("Zero-based starting process index; defaults to 0"),
+          .describe("Zero-based starting index in PID order; defaults to 0"),
       }),
     )
       .refine(
