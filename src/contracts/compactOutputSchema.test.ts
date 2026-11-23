@@ -1,6 +1,7 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
+import { schemaDepth } from "./compactJsonSchema.js";
 import { compactAdvertisedOutputSchema } from "./compactOutputSchema.js";
 
 const serializedBytes = (value: unknown): number =>
@@ -89,10 +90,32 @@ describe("compact advertised output schema", () => {
       },
       100_000,
     );
+    // Nine untyped property nestings put the replaced node at depth 8.
+    // Pruning leaves that node as an empty schema.
+    expect(schema).toEqual({
+      type: "object",
+      properties: {
+        deep: {
+          properties: {
+            child: {
+              properties: {
+                child: {
+                  properties: {
+                    child: {},
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      required: ["deep"],
+    });
+    expect(schemaDepth(schema)).toBe(8);
     expect(presentation).toBe("inline");
     const validate = new Ajv2020({ strict: false }).compile(schema);
-    expect(validate({ deep: null })).toBe(true);
-    expect(validate({ deep: { child: {} } })).toBe(true);
+    for (const child of [null, 1, "text", { nested: true }])
+      expect(validate({ deep: { child: { child: { child } } } })).toBe(true);
   });
 
   it("drops nested annotation prose while keeping the root guidance and validation", () => {
