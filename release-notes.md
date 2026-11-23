@@ -1110,6 +1110,7 @@
 * **sqlite:** consolidate inventory column capacity coverage ([d21636a](https://github.com/morluto/rea/commit/d21636ae071d6cd9223150a72e6a59d930ce9673))
 * **sqlite:** consolidate retained views and journal coverage ([#12876](https://github.com/morluto/rea/issues/12876)) ([b38438b](https://github.com/morluto/rea/commit/b38438bab4ecac3b85bb7808e8af53a138c10d52))
 * **uefi:** consolidate extraction publication contracts ([#13627](https://github.com/morluto/rea/issues/13627)) ([9e0d132](https://github.com/morluto/rea/commit/9e0d132ef3c16649333a9dfd8c43f5ddd335fa80))
+* **uefi:** consolidate volume ownership and checksum proofs ([#14070](https://github.com/morluto/rea/issues/14070)) ([df7f8b9](https://github.com/morluto/rea/commit/df7f8b9ead0dd472cd74803ea1bb90a62865fd4b))
 * **v8:** consolidate code cache parser and recovery coverage ([#12784](https://github.com/morluto/rea/issues/12784)) ([8af645c](https://github.com/morluto/rea/commit/8af645c25c7f36f6be74d4baff4aee6d8b422d75))
 * **v8:** consolidate code-cache parser and recovery coverage ([8af645c](https://github.com/morluto/rea/commit/8af645c25c7f36f6be74d4baff4aee6d8b422d75))
 * **v8:** consolidate relative CLI and source-byte checks ([#12867](https://github.com/morluto/rea/issues/12867)) ([aa16513](https://github.com/morluto/rea/commit/aa1651311d27a4a0a224d00f427eaee9c4fd1387))
