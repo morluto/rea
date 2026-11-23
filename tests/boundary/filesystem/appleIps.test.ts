@@ -1,7 +1,7 @@
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createAppleIpsService } from "../../../src/composition/binaryDiagnostics.js";
+import { createAppleIpsService } from "../../../src/composition/binaryDiagnostics/appleIps.js";
 import {
   appleIpsBytes,
   appleIpsMetadataLine,

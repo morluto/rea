@@ -225,7 +225,6 @@ it.each([
   async ({ environment, providerConfigured, installHopper }) => {
     const doctorHost = createDoctorHostFixture({
       platform: "darwin",
-      validTarget: () => Promise.resolve(false),
       executable: () => Promise.resolve(false),
     });
     const setupHost = systemSetupHost(doctorHost, {

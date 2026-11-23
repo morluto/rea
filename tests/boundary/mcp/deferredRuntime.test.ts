@@ -1077,9 +1077,14 @@ let entered = false;
 let release;
 const held = new Promise(resolve => { release = resolve; });
 let close;
+let hookCloses = 0;
 const result = await runDeferred({
   env: { REA_LOG_LEVEL: "silent" }, stdin: input,
-  serve: (factory, options) => serveStdio(factory, { ...options, transport: new StdioServerTransport(input, output) }),
+  serve: (factory, options) => serveStdio(context => {
+    const server = factory(context);
+    server.registerCloseHook(async () => { hookCloses++; });
+    return server;
+  }, { ...options, transport: new StdioServerTransport(input, output) }),
   loadOptionalProviders: async () => { entered = true; await held; return {}; },
   captureShutdown: owned => { close = owned; },
   registerShutdown: () => () => {}, writeStderr: text => { throw new Error(text); }, setExitCode: () => {},
@@ -1096,6 +1101,8 @@ try {
   release();
   await until(() => responses.some(value => value.id === 2) && responses.some(value => value.id === 3));
   await close();
+  await close();
+  assert.equal(hookCloses, 1);
   assert.deepEqual(Buffer.concat(received), Buffer.concat(writes));
   assert.equal(responses.filter(value => value.id === 2).length, 1);
   assert.equal(responses.filter(value => value.id === 3).length, 1);

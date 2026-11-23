@@ -10,6 +10,7 @@ import {
 } from "./machoDylibCommand.js";
 import { readMachoSegmentHeader } from "./machoSegmentHeader.js";
 import {
+  MACHO_COMMON_HEADER_BYTES,
   MachoLoadCommandCursor,
   machoCommandTableIssue,
   machoWordReader,
@@ -47,7 +48,7 @@ import {
   type FatSliceDeclaration,
   type FatSliceRangeIssue,
 } from "./machoContainer.js";
-import { strictUtf8Decoder } from "../strictUtf8.js";
+import { decodeStrictUtf8 } from "../strictUtf8.js";
 
 /** Read `length` bytes at `offset`; shorter results mean end of file. */
 export type ReadAt = (offset: number, length: number) => Promise<Uint8Array>;
@@ -407,7 +408,9 @@ export const readSliceCommandTable = async (
   base: number,
   length: number,
 ): Promise<MachoSliceCommandTable> => {
-  const headerBytes = await readAt(base, 28);
+  if (length < MACHO_COMMON_HEADER_BYTES)
+    return failed("malformed", "Mach-O header is truncated", null);
+  const headerBytes = await readAt(base, MACHO_COMMON_HEADER_BYTES);
   const parsed = readMachoHeaderDeclarations(headerBytes, length);
   if (!parsed.ok)
     return failed("malformed", "Mach-O header is truncated", null);
@@ -614,6 +617,11 @@ const maximumVmOffset = (segments: readonly SegmentSpan[]): bigint => {
   return max;
 };
 
+const SEGMENT_NAME_DECODER = new TextDecoder("utf-8", {
+  fatal: false,
+  ignoreBOM: true,
+});
+
 const readSegmentSpan = (
   body: Uint8Array,
   wide: boolean,
@@ -624,7 +632,7 @@ const readSegmentSpan = (
   const end = nameBytes.indexOf(0);
   return {
     // Segment names are fixed-width Mach-O data; a leading BOM is literal name bytes.
-    name: new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(
+    name: SEGMENT_NAME_DECODER.decode(
       end < 0 ? nameBytes : nameBytes.subarray(0, end),
     ),
     vmaddr,
@@ -1037,7 +1045,7 @@ const payloadString = (
   chargeLazyString(work, end - offset + 1);
   let text: string;
   try {
-    text = strictUtf8Decoder("preserve").decode(payload.subarray(offset, end));
+    text = decodeStrictUtf8(payload.subarray(offset, end), "preserve");
   } catch {
     throw machoIssue(
       "malformed",
@@ -1109,7 +1117,7 @@ const throwCommandStringIssue = (
 const decodeCommandString = (bytes: Uint8Array, index: number): string => {
   try {
     // lc_str contains name/path data, so a leading U+FEFF is part of its identity.
-    return strictUtf8Decoder("preserve").decode(bytes);
+    return decodeStrictUtf8(bytes, "preserve");
   } catch {
     throw machoIssue(
       "malformed",

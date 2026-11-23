@@ -160,9 +160,10 @@ export const apkOutputBudgetError = (projectedBytes: number): AnalysisError =>
 export const apkSignatureFailure = (
   cause: unknown,
   path: string,
+  identity?: { readonly sha256: string; readonly bytes: number },
 ): AnalysisError => {
   const primary = primaryFailure(artifactFilePrimaryFacts(cause), path);
-  const observation = completedStableArtifactObservation(cause, path);
+  const observation = completedStableArtifactObservation(cause, path, identity);
   if (observation !== undefined) primary.retainPartialObservation(observation);
   if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
     return primary;

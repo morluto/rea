@@ -90,6 +90,7 @@ const PROJECTED_SECTION_BYTES = 2048;
 const PROJECTED_CHILD_BYTES = 256;
 const PROJECTED_STRING_EXPANSION = 24;
 const DEFAULT_PROJECTED_BYTES = 64 * 1024 * 1024;
+const COMMAND_STRING_PREFIX_BYTES = 4096;
 
 export interface MachoCommandNames {
   readonly sliceSize: number;
@@ -264,8 +265,17 @@ export const readMachoCommandNames = async (
     label: string,
   ): Promise<Uint8Array> => {
     const length = Math.min(extent, stringAllowance() + 1);
-    const bytes = await exact(offset, length);
-    const end = bytes.indexOf(0);
+    let bytes = await exact(
+      offset,
+      Math.min(length, COMMAND_STRING_PREFIX_BYTES),
+    );
+    let end = bytes.indexOf(0);
+    if (end < 0 && bytes.byteLength < length) {
+      // Only long names need a second read. Read the whole bounded window
+      // then so retaining a split name still takes just one owned copy.
+      bytes = await exact(offset, length);
+      end = bytes.indexOf(0);
+    }
     if (end < 0) {
       if (length < extent) admitStringBytes(length);
       throw malformedInput("macho", `${label} is unterminated`);

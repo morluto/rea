@@ -541,90 +541,85 @@ describe("Mach-O UUID reconciliation", () => {
     return result;
   };
 
-  it("keeps a valid binary UUID when dwarfdump is malformed and reports the limitation", async () => {
-    const result = await runInspection("UUID: A (arm64) /fixture/app\n");
-    if (!result.ok) throw result.error;
-    expect(result.value.result).toMatchObject({ uuid: validUuid });
-    expect(result.value.limitations).toContainEqual(
-      expect.stringMatching(
+  const conflictingUuid = "FEDCBA98-7654-3210-FEDC-BA9876543210";
+  const misleadingPath = `/fixture/\nUUID: ${conflictingUuid} (arm64) fake`;
+  const dwarfRow = (uuid: string, path = "/fixture/app") =>
+    `UUID: ${uuid} (arm64) ${path}\n`;
+
+  it.each<{
+    description: string;
+    dwarfdump: string;
+    binaryUuids?: readonly string[];
+    path?: string;
+    uuid: string | null;
+    limitation?: RegExp;
+  }>([
+    {
+      description: "uses the binary UUID when dwarfdump is malformed",
+      dwarfdump: dwarfRow("A"),
+      uuid: validUuid,
+      limitation:
         /dwarfdump --uuid.*malformed UUID "A".*unambiguous.*LC_UUID/iu,
+    },
+    {
+      description: "withholds a UUID when the sources disagree",
+      dwarfdump: dwarfRow(conflictingUuid),
+      uuid: null,
+      limitation: new RegExp(
+        `dwarfdump.*${conflictingUuid}.*conflict.*LC_UUID.*${validUuid}.*unknown`,
+        "iu",
       ),
-    );
-  });
-
-  it("does not choose between conflicting valid UUIDs", async () => {
-    const result = await runInspection(
-      `UUID: FEDCBA98-7654-3210-FEDC-BA9876543210 (arm64) /fixture/app\n`,
-    );
-    if (!result.ok) throw result.error;
-    expect(result.value.result).toMatchObject({ uuid: null });
-    expect(result.value.limitations).toContainEqual(
-      expect.stringMatching(
-        new RegExp(
-          `dwarfdump.*FEDCBA98-7654-3210-FEDC-BA9876543210.*conflict.*LC_UUID.*${validUuid}.*unknown`,
-          "iu",
-        ),
+    },
+    {
+      description:
+        "preserves dwarfdump spelling when values differ only in case",
+      dwarfdump: dwarfRow(validUuid.toLowerCase()),
+      uuid: validUuid.toLowerCase(),
+    },
+    {
+      description: "uses the only available dwarfdump UUID",
+      dwarfdump: dwarfRow(validUuid),
+      binaryUuids: [],
+      uuid: validUuid,
+    },
+    {
+      description:
+        "reads one UUID row when the operand contains UUID-like text",
+      dwarfdump: dwarfRow(validUuid, misleadingPath),
+      binaryUuids: [],
+      path: misleadingPath,
+      uuid: validUuid,
+    },
+    {
+      description:
+        "withholds conflicting binary values despite matching dwarfdump",
+      dwarfdump: dwarfRow(validUuid),
+      binaryUuids: [validUuid, conflictingUuid],
+      uuid: null,
+      limitation: new RegExp(
+        `conflicting LC_UUID.*${validUuid}.*${conflictingUuid}`,
+        "iu",
       ),
-    );
-  });
-
-  it("accepts matching UUIDs with different case and preserves dwarfdump spelling", async () => {
-    const lower = validUuid.toLowerCase();
-    const result = await runInspection(`UUID: ${lower} (arm64) /fixture/app\n`);
-    if (!result.ok) throw result.error;
-    expect(result.value.result).toMatchObject({ uuid: lower });
-  });
-
-  it("uses a valid dwarfdump UUID when the binary has no UUID observation", async () => {
-    const result = await runInspection(
-      `UUID: ${validUuid} (arm64) /fixture/app\n`,
-      [],
-    );
-    if (!result.ok) throw result.error;
-    expect(result.value.result).toMatchObject({ uuid: validUuid });
-  });
-
-  it("frames a path containing a newline and UUID-like text as one dwarfdump row", async () => {
-    const path =
-      "/fixture/\nUUID: FEDCBA98-7654-3210-FEDC-BA9876543210 (arm64) fake";
-    const result = await runInspection(
-      `UUID: ${validUuid} (arm64) ${path}\n`,
-      [validUuid],
-      path,
-    );
-    if (!result.ok) throw result.error;
-    expect(result.value.result).toMatchObject({ uuid: validUuid });
-  });
-
-  it("keeps a conflict between duplicate valid LC_UUID commands unknown despite dwarfdump", async () => {
-    const result = await runInspection(
-      `UUID: ${validUuid} (arm64) /fixture/app\n`,
-      [validUuid, "FEDCBA98-7654-3210-FEDC-BA9876543210"],
-      "/fixture/app",
-    );
-    if (!result.ok) throw result.error;
-    expect(result.value.result).toMatchObject({ uuid: null });
-    expect(result.value.limitations).toContainEqual(
-      expect.stringMatching(
-        new RegExp(
-          `conflicting LC_UUID.*${validUuid}.*FEDCBA98-7654-3210-FEDC-BA9876543210`,
-          "iu",
-        ),
-      ),
-    );
-  });
-
-  it("keeps conflicting duplicate dwarfdump rows unknown despite binary UUID", async () => {
-    const conflictingUuid = "FEDCBA98-7654-3210-FEDC-BA9876543210";
-    const result = await runInspection(
-      `UUID: ${validUuid} (arm64) /fixture/app\nUUID: ${conflictingUuid} (arm64) /fixture/app\n`,
-    );
-    if (!result.ok) throw result.error;
-    expect(result.value.result).toMatchObject({ uuid: null });
-    expect(result.value.limitations).toContainEqual(
-      expect.stringMatching(/dwarfdump --uuid.*conflicting.*arm64/iu),
-    );
-  });
+    },
+    {
+      description:
+        "withholds conflicting dwarfdump rows despite a matching binary",
+      dwarfdump: dwarfRow(validUuid) + dwarfRow(conflictingUuid),
+      uuid: null,
+      limitation: /dwarfdump --uuid.*conflicting.*arm64/iu,
+    },
+  ])(
+    "$description",
+    async ({ dwarfdump, binaryUuids, path, uuid, limitation }) => {
+      const result = await runInspection(dwarfdump, binaryUuids, path);
+      if (!result.ok) throw result.error;
+      expect(result.value.result).toMatchObject({ uuid });
+      if (limitation !== undefined)
+        expect(result.value.limitations).toContainEqual(
+          expect.stringMatching(limitation),
+        );
+    },
+  );
 });
 
 describe("Mach-O slice command scheduling", () => {

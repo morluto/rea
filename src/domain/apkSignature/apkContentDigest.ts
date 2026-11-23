@@ -39,6 +39,53 @@ const u32le = (value: number): Uint8Array => {
   return out;
 };
 
+const hashSectionChunks = (
+  section: Uint8Array,
+  algorithm: ContentDigestAlgorithm,
+  createHash: HashFactory,
+  chunkDigests: Uint8Array[],
+): void => {
+  for (let offset = 0; offset < section.length; offset += CHUNK_SIZE) {
+    const chunk = section.subarray(
+      offset,
+      Math.min(offset + CHUNK_SIZE, section.length),
+    );
+    const hash = createHash(algorithm);
+    hash.update(Uint8Array.of(0xa5));
+    hash.update(u32le(chunk.length));
+    hash.update(chunk);
+    chunkDigests.push(hash.digest());
+  }
+};
+
+const finalizeTopDigest = (
+  chunkDigests: readonly Uint8Array[],
+  algorithm: ContentDigestAlgorithm,
+  createHash: HashFactory,
+): Uint8Array => {
+  const top = createHash(algorithm);
+  top.update(Uint8Array.of(0x5a));
+  top.update(u32le(chunkDigests.length));
+  for (const digest of chunkDigests) top.update(digest);
+  return top.digest();
+};
+
+const rewriteEocdCdOffset = (
+  rawEocd: Uint8Array,
+  blockStart: number,
+): Uint8Array => {
+  // A true copy: on a Node Buffer `.slice()` is a view over a possibly pooled
+  // ArrayBuffer, so rewriting through it would corrupt the caller's bytes. The
+  // DataView must also honour the copy's own byteOffset.
+  const eocd = Uint8Array.from(rawEocd);
+  new DataView(eocd.buffer, eocd.byteOffset, eocd.byteLength).setUint32(
+    EOCD_CD_OFFSET_FIELD,
+    blockStart,
+    true,
+  );
+  return eocd;
+};
+
 export const computeApkContentDigest = (
   bytes: Uint8Array,
   layout: {
@@ -58,15 +105,7 @@ export const computeApkContentDigest = (
   )
     return null;
 
-  // A true copy: on a Node Buffer `.slice()` is a view over a possibly pooled
-  // ArrayBuffer, so rewriting through it would corrupt the caller's bytes. The
-  // DataView must also honour the copy's own byteOffset.
-  const eocd = Uint8Array.from(bytes.subarray(eocdOffset));
-  new DataView(eocd.buffer, eocd.byteOffset, eocd.byteLength).setUint32(
-    EOCD_CD_OFFSET_FIELD,
-    blockStart,
-    true,
-  );
+  const eocd = rewriteEocdCdOffset(bytes.subarray(eocdOffset), blockStart);
   const sections = [
     bytes.subarray(0, blockStart),
     bytes.subarray(centralDirectoryOffset, eocdOffset),
@@ -75,21 +114,66 @@ export const computeApkContentDigest = (
 
   const chunkDigests: Uint8Array[] = [];
   for (const section of sections)
-    for (let offset = 0; offset < section.length; offset += CHUNK_SIZE) {
-      const chunk = section.subarray(
-        offset,
-        Math.min(offset + CHUNK_SIZE, section.length),
-      );
-      const hash = createHash(algorithm);
-      hash.update(Uint8Array.of(0xa5));
-      hash.update(u32le(chunk.length));
-      hash.update(chunk);
-      chunkDigests.push(hash.digest());
+    hashSectionChunks(section, algorithm, createHash, chunkDigests);
+  return finalizeTopDigest(chunkDigests, algorithm, createHash);
+};
+
+/**
+ * Recompute the APK v2/v3 content digest by streaming section 1 in 1 MiB
+ * chunks from a random-access reader instead of buffering the whole archive.
+ */
+export const computeApkContentDigestStreaming = async (
+  source: {
+    readonly size: number;
+    readonly readRange: (offset: number, length: number) => Promise<Uint8Array>;
+    readonly centralDirectory?: Uint8Array | undefined;
+    readonly eocd?: Uint8Array | undefined;
+  },
+  layout: {
+    readonly tail: ZipTail;
+    readonly blockStart: number;
+    readonly algorithm: ContentDigestAlgorithm;
+  },
+  createHash: HashFactory,
+): Promise<Uint8Array | null> => {
+  const { tail, blockStart, algorithm } = layout;
+  const { centralDirectoryOffset, centralDirectorySize, eocdOffset } = tail;
+  if (
+    blockStart < 0 ||
+    blockStart > centralDirectoryOffset ||
+    centralDirectoryOffset + centralDirectorySize !== eocdOffset ||
+    eocdOffset + 22 > source.size
+  )
+    return null;
+
+  const chunkDigests: Uint8Array[] = [];
+  for (let offset = 0; offset < blockStart; offset += CHUNK_SIZE) {
+    const length = Math.min(CHUNK_SIZE, blockStart - offset);
+    const chunk = await source.readRange(offset, length);
+    hashSectionChunks(chunk, algorithm, createHash, chunkDigests);
+  }
+  if (source.centralDirectory !== undefined)
+    hashSectionChunks(
+      source.centralDirectory,
+      algorithm,
+      createHash,
+      chunkDigests,
+    );
+  else
+    for (
+      let offset = centralDirectoryOffset;
+      offset < eocdOffset;
+      offset += CHUNK_SIZE
+    ) {
+      const length = Math.min(CHUNK_SIZE, eocdOffset - offset);
+      const chunk = await source.readRange(offset, length);
+      hashSectionChunks(chunk, algorithm, createHash, chunkDigests);
     }
 
-  const top = createHash(algorithm);
-  top.update(Uint8Array.of(0x5a));
-  top.update(u32le(chunkDigests.length));
-  for (const digest of chunkDigests) top.update(digest);
-  return top.digest();
+  const rawEocd =
+    source.eocd ??
+    (await source.readRange(eocdOffset, source.size - eocdOffset));
+  const eocd = rewriteEocdCdOffset(rawEocd, blockStart);
+  hashSectionChunks(eocd, algorithm, createHash, chunkDigests);
+  return finalizeTopDigest(chunkDigests, algorithm, createHash);
 };

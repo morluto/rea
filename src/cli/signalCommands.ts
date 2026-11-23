@@ -4,11 +4,11 @@ import type { SignalRecordingService } from "../application/signals/SignalRecord
 import { createSignalRecordingService } from "../composition/signals.js";
 import { SIGNAL_TOOL_CONTRACTS } from "../contracts/signals/signalToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
 import {
   analyzeWithService,
   inspectWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+} from "./contractCommandRunners.js";
 import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
 import type { CliInstance } from "./types.js";
 

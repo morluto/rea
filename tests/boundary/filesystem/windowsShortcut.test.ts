@@ -3,7 +3,7 @@ import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { createWindowsShortcutService } from "../../../src/composition/binaryDiagnostics.js";
+import { createWindowsShortcutService } from "../../../src/composition/binaryDiagnostics/windowsShortcut.js";
 import { WindowsShortcutProvider } from "../../../src/native/windows/WindowsShortcutProvider.js";
 import {
   LINK_FLAG,

@@ -2,6 +2,7 @@ import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
+import { isImmutableJsonSnapshot } from "../../domain/immutableJson.js";
 import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
 import {
   EvidenceIntegrityError,
@@ -516,16 +517,18 @@ export class AnalysisSnapshotCache {
     };
   }): void {
     this.select(input.target, input.profile);
+    const resolvedTarget = this.#target ?? snapshotTarget(input.target);
+    const resolvedBinding = this.#binding ?? snapshotBinding(input.profile);
     const queryId = analysisQueryId(
-      snapshotTarget(input.target),
-      snapshotBinding(input.profile),
+      resolvedTarget,
+      resolvedBinding,
       input.operation,
       input.parameters,
     );
     if (!this.#workflowEntries.has(queryId) && !this.#hasCapacity()) return;
     const entry = createAnalysisSnapshotWorkflowEntry({
-      target: snapshotTarget(input.target),
-      binding: snapshotBinding(input.profile),
+      target: resolvedTarget,
+      binding: resolvedBinding,
       operation: input.operation,
       parameters: input.parameters,
       execution: input.execution,
@@ -571,11 +574,17 @@ export class AnalysisSnapshotCache {
             withoutDisplayName(cachedTarget),
             target,
           );
-    const execution: AnalysisExecution = structuredClone({
+    const resultPayload = isImmutableJsonSnapshot(cached.execution.result)
+      ? cached.execution.result
+      : structuredClone(cached.execution.result);
+    const rawPayload = isImmutableJsonSnapshot(cached.execution.raw_result)
+      ? cached.execution.raw_result
+      : structuredClone(cached.execution.raw_result);
+    const execution: AnalysisExecution = {
       ...(binding === undefined ? {} : { evidenceId: binding.evidenceId }),
-      result: cached.execution.result,
-      rawResult: cached.execution.raw_result,
-      provider: cached.execution.provider,
+      result: resultPayload,
+      rawResult: rawPayload,
+      provider: structuredClone(cached.execution.provider),
       analysisProfile: structuredClone(profile),
       limitations: [
         ...cached.execution.limitations,
@@ -592,11 +601,13 @@ export class AnalysisSnapshotCache {
         : cached.execution.relationship_coverage === null
           ? {}
           : {
-              relationshipCoverage: cached.execution.relationship_coverage,
+              relationshipCoverage: structuredClone(
+                cached.execution.relationship_coverage,
+              ),
             }),
-      locations: cached.execution.locations,
-      subject: subject ?? null,
-    });
+      locations: structuredClone(cached.execution.locations),
+      subject: subject === null ? null : structuredClone(subject),
+    };
     return binding?.sourceEvidence === undefined
       ? execution
       : { ...execution, sourceEvidence: binding.sourceEvidence };
@@ -634,16 +645,18 @@ export class AnalysisSnapshotCache {
       if (closed === null) return;
       sourceBinding = closed;
     }
+    const resolvedTarget = this.#target ?? snapshotTarget(target);
+    const resolvedBinding = this.#binding ?? snapshotBinding(profile);
     const queryId = analysisQueryId(
-      snapshotTarget(target),
-      snapshotBinding(profile),
+      resolvedTarget,
+      resolvedBinding,
       operation,
       parameters,
     );
     if (!this.#entries.has(queryId) && !this.#hasCapacity()) return;
     const entry = createAnalysisSnapshotEntry({
-      target: snapshotTarget(target),
-      binding: snapshotBinding(profile),
+      target: resolvedTarget,
+      binding: resolvedBinding,
       operation,
       parameters,
       execution: {

@@ -1,4 +1,4 @@
-import type { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
+import type { UefiAnalysisService } from "../application/ProviderOperationServices.js";
 import type { MavenGradleMetadataService } from "../application/java/MavenGradleMetadataService.js";
 
 import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
@@ -21,10 +21,14 @@ import { javascriptSourceAnalysis } from "../composition/javascriptSourceAnalysi
 import { analysisSettingsConstraints } from "./analysisSettingsConstraints.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import type { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
-import { inspectAndroidJniBindings } from "../application/android/AndroidJniInspection.js";
-import { inspectAndroidPackage } from "../application/android/AndroidPackageInspection.js";
-import { inspectAndroidSymbol } from "../application/android/AndroidSymbolInspection.js";
 import {
+  androidJniInspectionInputSchema,
+  androidPackageInspectionInputSchema,
+  androidSymbolInspectionInputSchemas,
+} from "../domain/android/androidAnalysis.js";
+import { dartAotInspectionInputSchema } from "../domain/flutter/flutterBuildAnalysis.js";
+import {
+  executeRetainedSummaryOperation,
   inspectAnalysisView,
   projectRetainedAnalysis,
   requireAnalysisViewRetention,
@@ -34,7 +38,7 @@ import {
 import { z } from "zod";
 import { analysisViewSourceSchema } from "../domain/analysisView/analysisViewRequest.js";
 import type { ApkSignatureService } from "../application/apkSignature/ApkSignatureService.js";
-import type { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
+import type { ApktoolResourceAnalysisService } from "../application/ProviderOperationServices.js";
 import type { DesktopApplicationService } from "../application/artifacts/DesktopApplicationService.js";
 import type { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsService.js";
 import type { BinaryHardeningService } from "../application/binaryDiagnostics/BinaryHardeningService.js";
@@ -57,8 +61,7 @@ import type { PacketCaptureService } from "../application/captures/PacketCapture
 import type { BeamService } from "../application/erlang/BeamService.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import type { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
-import { inspectDartAot } from "../application/flutter/DartAotInspection.js";
-import type { FlutterBuildAnalysisService } from "../application/flutter/FlutterBuildAnalysisService.js";
+import type { FlutterBuildAnalysisService } from "../application/ProviderOperationServices.js";
 import type { GoBinaryService } from "../application/go/GoBinaryService.js";
 import type { GpuCodeObjectsService } from "../application/gpu/GpuCodeObjectsService.js";
 import type { Il2cppMetadataService } from "../application/il2cpp/Il2cppMetadataService.js";
@@ -67,9 +70,9 @@ import {
   recordEvidenceSources,
 } from "../application/investigation/recordEvidenceSources.js";
 import type { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
-import type { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
+import type { JebAnalysisService } from "../application/ProviderOperationServices.js";
 import type { ModelArtifactService } from "../application/model/ModelArtifactService.js";
-import type { PcapAnalysisService } from "../application/pcap/PcapAnalysisService.js";
+import type { PcapAnalysisService } from "../application/ProviderOperationServices.js";
 import type { PythonPycService } from "../application/python/PythonPycService.js";
 import type { ReleaseExposureService } from "../application/releaseExposure/ReleaseExposureService.js";
 import type { RustBinaryService } from "../application/rust/RustBinaryService.js";
@@ -113,10 +116,12 @@ import {
   settledExecution,
   sourceToBundleComparisonExecution,
 } from "../application/ApplicationToolExecutions.js";
-import { projectAndroidApplicationEvidence } from "../application/android/AndroidApplicationService.js";
+import {
+  projectAndroidApplicationEvidence,
+  projectAppleApplicationEvidence,
+  projectHarmonyApplicationEvidence,
+} from "../application/InventoryProjectionEvidence.js";
 import { inspectApiContractEvidence } from "../application/apiContract/ApiContractService.js";
-import { projectAppleApplicationEvidence } from "../application/apple/AppleApplicationService.js";
-import { projectHarmonyApplicationEvidence } from "../application/harmony/HarmonyApplicationService.js";
 import type { EvidenceWorkflowExecution } from "../application/investigation/EvidenceWorkflowExecution.js";
 import type { InvestigationWorkflowExecution } from "../application/investigation/InvestigationWorkflows.js";
 import { traceApplicationFeatureEvidence } from "../application/javascript/JavaScriptApplicationWorkflowService.js";
@@ -134,7 +139,7 @@ import { toolContract } from "../contracts/toolContracts.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
   readGuidanceSection,
   searchGuidance,
@@ -198,20 +203,10 @@ import type { ArtifactResourceScope } from "../resources/index.js";
 import {
   CommittedValue,
   DetailedFailure,
-  ForwardedValue,
   ReducibleValue,
-  type ValueOutcome,
-  type ValueToolRequest,
 } from "./contractToolHandler.js";
-import type { CallToolResult } from "@modelcontextprotocol/server";
-import type { ForwardedResult } from "../application/desktop/DesktopBuildComputers.js";
-import { DesktopBuildSteps } from "../application/desktop/DesktopBuildSteps.js";
-import type { ProgressReporter } from "../ports/ProgressReporter.js";
-import {
-  redactedResult,
-  withHeartbeat,
-  type DesktopBuildToolComputers,
-} from "./desktopBuildDelivery.js";
+import type { DesktopBuildToolComputers } from "./desktopBuildDelivery.js";
+import { bindDesktopBuildTools } from "./desktopBuildToolBindings.js";
 import {
   getNavigationContext,
   inspectAddressContext,
@@ -397,19 +392,6 @@ export interface ProviderOperationToolOptions extends ProviderOperationOptions {
   readonly contracts: readonly ToolContract<ProviderOperation>[];
 }
 
-/** The tools that drive build computers. */
-type DesktopBuildTool =
-  | "start_build_computer"
-  | "act_on_build_computer"
-  | "start_build_capture"
-  | "mark_build_checkpoint"
-  | "stop_build_capture"
-  | "export_build_environment"
-  | "check_build_task"
-  | "measure_build_task"
-  | "record_build_consent"
-  | "close_build_computer";
-
 /** The artifact resource scope application workflows read caller-named files under. */
 export interface ApplicationWorkflowToolOptions {
   readonly resources: ArtifactResourceScope;
@@ -448,7 +430,7 @@ const viewInputSourceSchema = z.looseObject({
 const analysisViewOverflowSource = (input: unknown): JsonValue | undefined => {
   const parsed = viewInputSourceSchema.safeParse(input);
   return parsed.success && parsed.data.source.kind !== "inline"
-    ? jsonValueSchema.parse(parsed.data.source)
+    ? ownedJsonValueSchema.parse(parsed.data.source)
     : undefined;
 };
 
@@ -456,7 +438,7 @@ const analysisViewOverflowSource = (input: unknown): JsonValue | undefined => {
 const jsonValueResult = <Error>(
   result: Result<unknown, Error>,
 ): Result<JsonValue, Error> =>
-  result.ok ? ok(jsonValueSchema.parse(result.value)) : result;
+  result.ok ? ok(ownedJsonValueSchema.parse(result.value)) : result;
 
 type Bind<Service> = (
   service: Service,
@@ -721,7 +703,14 @@ const SERVICE_TOOL_BINDINGS = {
     inspect_dart_aot: {
       admission: "sdk",
       run: (input, options) =>
-        inspectDartAot(service, input, retention, options),
+        executeRetainedSummaryOperation(
+          service,
+          "inspect_dart_aot",
+          dartAotInspectionInputSchema,
+          input,
+          retention,
+          options,
+        ),
     },
   })) satisfies Bind<FlutterBuildAnalysisService>,
   androidAnalysis: ((service, retention) => ({
@@ -732,19 +721,34 @@ const SERVICE_TOOL_BINDINGS = {
     inspect_android_package: {
       admission: "sdk",
       run: (input, options) =>
-        inspectAndroidPackage(service, input, retention, options),
+        executeRetainedSummaryOperation(
+          service,
+          "inspect_android_package",
+          androidPackageInspectionInputSchema,
+          input,
+          retention,
+          options,
+        ),
     },
     inspect_android_jni_bindings: {
       admission: "sdk",
       run: (input, options) =>
-        inspectAndroidJniBindings(service, input, retention, options),
+        executeRetainedSummaryOperation(
+          service,
+          "inspect_android_jni_bindings",
+          androidJniInspectionInputSchema,
+          input,
+          retention,
+          options,
+        ),
     },
     inspect_android_class: {
       admission: "sdk",
       run: (input, options) =>
-        inspectAndroidSymbol(
+        executeRetainedSummaryOperation(
           service,
           "inspect_android_class",
+          androidSymbolInspectionInputSchemas.inspect_android_class,
           input,
           retention,
           options,
@@ -753,9 +757,10 @@ const SERVICE_TOOL_BINDINGS = {
     inspect_android_method: {
       admission: "sdk",
       run: (input, options) =>
-        inspectAndroidSymbol(
+        executeRetainedSummaryOperation(
           service,
           "inspect_android_method",
+          androidSymbolInspectionInputSchemas.inspect_android_method,
           input,
           retention,
           options,
@@ -1729,7 +1734,10 @@ const SERVICE_TOOL_BINDINGS = {
       admission: "sdk",
       value: async (input) =>
         jsonValueResult(
-          await service.listProcesses(fridaDeviceSelection(input)),
+          await service.listProcesses(fridaDeviceSelection(input), {
+            limit: input.limit,
+            offset: input.offset,
+          }),
         ),
     },
     start_frida_session: {
@@ -2048,126 +2056,13 @@ const SERVICE_TOOL_BINDINGS = {
   // its own request so a refusal names the field; long steps report a
   // heartbeat so a client's request timeout can reset; no response, refusals
   // included, shows a typed secret's value.
-  desktopBuild: ((computers) => {
-    const steps = new DesktopBuildSteps(computers);
-    const presentResult = (result: CallToolResult) =>
-      redactedResult(result, computers.redaction);
-    const tool = <Schema extends z.ZodType>(
-      contract: { readonly name: string; readonly inputSchema: Schema },
-      run: (
-        input: z.output<Schema>,
-        request: ValueToolRequest,
-      ) => Promise<ValueOutcome>,
-    ) => {
-      return {
-        admission: "application" as const,
-        presentResult,
-        value: async (raw: unknown, request: ValueToolRequest) => {
-          const parsed = z.safeParse(contract.inputSchema, raw);
-          return parsed.success
-            ? run(parsed.data, request)
-            : err(
-                analysisInputErrorFromIssues(
-                  contract.name,
-                  parsed.error.issues,
-                  raw,
-                  { cause: parsed.error },
-                ),
-              );
-        },
-      };
-    };
-    const heartbeat = <Value>(
-      { progress }: ValueToolRequest,
-      phase: DesktopBuildTool,
-      run: (progress: ProgressReporter) => Promise<Value>,
-    ) => withHeartbeat(progress, phase, computers.progressMs, run);
-    // A forwarded driver answer, such as a screenshot, follows REA's JSON.
-    const forwarded = (
-      result: Result<ForwardedResult<JsonValue>, AnalysisError>,
-    ): ValueOutcome =>
-      result.ok
-        ? ok(new ForwardedValue(result.value.value, result.value.content))
-        : result;
-    return {
-      start_build_computer: tool(
-        toolContract("start_build_computer"),
-        async (input, { signal, progress }) =>
-          forwarded(await computers.start(input, signal, progress)),
-      ),
-      // An action can wait for the call before it on its computer, and a
-      // reset for the relaunched app, which can take minutes.
-      act_on_build_computer: tool(
-        toolContract("act_on_build_computer"),
-        async (input, request) =>
-          forwarded(
-            await heartbeat(request, "act_on_build_computer", () =>
-              computers.act(input, request.signal),
-            ),
-          ),
-      ),
-      start_build_capture: tool(
-        toolContract("start_build_capture"),
-        async (input, request) =>
-          forwarded(
-            await heartbeat(request, "start_build_capture", () =>
-              steps.startCapture(input, request.signal),
-            ),
-          ),
-      ),
-      mark_build_checkpoint: tool(
-        toolContract("mark_build_checkpoint"),
-        (input, request) =>
-          heartbeat(request, "mark_build_checkpoint", () =>
-            steps.markCheckpoint(input, request.signal),
-          ),
-      ),
-      stop_build_capture: tool(
-        toolContract("stop_build_capture"),
-        (input, request) =>
-          heartbeat(request, "stop_build_capture", () =>
-            steps.stopCapture(input, request.signal),
-          ),
-      ),
-      export_build_environment: tool(
-        toolContract("export_build_environment"),
-        (input, request) =>
-          heartbeat(request, "export_build_environment", () =>
-            steps.exportEnvironment(input, request.signal),
-          ),
-      ),
-      check_build_task: tool(
-        toolContract("check_build_task"),
-        (input, request) =>
-          heartbeat(request, "check_build_task", (progress) =>
-            steps.checkTask(input, request.signal, progress),
-          ),
-      ),
-      // Solves run one at a time for minutes each, so progress keeps the
-      // client waiting.
-      measure_build_task: tool(
-        toolContract("measure_build_task"),
-        (input, request) =>
-          heartbeat(request, "measure_build_task", (progress) =>
-            computers.measure(input, request.signal, progress),
-          ),
-      ),
-      record_build_consent: tool(
-        toolContract("record_build_consent"),
-        (input, { signal }) => steps.recordConsent(input, signal),
-      ),
-      close_build_computer: tool(
-        toolContract("close_build_computer"),
-        (input) => computers.close(input.computer_id),
-      ),
-    };
-  }) satisfies Bind<DesktopBuildToolComputers>,
+  desktopBuild: bindDesktopBuildTools satisfies Bind<DesktopBuildToolComputers>,
   // Provider-free access to the guided prompts this server advertises.
   guidedWorkflows: ((prompts) => ({
     guided_workflows: {
       admission: "application",
       value: async (input) =>
-        jsonValueResult(accessGuidedWorkflows(input, prompts)),
+        jsonValueResult(accessGuidedWorkflows(input, { contracts: prompts })),
     },
   })) satisfies Bind<readonly PromptContract[]>,
 } as const;

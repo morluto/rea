@@ -6,8 +6,7 @@ import {
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
   ArtifactReaderFailure,
-  type StableArtifactSnapshot,
-  readStableArtifact,
+  withStableArtifactHandle,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   ArtifactResourceScope,
@@ -33,9 +32,11 @@ import {
   parseLimitConstraint,
 } from "../../domain/parseFailureAnalysisError.js";
 import {
-  parsePeResources,
+  parsePeResourcesFromSource,
   peResourceLimitBoundary,
 } from "../../domain/pe/peResourceInventory.js";
+
+const PE_HEADER_PREFIX_BYTES = 4096;
 
 /** Portable parser over one bounded, identity-checked regular file. */
 export class PeResourcesProvider implements PeResourcesPort {
@@ -55,37 +56,49 @@ export class PeResourcesProvider implements PeResourcesPort {
   }
 
   async inspect(input: InspectPeResourcesInput, options?: ExecutionOptions) {
-    let snapshot: StableArtifactSnapshot | undefined;
+    let observed:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
-      return await this.#resources.run(async () => {
-        snapshot = await readStableArtifact(
+      return await this.#resources.run(async () =>
+        withStableArtifactHandle(
           input.path,
           input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        const { bytes, sha256 } = snapshot;
-        try {
-          return ok(
-            await parsePeResources(
-              bytes,
-              { path: input.path, sha256, bytes: bytes.length },
-              input,
-              options?.signal,
-            ),
-          );
-        } catch (cause) {
-          if (
-            isParseLimit(cause, "pe") &&
-            !Object.is(cause, options?.signal?.reason)
-          )
-            throw cause;
-          throw artifactParseFailure(cause, options?.signal);
-        }
-      });
+          {
+            retainBytes: (size) => Math.min(size, PE_HEADER_PREFIX_BYTES),
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            onIdentity: (identity) => {
+              observed = identity;
+            },
+          },
+          async (handle) => {
+            try {
+              return ok(
+                await parsePeResourcesFromSource(
+                  handle,
+                  {
+                    path: input.path,
+                    sha256: handle.sha256,
+                    bytes: handle.size,
+                  },
+                  input,
+                  options?.signal,
+                ),
+              );
+            } catch (cause) {
+              if (
+                isParseLimit(cause, "pe") &&
+                !Object.is(cause, options?.signal?.reason)
+              )
+                throw cause;
+              throw artifactParseFailure(cause, options?.signal);
+            }
+          },
+        ),
+      );
     } catch (cause) {
-      return err(peResourcesFailure(cause, input, snapshot));
+      return err(peResourcesFailure(cause, input, observed));
     }
   }
 }
@@ -197,7 +210,7 @@ const peResourcesFailurePrimary = (
 const peResourcesFailure = (
   cause: unknown,
   input: InspectPeResourcesInput,
-  snapshot?: StableArtifactSnapshot,
+  observed?: { readonly sha256: string; readonly bytes: number },
 ) => {
   const primary = peResourcesFailurePrimary(
     artifactFilePrimaryFacts(cause),
@@ -209,6 +222,6 @@ const peResourcesFailure = (
     input.path,
     PE_RESOURCES_PROVIDER.id,
     "inspect_pe_resources",
-    snapshot,
+    observed,
   );
 };
