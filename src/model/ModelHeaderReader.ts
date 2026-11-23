@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import {
   assertArtifactReadActive,
   ArtifactReaderFailure,
@@ -17,6 +18,8 @@ export class ModelHeaderReader {
   #end = 0;
   #guaranteedEnd = 0;
   #buffer = Buffer.alloc(0);
+  #littleReader: BinaryReader | undefined;
+  #bigReader: BinaryReader | undefined;
   #start = 0;
   #headerPrefixBytes = 0;
   readonly #hash = createHash("sha256");
@@ -67,48 +70,85 @@ export class ModelHeaderReader {
       );
   }
 
-  async take(length: number): Promise<Buffer> {
+  /** Cached BinaryReader over the current read-ahead buffer (reset on refill). */
+  binaryReader(little: boolean): BinaryReader {
+    if (little) {
+      this.#littleReader ??= new BinaryReader(this.#buffer, true, "model");
+      return this.#littleReader;
+    }
+    this.#bigReader ??= new BinaryReader(this.#buffer, false, "model");
+    return this.#bigReader;
+  }
+
+  async #fill(end: number): Promise<void> {
+    const readEnd = Math.max(
+      end,
+      Math.min(this.position + 65536, this.#guaranteedEnd),
+    );
+    const retained = this.#buffer.subarray(this.position - this.#start);
+    const next = Buffer.allocUnsafe(readEnd - this.position);
+    retained.copy(next);
+    let offset = retained.length;
+    while (offset < next.length) {
+      assertArtifactReadActive(this.signal);
+      const result = await this.file.read(
+        next,
+        offset,
+        next.length - offset,
+        this.position + offset,
+      );
+      if (result.bytesRead === 0)
+        throw new ArtifactReaderFailure(
+          "integrity",
+          "Model header ended before its admitted file extent",
+          { integrityCheck: "read-coverage" },
+        );
+      this.#hash.update(next.subarray(offset, offset + result.bytesRead));
+      offset += result.bytesRead;
+    }
+    this.#start = this.position;
+    this.#end = readEnd;
+    this.#buffer = next;
+    this.#littleReader = undefined;
+    this.#bigReader = undefined;
+  }
+
+  /** Fast synchronous advance when `length` bytes are already in `#buffer`. */
+  takeOffsetSync(length: number): number | undefined {
     assertArtifactReadActive(this.signal);
     const end = this.position + length;
     this.#validateEnd(end);
     if (!Number.isSafeInteger(length) || length < 0)
       rejectModel("Invalid header field length");
-    if (end > this.#end) {
-      const readEnd = Math.max(
-        end,
-        Math.min(this.position + 65536, this.#guaranteedEnd),
-      );
-      const retained = this.#buffer.subarray(this.position - this.#start);
-      const next = Buffer.allocUnsafe(readEnd - this.position);
-      retained.copy(next);
-      let offset = retained.length;
-      while (offset < next.length) {
-        assertArtifactReadActive(this.signal);
-        const result = await this.file.read(
-          next,
-          offset,
-          next.length - offset,
-          this.position + offset,
-        );
-        if (result.bytesRead === 0)
-          throw new ArtifactReaderFailure(
-            "integrity",
-            "Model header ended before its admitted file extent",
-            { integrityCheck: "read-coverage" },
-          );
-        this.#hash.update(next.subarray(offset, offset + result.bytesRead));
-        offset += result.bytesRead;
-      }
-      this.#start = this.position;
-      this.#end = readEnd;
-      this.#buffer = next;
-    }
-    const result = this.#buffer.subarray(
-      this.position - this.#start,
-      end - this.#start,
-    );
+    if (end > this.#end) return undefined;
+    const offset = this.position - this.#start;
     this.position = end;
-    return result;
+    return offset;
+  }
+
+  /** Advance `length` bytes and return their offset within the current `#buffer`. */
+  async takeOffset(length: number): Promise<number> {
+    assertArtifactReadActive(this.signal);
+    const end = this.position + length;
+    this.#validateEnd(end);
+    if (!Number.isSafeInteger(length) || length < 0)
+      rejectModel("Invalid header field length");
+    if (end > this.#end) await this.#fill(end);
+    const offset = this.position - this.#start;
+    this.position = end;
+    return offset;
+  }
+
+  /** Fast synchronous slice when `length` bytes are already in `#buffer`. */
+  takeSync(length: number): Buffer | undefined {
+    const offset = this.takeOffsetSync(length);
+    if (offset === undefined) return undefined;
+    return this.#buffer.subarray(offset, offset + length);
+  }
+
+  async take(length: number): Promise<Buffer> {
+    const offset = await this.takeOffset(length);
+    return this.#buffer.subarray(offset, offset + length);
   }
 
   async consume(length: number): Promise<void> {

@@ -1609,16 +1609,18 @@ export const createSystemProcessOwnershipHost = (
       const unresolved = stillLive.filter(
         ({ pid }) => identities.get(pid)?.state !== "readable",
       );
-      const liveAfterRetryPids = new Set(
-        liveProcesses(await safeListProcesses(signal)).map(({ pid }) => pid),
-      );
-      const stillUnresolved = unresolved.filter(({ pid }) =>
-        liveAfterRetryPids.has(pid),
-      );
-      if (stillUnresolved.length > 0)
-        throw new ProcessAdmissionError("identity_snapshot_unavailable", {
-          live_processes: stillUnresolved.length,
-        });
+      if (unresolved.length > 0) {
+        const liveAfterRetryPids = new Set(
+          liveProcesses(await safeListProcesses(signal)).map(({ pid }) => pid),
+        );
+        const stillUnresolved = unresolved.filter(({ pid }) =>
+          liveAfterRetryPids.has(pid),
+        );
+        if (stillUnresolved.length > 0)
+          throw new ProcessAdmissionError("identity_snapshot_unavailable", {
+            live_processes: stillUnresolved.length,
+          });
+      }
     }
     return processes.map(({ pid }) => {
       const observation = identities.get(pid);

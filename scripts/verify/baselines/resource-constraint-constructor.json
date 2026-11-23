@@ -80,7 +80,7 @@
   "src/ghidra/GhidraExecutableHeader.ts": 1,
   "src/ghidra/GhidraFileArtifacts.ts": 1,
   "src/ghidra/GhidraInstallationProperties.ts": 1,
-  "src/ghidra/GhidraProviderClient.ts": 4,
+  "src/ghidra/GhidraSessionErrorProjection.ts": 4,
   "src/go/GoBinaryProvider.ts": 2,
   "src/gpu/GpuCodeObjectsProvider.ts": 2,
   "src/hopper/HopperCallerReconciliation.ts": 1,

@@ -641,7 +641,8 @@ const stackRow = (
       continue;
     // A common definition shares those type bits but carries its size in
     // n_value, so only a zero n_value names an import.
-    if (symbols.word(entry + 8, wide ? 64 : 32) !== 0n) continue;
+    if (symbols.u32(entry + 8) !== 0 || (wide && symbols.u32(entry + 12) !== 0))
+      continue;
     // After a match, later records are still admitted so symbol order cannot
     // hide a damaged table; their names need not be read.
     if (found !== null) {
@@ -664,6 +665,12 @@ const stackRow = (
       unterminated = true;
       continue;
     }
+    if (
+      (observed.contentBytes !== 16 && observed.contentBytes !== 17) ||
+      strings[nameOffset] !== 0x5f ||
+      strings[nameOffset + 1] !== 0x5f
+    )
+      continue;
     const name = elfStringTableText(observed) ?? "";
     if (name === "__stack_chk_fail" || name === "___stack_chk_fail")
       found = row(

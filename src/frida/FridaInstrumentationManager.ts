@@ -61,6 +61,7 @@ import {
 } from "../domain/fridaCapturePolicy.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { FifoQueue } from "../kernel/FifoQueue.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const DEVICE_LOOKUP_TIMEOUT_MS = 1_000;
@@ -77,7 +78,7 @@ const isFridaDeviceLookupTimeout = (cause: unknown): boolean =>
   cause.message === FRIDA_DEVICE_LOOKUP_TIMEOUT_MESSAGE;
 
 interface ScriptMessageCapture {
-  readonly messages: MessageFifo<JsonValue>;
+  readonly messages: FifoQueue<JsonValue>;
   truncated: boolean;
 }
 
@@ -113,7 +114,7 @@ interface ManagedSession extends ManagedRemoteConnection {
   readonly pid: number;
   readonly mode: "attach" | "spawn";
   readonly scripts: Map<string, ManagedScript>;
-  readonly messages: MessageFifo<CapturedMessage>;
+  readonly messages: FifoQueue<CapturedMessage>;
   readonly scriptCaptures: Map<string, ScriptMessageCapture>;
   /** Once close begins, this session is retained only for cleanup. */
   cleanupStarted: boolean;
@@ -373,7 +374,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         pid,
         mode: input.mode,
         scripts: new Map(),
-        messages: new MessageFifo(),
+        messages: new FifoQueue(),
         scriptCaptures: new Map(),
         cleanupStarted: false,
         detached: false,
@@ -499,7 +500,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
       return err(cancelledOperation("load_frida_script", signal));
     const scriptId = randomUUID();
     const capture: ScriptMessageCapture = {
-      messages: new MessageFifo(),
+      messages: new FifoQueue(),
       truncated: false,
     };
     managed.scriptCaptures.set(scriptId, capture);
@@ -1970,42 +1971,3 @@ const markMessageTruncated = (
   const capture = managed.scriptCaptures.get(scriptId);
   if (capture !== undefined) capture.truncated = true;
 };
-
-/**
- * Arrival-ordered queue whose eviction advances a head offset. A full capture
- * budget evicts on every message, and `Array#shift` would copy every retained
- * message each time.
- */
-class MessageFifo<T> {
-  #items: (T | undefined)[] = [];
-  #head = 0;
-
-  get size(): number {
-    return this.#items.length - this.#head;
-  }
-
-  push(item: T): void {
-    this.#items.push(item);
-  }
-
-  peek(): T | undefined {
-    return this.#items[this.#head];
-  }
-
-  shift(): T | undefined {
-    if (this.#head >= this.#items.length) return undefined;
-    const item = this.#items[this.#head];
-    this.#items[this.#head] = undefined;
-    this.#head += 1;
-    // Compacting once half the slots are evicted keeps eviction amortized O(1).
-    if (this.#head * 2 >= this.#items.length) {
-      this.#items = this.#items.slice(this.#head);
-      this.#head = 0;
-    }
-    return item;
-  }
-
-  toArray(): T[] {
-    return this.#items.slice(this.#head) as T[];
-  }
-}
