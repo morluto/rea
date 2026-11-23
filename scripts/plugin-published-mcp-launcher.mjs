@@ -591,6 +591,11 @@ const tryAcquireInstallLock = async (lockPath) => {
     }
 
     if (await lockOwnerAlive(lockPath)) return { acquired: false };
+    // A failed install may release the old lock after the outer age check, and
+    // a third client can claim the pathname before this recheck. The fresh
+    // claimant has not bound its lease yet, so ownership of the lock directory
+    // is not readiness of the lease; treat that window as pending.
+    if (!isOlderThanGrace(lockPath)) return { acquired: false };
 
     rmSync(lockPath, { recursive: true, force: true });
     try {

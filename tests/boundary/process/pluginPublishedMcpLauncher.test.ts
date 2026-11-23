@@ -1,5 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import {
   access,
   chmod,
@@ -1086,6 +1087,150 @@ writeFileSync(entry, "process.exit(0);", { mode: 0o600 });
   await rm(recoveryPath, { recursive: true, force: true });
   const result = await closed;
   expect(result.code).toBe(0);
+  expect(await readFile(counterPath, "utf8")).toBe("1");
+  await access(join(prefix, READY_MARKER));
+});
+
+it("preserves a freshly claimed install lock during recovery recheck", async () => {
+  // Outer age check can pass on an abandoned lock; a third client may then
+  // claim the pathname before the recoverer's inner recheck. Without a grace
+  // check under the recovery barrier, that unbound fresh lock is deleted.
+  const version = "6.8.0-published-recovery-fresh-claim";
+  const temp = await createLauncherTemp();
+  const prefix = installPrefix(version, temp.temporaryRoot);
+  const lockPath = lockPathFor(version, temp.temporaryRoot);
+  const recoveryPath = `${lockPath}.recovery`;
+  await rm(prefix, { recursive: true, force: true });
+  await rm(lockPath, { recursive: true, force: true });
+  await rm(recoveryPath, { recursive: true, force: true });
+  await mkdir(temp.cacheRoot, { recursive: true, mode: 0o700 });
+  if (uid !== undefined)
+    await chmod(temp.cacheRoot, 0o700).catch(() => undefined);
+  await mkdir(lockPath, { mode: 0o700 });
+  if (uid !== undefined) await chmod(lockPath, 0o700);
+  await writeFile(join(lockPath, "pid"), "2147483647\n", { mode: 0o600 });
+  const abandonedAt = new Date(Date.now() - 60_000);
+  await utimes(lockPath, abandonedAt, abandonedAt);
+
+  const workspace = await createTestTempDirectory(
+    "rea-published-recovery-fresh-claim-",
+  );
+  const bin = join(workspace, "bin");
+  await mkdir(bin);
+  const npmEntry = join(bin, "npm-cli.cjs");
+  const counterPath = join(workspace, "install-count");
+  const plantedPid = "123456789\n";
+  await writeFile(counterPath, "0", { mode: 0o600 });
+  await writeFile(
+    npmEntry,
+    `#!/usr/bin/env node
+const { mkdirSync, readFileSync, writeFileSync } = require("node:fs");
+const { dirname, join } = require("node:path");
+const counterPath = ${JSON.stringify(counterPath)};
+writeFileSync(counterPath, String(Number(readFileSync(counterPath, "utf8")) + 1));
+const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
+const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
+mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
+writeFileSync(entry, "process.stdout.write('after-fresh-claim'); process.exit(0);", { mode: 0o600 });
+`,
+  );
+
+  // Widen only the inner recovery recheck window so the plant can land after
+  // claimInstallLock fails and before the grace/delete decision. Production
+  // lockOwnerAlive is unchanged; this copy still runs the real grace check.
+  // Keep the fixture beside the real launcher so ./lib/npm-invocation.mjs resolves.
+  const fixtureLauncher = join(
+    dirname(launcher),
+    `.fixture-recovery-fresh-claim-${String(process.pid)}.mjs`,
+  );
+  const launcherSource = await readFile(launcher, "utf8");
+  const delayedAlive = launcherSource.replace(
+    "const lockOwnerAlive = (lockPath) =>\n  new Promise((resolve) => {",
+    "const lockOwnerAlive = (lockPath) =>\n  new Promise((resolve) => {\n    const settle = resolve;\n    resolve = (alive) => setTimeout(() => settle(alive), 200);",
+  );
+  expect(delayedAlive).not.toBe(launcherSource);
+  await writeFile(fixtureLauncher, delayedAlive, { mode: 0o600 });
+  onTestFinished(async () => {
+    await rm(fixtureLauncher, { force: true });
+  });
+
+  const plantFreshClaim = (async () => {
+    for (;;) {
+      try {
+        await access(recoveryPath);
+        break;
+      } catch (cause) {
+        if (
+          cause === null ||
+          typeof cause !== "object" ||
+          !("code" in cause) ||
+          cause.code !== "ENOENT"
+        )
+          throw cause;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    }
+    // Simulate a failed install releasing the abandoned lock and a third
+    // client claiming the pathname before the recoverer's lease recheck.
+    rmSync(lockPath, { recursive: true, force: true });
+    mkdirSync(lockPath, { mode: 0o700 });
+    if (uid !== undefined) chmodSync(lockPath, 0o700);
+    writeFileSync(join(lockPath, "pid"), plantedPid, { mode: 0o600 });
+  })();
+
+  const child = spawn(process.execPath, [fixtureLauncher, version], {
+    cwd: temp.env.TMPDIR ?? tmpdir(),
+    env: {
+      ...process.env,
+      ...temp.env,
+      PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+      npm_execpath: npmEntry,
+    },
+    stdio: "pipe",
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout?.on("data", (bytes: Buffer) => {
+    stdout += bytes.toString();
+  });
+  child.stderr?.on("data", (bytes: Buffer) => {
+    stderr += bytes.toString();
+  });
+  const closed = new Promise<{
+    code: number | null;
+    signal: NodeJS.Signals | null;
+    stdout: string;
+    stderr: string;
+  }>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code, signal) =>
+      resolve({ code, signal, stdout, stderr }),
+    );
+  });
+  onTestFinished(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      try {
+        if (child.stdin !== null && !child.stdin.destroyed) child.stdin.end();
+      } catch {
+        // Already closed.
+      }
+      if (await waitForClosed(closed, LAUNCHER_TEARDOWN_GRACE_MS)) return;
+      forceStopLauncherTree(child);
+    }
+    await closed.catch(() => undefined);
+  });
+
+  await plantFreshClaim;
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(child.exitCode).toBeNull();
+  expect(await readFile(counterPath, "utf8")).toBe("0");
+  expect(await readFile(join(lockPath, "pid"), "utf8")).toBe(plantedPid);
+
+  const aged = new Date(Date.now() - 60_000);
+  await utimes(lockPath, aged, aged);
+  const result = await closed;
+  expect(result.code).toBe(0);
+  expect(result.stdout).toBe("after-fresh-claim");
   expect(await readFile(counterPath, "utf8")).toBe("1");
   await access(join(prefix, READY_MARKER));
 });
