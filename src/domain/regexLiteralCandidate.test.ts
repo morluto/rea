@@ -95,6 +95,16 @@ it("extracts literals guaranteed by every top-level alternative", () => {
   ).toBeUndefined();
   expect(extractRequiredRegexLiteral("(?:a|ab)", true)).toBeUndefined();
   expect(extractRequiredRegexLiteral("foo|", true)).toBeUndefined();
+  // Deeply nested alternations must not grow the call stack, and long
+  // disjoint alternatives must not block on substring probing.
+  const nested = `${"(?:".repeat(2_000)}foo${"|foo)".repeat(2_000)}`;
+  expect(() => extractRequiredRegexLiteral(nested, true)).not.toThrow();
+  expect(
+    extractRequiredRegexLiteral(
+      `${"a".repeat(1_024)}|${"b".repeat(1_024)}`,
+      true,
+    ),
+  ).toBeUndefined();
   expect(extractRequiredRegexLiteral("foo|\\d+", true)).toBeUndefined();
   expect(extractRequiredRegexLiteral("🧪ab|🧪ac", true)).toBe("🧪a");
   // A branch-common segment floats inside each branch; it must not be

@@ -276,10 +276,15 @@ const parseGroupHeader = (
   return { bodyStart: afterOpen + 1, extractable: false };
 };
 
+// Nested alternation branches recurse; past this depth extraction abandons
+// the branch instead of growing the call stack with pattern nesting.
+const MAX_ALTERNATION_DEPTH = 24;
+
 const collectRequiredRuns = (
   pattern: string,
   groups: GroupIndex,
   caseSensitive: boolean,
+  depth: number = 0,
 ): readonly string[] => {
   const runs: string[] = [];
   const frames: GroupFrame[] = [];
@@ -327,6 +332,11 @@ const collectRequiredRuns = (
         continue;
       }
       if (groups.groupHasAlt[index] === 1) {
+        if (depth >= MAX_ALTERNATION_DEPTH) {
+          flush();
+          index = quantifier.nextIndex;
+          continue;
+        }
         // Every branch must guarantee the segment for it to stay required.
         const branches = splitTopLevelAlternatives(
           pattern.slice(bodyStart, bodyEnd),
@@ -336,6 +346,7 @@ const collectRequiredRuns = (
             branch,
             analyzeRegexGroups(branch),
             caseSensitive,
+            depth + 1,
           ),
         );
         const common = runSets.some((runs) => runs.length === 0)
@@ -435,6 +446,10 @@ const splitTopLevelAlternatives = (pattern: string): readonly string[] => {
   return parts;
 };
 
+// Total substring probes across all runs; past this the extraction falls
+// back to the full inventory instead of blocking the calling thread.
+const MAX_COMMON_LITERAL_PROBES = 8192;
+
 /** Longest substring of `candidate` (by code point) present in some run of each set. */
 const longestCommonLiteral = (
   runSets: readonly (readonly string[])[],
@@ -444,6 +459,7 @@ const longestCommonLiteral = (
   const restRuns = rest;
   let best: string | undefined;
   let bestLength = 0;
+  let probes = 0;
   for (const run of first) {
     // generation-cap: candidate search work is bounded; longer runs still yield a valid shorter common literal.
     const points = Array.from(run).slice(0, MAX_COMMON_LITERAL_CODE_POINTS);
@@ -451,6 +467,8 @@ const longestCommonLiteral = (
     for (let length = points.length; length > bestLength; length -= 1) {
       let found: string | undefined;
       for (let offset = 0; offset + length <= points.length; offset += 1) {
+        probes += 1;
+        if (probes > MAX_COMMON_LITERAL_PROBES) return best;
         const probe = points.slice(offset, offset + length).join("");
         if (
           restRuns.every((runs) => runs.some((other) => other.includes(probe)))
