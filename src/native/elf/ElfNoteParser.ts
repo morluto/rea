@@ -863,6 +863,7 @@ const parseElfNoteSteps = function* (
     );
     const flags = namesSection.flags;
     const decoded = yield* decodeSectionNamesStep({
+      fileOffset: Number(namesSection.offset),
       raw: rawNames,
       flags,
       bits: header.elfClass,

@@ -100,6 +100,7 @@ const PATH_SCOPES = {
     "tests/boundary/filesystem/mutationWorkflow.test.ts",
     "src/server/externalMutationToolHandler.ts",
     "src/server/serviceToolBindings.ts",
+    "src/server/debuggerToolBindings.ts",
     "tests/boundary/mcp/rizin*.test.ts",
     "tests/boundary/mcp/debuggerExternalMutationLifecycleMcp.test.ts",
     "tests/fixtures/debuggerMcp.ts",

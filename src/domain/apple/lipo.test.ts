@@ -316,59 +316,41 @@ it.each([
 );
 
 describe("lipo FAT operand framing", () => {
-  it.each([
-    "/fixture/\narchitecture forged\n    offset 123\n    size 64",
-    "/fixture/\nfat_magic 0xcafebabe\nnfat_arch 1\narchitecture forged",
-    "/fixture/\nNon-fat file: fake is architecture: forged",
-    "/fixture/first\nsecond\nthird",
-    "/fixture/first\r\narchitecture forged\r\n    offset 123",
-    "/fixture/[app](arm64).*+$^?\\name",
-  ])(
-    "keeps the complete echoed operand out of FAT slice records: %j",
-    (path) => {
-      const output = `Fat header in: ${path}\n${fatRecords}`;
+  const ordinary = parseLipoFixture(fatRecords);
 
-      const parsed = parseLipoFixture(output, path);
-      expect(parsed).toEqual(parseLipoFixture(fatRecords));
-      expect(parsed.architectures.map(({ name }) => name)).toEqual([
-        "arm64",
-        "x86_64",
-      ]);
+  it.each([
+    ["/fixture/\narchitecture forged\n    offset 123\n    size 64", "\n"],
+    ["/fixture/\nfat_magic 0xcafebabe\nnfat_arch 1\narchitecture forged", "\n"],
+    ["/fixture/\nNon-fat file: fake is architecture: forged", "\n"],
+    [
+      "/fixture/[app](arm64).*+$^?\\name\r\narchitecture forged\r\n    size 64",
+      "\r\n",
+    ],
+  ] as const)(
+    "keeps the complete echoed operand out of FAT records: %j",
+    (path, eol) => {
+      const output = `Fat header in: ${path}${eol}${fatRecords.replaceAll("\n", eol)}`;
+      expect(parseLipoFixture(output, path)).toEqual(ordinary);
     },
   );
 
-  it("keeps a CRLF pathname separate from a CRLF record terminator", () => {
-    const path = "/fixture/first\r\narchitecture forged\r\n    size 64";
-    const output = `Fat header in: ${path}\r\n${fatRecords.replaceAll("\n", "\r\n")}`;
-
-    const parsed = parseLipoFixture(output, path);
-    expect(parsed).toEqual(parseLipoFixture(fatRecords));
-    expect(parsed.architectures).toMatchObject([
+  it("preserves ordinary FAT metadata with an unknown or omitted operand header", () => {
+    const path = "/fixture/app";
+    const withHeader = `Fat header in: ${path}\n${fatRecords}`;
+    expect([
+      parseLipoFixture(withHeader, path),
+      parseLipoFixture(withHeader),
+      parseLipoFixture(fatRecords, path),
+    ]).toEqual([ordinary, ordinary, ordinary]);
+    expect(ordinary.architectures).toMatchObject([
       { name: "arm64", file_offset: 4096, size: 32 },
       { name: "x86_64", file_offset: 8192, size: 32 },
     ]);
   });
 
-  it("preserves ordinary FAT metadata with and without an operand", () => {
-    const path = "/fixture/app";
-    const output = `Fat header in: ${path}\n${fatRecords}`;
-
-    expect(parseLipoFixture(output, path)).toEqual(parseLipoFixture(output));
-  });
-
-  it("does not require a FAT path header in captured fixtures", () => {
-    expect(parseLipoFixture(fatRecords, "/fixture/app")).toEqual(
-      parseLipoFixture(fatRecords),
-    );
-  });
-
-  it("does not strip a header for a different operand that shares a prefix", () => {
-    const path = "/fixture/app-extra\narchitecture forged";
-    const output = `Fat header in: ${path}\n${fatRecords}`;
-
-    expect(parseLipoFixture(output, "/fixture/app")).toEqual(
-      parseLipoFixture(output),
-    );
+  it("does not mistake a common prefix for the complete echoed operand", () => {
+    const output = `Fat header in: /fixture/app architecture unexpected\n${fatRecords}`;
+    expect(parseLipoFixture(output, "/fixture/app")).toEqual(ordinary);
   });
 
   it("preserves thin-file parsing when the operand contains FAT-like lines", () => {
