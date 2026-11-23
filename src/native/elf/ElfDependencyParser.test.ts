@@ -1285,6 +1285,40 @@ it("validates a declared ELF header larger than the fixed prefix against the fil
   expect(report).toEqual(parse(bytes));
 });
 
+it("reuses the cached string window for adjacent short names", async () => {
+  const needed = Array.from(
+    { length: 320 },
+    (_, index) => `libsample-${String(index)}.so`,
+  );
+  const bytes = elfDependencyFixture({
+    bits: 64,
+    little: true,
+    stripped: true,
+    needed,
+    interpreter: null,
+  });
+  const dynamic = Number(
+    bytes.readBigUInt64LE(elf64ProgramHeader(bytes, 2) + 8),
+  );
+  let tableAt = 0;
+  let tableSize = 0;
+  for (let entry = dynamic; bytes.readBigUInt64LE(entry) !== 0n; entry += 16) {
+    const tag = bytes.readBigUInt64LE(entry);
+    if (tag === 5n) tableAt = Number(bytes.readBigUInt64LE(entry + 8));
+    if (tag === 10n) tableSize = Number(bytes.readBigUInt64LE(entry + 8));
+  }
+  expect(tableSize).toBeGreaterThan(4096);
+  let tableReads = 0;
+  const report = await readFromSource(bytes, async (offset, length) => {
+    if (offset >= tableAt && offset < tableAt + tableSize) tableReads++;
+    return bytes.subarray(offset, offset + length);
+  });
+  expect(report.needed.map(({ name }) => name)).toEqual(needed);
+  expect(report).toEqual(parse(bytes));
+  expect(tableReads).toBeGreaterThan(0);
+  expect(tableReads).toBeLessThanOrEqual(4);
+});
+
 it("bounds reads of large dynamic string and interpreter extents", async () => {
   const longName = "x".repeat(2 * 65536);
   const bytes = elfDependencyFixture({

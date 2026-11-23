@@ -354,7 +354,7 @@ class DynamicStrings {
     if (offset < 0 || remaining <= 0)
       return { state: "outside", name: null, location: null };
     const at = this.table.offset + offset;
-    const first = yield* this.window.readSlice(
+    const first = yield* this.window.readPrefix(
       at,
       Math.min(remaining, WINDOW_READ_BYTES),
       "DT_STRTAB",
@@ -654,6 +654,11 @@ interface ElfWindowReader {
     size: number,
     label: string,
   ): ElfDependencySteps<Buffer>;
+  readPrefix(
+    offset: number,
+    maximum: number,
+    label: string,
+  ): ElfDependencySteps<Buffer>;
   u16(offset: number): ElfDependencySteps<number>;
   u32(offset: number): ElfDependencySteps<number>;
 }
@@ -702,6 +707,10 @@ const createElfWindowReader = (
     fileSize,
     little,
     readSlice,
+    *readPrefix(offset, maximum, label): ElfDependencySteps<Buffer> {
+      const rel = yield* ensureWindow(offset, 1, label);
+      return windowBytes.subarray(rel, rel + maximum);
+    },
     *u16(offset: number): ElfDependencySteps<number> {
       const rel = yield* ensureWindow(offset, 2, "16-bit field");
       return windowReader.u16(rel);
