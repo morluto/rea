@@ -58,6 +58,7 @@ import { selectedBrowserDeadlineMs } from "../domain/browserDeadline.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import {
   analysisErrorWithCleanupDependencies,
   providerCleanupErrorFromFailures,
@@ -348,7 +349,15 @@ export const fetchWebSourceMaps = async (
       siblingCleanups.push(cleanup);
     }
   }
-  return mergeSiblingCleanup(outcome, siblingCleanups, retainCompleted);
+  const merged = mergeSiblingCleanup(outcome, siblingCleanups, retainCompleted);
+  // The caller listener is gone before this wait. A cancel that arrives while
+  // an unused response is released must still win, without dropping a failure
+  // or cleanup owner that the wait already recorded.
+  if (signal?.aborted !== true) return merged;
+  const cancellation = cancelledBy("analyze_web_bundle", signal);
+  retainCompleted(cancellation);
+  if (merged.ok) return err(cancellation);
+  return err(analysisErrorWithCancellation(merged.error, cancellation));
 };
 
 const SOURCE_MAP_OPERATION = "analyze_web_bundle";

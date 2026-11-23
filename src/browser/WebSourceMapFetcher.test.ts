@@ -116,6 +116,280 @@ const nestedCauses = (error: unknown): unknown[] => {
   ];
 };
 
+const lookaheadRequests = [0, 1].map((index) => ({
+  ...request,
+  scriptKey: `scr_${String(index + 1).repeat(64)}`,
+  declaredUrl: `https://app.example.test/map${index}.js.map`,
+  fetchUrl: `https://app.example.test/map${index}.js.map`,
+}));
+
+const smallMap = JSON.stringify({
+  version: 3,
+  sources: ["map0.js"],
+  names: [],
+  mappings: "AAAA",
+});
+
+it("releases an unused prefetch when cancellation stops admission at the first map", async () => {
+  const controller = new AbortController();
+  const reason = new Error("caller cancelled during first map");
+  const requests = lookaheadRequests;
+  const result = await fetchWebSourceMaps(
+    requests,
+    approvedInput,
+    controller.signal,
+    {
+      fetch: async (url) => {
+        const index = Number(/map(\d)/.exec(String(url))?.[1] ?? 0);
+        if (index === 1) controller.abort(reason);
+        return new Response(index === 0 ? smallMap : "", { status: 200 });
+      },
+    },
+  );
+  if (result.ok) throw new Error("Expected cancellation");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisCancelledError",
+    cause: reason,
+    cleanupIncomplete: false,
+    cleanupResources: [],
+  });
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "cancelled",
+    category: "cancelled",
+    details: {
+      cleanup: "complete",
+      partial_observation: {
+        kind: "web-source-map-fetch",
+        source_maps: { requested: 2, processed: 0 },
+      },
+    },
+  });
+});
+
+it("keeps an unused prefetch owned until its cancellation releases", async () => {
+  const controller = new AbortController();
+  const reason = new Error("caller cancelled during first map");
+  const cleanup = phaseGate();
+  const requests = lookaheadRequests;
+  const siblingUrl = requests[1]!.fetchUrl;
+  const pending = fetchWebSourceMaps(
+    requests,
+    approvedInput,
+    controller.signal,
+    {
+      fetch: async (url) => {
+        const index = Number(/map(\d)/.exec(String(url))?.[1] ?? 0);
+        if (index === 0) return new Response(smallMap, { status: 200 });
+        controller.abort(reason);
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            cancel: () => cleanup.hold(),
+          }),
+          { status: 200 },
+        );
+      },
+    },
+  );
+  try {
+    const result = await pending;
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toEqual([siblingUrl]);
+    expect(primaryAnalysisError(result.error).cause).toBe(reason);
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cleanup_incomplete",
+      category: "cancelled",
+      details: {
+        cleanup: "incomplete",
+        resources: [siblingUrl],
+      },
+    });
+    cleanup.release();
+    await expect.poll(() => result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupResources).toEqual([]);
+    expect(primaryAnalysisError(result.error).cause).toBe(reason);
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cancelled",
+      category: "cancelled",
+      details: { cleanup: "complete" },
+    });
+  } finally {
+    cleanup.release();
+    await pending;
+  }
+});
+
+it("keeps an included map when an unadmitted sibling cleanup fails", async () => {
+  const physical = new Error("sibling response cancellation failed");
+  const requests = lookaheadRequests;
+  const siblingUrl = requests[1]!.fetchUrl;
+  // Large enough to include this map and to start the next fetch, and too
+  // small to admit that fetch once the included text is charged.
+  const fatMap = JSON.stringify({
+    version: 3,
+    sources: ["map0.js"],
+    sourcesContent: ["x".repeat(15000)],
+    names: [],
+    mappings: "AAAA",
+  });
+  const result = await fetchWebSourceMaps(
+    requests,
+    { ...approvedInput, source_map_limits: { output_bytes: 32400 } },
+    undefined,
+    {
+      fetch: async (url) => {
+        const index = Number(/map(\d)/.exec(String(url))?.[1] ?? 0);
+        if (index === 0) return new Response(fatMap, { status: 200 });
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            cancel() {
+              throw physical;
+            },
+          }),
+          { status: 200 },
+        );
+      },
+    },
+  );
+  if (result.ok) throw new Error("Expected sibling cleanup to stay owned");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupResources).toEqual([siblingUrl]);
+  expect(nestedCauses(result.error)).toContain(physical);
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      cleanup: "incomplete",
+      resources: [siblingUrl],
+      partial_observation: {
+        kind: "web-source-map-fetch",
+        source_maps: {
+          status: "partial",
+          requested: 2,
+          processed: 1,
+          items: [{ status: "included" }],
+        },
+      },
+    },
+  });
+});
+
+it("returns cancellation when the caller aborts during unused response release", async () => {
+  const controller = new AbortController();
+  const reason = new Error("caller cancelled during unused response release");
+  const requests = lookaheadRequests;
+  const fatMap = JSON.stringify({
+    version: 3,
+    sources: ["map0.js"],
+    sourcesContent: ["x".repeat(15000)],
+    names: [],
+    mappings: "AAAA",
+  });
+  const result = await fetchWebSourceMaps(
+    requests,
+    { ...approvedInput, source_map_limits: { output_bytes: 32400 } },
+    controller.signal,
+    {
+      fetch: async (url) => {
+        const index = Number(/map(\d)/.exec(String(url))?.[1] ?? 0);
+        if (index === 0) return new Response(fatMap, { status: 200 });
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            cancel() {
+              controller.abort(reason);
+            },
+          }),
+          { status: 200 },
+        );
+      },
+    },
+  );
+  if (result.ok) throw new Error("Expected cancellation");
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(result.error.cleanupResources).toEqual([]);
+  expect(primaryAnalysisError(result.error).cause).toBe(reason);
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "cancelled",
+    category: "cancelled",
+    details: {
+      cleanup: "complete",
+      partial_observation: {
+        kind: "web-source-map-fetch",
+        source_maps: {
+          status: "partial",
+          requested: 2,
+          processed: 1,
+          items: [{ status: "included" }],
+        },
+      },
+    },
+  });
+});
+
+it("keeps only the failed owner when redirect cleanup succeeds and an unused prefetch fails", async () => {
+  const physical = new Error("unused prefetch cancellation failed");
+  const requests = lookaheadRequests;
+  const siblingUrl = requests[1]!.fetchUrl;
+  const redirectUrl = "https://app.example.test/map0-final.js.map";
+  let redirectReleases = 0;
+  const fatMap = JSON.stringify({
+    version: 3,
+    sources: ["map0.js"],
+    sourcesContent: ["x".repeat(15000)],
+    names: [],
+    mappings: "AAAA",
+  });
+  const result = await fetchWebSourceMaps(
+    requests,
+    { ...approvedInput, source_map_limits: { output_bytes: 32400 } },
+    undefined,
+    {
+      fetch: async (url) => {
+        const href = String(url);
+        if (href === requests[0]!.fetchUrl)
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              cancel() {
+                redirectReleases += 1;
+              },
+            }),
+            { status: 302, headers: { location: redirectUrl } },
+          );
+        if (href === redirectUrl) return new Response(fatMap, { status: 200 });
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            cancel() {
+              throw physical;
+            },
+          }),
+          { status: 200 },
+        );
+      },
+    },
+  );
+  if (result.ok) throw new Error("Expected the failed prefetch to stay owned");
+  expect(redirectReleases).toBe(1);
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupResources).toEqual([siblingUrl]);
+  expect(result.error.cleanupResources).not.toContain(redirectUrl);
+  expect(nestedCauses(result.error)).toContain(physical);
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      cleanup: "incomplete",
+      resources: [siblingUrl],
+      partial_observation: {
+        kind: "web-source-map-fetch",
+        source_maps: {
+          status: "partial",
+          requested: 2,
+          processed: 1,
+          items: [{ status: "included", effective_url: redirectUrl }],
+        },
+      },
+    },
+  });
+});
+
 it("merges sibling cleanup when cancellation ends admission at the first map", async () => {
   const controller = new AbortController();
   const reason = new Error("caller cancelled during first map");
