@@ -663,8 +663,11 @@ const peSectionNames = (
       );
     const { offset: symbolOffset, count: symbolCount } =
       directory.pe_symbol_table;
+    // PE/COFF: PointerToSymbolTable == 0 means no COFF symbol or string table is present.
     const table =
-      symbolOffset > bytes.length ? null : symbolOffset + symbolCount * 18;
+      symbolOffset === 0 || symbolOffset > bytes.length
+        ? null
+        : symbolOffset + symbolCount * 18;
     if (
       table === null ||
       symbolCount > bytes.length ||
