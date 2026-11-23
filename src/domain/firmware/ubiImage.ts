@@ -129,7 +129,7 @@ const isErased = (bytes: Uint8Array): boolean =>
   bytes.every((byte) => byte === 0xff);
 
 /** The erase-counter header facts every PEB of one image shares. */
-export interface UbiEcHeader {
+interface UbiEcHeader {
   readonly version: number;
   readonly eraseCounter: bigint;
   readonly vidHeaderOffset: number;
@@ -196,7 +196,7 @@ export const recognizeUbiImage = (
 };
 
 /** Validate the first PEB's erase-counter header, which fixes the header layout. */
-export const parseUbiFirstEcHeader = (
+const parseUbiFirstEcHeader = (
   bytes: Uint8Array,
   fileSize: number,
 ): Result<UbiEcHeader, UbiImageParseError> => {
@@ -257,23 +257,18 @@ function* ubiEcHeaderOffsets(
 }
 
 /**
- * Aligned EC headers outside the data declared by the first PEB's VID.
- * A candidate that divides the file stays provisional until its volume table,
- * LEB constraints, and any passed-over candidate boundaries agree; a candidate
- * that yields no valid volume table lets the caller retry the next candidate.
+ * Aligned EC headers starting at `ubiPebSearchStart(first)`. A candidate that
+ * divides the file stays provisional until its volume table, LEB constraints
+ * (including any first-PEB VID extent), and passed-over candidate boundaries
+ * agree; an undersized or tableless candidate lets the caller retry the next
+ * candidate.
  */
 const ubiPebSizeCandidates = (
   chunk: Uint8Array,
   chunkOffset: number,
   first: UbiEcHeader,
-  minPebSize: number,
 ): Generator<{ offset: number; header: UbiEcHeader }, void> =>
-  ubiEcHeaderOffsets(
-    chunk,
-    chunkOffset,
-    Math.max(minPebSize, ubiPebSearchStart(first)),
-    () => true,
-  );
+  ubiEcHeaderOffsets(chunk, chunkOffset, ubiPebSearchStart(first), () => true);
 
 /**
  * A candidate that leaves a partial final PEB can still be the real size.
@@ -730,30 +725,11 @@ const isVolumeType = (volType: number): boolean =>
   volType === VOLUME_TYPE_DYNAMIC || volType === VOLUME_TYPE_STATIC;
 
 /**
- * The file offset of the first PEB's VID header when it lies inside both the
- * file and the fixed eraseblock ceiling, or null. A header past the ceiling
- * belongs to no admissible eraseblock, so it is never read: the eraseblock
- * search then reaches its bounded refusal without buffering up to the
- * declared offset.
- */
-export const ubiFirstVidHeaderOffset = (
-  first: UbiEcHeader,
-  fileSize: number,
-): number | null =>
-  first.vidHeaderOffset + UBI_HEADER_BYTES <=
-  Math.min(fileSize, UBI_MAX_PEB_BYTES)
-    ? first.vidHeaderOffset
-    : null;
-
-/**
  * The smallest eraseblock size that fits the VID header, or 0 when the
  * header is invalid. As `classifyUbiPeb` requires, the LEB must hold data_pad
  * plus data_size and more than data_pad.
  */
-export const ubiVidMinPebSize = (
-  vidBytes: Uint8Array,
-  ec: UbiEcHeader,
-): number => {
+const ubiVidMinPebSize = (vidBytes: Uint8Array, ec: UbiEcHeader): number => {
   const read = readVidHeader(vidBytes.subarray(0, UBI_HEADER_BYTES));
   if (read.state === "invalid" || !isVolumeType(read.vid.volType)) return 0;
   const { dataPad, dataSize } = read.vid;
@@ -1449,8 +1425,10 @@ interface UbiPebCandidateCheck {
  * area; it stays retryable so the caller keeps the first failure unless a
  * later geometry explains every passed-over header. A candidate whose LEB is
  * too small for a CRC-valid VID header's data_pad and data_size also stays
- * retryable, so a larger eraseblock that holds every LEB in full wins; its
- * image is kept as the fallback when no later candidate is accepted.
+ * retryable (even alongside a PEB error from a header inside that split LEB,
+ * without a fallback), so a larger eraseblock that holds every LEB in full
+ * wins; when the candidate is otherwise valid, its image is kept as the
+ * fallback if no later candidate is accepted.
  */
 const judgeUbiPebCandidate = ({
   geometry,
@@ -1465,19 +1443,20 @@ const judgeUbiPebCandidate = ({
     return { state: "reject", error: smallerGridError };
   const table = parseUbiVolumeTable(tableCopies, geometry);
   if (!table.ok) return { state: "retry", error: pebError ?? table.error };
-  if (pebError !== null) return { state: "reject", error: pebError };
-  if (passedOverHeaderOffset !== null)
-    return {
-      state: "retry",
-      error: ubiSpacingConflict(geometry.pebSize, passedOverHeaderOffset),
-    };
-  const image = assembleUbiImage(geometry, pebs, table.value, verifiedCopies);
   const undersized = pebs.findIndex(
     (peb) =>
       peb.state === "corrupt" &&
       peb.vidMinPebSize !== undefined &&
       peb.vidMinPebSize > geometry.pebSize,
   );
+  if (pebError !== null)
+    return { state: undersized !== -1 ? "retry" : "reject", error: pebError };
+  if (passedOverHeaderOffset !== null)
+    return {
+      state: "retry",
+      error: ubiSpacingConflict(geometry.pebSize, passedOverHeaderOffset),
+    };
+  const image = assembleUbiImage(geometry, pebs, table.value, verifiedCopies);
   if (undersized !== -1) {
     const peb = pebs[undersized];
     const needed = peb?.state === "corrupt" ? (peb.vidMinPebSize ?? 0) : 0;
@@ -1783,16 +1762,6 @@ export const parseUbiImage = async (
     fileSize,
   );
   if (!first.ok) return first;
-  // The eraseblock size is the distance to the next erase-counter header
-  // past the data the first PEB's VID header declares.
-  const vidHeaderOffset = ubiFirstVidHeaderOffset(first.value, fileSize);
-  const minPebSize =
-    vidHeaderOffset === null
-      ? 0
-      : ubiVidMinPebSize(
-          await read(vidHeaderOffset, UBI_HEADER_BYTES),
-          first.value,
-        );
   const ctx: UbiParseContext = {
     fileSize,
     first: first.value,
@@ -1819,7 +1788,6 @@ export const parseUbiImage = async (
       chunk,
       offset,
       first.value,
-      minPebSize,
     )) {
       if (candidate <= lastCandidate) continue;
       lastCandidate = candidate;

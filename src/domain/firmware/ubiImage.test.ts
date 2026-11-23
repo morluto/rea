@@ -4,16 +4,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   classifyUbiPeb,
-  parseUbiFirstEcHeader,
   parseUbiImage,
   recognizeUbiImage,
-  ubiFirstVidHeaderOffset,
   ubiSmallerPebSizeHoldsLebs,
-  ubiVidMinPebSize,
   UBI_IMAGE_LIMITATIONS,
   UBI_LAYOUT_VOLUME_ID,
   UBI_MAX_PEB_BYTES,
-  type UbiEcHeader,
   type UbiImage,
   type UbiImageParseError,
 } from "./ubiImage.js";
@@ -30,12 +26,6 @@ import {
   type UbiFixtureVolumeRecord,
 } from "./ubiImage.fixture.js";
 import type { Result } from "../result.js";
-
-/** The first PEB's minimum size, read from its VID header alone. */
-const firstPebMinSize = (bytes: Buffer, first: UbiEcHeader): number => {
-  const at = ubiFirstVidHeaderOffset(first, bytes.length);
-  return at === null ? 0 : ubiVidMinPebSize(bytes.subarray(at, at + 64), first);
-};
 
 /** Parse an in-memory image through the shared domain parser. */
 const parse = (bytes: Buffer): Promise<Result<UbiImage, UbiImageParseError>> =>
@@ -1563,10 +1553,6 @@ describe("erase-counter headers no eraseblock could begin at", () => {
         [lebs[0]!, ...ubiLayoutPebs(records, wide), ...lebs.slice(1)],
         wide,
       );
-      const first = parseUbiFirstEcHeader(bytes.subarray(0, 64), bytes.length);
-      expect(first.ok && firstPebMinSize(bytes, first.value)).toBe(
-        wide.pebSize,
-      );
       expect(await parse(bytes)).toMatchObject({
         ok: true,
         value: {
@@ -1578,25 +1564,25 @@ describe("erase-counter headers no eraseblock could begin at", () => {
     },
   );
 
-  it("reads no VID header the eraseblock ceiling rules out", () => {
-    const bytes = ubiImage([{ kind: "free" }]);
-    const first = parseUbiFirstEcHeader(bytes.subarray(0, 64), bytes.length);
-    expect(first.ok).toBe(true);
-    if (!first.ok) return;
-    expect(ubiFirstVidHeaderOffset(first.value, bytes.length)).toBe(64);
-    const far = {
-      ...first.value,
-      vidHeaderOffset: UBI_MAX_PEB_BYTES,
-      dataOffset: UBI_MAX_PEB_BYTES + 64,
-    };
-    expect(ubiFirstVidHeaderOffset(far, UBI_MAX_PEB_BYTES * 4)).toBeNull();
-    expect(
-      ubiFirstVidHeaderOffset(
-        { ...far, vidHeaderOffset: UBI_MAX_PEB_BYTES - 64 },
-        UBI_MAX_PEB_BYTES * 4,
-      ),
-    ).toBe(UBI_MAX_PEB_BYTES - 64);
-    expect(ubiFirstVidHeaderOffset(first.value, 100)).toBeNull();
+  it("reads no VID header the eraseblock ceiling rules out", async () => {
+    const vidHeaderOffset = UBI_MAX_PEB_BYTES * 4;
+    const header = ubiImage([{ kind: "free" }], {
+      vidHeaderOffset,
+      dataOffset: vidHeaderOffset + 64,
+    }).subarray(0, 64);
+    const reads: Array<{ offset: number; length: number }> = [];
+    const parsed = await parseUbiImage(
+      vidHeaderOffset + 4096,
+      (offset, length) => {
+        reads.push({ offset, length });
+        return offset === 0 ? header.subarray(0, length) : Buffer.alloc(length);
+      },
+    );
+    expect(parsed).toMatchObject({
+      ok: false,
+      error: { kind: "limit" },
+    });
+    expect(reads).toEqual([{ offset: 0, length: 64 }]);
   });
 
   it("measures past a nested image in the first PEB's dynamic data", async () => {
@@ -1624,11 +1610,57 @@ describe("erase-counter headers no eraseblock could begin at", () => {
       },
     });
   });
+});
 
-  it("sets no minimum size when the first PEB holds no valid VID header", () => {
-    const bytes = ubiImage([{ kind: "free" }, { kind: "free" }]);
-    const first = parseUbiFirstEcHeader(bytes.subarray(0, 64), bytes.length);
-    expect(first.ok && firstPebMinSize(bytes, first.value)).toBe(0);
+it("records vidMinPebSize when classifying PEB 0 with an oversized data_pad", async () => {
+  const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
+  const lebBytes = wide.pebSize - wide.dataOffset;
+  const bytes = ubiImage(
+    [
+      {
+        kind: "leb",
+        volId: 1,
+        lnum: 0,
+        data: Buffer.alloc(lebBytes, 0x50),
+        sqnum: 1n,
+        dataPad: wide.pebSize,
+      },
+      ...ubiLayoutPebs(
+        [{ id: 0, name: "config", type: "static", reservedPebs: 1 }],
+        wide,
+      ),
+      {
+        kind: "leb",
+        volId: 0,
+        lnum: 0,
+        data: Buffer.from("CONFIG", "latin1"),
+        sqnum: 2n,
+        volType: "static",
+        usedEbs: 1,
+      },
+    ],
+    wide,
+  );
+  const parsed = await image(bytes);
+  expect(
+    classifyUbiPeb(
+      bytes.subarray(0, parsed.geometry.headerReadBytes),
+      0,
+      parsed.geometry,
+    ),
+  ).toEqual({
+    ok: true,
+    value: {
+      state: "corrupt",
+      reason: expect.stringContaining("data_pad 131072"),
+      ec: { eraseCounter: 1n, imageSeq: parsed.geometry.imageSeq },
+      vidMinPebSize: wide.dataOffset + wide.pebSize + 1,
+    },
+  });
+  expect(parsed).toMatchObject({
+    geometry: { pebSize: wide.pebSize, pebCount: 4 },
+    corruptPebCount: 1,
+    volumes: [{ name: "config", dataBytes: 6, extractRefusal: null }],
   });
 });
 

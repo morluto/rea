@@ -752,3 +752,51 @@ it("reads a dynamic first LEB holding a nested mapped image with matching header
     await reader.close();
   }
 });
+
+it("counts a corrupt oversized data_pad on PEB 0 instead of skipping the real PEB boundary", async () => {
+  const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
+  const lebBytes = wide.pebSize - wide.dataOffset;
+  const configData = Buffer.from("CONFIG", "latin1");
+  const records = [
+    { id: 0, name: "config", type: "static" as const, reservedPebs: 1 },
+  ];
+  const bytes = ubiImage(
+    [
+      {
+        kind: "leb",
+        volId: 1,
+        lnum: 0,
+        data: Buffer.alloc(lebBytes, 0x50),
+        sqnum: 1n,
+        dataPad: 131_072,
+      },
+      ...ubiLayoutPebs(records, wide),
+      {
+        kind: "leb",
+        volId: 0,
+        lnum: 0,
+        data: configData,
+        sqnum: 2n,
+        volType: "static",
+        usedEbs: 1,
+      },
+    ],
+    wide,
+  );
+  const reader = new UbiImageArtifactReader(await fixture(bytes));
+  try {
+    const volumes = await entries(reader);
+    expect(reader.formatMetadata()).toMatchObject({
+      peb_size: wide.pebSize,
+      peb_count: 4,
+      corrupt_peb_count: 1,
+    });
+    expect(volumes).toMatchObject([
+      { path: "volumes/config", declaredSize: configData.length },
+    ]);
+    const extracted = await buffer(await reader.open(volumes[0]!));
+    expect(extracted.equals(configData)).toBe(true);
+  } finally {
+    await reader.close();
+  }
+});
