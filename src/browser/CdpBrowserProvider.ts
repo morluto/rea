@@ -90,6 +90,7 @@ import {
 } from "../domain/browserDeadline.js";
 import { fetchWebSourceMaps } from "./WebSourceMapFetcher.js";
 import { authorizeCdpTarget } from "./CdpAuthorizedTarget.js";
+import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import { observeCdpSession } from "./CdpObservationSession.js";
 import { discoverWebMcp } from "./CdpWebMcpDiscovery.js";
 import { captureCdpScreenshot } from "./CdpScreenshot.js";
@@ -621,7 +622,11 @@ const withTargetSession = async <
       endpoint.connection !== targetSession?.connection
     ) {
       if (endpoint.reusableBrowserSocket === true) {
-        if (attachAttempted)
+        // A correlated rejection confirms this attach created no session.
+        // A lost or unusable reply can leave an attachment on the socket.
+        const rejected =
+          !outcome.ok && outcome.error instanceof CdpCommandRejection;
+        if (attachAttempted && !rejected)
           await owner.evictBrowserSocket(endpoint.connection);
         else await owner.releaseBrowserSocket(endpoint.connection);
       } else {
