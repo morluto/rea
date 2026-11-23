@@ -40,7 +40,7 @@ import { uefiFailureDialect } from "./UefiFailures.js";
 import type { UefiDecodeResult } from "./UefiImageScan.js";
 import { UefiLzmaByteQueue } from "./UefiLzmaByteQueue.js";
 import {
-  encodeLzmaFrame,
+  encodeLzmaFrameHeader,
   LZMA_FRAME_HEADER_BYTES,
   lzmaReplySchema,
 } from "./UefiLzmaProtocol.js";
@@ -299,9 +299,11 @@ export class UefiLzmaSession {
         max_output_bytes: maxOutputBytes,
       });
       await active.stdinWriter.writeFrame(
-        encodeLzmaFrame(requestHeader, payload),
+        encodeLzmaFrameHeader(requestHeader, payload.length),
         signal,
       );
+      if (payload.length > 0)
+        await active.stdinWriter.writeFrame(payload, signal);
       const header = await active.reader.readExact(
         LZMA_FRAME_HEADER_BYTES,
         signal,
