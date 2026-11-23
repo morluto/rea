@@ -7,12 +7,12 @@ import { createPcapAnalysisProvider } from "../composition/pcap.js";
 import { PCAP_TOOL_CONTRACTS } from "../contracts/pcap/pcapToolContracts.js";
 import type { PcapOperation } from "../domain/pcap/pcapAnalysis.js";
 import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
 import {
   analyzeWithService,
   inspectWithService,
-  registerContractCommand,
   type EvidenceInspectionService,
-} from "./contractCommand.js";
+} from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 /** Expose the same explicit pcap requests through one-shot CLI commands. */

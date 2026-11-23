@@ -6,11 +6,11 @@ import { APKTOOL_TOOL_CONTRACTS } from "../contracts/apktool/apktoolToolContract
 import type { ApktoolOperation } from "../domain/apktool/apktoolResourceAnalysis.js";
 import type { Logger } from "pino";
 import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
 import {
   analyzeWithService,
-  registerContractCommand,
   type EvidenceInspectionService,
-} from "./contractCommand.js";
+} from "./contractCommandRunners.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import type { CliInstance } from "./types.js";

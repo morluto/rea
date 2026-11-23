@@ -2,10 +2,8 @@ import type { Logger } from "pino";
 
 import { createModelArtifactService } from "../composition/model.js";
 import { INSPECT_MODEL_ARTIFACT_CONTRACT } from "../contracts/model/modelToolContracts.js";
-import {
-  deliverWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { deliverWithService } from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 /** One-shot summaries export the same complete observations used by MCP retained pages. */
