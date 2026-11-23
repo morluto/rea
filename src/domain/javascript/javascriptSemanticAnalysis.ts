@@ -92,6 +92,7 @@ import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberM
 import { semanticInactiveFirstDefaultWritesSteps } from "./javascriptSemanticReadPresence.js";
 import {
   DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
+  javaScriptMemberMutationAllowanceForSource,
   type JavaScriptMemberMutationAllowance,
 } from "./javascriptSemanticWorkAllowance.js";
 import {
@@ -1104,7 +1105,10 @@ const createState = (
   };
   return {
     precision: resolveJavaScriptSemanticPrecision(precision),
-    memberMutationAllowance,
+    memberMutationAllowance: javaScriptMemberMutationAllowanceForSource(
+      memberMutationAllowance,
+      program.end ?? 0,
+    ),
     arrayIterationUnknown: false,
     memberMutationFactsComplete: false,
     program,

@@ -6,6 +6,7 @@ import {
   DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
   javaScriptMemberMutationAllowanceField,
   isJavaScriptMemberMutationRefusal,
+  javaScriptMemberMutationAllowanceReached,
   javaScriptMemberMutationRefusal,
   reportsJavaScriptMemberMutationRefusal,
 } from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
@@ -1377,8 +1378,11 @@ export class JavaScriptAnalysisWorker {
       if (reportsJavaScriptMemberMutationRefusal(reported))
         return javaScriptMemberMutationRefusal(
           OPERATION,
-          this.limits.memberMutationAllowance ??
-            DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
+          javaScriptMemberMutationAllowanceReached(
+            this.limits.memberMutationAllowance ??
+              DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
+            reported,
+          ),
           limits,
         );
       return new AnalysisResourceConstraintError(

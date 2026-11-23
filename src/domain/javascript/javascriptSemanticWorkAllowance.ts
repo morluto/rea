@@ -4,6 +4,7 @@ import type { AnalysisCapturedOutput } from "../analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import {
   DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES,
+  DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES_PER_SOURCE_UNIT,
   MAXIMUM_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES,
 } from "../analysisResourceLimits.js";
 import { analysisSettingLimit } from "../analysisSettingDefinitions.js";
@@ -63,8 +64,51 @@ export const javaScriptMemberMutationAllowanceFromField = (
   source: field.source,
 });
 
+/**
+ * The allowance one source of `sourceLength` UTF-16 units is analyzed under.
+ * Only the default grows with the source; a value a caller selected is the
+ * caller's choice and applies unchanged.
+ */
+export const javaScriptMemberMutationAllowanceForSource = (
+  allowance: JavaScriptMemberMutationAllowance,
+  sourceLength: number,
+): JavaScriptMemberMutationAllowance => {
+  if (allowance.source !== "default") return allowance;
+  const aliasStates = Math.min(
+    MAXIMUM_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES,
+    Math.max(
+      allowance.aliasStates,
+      Math.max(0, sourceLength) *
+        DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES_PER_SOURCE_UNIT,
+    ),
+  );
+  return aliasStates === allowance.aliasStates
+    ? allowance
+    : { ...allowance, aliasStates };
+};
+
+/**
+ * The allowance a worker reports it reached, for the refusal its parent
+ * rebuilds. The worker scales a default allowance by its source, so the
+ * parent names that effective value instead of the one it sent. A report that
+ * is not a value this allowance can take leaves the sent allowance in place.
+ */
+export const javaScriptMemberMutationAllowanceReached = (
+  sent: JavaScriptMemberMutationAllowance,
+  reportedLimits: Readonly<Record<string, unknown>> | null | undefined,
+): JavaScriptMemberMutationAllowance => {
+  const reported = reportedLimits?.[JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT];
+  return typeof reported === "number" &&
+    Number.isSafeInteger(reported) &&
+    reported >= sent.aliasStates &&
+    reported <= MAXIMUM_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES &&
+    (sent.source === "default" || reported === sent.aliasStates)
+    ? { ...sent, aliasStates: reported }
+    : sent;
+};
+
 const recovery = (allowance: JavaScriptMemberMutationAllowance): string => {
-  const current = `The effective javascript.member_mutation_alias_states value is ${String(allowance.aliasStates)} alias states (source ${allowance.source}; default ${String(DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES)}, maximum ${String(MAXIMUM_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES)}).`;
+  const current = `The effective javascript.member_mutation_alias_states value is ${String(allowance.aliasStates)} alias states (source ${allowance.source}; default ${String(DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES)} or ${String(DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES_PER_SOURCE_UNIT)} per source character if larger, maximum ${String(MAXIMUM_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES)}).`;
   const change =
     allowance.aliasStates >= MAXIMUM_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES
       ? "It is already at the maximum; do not increase it further. Select another complete source within the allowance."
@@ -74,8 +118,8 @@ const recovery = (allowance: JavaScriptMemberMutationAllowance): string => {
 
 /**
  * The refusal for a source whose member-mutation phase exceeded the allowance.
- * Worker parents rebuild it from the allowance they sent, so every adapter
- * reports the same setting, value and recovery.
+ * Worker parents rebuild it from the allowance the worker reached, so every
+ * adapter reports the same setting, value and recovery.
  */
 export const javaScriptMemberMutationRefusal = (
   operation: string,

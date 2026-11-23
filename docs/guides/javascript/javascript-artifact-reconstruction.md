@@ -901,9 +901,12 @@ is the question; request `complete` analysis afterwards, narrowed with
 `source_paths`, for semantic detail. The selection stays in Evidence
 parameters. The CLI accepts `--semantic-analysis structure-only`.
 
-Member-mutation analysis also has a work allowance of 524,288 alias states
-per source, selected by the `javascript.member_mutation_alias_states` setting
-(1 to 8,388,608). Change it with `update_analysis_settings` on MCP, or with
+Member-mutation analysis also has a work allowance per source, selected by
+the `javascript.member_mutation_alias_states` setting (1 to 8,388,608). The
+default is 524,288 alias states, or two per source character when that is
+larger, up to the maximum, so a large bundle is not held to the allowance of
+a small file. A value you select applies unchanged to every source. Change it
+with `update_analysis_settings` on MCP, or with
 `REA_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES` for CLI or future REA processes;
 it applies to the next `analyze_javascript_application`, `analyze_web_bundle`
 or `import-reference-source` operation. It is not a `semantic_precision` field.

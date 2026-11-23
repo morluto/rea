@@ -8,6 +8,8 @@ import { invariantViolation } from "../domain/internalInvariant.js";
 import {
   DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
   javaScriptMemberMutationAllowanceField,
+  javaScriptMemberMutationAllowanceForSource,
+  javaScriptMemberMutationAllowanceReached,
   javaScriptMemberMutationRefusal,
   reportsJavaScriptMemberMutationRefusal,
   type JavaScriptMemberMutationAllowance,
@@ -116,7 +118,10 @@ const webBundleResourceFailure = (
   if (reportsJavaScriptMemberMutationRefusal(frame.limits))
     return javaScriptMemberMutationRefusal(
       OPERATION,
-      job.memberMutationAllowance,
+      javaScriptMemberMutationAllowanceReached(
+        job.memberMutationAllowance,
+        frame.limits,
+      ),
       limits,
       capturedOutput,
     );
@@ -979,13 +984,20 @@ export class WebBundleAnalysisWorker {
         OPERATION,
         "Web analyzer returned an unavailable result without partial facts",
       );
-    // The refusal and its recovery come from the allowance this host sent.
+    // The refusal and its recovery come from the allowance this host sent,
+    // as the analyzer applied it to this script's source.
     return {
       status: "unavailable",
       script_key: facts.script_key,
       reason: "resource_constraint",
       ...unavailableWebScriptRecovery(
-        javaScriptMemberMutationRefusal(OPERATION, memberMutationAllowance),
+        javaScriptMemberMutationRefusal(
+          OPERATION,
+          javaScriptMemberMutationAllowanceForSource(
+            memberMutationAllowance,
+            script.source.artifact.text.length,
+          ),
+        ),
       ),
       partial: facts.partial,
     };

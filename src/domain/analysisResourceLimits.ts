@@ -39,6 +39,16 @@ export const MAXIMUM_GHIDRA_DECOMPILE_PAYLOAD_MIB = 2_047;
 export const DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES = 524_288;
 
 /**
+ * Default alias states admitted per UTF-16 unit of one JavaScript source.
+ * Member-mutation work grows with the source, so a large bundle is not held
+ * to the allowance of a small file: the default is the larger of
+ * {@link DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES} and this rate times
+ * the source length. A dense minified application bundle measured about one
+ * state per unit; ordinary sources schedule far fewer.
+ */
+export const DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES_PER_SOURCE_UNIT = 2;
+
+/**
  * At about 2 KiB per retained state this is 16 GiB, the largest JavaScript
  * worker heap `max_heap_mb` admits; a larger allowance could only exhaust it.
  */
