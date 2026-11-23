@@ -12,7 +12,7 @@ const formats = [
 ] as const;
 
 it.each(formats)(
-  "retains exact raw segment facts (wide=$wide, littleEndian=$littleEndian)",
+  "retains exact raw segment facts and bounds (wide=$wide, littleEndian=$littleEndian)",
   ({ wide, littleEndian, headerSize }) => {
     const backing = Buffer.alloc(headerSize + 19, 0xa5);
     const bytes = backing.subarray(7, 7 + headerSize);
@@ -44,29 +44,7 @@ it.each(formats)(
       wide,
       littleEndian,
     );
-    expect(backing.equals(before)).toBe(true);
-    if (!parsed.ok) throw new Error(parsed.error.message);
-    backing.fill(0);
-    const { nameBytes, ...facts } = parsed.value;
-    expect(nameBytes.equals(names)).toBe(true);
-    expect(facts).toEqual({
-      headerSize,
-      address: values[0],
-      memorySize: values[1],
-      fileOffset: values[2],
-      fileSize: values[3],
-      maxProtection: 0x80000001,
-      protection: 0xfedcba98,
-      sectionCount: 0xffffffff,
-      flags: 0x80000010,
-    });
-  },
-);
-
-it.each(formats)(
-  "refuses every incomplete fixed segment record (wide=$wide, littleEndian=$littleEndian)",
-  ({ wide, littleEndian, headerSize }) => {
-    const backing = Buffer.alloc(headerSize + 7, 0xff);
+    const exact = readMachoSegmentHeader(bytes, wide, littleEndian);
     for (let length = 0; length < headerSize; length++)
       expect(
         readMachoSegmentHeader(
@@ -81,6 +59,23 @@ it.each(formats)(
           message: expect.stringContaining("truncated"),
         },
       });
+    expect(backing.equals(before)).toBe(true);
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    backing.fill(0);
+    expect(exact).toEqual(parsed);
+    const { nameBytes, ...facts } = parsed.value;
+    expect(nameBytes.equals(names)).toBe(true);
+    expect(facts).toEqual({
+      headerSize,
+      address: values[0],
+      memorySize: values[1],
+      fileOffset: values[2],
+      fileSize: values[3],
+      maxProtection: 0x80000001,
+      protection: 0xfedcba98,
+      sectionCount: 0xffffffff,
+      flags: 0x80000010,
+    });
   },
 );
 
