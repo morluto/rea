@@ -84,9 +84,8 @@ report the resolved policy separately where needed. See the owning guides for
 
 High-cardinality discovery and graph tools also accept optional per-call
 pagination (`limit` and `offset` on `list_adb_packages`, `list_adb_processes`,
-`list_adb_directory`, `search_android_classes`, and `find_xrefs_to_name`) or
-traversal bounds (`max_depth` and `max_nodes` on `get_call_graph` and
-`trace_call_path`).
+`list_adb_directory`, and `search_android_classes`) or traversal bounds
+(`max_depth` and `max_nodes` on `get_call_graph` and `trace_call_path`).
 Omitting these controls preserves the complete query; supplying them bounds
 work and reply size, sets coverage/discovery to `partial` when entries or
 nodes are omitted, and records an explicit limitation or residual unknown so

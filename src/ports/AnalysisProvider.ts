@@ -94,8 +94,8 @@ export interface AnalysisExecution extends AnalysisObservation {
   /**
    * Whether the provider capped an `xrefs` read: true when it reported a
    * truncation, false when it explicitly reported none. Absent when it reports
-   * nothing, which is not a completeness claim. Never part of Evidence or tool
-   * output.
+   * nothing, which is not a completeness claim. The direct xrefs result stays
+   * address-only; composed workflows may use this fact to describe coverage.
    */
   readonly referencesTruncated?: boolean;
   /** The producer needs this observation retained as source Evidence for composed workflows. */

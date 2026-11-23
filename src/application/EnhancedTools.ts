@@ -697,16 +697,14 @@ export class EnhancedTools {
     if (resolved.value === null)
       return ok({ status: "unresolved", name, reason: "name_not_found" });
 
-    const xrefs = await this.#call(
+    const observed = await this.#observe(
       "xrefs",
       { address: resolved.value },
       signal,
     );
-    if (!xrefs.ok) return xrefs;
-    if (
-      !Array.isArray(xrefs.value) ||
-      xrefs.value.some((xref) => typeof xref !== "string")
-    )
+    if (!observed.ok) return observed;
+    const { result: xrefs, referencesTruncated } = observed.value;
+    if (!Array.isArray(xrefs) || xrefs.some((xref) => typeof xref !== "string"))
       return err(
         new AnalysisOutputError(
           "xrefs",
@@ -715,11 +713,9 @@ export class EnhancedTools {
       );
     const hasPaging = limit !== undefined || offset !== undefined;
     const start = offset ?? 0;
-    const page = !hasPaging
-      ? xrefs.value
-      : limit === undefined
-        ? xrefs.value.slice(start)
-        : xrefs.value.slice(start, start + limit);
+    const page = hasPaging
+      ? xrefs.slice(start, limit === undefined ? undefined : start + limit)
+      : xrefs;
     return ok({
       status: "resolved",
       name,
@@ -727,8 +723,11 @@ export class EnhancedTools {
       xrefs: page,
       ...(hasPaging
         ? {
-            total_xrefs: xrefs.value.length,
-            truncated: start > 0 || page.length < xrefs.value.length,
+            observed_xrefs: xrefs.length,
+            total_xrefs: referencesTruncated === false ? xrefs.length : null,
+            provider_truncated: referencesTruncated ?? null,
+            truncated:
+              page.length < xrefs.length ? true : (referencesTruncated ?? null),
           }
         : {}),
     });

@@ -75,10 +75,9 @@ export const enhancedInputSchemas = {
       .number()
       .int()
       .min(1)
-      .max(10_000)
       .optional()
       .describe(
-        "Maximum number of xref addresses to return; omit to return all",
+        "Maximum number of xref addresses to return; omit to return the observed suffix",
       ),
     offset: z
       .number()
