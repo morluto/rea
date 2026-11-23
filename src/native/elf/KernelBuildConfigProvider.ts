@@ -1,19 +1,16 @@
 import {
-  projectOwnedArtifactIdentityFailure,
-  projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
-  stableArtifactInputFailure,
   projectArtifactCloseFailure,
   ArtifactReaderFailure,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
   ArtifactResourceScope,
 } from "../../resources/index.js";
 import type { KernelBuildConfigPort } from "../../ports/binaryDiagnostics/KernelBuildConfigPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
-import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import {
   MAX_INSPECT_KERNEL_BUILD_CONFIG_CONFIG_BYTES,
   MAX_INSPECT_KERNEL_BUILD_CONFIG_ENTRIES,
@@ -146,91 +143,68 @@ const reportedBudgetContext = (input: InspectKernelBuildConfigInput) => ({
   max_payload_bytes: input.max_payload_bytes,
 });
 
-const kernelBuildConfigFailurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
-  input: InspectKernelBuildConfigInput,
-) => {
-  const { cause, origin } = facts;
-  const identityFailure = projectOwnedArtifactIdentityFailure(
-    facts,
-    OPERATION,
-    input.path,
-  );
-  if (identityFailure !== undefined) return identityFailure;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof KernelBuildConfigBudgetFailure
-  ) {
-    const { limit } = cause.failure;
-    return parseLimitConstraint(
-      OPERATION,
-      limit.name === "compressed_candidate_bytes" ? "memory" : "capacity",
-      cause,
-      {
-        reportedLimitContext: {
-          ...reportedBudgetContext(input),
-          [limit.name]: limit.maximum,
-        },
-        retryable: false,
-        remediationAction: parserBudgetRemediation(limit),
-      },
-    );
-  }
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit") {
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        cause.boundary ?? "memory",
-        cause.message,
-        reportedBudgetContext(input),
-        {
-          cause,
-          ...(cause.boundary !== "capacity" && cause.boundary !== "file-size"
-            ? {}
-            : {
-                retryable: false as const,
-                remediationAction:
-                  cause.boundary === "file-size"
-                    ? fileSizeRemediation(input)
-                    : "Select a smaller artifact. The caller-selected kernel build config budgets refused this image.",
-              }),
-        },
-      );
-    }
-    if (cause.reason === "path" || cause.reason === "format")
-      return stableArtifactInputFailure(cause, OPERATION);
-  }
-  const fileFailure = projectSelectedArtifactFileFailure(
-    cause,
-    OPERATION,
-    input.path,
-    "kernel image",
-  );
-  if (fileFailure !== undefined) return fileFailure;
-  return new ArtifactOperationError(
-    OPERATION,
-    origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure
-      ? cause.reason
-      : "io",
-    undefined,
-    cause instanceof Error
-      ? cause.message
-      : "Kernel build config inspection failed.",
-    { cause },
-  );
-};
-
 const kernelBuildConfigFailure = (
   cause: unknown,
   input: InspectKernelBuildConfigInput,
   identity: { readonly sha256: string; readonly bytes: number } | undefined,
 ) => {
-  const primary = kernelBuildConfigFailurePrimary(
-    artifactFilePrimaryFacts(cause),
-    input,
+  const facts = artifactFilePrimaryFacts(cause);
+  const primary = classifyProviderFailure(
+    facts.cause,
+    offlineArtifactFailureDialect(facts, {
+      providerId: KERNEL_BUILD_CONFIG_PROVIDER.id,
+      operation: OPERATION,
+      path: input.path,
+      description: "kernel image",
+      fallbackMessage: "Kernel build config inspection failed.",
+      recognise: (failure, origin) => {
+        if (
+          origin === "owned-or-classified" &&
+          failure instanceof KernelBuildConfigBudgetFailure
+        ) {
+          const { limit } = failure.failure;
+          return parseLimitConstraint(
+            OPERATION,
+            limit.name === "compressed_candidate_bytes" ? "memory" : "capacity",
+            failure,
+            {
+              reportedLimitContext: {
+                ...reportedBudgetContext(input),
+                [limit.name]: limit.maximum,
+              },
+              retryable: false,
+              remediationAction: parserBudgetRemediation(limit),
+            },
+          );
+        }
+        if (
+          origin === "owned-or-classified" &&
+          failure instanceof ArtifactReaderFailure &&
+          failure.reason === "limit"
+        ) {
+          return new AnalysisResourceConstraintError(
+            OPERATION,
+            failure.boundary ?? "memory",
+            failure.message,
+            reportedBudgetContext(input),
+            {
+              cause: failure,
+              ...(failure.boundary !== "capacity" &&
+              failure.boundary !== "file-size"
+                ? {}
+                : {
+                    retryable: false as const,
+                    remediationAction:
+                      failure.boundary === "file-size"
+                        ? fileSizeRemediation(input)
+                        : "Select a smaller artifact. The caller-selected kernel build config budgets refused this image.",
+                  }),
+            },
+          );
+        }
+        return undefined;
+      },
+    }),
   );
   return projectStableArtifactFailure(
     cause,
