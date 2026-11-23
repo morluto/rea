@@ -1760,41 +1760,43 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
 
         moduleSeq++;
         let modBytes = mod.bytes;
-        if (modBytes === undefined) {
+        let stagedInputDigestMismatched = false;
+        if (successfullyStagedInputs.has(moduleSeq)) {
           const stagedEfi = isMultiModuleBatch
             ? join(ghidraBatchInputDir, `mod_${moduleSeq}.efi`)
             : join(tempRoot.path, "mod_1.efi");
-          if (
-            successfullyStagedInputs.has(moduleSeq) &&
-            existsSync(stagedEfi)
-          ) {
+          if (existsSync(stagedEfi)) {
             const candidateBytes = await readFile(stagedEfi);
             const candidateSha = sha256Hex(candidateBytes);
             if (
-              mod.expectedSha256 === undefined ||
-              candidateSha === mod.expectedSha256
+              mod.expectedSha256 !== undefined &&
+              candidateSha !== mod.expectedSha256
             ) {
+              stagedInputDigestMismatched = true;
+              ghidraBatchOutcomeMap.delete(moduleSeq);
+              isCoveragePartial = true;
+            } else if (modBytes === undefined) {
               modBytes = candidateBytes;
             }
           }
-          if (modBytes === undefined && (mod.entry || mod.sourcePath)) {
-            let freshBytes: Buffer;
-            if (reader !== undefined && mod.entry !== undefined) {
-              freshBytes = await buffer(await reader.open(mod.entry, signal));
-            } else {
-              freshBytes = await readFile(mod.sourcePath!);
-            }
-            const freshSha256 = sha256Hex(freshBytes);
-            if (
-              mod.expectedSha256 !== undefined &&
-              freshSha256 !== mod.expectedSha256
-            ) {
-              throw new Error(
-                `Source module ${mod.sourceRelPath ?? mod.sourcePath} was modified concurrently during analysis (expected sha256 ${mod.expectedSha256}, observed ${freshSha256}).`,
-              );
-            }
-            modBytes = freshBytes;
+        }
+        if (modBytes === undefined && (mod.entry || mod.sourcePath)) {
+          let freshBytes: Buffer;
+          if (reader !== undefined && mod.entry !== undefined) {
+            freshBytes = await buffer(await reader.open(mod.entry, signal));
+          } else {
+            freshBytes = await readFile(mod.sourcePath!);
           }
+          const freshSha256 = sha256Hex(freshBytes);
+          if (
+            mod.expectedSha256 !== undefined &&
+            freshSha256 !== mod.expectedSha256
+          ) {
+            throw new Error(
+              `Source module ${mod.sourceRelPath ?? mod.sourcePath} was modified concurrently during analysis (expected sha256 ${mod.expectedSha256}, observed ${freshSha256}).`,
+            );
+          }
+          modBytes = freshBytes;
         }
         if (modBytes === undefined) {
           modBytes = Buffer.alloc(0);
@@ -1877,6 +1879,13 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         const safeLimitationModName = formatMarkdownCodeSpan(
           ellipsisExcerpt(mod.rawName.replace(/[\r\n]+/g, " "), 128),
         );
+
+        if (stagedInputDigestMismatched) {
+          const mismatchLimitation = `Decompiled C output for ${safeLimitationModName} discarded due to scratch input digest mismatch; recovered with reconstructed entry scaffolding.`;
+          if (!effectiveLimitations.includes(mismatchLimitation)) {
+            effectiveLimitations.push(mismatchLimitation);
+          }
+        }
 
         const headerName = `${boundedName}.h`;
         const headerRelPath = `${moduleRelDir}/${headerName}`;
@@ -2910,6 +2919,13 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         ManifestModuleEntry
       >();
       const ambiguousCrossPlatformKeys = new Set<string>();
+      interface ManifestPayloadEntry {
+        readonly payloadFile: string;
+        readonly exactNorm: string;
+        readonly record: ManifestModuleEntry;
+      }
+      const declaredManifestPayloads: ManifestPayloadEntry[] = [];
+      const matchedManifestPayloads = new Set<ManifestModuleEntry>();
       let manifestSha256: string | null = null;
 
       if (manifestEntry !== undefined) {
@@ -3172,6 +3188,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   exactNorm,
                   manifestEntryRecord,
                 );
+                declaredManifestPayloads.push({
+                  payloadFile: m.payload_file,
+                  exactNorm,
+                  record: manifestEntryRecord,
+                });
                 if (!manifestModulesByFoldedRelPath.has(foldedNorm)) {
                   manifestModulesByFoldedRelPath.set(
                     foldedNorm,
@@ -3402,6 +3423,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             ? (manifestModulesByFoldedRelPath.get(foldedLookupKey) ??
               manifestModulesByFallbackRelPath.get(crossPlatformFoldedKey))
             : undefined);
+        if (fromManifest !== undefined) {
+          matchedManifestPayloads.add(fromManifest);
+        }
 
         const fallbackPhase = hierarchySegments.some((s) => s === "sec")
           ? "SEC"
@@ -3510,6 +3534,34 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           fallbackCleanName,
           fromManifest,
         });
+      }
+
+      for (const declared of declaredManifestPayloads) {
+        if (!matchedManifestPayloads.has(declared.record)) {
+          isCoveragePartial = true;
+          const safePayload = formatMarkdownCodeSpan(
+            ellipsisExcerpt(declared.payloadFile.replace(/[\r\n]+/g, " "), 128),
+          );
+          if (limitations.length < 50) {
+            limitations.push(
+              `Manifest payload ${safePayload} was not found or admitted as a valid UEFI candidate module.`,
+            );
+          }
+          const identityRelPath =
+            HOST_PLATFORM.platform === "win32"
+              ? declared.payloadFile.replaceAll("\\", "/")
+              : declared.payloadFile;
+          if (
+            !omittedCandidates.some(
+              (o) => o.identityRelPath === identityRelPath,
+            )
+          ) {
+            omittedCandidates.push({
+              identityRelPath,
+              reason: "missing_manifest_payload",
+            });
+          }
+        }
       }
 
       // Sort admitted candidate modules deterministically by Unicode code point order

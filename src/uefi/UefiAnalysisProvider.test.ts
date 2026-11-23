@@ -7133,6 +7133,26 @@ it("rejects corrupted or truncated scratch inputs and verifies digest before acc
           scratchCorrupted = true;
         }
       }
+      const postScriptIdx = args.indexOf("-postScript");
+      const outDirArg = args[postScriptIdx + 2];
+      if (outDirArg && existsSync(outDirArg)) {
+        await writeFile(
+          join(outDirArg, "mod_1.efi.c"),
+          "void Module_1(void) {}\n",
+        );
+        await writeFile(
+          join(outDirArg, "mod_1.efi.c.outcome.json"),
+          JSON.stringify({ status: "ok", decompiled_functions: 1 }),
+        );
+        await writeFile(
+          join(outDirArg, "mod_2.efi.c"),
+          "void CorruptedModule_2(void) {}\n",
+        );
+        await writeFile(
+          join(outDirArg, "mod_2.efi.c.outcome.json"),
+          JSON.stringify({ status: "ok", decompiled_functions: 1 }),
+        );
+      }
       return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
     });
 
@@ -7149,8 +7169,17 @@ it("rejects corrupted or truncated scratch inputs and verifies digest before acc
     expect(scratchCorrupted).toBe(true);
     expect(result.modules).toHaveLength(2);
 
+    expect(result.modules[0]?.c_generator).toBe("ghidra");
     // Module 2 was beyond the 32 MiB preload cap, so its scratch copy was checked.
-    // The corrupted scratch copy was rejected, and authentic source bytes were re-read.
+    // The corrupted scratch copy was rejected, its Ghidra C output was discarded,
+    // and authentic source bytes were re-read to generate entry scaffolding.
+    expect(result.modules[1]?.c_generator).toBe("scaffold");
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((l) =>
+        l.includes("discarded due to scratch input digest mismatch"),
+      ),
+    ).toBe(true);
     expect(result.modules[1]?.code_bytes).toBe(mod2Buffer.length);
     const expectedSha2 = createHash("sha256").update(mod2Buffer).digest("hex");
     expect(result.modules[1]?.payload_sha256).toBe(expectedSha2);
@@ -7172,7 +7201,8 @@ it("prefers source_coverage over legacy coverage when evaluating directory manif
   await mkdir(inDir, { recursive: true });
 
   const peBuffer = createMinimalPeBuffer();
-  await writeFile(join(inDir, "Sample.efi"), peBuffer);
+  await mkdir(join(inDir, "DXE"), { recursive: true });
+  await writeFile(join(inDir, "DXE", "Sample.efi"), peBuffer);
   // Prior run had tool output failures (coverage: "partial"), but source was intact (source_coverage: "complete")
   await writeFile(
     join(inDir, "firmware_manifest.json"),
@@ -7311,6 +7341,65 @@ it("retains PEIM ABI for noncanonical vendor type with PEI phase", async () => {
     expect(cContent).toContain("EFI_PEI_SERVICES");
     expect(cContent).toContain("EFI_PEI_FILE_HANDLE");
     expect(cContent).not.toContain("EFI_SYSTEM_TABLE");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("reconciles declared manifest payload rows and records missing payloads as omissions with partial coverage", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-missing-manifest-payload-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const mod1Buffer = createMinimalPeBuffer(0x8664, 1, 256);
+  await writeFile(join(inDir, "Module_1.efi"), mod1Buffer);
+
+  // Manifest declares two modules: Module_1 (exists) and Module_2 (missing from disk)
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_found: 2,
+      total_modules_decompiled: 2,
+      coverage: "complete",
+      source_coverage: "complete",
+      modules: [
+        {
+          guid: "11111111-2222-3333-4444-555555555555",
+          name: "Module_1",
+          phase: "DXE",
+          payload_file: "Module_1.efi",
+        },
+        {
+          guid: "66666666-7777-8888-9999-aaaaaaaaaaaa",
+          name: "MissingModule_2",
+          phase: "DXE",
+          payload_file: "DXE/missing/MissingModule_2.efi",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.modules).toHaveLength(1);
+    expect(result.modules[0]?.name).toBe("Module_1");
+    // Missing declared payload must result in partial coverage and limitation
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some(
+        (l) =>
+          l.includes("Manifest payload") && l.includes("MissingModule_2.efi"),
+      ),
+    ).toBe(true);
   } finally {
     await provider.close();
   }
