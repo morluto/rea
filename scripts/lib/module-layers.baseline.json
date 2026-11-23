@@ -8,7 +8,5 @@
     "main <-> server"
   ],
   "crossProvider": {},
-  "entry": {
-    "application -> desktop": 11
-  }
+  "entry": {}
 }

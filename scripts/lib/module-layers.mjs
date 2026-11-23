@@ -274,8 +274,16 @@ export const ENTRY_FILES = Object.freeze(
         "BuildComputerEnvironment.ts",
         "DconfDatabaseReader.ts",
         "DesktopBuildDoctorFacts.ts",
+        "DesktopBuildSetupHost.ts",
         "DesktopCaptureProvider.ts",
         "DesktopSessionRequests.ts",
+        // Build-computer workflows in src/application/desktop drive these owners.
+        "AgentEnvComputerHelper.ts",
+        "AgentEnvSolveHelper.ts",
+        "BuildComputerController.ts",
+        "BuildComputerLongRuns.ts",
+        "BuildSecretFiles.ts",
+        "ScreenJudgeProcess.ts",
         // Build-computer composition (`capabilityServices`) wires `readHostFile` into `DesktopBuildComputers`.
         "HostFileRead.ts",
       ],
