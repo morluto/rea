@@ -8168,3 +8168,80 @@ it("records missing modules inventory explanation limitation when manifest is em
     await provider.close();
   }
 });
+
+it("rejects empty Ghidra C output and falls back to entry point scaffolding with diagnostic limitation", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-empty-ghidra-out-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "EmptyOutputMod.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args) => {
+      if (command.includes("analyzeHeadless")) {
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          // Emitting an empty / whitespace-only file
+          await writeFile(outC, "   \n\n  \t  \n");
+          await writeFile(
+            `${outC}.outcome.json`,
+            JSON.stringify({
+              status: "success",
+              decompiled_functions: 0,
+              failed_functions: 0,
+            }),
+          );
+        }
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.modules[0]?.c_generator).toBe("scaffold");
+    expect(
+      result.limitations.some((l) =>
+        l.includes(
+          "produced empty output; generated entry point scaffolding instead",
+        ),
+      ),
+    ).toBe(true);
+    const cContent = await readFile(
+      join(outDir, result.modules[0]!.relative_c_file!),
+      "utf8",
+    );
+    expect(cContent).toContain("Reconstructed Entry Scaffolding");
+    expect(cContent).toContain("EntryPoint");
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});

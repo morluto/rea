@@ -2286,11 +2286,13 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 const candidateC = await readFile(ghidraOutC, "utf8");
                 const candidateCBytes = Buffer.byteLength(candidateC, "utf8");
                 if (
+                  candidateCBytes > 0 &&
+                  candidateC.trim().length > 0 &&
                   totalStagedCBytes +
                     headerBytes.length +
                     candidateCBytes +
                     reservedScaffoldBytes <=
-                  MAX_DECOMPILE_TOTAL_BYTES
+                    MAX_DECOMPILE_TOTAL_BYTES
                 ) {
                   cContent = candidateC;
                   cGenerator = "ghidra";
@@ -2310,6 +2312,24 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     if (!effectiveLimitations.includes(incompleteMsg)) {
                       effectiveLimitations.push(incompleteMsg);
                     }
+                  }
+                } else if (
+                  candidateCBytes === 0 ||
+                  candidateC.trim().length === 0
+                ) {
+                  isCoveragePartial = true;
+                  const emptyMsg = `Ghidra C decompilation for ${safeLimitationModName} produced empty output; generated entry point scaffolding instead.`;
+                  if (recordedGhidraFailures < MAX_GHIDRA_FAILURE_DIAGNOSTICS) {
+                    effectiveLimitations.push(emptyMsg);
+                    recordedGhidraFailures++;
+                  } else if (
+                    !effectiveLimitations.includes(
+                      "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
+                    )
+                  ) {
+                    effectiveLimitations.push(
+                      "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
+                    );
                   }
                 } else if (
                   !effectiveLimitations.includes(
