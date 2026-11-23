@@ -2,7 +2,6 @@ import {
   RELEASE_EXPOSURE_AUDIT_OPERATION as OPERATION,
   releaseExposureFailure,
 } from "./releaseExposure/releaseExposureFailures.js";
-import { isUtf8 } from "node:buffer";
 import { createHash } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { lstat, mkdtemp, opendir, rm, writeFile } from "node:fs/promises";
@@ -41,10 +40,8 @@ import {
   createAsarHeaderSignatureProbe,
 } from "../resources/index.js";
 import {
-  decodeDeclaredText,
   decodeMemberText,
   declaresTextEncoding,
-  getCachedTextDecoder,
   type MemberText,
 } from "./releaseExposure/memberTextDecoding.js";
 import {
@@ -62,6 +59,23 @@ import {
   type PeHeaderState,
 } from "./releaseExposure/memberClassification.js";
 import { nodeShebang } from "./releaseExposure/nodeShebang.js";
+import {
+  diskPath,
+  entryPath,
+  hasExtractableAncestor,
+  packageAncestor,
+  type InventoryOccurrence,
+} from "./releaseExposure/occurrencePaths.js";
+import {
+  hasVisibleNonMapPrefix,
+  isSourceMapJsonObject,
+  mapText,
+  mayHaveSourceMapPrefix,
+  mayHaveSourceMapText,
+  namedMapReference,
+  parsesAsSourceMap,
+  type SourceMapReference,
+} from "./releaseExposure/sourceMapDetection.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
@@ -88,7 +102,6 @@ import { logicalPathNfc } from "../domain/artifactIdentity.js";
 import type { ArtifactIntegrityCheck } from "../domain/artifactOperationError.js";
 import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import { evidenceSubjectFormatSchema } from "../domain/evidenceSubject.js";
-import { byteOrderMarkEncoding } from "../domain/textByteOrderMark.js";
 import { RELEASE_EXPOSURE_PROVIDER } from "../domain/investigationProviders.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
@@ -121,17 +134,12 @@ import {
   sameRegularFileState,
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
-import { sourceMapJsonText } from "../domain/sourceMapEnvelope.js";
 import {
   hasScheme,
   htmlUrlText,
   stripQueryAndFragment,
 } from "../domain/artifactPathSyntax.js";
-import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
-import {
-  inspectSourceMap,
-  inspectSourceMapSourceContent,
-} from "../domain/sourceMapFormat.js";
+import { inspectSourceMapSourceContent } from "../domain/sourceMapFormat.js";
 import { htmlArtifactReferences } from "../domain/javascript/htmlArtifactReferences.js";
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
 import { addSourceMapDirectives } from "../domain/javascript/javascriptStaticAnalysisCalls.js";
@@ -188,16 +196,12 @@ const SCAN_INTERRUPTED =
   "The member scan stopped on unfinished cleanup. Members it did not reach are unknown.";
 const SCAN_CANCELLED =
   "The member scan was cancelled. Members it did not reach are unknown.";
-/** Decoded representation bound for one binary plist text member. */
-/** Bytes of a member that decide how its NULs are read. */
-/** One header byte in this many being NUL is too many for UTF-8 text. */
 const PE_MEMBER_NAME = /\.(?:dll|exe|sys)$/iu;
 const JAVASCRIPT_MEMBER_NAME = /\.(?:[cm]?[jt]s|[jt]sx)$/iu;
 /** Markup that `htmlArtifactReferences` reads for scripts. SVG can carry them too. */
 const SCRIPT_PAGE_NAME = /\.(?:html?|svg)$/iu;
 
 type NativeFormat = "elf" | "mach-o" | "mach-o-universal" | "pe";
-type InventoryOccurrence = ArtifactInventoryResult["occurrences"][number];
 
 /** One read attempt. Allowance and read failure are different facts. */
 type MemberRead =
@@ -205,29 +209,6 @@ type MemberRead =
   | { readonly kind: "over_allowance"; readonly prefix: Buffer | null }
   | { readonly kind: "unread" };
 type ReadMember = (budget: number) => Promise<MemberRead>;
-
-/** Interpretation is separate from the member's source path. */
-interface SourceMapReference {
-  readonly location: string;
-  readonly kind: "javascript-source-map" | "possible-linker-map";
-  readonly genericName?: boolean;
-  readonly occurrence?: object;
-}
-
-const namedMapReference = (
-  logical: string,
-  location: string,
-  occurrence?: object,
-): SourceMapReference => ({
-  location,
-  genericName:
-    logical.toLowerCase().endsWith(".map") &&
-    !isJavaScriptSourceMapName(logical),
-  ...(occurrence === undefined ? {} : { occurrence }),
-  kind: isJavaScriptSourceMapName(logical)
-    ? "javascript-source-map"
-    : "possible-linker-map",
-});
 
 interface OpenContainer {
   readonly path: string;
@@ -1457,55 +1438,6 @@ const noteUnreadMap = (
   noteUncertainLinkerMap(state, map);
 };
 
-/**
- * A map's text in the encoding its byte order mark names, or null for one this
- * reader does not decode, which leaves the map unresolved. Unmarked bytes are
- * read as UTF-8, as a source map is.
- */
-const mapText = (bytes: Buffer): MemberText | null => {
-  const encoding = byteOrderMarkEncoding(bytes);
-  if (encoding === null)
-    return { text: bytes.toString("utf8"), complete: isUtf8(bytes) };
-  if (encoding === "utf-32") return null;
-  return decodeDeclaredText(bytes, encoding);
-};
-
-const mayHaveSourceMapPrefix = (prefix: Buffer): boolean => {
-  const encoding = byteOrderMarkEncoding(prefix);
-  if (encoding === "utf-32") return true;
-  try {
-    const text = new TextDecoder(encoding ?? "utf-8", { fatal: true }).decode(
-      prefix,
-      { stream: true },
-    );
-    return mayHaveSourceMapText(text);
-  } catch (cause) {
-    if (!(cause instanceof TypeError)) throw cause;
-    return !hasVisibleNonMapPrefix(
-      getCachedTextDecoder(encoding ?? "utf-8", false).decode(prefix),
-    );
-  }
-};
-
-const mayHaveSourceMapText = (decoded: string): boolean => {
-  const text = sourceMapJsonText(decoded).trimStart();
-  return text.length === 0 || text.startsWith("{");
-};
-
-/** A visible ASCII non-JSON prefix remains evidence even if later text is lossy. */
-const hasVisibleNonMapPrefix = (text: string): boolean => {
-  const envelope = text.startsWith(")]}'");
-  if (envelope && !/[\r\n]/u.test(text)) return false;
-  const first = sourceMapJsonText(text).trimStart().charCodeAt(0);
-  // A leading ')' without a complete envelope may still begin one.
-  return (
-    first >= 0x21 &&
-    first <= 0x7e &&
-    first !== 0x7b &&
-    (envelope || first !== 0x29)
-  );
-};
-
 const readSourceMap = (
   state: ScanState,
   map: SourceMapReference,
@@ -1582,18 +1514,7 @@ const scriptHoldsMap = (
     !isScriptTarget(state, member.location)
   )
     return false;
-  const decoded = parseJsonWithDuplicatePolicy(
-    sourceMapJsonText(text),
-    "last-wins",
-  );
-  if (!decoded.ok) return false;
-  const parsed = decoded.value;
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
-    return false;
-  return (
-    "version" in parsed &&
-    ("mappings" in parsed || "sources" in parsed || "sections" in parsed)
-  );
+  return isSourceMapJsonObject(text);
 };
 
 /**
@@ -3412,81 +3333,6 @@ const classifySiblingMap = async (
   )
     state.skippedCompanions += 1;
   else noteLinkerMapGuess(state, sibling);
-};
-
-const parsesAsSourceMap = (bytes: Buffer): boolean => {
-  const text = mapText(bytes);
-  if (text === null || !text.complete) return false;
-  try {
-    inspectSourceMap(text.text);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const diskPath = (
-  input: ConsumeInput,
-  occurrence: InventoryOccurrence,
-  byId: Map<string, InventoryOccurrence>,
-  formatOf: (occurrence: InventoryOccurrence) => string,
-): string | null => {
-  if (hasExtractableAncestor(occurrence, byId, formatOf)) return null;
-  if (
-    occurrence.source_path !== undefined &&
-    occurrence.source_path.length > 0 &&
-    isAbsolute(occurrence.source_path)
-  )
-    return occurrence.source_path;
-  if (!input.directory) {
-    if (occurrence.parent_occurrence_id === null) return input.path;
-    return null;
-  }
-  if (occurrence.logical_path.split("/").includes("..")) return null;
-  if (occurrence.logical_path.length === 0 || occurrence.logical_path === ".")
-    return input.path;
-  const source = occurrence.source_path;
-  return appendCallerPath(
-    input.path,
-    source !== undefined && logicalPathNfc(source) === occurrence.logical_path
-      ? source
-      : occurrence.logical_path,
-  );
-};
-
-const packageAncestor = (
-  occurrence: InventoryOccurrence,
-  byId: Map<string, InventoryOccurrence>,
-  formatOf: (occurrence: InventoryOccurrence) => string,
-): InventoryOccurrence | undefined => {
-  const seen = new Set<string>();
-  let parentId = occurrence.parent_occurrence_id;
-  while (parentId !== null) {
-    if (seen.has(parentId)) return undefined;
-    seen.add(parentId);
-    const parent = byId.get(parentId);
-    if (parent === undefined) return undefined;
-    if (EXTRACTABLE.has(formatOf(parent))) return parent;
-    parentId = parent.parent_occurrence_id;
-  }
-  return undefined;
-};
-
-const hasExtractableAncestor = (
-  occurrence: InventoryOccurrence,
-  byId: Map<string, InventoryOccurrence>,
-  formatOf: (occurrence: InventoryOccurrence) => string,
-): boolean => packageAncestor(occurrence, byId, formatOf) !== undefined;
-
-const entryPath = (
-  occurrence: InventoryOccurrence,
-  parent: InventoryOccurrence,
-): string => {
-  const logical = occurrence.logical_path;
-  const parentLogical = parent.logical_path;
-  if (parentLogical.length === 0 || parentLogical === ".") return logical;
-  const prefix = `${parentLogical}/`;
-  return logical.startsWith(prefix) ? logical.slice(prefix.length) : logical;
 };
 
 /**
