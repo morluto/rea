@@ -250,10 +250,11 @@ it("rejects reused MethodDef tokens within an image but preserves cross-image re
   // Distinct rows may still point at the same native address after folding.
   const folded = createIl2cppBinaryFixture();
   folded.writeBigUInt64LE(folded.readBigUInt64LE(0x308), 0x300);
-  const linkedFolded = link(folded);
-  expect(linkedFolded.method_addresses[0]?.address).toBe(
-    linkedFolded.method_addresses[1]?.address,
-  );
+  expect(link(folded).method_addresses).toEqual([
+    expectedAddresses[0],
+    expectedAddresses[0],
+    ...expectedAddresses.slice(2),
+  ]);
 });
 
 it.each([0, 4000, 9000])(
@@ -570,10 +571,7 @@ it("finds an x86-64 module array through the instruction that loads it", () => {
   const linked = link(inlined);
   expect(linked.code_gen_modules_field).toBeNull();
   expect(linked.code_gen_modules_array).toBe(FIXTURE_BINARY_BASE + 0x500n);
-  expect(linked.method_addresses).toEqual(
-    link(createElfFixture(createIl2cppBinaryFixture(), { machine: 62 }))
-      .method_addresses,
-  );
+  expect(linked.method_addresses).toEqual(expectedAddresses);
 });
 
 it.each([
@@ -608,27 +606,17 @@ it.each([
       bytes.writeUInt32LE(1, 32 + 72 + 60); // The second segment is read-only.
       return bytes;
     };
-    expect(link(makeImage(width)).code_gen_modules_array).toBe(
-      FIXTURE_BINARY_BASE + 0x500n,
-    );
+    expect(link(makeImage(width))).toMatchObject({
+      code_gen_modules_field: null,
+      code_gen_modules_array: FIXTURE_BINARY_BASE + 0x500n,
+      method_addresses: expectedAddresses,
+    });
     expect(failure(makeImage(width - 1))).toMatchObject({
       reason: "code-registration-not-found",
       kind: "malformed",
     });
   },
 );
-
-it("finds an arm64 module array through the ADRP+ADD pair that loads it", () => {
-  const linked = link(
-    createIl2cppBinaryFixture({
-      codeRegistration: false,
-      adrpAdd: [[0xc00, 0x500]],
-    }),
-  );
-  expect(linked.code_gen_modules_field).toBeNull();
-  expect(linked.code_gen_modules_array).toBe(FIXTURE_BINARY_BASE + 0x500n);
-  expect(linked.method_addresses).toEqual(expectedAddresses);
-});
 
 it.each([
   ["no instruction pair loads the array", {}],
@@ -655,35 +643,32 @@ it.each([
   },
 );
 
-it("finds an arm64 type table through the ADRP+ADD pair that loads it", () => {
-  const linked = linkWholeTable(
-    createIl2cppBinaryFixture({
+it.each(["arm64", "x86-64"] as const)(
+  "links exact type identities from the %s code-referenced table",
+  (architecture) => {
+    const image = createIl2cppBinaryFixture({
       metadataRegistration: false,
-      adrpAdd: [[0xc20, 0x900]],
-    }),
-  );
-  const reference = linkWholeTable(createIl2cppBinaryFixture());
-  expect(linked.types_field).toBeNull();
-  expect(linked.types_count).toBe(4);
-  expect(linked.return_types).toEqual(reference.return_types);
-  expect(linked.field_types).toEqual(reference.field_types);
-  expect(linked.parameter_types).toEqual(reference.parameter_types);
-});
-
-it("finds an x86-64 type table through the instruction that loads it", () => {
-  const image = createIl2cppBinaryFixture({ metadataRegistration: false });
-  // lea rcx, [rip + disp32] at 0xc40, loading the type table at 0x900.
-  image.set([0x48, 0x8d, 0x0d], 0xc40);
-  image.writeInt32LE(0x900 - (0xc40 + 7), 0xc43);
-  const linked = linkWholeTable(createElfFixture(image, { machine: 62 }));
-  expect(linked.types_field).toBeNull();
-  expect(linked.types_count).toBe(4);
-  expect(linked.return_types).toEqual(
-    linkWholeTable(
-      createElfFixture(createIl2cppBinaryFixture(), { machine: 62 }),
-    ).return_types,
-  );
-});
+      adrpAdd: architecture === "arm64" ? [[0xc20, 0x900]] : [],
+    });
+    if (architecture === "x86-64") {
+      // lea rcx, [rip + disp32] at 0xc40, loading the type table at 0x900.
+      image.set([0x48, 0x8d, 0x0d], 0xc40);
+      image.writeInt32LE(0x900 - (0xc40 + 7), 0xc43);
+    }
+    const bytes =
+      architecture === "arm64"
+        ? image
+        : createElfFixture(image, { machine: 62 });
+    const genericArray = { type: 0, name: FIXTURE_RETURN_TYPE_NAME };
+    expect(linkWholeTable(bytes)).toMatchObject({
+      types_field: null,
+      types_count: 4,
+      return_types: Array.from({ length: 5 }, () => ({ type: 3, name: "int" })),
+      field_types: [genericArray, genericArray],
+      parameter_types: [genericArray],
+    });
+  },
+);
 
 it.each([
   ["the pair loads an address inside the run", { target: 0x908 }],
@@ -1296,11 +1281,6 @@ it("ignores unrelated unaligned Mach-O binds while finding module records", () =
   expect(linked.method_addresses).toEqual(expectedAddresses);
 });
 
-it("keeps unbound Mach-O method words classified from their values", () => {
-  const linked = link(createIl2cppBinaryFixture());
-  expect(linked.method_addresses[1]).toEqual(expectedAddresses[1]);
-  expect(linked.method_addresses[4]).toEqual(expectedAddress("no-body"));
-});
 it("refuses an unresolved inner type value instead of rendering its stored placeholder", () => {
   expect(
     failure(createIl2cppDyldBindFixture(FIXTURE_BINARY_BASE + 0x990n, 0x980)),

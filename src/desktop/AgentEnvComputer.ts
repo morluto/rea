@@ -7,7 +7,7 @@ import { z } from "zod";
 
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { Deadline } from "../domain/deadline.js";
-import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { isCanonicalBase64 } from "../domain/stringPatterns.js";
 import { StructuredContentMcpClient } from "../providers/StructuredContentMcpClient.js";
 import { validateMcpHttpResponse } from "../providers/Utf8McpResponse.js";
@@ -455,10 +455,14 @@ export class AgentEnvComputer implements ControlledComputer {
       { name, arguments: args },
       { timeout: REQUEST_TIMEOUT_MS, signal },
     );
-    const structured = jsonObjectSchema.safeParse(result.structuredContent);
+    const structured = ownedJsonObjectSchema.safeParse(
+      result.structuredContent,
+    );
     return {
       isError: result.isError === true,
-      content: result.content.map((block) => jsonObjectSchema.parse(block)),
+      content: result.content.map((block) =>
+        ownedJsonObjectSchema.parse(block),
+      ),
       structured: structured.success ? structured.data : null,
     };
   }

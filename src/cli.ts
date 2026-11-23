@@ -52,13 +52,15 @@ import * as browserModule from "./cli/browserCommands.js";
 import * as webRuntimeModule from "./cli/webRuntimeCommands.js";
 import * as webNetworkCaptureModule from "./cli/webNetworkCaptureCommands.js";
 import * as advancedBrowserModule from "./cli/browserAdvancedCommands.js";
-import * as browserScenarioModule from "./cliBrowserScenarioCommands.js";
+import * as browserScenarioModule from "./cli/browserScenarioCommands.js";
 import * as electronModule from "./cli/electronCommands.js";
 import * as javaScriptRuntimeObservationModule from "./cli/javascriptRuntimeCommands.js";
 import * as guidanceModule from "./cli/guidanceCommands.js";
 import * as guidedWorkflowModule from "./cli/guidedWorkflowCommands.js";
+import * as sourceToBundleModule from "./cli/sourceToBundleCommand.js";
+import * as staticObservedEndpointsModule from "./cli/staticObservedEndpointsCommand.js";
 import * as analysisViewModule from "./cli/analysisViewCommands.js";
-import * as evidenceModule from "./cliEvidenceCommands.js";
+import * as evidenceModule from "./cli/evidenceCommands.js";
 import * as environmentModule from "./cli/environmentCommands.js";
 import * as processModule from "./cli/processCommands.js";
 import * as desktopCaptureModule from "./cli/desktopCaptureCommands.js";
@@ -117,6 +119,8 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
   javaScriptRuntimeObservation: javaScriptRuntimeObservationModule,
   guidance: guidanceModule,
   guidedWorkflow: guidedWorkflowModule,
+  sourceToBundle: sourceToBundleModule,
+  staticObservedEndpoints: staticObservedEndpointsModule,
   analysisView: analysisViewModule,
   evidence: evidenceModule,
   environment: environmentModule,
@@ -134,7 +138,7 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
  * Build the complete one-shot Incur CLI without starting Hopper at import time.
  * Analysis commands acquire and close their own sessions; bare `mcp` and
  * `--mcp` are intercepted by the executable dispatcher before this module loads.
- * One-shot commands load only their own registrars; see `cli/cliLoader.ts`.
+ * One-shot commands load only their own registrars; see `cliLoader.ts`.
  */
 export const createCli = (
   selectedEnvironment: Readonly<

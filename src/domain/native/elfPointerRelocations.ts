@@ -123,7 +123,10 @@ export interface ElfPointerRelocationInput {
   readonly bits: 32 | 64;
   readonly little: boolean;
   readonly machine: number;
-  readonly dynamicSegments: readonly ElfDynamicSegment[];
+  readonly dynamicSegments: readonly Pick<
+    ElfDynamicSegment,
+    "offset" | "size"
+  >[];
   readonly mappings: readonly FileMapping[];
   readonly zeroFills: readonly ZeroFillMapping[];
 }
@@ -975,30 +978,43 @@ export function* readElfRelocationWritesSteps(
     const start = relrSize === 0n ? 0 : fileOffset(relr, Number(relrSize));
     if (start === null) return malformed("RELR table is not file-backed");
     let next: bigint | undefined;
-    for (let at = start; at < start + Number(relrSize); at += word) {
+    const wordBig = BigInt(word);
+    const addrSpace = 1n << BigInt(input.bits);
+    const maxAddr = addrSpace - wordBig;
+    const strideBig = BigInt((input.bits - 1) * word);
+    const end = start + Number(relrSize);
+    const add = (address: bigint, recordOffset: number) => {
+      if (address > maxAddr)
+        malformed("RELR destination overflows the ELF address space");
+      const slot = target(address, word);
+      return write(address, word, slot === null ? 0n : rawWord(slot), {
+        source: {
+          encoding: "relr",
+          record_file_offset: recordOffset,
+          kind: null,
+        },
+        symbol_index: null,
+        addend: null,
+      });
+    };
+    for (let at = start; at < end; at += word) {
       if ((at - start) % (word * 4096) === 0) yield;
       const entry = rawWord(at);
-      const add = (address: bigint) => {
-        if (address > (1n << BigInt(input.bits)) - BigInt(word))
-          malformed("RELR destination overflows the ELF address space");
-        const slot = target(address, word);
-        return write(address, word, slot === null ? 0n : rawWord(slot), {
-          source: { encoding: "relr", record_file_offset: at, kind: null },
-          symbol_index: null,
-          addend: null,
-        });
-      };
       if ((entry & 1n) === 0n) {
-        yield add(entry);
-        next = entry + BigInt(word);
+        yield add(entry, at);
+        next = entry + wordBig;
       } else {
         if (next === undefined)
           return malformed("RELR bitmap has no preceding address");
-        for (let bit = 1; bit < input.bits; bit++)
-          if ((entry & (1n << BigInt(bit))) !== 0n)
-            yield add(next + BigInt((bit - 1) * word));
-        next += BigInt((input.bits - 1) * word);
-        if (next > 1n << BigInt(input.bits))
+        let bits = entry >> 1n;
+        let addr = next;
+        while (bits !== 0n) {
+          if ((bits & 1n) !== 0n) yield add(addr, at);
+          bits >>= 1n;
+          addr += wordBig;
+        }
+        next += strideBig;
+        if (next > addrSpace)
           malformed("RELR bitmap overflows the ELF address space");
       }
     }
@@ -1024,6 +1040,11 @@ export function* readElfRelocationWritesSteps(
 /** Loader values and overlap ownership, independent of retained relocation provenance. */
 export interface ElfVirtualPointerWrites {
   readonly hasWrites: (address: bigint, size: number) => boolean;
+  /** Sorted, coalesced mapping-relative `[start, end)` byte intervals overlapping loader writes. */
+  readonly writeIntervalsIn: (
+    address: bigint,
+    size: number,
+  ) => readonly { readonly start: number; readonly end: number }[];
   /** Undefined when a write leaves the selected field unresolved or partly overwritten. */
   readonly unsignedAt: (address: bigint, width: 4 | 8) => bigint | undefined;
 }
@@ -1179,6 +1200,37 @@ class ElfVirtualWriteIndex {
         const low = before(address + BigInt(size));
         return low > 0 && (reach[low - 1] ?? 0n) > address;
       },
+      writeIntervalsIn: (
+        address: bigint,
+        size: number,
+      ): readonly { readonly start: number; readonly end: number }[] => {
+        if (size <= 0) return [];
+        const limit = address + BigInt(size);
+        const last = before(limit) - 1;
+        if (last < 0 || (reach[last] ?? 0n) <= address) return [];
+        const reversed: { start: number; end: number }[] = [];
+        for (let at = last; at >= 0 && (reach[at] ?? 0n) > address; at--) {
+          const range = ranges[at]!;
+          if (range.end <= address) continue;
+          const start =
+            range.address <= address ? 0 : Number(range.address - address);
+          const end = range.end >= limit ? size : Number(range.end - address);
+          reversed.push({ start, end });
+        }
+        if (reversed.length <= 1) return reversed;
+        reversed.reverse();
+        const coalesced: { start: number; end: number }[] = [reversed[0]!];
+        for (let i = 1; i < reversed.length; i += 1) {
+          const next = reversed[i]!;
+          const tail = coalesced[coalesced.length - 1]!;
+          if (next.start <= tail.end) {
+            if (next.end > tail.end) tail.end = next.end;
+          } else {
+            coalesced.push(next);
+          }
+        }
+        return coalesced;
+      },
     };
   }
 }
@@ -1286,6 +1338,7 @@ export function* readElfPointerValuesSteps(
   const { originalValueAt } = next.value;
   return {
     hasWrites: facts.hasWrites,
+    writeIntervalsIn: facts.writeIntervalsIn,
     unsignedAt: (address, width) => {
       if (!facts.hasWrites(address, width)) return undefined;
       return facts.unsignedAt(

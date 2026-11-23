@@ -14,6 +14,7 @@ import {
 import {
   gradleModuleFixture,
   mavenPomFixture,
+  mavenPropertyValuesFixture,
   qualifiedMavenPropertiesFixture,
 } from "../../src/java/MavenGradleMetadata.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -27,6 +28,96 @@ const bundleOutputSchema = contractNamed(
   SESSION_TOOL_CONTRACTS,
   "get_evidence_bundle",
 ).outputSchema;
+
+cliTest(
+  "preserves Maven property value characters through CLI, MCP and retained Evidence",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-maven-property-values-");
+    const path = join(root, "pom.xml");
+    const bytes = Buffer.from(mavenPropertyValuesFixture);
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-maven-gradle-metadata", path, "--json"],
+    });
+    expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+    const cliEvidence = outputSchema.parse(result.json);
+    const report = cliEvidence.normalized_result;
+    expect(report.properties).toEqual([
+      {
+        name: "revision",
+        value: "\u00a01.2.3\u00a0",
+        value_credentials_redacted: false,
+      },
+      {
+        name: "dependency.version",
+        value: "\ufeff2.0\ufeff",
+        value_credentials_redacted: false,
+      },
+      {
+        name: "marker",
+        value: "\u00a0\ufeff",
+        value_credentials_redacted: false,
+      },
+      {
+        name: "plain",
+        value: "ordinary value",
+        value_credentials_redacted: false,
+      },
+      { name: "blank", value: null, value_credentials_redacted: false },
+      {
+        name: "mirror",
+        value: "\u00a0https://example.invalid/repository\ufeff",
+        value_credentials_redacted: true,
+      },
+    ]);
+    expect(report.coordinates.version).toBe("${revision}");
+    expect(report.dependencies[0]?.version).toBe("${dependency.version}");
+    expect(report.unresolved).toEqual([
+      {
+        kind: "property",
+        reference: "${revision}",
+        field: "version",
+        owner: "project",
+        index: null,
+      },
+      {
+        kind: "property",
+        reference: "${dependency.version}",
+        field: "version",
+        owner: "dependency",
+        index: 0,
+      },
+    ]);
+    expect(report.artifact).toEqual({
+      path,
+      bytes: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    });
+    expect(report.coverage).toEqual({
+      status: "complete",
+      examined_bytes: bytes.length,
+    });
+    const { call } = await connectLocalToolsMcp();
+    const response = await call("inspect_maven_gradle_metadata", { path });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    const evidence = outputSchema.parse(response.structuredContent);
+    expect(evidence.normalized_result).toEqual(report);
+    const retained = await call("get_evidence_bundle", { detail: "complete" });
+    expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
+    const bundle = parseEvidenceBundle(
+      bundleOutputSchema.parse(retained.structuredContent).result,
+    );
+    expect(
+      bundle.records.find(
+        (record) => record.evidence_id === evidence.evidence_id,
+      ),
+    ).toEqual(evidence);
+    expect(JSON.stringify([cliEvidence, response, retained])).not.toContain(
+      "fixture-password",
+    );
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);
 
 cliTest(
   "distinguishes POM declaration namespaces and preserves qualified property keys through CLI and MCP",

@@ -210,6 +210,121 @@ const JAVA_GSON_STUBS = String.raw`
         JsonIOException(Throwable cause) { super(cause); }
     }
 
+    private static final class JsonWriter {
+        private final Writer out;
+        private final Gson gson;
+        private final List<Boolean> containerNeedsComma = new ArrayList<>();
+        private String deferredName;
+        private boolean serializeNulls;
+
+        JsonWriter(Writer out, Gson gson) {
+            this.out = out;
+            this.gson = gson;
+        }
+
+        void setSerializeNulls(boolean serializeNulls) {
+            this.serializeNulls = serializeNulls;
+        }
+
+        private void writeDeferredName() throws IOException {
+            if (deferredName != null) {
+                int top = containerNeedsComma.size() - 1;
+                if (containerNeedsComma.get(top)) {
+                    out.write(',');
+                } else {
+                    containerNeedsComma.set(top, true);
+                }
+                gson.writeString(out, deferredName);
+                out.write(':');
+                deferredName = null;
+            }
+        }
+
+        private void beforeValue() throws IOException {
+            if (deferredName != null) {
+                writeDeferredName();
+                return;
+            }
+            if (!containerNeedsComma.isEmpty()) {
+                int top = containerNeedsComma.size() - 1;
+                if (containerNeedsComma.get(top)) {
+                    out.write(',');
+                } else {
+                    containerNeedsComma.set(top, true);
+                }
+            }
+        }
+
+        JsonWriter beginObject() throws IOException {
+            beforeValue();
+            out.write('{');
+            containerNeedsComma.add(false);
+            return this;
+        }
+
+        JsonWriter endObject() throws IOException {
+            containerNeedsComma.remove(containerNeedsComma.size() - 1);
+            out.write('}');
+            return this;
+        }
+
+        JsonWriter beginArray() throws IOException {
+            beforeValue();
+            out.write('[');
+            containerNeedsComma.add(false);
+            return this;
+        }
+
+        JsonWriter endArray() throws IOException {
+            containerNeedsComma.remove(containerNeedsComma.size() - 1);
+            out.write(']');
+            return this;
+        }
+
+        JsonWriter name(String name) throws IOException {
+            deferredName = name;
+            return this;
+        }
+
+        JsonWriter value(String value) throws IOException {
+            if (value == null) return nullValue();
+            beforeValue();
+            gson.writeString(out, value);
+            return this;
+        }
+
+        JsonWriter value(boolean value) throws IOException {
+            beforeValue();
+            out.write(value ? "true" : "false");
+            return this;
+        }
+
+        JsonWriter value(long value) throws IOException {
+            beforeValue();
+            out.write(Long.toString(value));
+            return this;
+        }
+
+        JsonWriter nullValue() throws IOException {
+            if (deferredName != null) {
+                if (serializeNulls) {
+                    writeDeferredName();
+                } else {
+                    deferredName = null;
+                    return this;
+                }
+            } else {
+                beforeValue();
+            }
+            out.write("null");
+            return this;
+        }
+
+        void flush() throws IOException {
+            out.flush();
+        }
+    }
+
     private static class Gson {
         private static final String[] REPLACEMENT_CHARS = new String[128];
         static {
@@ -232,6 +347,9 @@ const JAVA_GSON_STUBS = String.raw`
         private boolean useCharArrayWrites;
         void setUseCharArrayWrites(boolean useCharArrayWrites) {
             this.useCharArrayWrites = useCharArrayWrites;
+        }
+        JsonWriter newJsonWriter(Writer out) {
+            return new JsonWriter(out, this);
         }
         void toJson(JsonElement element, Appendable appendable) {
             Writer out = (Writer) appendable;
@@ -436,8 +554,6 @@ const JAVA_GHIDRA_STUBS = String.raw`
         StubFunctionManager getFunctionManager() { return functionManager; }
         AddressFactory getAddressFactory() { return addressFactory; }
     }
-    private record ProcedureFacts() {}
-    private record SymbolFacts() {}
     private final StubProgram currentProgram = new StubProgram();
     private final TaskMonitor monitor = new TaskMonitor();
     private List<ProcedureEntry> procedureInventory;
@@ -480,8 +596,9 @@ const JAVA_PROBE_DRIVER = String.raw`
             String[] fields = line.split("\\|", -1);
             String pattern = "0".equals(fields[0]) ? null : decodeHex(fields[1]);
             String value = decodeHex(fields[2]);
+            String substring = fields[3].isEmpty() ? null : decodeHex(fields[3]);
             try {
-                ValueMatcher matcher = literalCandidateMatcher(pattern);
+                ValueMatcher matcher = literalCandidateMatcher(pattern, substring);
                 System.out.println(matcher.matches(value) ? "1" : "0");
             }
             catch (RequestFailure failure) {
@@ -722,8 +839,8 @@ const JAVA_PROBE_DRIVER = String.raw`
                 value,
                 leafName.equals(value) ? value : leafName,
                 List.copyOf(aliases),
-                new ProcedureFacts(),
-                new SymbolFacts()
+                new ProcedureFacts(false, false, null),
+                new SymbolFacts(true, false, false, "Function", "USER_DEFINED")
             ));
         }
         procedureInventory = List.copyOf(inventory);
@@ -766,8 +883,8 @@ const JAVA_PROBE_DRIVER = String.raw`
             String aliasLeaf = decodeHex(fields[5]);
             ValueMatcher delegate = switch (factory) {
                 case "literal" -> literalMatcher(expr);
-                case "candidate-ascii" -> literalCandidateMatcher(expr);
-                case "candidate-null" -> literalCandidateMatcher(null);
+                case "candidate-ascii" -> literalCandidateMatcher(expr, null);
+                case "candidate-null" -> literalCandidateMatcher(null, null);
                 case "regex-cs" -> regexMatcher(expr, true);
                 case "regex-ci" -> regexMatcher(expr, false);
                 default -> throw new IllegalArgumentException("Unknown matcher factory: " + factory);
@@ -794,11 +911,39 @@ const JAVA_PROBE_DRIVER = String.raw`
                 aliasQualified.isEmpty()
                     ? List.of()
                     : List.of(new ProcedureAlias(aliasLeaf, aliasQualified)),
-                new ProcedureFacts(),
-                new SymbolFacts()
+                new ProcedureFacts(false, false, null),
+                new SymbolFacts(true, false, false, "Function", "USER_DEFINED")
             );
             ProcedureNameMatch result = matchProcedureNames(entry, matcher);
             System.out.println(result.primary() + "|" + String.join(",", result.aliases()) + "|" + calls[0]);
+        }
+    }
+
+    private static void runStreamInventory() throws IOException {
+        StubAddress addr1 = new StubAddress(0x1000L, false);
+        StubAddress addr2 = new StubAddress(0x2000L, false);
+        SymbolFacts symFacts = new SymbolFacts(true, false, false, "Function", "USER_DEFINED");
+        ProcedureFacts procFacts = new ProcedureFacts(false, true, addr2);
+        ProcedureFacts procFactsNull = new ProcedureFacts(false, false, null);
+        StringFacts strFacts = new StringFacts("utf-8", true, 12);
+
+        List<NameEntry> names = List.of(new NameEntry(addr1, "ns::sym", symFacts));
+        ProcedureEntry proc1 = new ProcedureEntry(null, addr1, "ns::work", "work", true, List.of(), procFacts, symFacts);
+        ProcedureEntry proc2 = new ProcedureEntry(null, addr2, "plain", "plain", true, List.of(), procFactsNull, null);
+        List<MatchedProcedure> matched = List.of(new MatchedProcedure(proc1, List.of("alt::a", "alt::b")));
+        List<StringEntry> strings = List.of(new StringEntry(addr1, "hi-\ud800-lo-\udfff-end", strFacts));
+
+        StreamingResult[] streams = new StreamingResult[] {
+            out -> writeNameEntries(out, names),
+            out -> writeProcedureEntries(out, List.of(proc1, proc2)),
+            out -> writeMatchedProcedures(out, matched),
+            out -> writeStringEntries(out, strings),
+        };
+        for (int i = 0; i < streams.length; i++) {
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(bytes, StandardCharsets.UTF_8));
+            writeStreamingSuccess(writer, i + 1, streams[i]);
+            System.out.println(Base64.getEncoder().encodeToString(bytes.toByteArray()));
         }
     }
 
@@ -809,6 +954,7 @@ const JAVA_PROBE_DRIVER = String.raw`
             case "literal-direct" -> runLiteralDirect();
             case "spelling-match" -> runSpellingMatch();
             case "write-response" -> runWriteResponse();
+            case "stream-inventory" -> runStreamInventory();
             case "surrogate-writer" -> runSurrogateWriterChecks();
             case "write-failures" -> runWriteFailures();
             case "resolve-procedures" -> new ReaGhidraBridgeHelperProbe().runResolveProcedures();
@@ -839,15 +985,20 @@ const buildBridgeProbeSource = (bridgeSource: string): string => {
     "    private static void writeSuccess(BufferedWriter writer, int id, JsonElement result)",
     "    private static String safeMessage(Exception exception) {",
   );
+  const streamingInventoryWriters = extractBridgeSlice(
+    bridgeSource,
+    "    private static void writeNameEntries(",
+    "    private static JsonObject memoryRegion(",
+  );
   const valueMatcherInterface = extractBridgeSlice(
     bridgeSource,
     "    private interface ValueMatcher {",
-    "    private interface InventoryFacts {",
+    "    private static int compareInventory(",
   );
-  const procedureRecords = extractBridgeSlice(
+  const inventoryFactRecords = extractBridgeSlice(
     bridgeSource,
-    "    private record ProcedureAlias(",
-    "    private record StringEntry(",
+    "    private record SymbolFacts(",
+    "    private record AddressNameTarget(",
   );
   const procedureNameMatchRecord = extractBridgeSlice(
     bridgeSource,
@@ -860,11 +1011,12 @@ const buildBridgeProbeSource = (bridgeSource: string): string => {
     JAVA_GSON_STUBS,
     JAVA_GHIDRA_STUBS,
     valueMatcherInterface,
-    procedureRecords,
+    inventoryFactRecords,
     procedureNameMatchRecord,
     procedureMethods,
     matchMethods,
     literalMethods,
+    streamingInventoryWriters,
     responseMethods,
     requestFailureClass,
     JAVA_PROBE_DRIVER,

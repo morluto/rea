@@ -236,9 +236,9 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it.skipIf(process.platform === "win32").each(["$ORIGIN", "${ORIGIN}"])(
-  "resolves %s DT_NEEDED in each declaring object before deduplicating requests",
-  async (token) => {
+it.skipIf(process.platform === "win32")(
+  "resolves both ORIGIN forms for each declaring object before deduplicating requests",
+  async () => {
     const root = await createTestTempDirectory("rea-needed-origin-");
     const base = join(root, "$build-$&");
     const bin = join(base, "bin"),
@@ -254,13 +254,15 @@ it.skipIf(process.platform === "win32").each(["$ORIGIN", "${ORIGIN}"])(
       [join(a, "libliteral.so"), "literal-owner"],
       [join(a, "libchild.so"), "child-a"],
       [join(b, "libchild.so"), "child-b"],
+      [join(a, "libbraced.so"), "braced-child-a"],
+      [join(b, "libbraced.so"), "braced-child-b"],
     ]);
     await writeFile(
       executable,
       elfImage({
         needed: [
-          `${token}/../a/libparenta.so`,
-          `${token}/../b/libparentb.so`,
+          "$ORIGIN/../a/libparenta.so",
+          "${ORIGIN}/../b/libparentb.so",
           join(a, "libliteral.so"),
         ],
       }),
@@ -269,7 +271,9 @@ it.skipIf(process.platform === "win32").each(["$ORIGIN", "${ORIGIN}"])(
       await writeFile(
         path,
         elfImage({
-          needed: owner.startsWith("parent-") ? [`${token}/libchild.so`] : [],
+          needed: owner.startsWith("parent-")
+            ? ["$ORIGIN/libchild.so", "${ORIGIN}/libbraced.so"]
+            : [],
         }),
       );
     const queried: string[] = [];
@@ -305,13 +309,13 @@ it.skipIf(process.platform === "win32")(
   async () => {
     const root = await createTestTempDirectory("rea-needed-unknown-");
     const bin = join(root, "bin"),
-      literal = join(bin, "$LIB");
-    await mkdir(literal, { recursive: true });
+      literal = join(root, "$LIB");
+    await Promise.all([mkdir(bin), mkdir(literal)]);
     const executable = join(bin, "app"),
       decoy = join(literal, "libchoice.so");
     await writeFile(
       executable,
-      elfImage({ needed: ["$ORIGIN/$LIB/libchoice.so"] }),
+      elfImage({ needed: ["$ORIGIN/../$LIB/libchoice.so"] }),
     );
     await writeFile(decoy, elfImage({}));
     const queried: string[] = [];
@@ -325,11 +329,14 @@ it.skipIf(process.platform === "win32")(
       },
       undefined,
     );
-    expect(report.library_packages).toEqual([]);
-    expect(report.missing_libraries).toEqual([]);
-    expect(report.library_packages_reason).toMatch(
-      /DT_NEEDED.*unsupported dynamic token/,
-    );
+    expect(report).toEqual({
+      library_packages: [],
+      missing_libraries: [],
+      unpackaged_libraries: [],
+      library_packages_reason: expect.stringContaining(
+        'DT_NEEDED "$ORIGIN/../$LIB/libchoice.so" contains an unsupported dynamic token',
+      ),
+    });
     expect(queried).toEqual([]);
   },
 );
@@ -410,13 +417,6 @@ it.skipIf(process.platform === "win32")(
 
 it.skipIf(process.platform === "win32").each([
   {
-    label: "external packaged",
-    external: true,
-    owner: "vendor",
-    expected: ["vendor"],
-    unpackaged: false,
-  },
-  {
     label: "external separately packaged",
     external: true,
     owner: "alias-owner",
@@ -485,96 +485,55 @@ it.skipIf(process.platform === "win32").each([
 );
 
 it.skipIf(process.platform === "win32")(
-  "retains every package in a required directory-alias chain",
+  "retains required directory chains and distinct aliases of the same captured DSO",
   async () => {
     const root = await createTestTempDirectory("rea-needed-directory-chain-");
     const bin = join(root, "app", "bin");
     await mkdir(bin, { recursive: true });
     const outer = join(root, "outer");
     const inner = join(root, "inner");
-    await symlink("inner", outer);
-    await symlink("app/bin", inner);
-    const library = join(bin, "libinside.so");
+    const second = join(root, "second");
+    await Promise.all([
+      symlink("inner", outer),
+      symlink("app/bin", inner),
+      symlink("app/bin", second),
+      writeFile(join(bin, "libinside.so"), elfImage({})),
+    ]);
     const executable = join(bin, "app");
-    await writeFile(library, elfImage({}));
     await writeFile(
       executable,
-      elfImage({ needed: [`${outer}/libinside.so`] }),
+      elfImage({ needed: [`${outer}/libinside.so`, `${second}/libinside.so`] }),
     );
     const owners = new Map([
       [outer, "outer-owner"],
       [inner, "inner-owner"],
-    ]);
-    const report = await inspectLibraryPackages(
-      executable,
-      "app",
-      async (command, args) =>
-        command === "ldconfig"
-          ? { stdout: "", exitCode: 0 }
-          : {
-              stdout: args
-                .slice(1)
-                .flatMap((path) =>
-                  owners.has(path) ? [`${owners.get(path)}: ${path}`] : [],
-                )
-                .join("\n"),
-              exitCode: 0,
-            },
-      undefined,
-    );
-    expect(report).toEqual({
-      library_packages: ["inner-owner", "outer-owner"],
-      missing_libraries: [],
-      unpackaged_libraries: [],
-    });
-  },
-);
-
-it.skipIf(process.platform === "win32")(
-  "retains distinct directory aliases before deduplicating the same loaded DSO",
-  async () => {
-    const root = await createTestTempDirectory(
-      "rea-needed-directory-distinct-",
-    );
-    const bin = join(root, "app", "bin");
-    await mkdir(bin, { recursive: true });
-    const first = join(root, "first"),
-      second = join(root, "second");
-    await symlink("app/bin", first);
-    await symlink("app/bin", second);
-    const library = join(bin, "libinside.so");
-    const executable = join(bin, "app");
-    await writeFile(library, elfImage({}));
-    await writeFile(
-      executable,
-      elfImage({ needed: [`${first}/libinside.so`, `${second}/libinside.so`] }),
-    );
-    const owners = new Map([
-      [first, "first-owner"],
       [second, "second-owner"],
     ]);
+    const queried: string[] = [];
     const report = await inspectLibraryPackages(
       executable,
       "app",
-      async (command, args) =>
-        command === "ldconfig"
-          ? { stdout: "", exitCode: 0 }
-          : {
-              stdout: args
-                .slice(1)
-                .flatMap((path) =>
-                  owners.has(path) ? [`${owners.get(path)}: ${path}`] : [],
-                )
-                .join("\n"),
-              exitCode: 0,
-            },
+      async (command, args) => {
+        if (command === "ldconfig") return { stdout: "", exitCode: 0 };
+        queried.push(...args.slice(1));
+        return {
+          stdout: args
+            .slice(1)
+            .flatMap((path) =>
+              owners.has(path) ? [`${owners.get(path)}: ${path}`] : [],
+            )
+            .join("\n"),
+          exitCode: 0,
+        };
+      },
       undefined,
     );
     expect(report).toEqual({
-      library_packages: ["first-owner", "second-owner"],
+      library_packages: ["inner-owner", "outer-owner", "second-owner"],
       missing_libraries: [],
       unpackaged_libraries: [],
     });
+    expect(new Set(queried)).toEqual(new Set(owners.keys()));
   },
 );
 

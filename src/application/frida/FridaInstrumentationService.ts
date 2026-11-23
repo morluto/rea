@@ -139,15 +139,33 @@ export class FridaInstrumentationService {
 
   async listProcesses(
     selector: FridaDeviceSelector,
+    paging?: {
+      readonly limit?: number | undefined;
+      readonly offset?: number | undefined;
+    },
   ): Promise<Result<FridaProcessList, AnalysisError>> {
     const result = await this.#provider.listProcesses(selector);
-    return result.ok
-      ? ok({
-          device_id: result.value.deviceId,
-          processes: [...result.value.processes],
-          cleanup_error: result.value.cleanupError,
-        })
-      : result;
+    if (!result.ok) return result;
+    const all = result.value.processes;
+    const limit = paging?.limit;
+    const hasPaging = limit !== undefined || paging?.offset !== undefined;
+    const offset = paging?.offset ?? 0;
+    const processes = hasPaging
+      ? all
+          .toSorted((left, right) => left.pid - right.pid)
+          .slice(offset, limit === undefined ? undefined : offset + limit)
+      : [...all];
+    return ok({
+      device_id: result.value.deviceId,
+      processes,
+      ...(hasPaging
+        ? {
+            total_processes: all.length,
+            truncated: processes.length < all.length,
+          }
+        : {}),
+      cleanup_error: result.value.cleanupError,
+    });
   }
 
   async startSession(input: StartFridaSessionInput, signal?: AbortSignal) {

@@ -3,7 +3,7 @@ import { crc32 } from "node:zlib";
 import type {
   EspImageMetadata,
   EspImageSignatureBlockMetadata,
-} from "../artifactFormatMetadata.js";
+} from "../formatMetadata/firmwareMetadata.js";
 import { strictUtf8Decoder } from "../strictUtf8.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 

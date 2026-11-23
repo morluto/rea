@@ -37,7 +37,9 @@ describe("artifact directory inventory", () => {
     );
     await writeFile(join(app, "Contents", "Resources", "main.js"), "main();\n");
     await writeFile(join(app, "Contents", "Resources", "main.js.MAP"), "{}\n");
-    await symlink("/etc/passwd", join(app, "Contents", "Resources", "outside"));
+    const outside = join(root, "outside.exe");
+    await writeFile(outside, "unselected fixture", { mode: 0o755 });
+    await symlink(outside, join(app, "Contents", "Resources", "outside.exe"));
     const client = createOwnedArtifactClient(await target(app));
     const input = {};
     const first = await client.execute("inventory_artifact", input);
@@ -58,9 +60,13 @@ describe("artifact directory inventory", () => {
     );
     expect(
       left.occurrences.find(({ logical_path: path }) =>
-        path.endsWith("outside"),
+        path.endsWith("outside.exe"),
       ),
-    ).toMatchObject({ artifact_id: null, entry_kind: "symlink" });
+    ).toMatchObject({
+      artifact_id: null,
+      entry_kind: "symlink",
+      executable: false,
+    });
     const script = left.occurrences.find(({ logical_path: path }) =>
       path.endsWith("main.js"),
     );

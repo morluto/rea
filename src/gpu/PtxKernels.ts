@@ -9,64 +9,99 @@ interface Token {
   readonly start: number;
   readonly end: number;
 }
+const isPtxWordChar = (code: number): boolean =>
+  (code >= 0x30 && code <= 0x39) ||
+  (code >= 0x41 && code <= 0x5a) ||
+  (code >= 0x61 && code <= 0x7a) ||
+  code === 0x5f ||
+  code === 0x2e ||
+  code === 0x24 ||
+  code === 0x25 ||
+  code === 0x40;
+
+const isWhitespaceAt = (text: string, at: number, code: number): boolean =>
+  code < 0x80
+    ? code === 0x20 || (code >= 0x09 && code <= 0x0d)
+    : /\s/u.test(text[at]!);
+
 /** Byte coordinates are accumulated once, including non-ASCII comments and quoted strings. */
 function* tokens(text: string): Generator<Token> {
+  const len = text.length;
   let at = 0,
     byte = 0;
   const advance = (): void => {
+    const first = text.charCodeAt(at);
+    if (first < 0x80) {
+      at += 1;
+      byte += 1;
+      return;
+    }
     const code = text.codePointAt(at)!;
     at += code > 0xffff ? 2 : 1;
-    byte += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+    byte += code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
   };
-  while (at < text.length) {
-    if (/\s/u.test(text[at]!)) {
+  while (at < len) {
+    const code = text.charCodeAt(at);
+    if (isWhitespaceAt(text, at, code)) {
       advance();
       continue;
     }
-    if (text.startsWith("//", at)) {
-      while (at < text.length && text[at] !== "\n") advance();
-      continue;
-    }
-    if (text.startsWith("/*", at)) {
-      advance();
-      advance();
-      while (at < text.length && !text.startsWith("*/", at)) advance();
-      if (at === text.length) rejectGpu("Unterminated PTX comment");
-      advance();
-      advance();
-      continue;
+    if (code === 0x2f && at + 1 < len) {
+      const next = text.charCodeAt(at + 1);
+      if (next === 0x2f) {
+        while (at < len && text.charCodeAt(at) !== 0x0a) advance();
+        continue;
+      }
+      if (next === 0x2a) {
+        at += 2;
+        byte += 2;
+        while (
+          at < len &&
+          !(text.charCodeAt(at) === 0x2a && text.charCodeAt(at + 1) === 0x2f)
+        )
+          advance();
+        if (at === len) rejectGpu("Unterminated PTX comment");
+        at += 2;
+        byte += 2;
+        continue;
+      }
     }
     const start = byte,
       position = at;
-    if (text[at] === '"') {
-      advance();
+    if (code === 0x22) {
+      at += 1;
+      byte += 1;
       let closed = false;
-      while (at < text.length) {
-        if (text[at] === '"') {
-          advance();
+      while (at < len) {
+        const ch = text.charCodeAt(at);
+        if (ch === 0x22) {
+          at += 1;
+          byte += 1;
           closed = true;
           break;
         }
-        if (text[at] === "\\") {
-          advance();
-          if (at < text.length) advance();
+        if (ch === 0x5c) {
+          at += 1;
+          byte += 1;
+          if (at < len) advance();
         } else advance();
       }
       if (!closed) rejectGpu("Unterminated PTX string");
       yield { value: '""', start, end: byte };
       continue;
     }
-    if (/[.\w$%@]/u.test(text[at]!)) {
+    if (isPtxWordChar(code)) {
       // Dot-prefixed keywords remain separate when their whitespace is omitted.
       // Internal dots in names, instruction mnemonics and version literals stay intact.
-      const keyword = text[at] === ".";
-      advance();
-      while (
-        at < text.length &&
-        /[.\w$%@]/u.test(text[at]!) &&
-        (!keyword || text[at] !== ".")
-      )
-        advance();
+      const keyword = code === 0x2e;
+      at += 1;
+      byte += 1;
+      while (at < len) {
+        const ch = text.charCodeAt(at);
+        if (!isPtxWordChar(ch) || (keyword && ch === 0x2e)) break;
+        at += 1;
+        byte += 1;
+      }
     } else advance();
     if (at - position > 65536)
       throw new BinaryResourceFailure(
@@ -262,6 +297,7 @@ const declaration = (
 export function* readPtxKernels(
   text: string,
   objectId: string,
+  targetTracker?: PtxTargetTracker,
 ): Generator<{ kernel: GpuKernel; coverage: "complete" | "partial" }> {
   if (Buffer.byteLength(text) > GPU_REPORT_BYTES)
     throw new BinaryResourceFailure(
@@ -278,8 +314,12 @@ export function* readPtxKernels(
   let kernelCount = 0;
   let outerDepth = 0;
   let version: PtxVersion | null = null;
+  let firstToken = true;
+  let targetTrackingEnabled = false;
   for (let step = iterator.next(); !step.done; step = iterator.next()) {
     const token = step.value;
+    const isFirst = firstToken;
+    firstToken = false;
     if (token.value === "{") {
       outerDepth++;
       continue;
@@ -293,6 +333,16 @@ export function* readPtxKernels(
     if (token.value === ".version") {
       const value = iterator.next();
       version = value.done ? null : ptxVersion(value.value.value);
+      if (isFirst) targetTrackingEnabled = version !== null;
+      continue;
+    }
+    if (
+      targetTracker !== undefined &&
+      targetTrackingEnabled &&
+      token.value === ".target"
+    ) {
+      const value = iterator.next();
+      targetTracker.observe(value.done ? undefined : value.value.value);
       continue;
     }
     if (token.value !== ".entry") continue;
@@ -532,11 +582,77 @@ export function* readPtxKernels(
   if (outerDepth !== 0) rejectGpu("Unbalanced PTX body");
 }
 
-interface PtxTargetFacts {
+export interface PtxTargetFacts {
   readonly recognized: boolean;
   readonly target: string | null;
   readonly limitation: string | null;
 }
+
+/** Single-pass `.target` directive accumulator shared by target discovery and module parsing. */
+export interface PtxTargetTracker {
+  observe(spelling: string | undefined): void;
+  markMalformed(): void;
+  facts(): PtxTargetFacts;
+}
+
+export const createPtxTargetTracker = (): PtxTargetTracker => {
+  let target: string | null = null,
+    targetIdentity: string | null = null,
+    targetArchitecture = -1,
+    ambiguous = false,
+    unsupported = false,
+    malformed = false;
+  return {
+    observe(spelling) {
+      if (spelling === undefined) {
+        unsupported = true;
+        return;
+      }
+      const match = /^(?:sm_|compute_)([0-9]+)(?:a|f)?$/u.exec(spelling);
+      if (match === null) {
+        unsupported = true;
+        return;
+      }
+      const architecture = Number(match[1]);
+      if (!Number.isSafeInteger(architecture)) {
+        unsupported = true;
+        return;
+      }
+      const identity = ptxTargetIdentity(spelling);
+      if (architecture > targetArchitecture) {
+        target = spelling;
+        targetIdentity = identity;
+        targetArchitecture = architecture;
+        ambiguous = false;
+      } else if (
+        architecture === targetArchitecture &&
+        targetIdentity !== identity
+      ) {
+        ambiguous = true;
+      }
+    },
+    markMalformed() {
+      malformed = true;
+    },
+    facts() {
+      const recognized = target !== null;
+      const limitation = !recognized
+        ? null
+        : unsupported
+          ? "Unsupported PTX target directives leave the effective target unknown."
+          : ambiguous
+            ? "Same-generation PTX target profiles cannot be represented by one effective target."
+            : malformed
+              ? "Malformed PTX text prevents complete target discovery."
+              : null;
+      return {
+        recognized,
+        target: limitation === null ? target : null,
+        limitation,
+      };
+    },
+  };
+};
 
 /** PTX's compute spelling is an alias for the corresponding baseline SM target. */
 export const ptxTargetIdentity = (target: string): string =>
@@ -545,13 +661,8 @@ export const ptxTargetIdentity = (target: string): string =>
 /** Resolve all module-scope targets through the highest numbered architecture. */
 export const readPtxTarget = (text: string): PtxTargetFacts => {
   const stream = tokens(text);
-  let depth = 0,
-    target: string | null = null,
-    targetIdentity: string | null = null,
-    targetArchitecture = -1,
-    ambiguous = false,
-    unsupported = false,
-    malformed = false;
+  const tracker = createPtxTargetTracker();
+  let depth = 0;
   try {
     const first = stream.next();
     if (first.done || first.value.value !== ".version")
@@ -574,51 +685,11 @@ export const readPtxTarget = (text: string): PtxTargetFacts => {
       if (depth !== 0) continue;
       if (token.value !== ".target") continue;
       const value = stream.next();
-      if (value.done) {
-        unsupported = true;
-        continue;
-      }
-      const spelling = value.value.value,
-        match = /^(?:sm_|compute_)([0-9]+)(?:a|f)?$/u.exec(spelling);
-      if (match === null) {
-        unsupported = true;
-        continue;
-      }
-      const architecture = Number(match[1]);
-      if (!Number.isSafeInteger(architecture)) {
-        unsupported = true;
-        continue;
-      }
-      const identity = ptxTargetIdentity(spelling);
-      if (architecture > targetArchitecture) {
-        target = spelling;
-        targetIdentity = identity;
-        targetArchitecture = architecture;
-        ambiguous = false;
-      } else if (
-        architecture === targetArchitecture &&
-        targetIdentity !== identity
-      ) {
-        ambiguous = true;
-      }
+      tracker.observe(value.done ? undefined : value.value.value);
     }
   } catch (cause) {
     if (!(cause instanceof BinaryFormatFailure)) throw cause;
-    malformed = true;
+    tracker.markMalformed();
   }
-  const recognized = target !== null;
-  const limitation = !recognized
-    ? null
-    : unsupported
-      ? "Unsupported PTX target directives leave the effective target unknown."
-      : ambiguous
-        ? "Same-generation PTX target profiles cannot be represented by one effective target."
-        : malformed
-          ? "Malformed PTX text prevents complete target discovery."
-          : null;
-  return {
-    recognized,
-    target: limitation === null ? target : null,
-    limitation,
-  };
+  return tracker.facts();
 };

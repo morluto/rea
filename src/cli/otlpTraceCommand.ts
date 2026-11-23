@@ -10,11 +10,11 @@ import {
   OTLP_TRACE_PROVIDER,
 } from "../domain/otlpTrace/otlpTrace.js";
 import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
 import {
   deliverWithService,
-  registerContractCommand,
   type EvidenceInspectionService,
-} from "./contractCommand.js";
+} from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 export const registerOtlpTraceCommand = (

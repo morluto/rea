@@ -1,7 +1,7 @@
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createElfDependenciesService } from "../../../src/composition/binaryDiagnostics.js";
+import { createElfDependenciesService } from "../../../src/composition/binaryDiagnostics/elfDependencies.js";
 import { elfDependencyFixture } from "../../../src/native/elf/ElfDependencies.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 

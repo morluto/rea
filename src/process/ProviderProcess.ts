@@ -108,7 +108,9 @@ export interface ProviderProcessHandle extends Pick<
   readonly stderr: Readable | null;
   readonly exitCode: number | null;
   readonly signalCode: NodeJS.Signals | null;
-  /** True once an enforced process memory limit reported an allocation failure. */
+  /** True once an enforced process memory limit reported an allocation failure.
+   * A live owner emits `memory-limit` on the first transition to true.
+   */
   readonly memoryLimitReached?: boolean;
   /** True if a Windows backpressured stream was destroyed before output drained. */
   readonly outputIncomplete?: boolean;
@@ -258,6 +260,8 @@ export interface ProviderProcessSupervisorOptions {
    */
   readonly diagnosticRetention?: "head" | "tail";
   readonly onDiagnostic?: (event: ProviderProcessDiagnostic) => void;
+  /** Wake a waiter when a live process owner first observes a memory refusal. */
+  readonly onMemoryLimit?: () => void;
 }
 
 /** One output token located before retention applies, so it survives an exhausted budget. */
@@ -505,6 +509,9 @@ export class ProviderProcessSupervisor {
     }
     this.#outputClose.resolve(undefined);
   };
+  readonly #onMemoryLimit = (): void => {
+    this.#options.onMemoryLimit?.();
+  };
   readonly #onError = (cause: Error): void => {
     this.#options.onDiagnostic?.({
       type: "error",
@@ -551,6 +558,8 @@ export class ProviderProcessSupervisor {
     launch.process.once("exit", this.#onExit);
     launch.process.once("close", this.#onClose);
     launch.process.on("error", this.#onError);
+    if (this.#options.onMemoryLimit !== undefined)
+      launch.process.once("memory-limit", this.#onMemoryLimit);
     if (launch.process.exitCode !== null || launch.process.signalCode !== null)
       this.#recordExit(launch.process.exitCode, launch.process.signalCode);
   }
@@ -910,6 +919,7 @@ export class ProviderProcessSupervisor {
     this.launch.process.off("exit", this.#onExit);
     this.launch.process.off("close", this.#onClose);
     this.launch.process.off("error", this.#onError);
+    this.launch.process.off("memory-limit", this.#onMemoryLimit);
   }
 
   /** Release event-loop references so incomplete cleanup does not prevent host exit. */
@@ -1221,6 +1231,7 @@ const diagnosticEventWithLazySnapshot = <
 };
 
 const EMPTY_CHUNKS: readonly Buffer[] = [];
+const DISCARDED_CHUNK = Buffer.alloc(0);
 const EMPTY_OUTPUT_BUFFER = Buffer.alloc(0);
 
 const materializeCapturedOutput = (
@@ -1254,6 +1265,8 @@ const snapshotOutputBuffer = (
 
 class ProcessOutputCapture {
   #chunks: Buffer[] = [];
+  #head = 0;
+  #headOffset = 0;
   // Copy-on-write: shared with pending lazy snapshots until the next mutation or reset.
   #sharedChunks = false;
   // not-an-allowance: retained length of a tail buffer that drops its front past the limit instead of refusing input.
@@ -1263,6 +1276,14 @@ class ProcessOutputCapture {
 
   get bytes(): number {
     return this.#bytes;
+  }
+
+  #activeChunks(): Buffer[] {
+    if (this.#head === 0 && this.#headOffset === 0) return this.#chunks;
+    const active = this.#chunks.slice(this.#head);
+    if (active.length > 0 && this.#headOffset > 0)
+      active[0] = active[0]!.subarray(this.#headOffset);
+    return active;
   }
 
   #mutableChunks(): Buffer[] {
@@ -1280,6 +1301,8 @@ class ProcessOutputCapture {
     } else {
       this.#chunks.length = 0;
     }
+    this.#head = 0;
+    this.#headOffset = 0;
     this.#bytes = 0;
     this.#start = 0;
   }
@@ -1306,32 +1329,53 @@ class ProcessOutputCapture {
   /** Drop the first `count` retained bytes and, after a cut, the rest of a character it split. */
   #dropFront(count: number, cut: boolean): void {
     let remaining = Math.max(0, count);
-    for (
-      let first = this.#chunks[0];
-      first !== undefined;
-      first = this.#chunks[0]
-    ) {
-      let drop = Math.min(remaining, first.byteLength);
+    while (this.#head < this.#chunks.length) {
+      const first = this.#chunks[this.#head]!;
+      const available = first.byteLength - this.#headOffset;
+      let drop = Math.min(remaining, available);
       // UTF-8 continuation bytes are 0b10xxxxxx.
       while (
         cut &&
-        drop < first.byteLength &&
-        ((first[drop] ?? 0) & 0xc0) === 0x80
+        drop < available &&
+        ((first[this.#headOffset + drop] ?? 0) & 0xc0) === 0x80
       )
         drop += 1;
-      if (drop === first.byteLength) this.#mutableChunks().shift();
-      else if (drop > 0)
-        this.#mutableChunks()[0] = Buffer.from(first.subarray(drop));
       this.#bytes -= drop;
       this.#start += drop;
       remaining -= Math.min(remaining, drop);
-      if (drop < first.byteLength) return;
+      if (drop === available) {
+        this.#chunks[this.#head] = DISCARDED_CHUNK;
+        this.#head += 1;
+        this.#headOffset = 0;
+      } else {
+        if (drop > 0) this.#headOffset += drop;
+        break;
+      }
+    }
+    if (this.#head === this.#chunks.length) {
+      if (this.#sharedChunks) {
+        this.#chunks = [];
+        this.#sharedChunks = false;
+      } else {
+        this.#chunks.length = 0;
+      }
+      this.#head = 0;
+      this.#headOffset = 0;
+    } else if (this.#head >= 64 && this.#head * 2 >= this.#chunks.length) {
+      this.#chunks = this.#chunks.slice(this.#head);
+      this.#head = 0;
+      this.#sharedChunks = false;
     }
   }
 
   snapshotRaw(observedBytes: number): RawOutputCapture {
-    if (this.#chunks.length === 0)
+    if (this.#head >= this.#chunks.length)
       return { chunks: EMPTY_CHUNKS, bytes: 0, observedBytes };
+    if (this.#head > 0 || this.#headOffset > 0) {
+      this.#chunks = this.#activeChunks();
+      this.#head = 0;
+      this.#headOffset = 0;
+    }
     this.#sharedChunks = true;
     return {
       chunks: this.#chunks,
@@ -1341,7 +1385,11 @@ class ProcessOutputCapture {
   }
 
   snapshot(observedBytes: number): ProviderProcessSnapshot["stdout"] {
-    return materializeCapturedOutput(this.#chunks, this.#bytes, observedBytes);
+    return materializeCapturedOutput(
+      this.#activeChunks(),
+      this.#bytes,
+      observedBytes,
+    );
   }
 
   snapshotRange(
@@ -1354,7 +1402,12 @@ class ProcessOutputCapture {
     const availableStart = Math.min(Math.max(start, this.#start), availableEnd);
     const chunks: Buffer[] = [];
     let offset = this.#start;
-    for (const chunk of this.#chunks) {
+    for (let index = this.#head; index < this.#chunks.length; index += 1) {
+      const raw = this.#chunks[index]!;
+      const chunk =
+        index === this.#head && this.#headOffset > 0
+          ? raw.subarray(this.#headOffset)
+          : raw;
       const chunkEnd = offset + chunk.byteLength;
       const from = Math.max(availableStart, offset);
       const to = Math.min(availableEnd, chunkEnd);
