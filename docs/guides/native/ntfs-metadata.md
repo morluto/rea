@@ -7,7 +7,7 @@ Pairing the acquisitions is the caller's responsibility.
 
 ```bash
 rea inspect-artifact ./MFT --json
-rea inspect-ntfs-journal ./MFT ./UsnJrnl-J --max-rows=50 --json
+rea inspect-ntfs-journal ./MFT ./UsnJrnl-J --max-rows 50 --json
 ```
 
 MCP accepts absolute local paths:

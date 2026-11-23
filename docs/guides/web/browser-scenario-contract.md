@@ -107,8 +107,7 @@ rea capture-browser-scenario ./browser-scenario.json --json > browser-capture.js
 The default capture includes the final URL. Select DOM, screenshots, or events
 only when they help answer the question. REA launches and cleans up the browser
 profile for this request; it does not start your fixture server or install a
-browser. A schema-valid scenario does not prove that the executable or target
-is available on the host.
+browser.
 
 ## Interaction example: capture the visible result
 

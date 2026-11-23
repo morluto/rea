@@ -15,6 +15,16 @@ import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
+// The example pins the released version this checkout describes, so a release
+// bump fails here until the example is updated.
+const packageVersion = z
+  .object({ version: z.string().min(1) })
+  .parse(
+    JSON.parse(
+      await readFile(new URL("../../../package.json", import.meta.url), "utf8"),
+    ),
+  ).version;
+
 const example = async () =>
   z
     .object({
@@ -69,7 +79,7 @@ it("keeps the example manually triggered, least-privileged, pinned and failure-p
   }
   expect(
     job.steps.find((step) => step.name === "Install pinned REA")?.run,
-  ).toContain("--save-exact rea-agents@6.7.0");
+  ).toContain(`--save-exact rea-agents@${packageVersion}`);
   const upload = job.steps.find((step) =>
     step.uses?.startsWith("actions/upload-artifact@"),
   );

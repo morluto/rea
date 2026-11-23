@@ -5,10 +5,10 @@ selected local SQLite database snapshot without an active native analysis
 target. Use it to understand application storage, configuration or retained
 database evidence. No separate SQLite installation is required.
 
-This operation requires Node.js 24.x >=24.15 or 26+ with the native
-`DatabaseSync.limits` API. The worker verifies that capability before querying
-the copied database. Other REA features retain their published Node.js 22.x,
-24.x or 26+ requirements.
+This operation needs the native `DatabaseSync.limits` API, which REA's
+supported Node.js 24.x (>=24.22.1) and 26.x (>=26.12.1) releases provide; it is
+unavailable on the supported 22.x line. The worker verifies that capability
+before querying the copied database.
 
 `rea capabilities` reports `inspect_sqlite_database` availability and the
 runtime requirement without opening a database. Unsupported runtimes show

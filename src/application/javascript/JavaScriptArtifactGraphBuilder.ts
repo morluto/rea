@@ -15,7 +15,10 @@ import {
   type JavaScriptApplicationGraph,
 } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
-import type { JavaScriptArtifactFileSet } from "../../domain/javascript/javascriptArtifactFiles.js";
+import {
+  javaScriptApplicationInputPresence,
+  type JavaScriptArtifactFileSet,
+} from "../../domain/javascript/javascriptArtifactFiles.js";
 import { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
 import {
   HTML_INLINE_SCRIPT_LOCATION_COVERAGE_LIMIT,
@@ -400,6 +403,18 @@ const semanticResourceLimits = (
     ...new Set(semanticResourceBounds(context).map(({ limit }) => limit)),
   ].sort();
 
+/** Complete traversal found no entries, so there was nothing to analyze. */
+const EMPTY_INPUT_LIMITATION =
+  "No JavaScript inputs were found: the complete inventory contains no files. Select the directory or .asar that holds the application sources; for a desktop installation directory, call inspect_desktop_application or audit_release_exposure.";
+
+const emptyInputLimitations = (
+  context: JavaScriptArtifactGraphContext,
+): readonly string[] =>
+  javaScriptApplicationInputPresence(context.fileSet, context.snapshot) ===
+  "empty"
+    ? [EMPTY_INPUT_LIMITATION]
+    : [];
+
 const graphLimitations = (
   context: JavaScriptArtifactGraphContext,
   coverage: "complete" | "partial" | "unknown" | "unavailable",
@@ -419,6 +434,7 @@ const graphLimitations = (
           `Caller-selected source analysis leaves ${String(context.fileSet.source_selection?.unselected_files)} inventoried files outside analysis scope. Inventory identity covers the complete artifact; relationships through unselected sources remain unknown.`,
         ]),
     ...context.snapshot.limitations,
+    ...emptyInputLimitations(context),
     ...context.snapshot.integrity_contradictions.map(
       ({ logical_path: path }) =>
         `Artifact integrity metadata contradicts observed bytes at ${path}; the observed bytes are untrusted.`,
