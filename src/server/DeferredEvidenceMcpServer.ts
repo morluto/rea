@@ -237,7 +237,7 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
     }
   }
 
-  closePartialRuntime(): Promise<void> {
+  closeRuntimeHooks(): Promise<void> {
     return this.closeRegisteredHooks();
   }
 
