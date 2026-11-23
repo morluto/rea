@@ -4,11 +4,11 @@ import type {
 } from "@modelcontextprotocol/server";
 import type { Logger } from "pino";
 
+import { summarizeRetainedAnalysis } from "../application/analysisView/AnalysisViewService.js";
 import {
   requireAnalysisViewRetention,
-  summarizeRetainedAnalysis,
   type AnalysisViewRetention,
-} from "../application/analysisView/AnalysisViewService.js";
+} from "../application/analysisView/AnalysisViewRetention.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";

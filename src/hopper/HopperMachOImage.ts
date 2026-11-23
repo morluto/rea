@@ -1,3 +1,9 @@
+import {
+  withOwnedFileHandle,
+  RegularFileCancelled,
+  RegularFileCleanupFailure,
+} from "../filesystem/OwnedRegularFile.js";
+import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
 import { createHash } from "node:crypto";
 import { open, type FileHandle } from "node:fs/promises";
 import { z } from "zod";
@@ -124,57 +130,63 @@ const inspectAndFinalizeHopperMachOImage = async (
   owner: OwnedFileHandle,
   options: HopperMachOImageResolutionOptions,
 ): Promise<Result<HopperMachOImage, AnalysisError>> => {
-  let result: Result<HopperMachOImage, HopperMachOImageResolutionError>;
-  try {
-    result = await inspectHopperMachOImage(
-      target,
-      owner.handle,
-      options.signal,
-    );
-  } catch (cause: unknown) {
-    result =
-      cause instanceof BinaryTargetError ||
-      cause instanceof AnalysisCancelledError
-        ? err(cause)
-        : err(
-            new BinaryTargetError(
-              target.path,
-              `Cannot validate Mach-O image: ${errorMessage(cause)}`,
-              { cause },
-            ),
+  let cancellationBeforeClose = false;
+  const readFailure = (cause: unknown): HopperMachOImageResolutionError =>
+    cause instanceof BinaryTargetError ||
+    cause instanceof AnalysisCancelledError
+      ? cause
+      : cause instanceof RegularFileOperationCancelled
+        ? cancelledBy("open_binary", carriedReason(cause.reason))
+        : new BinaryTargetError(
+            target.path,
+            `Cannot validate Mach-O image: ${errorMessage(cause)}`,
+            { cause },
           );
-  }
-  const cancellationBeforeClose = options.signal?.aborted === true;
-  let closeOutcome:
-    | { readonly kind: "closed" }
-    | { readonly kind: "failed"; readonly cause: unknown };
   try {
-    await owner.close();
-    closeOutcome = { kind: "closed" };
+    const image = await withOwnedFileHandle(
+      target.path,
+      owner,
+      options.signal === undefined ? {} : { signal: options.signal },
+      async (handle) => {
+        try {
+          const inspected = await inspectHopperMachOImage(
+            target,
+            handle,
+            options.signal,
+          );
+          if (!inspected.ok) throw inspected.error;
+          return inspected.value;
+        } finally {
+          cancellationBeforeClose = options.signal?.aborted === true;
+        }
+      },
+    );
+    return ok(image);
   } catch (cause: unknown) {
-    closeOutcome = { kind: "failed", cause };
+    if (cause instanceof RegularFileCancelled)
+      return err(cancelledBy("open_binary", carriedReason(cause.reason)));
+    if (!(cause instanceof RegularFileCleanupFailure))
+      return err(readFailure(cause));
+    return retainHopperPreflightCloseFailure({
+      target,
+      owner: cause.owner,
+      resourceScope: options.resourceScope,
+      failure:
+        cause.outcome.kind === "failed"
+          ? readFailure(cause.outcome.cause)
+          : undefined,
+      cancellationBeforeClose,
+      signal: options.signal,
+      closeFailure: cause.cleanupCause,
+    });
   }
-  if (closeOutcome.kind === "closed") {
-    if (result.ok && options.signal?.aborted)
-      return err(cancelledBy("open_binary", options.signal));
-    return result;
-  }
-  return retainHopperPreflightCloseFailure({
-    target,
-    owner,
-    resourceScope: options.resourceScope,
-    result,
-    cancellationBeforeClose,
-    signal: options.signal,
-    closeFailure: closeOutcome.cause,
-  });
 };
 
 const retainHopperPreflightCloseFailure = (options: {
   readonly target: BinaryTarget & { readonly kind: "executable" };
   readonly owner: OwnedFileHandle;
   readonly resourceScope: RetainedResourceScope;
-  readonly result: Result<HopperMachOImage, HopperMachOImageResolutionError>;
+  readonly failure: HopperMachOImageResolutionError | undefined;
   readonly cancellationBeforeClose: boolean;
   readonly signal: AbortSignal | undefined;
   readonly closeFailure: unknown;
@@ -195,32 +207,25 @@ const retainHopperPreflightCloseFailure = (options: {
     resources: [resource],
   };
   const cancellationIsPrimary =
-    (!options.result.ok &&
-      options.result.error instanceof AnalysisCancelledError) ||
-    (options.result.ok && options.cancellationBeforeClose);
+    options.failure instanceof AnalysisCancelledError ||
+    (options.failure === undefined && options.cancellationBeforeClose);
   let failure: AnalysisError;
   let closeIsPrimary = false;
-  if (!options.result.ok) {
+  if (options.failure !== undefined) {
     failure =
-      options.result.error instanceof BinaryTargetError
-        ? new BinaryTargetError(
-            options.result.error.path,
-            options.result.error.reason,
-            {
-              ...(options.result.error.cause === undefined
-                ? {}
-                : { cause: options.result.error.cause }),
-              ...(options.result.error.constraint === undefined
-                ? {}
-                : { constraint: options.result.error.constraint }),
-              cleanup,
-            },
-          )
-        : cancelledBy(
-            "open_binary",
-            carriedReason(options.result.error.cause),
-            { cleanup },
-          );
+      options.failure instanceof BinaryTargetError
+        ? new BinaryTargetError(options.failure.path, options.failure.reason, {
+            ...(options.failure.cause === undefined
+              ? {}
+              : { cause: options.failure.cause }),
+            ...(options.failure.constraint === undefined
+              ? {}
+              : { constraint: options.failure.constraint }),
+            cleanup,
+          })
+        : cancelledBy("open_binary", carriedReason(options.failure.cause), {
+            cleanup,
+          });
   } else if (options.cancellationBeforeClose) {
     // cancellationBeforeClose records that the caller's signal had aborted.
     failure = cancelledBy(

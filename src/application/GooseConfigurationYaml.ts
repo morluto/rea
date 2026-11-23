@@ -145,8 +145,11 @@ const gooseYamlOptions = {
   customTags: gooseScalarTags,
 } as const;
 
+/** A diagnostic from Goose's native YAML reader or editor. */
+export class GooseConfigurationYamlError extends ConfigurationError {}
+
 /** A duplicate YAML member cannot establish one selected configuration value. */
-class GooseConfigurationYamlError extends ConfigurationError {
+class GooseDuplicateMemberError extends GooseConfigurationYamlError {
   readonly kind = "shadowed_member";
   constructor(
     readonly path: readonly string[],
@@ -194,12 +197,12 @@ const parseGooseDocument = (text: string): Document => {
   const document = parseDocument(text, gooseYamlOptions);
   const failure = document.errors[0] ?? document.warnings[0];
   if (failure?.code === "DUPLICATE_KEY")
-    throw new GooseConfigurationYamlError(
+    throw new GooseDuplicateMemberError(
       duplicatePath(document.contents, failure.pos[0]) ?? [],
       failure,
     );
   if (failure !== undefined)
-    throw new ConfigurationError("Invalid or unsupported Goose YAML", {
+    throw new GooseConfigurationYamlError("Invalid or unsupported Goose YAML", {
       cause: failure,
     });
   return document;
@@ -217,9 +220,12 @@ const gooseDocumentValue = (document: Document): unknown => {
           : value,
     });
   } catch (cause: unknown) {
-    throw new ConfigurationError("Goose YAML values could not be resolved", {
-      cause,
-    });
+    throw new GooseConfigurationYamlError(
+      "Goose YAML values could not be resolved",
+      {
+        cause,
+      },
+    );
   }
 };
 
@@ -252,7 +258,9 @@ export const editGooseConfigurationYaml = (
     document.contents = map;
   }
   if (!isMap(document.contents))
-    throw new ConfigurationError("Goose configuration root must be a mapping");
+    throw new GooseConfigurationYamlError(
+      "Goose configuration root must be a mapping",
+    );
   for (let length = 1; length < path.length; length++) {
     const parent = resolveYamlEditPath(document, path.slice(0, length));
     let previous = document.getIn(parent, true);
@@ -264,7 +272,7 @@ export const editGooseConfigurationYaml = (
       if (value === undefined) return text;
       document.setIn(parent, document.createNode({}));
     } else if (!isMap(previous))
-      throw new ConfigurationError(
+      throw new GooseConfigurationYamlError(
         `Goose configuration ${path.slice(0, length).join(".")} must be a mapping`,
       );
   }
