@@ -413,44 +413,6 @@ const expectIl2cppSource = (
   });
 };
 
-it.each(staticProviders)(
-  "preserves the exact late-close cancellation cause through %s inspection",
-  async (_name, makeProvider) => {
-    const path = await selectedImage();
-    const provider = makeProvider();
-    if (provider instanceof PeResourcesProvider)
-      await writeFile(path, peResourceFixture().bytes);
-    if (provider instanceof Il2cppMetadataProvider)
-      await writeFile(path, createIl2cppMetadataFixture().bytes);
-    const controller = new AbortController();
-    const reason = new Error("cancel during confirmed descriptor close");
-    fault.blockNew = false;
-    fault.onClose = () => controller.abort(reason);
-    try {
-      const result =
-        provider instanceof PeResourcesProvider
-          ? await provider.inspect(
-              inspectPeResourcesInputSchema.parse({ path }),
-              { signal: controller.signal },
-            )
-          : await provider.inspect({ path }, { signal: controller.signal });
-      if (result.ok) throw new Error("Expected late cancellation");
-      expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-      expect(result.error.cause).toBe(reason);
-      if (provider instanceof Il2cppMetadataProvider)
-        expectIl2cppSource(
-          result.error,
-          path,
-          createIl2cppMetadataFixture().bytes,
-        );
-      expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
-    } finally {
-      fault.blocked.clear();
-      await provider.close();
-    }
-  },
-);
-
 it.each([false, true])(
   "retains completed IL2CPP source facts through failed close (cancel: %s)",
   async (cancel) => {
@@ -491,71 +453,60 @@ it.each([false, true])(
   },
 );
 
-it.each(
-  staticProviders.flatMap(([name, makeProvider]) => [
-    [
-      name,
-      makeProvider,
-      new ArtifactReaderFailure("integrity", "source replacement", {
-        integrityCheck: "container-identity",
-      }),
-      AnalysisArtifactChangedError,
-    ] as const,
-    [
-      name,
-      makeProvider,
-      Object.assign(new Error("read denied"), { code: "EACCES" }),
-      AnalysisAccessDeniedError,
-    ] as const,
-    [
-      name,
-      makeProvider,
-      new ArtifactReaderFailure("limit", "read limit"),
-      AnalysisResourceConstraintError,
-    ] as const,
-  ]),
-)(
-  "preserves %s read failure after successful close observes cancellation",
-  async (_name, makeProvider, primary, expected) => {
-    const path = await selectedImage();
-    const provider = makeProvider();
-    fault.blockNew = false;
-    fault.readFailure = { cause: primary };
-    const controller = new AbortController();
-    fault.onClose = () => controller.abort(new Error("later cancellation"));
-    try {
-      const result =
-        provider instanceof PeResourcesProvider
-          ? await provider.inspect(
-              inspectPeResourcesInputSchema.parse({ path }),
-              { signal: controller.signal },
-            )
-          : await provider.inspect({ path }, { signal: controller.signal });
-      if (result.ok) throw new Error("Expected primary read failure");
-      expect(result.error).toBeInstanceOf(expected);
-      expect(result.error.cause).toBe(primary);
-      if (provider instanceof Il2cppMetadataProvider)
-        expect(result.error.partialObservation).toBeUndefined();
-      expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
-    } finally {
-      await provider.close();
-    }
-  },
-);
+const identityFailure = () =>
+  new ArtifactReaderFailure("integrity", "source replacement", {
+    integrityCheck: "container-identity",
+  });
 
-it.each(staticProviders)(
-  "keeps the primary %s read failure when cancellation arrives during failed close",
-  async (_name, makeProvider) => {
+const descriptorOutcomes = [
+  ["completed read", false, undefined, AnalysisCancelledError],
+  ["identity failure", false, identityFailure, AnalysisArtifactChangedError],
+  [
+    "permission failure",
+    false,
+    () => Object.assign(new Error("read denied"), { code: "EACCES" }),
+    AnalysisAccessDeniedError,
+  ],
+  [
+    "budget failure",
+    false,
+    () => new ArtifactReaderFailure("limit", "read limit"),
+    AnalysisResourceConstraintError,
+  ],
+  ["identity failure", true, identityFailure, AnalysisArtifactChangedError],
+] as const;
+
+it.each(
+  staticProviders.flatMap(([name, makeProvider]) =>
+    descriptorOutcomes.map(([outcome, blocked, failure, expected]) => ({
+      name,
+      makeProvider,
+      outcome,
+      blocked,
+      failure,
+      expected,
+    })),
+  ),
+)(
+  "preserves the $name $outcome through close cancellation (blocked: $blocked)",
+  async ({ makeProvider, blocked, failure, expected }) => {
     const path = await selectedImage();
     const provider = makeProvider();
-    const primary = new ArtifactReaderFailure(
-      "integrity",
-      "controlled source replacement",
-      { integrityCheck: "container-identity" },
-    );
-    fault.readFailure = { cause: primary };
+    const primary = failure?.();
+    const bytes =
+      primary !== undefined
+        ? undefined
+        : provider instanceof PeResourcesProvider
+          ? peResourceFixture().bytes
+          : provider instanceof Il2cppMetadataProvider
+            ? createIl2cppMetadataFixture().bytes
+            : undefined;
+    if (bytes !== undefined) await writeFile(path, bytes);
     const controller = new AbortController();
-    fault.onClose = () => controller.abort(new Error("later cancellation"));
+    const reason = new Error("cancel during descriptor close");
+    fault.blockNew = blocked;
+    fault.onClose = () => controller.abort(reason);
+    if (primary !== undefined) fault.readFailure = { cause: primary };
     try {
       const result =
         provider instanceof PeResourcesProvider
@@ -565,20 +516,36 @@ it.each(staticProviders)(
             )
           : await provider.inspect({ path }, { signal: controller.signal });
       if (result.ok)
-        throw new Error("Expected primary failure and retained descriptor");
-      expect(result.error.cleanupIncomplete).toBe(true);
-      const aggregate = result.error.cause;
-      if (!(aggregate instanceof AggregateError))
-        throw new Error("Missing primary/cleanup aggregate");
-      const [original] = aggregate.errors;
-      expect(original).toBeInstanceOf(AnalysisArtifactChangedError);
-      expect((original as AnalysisArtifactChangedError).cause).toBe(primary);
-      if (provider instanceof Il2cppMetadataProvider)
-        expect(result.error.partialObservation).toBeUndefined();
-      fault.blocked.clear();
-      await provider.close();
-      expect(result.error.cleanupIncomplete).toBe(false);
+        throw new Error(
+          "Expected close cancellation or a primary read failure",
+        );
+      expect(controller.signal.reason).toBe(reason);
+      expect(result.error.cleanupIncomplete).toBe(blocked);
+      let carried: unknown = result.error;
+      if (blocked) {
+        const aggregate = result.error.cause;
+        if (!(aggregate instanceof AggregateError))
+          throw new Error("Missing primary/cleanup aggregate");
+        [carried] = aggregate.errors;
+      }
+      expect(carried).toBeInstanceOf(expected);
+      expect((carried as Error).cause).toBe(primary ?? reason);
+
+      if (provider instanceof Il2cppMetadataProvider) {
+        if (bytes === undefined)
+          expect(result.error.partialObservation).toBeUndefined();
+        else expectIl2cppSource(result.error, path, bytes);
+      }
+      expect(fault.handles).toHaveLength(1);
+      if (blocked) {
+        expect(fault.handles[0]?.fd).toBeGreaterThanOrEqual(0);
+        fault.blocked.clear();
+        await provider.close();
+        expect(result.error.cleanupIncomplete).toBe(false);
+      }
+      expect(fault.handles[0]?.fd).toBe(-1);
     } finally {
+      fault.onClose = undefined;
       fault.blocked.clear();
       await provider.close();
     }
