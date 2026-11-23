@@ -113,8 +113,13 @@ export const readRustWasmSectionsFromReader = async (
         { offset: cursor },
       );
     if (id === CUSTOM_SECTION) {
+      // A name length cannot consume bytes from the next section.
       const nameHeaderLen = Math.min(5, end - payloadStart);
-      const nameHeader = await readSlice(payloadStart, nameHeaderLen);
+      const nameHeaderEnd = size.end + nameHeaderLen;
+      const nameHeader =
+        nameHeaderEnd <= probe.length
+          ? probe.subarray(size.end, nameHeaderEnd)
+          : await readSlice(payloadStart, nameHeaderLen);
       const nameLen = readU32(nameHeader, 0, nameHeader.length, {
         label: "custom section name length",
         boundary: "section",

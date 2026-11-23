@@ -795,3 +795,42 @@ it("refuses a padded PE compressed stream that cannot end within its read budget
   });
   expect(image.largestRead()).toBeLessThanOrEqual(1024 * 1024);
 });
+
+it.each([false, true])(
+  "reuses the WebAssembly section probe unless the name length falls outside it (short: %s)",
+  async (shortProbe) => {
+    const preamble = WASM_MODULE_HEADER.length;
+    const nameHeaderOffset = preamble + 2;
+    const bytes = Buffer.concat([
+      WASM_MODULE_HEADER,
+      wasmCustomSection("abc", Buffer.alloc(0)),
+      createRustWasmModule().subarray(preamble),
+    ]);
+    const reads: [offset: number, length: number][] = [];
+    const image = await readRustBinaryImageFromHandle(
+      {
+        size: bytes.length,
+        readRange: async (offset, length) => {
+          reads.push([offset, length]);
+          const end = offset + (shortProbe && offset === preamble ? 2 : length);
+          return bytes.subarray(offset, end);
+        },
+      },
+      undefined,
+      undefined,
+      async () => {},
+    );
+    expect(image.auditable_metadata).toMatchObject({
+      file_offset: bytes.indexOf(rustDependencyPayload()),
+      packages,
+    });
+    const firstFrameEnd = nameHeaderOffset + 4;
+    expect(
+      reads.filter(([offset]) => offset >= preamble && offset < firstFrameEnd),
+    ).toEqual([
+      [preamble, 16],
+      ...(shortProbe ? [[nameHeaderOffset, 4]] : []),
+      [nameHeaderOffset + 1, 3],
+    ]);
+  },
+);
