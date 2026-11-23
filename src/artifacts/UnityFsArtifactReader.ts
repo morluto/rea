@@ -18,10 +18,8 @@ import {
 } from "../resources/index.js";
 import { ownAsyncArtifactStream } from "./OwnedAsyncArtifactStream.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
-import type {
-  ArtifactFormatMetadata,
-  UnityFsMetadata,
-} from "../domain/artifactFormatMetadata.js";
+import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
+import type { UnityFsMetadata } from "../domain/formatMetadata/packageAndGameMetadata.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { UNITYFS_COMPRESSION_NONE } from "../domain/unityfsFormat.js";
 import {

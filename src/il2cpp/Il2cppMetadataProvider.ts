@@ -2,7 +2,12 @@ import { IL2CPP_METADATA_PROVIDER_IDENTITY } from "./Il2CppMetadataProviderIdent
 import {
   Il2cppBinaryFormatFailure,
   IL2CPP_BINARY_BYTES,
+  IL2CPP_BINARY_FORMAT,
 } from "./Il2cppBinaryFormat.js";
+import {
+  isParseLimit,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
 import { Il2cppMetadataFormatFailure } from "./Il2cppMetadataFormat.js";
 import { inspectIl2cppMetadataV108 } from "./Il2cppMetadataV108.js";
 import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
@@ -56,7 +61,7 @@ import {
   type Il2cppMetadataRowCounts,
 } from "./Il2cppMetadataFile.js";
 import {
-  linkIl2cppBinarySteps,
+  linkIl2cppBinaryCooperative,
   type Il2cppBinaryLink,
 } from "./Il2cppBinaryFile.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -82,30 +87,20 @@ const failureForPrimary = (
     return cause;
   if (
     cause instanceof Il2cppBinaryFormatFailure &&
-    cause.failure.kind === "limit"
+    isParseLimit(cause, IL2CPP_BINARY_FORMAT)
   )
-    return new AnalysisResourceConstraintError(
+    return parseLimitConstraint(
       OPERATION,
       cause.reason === "native-type-text-capacity" ? "memory" : "capacity",
-      cause.message,
-      // The producing site states what its maximum counts.
-      {
-        boundary: cause.reason,
-        ...(cause.unit === undefined
-          ? {}
-          : { [`maximum_${cause.unit}`]: cause.failure.limit.maximum }),
-      },
-      {
-        cause,
-        ...fixedAllowanceOptions(
-          "The IL2CPP native-link allowance",
-          cause.reason === "native-type-text-capacity" ? "parser" : "count",
-          {
-            limit: cause.failure.limit.maximum,
-            ...(cause.unit === undefined ? {} : { unit: cause.unit }),
-          },
-        ),
-      },
+      cause,
+      fixedAllowanceOptions(
+        "The IL2CPP native-link allowance",
+        cause.reason === "native-type-text-capacity" ? "parser" : "count",
+        {
+          limit: cause.failure.limit.maximum,
+          ...(cause.unit === undefined ? {} : { unit: cause.unit }),
+        },
+      ),
     );
   if (
     cause instanceof Il2cppBinaryFormatFailure ||
@@ -568,7 +563,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               input.binary_architecture,
             );
             sliceLimitations = selected.limitations;
-            const linking = linkIl2cppBinarySteps(
+            const linking = await linkIl2cppBinaryCooperative(
               selected.bytes,
               decoded,
               link,
@@ -576,14 +571,12 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
                 ...admission,
                 genericInstances: input.generic_instances === true,
               },
+              async () => {
+                await this.yieldControl();
+                assertArtifactReadActive(options?.signal);
+              },
             );
-            let linkStep = linking.next();
-            while (!linkStep.done) {
-              await this.yieldControl();
-              assertArtifactReadActive(options?.signal);
-              linkStep = linking.next();
-            }
-            linked = binaryReport(linkStep.value, {
+            linked = binaryReport(linking, {
               path: binaryPath,
               sha256: binary.sha256,
               bytes: binary.bytes.length,

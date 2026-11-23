@@ -7,9 +7,11 @@ manages them and never installs platform tools. Every operation composes a
 fixed adb argument vector — caller values occupy positional arguments only
 and are quoted when adb forwards them to the device shell.
 
-The adb client may start its local server on first device query; that is adb
-client behavior, recorded in the tool result when observed.
-`inspect_adb_client` probes only the binary and never contacts the server.
+Before a device operation, REA runs `adb start-server`, which starts the local
+adb server only when none is running. The server is a shared service that
+other tools on the host use: REA may start it but never stops it, and a device
+command's cleanup does not reach it. `inspect_adb_client` probes only the
+binary and never contacts the server.
 
 ## Supply tools
 
@@ -99,16 +101,16 @@ existing analysis families directly, for example
 | `list_adb_devices`      | read               | Serial, state, transport, model metadata, inferred emulator/physical kind with basis                                                                                                                                                  |
 | `inspect_adb_device`    | read               | Fixed `getprop` whitelist: build, SDK, patch, fingerprint, product, ABIs, debuggable, `ro.kernel.qemu`                                                                                                                                |
 | `inspect_adb_display`   | read               | `wm size` and `wm density` as declared                                                                                                                                                                                                |
-| `list_adb_features`     | read               | `pm list features` (hardware/software features, hex GL versions)                                                                                                                                                                      |
-| `list_adb_services`     | read               | `service list` binder services and interfaces                                                                                                                                                                                         |
-| `list_adb_processes`    | read               | `ps -A`: user, pid, ppid, rss, state, name                                                                                                                                                                                            |
+| `list_adb_features`     | read               | `pm list features` (hardware/software features, hex GL versions); optional `limit` and `offset` paging                                                                                                                                |
+| `list_adb_services`     | read               | `service list` binder services and interfaces; optional `limit` and `offset` paging                                                                                                                                                   |
+| `list_adb_processes`    | read               | `ps -A`: user, pid, ppid, rss, state, name; optional `limit` and `offset` paging                                                                                                                                                      |
 | `inspect_adb_window`    | read               | `dumpsys window` focus declarations (what is on screen)                                                                                                                                                                               |
 | `read_adb_setting`      | read               | One `settings get` value; device-side null is reported as such                                                                                                                                                                        |
 | `read_adb_logcat`       | read               | Bounded `logcat -d -t` dump for one buffer, optional pid filter                                                                                                                                                                       |
-| `list_adb_packages`     | read               | `pm list packages -f` with scope; base APK device paths                                                                                                                                                                               |
+| `list_adb_packages`     | read               | `pm list packages -f` with scope; base APK device paths; optional `limit` and `offset` paging                                                                                                                                         |
 | `resolve_adb_packages`  | read               | Case-insensitive package-name substring search with exact-match flag                                                                                                                                                                  |
 | `inspect_adb_package`   | read               | `dumpsys package` projection: versions, install times, installer, flags, and count of listed requested-permission rows (including Unicode names)                                                                                      |
-| `list_adb_directory`    | read               | NUL-framed immediate children, including hidden entries: kinds, permissions, owner, group, sizes, symlink targets                                                                                                                     |
+| `list_adb_directory`    | read               | NUL-framed immediate children, including hidden entries: kinds, permissions, owner, group, sizes, symlink targets; optional `limit` and `offset` paging                                                                               |
 | `pull_adb_package`      | read               | Complete split APK set from `pm path`, each file digested                                                                                                                                                                             |
 | `pull_adb_file`         | read               | One absolute device path pulled and digested                                                                                                                                                                                          |
 | `capture_adb_screen`    | read               | One `screencap -p` frame (exec-out, no device-side file) with dimensions                                                                                                                                                              |
@@ -120,9 +122,9 @@ existing analysis families directly, for example
 | `start_adb_activity`    | **mutates device** | Starts an intent (`am start -W -a` with optional URI, component, and up to 16 typed extras); preserves the activity manager's verdict                                                                                                 |
 | `stop_adb_app`          | **mutates device** | Force-stops every process of a package, ending a dynamic-analysis run                                                                                                                                                                 |
 
-Screen capture validates the PNG signature, IHDR framing, dimensions, and IHDR
-checksum before publishing. It does not validate encoding fields or decode and
-validate image contents; that limitation is retained in Evidence.
+Screen capture validates the PNG signature, IHDR framing and checksum, dimensions,
+and encoding fields before publishing. Evidence records that pixel data remains
+undecoded.
 
 When `push_adb_file` receives an existing directory, adb places the local file
 inside it under the local basename; Evidence reports that effective file path
@@ -156,6 +158,16 @@ Failed snapshot cleanup remains owned and is retried before later operations
 and during shutdown.
 
 ## Interpret the result
+
+Package, process, directory, feature, and service listings accept an optional
+positive integer `limit` and a zero-based `offset` among parsed rows. Use
+`--limit` and `--offset` on the CLI. Omitting both returns the full parsed
+listing. Paging trims the returned rows after ADB captures the listing. When
+paging omits rows, `coverage` is `partial` and the limitation reports the
+returned count, total parsed count, and selected page. Unparsed output can
+also make coverage partial. Repeat the operation with the next offset to
+continue. Each call captures a new listing, so rows may shift if device state
+changes between calls.
 
 - **Package numeric declarations retain failures.** `inspect_adb_package`
   admits the first valid `userId` or `appId` as `user_id`: a nonnegative safe
@@ -273,7 +285,10 @@ and during shutdown.
   cleanup before later work and during shutdown. Cleanup refuses a replacement
   directory. Terminal shutdown stops admission and drains active operations.
 - The provider holds no long-lived processes; every invocation is one
-  bounded adb run. The adb server belongs to the caller.
+  bounded adb run in its own process group. Cancellation or a deadline asks
+  adb to stop with SIGTERM, then cleanup stops what remains of that run,
+  including descendants it left behind. The adb server belongs to the host:
+  REA may start it with `adb start-server` and never stops it.
 
 ## Related capability and follow-up lanes
 

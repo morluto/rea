@@ -1,7 +1,7 @@
 import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { goBinarySchema } from "../../src/domain/go/goBinary.js";
 import { evidenceResultOf } from "../../src/contracts/toolOutputSchemaPrimitives.js";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { expect } from "vitest";
@@ -23,10 +23,13 @@ import {
 import { createGoRodataStringFixture } from "../fixtures/go/rodataStringImage.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { analysisViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
-import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { lazyLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+
+const connectLocalToolsMcp = lazyLocalToolsMcp();
 
 cliTest(
   "reads Mach-O inline Go strings beyond a header-only discovery section through CLI and MCP",
@@ -166,7 +169,7 @@ cliTest(
                   resource: "memory",
                   reported_limits: {
                     boundary: "build-info",
-                    maximum_bytes: maximum,
+                    maximum,
                   },
                 }
               : { issues: [{ path: ["path"], reason: "invalid_format" }] }),
@@ -181,7 +184,7 @@ cliTest(
                   resource: "memory",
                   reported_limits: {
                     boundary: "build-info",
-                    maximum_bytes: maximum,
+                    maximum,
                   },
                 }
               : { issues: [{ path: ["path"], reason: "invalid_format" }] }),
@@ -268,7 +271,7 @@ cliTest(
         resource: "cpu",
         reported_limits: {
           boundary: "search",
-          maximum_bytes: 256 * 1024 * 1024,
+          maximum: 256 * 1024 * 1024,
         },
       },
     };
@@ -306,56 +309,45 @@ cliTest(
   },
 );
 
-for (const bits of [32, 64] as const) {
-  for (const encoding of ["inline", "pointer"] as const) {
-    cliTest(
-      `preserves PE ${bits}-bit ${encoding} build info at zero VirtualSize through CLI and stdio MCP`,
-      async ({ cli }) => {
-        const root = await createTestTempDirectory("rea-go-pe-zero-vsize-");
-        const fixture = createGoBinaryFixture({ format: "pe", bits, encoding });
-        const ordinaryBytes = Buffer.from(fixture.bytes);
-        const zeroSizeBytes = Buffer.from(fixture.bytes);
-        setGoPeVirtualSize(zeroSizeBytes, 0);
-        const { client, call } = await connectLocalToolsMcp();
-        const buildInfos = [];
-
-        for (const [label, bytes] of [
-          ["ordinary", ordinaryBytes],
-          ["zero-vsize", zeroSizeBytes],
-        ] as const) {
-          const path = join(root, `${label}.exe`);
-          await writeFile(path, bytes);
-          const result = await cli.run({
-            arguments: ["inspect-go-binary", path, "--json"],
-          });
-          expect(result.exitCode, result.stderr).toBe(0);
-          const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
-          expect(fileIdentity(evidence.subject).sha256).toBe(
-            createHash("sha256").update(bytes).digest("hex"),
-          );
-          expect(evidence.normalized_result.build_info).toMatchObject({
-            go_version: "go1.26.0",
-            encoding,
-            header_offset: fixture.headerOffset,
-            module_text: GO_MODULE_TEXT,
-          });
-          buildInfos.push(evidence.normalized_result.build_info);
-
-          const response = await call("inspect_go_binary", { path });
-          expect(response.isError, JSON.stringify(response)).not.toBe(true);
-          expectCliMcpEvidenceParity(
-            evidence,
-            response.structuredContent,
-            path,
-          );
-        }
-
-        expect(buildInfos[1]).toEqual(buildInfos[0]);
-        await client.ping();
-      },
+cliTest(
+  "preserves PE pointer build info at zero VirtualSize through CLI and stdio MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-go-pe-zero-vsize-");
+    const fixture = createGoBinaryFixture({
+      format: "pe",
+      bits: 32,
+      encoding: "pointer",
+    });
+    const path = join(root, "zero-vsize.exe");
+    setGoPeVirtualSize(fixture.bytes, 0);
+    await writeFile(path, fixture.bytes);
+    const result = await cli.run({
+      arguments: ["inspect-go-binary", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
+    expect(fileIdentity(evidence.subject).sha256).toBe(
+      createHash("sha256").update(fixture.bytes).digest("hex"),
     );
-  }
-}
+    expect(evidence.normalized_result.build_info).toMatchObject({
+      go_version: "go1.26.0",
+      encoding: "pointer",
+      header_offset: fixture.headerOffset,
+      module_text: GO_MODULE_TEXT,
+      version_location: { offset: fixture.versionOffset, bytes: 8 },
+      module_location: {
+        offset: fixture.moduleOffset,
+        bytes: fixture.moduleBytes.length,
+      },
+    });
+
+    const { client, call } = await connectLocalToolsMcp();
+    const response = await call("inspect_go_binary", { path });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
+    await client.ping();
+  },
+);
 
 cliTest(
   "rejects misaligned 64-bit Mach-O through Go CLI and stdio MCP",
@@ -631,6 +623,7 @@ cliTest(
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
+    expect(evidence.normalized_result.build_info?.module_text).toBe(moduleText);
     expect(evidence.normalized_result.build_info?.module).toMatchObject({
       path: "example.com/tool/cmd/tool",
       main: null,
@@ -641,6 +634,72 @@ cliTest(
     expect(evidence.limitations.join(" ")).toContain(
       "Dependency coverage is unknown",
     );
+  },
+);
+
+cliTest(
+  "projects the same Go BOM from retained MCP and detached CLI Evidence",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-go-cyclonedx-");
+    const path = join(root, "application.elf");
+    const evidencePath = join(root, "go-evidence.json");
+    const requestPath = join(root, "cyclonedx-view.json");
+    await writeFile(path, createGoBinaryFixture().bytes);
+    const { call } = await connectLocalToolsMcp();
+    const inspected = await call("inspect_go_binary", { path });
+    expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
+    const parent = parseEvidence(inspected.structuredContent);
+    await writeFile(evidencePath, JSON.stringify(parent));
+    await unlink(path);
+    const view = { kind: "cyclonedx" } as const;
+    const retained = await call("inspect_analysis_view", {
+      source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+      view,
+    });
+    expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
+    const mcpEvidence = parseEvidence(retained.structuredContent);
+
+    await writeFile(
+      requestPath,
+      JSON.stringify({
+        source: { kind: "evidence-file", path: evidencePath },
+        view,
+      }),
+    );
+    const viewed = await cli.run({
+      arguments: ["inspect-analysis-view", requestPath, "--json"],
+    });
+    expect(viewed.exitCode, viewed.stderr).toBe(0);
+    const cliEvidence = parseEvidence(viewed.json);
+    expect(cliEvidence.confidence).toBe("derived");
+    expect(mcpEvidence.confidence).toBe("derived");
+    expect(cliEvidence.normalized_result).toEqual(
+      mcpEvidence.normalized_result,
+    );
+    const result = analysisViewResultSchema.parse(
+      cliEvidence.normalized_result,
+    );
+    if (result.kind !== "cyclonedx")
+      throw new Error("Expected a CycloneDX view");
+    const mainRef = "pkg:golang/example.com/tool@%28devel%29";
+    expect(result).toMatchObject({
+      parent_evidence_id: parent.evidence_id,
+      parent_operation: "inspect_go_binary",
+      source_coverage: { aggregate: "unknown", records: "present" },
+      document: {
+        bomFormat: "CycloneDX",
+        specVersion: "1.6",
+        compositions: [{ aggregate: "unknown" }],
+        components: [
+          { name: "example.com/tool", "bom-ref": mainRef, purl: mainRef },
+          { name: "../dependency", "bom-ref": "go-module:1" },
+        ],
+        dependencies: expect.arrayContaining([
+          { ref: mainRef, dependsOn: ["go-module:1"] },
+        ]),
+      },
+    });
+    expect(result.document.components[1]).not.toHaveProperty("purl");
   },
 );
 

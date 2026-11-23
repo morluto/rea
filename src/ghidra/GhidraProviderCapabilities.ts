@@ -8,6 +8,15 @@ import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
 import { GHIDRA_MUTATING_OPERATIONS } from "./GhidraSessionValues.js";
 import { ghidraLoadImageVerificationNote } from "./GhidraVerifiedLoadImageFormats.js";
+import {
+  EXISTING_PROJECT_WINDOWS_REMEDIATION,
+  EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+} from "./GhidraAdmission.js";
+
+export {
+  EXISTING_PROJECT_WINDOWS_REMEDIATION,
+  EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+};
 
 /** Target architectures admitted by the Windows P0 native PE boundary. */
 export const WINDOWS_P0_NATIVE_PE_ARCHITECTURES: readonly string[] =
@@ -114,6 +123,15 @@ export const ghidraNotInProcedureLimitation = (
 ): string =>
   `Ghidra has no function at or containing this address in this session. This reflects the current function inventory, not proof that the address holds no code. ${ghidraFunctionSeedRecovery(source)}`;
 
+/**
+ * Attached to a not-in-listing instruction: Ghidra attempted no decode, so the
+ * answer does not show the bytes are data. Names the `code` seed recovery.
+ */
+export const ghidraNotInListingLimitation = (
+  source: GhidraSessionSource,
+): string =>
+  `Ghidra's listing has no instruction or defined data at this address in this session, so no decode was attempted; this is not proof that the bytes are not code. If they are initialized code that auto-analysis did not reach, declare the address as a \`code\` seed, or a \`function\` seed for an entry point, in REA_GHIDRA_SEED_FILE for a new REA process${seedSessionRestriction[source]}; that session's seed outcome limitation counts decoded, failed and unmapped seeds.`;
+
 /** Limitation text for one admitted operation, including the common base. */
 export const limitationsFor = (
   operation: string,
@@ -162,7 +180,7 @@ export const limitationsFor = (
     case "search_bytes":
       return [
         ...common,
-        "Searches contiguous eligible initialized loader-adjusted memory in provider address order, including across adjacent blocks. Bounds and page coverage ends are inclusive. Unbounded searches separately list skipped unloaded blocks and loaded overlays; use an overlay address-space bound to search it. Uninitialized blocks are listed separately and break search runs. Overlapping matches are included. A cursor resumes the same target, profile and query. Cancellation discards the active search and returns no successful partial page.",
+        "Searches contiguous eligible initialized loader-adjusted memory in provider address order, including across adjacent blocks. Bounds and page coverage ends are inclusive. Unbounded searches separately list skipped unloaded blocks and loaded overlays; use an overlay address-space bound to search it. Uninitialized blocks are listed separately and break search runs. Overlapping matches are included. A cursor resumes the same target, profile and query; it does not pin match metadata. Procedure names and other match metadata are read live on each page, so a rename in this session between pages appears on later pages. Cancellation discards the active search and returns no successful partial page.",
       ];
     case "address_to_file_offset":
       return [
@@ -295,14 +313,6 @@ export const checkpointCapabilities = (): readonly CapabilityDescriptor[] =>
     ...capability,
     limitations: limitationsFor(capability.operation, "owned-checkpoint"),
   }));
-
-/** The selected database mode is not part of Windows P0 authority. */
-export const EXISTING_PROJECT_WINDOWS_UNAVAILABLE =
-  "An existing Ghidra project cannot be opened on the Windows launch path.";
-
-/** Windows P0 imports targets into ephemeral projects only. */
-export const EXISTING_PROJECT_WINDOWS_REMEDIATION =
-  "Unset REA_GHIDRA_PROJECT_PATH in the environment that starts REA to import targets into an ephemeral project, or open the existing project on a supported Linux or macOS host; restart REA after changing the environment.";
 
 /** Read-only project mode retains precise unavailable mutation capabilities. */
 export const existingProjectCapabilities = (

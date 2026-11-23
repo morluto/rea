@@ -71,6 +71,15 @@ export class SessionProviderRouter {
     return this.route;
   }
 
+  /** Auxiliary-only router for target-selected operations that do not select a deep provider. */
+  auxiliaryOnly(): SessionProviderRouter {
+    return new SessionProviderRouter(
+      new AnalysisProviderRegistry([]),
+      this.auxiliaryProviders,
+      this.route,
+    );
+  }
+
   /** Close provider owners not represented by the currently bound client. */
   closeOwnedResources() {
     return this.registry.closeOwnedResources();

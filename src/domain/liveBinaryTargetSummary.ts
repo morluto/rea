@@ -6,17 +6,26 @@ import {
   RAW_ONLY_ARCHITECTURES,
 } from "./binaryTargetTypes.js";
 import { digestSchema } from "./digests.js";
+import { localPathStringSchema } from "./localPath.js";
 import {
   binaryArchitectureSchema,
   rawBinaryEntryPointSchema,
 } from "./rawBinary.js";
-import { ZIP_PACKAGE_FORMATS } from "./zipPackageFormat.js";
+import { targetFormatsOfKind } from "./targetFormats.js";
 
 const architectureSchema = z.enum(BINARY_ARCHITECTURES);
 const headerArchitectureSchema = architectureSchema.exclude(
   HEADER_ARCHITECTURE_EXCLUSIONS,
 );
-const identity = { path: z.string(), sha256: digestSchema };
+const identity = {
+  path: z.string(),
+  sha256: digestSchema,
+  caller_input_path: localPathStringSchema
+    .exactOptional()
+    .describe(
+      "Verbatim selected path when it differs from the inspected file path.",
+    ),
+};
 const executable = { ...identity, kind: z.literal("executable") };
 
 /** Live target classifications; historical Evidence and snapshots retain their own admission. */
@@ -64,25 +73,11 @@ export const liveBinaryTargetSummaryVariants = [
   z.object({
     ...identity,
     kind: z.literal("archive"),
-    format: z.enum([
-      ...ZIP_PACKAGE_FORMATS,
-      "asar",
-      "ines",
-      "godot-pck",
-      "unityfs",
-      "wxapkg",
-      "axml",
-      "uimage",
-      "dmg",
-      "pkg",
-      "intel-hex",
-      "srec",
-      "esp-image",
-      "uf2",
-      "dfuse",
-      "fit",
-      "ntfs-mft",
-    ]),
+    format: z.enum(
+      targetFormatsOfKind("archive").filter(
+        (format) => format !== "esp-flash-image",
+      ),
+    ),
     architecture: z.null(),
   }),
   z.object({
@@ -112,7 +107,7 @@ export const liveBinaryTargetSummaryVariants = [
   z.object({
     ...identity,
     kind: z.literal("artifact"),
-    format: z.enum(["plist", "javascript", "source-map"]),
+    format: z.enum(targetFormatsOfKind("artifact")),
     architecture: z.null(),
   }),
 ] as const;

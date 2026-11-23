@@ -11,12 +11,16 @@ import {
   bindArtifactFileCleanup,
   type ArtifactFilePrimaryFacts,
 } from "./ArtifactFileOperation.js";
-import { completedStableArtifactObservation } from "./StableArtifactObservation.js";
+import {
+  completedStableArtifactObservation,
+  type CompletedStableArtifact,
+} from "./StableArtifactObservation.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisInputError,
+  AnalysisUnsupportedTargetError,
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
@@ -62,6 +66,32 @@ export const projectOwnedArtifactIdentityFailure = (
 
 /** The request field that selected a file: a name, or a path into the request. */
 export type RequestField = string | readonly (string | number)[];
+
+/** Keep a selected parser refusal's established path and structured input projection. */
+export const projectOwnedArtifactInputFailure = (
+  { cause, origin }: ArtifactFilePrimaryFacts,
+  operation: string,
+  path: string,
+  field: RequestField = "path",
+): AnalysisError | undefined => {
+  if (
+    origin !== "owned-or-classified" ||
+    !(cause instanceof ArtifactReaderFailure)
+  )
+    return undefined;
+  if (cause.reason === "unsupported")
+    return new AnalysisUnsupportedTargetError(operation, path, cause.message, {
+      cause,
+    });
+  if (
+    cause.reason === "malformed" ||
+    cause.reason === "truncated" ||
+    cause.reason === "format" ||
+    cause.reason === "path"
+  )
+    return stableArtifactInputFailure(cause, operation, field);
+  return undefined;
+};
 
 const requestFieldPath = (field: RequestField): (string | number)[] =>
   typeof field === "string" ? [field] : [...field];
@@ -167,7 +197,7 @@ export const projectStableArtifactFailure = (
   path: string,
   providerId: string,
   operation: string,
-  snapshot?: StableArtifactSnapshot,
+  snapshot?: CompletedStableArtifact,
 ): AnalysisError => {
   const observation = completedStableArtifactObservation(cause, path, snapshot);
   if (observation !== undefined) primary.retainPartialObservation(observation);

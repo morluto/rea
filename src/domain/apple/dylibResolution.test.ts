@@ -799,134 +799,65 @@ describe("dyld load order", () => {
   );
 });
 
-describe("loader-relative dylib resolution", () => {
-  it("does not reuse already loaded images by install name for @loader_path dependencies", async () => {
-    const pluginA = "Contents/PlugIns/A/pluginA.dylib";
-    const helperA = "Contents/PlugIns/A/libhelper.dylib";
-    const pluginB = "Contents/PlugIns/B/pluginB.dylib";
-    const trace = await traceDylibLoading(
-      memoryView({
-        [MAIN]: executable({
-          dependencies: [
-            dependency("@executable_path/../PlugIns/A/pluginA.dylib"),
-            dependency("@executable_path/../PlugIns/B/pluginB.dylib"),
-          ],
-        }),
-        [pluginA]: parsed(
-          slice({
-            dependencies: [dependency("@loader_path/libhelper.dylib")],
-          }),
-        ),
-        [helperA]: parsed(
-          slice({
-            install_name: "@loader_path/libhelper.dylib",
-          }),
-        ),
-        [pluginB]: parsed(
-          slice({
-            dependencies: [dependency("@loader_path/libhelper.dylib")],
-          }),
+it("resolves the same loader-relative install name separately for each loader", async () => {
+  const installName = "@loader_path/libhelper.dylib";
+  const plugins = ["A", "B", "C"].map(
+    (directory) => `Contents/PlugIns/${directory}/plugin.dylib`,
+  );
+  const loaders = Object.fromEntries(
+    plugins.map((path) => [
+      path,
+      parsed(slice({ dependencies: [dependency(installName)] })),
+    ]),
+  );
+  const helpers = Object.fromEntries(
+    ["A", "B"].map((directory) => [
+      `Contents/PlugIns/${directory}/libhelper.dylib`,
+      parsed(slice({ install_name: installName })),
+    ]),
+  );
+  const trace = await traceDylibLoading(
+    memoryView({
+      [MAIN]: executable({
+        dependencies: ["A", "B", "C"].map((directory) =>
+          dependency(`@executable_path/../PlugIns/${directory}/plugin.dylib`),
         ),
       }),
-      { roots: [MAIN] },
-    );
+      ...loaders,
+      ...helpers,
+    }),
+    { roots: [MAIN] },
+  );
 
-    const edgeA = edgeFor(trace, pluginA, "@loader_path/libhelper.dylib");
-    expect(edgeA.resolution).toEqual({
-      status: "resolved",
-      image: helperA,
-    });
-    expect(edgeA.candidates).toEqual([
-      expect.objectContaining({
-        source: "loader_path",
-        outcome: "resolved",
-        resolved_path: helperA,
-      }),
-    ]);
-
-    const edgeB = edgeFor(trace, pluginB, "@loader_path/libhelper.dylib");
-    expect(edgeB.resolution).toEqual({
-      status: "unresolved",
-      image: null,
-    });
-    expect(edgeB.candidates).toEqual([
-      expect.objectContaining({
-        path: "Contents/PlugIns/B/libhelper.dylib",
-        source: "loader_path",
-        outcome: "absent",
-        resolved_path: null,
-      }),
-    ]);
-    expect(trace.findings).toContainEqual(
-      expect.objectContaining({
-        kind: "required-load-unresolved",
-        image: pluginB,
-      }),
-    );
-  });
-
-  it("resolves @loader_path dependencies to the loader's own directory when multiple helpers exist", async () => {
-    const pluginA = "Contents/PlugIns/A/pluginA.dylib";
-    const helperA = "Contents/PlugIns/A/libhelper.dylib";
-    const pluginB = "Contents/PlugIns/B/pluginB.dylib";
-    const helperB = "Contents/PlugIns/B/libhelper.dylib";
-    const trace = await traceDylibLoading(
-      memoryView({
-        [MAIN]: executable({
-          dependencies: [
-            dependency("@executable_path/../PlugIns/A/pluginA.dylib"),
-            dependency("@executable_path/../PlugIns/B/pluginB.dylib"),
-          ],
-        }),
-        [pluginA]: parsed(
-          slice({
-            dependencies: [dependency("@loader_path/libhelper.dylib")],
+  expect(
+    trace.edges.filter(({ install_name }) => install_name === installName),
+  ).toEqual(
+    ["A", "B", "C"].map((directory) => {
+      const folder = `Contents/PlugIns/${directory}`;
+      const helper = `${folder}/libhelper.dylib`;
+      const found = directory !== "C";
+      return expect.objectContaining({
+        loader: `${folder}/plugin.dylib`,
+        resolution: {
+          status: found ? "resolved" : "unresolved",
+          image: found ? helper : null,
+        },
+        candidates: [
+          expect.objectContaining({
+            path: helper,
+            source: "loader_path",
+            outcome: found ? "resolved" : "absent",
+            resolved_path: found ? helper : null,
           }),
-        ),
-        [helperA]: parsed(
-          slice({
-            install_name: "@loader_path/libhelper.dylib",
-          }),
-        ),
-        [pluginB]: parsed(
-          slice({
-            dependencies: [dependency("@loader_path/libhelper.dylib")],
-          }),
-        ),
-        [helperB]: parsed(
-          slice({
-            install_name: "@loader_path/libhelper.dylib",
-          }),
-        ),
-      }),
-      { roots: [MAIN] },
-    );
-
-    expect(
-      edgeFor(trace, pluginA, "@loader_path/libhelper.dylib"),
-    ).toMatchObject({
-      resolution: { status: "resolved", image: helperA },
-      candidates: [
-        expect.objectContaining({
-          source: "loader_path",
-          outcome: "resolved",
-          resolved_path: helperA,
-        }),
-      ],
-    });
-    expect(
-      edgeFor(trace, pluginB, "@loader_path/libhelper.dylib"),
-    ).toMatchObject({
-      resolution: { status: "resolved", image: helperB },
-      candidates: [
-        expect.objectContaining({
-          source: "loader_path",
-          outcome: "resolved",
-          resolved_path: helperB,
-        }),
-      ],
-    });
-  });
+        ],
+      });
+    }),
+  );
+  expect(
+    trace.findings.filter(({ kind }) => kind === "required-load-unresolved"),
+  ).toEqual([
+    expect.objectContaining({ image: "Contents/PlugIns/C/plugin.dylib" }),
+  ]);
 });
 
 it.each([

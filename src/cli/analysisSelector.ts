@@ -71,21 +71,3 @@ export const selectCliAnalysisSelector = (
     );
   return ok(selected);
 };
-
-/** Preserve a CLI selector supplied positionally or through its named option. */
-export const resolveCliAnalysisSelector = (
-  positional: string | undefined,
-  named: string | undefined,
-  option: string,
-  operation: string,
-  kind: CliSelectorKind = "text",
-): string => {
-  const selected = selectCliAnalysisSelector(positional, named, {
-    option,
-    operation,
-    kind,
-    required: true,
-  });
-  if (!selected.ok) throw selected.error;
-  return selected.value!;
-};

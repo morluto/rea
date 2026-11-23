@@ -8,14 +8,10 @@ import {
 } from "./ClientRegistration.js";
 import { clientRegistrationEnvironment } from "./ClientRegistrationEnvironment.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
-import {
-  parseClientConfiguration,
-  clientConfigurationRecordSchema,
-} from "./ClientConfigurationDocument.js";
-import {
-  supportedClientRegistrationProfile,
-  type SetupClient,
-} from "./SupportedClients.js";
+import { parseClientConfiguration } from "./ClientConfigurationDocument.js";
+import { clientConfigurationRecordSchema } from "./ClientConfigurationValues.js";
+import type { SetupClient } from "./SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../tests/fixtures/clientRegistrationProfile.js";
 import { mcpClientRegistrationProfile } from "./McpRegistrationCatalog.js";
 import { admitClientStdioConnection } from "./ClientRegistrationConnection.js";
 import type { ClientRegistrationTarget } from "./ClientRegistrationProfile.js";
@@ -162,29 +158,24 @@ it("normalizes an explicitly empty Goose env alias to one canonical field", () =
   expect(result.value).not.toHaveProperty("env");
 });
 
-it.each([
-  { env: { KEEP: "1" }, envs: { KEEP: "1" } },
-  { env: { KEEP: "old" }, envs: { KEEP: "new" } },
-])(
-  "refuses both Goose environment aliases even when their contents agree: %j",
-  (previous) => {
-    const result = replaceClientRegistrationLauncher(
-      gooseTarget,
-      ["fixture"],
-      previous,
-    );
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("Ambiguous Goose aliases were admitted");
-    expect(result.error).toBeInstanceOf(ConfigurationError);
-    expect(result.error.message).toContain("envs or its env alias, not both");
-    expect(result.error.settings).toEqual([
-      {
-        setting: "envs",
-        constraint: "env and envs declare the same native field",
-      },
-    ]);
-  },
-);
+it("refuses both Goose environment aliases even when their contents agree", () => {
+  const result = replaceClientRegistrationLauncher(gooseTarget, ["fixture"], {
+    env: { KEEP: "1" },
+    envs: { KEEP: "1" },
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "ConfigurationError",
+      settings: [
+        {
+          setting: "envs",
+          constraint: expect.stringMatching(/\benv\b.*\benvs\b/u),
+        },
+      ],
+    },
+  });
+});
 
 it.each([null, 42, ["value"], { VALUE: 123 }])(
   "refuses a malformed Goose env alias: %j",

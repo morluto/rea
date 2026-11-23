@@ -644,51 +644,45 @@ it("rejects a cookie whose package range is outside the file", async () => {
   await reader.close();
 });
 
-it("rejects a member whose declared size exceeds the decompression budget", async () => {
-  const path = await writeArchive(
-    "bomb",
-    cArchiveExecutable({
-      layout: "2.1",
-      pythonVersion: 314,
-      pythonLibrary: "libpython3.14.dylib",
-      members: [
-        {
-          name: "bomb.bin",
-          typeCode: "b",
-          payload: Buffer.alloc(0),
-          compress: true,
-          declaredUncompressedSize: 300 * 1024 * 1024,
-        },
-      ],
-    }),
-  );
-  await expect(scanCanonicalArtifactInventory(path)).rejects.toMatchObject({
-    reason: "limit",
-  });
-});
-
-it("rejects a zlib member that expands past its declared size", async () => {
-  const path = await writeArchive(
-    "expand",
-    cArchiveExecutable({
-      layout: "2.1",
-      pythonVersion: 314,
-      pythonLibrary: "libpython3.14.dylib",
-      members: [
-        {
-          name: "expand.bin",
-          typeCode: "b",
-          payload: Buffer.from("hello world hello world"),
-          compress: true,
-          declaredUncompressedSize: 4,
-        },
-      ],
-    }),
-  );
-  await expect(scanCanonicalArtifactInventory(path)).rejects.toMatchObject({
-    reason: "limit",
-  });
-});
+it.each([
+  ["an oversized declaration", "", 300 * 1024 * 1024, { reason: "limit" }],
+  [
+    "plaintext longer than declared",
+    "hello world",
+    4,
+    { reason: "integrity", integrityCheck: "declared-size" },
+  ],
+  [
+    "nonempty plaintext declared empty",
+    "x",
+    0,
+    { reason: "integrity", integrityCheck: "declared-size" },
+  ],
+] as const)(
+  "distinguishes %s when hashing a compressed CArchive member",
+  async (_, body, declaredSize, expected) => {
+    const path = await writeArchive(
+      "compressed-size",
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 314,
+        pythonLibrary: "libpython3.14.dylib",
+        members: [
+          {
+            name: "member.bin",
+            typeCode: "b",
+            payload: Buffer.from(body),
+            compress: true,
+            declaredUncompressedSize: declaredSize,
+          },
+        ],
+      }),
+    );
+    await expect(scanCanonicalArtifactInventory(path)).rejects.toMatchObject(
+      expected,
+    );
+  },
+);
 
 it("reads a compressed member whose uncompressed size is zero", async () => {
   const path = await writeArchive(
@@ -731,27 +725,6 @@ it("reads a compressed member whose uncompressed size is zero", async () => {
       (node) => node.sha256 === sha256(derived(Buffer.alloc(0))),
     ),
   ).toMatchObject({ size: derived(Buffer.alloc(0)).length });
-
-  const expanded = await writeArchive(
-    "zero-declared",
-    cArchiveExecutable({
-      layout: "2.1",
-      pythonVersion: 309,
-      pythonLibrary: "libpython3.9.so",
-      members: [
-        {
-          name: "expand.bin",
-          typeCode: "x",
-          payload: Buffer.from("x"),
-          compress: true,
-          declaredUncompressedSize: 0,
-        },
-      ],
-    }),
-  );
-  await expect(scanCanonicalArtifactInventory(expanded)).rejects.toMatchObject({
-    reason: "limit",
-  });
 });
 
 it("preserves an uppercase Z ZIP member as a readable file", async () => {
@@ -1121,6 +1094,45 @@ it("reads a PE signature beyond the carrier prefix before projecting paths", asy
     expect(entries.map((entry) => entry.path)).toContain("pkg/data.bin");
   } finally {
     await reader.close();
+  }
+});
+
+it("requires DOS magic before a PE-like record can select Windows path semantics", async () => {
+  const storedName = String.raw`pkg\data.bin`;
+  const carrier = cArchiveExecutable({
+    carrier: "pe",
+    layout: "2.1",
+    pythonVersion: 309,
+    members: [
+      {
+        name: storedName,
+        typeCode: "x",
+        payload: Buffer.from("data"),
+        compress: false,
+      },
+    ],
+  });
+  const withoutDosMagic = Buffer.from(carrier);
+  withoutDosMagic.write("XX");
+  for (const [bytes, expectedPath] of [
+    [carrier, "pkg/data.bin"],
+    [withoutDosMagic, storedName],
+  ] as const) {
+    const reader = new PyInstallerArtifactReader(
+      await writeArchive("carrier", bytes),
+    );
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      expect(entries).toContainEqual(
+        expect.objectContaining({
+          path: expectedPath,
+          formatMetadata: expect.objectContaining({ source_name: storedName }),
+        }),
+      );
+    } finally {
+      await reader.close();
+    }
   }
 });
 

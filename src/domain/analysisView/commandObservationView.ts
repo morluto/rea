@@ -19,7 +19,7 @@ import {
   completeWithinViewCoverage,
 } from "./analysisViewCoverage.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { isRecord } from "../../kernel/isRecord.js";
 
 export const commandSummaryContext = {
@@ -39,6 +39,13 @@ export const gdbCommandSummarySchema = gdbCommandResultSchema
       log_utf16_units: z.number().int().nonnegative(),
     }),
   });
+
+const readGdbCommandResult = createAnalysisViewResultReader(
+  gdbCommandResultSchema,
+);
+const readCommandObservation = createAnalysisViewResultReader(
+  commandObservationSchema,
+);
 
 /** Select existing owner facts without parsing a command or its output protocol. */
 export const projectCommandObservationView = (
@@ -116,7 +123,7 @@ export const projectCommandObservationView = (
     ),
   };
   if (parent.operation === "gdb_console") {
-    const parsed = parseAnalysisViewResult(gdbCommandResultSchema, parent);
+    const parsed = readGdbCommandResult(parent);
     if (!parsed.ok) return parsed;
     const selection = parameters.data;
     if (
@@ -149,7 +156,7 @@ export const projectCommandObservationView = (
       },
     });
   }
-  const parsed = parseAnalysisViewResult(commandObservationSchema, parent);
+  const parsed = readCommandObservation(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
   if (

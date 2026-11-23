@@ -1,4 +1,4 @@
-import type { Cli } from "incur";
+import type { CliInstance } from "./types.js";
 import type { Logger } from "pino";
 
 import type { WebRuntimeService } from "../application/WebRuntimeService.js";
@@ -31,7 +31,7 @@ const targetFields = {
 
 /** Register public equivalents of the two modular website runtime tools. */
 export const registerWebRuntimeCommands = (
-  cli: ReturnType<typeof Cli.create>,
+  cli: CliInstance,
   logger: Logger,
 ): void => {
   registerContractCommand(

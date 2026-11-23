@@ -6,6 +6,7 @@ import { isRecord as isObject } from "../kernel/isRecord.js";
 import { advertisedSchemaPatterns } from "./advertisedDialect.js";
 import { projectPortablePattern } from "./portablePattern.js";
 import {
+  mapSchemaChildren,
   schemaArrays,
   schemaChildren,
   schemaMaps,
@@ -487,29 +488,13 @@ const hasLiteralReference = (root: Record<string, unknown>): boolean => {
 /** Copy schema positions, replacing each pattern with its exact portable form. */
 const replaceExactPatterns = (schema: unknown): unknown => {
   if (!isObject(schema)) return schema;
-  return Object.fromEntries(
-    Object.entries(schema).map(([key, value]) => {
-      if (key === "pattern" && typeof value === "string") {
-        const projection = projectPortablePattern(value);
-        return [key, projection.kind === "exact" ? projection.pattern : value];
-      }
-      if (schemaMaps.has(key) && isObject(value))
-        return [
-          key,
-          Object.fromEntries(
-            Object.entries(value).map(([name, child]) => [
-              name,
-              replaceExactPatterns(child),
-            ]),
-          ),
-        ];
-      if (
-        (schemaArrays.has(key) || schemaChildren.has(key)) &&
-        Array.isArray(value)
-      )
-        return [key, value.map(replaceExactPatterns)];
-      if (schemaChildren.has(key)) return [key, replaceExactPatterns(value)];
-      return [key, value];
-    }),
+  const rebuilt = mapSchemaChildren(
+    schema as Record<string, unknown>,
+    replaceExactPatterns,
   );
+  if (typeof rebuilt.pattern !== "string") return rebuilt;
+  const projection = projectPortablePattern(rebuilt.pattern);
+  if (projection.kind !== "exact" || projection.pattern === rebuilt.pattern)
+    return rebuilt;
+  return { ...rebuilt, pattern: projection.pattern };
 };

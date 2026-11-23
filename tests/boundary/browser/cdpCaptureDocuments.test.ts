@@ -1,43 +1,9 @@
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
-
-it("reports malformed child frame entries through the CDP boundary", async () => {
-  const browser = await startFakeCdpBrowser({
-    commandResult: (command, origin) =>
-      command.method === "Page.getFrameTree"
-        ? {
-            frameTree: {
-              frame: { id: "main", url: `${origin}/` },
-              childFrames: [
-                null,
-                { frame: { id: "child", url: `${origin}/child` } },
-              ],
-            },
-          }
-        : undefined,
-  });
-  trackBrowser(browser);
-
-  const result = await new CdpBrowserProvider().inspectPage(
-    inspectWebPageInputSchema.parse({
-      cdp_endpoint: browser.endpoint,
-      allowed_origins: [browser.allowedOrigin],
-      target_id: "allowed-page",
-      observation_ms: 0,
-    }),
-  );
-
-  if (!result.ok) throw result.error;
-  expect(result.value.frames.map(({ frame_id }) => frame_id)).toEqual([
-    "main",
-    "child",
-  ]);
-  expect(result.value.completeness.unavailable_sections).toContain("frames");
-});
 
 it("marks a missing resource frame tree incomplete through CDP", async () => {
   const browser = await startFakeCdpBrowser({
@@ -60,69 +26,251 @@ it("marks a missing resource frame tree incomplete through CDP", async () => {
   expect(result.value.completeness.unavailable_sections).toContain("resources");
 });
 
-const inspectWithReply = async (
-  method: string,
-  reply: Readonly<Record<string, unknown>>,
-) => {
+const accessibilityMethod = "Accessibility.getFullAXTree";
+const startAccessibilityCapture = async (childCount = 0) => {
+  const state: {
+    reply: (frameId: unknown) => Readonly<Record<string, unknown>>;
+    error: { code: number; message: string } | undefined;
+  } = { reply: () => ({ nodes: [] }), error: undefined };
   const browser = await startFakeCdpBrowser({
-    commandResult: (command) => (command.method === method ? reply : undefined),
+    commandError: ({ method }) =>
+      method === accessibilityMethod ? state.error : undefined,
+    commandResult: ({ method, params }, origin) => {
+      if (method === accessibilityMethod) return state.reply(params.frameId);
+      if (method !== "Page.getFrameTree" || childCount === 0) return undefined;
+      return {
+        frameTree: {
+          frame: { id: "frame-main", url: `${origin}/app` },
+          childFrames: Array.from({ length: childCount }, (_, index) => ({
+            frame: {
+              id: `child-${index}`,
+              parentId: "frame-main",
+              url: `${origin}/child/${index}`,
+            },
+          })),
+        },
+      };
+    },
   });
-  trackBrowser(browser);
-  const result = await new CdpBrowserProvider().inspectPage(
-    inspectWebPageInputSchema.parse({
-      cdp_endpoint: browser.endpoint,
-      allowed_origins: [browser.allowedOrigin],
-      target_id: "allowed-page",
-      observation_ms: 0,
-    }),
-  );
-  if (!result.ok) throw result.error;
-  return result.value;
+  const provider = new CdpBrowserProvider();
+  onTestFinished(async () => {
+    try {
+      await provider.close();
+    } finally {
+      await browser.close();
+    }
+  });
+  const capture = (includeText?: boolean) =>
+    provider.inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+        include_accessibility_text: includeText,
+      }),
+    );
+  const inspect = async (includeText?: boolean) => {
+    const result = await capture(includeText);
+    if (!result.ok) throw result.error;
+    return result.value;
+  };
+  const accessibilityReads = () =>
+    browser.commands.filter(({ method }) => method === accessibilityMethod)
+      .length;
+  return { state, capture, inspect, accessibilityReads };
 };
 
-it.each([
-  ["an omitted node inventory", {}],
-  ["a non-array node inventory", { nodes: { length: 1 } }],
-])(
-  "records %s from Accessibility.getFullAXTree as an accessibility gap",
-  async (_label, reply) => {
-    const inspected = await inspectWithReply(
-      "Accessibility.getFullAXTree",
-      reply,
-    );
+it("stops frame reads after method refusal and probes a fresh observation", async () => {
+  const { state, inspect, capture, accessibilityReads } =
+    await startAccessibilityCapture(32);
+  state.error = { code: -32_601, message: "Method not found" };
+  const degraded = await inspect(true);
+  expect(degraded.frames).toHaveLength(33);
+  expect(degraded.accessibility).toMatchObject({
+    nodes: [],
+    text_capture: { status: "unavailable" },
+  });
+  expect(degraded.completeness.unavailable_sections).toContain("accessibility");
+  expect(accessibilityReads()).toBe(1);
+  expect(
+    degraded.limitations.filter((line) => line.startsWith(accessibilityMethod)),
+  ).toEqual([
+    "Accessibility.getFullAXTree was unavailable from this browser target.",
+  ]);
 
-    expect(inspected.accessibility).toMatchObject({
+  state.error = { code: -32_602, message: "Invalid params" };
+  expect(await capture(true)).toMatchObject({
+    ok: false,
+    error: {
+      reason: "protocol_error",
+      command: accessibilityMethod,
+      code: -32_602,
+      reportedMessage: "Invalid params",
+    },
+  });
+  expect(accessibilityReads()).toBe(2);
+
+  state.error = undefined;
+  state.reply = (frameId) => {
+    if (frameId === "frame-main") return {};
+    return {
+      nodes:
+        frameId === "child-31" ? [{ nodeId: "child-ax", ignored: false }] : [],
+    };
+  };
+  const partial = await inspect(true);
+  expect(partial.accessibility.nodes).toMatchObject([{ node_id: "child-ax" }]);
+  expect(partial.accessibility.text_capture.status).toBe("included");
+  expect(partial.completeness.excluded).toContainEqual({
+    section: "accessibility",
+    reason: "invalid_protocol_value",
+    count: null,
+  });
+  expect(accessibilityReads()).toBe(35);
+});
+
+it("distinguishes an empty accessibility inventory from an unreadable command reply", async () => {
+  const { state, inspect } = await startAccessibilityCapture();
+  const empty = await inspect(true);
+  expect(empty.accessibility).toEqual({
+    total_nodes: 0,
+    nodes: [],
+    text_capture: { status: "included", retained_bytes: 0, excluded_fields: 0 },
+  });
+  expect(empty.completeness.unavailable_sections).not.toContain(
+    "accessibility",
+  );
+  expect(empty.completeness.truncated_sections).not.toContain("accessibility");
+  expect(
+    empty.completeness.excluded.filter(
+      ({ section }) => section === "accessibility",
+    ),
+  ).toEqual([]);
+
+  for (const [label, reply] of [
+    ["omitted", {}],
+    ["non-array", { nodes: { length: 1 } }],
+  ] as const) {
+    state.reply = () => reply;
+    const unreadable = await inspect(true);
+    expect(unreadable.accessibility, label).toMatchObject({
       total_nodes: 0,
       nodes: [],
     });
-    expect(inspected.completeness.unavailable_sections).toContain(
+    expect(unreadable.completeness.unavailable_sections, label).toContain(
       "accessibility",
     );
-    expect(inspected.completeness.excluded).toContainEqual({
-      section: "accessibility",
-      reason: "invalid_protocol_value",
-      count: null,
-    });
-    expect(inspected.limitations).toContain(
+    expect(
+      unreadable.completeness.excluded.filter(
+        ({ section }) => section === "accessibility",
+      ),
+      label,
+    ).toEqual([
+      {
+        section: "accessibility",
+        reason: "invalid_protocol_value",
+        count: null,
+      },
+    ]);
+    expect(unreadable.limitations, label).toContain(
       "Accessibility.getFullAXTree returned a malformed result; the section that reads it is incomplete.",
     );
-    // Other sections keep their evidence.
-    expect(inspected.dom.total_nodes).toBeGreaterThan(0);
-  },
-);
+    expect(unreadable.dom.total_nodes, label).toBeGreaterThan(0);
+  }
+});
 
-it("records a DOM snapshot without documents as a DOM and metadata gap", async () => {
-  const inspected = await inspectWithReply("DOMSnapshot.captureSnapshot", {
-    strings: [],
-    documents: [],
+it("retains admitted accessibility nodes and only reports unobserved usable child IDs", async () => {
+  const { state, inspect } = await startAccessibilityCapture();
+  const parent = {
+    nodeId: "parent",
+    ignored: false,
+    parentId: "",
+    childIds: ["", 3, "child"],
+    role: { value: "button" },
+    name: { value: "😀a" },
+    description: { value: "éé" },
+    properties: [
+      { name: "disabled", value: { value: true } },
+      { name: "valuetext", value: { value: "private value" } },
+    ],
+  };
+  const siblings = [
+    { nodeId: "child", ignored: false, parentId: "parent" },
+    { nodeId: "invalid-parent", ignored: false, parentId: 3 },
+    { nodeId: "invalid-children", ignored: false, childIds: "bad" },
+    null,
+    {},
+    { nodeId: "missing-ignored" },
+    { nodeId: "invalid-ignored", ignored: "false" },
+    "malformed",
+  ];
+  state.reply = () => ({ nodes: [parent, ...siblings] });
+  const approved = await inspect(true);
+  const expectedNodes = [
+    {
+      node_id: "parent",
+      parent_id: null,
+      role: "button",
+      ignored: false,
+      states: [{ name: "disabled", value: true }],
+    },
+    { node_id: "child", parent_id: "parent", ignored: false },
+    { node_id: "invalid-parent", parent_id: null, ignored: false },
+    { node_id: "invalid-children", parent_id: null, ignored: false },
+  ];
+  expect(approved.accessibility).toMatchObject({
+    total_nodes: 4,
+    nodes: [
+      { ...expectedNodes[0], name: "😀a", description: "éé" },
+      ...expectedNodes.slice(1),
+    ],
+    text_capture: { status: "included", retained_bytes: 9, excluded_fields: 0 },
   });
+  expect(approved.completeness.unavailable_sections).toContain("accessibility");
+  expect(approved.completeness.truncated_sections).not.toContain(
+    "accessibility",
+  );
+  expect(
+    approved.completeness.excluded.filter(
+      ({ section }) => section === "accessibility",
+    ),
+  ).toEqual([
+    { section: "accessibility", reason: "invalid_protocol_value", count: 9 },
+  ]);
 
-  expect(inspected.dom).toMatchObject({ total_nodes: 0, nodes: [] });
-  for (const section of ["dom", "metadata"])
-    expect(inspected.completeness.excluded).toContainEqual({
-      section,
-      reason: "invalid_protocol_value",
-      count: null,
-    });
-  expect(inspected.accessibility.total_nodes).toBeGreaterThan(0);
+  const unapproved = await inspect();
+  expect(unapproved.accessibility).toMatchObject({
+    total_nodes: 4,
+    nodes: [
+      { ...expectedNodes[0], name: null, description: null },
+      ...expectedNodes.slice(1),
+    ],
+    text_capture: {
+      status: "not_approved",
+      retained_bytes: 0,
+      excluded_fields: 2,
+    },
+  });
+  expect(unapproved.completeness.truncated_sections).not.toContain(
+    "accessibility",
+  );
+  expect(unapproved.completeness.excluded).toEqual(
+    expect.arrayContaining([
+      { section: "accessibility", reason: "invalid_protocol_value", count: 9 },
+      { section: "accessibility", reason: "not_approved", count: 2 },
+    ]),
+  );
+
+  state.reply = () => ({
+    nodes: [
+      { ...parent, childIds: [...parent.childIds, "unobserved"] },
+      ...siblings,
+    ],
+  });
+  const withUnobservedChild = await inspect(true);
+  expect(withUnobservedChild.accessibility).toEqual(approved.accessibility);
+  expect(withUnobservedChild.completeness.truncated_sections).toContain(
+    "accessibility",
+  );
 });

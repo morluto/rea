@@ -19,13 +19,18 @@ const sources = async (files: Readonly<Record<string, string>>) => {
 };
 
 describe("packaged producer identity", () => {
-  it("changes when a producer script changes, without a revision marker", async () => {
+  it("binds the release and every source in canonical name order", async () => {
     const directory = await sources({ "a.java": "one", "b.py": "two" });
-    const before = packagedSourcesDigest(directory, ["a.java", "b.py"]);
+    const original = packagedProducerIdentity(directory, ["b.py", "a.java"])();
+    expect(original).toEqual({
+      rea_version: PRODUCT_IDENTITY.packageVersion,
+      sources_sha256:
+        "36a70f4afc72128b1276d83321de8fba924bd1b5988b0bf8944b7b8481093126",
+    });
     await writeFile(new URL("b.py", directory), "two, edited");
-    expect(packagedSourcesDigest(directory, ["a.java", "b.py"])).not.toBe(
-      before,
-    );
+    expect(
+      packagedProducerIdentity(directory, ["a.java", "b.py"])().sources_sha256,
+    ).not.toBe(original.sources_sha256);
   });
 
   it("frames each source by name and length so bytes cannot move between files", async () => {
@@ -36,25 +41,10 @@ describe("packaged producer identity", () => {
     );
   });
 
-  it("does not depend on the order sources are listed in", async () => {
-    const directory = await sources({ "a.java": "one", "b.py": "two" });
-    expect(packagedSourcesDigest(directory, ["b.py", "a.java"])).toBe(
-      packagedSourcesDigest(directory, ["a.java", "b.py"]),
-    );
-  });
-
   it("refuses an identity when a declared source is not packaged", async () => {
     const directory = await sources({ "a.java": "one" });
     expect(() =>
       packagedSourcesDigest(directory, ["a.java", "missing.py"]),
     ).toThrow(/ENOENT/u);
-  });
-
-  it("commits the REA release beside the source digest", async () => {
-    const directory = await sources({ "a.java": "one" });
-    expect(packagedProducerIdentity(directory, ["a.java"])()).toEqual({
-      rea_version: PRODUCT_IDENTITY.packageVersion,
-      sources_sha256: packagedSourcesDigest(directory, ["a.java"]),
-    });
   });
 });

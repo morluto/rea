@@ -17,13 +17,14 @@ import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  OwnerCancellation,
   cancelledBy,
   carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import { err, type Result } from "../../domain/result.js";
+import { err, ok, type Result } from "../../domain/result.js";
 import {
   DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS,
   webSourceMapDecodeTimeoutRecovery,
@@ -32,7 +33,7 @@ import {
 import { parseSourceMapReply } from "./SourceMapReply.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import { DarwinProcessOwnershipInspectionError } from "../../process/DarwinProcessRunTokenReader.js";
-import { ProcessAdmissionError } from "../../process/ProcessAdmissionError.js";
+import { isProcessOwnershipInspectionCancellation } from "../../process/ProcessInspectionCancellation.js";
 import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
@@ -49,6 +50,11 @@ import {
   type SpawnedOwnedProviderProcess,
 } from "../../process/ProviderProcess.js";
 import { prepareProcessOwnershipInspection } from "../../process/ProcessOwnershipObservation.js";
+import { capturedProviderOutput } from "../../process/capturedProviderOutput.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../../providers/classifyProviderFailure.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "trace_web_source_location";
@@ -67,7 +73,7 @@ export interface SourceMapDecoderDependencies {
   readonly launcher?: SourceMapCodecLauncher;
   readonly createRuntime?: () => Promise<SourceMapCodecRuntime>;
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
-  /** Prepare host ownership inspection outside the codec execution deadline. */
+  /** Prepare host inspection outside the codec deadline, using its typed cancellation outcome. */
   readonly prepareOwnership?: (signal?: AbortSignal) => Promise<void>;
 }
 
@@ -125,35 +131,31 @@ export const runSourceMapCommand = async (
   } catch (cause: unknown) {
     const signal = options?.signal;
     const preparation =
-      cause !== signal?.reason &&
       cause instanceof DarwinProcessOwnershipInspectionError
         ? cause
         : undefined;
-    const knownPhysical =
-      cause !== signal?.reason &&
-      (cause instanceof AnalysisError ||
-        cause instanceof ProcessAdmissionError ||
-        (preparation !== undefined && preparation.cancellation === undefined));
-    const physical =
-      cause instanceof AnalysisError
-        ? cause
-        : new ProviderAdapterError(PROVIDER, OPERATION, {
-            cause,
-            ...(preparation?.capturedOutput === undefined
-              ? {}
-              : { capturedOutput: preparation.capturedOutput }),
-            diagnostics: {
-              map_path: path,
-              error_message: errorMessage(cause),
-              phase: "process_ownership_preparation",
-            },
-          });
+    const cancellation = isProcessOwnershipInspectionCancellation(cause)
+      ? cause
+      : preparation?.cancellation;
+    const failure =
+      cancellation !== undefined
+        ? cancelledBy(OPERATION, carriedReason(cancellation.reason))
+        : cause instanceof AnalysisError
+          ? cause
+          : new ProviderAdapterError(PROVIDER, OPERATION, {
+              cause,
+              ...(preparation?.capturedOutput === undefined
+                ? {}
+                : { capturedOutput: preparation.capturedOutput }),
+              diagnostics: {
+                map_path: path,
+                error_message: errorMessage(cause),
+                phase: "process_ownership_preparation",
+              },
+            });
     const primary = signal?.aborted
-      ? analysisErrorWithCancellation(
-          knownPhysical ? physical : undefined,
-          cancelledBy(OPERATION, signal),
-        )
-      : physical;
+      ? analysisErrorWithCancellation(failure, cancelledBy(OPERATION, signal))
+      : failure;
     if (preparation?.cleanupFailure === undefined) return err(primary);
     const owner = new PreparationCleanup(preparation, path);
     retainedCleanup.owner = owner;
@@ -178,13 +180,15 @@ export const runSourceMapCommand = async (
   );
   let result: Result<WebSourceMapReport, AnalysisError>;
   try {
-    await command.start(request);
-    result = parseSourceMapReply(
-      await command.collect(),
-      path,
-      javaScriptWorkerMemoryLimitBytes(limits.codecHeapMiB),
-      limits.codecHeapMiB,
-    );
+    const started = await command.start(request);
+    result = started.ok
+      ? parseSourceMapReply(
+          await command.collect(),
+          path,
+          javaScriptWorkerMemoryLimitBytes(limits.codecHeapMiB),
+          limits.codecHeapMiB,
+        )
+      : started;
   } catch (cause: unknown) {
     result = err(command.failure(cause));
   } finally {
@@ -259,6 +263,7 @@ class OwnedCodec implements SourceMapCleanupOwner {
   #cleanupRelease: AnalysisCleanupRelease | undefined;
   #outcome: CodecOutcome | undefined;
   #drainStop: CodecPhysicalObservation | undefined;
+  readonly #wakeController = new AbortController();
   readonly #onInterruption: () => void;
   constructor(
     readonly path: string,
@@ -280,7 +285,7 @@ class OwnedCodec implements SourceMapCleanupOwner {
     this.deadline.signal.removeEventListener("abort", this.#onInterruption);
   }
 
-  async start(request: string): Promise<void> {
+  async start(request: string): Promise<Result<void, AnalysisError>> {
     this.check();
     this.#runtime = await (
       this.dependencies.createRuntime ??
@@ -299,9 +304,7 @@ class OwnedCodec implements SourceMapCleanupOwner {
       UV_THREADPOOL_SIZE: "1",
     };
     delete environment.NODE_OPTIONS;
-    const spawned = await (
-      this.dependencies.launcher ?? spawnOwnedProviderProcess
-    )({
+    const launchOptions: OwnedProviderProcessSpawnOptions = {
       command: process.execPath,
       arguments: [
         `--max-old-space-size=${String(this.limits.codecHeapMiB)}`,
@@ -324,7 +327,22 @@ class OwnedCodec implements SourceMapCleanupOwner {
             )!,
           }),
       signal: this.deadline.signal,
-    });
+    };
+    let spawned: SpawnedOwnedProviderProcess;
+    try {
+      spawned = await (this.dependencies.launcher ?? spawnOwnedProviderProcess)(
+        launchOptions,
+      );
+    } catch (cause: unknown) {
+      this.#observeInterruption();
+      if (this.#outcome?.kind === "timeout") return err(this.failure(cause));
+      // Only the process owner can say the rejection was caused by cancellation.
+      return err(
+        isProcessOwnershipInspectionCancellation(cause)
+          ? cancelledBy(OPERATION, carriedReason(cause.reason))
+          : classifyProviderFailure(cause, this.#failureDialect()),
+      );
+    }
     this.#supervisor = new ProviderProcessSupervisor(
       {
         ...spawned,
@@ -367,13 +385,18 @@ class OwnedCodec implements SourceMapCleanupOwner {
         },
       },
     );
+    return ok(undefined);
   }
 
   async collect(): Promise<string> {
     const supervisor = this.#supervisor;
     if (supervisor === undefined)
       throw new Error("Codec process was not acquired");
-    while (!(await supervisor.waitForOutputClose(50))) {
+    const wakeSignal = AbortSignal.any([
+      this.deadline.signal,
+      this.#wakeController.signal,
+    ]);
+    while (!(await supervisor.waitForOutputClose(undefined, wakeSignal))) {
       const outcome = this.#outcome;
       if (
         outcome?.kind !== "physical" ||
@@ -419,16 +442,27 @@ class OwnedCodec implements SourceMapCleanupOwner {
         this.decodeTimeoutMs,
         webSourceMapDecodeTimeoutRecovery(this.decodeTimeoutMs),
       );
-    if (cause instanceof AnalysisError) return cause;
-    return cause instanceof RuntimeControlUnavailableError
-      ? runtimeControlCapabilityError(PROVIDER, OPERATION, cause)
-      : new ProviderAdapterError(PROVIDER, OPERATION, {
+    return classifyProviderFailure(cause, this.#failureDialect());
+  }
+
+  #failureDialect(): ProviderFailureDialect {
+    return {
+      providerId: PROVIDER,
+      operation: OPERATION,
+      recognise: (cause) =>
+        cause instanceof RuntimeControlUnavailableError
+          ? runtimeControlCapabilityError(PROVIDER, OPERATION, cause)
+          : undefined,
+      unclassified: (cause, details) =>
+        new ProviderAdapterError(PROVIDER, OPERATION, {
+          ...details,
           cause,
           diagnostics: {
             map_path: this.path,
             error_message: errorMessage(cause),
           },
-        });
+        }),
+    };
   }
 
   #observeInterruption(): void {
@@ -448,6 +482,8 @@ class OwnedCodec implements SourceMapCleanupOwner {
       this.#outcome = { kind: "physical", observation };
     else if (observation.kind !== "exit" && this.#drainStop === undefined)
       this.#drainStop = observation;
+    if (observation.kind !== "exit" && !this.#wakeController.signal.aborted)
+      this.#wakeController.abort(OwnerCancellation.noLongerNeeded);
   }
 
   #physicalFailure(observation: CodecPhysicalObservation): AnalysisError {
@@ -544,15 +580,14 @@ class OwnedCodec implements SourceMapCleanupOwner {
     outputComplete: boolean,
   ) {
     if (snapshot === undefined) return undefined;
+    const captured = capturedProviderOutput(
+      exit === undefined
+        ? snapshot
+        : { ...snapshot, exitCode: exit.code, signal: exit.signal },
+    );
     return {
-      stdout: snapshot.stdout.text,
-      stderr: snapshot.stderr.text,
-      truncated: snapshot.diagnosticTruncated === true || !outputComplete,
-      stdout_bytes: snapshot.stdout.observedBytes,
-      stderr_bytes: snapshot.stderr.observedBytes,
-      ...(exit === undefined
-        ? {}
-        : { exit_code: exit.code, signal: exit.signal }),
+      ...captured,
+      truncated: captured.truncated || !outputComplete,
     };
   }
 

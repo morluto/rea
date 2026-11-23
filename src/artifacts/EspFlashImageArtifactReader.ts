@@ -1,6 +1,6 @@
 import type { FileHandle } from "node:fs/promises";
 
-import type { EspFlashImageMetadata } from "../domain/artifactFormatMetadata.js";
+import type { EspFlashImageMetadata } from "../domain/formatMetadata/firmwareMetadata.js";
 import { ESP_CHIP_TABLE_SOURCE } from "../domain/firmware/espChips.js";
 import {
   espErasedSlotLimitation,
@@ -334,6 +334,7 @@ const layoutMetadata = (
         status: table.md5.status,
         stored: table.md5.stored,
         computed: table.md5.computed,
+        entries_after_checksum: table.md5.entriesAfterChecksum,
       },
     },
     partitions_outside_dump: table.partitions

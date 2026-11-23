@@ -10,6 +10,7 @@ import { isImmutableJsonSnapshot } from "./immutableJson.js";
 import {
   analysisErrorCategory,
   UNRETAINED_EVIDENCE_EXPORT_GUIDANCE,
+  analysisErrorRelatedInputs,
   analysisErrorRemediationAction,
   analysisErrorUserMessage,
   assertKnownAnalysisError,
@@ -58,6 +59,7 @@ import {
   RETRYABLE_CODES,
 } from "./analysisErrorClassification.js";
 import { isRecord } from "../kernel/isRecord.js";
+import { reportedParseLimit } from "./parseFailure.js";
 
 /**
  * Inputs the recovery names, by contract field and operation name. Each
@@ -448,7 +450,7 @@ const projectError = (
     ...(refusal === undefined
       ? {}
       : { refusal: analysisRefusalDetails(refusal) }),
-    ...relatedInputDetails(primary.related),
+    ...relatedInputDetails(analysisErrorRelatedInputs(primary)),
     ...(!options.secondary || secondary.size === 0
       ? {}
       : {
@@ -730,6 +732,9 @@ const artifactStateErrorDetails = (
       ...(error.readerLimit === undefined
         ? {}
         : { reader_limit: { ...error.readerLimit } }),
+      ...(error.parserLimit === undefined
+        ? {}
+        : { reported_limits: reportedParseLimit(error.parserLimit) }),
       ...(error.admission === undefined
         ? {}
         : {

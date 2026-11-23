@@ -1,5 +1,6 @@
 """Producer admission regressions; no pwntools imports or target execution."""
 from contextlib import nullcontext
+import gc
 import importlib.metadata
 from pathlib import Path
 import runpy
@@ -8,6 +9,7 @@ import tempfile
 import types
 import unittest
 from unittest.mock import patch
+import weakref
 
 
 layout = runpy.run_path(str(Path(__file__).with_name("layout_impl.py")))
@@ -18,7 +20,7 @@ class UpstreamReached(RuntimeError):
 
 
 class LayoutStorageTests(unittest.TestCase):
-    def inspect(self, section_type, flags, section_stride=64, sections=None, shstrndx=0):
+    def inspect(self, section_type, flags, section_stride=64, sections=None, shstrndx=0, emulate_plt=None):
         described = sections if sections is not None else [
             types.SimpleNamespace(sh_type="SHT_NULL", sh_flags=0, sh_link=0),
             types.SimpleNamespace(sh_type=section_type, sh_flags=flags, sh_link=0),
@@ -34,15 +36,36 @@ class LayoutStorageTests(unittest.TestCase):
             def _get_section_header(self, index):
                 return described[index]
 
+        modules = {name: types.ModuleType(name) for name in (
+            "pwnlib", "pwnlib.context", "pwnlib.elf", "pwnlib.elf.elf", "elftools", "elftools.common",
+            "elftools.common.exceptions", "elftools.common.utils", "elftools.elf", "elftools.elf.elffile")}
+        upstream_elf = self.upstream_elf = modules["pwnlib.elf.elf"]
+        self.plt_warnings = []
+
         class Elf:
             def __init__(self, *_args, **_kwargs):
+                if emulate_plt is not None:
+                    # Like pwntools 4.15.0, a PLT failure becomes a warning.
+                    try:
+                        self._populate_plt()
+                    except Exception as error:
+                        test.plt_warnings.append(f"Could not populate PLT: {error}")
                 raise UpstreamReached("No artifact decoding or emulation is allowed in this test")
 
-        modules = {name: types.ModuleType(name) for name in (
-            "pwnlib", "pwnlib.context", "pwnlib.elf", "elftools", "elftools.common",
-            "elftools.common.exceptions", "elftools.common.utils", "elftools.elf", "elftools.elf.elffile")}
+            def _populate_plt(self):
+                # One call per present PLT section through the module global,
+                # resolved at call time as pwntools 4.15.0 does; the real
+                # emulator arguments are not needed by the release wrapper.
+                for section in (".plt", ".plt.got", ".plt.sec"):
+                    upstream_elf.emulate_plt_instructions(self, section)
+
+        test = self
+
+        upstream_elf.ELF = Elf
+        upstream_elf.emulate_plt_instructions = emulate_plt
         modules["pwnlib.context"].context = types.SimpleNamespace(local=lambda **_kwargs: nullcontext())
         modules["pwnlib.elf"].ELF = Elf
+        modules["pwnlib.elf"].elf = upstream_elf
         modules["elftools.common.exceptions"].ELFError = type("ELFError", (Exception,), {})
         modules["elftools.elf.elffile"].ELFFile = lambda _stream: Headers()
         modules["elftools.common.utils"].struct_parse = lambda _struct, _stream, stream_pos: described[(stream_pos - 64) // max(section_stride, 1)]
@@ -101,6 +124,51 @@ class LayoutStorageTests(unittest.TestCase):
     def test_uninterpreted_compressed_payload_does_not_change_admission(self):
         with self.assertRaises(UpstreamReached):
             self.inspect("SHT_PROGBITS", 0x800)
+
+    def test_each_plt_emulator_is_released_before_the_next_section(self):
+        # pwntools 4.15.0 builds one Unicorn emulator per PLT section. Hook
+        # closures keep it in a reference cycle, and each emulator reserves a
+        # 1 GiB virtual map. If emulators stay alive until a later cyclic
+        # collection, the third section (.plt.sec on CET x86-64 images)
+        # cannot fit the default address-space limit.
+        class Emulator:
+            def __init__(self):
+                self.cycle = self
+
+        live, alive_at_start = [], []
+
+        def emulate(_elf, section):
+            # Record rather than assert: the code under test rewraps
+            # AssertionError as an ELF format failure.
+            alive_at_start.append((section, sum(ref() is not None for ref in live)))
+            emulator = Emulator()
+            live.append(weakref.ref(emulator))
+            return {}
+
+        enabled = gc.isenabled()
+        gc.disable()  # Only explicit collection may release the cycles.
+        try:
+            with self.assertRaises(UpstreamReached):
+                self.inspect("SHT_PROGBITS", 0, emulate_plt=emulate)
+            still_alive = sum(ref() is not None for ref in live)
+        finally:
+            if enabled:
+                gc.enable()
+        self.assertEqual(alive_at_start, [(".plt", 0), (".plt.got", 0), (".plt.sec", 0)])
+        self.assertEqual(still_alive, 0)
+        self.assertIs(self.upstream_elf.emulate_plt_instructions, emulate)
+        self.assertEqual(self.plt_warnings, [])
+
+    def test_plt_emulation_failure_stays_an_upstream_warning(self):
+        # The release wrapper must not change upstream's failure handling or
+        # outlive the PLT pass when emulation cannot reserve its map.
+        def emulate(_elf, _section):
+            raise OSError("Cannot allocate 1GB memory to run Unicorn Engine")
+
+        with self.assertRaises(UpstreamReached):
+            self.inspect("SHT_PROGBITS", 0, emulate_plt=emulate)
+        self.assertEqual(self.plt_warnings, ["Could not populate PLT: Cannot allocate 1GB memory to run Unicorn Engine"])
+        self.assertIs(self.upstream_elf.emulate_plt_instructions, emulate)
 
     def test_short_section_header_stride_refuses_before_raw_header_scan(self):
         for stride in (0, 1, 63):

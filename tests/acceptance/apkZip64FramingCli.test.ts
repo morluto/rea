@@ -132,6 +132,12 @@ cliTest(
         diagnosticOffset: locatorOffset + 4,
         detail: "Zip64 EOCD disk is outside the declared disk count",
       },
+      {
+        at: recordOffset + 24,
+        value: 0,
+        diagnosticOffset: recordOffset + 24,
+        detail: "single-disk Zip64 entry counts disagree",
+      },
     ];
     for (const scenario of cases) {
       const bytes = Uint8Array.from(fixture.bytes);
@@ -219,11 +225,29 @@ cliTest(
       fixture.recordOffset + 48,
     ]) {
       const bytes = Uint8Array.from(fixture.bytes);
-      new DataView(bytes.buffer).setBigUint64(at, 1n << 53n, true);
+      const view = new DataView(bytes.buffer);
+      const tooWide = 1n << 53n;
+      view.setBigUint64(at, tooWide, true);
+      if (at === fixture.recordOffset + 32)
+        view.setBigUint64(fixture.recordOffset + 24, tooWide, true);
       await expectRefusal(cli, path, bytes, {
         code: "unsupported_target",
         category: "unsupported_target",
         message: expect.stringContaining("safe range"),
+        details: { path },
+      });
+    }
+    for (const at of [
+      fixture.eocdOffset + 6,
+      fixture.recordOffset + 16,
+      fixture.recordOffset + 20,
+    ]) {
+      const bytes = Uint8Array.from(fixture.bytes);
+      new DataView(bytes.buffer).setUint16(at, 1, true);
+      await expectRefusal(cli, path, bytes, {
+        code: "unsupported_target",
+        category: "unsupported_target",
+        message: expect.stringContaining("selected single disk"),
         details: { path },
       });
     }

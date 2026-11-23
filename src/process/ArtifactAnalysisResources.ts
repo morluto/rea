@@ -6,6 +6,7 @@ import {
   type CleanupFailedRead,
   ArtifactResourceScope,
   readStableArtifact,
+  streamStableArtifact,
 } from "../resources/index.js";
 import {
   AnalysisError,
@@ -19,7 +20,10 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   fixedAllowanceOptions,
@@ -188,6 +192,25 @@ export class ArtifactAnalysisResources {
     );
   }
 
+  /** Stream-hash a bounded regular file without buffering its full bytes in heap. */
+  async hash(
+    path: string,
+    maximumBytes: number,
+    signal?: AbortSignal,
+  ): Promise<{ readonly bytes: number; readonly sha256: string }> {
+    if (this.readArtifact === readStableArtifact) {
+      const streamed = await streamStableArtifact(path, maximumBytes, {
+        retainBytes: () => 0,
+        onChunk: () => undefined,
+        signal,
+        resourceScope: this.#artifacts.scope,
+      });
+      return { bytes: streamed.size, sha256: streamed.sha256 };
+    }
+    const snapshot = await this.read(path, maximumBytes, signal);
+    return { bytes: snapshot.bytes.byteLength, sha256: snapshot.sha256 };
+  }
+
   /** Admit a selected input and classify its physical failure before later stages. */
   async readSelectedArtifact(input: SelectedArtifactRead) {
     const operation = this.#artifacts.operation;
@@ -233,7 +256,7 @@ export class ArtifactAnalysisResources {
   ) {
     const read = async (path: string) => {
       try {
-        return await this.read(path, 64 * 1024 * 1024);
+        return await this.hash(path, 64 * 1024 * 1024);
       } catch (cause: unknown) {
         throw this.classify(cause, {
           kind: "integrity",
@@ -330,21 +353,18 @@ export class ArtifactAnalysisResources {
     }
     if (failures.length === 0) return;
     if (failures.length === 1) throw failures[0];
-    throw new ProviderCleanupError(
+    throw providerCleanupErrorFromFailures(
       this.providerId,
-      failures.flatMap((failure) => failure.cleanupResources),
+      failures,
       {
         reason: "One or more analysis runtime resources remain owned.",
         failures: failures.map((failure) => projectAnalysisError(failure)),
       },
       {
         operation: failures[0]?.operation ?? this.#artifacts.operation,
-        cause: new AggregateError(
-          failures,
-          "Analysis runtime cleanup remains incomplete",
-        ),
+        message: "Analysis runtime cleanup remains incomplete",
       },
-    ).bindCleanupDependencies(failures);
+    );
   }
 
   async #releaseRoot(root: ArtifactAnalysisRuntime): Promise<void> {
@@ -433,11 +453,7 @@ export class ArtifactAnalysisResources {
       (primary ?? failure).retainPartialObservation(cause.partialObservation);
     return primary === undefined
       ? failure
-      : analysisErrorWithCleanupFailure(
-          primary,
-          failure,
-          operation,
-        ).bindCleanupDependencies([primary, failure]);
+      : analysisErrorWithCleanupDependencies(primary, failure, operation);
   }
 
   commandFailure(
@@ -532,11 +548,11 @@ export class ArtifactAnalysisResources {
       await this.release();
     } catch (cause: unknown) {
       if (descriptorFailure !== undefined && cause instanceof AnalysisError)
-        throw analysisErrorWithCleanupFailure(
+        throw analysisErrorWithCleanupDependencies(
           descriptorFailure,
           cause,
           this.#artifacts.operation,
-        ).bindCleanupDependencies([descriptorFailure, cause]);
+        );
       throw cause;
     }
     if (descriptorFailure !== undefined) throw descriptorFailure;

@@ -49,7 +49,7 @@ Captured stdout and stderr share `max_output_bytes` (CLI: `--max-output-bytes`),
 
 ## GDB
 
-Persistent GDB sessions, including the MCP workflow and one-shot `rea debug-with-gdb` CLI, are available only on Linux. REA verifies a live inferior's output descriptors through `/proc` before detaching it; it does not claim equivalent descriptor verification on macOS. Windows is also unsupported because owned Job Object cleanup can terminate debugger inferiors. On supported Linux hosts, `start_gdb_session`, `gdb_console`, `gdb_session_status`, and `close_gdb_session` manage a persistent GDB/MI session in MCP. The one-shot CLI requires a caller-selected durable TTY: `rea debug-with-gdb --inferior-tty /dev/pts/7 'file ./program'`. The TTY must remain available after GDB exits so a detached inferior can continue writing. MCP starts GDB with `--nx --quiet --interpreter=mi3`, retries initialization with MI2 if MI3 initialization returns an error and cleanup succeeds, waits for its prompt, and disables auto-loading. Pass optional `inferior_tty` to select the terminal that future inferior runs use; REA configures it before the session becomes ready and checks the exact value with GDB/MI. `gdb_session_status` reports the selected path, whether REA still considers the configuration verified, and whether invalid UTF-8 has been observed in MI bytes (`mi_invalid_utf8`) or stderr (`stderr_invalid_utf8`). Commands that can change the inferior TTY or redirect a run revoke that verification permanently for the session, so close retains GDB ownership if a live inferior remains. The complete built-in inspections `show inferior-tty` and `help inferior-tty` preserve verification; compound commands still use the conservative mutation checks. Closing a session with one live inferior and a verified TTY automatically detaches the target, which can resume execution; MCP clients receive destructive-operation annotations for this behavior. The console remains unrestricted and can run shell commands, change target state, access files, and use network in the REA process user's security context. Raw MI records and console/target/log streams are returned with Evidence. Its subject names the session, `{ "kind": "session", "session_kind": "gdb", "id": <session_id>, "target": { "kind": "unknown", "reason": "not-observed" } }`: `start_gdb_session` launches no program file, and REA does not hash programs that console commands load or attach, so the target stays unknown; command output is retained up to the configured budget (16 MiB by default) and explicitly marked when truncated. A single console, target or log record over the 16 MiB MI line limit is dropped and the command is marked truncated, while an oversized result or async record still stops the session. GDB startup waits 10000 ms with no runtime override. Each MI command defaults to 120000 ms; its deadline, command-output budget, session capacity and pending-command queue use the [shared debugger launch settings](#debugger-launch-settings). `command_timeout_ms` does not change a persistent debugger session.
+Persistent GDB sessions, including the MCP workflow and one-shot `rea debug-with-gdb` CLI, are available only on Linux. REA verifies a live inferior's output descriptors through `/proc` before detaching it; it does not claim equivalent descriptor verification on macOS. Windows is also unsupported because owned Job Object cleanup can terminate debugger inferiors. On supported Linux hosts, `start_gdb_session`, `gdb_console`, `gdb_session_status`, and `close_gdb_session` manage a persistent GDB/MI session in MCP. The one-shot CLI requires a caller-selected durable TTY: `rea debug-with-gdb --inferior-tty /dev/pts/7 --executable ./program 'info files'`. The TTY must remain available after GDB exits so a detached inferior can continue writing. MCP starts GDB with `--nx --quiet --interpreter=mi3`, retries protocol initialization with MI2 when applicable and cleanup succeeds, waits for its prompt, and disables auto-loading. Optional `executable` hashes and loads an initial local file without running it; readiness requires a confirmed load. A refused load is not repeated with MI2. Pass optional `inferior_tty` to select the terminal that future inferior runs use; REA configures it before the session becomes ready and checks the exact value with GDB/MI. `gdb_session_status` reports the selected path, whether REA still considers the configuration verified, and whether invalid UTF-8 has been observed in MI bytes (`mi_invalid_utf8`) or stderr (`stderr_invalid_utf8`). Commands that can change the inferior TTY or redirect a run revoke that verification permanently for the session, so close retains GDB ownership if a live inferior remains. The complete built-in inspections `show inferior-tty` and `help inferior-tty` preserve verification; compound commands still use the conservative mutation checks. Closing a session with one live inferior and a verified TTY automatically detaches the target, which can resume execution; MCP clients receive destructive-operation annotations for this behavior. The console remains unrestricted and can run shell commands, change target state, access files, and use network in the REA process user's security context. Raw MI records and console/target/log streams are returned with Evidence. Its subject names the session and its initial file selection: `{ "kind": "session", "session_kind": "gdb", "id": <session_id>, "target": <file identity or unknown> }`. Selecting `executable` binds the initial stable file hash; omission or a physical hash failure leaves the target unknown, with the failure reason retained. `parameters.launch_provenance` preserves the original and absolute startup paths. Later console loads or attaches do not rebind this initial selection or establish the current inferior's identity; command output is retained up to the configured budget (16 MiB by default) and explicitly marked when truncated. A single console, target or log record over the 16 MiB MI line limit is dropped and the command is marked truncated, while an oversized result or async record still stops the session. GDB startup waits 10000 ms with no runtime override. Each MI command defaults to 120000 ms; its deadline, command-output budget, session capacity and pending-command queue use the [shared debugger launch settings](#debugger-launch-settings). `command_timeout_ms` does not change a persistent debugger session.
 
 A truncated GDB command capture includes `output_limits` with the exact causes
 and effective maxima: `command_bytes`, `command_records`, or `mi_line_bytes`.
@@ -271,6 +271,40 @@ they use `%LOCALAPPDATA%\REA\CutterBridge` on Windows when `LOCALAPPDATA` is set
 and `~/.cache/rea/cutter-bridge` otherwise. The two processes must resolve the
 same directory for discovery to find the published sessions.
 
+REA's npm package includes the plugin as `bridge/cutter/rea_bridge.py`. Use the
+copy from the REA version you run (`rea --version`, or the version in an
+`npx rea-agents@<version>` registration). An `npx` installation keeps that
+package in npm's cache rather than a stable folder, so take the file from the
+published package of the same version instead (in Windows PowerShell, use
+`npm.cmd`):
+
+```sh
+npm pack rea-agents@<version>
+tar -xzf rea-agents-<version>.tgz package/bridge/cutter/rea_bridge.py
+```
+
+Copy the extracted `package/bridge/cutter/rea_bridge.py` into the `python`
+subdirectory of Cutter's plugin directory, then restart Cutter. Cutter shows that
+directory and the loaded plugins under Edit > Preferences > Plugins. When no
+session in the bridge directory answers, `list_cutter_sessions` reports
+`no_live_bridge_found` with a limitation that names the possible causes. Whether
+or not a session answers, it also counts descriptor files it could not read,
+without claiming they belong to a session, and published sessions that did not
+answer, because neither is listed. If Cutter lists the plugin as loaded but
+discovery still finds no session, check that the bridge directory is writable
+and has free space: the bridge does not log a failure to publish its session.
+
+Official Cutter 2.5.0 builds have been observed to reject Python plugins at
+startup: Cutter's own sample plugin in the Linux AppImage, and this bridge and a
+minimal independent plugin on macOS arm64
+([rizinorg/cutter#3659](https://github.com/rizinorg/cutter/issues/3659)). The
+log then shows `Plugin's create_cutter_plugin() function did not return an
+instance of CutterPlugin` and `Loaded 0 plugin(s)`, and no session is
+published. Because a minimal plugin fails the same way, a change to REA's
+bridge is not expected to help; the cause is unconfirmed upstream. Cutter 2.4.1
+loaded the bridge on the same macOS arm64 host, where discovery and an `ij`
+command worked. Other hosts and Cutter builds have not been checked.
+
 The plugin publishes the SHA-256 of its own file on its session descriptor.
 Discovery reports each session's `bridge_source`: `packaged` when it matches
 REA's packaged `bridge/cutter/rea_bridge.py`, `modified` when it differs, and
@@ -327,6 +361,9 @@ when the plugin did not declare them, for example when no reply was read, the
 reply was malformed, or an older plugin omitted them. A null generation means
 the document may have changed; list sessions again before choosing an
 `expected_generation`. Evidence carries a limitation for each unknown field.
+With `json: true`, Cutter command output retains integer literals outside
+JavaScript's safe integer range as decimal strings, so 64-bit addresses and
+offsets keep their original digits.
 Each bridge request waits 25000 ms. The Cutter hello frame still must arrive
 within 1 second. The authenticated command frame is read with one second per
 mebibyte of `REA_BRIDGE_MAX_REQUEST_BYTES`, and that read never waits longer

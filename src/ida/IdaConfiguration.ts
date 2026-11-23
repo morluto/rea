@@ -50,10 +50,11 @@ const common = {
    * An attached registration names its upstream protocol. `"legacy"` (the
    * removed ida-pro-mcp 1.4 GUI proxy) is still recognized so that a stored
    * registration is refused with migration guidance rather than reported as an
-   * unknown value or read as another protocol. Headless mode has one protocol
-   * (the database supervisor).
+   * unknown value or read as another protocol. Headless mode uses the database
+   * supervisor when `protocol` is omitted, or `"hexrays"` for the official
+   * Hex-Rays IDA MCP.
    */
-  protocol: z.enum(["legacy", "native"]).optional(),
+  protocol: z.enum(["legacy", "native", "hexrays"]).optional(),
   timeoutMs: z
     .int()
     .min(MIN_IDA_REQUEST_TIMEOUT_MS)
@@ -96,12 +97,23 @@ const registrationSchema = z
       .strict(),
   ])
   .refine(
-    (config) => config.protocol === undefined || config.mode === "attached",
-    "An IDA MCP protocol requires attached mode; headless registrations omit protocol",
+    (config) =>
+      config.protocol === undefined ||
+      config.protocol === "hexrays" ||
+      config.mode === "attached",
+    'An IDA MCP protocol requires attached mode; a headless registration omits protocol or sets "hexrays"',
   )
   .refine(
     (config) => config.protocol !== undefined || config.mode !== "attached",
     'attached IDA registrations must set protocol to "native" (ida-free-mcp plugin)',
+  )
+  // Hex-Rays database leases belong to the MCP server process. Only a stdio
+  // registration gives REA a server, and therefore leases, of its own.
+  .refine(
+    (config) =>
+      config.protocol !== "hexrays" ||
+      (config.mode === "headless" && "command" in config),
+    "The Hex-Rays IDA MCP protocol requires a headless stdio registration",
   )
   // Resolve the upstream protocol once; consumers never infer it from mode.
   .transform((config, context) => {
@@ -138,6 +150,13 @@ export const IDA_COMPATIBILITY_PROFILES = {
     identity: "database-supervisor",
     diagnosticIdentity: "database-supervisor",
     diagnosticLabel: "headless",
+  },
+  hexrays: {
+    protocol: "hexrays",
+    mode: "headless",
+    identity: "hexrays-ida-mcp",
+    diagnosticIdentity: "hexrays",
+    diagnosticLabel: "Hex-Rays",
   },
   native: {
     protocol: "native",
@@ -191,6 +210,7 @@ export const readIdaConfiguration = (
             MAXIMUM_REGISTRATION_BYTES,
             {
               signal: options.signal,
+              expectedSize: metadata.size,
               cancellationFailure: (reason) =>
                 new RegularFileOperationCancelled(reason),
             },
@@ -334,6 +354,18 @@ export const idaRegistrationTimeoutGuidance = (
         ? `This IDA request reached the registration timeoutMs deadline of ${String(timeoutMs)} ms (deadlineExpired).`
         : `This IDA request reached its ${String(timeoutMs)} ms deadline (deadlineExpired), within the registration timeoutMs ceiling of ${String(ceilingMs)} ms.`,
   remediationAction: `Set timeoutMs in the JSON file named by REA_IDA_MCP_CONFIG to an integer from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)} (omitted means ${String(DEFAULT_IDA_REQUEST_TIMEOUT_MS)}). REA applies the edited file on the next IDA connection after it re-reads the registration; an already open session keeps the timeout it connected with. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
+});
+
+/**
+ * Name the upstream supervisor setting that ended an open. It belongs to the
+ * process that runs ida-pro-mcp, not to REA's registration timeoutMs.
+ */
+export const idaSupervisorOpenTimeoutGuidance = (
+  seconds: number,
+): { readonly userMessage: string; readonly remediationAction: string } => ({
+  userMessage: `The IDA database supervisor stopped opening and analyzing the input after its IDA_MCP_OPEN_TIMEOUT deadline of ${String(seconds)} s. That deadline is an ida-pro-mcp setting, separate from REA's registration timeoutMs.`,
+  remediationAction:
+    "Raise IDA_MCP_OPEN_TIMEOUT (0 waits indefinitely) in the environment that starts the ida-pro-mcp supervisor, then restart it. Keep the registration timeoutMs in the JSON file named by REA_IDA_MCP_CONFIG above the expected analysis time as well. Confirm retained cleanup before retrying.",
 });
 
 /** A REA_IDA_MCP_CONFIG rejection that names the setting it concerns. */

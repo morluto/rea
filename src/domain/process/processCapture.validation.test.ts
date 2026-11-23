@@ -23,6 +23,22 @@ import type { FilesystemCoverage } from "./processCaptureCoverage.js";
 
 expectTypeOf<UnverifiedProcessCapture>().not.toExtend<ProcessCapture>();
 
+it("rejects unrecognized fields when admitting a recorded process capture", () => {
+  const parsed = processCaptureSchema.safeParse({
+    ...emptyCapture(),
+    extra_observations: [],
+  });
+  if (parsed.success)
+    throw new Error("Expected unknown observations to be rejected");
+  expect(parsed.error.issues).toEqual([
+    expect.objectContaining({
+      code: "unrecognized_keys",
+      keys: ["extra_observations"],
+      path: [],
+    }),
+  ]);
+});
+
 it.each(["reports", "\ufffd"])(
   "requires stored target bytes instead of deriving them from symlink text %j",
   (text) => {

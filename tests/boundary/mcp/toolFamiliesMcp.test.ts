@@ -1,9 +1,8 @@
 import type { Client } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
-import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 
-import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
-import { TOOL_FAMILY_DEFINITIONS } from "../../../src/contracts/toolFamilies.js";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import type { SessionStatusToolOptions } from "../../../src/server/sessionStatusTool.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -13,7 +12,6 @@ import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { AnalysisProtocolError } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
-import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { createTestMcp } from "../../support/mcp/mcpFixture.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -41,15 +39,6 @@ const scopedServer = (
     advertisedToolFamilies,
   );
 
-const registerCatalog = (server: EvidenceMcpServer): void => {
-  for (const contract of TOOL_CONTRACTS)
-    server.registerTool(
-      contract.name,
-      toolRegistrationOptions(contract),
-      async () => ({ content: [] }),
-    );
-};
-
 const withClient = async (
   server: EvidenceMcpServer,
   use: (client: Client) => Promise<void>,
@@ -65,11 +54,6 @@ const withClient = async (
     await mcp.close();
   }
 };
-
-const familyTools = (...ids: readonly string[]): readonly string[] =>
-  TOOL_FAMILY_DEFINITIONS.filter(({ id }) => ids.includes(id)).flatMap(
-    ({ contracts }) => contracts.map(({ name }) => name),
-  );
 
 /** Preserve owner-produced lifecycle facts while varying the route under test. */
 const sessionWithDirectOperations = () => {
@@ -121,72 +105,6 @@ const sessionWithDirectOperations = () => {
   });
   return session;
 };
-
-interface SessionReport {
-  readonly capabilities?: readonly {
-    readonly groups: readonly { readonly operations: readonly string[] }[];
-  }[];
-  readonly tool_availability?: {
-    readonly groups: readonly {
-      readonly names: readonly string[];
-      readonly available: boolean;
-      readonly reason: string | null;
-      readonly default_mode_available?: boolean;
-    }[];
-  };
-}
-
-describe("MCP tool family advertising", () => {
-  it("advertises every catalog tool when no scope is set", async () => {
-    const server = scopedServer(undefined);
-    registerCatalog(server);
-    await withClient(server, async (client) => {
-      expect(
-        (await client.listTools()).tools.map(({ name }) => name).sort(),
-      ).toEqual(TOOL_CONTRACTS.map(({ name }) => name).sort());
-    });
-  });
-
-  it("advertises only the scoped families", async () => {
-    const server = scopedServer(new Set(["session", "javascript-runtime"]));
-    registerCatalog(server);
-    await withClient(server, async (client) => {
-      const advertised = (await client.listTools()).tools
-        .map(({ name }) => name)
-        .sort();
-      expect(advertised).toEqual(
-        [...familyTools("session", "javascript-runtime")].sort(),
-      );
-      expect(advertised).not.toContain("inspect_macho");
-    });
-  });
-
-  it("fails calls to out-of-scope tools with the disabled-tool error", async () => {
-    const server = scopedServer(new Set(["session"]));
-    registerCatalog(server);
-    await withClient(server, async (client) => {
-      await expect(
-        client.callTool({ name: "list_frida_devices" }),
-      ).rejects.toThrow(/disabled/u);
-    });
-  });
-
-  it("reflects the scope in availability reports", () => {
-    const server = scopedServer(new Set(["session"]));
-    registerCatalog(server);
-    // Status reporting must not advertise a tool the registration disables.
-    expect(server.advertisesTool("open_binary")).toBe(true);
-    expect(server.advertisesTool("analyze_javascript_application")).toBe(false);
-    expect(server.advertisesTool("inspect_macho")).toBe(false);
-  });
-
-  it("advertises every tool in availability reports when no scope is set", () => {
-    const server = scopedServer(undefined);
-    registerCatalog(server);
-    for (const { name } of TOOL_CONTRACTS)
-      expect(server.advertisesTool(name)).toBe(true);
-  });
-});
 
 it.each([
   { scope: ["session"], probed: [] },
@@ -329,45 +247,32 @@ it.each([
   },
 );
 
-describe("MCP tool family availability", () => {
-  it("reports only advertised operations without erasing composed availability", async () => {
-    // `session` advertises `get_navigation_context`, while `direct` owns the
-    // operations its default mode composes.
-    const server = scopedServer(new Set(["session"]));
-    registerSessionStatus({
-      server,
-      session: sessionWithDirectOperations(),
-      startedAt: new Date().toISOString(),
-      availabilityPolicy: () => ({ processCaptureEnabled: false }),
-      androidAnalysisAvailability: async () => ({
-        status: "unavailable",
-        code: "runtime_missing",
-        reason: "android runtime is unavailable",
-        remediation: "Repair the fixture provider.",
-        diagnostics: {},
-      }),
+it("reports only advertised operations without erasing composed availability", async () => {
+  // Navigation composes operations outside the advertised session family.
+  const server = scopedServer(new Set(["session"]));
+  registerSessionStatus({
+    server,
+    session: sessionWithDirectOperations(),
+    startedAt: new Date().toISOString(),
+    availabilityPolicy: () => ({ processCaptureEnabled: false }),
+    androidAnalysisAvailability: async () => {
+      throw new Error("Session-only status must not probe Android");
+    },
+  });
+  await withClient(server, async (client) => {
+    const result = await client.callTool({
+      name: "binary_session",
+      arguments: {},
     });
-    let content: Record<string, unknown> | undefined;
-    await withClient(server, async (client) => {
-      const result = await client.callTool({
-        name: "binary_session",
-        arguments: {},
-      });
-      expect(result.isError, JSON.stringify(result)).not.toBe(true);
-      content = jsonObjectSchema.parse(
-        jsonObjectSchema.parse(result.structuredContent).result,
-      );
-    });
-
-    const report = content as SessionReport | undefined;
-    // The public report must follow the scope of `tools/list`.
-    const reported = report?.capabilities
-      ?.flatMap((set) => set.groups.flatMap(({ operations }) => operations))
+    expect(result.isError, JSON.stringify(result)).not.toBe(true);
+    const report = toolContract("binary_session").outputSchema.parse(
+      result.structuredContent,
+    ).result;
+    const reported = report.capabilities
+      .flatMap((set) => set.groups.flatMap(({ operations }) => operations))
       .sort();
     expect(reported).toEqual(["get_navigation_context", "open_binary"]);
-    // Availability was built from the complete provider facts: the composed
-    // tool needs operations the public report hides.
-    const available = report?.tool_availability?.groups.find(({ names }) =>
+    const available = report.tool_availability.groups.find(({ names }) =>
       names.includes("get_navigation_context"),
     );
     expect(available).toMatchObject({

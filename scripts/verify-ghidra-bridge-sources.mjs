@@ -139,6 +139,8 @@ await withVerifierFixture(scratchFixture, async () => {
       "UTF-8",
       "--release",
       String(SUPPORTED_GHIDRA_JAVA_MAJOR),
+      "-Xlint:deprecation,removal",
+      "-Werror",
       "-cp",
       jars.join(process.platform === "win32" ? ";" : ":"),
       "-d",

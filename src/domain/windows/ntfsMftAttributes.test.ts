@@ -1,5 +1,8 @@
 import { expect, it } from "vitest";
-import { readMftAttributes } from "./ntfsMftAttributes.js";
+import {
+  readMftAttributes,
+  summarizeMftAttributes,
+} from "./ntfsMftAttributes.js";
 
 const resident = (type: number, value: Buffer, name = ""): Buffer => {
   const nameBytes = Buffer.from(name, "utf16le");
@@ -81,6 +84,41 @@ it.each([48, 72])(
     });
   },
 );
+
+it("rejects a FILE_NAME attribute with an undefined namespace", () => {
+  const value = Buffer.alloc(66);
+  value[65] = 4;
+  const result = scan(resident(0x30, value));
+  expect(result).toMatchObject({
+    attributeCoverage: "incomplete",
+    attributeIssue: {
+      kind: "malformed",
+      message: "FILE_NAME namespace is outside the NTFS range",
+    },
+    fileNames: [],
+  });
+});
+
+it("retains a prior FILE_NAME when the next name would read into attribute padding", () => {
+  const value = Buffer.alloc(68);
+  value[64] = 1;
+  value.write("x", 66, "utf16le");
+  const valid = resident(0x30, value);
+  value[64] = 2;
+  const malformed = resident(0x30, value);
+
+  expect(scan(valid, malformed)).toMatchObject({
+    attributes: [{ type: 0x30 }],
+    fileNames: [{ name: "x", fileOffset: 4120 }],
+    attributeCoverage: "incomplete",
+    fileNameCoverage: "incomplete",
+    attributeIssue: {
+      kind: "malformed",
+      fileOffset: 4192,
+      message: "FILE_NAME string exceeds its value",
+    },
+  });
+});
 
 it("retains fragmented and sparse mapping pairs and lossless nonresident sizes without reading a volume", () => {
   const attribute = nonresident();
@@ -221,5 +259,29 @@ it.each([0x10, 0x30])(
         message: "Standard information and FILE_NAME must be resident",
       },
     });
+  },
+);
+
+it.each([48, 49, 60, 71, 72])(
+  "keeps detail and accounting consistent for %i-byte standard information",
+  (length) => {
+    const marker = Buffer.alloc(8);
+    marker.writeUInt32LE(0xffffffff);
+    const bytes = Buffer.concat([
+      resident(0x10, Buffer.alloc(length)),
+      resident(0x30, Buffer.alloc(66)),
+      marker,
+    ]);
+    const detail = readMftAttributes(bytes, 0, bytes.length, 4096);
+    const summary = summarizeMftAttributes(bytes, 0, bytes.length, 4096);
+    const valid = length === 48 || length === 72;
+    expect(summary).toEqual({
+      fileNameCount: valid ? 1 : 0,
+      fileNameCoverage: valid ? "complete" : "incomplete",
+      attributeCoverage: valid ? "complete" : "incomplete",
+    });
+    expect(detail.fileNames).toHaveLength(summary.fileNameCount);
+    expect(detail.fileNameCoverage).toBe(summary.fileNameCoverage);
+    expect(detail.attributeCoverage).toBe(summary.attributeCoverage);
   },
 );

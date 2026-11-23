@@ -1,3 +1,4 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import {
   chmod,
   mkdir,
@@ -11,13 +12,12 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { Cli } from "incur";
 import pino from "pino";
 import { expect, it } from "vitest";
 
 import type { BrowserScenarioCapturePort } from "../../../src/ports/BrowserScenarioCapturePort.js";
 import type { ElectronActiveObservationPort } from "../../../src/ports/javascript/ElectronActiveObservationPort.js";
-import { registerBrowserScenarioCommands } from "../../../src/cliBrowserScenarioCommands.js";
+import { registerBrowserScenarioCommands } from "../../../src/cli/browserScenarioCommands.js";
 import { registerAnalysisViewCommands } from "../../../src/cli/analysisViewCommands.js";
 import { registerElectronCommands } from "../../../src/cli/electronCommands.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
@@ -27,6 +27,7 @@ import {
   analysisViewJavaScriptEvidence,
   analysisViewLayoutEvidence,
 } from "../../fixtures/analysisView.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const providerIdentity = {
   id: "test.path-boundary",
@@ -35,7 +36,7 @@ const providerIdentity = {
 } as const;
 
 const serveJson = async (
-  cli: ReturnType<typeof Cli.create>,
+  cli: ReturnType<typeof createCommandCli>,
   command: string,
   input: unknown,
 ): Promise<unknown> => {
@@ -53,7 +54,7 @@ const serveJson = async (
 it.skipIf(process.platform === "win32")(
   "keeps caller-selected JSON paths through the public CLI and provider boundaries",
   async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-cli-json-path-"));
+    const root = await createTestTempDirectory("rea-cli-json-path-");
     const originalCwd = process.cwd();
     const originalExitCode = process.exitCode;
     try {
@@ -88,9 +89,7 @@ it.skipIf(process.platform === "win32")(
         },
         close: async () => undefined,
       };
-      const electronCli = Cli.create("rea-path-electron-test", {
-        sync: false,
-      });
+      const electronCli = createCommandCli();
       registerElectronCommands(
         electronCli,
         pino({ level: "silent" }),
@@ -138,9 +137,7 @@ it.skipIf(process.platform === "win32")(
         },
         close: async () => undefined,
       };
-      const browserCli = Cli.create("rea-path-browser-test", {
-        sync: false,
-      });
+      const browserCli = createCommandCli();
       registerBrowserScenarioCommands(
         browserCli,
         pino({ level: "silent" }),
@@ -171,7 +168,6 @@ it.skipIf(process.platform === "win32")(
     } finally {
       process.chdir(originalCwd);
       process.exitCode = originalExitCode;
-      await rm(root, { recursive: true, force: true });
     }
   },
 );
@@ -179,7 +175,7 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "reads the caller-selected Evidence file through the registered CLI",
   async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-cli-evidence-path-"));
+    const root = await createTestTempDirectory("rea-cli-evidence-path-");
     const originalCwd = process.cwd();
     const originalExitCode = process.exitCode;
     try {
@@ -202,9 +198,7 @@ it.skipIf(process.platform === "win32")(
           JSON.parse(await readFile(`${root}/link/../evidence.json`, "utf8")),
         ).evidence_id,
       ).toBe(selectedEvidence.evidence_id);
-      const analysisViewCli = Cli.create("rea-path-evidence-test", {
-        sync: false,
-      });
+      const analysisViewCli = createCommandCli();
       registerAnalysisViewCommands(analysisViewCli, pino({ level: "silent" }));
       for (const path of [
         "link/../evidence.json",
@@ -226,7 +220,6 @@ it.skipIf(process.platform === "win32")(
     } finally {
       process.chdir(originalCwd);
       process.exitCode = originalExitCode;
-      await rm(root, { recursive: true, force: true });
     }
   },
 );

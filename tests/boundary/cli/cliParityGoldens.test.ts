@@ -86,6 +86,8 @@ const NEWER_VERSION = "999.0.0";
 
 const TERMINAL_CASES: readonly ParityCase[] = [
   terminal("help-root-bare", fixed()),
+  terminal("error-invalid-completion-shell", fixed("completions", "bogus")),
+  terminal("error-command-update", fixed("doctor", "--update")),
   terminal("help-command", fixed("inspect-byte-entropy", "--help")),
   terminal("output", (w) => entropy(w, ...WINDOW)),
   terminal("output-explicit-format", (w) =>
@@ -258,6 +260,19 @@ const CASES: readonly ParityCase[] = [
     arguments: fixed("no-such-command", "--token-limit", "6"),
   },
   { name: "error-unknown-mcp-subcommand", arguments: fixed("mcp", "bogus") },
+  {
+    name: "error-invalid-completion-shell",
+    arguments: fixed("completions", "bogus"),
+  },
+  {
+    name: "error-invalid-completion-shell-json",
+    arguments: fixed("completions", "bogus", "--json"),
+  },
+  { name: "error-command-update", arguments: fixed("doctor", "--update") },
+  {
+    name: "error-command-update-json",
+    arguments: fixed("doctor", "--update", "--json"),
+  },
   {
     name: "error-missing-positional",
     arguments: fixed("inspect-byte-entropy"),
@@ -539,7 +554,6 @@ describe("CLI parity goldens", () => {
           ? {}
           : { COMPLETE: testCase.complete }),
       },
-      ...(testCase.complete === undefined ? {} : { freshProcess: true }),
       ...(testCase.terminal === true ? { terminal: true } : {}),
     });
     const actual = render(testCase, workspace, result);

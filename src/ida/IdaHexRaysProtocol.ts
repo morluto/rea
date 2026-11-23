@@ -1,0 +1,182 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { z } from "zod";
+import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
+import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { IdaToolRejection, type IdaMcpConnection } from "./IdaMcpConnection.js";
+import type { IdaRawObservation } from "./IdaOperationRunner.js";
+
+/** The official Hex-Rays IDA MCP catalog this profile requires. */
+export const hexRaysTools = [
+  "open_database",
+  "list_databases",
+  "close_database",
+  "execute_python",
+];
+
+/** Database-supervisor reads that REA's fixed query bridge answers. */
+const hexRaysQueries: ReadonlySet<string> = new Set([
+  "server_health",
+  "list_funcs",
+  "lookup_funcs",
+  "find_regex",
+  "string_at",
+  "decompile",
+  "disasm",
+  "callees",
+  "callgraph",
+  "xrefs_to",
+  "survey_binary",
+]);
+
+const hexRaysBackend = z.enum(["gui", "idalib", "idat"]);
+const hexRaysStatus = z.enum([
+  "available",
+  "attached",
+  "current",
+  "unavailable",
+]);
+export type HexRaysBackend = z.infer<typeof hexRaysBackend>;
+export type HexRaysStatus = z.infer<typeof hexRaysStatus>;
+
+export const hexRaysOpenSchema = z
+  .object({
+    instance_id: z.string().min(1),
+    backend: hexRaysBackend,
+    status: z.string(),
+  })
+  .passthrough();
+
+/**
+ * Inventory rows. `instance_id` is null when this server holds no lease.
+ * The row is still a live database owner; null does not mean it has stopped.
+ * `idat` is a headless owner, distinct from a GUI database.
+ */
+export const hexRaysListSchema = z
+  .object({
+    instances: z.array(
+      z
+        .object({
+          path: z.string(),
+          backend: hexRaysBackend,
+          status: hexRaysStatus,
+          instance_id: z.string().nullable(),
+        })
+        .passthrough(),
+    ),
+  })
+  .passthrough();
+
+export const hexRaysCloseSchema = z.object({
+  closed: z.literal(true),
+  final_lease: z.boolean().optional(),
+  idb_path: z.string().min(1).optional(),
+});
+export type HexRaysCloseReceipt = z.infer<typeof hexRaysCloseSchema>;
+
+const executionSchema = z
+  .object({
+    result: ownedJsonValueSchema,
+    stdout: z.string(),
+    stderr: z.string(),
+  })
+  .passthrough();
+
+let querySource: { readonly code: string; readonly sha256: string } | undefined;
+const queryBridge = () => {
+  if (querySource !== undefined) return querySource;
+  const code = readFileSync(
+    fileURLToPath(
+      new URL("../../bridge/ida/hexrays_queries.py", import.meta.url),
+    ),
+    "utf8",
+  );
+  querySource = {
+    code,
+    sha256: sha256Hex(code),
+  };
+  return querySource;
+};
+
+/** Leases on a connection whose Python globals already have `queryBridge()` loaded. */
+const bootstrappedLeases = new WeakMap<IdaMcpConnection, Set<string>>();
+
+const isMissingBridgeError = (error: unknown): boolean => {
+  if (!(error instanceof IdaToolRejection)) return false;
+  const reason = error.diagnostics?.reason;
+  const detail = typeof reason === "string" ? reason : error.message;
+  return /(?:^|\n)NameError: name '_rea_query' is not defined$/u.test(
+    detail.trimEnd(),
+  );
+};
+
+/**
+ * Answer one database-supervisor read through `execute_python` with REA's
+ * fixed, read-only query bridge. Only the query name and its JSON arguments
+ * vary; caller text never becomes Python source. The observation records the
+ * actual upstream tool and the bridge digest instead of the bridge body.
+ */
+export const runHexRaysQuery = async (
+  connection: IdaMcpConnection,
+  instanceId: string,
+  query: string,
+  args: Readonly<Record<string, JsonValue>>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<IdaRawObservation> => {
+  if (!hexRaysQueries.has(query))
+    throw new AnalysisProtocolError(
+      `The Hex-Rays IDA MCP profile does not implement ${query}.`,
+    );
+  // The lease is selected by instance_id; the supervisor `database` argument has no bridge meaning.
+  const { database: _database, ...queryArguments } = args;
+  const bridge = queryBridge();
+  const timeoutSeconds = timeoutMs / 1000;
+  // A JSON string literal is also a valid Python string literal.
+  const callLine = `_rea_query(${JSON.stringify(query)}, ${JSON.stringify(JSON.stringify(queryArguments))})`;
+  const callOptions = {
+    timeoutMs,
+    ...(signal === undefined ? {} : { signal }),
+  };
+  const engineTimeout = timeoutSeconds - Math.min(5, timeoutSeconds / 2);
+  let leases = bootstrappedLeases.get(connection);
+  const invoke = (code: string) =>
+    connection.call(
+      "execute_python",
+      { instance_id: instanceId, code, timeout: engineTimeout },
+      callOptions,
+    );
+  let raw: JsonValue;
+  if (leases?.has(instanceId)) {
+    try {
+      raw = await invoke(`# rea-bridge\n${callLine}`);
+    } catch (error) {
+      if (!isMissingBridgeError(error)) throw error;
+      leases.delete(instanceId);
+      raw = await invoke(`${bridge.code}\n${callLine}`);
+      leases.add(instanceId);
+    }
+  } else {
+    raw = await invoke(`${bridge.code}\n${callLine}`);
+    if (leases === undefined) {
+      leases = new Set();
+      bootstrappedLeases.set(connection, leases);
+    }
+    leases.add(instanceId);
+  }
+  const execution = executionSchema.parse(raw);
+  return {
+    tool: "execute_python",
+    arguments: {
+      instance_id: instanceId,
+      query,
+      query_arguments: queryArguments,
+      bridge_sha256: bridge.sha256,
+    },
+    result: execution.result,
+    ...(execution.stdout === "" && execution.stderr === ""
+      ? {}
+      : { output: { stdout: execution.stdout, stderr: execution.stderr } }),
+  };
+};

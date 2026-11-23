@@ -2,9 +2,56 @@ import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import { readLeb128, ULEB32 } from "../domain/leb128.js";
 import { isStrictUtf8 } from "../domain/strictUtf8.js";
 
+const SECTION_ROW_RE =
+  /[ \t]*(\w+) start=0x([\da-f]+) end=0x([\da-f]+) \(size=0x([\da-f]+)\) /uy;
+
 /** WABT prints names with %.*s, so an embedded NUL ends their display. */
-const wabtDisplayedName = (name: string | undefined): string | undefined =>
-  name?.split("\0", 1)[0];
+const wabtDisplayedName = (name: string | undefined): string | undefined => {
+  if (name === undefined) return undefined;
+  const nul = name.indexOf("\0");
+  return nul < 0 ? name : name.slice(0, nul);
+};
+
+const parseCustomSectionField = (
+  text: string,
+  offset: number,
+  customSectionNames: readonly string[],
+  customIndex: { value: number },
+  bounds: { start: number; end: number; artifact: Uint8Array | undefined },
+): {
+  readonly description: string;
+  readonly nextOffset: number;
+  readonly invalidNameEnd?: number;
+} => {
+  if (text.charCodeAt(offset) !== 0x22) {
+    // WABT leaves this field blank when the binary custom name is invalid
+    // UTF-8. Confirm the bytes rather than inventing a name from its output.
+    const invalidEnd = invalidCustomNameEnd(
+      bounds.artifact,
+      bounds.start,
+      bounds.end,
+    );
+    if (invalidEnd === undefined)
+      throw new WabtAdmissionError("blank_custom_name");
+    const nextOffset =
+      text.charCodeAt(offset) === 0x0a &&
+      !text.startsWith("\nSection Details:\n", offset)
+        ? offset + 1
+        : offset;
+    return { description: "", nextOffset, invalidNameEnd: invalidEnd };
+  }
+  const name = wabtDisplayedName(customSectionNames[customIndex.value++]);
+  if (
+    name === undefined ||
+    text.charCodeAt(offset) !== 0x22 ||
+    !text.startsWith(name, offset + 1) ||
+    text.charCodeAt(offset + 1 + name.length) !== 0x22 ||
+    text.charCodeAt(offset + 2 + name.length) !== 0x0a
+  )
+    throw new WabtAdmissionError("custom_header_mismatch");
+  const description = `"${name}"`;
+  return { description, nextOffset: offset + description.length + 1 };
+};
 
 /** Frame WABT's raw custom names using the ordered names from its escaped WAT output. */
 export const parseWabtOutput = (
@@ -14,75 +61,61 @@ export const parseWabtOutput = (
   debugModuleNames: readonly string[] = [],
   artifact?: Uint8Array,
 ) => {
-  const preamble =
-    "\nmodule.wasm:\tfile format wasm 0x1\n" +
-    debugModuleNames
-      .map((name) => `module name: <${wabtDisplayedName(name)}>\n`)
-      .join("");
+  let moduleLines = "";
+  for (let i = 0; i < debugModuleNames.length; i++)
+    moduleLines += `module name: <${wabtDisplayedName(debugModuleNames[i])}>\n`;
+  const preamble = `\nmodule.wasm:\tfile format wasm 0x1\n${moduleLines}`;
   const prefix = `${preamble}\nSections:\n\n`;
   if (!text.startsWith(prefix))
     throw new WabtAdmissionError("unsupported_section_header");
   let offset = prefix.length;
-  let customIndex = 0;
+  const customIndex = { value: 0 };
+  let previousEnd = 8;
   const sections = [];
-  const invalidNameEnds: number[] = [];
+  const invalidNameEnds = new Set<number>();
   while (!text.startsWith("\nSection Details:\n", offset)) {
-    const match =
-      /^[ \t]*(\w+) start=0x([\da-f]+) end=0x([\da-f]+) \(size=0x([\da-f]+)\) /u.exec(
-        text.slice(offset),
-      );
+    SECTION_ROW_RE.lastIndex = offset;
+    const match = SECTION_ROW_RE.exec(text);
     if (match === null)
       throw new WabtAdmissionError("unrecognized_section_row");
     offset += match[0].length;
+    const kind = match[1] ?? "";
+    const start = Number.parseInt(match[2] ?? "", 16);
+    const end = Number.parseInt(match[3] ?? "", 16);
+    const bytes = Number.parseInt(match[4] ?? "", 16);
     let description: string;
-    if (match[1] === "Custom" && !text.startsWith('"', offset)) {
-      // WABT leaves this field blank when the binary custom name is invalid
-      // UTF-8. Confirm the bytes rather than inventing a name from its output.
-      const start = Number.parseInt(match[2] ?? "", 16);
-      const end = Number.parseInt(match[3] ?? "", 16);
-      const invalidEnd = invalidCustomNameEnd(artifact, start, end);
-      if (invalidEnd === undefined)
-        throw new WabtAdmissionError("blank_custom_name");
-      invalidNameEnds.push(invalidEnd);
-      description = "";
-      // WABT does not terminate a blank-name row when another section follows.
-      if (
-        text.startsWith("\n", offset) &&
-        !text.startsWith("\nSection Details:\n", offset)
-      )
-        offset += 1;
-    } else if (match[1] === "Custom") {
-      const name = wabtDisplayedName(customSectionNames[customIndex++]);
-      if (name === undefined || !text.startsWith(`"${name}"\n`, offset))
-        throw new WabtAdmissionError("custom_header_mismatch");
-      description = `"${name}"`;
-      offset += description.length + 1;
+    if (kind === "Custom") {
+      const parsed = parseCustomSectionField(
+        text,
+        offset,
+        customSectionNames,
+        customIndex,
+        { start, end, artifact },
+      );
+      description = parsed.description;
+      offset = parsed.nextOffset;
+      if (parsed.invalidNameEnd !== undefined)
+        invalidNameEnds.add(parsed.invalidNameEnd);
     } else {
-      const end = text.indexOf("\n", offset);
-      if (end < 0) throw new WabtAdmissionError("incomplete_section_row");
-      description = text.slice(offset, end).trim();
-      offset = end + 1;
+      const rowEnd = text.indexOf("\n", offset);
+      if (rowEnd < 0) throw new WabtAdmissionError("incomplete_section_row");
+      description = text.slice(offset, rowEnd).trim();
+      offset = rowEnd + 1;
     }
-    const section = {
-      kind: match[1] ?? "",
-      start: Number.parseInt(match[2] ?? "", 16),
-      end: Number.parseInt(match[3] ?? "", 16),
-      bytes: Number.parseInt(match[4] ?? "", 16),
-      description,
-    };
-    const sectionHeaderBytes = section.start - (sections.at(-1)?.end ?? 8);
+    const sectionHeaderBytes = start - previousEnd;
     if (
-      section.end > artifactBytes ||
-      section.end - section.start !== section.bytes ||
+      end > artifactBytes ||
+      end - start !== bytes ||
       sectionHeaderBytes < 2 ||
       sectionHeaderBytes > 6
     )
       throw new WabtAdmissionError("section_ranges");
-    sections.push(section);
+    previousEnd = end;
+    sections.push({ kind, start, end, bytes, description });
   }
-  if (customIndex !== customSectionNames.length)
+  if (customIndex.value !== customSectionNames.length)
     throw new WabtAdmissionError("custom_inventory_mismatch");
-  if ((sections.at(-1)?.end ?? 8) !== artifactBytes)
+  if (previousEnd !== artifactBytes)
     throw new WabtAdmissionError("section_coverage");
   const separator = offset + 1;
   return {

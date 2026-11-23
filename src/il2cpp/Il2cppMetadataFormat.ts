@@ -1,3 +1,4 @@
+import type { BinaryReader } from "../domain/binaryContainer.js";
 /** Stable machine-readable reason for each rejected input. */
 export const IL2CPP_METADATA_FAILURE_REASONS = {
   unsupported: ["unrecognized-magic", "unsupported-version"],
@@ -93,16 +94,20 @@ export const checkRange = (
 };
 
 /** Read a serialized index; the all-ones value of narrow widths means -1. */
-export const readIndex = (bytes: Buffer, offset: number, width: 1 | 2 | 4) => {
+export const readIndex = (
+  reader: BinaryReader,
+  offset: number,
+  width: 1 | 2 | 4,
+) => {
   if (width === 1) {
-    const value = bytes.readUInt8(offset);
+    const value = reader.u8(offset);
     return value === 0xff ? -1 : value;
   }
   if (width === 2) {
-    const value = bytes.readUInt16LE(offset);
+    const value = reader.u16(offset);
     return value === 0xffff ? -1 : value;
   }
-  return bytes.readInt32LE(offset);
+  return reader.i32(offset);
 };
 import type { Il2cppMetadataSection } from "../domain/il2cpp/il2cppMetadata.js";
 import {

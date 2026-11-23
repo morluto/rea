@@ -19,6 +19,7 @@ export class AnalysisCleanupLease {
   readonly #resources: readonly string[] | undefined;
 
   get cleanupResources(): readonly string[] | undefined {
+    if (this.#released) return [];
     return this.#resourceOwner === undefined
       ? this.#resources
       : this.#resourceOwner.cleanupResources;

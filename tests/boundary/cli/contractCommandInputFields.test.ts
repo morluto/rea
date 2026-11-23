@@ -1,105 +1,18 @@
-import { Cli } from "incur";
+import { registerContractDocumentCommand } from "../../../src/cli/contractDocumentCommand.js";
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { z } from "zod";
 import pino from "pino";
 import { expect, it } from "vitest";
 
-import { publishCliAnalysisEvidence } from "../../../src/cli/analysisEvidenceDelivery.js";
 import {
   admittedContractInput,
   registerContractCommand,
-  registerContractDocumentCommand,
 } from "../../../src/cli/contractCommand.js";
 import type { CliInstance } from "../../../src/cli/types.js";
-import type { JsonValue } from "../../../src/domain/jsonValue.js";
-
-/** A provider lookup failure as an operation reports it, by contract field. */
-const lookupFailure = {
-  error: "Procedure not found",
-  code: "invalid_request",
-  details: {
-    operation: "lookup_probe",
-    issues: [{ path: ["procedure"], reason: "invalid_value" }],
-  },
-} as const satisfies JsonValue;
-
-/**
- * One synthetic contract whose `procedure` field the CLI spells `address`,
- * returning the provider's failure through the shared Evidence delivery.
- */
-const harness = () => {
-  const cli = Cli.create("rea-input-fields-test", {
-    version: "1",
-    sync: false,
-  });
-  registerContractCommand(
-    cli as unknown as CliInstance,
-    pino({ enabled: false }),
-    {
-      name: "lookup_probe",
-      inputSchema: z.object({
-        procedure: z.string(),
-        detail: z.enum(["complete", "summary"]).default("complete"),
-      }),
-    },
-    {
-      command: "probe",
-      description: "Probe",
-      positionals: ["procedure"],
-      evidenceDelivery: true,
-      fields: { procedure: { name: "address", description: "Procedure" } },
-    },
-    async (_input, { operation, signal, delivery }) =>
-      publishCliAnalysisEvidence(
-        { ok: false, error: lookupFailure },
-        {
-          operation,
-          signal,
-          detail: delivery?.detail ?? "complete",
-          evidenceOutput: delivery?.evidenceOutput,
-        },
-      ),
-  );
-  const registered = Cli.toCommands.get(cli)?.get("probe");
-  if (registered === undefined) throw new Error("probe was not registered");
-  const execute = Reflect.get(registered, "run") as (
-    value: unknown,
-  ) => Promise<unknown>;
-  const parse = (key: "args" | "options", value: unknown) =>
-    (Reflect.get(registered, key) as { parse(v: unknown): unknown }).parse(
-      value,
-    );
-  // A failed command sets the shared worker's exit status; restore it.
-  return async (address: string) => {
-    const exitCode = process.exitCode;
-    try {
-      return await execute({
-        args: parse("args", { address }),
-        options: parse("options", {}),
-      });
-    } finally {
-      process.exitCode = exitCode;
-    }
-  };
-};
-
-it("names a delivered provider failure's input field by its CLI key", async () => {
-  const invoke = harness();
-  const exitCode = process.exitCode;
-  await expect(invoke("missing")).resolves.toMatchObject({
-    code: "invalid_request",
-    details: {
-      operation: "lookup_probe",
-      issues: [{ path: ["address"], reason: "invalid_value" }],
-    },
-  });
-  expect(process.exitCode).toBe(exitCode);
-});
 
 it("keeps a branch-only default out of the branch the caller selects", async () => {
-  const cli = Cli.create("rea-branch-default-test", {
-    version: "1",
-    sync: false,
-  });
+  const cli = createCommandCli();
   const received: unknown[] = [];
   registerContractCommand(
     cli as unknown as CliInstance,
@@ -124,7 +37,7 @@ it("keeps a branch-only default out of the branch the caller selects", async () 
       return {};
     },
   );
-  const registered = Cli.toCommands.get(cli)?.get("branch-probe");
+  const registered = cliCommand(cli, "branch-probe")?.definition;
   if (registered === undefined) throw new Error("branch-probe is missing");
   const parse = (value: unknown) =>
     (
@@ -140,10 +53,7 @@ it("keeps a branch-only default out of the branch the caller selects", async () 
 });
 
 it("hands a whole-input handler the contract's parse, or its refusal, without parsing again", async () => {
-  const cli = Cli.create("rea-admitted-input-test", {
-    version: "1",
-    sync: false,
-  });
+  const cli = createCommandCli();
   const received: unknown[] = [];
   // Counts evaluations of the whole contract schema; argv option parsing
   // checks field schemas only.
@@ -182,7 +92,7 @@ it("hands a whole-input handler the contract's parse, or its refusal, without pa
     async () => ({}),
   );
   const command = (name: string) => {
-    const registered = Cli.toCommands.get(cli)?.get(name);
+    const registered = cliCommand(cli, name)?.definition;
     if (registered === undefined) throw new Error(`${name} is missing`);
     const options = (value: unknown) =>
       (
@@ -216,10 +126,7 @@ it("hands a whole-input handler the contract's parse, or its refusal, without pa
 });
 
 it("hands a JSON-document handler the contract's parse of its document, once, only when read", async () => {
-  const cli = Cli.create("rea-admitted-document-test", {
-    version: "1",
-    sync: false,
-  });
+  const cli = createCommandCli();
   const received: unknown[] = [];
   let wholeParses = 0;
   const inputSchema = z
@@ -264,7 +171,7 @@ it("hands a JSON-document handler the contract's parse of its document, once, on
     async () => ({}),
   );
   const command = (name: string) => {
-    const registered = Cli.toCommands.get(cli)?.get(name);
+    const registered = cliCommand(cli, name)?.definition;
     if (registered === undefined) throw new Error(`${name} is missing`);
     const args = (value: unknown) =>
       (Reflect.get(registered, "args") as { parse(v: unknown): unknown }).parse(
