@@ -2129,7 +2129,10 @@ process.exit(1);
     const stagingPrefix = (await waitForFile(failedPath)).trim();
     expect(basename(stagingPrefix)).toMatch(stagingNamePattern(version));
     // Staging still holds the failed tree; signal during the owned cleanup that
-    // follows installer exit rather than during the install itself.
+    // follows installer exit rather than during the install itself. Without
+    // allowing pending signal delivery before cancel.release(), a SIGTERM that
+    // arrives during removeStaging's rmSync can leave exit status 1 instead of
+    // 143 after cleanup completes.
     await access(join(stagingPrefix, "partial"));
     child.kill("SIGTERM");
     const result = await closed;
@@ -2143,6 +2146,19 @@ process.exit(1);
       (name) => stagingNamePattern(version).test(name),
     );
     expect(leftover).toEqual([]);
+  });
+
+  it("yields for pending signals before checking and releasing install cancel", async () => {
+    const source = await readFile(launcher, "utf8");
+    // Structural lock for the finalization race: sync cleanup can leave a
+    // pending SIGTERM that only runs after a macrotask while the observer
+    // remains installed (dispatchQueuedInterrupts / allowPendingCancellation).
+    expect(source).toMatch(
+      /await allowPendingCancellation\(\);\s*if \(cancel\.cancelled !== undefined\) \{\s*applyAcquisitionCancel\(cancel\.cancelled\);\s*entry = undefined;\s*\}\s*cancel\.release\(\);/u,
+    );
+    expect(source).toMatch(
+      /const allowPendingCancellation = async \(\) => \{\s*await nextMacrotask\(\);\s*await nextMacrotask\(\);\s*\};/u,
+    );
   });
 
   it.each([

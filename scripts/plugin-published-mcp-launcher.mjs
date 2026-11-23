@@ -24,6 +24,7 @@ import {
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
+import { setImmediate as nextMacrotask } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
 import { npmInvocation } from "./lib/npm-invocation.mjs";
@@ -935,6 +936,20 @@ const runOwnedInstaller = (invocation, installer) =>
     });
   });
 
+const cancelExitCode = (signal) =>
+  signal === undefined ? 0 : (SIGNAL_EXIT_CODES[signal] ?? 1);
+
+/**
+ * Let queued callbacks and pending OS signals run while a cancel observer is
+ * still installed. Matches dispatchQueuedInterrupts: one macrotask for queued
+ * work, then one for signal handlers a prior sync section left pending (for
+ * example SIGTERM during removeStaging's rmSync).
+ */
+const allowPendingCancellation = async () => {
+  await nextMacrotask();
+  await nextMacrotask();
+};
+
 const waitForReadyOrLock = async (prefix, lockPath) => {
   /** @type {(() => void) | undefined} */
   let wakeWait;
@@ -963,7 +978,9 @@ const waitForReadyOrLock = async (prefix, lockPath) => {
       if (lock.acquired) {
         // SIGTERM during the awaited acquisition is recorded on this observer;
         // recheck before handing the lock to the installer, which starts a new
-        // observer that cannot see an already-consumed signal.
+        // observer that cannot see an already-consumed signal. Yield first so a
+        // signal that arrived during sync lock work can run before release.
+        await allowPendingCancellation();
         if (cancel.cancelled !== undefined) {
           releaseInstallLock(lockPath, lock.server);
           return {
@@ -989,9 +1006,6 @@ const waitForReadyOrLock = async (prefix, lockPath) => {
     cancel.release();
   }
 };
-
-const cancelExitCode = (signal) =>
-  signal === undefined ? 0 : (SIGNAL_EXIT_CODES[signal] ?? 1);
 
 /** Fail like ownStdioStartupInput when acquisition stdin exceeds stdio capacity. */
 const applyAcquisitionCancel = (cancelled) => {
@@ -1210,6 +1224,10 @@ if (process.exitCode === 1) {
           lockServer = undefined;
           // A signal during finalization was only recorded; apply it after
           // cleanup and lock release so exit status matches the client request.
+          // Yield first so a SIGTERM that arrived during sync rmSync can run
+          // while this observer is still installed (Node cannot deliver it
+          // until JavaScript yields).
+          await allowPendingCancellation();
           if (cancel.cancelled !== undefined) {
             applyAcquisitionCancel(cancel.cancelled);
             entry = undefined;
