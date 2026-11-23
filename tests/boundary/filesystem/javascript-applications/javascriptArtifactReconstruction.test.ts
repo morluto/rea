@@ -119,11 +119,16 @@ it("returns static and application facts without semantic analysis in structure-
   expect(
     result.limitations.some((text) => text.includes("structure-only")),
   ).toBe(true);
+  // Coverage must not claim the semantic graph was completely examined.
+  expect(result.semantic_graph.coverage.status).not.toBe("complete");
   const complete = await reconstructJavaScriptArtifact({
     input_path: root,
     format: "directory",
   });
-  expect(complete.semantic_graph.nodes.length).toBeGreaterThan(0);
+  expect(
+    complete.semantic_graph.nodes.some(({ kind }) => kind !== "module"),
+  ).toBe(true);
+  expect(complete.semantic_graph.relations.length).toBeGreaterThan(0);
   expect(
     complete.limitations.some((text) => text.includes("structure-only")),
   ).toBe(false);

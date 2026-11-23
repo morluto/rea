@@ -53,7 +53,10 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
   } catch (cause: unknown) {
     // The semantic phase indexes the same mutations under the same
     // allowance, so it is not started; the syntax facts cross first.
-    if (purpose === "analysis" && isJavaScriptMemberMutationRefusal(cause))
+    if (
+      purpose !== "preload-discovery" &&
+      isJavaScriptMemberMutationRefusal(cause)
+    )
       await callbacks.checkpoint(
         memberMutationRefusedJavaScriptStaticAnalysis(
           file.text.value,

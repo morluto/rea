@@ -189,10 +189,12 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
       });
       const semanticUnavailableReason =
         failure?.reason ??
-        javaScriptSemanticSourceExclusion(
-          file,
-          facts.javascript?.parse_status ?? null,
-        );
+        (structureOnly && file.kind === "javascript" && file.text.included
+          ? "Semantic analysis was not requested (structure-only)"
+          : javaScriptSemanticSourceExclusion(
+              file,
+              facts.javascript?.parse_status ?? null,
+            ));
       if (facts.projection === null && semanticUnavailableReason !== null)
         projection.recordUnavailableFile(
           file,
