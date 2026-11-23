@@ -569,7 +569,7 @@ it("reuses pooled workers across calls and retires a deadline-stuck worker", asy
     pattern: "^(a+)+$",
     caseSensitive: true,
     values: [`${"a".repeat(40)}b`],
-    deadline: { deadlineMs: 50, source: "runtime-setting" },
+    deadline: { deadlineMs: 50, source: "runtime" },
   });
   expect(stuck.ok).toBe(false);
   const after = await matchRegexValues({
