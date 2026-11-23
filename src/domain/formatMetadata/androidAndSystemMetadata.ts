@@ -282,7 +282,9 @@ export const systemdJournalHeaderSchema = z.strictObject({
   state: z.string(),
   file_id: z.string(),
   machine_id: z.string(),
-  tail_entry_boot_id: z.string(),
+  // Null when the compatible `tail-entry-boot-id` flag is clear, so the bytes
+  // hold the legacy boot id rather than a tail-entry identity.
+  tail_entry_boot_id: z.string().nullable(),
   seqnum_id: z.string(),
   header_size: offset,
   arena_size: offset,
@@ -311,6 +313,9 @@ export const systemdJournalHeaderSchema = z.strictObject({
   tail_entry_offset: offset.nullable(),
   // Fields whose declared value exceeded 2^53-1 and report that ceiling.
   overflowed_fields: z.array(z.string()),
+  // Fields left unread because the declared header could not be anchored; their
+  // reported zeros are not observations.
+  unread_fields: z.array(z.string()),
 });
 
 export const systemdJournalObjectHeaderSchema = z.strictObject({
@@ -320,6 +325,8 @@ export const systemdJournalObjectHeaderSchema = z.strictObject({
   flags: uint32,
   flag_names: z.array(z.string()),
   size: offset,
+  // True when the declared size exceeded 2^53-1 and `size` is that ceiling.
+  size_overflowed: z.boolean(),
   compressed: z.boolean(),
 });
 

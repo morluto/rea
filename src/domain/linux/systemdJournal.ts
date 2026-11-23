@@ -105,6 +105,24 @@ const HEADER = {
   tailEntryOffset: 264,
 } as const;
 
+/** Numeric header declarations left unread when the header cannot be anchored. */
+const UNREAD_HEADER_FIELDS: readonly string[] = [
+  "arena_size",
+  "data_hash_table_offset",
+  "data_hash_table_size",
+  "field_hash_table_offset",
+  "field_hash_table_size",
+  "tail_object_offset",
+  "n_objects",
+  "n_entries",
+  "tail_entry_seqnum",
+  "head_entry_seqnum",
+  "entry_array_offset",
+  "head_entry_realtime",
+  "tail_entry_realtime",
+  "tail_entry_monotonic",
+];
+
 export interface JournalHeaderFacts {
   readonly compatible_flags: number;
   readonly compatible_flag_names: readonly string[];
@@ -113,7 +131,8 @@ export interface JournalHeaderFacts {
   readonly state: string;
   readonly file_id: string;
   readonly machine_id: string;
-  readonly tail_entry_boot_id: string;
+  /** Null when the compatible `tail-entry-boot-id` flag is clear. */
+  readonly tail_entry_boot_id: string | null;
   readonly seqnum_id: string;
   readonly header_size: number;
   readonly arena_size: number;
@@ -145,6 +164,12 @@ export interface JournalHeaderFacts {
    * reported value is that ceiling, so these names say which ones are not exact.
    */
   readonly overflowed_fields: readonly string[];
+  /**
+   * Fields the reader never read, reported as zero. Non-empty only for a header
+   * whose declared size could not anchor the object area; a reader must treat
+   * these as unknown rather than observed.
+   */
+  readonly unread_fields: readonly string[];
 }
 
 export interface JournalObjectHeader {
@@ -155,6 +180,8 @@ export interface JournalObjectHeader {
   readonly flags: number;
   readonly flag_names: readonly string[];
   readonly size: number;
+  /** True when the declared size exceeds Number.MAX_SAFE_INTEGER. */
+  readonly size_overflowed: boolean;
   readonly compressed: boolean;
 }
 
@@ -264,6 +291,14 @@ const readUint64 = (
   return Number(value);
 };
 
+/** Read a little-endian u32 directly from header bytes, before any BinaryReader. */
+const u32At = (bytes: Uint8Array, offset: number): number =>
+  (bytes[offset]! |
+    (bytes[offset + 1]! << 8) |
+    (bytes[offset + 2]! << 16) |
+    (bytes[offset + 3]! << 24)) >>>
+  0;
+
 const readFlagFacts = (view: BinaryReader) => {
   const compatibleFlags = view.u32(HEADER.compatibleFlags);
   const incompatibleFlags = view.u32(HEADER.incompatibleFlags);
@@ -280,9 +315,14 @@ const readIdFacts = (bytes: Uint8Array) => ({
   machine_id: formatId128(
     bytes.subarray(HEADER.machineId, HEADER.machineId + 16),
   ),
-  tail_entry_boot_id: formatId128(
-    bytes.subarray(HEADER.tailEntryBootId, HEADER.tailEntryBootId + 16),
-  ),
+  // Bytes 56-71 are the legacy boot id unless `tail-entry-boot-id` is set:
+  // the compatible flag is what tells the two meanings apart.
+  tail_entry_boot_id:
+    (u32At(bytes, 8) & (1 << 1)) !== 0
+      ? formatId128(
+          bytes.subarray(HEADER.tailEntryBootId, HEADER.tailEntryBootId + 16),
+        )
+      : null,
   seqnum_id: formatId128(bytes.subarray(HEADER.seqnumId, HEADER.seqnumId + 16)),
 });
 
@@ -319,6 +359,9 @@ const unanchoredHeader = (
   tail_entry_array_offset: null,
   tail_entry_array_n_entries: null,
   tail_entry_offset: null,
+  // Every numeric declaration above is unread, not zero: the probe stopped
+  // before them, so callers must not read these as observed values.
+  unread_fields: UNREAD_HEADER_FIELDS,
   overflowed_fields: [],
 });
 
@@ -391,6 +434,7 @@ const readHeaderFacts = (
       ? view.u32(HEADER.tailEntryArrayNEntries)
       : null,
     tail_entry_offset: optional(HEADER.tailEntryOffset, 8, "tail_entry_offset"),
+    unread_fields: [],
     overflowed_fields: overflowed,
   };
 };
@@ -437,9 +481,22 @@ class JournalScanner {
   #truncatedCount = 0;
   #unknownTypeCount = 0;
   #compressedCount = 0;
+  #overflowedObjectCount = 0;
+  /** Objects that declared fewer bytes than their own 16-byte header. */
+  #undersizedObjectCount = 0;
+  /** True when the chain stopped because the declared tail object was reached. */
+  #tailReached = false;
+  /** The header declared an empty object chain (n_objects 0, tail offset 0). */
+  #emptyChainDeclared = false;
+  /** Objects whose declared extent reaches past the declared arena. */
+  #outsideArenaCount = 0;
   #nextObjectHeaderIndex: number | null = null;
   /** End of the last object that fit the file; the tail begins there or later. */
   #lastObjectEnd = 0;
+  /** Absolute offset the declared arena ends at, or null when unread. */
+  #arenaEnd: number | null = null;
+  /** Absolute offset the declared header ends at. */
+  #headerStart = 0;
   #tailObjectOffset: bigint | null = null;
 
   constructor(fileBytes: number) {
@@ -566,10 +623,21 @@ class JournalScanner {
       declared,
     );
     this.#header = header;
+    this.#headerStart = declared;
+    this.#arenaEnd =
+      header.unread_fields.length === 0 && header.arena_size > 0
+        ? declared + header.arena_size
+        : null;
     this.#offset = declared;
     this.#lastObjectEnd = declared;
+    // `tail_object_offset` is 0 both for a journal whose object chain is empty
+    // and for one that never recorded a tail; only the declaration of zero
+    // objects makes it an empty chain. A non-empty chain with a zero tail is
+    // walked to its end, where its own object count bounds it.
+    this.#emptyChainDeclared =
+      header.n_objects === 0 && header.tail_object_offset === 0;
     this.#tailObjectOffset =
-      header.tail_object_offset === 0
+      this.#emptyChainDeclared || header.tail_object_offset === 0
         ? null
         : BigInt(header.tail_object_offset);
     const unknownFlags = header.incompatible_flags & ~INCOMPATIBLE_FLAGS_KNOWN;
@@ -591,6 +659,12 @@ class JournalScanner {
 
   #acceptObjectHeader(): void {
     const offset = this.#offset;
+    // A declared empty chain has no objects to walk; the first 16 bytes past
+    // the header are preallocated capacity, not an object header.
+    if (this.#emptyChainDeclared) {
+      this.#phase = "closed";
+      return;
+    }
     if (
       this.#tailObjectOffset !== null &&
       BigInt(offset) > this.#tailObjectOffset
@@ -619,18 +693,18 @@ class JournalScanner {
     /** An object's declared size counts its own 16-byte header. */
     const declaredSize = view.word(8, 64);
     const type = describeObjectType(rawType);
+    const sizeOverflowed = declaredSize > BigInt(Number.MAX_SAFE_INTEGER);
     const object: JournalObjectHeader = {
       offset,
       type,
       raw_type: rawType,
       flags,
       flag_names: flagNames(flags, OBJECT_FLAG_NAMES),
-      size:
-        declaredSize <= BigInt(Number.MAX_SAFE_INTEGER)
-          ? Number(declaredSize)
-          : Number.MAX_SAFE_INTEGER,
+      size: sizeOverflowed ? Number.MAX_SAFE_INTEGER : Number(declaredSize),
+      size_overflowed: sizeOverflowed,
       compressed: (flags & OBJECT_COMPRESSED_MASK) !== 0,
     };
+    if (sizeOverflowed) this.#overflowedObjectCount += 1;
     const index = this.#objectCount;
     this.#objectCount += 1;
     this.#typeCounts.set(type, (this.#typeCounts.get(type) ?? 0) + 1);
@@ -641,11 +715,30 @@ class JournalScanner {
       this.#objectHeaders.push(object);
     else this.#nextObjectHeaderIndex ??= index;
 
-    if (
-      declaredSize < BigInt(JOURNAL_OBJECT_HEADER_BYTES) ||
-      declaredSize > BigInt(this.#fileBytes - offset)
-    ) {
+    // A declared size below the 16-byte header is a self-contradictory
+    // declaration, not a file cut short: no bytes are missing. Counting it as
+    // truncation would tell the analyst the writer was interrupted.
+    if (declaredSize < BigInt(JOURNAL_OBJECT_HEADER_BYTES)) {
+      this.#undersizedObjectCount += 1;
+      this.#phase = "closed";
+      return;
+    }
+    if (declaredSize > BigInt(this.#fileBytes - offset)) {
       this.#truncatedCount += 1;
+      this.#phase = "closed";
+      return;
+    }
+    // The arena is the object area the header declares. An object that starts
+    // inside it but ends past its end describes bytes outside the arena, which
+    // the physical file alone cannot detect when the arena is short. A header
+    // whose arena starts before the object area (an arena_size below the
+    // declared header size) leaves nothing to check.
+    if (
+      this.#arenaEnd !== null &&
+      this.#arenaEnd > this.#headerStart &&
+      offset + Number(declaredSize) > this.#arenaEnd
+    ) {
+      this.#outsideArenaCount += 1;
       this.#phase = "closed";
       return;
     }
@@ -655,6 +748,7 @@ class JournalScanner {
       this.#tailObjectOffset !== null &&
       BigInt(offset) === this.#tailObjectOffset
     ) {
+      this.#tailReached = true;
       this.#phase = "closed";
       return;
     }
@@ -682,6 +776,14 @@ class JournalScanner {
     const header = this.#header;
     if (header === null)
       return err(failure("stream ended before the journal header was read"));
+    // A declared tail the walk never reached: the chain stopped at a damaged
+    // or truncated object, or at EOF, before the offset the header names.
+    const tailUnreached =
+      !this.#emptyChainDeclared &&
+      this.#tailObjectOffset !== null &&
+      this.#tailObjectOffset <= BigInt(Number.MAX_SAFE_INTEGER) &&
+      !this.#tailReached &&
+      Number(this.#tailObjectOffset) > this.#lastObjectEnd;
 
     if (header.header_size > 0) {
       if (this.#objectCount !== header.n_objects)
@@ -691,6 +793,22 @@ class JournalScanner {
       if (this.#truncatedCount > 0)
         this.#limitations.push(
           "the object chain ends at an object whose declared size does not fit the file; its payload is not covered",
+        );
+      if (this.#undersizedObjectCount > 0)
+        this.#limitations.push(
+          `${String(this.#undersizedObjectCount)} object(s) declare a size below the 16-byte object header, which is a self-contradictory declaration rather than a file cut short; no bytes of theirs are covered`,
+        );
+      if (this.#overflowedObjectCount > 0)
+        this.#limitations.push(
+          `${String(this.#overflowedObjectCount)} object(s) declare a size above 2^53-1 and are reported with that ceiling and \`size_overflowed: true\``,
+        );
+      if (this.#outsideArenaCount > 0)
+        this.#limitations.push(
+          `${String(this.#outsideArenaCount)} object(s) declare an extent past the end of the arena the header declares; the object chain stops there`,
+        );
+      if (tailUnreached)
+        this.#limitations.push(
+          `the header declares a tail object at ${String(this.#tailObjectOffset)} that the walked chain never reached; the object area is not complete`,
         );
       if (this.#unknownTypeCount > 0)
         this.#limitations.push(
