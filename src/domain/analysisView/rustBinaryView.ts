@@ -1,9 +1,10 @@
-import { binaryMetadataArchitecture } from "../binaryMetadataArchitecture.js";
-import { metadataReportSubjectFormat } from "../apple/machoTargetSelection.js";
+import { completeOrUnknownCoverageSchema } from "../coverage.js";
 import { z } from "zod";
+import { requireMetadataReportSubject } from "./metadataReportSubject.js";
 import {
   rustBinarySchema,
   rustAuditableMetadataSchema,
+  rustcCommitOmissionSchema,
   rustcCommitSchema,
   type RustBinary,
 } from "../rust/rustBinary.js";
@@ -25,9 +26,33 @@ import {
   unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
-import { selectViewRows } from "./selectViewRows.js";
+import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
 
 const count = z.number().int().nonnegative();
+
+const RUST_BINARY_RUNTIME_UNKNOWN =
+  "Embedded dependency records do not authenticate build provenance or establish complete runtime dependencies or target behavior.";
+
+/** Unknowns owned by the Rust binary view. Other projections reuse them. */
+export const rustBinaryUnknowns = (
+  report: RustBinary,
+): {
+  readonly values: readonly string[];
+  readonly required: readonly string[];
+} => {
+  const metadata = report.auditable_metadata;
+  return {
+    required: [RUST_BINARY_RUNTIME_UNKNOWN],
+    values: [
+      RUST_BINARY_RUNTIME_UNKNOWN,
+      ...(metadata === null
+        ? [
+            "No cargo-auditable metadata was observed; missing metadata does not establish an empty dependency set.",
+          ]
+        : []),
+    ],
+  };
+};
 export const rustBinarySummarySchema = z.strictObject({
   bytes: count,
   format: rustBinarySchema.shape.format,
@@ -53,11 +78,12 @@ export const rustBinarySummarySchema = z.strictObject({
     .omit({ hashes: true })
     .extend({ hashes_count: count })
     .nullable(),
+  rustc_commit_omission: rustcCommitOmissionSchema.exactOptional(),
 });
 export const rustBinaryViewContextSchema = z.strictObject({
   source_coverage: z.strictObject({
     auditable_metadata_available: z.boolean(),
-    embedded_records: z.enum(["complete", "unknown"]),
+    embedded_records: completeOrUnknownCoverageSchema,
     runtime_dependencies: z.literal("unknown"),
   }),
 });
@@ -107,6 +133,9 @@ const summarize = (
     bytes: artifact.bytes,
     auditable_metadata: section,
     rustc_commit: compilerSummary,
+    ...(report.rustc_commit_omission === undefined
+      ? {}
+      : { rustc_commit_omission: report.rustc_commit_omission }),
   };
 };
 
@@ -121,7 +150,7 @@ export const projectRustBinaryView = (
         {
           path: ["view"],
           reason: "invalid_value",
-          message: "Rust Evidence supports summary and rust views.",
+          message: "Rust Evidence supports summary, rust and cyclonedx views.",
         },
       ]),
     );
@@ -131,27 +160,14 @@ export const projectRustBinaryView = (
   const parsed = parseReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
-  const subject = parent.subject;
-  if (
-    subject == null ||
-    subject.digest.sha256 !== report.artifact.sha256 ||
-    subject.format !== metadataReportSubjectFormat(report) ||
-    subject.architecture !==
-      (binaryMetadataArchitecture(report.architecture) ?? null)
-  )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "Rust parent subject must identify the report's exact artifact.",
-        },
-      ]),
-    );
+  const subject = requireMetadataReportSubject(
+    parent,
+    report,
+    "Rust parent subject must identify the report's exact artifact.",
+  );
+  if (!subject.ok) return subject;
   const metadata = report.auditable_metadata;
-  const unknown =
-    "Embedded dependency records do not authenticate build provenance or establish complete runtime dependencies or target behavior.";
+  const unknowns = rustBinaryUnknowns(report);
   const shared = {
     parent_evidence_id: parent.evidenceId,
     parent_operation: "inspect_rust_binary" as const,
@@ -169,17 +185,10 @@ export const projectRustBinaryView = (
       "limitations",
     ),
     unknowns: boundedViewMessages(
-      [
-        unknown,
-        ...(metadata === null
-          ? [
-              "No cargo-auditable metadata was observed; missing metadata does not establish an empty dependency set.",
-            ]
-          : []),
-      ],
+      unknowns.values,
       parent.evidenceId,
       "unknowns",
-      [unknown],
+      unknowns.required,
     ),
   };
   const summary = summarize(report);
@@ -189,7 +198,7 @@ export const projectRustBinaryView = (
       view,
       ...shared,
       summary,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   if (metadata === null)
     return ok({
@@ -208,28 +217,35 @@ export const projectRustBinaryView = (
     const names = view.names === undefined ? undefined : new Set(view.names);
     const versions =
       view.versions === undefined ? undefined : new Set(view.versions);
-    const selected = selectViewRows(
-      metadata.packages,
-      view,
-      (row, index) =>
-        (indices?.has(index) ?? true) &&
-        (names?.has(row.name) ?? true) &&
-        (versions?.has(row.version) ?? true),
-      (row, index) => ({
-        index,
-        ...((fields?.has("name") ?? true) && { name: row.name }),
-        ...((fields?.has("version") ?? true) && { version: row.version }),
-        ...((fields?.has("source") ?? true) && { source: row.source }),
-        ...((fields?.has("kind") ?? true) && { kind: row.kind }),
-        ...((fields?.has("root") ?? true) && { root: row.root }),
-        ...(fields?.has("dependencies") === true && {
-          dependencies: row.dependencies,
-        }),
-        ...(fields?.has("features") === true && {
-          features: row.features,
-        }),
+    const matchPackage = (row: (typeof metadata.packages)[number]) =>
+      (names?.has(row.name) ?? true) && (versions?.has(row.version) ?? true);
+    const projectPackage = (
+      row: (typeof metadata.packages)[number],
+      index: number,
+    ) => ({
+      index,
+      ...((fields?.has("name") ?? true) && { name: row.name }),
+      ...((fields?.has("version") ?? true) && { version: row.version }),
+      ...((fields?.has("source") ?? true) && { source: row.source }),
+      ...((fields?.has("kind") ?? true) && { kind: row.kind }),
+      ...((fields?.has("root") ?? true) && { root: row.root }),
+      ...(fields?.has("dependencies") === true && {
+        dependencies: row.dependencies,
       }),
-    );
+      ...(fields?.has("features") === true && {
+        features: row.features,
+      }),
+    });
+    const selected =
+      indices !== undefined
+        ? selectIndexedViewRows(
+            metadata.packages,
+            indices,
+            view,
+            matchPackage,
+            projectPackage,
+          )
+        : selectViewRows(metadata.packages, view, matchPackage, projectPackage);
     return ok({
       kind: "rust" as const,
       view,
@@ -247,21 +263,28 @@ export const projectRustBinaryView = (
     view.from_indices === undefined ? undefined : new Set(view.from_indices);
   const to =
     view.to_indices === undefined ? undefined : new Set(view.to_indices);
-  const selected = selectViewRows(
-    metadata.dependency_edges,
-    view,
-    (row, index) =>
-      (indices?.has(index) ?? true) &&
-      (from?.has(row.from_index) ?? true) &&
-      (to?.has(row.to_index) ?? true),
-    (row, index) => ({
-      index,
-      ...((fields?.has("from_index") ?? true) && {
-        from_index: row.from_index,
-      }),
-      ...((fields?.has("to_index") ?? true) && { to_index: row.to_index }),
+  const matchEdge = (row: (typeof metadata.dependency_edges)[number]) =>
+    (from?.has(row.from_index) ?? true) && (to?.has(row.to_index) ?? true);
+  const projectEdge = (
+    row: (typeof metadata.dependency_edges)[number],
+    index: number,
+  ) => ({
+    index,
+    ...((fields?.has("from_index") ?? true) && {
+      from_index: row.from_index,
     }),
-  );
+    ...((fields?.has("to_index") ?? true) && { to_index: row.to_index }),
+  });
+  const selected =
+    indices !== undefined
+      ? selectIndexedViewRows(
+          metadata.dependency_edges,
+          indices,
+          view,
+          matchEdge,
+          projectEdge,
+        )
+      : selectViewRows(metadata.dependency_edges, view, matchEdge, projectEdge);
   return ok({
     kind: "rust" as const,
     view,

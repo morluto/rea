@@ -1,6 +1,8 @@
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import { createDeferred } from "../../tests/fixtures/binarySession.js";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import {
+  phaseGate,
+  type PhaseGate,
+} from "../../tests/support/lifecycleHarness.js";
 
 import type {
   Device,
@@ -12,14 +14,14 @@ import type {
   Signal,
 } from "frida";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
-import { FridaScriptLoadCancelledError } from "../application/frida/FridaInstrumentationPort.js";
+import { FridaScriptLoadCancelledError } from "../ports/frida/FridaInstrumentationPort.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { FridaInstrumentationManager } from "./FridaInstrumentationManager.js";
-import { fridaCaptureLimitations } from "./fridaCaptureLimits.js";
+import { fridaCaptureLimitations } from "../domain/fridaCaptureLimits.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
@@ -91,8 +93,8 @@ class FakeSession implements Session {
   nextLoadFailure: Error | undefined;
   nextUnloadFailureCount = 0;
   detachFailureCount = 0;
-  scriptLoadGate: Promise<void> | undefined;
-  onScriptLoadStarted: (() => void) | undefined;
+  /** Holds every later script load at the provider boundary. */
+  scriptLoad: PhaseGate | undefined;
   private detachedState = false;
   readonly pid = 512;
 
@@ -104,8 +106,7 @@ class FakeSession implements Session {
     const script = new FakeScript(
       this.nextPayload,
       async () => {
-        this.onScriptLoadStarted?.();
-        await this.scriptLoadGate;
+        await this.scriptLoad?.hold();
       },
       this.nextDescription,
       this.nextStack,
@@ -344,17 +345,9 @@ describe("FridaInstrumentationManager", () => {
 
   it("records a session already detached during process metadata lookup", async () => {
     const bindings = new FakeDeviceManager();
-    let lookupStarted!: () => void;
-    const lookupEntered = new Promise<void>((resolve) => {
-      lookupStarted = resolve;
-    });
-    let finishLookup!: () => void;
-    const lookupGate = new Promise<void>((resolve) => {
-      finishLookup = resolve;
-    });
+    const lookup = phaseGate();
     bindings.device.getProcessByPid = async () => {
-      lookupStarted();
-      await lookupGate;
+      await lookup.hold();
       return bindings.device.process;
     };
     const manager = new FridaInstrumentationManager({
@@ -365,9 +358,9 @@ describe("FridaInstrumentationManager", () => {
       deviceId: "local",
       pid: 512,
     });
-    await lookupEntered;
+    await lookup.reached(starting, "process metadata lookup");
     bindings.device.session.markDetached();
-    finishLookup();
+    lookup.release();
 
     const started = await starting;
     expect(started.ok).toBe(true);
@@ -398,6 +391,62 @@ describe("FridaInstrumentationManager", () => {
     expect(started.ok).toBe(false);
     if (started.ok) return;
     expect(JSON.stringify(started.error)).toContain("attach denied");
+    await manager.closeAll();
+  });
+
+  it.each(["attach", "spawn"] as const)(
+    "names the refused ptrace seize request when %s injection cannot start",
+    async (mode) => {
+      const bindings = new FakeDeviceManager();
+      const reason = "Unable to perform ptrace seize: Operation not supported";
+      bindings.device.attach = async () => {
+        throw new Error(reason);
+      };
+      const manager = new FridaInstrumentationManager({
+        deviceManager: bindings,
+      });
+      const started = await manager.startSession(
+        mode === "attach"
+          ? { mode, deviceId: "local", pid: 512 }
+          : { mode, deviceId: "local", program: "/bin/echo" },
+      );
+      expect(started.ok).toBe(false);
+      if (started.ok) return;
+      const projected = projectAnalysisError(started.error);
+      expect(projected).toMatchObject({
+        code: "capability_unavailable",
+        details: { reason, provider_id: "frida" },
+      });
+      expect(projected.remediation.action).toContain("PTRACE_SEIZE");
+      expect(projected.remediation.action).toContain("PRoot");
+      expect(projected.remediation.action).toContain("this target alone");
+      expect(projected.remediation.action).not.toContain("whatever the target");
+      expect(projected.remediation.action).not.toContain(
+        "Choose another analysis or target",
+      );
+      expect(projected.message).toContain("ptrace seize");
+      await manager.closeAll();
+    },
+  );
+
+  it("keeps the generic remediation for other Frida startup refusals", async () => {
+    const bindings = new FakeDeviceManager();
+    bindings.device.attach = async () => {
+      throw new Error("Unable to access process with pid 512");
+    };
+    const manager = new FridaInstrumentationManager({
+      deviceManager: bindings,
+    });
+    const started = await manager.startSession({
+      mode: "attach",
+      deviceId: "local",
+      pid: 512,
+    });
+    expect(started.ok).toBe(false);
+    if (started.ok) return;
+    expect(
+      projectAnalysisError(started.error).remediation.action,
+    ).not.toContain("PTRACE_SEIZE");
     await manager.closeAll();
   });
 
@@ -1118,22 +1167,14 @@ it("reports truncation when that script loses its own message", async () => {
   expect(first.ok).toBe(true);
   if (!first.ok) return;
 
-  let finishSecondLoad: (() => void) | undefined;
-  let markSecondLoadStarted: (() => void) | undefined;
-  const secondLoadGate = new Promise<void>((resolve) => {
-    finishSecondLoad = resolve;
-  });
-  const secondLoadStarted = new Promise<void>((resolve) => {
-    markSecondLoadStarted = resolve;
-  });
+  const secondLoad = phaseGate();
   session.nextPayload = { tag: "B2" };
-  session.scriptLoadGate = secondLoadGate;
-  session.onScriptLoadStarted = () => markSecondLoadStarted?.();
+  session.scriptLoad = secondLoad;
   const secondLoading = manager.loadScript(started.value.sessionId, {
     sourceKind: "inline",
     source: "send({tag: 'B2'});",
   });
-  await secondLoadStarted;
+  await secondLoad.reached(secondLoading, "second script load");
   const secondScript = session.scripts[1];
   expect(secondScript).toBeDefined();
   if (secondScript === undefined) return;
@@ -1148,7 +1189,7 @@ it("reports truncation when that script loses its own message", async () => {
       null,
     );
 
-  finishSecondLoad?.();
+  secondLoad.release();
   const second = await secondLoading;
   expect(second.ok).toBe(true);
   if (second.ok) {
@@ -1208,17 +1249,9 @@ it("retains the newest contiguous messages across repeated budget evictions", as
 
 it("serializes a final remote release against a new same-endpoint session", async () => {
   const bindings = new FakeDeviceManager();
-  let enteredRemoval: (() => void) | undefined;
-  const removalEntered = new Promise<void>((resolve) => {
-    enteredRemoval = resolve;
-  });
-  let finishRemoval: (() => void) | undefined;
-  const removalGate = new Promise<void>((resolve) => {
-    finishRemoval = resolve;
-  });
+  const removal = phaseGate();
   bindings.removeRemoteDevice = async (address) => {
-    enteredRemoval?.();
-    await removalGate;
+    await removal.hold();
     bindings.removedRemote.push(address);
   };
   const manager = new FridaInstrumentationManager({
@@ -1234,7 +1267,7 @@ it("serializes a final remote release against a new same-endpoint session", asyn
   if (!first.ok) return;
 
   const closing = manager.closeSession(first.value.sessionId);
-  await removalEntered;
+  await removal.reached(closing, "final remote release");
   let secondStarted = false;
   const secondPromise = manager
     .startSession({ mode: "attach", remote, pid: 512 })
@@ -1244,7 +1277,7 @@ it("serializes a final remote release against a new same-endpoint session", asyn
     });
   await Promise.resolve();
   expect(secondStarted).toBe(false);
-  finishRemoval?.();
+  removal.release();
   expect((await closing).ok).toBe(true);
   const second = await secondPromise;
   expect(second.ok).toBe(true);
@@ -1746,16 +1779,8 @@ it.each([
 
 it("serializes script loading against concurrent close and unloads the loaded script", async () => {
   const bindings = new FakeDeviceManager();
-  let finishScriptLoad: (() => void) | undefined;
-  const scriptLoadGate = new Promise<void>((resolve) => {
-    finishScriptLoad = resolve;
-  });
-  let markScriptLoadStarted: (() => void) | undefined;
-  const scriptLoadStarted = new Promise<void>((resolve) => {
-    markScriptLoadStarted = resolve;
-  });
-  bindings.device.session.scriptLoadGate = scriptLoadGate;
-  bindings.device.session.onScriptLoadStarted = () => markScriptLoadStarted?.();
+  const scriptLoad = phaseGate();
+  bindings.device.session.scriptLoad = scriptLoad;
   const manager = new FridaInstrumentationManager({ deviceManager: bindings });
   const started = await manager.startSession({
     mode: "attach",
@@ -1769,7 +1794,7 @@ it("serializes script loading against concurrent close and unloads the loaded sc
     sourceKind: "inline",
     source: "send('loaded');",
   });
-  await scriptLoadStarted;
+  await scriptLoad.reached(loading, "script load");
   let closed = false;
   const closing = manager.closeSession(started.value.sessionId);
   void closing.then(() => {
@@ -1783,7 +1808,7 @@ it("serializes script loading against concurrent close and unloads the loaded sc
   await Promise.resolve();
   expect(closed).toBe(false);
   expect(secondClosed).toBe(false);
-  finishScriptLoad?.();
+  scriptLoad.release();
   expect((await loading).ok).toBe(true);
   expect((await closing).ok).toBe(true);
   expect((await secondClose).ok).toBe(true);
@@ -1856,11 +1881,9 @@ it.each([false, true])(
     onTestFinished(() => manager.closeAll());
     if (!started.ok) throw started.error;
     const session = bindings.device.session;
-    const entered = createDeferred<void>();
-    const held = createDeferred<void>();
-    onTestFinished(() => held.resolve());
-    session.onScriptLoadStarted = entered.resolve;
-    session.scriptLoadGate = held.promise;
+    const held = phaseGate();
+    onTestFinished(() => held.release());
+    session.scriptLoad = held;
     const nativeFailure = new Error("native load failed");
     if (rejectNative) session.nextLoadFailure = nativeFailure;
     const controller = new AbortController();
@@ -1870,11 +1893,7 @@ it.each([false, true])(
       { sourceKind: "inline", source: "send('marker')" },
       controller.signal,
     );
-    await awaitAcknowledgement(
-      entered.promise,
-      loading,
-      "provider lifecycle boundary",
-    );
+    await held.reached(loading, "provider lifecycle boundary");
     const script = session.scripts[0];
     if (script === undefined) throw new Error("Missing admitted script");
     const unload = script.unload.bind(script);
@@ -1887,7 +1906,7 @@ it.each([false, true])(
       await unload();
     };
     controller.abort(reason);
-    held.resolve();
+    held.release();
     const loaded = await loading;
     if (loaded.ok) throw new Error("Cancelled load succeeded");
     expect(loaded.error).toBeInstanceOf(FridaScriptLoadCancelledError);
@@ -1916,15 +1935,13 @@ it("preserves a native rejection observed before cancellation during script clea
   onTestFinished(() => manager.closeAll());
   if (!started.ok) throw started.error;
   const session = bindings.device.session;
-  const entered = createDeferred<void>();
-  const held = createDeferred<void>();
-  onTestFinished(() => held.resolve());
+  const providerLifecycleBoundary = phaseGate();
+  onTestFinished(() => providerLifecycleBoundary.release());
   const create = session.createScript.bind(session);
   session.createScript = async () => {
     const script = await create();
     script.unload = async () => {
-      entered.resolve();
-      await held.promise;
+      await providerLifecycleBoundary.hold();
       const owned = session.scripts[0];
       if (owned !== undefined) owned.isDestroyed = true;
     };
@@ -1938,13 +1955,12 @@ it("preserves a native rejection observed before cancellation during script clea
     { sourceKind: "inline", source: "void 0" },
     controller.signal,
   );
-  await awaitAcknowledgement(
-    entered.promise,
+  await providerLifecycleBoundary.reached(
     loading,
     "provider lifecycle boundary",
   );
   controller.abort(new Error("late abort during cleanup"));
-  held.resolve();
+  providerLifecycleBoundary.release();
   const result = await loading;
   if (result.ok) throw new Error("Failed load succeeded");
   expect(result.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
@@ -2037,3 +2053,173 @@ it.each([{}, { session_bytes: 12345 }, { session_bytes: -1 }])(
     );
   },
 );
+
+it("accounts exact JSON byte charges across unicode, surrogates, control chars, and binary data", async () => {
+  const token = "secret-tok";
+  const bindings = new FakeDeviceManager();
+  const manager = new FridaInstrumentationManager({ deviceManager: bindings });
+  onTestFinished(() => manager.closeAll());
+  const started = await manager.startSession({
+    mode: "attach",
+    remote: { address: "127.0.0.1:27042", token },
+    pid: 512,
+  });
+  if (!started.ok) throw started.error;
+  const loaded = await manager.loadScript(started.value.sessionId, {
+    sourceKind: "inline",
+    source: "send('probe');",
+  });
+  if (!loaded.ok) throw loaded.error;
+  const script = bindings.device.session.scripts[0]!;
+  // Emit a rich message exercising 0x7f (DEL, 1 JSON byte), control chars,
+  // 2/3-byte UTF-8, surrogate pair (😀), lone surrogate, secret redaction,
+  // nested arrays/objects, line/column numbers, and base64 binary data.
+  const richPayload = {
+    del: "\x7f",
+    ctrl: '\x00\n"\\',
+    utf8: "é中😀\ud800",
+    list: [1, true, null, { [token]: "keep" }],
+    secretText: `before-${token}-after`,
+  };
+  script.message.emit(
+    {
+      type: "error",
+      payload: richPayload,
+      description: `err ${token} \x7f 😀`,
+      stack: "stack line 1",
+      fileName: "hook.js",
+      lineNumber: 42,
+      columnNumber: 7,
+    },
+    Buffer.from([1, 2, 3, 4]),
+  );
+  const loadedObserved = manager.status(started.value.sessionId)?.messages[0];
+  const loadedCharge = Buffer.byteLength(JSON.stringify(loadedObserved));
+  const firstObserved = manager.status(started.value.sessionId)
+    ?.messages[1] as Record<string, unknown>;
+  expect(firstObserved.payload).toEqual({
+    del: "\x7f",
+    ctrl: '\x00\n"\\',
+    utf8: "é中😀\ud800",
+    list: [1, true, null, { "[redacted]": "keep" }],
+    secretText: "before-[redacted]-after",
+  });
+  expect(firstObserved.description).toBe("err [redacted] \x7f 😀");
+  expect(firstObserved.data_base64).toBe(
+    Buffer.from([1, 2, 3, 4]).toString("base64"),
+  );
+
+  // Verify exact byte-for-byte charge parity above MAX_MESSAGE_METADATA_BYTES (128 KiB):
+  // emit 9 copies of a 20 KiB message (~185 KiB total, each < remaining per-message budget)
+  // so at `exactFit`, all messages stay untruncated; at `exactFit - 1`, the first is evicted.
+  const paddedPayload = { ...richPayload, pad: "x".repeat(20_000) };
+  script.message.emit(
+    {
+      type: "error",
+      payload: paddedPayload,
+      description: `err ${token} \x7f 😀`,
+      stack: "stack line 1",
+      fileName: "hook.js",
+      lineNumber: 42,
+      columnNumber: 7,
+    },
+    Buffer.from([1, 2, 3, 4]),
+  );
+  const paddedObserved = manager.status(started.value.sessionId)?.messages[2];
+  const paddedCharge = Buffer.byteLength(JSON.stringify(paddedObserved));
+  const secondMessageCharge = Buffer.byteLength(
+    JSON.stringify({
+      script_id: loaded.value.scriptId,
+      type: "send",
+      payload: "ok",
+    }),
+  );
+  const copies = 9;
+  const exactFit = loadedCharge + copies * paddedCharge + secondMessageCharge;
+
+  for (const [sessionBytes, expectedCount, expectedTruncated] of [
+    [exactFit, copies + 2, false],
+    [exactFit - 1, copies + 1, true],
+  ] as const) {
+    const tightBindings = new FakeDeviceManager();
+    const tightManager = new FridaInstrumentationManager({
+      deviceManager: tightBindings,
+    });
+    onTestFinished(() => tightManager.closeAll());
+    const tightSession = await tightManager.startSession({
+      mode: "attach",
+      remote: { address: "127.0.0.1:27042", token },
+      pid: 512,
+      captureLimits: { session_bytes: sessionBytes },
+    });
+    if (!tightSession.ok) throw tightSession.error;
+    const tightLoad = await tightManager.loadScript(
+      tightSession.value.sessionId,
+      {
+        sourceKind: "inline",
+        source: "send('probe');",
+      },
+    );
+    if (!tightLoad.ok) throw tightLoad.error;
+    const tightScript = tightBindings.device.session.scripts[0]!;
+    for (let i = 0; i < copies; i += 1) {
+      tightScript.message.emit(
+        {
+          type: "error",
+          payload: paddedPayload,
+          description: `err ${token} \x7f 😀`,
+          stack: "stack line 1",
+          fileName: "hook.js",
+          lineNumber: 42,
+          columnNumber: 7,
+        },
+        Buffer.from([1, 2, 3, 4]),
+      );
+    }
+    tightScript.message.emit({ type: "send", payload: "ok" }, null);
+    const tightStatus = tightManager.status(tightSession.value.sessionId)!;
+    expect(tightStatus.messages).toHaveLength(expectedCount);
+    expect(tightStatus.messagesTruncated).toBe(expectedTruncated);
+  }
+});
+
+it("evicts at exact session_bytes charge parity with Buffer.byteLength(JSON.stringify)", async () => {
+  const bindings = new FakeDeviceManager();
+  const manager = new FridaInstrumentationManager({ deviceManager: bindings });
+  onTestFinished(() => manager.closeAll());
+  const started = await manager.startSession({
+    mode: "attach",
+    pid: 512,
+    captureLimits: { session_bytes: 65_536 },
+  });
+  if (!started.ok) throw started.error;
+  const loaded = await manager.loadScript(started.value.sessionId, {
+    sourceKind: "inline",
+    source: "send('base');",
+  });
+  if (!loaded.ok) throw loaded.error;
+  const script = bindings.device.session.scripts[0]!;
+  // Fill budget with messages containing non-ASCII, DEL, surrogates, and binary data.
+  for (let i = 0; i < 40; i += 1) {
+    script.message.emit(
+      {
+        type: "error",
+        description: `d_${i}_\x7f_é_😀`,
+        stack: "s".repeat(1200),
+        fileName: "a.js",
+        lineNumber: i,
+        columnNumber: 1,
+        payload: { i, text: "p".repeat(1200) },
+      },
+      Buffer.alloc(256, i),
+    );
+  }
+  const status = manager.status(started.value.sessionId)!;
+  expect(status.messagesTruncated).toBe(true);
+  const totalJsonBytes = status.messages.reduce<number>(
+    (sum, msg) => sum + Buffer.byteLength(JSON.stringify(msg)),
+    0,
+  );
+  expect(totalJsonBytes).toBeLessThanOrEqual(65_536);
+  expect(totalJsonBytes).toBeGreaterThan(60_000);
+});

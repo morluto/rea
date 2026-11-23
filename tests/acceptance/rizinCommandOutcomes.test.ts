@@ -1,3 +1,4 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { chmod, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,12 +14,16 @@ const outcomes = [
     command: "axffj",
     stdout: "",
     stderr: "ERROR: Command 'axffj' does not exist.\n",
+    // The refusal line on stderr is classified; process facts stay as observed.
+    completion: "rejected",
   },
-  { command: "q", stdout: "", stderr: "" },
+  { command: "q", stdout: "", stderr: "", completion: "complete" },
   {
     command: "echo diagnostic",
     stdout: "ERROR: Command 'axffj' does not exist.\n",
     stderr: "WARNING: fixture warning\n",
+    // Refusal text on stdout is command output, not a Rizin diagnostic.
+    completion: "complete",
   },
 ] as const;
 
@@ -71,12 +76,12 @@ cliTest.skipIf(process.platform === "win32").for(outcomes)(
         stdout: outcome.stdout,
         stderr: outcome.stderr,
         exit_code: 0,
-        completion_status: "complete",
+        completion_status: outcome.completion,
         output_truncated: false,
         artifact_changed: false,
       });
       expect(evidence.raw_result).toEqual(evidence.normalized_result);
-      expect(evidence.subject?.digest.sha256).toBe(
+      expect(fileIdentity(evidence.subject).sha256).toBe(
         createHash("sha256").update(content).digest("hex"),
       );
       expect(evidence.parameters.command).toBe(outcome.command);

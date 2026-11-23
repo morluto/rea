@@ -1,9 +1,7 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { readElfAttributeUleb } from "../domain/elfAttributeUleb.js";
 import type { MipsGnuAttributes } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
-
-/** Bound the section read before its declared size can drive allocation. */
-export const MIPS_GNU_ATTRIBUTES_MAX_BYTES = 4096;
 
 const FORMAT_VERSION = 0x41;
 const TAG_FILE = 1;
@@ -21,8 +19,7 @@ export const parseMipsGnuAttributes = (
   if (bytes.length === 0 || bytes[0] !== FORMAT_VERSION)
     return err("unsupported MIPS GNU attribute section format version");
 
-  const readU32 = (offset: number): number =>
-    littleEndian ? bytes.readUInt32LE(offset) : bytes.readUInt32BE(offset);
+  const reader = new BinaryReader(bytes, littleEndian, "mips-gnu-attributes");
 
   let fpAbi: number | null = null;
   let msa: number | null = null;
@@ -31,14 +28,14 @@ export const parseMipsGnuAttributes = (
   while (position < bytes.length) {
     if (bytes.length - position < 4)
       return err("truncated MIPS GNU attribute subsection length");
-    const length = readU32(position);
+    const length = reader.u32(position);
     if (length < 4 || length > bytes.length - position)
       return err(
         "MIPS GNU attribute subsection length does not fit the section",
       );
     const end = position + length;
-    const vendorEnd = bytes.indexOf(0, position + 4);
-    if (vendorEnd < 0 || vendorEnd >= end)
+    const vendorEnd = bytes.subarray(0, end).indexOf(0, position + 4);
+    if (vendorEnd < 0)
       return err("unterminated MIPS GNU attribute vendor name");
     if (bytes.toString("latin1", position + 4, vendorEnd) !== "gnu")
       return err(
@@ -60,7 +57,7 @@ export const parseMipsGnuAttributes = (
         );
       if (end - scope.next < 4)
         return err("truncated MIPS GNU attribute scope length");
-      const scopeLength = readU32(scope.next);
+      const scopeLength = reader.u32(scope.next);
       if (
         scopeLength < scope.next + 4 - scopeStart ||
         scopeLength > end - scopeStart

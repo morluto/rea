@@ -1,6 +1,6 @@
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
-import type { NativeCommandCapture } from "./CommandRunner.js";
+import type { NativeCommandCapture } from "../providers/NativeCommandRunner.js";
 import { withoutEchoedPathHeader } from "./parsers/echoedPath.js";
 
 /** Path the command received. Diagnostics echo this operand, not the selected subject. */
@@ -95,13 +95,15 @@ export const isUnbackedTextDyldFailure = (
 export const parseDyldFileTypeRefusal = (
   capture: NativeCommandCapture,
 ): {
-  readonly fileType: "3" | "4";
+  readonly fileType: 3 | 4;
   readonly diagnostic: string;
 } | null => {
   const diagnostic = dyldFailureDiagnostic(capture);
   if (diagnostic === null) return null;
-  const fileType = /^unknown (?:mh\.)?filetype ([34])$/u.exec(diagnostic)?.[1];
-  return fileType === "3" || fileType === "4" ? { fileType, diagnostic } : null;
+  const fileType = Number(
+    /^unknown (?:mh\.)?filetype ([34])$/u.exec(diagnostic)?.[1],
+  );
+  return fileType === 3 || fileType === 4 ? { fileType, diagnostic } : null;
 };
 
 /** Complete captures come from the settled native command owner. */

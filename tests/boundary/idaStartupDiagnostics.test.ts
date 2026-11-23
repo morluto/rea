@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createIdaMcpConnection } from "../../src/ida/IdaMcpConnection.js";
+import { idaConnectionDependencies } from "../support/idaConnectionDependencies.js";
 
 const launcherEnvironment = (): Readonly<Record<string, string>> => {
   if (process.platform !== "win32") return {};
@@ -9,111 +10,50 @@ const launcherEnvironment = (): Readonly<Record<string, string>> => {
   return { SYSTEMROOT: systemRoot };
 };
 
+const failureText = "FATAL: IDA runtime initialization failed\n";
+const tailMarker = "FATAL-END";
+
 describe("IDA startup diagnostics", () => {
-  it("preserves the failing launcher's stderr instead of reporting only a closed transport", async () => {
+  it.each([
+    {
+      label: "keeps undecodable bytes when the launcher stderr fits",
+      write: `Buffer.concat([Buffer.from([0x80]), Buffer.from(${JSON.stringify(failureText)})])`,
+      stderr: "\ufffd" + failureText,
+      bytes: 1 + Buffer.byteLength(failureText),
+      truncated: false,
+    },
+    {
+      label: "preserves the bounded tail and removes its partial UTF-8 prefix",
+      write: `"discarded\\n" + "€".repeat(6000) + ${JSON.stringify(tailMarker)}`,
+      stderr:
+        "€".repeat(Math.floor((16384 - tailMarker.length) / 3)) + tailMarker,
+      bytes: "discarded\n".length + 6000 * 3 + tailMarker.length,
+      truncated: true,
+    },
+  ])("$label", async ({ write, stderr, bytes, truncated }) => {
     const connection = createIdaMcpConnection(
       {
         command: process.execPath,
-        args: [
-          "-e",
-          'process.stderr.write("FATAL: IDA runtime initialization failed\\n", () => process.exit(2));',
-        ],
+        args: ["-e", `process.stderr.write(${write}, () => process.exit(2));`],
         env: launcherEnvironment(),
         mode: "headless",
+        protocol: "modern",
         timeoutMs: 1000,
       },
       {},
+      idaConnectionDependencies(),
     );
     try {
-      await expect(connection.connect()).rejects.toMatchObject({
+      const failure = await connection
+        .connect()
+        .catch((cause: unknown) => cause);
+      expect(failure).toMatchObject({
         _tag: "ProviderAdapterError",
-        capturedOutput: {
-          stderr: expect.stringContaining("IDA runtime initialization failed"),
-          truncated: false,
-        },
+        capturedOutput: { stderr, stderr_bytes: bytes, truncated },
       });
+      expect(failure).not.toHaveProperty("diagnostics.upstream_stderr");
     } finally {
       await connection.close();
     }
   });
-
-  it("retains only the bounded stderr tail and reports the original byte count", async () => {
-    const connection = createIdaMcpConnection(
-      {
-        command: process.execPath,
-        args: [
-          "-e",
-          'process.stderr.write("x".repeat(20000) + "FATAL-END", () => process.exit(2));',
-        ],
-        env: launcherEnvironment(),
-        mode: "headless",
-        timeoutMs: 1000,
-      },
-      {},
-    );
-    try {
-      await expect(connection.connect()).rejects.toMatchObject({
-        _tag: "ProviderAdapterError",
-        capturedOutput: {
-          stderr: "x".repeat(16384 - "FATAL-END".length) + "FATAL-END",
-          stderr_bytes: 20000 + "FATAL-END".length,
-          truncated: true,
-        },
-      });
-    } finally {
-      await connection.close();
-    }
-  });
-});
-
-it("drops a leading partial UTF-8 character from the bounded stderr tail", async () => {
-  const connection = createIdaMcpConnection(
-    {
-      command: process.execPath,
-      args: [
-        "-e",
-        'process.stderr.write("€".repeat(6000), () => process.exit(2));',
-      ],
-      env: launcherEnvironment(),
-      mode: "headless",
-      timeoutMs: 1000,
-    },
-    {},
-  );
-  try {
-    await expect(connection.connect()).rejects.toMatchObject({
-      capturedOutput: {
-        stderr: "€".repeat(Math.floor(16384 / 3)),
-        stderr_bytes: 18000,
-        truncated: true,
-      },
-    });
-  } finally {
-    await connection.close();
-  }
-});
-
-it("retains an in-budget undecodable leading byte without claiming tail truncation", async () => {
-  const connection = createIdaMcpConnection(
-    {
-      command: process.execPath,
-      args: [
-        "-e",
-        "process.stderr.write(Buffer.from([0x80, 0x61, 0x62]), () => process.exit(2));",
-      ],
-      env: launcherEnvironment(),
-      mode: "headless",
-      timeoutMs: 1000,
-    },
-    {},
-  );
-  try {
-    const failure = await connection.connect().catch((cause: unknown) => cause);
-    expect(failure).toMatchObject({
-      capturedOutput: { stderr: "�ab", stderr_bytes: 3, truncated: false },
-    });
-    expect(failure).not.toHaveProperty("diagnostics.upstream_stderr");
-  } finally {
-    await connection.close();
-  }
 });

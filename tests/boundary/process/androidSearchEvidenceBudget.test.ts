@@ -11,6 +11,7 @@ import {
   createJadxProtocolFixture,
   verifyJadxFixtureCleanup,
 } from "../../fixtures/android/jadx.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const INVENTORY_CLASS_COUNT = 7096;
 
@@ -59,7 +60,7 @@ const rawInventoryNames = (raw: unknown): number =>
     return sum + items.length;
   }, 0);
 
-test("delivers bounded search_android_classes Evidence while retaining the complete inventory", async () => {
+const connectJadxSearchFixture = async () => {
   const { provider, apk, launches } = await createJadxProtocolFixture(
     "search-audit-metadata",
     undefined,
@@ -72,30 +73,42 @@ test("delivers bounded search_android_classes Evidence while retaining the compl
     { kind: "session", session },
     { androidAnalysis: provider },
   );
-  const client = new Client({
-    name: "android-search-inventory-budget",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "android-search-inventory-budget",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
     await session.close();
+    await verifyJadxFixtureCleanup(launches);
   });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
 
-  const search = async (query: string) =>
+  const search = async (
+    query: string,
+    paging: { readonly limit?: number; readonly offset?: number } = {},
+  ) =>
     parseEvidence(
       (
         await client.callTool({
           name: "search_android_classes",
-          arguments: { path: apk, query },
+          arguments: { path: apk, query, ...paging },
         })
       ).structuredContent,
     );
 
+  return { apk, client, search, session };
+};
+
+test("delivers bounded search_android_classes Evidence while retaining the complete inventory", async () => {
+  const { search, session } = await connectJadxSearchFixture();
   const single = await search("Target");
   expect(
     androidResultSchemas.search_android_classes.parse(single.normalized_result),
@@ -207,10 +220,56 @@ test("delivers bounded search_android_classes Evidence while retaining the compl
       },
     },
   ]);
+});
 
-  await client.close();
-  await server.close();
-  await verifyJadxFixtureCleanup(launches);
+test("pages filtered class matches with bounded provider lookahead", async () => {
+  const { apk, client, search } = await connectJadxSearchFixture();
+
+  const page = await search("Class", { offset: 1, limit: 2 });
+  expect(page.normalized_result).toMatchObject({
+    matches: ["fixture.Class1", "fixture.Class2"],
+    coverage: "partial",
+  });
+  expect(listClassCalls(page.raw_result).map(responsePage)).toMatchObject([
+    { limit: 4, next_offset: 5, items_omitted: 4 },
+  ]);
+
+  const boundaryPage = await search("", { limit: 4096 });
+  expect(boundaryPage.normalized_result).toMatchObject({ coverage: "partial" });
+  expect(
+    listClassCalls(boundaryPage.raw_result).map(responsePage),
+  ).toMatchObject([
+    { limit: 4096, next_offset: 4096 },
+    { limit: 1, next_offset: 4097 },
+  ]);
+
+  const largePage = await search("Class7094", { limit: 20_000 });
+  expect(largePage.normalized_result).toMatchObject({
+    matches: ["fixture.Class7094"],
+    coverage: "complete",
+  });
+
+  const suffix = await search("Class709", { offset: 4 });
+  expect(suffix.normalized_result).toMatchObject({
+    matches: ["fixture.Class7093", "fixture.Class7094"],
+    coverage: "partial",
+  });
+  const exhausted = await search("Target", { offset: 1, limit: 1 });
+  expect(exhausted.normalized_result).toMatchObject({
+    matches: [],
+    coverage: "partial",
+  });
+  const rejected = await client.callTool({
+    name: "search_android_classes",
+    arguments: { path: apk, query: "", limit: 0, offset: -1 },
+  });
+  expect(rejected.isError).toBe(true);
+
+  const emptyPage = await search("fixture.Missing", { offset: 1 });
+  expect(emptyPage.normalized_result).toMatchObject({
+    matches: [],
+    coverage: "complete",
+  });
 });
 
 test("keeps the complete paged inventory inline without a retaining session", async () => {

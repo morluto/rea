@@ -9,6 +9,7 @@ import { inspectPeCertificatesInputSchema } from "../../../src/domain/native/peC
 import { inspectPeImportsInputSchema } from "../../../src/domain/native/peImports.js";
 import { inspectElfNotesInputSchema } from "../../../src/domain/native/elfNotes.js";
 import { inspectKernelModuleInputSchema } from "../../../src/domain/native/kernelModule.js";
+import { inspectElfDependenciesInputSchema } from "../../../src/domain/native/elfDependencies.js";
 import { inspectNativeExportsInputSchema } from "../../../src/domain/native/nativeExports.js";
 import { inspectAppleIpsInputSchema } from "../../../src/domain/native/appleIps.js";
 import { inspectWindowsShortcutInputSchema } from "../../../src/domain/native/windowsShortcut.js";
@@ -16,13 +17,17 @@ import { inspectApkSignatureInputSchema } from "../../../src/domain/apkSignature
 import { PeResourcesProvider } from "../../../src/native/pe/PeResourcesProvider.js";
 import { PeCertificatesProvider } from "../../../src/native/pe/PeCertificatesProvider.js";
 import { PeImportsProvider } from "../../../src/native/pe/PeImportsProvider.js";
+import { elfNoteFixture } from "../../../src/native/elf/ElfNotes.fixture.js";
 import { ElfNotesProvider } from "../../../src/native/elf/ElfNotesProvider.js";
+import { kernelModuleFixture } from "../../../src/native/elf/KernelModule.fixture.js";
 import { KernelModuleProvider } from "../../../src/native/elf/KernelModuleProvider.js";
+import { elfDependencyFixture } from "../../../src/native/elf/ElfDependencies.fixture.js";
+import { ElfDependenciesProvider } from "../../../src/native/elf/ElfDependenciesProvider.js";
 import { NativeExportsProvider } from "../../../src/native/exports/NativeExportsProvider.js";
 import { AppleIpsProvider } from "../../../src/native/apple/AppleIpsProvider.js";
 import { WindowsShortcutProvider } from "../../../src/native/windows/WindowsShortcutProvider.js";
 import { ApkSignatureProvider } from "../../../src/apkSignature/ApkSignatureProvider.js";
-import { peResourceFixture } from "../../../src/native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const cases = [
@@ -67,6 +72,7 @@ const cases = [
   },
   {
     name: "ELF notes",
+    fixture: elfNoteFixture,
     make: () => {
       const provider = new ElfNotesProvider();
       return {
@@ -80,11 +86,26 @@ const cases = [
   },
   {
     name: "kernel modules",
+    fixture: kernelModuleFixture,
     make: () => {
       const provider = new KernelModuleProvider();
       return {
         inspect: (path: string, signal: AbortSignal) =>
           provider.inspect(inspectKernelModuleInputSchema.parse({ path }), {
+            signal,
+          }),
+        close: () => provider.close(),
+      };
+    },
+  },
+  {
+    name: "ELF dependencies",
+    fixture: elfDependencyFixture,
+    make: () => {
+      const provider = new ElfDependenciesProvider();
+      return {
+        inspect: (path: string, signal: AbortSignal) =>
+          provider.inspect(inspectElfDependenciesInputSchema.parse({ path }), {
             signal,
           }),
         close: () => provider.close(),
@@ -152,18 +173,14 @@ const modes = [
   "close-both",
 ] as const;
 
-it.each(
-  cases.flatMap(({ name, make }) =>
-    modes.map((mode) => ({ name, make, mode })),
-  ),
-)(
+it.each(cases.flatMap((entry) => modes.map((mode) => ({ ...entry, mode }))))(
   "retains completed $name acquisition through $mode",
-  async ({ make, mode }) => {
+  async (entry) => {
+    const { make, mode } = entry;
     const root = await createTestTempDirectory("rea-native-finalization-");
     const path = join(root, "selected.bin");
-    // The descriptor must finalize before any format parser runs, so one
-    // physical file can exercise every acquisition boundary.
-    const bytes = peResourceFixture().bytes;
+    const bytes =
+      "fixture" in entry ? entry.fixture() : peResourceFixture().bytes;
     await writeFile(path, bytes);
     const controller = new AbortController();
     const reason =

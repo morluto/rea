@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { JsonObject, StateEntity } from "./environmentStateRules.js";
 import {
@@ -99,19 +99,41 @@ it("finds the echoed members a wide body's constants hold without searching each
       `constant text ${String(index)}`,
     ]),
   );
-  const started = performance.now();
-  const result = create(
-    {
-      id: 1,
-      ...body,
-      ...constants,
-      last: `see ${body[`e${String(n - 1)}`]!}`,
-    },
-    body,
-    () => [],
-  );
-  // Searching every text for every echoed member is quadratic in the body.
-  expect(performance.now() - started).toBeLessThan(5_000);
+  // Each text is read once for the members it holds, with a few searches per
+  // field besides. Searching every text for every echoed member makes n^2
+  // searches; the spies stop such a search at the bound instead of letting it
+  // run on.
+  const allowed = 16 * n;
+  let searches = 0;
+  const searched = (method: "includes" | "indexOf") => {
+    const original = String.prototype[method] as (
+      ...args: unknown[]
+    ) => unknown;
+    return vi.spyOn(String.prototype, method).mockImplementation(function (
+      this: string,
+      ...args: unknown[]
+    ) {
+      if (++searches > allowed) throw new Error("texts searched per member");
+      return original.apply(this, args);
+    } as never);
+  };
+  const spies = [searched("includes"), searched("indexOf")];
+  let result: ReturnType<typeof create>;
+  try {
+    result = create(
+      {
+        id: 1,
+        ...body,
+        ...constants,
+        last: `see ${body[`e${String(n - 1)}`]!}`,
+      },
+      body,
+      () => [],
+    );
+  } finally {
+    for (const spy of spies) spy.mockRestore();
+  }
+  expect(searches).toBeLessThanOrEqual(allowed);
   expect(result.fixed).toEqual([
     { member: `e${String(n - 1)}`, sent: body[`e${String(n - 1)}`] },
   ]);

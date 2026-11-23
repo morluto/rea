@@ -44,7 +44,7 @@ vi.mock("node:child_process", async (original) => {
   };
 });
 const { verifyWindowsGuardianIsolation } = await vi.importActual<{
-  verifyWindowsGuardianIsolation(): Promise<void>;
+  verifyWindowsGuardianIsolation(platform?: NodeJS.Platform): Promise<void>;
 }>("../../../scripts/verify/android/windows-guardian-isolation.mjs");
 
 it.each(["ENOENT", "ENOTDIR", "EACCES", "EIO"])(
@@ -53,16 +53,9 @@ it.each(["ENOENT", "ENOTDIR", "EACCES", "EIO"])(
     observation.failure = Object.assign(new Error(`inert stat ${code}`), {
       code,
     });
-    const original = Object.getOwnPropertyDescriptor(process, "platform");
-    if (original === undefined) throw new Error("Platform descriptor missing");
-    Object.defineProperty(process, "platform", { ...original, value: "win32" });
-    try {
-      const result = verifyWindowsGuardianIsolation();
-      if (code === "ENOENT" || code === "ENOTDIR")
-        await expect(result).resolves.toBeUndefined();
-      else await expect(result).rejects.toBe(observation.failure);
-    } finally {
-      Object.defineProperty(process, "platform", original);
-    }
+    const result = verifyWindowsGuardianIsolation("win32");
+    if (code === "ENOENT" || code === "ENOTDIR")
+      await expect(result).resolves.toBeUndefined();
+    else await expect(result).rejects.toBe(observation.failure);
   },
 );

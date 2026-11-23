@@ -2,13 +2,11 @@ import { describe, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
-import {
-  analysisErrorJsonSchema,
-  analysisErrorProjectionSchema,
-} from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorJsonSchema } from "../../../src/contracts/analysisErrorJsonSchema.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { ArtifactOperationError } from "../../../src/domain/artifactOperationError.js";
 import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
-import { HopperRemoteError } from "../../../src/domain/hopperErrors.js";
+import { HopperRemoteError } from "../../../src/hopper/HopperErrors.js";
 import { UnknownRegistryError } from "../../../src/domain/unknownRegistryError.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { BrowserObservationError } from "../../../src/domain/browserObservationError.js";

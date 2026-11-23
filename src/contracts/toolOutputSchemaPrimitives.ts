@@ -1,3 +1,4 @@
+import { nativeSegmentListSchema } from "../domain/native/nativeSegments.js";
 import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
 import { providerReleaseVerificationSchema } from "../domain/providerReleaseVerification.js";
@@ -90,6 +91,7 @@ const providerCapabilityFacts = {
   limitations: z.array(z.string()),
   native_value_flow: nativeValueFlowDeclaration.exactOptional(),
   independent_decompile: z.literal(true).exactOptional(),
+  call_destination_decompile: z.literal(true).exactOptional(),
 };
 
 export const providerCapability = z.discriminatedUnion("available", [
@@ -127,6 +129,8 @@ const providerCapabilityGroupFacts = {
   limitations: z.array(z.string()),
   native_value_flow: nativeValueFlowDeclaration.exactOptional(),
   independent_decompile: providerCapabilityFacts.independent_decompile,
+  call_destination_decompile:
+    providerCapabilityFacts.call_destination_decompile,
 };
 
 const providerCapabilityGroup = z.discriminatedUnion("available", [
@@ -171,6 +175,9 @@ export const expandProviderCapabilities = (
           ...(group.independent_decompile === undefined
             ? {}
             : { independent_decompile: group.independent_decompile }),
+          ...(group.call_destination_decompile === undefined
+            ? {}
+            : { call_destination_decompile: group.call_destination_decompile }),
           available: group.available,
           reason: group.reason,
           availability_code: group.availability_code,
@@ -597,28 +604,30 @@ export function expandToolAvailability(
           group.client_requirements ?? inventory.client_requirements,
       })),
     );
-  return inventory.groups.flatMap((group) =>
-    group.names.map((name) =>
+  return inventory.groups.flatMap((group) => {
+    const effectSet = new Set(group.effects);
+    const annotationSet = new Set(group.annotations);
+    const effects = Object.fromEntries(
+      TOOL_EFFECT_NAMES.map((effect) => [effect, effectSet.has(effect)]),
+    );
+    const annotations = Object.fromEntries(
+      TOOL_ANNOTATION_NAMES.map((annotation) => [
+        annotation,
+        annotationSet.has(annotation),
+      ]),
+    );
+    const client_requirements =
+      group.client_requirements ?? inventory.client_requirements;
+    return group.names.map((name) =>
       toolAvailability.parse({
         ...group,
         name,
-        client_requirements:
-          group.client_requirements ?? inventory.client_requirements,
-        effects: Object.fromEntries(
-          TOOL_EFFECT_NAMES.map((effect) => [
-            effect,
-            group.effects.includes(effect),
-          ]),
-        ),
-        annotations: Object.fromEntries(
-          TOOL_ANNOTATION_NAMES.map((annotation) => [
-            annotation,
-            group.annotations.includes(annotation),
-          ]),
-        ),
+        client_requirements,
+        effects,
+        annotations,
       }),
-    ),
-  );
+    );
+  });
 }
 
 /** Session status facts shared by every detail level and session kind. */
@@ -728,34 +737,7 @@ export const addressedEntry = z.object({
   address: z.string(),
   name: z.string(),
 });
-const unavailable = z.object({
-  available: z.literal(false),
-  reason: z.string(),
-});
-
-const availableMemoryPermissions = z.object({
-  available: z.literal(true),
-  source: z.literal("ghidra-memory-block"),
-});
-
-const memoryRegionOutput = z.object({
-  name: z.string(),
-  start: z.string(),
-  end: z.string(),
-  readable: z.boolean().nullable(),
-  writable: z.boolean().nullable(),
-  executable: z.boolean().nullable(),
-  permissions: z.union([unavailable, availableMemoryPermissions]),
-  provenance: z.enum(["hopper-public-python-api", "ghidra-memory-block"]),
-  address_space: z.string().optional(),
-  image_base: z.string().optional(),
-  initialized: z.boolean().optional(),
-  overlay: z.boolean().optional(),
-});
-
-export const segmentOutput = evidenceResultOf(
-  z.array(memoryRegionOutput.extend({ sections: z.array(memoryRegionOutput) })),
-);
+export const segmentOutput = evidenceResultOf(nativeSegmentListSchema);
 
 export const procedureInfoOutput = evidenceResultOf(procedureInfoSchema);
 

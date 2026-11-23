@@ -9,6 +9,14 @@ import {
   parseRecordedTransportUrl,
   parseUrlQueryParameterNames,
 } from "./recordedTransportUrl.js";
+import {
+  unknownTarget,
+  type UnknownTargetIdentity,
+  type UrlTargetIdentity,
+} from "./targetIdentity.js";
+
+/** Retain observed three-digit statuses, including nonstandard values above 599. */
+export const browserResponseStatusSchema = z.int().min(100).max(999);
 
 const parseExactOrigin = (value: string): string | undefined => {
   let url: URL;
@@ -222,9 +230,9 @@ const inspectWebPageInputFacts = {
   include_storage_fingerprints: z.boolean().default(false),
 } as const;
 
-const inspectWebPageWithoutSourceSchema = z.strictObject({
+const inspectWebPageShapeSchema = z.strictObject({
   ...inspectWebPageInputFacts,
-  include_script_sources: z.literal(false).optional().default(false),
+  include_script_sources: z.boolean().default(false),
 });
 
 const inspectWebPageWithSourceShapeSchema = z.strictObject({
@@ -232,9 +240,7 @@ const inspectWebPageWithSourceShapeSchema = z.strictObject({
   include_script_sources: z.literal(true).default(true),
 });
 
-type InspectWebPageShape =
-  | z.output<typeof inspectWebPageWithoutSourceSchema>
-  | z.output<typeof inspectWebPageWithSourceShapeSchema>;
+type InspectWebPageShape = z.output<typeof inspectWebPageShapeSchema>;
 
 const refineInspectWebPageInput = (
   input: InspectWebPageShape,
@@ -253,16 +259,8 @@ export const inspectWebPageWithSourceInputSchema =
   inspectWebPageWithSourceShapeSchema.superRefine(refineInspectWebPageInput);
 
 /** Caller-visible schema for one passive inspection. */
-export const inspectWebPageInputSchema = z.discriminatedUnion(
-  "include_script_sources",
-  [
-    inspectWebPageWithoutSourceSchema.superRefine(refineInspectWebPageInput),
-    inspectWebPageWithSourceShapeSchema
-      .extend({
-        include_script_sources: z.literal(true),
-      })
-      .superRefine(refineInspectWebPageInput),
-  ],
+export const inspectWebPageInputSchema = inspectWebPageShapeSchema.superRefine(
+  refineInspectWebPageInput,
 );
 
 export type ListBrowserTargetsInput = z.infer<
@@ -334,6 +332,25 @@ const credentialFreeHref = (parsed: URL): string => {
   parsed.username = "";
   parsed.password = "";
   return parsed.href;
+};
+
+/**
+ * The target identity of the live document URL a browser provider reported:
+ * the URL without userinfo, and its origin. A value that is not a URL, such
+ * as the placeholder for a document outside the selected origins, does not
+ * identify the document.
+ */
+export const browserUrlTargetIdentity = (
+  value: string,
+): UrlTargetIdentity | UnknownTargetIdentity => {
+  const observation = observeBrowserUrl(value);
+  return observation.kind === "parsed"
+    ? {
+        kind: "url",
+        url: observation.sanitized.url,
+        origin: observation.sanitized.origin,
+      }
+    : unknownTarget("not-observed");
 };
 
 /** Normalize endpoint candidates without discarding local query or fragment data. */

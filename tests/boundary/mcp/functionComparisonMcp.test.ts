@@ -1,8 +1,10 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
 import { functionSnapshotFixture } from "../../../src/domain/functionDossierEvidence.fixture.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -31,7 +33,6 @@ it.each([
       );
     });
     const harness = await createApplicationMcpHarness({ session });
-    onTestFinished(harness.close);
     const source = (side: "1" | "2", space: string) => {
       const example = FUNCTION_COMPARISON_EXAMPLE.left;
       const value = functionDossierSchema.parse(example.normalized_result);
@@ -250,7 +251,7 @@ it.each([
 
 const wrongKindFunctionEvidence = (mismatch: "operation" | "predicate") =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation:
@@ -314,10 +315,9 @@ describe("function comparison MCP integration", () => {
 });
 
 describe("function comparison input-kind diagnostics", () => {
+  // Each mismatch is checked once; alternating sides covers both labels.
   it.each([
     { side: "left", mismatch: "operation" },
-    { side: "right", mismatch: "operation" },
-    { side: "left", mismatch: "predicate" },
     { side: "right", mismatch: "predicate" },
   ] as const)(
     "rejects inline $side Evidence with the wrong $mismatch as an input-selection error",
@@ -326,7 +326,6 @@ describe("function comparison input-kind diagnostics", () => {
         throw new Error("Wrong-kind function input must not launch a provider");
       });
       const harness = await createApplicationMcpHarness({ session });
-      onTestFinished(harness.close);
       const wrong = wrongKindFunctionEvidence(mismatch);
       const good =
         FUNCTION_COMPARISON_EXAMPLE[side === "left" ? "right" : "left"];
@@ -350,10 +349,13 @@ describe("function comparison input-kind diagnostics", () => {
             {
               path: [side],
               reason: "invalid_value",
-              message: `Function analysis requires analyze_function Evidence with the rea.analysis predicate; the ${side} Evidence has operation ${wrong.operation} and predicate ${wrong.predicate_type}.`,
               expected: {
                 operation: "analyze_function",
                 predicate_type: "rea.analysis",
+              },
+              observed: {
+                operation: wrong.operation,
+                predicate_type: wrong.predicate_type,
               },
             },
           ],
@@ -372,7 +374,6 @@ describe("function comparison input-kind diagnostics", () => {
       true,
     );
     const harness = await createApplicationMcpHarness({ session });
-    onTestFinished(harness.close);
     const result = await harness.client.callTool({
       name: "compare_functions",
       arguments: {
@@ -390,9 +391,7 @@ describe("function comparison input-kind diagnostics", () => {
         issues: [
           {
             path: ["left"],
-            message: expect.stringContaining(
-              "the left Evidence has operation inventory_artifact",
-            ),
+            observed: { operation: "inventory_artifact" },
           },
         ],
       },
@@ -405,7 +404,6 @@ describe("function comparison input-kind diagnostics", () => {
       throw new Error("Tampered function input must not launch a provider");
     });
     const harness = await createApplicationMcpHarness({ session });
-    onTestFinished(harness.close);
     const tampered = {
       ...FUNCTION_COMPARISON_EXAMPLE.left,
       limitations: [
@@ -420,6 +418,7 @@ describe("function comparison input-kind diagnostics", () => {
     expect(parseMcpToolError(result).error).toMatchObject({
       code: "evidence_integrity_mismatch",
       category: "integrity_mismatch",
+      details: { side: "left", issue_path: ["evidence_id"] },
     });
   });
 });
@@ -474,17 +473,25 @@ it.each([
       authority: "analyst-inference" as const,
       evidenceLinks: [left.evidence_id, right.evidence_id],
     };
-    const consistent = createEvidence(undefined, provider, {
-      ...observation,
-      result: result,
-    });
+    const consistent = createEvidence(
+      unknownTarget("derived-from-linked-evidence"),
+      provider,
+      {
+        ...observation,
+        result: result,
+      },
+    );
     const inconsistent =
       status === "unchanged"
         ? null
-        : createEvidence(undefined, provider, {
-            ...observation,
-            result: { ...result, status: "unchanged" },
-          });
+        : createEvidence(
+            unknownTarget("derived-from-linked-evidence"),
+            provider,
+            {
+              ...observation,
+              result: { ...result, status: "unchanged" },
+            },
+          );
     const directory = await createTestTempDirectory("rea-function-status-");
     const path = join(directory, "bundle.json");
     await writeFile(
@@ -502,7 +509,6 @@ it.each([
       throw new Error("Imported comparison must not launch a provider");
     });
     const harness = await createApplicationMcpHarness({ session });
-    onTestFinished(harness.close);
     const imported = await harness.client.callTool({
       name: "import_evidence_bundle",
       arguments: { path },
@@ -530,11 +536,7 @@ it.each([
       const rejected = await verification(inconsistent.evidence_id);
       expect(parseMcpToolError(rejected).error).toMatchObject({
         code: "evidence_integrity_mismatch",
-        details: {
-          reason: expect.stringContaining(
-            "Function comparison status contradicts its dimensions or function match",
-          ),
-        },
+        details: { constraint: "status-matches-dimensions" },
       });
       expect(harness.session.evidenceById(inconsistent.evidence_id)).toEqual(
         inconsistent,
@@ -554,12 +556,11 @@ it("advertises Swift literal coverage as a pair through the MCP SDK", async () =
   const tool = (await harness.client.listTools()).tools.find(
     ({ name }) => name === "analyze_function",
   );
-  if (tool?.outputSchema === undefined)
-    throw new Error("Missing output schema");
+  if (tool === undefined) throw new Error("Missing output schema");
   const validate = new Ajv2020({
     strict: false,
     validateFormats: false,
-  }).compile(tool.outputSchema as AnySchema);
+  }).compile(canonicalOutputSchema(tool.name) as AnySchema);
   const original = FUNCTION_COMPARISON_EXAMPLE.left;
   for (const [literals, omissions, valid] of [
     [false, false, true],

@@ -1,8 +1,7 @@
 import { insideArtifact } from "./artifactRange.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { WindowsShortcutPort } from "./WindowsShortcutPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { WindowsShortcutPort } from "../../ports/binaryDiagnostics/WindowsShortcutPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectWindowsShortcutInputSchema,
@@ -10,9 +9,8 @@ import {
   type InspectWindowsShortcutInput,
   type WindowsShortcut,
 } from "../../domain/native/windowsShortcut.js";
-import { err, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import type { Result } from "../../domain/result.js";
+import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_windows_shortcut";
 
@@ -24,50 +22,42 @@ export class WindowsShortcutService {
     return this.provider.close?.() ?? Promise.resolve();
   }
 
-  async inspect(
+  inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    const input = parseAnalysisInput(
-      OPERATION,
-      rawInput,
-      inspectWindowsShortcutInputSchema,
-      options?.signal,
-    );
-    if (!input.ok) return input;
-    const result = await this.provider.inspect(input.value, options);
-    if (!result.ok) return result;
-    const report = windowsShortcutSchema.safeParse(result.value);
-    if (
-      !report.success ||
-      report.data.artifact.path !== input.value.path ||
-      !validReport(report.data, input.value)
-    )
-      return err(
-        new AnalysisOutputError(
-          OPERATION,
+    return executeArtifactInspection(
+      {
+        operation: OPERATION,
+        inputSchema: inspectWindowsShortcutInputSchema,
+        outputSchema: windowsShortcutSchema,
+        provider: this.provider,
+        invalidOutputMessage:
           "Windows shortcut provider returned malformed output or changed artifact identity.",
-        ),
-      );
-    const value = report.data;
-    return completeProviderEvidence(
-      createEvidence(
-        {
-          path: value.artifact.path,
-          format: "file",
-          sha256: value.artifact.sha256,
-        },
-        this.provider.identity,
-        {
-          operation: OPERATION,
-          parameters: input.value,
-          result: value,
-          confidence: "observed",
-          limitations: value.limitations,
-          locations: locationsOf(value),
-        },
-      ),
-      options?.signal,
+        toParameters: (input) => input,
+        validateReport: (report, parameters) =>
+          report.artifact.path === parameters.path &&
+          validReport(report, parameters),
+        buildEvidence: (value, identity, parameters) =>
+          createEvidence(
+            {
+              path: value.artifact.path,
+              format: "file",
+              sha256: value.artifact.sha256,
+            },
+            identity,
+            {
+              operation: OPERATION,
+              parameters,
+              result: value,
+              confidence: "observed",
+              limitations: value.limitations,
+              locations: locationsOf(value),
+            },
+          ),
+      },
+      rawInput,
+      options,
     );
   }
 }

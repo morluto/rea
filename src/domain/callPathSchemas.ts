@@ -1,3 +1,4 @@
+import { coverageStatusSchema } from "./coverage.js";
 import { z } from "zod";
 
 import { emptyArraySchema } from "./emptyArraySchema.js";
@@ -62,12 +63,12 @@ const resultContextShape = {
 };
 const searchScope = {
   graph: z.literal("supplied_evidence"),
-  discovery: z.enum(["complete", "partial", "unknown"]),
+  discovery: coverageStatusSchema,
   observed_status: z.enum(["found", "not_found", "unknown"]),
 };
 
 /** Evidence-cited directed call-path result containing every shortest path. */
-export const callPathResultSchema = z.union([
+export const callPathResultSchema = z.discriminatedUnion("status", [
   z.object({
     ...resultContextShape,
     status: z.literal("found"),
@@ -95,7 +96,7 @@ export const callPathResultSchema = z.union([
     ...resultContextShape,
     status: z.literal("unknown"),
     shortest_hops: z.null(),
-    search_scope: z.union([
+    search_scope: z.discriminatedUnion("observed_status", [
       z.object({
         ...searchScope,
         exhaustive: z.literal(false),

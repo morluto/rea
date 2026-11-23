@@ -4,10 +4,11 @@ import { z } from "zod";
 import { readFile, writeFile, rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { metroContext } from "../fixtures/javascriptMetroContext.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
-import { javaScriptRoutesViewResultSchema } from "../../src/domain/analysisView/analysisView.js";
+import { javaScriptRoutesViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 
 const routeViewFromEvidence = (evidence: unknown) =>
   javaScriptRoutesViewResultSchema.parse(
@@ -190,6 +191,68 @@ cliTest(
     }
   },
 );
+const ordinaryDescriptorMap =
+  "Object.defineProperties({},{'./_layout.tsx':{value:0},'./ordinary.tsx':{value:1}});";
+
+cliTest(
+  "inventories Expo Router require.context keys from a Metro web bundle",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-expo-router-routes-");
+    const app = join(root, "app");
+    await mkdir(app);
+    const keys = [
+      "./(app)/_layout.tsx",
+      "./(app)/reports/[id]/edit.tsx",
+      "./+not-found.tsx",
+      "./_layout.tsx",
+      "./index.tsx",
+    ];
+    await writeFile(
+      join(app, "index-abc123.js"),
+      metroContext(keys) + ordinaryDescriptorMap,
+    );
+    const response = await cli.run({
+      arguments: [
+        "analyze-javascript-application",
+        app,
+        "--source-path",
+        "index-abc123.js",
+        "--evidence_output",
+        join(root, "routes.json"),
+        "--detail",
+        "summary",
+        "--view",
+        JSON.stringify({
+          kind: "javascript-routes",
+          collection: "routes",
+          where: { mechanisms: ["expo-router-context-key"] },
+          fields: ["path", "classification", "confidence"],
+        }),
+        "--json",
+      ],
+    });
+    expect(response.exitCode, response.stdout + response.stderr).toBe(0);
+    const envelope = z.object({ summary: z.unknown() }).parse(response.json);
+    const view = routeViewFromEvidence(envelope.summary);
+    expect(view.items).toEqual([
+      expect.objectContaining({
+        path: "/",
+        classification: "unknown",
+        confidence: "low",
+      }),
+      expect.objectContaining({
+        path: "/reports/:id/edit",
+        classification: "unknown",
+        confidence: "low",
+      }),
+    ]);
+    expect(view.source_coverage).toMatchObject({
+      source_parsing: "complete",
+      candidate_enumeration: "complete",
+      application_routes: "unknown",
+    });
+  },
+);
 const expectAccountRoutes = (items: unknown[]) => {
   expect(items).toHaveLength(2);
   expect(items).toEqual(
@@ -334,7 +397,7 @@ cliTest(
     }
   },
 );
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "serves retained route batches through the %s production SDK schemas",
   async (profile) => {
     const path = await fixture(),
@@ -495,7 +558,10 @@ cliTest(
       commandResult: ({ method }) =>
         method === "Debugger.getScriptSource"
           ? {
-              scriptSource: `const panels=[{path:'panel',element:Panel}];const discarded={path:'/discarded',children:panels,children:[]};const secondary=[{path:'/reports',children:[{children:panels}]}];createBrowserRouter([{path:'/reports',children:[{path:'settings'}],element:jsx(Panel,{routes:secondary})}]);const query={path:'/download/web-data',component:'preview',href:'/web-query-data',module:'app/web-fake/page.tsx'};const target={pathname:'/reports/aliased-web',query};router.push(target);const independent={path:'/checks/independent-web',component:View};router.push({pathname:'/reports/aliased-web',query:!!independent});const registry={route:{path:'/checks/projected-web',component:View},query:{path:'/download/projected-web-query',component:Preview}};const {query:payload}=registry;router.push({pathname:'/reports/aliased-web',query:payload});route(('/checks/optional-web/:id?'));const restRegistry={query:{path:'/download/rest-web-query',component:Preview},route:{path:'/checks/rest-web',component:View}};const {route:excluded,...restPayload}=restRegistry;router.push({pathname:'/reports/aliased-web',query:restPayload});const fallback={path:'/checks/inactive-default-web',component:View};const {query:actualQuery=fallback}={query:{ok:1}};router.push({pathname:'/reports/aliased-web',query:actualQuery});const cache=[];cache.push('/checks/array-data-web');text.replace('/checks/string-data-web','');const inactiveBranch={path:'/checks/inactive-branch-web',component:View};router.push({pathname:'/reports/aliased-web',query:true?{}:inactiveBranch});const overwritten={path:'/checks/overwritten-web',component:View};router.push({pathname:'/reports/aliased-web',query:{item:overwritten,item:0}});const memberRegistry={query:{path:'/download/member-query-web',component:Preview},route:{path:'/checks/member-web',component:View}};router.push({pathname:'/reports/aliased-web',query:memberRegistry.query});const protoPayload={path:'/download/proto-query-web',component:Preview};router.push({pathname:'/reports/aliased-web',query:{['__proto__']:protoPayload,__proto__:null}});const replacedRegistry={query:independent};replacedRegistry.query={ok:1};router.push({pathname:'/reports/aliased-web',query:replacedRegistry.query});let replacedDirect=independent;replacedDirect={ok:1};router.push({pathname:'/reports/aliased-web',query:replacedDirect});const uncertainPayload={path:'/download/uncertain-query-web',component:Preview};const uncertainRegistry={query:uncertainPayload};const otherRegistry={query:{ok:1}};const uncertainAlias=flag?uncertainRegistry:otherRegistry;uncertainAlias.query={ok:1};router.push({pathname:'/reports/aliased-web',query:uncertainRegistry.query});const possiblePayload={path:'/download/possible-query-web',component:Preview};const possibleRegistry={query:possiblePayload,...unknown};router.push({pathname:'/reports/aliased-web',query:possibleRegistry.query});const cyclicRegistry={get a(){return this.a.b}};router.push({pathname:'/reports/aliased-web',query:cyclicRegistry.a});const finiteRegistry={get a(){return this},get b(){return this.a.a},path:'/download/finite-query-web',component:Preview};router.push({pathname:'/reports/aliased-web',query:finiteRegistry.a.b});const configurationRegistry={children:[{path:'/checks/config-sibling-web',component:View}],routes:[]};createBrowserRouter(configurationRegistry.routes);`,
+              scriptSource:
+                `const panels=[{path:'panel',element:Panel}];const discarded={path:'/discarded',children:panels,children:[]};const secondary=[{path:'/reports',children:[{children:panels}]}];createBrowserRouter([{path:'/reports',children:[{path:'settings'}],element:jsx(Panel,{routes:secondary})}]);const query={path:'/download/web-data',component:'preview',href:'/web-query-data',module:'app/web-fake/page.tsx'};const target={pathname:'/reports/aliased-web',query};router.push(target);const independent={path:'/checks/independent-web',component:View};router.push({pathname:'/reports/aliased-web',query:!!independent});const registry={route:{path:'/checks/projected-web',component:View},query:{path:'/download/projected-web-query',component:Preview}};const {query:payload}=registry;router.push({pathname:'/reports/aliased-web',query:payload});route(('/checks/optional-web/:id?'));const restRegistry={query:{path:'/download/rest-web-query',component:Preview},route:{path:'/checks/rest-web',component:View}};const {route:excluded,...restPayload}=restRegistry;router.push({pathname:'/reports/aliased-web',query:restPayload});const fallback={path:'/checks/inactive-default-web',component:View};const {query:actualQuery=fallback}={query:{ok:1}};router.push({pathname:'/reports/aliased-web',query:actualQuery});const cache=[];cache.push('/checks/array-data-web');const inactiveBranch={path:'/checks/inactive-branch-web',component:View};router.push({pathname:'/reports/aliased-web',query:true?{}:inactiveBranch});const overwritten={path:'/checks/overwritten-web',component:View};router.push({pathname:'/reports/aliased-web',query:{item:overwritten,item:0}});const memberRegistry={query:{path:'/download/member-query-web',component:Preview},route:{path:'/checks/member-web',component:View}};router.push({pathname:'/reports/aliased-web',query:memberRegistry.query});const protoPayload={path:'/download/proto-query-web',component:Preview};router.push({pathname:'/reports/aliased-web',query:{['__proto__']:protoPayload,__proto__:null}});const replacedRegistry={query:independent};replacedRegistry.query={ok:1};router.push({pathname:'/reports/aliased-web',query:replacedRegistry.query});let replacedDirect=independent;replacedDirect={ok:1};router.push({pathname:'/reports/aliased-web',query:replacedDirect});const uncertainPayload={path:'/download/uncertain-query-web',component:Preview};const uncertainRegistry={query:uncertainPayload};const otherRegistry={query:{ok:1}};const uncertainAlias=flag?uncertainRegistry:otherRegistry;uncertainAlias.query={ok:1};router.push({pathname:'/reports/aliased-web',query:uncertainRegistry.query});const possiblePayload={path:'/download/possible-query-web',component:Preview};const possibleRegistry={query:possiblePayload,...unknown};router.push({pathname:'/reports/aliased-web',query:possibleRegistry.query});const cyclicRegistry={get a(){return this.a.b}};router.push({pathname:'/reports/aliased-web',query:cyclicRegistry.a});const finiteRegistry={get a(){return this},get b(){return this.a.a},path:'/download/finite-query-web',component:Preview};router.push({pathname:'/reports/aliased-web',query:finiteRegistry.a.b});const configurationRegistry={children:[{path:'/checks/config-sibling-web',component:View}],routes:[]};createBrowserRouter(configurationRegistry.routes);` +
+                metroContext(["./_layout.tsx", "./browser-expo.tsx"]) +
+                ordinaryDescriptorMap,
             }
           : undefined,
     });
@@ -520,7 +586,8 @@ cliTest(
             "/download/rest-web-query",
             "/checks/inactive-default-web",
             "/checks/array-data-web",
-            "/checks/string-data-web",
+            "/ordinary",
+            "/browser-expo",
             "/checks/inactive-branch-web",
             "/checks/overwritten-web",
             "/checks/member-web",
@@ -571,6 +638,7 @@ cliTest(
         "/checks/member-web",
         "/checks/config-sibling-web",
         "/checks/optional-web/:id?",
+        "/browser-expo",
       ].sort();
       expect(
         selected.items

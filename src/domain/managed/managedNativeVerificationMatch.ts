@@ -1,11 +1,16 @@
+import { managedModuleRow } from "./managedModuleIdentity.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
+import { joinCoverageStatus } from "../coverage.js";
 import type { Evidence } from "../evidence.js";
 import { machoRuntimeSymbolName } from "../native/machoSymbolName.js";
 import type {
   ManagedNativeObservationFacts,
   ManagedNativePlatform,
 } from "./managedNativeVerificationSource.js";
-import type { ManagedNativeBoundaryInspection } from "./managedArtifact.js";
+import {
+  managedInspectionCoverage,
+  type ManagedNativeBoundaryInspection,
+} from "./managedArtifact.js";
 import type {
   ManagedNativeVerificationResult,
   NativeSymbol,
@@ -358,28 +363,27 @@ const matchPinvoke = (
     };
 
   const candidates: [NativeSymbol, ...NativeSymbol[]] = [first, ...remaining];
-  const moduleRelation = (symbol: NativeSymbol) =>
-    moduleCompatibility(
+  let exact: NativeSymbol | undefined;
+  let exactUnknownModule: NativeSymbol | undefined;
+  let firstUnknownModule: NativeSymbol | undefined;
+  let decorated: NativeSymbol | undefined;
+  for (const symbol of candidates) {
+    const relation = moduleCompatibility(
       managed.import_scope_name,
       symbol,
       modulePlatformsByEvidenceId.get(symbol.evidence_id) ?? null,
     );
-  const exact = candidates.find(
-    (symbol) =>
-      managed.import_name === lookupSymbolName(symbol) &&
-      moduleRelation(symbol) === "match",
-  );
-  const exactUnknownModule = candidates.find(
-    (symbol) =>
-      managed.import_name === lookupSymbolName(symbol) &&
-      moduleRelation(symbol) === "unknown",
-  );
-  const unknownModule =
-    exactUnknownModule ??
-    candidates.find((symbol) => moduleRelation(symbol) === "unknown");
-  const decorated = candidates.find(
-    (symbol) => moduleRelation(symbol) === "match",
-  );
+    const isExactName = managed.import_name === lookupSymbolName(symbol);
+    if (relation === "match") {
+      if (isExactName && exact === undefined) exact = symbol;
+      if (decorated === undefined) decorated = symbol;
+    } else if (relation === "unknown") {
+      if (isExactName && exactUnknownModule === undefined)
+        exactUnknownModule = symbol;
+      if (firstUnknownModule === undefined) firstUnknownModule = symbol;
+    }
+  }
+  const unknownModule = exactUnknownModule ?? firstUnknownModule;
   const selected = exact ?? decorated ?? first;
   if (exact !== undefined)
     return {
@@ -566,13 +570,15 @@ export const buildVerificationResult = ({
     ({ boundary_kind: kind }) =>
       kind !== "pinvoke" && kind !== "runtime-provided",
   ).length;
+  // An unavailable boundary inspection read no P/Invoke declarations, so the
+  // verification cannot tell what it would cover: unknown wins beside the
+  // known gaps of skipped native Evidence or non-exhaustive exports.
+  const status = joinCoverageStatus([
+    managedInspectionCoverage(managed.coverage.state),
+    native.unsupported === 0 && !native.partialExports ? "complete" : "partial",
+  ]);
   const coverage: ManagedNativeVerificationResult["coverage"] = {
-    status:
-      managed.coverage.state === "complete" &&
-      native.unsupported === 0 &&
-      !native.partialExports
-        ? "complete-within-inputs"
-        : "partial",
+    status: status === "complete" ? "complete-within-inputs" : status,
   };
   return {
     algorithm: {
@@ -584,7 +590,7 @@ export const buildVerificationResult = ({
       evidence_id: managedEvidence.evidence_id,
       artifact_sha256: managed.artifact.sha256,
       artifact_path: managed.artifact.path,
-      mvid: managed.module?.mvid ?? null,
+      mvid: managedModuleRow(managed)?.mvid ?? null,
       metadata_status: managed.metadata.status,
       pinvoke_imports_total: managed.pinvoke_imports.length,
       native_implementations_total: managed.native_implementations.length,

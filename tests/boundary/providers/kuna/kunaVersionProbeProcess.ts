@@ -6,6 +6,7 @@ import type {
   OwnedProviderProcessSpawnOptions,
   SpawnedOwnedProviderProcess,
 } from "../../../../src/process/ProviderProcess.js";
+import { processGroupHasStopped } from "../../../support/process/observePosixProcess.js";
 
 /** Cleanup authority for the exact detached group created by this test launcher. */
 export const ownedGroupCleanup = async (
@@ -27,9 +28,7 @@ export const ownedGroupCleanup = async (
   }
   const deadline = Date.now() + 1_000;
   while (Date.now() < deadline) {
-    try {
-      process.kill(-pid, 0);
-    } catch {
+    if (await processGroupHasStopped(pid)) {
       return { cleaned: true, signaled };
     }
     await delay(10);
@@ -48,6 +47,7 @@ export const makeLauncher = (
 ) => {
   let launches = 0;
   const groups: number[] = [];
+  const exits: Promise<void>[] = [];
   const launcher = async (
     options: OwnedProviderProcessSpawnOptions,
   ): Promise<SpawnedOwnedProviderProcess> => {
@@ -62,6 +62,7 @@ export const makeLauncher = (
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    exits.push(new Promise((resolve) => child.once("exit", () => resolve())));
     await new Promise<void>((resolve, reject) => {
       child.once("spawn", resolve);
       child.once("error", reject);
@@ -84,6 +85,7 @@ export const makeLauncher = (
   return {
     launcher,
     groups,
+    exits,
     get launches() {
       return launches;
     },

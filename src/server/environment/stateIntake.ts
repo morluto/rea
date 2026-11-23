@@ -1,3 +1,4 @@
+import type { ReadableStreamReadResult } from "node:stream/web";
 import { ResponseBodyCleanup } from "../../providers/ResponseBodyCleanup.js";
 import { fileURLToPath } from "node:url";
 
@@ -5,7 +6,7 @@ import { mediaTypeEssence } from "../../domain/analysisView/recordedMediaType.js
 import {
   ArtifactResourceRetryFailure,
   type ArtifactResourceScope,
-} from "../../artifacts/ArtifactResourceScope.js";
+} from "../../resources/index.js";
 import { STATE_INTAKE_LIMIT_BYTES } from "../../application/environment/environmentStateDocument.js";
 import { isExactJsonNumber } from "../../domain/exactJsonNumber.js";
 import { paddedBase64ByteLength } from "../../domain/paddedBase64.js";
@@ -19,6 +20,8 @@ import {
   RegularFileCleanupFailure,
   withOwnedRegularFile,
 } from "../../filesystem/OwnedRegularFile.js";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** Why a named file or download could not be read, or a call was cancelled: a category naming neither the uri nor the content. */
 export type IntakeFailure =
@@ -125,9 +128,6 @@ const fileFailure = (cause: unknown): IntakeFailure =>
     ? FILE_FAILURES.get(String(cause.code))
     : undefined) ?? "read-failed";
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 const MAX_INLINE_BASE64_CHARACTERS =
   Math.ceil(STATE_INTAKE_LIMIT_BYTES / 3) * 4;
 
@@ -135,7 +135,8 @@ const MAX_INLINE_BASE64_CHARACTERS =
 const parseDocumentBytes = (bytes: Uint8Array): Result<unknown, RpcError> => {
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    // A user-saved JSON document may carry a BOM signature (RFC 8259 8.1).
+    text = decodeStrictUtf8(bytes, "strip-signature");
   } catch {
     return err(invalidParams("the file is not UTF-8 text"));
   }
@@ -194,18 +195,15 @@ const readStateFile = async (
   }
 };
 
-/** Settles only by rejecting when the signal aborts; the rejection is always handled. */
-const abortion = (signal: AbortSignal): Promise<never> => {
-  const aborted = new Promise<never>((_, reject) => {
-    if (signal.aborted) reject(signal.reason);
+/** An abort settles the race directly, before any later read or response. */
+const whenAborted = (signal: AbortSignal): Promise<undefined> =>
+  new Promise((resolve) => {
+    if (signal.aborted) resolve(undefined);
     else
-      signal.addEventListener("abort", () => reject(signal.reason), {
+      signal.addEventListener("abort", () => resolve(undefined), {
         once: true,
       });
   });
-  aborted.catch(() => undefined);
-  return aborted;
-};
 
 /** What ends a download: its time limit or the caller's cancellation; `failure` names which, or a network failure when neither did. */
 interface DownloadBounds {
@@ -225,6 +223,33 @@ const downloadBounds = (
   };
 };
 
+/** Cancel the stream's remaining work and return its reader lock. */
+const cancelReader = async (
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<void> => {
+  try {
+    await reader.cancel();
+  } catch (cause: unknown) {
+    // Cancel also rejects with the stored read error of an already errored
+    // stream. A failed underlying cancel closes the stream and rejects only
+    // cancel(), so that failure still belongs to the cleanup owner.
+    const alreadyErrored = await reader.closed.then(
+      () => false,
+      () => true,
+    );
+    if (!alreadyErrored) throw cause;
+  } finally {
+    reader.releaseLock();
+  }
+};
+
+const discardBody = (
+  body: ReadableStream<Uint8Array> | null,
+  responses: ResponseBodyCleanup,
+): void => {
+  if (body !== null) responses.cancel(() => cancelReader(body.getReader()));
+};
+
 /** Read a response body within the intake limit and the download's bounds, whether or not the fetcher ties the body to the signal. */
 const readCapped = async (
   body: ReadableStream<Uint8Array> | null,
@@ -233,25 +258,39 @@ const readCapped = async (
 ): Promise<Result<Buffer, RpcError>> => {
   if (body === null) return ok(Buffer.alloc(0));
   const reader = body.getReader();
-  const aborted = abortion(bounds.signal);
+  const aborted = whenAborted(bounds.signal);
   const chunks: Uint8Array[] = [];
   let total = 0;
+  let mustCancel = true;
   try {
     for (;;) {
-      const { done, value } = await Promise.race([reader.read(), aborted]);
-      if (done) return ok(Buffer.concat(chunks, total));
-      total += value.byteLength;
-      if (total > STATE_INTAKE_LIMIT_BYTES) {
-        // A tee's sibling can be caller-owned; cancelling this branch must not
-        // delay the refusal until that sibling finishes.
-        responses.cancel(() => reader.cancel());
-        return err(TOO_LARGE);
+      let result: ReadableStreamReadResult<Uint8Array> | undefined;
+      try {
+        result = bounds.signal.aborted
+          ? undefined
+          : await Promise.race([aborted, reader.read()]);
+      } catch (cause: unknown) {
+        // A rejected read already ended the stream. An error handling a
+        // fulfilled chunk below can still leave the stream open.
+        mustCancel = false;
+        throw cause;
       }
-      chunks.push(value);
+      if (result === undefined) return err(fetchFailed(bounds.failure()));
+      if (result.done) {
+        mustCancel = false;
+        return ok(Buffer.concat(chunks, total));
+      }
+      total += result.value.byteLength;
+      if (total > STATE_INTAKE_LIMIT_BYTES) return err(TOO_LARGE);
+      chunks.push(result.value);
     }
   } catch {
-    responses.cancel(() => reader.cancel());
     return err(fetchFailed(bounds.failure()));
+  } finally {
+    // A tee's sibling can be caller-owned. Retain cancellation without waiting
+    // for the sibling, and release the reader once the cancellation settles.
+    if (mustCancel) responses.cancel(() => cancelReader(reader));
+    else reader.releaseLock();
   }
 };
 
@@ -266,16 +305,17 @@ const downloadState = async (
   const fetching = Promise.resolve().then(() =>
     intake.fetchState(url, bounds.signal),
   );
-  let response: Response;
+  let response: Response | undefined;
   try {
-    response = await Promise.race([fetching, abortion(bounds.signal)]);
+    response = await Promise.race([whenAborted(bounds.signal), fetching]);
   } catch {
+    return err(fetchFailed(bounds.failure()));
+  }
+  if (response === undefined) {
     // A response that arrives after the download ended is released unread.
     void fetching
       .then(
-        (late) => {
-          if (late.body !== null) responses.cancel(() => late.body!.cancel());
-        },
+        (late) => discardBody(late.body, responses),
         () => undefined,
       )
       .catch(() => undefined);
@@ -284,7 +324,7 @@ const downloadState = async (
   const declared = Number(response.headers.get("content-length") ?? "0");
   if (!response.ok || declared > STATE_INTAKE_LIMIT_BYTES) {
     // Cancel this branch without waiting for a potentially independent tee sibling.
-    if (response.body !== null) responses.cancel(() => response.body!.cancel());
+    discardBody(response.body, responses);
     return err(
       response.ok
         ? TOO_LARGE

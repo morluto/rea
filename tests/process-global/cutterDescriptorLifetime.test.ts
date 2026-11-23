@@ -38,7 +38,7 @@ import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
 import { AnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
+import { phaseArrival, phaseGate } from "../support/lifecycleHarness.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { authenticatedServer } from "../fixtures/cutterBridgeProtocol.js";
 
@@ -162,23 +162,15 @@ it("shutdown waits for descriptor finalization before retrying retained cleanup"
     throw new Error("Expected a local Cutter test port");
   await descriptor(root, 1, address.port);
   fault.root = root;
-  let entered!: () => void;
-  let release!: () => void;
-  const closing = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const descriptorClose = phaseGate();
   fault.onClose = async () => {
-    entered();
-    await gate;
+    await descriptorClose.hold();
   };
   const client = new CutterBridgeClient({ REA_CUTTER_BRIDGE_DIR: root });
   const reading = client.listSessions();
   let shutdown: Promise<void> | undefined;
   try {
-    await awaitAcknowledgement(closing, reading, "descriptor finalization");
+    await descriptorClose.reached(reading, "descriptor finalization");
     let settled = false;
     shutdown = client.close().then(() => {
       settled = true;
@@ -186,7 +178,7 @@ it("shutdown waits for descriptor finalization before retrying retained cleanup"
     await new Promise((resolve) => setImmediate(resolve));
     expect(settled).toBe(false);
     fault.blocked.clear();
-    release();
+    descriptorClose.release();
     expect(await reading).toMatchObject({
       discovery_status: "sessions_found",
       sessions: [{ session_id: sessionId }],
@@ -194,7 +186,7 @@ it("shutdown waits for descriptor finalization before retrying retained cleanup"
     await shutdown;
     expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
   } finally {
-    release();
+    descriptorClose.release();
     fault.onClose = undefined;
     fault.blocked.clear();
     await Promise.allSettled([reading, ...(shutdown ? [shutdown] : [])]);
@@ -242,40 +234,28 @@ it("does not assign a peer's later cancellation to a descriptor that already fai
   fault.root = root;
   const controller = new AbortController();
   const reason = new Error("cancel after the first descriptor failure");
-  let entered!: () => void;
-  let release!: () => void;
-  const waiting = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let firstClosing!: () => void;
-  const firstCloseStarted = new Promise<void>((resolve) => {
-    firstClosing = resolve;
-  });
+  const peerClose = phaseGate();
+  const firstClose = phaseArrival();
   fault.onClose = async (handle) => {
     if (handle === fault.handles[0]) {
-      firstClosing();
+      firstClose.arrive();
       return;
     }
-    entered();
-    await gate;
+    await peerClose.hold();
   };
   const client = new CutterBridgeClient({ REA_CUTTER_BRIDGE_DIR: root });
   const reading = client
     .listSessions({ signal: controller.signal })
     .catch((cause: unknown) => cause);
   try {
-    await awaitAcknowledgement(
-      Promise.all([waiting, firstCloseStarted]).then(() => undefined),
-      reading,
-      "peer descriptor finalization",
-    );
+    await Promise.all([
+      peerClose.reached(reading, "peer descriptor finalization"),
+      firstClose.reached(reading, "first descriptor close"),
+    ]);
     // Let the first close rejection propagate while its peer remains gated.
     await new Promise((resolve) => setImmediate(resolve));
     controller.abort(reason);
-    release();
+    peerClose.release();
     const failure = await reading;
     if (
       !(failure instanceof AnalysisError) ||
@@ -300,7 +280,7 @@ it("does not assign a peer's later cancellation to a descriptor that already fai
     await client.close();
     expect(failure.cleanupIncomplete).toBe(false);
   } finally {
-    release();
+    peerClose.release();
     fault.onClose = undefined;
     fault.blocked.clear();
     await reading;

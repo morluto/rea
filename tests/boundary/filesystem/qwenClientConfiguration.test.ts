@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -57,7 +58,9 @@ describe("Qwen Code configuration paths", () => {
       QWEN_HOME: override,
     });
     expect(
-      supportedClients("/home/a").find(({ name }) => name === "qwen_code"),
+      supportedClients("/home/a", HOST_PLATFORM.platform).find(
+        ({ name }) => name === "qwen_code",
+      ),
     ).toEqual(client);
     expect(client).toMatchObject({
       configPath: join(directory, "settings.json"),
@@ -115,7 +118,9 @@ describe("Qwen Code client lifecycle", () => {
   });
 
   it("preserves Qwen environment expressions when refreshing a registration", async () => {
-    const { client } = await qwenClient();
+    const { home, client } = await qwenClient();
+    const projectPath = join(home, "retained.gpr");
+    const language = "${QWEN_GHIDRA_LANGUAGE}";
     await writeFile(
       client.configPath,
       JSON.stringify({
@@ -123,7 +128,11 @@ describe("Qwen Code client lifecycle", () => {
           rea: {
             command: command[0],
             args: command.slice(1),
-            env: { PATH: "/opt/bin:${PATH}" },
+            env: {
+              PATH: "/opt/bin:${PATH}",
+              REA_GHIDRA_PROJECT_PATH: projectPath,
+              REA_GHIDRA_LANGUAGE_ID: language,
+            },
           },
         },
       }),
@@ -137,11 +146,21 @@ describe("Qwen Code client lifecycle", () => {
         )
       ).status,
     ).toBe("configured");
-    const config = JSON.parse(await readFile(client.configPath, "utf8"));
-    expect(config.mcpServers.rea.env).toMatchObject({
+    const text = await readFile(client.configPath, "utf8");
+    expect(parseJsonc(text).mcpServers.rea.env).toEqual({
       PATH: "/opt/bin:${PATH}",
+      REA_GHIDRA_PROJECT_PATH: projectPath,
+      REA_GHIDRA_LANGUAGE_ID: language,
       REA_KUNA_JOBS: "4",
     });
+    expect(
+      await configureClientConfiguration(
+        client,
+        { REA_GHIDRA_LANGUAGE_ID: "x86:LE:32:default" },
+        command,
+      ),
+    ).toMatchObject({ status: "failed", reason: "readback" });
+    expect(await readFile(client.configPath, "utf8")).toBe(text);
   });
 
   it("reports the selected installation as aligned", async () => {
@@ -151,7 +170,10 @@ describe("Qwen Code client lifecycle", () => {
     ).toBe("configured");
     const entry = command[1];
     const status = (
-      await readClientRegistrationStatuses(home, entry, { environment: {} })
+      await readClientRegistrationStatuses(home, entry, {
+        platform: HOST_PLATFORM.platform,
+        environment: {},
+      })
     ).find(({ client: name }) => name === "qwen_code");
     expect(status).toMatchObject({ state: "aligned" });
   });
@@ -196,6 +218,7 @@ describe("Qwen Code profile setup", () => {
       expect(
         (
           await readClientRegistrationStatuses(home, command[1], {
+            platform: HOST_PLATFORM.platform,
             environment,
           })
         ).find(({ client: name }) => name === "qwen_code"),

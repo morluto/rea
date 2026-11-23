@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../../tests/fixtures/evidenceSubject.js";
 import { expect, it } from "vitest";
 import { RecordedCrashService } from "./RecordedCrashService.js";
 import {
@@ -49,7 +50,9 @@ it.each([
       include_debugger_context: false,
     });
     if (!result.ok) throw result.error;
-    expect(parseEvidence(result.value).subject?.architecture).toBe(expected);
+    expect(fileIdentity(parseEvidence(result.value).subject).architecture).toBe(
+      expected,
+    );
   },
 );
 

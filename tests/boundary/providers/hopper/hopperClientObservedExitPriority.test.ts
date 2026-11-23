@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   HopperCancelledError,
   HopperProcessError,
-} from "../../../../src/domain/hopperErrors.js";
+} from "../../../../src/hopper/HopperErrors.js";
 import { ok } from "../../../../src/domain/result.js";
 import type {
   BridgeLauncher,

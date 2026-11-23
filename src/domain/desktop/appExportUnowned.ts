@@ -1,3 +1,4 @@
+import { boundedList, describeBoundedList } from "../boundedList.js";
 import {
   STATE_PATH_INPUTS,
   STATE_PATH_INPUTS_MARKDOWN,
@@ -163,11 +164,8 @@ export const runtimeSeeds = (
 };
 
 /** Names as a list, the first eight named and the rest counted. */
-export const counted = (names: readonly string[]): string => {
-  const named = names.slice(0, MAX_LISTED).join(", ");
-  const rest = names.length - MAX_LISTED;
-  return rest > 0 ? `${named}, and ${String(rest)} more` : named;
-};
+export const counted = (names: readonly string[]): string =>
+  describeBoundedList(boundedList(names, MAX_LISTED), ", ");
 
 /** Home paths as a list, the first eight named and the rest counted. */
 const listed = (paths: readonly string[], markdown: boolean): string =>
@@ -279,7 +277,14 @@ export const unreadDconfLimitation = (
     return version?.present === true &&
       version.checkpoint_index > 0 &&
       version.view_error !== null
-      ? [{ home, error: version.view_error }]
+      ? [
+          {
+            home,
+            error: version.view_error,
+            kind: version.view_failure?.kind,
+            retained: version.sha256 !== null,
+          },
+        ]
       : [];
   });
   if (unread.length === 0) return undefined;
@@ -288,7 +293,21 @@ export const unreadDconfLimitation = (
     false,
   );
   const errors = [...new Set(unread.map(({ error }) => error))].join("; ");
-  return `${names} changed by the seed checkpoint but could not be read (${errors}), so the app's settings stored in dconf, if any, are not seeded. Export where dconf-cli is installed, or with REA_DCONF_COMMAND naming dconf; a build computer installs it, so capture again on a new one.`;
+  const recovery = new Set(
+    unread.map(({ kind, retained }) => {
+      if (!retained)
+        return "Capture again with the changed dconf database retained.";
+      switch (kind) {
+        case "descriptor-unavailable":
+          return "Export on Linux with readable /proc file descriptors to recover these settings.";
+        case "not-installed":
+          return "Export again where dconf-cli is installed, or with REA_DCONF_COMMAND naming dconf.";
+        default:
+          return "Review the reported dconf read failure before exporting again.";
+      }
+    }),
+  );
+  return `${names} changed by the seed checkpoint but could not be read (${errors}), so the app's settings stored in dconf, if any, are not seeded. ${[...recovery].join(" ")}`;
 };
 
 /** Files in the desktop Trash at the seed, which the state view never makes the app's, so the seed leaves them out. */

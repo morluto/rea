@@ -1,4 +1,6 @@
+import { timerDurationMsSchema } from "../analysisResourceLimits.js";
 import { z } from "zod";
+import { requirePresence } from "../schemaConstraints.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import type { JsonValue } from "../jsonValue.js";
 
@@ -14,8 +16,6 @@ export const sqliteSchemaHasObjectDeclaration = (name: string): boolean =>
 export const SQLITE_ROW_LIMIT_DEFAULT = 20;
 /** Execution budget, bounded by the runtime's signed 32-bit timer range. */
 export const DEFAULT_SQLITE_WORKER_TIMEOUT_MS = 30_000;
-export const MAX_SQLITE_WORKER_TIMEOUT_MS = 2_147_483_647;
-const workerTimeout = z.number().int().min(1).max(MAX_SQLITE_WORKER_TIMEOUT_MS);
 
 const nonnegative = z.int().nonnegative();
 const hex = z.string().regex(/^(?:[0-9a-f]{2})*$/);
@@ -34,8 +34,8 @@ export const SQLITE_TABLE_REQUIRED_SELECTION_FIELDS = [
 ] as const;
 
 /** Shared row/schema selection constraints, independent of path transport. */
-export const sqliteTableSelectionSchema = z
-  .strictObject({
+export const sqliteTableSelectionSchema = requirePresence(
+  z.strictObject({
     table: z
       .string()
       .optional()
@@ -69,43 +69,21 @@ export const sqliteTableSelectionSchema = z
       .describe(
         "Rows to skip before the retained window; default 0; requires table",
       ),
-  })
-  .superRefine((input, context) => {
-    if (input.row_limit !== undefined && input.table === undefined)
-      context.addIssue({
-        code: "custom",
-        path: ["row_limit"],
-        message: "row_limit requires an explicit table selection",
-      });
-    if (input.row_offset !== undefined && input.table === undefined)
-      context.addIssue({
-        code: "custom",
-        path: ["row_offset"],
-        message: "row_offset requires an explicit table selection",
-      });
-    if (input.columns !== undefined && input.table === undefined)
-      context.addIssue({
-        code: "custom",
-        path: ["columns"],
-        message: "columns requires an explicit table selection",
-      });
-    if (input.schema_scope === "selected_table" && input.table === undefined)
-      context.addIssue({
-        code: "custom",
-        path: ["schema_scope"],
-        message: "selected_table schema scope requires table",
-      });
-  })
-  .meta({
-    dependentRequired: Object.fromEntries(
-      SQLITE_TABLE_REQUIRED_SELECTION_FIELDS.map((field) => [field, ["table"]]),
-    ),
-    if: {
-      properties: { schema_scope: { const: "selected_table" } },
-      required: ["schema_scope"],
+  }),
+  [
+    ...SQLITE_TABLE_REQUIRED_SELECTION_FIELDS.map((field) => ({
+      when: field,
+      requires: "table" as const,
+      message: `${field} requires an explicit table selection`,
+    })),
+    {
+      when: "schema_scope",
+      equals: "selected_table",
+      requires: "table",
+      message: "selected_table schema scope requires table",
     },
-    then: { required: ["table"] },
-  });
+  ],
+);
 
 /** Inspect one frozen database and its sibling WAL, with optional ordinary-table rows. */
 export const inspectSqliteDatabaseInputSchema = sqliteTableSelectionSchema
@@ -113,7 +91,7 @@ export const inspectSqliteDatabaseInputSchema = sqliteTableSelectionSchema
     path: absoluteLocalPathStringSchema.describe(
       "Absolute path to an offline SQLite database snapshot",
     ),
-    worker_timeout_ms: workerTimeout
+    worker_timeout_ms: timerDurationMsSchema
       .optional()
       .describe(
         `Deadline in milliseconds for worker startup, queries and reply writing (default ${String(DEFAULT_SQLITE_WORKER_TIMEOUT_MS)}), not snapshot acquisition or the whole call. Allow client headroom for acquisition, reply reads, cleanup and delivery. Fixed byte/heap limits do not change.`,
@@ -143,129 +121,125 @@ export const sqliteValueSchema = z.discriminatedUnion("type", [
 ]);
 
 /** Frozen schema facts and explicitly bounded selected records, without arbitrary SQL. */
-export const sqliteDatabaseSchema = z
-  .strictObject({
-    artifact: artifactSchema,
-    wal: artifactSchema.nullable(),
-    engine: z.strictObject({
-      name: z.literal("SQLite"),
-      version: z.string().min(1),
-    }),
-    worker_timeout_ms: workerTimeout
-      .exactOptional()
+export const sqliteDatabaseSchema = z.strictObject({
+  artifact: artifactSchema,
+  wal: artifactSchema.nullable(),
+  engine: z.strictObject({
+    name: z.literal("SQLite"),
+    version: z.string().min(1),
+  }),
+  worker_timeout_ms: timerDurationMsSchema.describe(
+    "Actual parent-supervised worker deadline in milliseconds.",
+  ),
+  database_encoding: encoding,
+  schema: z.strictObject({
+    scope: z.enum(["inventory", "selected_table", "database"]),
+    completeness: z
+      .literal("complete")
       .describe(
-        "Actual parent-supervised worker deadline in milliseconds; absent in historical Evidence means unknown, not the default.",
+        "Complete within the indicated schema scope; inventory omits declarations and column details",
       ),
-    database_encoding: encoding,
-    schema: z.strictObject({
-      scope: z.enum(["inventory", "selected_table", "database"]),
-      completeness: z
-        .literal("complete")
-        .describe(
-          "Complete within the indicated schema scope; inventory omits declarations and column details",
-        ),
-      tables: z.array(
-        z.strictObject({
-          name: z.string(),
-          sql: z.string().nullable().optional(),
-          root_page: nonnegative,
-          kind: z
-            .enum(["table", "virtual", "shadow", "unknown"])
-            .describe(
-              "Unknown means a possible shadow table of an unresolved virtual table; its rows cannot be inspected",
-            ),
-          without_rowid: z.boolean(),
-          strict: z.boolean(),
-          column_count: nonnegative.nullable(),
-          columns_completeness: z.enum([
-            "complete",
-            "unsupported",
-            "not_requested",
-          ]),
-          columns: z.array(
-            z.strictObject({
-              cid: nonnegative,
-              name: z.string(),
-              declared_type: z.string(),
-              not_null: z.boolean(),
-              default_sql: z.string().nullable(),
-              primary_key_position: nonnegative,
-              hidden: z.union([
-                z.literal(0),
-                z.literal(1),
-                z.literal(2),
-                z.literal(3),
-              ]),
-            }),
+    tables: z.array(
+      z.strictObject({
+        name: z.string(),
+        sql: z.string().nullable().optional(),
+        root_page: nonnegative,
+        kind: z
+          .enum(["table", "virtual", "shadow", "unknown"])
+          .describe(
+            "Unknown means a possible shadow table of an unresolved virtual table; its rows cannot be inspected",
           ),
-        }),
-      ),
-      indexes: z.array(
-        z.strictObject({
-          name: z.string(),
-          table: z.string(),
-          sql: z.string().nullable().optional(),
-          root_page: nonnegative,
-        }),
-      ),
-      views: z.array(
-        z.strictObject({
-          name: z.string(),
-          sql: z.string().nullable().optional(),
-        }),
-      ),
-      triggers: z.array(
-        z.strictObject({
-          name: z.string(),
-          table: z.string(),
-          sql: z.string().nullable().optional(),
-        }),
-      ),
-    }),
-    rows: z
-      .strictObject({
+        without_rowid: z.boolean(),
+        strict: z.boolean(),
+        column_count: nonnegative.nullable(),
+        // domain-vocabulary: whether column details were read, unsupported or not requested.
+        columns_completeness: z.enum([
+          "complete",
+          "unsupported",
+          "not_requested",
+        ]),
+        columns: z.array(
+          z.strictObject({
+            cid: nonnegative,
+            name: z.string(),
+            declared_type: z.string(),
+            not_null: z.boolean(),
+            default_sql: z.string().nullable(),
+            primary_key_position: nonnegative,
+            hidden: z.union([
+              z.literal(0),
+              z.literal(1),
+              z.literal(2),
+              z.literal(3),
+            ]),
+          }),
+        ),
+      }),
+    ),
+    indexes: z.array(
+      z.strictObject({
+        name: z.string(),
         table: z.string(),
-        columns: z.array(z.string()),
-        values: z.array(z.array(sqliteValueSchema)),
-        row_limit: z.int().min(1),
-        returned_rows: nonnegative,
-        truncated: z.boolean(),
-        order: z
-          .enum(["rowid", "primary_key", "unspecified"])
-          .describe(
-            "Unique order the retained window is read in; unspecified means the table shadows rowid, _rowid_ and oid and no primary key is declared",
-          ),
-        row_offset: nonnegative.describe(
-          "Rows skipped before this window; 0 for the sample taken without a selection",
+        sql: z.string().nullable().optional(),
+        root_page: nonnegative,
+      }),
+    ),
+    views: z.array(
+      z.strictObject({
+        name: z.string(),
+        sql: z.string().nullable().optional(),
+      }),
+    ),
+    triggers: z.array(
+      z.strictObject({
+        name: z.string(),
+        table: z.string(),
+        sql: z.string().nullable().optional(),
+      }),
+    ),
+  }),
+  rows: z
+    .strictObject({
+      table: z.string(),
+      columns: z.array(z.string()),
+      values: z.array(z.array(sqliteValueSchema)),
+      row_limit: z.int().min(1),
+      returned_rows: nonnegative,
+      truncated: z.boolean(),
+      order: z
+        .enum(["rowid", "primary_key", "unspecified"])
+        .describe(
+          "Unique order the retained window is read in; unspecified means the table shadows rowid, _rowid_ and oid and no primary key is declared",
         ),
-        next_row_offset: nonnegative
-          .nullable()
-          .describe(
-            "Offset to request for the following page; null when the sampled window reaches the end or the table has no stated order. Pages compose only while artifact.sha256 and wal.sha256 match",
-          ),
-      })
-      .nullable(),
-    limitations: z.array(z.string()),
-  })
-  .superRefine((report, context) => {
-    const rows = report.rows;
-    if (
-      rows !== null &&
-      (rows.returned_rows !== rows.values.length ||
-        rows.returned_rows > rows.row_limit ||
-        rows.values.some((row) => row.length !== rows.columns.length) ||
-        rows.next_row_offset !==
-          (rows.truncated && rows.order !== "unspecified"
-            ? rows.row_offset + rows.returned_rows
-            : null))
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["rows"],
-        message:
-          "Selected row counts, column dimensions and the next window must match the retained values",
-      });
-  });
+      row_offset: nonnegative.describe(
+        "Rows skipped before this window; 0 for the sample taken without a selection",
+      ),
+      next_row_offset: nonnegative
+        .nullable()
+        .describe(
+          "Offset to request for the following page; null when the sampled window reaches the end or the table has no stated order. Pages compose only while artifact.sha256 and wal.sha256 match",
+        ),
+    })
+    .nullable()
+    .superRefine((rows, context) => {
+      if (
+        rows !== null &&
+        (rows.returned_rows !== rows.values.length ||
+          rows.returned_rows > rows.row_limit ||
+          rows.values.some((row) => row.length !== rows.columns.length) ||
+          rows.next_row_offset !==
+            (rows.truncated && rows.order !== "unspecified"
+              ? rows.row_offset + rows.returned_rows
+              : null))
+      )
+        context.addIssue({
+          code: "custom",
+          message:
+            "Selected row counts, column dimensions and the next window must match the retained values",
+        });
+    }),
+  limitations: z.array(z.string()),
+});
 
 export type InspectSqliteDatabaseInput = z.infer<
   typeof inspectSqliteDatabaseInputSchema

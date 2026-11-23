@@ -1,11 +1,18 @@
-import type { PointerFixups } from "./AppleMachoFixups.js";
-import type { MachoLayout } from "./AppleMachoSelection.js";
+import type { PointerFixups } from "../domain/apple/appleMachoFixups.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
+import type { MachoLayout } from "../domain/apple/appleMachoSelection.js";
 import type { MachoImportBinding } from "../domain/native/objcSwiftMetadata.js";
+import { expectedAppleMetadataReadFailure } from "./AppleMetadataReadFailure.js";
 
 export interface ObjcClassImportBindingScan {
   readonly bindings: readonly MachoImportBinding[];
   readonly coverage: {
-    readonly status: "complete" | "partial" | "unsupported" | "not_requested";
+    readonly status:
+      | "complete"
+      | "partial"
+      | "unknown"
+      | "unsupported"
+      | "not_requested";
     readonly reason: string | null;
     readonly examined: number;
     readonly decoded: number;
@@ -18,14 +25,18 @@ export const inspectObjcClassImportBindings = (input: {
   readonly layout: MachoLayout;
   readonly fixups: PointerFixups;
   readonly addresses: readonly string[] | undefined;
-  readonly addressesComplete: boolean;
+  /** Whether `addresses` covers every class-label row; undefined is unknown. */
+  readonly addressesComplete: boolean | undefined;
   readonly maxRecords: number;
 }): ObjcClassImportBindingScan => {
   const { bytes, layout, fixups, addresses, addressesComplete, maxRecords } =
     input;
-  // An explicitly truncated candidate scan keeps its limitation even when no
-  // candidate was retained.
-  if (addresses === undefined || (addresses.length === 0 && addressesComplete))
+  // A candidate scan that is truncated, or whose completeness was not stated,
+  // reports that limitation even when no candidate was retained.
+  if (
+    addresses === undefined ||
+    (addresses.length === 0 && addressesComplete === true)
+  )
     return {
       bindings: [],
       coverage: {
@@ -47,9 +58,13 @@ export const inspectObjcClassImportBindings = (input: {
     };
 
   const reasons = new Set<string>();
-  if (!addressesComplete)
+  if (addressesComplete === false)
     reasons.add(
       "Candidate address scan reached the existing max_records limit",
+    );
+  if (addressesComplete === undefined)
+    reasons.add(
+      "The caller did not state whether the candidate addresses include every class-label row (objc_class_import_addresses_complete)",
     );
   for (const failure of fixups.failures) reasons.add(failure);
 
@@ -61,6 +76,7 @@ export const inspectObjcClassImportBindings = (input: {
       "Candidate address scan reached the existing max_records limit",
     );
 
+  const reader = new BinaryReader(bytes, true, "macho-chained-fixup-bindings");
   for (const requestedAddress of candidates) {
     if (examinedAddresses.has(requestedAddress)) continue;
     examinedAddresses.add(requestedAddress);
@@ -72,13 +88,11 @@ export const inspectObjcClassImportBindings = (input: {
 
     try {
       const offset = layout.offset(parsedAddress, 8);
-      const raw = bytes.readBigUInt64LE(offset);
+      // The loader already resolved this address to an 8-byte slot; the shared reader
+      // repeats the range check and names the format if the slice is short.
+      const raw = reader.word(offset, 64);
       const decoded = fixups.decode(parsedAddress, raw);
-      if (decoded.kind === "unsupported") {
-        reasons.add(`${requestedAddress}: ${decoded.reason}`);
-        continue;
-      }
-      if (decoded.kind === "unknown") {
+      if (decoded.kind === "unsupported" || decoded.kind === "unknown") {
         reasons.add(`${requestedAddress}: ${decoded.reason}`);
         continue;
       }
@@ -94,9 +108,9 @@ export const inspectObjcClassImportBindings = (input: {
         addend: decoded.addend.toString(10),
       });
     } catch (cause: unknown) {
-      reasons.add(
-        `${requestedAddress}: ${cause instanceof Error ? cause.message : String(cause)}`,
-      );
+      const failure = expectedAppleMetadataReadFailure(cause);
+      if (failure === null) throw cause;
+      reasons.add(`${requestedAddress}: ${failure}`);
     }
   }
 
@@ -104,7 +118,14 @@ export const inspectObjcClassImportBindings = (input: {
   return {
     bindings,
     coverage: {
-      status: reason === null ? "complete" : "partial",
+      // Unstated candidate completeness leaves the whole scan's coverage
+      // unknown, even when other gaps are also known.
+      status:
+        addressesComplete === undefined
+          ? "unknown"
+          : reason === null
+            ? "complete"
+            : "partial",
       reason,
       examined: examinedAddresses.size,
       decoded: bindings.length,
@@ -112,14 +133,8 @@ export const inspectObjcClassImportBindings = (input: {
   };
 };
 
-const parseAddress = (address: string): bigint | undefined => {
-  if (!/^0x[0-9a-f]{1,16}$/iu.test(address)) return undefined;
-  try {
-    return BigInt(address);
-  } catch {
-    return undefined;
-  }
-};
+const parseAddress = (address: string): bigint | undefined =>
+  /^0x[0-9a-f]{1,16}$/iu.test(address) ? BigInt(address) : undefined;
 
 const isObjcClassImport = (symbol: string): boolean =>
   /^_?OBJC_CLASS_\$_.+$/u.test(symbol);

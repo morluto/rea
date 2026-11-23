@@ -8,7 +8,7 @@ import {
   runDoctor,
   systemDoctorHost,
 } from "../../../src/application/Doctor.js";
-import { defaultHopperLauncherPath } from "../../../src/config/parseConfig.js";
+import { defaultHopperLauncherPath } from "../../../src/hopperPaths/HopperLauncherDiscovery.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 // A real system installation legitimately precedes this isolated user fixture.

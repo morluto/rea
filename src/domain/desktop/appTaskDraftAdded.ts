@@ -22,6 +22,7 @@ import {
 import { pairMembers } from "./memberPairing.js";
 import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
 import { selectorOf } from "./viewSelector.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 type Suggestion = DesktopTaskCheckInput;
 
@@ -67,11 +68,6 @@ type Element = Extract<JsonValue, Record<string, JsonValue>> & {
   readonly name: string;
   readonly children: JsonValue[];
 };
-
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const attributesOf = (element: Element) =>
   isRecord(element.attributes) ? element.attributes : {};
@@ -133,15 +129,17 @@ const idsIn = (roots: readonly JsonValue[]): ReadonlySet<string> => {
   return ids;
 };
 
+/** The conditions encoded in a pointer's final member selector. */
+const lastSelector = (pointer: string) =>
+  selectorOf(unescapeJsonPointerToken(pointer.split("/").at(-1) ?? "")) ?? [];
+
 /** The attribute keys the last segment of a pointer selects by. */
-const selectorKeys = (pointer: string): ReadonlySet<string> => {
-  const segment = unescapeJsonPointerToken(pointer.split("/").at(-1) ?? "");
-  return new Set(
-    [...segment.matchAll(/\[@(?<key>[^=\]]+)=/gu)].map(
-      (match) => match.groups?.key ?? "",
-    ),
+const selectorKeys = (pointer: string): ReadonlySet<string> =>
+  new Set(
+    lastSelector(pointer)
+      .filter(({ prefix }) => prefix === "@")
+      .map(({ key }) => key),
   );
-};
 
 /**
  * A `value_equals` per attribute of an element added whole to a list, as
@@ -209,27 +207,30 @@ export const attributeChecks = (
       ) &&
       !isViewStateName(key),
   );
-  return rankAttributes(
-    eligible.filter(({ key, value }) =>
-      checkFits(
-        context,
-        `${pointer}/attributes/${escapeJsonPointerToken(key)}`,
-        value,
+  return (
+    rankAttributes(
+      eligible.filter(({ key, value }) =>
+        checkFits(
+          context,
+          `${pointer}/attributes/${escapeJsonPointerToken(key)}`,
+          value,
+        ),
       ),
-    ),
-  )
-    .toSorted(
-      (left, right) =>
-        usual(left.key, left.value) - usual(right.key, right.value),
     )
-    .slice(0, MAX_ATTRIBUTE_CHECKS)
-    .map(({ key, value }) =>
-      valueEqualsCheck(
-        file,
-        `${pointer}/attributes/${escapeJsonPointerToken(key)}`,
-        value,
-      ),
-    );
+      .toSorted(
+        (left, right) =>
+          usual(left.key, left.value) - usual(right.key, right.value),
+      )
+      // generation-cap: suggested attribute checks
+      .slice(0, MAX_ATTRIBUTE_CHECKS)
+      .map(({ key, value }) =>
+        valueEqualsCheck(
+          file,
+          `${pointer}/attributes/${escapeJsonPointerToken(key)}`,
+          value,
+        ),
+      )
+  );
 };
 
 /**
@@ -350,14 +351,12 @@ export const fieldChecks = (
         alreadySeen = true;
         continue;
       }
-      if (value.length > context.chars) {
-        context.long?.push(fieldAt);
-        continue;
-      }
+      if (!checkFits(context, fieldAt, value)) continue;
       texts.push(text);
     }
   });
   if (texts.length > 0)
+    // generation-cap: suggested field checks
     return [...new Set(texts)].slice(0, MAX_FIELD_CHECKS).map((value) => ({
       kind: "text_contains" as const,
       file,
@@ -420,10 +419,7 @@ const sharedFields = (
 /** The child fields a pointer's last selector names its member by, `[>first_name=Delphine]`, as tag NUL text. */
 const selectorFields = (pointer: string): ReadonlySet<string> =>
   new Set(
-    (
-      selectorOf(unescapeJsonPointerToken(pointer.split("/").at(-1) ?? "")) ??
-      []
-    )
+    lastSelector(pointer)
       .filter(({ prefix }) => prefix === ">")
       .map(({ key, value }) => `${key}\u0000${value}`),
   );
@@ -454,10 +450,14 @@ export const recordChecks = (
   const fields = fieldsOf(context, pointer, element, { nested: true });
   // A record whose one field is the one its selector names it by, as a VYM branch its heading, is checked by that field.
   return (
-    fields.length > 0
-      ? fields
-      : fieldsOf(context, pointer, element, { nested: true, selector: true })
-  ).slice(0, MAX_FIELD_CHECKS);
+    (
+      fields.length > 0
+        ? fields
+        : fieldsOf(context, pointer, element, { nested: true, selector: true })
+    )
+      // generation-cap: suggested field checks
+      .slice(0, MAX_FIELD_CHECKS)
+  );
 };
 
 /** Whether an element holds an identifier of its own among its descendants, as GnuCash's `<trn:splits>` holds each split's `<split:id>`, so its whole text holds ids a later save makes anew. */
@@ -531,18 +531,14 @@ const fieldsOf = (
     if (pieces.length === 0 || holdsIds(field)) return [];
     // The evaluator reads the field's text as saved, including the line breaks around it.
     const whole = elementText(field);
-    if (pieces.length === 1 && pieces[0]?.trim() === whole.trim()) {
-      const value = whole;
-      if (value.length > context.chars) {
-        context.long?.push(at);
-        return [];
-      }
-      return [wholeTextCheck(file, at, value, undefined)];
-    }
+    if (pieces.length === 1 && pieces[0]?.trim() === whole.trim())
+      return checkFits(context, at, whole)
+        ? [wholeTextCheck(file, at, whole, undefined)]
+        : [];
     return pieces.flatMap((value) =>
-      value.length > context.chars
-        ? []
-        : [{ kind: "text_contains" as const, file, pointer: at, value }],
+      checkFits(context, at, value)
+        ? [{ kind: "text_contains" as const, file, pointer: at, value }]
+        : [],
     ) satisfies Suggestion[];
   });
 };

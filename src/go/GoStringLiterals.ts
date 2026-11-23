@@ -9,12 +9,13 @@ import {
 } from "../domain/go/goBinary.js";
 import {
   BinaryMappingFailure,
+  BinaryReader,
   createFileMappingIndex,
   imageFileMappings,
   type BinaryContainer,
   type FileMappingIndex,
   type LoadRegion,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 
 const MAX_REJECTED_SLICE_CACHE = 4096;
 const PE_MEM_READ = 0x40000000;
@@ -86,12 +87,17 @@ export const recoverGoStringLiterals = (
     };
 
   const { bits } = container;
-  const little = container.byte_order === "little";
+  const reader = new BinaryReader(
+    bytes,
+    container.byte_order === "little",
+    container.format,
+  );
   const wordBytes = bits === 64 ? 8 : 4;
   const firstTarget = targets[0] as FileMapping;
   const lastTarget = targets[targets.length - 1] as FileMapping;
   const minTargetAddr = firstTarget.address;
   const maxTargetEnd = lastTarget.address + BigInt(lastTarget.size);
+  const targetEnds = targets.map((t) => t.address + BigInt(t.size));
 
   const accepted = new Map<string, CandidateLiteral>();
   const rejected = new Set<string>();
@@ -107,7 +113,7 @@ export const recoverGoStringLiterals = (
       break;
     }
     remainingBudget -= wordBytes;
-    let word0 = readWord(bytes, startOffset, bits, little);
+    let word0 = reader.word(startOffset, bits);
 
     for (
       let headerOffset = startOffset;
@@ -121,7 +127,7 @@ export const recoverGoStringLiterals = (
         break outer;
       }
       remainingBudget -= wordBytes;
-      const word1 = readWord(bytes, headerOffset + wordBytes, bits, little);
+      const word1 = reader.word(headerOffset + wordBytes, bits);
       const ptr = word0;
       const rawLen = word1;
       word0 = word1;
@@ -131,13 +137,8 @@ export const recoverGoStringLiterals = (
       const targetIndex = lastSpanAtOrBelow(targets, ptr);
       if (targetIndex < 0) continue;
       const target = targets[targetIndex] as FileMapping;
-      if (ptr + rawLen > target.address + BigInt(target.size)) continue;
+      if (ptr + rawLen > targetEnds[targetIndex]!) continue;
 
-      if (rawLen > BigInt(budgets.max_string_literal_bytes)) {
-        limitsReached.add("max_string_literal_bytes");
-        budgetTruncated = true;
-        continue;
-      }
       const byteLen = Number(rawLen);
       const sliceOffset = target.offset + Number(ptr - target.address);
       if (
@@ -145,6 +146,12 @@ export const recoverGoStringLiterals = (
         sliceOffset < headerOffset + wordBytes * 2
       )
         continue;
+
+      if (byteLen > budgets.max_string_literal_bytes) {
+        limitsReached.add("max_string_literal_bytes");
+        budgetTruncated = true;
+        continue;
+      }
 
       const key = `${String(sliceOffset)}:${String(byteLen)}`;
       const existing = accepted.get(key);
@@ -156,11 +163,6 @@ export const recoverGoStringLiterals = (
       }
       if (rejected.has(key)) continue;
 
-      if (candidates.length >= budgets.max_string_candidates) {
-        limitsReached.add("max_string_candidates");
-        budgetTruncated = true;
-        break outer;
-      }
       if (remainingBudget < byteLen) {
         limitsReached.add("max_string_header_scan_bytes");
         budgetTruncated = true;
@@ -173,6 +175,11 @@ export const recoverGoStringLiterals = (
         if (rejected.size >= MAX_REJECTED_SLICE_CACHE) rejected.clear();
         rejected.add(key);
         continue;
+      }
+      if (candidates.length >= budgets.max_string_candidates) {
+        limitsReached.add("max_string_candidates");
+        budgetTruncated = true;
+        break outer;
       }
       const entry: CandidateLiteral = {
         offset: sliceOffset,
@@ -226,21 +233,10 @@ export const recoverGoStringLiterals = (
   };
 };
 
-const readWord = (
-  bytes: Buffer,
-  offset: number,
-  bits: 32 | 64,
-  little: boolean,
-): bigint =>
-  bits === 32
-    ? BigInt(little ? bytes.readUInt32LE(offset) : bytes.readUInt32BE(offset))
-    : little
-      ? bytes.readBigUInt64LE(offset)
-      : bytes.readBigUInt64BE(offset);
-
 const isPrintableGoUtf8 = (slice: Buffer): boolean => {
   let hasNonAscii = false;
-  for (const byte of slice) {
+  for (let i = 0; i < slice.length; i += 1) {
+    const byte = slice[i]!;
     if (byte >= 0x80) {
       hasNonAscii = true;
       continue;

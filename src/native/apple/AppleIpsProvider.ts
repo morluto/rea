@@ -1,4 +1,20 @@
-import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
+import {
+  completedStableArtifactObservation,
+  type StableArtifactSnapshot,
+  projectOwnedArtifactIdentityFailure,
+  projectSelectedArtifactFileFailure,
+  projectStableArtifactFailure,
+  stableArtifactInputFailure,
+  projectArtifactCloseFailure,
+  ArtifactReaderFailure,
+  readStableArtifact,
+  withStableArtifactHandle,
+  artifactFileCompletion,
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
+  assertArtifactReadActive,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import { FieldReader } from "./AppleIpsFieldReader.js";
 import {
   type AppleIps,
@@ -12,43 +28,28 @@ import {
   MAX_INSPECT_APPLE_IPS_THREADS,
   type InspectAppleIpsInput,
 } from "../../domain/native/appleIps.js";
-import type { StableArtifactSnapshot } from "../../artifacts/readStableArtifact.js";
-import {
-  projectSelectedArtifactFileFailure,
-  projectStableArtifactFailure,
-  stableArtifactInputRecovery,
-  projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
-import {
-  artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
-  assertArtifactReadActive,
-  artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { AppleIpsPort } from "../../application/binaryDiagnostics/AppleIpsPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { AppleIpsPort } from "../../ports/binaryDiagnostics/AppleIpsPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import {
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
+  isParseLimit,
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
+import type { LimitRef } from "../../domain/parseFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { APPLE_IPS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
-  AppleIpsFormatFailure,
-  AppleIpsResourceFailure,
+  APPLE_IPS_FORMAT,
+  type AppleIpsFixedBoundary,
   type AppleIpsSelectedBoundary,
 } from "./AppleIps.errors.js";
 import { parseAppleIps } from "./AppleIpsParser.js";
 import { resolveAppleIpsJoin } from "./AppleIpsMachOJoin.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_apple_ips";
 
@@ -71,9 +72,13 @@ export class AppleIpsProvider implements AppleIpsPort {
 
   async inspect(input: InspectAppleIpsInput, options?: ExecutionOptions) {
     let completedReport: AppleIps | undefined;
+    let candidateJoin: AppleIps | undefined;
     let activePath = input.path;
     let activeField: "path" | "join_path" = "path";
-    let completedSnapshot: StableArtifactSnapshot | undefined;
+    let completedSnapshot:
+      | StableArtifactSnapshot
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     const read = new FieldReader(input.max_integer_text_bytes);
     try {
       return await this.#resources.run(async () => {
@@ -99,34 +104,63 @@ export class AppleIpsProvider implements AppleIpsPort {
         completedReport = report;
         assertArtifactReadActive(options?.signal);
         if (input.join_path === undefined) return ok(report);
-        activePath = input.join_path;
+        const joinPath = input.join_path;
+        activePath = joinPath;
         activeField = "join_path";
         completedSnapshot = undefined;
-        const joinArtifact = await readStableArtifact(
-          input.join_path,
+        completedReport = await withStableArtifactHandle(
+          joinPath,
           input.max_join_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        completedSnapshot = joinArtifact;
-        assertArtifactReadActive(options?.signal);
-        completedReport = {
-          ...report,
-          join: await resolveAppleIpsJoin(
-            report,
-            { ...joinArtifact, path: input.join_path },
-            {
-              path: input.join_path,
-              max_join_bytes: input.max_join_bytes,
+          {
+            retainBytes: (size) => Math.min(size, 4096),
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            onIdentity: (identity) => {
+              completedSnapshot = identity;
             },
-            read,
-          ),
-        };
+          },
+          async (joinHandle) => {
+            assertArtifactReadActive(options?.signal);
+            const readJoinRange: typeof joinHandle.readRange = (
+              offset,
+              length,
+            ) =>
+              offset >= 0 &&
+              length >= 0 &&
+              offset + length <= joinHandle.prefix.length
+                ? Promise.resolve(
+                    joinHandle.prefix.subarray(offset, offset + length),
+                  )
+                : joinHandle.readRange(offset, length);
+            candidateJoin = {
+              ...report,
+              join: await resolveAppleIpsJoin(
+                report,
+                {
+                  path: joinPath,
+                  sha256: joinHandle.sha256,
+                  size: joinHandle.size,
+                  readRange: readJoinRange,
+                },
+                {
+                  path: joinPath,
+                  max_join_bytes: input.max_join_bytes,
+                },
+                read,
+              ),
+            };
+            return candidateJoin;
+          },
+        );
         assertArtifactReadActive(options?.signal);
         return ok(completedReport);
       });
     } catch (cause) {
+      if (
+        candidateJoin !== undefined &&
+        artifactFileCompletion(cause)?.value === candidateJoin
+      )
+        completedReport = candidateJoin;
       const primary = appleIpsFailurePrimary(
         artifactFilePrimaryFacts(cause),
         {
@@ -217,16 +251,15 @@ const SELECTED_BUDGETS = {
 >;
 
 const isSelectedBoundary = (
-  boundary: AppleIpsResourceFailure["boundary"],
+  boundary: string,
 ): boundary is AppleIpsSelectedBoundary =>
   Object.hasOwn(SELECTED_BUDGETS, boundary);
 
 const budgetRemediation = (
-  input: InspectAppleIpsInput,
   boundary: AppleIpsSelectedBoundary,
+  selected: number,
 ): string => {
   const { argument, maximum, unit } = SELECTED_BUDGETS[boundary];
-  const selected = input[argument];
   const recovery =
     selected >= maximum
       ? `This release has no override above the ${String(maximum)} ${unit} ceiling; select a smaller report.`
@@ -238,21 +271,32 @@ const budgetRemediation = (
   return `Effective ${argument} is ${String(selected)} ${unit}. ${recovery}${explanation}`;
 };
 
-const resourceRecovery = (
-  input: InspectAppleIpsInput,
-  cause: AppleIpsResourceFailure,
-) => {
-  const { boundary } = cause;
-  return isSelectedBoundary(boundary)
+/** The unit each fixed IPS format ceiling counts. */
+const FIXED_BOUNDARY_UNITS: Readonly<Record<AppleIpsFixedBoundary, string>> = {
+  termination_reasons: "termination reasons",
+  unlisted_keys: "keys",
+  nesting: "levels",
+};
+
+const isFixedBoundary = (name: string): name is AppleIpsFixedBoundary =>
+  Object.hasOwn(FIXED_BOUNDARY_UNITS, name);
+
+const resourceRecovery = ({ name, maximum }: LimitRef) =>
+  isSelectedBoundary(name)
     ? {
         retryable: false,
-        remediationAction: budgetRemediation(input, boundary),
+        remediationAction: budgetRemediation(name, maximum),
       }
     : fixedAllowanceOptions(
-        `The IPS ${boundary.replaceAll("_", " ")} allowance of ${String(cause.maximum)}`,
+        `The IPS ${name.replaceAll("_", " ")} allowance`,
         "parser",
+        {
+          limit: maximum,
+          ...(isFixedBoundary(name)
+            ? { unit: FIXED_BOUNDARY_UNITS[name] }
+            : {}),
+        },
       );
-};
 
 const appleIpsFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,
@@ -262,48 +306,24 @@ const appleIpsFailurePrimary = (
   const { cause, origin } = facts;
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
     return cause;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      { cause },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
+  if (isParseLimit(cause, APPLE_IPS_FORMAT))
+    return parseLimitConstraint(OPERATION, "capacity", cause, {
+      ...resourceRecovery(cause.failure.limit),
+      path: input.path,
     });
-  if (cause instanceof AppleIpsResourceFailure)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "capacity",
-      `Selected artifact ${input.path}: ${cause.message}`,
-      { boundary: cause.boundary, maximum: cause.maximum },
-      { cause, ...resourceRecovery(input, cause) },
-    );
-  if (cause instanceof AppleIpsFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: [field],
-            reason: "invalid_format",
-            message: `Selected artifact ${input.path}: ${cause.message}`,
-          },
-        ]);
+  const formatFailure = parseFailureAnalysisError(
+    OPERATION,
+    input.path,
+    cause,
+    field,
+  );
+  if (formatFailure !== undefined) return formatFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -325,11 +345,7 @@ const appleIpsFailurePrimary = (
         },
       );
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [{ path: [field], reason: "invalid_format", message: cause.message }],
-      );
+      return stableArtifactInputFailure(cause, OPERATION, field);
   }
   const fileFailure = projectSelectedArtifactFileFailure(
     cause,
@@ -343,7 +359,7 @@ const appleIpsFailurePrimary = (
     cause,
     diagnostics: {
       path: input.path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

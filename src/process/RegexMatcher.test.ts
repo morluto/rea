@@ -70,9 +70,9 @@ it.each([
   },
   {
     name: "accepts quoted NODE_OPTIONS and a leading plus or zeros",
-    execArgv: ["--max-old-space-size=+0256"],
-    nodeOptions: '"--max-old-space-size=144"',
-    heap: effective(256, true),
+    execArgv: [],
+    nodeOptions: '"--max-old-space-size=+0144"',
+    heap: effective(144, true),
   },
   {
     name: "uses the last positive flag",
@@ -223,12 +223,19 @@ it.each([
   },
 );
 
+it("leaves launch flags unrecoverable on platforms without /proc/self", () => {
+  for (const platform of ["darwin", "win32"] as const) {
+    expect(readLaunchNodeOptions(platform)).toEqual({ kind: "unrecoverable" });
+    expect(readLaunchExecArgv(platform)).toEqual({ kind: "unrecoverable" });
+  }
+});
+
 it("does not treat a rewritten NODE_OPTIONS value as the launch heap", () => {
   const previous = process.env.NODE_OPTIONS;
   const rewritten = "--max-old-space-size=61-rewritten";
   process.env.NODE_OPTIONS = rewritten;
   try {
-    const launch = readLaunchNodeOptions();
+    const launch = readLaunchNodeOptions(process.platform);
     if (process.platform === "linux") {
       expect(launch.kind).toBe("recovered");
       if (launch.kind === "recovered")
@@ -356,12 +363,12 @@ it("recovers launch exec argv from the command line, not process.execArgv", () =
     kind: "recovered",
     value: [],
   });
-  const before = readLaunchExecArgv();
+  const before = readLaunchExecArgv(process.platform);
   const snapshot = [...process.execArgv];
   process.execArgv.length = 0;
   try {
     expect(process.execArgv).toEqual([]);
-    expect(readLaunchExecArgv()).toEqual(before);
+    expect(readLaunchExecArgv(process.platform)).toEqual(before);
     if (before.kind === "recovered") expect(before.value).toEqual(snapshot);
     else expect(before).toEqual({ kind: "unrecoverable" });
   } finally {
@@ -539,3 +546,77 @@ it.each([
     });
   },
 );
+
+it("validates patterns even when the worker has no candidate values", async () => {
+  const invalid = await matchRegexValues({
+    operation: "search_procedures",
+    pattern: "[",
+    caseSensitive: false,
+    values: [],
+  });
+  expect(invalid).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError", operation: "search_procedures" },
+  });
+  const empty = await matchRegexValues({
+    operation: "search_procedures",
+    pattern: "^main$",
+    caseSensitive: false,
+    values: [],
+  });
+  expect(empty).toEqual({ ok: true, value: [] });
+});
+
+it("preserves Unicode case folding, astral and lone surrogates, and empty values", async () => {
+  expect(
+    await matchRegexValues({
+      operation: "search_strings",
+      pattern: "^(?:$|\\u{1F600}_|δ|[\\uD800])",
+      caseSensitive: false,
+      values: [
+        "",
+        "delta",
+        "Δelta",
+        "😀_emoji",
+        "\uD800",
+        "middle",
+        "",
+        "😀_end",
+        "δίκη",
+      ],
+    }),
+  ).toEqual({ ok: true, value: [0, 2, 3, 4, 6, 7, 8] });
+});
+
+it("matches across mixed ASCII, Unicode, and oversized single-item chunk boundaries", async () => {
+  const hugeString = `${"a".repeat(300_000)}NEEDLE_${"b".repeat(100)}`;
+  const values = Array.from({ length: 5_000 }, (_, i) => `item_${i}`);
+  values[12] = "Δ_chunk0";
+  values[4095] = "edge_chunk0_NEEDLE";
+  values[4096] = "start_chunk1_ascii";
+  values[4500] = hugeString;
+  values[4501] = "😀_post_huge_NEEDLE";
+  values[4999] = "\uD800_tail_NEEDLE";
+
+  expect(
+    await matchRegexValues({
+      operation: "search_strings",
+      pattern: "NEEDLE|Δ_chunk0",
+      caseSensitive: true,
+      values,
+    }),
+  ).toEqual({ ok: true, value: [12, 4095, 4500, 4501, 4999] });
+
+  const allEmpty = Array.from({ length: 4_200 }, () => "");
+  expect(
+    await matchRegexValues({
+      operation: "search_strings",
+      pattern: "^$",
+      caseSensitive: true,
+      values: allEmpty,
+    }),
+  ).toEqual({
+    ok: true,
+    value: Array.from({ length: 4_200 }, (_, i) => i),
+  });
+});

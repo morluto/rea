@@ -1,9 +1,18 @@
-import { validateRegistrationEnvironment } from "./RegistrationEnvironmentValidation.js";
-import { clientRegistrationSource } from "./ClientRegistrationSource.js";
+import type {
+  OwnedProviderSetting,
+  RecordedProviderSettings,
+} from "../ports/DesktopBuildHost.js";
+import {
+  validateRegistrationEnvironment,
+  type ValidatedRegistrationEnvironment,
+} from "./RegistrationEnvironmentValidation.js";
+import {
+  clientRegistrationSource,
+  gooseEnvironmentField,
+} from "./ClientRegistrationSource.js";
 import type { SetupClient } from "./SupportedClients.js";
 
 import { launchAnalysisSetting } from "../config/analysisSettings.js";
-import type { Environment } from "../config/environment.js";
 import {
   DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
   DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
@@ -17,21 +26,33 @@ import {
 } from "./ClientConfigurationDocument.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import {
-  mergeEnvironmentOverrides,
-  snapshotEnvironment,
-} from "../process/snapshotEnvironment.js";
+import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
 import { dshDocument } from "./DshCordisPatch.js";
-import type { McpToolTimeoutInputs } from "../mcpStartupPolicy.js";
+import { mergeRegistrationEnvironment } from "./UserConfigurationLocation.js";
+import type { McpToolTimeoutInputs } from "../config/mcpStartupPolicy.js";
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 
-export type ProviderRequestBudgetResolver = (
-  analysisProvider: AnalysisProviderSelector,
-  environment: Readonly<Record<string, string>>,
-) => Promise<Result<number | undefined, ConfigurationError>>;
+export interface ProviderRequestBudgetResolver {
+  (
+    analysisProvider: AnalysisProviderSelector,
+    environment: Readonly<Record<string, string>>,
+  ): Promise<Result<number | undefined, ConfigurationError>>;
+  /**
+   * Settings needed for the provider and lookup selected by the literals.
+   * An unresolved expression blocks that lookup when it could change its
+   * inputs. An omitted declaration keeps the fail-closed whole-environment gate.
+   */
+  readonly budgetSettings?: (
+    analysisProvider: AnalysisProviderSelector,
+    environment: Readonly<Record<string, string>>,
+  ) => ReadonlySet<string>;
+}
 
 export interface ClientRegistrationEnvironmentDetails {
   readonly values: Readonly<Record<string, string>>;
+  /** The platform-admitted keys used for launch setting and budget lookup. */
+  readonly runtimeEnvironment: Readonly<Record<string, string>>;
+  readonly configHomeFallbackApplied?: true;
   readonly unresolvedSettings: ReadonlySet<string>;
   readonly timeoutInputs: McpToolTimeoutInputs | undefined;
 }
@@ -63,6 +84,25 @@ const environmentSchema = clientConfigurationRecordSchema.transform(
     return Object.fromEntries(entries);
   },
 );
+
+/** Invalid recorded shape, with literal environment keys kept for source attribution. */
+export class ClientRegistrationEnvironmentShapeError extends ConfigurationError {
+  constructor(
+    field: string,
+    readonly invalidKeys: readonly string[],
+  ) {
+    super("Invalid REA server environment", {
+      settings: (invalidKeys.length === 0
+        ? [field]
+        : invalidKeys.map((key) => `${field}.${key}`)
+      ).map((setting) => ({
+        setting,
+        constraint:
+          "Server environment must be an object containing only string values",
+      })),
+    });
+  }
+}
 
 /**
  * Clients that expand `$VAR` and `${VAR}` in a recorded `env` value from the
@@ -96,16 +136,16 @@ const expressionSettings = (
 export const clientRegistrationEnvironment = (
   parsed: ClientConfigurationDocument | undefined,
   client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
+  platform: NodeJS.Platform,
   overrides: Readonly<Record<string, string>> = {},
   validation: "fragment" | "effective" = "effective",
-  platform: NodeJS.Platform = process.platform,
 ): Result<Readonly<Record<string, string>>, ConfigurationError> => {
   const details = clientRegistrationEnvironmentDetails(
     parsed,
     client,
+    platform,
     overrides,
     validation,
-    platform,
   );
   return details.ok ? ok(details.value.values) : details;
 };
@@ -114,9 +154,9 @@ export const clientRegistrationEnvironment = (
 export const clientRegistrationEnvironmentDetails = (
   parsed: ClientConfigurationDocument | undefined,
   client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
+  platform: NodeJS.Platform,
   overrides: Readonly<Record<string, string>> = {},
   validation: "fragment" | "effective" = "effective",
-  platform: NodeJS.Platform = process.platform,
 ): Result<ClientRegistrationEnvironmentDetails, ConfigurationError> => {
   if (parsed?.dialect === "dsh") {
     const environment = dshDocument(parsed.document).environment(
@@ -125,13 +165,7 @@ export const clientRegistrationEnvironmentDetails = (
       platform,
     );
     if (!environment.ok) return environment;
-    return ok(
-      environmentDetails(
-        environment.value.values,
-        environment.value.configuration,
-        environment.value.unresolvedSettings,
-      ),
-    );
+    return ok(environmentDetails(environment.value.values, environment.value));
   }
   const key = parsed?.environmentKey ?? "env";
   const registration =
@@ -142,51 +176,37 @@ export const clientRegistrationEnvironmentDetails = (
     registration,
     client?.registrationProfile,
   );
-  const raw = source.connection?.[key];
+  const field =
+    key === "envs" ? gooseEnvironmentField(source.connection) : ok(key);
+  if (!field.ok) return field;
+  const raw = source.connection?.[field.value];
   const existing = environmentSchema.safeParse(raw === undefined ? {} : raw);
   if (!existing.success)
     return err(
-      new ConfigurationError("Invalid REA server environment", {
-        settings: existing.error.issues.map((issue) => ({
-          setting: [
-            ...(source.nested ? ["transport"] : []),
-            key,
-            ...issue.path,
-          ].join("."),
-          constraint:
-            "Server environment must be an object containing only string values",
-        })),
-      }),
+      new ClientRegistrationEnvironmentShapeError(
+        source.nested ? `transport.${field.value}` : field.value,
+        existing.error.issues.flatMap(({ path: [key] }) =>
+          typeof key === "string" ? [key] : [],
+        ),
+      ),
     );
   // Validate known settings with the runtime's parser, but retain the original
   // string overrides, including unknown client-specific keys and no defaults.
-  const environment = mergeEnvironmentOverrides(
+  const merged = mergeRegistrationEnvironment(
     existing.data,
     overrides,
     platform,
   );
-  return validatedDetails(
-    environment,
+  const validated = validatedDetails(
+    merged.values,
     validation,
     platform,
-    expressionSettings(client?.name, environment),
+    expressionSettings(client?.name, merged.values),
   );
+  return validated.ok && merged.configHomeFallbackApplied === true
+    ? ok({ ...validated.value, configHomeFallbackApplied: true })
+    : validated;
 };
-
-/** Setting names a registration does not carry as the value selected here. */
-export interface RecordedProviderSettings {
-  /** Selected here and absent from the registration's recorded environment. */
-  readonly unrecorded: readonly string[];
-  /** Recorded with text other than the value selected here. */
-  readonly differing: readonly string[];
-  /** Recorded as an expression, or in a map REA could not read. */
-  readonly unresolved: readonly string[];
-  /** Recorded with a value the caller owns, as an archive setup packed for another version. */
-  readonly owned?: readonly string[];
-}
-
-/** Whether a recorded value is the caller's own, which it may replace; the value never leaves the reader. */
-export type OwnedProviderSetting = (name: string, value: string) => boolean;
 
 /** Consume a resolved setting inside its reader without including its value in diagnostics. */
 export type ProviderSettingObserver = (name: string, value: string) => void;
@@ -201,7 +221,7 @@ export const recordedProviderSettings = (
   parsed: ClientConfigurationDocument,
   client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
   selected: Readonly<Record<string, string>>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   owns?: OwnedProviderSetting,
   observe?: ProviderSettingObserver,
 ): RecordedProviderSettings | undefined => {
@@ -213,39 +233,29 @@ export const recordedProviderSettings = (
   const details = clientRegistrationEnvironmentDetails(
     parsed,
     client,
+    platform,
     {},
     "fragment",
-    platform,
   );
   if (!details.ok) return { unrecorded: [], differing: [], unresolved: names };
-  const recorded = snapshotEnvironment(details.value.values, platform);
-  // Expression names fold like every other environment name on this platform.
-  const expressions = snapshotEnvironment(
-    Object.fromEntries(
-      [...details.value.unresolvedSettings].map((name) => [name, ""]),
-    ),
-    platform,
-  );
+  const { runtimeEnvironment: recorded, unresolvedSettings } = details.value;
+  const isUnresolved = (name: string): boolean =>
+    unresolvedSettings.has(identity(name));
   for (const name of names) {
     const value = recorded[identity(name)];
-    if (value !== undefined && expressions[identity(name)] === undefined)
-      observe?.(name, value);
+    if (value !== undefined && !isUnresolved(name)) observe?.(name, value);
   }
   const facts = {
     unrecorded: names.filter(
-      (name) =>
-        recorded[identity(name)] === undefined &&
-        expressions[identity(name)] === undefined,
+      (name) => recorded[identity(name)] === undefined && !isUnresolved(name),
     ),
     differing: names.filter(
       (name) =>
-        expressions[identity(name)] === undefined &&
+        !isUnresolved(name) &&
         recorded[identity(name)] !== undefined &&
         recorded[identity(name)] !== selection[name],
     ),
-    unresolved: names.filter(
-      (name) => expressions[identity(name)] !== undefined,
-    ),
+    unresolved: names.filter(isUnresolved),
   };
   const owned = names.filter((name) => {
     const value = recorded[identity(name)];
@@ -267,24 +277,37 @@ export const clientRegistrationEnvironmentDetailsWithBudget = async (
   overrides: Readonly<Record<string, string>>,
   validation: "fragment" | "effective",
   resolveProviderRequestBudget: ProviderRequestBudgetResolver | undefined,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): Promise<
   Result<ResolvedClientRegistrationEnvironmentDetails, ConfigurationError>
 > => {
   const details = clientRegistrationEnvironmentDetails(
     parsed,
     client,
+    platform,
     overrides,
     validation,
-    platform,
   );
   if (!details.ok) return details;
+  // The budget gate stays fail-closed: settings the resolver may read must be
+  // literals, and an undeclared read set keeps every unresolved expression
+  // blocking, because an unreadable budget cannot be treated as absent.
+  const { timeoutInputs, runtimeEnvironment } = details.value;
+  const budgetSettings =
+    timeoutInputs === undefined
+      ? undefined
+      : resolveProviderRequestBudget?.budgetSettings?.(
+          timeoutInputs.analysisProvider,
+          runtimeEnvironment,
+        );
   const unresolved = [...details.value.unresolvedSettings].filter(
     (setting) =>
-      resolveProviderRequestBudget !== undefined ||
-      TIMEOUT_INPUT_SETTINGS.has(setting),
+      TIMEOUT_INPUT_SETTINGS.has(setting) ||
+      (timeoutInputs !== undefined &&
+        resolveProviderRequestBudget !== undefined &&
+        (budgetSettings === undefined || budgetSettings.has(setting))),
   );
-  if (details.value.timeoutInputs === undefined || unresolved.length > 0)
+  if (timeoutInputs === undefined || unresolved.length > 0)
     return err(
       new ConfigurationError(
         "Cannot derive a provider request budget from expression-backed settings",
@@ -297,12 +320,9 @@ export const clientRegistrationEnvironmentDetailsWithBudget = async (
         },
       ),
     );
-  const resolved = {
-    ...details.value,
-    timeoutInputs: details.value.timeoutInputs,
-  };
+  const resolved = { ...details.value, timeoutInputs };
   if (resolveProviderRequestBudget === undefined) return ok(resolved);
-  return validatedBudget(resolved, resolveProviderRequestBudget, platform);
+  return validatedBudget(resolved, resolveProviderRequestBudget);
 };
 
 const validatedDetails = (
@@ -318,13 +338,7 @@ const validatedDetails = (
     platform,
   );
   return validated.ok
-    ? ok(
-        environmentDetails(
-          environment,
-          validated.value.configuration,
-          validated.value.unresolvedSettings,
-        ),
-      )
+    ? ok(environmentDetails(environment, validated.value))
     : validated;
 };
 
@@ -380,14 +394,18 @@ const registrationTimeoutInputs = (
 
 const environmentDetails = (
   environment: Readonly<Record<string, string>>,
-  configuration: Environment,
-  unresolvedSettings: ReadonlySet<string>,
+  {
+    configuration,
+    runtimeEnvironment,
+    unresolvedSettings,
+  }: ValidatedRegistrationEnvironment,
 ): ClientRegistrationEnvironmentDetails => ({
   values: Object.fromEntries(
     Object.entries(environment).sort(([left], [right]) =>
       compareUnicodeCodePoints(left, right),
     ),
   ),
+  runtimeEnvironment,
   unresolvedSettings,
   timeoutInputs: [...unresolvedSettings].some((setting) =>
     TIMEOUT_INPUT_SETTINGS.has(setting),
@@ -395,20 +413,19 @@ const environmentDetails = (
     ? undefined
     : {
         analysisProvider: configuration.REA_ANALYSIS_PROVIDER,
-        ...registrationTimeoutInputs(environment),
+        ...registrationTimeoutInputs(runtimeEnvironment),
       },
 });
 
 const validatedBudget = async (
   details: ResolvedClientRegistrationEnvironmentDetails,
   resolveProviderRequestBudget: ProviderRequestBudgetResolver,
-  platform: NodeJS.Platform,
 ): Promise<
   Result<ResolvedClientRegistrationEnvironmentDetails, ConfigurationError>
 > => {
   const providerBudget = await resolveProviderRequestBudget(
     details.timeoutInputs.analysisProvider,
-    snapshotEnvironment(details.values, platform),
+    details.runtimeEnvironment,
   );
   if (!providerBudget.ok) return providerBudget;
   return ok({

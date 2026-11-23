@@ -1,11 +1,12 @@
+import { fixedAllowanceRemediation } from "../../domain/fixedAllowanceRemediation.js";
 import { createHash } from "node:crypto";
 import { lstat, open, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import * as stableArtifact from "../../artifacts/readStableArtifact.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+import * as stableArtifact from "../../resources/readStableArtifact.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { inspectNtfsJournalEvidence } from "./NtfsJournalService.js";
 import { parseEvidence } from "../../domain/evidence.js";
@@ -69,6 +70,41 @@ it("preserves the completed file identity when MFT interpretation fails", async 
     expect(spy).toHaveBeenCalledTimes(1);
   } finally {
     spy.mockRestore();
+    await resources.close();
+  }
+});
+
+it("refuses an oversized acquisition as a fixed ceiling, not host memory", async () => {
+  const resources = new ArtifactResourceScope();
+  const directory = await createTestTempDirectory("rea-ntfs-oversized-");
+  const mftPath = join(directory, "mft");
+  const file = await open(mftPath, "w");
+  await file.truncate(64 * 1024 * 1024 + 1);
+  await file.close();
+  try {
+    const result = await inspectNtfsJournalEvidence(
+      { mft_path: mftPath, journal_path: "/fixture/journal" },
+      resources,
+    );
+    if (result.ok) throw new Error("expected a size refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance: "The NTFS journal file allowance",
+          limit: 64 * 1024 * 1024,
+          unit: "bytes",
+        },
+      },
+    });
+    // Recovery comes from the fixed-allowance owner, not host-memory advice.
+    expect(projected.remediation.action).toContain(
+      fixedAllowanceRemediation("The NTFS journal file allowance", "input"),
+    );
+  } finally {
     await resources.close();
   }
 });

@@ -1,4 +1,4 @@
-import type { ProviderIdentity } from "../application/AnalysisProvider.js";
+import type { ProviderIdentity } from "../ports/AnalysisProvider.js";
 
 /** Source-owned static provider identity and public operation names. */
 export const JEB_PROVIDER_IDENTITY: ProviderIdentity = {

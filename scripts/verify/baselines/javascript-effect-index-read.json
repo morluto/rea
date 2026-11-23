@@ -1,0 +1,6 @@
+{
+  "src/domain/javascript/javascriptSemanticAmbientWrites.ts": 25,
+  "src/domain/javascript/javascriptSemanticAnalysis.ts": 4,
+  "src/domain/javascript/javascriptSemanticMemberMutations.ts": 5,
+  "src/domain/javascript/javascriptSemanticMutationInitializers.ts": 3
+}

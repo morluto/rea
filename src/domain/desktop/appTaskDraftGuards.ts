@@ -2,9 +2,8 @@ import {
   escapeJsonPointerToken,
   unescapeJsonPointerToken,
 } from "../jsonPointer.js";
-import type { JsonValue } from "../jsonValue.js";
+import { equalJsonValues, type JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
-import { sameJson } from "./appTaskChecks.js";
 import { holdsSplitDate, isCoordinates, isStamp } from "./appTaskDraftNoise.js";
 import { holdsNoisyText } from "./appTaskDraftText.js";
 import { decimalOf, valueEqualsCheck } from "./appTaskDraftScalars.js";
@@ -25,6 +24,7 @@ import { numberedInOrder } from "./positionalKeys.js";
 import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
 import { selectorOf, spellCondition, type Condition } from "./viewSelector.js";
 import { childConditions } from "./selectorCandidates.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 type Suggestion = DesktopTaskCheckInput;
 
@@ -114,7 +114,7 @@ const guardAt = (
       : undefined;
   }
   return typeof before !== "object" &&
-    sameJson(before, after) &&
+    equalJsonValues(before, after) &&
     !isStamp(before) &&
     (typeof before !== "string" || before.length <= context.chars)
     ? valueEqualsCheck(file, pointer, before)
@@ -215,11 +215,7 @@ const siblingsOf = (
 };
 
 const attributesOf = ({ attributes }: Record<string, JsonValue>) =>
-  typeof attributes === "object" &&
-  attributes !== null &&
-  !Array.isArray(attributes)
-    ? attributes
-    : {};
+  isRecord(attributes) ? attributes : {};
 
 /** The conditions a sibling's segment selects it by, `@` attributes and `>` children's text. */
 const conditionsOf = (member: string) =>
@@ -363,9 +359,9 @@ const guardField = (
   const own = !readsSelector(sibling, rest);
   if (rest.length > 0 && varies(rest) && own) return rest;
   const selected = new Set(
-    [...sibling.member.matchAll(/\[@(?<key>[^=\]]+)=/gu)].map(
-      ({ groups }) => groups?.key ?? "",
-    ),
+    conditionsOf(sibling.member)
+      .filter(({ prefix }) => prefix === "@")
+      .map(({ key }) => key),
   );
   const [best] = rankAttributes(
     Object.entries(attributesOf(sibling.element)).flatMap(([key, value]) =>
@@ -440,6 +436,7 @@ const guardsFor = (context: GuardContext, check: Suggestion): Suggestion[] => {
     const { siblings, all } = siblingsOf(context, step);
     const varies = variesAmong(all);
     const guards: Suggestion[] = [];
+    // generation-cap: siblings read while looking for a guard
     for (const sibling of siblings.slice(0, MAX_SIBLINGS_READ)) {
       if (guards.length === MAX_GUARDS_PER_CHECK) break;
       const guard = siblingGuard(
@@ -485,7 +482,10 @@ export const draftGuards = (
         guards.push(guard);
       }
   }
-  return guards
-    .toSorted((left, right) => placed(left) - placed(right))
-    .slice(0, MAX_GUARDS);
+  return (
+    guards
+      .toSorted((left, right) => placed(left) - placed(right))
+      // generation-cap: suggested guards
+      .slice(0, MAX_GUARDS)
+  );
 };

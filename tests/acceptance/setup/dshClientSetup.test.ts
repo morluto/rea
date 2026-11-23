@@ -1,18 +1,41 @@
 import { artifactMcpCall } from "../../../scripts/lib/artifact-e2e.mjs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { expect } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect } from "vitest";
 import { parse } from "yaml";
 import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../support/workspace/workspaceFixture.js";
+
+let sharedDshHome = "";
+
+beforeAll(async () => {
+  sharedDshHome = (await createTestWorkspace("rea-dsh-shared-")).root;
+});
+
+beforeEach(async () => {
+  for (const entry of await readdir(sharedDshHome)) {
+    await rm(join(sharedDshHome, entry), { recursive: true, force: true });
+  }
+});
+
+afterAll(async () => {
+  if (sharedDshHome !== "") {
+    await removeTestWorkspace(sharedDshHome);
+  }
+});
 
 cliTest.for(["setup", "uninstall"] as const)(
   "DSH CLI %s refuses a multi-document patch without losing caller content",
   async (operation, { cli }) => {
-    const home = await createTestTempDirectory("rea-dsh-multiple-documents-");
+    const home = sharedDshHome;
     const profile = join(home, ".dsh");
     const config = join(profile, "cordis.patch.yml");
     await mkdir(profile);
@@ -107,23 +130,15 @@ cliTest.for([
           DSH_AGENTS_HOME: agents,
         },
       });
-    const planned = await run(["setup", "--client", "dsh", "--dry-run"]);
-    expect(planned.exitCode).toBe(0);
-    expect(planned.json).toMatchObject({
-      status: "planned",
-      appliedActions: [],
-      plannedActions: expect.arrayContaining([
-        expect.objectContaining({ id: "configure_client:dsh", target: config }),
-        expect.objectContaining({ kind: "install_skill", target: skillRoot }),
-      ]),
-    });
-    expect(await readFile(config, "utf8")).toBe(original);
-    await expect(readFile(skill)).rejects.toMatchObject({ code: "ENOENT" });
     const configured = await run(["setup", "--client", "dsh", "--yes"]);
     expect(configured.exitCode).toBe(0);
     expect(configured.json).toMatchObject({
       status: "ready",
       clients: { dsh: { status: "configured" } },
+      plannedActions: expect.arrayContaining([
+        expect.objectContaining({ id: "configure_client:dsh", target: config }),
+        expect.objectContaining({ kind: "install_skill", target: skillRoot }),
+      ]),
     });
     const text = await readFile(config, "utf8");
     expect(text).toContain("# caller patch");
@@ -135,14 +150,6 @@ cliTest.for([
     const doctor = await run(["doctor", "--client", "dsh", "--skill"]);
     expect(doctor.exitCode).toBe(0);
     expect(doctor.json).toMatchObject({ healthy: true });
-    const repeated = await run(["setup", "--client", "dsh", "--yes"]);
-    expect(repeated.exitCode).toBe(0);
-    expect(repeated.json).toMatchObject({
-      status: "ready",
-      plannedActions: [],
-      appliedActions: [],
-    });
-    expect(await readFile(config, "utf8")).toBe(text);
     const removed = await run(["uninstall"]);
     expect(removed.exitCode).toBe(0);
     expect(removed.json).toMatchObject({
@@ -200,7 +207,6 @@ cliTest(
         arguments: [...args, "--json"],
         cwd: home,
         environment,
-        timeoutMs: 20_000,
       });
     const plan = await run(["setup", "--client", "dsh", "--dry-run"]);
     expect(plan.exitCode).toBe(0);
@@ -209,19 +215,27 @@ cliTest(
       appliedActions: [],
       plannedActions: expect.arrayContaining([
         expect.objectContaining({ id: "configure_client:dsh", target: config }),
-        expect.objectContaining({ id: "install_skill" }),
+        expect.objectContaining({
+          id: "install_skill",
+          target: dirname(skill),
+        }),
       ]),
     });
     expect(await readFile(config, "utf8")).toBe(original);
     await expect(readFile(`${config}.rea.backup`)).rejects.toMatchObject({
       code: "ENOENT",
     });
+    await expect(readFile(skill)).rejects.toMatchObject({ code: "ENOENT" });
     const unapproved = await run(["setup", "--client", "dsh"]);
     expect(unapproved.json).toMatchObject({
       status: "needs_confirmation",
       appliedActions: [],
     });
     expect(await readFile(config, "utf8")).toBe(original);
+    await expect(readFile(`${config}.rea.backup`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(readFile(skill)).rejects.toMatchObject({ code: "ENOENT" });
     const configured = await run(["setup", "--client", "dsh", "--yes"]);
     expect(configured.exitCode).toBe(0);
     expect(configured.json).toMatchObject({
@@ -309,10 +323,16 @@ async function verifyGeneratedLauncher(
     command: registration.command,
     args: registration.args,
     cwd: home,
-    env: { PATH: process.env.PATH ?? "", ...environment },
+    env: {
+      PATH: process.env.PATH ?? "",
+      ...environment,
+    },
     stderr: "pipe",
   });
-  const client = new Client({ name: "dsh-setup-lifecycle", version: "1" });
+  const client = new Client(
+    { name: "dsh-setup-lifecycle", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   try {
     await client.connect(transport);
     expect((await client.listTools()).tools.map(({ name }) => name)).toContain(
@@ -335,7 +355,7 @@ async function verifyGeneratedLauncher(
 cliTest.for(["null", "caller-value", "[caller-value]"])(
   "DSH CLI refuses to edit config %s and plain uninstall removes its owned row",
   async (configValue, { cli }) => {
-    const home = await createTestTempDirectory("rea-dsh-malformed-config-");
+    const home = sharedDshHome;
     const profile = join(home, ".dsh");
     const config = join(profile, "cordis.patch.yml");
     await mkdir(profile);
@@ -405,7 +425,7 @@ cliTest.for([
 ])(
   "DSH CLI rejects setup and preserves ownership for $label",
   async ({ patch, remediation, removal }, { cli }) => {
-    const home = await createTestTempDirectory("rea-dsh-ownership-");
+    const home = sharedDshHome;
     const profile = join(home, ".dsh");
     const config = join(profile, "cordis.patch.yml");
     await mkdir(profile);

@@ -1216,3 +1216,76 @@ describe("summary tool availability", () => {
     );
   });
 });
+
+describe("declared contract availability", () => {
+  const declared = TOOL_CONTRACTS.flatMap((contract) =>
+    "availability" in contract && contract.availability !== undefined
+      ? [{ name: contract.name, availability: contract.availability }]
+      : [],
+  );
+  const failed = { providerId: "fixture", reason: "load failed" };
+  const inventory = (policy: Parameters<typeof buildCapabilityInventory>[1]) =>
+    new Map(
+      buildCapabilityInventory({ open: false, capabilities: [] }, policy).map(
+        (tool) => [tool.name, tool],
+      ),
+    );
+
+  it("keeps standalone workflows available without providers, a target or configuration", () => {
+    const tools = inventory({
+      processCaptureEnabled: false,
+      optionalProviderLoadFailures: {
+        browserObservation: failed,
+        browserScenarioCapture: failed,
+        electronObservation: failed,
+        electronActiveObservation: failed,
+        javascriptRuntimeObservation: failed,
+        fridaInstrumentation: failed,
+      },
+    });
+    const standalone = declared.filter(
+      ({ availability }) => availability === "standalone",
+    );
+    expect(standalone.length).toBeGreaterThan(0);
+    for (const { name } of standalone)
+      expect(tools.get(name), name).toMatchObject({
+        available: true,
+        reason: "available",
+      });
+  });
+
+  it("refuses each host-restricted declaration on an unsupported host before its configuration", () => {
+    const hosted = declared.flatMap(({ name, availability }) =>
+      availability === "standalone" ? [] : [{ name, ...availability }],
+    );
+    expect(hosted.length).toBeGreaterThan(0);
+    const tools = inventory({
+      processCaptureEnabled: true,
+      hostUnsupported: Object.fromEntries(
+        hosted.map(({ host }) => [host, true]),
+      ),
+    });
+    for (const { name } of hosted)
+      expect(tools.get(name), name).toMatchObject({
+        available: false,
+        reason: "unsupported_host",
+        remediation: expect.any(String),
+      });
+  });
+});
+
+it("isolates mutable client requirements between tools and inventory calls", () => {
+  const status = { open: false, capabilities: [] };
+  const entries = buildCapabilityInventory(status, {
+    processCaptureEnabled: false,
+  });
+  const [first, second] = entries;
+  if (first === undefined || second === undefined)
+    throw new Error("Expected multiple capabilities");
+  first.client_requirements.required.push("elicitation_form");
+  expect(second.client_requirements.required).toEqual([]);
+  expect(
+    buildCapabilityInventory(status, { processCaptureEnabled: false })[0]
+      ?.client_requirements.required,
+  ).toEqual([]);
+});

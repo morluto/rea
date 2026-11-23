@@ -7,6 +7,7 @@ import {
   selectorOf,
   type Condition,
 } from "./viewSelector.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** The arrays a pointer stepped into, each as the pointer to it. */
 interface ArraySteps {
@@ -31,12 +32,13 @@ type Stepped =
   | { readonly kind: "none"; readonly reason?: string }
   | { readonly kind: "unresolved"; readonly problem: string };
 
-const INDEX = /^(?:0|[1-9][0-9]*)$/u;
+/** The conditions in a pointer's last reference token, when it is a selector. */
+export const lastSelectorOf = (pointer: string): readonly Condition[] =>
+  selectorOf(
+    unescapeJsonPointerToken(pointer.slice(pointer.lastIndexOf("/") + 1)),
+  ) ?? [];
 
-const isRecord = (
-  value: JsonValue | null | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+const INDEX = /^(?:0|[1-9][0-9]*)$/u;
 
 const own = (record: Record<string, JsonValue>, key: string) =>
   Object.hasOwn(record, key) ? record[key] : undefined;

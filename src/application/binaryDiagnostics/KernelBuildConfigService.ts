@@ -1,7 +1,6 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { KernelBuildConfigPort } from "./KernelBuildConfigPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { KernelBuildConfigPort } from "../../ports/binaryDiagnostics/KernelBuildConfigPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectKernelBuildConfigInputSchema,
@@ -13,9 +12,8 @@ import {
   type KernelBuildConfig,
   type KernelBuildConfigEntry,
 } from "../../domain/native/kernelBuildConfig.js";
-import { err, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import type { Result } from "../../domain/result.js";
+import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_kernel_build_config";
 const MARKER_BYTES = KERNEL_BUILD_CONFIG_MARKER_BYTES;
@@ -30,50 +28,42 @@ export class KernelBuildConfigService {
     return this.provider.close?.() ?? Promise.resolve();
   }
 
-  async inspect(
+  inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    const input = parseAnalysisInput(
-      OPERATION,
-      rawInput,
-      inspectKernelBuildConfigInputSchema,
-      options?.signal,
-    );
-    if (!input.ok) return input;
-    const result = await this.provider.inspect(input.value, options);
-    if (!result.ok) return result;
-    const report = kernelBuildConfigSchema.safeParse(result.value);
-    if (
-      !report.success ||
-      report.data.artifact.path !== input.value.path ||
-      !validReport(report.data, input.value)
-    )
-      return err(
-        new AnalysisOutputError(
-          OPERATION,
+    return executeArtifactInspection(
+      {
+        operation: OPERATION,
+        inputSchema: inspectKernelBuildConfigInputSchema,
+        outputSchema: kernelBuildConfigSchema,
+        provider: this.provider,
+        invalidOutputMessage:
           "Kernel build config provider returned malformed output or changed artifact identity.",
-        ),
-      );
-    const value = report.data;
-    return completeProviderEvidence(
-      createEvidence(
-        {
-          path: value.artifact.path,
-          format: value.format === "elf" ? "elf" : "file",
-          sha256: value.artifact.sha256,
-        },
-        this.provider.identity,
-        {
-          operation: OPERATION,
-          parameters: input.value,
-          result: value,
-          confidence: "observed",
-          limitations: value.limitations,
-          locations: locationsOf(value),
-        },
-      ),
-      options?.signal,
+        toParameters: (input) => input,
+        validateReport: (report, parameters) =>
+          report.artifact.path === parameters.path &&
+          validReport(report, parameters),
+        buildEvidence: (value, identity, parameters) =>
+          createEvidence(
+            {
+              path: value.artifact.path,
+              format: value.format === "elf" ? "elf" : "file",
+              sha256: value.artifact.sha256,
+            },
+            identity,
+            {
+              operation: OPERATION,
+              parameters,
+              result: value,
+              confidence: "observed",
+              limitations: value.limitations,
+              locations: locationsOf(value),
+            },
+          ),
+      },
+      rawInput,
+      options,
     );
   }
 }
@@ -260,11 +250,13 @@ const searchedAgrees = (report: KernelBuildConfig): boolean => {
     if (report.banner.status === "unknown") return false;
     if (report.config.status === "present" || report.config.status === "absent")
       return report.coverage.status === "complete";
+    // A cut or budget-stopped config is a known gap; a malformed one is unreadable.
+    if (report.coverage.examined_entries !== 0) return false;
+    if (report.config.status === "incomplete")
+      return report.coverage.status === "partial";
     return (
-      (report.config.status === "incomplete" ||
-        report.config.status === "malformed") &&
-      report.coverage.status === "incomplete" &&
-      report.coverage.examined_entries === 0
+      report.config.status === "malformed" &&
+      report.coverage.status === "unknown"
     );
   }
   if (
@@ -279,7 +271,7 @@ const searchedAgrees = (report: KernelBuildConfig): boolean => {
       report.config.status === "unsupported"
     );
   return (
-    report.coverage.status === "incomplete" &&
+    report.coverage.status === "unknown" &&
     report.config.status === "incomplete"
   );
 };

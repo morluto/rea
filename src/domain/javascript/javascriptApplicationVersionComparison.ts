@@ -1,6 +1,8 @@
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import type { Evidence } from "../evidence.js";
+import { joinCoverageStatus } from "../coverage.js";
+import { applicationCoverageKnowledge } from "./javascriptApplicationEvidenceSchemas.js";
 import { buildJavaScriptApplicationChangeGraph } from "./javascriptApplicationChangeGraph.js";
 import {
   ownedApplicationVersionComparisonResultSchema,
@@ -84,36 +86,57 @@ export const compareJavaScriptApplicationVersions = (
 
 const summary = (
   items: readonly ApplicationVersionComparisonResult["items"][number][],
-): ApplicationVersionComparisonResult["summary"] => ({
-  unchanged: countStatus(items, "unchanged"),
-  added: countStatus(items, "added"),
-  removed: countStatus(items, "removed"),
-  changed: countStatus(items, "changed"),
-  unknown: countStatus(items, "unknown"),
-});
-
-const countStatus = (
-  items: readonly ApplicationVersionComparisonResult["items"][number][],
-  status: ApplicationVersionComparisonResult["items"][number]["status"],
-): number => items.filter((item) => item.status === status).length;
+): ApplicationVersionComparisonResult["summary"] => {
+  const counts = {
+    unchanged: 0,
+    added: 0,
+    removed: 0,
+    changed: 0,
+    unknown: 0,
+  };
+  for (const item of items) counts[item.status] += 1;
+  return counts;
+};
 
 const matchingSummary = (
   items: readonly ApplicationVersionComparisonResult["items"][number][],
-): ApplicationVersionComparisonResult["matching"] => ({
-  exact_node_identity: countBasis(items, "exact-node-identity"),
-  exact_content_digest: countBasis(items, "exact-content-digest"),
-  exact_module_source_digest: countBasis(items, "exact-module-source-digest"),
-  source_map_identity: countBasis(items, "source-map-identity"),
-  structural_fingerprint: countBasis(items, "structural-fingerprint"),
-  semantic_key: countBasis(items, "semantic-key"),
-  ambiguous: items.filter(({ match }) => match.status === "ambiguous").length,
-  unmatched: items.filter(({ match }) => match.status === "unmatched").length,
-});
-
-const countBasis = (
-  items: readonly ApplicationVersionComparisonResult["items"][number][],
-  basis: ApplicationVersionComparisonResult["items"][number]["match"]["basis"],
-): number => items.filter(({ match }) => match.basis === basis).length;
+): ApplicationVersionComparisonResult["matching"] => {
+  const counts = {
+    exact_node_identity: 0,
+    exact_content_digest: 0,
+    exact_module_source_digest: 0,
+    source_map_identity: 0,
+    structural_fingerprint: 0,
+    semantic_key: 0,
+    ambiguous: 0,
+    unmatched: 0,
+  };
+  for (const { match } of items) {
+    switch (match.basis) {
+      case "exact-node-identity":
+        counts.exact_node_identity += 1;
+        break;
+      case "exact-content-digest":
+        counts.exact_content_digest += 1;
+        break;
+      case "exact-module-source-digest":
+        counts.exact_module_source_digest += 1;
+        break;
+      case "source-map-identity":
+        counts.source_map_identity += 1;
+        break;
+      case "structural-fingerprint":
+        counts.structural_fingerprint += 1;
+        break;
+      case "semantic-key":
+        counts.semantic_key += 1;
+        break;
+    }
+    if (match.status === "ambiguous") counts.ambiguous += 1;
+    else if (match.status === "unmatched") counts.unmatched += 1;
+  }
+  return counts;
+};
 
 type ComparisonOmissions = ApplicationVersionComparisonResult["coverage"];
 type ComparisonOmissionCounts = Pick<
@@ -129,19 +152,23 @@ const comparisonCoverage = (
     left_graph_status: input.left.graph.coverage.status,
     right_graph_status: input.right.graph.coverage.status,
   };
-  const sourceGraphsComplete =
-    input.left.graph.coverage.status === "complete" &&
-    input.right.graph.coverage.status === "complete";
+  const joined = joinCoverageStatus([
+    applicationCoverageKnowledge(input.left.graph.coverage.status),
+    applicationCoverageKnowledge(input.right.graph.coverage.status),
+  ]);
   const sourceGraphsTruncated =
     input.left.graph.coverage.truncated || input.right.graph.coverage.truncated;
   return {
     ...context,
     ...omissions,
-    status: sourceGraphsComplete
-      ? "complete-within-inputs"
-      : sourceGraphsTruncated
-        ? "truncated"
-        : "partial",
+    status:
+      joined === "complete"
+        ? "complete-within-inputs"
+        : joined === "unknown"
+          ? "unknown"
+          : sourceGraphsTruncated
+            ? "truncated"
+            : "partial",
   };
 };
 

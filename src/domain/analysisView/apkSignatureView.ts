@@ -28,6 +28,7 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { evidenceSubjectTarget } from "../evidence.js";
 
 const identityFields = new Set([
   "id",
@@ -99,12 +100,10 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
   const reusable = isImmutableJsonSnapshot(report);
   const cached = reusable ? checked.get(report) : undefined;
   // Parent identity is checked on every read, independently of reusable facts.
+  const subject = evidenceSubjectTarget(parent.subject);
   if (
-    parent.subject != null &&
-    !apkSignatureMatchesSubject(report.artifact, {
-      sha256: parent.subject.digest.sha256,
-      format: parent.subject.format,
-    })
+    subject !== undefined &&
+    !apkSignatureMatchesSubject(report.artifact, subject)
   )
     return err(
       analysisViewInputError([
@@ -305,7 +304,7 @@ export const projectApkSignatureView = (
       view,
       ...shared,
       summary,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const ids = view.ids === undefined ? undefined : new Set(view.ids);
   const signers =

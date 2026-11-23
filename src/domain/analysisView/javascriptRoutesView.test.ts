@@ -1,13 +1,13 @@
+import { UNKNOWN_EVIDENCE_SUBJECT } from "../../../tests/fixtures/evidenceSubject.js";
 import { expect, it } from "vitest";
 import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { completeSemanticSteps } from "../javascript/javascriptSemanticTraversal.js";
 import { buildJavaScriptRouteInventorySteps } from "../javascript/javascriptRouteInventory.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import { projectAnalysisError } from "../analysisErrorProjection.js";
-import {
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { evidenceSubject } from "../evidence.js";
 import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 const inventory = (
@@ -152,7 +152,7 @@ it("accepts captured-page Evidence with an explicitly absent local artifact", ()
     {
       ...parent(),
       operation: "analyze_web_bundle",
-      subject: null,
+      subject: UNKNOWN_EVIDENCE_SUBJECT,
       normalizedResult: {
         capture: { target_url: "https://example.test/" },
         route_inventory: inventory(),
@@ -178,13 +178,12 @@ it("checks subject identity again after warming an immutable parent", () => {
   const result = projectAnalysisView(
     {
       ...sealed,
-      subject: {
+      subject: evidenceSubject({
         name: "app",
-        local_path: "/different",
-        digest: { sha256: "d".repeat(64) },
+        path: "/different",
+        sha256: "d".repeat(64),
         format: "javascript-bundle",
-        architecture: null,
-      },
+      }),
     },
     analysisViewRequestSchema.parse({
       kind: "javascript-routes",
@@ -355,4 +354,56 @@ it("admits a summary that fits exactly after sealing", () => {
   expect(Buffer.byteLength(JSON.stringify(query(source, selection)))).toBe(
     1024 * 1024,
   );
+});
+
+it("paginates filtered and ID-selected route pages accurately across skipped offsets", () => {
+  const source = {
+    ...parent(),
+    normalizedResult: {
+      input_path: "/gone/app",
+      root_artifact_sha256: "c".repeat(64),
+      route_inventory: inventory(
+        [
+          "createBrowserRouter([",
+          "  { path: '/alpha' },",
+          "  { path: '/beta' },",
+          "  { path: '/gamma' },",
+          "  { path: '/delta' },",
+          "  { path: '/epsilon' },",
+          "]);",
+          "router.push('/login');",
+        ].join("\n"),
+      ),
+    },
+  };
+  const all = query(source, { collection: "routes", fields: ["path"] });
+  expect(all.items).toHaveLength(6);
+  const byPath = new Map(
+    all.items.map((row) => ["path" in row ? row.path : undefined, row.id]),
+  );
+  const page = query(source, {
+    collection: "routes",
+    fields: ["path"],
+    where: {
+      ids: [
+        byPath.get("/epsilon")!,
+        byPath.get("/gamma")!,
+        byPath.get("/login")!,
+        byPath.get("/alpha")!,
+        byPath.get("/delta")!,
+      ],
+      classifications: ["page"],
+    },
+    offset: 1,
+    limit: 2,
+  });
+  expect(
+    page.items.map((row) => ("path" in row ? row.path : undefined)),
+  ).toEqual(["/delta", "/epsilon"]);
+  expect(page.coverage).toMatchObject({
+    total: 4,
+    examined: 2,
+    next_offset: 3,
+    exhausted: false,
+  });
 });

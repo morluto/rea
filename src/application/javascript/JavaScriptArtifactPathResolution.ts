@@ -36,6 +36,7 @@ import { selectPackageSubpathPattern } from "../../domain/javascript/javascriptP
 import type { JavaScriptModuleResolutionMode } from "../../domain/javascript/javascriptModuleResolutionMode.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 type ArtifactPathResolutionContext =
   | "package-entrypoint"
@@ -1304,15 +1305,20 @@ const hasContainerDirectory = (
     )
   )
     return true;
-  // Inventory has files rather than directory entries. An admitted descendant
-  // establishes a package directory even without package.json.
+  // An admitted file can establish a directory without an explicit entry.
+  // Use the inventory's prefix range when available to avoid walking every
+  // analyzed file for each package searched along the ancestor chain.
   const prefix = `${candidate}/`;
-  for (const [path, file] of input.files)
+  const indexedPaths = input.unanalyzedFiles?.filePathsBelow?.(candidate);
+  for (const path of indexedPaths ?? input.files.keys()) {
+    if (indexedPaths === undefined && !path.startsWith(prefix)) continue;
+    const file = input.files.get(path);
     if (
-      path.startsWith(prefix) &&
+      file !== undefined &&
       admitsRuntimeContainer(input, path, file.container_sha256)
     )
       return true;
+  }
   const container = crossesRuntimeArchiveBoundary(input, `${candidate}/`)
     ? undefined
     : input.files.get(input.sourcePath)?.container_sha256;
@@ -1502,10 +1508,7 @@ const readPackageMetadata = (
         ? exports
         : undefined,
     // Import maps must be non-array objects; other shapes are not a map.
-    imports:
-      typeof imports === "object" && imports !== null && !Array.isArray(imports)
-        ? imports
-        : undefined,
+    imports: isRecord(imports) ? imports : undefined,
     main:
       input.moduleKind !== undefined && typeof main !== "string"
         ? undefined
@@ -1700,8 +1703,11 @@ const resolveFileCandidates = (
   return null;
 };
 
+const ASAR_SEGMENT_PATTERN = /\.asar\//iu;
+
 /** Classify the extension as inventory does; retain exact archive occurrence bytes. */
 const runtimeArchiveRoot = (path: string): string | undefined => {
+  if (!ASAR_SEGMENT_PATTERN.test(path)) return undefined;
   const components = path.split("/");
   const archive = components.findLastIndex(
     (component, index) =>
@@ -1851,7 +1857,7 @@ const selectPackageExport = (
   let target = value;
   let pattern: string | undefined;
   let declared: string[] = [];
-  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+  if (isRecord(value)) {
     const keys = Object.keys(value);
     const hasSubpaths = keys.some((key) => key.startsWith("."));
     if (hasSubpaths && keys.some((key) => !key.startsWith(".")))
@@ -1862,8 +1868,12 @@ const selectPackageExport = (
       };
     declared = keys;
     if (hasSubpaths) {
-      if (subpath.endsWith("/")) return { status: "unmatched", declared };
-      if (!subpath.includes("*") && Object.hasOwn(value, subpath))
+      // A trailing slash excludes exact keys, but can still match a wildcard.
+      if (
+        !subpath.endsWith("/") &&
+        !subpath.includes("*") &&
+        Object.hasOwn(value, subpath)
+      )
         target = Reflect.get(value, subpath);
       else {
         pattern = selectPackageSubpathPattern(keys, subpath);
@@ -2065,16 +2075,39 @@ const selectExportTarget = (
  * built-in resolver that owns installed-package imports and requires. The
  * supported Node runtimes also activate "module-sync" for both loaders.
  */
+const EXPORT_CONDITIONS_DEFAULT: ReadonlySet<string> = new Set([
+  "node",
+  "node-addons",
+  "module-sync",
+  "default",
+]);
+const EXPORT_CONDITIONS_BY_KIND = new Map<string, ReadonlySet<string>>([
+  [
+    "import",
+    new Set(["node", "node-addons", "module-sync", "import", "default"]),
+  ],
+  [
+    "require",
+    new Set(["node", "node-addons", "module-sync", "require", "default"]),
+  ],
+  [
+    "compiler-dependent",
+    new Set([
+      "node",
+      "node-addons",
+      "module-sync",
+      "compiler-dependent",
+      "default",
+    ]),
+  ],
+]);
+
 const packageExportConditions = (
   moduleKind: ResolveArtifactPathInput["moduleKind"],
 ): ReadonlySet<string> =>
-  new Set([
-    "node",
-    "node-addons",
-    "module-sync",
-    ...(moduleKind === undefined ? [] : [moduleKind]),
-    "default",
-  ]);
+  moduleKind === undefined
+    ? EXPORT_CONDITIONS_DEFAULT
+    : (EXPORT_CONDITIONS_BY_KIND.get(moduleKind) ?? EXPORT_CONDITIONS_DEFAULT);
 
 const notFoundCandidate = (): Extract<
   CandidateResolution,

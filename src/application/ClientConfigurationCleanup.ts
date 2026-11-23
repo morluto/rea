@@ -2,15 +2,15 @@ import {
   ArtifactResourceRetryFailure,
   type ArtifactResourceOwner,
   type ArtifactResourceScope,
-} from "../artifacts/ArtifactResourceScope.js";
-import type { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+  type AnalysisCleanupLease,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import {
   RegularFileCleanupFailure,
   type RegularFileOperationOutcome,
 } from "../filesystem/OwnedRegularFile.js";
-import { retryRegularFileCleanupFailures } from "./RegularFileRead.js";
+import { retryRegularFileCleanupFailures } from "../process/RegularFileRead.js";
 
 /** Completion and exact staging owner retained when publication cleanup fails. */
 export class ClientConfigurationPublicationFailure<

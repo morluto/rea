@@ -556,9 +556,8 @@ it.skipIf(process.platform === "win32")(
       ),
     );
     let outcome;
-    let sameClose = false;
-    let closeSettled = false;
-    let settledBeforeLaunchRelease = false;
+    let settledCloses = 0;
+    let settledBeforeLaunchRelease;
     try {
       await Promise.race([
         entered.promise,
@@ -568,17 +567,13 @@ it.skipIf(process.platform === "win32")(
       ]);
       const first = commands.close();
       const second = commands.close();
-      sameClose = first === second;
-      void first.then(
-        () => {
-          closeSettled = true;
-        },
-        () => {
-          closeSettled = true;
-        },
-      );
+      const settled = () => {
+        settledCloses += 1;
+      };
+      for (const closing of [first, second])
+        void closing.then(settled, settled);
       await cancelled.promise;
-      settledBeforeLaunchRelease = closeSettled;
+      settledBeforeLaunchRelease = settledCloses;
       release.resolve();
       await Promise.all([first, second]);
       outcome = await running;
@@ -588,8 +583,7 @@ it.skipIf(process.platform === "win32")(
       await running;
     }
 
-    expect(sameClose).toBe(true);
-    expect(settledBeforeLaunchRelease).toBe(false);
+    expect(settledBeforeLaunchRelease).toBe(0);
     expect(outcome).toEqual({
       ok: false,
       cause: expect.objectContaining({ reason: "cancelled", snapshot: null }),

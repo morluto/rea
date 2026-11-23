@@ -91,6 +91,59 @@ export const measureMcpResultWithinBudget = (
   return { ok: true, bytes };
 };
 
+const measureJsonPart = (
+  part: string,
+): {
+  readonly rawBytes: number;
+  readonly escapedBytes: number;
+  readonly escapedCodeUnits: number;
+} => {
+  const len = part.length;
+  let rawBytes = 0;
+  let escapedBytes = 0;
+  let escapedCodeUnits = len;
+  for (let index = 0; index < len; index += 1) {
+    const code = part.charCodeAt(index);
+    if (code < 0x80) {
+      rawBytes += 1;
+      if (code === 34 || code === 92) {
+        escapedBytes += 2;
+        escapedCodeUnits += 1;
+      } else if (code < 32) {
+        const extra =
+          code === 8 || code === 9 || code === 10 || code === 12 || code === 13
+            ? 1
+            : 5;
+        escapedBytes += 1 + extra;
+        escapedCodeUnits += extra;
+      } else {
+        escapedBytes += 1;
+      }
+    } else if (code < 0x800) {
+      rawBytes += 2;
+      escapedBytes += 2;
+    } else if (code >= 0xd800 && code <= 0xdfff) {
+      if (code <= 0xdbff && index + 1 < len) {
+        const next = part.charCodeAt(index + 1);
+        if (next >= 0xdc00 && next <= 0xdfff) {
+          rawBytes += 4;
+          escapedBytes += 4;
+          index += 1;
+          continue;
+        }
+      }
+      // Unpaired surrogate: UTF-8 emits U+FFFD (3 bytes); JSON.stringify emits \udxxx (6 ASCII bytes / code units).
+      rawBytes += 3;
+      escapedBytes += 6;
+      escapedCodeUnits += 5;
+    } else {
+      rawBytes += 3;
+      escapedBytes += 3;
+    }
+  }
+  return { rawBytes, escapedBytes, escapedCodeUnits };
+};
+
 /** Account for the delivered JSON representations before allocating the complete text. */
 export const encodeToolResult = (
   value: JsonValue,
@@ -105,12 +158,9 @@ export const encodeToolResult = (
     (targetContent ? TARGET_CONTENT_META_BYTES : 0);
   let codeUnits = bytes;
   for (const part of bufferedJsonParts(jsonParts(value))) {
-    const escapedPart = JSON.stringify(part);
-    bytes +=
-      (structured ? Buffer.byteLength(part) : 0) +
-      Buffer.byteLength(escapedPart) -
-      2;
-    codeUnits += (structured ? part.length : 0) + escapedPart.length - 2;
+    const measured = measureJsonPart(part);
+    bytes += (structured ? measured.rawBytes : 0) + measured.escapedBytes;
+    codeUnits += (structured ? part.length : 0) + measured.escapedCodeUnits;
     if (bytes > budgetBytes || codeUnits > MCP_RESULT_STRING_LIMIT)
       return {
         ok: false,
@@ -124,4 +174,26 @@ export const encodeToolResult = (
     parts.push(part);
   }
   return { ok: true, text: parts.join(""), bytes };
+};
+
+/**
+ * A value's wire size inside an error result's text, measured exactly as the
+ * encoder counts it (escaped UTF-8), stopping once it exceeds the budget. A
+ * value over the budget cannot be delivered alone, so its clipped size still
+ * ranks it above every value that fits.
+ */
+export const errorTextWireBytes = (
+  value: JsonValue,
+  budgetBytes: number,
+): number => {
+  let bytes = ERROR_RESULT_ENVELOPE_BYTES;
+  let codeUnits = bytes;
+  for (const part of bufferedJsonParts(jsonParts(value))) {
+    const measured = measureJsonPart(part);
+    bytes += measured.escapedBytes;
+    codeUnits += measured.escapedCodeUnits;
+    if (bytes > budgetBytes || codeUnits > MCP_RESULT_STRING_LIMIT)
+      return bytes;
+  }
+  return bytes;
 };

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { localPathStringSchema } from "../localPath.js";
 
 /**
@@ -127,7 +128,7 @@ export const jebResultSchemas = {
     index: z.number().int().nonnegative(),
     count: z.number().int().positive(),
     units: z.array(unit),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
   }),
   decompile_jeb_item: z.strictObject({
     engine,

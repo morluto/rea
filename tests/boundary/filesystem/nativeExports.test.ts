@@ -1,13 +1,20 @@
 import { createHash } from "node:crypto";
-import { symlink, writeFile } from "node:fs/promises";
+import { symlink, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics.js";
+import { scheduler } from "node:timers/promises";
+import { describe, expect, it, vi } from "vitest";
+import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics/nativeExports.js";
+import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { nativeExportsSchema } from "../../../src/domain/native/nativeExports.js";
+import {
+  MAX_NATIVE_EXPORT_ROWS,
+  nativeExportsSchema,
+} from "../../../src/domain/native/nativeExports.js";
 import {
   elfExportImage,
   peExportImage,
+  peStoredExportTableImage,
   peRepeatedExportNamesImage,
 } from "../../fixtures/binaryDiagnostics/nativeExports.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -30,7 +37,7 @@ describe("native export stable filesystem boundary", () => {
       const sha256 = createHash("sha256").update(bytes).digest("hex");
       expect(evidence.subject).toMatchObject({
         local_path: path,
-        digest: { sha256 },
+        identity: { sha256 },
       });
       expect(
         nativeExportsSchema.parse(evidence.normalized_result),
@@ -71,10 +78,28 @@ describe("native export stable filesystem boundary", () => {
             coverage: { status: "complete", examined_entries: 1, exports: 0 },
           });
         } else {
-          expect(result).toMatchObject({
-            ok: false,
-            error: { _tag: "AnalysisResourceConstraintError" },
+          // 4100 aliases of one 4096-byte name exceed the 16 MiB retained-text
+          // byte budget while staying far below the 262144-entry ceiling, so
+          // recovery must name the byte allowance, not the entry count.
+          if (result.ok) throw new Error("Expected retained-text refusal");
+          expect(result.error).toMatchObject({
+            _tag: "AnalysisResourceConstraintError",
+            resource: "capacity",
+            reportedLimits: { boundary: "retained_text", maximum: 16777216 },
+            retryable: false,
+            fixedAllowance: {
+              name: "The native export retained-text allowance",
+              kind: "bytes",
+              limit: 16777216,
+              unit: "bytes",
+            },
           });
+          expect(result.error.message).toContain(
+            "16777216-byte retained-text allowance",
+          );
+          const action = analysisErrorRemediationAction(result.error);
+          expect(action).toContain("fixed byte allowance");
+          expect(action).not.toContain("fixed count");
         }
       }
     } finally {
@@ -111,7 +136,7 @@ describe("native export stable filesystem boundary", () => {
         operation: "inspect_native_exports",
         provider: { id: "rea-native-exports" },
         confidence: "observed",
-        subject: { local_path: path, format, digest: { sha256 } },
+        subject: { local_path: path, identity: { format, sha256 } },
       });
       expect(
         nativeExportsSchema.parse(evidence.normalized_result),
@@ -123,6 +148,54 @@ describe("native export stable filesystem boundary", () => {
     }
     await service.close();
   });
+});
+
+it("observes cancellation during a bounded ELF export inventory", async () => {
+  const root = await createTestTempDirectory("rea-native-export-cancel-");
+  const path = join(root, "libfixture.so");
+  const bytes = elfExportImage({
+    symbols: Array.from({ length: 1025 }, () => ({ name: "exported" })),
+  });
+  await writeFile(path, bytes);
+  const service = createNativeExportsService();
+  const controller = new AbortController();
+  const reason = new Error("stop during export rows");
+  const yieldToEventLoop = scheduler.yield.bind(scheduler);
+  const pause = vi
+    .spyOn(scheduler, "yield")
+    .mockImplementationOnce(async () => {
+      await yieldToEventLoop();
+      controller.abort(reason);
+    });
+  try {
+    const result = await service.inspect(
+      { path },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected cancellation during export rows");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      operation: "inspect_native_exports",
+      cause: reason,
+      partialObservation: {
+        kind: "file-snapshot-hash",
+        path,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+      },
+    });
+    const retry = await service.inspect(
+      { path },
+      { signal: new AbortController().signal },
+    );
+    if (!retry.ok) throw retry.error;
+    expect(retry.value.normalized_result).toMatchObject({
+      coverage: { status: "complete", examined_entries: 1025, exports: 1025 },
+    });
+  } finally {
+    pause.mockRestore();
+    await service.close();
+  }
 });
 
 describe("native export text capacity", () => {
@@ -141,7 +214,7 @@ describe("native export text capacity", () => {
       const report = nativeExportsSchema.parse(evidence.normalized_result);
       expect(evidence.subject).toMatchObject({
         local_path: path,
-        digest: { sha256: createHash("sha256").update(bytes).digest("hex") },
+        identity: { sha256: createHash("sha256").update(bytes).digest("hex") },
       });
       expect(report).toMatchObject({
         exports: [expect.objectContaining({ name: "kept" })],
@@ -255,6 +328,93 @@ describe("native export text capacity", () => {
   });
 });
 
+describe("native export entry allowance", () => {
+  it.each([false, true])(
+    "reports whether an oversized ELF dynamic symbol table is file-backed (%s)",
+    async (stored) => {
+      const bytes = elfExportImage({ symbols: [{ name: "exported" }] });
+      const symbolSection = Number(bytes.readBigUInt64LE(40)) + 64;
+      const size = (MAX_NATIVE_EXPORT_ROWS + 1) * 24;
+      bytes.writeBigUInt64LE(BigInt(bytes.length), symbolSection + 24);
+      bytes.writeBigUInt64LE(BigInt(size), symbolSection + 32);
+      const root = await createTestTempDirectory("rea-native-export-dynsym-");
+      const path = join(root, "rows.so");
+      await writeFile(path, bytes);
+      if (stored) await truncate(path, bytes.length + size);
+      const service = createNativeExportsService();
+      try {
+        const result = await service.inspect({ path });
+        if (result.ok) throw new Error("Expected a symbol-table refusal");
+        const projected = projectAnalysisError(result.error);
+        if (stored)
+          expect(projected).toMatchObject({
+            code: "resource_constraint",
+            details: {
+              reported_limits: {
+                boundary: "rows",
+                maximum: MAX_NATIVE_EXPORT_ROWS,
+              },
+            },
+          });
+        else
+          expect(projected).toMatchObject({
+            code: "invalid_request",
+            details: {
+              issues: [
+                {
+                  path: ["path"],
+                  reason: "invalid_format",
+                  message: expect.stringContaining(
+                    "ELF dynamic symbols range is outside the file",
+                  ),
+                },
+              ],
+            },
+          });
+      } finally {
+        await service.close();
+      }
+    },
+  );
+
+  it.each([
+    ["stored", () => peStoredExportTableImage(0x40001)],
+    [
+      "truncated",
+      () => peExportImage({ functions: [], declaredFunctions: 0x40001 }),
+    ],
+  ])(
+    "keeps count recovery for a %s export table above the entry allowance",
+    async (_case, image) => {
+      const root = await createTestTempDirectory("rea-native-export-rows-");
+      const path = join(root, "rows.dll");
+      await writeFile(path, image());
+      const service = createNativeExportsService();
+      try {
+        const result = await service.inspect({ path });
+        if (result.ok) throw new Error("Expected entry allowance refusal");
+        expect(result.error).toMatchObject({
+          _tag: "AnalysisResourceConstraintError",
+          resource: "capacity",
+          reportedLimits: { boundary: "rows", maximum: 262144 },
+          retryable: false,
+          fixedAllowance: {
+            name: "The native export inventory allowance",
+            kind: "count",
+            limit: 262144,
+            unit: "entries",
+          },
+        });
+        const action = analysisErrorRemediationAction(result.error);
+        expect(action).toContain("fixed count");
+        expect(action).not.toContain("fixed byte allowance");
+      } finally {
+        await service.close();
+      }
+    },
+  );
+});
+
 describe("native export encoding and failures", () => {
   it("keeps ELF symbol bytes while exposing valid UTF-8 text", async () => {
     const root = await createTestTempDirectory("rea-native-export-unicode-");
@@ -288,35 +448,23 @@ describe("native export encoding and failures", () => {
         },
       ],
     });
-    const olderRows = JSON.parse(
+    const withoutEncoding = JSON.parse(
       JSON.stringify(result.value.normalized_result),
     ) as { exports: Record<string, unknown>[] };
-    for (const row of olderRows.exports) {
+    for (const row of withoutEncoding.exports) {
       delete row.name_bytes_base64;
       delete row.name_utf8_decodable;
-      const version = row.version;
-      if (version !== null && typeof version === "object") {
-        Reflect.deleteProperty(version, "name_bytes_base64");
-        Reflect.deleteProperty(version, "name_utf8_decodable");
-      }
     }
-    expect(nativeExportsSchema.parse(olderRows)).toMatchObject({
-      exports: [
-        {
-          name: "café",
-          name_bytes_base64: null,
-          name_utf8_decodable: null,
-          version: {
-            index: 2,
-            name: "libcafé.so",
-            name_bytes_base64: null,
-            name_utf8_decodable: null,
-            hidden: false,
-          },
-        },
-        { name: "ÿ", name_bytes_base64: null, name_utf8_decodable: null },
-      ],
-    });
+    expect(
+      nativeExportsSchema
+        .safeParse(withoutEncoding)
+        .error?.issues.map(({ path }) => path.join(".")),
+    ).toEqual(
+      expect.arrayContaining([
+        "exports.0.name_bytes_base64",
+        "exports.0.name_utf8_decodable",
+      ]),
+    );
     await service.close();
   });
 

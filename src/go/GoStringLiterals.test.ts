@@ -5,7 +5,7 @@ import type {
   BinaryContainer,
   ImageSection,
   LoadRegion,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import { createGoRodataStringFixture } from "../../tests/fixtures/go/rodataStringImage.js";
 import { readGoBinaryImage } from "./GoBinaryImage.js";
 import { recoverGoStringLiterals } from "./GoStringLiterals.js";
@@ -151,112 +151,39 @@ it.each([
   ]);
 });
 
-it("rejects invalid candidates and reports valid ranges omitted by the string-length budget", () => {
-  const validUnicode = Buffer.from("café\t日本語\n", "utf8");
-  const invalidUtf8 = Buffer.from([0xff, 0xfe, 0x41]);
-  const embeddedNul = Buffer.from("bad\0str", "utf8");
-  const c1Control = Buffer.from([0xc2, 0x85]);
-  const noncharacter = Buffer.from([0xef, 0xbf, 0xbf]);
-  const maxAllowed = Buffer.alloc(DEFAULT_LITERAL_BYTES, 0x61);
-  const overMax = Buffer.alloc(DEFAULT_LITERAL_BYTES + 1, 0x62);
-  const rodata = Buffer.concat([
-    validUnicode,
-    invalidUtf8,
-    embeddedNul,
-    c1Control,
-    noncharacter,
-    maxAllowed,
-    overMax,
-    Buffer.from("tail", "utf8"),
-  ]);
-  const secondRodata = Buffer.from("across-boundary", "utf8");
-  const baseRo = 0x102000n;
-  const tailOffset = rodata.length - 4;
-  const badPrefixLen =
-    validUnicode.length +
-    invalidUtf8.length +
-    embeddedNul.length +
-    c1Control.length +
-    noncharacter.length;
-
+it("recovers only admitted printable ranges at the default literal length", () => {
+  const parts = [
+    Buffer.from("café\t日本語\n"),
+    Buffer.from([0xff, 0xfe, 0x41]), // Malformed UTF-8.
+    Buffer.from("bad\0str"),
+    Buffer.from([0xc2, 0x85]), // C1 control.
+    Buffer.from([0xef, 0xbf, 0xbf]), // Noncharacter.
+    Buffer.alloc(DEFAULT_LITERAL_BYTES, 0x61),
+    Buffer.alloc(DEFAULT_LITERAL_BYTES + 1, 0x62),
+  ];
+  const base = 0x102000n;
+  let next = base;
+  const headers = parts.map((part, index) => {
+    const len = BigInt(part.length);
+    const ptr = next;
+    next += len;
+    return { section: "data" as const, offsetInSection: index * 16, ptr, len };
+  });
   const fixture = createGoRodataStringFixture({
     format: "elf",
-    rodata,
-    secondRodata,
+    rodata: Buffer.concat([...parts, Buffer.from("tail")]),
+    secondRodata: Buffer.from("across-boundary"),
     headers: [
-      {
-        section: "data",
-        offsetInSection: 0,
-        ptr: baseRo,
-        len: BigInt(validUnicode.length),
-      },
-      {
-        section: "data",
-        offsetInSection: 16,
-        ptr: baseRo + BigInt(badPrefixLen),
-        len: BigInt(DEFAULT_LITERAL_BYTES),
-      },
-      {
-        section: "data",
-        offsetInSection: 32,
-        ptr: baseRo + BigInt(badPrefixLen + maxAllowed.length),
-        len: BigInt(DEFAULT_LITERAL_BYTES + 1),
-      },
-      { section: "data", offsetInSection: 48, ptr: baseRo, len: 0n },
-      {
-        section: "data",
-        offsetInSection: 64,
-        ptr: baseRo + BigInt(validUnicode.length),
-        len: BigInt(invalidUtf8.length),
-      },
-      {
-        section: "data",
-        offsetInSection: 80,
-        ptr: baseRo + BigInt(validUnicode.length + invalidUtf8.length),
-        len: BigInt(embeddedNul.length),
-      },
-      {
-        section: "data",
-        offsetInSection: 96,
-        ptr:
-          baseRo +
-          BigInt(validUnicode.length + invalidUtf8.length + embeddedNul.length),
-        len: BigInt(c1Control.length),
-      },
-      {
-        section: "data",
-        offsetInSection: 112,
-        ptr: baseRo + BigInt(badPrefixLen - noncharacter.length),
-        len: BigInt(noncharacter.length),
-      },
-      {
-        section: "data",
-        offsetInSection: 128,
-        ptr: baseRo + BigInt(tailOffset),
-        len: 10n,
-      },
-      {
-        section: "data",
-        offsetInSection: 144,
-        ptr: baseRo + BigInt(rodata.length),
-        len: BigInt(secondRodata.length + 8),
-      },
-      {
-        section: "data",
-        offsetInSection: 164,
-        ptr: baseRo + BigInt(tailOffset),
-        len: 4n,
-      },
-      {
-        section: "text",
-        offsetInSection: 0,
-        ptr: baseRo + BigInt(tailOffset),
-        len: 4n,
-      },
+      ...headers,
+      { section: "data", offsetInSection: 112, ptr: base, len: 0n },
+      { section: "data", offsetInSection: 128, ptr: next, len: 10n },
+      { section: "data", offsetInSection: 144, ptr: next + 4n, len: 23n },
+      { section: "data", offsetInSection: 164, ptr: next, len: 4n },
+      { section: "text", offsetInSection: 0, ptr: next, len: 4n },
       { section: "data", offsetInSection: 192, ptr: 0x101000n, len: 4n },
     ],
   });
-  fixture.bytes.write("CODE", 0x1000, "utf8");
+  fixture.bytes.write("CODE", 0x1000);
 
   const recovered = readGoBinaryImage(fixture.bytes, {
     includeStringLiterals: true,
@@ -265,9 +192,62 @@ it("rejects invalid candidates and reports valid ranges omitted by the string-le
     "café\t日本語\n",
     "a".repeat(DEFAULT_LITERAL_BYTES),
   ]);
-  expect(recovered?.truncated).toBe(true);
-  expect(recovered?.limits_reached).toEqual(["max_string_literal_bytes"]);
+  expect(recovered).toMatchObject({
+    discovered_count: 2,
+    truncated: true,
+    limits_reached: ["max_string_literal_bytes"],
+  });
 });
+
+it.each(["length", "candidate count"] as const)(
+  "reports a %s limit only when it excludes a literal candidate",
+  (limit) => {
+    const rodata = Buffer.alloc(64);
+    rodata.write("kept", 32);
+    rodata.write("sixteen letters!", 48);
+    const base = 0x102000n;
+    const fixture = createGoRodataStringFixture({
+      format: "elf",
+      rodata,
+      headers: [
+        { section: "data", offsetInSection: 0, ptr: base + 32n, len: 4n },
+        limit === "length"
+          ? { section: "rodata", offsetInSection: 0, ptr: base, len: 16n }
+          : { section: "data", offsetInSection: 16, ptr: base + 40n, len: 4n },
+      ],
+    });
+    const parameter =
+      limit === "length" ? "max_string_literal_bytes" : "max_string_candidates";
+    const inspect = () =>
+      readGoBinaryImage(fixture.bytes, {
+        includeStringLiterals: true,
+        budgets: { [parameter]: limit === "length" ? 8 : 1 },
+      }).string_literals;
+    expect(inspect()).toEqual({
+      evidence_kind: "inferred",
+      discovered_count: 1,
+      aggregate_bytes: 4,
+      max_items: 2000,
+      truncated: false,
+      items: [
+        {
+          value: "kept",
+          location: { offset: fixture.rodataOffset + 32, bytes: 4 },
+          first_header_offset: fixture.dataOffset,
+          reference_count: 1,
+        },
+      ],
+    });
+    if (limit === "length")
+      fixture.bytes.writeBigUInt64LE(base + 48n, fixture.rodataOffset);
+    else fixture.bytes.write("next", fixture.rodataOffset + 40);
+    expect(inspect()).toMatchObject({
+      discovered_count: 1,
+      truncated: true,
+      limits_reached: [parameter],
+    });
+  },
+);
 
 it("enforces maxStringLiterals and the 512 KiB aggregate byte cap deterministically", () => {
   const chunks = Array.from({ length: 130 }, (_, index) =>
@@ -516,6 +496,7 @@ it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and
       declared_range: { offset: BigInt(offset), size: BigInt(slotBytes) },
       segment_mapping: mapping,
       segment_unmapped: false,
+      on_disk: true,
       relocations: { offset: 0, count: 0 },
       offset,
       size: slotBytes,
@@ -539,6 +520,7 @@ it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and
 
   const container: BinaryContainer = {
     format: "macho",
+    macho_cpu_type: 0x0100000c,
     architecture: "arm64",
     bits: 64,
     byte_order: "little",
@@ -548,11 +530,29 @@ it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and
     sections,
   };
 
-  const started = performance.now();
-  const recovered = recoverGoStringLiterals(bytes, container);
-  const elapsedMs = performance.now() - started;
-
-  expect(elapsedMs).toBeLessThan(500);
+  // Indexing reads each mapping, load region and section once or twice
+  // (100,000 reads here); a per-lookup scan reads 25,000 regions per lookup.
+  let tableReads = 0;
+  const budget = 8 * count;
+  const counted = <T extends object>(table: readonly T[]): readonly T[] =>
+    new Proxy(table, {
+      get(target, property, receiver) {
+        if (
+          typeof property === "string" &&
+          /^\d+$/u.test(property) &&
+          ++tableReads > budget
+        )
+          throw new Error("Container table read budget exceeded");
+        return Reflect.get(target, property, receiver) as unknown;
+      },
+    });
+  const recovered = recoverGoStringLiterals(bytes, {
+    ...container,
+    mappings: counted(mappings),
+    load_regions: counted(loadRegions),
+    sections: counted(sections),
+  } as BinaryContainer);
+  expect(tableReads).toBeLessThanOrEqual(budget);
   expect(recovered.items).toEqual([
     {
       value: literal,
@@ -682,6 +682,7 @@ it.each([
     };
     const container: BinaryContainer = {
       format: "macho",
+      macho_cpu_type: 0x0100000c,
       architecture: "arm64",
       bits: 64,
       byte_order: "little",
@@ -712,6 +713,7 @@ it.each([
           declared_range: { offset: 0n, size: 16n },
           segment_mapping: roMapping,
           segment_unmapped: false,
+          on_disk: true,
           relocations: { offset: 0, count: 0 },
           offset: 0,
           size: 16,
@@ -729,6 +731,7 @@ it.each([
           declared_range: { offset: 16n, size: 16n },
           segment_mapping: dataMapping,
           segment_unmapped: false,
+          on_disk: true,
           relocations: { offset: 0, count: 0 },
           offset: 16,
           size: 16,

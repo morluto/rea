@@ -1,20 +1,24 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createPackage } from "@electron/asar";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
+import { createHash } from "node:crypto";
+import { asarHeaderBytes } from "../../fixtures/asarHeader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { translateArtifactFailure } from "../../../src/artifacts/ArtifactOperationFailure.js";
+import {
+  translateArtifactFailure,
+  DirectoryArtifactReader,
+} from "../../../src/resources/index.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
-} from "../../../src/artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+} from "../../../src/resources/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { scanCanonicalArtifactInventoryInScope } from "../../../src/artifacts/inventory/scanCanonical.js";
 import { scanArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -35,66 +39,83 @@ describe("artifact inventory snapshot", () => {
     expect(snapshot.manifest.occurrence_count).toBe(3);
   });
 
-  it("projects the complete inventory when reader cleanup fails after scanning", async () => {
+  it("projects complete observed inventory while owned snapshot cleanup needs retry", async () => {
     const root = await createTestTempDirectory("rea-inventory-cleanup-");
-    await writeFile(join(root, "observed.txt"), "observed");
-    const directory = new DirectoryArtifactReader(root);
-    const resourceScope = new ArtifactResourceScope();
-    onTestFinished(() => resourceScope.close());
-    let closeAttempts = 0;
-    const reader: ArtifactReader = {
-      format: directory.format,
-      entries: (signal) => directory.entries(signal),
-      open: (entry, signal) => directory.open(entry, signal),
-      provenance: () => directory.provenance(),
-      async close() {
-        await directory.close();
-        closeAttempts += 1;
-        if (closeAttempts > 1) return;
-        throw new ArtifactReaderFailure("unavailable", "mount still attached", {
-          cleanup: {
-            reason: "DMG detach failed",
-            resources: ["/dev/disk-test", "/tmp/rea-mount-test"],
-          },
-        });
+    const archive = join(root, "app.asar");
+    const member = Buffer.from("observed");
+    const bytes = Buffer.concat([
+      asarHeaderBytes(
+        JSON.stringify({
+          files: { "observed.txt": { size: member.length, offset: "0" } },
+        }),
+      ),
+      member,
+    ]);
+    await writeFile(archive, bytes);
+    let snapshotRoot: string | undefined;
+    const reader = new AsarArtifactReader(archive, {
+      async removeSnapshot(path) {
+        if (snapshotRoot === undefined) {
+          snapshotRoot = path;
+          throw new Error("injected snapshot removal failure");
+        }
+        await rm(path, { recursive: true, force: true });
       },
-    };
+    });
+    const resourceScope = new ArtifactResourceScope();
+    onTestFinished(async () => {
+      try {
+        await resourceScope.close();
+      } finally {
+        await reader.close();
+      }
+    });
     const failure = await resourceScope
       .run(() =>
         scanCanonicalArtifactInventoryInScope(
-          root,
+          archive,
           { resourceScope },
           () => reader,
         ),
       )
-      .catch((cause: unknown) => cause);
-    expect(failure).toBeInstanceOf(ArtifactReaderFailure);
-    if (!(failure instanceof ArtifactReaderFailure))
-      throw failure instanceof Error
-        ? failure
-        : new Error("Expected the reader cleanup failure", { cause: failure });
-    const projection = projectAnalysisError(
-      translateArtifactFailure("inventory_artifact", failure),
-    );
-    expect(projection).toMatchObject({
+      .then(
+        () => {
+          throw new Error("Expected snapshot cleanup to fail");
+        },
+        (cause: unknown) => cause,
+      );
+    if (snapshotRoot === undefined)
+      throw new Error("ASAR snapshot was not observed");
+    expect((await lstat(snapshotRoot)).isDirectory()).toBe(true);
+    const error = translateArtifactFailure("inventory_artifact", failure);
+    const observation = {
+      kind: "artifact-inventory",
+      inventory: {
+        coverage: { scope: "container-entries", status: "complete" },
+        manifest: {
+          root_sha256: createHash("sha256").update(bytes).digest("hex"),
+          occurrence_count: 2,
+        },
+        occurrences: [
+          { logical_path: "." },
+          { logical_path: "observed.txt", hash_status: "verified" },
+        ],
+      },
+    };
+    expect(projectAnalysisError(error)).toMatchObject({
       code: "cleanup_incomplete",
       details: {
         execution_failure: "artifact_operation_failed",
-        resources: ["/dev/disk-test", "/tmp/rea-mount-test"],
-        partial_observation: {
-          kind: "artifact-inventory",
-          inventory: {
-            manifest: { occurrence_count: 2 },
-            occurrences: [
-              { logical_path: "." },
-              { logical_path: "observed.txt" },
-            ],
-          },
-        },
+        resources: [snapshotRoot],
+        partial_observation: observation,
       },
     });
     await resourceScope.close();
-    expect(closeAttempts).toBe(2);
+    await expect(lstat(snapshotRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(error.cleanupIncomplete).toBe(false);
+    expect(
+      projectAnalysisError(error).details?.partial_observation,
+    ).toMatchObject(observation);
   });
 });
 
@@ -130,6 +151,7 @@ it("unwinds every nested traversal and preserves its primary failure", async () 
           throw new ArtifactReaderFailure(
             "integrity",
             "primary nested member failure",
+            { integrityCheck: "container-identity" },
           );
         },
         async return() {

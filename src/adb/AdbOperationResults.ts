@@ -1,4 +1,4 @@
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import type { AdbUnparsedLines } from "./AdbUnparsedLines.js";
 import type {
   AdbBinarySelection,
@@ -22,6 +22,33 @@ export type AdbProviderIdentity = {
   version: string | null;
 };
 
+/** Slice a parsed listing by optional caller-selected offset and limit. */
+export const pageListingItems = <T>(
+  items: readonly T[],
+  label: string,
+  paging: {
+    readonly limit?: number | undefined;
+    readonly offset?: number | undefined;
+  },
+): {
+  readonly items: T[];
+  readonly truncated: boolean;
+  readonly limitations: readonly string[];
+} => {
+  const offset = paging.offset ?? 0;
+  const sliced = items.slice(
+    offset,
+    paging.limit === undefined ? undefined : offset + paging.limit,
+  );
+  const truncated = sliced.length < items.length;
+  const limitations = truncated
+    ? [
+        `Returned ${String(sliced.length)} of ${String(items.length)} ${label} (offset ${String(offset)}${paging.limit === undefined ? "" : `, limit ${String(paging.limit)}`}); adjust offset or limit to read remaining entries.`,
+      ]
+    : [];
+  return { items: sliced, truncated, limitations };
+};
+
 /**
  * Build a parsed-listing execution whose `unparsed_lines`, coverage, and
  * truncation limitation all derive from the parser's unrecognized-line facts,
@@ -32,12 +59,13 @@ export const parsedListingExecution = (
   unparsed: AdbUnparsedLines,
   provider: AdbProviderIdentity,
   limitations: readonly string[] = [],
+  partial = false,
 ) =>
   createAnalysisExecution(
     {
       ...result,
       unparsed_lines: unparsed.sample,
-      coverage: unparsed.total > 0 ? "partial" : "complete",
+      coverage: unparsed.total > 0 || partial ? "partial" : "complete",
     },
     provider,
     {

@@ -1,3 +1,6 @@
+import { ENTRY_BYTES } from "./webNetworkRouteTemplates.js";
+import { boundedList } from "../boundedList.js";
+import { ellipsisExcerpt } from "../excerpt.js";
 import { jsonPointerTokens } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
@@ -100,17 +103,11 @@ const LISTED_NAME_CHARS = 120;
 /** Captured member names quoted, so a separator in one cannot read as another, and bounded in count and length. */
 const listed = (members: readonly string[]): string => {
   if (members.length === 0) return "none";
-  const shown = members
-    .slice(0, LISTED_MEMBERS)
-    .map((member) =>
-      JSON.stringify(
-        member.length > LISTED_NAME_CHARS
-          ? `${member.slice(0, LISTED_NAME_CHARS)}…`
-          : member,
-      ),
-    )
+  const { items, omitted } = boundedList(members, LISTED_MEMBERS);
+  const shown = items
+    .map((member) => JSON.stringify(ellipsisExcerpt(member, LISTED_NAME_CHARS)))
     .join(", ");
-  return members.length > LISTED_MEMBERS
+  return omitted > 0
     ? `${shown}, … (${String(members.length)} members; all in the state Evidence)`
     : shown;
 };
@@ -622,12 +619,16 @@ export const laterItemFields = (
   views: Iterable<StateView>,
   entities: readonly StateEntity[],
   type: string | null,
+  retain?: (bytes: number) => void,
 ): Set<string> => {
   const fields = new Set<string>();
   for (const view of views)
     if (view.shape === "item" && view.type === type)
       for (const field of view.fields)
-        if (!view.required_fields.includes(field)) fields.add(field);
+        if (!view.required_fields.includes(field) && !fields.has(field)) {
+          retain?.(ENTRY_BYTES);
+          fields.add(field);
+        }
   for (const entity of entities)
     if (entity.type === type)
       for (const held of [

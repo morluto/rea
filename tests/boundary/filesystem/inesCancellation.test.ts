@@ -2,24 +2,30 @@ import { createHash } from "node:crypto";
 import { open, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
+import { finished } from "node:stream/promises";
+import type { Readable } from "node:stream";
+import { setImmediate } from "node:timers/promises";
+import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { InesArtifactReader } from "../../../src/artifacts/InesArtifactReader.js";
 import { scanReader } from "../../../src/artifacts/inventory/scanReader.js";
-import { hashStableRootArtifactHandle } from "../../../src/artifacts/inventory/hashStableRootArtifact.js";
+import { hashStableRootArtifactHandle } from "../../../src/resources/StableRootArtifact.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
-import { inesFixture } from "../../fixtures/ines.js";
+import { inesFixture, nes2Fixture } from "../../fixtures/ines.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { RetainedRegularFileCleanupFailure } from "../../../src/application/RegularFileRead.js";
+import { RetainedRegularFileCleanupFailure } from "../../../src/process/RegularFileRead.js";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import {
   artifactFileCompletion,
   artifactFilePrimaryFacts,
   ArtifactFileCleanupFailure,
   withArtifactFileHandle,
-} from "../../../src/artifacts/ArtifactFileOperation.js";
-import { readFileHandlePrefix } from "../../../src/filesystem/readFileHandlePrefix.js";
-import { abortIfNeeded } from "../../../src/artifacts/ArtifactHash.js";
+} from "../../../src/resources/ArtifactFileOperation.js";
+import { readFileHandleRange } from "../../../src/filesystem/readFileHandleRange.js";
+import { abortIfNeeded } from "../../../src/resources/StreamDigest.js";
+import * as regularFile from "../../../src/filesystem/RegularFile.js";
 
 it.each(["close", "cancel"] as const)(
   "does not complete an iNES inventory after %s while paused",
@@ -41,6 +47,9 @@ it.each(["close", "cancel"] as const)(
       await expect(entries.next()).rejects.toMatchObject({
         reason: interruption === "close" ? "unavailable" : "cancelled",
       });
+      // Close leaves the borrowed inventory descriptor with its owner.
+      if (interruption === "close")
+        await expect(handle.stat()).resolves.toBeDefined();
     } finally {
       await reader.close();
       await handle.close();
@@ -68,12 +77,9 @@ const cancelAfterNextStat = (
 
 const malformed = (format: string) => {
   if (format === "UNIF") return Buffer.from("UNIF");
-  const bytes = inesFixture();
-  if (format === "NES 2.0") {
-    bytes[7] = 8;
-    return bytes;
-  }
-  return bytes.subarray(0, 20);
+  // PRG-ROM MSB nibble 1 declares more bytes than the file holds.
+  if (format === "NES 2.0") return nes2Fixture({ header: { 9: 0x01 } });
+  return inesFixture().subarray(0, 20);
 };
 
 it.each(["default", "caller-error", "failed-close"])(
@@ -577,7 +583,7 @@ it.each([
         resources,
         controller.signal,
         (file) =>
-          readFileHandlePrefix(file, 16, () =>
+          readFileHandleRange(file, 0, 16, () =>
             abortIfNeeded(controller.signal),
           ),
       ).catch((cause: unknown) => cause);
@@ -606,6 +612,297 @@ it.each([
       close.mockRestore();
       await resources.close();
       if (handle.fd >= 0) await handle.close();
+    }
+  },
+);
+
+it.each([
+  ...[true, false].flatMap((owned) =>
+    [false, true].flatMap((failed) =>
+      (["read", "validation"] as const).flatMap((phase) =>
+        [false, ...(owned && !failed ? [true] : [])].map((consumerEnds) => ({
+          owned,
+          failed,
+          phase,
+          consumerEnds,
+          order: "close only" as const,
+        })),
+      ),
+    ),
+  ),
+  ...(["read", "validation"] as const).flatMap((phase) =>
+    (["close first", "caller first"] as const).map((order) => ({
+      owned: true,
+      failed: false,
+      phase,
+      consumerEnds: false,
+      order,
+    })),
+  ),
+])(
+  "joins admitted iNES $phase before close (owned=$owned, failed=$failed, consumer ends=$consumerEnds, interruption=$order)",
+  async ({ owned, failed, phase, consumerEnds, order }) => {
+    const root = await createTestTempDirectory("rea-ines-close-read-");
+    const path = join(root, "source.nes");
+    await writeFile(path, inesFixture());
+    const handle = await open(path, "r");
+    const reader = new InesArtifactReader(
+      path,
+      { handle, initial: await handle.stat() },
+      owned ? new OwnedFileHandle(handle) : undefined,
+    );
+    const physical = Object.assign(new Error("held region read failed"), {
+      code: "EIO",
+    });
+    const controller = new AbortController();
+    const callerReason = new Error("caller stopped during region shutdown");
+    let acknowledge = () => {};
+    let release = () => {};
+    const reached = new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let closing: Promise<void> | undefined;
+    let completion: Promise<unknown> | undefined;
+    let stream: Readable | undefined;
+    let restore = () => {};
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      const original = handle.read.bind(handle);
+      const originalStat = handle.stat.bind(handle);
+      let regionRead = false;
+      let heldValidation = false;
+      const read = vi
+        .spyOn(handle, "read")
+        .mockImplementationOnce(async (...args) => {
+          const result = await original(...args);
+          regionRead = true;
+          if (phase === "read") {
+            acknowledge();
+            await gate;
+            if (failed) throw physical;
+          }
+          return result;
+        });
+      const stat = vi
+        .spyOn(handle, "stat")
+        .mockImplementation(async (...args) => {
+          const result = await originalStat(...args);
+          if (phase === "validation" && regionRead && !heldValidation) {
+            heldValidation = true;
+            acknowledge();
+            await gate;
+            if (failed) throw physical;
+          }
+          return result;
+        });
+      restore = () => {
+        read.mockRestore();
+        stat.mockRestore();
+      };
+      stream = await reader.open(entries[0]!, controller.signal);
+      completion = finished(stream, { cleanup: true }).then(
+        () => ({ kind: "success" }),
+        (cause: unknown) => cause,
+      );
+      if (phase === "validation") stream.resume();
+      else stream.read(0);
+      await awaitAcknowledgement(reached, completion, `iNES ${phase} boundary`);
+      if (consumerEnds) stream.destroy();
+      let closed = false;
+      if (order === "caller first") controller.abort(callerReason);
+      closing = reader.close().then(() => {
+        closed = true;
+      });
+      if (order === "close first") controller.abort(callerReason);
+      await setImmediate();
+      expect(closed).toBe(false);
+      await expect(handle.stat()).resolves.toBeDefined();
+      release();
+      const outcome = await completion;
+      await closing;
+      if (!consumerEnds)
+        expect(outcome).toMatchObject(
+          failed
+            ? { reason: "io", cause: physical }
+            : order === "caller first"
+              ? { reason: "cancelled", cause: callerReason }
+              : { reason: "unavailable" },
+        );
+      expect(stream.closed).toBe(true);
+      if (owned)
+        await expect(handle.stat()).rejects.toMatchObject({ code: "EBADF" });
+      else await expect(handle.stat()).resolves.toBeDefined();
+    } finally {
+      release();
+      stream?.destroy();
+      await completion;
+      await closing;
+      restore();
+      await reader.close();
+      if (!owned) await handle.close();
+    }
+  },
+);
+
+it.each(["unread", "buffered"] as const)(
+  "retires an iNES %s stream while preserving its borrowed descriptor",
+  async (phase) => {
+    const root = await createTestTempDirectory("rea-ines-close-buffer-");
+    const path = join(root, "source.nes");
+    await writeFile(path, inesFixture());
+    const handle = await open(path, "r");
+    const reader = new InesArtifactReader(path, {
+      handle,
+      initial: await handle.stat(),
+    });
+    let stream: Readable | undefined;
+    let completion: Promise<unknown> | undefined;
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      stream = await reader.open(entries[0]!);
+      completion = finished(stream, { cleanup: true }).catch(
+        (cause: unknown) => cause,
+      );
+      if (phase === "buffered") {
+        const buffered = new Promise<void>((resolve) =>
+          stream!.once("readable", resolve),
+        );
+        stream.read(0);
+        await awaitAcknowledgement(
+          buffered,
+          completion,
+          "iNES buffered region bytes",
+        );
+        expect(stream.readableLength).toBe(16);
+      }
+      await reader.close();
+      expect(stream.destroyed).toBe(true);
+      expect(await completion).toMatchObject({ reason: "unavailable" });
+      expect(stream.closed).toBe(true);
+      await expect(handle.stat()).resolves.toBeDefined();
+      await expect(reader.open(entries[0]!)).rejects.toMatchObject({
+        reason: "unavailable",
+      });
+      await reader.close();
+    } finally {
+      stream?.destroy();
+      await completion;
+      await reader.close();
+      await handle.close();
+    }
+  },
+);
+
+it.each(["close", "cancel"] as const)(
+  "refuses a region when %s follows completed source validation",
+  async (action) => {
+    const root = await createTestTempDirectory("rea-ines-open-retirement-");
+    const path = join(root, "source.nes");
+    await writeFile(path, inesFixture());
+    const handle = await open(path, "r");
+    const reader = new InesArtifactReader(path, {
+      handle,
+      initial: await handle.stat(),
+    });
+    const controller = new AbortController();
+    const reason = new Error("caller cancelled after source validation");
+    let closing: Promise<void> | undefined;
+    let stream: Readable | undefined;
+    let completion: Promise<unknown> | undefined;
+    let restore = () => {};
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      const original = regularFile.assertStableRegularFileIdentity;
+      const validation = vi
+        .spyOn(regularFile, "assertStableRegularFileIdentity")
+        .mockImplementationOnce(async (...args) => {
+          await original(...args);
+          // Let #verifySource complete its final state check, then retire the
+          // reader/caller before the awaiting open operation resumes.
+          queueMicrotask(() =>
+            queueMicrotask(() => {
+              if (action === "close") closing = reader.close();
+              else controller.abort(reason);
+            }),
+          );
+        });
+      restore = () => validation.mockRestore();
+      const opened = reader
+        .open(entries[0]!, controller.signal)
+        .then((value) => {
+          stream = value;
+          completion = finished(value, { cleanup: true }).catch(
+            (cause: unknown) => cause,
+          );
+          return value;
+        });
+      await expect(opened).rejects.toMatchObject(
+        action === "close"
+          ? { reason: "unavailable" }
+          : { reason: "cancelled", cause: reason },
+      );
+      await expect(handle.stat()).resolves.toBeDefined();
+    } finally {
+      restore();
+      stream?.destroy();
+      await completion;
+      await closing;
+      await reader.close();
+      await handle.close();
+    }
+  },
+);
+
+it.each(["close", "cancel"] as const)(
+  "preserves region EIO when %s precedes stream error forwarding",
+  async (action) => {
+    const root = await createTestTempDirectory("rea-ines-rejection-forward-");
+    const path = join(root, "source.nes");
+    await writeFile(path, inesFixture());
+    const handle = await open(path, "r");
+    const reader = new InesArtifactReader(
+      path,
+      { handle, initial: await handle.stat() },
+      new OwnedFileHandle(handle),
+    );
+    const controller = new AbortController();
+    const physical = Object.assign(new Error("region descriptor read failed"), {
+      code: "EIO",
+    });
+    let closing: Promise<void> | undefined;
+    let restore = () => {};
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      const stream = await reader.open(entries[0]!, controller.signal);
+      const read = vi.spyOn(handle, "read").mockImplementationOnce(async () => {
+        queueMicrotask(() =>
+          queueMicrotask(() => {
+            if (action === "close") closing = reader.close();
+            else controller.abort(physical);
+          }),
+        );
+        throw physical;
+      });
+      restore = () => read.mockRestore();
+      const completed = finished(stream, { cleanup: true }).catch(
+        (cause: unknown) => cause,
+      );
+      stream.resume();
+      const outcome = await completed;
+      expect(outcome).toMatchObject({ reason: "io", cause: physical });
+      await reader.close();
+      expect(handle.fd).toBe(-1);
+    } finally {
+      restore();
+      await closing;
+      await reader.close();
     }
   },
 );

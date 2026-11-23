@@ -1,20 +1,31 @@
+import { deadlineParameterLimit } from "./analysisResourceLimits.js";
 import { createHash } from "node:crypto";
 import { canonicalBase64Schema } from "./stringPatterns.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "./coverage.js";
 import {
   browserDeadlineIncrease,
+  type BrowserDeadlineRecovery,
   browserDeadlineRetry,
   optionalBrowserDeadlineMs,
   selectedBrowserDeadlineMs,
 } from "./browserDeadline.js";
-import { jsonValueSchema, MAX_JSON_DEPTH } from "./jsonValue.js";
+import {
+  jsonValueSchema,
+  MAX_JSON_DEPTH,
+  ownedJsonValueSchema,
+} from "./jsonValue.js";
 import { absoluteLocalPathStringSchema } from "./localPath.js";
 import {
   protobufDecodingSchema,
   protobufOptionsSchema,
 } from "./protobufWire.js";
 import { qlogCaptureFactsSchema } from "./qlogCapture.js";
-import { canBorrowParsedJsonSnapshot } from "./immutableJson.js";
+import {
+  canBorrowParsedJsonSnapshot,
+  freezeOwnedJsonTreeSnapshot,
+  isImmutableJsonSnapshot,
+} from "./immutableJson.js";
 
 /** Default historical evidence budgets; exceeding a budget returns no partial capture. */
 export const WEB_NETWORK_CAPTURE_LIMITS = {
@@ -90,13 +101,15 @@ export const webNetworkCaptureBudgetFacts = (
 export const webNetworkCaptureBudgetRecovery = (
   input: Parameters<typeof selectedWebNetworkCaptureBudgets>[0],
   parameter: Parameters<typeof webNetworkCaptureBudgetFacts>[1],
+  enforcedMaximum?: number,
 ): string => {
   const facts = webNetworkCaptureBudgetFacts(input, parameter);
+  const effective = enforcedMaximum ?? facts.effective_value;
   const next =
-    facts.effective_value < facts.maximum
-      ? `Increase ${parameter} above ${String(facts.effective_value)} on the next inspect_web_network_capture call`
+    effective < facts.maximum
+      ? `Increase ${parameter} above ${String(effective)} on the next inspect_web_network_capture call`
       : `${parameter} is at its maximum; select a smaller complete producer export when that preserves the required observation`;
-  return `${next}. Effective ${parameter}: ${String(facts.effective_value)} ${facts.unit} (source ${facts.source}, default ${String(facts.default_value)}, floor ${String(facts.minimum)}, maximum ${String(facts.maximum)}). No REA restart is required. Other capture budgets, worker limits and client limits remain separate. Selection and delivery do not recreate a completed report from a refused decode.`;
+  return `${next}. Effective ${parameter}: ${String(effective)} ${facts.unit} (source ${facts.source}, default ${String(facts.default_value)}, floor ${String(facts.minimum)}, maximum ${String(facts.maximum)}). No REA restart is required. Other capture budgets, worker limits and client limits remain separate. Selection and delivery do not recreate a completed report from a refused decode.`;
 };
 
 /** Capture deadline used when capture_timeout_ms is omitted. */
@@ -111,9 +124,14 @@ export const selectedWebNetworkCaptureTimeoutMs = (
 /** Caller-visible capture deadline; byte/depth budgets have separate per-call controls. */
 export const webNetworkCaptureTimeoutRecovery = (
   timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
+): BrowserDeadlineRecovery => ({
   userMessage: `inspect_web_network_capture reached its ${String(timeoutMs)} ms capture deadline (deadlineExpired) for capture_timeout_ms. No partial capture is returned. This is not the MCP client deadline.`,
-  remediationAction: `${browserDeadlineIncrease("capture_timeout_ms", timeoutMs, DEFAULT_WEB_NETWORK_CAPTURE_TIMEOUT_MS, "--capture-timeout-ms")} ${browserDeadlineRetry} The separate max_input_bytes, max_reply_bytes and max_nesting_depth controls apply to the next call without restarting REA; capture_timeout_ms does not raise them.`,
+  limit: deadlineParameterLimit(
+    "capture_timeout_ms",
+    timeoutMs,
+    DEFAULT_WEB_NETWORK_CAPTURE_TIMEOUT_MS,
+  ),
+  remediationAction: `${browserDeadlineIncrease("capture_timeout_ms", timeoutMs, DEFAULT_WEB_NETWORK_CAPTURE_TIMEOUT_MS)} ${browserDeadlineRetry} The separate max_input_bytes, max_reply_bytes and max_nesting_depth controls apply to the next call without restarting REA; capture_timeout_ms does not raise them.`,
 });
 
 export const WEB_NETWORK_CAPTURE_FORMATS = [
@@ -311,7 +329,7 @@ export const webNetworkCaptureDecoderSchema = z.strictObject({
 /** Source coverage is shared by every offline decoder. */
 export const protobufCaptureCoverageSchema = z
   .strictObject({
-    status: z.enum(["complete", "partial"]),
+    status: knownCoverageStatusSchema,
     selected_records: z.number().int().nonnegative(),
     inspected_records: z.number().int().nonnegative(),
   })
@@ -408,24 +426,30 @@ export type WebNetworkCaptureRecord = z.output<
   typeof webNetworkCaptureRecordSchema
 >;
 
-const validatedImmutableCaptures = new WeakSet<object>();
+const validatedImmutableCaptures = new WeakMap<object, WebNetworkCapture>();
 
-/** Reuse successful validation of the exact owned snapshot, without a retained copy. */
+/** Reuse an authenticated capture, sealing normalized copies before sharing. */
 export const safeParseOwnedWebNetworkCapture = (
   input: unknown,
 ): z.ZodSafeParseResult<WebNetworkCapture> => {
-  if (
+  const reusable =
     typeof input === "object" &&
     input !== null &&
-    validatedImmutableCaptures.has(input)
-  )
-    return { success: true, data: input as WebNetworkCapture };
+    isImmutableJsonSnapshot(input);
+  const known = reusable ? validatedImmutableCaptures.get(input) : undefined;
+  if (known !== undefined) return { success: true, data: known };
   const parsed = webNetworkCaptureSchema.safeParse(input);
-  if (parsed.success && canBorrowParsedJsonSnapshot(input, parsed.data)) {
-    // Borrow only when full validation preserves values, schema normalization
-    // and alias topology. Merely frozen or mutable objects never gain a proof.
-    validatedImmutableCaptures.add(input);
+  if (!parsed.success || !reusable) return parsed;
+  if (canBorrowParsedJsonSnapshot(input, parsed.data)) {
+    // Borrow only when full validation preserves normalization and topology.
+    validatedImmutableCaptures.set(input, input);
     return { success: true, data: input };
   }
-  return parsed;
+  const normalized = ownedJsonValueSchema.safeParse(parsed.data);
+  if (!normalized.success) return parsed;
+  const sealed = freezeOwnedJsonTreeSnapshot(
+    normalized.data,
+  ) as WebNetworkCapture;
+  validatedImmutableCaptures.set(input, sealed);
+  return { success: true, data: sealed };
 };

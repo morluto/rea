@@ -1,3 +1,7 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect, onTestFinished } from "vitest";
@@ -40,9 +44,11 @@ mcpTest(
     const advertised = (await client.listTools()).tools.find(
       (tool) => tool.name === "inspect_pe_certificates",
     );
-    if (advertised?.outputSchema === undefined)
+    if (advertised === undefined)
       throw new Error("PE certificates output schema is missing");
-    const schema: Record<string, unknown> = advertised.outputSchema;
+    const schema: Record<string, unknown> = canonicalOutputSchema(
+      advertised.name,
+    );
     const ajv = schemaValidation.assertions;
     expect(ajv.validateSchema(schema)).toBe(true);
     const root = await createTestTempDirectory("rea-pe-cert-schema-");
@@ -58,7 +64,7 @@ mcpTest(
     );
     const result = await client.callTool(
       { name: "inspect_pe_certificates", arguments: { path } },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     expect(result.isError).not.toBe(true);
   },

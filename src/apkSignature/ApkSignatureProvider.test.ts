@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { deflateRawSync } from "node:zlib";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,9 +21,12 @@ import {
   withSigningBlock,
   zipWith,
 } from "../../tests/fixtures/apkSignature/v1SignatureBlock.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { apkSignatureResultSchema } from "../domain/apkSignature/apkSignatureReport.js";
 import { ApkSignatureProvider } from "./ApkSignatureProvider.js";
+import { APK_SIGNATURE_LIMITS } from "./ApkSignatureRelease.js";
+import { decodeV1SignerFromReader } from "./apkV1Signers.js";
 import { apkSignatureFailure } from "./apkSignatureFailures.js";
 import { apkSchemeValue } from "../../tests/fixtures/apkSignature/signingScheme.js";
 
@@ -384,10 +388,16 @@ describe("ApkSignatureProvider v1 signers", () => {
     const result = await provider.inspect({
       path: await write("v1-many.apk", await zipWith(names)),
     });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error._tag).toBe("AnalysisResourceConstraintError");
-    expect(result.error.message).toContain("more than 32 v1 signature blocks");
+    if (result.ok)
+      throw new Error("Accepted an archive above the v1 signer limit");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        reported_limits: { max_v1_signers: 32 },
+        refusal: { kind: "fixed_ceiling", allowance_kind: "count" },
+      },
+    });
   });
 });
 
@@ -597,10 +607,21 @@ const registerSigningStructureFailureCases = () => {
     const result = await provider.inspect({
       path: await write("huge.apk", syntheticSigned([{ id: V2, value }])),
     });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error._tag).toBe("AnalysisResourceConstraintError");
-    expect(result.error.message).toContain("output budget");
+    if (result.ok)
+      throw new Error("Accepted a report above the projection limit");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        reported_limits: { max_output_bytes: APK_SIGNATURE_LIMITS.outputBytes },
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance_kind: "report",
+          limit: APK_SIGNATURE_LIMITS.outputBytes,
+          unit: "bytes",
+        },
+      },
+    });
   });
 };
 
@@ -644,3 +665,71 @@ describe("ApkSignatureProvider output budget", () => {
     expect(over.error.message).toContain("output budget");
   });
 });
+
+it.each([
+  { method: 8, padding: 0 },
+  { method: 8, padding: 64 * 1024 },
+  { method: 99, padding: 0 },
+])(
+  "limits V1 payload reads for compression method $method and padding $padding",
+  async ({ method, padding }) => {
+    const name = "META-INF/A.RSA";
+    const rawName = Buffer.from(name);
+    const uncompressedSize = 150_000;
+    const compressed = deflateRawSync(Buffer.alloc(uncompressedSize), {
+      level: 0,
+    });
+    const payload = Buffer.concat([compressed, Buffer.alloc(padding)]);
+    const bytes = Buffer.alloc(30 + rawName.length + payload.length);
+    const dataStart = 30 + rawName.length;
+    bytes.writeUInt32LE(0x04034b50, 0);
+    bytes.writeUInt16LE(method, 8);
+    bytes.writeUInt32LE(payload.length, 18);
+    bytes.writeUInt32LE(uncompressedSize, 22);
+    bytes.writeUInt16LE(rawName.length, 26);
+    rawName.copy(bytes, 30);
+    payload.copy(bytes, dataStart);
+    const reads: number[] = [];
+    const result = await decodeV1SignerFromReader(
+      {
+        size: bytes.length,
+        readRange: async (offset, length) => {
+          if (offset >= dataStart) reads.push(length);
+          return bytes.subarray(offset, offset + length);
+        },
+      },
+      {
+        signatureFile: "META-INF/A.SF",
+        duplicate: null,
+        block: {
+          name,
+          rawName,
+          flags: 0,
+          method,
+          crc32: 0,
+          compressedSize: payload.length,
+          uncompressedSize,
+          localHeaderOffset: 0,
+        },
+      },
+      bytes.length,
+    );
+    if (method === 8) {
+      expect(result.decoded).toMatchObject({
+        ok: false,
+        error: expect.stringContaining("malformed PKCS#7"),
+      });
+      expect(reads.length).toBeGreaterThan(1);
+      expect(Math.max(...reads)).toBeLessThanOrEqual(64 * 1024);
+      const readBytes = reads.reduce((total, count) => total + count, 0);
+      expect(readBytes).toBeGreaterThanOrEqual(compressed.length);
+      expect(readBytes).toBeLessThanOrEqual(payload.length);
+    } else {
+      expect(result.decoded).toEqual({
+        ok: false,
+        error: "compression method 99 is not supported",
+      });
+      expect(reads).toEqual([]);
+    }
+  },
+);

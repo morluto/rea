@@ -45,7 +45,7 @@ describe("readiness bundle authentication", () => {
     value.evidence_bundle.providers.push(provider);
 
     expect(() => createReconstructionReadinessReport(value)).toThrow(
-      /Evidence bundle manifests are not canonical/u,
+      /Evidence bundle sections are not canonical: providers$/u,
     );
   });
 

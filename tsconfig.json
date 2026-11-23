@@ -1,7 +1,9 @@
 {
   "compilerOptions": {
+    "allowJs": true,
     "allowUnreachableCode": false,
     "allowUnusedLabels": false,
+    "checkJs": false,
     "exactOptionalPropertyTypes": true,
     "forceConsistentCasingInFileNames": true,
     "lib": ["ES2023"],
@@ -12,6 +14,9 @@
     "noImplicitReturns": true,
     "noUncheckedIndexedAccess": true,
     "outDir": "dist",
+    "paths": {
+      "#dist/*": ["./src/*"]
+    },
     "rootDir": ".",
     "skipLibCheck": true,
     "strict": true,

@@ -2,20 +2,17 @@ import { z } from "zod";
 
 import { uniqueSorted } from "../domain/canonicalOrdering.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../ports/AnalysisProvider.js";
 import { parseProcessCaptureEvidence } from "../application/process/ProcessEvidence.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import type { PromptCompletionKind } from "../contracts/promptContracts.js";
-import { addressedValueSchema } from "../domain/native/nativeInventory.js";
-import { currentMcpRequestSignal } from "./EvidenceMcpServerCore.js";
+import { listProceduresFact } from "../domain/native/nativeOperationFacts.js";
+import { currentMcpRequestSignal } from "./ErrorEvidenceTransport.js";
 import { parseArtifactInventoryEvidence } from "../domain/artifactInventoryEvidence.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import type { Evidence } from "../domain/evidence.js";
 
 const documentListSchema = z.array(z.string().min(1));
-const procedureInventorySchema = z.array(
-  addressedValueSchema.pick({ address: true, value: true }),
-);
 const providerStatusSchema = z.object({
   analysis_provider_candidates: z.array(
     z.object({ provider: z.object({ id: z.string().min(1) }) }),
@@ -48,10 +45,12 @@ export const createPromptCompletionSource = (
       context,
     );
     const prefix = normalize(value);
-    const nonEmpty = candidates.filter((candidate) => candidate.length > 0);
-    return uniqueSorted(nonEmpty).filter((candidate) =>
-      normalize(candidate).startsWith(prefix),
+    const matches = candidates.filter(
+      (candidate) =>
+        candidate.length > 0 &&
+        (prefix === "" || normalize(candidate).startsWith(prefix)),
     );
+    return uniqueSorted(matches);
   },
 });
 
@@ -116,7 +115,7 @@ const procedureCandidates = async (
   );
   if (result === undefined) return [];
   if (result.ok) {
-    const parsed = procedureInventorySchema.safeParse(result.value.result);
+    const parsed = listProceduresFact.schema.safeParse(result.value.result);
     if (parsed.success)
       for (const { address, value: name } of parsed.data) {
         addresses.add(address);
