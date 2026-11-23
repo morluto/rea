@@ -378,14 +378,23 @@ target it decodes. A computed call that analysis resolves later, such as a
 RISC-V `auipc`+`jalr` pair, keeps its fallthrough, although the decompiler stops
 at it. After the clearing passes, the repair therefore ends each computed call
 that has no decoded target and whose only resolved target is a non-external,
-non-thunk function that keeps its flag. It sets Ghidra's `CALL_RETURN` flow
-override, as Ghidra's `FixupNoReturnFunctionsScript` does, and refits the owning
-functions. The call keeps its reference to the callee. Instruction flow,
-basic-block successors and terminal-call limitations then agree with the
-pseudocode. The repair does not change conditional calls, calls with another
-resolved target or an existing flow override, or calls whose target is a thunk
-or an external function. Analysis profiles version this repair so snapshots
-produced before it are not reused. Windows P0 does not run it.
+non-thunk function that keeps its flag, when the instruction stream proves that
+target. A resolved reference alone is a candidate, not proof that no other value
+reaches the call. The proof follows the call's target back through the call's
+p-code and at most three preceding instructions that only fall through and that
+no other code enters. It accepts only constants combined by copy, addition,
+subtraction, masking, bitwise negation, left shifts and extension, and the
+result must equal the callee's address. A target read from memory or from a
+register that this window does not set fails the proof, so a call through a
+writable function pointer keeps its fallthrough. The repair sets Ghidra's
+`CALL_RETURN` flow override, as Ghidra's `FixupNoReturnFunctionsScript` does,
+and refits the owning functions. The call keeps its reference to the callee.
+Instruction flow, basic-block successors and terminal-call limitations then
+agree with the pseudocode. The repair does not change conditional calls, calls
+without that proof, calls with another resolved target or an existing flow
+override, calls with delay slots, or calls whose target is a thunk or an
+external function. Analysis profiles version this repair so snapshots produced
+before it are not reused. Windows P0 does not run it.
 
 Ghidra applies most loader relocations, but it cannot apply some, such as an
 ELF copy relocation into RELRO (for example musl's `stderr`) or a TLS slot that
