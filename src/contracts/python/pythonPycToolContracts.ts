@@ -7,9 +7,9 @@ import { toolContractMetadata, evidenceEffects } from "../toolEffects.js";
 import { analysisDetailOutputSchemaOf } from "../analysisDetail.js";
 import { z } from "zod";
 import {
-  pythonPycSummaryViewResultSchema,
   pythonPycCodeObjectsViewResultSchema,
-} from "../../domain/analysisView/analysisViewResult.js";
+  pythonPycSummaryViewResultSchema,
+} from "../../domain/analysisView/summarySchemas/pythonPycSummarySchemas.js";
 import {
   pythonPycCompleteDeliveryShape,
   pythonPycSummaryDeliveryShape,

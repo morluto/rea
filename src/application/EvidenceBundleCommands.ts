@@ -6,6 +6,7 @@ import {
   type PublishedEvidenceFile,
 } from "../domain/evidenceErrors.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { withInheritedCleanupOwnership } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisInputError,
   cancelledBy,
@@ -13,7 +14,7 @@ import {
 import type { Evidence } from "../domain/evidence.js";
 import type { EvidenceBundle } from "../domain/evidenceBundle.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   compareBundles,
@@ -151,14 +152,19 @@ export const publishEvidenceDelivery = async (input: {
     // command retains its own overwrite-capable recovery guidance.
     const failure =
       original instanceof EvidenceFileError && original.reason === "exists"
-        ? new EvidenceFileError(original.operation, original.reason, {
-            cause: original,
-            ...(original.path === undefined ? {} : { path: original.path }),
-            userMessage:
-              "Evidence file already exists. Choose another output path.",
-            cleanup: original.cleanup,
-            diagnostics: original.diagnostics,
-          }).bindCleanupDependencies([original])
+        ? withInheritedCleanupOwnership(
+            new EvidenceFileError(original.operation, original.reason, {
+              cause: original,
+              ...(original.path === undefined ? {} : { path: original.path }),
+              userMessage:
+                "Evidence file already exists. Choose another output path.",
+              ...(original.cleanupIncomplete
+                ? { cleanup: original.cleanup }
+                : {}),
+              diagnostics: original.diagnostics,
+            }),
+            original,
+          )
         : original;
     return err(failure.retainPartialObservation(input.complete));
   }
@@ -233,7 +239,9 @@ export const compareEvidenceBundlesCommand = async (input: {
       const { left, right } = loaded.value;
       try {
         return ok(
-          jsonValueSchema.parse(compareBundles(left, right, input.recordPairs)),
+          ownedJsonValueSchema.parse(
+            compareBundles(left, right, input.recordPairs),
+          ),
         );
       } catch (cause: unknown) {
         if (cause instanceof AnalysisInputError) return err(cause);
@@ -260,6 +268,7 @@ export const inspectEvidenceBundleCommand = async (
     readonly offset?: number | undefined;
     readonly limit?: number | undefined;
     readonly traversal?: "direct" | "retained-closure" | undefined;
+    readonly linked_evidence_id?: string | undefined;
     readonly link_status?: "missing" | "retained" | "all" | undefined;
   },
   signal?: AbortSignal,

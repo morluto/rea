@@ -1,4 +1,5 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { DwarfCursor } from "./DwarfReader.js";
 import {
   MAX_DWARF_ABBREV_ENTRIES,
   MAX_DWARF_STRING_BYTES,
@@ -852,4 +853,68 @@ it("does not count a zero abbrev code as an unknown form", () => {
     issues: [],
   });
   expect(uleb(0).equals(Buffer.from([0]))).toBe(true);
+});
+
+describe("DwarfCursor ulebSafe and duplicate attribute truncation", () => {
+  it("decodes 1-byte, multi-byte SMI, 53-bit max, padded, overflow, and invalid ULEB128", () => {
+    const cases: readonly { bytes: readonly number[]; expected: number }[] = [
+      { bytes: [0x00], expected: 0 },
+      { bytes: [0x7f], expected: 127 },
+      { bytes: [0x80, 0x01], expected: 128 },
+      { bytes: [0xff, 0xff, 0xff, 0x7f], expected: 0x0fffffff },
+      {
+        bytes: [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x0f],
+        expected: Number.MAX_SAFE_INTEGER,
+      },
+      {
+        bytes: [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x8f, 0x80, 0x00],
+        expected: Number.MAX_SAFE_INTEGER,
+      },
+      {
+        bytes: [0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00],
+        expected: 0,
+      },
+      {
+        bytes: [0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x10],
+        expected: -2,
+      },
+      {
+        bytes: [0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01],
+        expected: -2,
+      },
+      { bytes: [0x80], expected: -1 },
+      { bytes: new Array(10).fill(0x80), expected: -1 },
+    ];
+    for (const { bytes, expected } of cases) {
+      const cursor = new DwarfCursor(Buffer.from(bytes), true);
+      expect(cursor.ulebSafe()).toBe(expected);
+      expect(cursor.offset).toBe(bytes.length);
+    }
+    expect(new DwarfCursor(Buffer.alloc(0), true).ulebSafe()).toBe(-1);
+  });
+
+  it("marks a duplicate attribute as unknown when its later occurrence is truncated", () => {
+    const abbrev = abbrevTable([
+      {
+        code: 1,
+        tag: 0x11,
+        children: false,
+        attributes: [
+          { name: 0x03, form: 0x08 },
+          { name: 0x25, form: 0x08 },
+          { name: 0x03, form: 0x08 },
+        ],
+      },
+    ]);
+    const info = compileUnit({
+      attributes: [Buffer.from("first.c\0clang\0unterminated", "latin1")],
+    });
+    const parsed = walk(info, abbrev);
+    expect(parsed.units[0]?.die_complete).toBe(false);
+    expect(parsed.units[0]?.producer).toEqual({
+      state: "present",
+      value: "clang",
+    });
+    expect(parsed.units[0]?.name).toEqual({ state: "unknown", value: null });
+  });
 });

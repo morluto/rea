@@ -1,4 +1,5 @@
 // oxlint-disable max-lines -- Keep the exhaustive static provenance bindings together; this table has no execution or host-availability logic.
+import { UEFI_PROVIDER_IDENTITY } from "../uefi/UefiProviderIdentity.js";
 import type { ProviderIdentity } from "../ports/AnalysisProvider.js";
 import type {
   TOOL_CONTRACTS,
@@ -322,6 +323,11 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(BINWALK_PROVIDER_IDENTITY, ["inspect_firmware_regions"]),
       providerBinding(UNBLOB_PROVIDER_IDENTITY, ["extract_firmware"]),
+    ],
+  },
+  uefiAnalysis: {
+    providers: [
+      providerBinding(UEFI_PROVIDER_IDENTITY, { group: "UEFI_TOOL_CONTRACTS" }),
     ],
   },
   flutter: {

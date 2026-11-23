@@ -45,6 +45,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   await rm(home, { recursive: true, force: true });
 });
 
@@ -300,6 +301,54 @@ describe("maintenance activation and layered configuration", () => {
       existingMaintenanceScope(home, entryPoint, process.env, isolated()),
     ).resolves.toMatchObject({ clients: ["opencode"] });
   });
+});
+
+it("selects user registrations for maintenance even when project files override or define rea", async () => {
+  const projectDir = await createTestTempDirectory("rea-update-project-cwd-");
+  vi.spyOn(process, "cwd").mockReturnValue(projectDir);
+
+  await writeClient(
+    "pi",
+    JSON.stringify({
+      mcpServers: {
+        rea: { command: "npx", args: ["-y", "rea-agents@0.1.0", "mcp"] },
+      },
+    }),
+  );
+  await writeClient(
+    "opencode",
+    JSON.stringify({
+      mcp: {
+        servers: {
+          rea: {
+            type: "local",
+            command: ["npx", "-y", "rea-agents@0.1.0", "mcp"],
+            enabled: true,
+          },
+        },
+      },
+    }),
+  );
+
+  const projectPiDir = join(projectDir, ".pi");
+  await mkdir(projectPiDir, { recursive: true });
+  await writeFile(
+    join(projectPiDir, "mcp.json"),
+    JSON.stringify({ mcpServers: { rea: { enabled: true } } }),
+  );
+  await writeFile(
+    join(projectDir, "opencode.json"),
+    JSON.stringify({ mcp: { servers: { rea: { disabled: true } } } }),
+  );
+
+  const scope = await existingMaintenanceScope(
+    home,
+    entryPoint,
+    process.env,
+    isolated(),
+  );
+  expect(scope.clients).toContain("pi");
+  expect(scope.clients).toContain("opencode");
 });
 
 describe("unknown client locations in maintenance", () => {

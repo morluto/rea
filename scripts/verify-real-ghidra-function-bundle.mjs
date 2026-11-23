@@ -14,7 +14,7 @@ import {
 const installation = process.env.GHIDRA_INSTALL_DIR;
 if (!installation || !process.env.JAVA_HOME)
   throw new Error(
-    "Set GHIDRA_INSTALL_DIR and JAVA_HOME to caller-installed Ghidra and JDK 21.",
+    "Set GHIDRA_INSTALL_DIR and JAVA_HOME to caller-installed Ghidra 12.2 and JDK 25.",
   );
 const commands = await createVerifierCommands();
 const workspace = await VerifierFixture.open({

@@ -6,6 +6,13 @@ other versions return `unsupported_target`. Corrupt recognized blobs return
 `invalid_request`, and exhausted budgets return `resource_constraint` without
 partial success.
 
+[DTSpec §5.4.1](https://devicetree-specification.readthedocs.io/en/stable/flattened-format.html#lexical-structure)
+requires zero padding after structure node names and property values. For
+example, [libfdt's node rename](https://github.com/dgibson/dtc/blob/c954f9dd835764ec69d3d9afb467c4541b47b66d/libfdt/fdt_rw.c#L253-L273)
+can leave bytes from the old name after the new terminator. REA reports the
+count and first file offset of nonzero padding while retaining the tree's
+observations when all fields fit.
+
 ```bash
 rea inspect-devicetree /artifacts/board.dtb --json
 rea inspect-devicetree /artifacts/board.dtb --detail summary --evidence_output /artifacts/board-evidence.json --json
@@ -68,6 +75,11 @@ collection and parent Evidence; property indices are scoped to their node.
 
 Decoded names, paths, values and row overhead share a fixed 32 MiB representation
 allowance, charged before expansion. It has no runtime override.
+
+A parser budget refusal names the allowance in `details.reported_limits.boundary`
+and its effective bound in `details.reported_limits.maximum`. For example,
+`--max-nodes 1` reports `{ "boundary": "max_nodes", "maximum": 1 }` if the
+blob contains more than one node.
 
 The reservation count also uses `max_properties`. CLI flags use kebab case,
 for example `--max-nodes 16384`. View pages contain at most 256 rows.

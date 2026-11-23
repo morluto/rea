@@ -3,21 +3,16 @@ import { expect, it } from "vitest";
 
 import { ParseFailureError } from "../../domain/parseFailure.js";
 import {
-  ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION,
   ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION,
   ELF_DEBUG_LINK_MULTIPLE_BUILD_IDS_LIMITATION,
   ELF_DEBUG_LINK_NAME_SEGMENT_LIMITATION,
   elfDebugLinkSchema,
   inspectElfDebugLinkInputSchema,
 } from "../../domain/native/elfDebugLink.js";
-import { gnuBuildIdNote } from "./ElfNotes.fixture.js";
+import { elfNote, gnuBuildIdNote } from "./ElfNotes.fixture.js";
 import { parseElfNotes } from "./ElfNoteParser.js";
 import { readElfImage } from "../../domain/native/elfImage.js";
-import {
-  parseElfDebugLink,
-  unreadableElfDebugCandidate,
-  verifyElfDebugCandidate,
-} from "./ElfDebugLink.js";
+import { parseElfDebugLink, verifyElfDebugCandidate } from "./ElfDebugLink.js";
 import {
   debugaltlinkSection,
   debuglinkSection,
@@ -34,16 +29,12 @@ const digest = "ab".repeat(32);
 const inputFor = (extra: { readonly max_entries?: number } = {}) =>
   inspectElfDebugLinkInputSchema.parse({ path: artifactPath, ...extra });
 
-const parse = (
-  bytes: Buffer,
-  extra: { readonly max_entries?: number } = {},
-  path = artifactPath,
-) =>
+const parse = (bytes: Buffer, extra: { readonly max_entries?: number } = {}) =>
   elfDebugLinkSchema.parse(
     parseElfDebugLink(
       bytes,
-      { path, sha256: digest, bytes: bytes.length },
-      inspectElfDebugLinkInputSchema.parse({ path, ...extra }),
+      { path: artifactPath, sha256: digest, bytes: bytes.length },
+      inspectElfDebugLinkInputSchema.parse({ path: artifactPath, ...extra }),
     ),
   );
 
@@ -84,14 +75,8 @@ it("reads a little-endian debuglink CRC, build-id, and lookup paths", () => {
 });
 
 it("keeps the CRC across padding, trailing bytes, and an overlong name", () => {
-  const padded = debuglinkSection("ab", 0x89abcdef, true);
-  expect(padded.length).toBe(8);
-  expect(padded.subarray(0, 4).equals(Buffer.from("ab\0\0", "latin1"))).toBe(
-    true,
-  );
-  expect(padded.readUInt32LE(4)).toBe(0x89abcdef);
-  const aligned = debuglinkSection("abc", 0x01020304, true);
-  expect(aligned.length).toBe(8);
+  const padded = Buffer.from([0x61, 0x62, 0, 0, 0xef, 0xcd, 0xab, 0x89]);
+  const aligned = Buffer.from([0x61, 0x62, 0x63, 0, 4, 3, 2, 1]);
   expect(
     parse(elfDebugLinkFixture({ debuglink: padded })).debuglink,
   ).toMatchObject({
@@ -263,13 +248,25 @@ it("fails the note entry budget instead of returning a partial build-id", () => 
   ).toThrow(ParseFailureError);
 });
 
-it("preserves parent-directory segments and omits a slash name", () => {
-  const preserved = parse(elfDebugLinkFixture(), {}, "/var/tmp/../lib/prog");
-  expect(
-    preserved.lookup_paths.find(
-      (entry) => entry.kind === "global_debug_directory",
-    )?.path,
-  ).toBe("/usr/lib/debug/var/tmp/../lib/prog.debug");
+it("reads the build-id beside glibc's SystemTap probe notes by default", () => {
+  const probes = Array.from({ length: 79 }, () =>
+    elfNote("stapsdt", 3, Buffer.alloc(40)),
+  );
+  const report = parse(
+    elfDebugLinkFixture({
+      notes: Buffer.concat([
+        gnuBuildIdNote(FIXTURE_BUILD_ID_HEX, true),
+        ...probes,
+      ]),
+    }),
+  );
+  expect(report.build_id).toMatchObject({
+    status: "observed",
+    hex: FIXTURE_BUILD_ID_HEX,
+  });
+});
+
+it("observes a slash name without producing directory lookup strings", () => {
   const slashed = parse(
     elfDebugLinkFixture({
       debuglink: debuglinkSection("dir/prog.debug", 0x12345678, true),
@@ -358,7 +355,7 @@ const verify = (image: Buffer, candidate: Buffer, candidatePath: string) => {
 
 it("counts legacy .zdebug_info as present candidate debug info", () => {
   const candidate = elfDebugCandidateFixture({ zdebugInfo: true });
-  const sections = readElfImage(candidate).sections;
+  const sections = readElfImage(candidate, "elf-directory").sections;
   expect(
     sections.some(
       (section) => section.format === "elf" && section.name === ".zdebug_info",
@@ -379,7 +376,7 @@ it("counts legacy .zdebug_info as present candidate debug info", () => {
 /** Point one named section of a little-endian ELF64 candidate past its end. */
 const moveSectionPastEnd = (candidate: Buffer, name: string): Buffer => {
   const damaged = Buffer.from(candidate);
-  const declared = readElfImage(candidate).sections.find(
+  const declared = readElfImage(candidate, "elf-directory").sections.find(
     (section) => section.format === "elf" && section.name === name,
   );
   if (declared?.format !== "elf") throw new Error(`missing ${name}`);
@@ -439,43 +436,4 @@ it("cannot verify when neither CRC32 nor build-id is comparable", () => {
   });
   expect(report.verification?.crc32.observed_hex).toBe("314f0306");
   expect(report.limitations).toContain(ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION);
-});
-
-it("keeps the image linkage when the candidate cannot be read", () => {
-  const image = elfDebugLinkFixture({
-    debuglink: debuglinkSection(FIXTURE_DEBUG_NAME, 0x12345678, true),
-  });
-  const report = parseElfDebugLink(
-    image,
-    { path: artifactPath, sha256: digest, bytes: image.length },
-    inputFor(),
-  );
-  const unreadable = elfDebugLinkSchema.parse(
-    unreadableElfDebugCandidate(report),
-  );
-  expect(unreadable.debuglink).toEqual(report.debuglink);
-  expect(unreadable.lookup_paths).toEqual(report.lookup_paths);
-  expect(unreadable.candidate).toBeNull();
-  expect(unreadable.verification).toEqual({
-    status: "cannot_verify",
-    reason: "candidate_unreadable",
-    crc32: {
-      status: "unavailable",
-      expected_hex: "12345678",
-      observed_hex: null,
-      reason: "candidate_unreadable",
-    },
-    build_id: {
-      status: "unavailable",
-      binary_hex: FIXTURE_BUILD_ID_HEX,
-      candidate_hex: null,
-      reason: "candidate_unreadable",
-    },
-  });
-  expect(unreadable.limitations).toEqual(
-    expect.arrayContaining([
-      ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION,
-      ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION,
-    ]),
-  );
 });

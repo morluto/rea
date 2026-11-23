@@ -29,6 +29,7 @@ export { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 export {
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
+  ArtifactFileFailureGroup,
   artifactFileCancellationCause,
   artifactFileCompletion,
   artifactFilePrimaryFacts,
@@ -37,6 +38,7 @@ export {
   artifactReadCancelledBy,
   artifactSelectedPathErrno,
   assertArtifactReadActive,
+  yieldArtifactRead,
   bindArtifactFileCleanup,
   mapArtifactFileFailure,
   withArtifactFileHandle,
@@ -115,6 +117,7 @@ export type {
   StableArtifactFileSystem,
   StableArtifactSnapshot,
   StableArtifactStream,
+  StableArtifactStreamOptions,
 } from "./readStableArtifact.js";
 export {
   ArtifactPathRegistry,

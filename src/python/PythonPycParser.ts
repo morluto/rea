@@ -11,12 +11,11 @@ import {
   type MarshalTuple,
 } from "../domain/python/marshalReader.js";
 import {
-  PYTHON_PYC_CHECK_SOURCE,
   PYTHON_PYC_CONST_PREVIEW_LIMIT,
-  PYTHON_PYC_HASH_BASED,
   PYTHON_PYC_HEADER_BYTES,
   PYTHON_PYC_INT_PREVIEW_BITS,
   PYTHON_PYC_SLICE_MAGIC,
+  interpretPythonPycHeaderFlags,
   pythonPycMarshalProfile,
   type PythonPycLimits,
   type PythonPyc,
@@ -27,10 +26,7 @@ import {
 import { Budget } from "../domain/budget.js";
 import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
-import {
-  PYTHON_PYC_FORMAT,
-  PythonPycResourceFailure,
-} from "./PythonPyc.errors.js";
+import { PYTHON_PYC_FORMAT, pythonPycLimit } from "./PythonPyc.errors.js";
 import { pythonPycBytecodeIdentity } from "./PythonPycBytecodeEquality.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 
@@ -259,12 +255,13 @@ export const parsePythonPyc = (
   // Every CPython 3.7+ header packs flags at 4, then the source hash (8..16)
   // or the source mtime (8) and size (12).
   const header = new BinaryReader(bytes, true, PYTHON_PYC_FORMAT);
+  const flags = header.u32(4);
+  const { hashBased, checkSource, inactiveCheckSource, hasUnknownFlags } =
+    interpretPythonPycHeaderFlags(flags);
   if (mapped === null || identity === null) {
     // A known identity without a pinned code layout is a different outcome from an
     // unrecognized magic: the header below is still qualified from the same packed
     // fields every 3.7+ pyc uses, so report it instead of a bare rejection.
-    const flags = header.u32(4);
-    const hashBased = (flags & PYTHON_PYC_HASH_BASED) !== 0;
     const headerFacts = `16-byte header, flags 0x${flags.toString(16)}, ${
       hashBased ? "hash-based" : "timestamp-based"
     }`;
@@ -274,15 +271,13 @@ export const parsePythonPyc = (
         : `CPython ${identity.pythonVersion} header is recognized (magic ${magic}, ${headerFacts}), but no marshal code layout is pinned for that version, so its code objects cannot be decoded. Standalone marshal decoding is pinned for CPython 3.7–3.13 and the 3.14 and 3.15 magics 3627 and 3666.`,
     );
   }
-  const flags = header.u32(4);
-  const hashBased = (flags & PYTHON_PYC_HASH_BASED) !== 0;
   const headerFields = {
     magic,
     python_version: identity.pythonVersion,
     code_layout: mapped.code_layout,
     flags,
     hash_based: hashBased,
-    check_source: (flags & PYTHON_PYC_CHECK_SOURCE) !== 0,
+    check_source: checkSource,
     source_hash_hex: hashBased ? bytes.subarray(8, 16).toString("hex") : null,
     source_mtime: hashBased ? null : header.u32(8),
     source_size: hashBased ? null : header.u32(12),
@@ -304,8 +299,6 @@ export const parsePythonPyc = (
     return malformed("Top-level marshal object is not a code object.");
   reader.finishCodes();
   const codeObjects = flattenCode(root.value, work);
-  const unknownFlags =
-    flags & ~(PYTHON_PYC_HASH_BASED | PYTHON_PYC_CHECK_SOURCE);
   return {
     artifact: {
       path: artifact.path,
@@ -334,11 +327,16 @@ export const parsePythonPyc = (
             "Magic 3410 is shared by CPython revisions with different negative co_stacksize/co_flags constructor checks; these raw values are preserved, but this header cannot establish constructor acceptance.",
           ]
         : []),
-      ...(unknownFlags === 0
-        ? []
-        : [
+      ...(inactiveCheckSource
+        ? [
+            "The stored check_source bit is set but applies only to hash-based pycs. This pyc carries timestamp metadata.",
+          ]
+        : []),
+      ...(hasUnknownFlags
+        ? [
             `Header flags ${flags} include unrecognized bits; only hash-based and check-source bits are decoded.`,
-          ]),
+          ]
+        : []),
     ],
   };
 };
@@ -421,28 +419,28 @@ class PycMarshalReader extends MarshalReader<MarshalValue> {
     const { max_objects, max_depth, max_string_bytes } = this.input;
     switch (exceeded.limit) {
       case "objects":
-        throw new PythonPycResourceFailure(
-          "objects",
-          { max_objects },
+        throw pythonPycLimit(
+          "max_objects",
+          max_objects,
           `Marshal object count exceeds max_objects ${max_objects}.`,
         );
       case "depth":
-        throw new PythonPycResourceFailure(
-          "depth",
-          { max_depth },
+        throw pythonPycLimit(
+          "max_depth",
+          max_depth,
           `Marshal nesting exceeds max_depth ${max_depth}.`,
         );
       case "string-bytes":
-        throw new PythonPycResourceFailure(
-          "string",
-          { max_string_bytes },
+        throw pythonPycLimit(
+          "max_string_bytes",
+          max_string_bytes,
           `Marshal string of ${exceeded.amount} bytes exceeds max_string_bytes ${max_string_bytes}.`,
         );
       default:
         // Long digits; this reader sets no sequence or digit-count bound.
-        throw new PythonPycResourceFailure(
-          "string",
-          { max_string_bytes },
+        throw pythonPycLimit(
+          "max_string_bytes",
+          max_string_bytes,
           `Marshal long of ${exceeded.amount} digit bytes exceeds max_string_bytes ${max_string_bytes}.`,
         );
     }
@@ -717,14 +715,12 @@ class PycMarshalReader extends MarshalReader<MarshalValue> {
   #reportStrings(values: readonly string[]): void {
     let bytes = 0;
     for (const value of values) bytes += Buffer.byteLength(value, "utf8");
-    this.#reportedStringBytes.charge(
-      bytes,
-      () =>
-        new PythonPycResourceFailure(
-          "string",
-          { max_file_bytes: this.input.max_file_bytes },
-          `Reported code-object strings exceed max_file_bytes ${this.input.max_file_bytes}.`,
-        ),
+    this.#reportedStringBytes.charge(bytes, () =>
+      pythonPycLimit(
+        "reported_string_bytes",
+        this.#reportedStringBytes.maximum,
+        `Reported code-object strings exceed max_file_bytes ${this.#reportedStringBytes.maximum}.`,
+      ),
     );
   }
 
@@ -763,14 +759,12 @@ class PycMarshalReader extends MarshalReader<MarshalValue> {
     count: number,
     what: "constants" | "names" | "nested code relationships",
   ): void {
-    this.#reportedCopies.charge(
-      count,
-      () =>
-        new PythonPycResourceFailure(
-          "objects",
-          { max_objects: this.input.max_objects },
-          `Reported ${what} exceed max_objects ${this.input.max_objects}.`,
-        ),
+    this.#reportedCopies.charge(count, () =>
+      pythonPycLimit(
+        "reported_rows",
+        this.#reportedCopies.maximum,
+        `Reported ${what} exceed max_objects ${this.#reportedCopies.maximum}.`,
+      ),
     );
   }
 
@@ -934,17 +928,12 @@ class PycMarshalReader extends MarshalReader<MarshalValue> {
   }
 
   #takeNestedStep(): void {
-    this.#nestedSteps.charge(
-      1,
-      () =>
-        new PythonPycResourceFailure(
-          "objects",
-          {
-            max_objects: this.input.max_objects,
-            max_depth: this.input.max_depth,
-          },
-          `Nested code walk exceeds ${String(this.#nestedSteps.maximum)} steps (max_objects * max_depth).`,
-        ),
+    this.#nestedSteps.charge(1, () =>
+      pythonPycLimit(
+        "nested_code_steps",
+        this.#nestedSteps.maximum,
+        `Nested code walk exceeds ${String(this.#nestedSteps.maximum)} steps (max_objects * max_depth).`,
+      ),
     );
     this.work.nestedSteps += 1;
   }
@@ -956,17 +945,12 @@ class PycMarshalReader extends MarshalReader<MarshalValue> {
   }
 
   #retainNested(codes: readonly CodeNode[]): void {
-    this.#nestedRetained.charge(
-      codes.length,
-      () =>
-        new PythonPycResourceFailure(
-          "objects",
-          {
-            max_objects: this.input.max_objects,
-            max_depth: this.input.max_depth,
-          },
-          `Nested code walk retains more than ${String(this.#nestedRetained.maximum)} code references.`,
-        ),
+    this.#nestedRetained.charge(codes.length, () =>
+      pythonPycLimit(
+        "nested_code_references",
+        this.#nestedRetained.maximum,
+        `Nested code walk retains more than ${String(this.#nestedRetained.maximum)} code references.`,
+      ),
     );
   }
 
@@ -1190,14 +1174,12 @@ class PycMarshalReader extends MarshalReader<MarshalValue> {
    * not `max_depth`, because a reference chain is shallow in the stream.
    */
   #takeKeyStep(): void {
-    this.#keySteps.charge(
-      1,
-      () =>
-        new PythonPycResourceFailure(
-          "objects",
-          { max_objects: this.input.max_objects },
-          `Marshal key walk exceeds ${this.#keySteps.maximum} steps (max_objects * 8).`,
-        ),
+    this.#keySteps.charge(1, () =>
+      pythonPycLimit(
+        "marshal_key_steps",
+        this.#keySteps.maximum,
+        `Marshal key walk exceeds ${this.#keySteps.maximum} steps (max_objects * 8).`,
+      ),
     );
     this.work.keySteps += 1;
   }
@@ -1508,22 +1490,20 @@ class PycMarshalReader extends MarshalReader<MarshalValue> {
 
   #reserveKey(size: number): void {
     if (size > this.input.max_string_bytes) this.#keyTooLarge(size);
-    this.#keyBytes.charge(
-      size,
-      () =>
-        new PythonPycResourceFailure(
-          "string",
-          { max_file_bytes: this.input.max_file_bytes },
-          `Marshal key expansion exceeds max_file_bytes ${this.input.max_file_bytes}.`,
-        ),
+    this.#keyBytes.charge(size, () =>
+      pythonPycLimit(
+        "marshal_key_bytes",
+        this.#keyBytes.maximum,
+        `Marshal key expansion exceeds max_file_bytes ${this.#keyBytes.maximum}.`,
+      ),
     );
     this.work.keyBytes += size;
   }
 
   #keyTooLarge(size: number): never {
-    throw new PythonPycResourceFailure(
-      "string",
-      { max_string_bytes: this.input.max_string_bytes },
+    throw pythonPycLimit(
+      "max_string_bytes",
+      this.input.max_string_bytes,
       `Marshal key of ${size} bytes exceeds max_string_bytes ${this.input.max_string_bytes}.`,
     );
   }

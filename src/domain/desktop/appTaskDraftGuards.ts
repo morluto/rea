@@ -2,9 +2,8 @@ import {
   escapeJsonPointerToken,
   unescapeJsonPointerToken,
 } from "../jsonPointer.js";
-import type { JsonValue } from "../jsonValue.js";
+import { equalJsonValues, type JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
-import { sameJson } from "./appTaskChecks.js";
 import { holdsSplitDate, isCoordinates, isStamp } from "./appTaskDraftNoise.js";
 import { holdsNoisyText } from "./appTaskDraftText.js";
 import { decimalOf, valueEqualsCheck } from "./appTaskDraftScalars.js";
@@ -115,7 +114,7 @@ const guardAt = (
       : undefined;
   }
   return typeof before !== "object" &&
-    sameJson(before, after) &&
+    equalJsonValues(before, after) &&
     !isStamp(before) &&
     (typeof before !== "string" || before.length <= context.chars)
     ? valueEqualsCheck(file, pointer, before)
@@ -360,9 +359,9 @@ const guardField = (
   const own = !readsSelector(sibling, rest);
   if (rest.length > 0 && varies(rest) && own) return rest;
   const selected = new Set(
-    [...sibling.member.matchAll(/\[@(?<key>[^=\]]+)=/gu)].map(
-      ({ groups }) => groups?.key ?? "",
-    ),
+    conditionsOf(sibling.member)
+      .filter(({ prefix }) => prefix === "@")
+      .map(({ key }) => key),
   );
   const [best] = rankAttributes(
     Object.entries(attributesOf(sibling.element)).flatMap(([key, value]) =>

@@ -17,7 +17,17 @@
  * names decoded.
  */
 import { boundedList } from "../boundedList.js";
+import { BinaryReader } from "../binaryContainer.js";
+import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
 import { type Result, err, ok } from "../result.js";
+import {
+  ZIP_CENTRAL_HEADER,
+  readZipCentralExtent,
+} from "../zip/zipCentralHeader.js";
+import {
+  ZIP_LOCAL_HEADER_BYTES,
+  ZIP_LOCAL_HEADER_SIGNATURE,
+} from "../zip/zipLocalHeader.js";
 import {
   canonicalNameHash,
   compareCanonicalNames,
@@ -36,20 +46,13 @@ import {
   v1SignatureFileNameForBlock,
 } from "./apkV1MetadataName.js";
 
-const CD_SIGNATURE = 0x02014b50;
-const CD_FIXED_SIZE = 46;
-
 export type ApkCentralDirectoryError =
   | {
       readonly kind: "malformed-central-directory";
       readonly offset: number;
       readonly detail: string;
     }
-  | {
-      readonly kind: "budget-exceeded";
-      readonly resource: "v1-signature-entries";
-      readonly limit: number;
-    };
+  | ParseFailureError<"limit">;
 
 /**
  * Signing-relevant `META-INF/` entries retained. A signed APK holds a manifest
@@ -263,7 +266,6 @@ export const centralDirectoryV1SignatureEntries = (
   totalEntries: number,
   apksigRecords: number = totalEntries,
 ): Result<ApkCentralDirectoryScan, ApkCentralDirectoryError> => {
-  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const end = centralDirectoryOffset + centralDirectorySize;
   if (
     !Number.isSafeInteger(end) ||
@@ -276,39 +278,43 @@ export const centralDirectoryV1SignatureEntries = (
       offset: centralDirectoryOffset,
       detail: "declared central-directory extent is outside the file",
     });
+  const reader = new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    true,
+    "zip",
+  );
   // A record takes at least its fixed bytes, so the walk fails before a
   // declared count past this capacity is reached.
   const capacity = Math.min(
     totalEntries,
-    Math.max(0, Math.floor((end - centralDirectoryOffset) / CD_FIXED_SIZE)),
+    Math.max(
+      0,
+      Math.floor((end - centralDirectoryOffset) / ZIP_CENTRAL_HEADER.bytes),
+    ),
   );
   const starts = new Uint32Array(capacity);
   const lengths = new Uint16Array(capacity);
   const entries: ApkV1Entry[] = [];
   let at = centralDirectoryOffset;
   for (let i = 0; i < totalEntries; i += 1) {
-    if (at + CD_FIXED_SIZE > end)
+    const extent = readZipCentralExtent(reader, at, end);
+    if (!extent.ok) {
+      const { kind, offset } = extent.error;
+      const detail = {
+        "fixed-fields": `central directory ends after ${String(i)} of ${String(totalEntries)} records`,
+        signature: "central-directory record signature mismatch",
+        name: "central-directory file name runs past the directory",
+        "extra-or-comment":
+          "central-directory extra field or comment runs past the directory",
+      }[kind];
       return err({
         kind: "malformed-central-directory",
-        offset: at,
-        detail: `central directory ends after ${String(i)} of ${String(totalEntries)} records`,
+        offset,
+        detail,
       });
-    if (dv.getUint32(at, true) !== CD_SIGNATURE)
-      return err({
-        kind: "malformed-central-directory",
-        offset: at,
-        detail: "central-directory record signature mismatch",
-      });
-    const nameLength = dv.getUint16(at + 28, true);
-    const extraLength = dv.getUint16(at + 30, true);
-    const commentLength = dv.getUint16(at + 32, true);
-    const nameStart = at + CD_FIXED_SIZE;
-    if (nameStart + nameLength > end)
-      return err({
-        kind: "malformed-central-directory",
-        offset: nameStart,
-        detail: "central-directory file name runs past the directory",
-      });
+    }
+    const { name: nameStart, extra, next } = extent.value;
+    const nameLength = extra - nameStart;
     starts[i] = nameStart;
     lengths[i] = nameLength;
     if (startsWithV1MetaInfPrefix(bytes, nameStart, nameLength)) {
@@ -316,24 +322,32 @@ export const centralDirectoryV1SignatureEntries = (
       const name = decodeZipName(rawName);
       if (isV1SignatureMetadataName(name)) {
         if (entries.length >= MAX_V1_SIGNATURE_ENTRIES)
-          return err({
-            kind: "budget-exceeded",
-            resource: "v1-signature-entries",
-            limit: MAX_V1_SIGNATURE_ENTRIES,
-          });
+          return err(
+            decodeLimit(
+              "apk-v1-central-directory",
+              `The central directory holds more than ${String(MAX_V1_SIGNATURE_ENTRIES)} META-INF v1 signing entries.`,
+              {
+                name: "max_v1_signature_entries",
+                maximum: MAX_V1_SIGNATURE_ENTRIES,
+              },
+              { offset: at },
+            ),
+          );
         entries.push({
           name,
           rawName,
-          flags: dv.getUint16(at + 8, true),
-          method: dv.getUint16(at + 10, true),
-          crc32: dv.getUint32(at + 16, true),
-          compressedSize: dv.getUint32(at + 20, true),
-          uncompressedSize: dv.getUint32(at + 24, true),
-          localHeaderOffset: dv.getUint32(at + 42, true),
+          flags: reader.u16(at + 8),
+          method: reader.u16(at + 10),
+          crc32: reader.u32(at + 16),
+          compressedSize: reader.u32(at + 20),
+          uncompressedSize: reader.u32(at + 24),
+          localHeaderOffset: reader.u32(
+            at + ZIP_CENTRAL_HEADER.localHeaderOffset,
+          ),
         });
       }
     }
-    at = nameStart + nameLength + extraLength + commentLength;
+    at = next;
   }
   // An under-declared record count would silently hide entries (and so v1
   // signing): the walk must consume exactly the declared directory.
@@ -388,8 +402,6 @@ export const detectV1Signature = (
   };
 };
 
-const LOCAL_SIGNATURE = 0x04034b50;
-const LOCAL_FIXED_SIZE = 30;
 const ZIP64_SENTINEL = 0xffffffff;
 const FLAG_ENCRYPTED = 0x1;
 const FLAG_DATA_DESCRIPTOR = 0x8;
@@ -434,16 +446,20 @@ export const localEntryData = (
     return err({ detail: "Zip64 entry sizes are not read" });
   const at = entry.localHeaderOffset;
   const limit = Math.min(entriesEnd, bytes.length);
-  if (at + LOCAL_FIXED_SIZE > limit)
+  if (at + ZIP_LOCAL_HEADER_BYTES > limit)
     return err({
       detail: `local header at byte ${String(at)} is out of range`,
     });
-  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (dv.getUint32(at, true) !== LOCAL_SIGNATURE)
+  const reader = new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    true,
+    "zip",
+  );
+  if (reader.u32(at) !== ZIP_LOCAL_HEADER_SIGNATURE)
     return err({
       detail: `local header signature mismatch at byte ${String(at)}`,
     });
-  const flags = dv.getUint16(at + 6, true);
+  const flags = reader.u16(at + 6);
   const descriptor = (flags & FLAG_DATA_DESCRIPTOR) !== 0;
   if (descriptor !== ((entry.flags & FLAG_DATA_DESCRIPTOR) !== 0))
     return err({
@@ -456,14 +472,14 @@ export const localEntryData = (
       ["compressed size", 18, entry.compressedSize],
       ["uncompressed size", 22, entry.uncompressedSize],
     ] as const) {
-      const local = dv.getUint32(at + offset, true);
+      const local = reader.u32(at + offset);
       if (local !== expected)
         return err({
           detail: `local header ${field} ${String(local)} differs from the central directory's ${String(expected)}`,
         });
     }
-  const nameLength = dv.getUint16(at + 26, true);
-  const nameStart = at + LOCAL_FIXED_SIZE;
+  const nameLength = reader.u16(at + 26);
+  const nameStart = at + ZIP_LOCAL_HEADER_BYTES;
   if (
     nameStart + nameLength > limit ||
     // apksig refuses a local name longer in bytes before decoding either.
@@ -476,7 +492,7 @@ export const localEntryData = (
     return err({
       detail: "local header name differs from the central directory's",
     });
-  const start = nameStart + nameLength + dv.getUint16(at + 28, true);
+  const start = nameStart + nameLength + reader.u16(at + 28);
   const end = start + entry.compressedSize;
   if (end > limit)
     return err({

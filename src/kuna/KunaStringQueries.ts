@@ -10,6 +10,7 @@ import {
   analysisSearchPredicate,
   type AnalysisSearchQuery,
 } from "../domain/analysisSearch.js";
+import { extractRequiredRegexLiteral } from "../domain/regexLiteralCandidate.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { normalizeKunaAddress } from "./KunaAddress.js";
@@ -73,16 +74,33 @@ export class KunaStringQueries {
       items = kunaStringsAtAddress(inventory.value, address);
     if (query !== undefined) {
       if (query.mode === "regex") {
+        const requiredLiteral = extractRequiredRegexLiteral(
+          query.pattern,
+          query.case_sensitive,
+        );
+        const prefilter =
+          requiredLiteral === undefined
+            ? undefined
+            : analysisSearchPredicate({
+                pattern: requiredLiteral,
+                mode: "literal",
+                case_sensitive: query.case_sensitive,
+              });
+        let candidates = available;
         const matched = await this.work.match({
           operation,
           pattern: query.pattern,
           caseSensitive: query.case_sensitive,
-          values: () => available.map((item) => item.value),
+          values: () => {
+            if (prefilter !== undefined)
+              candidates = available.filter((item) => prefilter(item.value));
+            return candidates.map((item) => item.value);
+          },
           signal,
           ...regex,
         });
         if (!matched.ok) return matched;
-        items = matched.value.map((index) => available[index]!);
+        items = matched.value.map((index) => candidates[index]!);
       } else {
         const predicate = analysisSearchPredicate(query);
         items = available.filter((item) => predicate(item.value));

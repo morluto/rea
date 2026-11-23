@@ -1,3 +1,4 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { Budget } from "../domain/budget.js";
 import type { FileHandle } from "node:fs/promises";
 import {
@@ -8,10 +9,10 @@ import {
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import { setImmediate } from "node:timers/promises";
 import {
+  admitWxapkgMemberExtents,
   hasWxapkgEncryptedMagic,
   readWxapkgHeaderFacts,
   resolveWxapkgIndexLayouts,
-  selectWxapkgIndexLayout,
   WXAPKG_MIN_ROW_BYTES,
   type WxapkgIndexLayout,
   type WxapkgIndexLayoutFailure,
@@ -153,6 +154,7 @@ export const readWxapkgFileTable = async (
   // Loose lower bound already checked in facts; precise rows are checked here.
   if (table.length < header.fileCount * WXAPKG_MIN_ROW_BYTES)
     throw wxapkgFormatFailure("member table is truncated");
+  const reader = new BinaryReader(table, false, "wxapkg");
   const members: WxapkgMember[] = [];
   let cursor = 0;
   for (let index = 0; index < header.fileCount; index++) {
@@ -160,7 +162,7 @@ export const readWxapkgFileTable = async (
     assertArtifactReadActive(signal);
     if (cursor + 4 > table.length)
       throw wxapkgFormatFailure("member row is truncated");
-    const nameLength = table.readUInt32BE(cursor);
+    const nameLength = reader.u32(cursor);
     cursor += 4;
     if (
       nameLength === 0 ||
@@ -183,8 +185,8 @@ export const readWxapkgFileTable = async (
       );
     }
     cursor += nameLength;
-    const offset = table.readUInt32BE(cursor);
-    const sizeMember = table.readUInt32BE(cursor + 4);
+    const offset = reader.u32(cursor);
+    const sizeMember = reader.u32(cursor + 4);
     cursor += 8;
     // Producer names are root-prefixed; translate to package-relative once.
     const path = declaredPath.startsWith("/")
@@ -194,25 +196,21 @@ export const readWxapkgFileTable = async (
       throw wxapkgFormatFailure("member name has no package-relative path");
     members.push({ offset, size: sizeMember, path, declaredPath });
   }
-  const candidates = indexLayouts.filter((index) => index.tableBytes >= cursor);
-  if (candidates.length === 0)
-    throw wxapkgFormatFailure("member table is truncated");
-  // Rows and member ranges choose the convention. EOF is not a signal: four
-  // trailing bytes can make the other convention end on the carrier.
-  const index = selectWxapkgIndexLayout(candidates, cursor, members);
-  if (index === undefined) {
-    const outside = members.find((member) => {
-      const extentEnd = member.offset + member.size;
-      return candidates.every(
-        (candidate) =>
-          member.offset < candidate.dataStart ||
-          extentEnd > candidate.dataEnd ||
-          extentEnd < member.offset,
-      );
-    });
-    throw wxapkgFormatFailure(
-      `member exceeds the data region: ${outside?.path ?? ""}`,
-    );
+  // Rows and member ranges choose the convention. EOF can fit either.
+  const admitted = admitWxapkgMemberExtents(indexLayouts, cursor, members);
+  if (!admitted.ok) {
+    switch (admitted.error._tag) {
+      case "TruncatedRows":
+        throw wxapkgFormatFailure("member table is truncated");
+      case "MemberOutsideDataRegion":
+        throw wxapkgFormatFailure(
+          `member exceeds the data region: ${admitted.error.member.path}`,
+        );
+      case "ConflictingMemberExtents":
+        throw wxapkgFormatFailure(
+          "no single declared data region contains all member extents",
+        );
+    }
   }
   return { members };
 };

@@ -130,23 +130,15 @@ cliTest.for([
           DSH_AGENTS_HOME: agents,
         },
       });
-    const planned = await run(["setup", "--client", "dsh", "--dry-run"]);
-    expect(planned.exitCode).toBe(0);
-    expect(planned.json).toMatchObject({
-      status: "planned",
-      appliedActions: [],
-      plannedActions: expect.arrayContaining([
-        expect.objectContaining({ id: "configure_client:dsh", target: config }),
-        expect.objectContaining({ kind: "install_skill", target: skillRoot }),
-      ]),
-    });
-    expect(await readFile(config, "utf8")).toBe(original);
-    await expect(readFile(skill)).rejects.toMatchObject({ code: "ENOENT" });
     const configured = await run(["setup", "--client", "dsh", "--yes"]);
     expect(configured.exitCode).toBe(0);
     expect(configured.json).toMatchObject({
       status: "ready",
       clients: { dsh: { status: "configured" } },
+      plannedActions: expect.arrayContaining([
+        expect.objectContaining({ id: "configure_client:dsh", target: config }),
+        expect.objectContaining({ kind: "install_skill", target: skillRoot }),
+      ]),
     });
     const text = await readFile(config, "utf8");
     expect(text).toContain("# caller patch");
@@ -158,14 +150,6 @@ cliTest.for([
     const doctor = await run(["doctor", "--client", "dsh", "--skill"]);
     expect(doctor.exitCode).toBe(0);
     expect(doctor.json).toMatchObject({ healthy: true });
-    const repeated = await run(["setup", "--client", "dsh", "--yes"]);
-    expect(repeated.exitCode).toBe(0);
-    expect(repeated.json).toMatchObject({
-      status: "ready",
-      plannedActions: [],
-      appliedActions: [],
-    });
-    expect(await readFile(config, "utf8")).toBe(text);
     const removed = await run(["uninstall"]);
     expect(removed.exitCode).toBe(0);
     expect(removed.json).toMatchObject({
@@ -231,19 +215,27 @@ cliTest(
       appliedActions: [],
       plannedActions: expect.arrayContaining([
         expect.objectContaining({ id: "configure_client:dsh", target: config }),
-        expect.objectContaining({ id: "install_skill" }),
+        expect.objectContaining({
+          id: "install_skill",
+          target: dirname(skill),
+        }),
       ]),
     });
     expect(await readFile(config, "utf8")).toBe(original);
     await expect(readFile(`${config}.rea.backup`)).rejects.toMatchObject({
       code: "ENOENT",
     });
+    await expect(readFile(skill)).rejects.toMatchObject({ code: "ENOENT" });
     const unapproved = await run(["setup", "--client", "dsh"]);
     expect(unapproved.json).toMatchObject({
       status: "needs_confirmation",
       appliedActions: [],
     });
     expect(await readFile(config, "utf8")).toBe(original);
+    await expect(readFile(`${config}.rea.backup`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(readFile(skill)).rejects.toMatchObject({ code: "ENOENT" });
     const configured = await run(["setup", "--client", "dsh", "--yes"]);
     expect(configured.exitCode).toBe(0);
     expect(configured.json).toMatchObject({

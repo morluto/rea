@@ -24,7 +24,7 @@ const parse = (b: Buffer, limits = {}) =>
       sha256: createHash("sha256").update(b).digest("hex"),
     },
     inspectDevicetreeInputSchema.parse({ path: "/board.dtb", ...limits }),
-  );
+  ).report;
 describe("flattened devicetree", () => {
   it.each([16, 17])(
     "decodes v%s with derived facts and unresolved references",
@@ -93,6 +93,43 @@ describe("flattened devicetree", () => {
   ] as const)("rejects %s", (_name, mutate) =>
     expect(() => parse(mutate(devicetreeFixture()))).toThrow(),
   );
+  it.each([16, 17])(
+    "checks padding and required closing tokens before the v%s property limit",
+    (version) => {
+      const valid = devicetreeFixture(
+        {
+          name: "",
+          properties: { first: Buffer.from([0]), second: Buffer.from([1]) },
+        },
+        version,
+      );
+      expect(() => parse(valid, { max_properties: 1 })).toThrow(
+        "max_properties",
+      );
+      expect(
+        parse(valid, { max_properties: 2 }).nodes[0]?.properties,
+      ).toHaveLength(2);
+
+      const structureEnd = valid.readUInt32BE(12);
+      for (const removed of [4, 11]) {
+        // Remove END or padding plus closing tokens from the structure,
+        // preserving the separately declared string table.
+        const end = structureEnd - removed;
+        const truncated = Buffer.concat([
+          valid.subarray(0, end),
+          valid.subarray(structureEnd),
+        ]);
+        truncated.writeUInt32BE(truncated.length, 4);
+        truncated.writeUInt32BE(end, 12);
+        if (version === 17)
+          truncated.writeUInt32BE(end - valid.readUInt32BE(8), 36);
+        expect(() => parse(truncated, { max_properties: 1 })).toThrow(
+          "Truncated FDT structure token or property",
+        );
+      }
+    },
+  );
+
   it("bounds depth, nodes and properties", () => {
     let root: FixtureNode = { name: "leaf" };
     for (let i = 0; i < 10; i++) root = { name: `n${i}`, children: [root] };
@@ -225,6 +262,76 @@ it.each([
     );
   },
 );
+it.each([
+  ["empty", Buffer.alloc(0)],
+  ["short", Buffer.from([0, 0])],
+  ["multiple cells", cells(1, 2)],
+])(
+  "reports a malformed linux,phandle (%s) and keeps canonical phandle unresolved",
+  (_name, legacy) => {
+    const r = parse(
+      devicetreeFixture({
+        name: "",
+        children: [
+          {
+            name: "target",
+            properties: { phandle: cells(3), "linux,phandle": legacy },
+          },
+          {
+            name: "legacy_only",
+            properties: { "linux,phandle": legacy },
+          },
+          { name: "consumer", properties: { "interrupt-parent": cells(3) } },
+        ],
+      }),
+    );
+    expect(r.references).toMatchObject([
+      { source: "/consumer", phandle: 3, target: null },
+    ]);
+    expect(r.nodes[1]?.properties[1]).toMatchObject({
+      name: "linux,phandle",
+      bytes: legacy.length,
+      hex: legacy.toString("hex"),
+      derived: { cells: null },
+    });
+    expect(r.limitations).toContainEqual(
+      expect.stringMatching(
+        /linux,phandle.*\/target.*not a single cell.*unresolved/iu,
+      ),
+    );
+    expect(r.limitations).toContainEqual(
+      expect.stringMatching(
+        /linux,phandle.*\/legacy_only.*not a single cell.*unresolved/iu,
+      ),
+    );
+  },
+);
+it("reports both limitations when phandle and linux,phandle are both malformed", () => {
+  const r = parse(
+    devicetreeFixture({
+      name: "",
+      children: [
+        {
+          name: "both_bad",
+          properties: {
+            phandle: Buffer.from([0, 1]),
+            "linux,phandle": cells(1, 2),
+          },
+        },
+      ],
+    }),
+  );
+  expect(r.limitations).toContainEqual(
+    expect.stringMatching(
+      /^phandle at \/both_bad is not a single cell; this node's reference identity remains unresolved\.$/u,
+    ),
+  );
+  expect(r.limitations).toContainEqual(
+    expect.stringMatching(
+      /^linux,phandle at \/both_bad is not a single cell; this node's reference identity remains unresolved\.$/u,
+    ),
+  );
+});
 it("resolves a legacy phandle only when the canonical property is absent", () => {
   const r = parse(
     devicetreeFixture({
