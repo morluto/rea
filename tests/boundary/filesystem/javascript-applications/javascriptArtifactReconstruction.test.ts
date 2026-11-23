@@ -47,6 +47,7 @@ import {
   parseJavaScriptApplicationGraph,
   type JavaScriptApplicationGraph,
 } from "../../../../src/domain/javascript/javascriptApplicationGraph.js";
+import { compareJavaScriptApplicationVersions } from "../../../../src/domain/javascript/javascriptApplicationVersionComparison.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import {
   createJavaScriptSemanticGraph,
@@ -93,12 +94,22 @@ it("does not let a known-absent optional import erase another application's page
   ).toHaveLength(1);
 });
 
+const moduleFactRoles = (graph: JavaScriptApplicationGraph): string[] =>
+  graph.nodes.flatMap(({ observations }) =>
+    observations.flatMap(({ properties }) => {
+      const role = properties.semantic_role;
+      return role === "source-module" || role === "export-binding"
+        ? [role]
+        : [];
+    }),
+  );
+
 it("returns static and application facts without semantic analysis in structure-only mode", async () => {
   const root = await createTestTempDirectory("rea-structure-only-");
   await writeFixtureFiles(root, {
     "package.json": JSON.stringify({ main: "main.cjs" }),
     "main.cjs":
-      'const {BrowserWindow} = require("electron"); const w = new BrowserWindow(); w.loadFile("index.html");',
+      'const {BrowserWindow} = require("electron"); const w = new BrowserWindow(); w.loadFile("index.html"); module.exports = { open() { return w; } };',
     "index.html": "valid page",
   });
   const result = await reconstructJavaScriptArtifact({
@@ -119,8 +130,21 @@ it("returns static and application facts without semantic analysis in structure-
   expect(
     result.limitations.some((text) => text.includes("structure-only")),
   ).toBe(true);
-  // Coverage must not claim the semantic graph was completely examined.
-  expect(result.semantic_graph.coverage.status).not.toBe("complete");
+  // Skipped semantic facts stay partial in structured coverage, including the
+  // application graph that would otherwise claim the missing exports examined.
+  expect(result.semantic_graph.coverage).toMatchObject({
+    status: "partial",
+    truncated: false,
+    omitted_nodes: null,
+    omitted_relations: null,
+  });
+  expect(moduleFactRoles(result.graph)).toEqual([]);
+  expect(result.graph.coverage).toEqual({
+    status: "partial",
+    truncated: false,
+    omitted_count: null,
+    limits: [],
+  });
   const complete = await reconstructJavaScriptArtifact({
     input_path: root,
     format: "directory",
@@ -132,6 +156,65 @@ it("returns static and application facts without semantic analysis in structure-
   expect(
     complete.limitations.some((text) => text.includes("structure-only")),
   ).toBe(false);
+  expect(complete.graph.coverage).toEqual({
+    status: "complete",
+    truncated: false,
+    omitted_count: 0,
+    limits: [],
+  });
+  const roles = moduleFactRoles(complete.graph);
+  expect(roles).toContain("source-module");
+  expect(roles).toContain("export-binding");
+  const moduleNodeIds = new Set(
+    complete.graph.nodes.flatMap((node) =>
+      node.observations.some(({ properties }) => {
+        const role = properties.semantic_role;
+        return role === "source-module" || role === "export-binding";
+      })
+        ? [node.node_id]
+        : [],
+    ),
+  );
+  const comparison = compareJavaScriptApplicationVersions({
+    left: {
+      evidenceId: `ev_${"1".repeat(64)}`,
+      rootArtifactSha256: complete.root_artifact_sha256,
+      graph: complete.graph,
+    },
+    right: {
+      evidenceId: `ev_${"2".repeat(64)}`,
+      rootArtifactSha256: result.root_artifact_sha256,
+      graph: result.graph,
+    },
+    leftNativeEvidence: [],
+    rightNativeEvidence: [],
+  });
+  expect(comparison.coverage).toEqual({
+    status: "partial",
+    left_graph_status: "complete",
+    right_graph_status: "partial",
+    left_graph_omitted_count: 0,
+    right_graph_omitted_count: null,
+  });
+  const moduleItems = comparison.items.filter(
+    (item) =>
+      item.left_node_id !== null && moduleNodeIds.has(item.left_node_id),
+  );
+  expect(moduleItems.length).toBeGreaterThan(0);
+  expect(moduleItems).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        status: "unknown",
+        right_node_id: null,
+        dimensions: ["availability", "coverage"],
+      }),
+    ]),
+  );
+  expect(moduleItems.every((item) => item.status === "unknown")).toBe(true);
+  expect(comparison.items.some((item) => item.status === "removed")).toBe(
+    false,
+  );
+  expect(comparison.summary.removed).toBe(0);
 });
 
 it.each([

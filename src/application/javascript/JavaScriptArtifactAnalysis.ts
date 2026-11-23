@@ -381,6 +381,7 @@ const finalizeArtifactAnalysis = (
       ),
     modules: state.modules,
     parse_failures: state.parseFailures,
+    ...(structureOnly ? { semantic_analysis: "structure-only" as const } : {}),
     limitations: [
       "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
       "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",

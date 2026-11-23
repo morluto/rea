@@ -888,9 +888,14 @@ semantic-depth cut.
 `complete`, parses, static-analyzes and semantic-analyzes every selected
 source. `structure-only` returns the static and application-graph facts —
 package and Electron roles, preload and renderer structure, IPC and route
-structure — without building semantic IR, semantic graph content or semantic
-traces for any file. Each file's semantic coverage is recorded as not examined
-with that reason, and the result states the omission once in `limitations`.
+structure — without building semantic IR, semantic graph content, semantic
+traces, or the application-graph source-module and export-binding nodes those
+facts feed. Each file's semantic coverage is recorded as not examined with
+that reason. The application graph's `coverage` is `partial`, with
+`truncated: false`, `omitted_count: null` and no extra limits: the number of
+omitted module and export nodes is not known, so a comparison reports those
+nodes as unknown rather than removed or added. The result states the omission
+once in `limitations`.
 Use it for a first pass over a large application when the structural surface
 is the question; request `complete` analysis afterwards, narrowed with
 `source_paths`, for semantic detail. The selection stays in Evidence
