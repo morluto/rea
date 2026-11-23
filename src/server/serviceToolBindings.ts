@@ -6,18 +6,7 @@ import type { DwarfUnitsService } from "../application/binaryDiagnostics/DwarfUn
 import type { ElfDependenciesService } from "../application/binaryDiagnostics/ElfDependenciesService.js";
 import type { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
-import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import type { ElectronFuseService } from "../application/electron/ElectronFuseService.js";
-import type { ElectronObservationPort } from "../ports/javascript/ElectronObservationPort.js";
-import type { ElectronActiveObservationPort } from "../ports/javascript/ElectronActiveObservationPort.js";
-import {
-  inspectElectronPage,
-  listElectronTargets,
-} from "../application/javascript/ElectronObservationService.js";
-import { captureElectronScenario } from "../application/javascript/ElectronActiveObservationService.js";
-import { analyzeJavaScriptApplicationValidated } from "../application/javascript/JavaScriptApplicationService.js";
-import { reconcileJavaScriptRuntimeEvidence } from "../application/javascript/JavaScriptRuntimeReconciliationService.js";
-import { javascriptSourceAnalysis } from "../composition/javascriptSourceAnalysis.js";
 import { analysisSettingsConstraints } from "./analysisSettingsConstraints.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import type { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
@@ -30,8 +19,6 @@ import { dartAotInspectionInputSchema } from "../domain/flutter/flutterBuildAnal
 import {
   executeRetainedSummaryOperation,
   inspectAnalysisView,
-  projectRetainedAnalysis,
-  requireAnalysisViewRetention,
   summarizeRetainedAnalysis,
   type AnalysisViewRetention,
 } from "../application/analysisView/AnalysisViewService.js";
@@ -147,7 +134,6 @@ import {
 import { captureSensitiveValues } from "../domain/webNetworkCapture.js";
 import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
 import type { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
-import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
 import {
   resolveRizinCommandRequest,
   type ReverseEngineeringService,
@@ -164,33 +150,25 @@ import {
   type RizinDebugToolOptions,
 } from "./debuggerToolBindings.js";
 import {
-  optionalProviderUnavailable,
-  type OptionalProviderLoadFailure,
-} from "../ports/OptionalObservationProviders.js";
+  bindBrowserObservationTools,
+  bindBrowserScenarioTools,
+  bindElectronObservationTools,
+  bindElectronScenarioTools,
+  bindJavaScriptApplicationTools,
+  bindJavaScriptRuntimeTools,
+  type BrowserObservationToolOptions,
+  type BrowserScenarioToolOptions,
+  type ElectronObservationToolOptions,
+  type ElectronScenarioToolOptions,
+  type JavaScriptApplicationToolOptions,
+  type JavaScriptRuntimeToolOptions,
+} from "./browserToolBindings.js";
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
-import { browserScenarioSchema } from "../domain/browserScenario.js";
-import type { BrowserScenarioCapturePort } from "../ports/BrowserScenarioCapturePort.js";
-import { captureBrowserScenario } from "../application/BrowserScenarioCaptureService.js";
-import type { JavaScriptRuntimeObservationPort } from "../ports/javascript/JavaScriptRuntimeObservationPort.js";
-import {
-  listJavaScriptRuntimeTargets,
-  observeJavaScriptRuntime,
-} from "../application/javascript/JavaScriptRuntimeObservationService.js";
 import { accessGuidedWorkflows } from "../application/GuidedWorkflowAccess.js";
 import type { PromptContract } from "../contracts/promptContracts.js";
 import { matchNativeFunctions } from "../application/native/NativeFunctionMatchingService.js";
 import type { NativeMatchingAllowance } from "../config/nativeMatchingAllowance.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
-import {
-  analyzeWebBundle,
-  captureWebScreenshot,
-  compareWebCaptureEvidence,
-  compareWebScreenshotEvidence,
-  discoverWebMcpTools,
-  inspectWebPage,
-  listBrowserTargets,
-  observeWebSession,
-} from "../application/BrowserObservationService.js";
 import type { WebRuntimeService } from "../application/WebRuntimeService.js";
 import { exportWebScriptsValidated } from "../application/WebScriptExportService.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
@@ -311,47 +289,10 @@ const prepareRizinCommand =
     );
   };
 
-/** The browser observation provider, or why it failed to load. */
-export interface BrowserObservationToolOptions {
-  readonly browser: BrowserObservationPort | undefined;
-  readonly loadFailure?: OptionalProviderLoadFailure | undefined;
-}
-
-/** Passive Electron observation is independent of active scenario capture. */
-interface ElectronObservationToolOptions {
-  readonly provider: ElectronObservationPort | undefined;
-  readonly loadFailure?: OptionalProviderLoadFailure | undefined;
-}
-
-/** Existing owned Electron scenario execution and its independent load failure. */
-interface ElectronScenarioToolOptions {
-  readonly provider: ElectronActiveObservationPort | undefined;
-  readonly loadFailure?: OptionalProviderLoadFailure | undefined;
-}
-
-/** Static JavaScript analysis needs local artifacts, never an Electron runtime. */
-interface JavaScriptApplicationToolOptions {
-  readonly resources: ArtifactResourceScope;
-  readonly environment: Readonly<Record<string, string | undefined>>;
-  readonly settings?: AnalysisSettingsReader;
-}
-
 /** The session native matching reads, and its allowance for each accepted call. */
 export interface NativeFunctionMatchingToolOptions {
   readonly session: BinarySessionPort;
   readonly allowance: () => Result<NativeMatchingAllowance, ConfigurationError>;
-}
-
-/** The browser scenario provider, or why it failed to load. */
-export interface BrowserScenarioToolOptions {
-  readonly provider: BrowserScenarioCapturePort | undefined;
-  readonly loadFailure?: OptionalProviderLoadFailure | undefined;
-}
-
-/** The JavaScript runtime observation provider, or why it failed to load. */
-export interface JavaScriptRuntimeToolOptions {
-  readonly runtime: JavaScriptRuntimeObservationPort | undefined;
-  readonly loadFailure?: OptionalProviderLoadFailure | undefined;
 }
 
 /** One family's provider operations and how they run. */
@@ -1410,142 +1351,22 @@ const SERVICE_TOOL_BINDINGS = {
   gdb: bindGdbTools satisfies Bind<GdbToolOptions>,
   // Browser observation runs through an optional provider; when it failed
   // to load, every call reports it unavailable before admission.
-  browserObservation: (({ browser, loadFailure }, retention) => {
-    const optional = { unavailable: loadFailure };
-    return {
-      list_browser_targets: {
-        admission: "sdk",
-        ...optional,
-        run: (input, options) => listBrowserTargets(browser, input, options),
-      },
-      inspect_web_page: {
-        admission: "sdk",
-        ...optional,
-        run: (input, options) => inspectWebPage(browser, input, options),
-      },
-      analyze_web_bundle: {
-        admission: "sdk",
-        ...optional,
-        run: async ({ detail, view, ...request }, options) => {
-          if (detail === "summary") {
-            const ready = requireAnalysisViewRetention(
-              "analyze_web_bundle",
-              retention,
-            );
-            if (!ready.ok) return ready;
-          }
-          const analyzed = await analyzeWebBundle(browser, request, options);
-          return analyzed.ok && view !== undefined
-            ? projectRetainedAnalysis(analyzed.value, retention, view)
-            : analyzed;
-        },
-      },
-      observe_web_session: {
-        admission: "sdk",
-        ...optional,
-        run: (input, options) => observeWebSession(browser, input, options),
-      },
-      discover_webmcp_tools: {
-        admission: "sdk",
-        ...optional,
-        run: (input, options) => discoverWebMcpTools(browser, input, options),
-      },
-      compare_web_captures: {
-        admission: "sdk",
-        ...optional,
-        run: (input) => compareWebCaptureEvidence(browser, input),
-      },
-      capture_web_screenshot: {
-        admission: "sdk",
-        ...optional,
-        run: (input, options) => captureWebScreenshot(browser, input, options),
-      },
-      compare_web_screenshots: {
-        admission: "sdk",
-        ...optional,
-        run: (input) => compareWebScreenshotEvidence(browser, input),
-      },
-    };
-  }) satisfies Bind<BrowserObservationToolOptions>,
+  browserObservation:
+    bindBrowserObservationTools satisfies Bind<BrowserObservationToolOptions>,
   electronFuses: ((service) => ({
     inspect_electron_fuses: {
       admission: "application",
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<Pick<ElectronFuseService, "inspect">>,
-  electronObservation: (({ provider, loadFailure }) => ({
-    list_electron_targets: {
-      admission: "sdk",
-      unavailable: loadFailure,
-      run: (input, options) => listElectronTargets(provider, input, options),
-    },
-    inspect_electron_page: {
-      admission: "sdk",
-      unavailable: loadFailure,
-      run: (input, options) => inspectElectronPage(provider, input, options),
-    },
-  })) satisfies Bind<ElectronObservationToolOptions>,
+  electronObservation:
+    bindElectronObservationTools satisfies Bind<ElectronObservationToolOptions>,
   // Keep active capture separate from passive observation and static analysis.
   // Its existing service owns execution admission, effects and cleanup.
-  electronScenario: (({ provider, loadFailure }) => ({
-    capture_electron_scenario: {
-      admission: "sdk",
-      unavailable: loadFailure,
-      run: (input, options) =>
-        captureElectronScenario(provider, input, options),
-    },
-  })) satisfies Bind<ElectronScenarioToolOptions>,
-  javascriptApplication: ((
-    { resources, environment, settings },
-    retention,
-  ) => ({
-    analyze_javascript_application: {
-      admission: "sdk",
-      run: async ({ detail, view, ...request }, options) => {
-        if (detail === "summary") {
-          const ready = requireAnalysisViewRetention(
-            "analyze_javascript_application",
-            retention,
-          );
-          if (!ready.ok) return ready;
-        }
-        const analyzed = await analyzeJavaScriptApplicationValidated(
-          request,
-          resources,
-          {
-            ...options,
-            sourceAnalysis: javascriptSourceAnalysis,
-            environment,
-            ...(settings === undefined ? {} : { settings }),
-          },
-        );
-        return detail === "summary" && analyzed.ok
-          ? projectRetainedAnalysis(
-              analyzed.value,
-              retention,
-              view ?? { kind: "summary" },
-            )
-          : analyzed;
-      },
-    },
-    reconcile_javascript_runtime: {
-      admission: "sdk",
-      run: async (input, options) => {
-        const result = reconcileJavaScriptRuntimeEvidence(
-          input,
-          retention.evidenceById,
-          options,
-        );
-        if (!result.ok) return result;
-        const recorded = recordEvidenceSources(
-          retention.recordEvidence,
-          result.value.sources,
-          { evidence: result.value.evidence },
-        );
-        return recorded.ok ? ok(result.value.evidence) : recorded;
-      },
-    },
-  })) satisfies Bind<JavaScriptApplicationToolOptions>,
+  electronScenario:
+    bindElectronScenarioTools satisfies Bind<ElectronScenarioToolOptions>,
+  javascriptApplication:
+    bindJavaScriptApplicationTools satisfies Bind<JavaScriptApplicationToolOptions>,
   // Frida sessions instrument a live process the caller selects, not the
   // session's target; compose them without analysis admission.
   frida: bindFridaTools satisfies Bind<FridaInstrumentationService>,
@@ -1762,47 +1583,12 @@ const SERVICE_TOOL_BINDINGS = {
   // The SDK admits the advertised structure; the scenario's own parser owns
   // field-path diagnostics, shared with the CLI. A provider that failed to
   // load is reported after the request is validated.
-  browserScenario: (({ provider, loadFailure }) => ({
-    capture_browser_scenario: {
-      admission: "sdk",
-      summary: async (input, options) => {
-        const scenario = browserScenarioSchema.safeParse(input);
-        if (!scenario.success)
-          return err(
-            analysisInputErrorFromIssues(
-              "capture_browser_scenario",
-              scenario.error.issues,
-              input,
-              { cause: scenario.error },
-            ),
-          );
-        return loadFailure === undefined
-          ? captureBrowserScenario(provider, scenario.data, options)
-          : err(
-              optionalProviderUnavailable(
-                loadFailure,
-                "capture_browser_scenario",
-              ),
-            );
-      },
-    },
-  })) satisfies Bind<BrowserScenarioToolOptions>,
+  browserScenario:
+    bindBrowserScenarioTools satisfies Bind<BrowserScenarioToolOptions>,
   // Passive Inspector tools stay registered when policy keeps the provider
   // unavailable; every call then reports it before admission.
-  javascriptRuntime: (({ runtime, loadFailure }) => ({
-    list_javascript_runtime_targets: {
-      admission: "sdk",
-      unavailable: loadFailure,
-      run: (input, options) =>
-        listJavaScriptRuntimeTargets(runtime, input, options),
-    },
-    observe_javascript_runtime: {
-      admission: "sdk",
-      unavailable: loadFailure,
-      run: (input, options) =>
-        observeJavaScriptRuntime(runtime, input, options),
-    },
-  })) satisfies Bind<JavaScriptRuntimeToolOptions>,
+  javascriptRuntime:
+    bindJavaScriptRuntimeTools satisfies Bind<JavaScriptRuntimeToolOptions>,
   // Provider operations whose observation becomes atomic Evidence, run on
   // the analysis admission grants; each family routes its own operations.
   providerOperations: (({ contracts, ...options }): ContractToolBindings =>
