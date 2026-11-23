@@ -128,7 +128,13 @@ async function verifyFixture(fixture) {
 }
 
 function verifyCount(output, prefix, expected, fixture) {
-  if (prefix === undefined || expected === undefined) return;
+  // A fixture that declares neither member has no count to check; admission
+  // rejects a fixture that declares only one of the pair.
+  if (prefix === undefined && expected === undefined) return;
+  if (prefix === undefined || expected === undefined)
+    throw new Error(
+      `${fixture}: counted expectation requires a prefix and a count`,
+    );
   const count = output.filter((record) => record.startsWith(prefix)).length;
   if (count !== expected)
     throw new Error(

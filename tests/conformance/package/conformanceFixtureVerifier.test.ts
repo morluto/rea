@@ -41,6 +41,7 @@ it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
   { mode: "renamed", marker: "REA_C_ENTRY" },
   { mode: "wrong-prefix", marker: "REA_C_ENTRY" },
   { mode: "prefix-complete", marker: "REA_C_ENTRY" },
+  { mode: "half-count", marker: "REA_C_ENTRY" },
   { mode: "marker", marker: "REA_C_ENTRY" },
   { mode: "fragment", marker: "performAction:error:" },
 ])(
@@ -85,8 +86,14 @@ it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
           ...(mode === "fragment"
             ? { stringFragments: [marker] }
             : { stringMarkers: [marker] }),
-          ...(mode === "wrong-prefix" || mode === "prefix-complete"
-            ? { symbolPrefix: `${prefix}rea_inventory_`, symbolCount: 1 }
+          ...(mode === "wrong-prefix" ||
+          mode === "prefix-complete" ||
+          mode === "half-count"
+            ? {
+                symbolPrefix: `${prefix}rea_inventory_`,
+                // A half-declared pair must be refused before verification.
+                ...(mode === "half-count" ? {} : { symbolCount: 1 }),
+              }
             : {}),
         },
       });
@@ -157,7 +164,9 @@ setTimeout(() => {}, 15_000);
                 ? `missing symbol ${prefix}rea_version_entry`
                 : mode === "wrong-prefix"
                   ? `expected 1 ${prefix}rea_inventory_ records, received 0`
-                  : `missing string marker ${marker}`,
+                  : mode === "half-count"
+                    ? "must carry symbolPrefix and symbolCount together"
+                    : `missing string marker ${marker}`,
             ),
           },
         },
