@@ -27,9 +27,12 @@ const child = spawn(
 );
 
 const signalExitCodes = { SIGINT: 130, SIGTERM: 143 };
+let receivedSignal;
 for (const signal of Object.keys(signalExitCodes))
   process.on(signal, () => {
-    if (wrap) return; // run-exclusive owns forwarding and group cleanup.
+    // Forward even when wrapped: run-exclusive can only forward signals it
+    // receives itself, not ones delivered solely to this launcher PID.
+    receivedSignal ??= signal;
     child.kill(signal);
   });
 
@@ -39,7 +42,9 @@ child.once("error", (cause) => {
 });
 child.once("close", (code, signal) => {
   process.exitCode =
-    signal !== null && signal in signalExitCodes
-      ? signalExitCodes[signal]
-      : (code ?? 1);
+    receivedSignal !== undefined
+      ? signalExitCodes[receivedSignal]
+      : signal !== null && signal in signalExitCodes
+        ? signalExitCodes[signal]
+        : (code ?? 1);
 });
