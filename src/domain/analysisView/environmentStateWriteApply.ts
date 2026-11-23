@@ -1,3 +1,4 @@
+import { ENTRY_BYTES } from "./webNetworkRouteTemplates.js";
 import { boundedList } from "../boundedList.js";
 import { ellipsisExcerpt } from "../excerpt.js";
 import { jsonPointerTokens } from "../jsonPointer.js";
@@ -618,12 +619,16 @@ export const laterItemFields = (
   views: Iterable<StateView>,
   entities: readonly StateEntity[],
   type: string | null,
+  retain?: (bytes: number) => void,
 ): Set<string> => {
   const fields = new Set<string>();
   for (const view of views)
     if (view.shape === "item" && view.type === type)
       for (const field of view.fields)
-        if (!view.required_fields.includes(field)) fields.add(field);
+        if (!view.required_fields.includes(field) && !fields.has(field)) {
+          retain?.(ENTRY_BYTES);
+          fields.add(field);
+        }
   for (const entity of entities)
     if (entity.type === type)
       for (const held of [

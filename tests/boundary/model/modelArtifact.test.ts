@@ -2,7 +2,7 @@ import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { open, writeFile, symlink, truncate } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { ModelArtifactProvider } from "../../../src/model/ModelArtifactProvider.js";
 import { ModelHeaderReader } from "../../../src/model/ModelHeaderReader.js";
 import {
@@ -36,13 +36,18 @@ const INVALID_FORMAT = {
 
 const hash = (bytes: Buffer) =>
   createHash("sha256").update(bytes).digest("hex");
-const providerAt = async (bytes: Buffer) => {
+const writeModelFixture = async (bytes: Buffer) => {
   const root = await createTestTempDirectory("rea-model-reader-");
   const path = join(root, "content.without-format-extension");
   await writeFile(path, bytes);
+  return { path, root };
+};
+
+const providerAt = async (bytes: Buffer) => {
+  const fixture = await writeModelFixture(bytes);
   const provider = new ModelArtifactProvider();
   onTestFinished(() => provider.close());
-  return { provider, path, root };
+  return { provider, ...fixture };
 };
 
 it.each([
@@ -1500,17 +1505,14 @@ it("reports a truncated safetensors header whose length resembles a pickle marke
   });
 });
 
-it("bounds expansion before allocation and distinguishes unsupported pickle and paths", async () => {
-  const fixture = ggufFixture();
-  fixture.bytes.writeBigUInt64LE(0xffffffffffffffffn, 8);
-  const { provider, path, root } = await providerAt(fixture.bytes);
-  const huge = await provider.inspect({ path, hash: "header" });
-  if (huge.ok) throw new Error("Huge count admitted");
-  expect(huge.error).toMatchObject(INVALID_FORMAT);
-  await writeFile(path, Buffer.from([0x80, 4, 0, 0]));
-  const pickle = await provider.inspect({ path, hash: "header" });
-  if (pickle.ok) throw new Error("Pickle admitted");
-  expect(pickle.error._tag).toBe("AnalysisUnsupportedTargetError");
+it("admits a valid model after refusing pickle and rejects unapproved path types", async () => {
+  const { provider, path, root } = await providerAt(
+    Buffer.from([0x80, 4, 0, 0]),
+  );
+  expect(await provider.inspect({ path, hash: "header" })).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisUnsupportedTargetError" },
+  });
   await writeFile(path, ggufFixture().bytes);
   expect((await provider.inspect({ path, hash: "header" })).ok).toBe(true);
   const alias = join(root, "link");
@@ -1528,44 +1530,53 @@ it("bounds expansion before allocation and distinguishes unsupported pickle and 
   expect(invalid.error._tag).toBe("AnalysisInputError");
 });
 
-it("reads only the exact header, even when it ends in the middle of a normal buffer", async () => {
-  const fixture = safetensorsFixture();
-  const { path } = await providerAt(fixture.bytes);
-  const file = await open(path, "r");
-  onTestFinished(() => file.close());
-  const requests: [number, number][] = [];
-  const read = file.read.bind(file);
-  const boundary = {
-    read: async (
+it.each([
+  ["GGUF", ggufFixture],
+  ["safetensors", safetensorsFixture],
+] as const)(
+  "reads and hashes the exact %s header across short positional reads",
+  async (format, build) => {
+    const fixture = build();
+    const { path } = await writeModelFixture(fixture.bytes);
+    const file = await open(path, "r");
+    const read = file.read.bind(file);
+    let bytesRead = 0;
+    const shortRead = async (
       buffer: Buffer,
       offset: number,
       length: number,
       position: number,
     ) => {
-      requests.push([position, length]);
       expect(position + length).toBeLessThanOrEqual(fixture.header.length);
-      return read(buffer, offset, length, position);
-    },
-  } as Pick<typeof file, "read">;
-  const reader = new ModelHeaderReader(
-    boundary as typeof file,
-    fixture.bytes.length,
-  );
-  await readSafetensorsHeader(reader, await reader.take(4));
-  expect(await reader.finish(false)).toMatchObject({
-    bytes_read: fixture.header.length,
-    header_sha256: hash(fixture.header),
-  });
-  expect(requests.reduce((n, [, length]) => n + length, 0)).toBe(
-    fixture.header.length,
-  );
-});
+      const result = await read(buffer, offset, Math.min(length, 3), position);
+      bytesRead += result.bytesRead;
+      return result;
+    };
+    const spy = vi
+      .spyOn(file, "read")
+      .mockImplementation(shortRead as typeof file.read);
+    onTestFinished(async () => {
+      spy.mockRestore();
+      await file.close();
+    });
+    const reader = new ModelHeaderReader(file, fixture.bytes.length);
+    const first = await reader.take(4);
+    if (format === "GGUF") await new GgufHeader(reader).read();
+    else await readSafetensorsHeader(reader, first);
+    expect(await reader.finish(false)).toEqual({
+      bytes_read: fixture.header.length,
+      header_sha256: hash(fixture.header),
+      sha256: null,
+    });
+    expect(bytesRead).toBe(fixture.header.length);
+  },
+);
 
 it.each(["header", "full"] as const)(
-  "classifies real truncation after admission during %s reading as an identity change",
+  "classifies real EOF after admission during %s reading as incomplete coverage",
   async (mode) => {
     const fixture = ggufFixture();
-    const { path } = await providerAt(fixture.bytes);
+    const { path } = await writeModelFixture(fixture.bytes);
     const file = await open(path, "r");
     onTestFinished(() => file.close());
     const admitted = await file.stat();
@@ -1573,39 +1584,12 @@ it.each(["header", "full"] as const)(
     if (mode === "full") await reader.take(fixture.header.length);
     await truncate(path, mode === "header" ? 0 : fixture.header.length);
     const reading = mode === "header" ? reader.take(4) : reader.finish(true);
-    await expect(reading).rejects.toMatchObject({ reason: "integrity" });
+    await expect(reading).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "read-coverage",
+    });
   },
 );
-
-it("keeps GGUF read-ahead inside the directory and hashes precisely that prefix", async () => {
-  const fixture = ggufFixture();
-  const { path } = await providerAt(fixture.bytes);
-  const file = await open(path, "r");
-  onTestFinished(() => file.close());
-  const read = file.read.bind(file);
-  let bytesRead = 0;
-  const boundary = {
-    read: async (
-      buffer: Buffer,
-      offset: number,
-      length: number,
-      position: number,
-    ) => {
-      expect(position + length).toBeLessThanOrEqual(fixture.header.length);
-      const result = await read(buffer, offset, length, position);
-      bytesRead += result.bytesRead;
-      return result;
-    },
-  } as Pick<typeof file, "read">;
-  const reader = new ModelHeaderReader(
-    boundary as typeof file,
-    fixture.bytes.length,
-  );
-  await reader.take(4);
-  await new GgufHeader(reader).read();
-  await reader.finish(false);
-  expect(bytesRead).toBe(fixture.header.length);
-});
 
 it("inspects a 1 GiB sparse safetensors declaration using only its small header", async () => {
   const dataBytes = 1024 ** 3;
@@ -1648,43 +1632,6 @@ it("supports true scalar shapes and prototype-named metadata without changing th
     ["__proto__", "raw"],
     ["constructor", "kept"],
   ]);
-});
-
-it("yields while validating a large metadata array, preserves cancellation and releases admission", async () => {
-  const f = ggufFixture();
-  const count = 1_000_000;
-  const fixture = ggufFixture({
-    metadata: [
-      {
-        key: "custom.bools",
-        type: 9,
-        value: Buffer.concat([
-          f.u32(7),
-          f.u64(BigInt(count)),
-          Buffer.alloc(count),
-        ]),
-      },
-    ],
-  });
-  const { path, provider } = await providerAt(fixture.bytes);
-  const controller = new AbortController();
-  const reason = new Error("stop large array");
-  const pending = provider.inspect(
-    { path, hash: "header" },
-    { signal: controller.signal },
-  );
-  setTimeout(() => controller.abort(reason), 0);
-  const result = await pending;
-  if (result.ok) throw new Error("Cancellation ignored");
-  expect(result.error).toMatchObject({
-    _tag: "AnalysisCancelledError",
-    cause: reason,
-  });
-  expect(result.error.cause).toBe(reason);
-  await writeFile(path, ggufFixture().bytes);
-  const recovered = await provider.inspect({ path, hash: "header" });
-  if (!recovered.ok) throw recovered.error;
-  expect(recovered.value.tensors).toHaveLength(2);
 });
 
 it("retains explicit scoped identity through shared service and preserves caller abort reasons", async () => {

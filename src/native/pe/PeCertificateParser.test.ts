@@ -17,7 +17,10 @@ import {
   PeCertificateAsn1Failure,
   readAsn1,
 } from "./PeCertificateAsn1.js";
-import { parsePeCertificates } from "./PeCertificateParser.js";
+import {
+  parsePeCertificates,
+  parsePeCertificatesFromHandle,
+} from "./PeCertificateParser.js";
 
 // Independent boundary examples: changing an allowance requires reviewing
 // both the admitted and rejected certificate shapes.
@@ -74,6 +77,52 @@ it("reads PE32 and PE32+ PKCS#7 certificate tables", () => {
       certificates: 1,
     });
   }
+});
+
+it("reads distant PE headers and certificates without reading the intervening image", async () => {
+  const fixture = peCertificateFixture(true);
+  const peAt = 0x4000;
+  const headersEnd = peAt + 0x180;
+  const tableAt = 2 * 1024 * 1024;
+  const table = fixture.subarray(0x200);
+  const bytes = Buffer.alloc(tableAt + table.length);
+  fixture.copy(bytes, 0, 0, 0x80);
+  fixture.copy(bytes, peAt, 0x80, 0x200);
+  table.copy(bytes, tableAt);
+  bytes.writeUInt32LE(peAt, 60);
+  bytes.writeUInt32LE(headersEnd, peAt + 24 + 60);
+  bytes.writeUInt32LE(tableAt, peAt + 24 + 112 + 4 * 8);
+
+  const buffered = parse(bytes);
+  expect(buffered.entries).toHaveLength(1);
+  expect(buffered.table?.location).toEqual({
+    offset: tableAt,
+    bytes: table.length,
+  });
+  const reads: { offset: number; length: number }[] = [];
+  const streamed = await parsePeCertificatesFromHandle(
+    {
+      sha256: buffered.artifact.sha256,
+      size: bytes.length,
+      prefix: bytes.subarray(0, 4096),
+      readRange: async (offset, length) => {
+        reads.push({ offset, length });
+        return bytes.subarray(offset, offset + length);
+      },
+    },
+    buffered.artifact,
+    defaults,
+  );
+  expect(streamed).toEqual(buffered);
+  expect(reads.slice(0, -1).length).toBeGreaterThan(0);
+  expect(
+    reads
+      .slice(0, -1)
+      .every(
+        ({ offset, length }) => offset >= peAt && offset + length <= headersEnd,
+      ),
+  ).toBe(true);
+  expect(reads.at(-1)).toEqual({ offset: tableAt, length: table.length });
 });
 
 it("reports unsigned attribute OIDs and incomplete nested coverage", () => {
@@ -1148,6 +1197,7 @@ it("accepts only RFC 5280 UTC validity instants", () => {
   // UTCTime 00 is 2000, a leap year; GeneralizedTime carries 2050 onward.
   for (const [tag, time] of [
     [0x17, "000229235959Z"],
+    [0x17, "240229000000Z"],
     [0x18, "20500101000000Z"],
   ] as const)
     expect(
@@ -1259,11 +1309,15 @@ it("decodes UniversalString names as UTF-32BE", () => {
   );
 });
 
-it.each([0xd800, 0xdfff])(
-  "rejects BMPString surrogate code unit %i in certificate names",
-  (codeUnit) => {
-    const content = Buffer.alloc(2);
-    content.writeUInt16BE(codeUnit);
+it.each([
+  { units: [0xd800] },
+  { units: [0xdfff] },
+  { units: [0xd800, 0xdc00] },
+])(
+  "rejects BMPString surrogate code units $units in certificate names",
+  ({ units }) => {
+    const content = Buffer.alloc(units.length * 2);
+    units.forEach((unit, index) => content.writeUInt16BE(unit, index * 2));
     const certificate = readAsn1(
       namedCertificate(
         directoryName(der(0x1e, content)),

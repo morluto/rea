@@ -40,8 +40,8 @@ spelled. Missing project coordinates stay `null`. A `${property}` spelling is
 kept as written and listed in `unresolved`; this reader does not interpolate
 properties or inherit parent or BOM values. POM text goes through XML
 end-of-line handling, as Maven's reader applies it: CRLF and lone CR read as LF.
-POM coordinates, parent fields, and dependency fields use Maven's trimming
-rules, retaining non-ASCII characters at the edges of a declared version.
+POM coordinates, parent fields, dependency fields, and property values use
+Maven's trimming rules, retaining non-ASCII characters at their edges.
 Coordinate, parent, dependency and property values can contain text and CDATA.
 REA reports nested elements inside those values as malformed input.
 When a parent is declared, omitted project group/version fields point to the

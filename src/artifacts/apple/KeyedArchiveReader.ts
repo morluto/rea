@@ -23,7 +23,6 @@ import { basename, join } from "node:path";
 import { realpath } from "node:fs/promises";
 import { InternalInvariantError } from "../../domain/internalInvariant.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
-import { z } from "zod";
 
 import { decodeBinaryPropertyList } from "../../domain/apple/binaryPlistMaterializer.js";
 import { plistDuplicateKeyLimitations } from "../../domain/apple/plistDuplicateKeys.js";
@@ -413,7 +412,14 @@ const readSelectedKeyedArchive = async (
         { cause: input.signal.reason },
       );
     }
-    const bytes = z.instanceof(Buffer).parse(chunk);
+    if (!Buffer.isBuffer(chunk)) {
+      stream.destroy();
+      throw new ArtifactReaderFailure(
+        "malformed",
+        "Expected Buffer chunk from keyed archive stream",
+      );
+    }
+    const bytes = chunk;
     size += bytes.length;
     if (size > MAX_BYTES) {
       stream.destroy();

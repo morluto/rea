@@ -502,7 +502,7 @@ jobs:
         shell: bash
         run: |
           # A new Turbo dry run can evict the entries this build just used.
-          node scripts/ci/portable-build-cache.mjs snapshot < .cache/ci-build-plan.json
+          node scripts/ci/portable-build-cache.mjs snapshot .cache/ci-build-plan.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rea-build-cache

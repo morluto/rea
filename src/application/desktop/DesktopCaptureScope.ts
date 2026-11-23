@@ -73,6 +73,30 @@ export interface CaptureScope {
  * home directory, which would retain and walk whole trees. A selected path
  * that is not a directory brings its SQLite sidecars as content roots too.
  */
+const SCOPE_PATH_CONCURRENCY = 16;
+
+const mapBounded = async <T, U>(
+  items: readonly T[],
+  fn: (item: T) => Promise<U>,
+): Promise<U[]> => {
+  if (items.length <= 1) return Promise.all(items.map(fn));
+  const results = new Array<U>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]!);
+    }
+  };
+  await Promise.all(
+    Array.from(
+      { length: Math.min(SCOPE_PATH_CONCURRENCY, items.length) },
+      worker,
+    ),
+  );
+  return results;
+};
+
 export const captureScope = async (
   request: {
     readonly arguments: readonly string[];
@@ -85,18 +109,15 @@ export const captureScope = async (
   output: string,
 ): Promise<CaptureScope> => {
   const canonical = (paths: readonly string[]) =>
-    Promise.all(paths.map((path) => canonicalCallerPath(path)));
+    mapBounded(paths, (path) => canonicalCallerPath(path));
   const named = (paths: readonly string[]) =>
-    Promise.all(
-      paths.map(async (path) => ({
-        path: absoluteCallerPath(path),
-        physical: await canonicalCallerPath(path),
-      })),
-    );
-  const stateDirectories = await Promise.all(
-    inventory.state_directories.map((entry) =>
-      canonicalStateDirectory(entry.path),
-    ),
+    mapBounded(paths, async (path) => ({
+      path: absoluteCallerPath(path),
+      physical: await canonicalCallerPath(path),
+    }));
+  const stateDirectories = await mapBounded(
+    inventory.state_directories,
+    (entry) => canonicalStateDirectory(entry.path),
   );
   const argumentPaths = await named(
     request.arguments.filter((value) => isAbsolute(value)),
@@ -106,7 +127,7 @@ export const captureScope = async (
       .map(({ physical }) => physical)
       .filter((path) => isWithinAny(home, [path])),
   );
-  const selectedPaths = await Promise.all(
+  const selectedPaths = await mapBounded(
     [
       ...new Map(
         [
@@ -116,10 +137,11 @@ export const captureScope = async (
           ),
         ].map((entry) => [entry.path, entry]),
       ).values(),
-    ].map(async (entry) => ({
+    ],
+    async (entry) => ({
       ...entry,
       kind: await pathKind(entry.physical),
-    })),
+    }),
   );
   const selected = unique(selectedPaths.map(({ physical }) => physical));
   // A database selected on its own is unreadable without its logs. A directory

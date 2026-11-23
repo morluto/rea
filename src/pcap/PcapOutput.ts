@@ -912,12 +912,15 @@ const projectTsharkFields = (
     state.unresolvedHttpUriTarget,
 });
 
+const DNS_FAMILY_PROTOCOL_PATTERN = /(?:^|:)(?:dns|mdns|llmnr)(?::|$)/iu;
+
 export interface PreparedTsharkBaseOutput {
   readonly packets: TsharkPacketLayers[];
   readonly baseDecodedBytes: number;
   readonly state: NonDnsAccumulator;
   readonly nonDnsRetainedBytes: number;
   readonly dnsFrameIndices: readonly number[];
+  readonly hasDnsProtocol: boolean;
   readonly fallback: TsharkFields;
 }
 
@@ -952,12 +955,22 @@ export const prepareTsharkBaseOutput = async (
   }
   const fallback = projectTsharkFields(state, fallbackDns);
   state.retainedBytes = nonDnsRetainedBytes;
+  let hasDnsProtocol = dnsFrameIndices.length > 0;
+  if (!hasDnsProtocol) {
+    for (const protocol of state.protocols.keys()) {
+      if (DNS_FAMILY_PROTOCOL_PATTERN.test(protocol)) {
+        hasDnsProtocol = true;
+        break;
+      }
+    }
+  }
   return {
     packets,
     baseDecodedBytes: budget.decodedBytes,
     state,
     nonDnsRetainedBytes,
     dnsFrameIndices,
+    hasDnsProtocol,
     fallback,
   };
 };

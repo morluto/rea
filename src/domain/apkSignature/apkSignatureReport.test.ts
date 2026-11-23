@@ -249,9 +249,10 @@ describe("deriveApkPosture v1 comparison", () => {
     const match = (...args: Parameters<typeof v1>) =>
       v1(...args).posture.v1_signers_match_block_signers;
     expect(match(["aa"], ["aa"], ["aa"])).toBe(true);
-    // A rotated v3 signer does not hide that v1 and v2 agree.
+    // The v3 lineage names a different original key, so choosing it
+    // instead of the lower v2 scheme would report a mismatch.
     expect(
-      match(["old"], ["old"], [signer("new", decoded("old", "new"))]),
+      match(["old"], ["old"], [signer("new", decoded("other", "new"))]),
     ).toBe(true);
     // The JAR signature naming another key is a mismatch, not agreement.
     expect(match(["other"], ["aa"], ["aa"])).toBe(false);

@@ -40,6 +40,7 @@ import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import {
   decodeNibArchive,
   nibCollectionMembers,
+  trimTrailingNul,
   type NibArchiveDocument,
 } from "./NibArchive.js";
 import {
@@ -57,7 +58,10 @@ import {
   type InterfaceBuilderAnalysis,
 } from "../../domain/apple/interfaceBuilderGraph.js";
 import { projectNibViewHierarchy } from "./NibViewHierarchy.js";
-import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
+import {
+  ownedJsonValueSchema,
+  type JsonValue,
+} from "../../domain/jsonValue.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
@@ -674,7 +678,7 @@ const projectNibArchive = (
 ) => {
   const unexaminedSources: NibUnexaminedSource[] = [];
   for (const object of archive.objects) {
-    const name = object.class_name.replace(/\0+$/u, "");
+    const name = trimTrailingNul(object.class_name);
     if (
       name === "UINib" &&
       ["UINib.archiveData", "archiveData"].some((key) =>
@@ -698,7 +702,7 @@ const projectNibArchive = (
   const normalizeClassName = (value: string): string => {
     const known = normalizedClassNames.get(value);
     if (known !== undefined) return known;
-    const normalized = value.replace(/\0+$/u, "");
+    const normalized = trimTrailingNul(value);
     normalizedClassNames.set(value, normalized);
     return normalized;
   };
@@ -1017,7 +1021,7 @@ const projectNibArchive = (
     unresolvedConnections,
     nonFiniteRealCount,
     negativeZeroRealCount,
-    raw: jsonValueSchema.parse({
+    raw: ownedJsonValueSchema.parse({
       "com.apple.ibtool.document.objects": objects,
       "com.apple.ibtool.document.connections": connections,
       "com.apple.ibtool.document.hierarchy": viewHierarchy.hierarchy ?? [],

@@ -7,7 +7,7 @@ import {
   MAXIMUM_ZSTD_MAX_FRAMES,
   MINIMUM_ZSTD_MAX_FRAMES,
 } from "../../../src/domain/analysisResourceLimits.js";
-import { createElfUnwindRangesService } from "../../../src/composition/binaryDiagnostics.js";
+import { createElfUnwindRangesService } from "../../../src/composition/binaryDiagnostics/elfUnwindRanges.js";
 import { MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES } from "../../../src/domain/native/elfUnwindRanges.js";
 import { elfUnwindFixture } from "../../../src/native/elf/ElfUnwindTables.fixture.js";
 import { compressedElfNoteFixture } from "../../../src/native/elf/ElfNotes.fixture.js";

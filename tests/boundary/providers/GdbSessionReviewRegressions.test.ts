@@ -19,7 +19,7 @@ import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { waitForTestPidFile } from "../../support/process/pidFile.js";
-import { processHasStopped } from "../../support/process/observePosixProcess.js";
+import { waitForPosixProcessStopped } from "../../support/process/observePosixProcess.js";
 import { testWaitDeadline } from "../../support/testWait.js";
 
 // These tests launch controlled fake providers; Linux admission is injected so
@@ -498,7 +498,7 @@ process.stdin.resume();
     if (started.ok) throw new Error("GDB unexpectedly started");
     expect(started.error._tag).toBe("AnalysisCancelledError");
     expect(await readFile(signalPath, "utf8")).toBe("SIGTERM");
-    await expect.poll(() => processHasStopped(pid)).toBe(true);
+    await waitForPosixProcessStopped(pid);
     expect(manager.status("unknown-session")).toBeUndefined();
     await expect(manager.start()).resolves.toMatchObject({
       ok: false,
@@ -630,7 +630,7 @@ process.stdin.on("data", (chunk) => {
       join(directory, "pid"),
       testWaitDeadline(),
     );
-    await expect.poll(() => processHasStopped(pid)).toBe(true);
+    await waitForPosixProcessStopped(pid);
     expect(manager.status(started.value.session_id)?.state).toBe("closed");
   },
 );
@@ -1019,7 +1019,7 @@ setInterval(() => {}, 1000);
         }
         await ownedProcessExit;
         const pid = ownedLaunch.ownership.leaderPid;
-        await expect.poll(() => processHasStopped(pid)).toBe(true);
+        await waitForPosixProcessStopped(pid);
       }
       const retried = await manager.retryCleanupFailures();
       expect(retried.ok).toBe(false);

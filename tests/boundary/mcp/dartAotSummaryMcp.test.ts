@@ -7,9 +7,12 @@ import { unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished, vi } from "vitest";
-import { FlutterBuildAnalysisService } from "../../../src/application/flutter/FlutterBuildAnalysisService.js";
-import { inspectDartAot } from "../../../src/application/flutter/DartAotInspection.js";
-import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
+import { createFlutterBuildAnalysisService } from "../../../src/application/ProviderOperationServices.js";
+import {
+  executeRetainedSummaryOperation,
+  inspectAnalysisView,
+} from "../../../src/application/analysisView/AnalysisViewService.js";
+import { dartAotInspectionInputSchema } from "../../../src/domain/flutter/flutterBuildAnalysis.js";
 import { createFlutterBuildAnalysisProvider } from "../../../src/composition/flutter.js";
 import {
   analysisViewResultSchema,
@@ -316,11 +319,13 @@ it("rejects unavailable retention, invalid delivery and cancellation before prod
   const provider = createFlutterBuildAnalysisProvider();
   onTestFinished(() => provider.close());
   const execute = vi.spyOn(provider, "execute");
-  const service = new FlutterBuildAnalysisService(provider);
+  const service = createFlutterBuildAnalysisService(provider);
   const retention = { recordEvidence: undefined, evidenceById: undefined };
   expect(
-    await inspectDartAot(
+    await executeRetainedSummaryOperation(
       service,
+      "inspect_dart_aot",
+      dartAotInspectionInputSchema,
       { path: "/missing.apk", abi: "x86_64", detail: "summary" },
       retention,
     ),
@@ -329,15 +334,19 @@ it("rejects unavailable retention, invalid delivery and cancellation before prod
     error: { _tag: "AnalysisCapabilityUnavailableError" },
   });
   expect(
-    await inspectDartAot(
+    await executeRetainedSummaryOperation(
       service,
+      "inspect_dart_aot",
+      dartAotInspectionInputSchema,
       { path: "/missing.apk", detail: "other" },
       retention,
     ),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
   const reason = Object.freeze({ requested: "dart-stop" });
-  const cancelled = await inspectDartAot(
+  const cancelled = await executeRetainedSummaryOperation(
     service,
+    "inspect_dart_aot",
+    dartAotInspectionInputSchema,
     { path: "/missing.apk", detail: "summary" },
     retention,
     { signal: AbortSignal.abort(reason) },

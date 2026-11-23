@@ -24,7 +24,7 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { jsonValueSchema, ownedJsonValueSchema } from "../domain/jsonValue.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Result } from "../domain/result.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
@@ -39,7 +39,7 @@ import type {
   UefiImageScanSummary,
   UefiDecodeResult,
   UefiPayload,
-} from "./UefiImageScan.js";
+} from "./UefiScanContext.js";
 import { scanUefiImage } from "./UefiImageScan.js";
 import { scanAmiNvramStores } from "./UefiNvram.js";
 import { uefiFailureDialect } from "./UefiFailures.js";
@@ -65,6 +65,29 @@ type ExtractInput = Extract<
   { operation: "extract_uefi_firmware" }
 >["input"];
 type ExtractedFile = UefiExtractResult["files"][number];
+
+/**
+ * Map each FFS file and section logical path to the file that owns it. Decoded
+ * streams are named by their carrier section, so they resolve to that file.
+ */
+const ffsFileOwners = (
+  scan: UefiImageScanSummary,
+): ReadonlyMap<string, NonNullable<ExtractedFile["ffs_file"]>> => {
+  const owners = new Map<string, NonNullable<ExtractedFile["ffs_file"]>>();
+  for (const volume of scan.volumes)
+    for (const file of volume.ffs_files) {
+      const owner = {
+        guid: file.guid,
+        ui_string: file.ui_string,
+        type_name: file.type_name,
+        logical_path: file.logical_path,
+      };
+      owners.set(file.logical_path, owner);
+      for (const section of file.sections)
+        owners.set(section.logical_path, owner);
+    }
+  return owners;
+};
 type ExtractionRange = UefiPayload["range"];
 
 /** Offsets are scoped to the scanner's exact stream and may repeat across streams. */
@@ -582,6 +605,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       });
     };
 
+    const owners = ffsFileOwners(scan);
+    const ownerOf = (logicalPath: string): ExtractedFile["ffs_file"] =>
+      owners.get(logicalPath) ?? null;
+
     const stage = (
       logicalPath: string,
       suffix: string,
@@ -621,6 +648,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           media_type: mediaType,
           source,
           parent_logical_path: parentLogicalPath,
+          ffs_file: ownerOf(logicalPath),
         },
       });
       return relativePath;
@@ -753,7 +781,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     if (publication.failure !== undefined) {
       throw publication.failure.retainPartialObservation({
         kind: "uefi",
-        result: jsonValueSchema.parse(result),
+        result: ownedJsonValueSchema.parse(result),
         provenance: { path: input.path, sha256: imageSha256 },
       });
     }

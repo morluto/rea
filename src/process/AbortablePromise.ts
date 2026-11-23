@@ -1,4 +1,7 @@
-import type { CarriedCancellationReason } from "../domain/analysisErrorCore.js";
+import {
+  cancelledBy,
+  type CarriedCancellationReason,
+} from "../domain/analysisErrorCore.js";
 
 /**
  * An abortable wait that the signal won. It carries the signal's reason as
@@ -34,4 +37,17 @@ export const waitForAbortable = async <Value>(
   } finally {
     if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
   }
+};
+
+/**
+ * Await the previous holder of a serialized command turn. A caller abort that
+ * wins the wait becomes `operation`'s cancellation with the caller's reason.
+ */
+export const waitForCommandTurn = async (
+  previous: Promise<void>,
+  signal: AbortSignal | undefined,
+  operation: string,
+): Promise<void> => {
+  const outcome = await waitForAbortable(previous, signal);
+  if (outcome instanceof AbortedWait) throw cancelledBy(operation, outcome);
 };

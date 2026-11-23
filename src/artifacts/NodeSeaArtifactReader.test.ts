@@ -1436,7 +1436,7 @@ it.each(["valid replacement", "malformed blob"] as const)(
   },
 );
 
-it("allows an uncancelled inventory after a cancelled SEA preparation", async () => {
+it("allows an uncancelled inventory sharing a SEA preparation cancelled during the fuse scan", async () => {
   const path = await writeCarrier("cancel-retry", nodeSeaElf(populated));
   const reader = new NodeSeaArtifactReader(path);
   const controller = new AbortController();
@@ -1445,13 +1445,28 @@ it("allows an uncancelled inventory after a cancelled SEA preparation", async ()
   const prototype = Object.getPrototypeOf(observed) as FileHandle;
   const original = prototype.read;
   let stopped = false;
+  let other: Promise<IteratorResult<unknown>> | undefined;
   const spy = vi.spyOn(prototype, "read").mockImplementation(async function (
     this: FileHandle,
     ...args: Parameters<typeof original>
   ) {
     const result = await original.apply(this, args);
-    if (!stopped) {
+    const [destination] = args;
+    // Fuse scanning uses the reusable 64 KiB scratch buffer plus overlap.
+    if (
+      !stopped &&
+      Buffer.isBuffer(destination) &&
+      destination.length > 64 * 1024
+    ) {
       stopped = true;
+      other = (async () => {
+        const iterator = reader.entries()[Symbol.asyncIterator]();
+        try {
+          return await iterator.next();
+        } finally {
+          await iterator.return?.();
+        }
+      })();
       controller.abort(reason);
     }
     return result;
@@ -1459,11 +1474,9 @@ it("allows an uncancelled inventory after a cancelled SEA preparation", async ()
   try {
     await expect(
       reader.entries(controller.signal)[Symbol.asyncIterator]().next(),
-    ).rejects.toMatchObject({ reason: "cancelled" });
-    spy.mockRestore();
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
-    expect(entries.length).toBeGreaterThan(0);
+    ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+    expect(stopped).toBe(true);
+    await expect(other).resolves.toMatchObject({ done: false });
   } finally {
     spy.mockRestore();
     await observed.close();

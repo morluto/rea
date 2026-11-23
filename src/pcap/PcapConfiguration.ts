@@ -21,12 +21,15 @@ export interface WiresharkExecutableIdentity {
   readonly sha256: string;
 }
 
-/** Retain only identity facts after a bounded executable read. */
+/** Retain only identity facts after a bounded executable read or stream hash. */
 export const wiresharkExecutableIdentity = (snapshot: {
-  readonly bytes: Uint8Array;
+  readonly bytes: Uint8Array | number;
   readonly sha256: string;
 }): WiresharkExecutableIdentity => ({
-  bytes: snapshot.bytes.byteLength,
+  bytes:
+    typeof snapshot.bytes === "number"
+      ? snapshot.bytes
+      : snapshot.bytes.byteLength,
   sha256: snapshot.sha256,
 });
 

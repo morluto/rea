@@ -1,7 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { literalSubstringPredicate } from "../../../../src/domain/analysisSearch.js";
 import { decodeStrictUtf8 } from "../../../../src/domain/strictUtf8.js";
-import { ghidraAsciiLiteralCandidate } from "../../../../src/ghidra/GhidraLiteralSearch.js";
+import {
+  ghidraAsciiLiteralCandidate,
+  ghidraAsciiLiteralSubstring,
+} from "../../../../src/ghidra/GhidraLiteralSearch.js";
 import {
   createTestWorkspace,
   removeTestWorkspace,
@@ -94,6 +97,7 @@ describe.skipIf(jdk === undefined)(
         "\ud800",
         "\udfff",
         "pre\ud800mid",
+        "éSk",
       ];
       const values = [
         "",
@@ -123,24 +127,31 @@ describe.skipIf(jdk === undefined)(
         "pre\ud800mid",
         "\udfff",
         "ascii_only_string",
+        "xÉſKy",
       ];
 
       const pairs: {
         readonly pattern: string;
         readonly candidate: string | null;
+        readonly substring: string | null;
         readonly value: string;
       }[] = [];
       for (const pattern of patterns) {
         const candidate = ghidraAsciiLiteralCandidate(pattern);
+        const substring =
+          candidate === null ? ghidraAsciiLiteralSubstring(pattern) : null;
         for (const value of values) {
-          pairs.push({ pattern, candidate, value });
+          pairs.push({ pattern, candidate, substring, value });
         }
       }
       const stdin = pairs
-        .map(({ candidate, value }) =>
-          candidate === null
-            ? `0||${encodeUtf16Hex(value)}`
-            : `1|${encodeUtf16Hex(candidate)}|${encodeUtf16Hex(value)}`,
+        .map(({ candidate, substring, value }) =>
+          [
+            candidate === null ? "0" : "1",
+            encodeUtf16Hex(candidate ?? ""),
+            encodeUtf16Hex(value),
+            encodeUtf16Hex(substring ?? ""),
+          ].join("|"),
         )
         .join("\n");
       const stdout = await runBridgeProbe(
@@ -152,7 +163,7 @@ describe.skipIf(jdk === undefined)(
       expect(observed).toHaveLength(pairs.length);
 
       for (let index = 0; index < pairs.length; index += 1) {
-        const { pattern, candidate, value } = pairs[index]!;
+        const { pattern, candidate, substring, value } = pairs[index]!;
         const matched = observed[index] === "1";
         const jsMatches = literalSubstringPredicate(pattern, false)(value);
         if (jsMatches) {
@@ -162,10 +173,26 @@ describe.skipIf(jdk === undefined)(
         if (valueIsAscii) {
           expect(matched).toBe(jsMatches);
         }
-        if (candidate === null) {
+        if (candidate === null && substring === null) {
           expect(matched).toBe(!valueIsAscii);
         }
       }
+    });
+  },
+);
+
+describe.skipIf(jdk === undefined)(
+  "ReaGhidraBridge literalCandidateMatcher edge cases",
+  () => {
+    it("requires both the folded ASCII run and a non-ASCII value for mixed literal candidates", async () => {
+      const stdout = await runBridgeProbe(
+        requireProbe(),
+        "literal-batch",
+        ["xÉſKy", "xÉunrelated", "ASCII_SK_only"]
+          .map((value) => `0||${encodeUtf16Hex(value)}|${encodeUtf16Hex("sk")}`)
+          .join("\n"),
+      );
+      expect(splitProbeLines(stdout)).toEqual(["1", "0", "0"]);
     });
 
     it("handles empty, invalid non-ASCII, and case-sensitive literal matchers", async () => {
@@ -173,9 +200,9 @@ describe.skipIf(jdk === undefined)(
         requireProbe(),
         "literal-batch",
         [
-          `1||${encodeUtf16Hex("anything")}`,
-          `1|${encodeUtf16Hex("é")}|${encodeUtf16Hex("é")}`,
-          `1|${encodeUtf16Hex("abc")}|${encodeUtf16Hex("ab")}`,
+          `1||${encodeUtf16Hex("anything")}|`,
+          `1|${encodeUtf16Hex("é")}|${encodeUtf16Hex("é")}|`,
+          `1|${encodeUtf16Hex("abc")}|${encodeUtf16Hex("ab")}|`,
         ].join("\n"),
       );
       expect(splitProbeLines(invalidAndEdge)).toEqual([
@@ -476,6 +503,111 @@ describe.skipIf(jdk === undefined)(
           .join("\n"),
       );
       expect(splitProbeLines(stdout)).toEqual(cases.map((row) => row[6]));
+    });
+  },
+);
+
+describe.skipIf(jdk === undefined)(
+  "ReaGhidraBridge writeStreamingSuccess and inventory writers",
+  () => {
+    it("streams names, procedures, matched procedure aliases, and strings with surrogate escaping", async () => {
+      const stdout = await runBridgeProbe(requireProbe(), "stream-inventory");
+      const lines = splitProbeLines(stdout);
+      expect(lines).toHaveLength(4);
+      const parsed = lines.map((line) => {
+        const wireText = decodeStrictUtf8(
+          Buffer.from(line, "base64"),
+          "preserve",
+        );
+        expect(wireText.endsWith("\n")).toBe(true);
+        return JSON.parse(wireText.trimEnd()) as unknown;
+      });
+      expect(parsed[0]).toEqual({
+        id: 1,
+        ok: true,
+        result: [
+          {
+            address: "0x1000",
+            value: "ns::sym",
+            symbol: {
+              primary: true,
+              dynamic: false,
+              external: false,
+              type: "Function",
+              source: "USER_DEFINED",
+            },
+          },
+        ],
+      });
+      expect(parsed[1]).toEqual({
+        id: 2,
+        ok: true,
+        result: [
+          {
+            address: "0x1000",
+            value: "ns::work",
+            procedure: {
+              external: false,
+              thunk: true,
+              thunk_target: "0x2000",
+            },
+            symbol: {
+              primary: true,
+              dynamic: false,
+              external: false,
+              type: "Function",
+              source: "USER_DEFINED",
+            },
+          },
+          {
+            address: "0x2000",
+            value: "plain",
+            procedure: {
+              external: false,
+              thunk: false,
+              thunk_target: null,
+            },
+          },
+        ],
+      });
+      expect(parsed[2]).toEqual({
+        id: 3,
+        ok: true,
+        result: [
+          {
+            address: "0x1000",
+            value: "ns::work",
+            procedure: {
+              external: false,
+              thunk: true,
+              thunk_target: "0x2000",
+            },
+            symbol: {
+              primary: true,
+              dynamic: false,
+              external: false,
+              type: "Function",
+              source: "USER_DEFINED",
+            },
+            matched_aliases: ["alt::a", "alt::b"],
+          },
+        ],
+      });
+      expect(parsed[3]).toEqual({
+        id: 4,
+        ok: true,
+        result: [
+          {
+            address: "0x1000",
+            value: "hi-\ud800-lo-\udfff-end",
+            string: {
+              encoding: "utf-8",
+              termination: "missing",
+              byte_length: 12,
+            },
+          },
+        ],
+      });
     });
   },
 );

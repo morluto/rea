@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import {
   inspectV8CodeCacheInputSchema,
+  MAX_INSPECT_V8_CODE_CACHE_STRING_BYTES,
   v8CodeCacheSchema,
   V8_CODE_CACHE_HEADER_BYTES,
   V8_CODE_CACHE_LEGACY_HEADER_BYTES,
@@ -9,7 +10,10 @@ import {
   V8_CODE_CACHE_NARROW_HEADER_BYTES,
   type V8CodeCache,
 } from "../domain/v8/v8CodeCache.js";
-import { parseV8CodeCache } from "./V8CodeCacheParser.js";
+import {
+  parseV8CodeCache,
+  parseV8CodeCacheFromHandle,
+} from "./V8CodeCacheParser.js";
 import {
   v8CodeCacheFixture,
   v8FunctionCodeCacheFixture,
@@ -439,4 +443,36 @@ it("rejects retained header and payload coordinates that disagree", () => {
   expect(
     v8CodeCacheSchema.safeParse(shiftedPayload).error?.issues ?? [],
   ).toContainEqual(expect.objectContaining({ path: ["payload", "offset"] }));
+});
+
+it("streams multi-chunk payloads identically to in-memory parsing across boundaries", async () => {
+  const payloadBytes = 65_536 + 1024 * 1024 + 4096;
+  const bytes = Buffer.alloc(V8_CODE_CACHE_HEADER_BYTES + payloadBytes);
+  real.copy(bytes, 0, 0, V8_CODE_CACHE_HEADER_BYTES);
+  bytes.writeUInt32LE(payloadBytes, 20);
+  // Write printable runs straddling both the 64 KiB prefix boundary and the 1 MiB chunk boundary.
+  Buffer.from("prefix_boundary_crossing_string").copy(bytes, 65_520);
+  Buffer.from("a".repeat(MAX_INSPECT_V8_CODE_CACHE_STRING_BYTES + 64)).copy(
+    bytes,
+    65_536 + 1024 * 1024 - 100,
+  );
+
+  const id = identity(bytes);
+  const expected = parseV8CodeCache(bytes, id, defaults);
+  const streamed = await parseV8CodeCacheFromHandle(
+    {
+      size: bytes.length,
+      prefix: bytes.subarray(0, 65_536),
+      readRange: async (offset, length) =>
+        bytes.subarray(offset, offset + length),
+    },
+    id,
+    defaults,
+  );
+  expect(streamed).toEqual(expected);
+  expect(streamed.embedded_strings).toHaveLength(2);
+  expect(streamed.embedded_strings[0]?.text).toBe(
+    "prefix_boundary_crossing_string",
+  );
+  expect(streamed.embedded_strings[1]?.truncated).toBe(true);
 });

@@ -1121,6 +1121,46 @@ it("keeps a native Intel host whose __DATA segment stores an Intel Deno executab
   expect(snapshot.manifest.root_format).not.toBe("deno-standalone");
 });
 
+it("ignores embedded Intel sentinels in out-of-order overlapping segments and accepts a trailer at their end", async () => {
+  const section = buildDenoSection();
+  const trailer = denoIntelTrailer(section).subarray(-section.length - 24);
+  const segmentSize = 72;
+  const header = Buffer.alloc(32 + 3 * segmentSize);
+  header.writeUInt32LE(0xfeedfacf, 0);
+  header.writeUInt32LE(0x01000007, 4);
+  header.writeUInt32LE(2, 12);
+  header.writeUInt32LE(3, 16);
+  header.writeUInt32LE(3 * segmentSize, 20);
+  const start = header.length;
+  const middle = start + trailer.length;
+  const end = middle + trailer.length;
+  const segments = [
+    [middle, end],
+    [start, middle],
+    [start + 1, middle + 1],
+  ] as const;
+  for (const [index, [from, to]] of segments.entries()) {
+    const at = 32 + index * segmentSize;
+    header.writeUInt32LE(0x19, at);
+    header.writeUInt32LE(segmentSize, at + 4);
+    header.write("__DATA", at + 8, "ascii");
+    header.writeBigUInt64LE(BigInt(to - from), at + 32);
+    header.writeBigUInt64LE(BigInt(from), at + 40);
+    header.writeBigUInt64LE(BigInt(to - from), at + 48);
+  }
+  const native = Buffer.concat([header, trailer, trailer]);
+  await expect(
+    locateDenoStandalone(bytesHandle(native), native.length),
+  ).resolves.toEqual({ status: "absent" });
+  const application = Buffer.concat([native, trailer]);
+  await expect(
+    locateDenoStandalone(bytesHandle(application), application.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    location: { offset: end + 24, length: section.length },
+  });
+});
+
 it("reads an Intel trailer that __LINKEDIT extends over", async () => {
   const section = buildDenoSection();
   const trailer = denoIntelTrailer(section);
@@ -1215,6 +1255,61 @@ const intelTrailerRecord = (section: Buffer): Buffer => {
     section,
   ]);
 };
+
+// The search starts at EOF and walks in 1 MiB chunks.
+const intelTrailerChunkEdge = 2 * 1024 * 1024;
+const intelTrailerChunkSize = 1024 * 1024;
+
+it.each([
+  ["before the seam window", -25],
+  ["at the start of the seam window", -24],
+  ["with the length word split", -23],
+  ["with the sentinel ending at the chunk edge", -16],
+  ["with the sentinel split", -15],
+  ["with one sentinel byte in the older chunk", -1],
+  ["at the start of the newer chunk", 0],
+  ["inside the newer chunk", 1],
+])("recognizes the Intel trailer %s exactly once", async (_label, delta) => {
+  const image = denoMachO([], { architecture: "x64" });
+  const section = buildDenoSection();
+  const trailer = intelTrailerRecord(section);
+  const sentinelOffset = intelTrailerChunkEdge + delta;
+  const bytes = Buffer.alloc(intelTrailerChunkEdge + intelTrailerChunkSize);
+  image.copy(bytes);
+  trailer.copy(bytes, sentinelOffset);
+  // The valid trailer and 63 decoys use the entire candidate allowance.
+  const decoys = rejectedIntelSentinels(63);
+  decoys.copy(bytes, bytes.length - decoys.length);
+
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toEqual({
+    status: "present",
+    location: {
+      carrier: "mach-o",
+      embedding: "mach-o-intel-trailer",
+      offset: sentinelOffset + 24,
+      length: section.length,
+    },
+  });
+});
+
+it("counts the seam trailer before older candidates in the same chunk", async () => {
+  const image = denoMachO([], { architecture: "x64" });
+  const bytes = Buffer.alloc(intelTrailerChunkEdge + intelTrailerChunkSize);
+  image.copy(bytes);
+  const sentinelOffset = intelTrailerChunkEdge - 24;
+  const older = rejectedIntelSentinels(64);
+  older.copy(bytes, sentinelOffset - older.length);
+  intelTrailerRecord(buildDenoSection()).copy(bytes, sentinelOffset);
+
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: { reason: "limit", boundary: "capacity" },
+  });
+});
 
 const sideBySideIntelTrailers = (second: Buffer): Buffer =>
   Buffer.concat([

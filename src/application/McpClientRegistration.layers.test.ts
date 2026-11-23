@@ -15,6 +15,7 @@ import { ClientConfigurationPublication } from "./ClientConfigurationPublication
 import { mergeClientConfigurationDocuments } from "./ClientConfigurationFiles.js";
 import {
   mcpClientRegistrationProfile,
+  resolveMcpRegistrationClients,
   type McpRegistrationClient,
 } from "./McpRegistrationCatalog.js";
 
@@ -138,47 +139,85 @@ it("refuses a higher Kilo file launcher before creating the lower selected targe
   });
 });
 
-it("reports the retained backup when a higher layer invalidates publication", async () => {
-  const root = await createTestTempDirectory(
-    "rea-registration-layer-readback-",
-  );
-  const target = join(root, "project", "kilo.json");
-  const higher = join(root, "higher", "kilo.json");
-  const original = await write(target, { theme: "target" });
-  const higherDocument = {
-    mcp: { rea: { type: "local", command: ["higher-server"] } },
-  };
-  const publish = ClientConfigurationPublication.write;
-  let higherText: string | undefined;
-  vi.spyOn(ClientConfigurationPublication, "write").mockImplementation(
-    async (...args) => {
-      const publication = await publish(...args);
-      higherText = await write(higher, higherDocument);
-      return publication;
-    },
-  );
-  const result = await registerMcpClientOnHost(
-    clientFor(target, [target, higher]),
-    launcher,
-    undefined,
-    resources,
-  );
-  if (result.ok)
-    throw new Error("Registration should refuse the changed launcher");
-  const backup = `${target}.rea.backup`;
-  expect(result.error.message).toContain(
-    "higher-priority configuration overrides",
-  );
-  expect(projectAnalysisError(result.error).details?.diagnostics).toMatchObject(
-    {
+it.each(["kilo", "opencode"] as const)(
+  "reports the retained backup when a higher %s layer invalidates publication",
+  async (format) => {
+    const root = await createTestTempDirectory(
+      "rea-registration-layer-readback-",
+    );
+    const project = join(root, "project");
+    const target = join(
+      project,
+      format === "kilo" ? "kilo.json" : "opencode.jsonc",
+    );
+    const higher =
+      format === "kilo"
+        ? join(root, "higher", "kilo.json")
+        : join(project, ".opencode", "opencode.json");
+    const original = await write(target, {
+      theme: "target",
+      ...(format === "opencode" ? { mcp: { servers: {} } } : {}),
+    });
+    const higherRow = { type: "local", command: ["higher-server"] };
+    const higherDocument = {
+      mcp:
+        format === "kilo"
+          ? { rea: higherRow }
+          : { servers: { rea: higherRow } },
+    };
+    let client: McpRegistrationClient;
+    if (format === "kilo") client = clientFor(target, [target, higher]);
+    else {
+      const selected = await resolveMcpRegistrationClients(
+        {
+          agents: ["opencode"],
+          global: false,
+          home: join(root, "home"),
+          cwd: project,
+          platform: HOST_PLATFORM.platform,
+          environment: {},
+        },
+        resources,
+      );
+      if (!selected.ok) throw selected.error;
+      const [projectClient] = selected.value;
+      if (projectClient === undefined)
+        throw new Error("OpenCode project was not selected");
+      client = projectClient;
+    }
+    const publish = ClientConfigurationPublication.write;
+    let higherText: string | undefined;
+    vi.spyOn(ClientConfigurationPublication, "write").mockImplementation(
+      async (...args) => {
+        const publication = await publish(...args);
+        higherText = await write(higher, higherDocument);
+        return publication;
+      },
+    );
+    const result = await registerMcpClientOnHost(
+      client,
+      launcher,
+      undefined,
+      resources,
+    );
+    if (result.ok)
+      throw new Error("Registration should refuse the changed launcher");
+    const backup = `${target}.rea.backup`;
+    expect(result.error.message).toContain(
+      "overrides the selected stdio launcher",
+    );
+    expect(
+      projectAnalysisError(result.error).details?.diagnostics,
+    ).toMatchObject({
       settings_path: target,
       backup_path: backup,
-    },
-  );
-  expect(await readFile(target, "utf8")).toBe(original);
-  expect(await readFile(backup, "utf8")).toBe(original);
-  expect(await readFile(higher, "utf8")).toBe(higherText);
-});
+      ...(format === "opencode" ? { override_path: higher } : {}),
+    });
+    expect(await readFile(target, "utf8")).toBe(original);
+    expect(await readFile(backup, "utf8")).toBe(original);
+    expect(await readFile(higher, "utf8")).toBe(higherText);
+  },
+);
 
 it("refuses a conflicting KILO_CONFIG_CONTENT launcher without mutating the inline source or creating a target", async () => {
   const root = await createTestTempDirectory(

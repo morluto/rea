@@ -1,3 +1,4 @@
+import { registerContractDocumentCommand } from "../../../src/cli/contractDocumentCommand.js";
 import { cliCommand } from "../../../src/cli/commandRegistry.js";
 import { createCommandCli } from "../../support/cli/commandCli.js";
 import { z } from "zod";
@@ -7,7 +8,6 @@ import { expect, it } from "vitest";
 import {
   admittedContractInput,
   registerContractCommand,
-  registerContractDocumentCommand,
 } from "../../../src/cli/contractCommand.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 

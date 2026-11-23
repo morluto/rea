@@ -1521,7 +1521,14 @@ it.each(["file", "bundle"] as const)(
       await createTestTempDirectory("rea-view-invalid-"),
       "invalid.json",
     );
-    await writeFile(path, "{}");
+    const invalid =
+      kind === "file"
+        ? {
+            ...analysisViewCaptureEvidence(),
+            evidence_id: `ev_${"0".repeat(64)}`,
+          }
+        : {};
+    await writeFile(path, JSON.stringify(invalid));
     const controller = new AbortController();
     const dispatch = queuedInterrupts.dispatchQueuedInterrupts;
     const interrupt = vi
