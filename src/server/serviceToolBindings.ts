@@ -218,8 +218,6 @@ import {
   type ProcessSessionCaptureOptions,
 } from "../application/process/ProcessSessionCapture.js";
 import { openBinaryTargetSelection } from "../contracts/sessionLifecycleInputs.js";
-import type { Evidence } from "../domain/evidence.js";
-import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { ResidualUnknown } from "../domain/residualUnknown.js";
 import { cancelledBy } from "../domain/analysisErrorCore.js";
 import {
@@ -447,174 +445,186 @@ type Bind<Service> = (
   retention: AnalysisViewRetention,
 ) => ContractToolBindings;
 
-interface InspectableService {
-  inspect(
-    input: unknown,
-    options?: ExecutionOptions,
-  ): Promise<Result<Evidence, AnalysisError>>;
-}
-
-interface RetainedInspectableService {
-  inspect(
-    input: unknown,
-    options?: ExecutionOptions,
-    retention?: AnalysisViewRetention,
-  ): Promise<Result<Evidence, AnalysisError>>;
-}
-
-const bindInspect =
-  <Service extends InspectableService>(
-    tool: keyof ContractToolBindings,
-    admission: "sdk" | "application",
-    mode: "run" | "summary" = "run",
-  ): Bind<Service> =>
-  (service) =>
-    ({
-      [tool]:
-        mode === "summary"
-          ? {
-              admission,
-              summary: (input: unknown, options: ExecutionOptions) =>
-                service.inspect(input, options),
-            }
-          : {
-              admission,
-              run: (input: unknown, options: ExecutionOptions) =>
-                service.inspect(input, options),
-            },
-    }) as ContractToolBindings;
-
-const bindRetainedInspect =
-  <Service extends RetainedInspectableService>(
-    tool: keyof ContractToolBindings,
-    admission: "sdk" | "application",
-  ): Bind<Service> =>
-  (service, retention) =>
-    ({
-      [tool]: {
-        admission,
-        run: (input: unknown, options: ExecutionOptions) =>
-          service.inspect(input, options, retention),
-      },
-    }) as ContractToolBindings;
-
 /**
  * The MCP binding of every service-backed contract, keyed by the service that
  * runs it. Production composition and MCP tests both bind from this table,
  * so a test exercises the same handler kind, admission and dependencies.
  */
 const SERVICE_TOOL_BINDINGS = {
-  byteEntropy: bindInspect<ByteEntropyService>(
-    "inspect_byte_entropy",
-    "sdk",
-    "summary",
-  ),
-  peResources: bindInspect<PeResourcesService>(
-    "inspect_pe_resources",
-    "application",
-  ),
-  nativeExports: bindInspect<NativeExportsService>(
-    "inspect_native_exports",
-    "application",
-    "summary",
-  ),
-  devicetree: bindInspect<DevicetreeService>(
-    "inspect_devicetree",
-    "application",
-    "summary",
-  ),
-  elfNotes: bindInspect<ElfNotesService>("inspect_elf_notes", "sdk"),
-  elfDebugLink: bindInspect<ElfDebugLinkService>(
-    "inspect_elf_debug_link",
-    "application",
-  ),
-  nativeInitializers: bindInspect<NativeInitializersService>(
-    "inspect_native_initializers",
-    "sdk",
-  ),
-  elfUnwindRanges: bindInspect<ElfUnwindRangesService>(
-    "inspect_elf_unwind_ranges",
-    "sdk",
-  ),
-  appleIps: bindInspect<AppleIpsService>("inspect_apple_ips", "sdk"),
-  kernelModule: bindInspect<KernelModuleService>(
-    "inspect_kernel_module",
-    "sdk",
-  ),
-  kernelBuildConfig: bindInspect<KernelBuildConfigService>(
-    "inspect_kernel_build_config",
-    "sdk",
-  ),
-  peLoadConfig: bindInspect<PeLoadConfigService>(
-    "inspect_pe_load_config",
-    "sdk",
-  ),
-  releaseExposure: bindInspect<ReleaseExposureService>(
-    "audit_release_exposure",
-    "sdk",
-  ),
-  binaryHardening: bindInspect<BinaryHardeningService>(
-    "inspect_binary_hardening",
-    "sdk",
-  ),
-  peCertificates: bindInspect<PeCertificatesService>(
-    "inspect_pe_certificates",
-    "sdk",
-  ),
-  peImports: bindInspect<PeImportsService>("inspect_pe_imports", "sdk"),
-  windowsShortcut: bindInspect<WindowsShortcutService>(
-    "inspect_windows_shortcut",
-    "sdk",
-  ),
-  recordedCrash: bindInspect<RecordedCrashService>(
-    "inspect_recorded_crash",
-    "application",
-  ),
-  desktopApplication: bindInspect<DesktopApplicationService>(
-    "inspect_desktop_application",
-    "application",
-    "summary",
-  ),
-  modelArtifact: bindRetainedInspect<ModelArtifactService>(
-    "inspect_model_artifact",
-    "sdk",
-  ),
-  gpuCodeObjects: bindRetainedInspect<GpuCodeObjectsService>(
-    "inspect_gpu_code_objects",
-    "sdk",
-  ),
-  evmInterface: bindInspect<EvmInterfaceService>(
-    "inspect_evm_interface",
-    "application",
-    "summary",
-  ),
-  goBinary: bindRetainedInspect<GoBinaryService>(
-    "inspect_go_binary",
-    "application",
-  ),
-  il2cppMetadata: bindRetainedInspect<Il2cppMetadataService>(
-    "inspect_il2cpp_metadata",
-    "application",
-  ),
-  rustBinary: bindRetainedInspect<RustBinaryService>(
-    "inspect_rust_binary",
-    "application",
-  ),
-  nugetNupkg: bindInspect<NugetNupkgService>(
-    "inspect_nuget_nupkg",
-    "application",
-  ),
-  pythonPyc: bindInspect<PythonPycService>(
-    "inspect_python_pyc",
-    "application",
-    "summary",
-  ),
-  erlangBeam: bindInspect<BeamService>(
-    "inspect_erlang_beam",
-    "application",
-    "summary",
-  ),
-  v8CodeCache: bindInspect<V8CodeCacheService>("inspect_v8_code_cache", "sdk"),
+  byteEntropy: ((service) => ({
+    inspect_byte_entropy: {
+      admission: "sdk",
+      summary: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<ByteEntropyService>,
+  peResources: ((service) => ({
+    inspect_pe_resources: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<PeResourcesService>,
+  nativeExports: ((service) => ({
+    inspect_native_exports: {
+      admission: "application",
+      summary: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<NativeExportsService>,
+  devicetree: ((service) => ({
+    inspect_devicetree: {
+      admission: "application",
+      summary: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<DevicetreeService>,
+  elfNotes: ((service) => ({
+    inspect_elf_notes: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<ElfNotesService>,
+  elfDebugLink: ((service) => ({
+    inspect_elf_debug_link: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<ElfDebugLinkService>,
+  nativeInitializers: ((service) => ({
+    inspect_native_initializers: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<NativeInitializersService>,
+  elfUnwindRanges: ((service) => ({
+    inspect_elf_unwind_ranges: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<ElfUnwindRangesService>,
+  appleIps: ((service) => ({
+    inspect_apple_ips: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<AppleIpsService>,
+  kernelModule: ((service) => ({
+    inspect_kernel_module: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<KernelModuleService>,
+  kernelBuildConfig: ((service) => ({
+    inspect_kernel_build_config: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<KernelBuildConfigService>,
+  peLoadConfig: ((service) => ({
+    inspect_pe_load_config: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<PeLoadConfigService>,
+  releaseExposure: ((service) => ({
+    audit_release_exposure: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<ReleaseExposureService>,
+  binaryHardening: ((service) => ({
+    inspect_binary_hardening: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<BinaryHardeningService>,
+  peCertificates: ((service) => ({
+    inspect_pe_certificates: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<PeCertificatesService>,
+  peImports: ((service) => ({
+    inspect_pe_imports: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<PeImportsService>,
+  windowsShortcut: ((service) => ({
+    inspect_windows_shortcut: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<WindowsShortcutService>,
+  recordedCrash: ((service) => ({
+    inspect_recorded_crash: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<RecordedCrashService>,
+  desktopApplication: ((service) => ({
+    inspect_desktop_application: {
+      admission: "application",
+      summary: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<DesktopApplicationService>,
+  modelArtifact: ((service, retention) => ({
+    inspect_model_artifact: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options, retention),
+    },
+  })) satisfies Bind<ModelArtifactService>,
+  gpuCodeObjects: ((service, retention) => ({
+    inspect_gpu_code_objects: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options, retention),
+    },
+  })) satisfies Bind<GpuCodeObjectsService>,
+  evmInterface: ((service) => ({
+    inspect_evm_interface: {
+      admission: "application",
+      summary: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<EvmInterfaceService>,
+  goBinary: ((service, retention) => ({
+    inspect_go_binary: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options, retention),
+    },
+  })) satisfies Bind<GoBinaryService>,
+  il2cppMetadata: ((service, retention) => ({
+    inspect_il2cpp_metadata: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options, retention),
+    },
+  })) satisfies Bind<Il2cppMetadataService>,
+  rustBinary: ((service, retention) => ({
+    inspect_rust_binary: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options, retention),
+    },
+  })) satisfies Bind<RustBinaryService>,
+  nugetNupkg: ((service) => ({
+    inspect_nuget_nupkg: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<NugetNupkgService>,
+  pythonPyc: ((service) => ({
+    inspect_python_pyc: {
+      admission: "application",
+      summary: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<PythonPycService>,
+  erlangBeam: ((service) => ({
+    inspect_erlang_beam: {
+      admission: "application",
+      summary: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<BeamService>,
+  v8CodeCache: ((service) => ({
+    inspect_v8_code_cache: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<V8CodeCacheService>,
   wasmArtifact: ((service, retention) => ({
     compare_wasm_interfaces: {
       admission: "sdk",
@@ -637,14 +647,18 @@ const SERVICE_TOOL_BINDINGS = {
       summary: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<Pick<WasmArtifactService, "inspect">>,
-  apkSignature: bindRetainedInspect<Pick<ApkSignatureService, "inspect">>(
-    "inspect_apk_signature",
-    "sdk",
-  ),
-  sqliteDatabase: bindInspect<SqliteDatabaseService>(
-    "inspect_sqlite_database",
-    "application",
-  ),
+  apkSignature: ((service, retention) => ({
+    inspect_apk_signature: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options, retention),
+    },
+  })) satisfies Bind<Pick<ApkSignatureService, "inspect">>,
+  sqliteDatabase: ((service) => ({
+    inspect_sqlite_database: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<SqliteDatabaseService>,
   packetCapture: ((service) => ({
     inspect_packet_capture: {
       admission: "application",
@@ -862,19 +876,24 @@ const SERVICE_TOOL_BINDINGS = {
       run: (input, options) => service.recover(input, options),
     },
   })) satisfies Bind<JavaScriptRecoveryService>,
-  mavenGradleMetadata: bindInspect<MavenGradleMetadataService>(
-    "inspect_maven_gradle_metadata",
-    "application",
-  ),
-  dwarfUnits: bindInspect<DwarfUnitsService>(
-    "inspect_dwarf_units",
-    "application",
-  ),
-  elfDependencies: bindInspect<ElfDependenciesService>(
-    "inspect_elf_dependencies",
-    "application",
-    "summary",
-  ),
+  mavenGradleMetadata: ((service) => ({
+    inspect_maven_gradle_metadata: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<MavenGradleMetadataService>,
+  dwarfUnits: ((service) => ({
+    inspect_dwarf_units: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<DwarfUnitsService>,
+  elfDependencies: ((service) => ({
+    inspect_elf_dependencies: {
+      admission: "application",
+      summary: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<ElfDependenciesService>,
   guidance: ((resources) => ({
     search_guidance: {
       admission: "application",
@@ -1622,10 +1641,12 @@ const SERVICE_TOOL_BINDINGS = {
       },
     };
   }) satisfies Bind<BrowserObservationToolOptions>,
-  electronFuses: bindInspect<Pick<ElectronFuseService, "inspect">>(
-    "inspect_electron_fuses",
-    "application",
-  ),
+  electronFuses: ((service) => ({
+    inspect_electron_fuses: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<Pick<ElectronFuseService, "inspect">>,
   electronObservation: (({ provider, loadFailure }) => ({
     list_electron_targets: {
       admission: "sdk",
