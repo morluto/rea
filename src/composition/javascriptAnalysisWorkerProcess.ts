@@ -40,49 +40,16 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     return null;
   }
   await callbacks.phase("static");
-  let facts: JavaScriptStaticAnalysis;
-  try {
-    facts = await completeJavaScriptAnalysisSteps(
-      analyzeParsedJavaScriptStaticSourceSteps(
-        file.text.value,
-        parsed,
-        precision,
-        memberMutationAllowance,
-      ),
-    );
-  } catch (cause: unknown) {
-    // The semantic phase indexes the same mutations under the same
-    // allowance, so it is not started; the syntax facts cross first.
-    if (purpose === "analysis" && isJavaScriptMemberMutationRefusal(cause))
-      await callbacks.checkpoint(
-        memberMutationRefusedJavaScriptStaticAnalysis(
-          file.text.value,
-          parsed,
-          cause,
-        ),
-      );
-    throw cause;
-  }
-  if (purpose === "preload-discovery") {
-    // Only declarations cross this preliminary pass. The normal pass owns
-    // full static/semantic facts and their result reservations.
-    const empty = failedJavaScriptStaticAnalysis();
-    await callbacks.checkpoint({
-      ...empty,
-      parse_status: facts.parse_status,
-      parse_error_count: facts.parse_error_count,
-      analysis_coverage: facts.analysis_coverage,
-      visited_ast_nodes: facts.visited_ast_nodes,
-      limitations: facts.limitations,
-      electron: {
-        ...empty.electron,
-        browser_windows: facts.electron.browser_windows,
-      },
-    });
-    return null;
-  }
-  const resultBudgetBytes = await callbacks.checkpoint(facts);
-  if (facts.parse_status === "failed") return null;
+  const static_ = await staticCheckpoint(
+    file.text.value,
+    parsed,
+    callbacks,
+    purpose,
+    precision,
+    memberMutationAllowance,
+  );
+  if (static_ === null) return null;
+  const { resultBudgetBytes, callPaths } = static_;
   if (resultBudgetBytes === 0)
     throw new AnalysisResourceConstraintError(
       "analyze_javascript_application",
@@ -120,14 +87,77 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     );
   await callbacks.phase("projection");
   const projection = await completeJavaScriptAnalysisSteps(
-    projectJavaScriptSemanticFileSteps(
-      file,
-      ir,
-      capacity,
-      facts.electron.call_paths,
-    ),
+    projectJavaScriptSemanticFileSteps(file, ir, capacity, callPaths),
   );
   return { module, projection };
+};
+
+/**
+ * Checkpoint static facts, reusing the ones preload discovery retained for
+ * this exact request. Null ends the job: discovery returns only declarations,
+ * and a failed parse has no semantic phase.
+ */
+const staticCheckpoint = async (
+  source: string,
+  parsed: NonNullable<ReturnType<typeof parseJavaScriptSource>>,
+  callbacks: Parameters<JavaScriptSourceWorkerAnalyzer>[2],
+  purpose: Parameters<JavaScriptSourceWorkerAnalyzer>[4],
+  precision: Parameters<JavaScriptSourceWorkerAnalyzer>[5],
+  memberMutationAllowance: Parameters<JavaScriptSourceWorkerAnalyzer>[6],
+): Promise<{
+  readonly resultBudgetBytes: number;
+  readonly callPaths: JavaScriptStaticAnalysis["electron"]["call_paths"];
+} | null> => {
+  const reused = purpose === "analysis" ? callbacks.reusedStatic() : undefined;
+  if (reused !== undefined) {
+    const resultBudgetBytes = await callbacks.checkpointReused(reused);
+    return reused.parse_status === "failed"
+      ? null
+      : { resultBudgetBytes, callPaths: reused.call_paths };
+  }
+  let facts: JavaScriptStaticAnalysis;
+  try {
+    facts = await completeJavaScriptAnalysisSteps(
+      analyzeParsedJavaScriptStaticSourceSteps(
+        source,
+        parsed,
+        precision,
+        memberMutationAllowance,
+      ),
+    );
+  } catch (cause: unknown) {
+    // The semantic phase indexes the same mutations under the same
+    // allowance, so it is not started; the syntax facts cross first.
+    if (purpose === "analysis" && isJavaScriptMemberMutationRefusal(cause))
+      await callbacks.checkpoint(
+        memberMutationRefusedJavaScriptStaticAnalysis(source, parsed, cause),
+      );
+    throw cause;
+  }
+  if (purpose === "preload-discovery") {
+    // Only declarations cross this preliminary pass. The normal pass owns
+    // full static/semantic facts and their result reservations; the worker
+    // keeps the complete checkpoint so that pass need not recompute it.
+    callbacks.retainStatic(facts);
+    const empty = failedJavaScriptStaticAnalysis();
+    await callbacks.checkpoint({
+      ...empty,
+      parse_status: facts.parse_status,
+      parse_error_count: facts.parse_error_count,
+      analysis_coverage: facts.analysis_coverage,
+      visited_ast_nodes: facts.visited_ast_nodes,
+      limitations: facts.limitations,
+      electron: {
+        ...empty.electron,
+        browser_windows: facts.electron.browser_windows,
+      },
+    });
+    return null;
+  }
+  const resultBudgetBytes = await callbacks.checkpoint(facts);
+  return facts.parse_status === "failed"
+    ? null
+    : { resultBudgetBytes, callPaths: facts.electron.call_paths };
 };
 
 try {

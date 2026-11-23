@@ -746,14 +746,14 @@ export const kiloLayeredLocation = async (
 ): Promise<Result<ClientLayeredLocation, ClientPathFailure>> => {
   const kilo = kiloTableContext(context);
   try {
-    const located = await kiloGlobalLocation(kilo);
-    if (!located.ok)
+    const location = await kiloGlobalLocation(kilo);
+    if (!location.ok)
       return err({
         path: kiloDefaultLocation(kilo).markerPath,
-        message: located.error.message,
-        failure: located.error,
+        message: location.error.message,
+        failure: location.error,
       });
-    const { configPath, configPaths, inlineConfiguration } = located.value;
+    const { configPath, configPaths, inlineConfiguration } = location.value;
     return ok({
       configPath,
       configPaths,

@@ -594,6 +594,10 @@ failed request's physical, cancellation and cleanup facts.
   cancellation before commit keeps the completed value as a partial
   observation, cancellation after commit keeps the value, and unconfirmed
   cleanup reports `cleanup_incomplete` while keeping the completed value.
+  SQLite keeps a failed close primary when cancellation arrives during that
+  close, and retains the caller's cancellation as a secondary failure.
+  Startup deadlines own the readiness cutoff for sessions that remain open
+  after a successful handshake.
 - Give descriptor-backed reads an owner before opening the file. A rejected
   close must retain the exact handle and preserve any earlier failure.
   Carry [`openRegularFile`](https://github.com/morluto/rea/blob/main/src/filesystem/RegularFile.ts)'s

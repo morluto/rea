@@ -103,6 +103,8 @@ import {
 } from "./interfaceBuilderView.js";
 import { javascriptApplicationSourceCoverageSchema } from "./javascriptApplicationCoverage.js";
 import {
+  javascriptFactGroupRowSchema,
+  javascriptFactGroupsViewRequestSchema,
   javascriptFactRowSchema,
   javascriptFactsViewRequestSchema,
 } from "./javascriptFactsView.js";
@@ -511,6 +513,16 @@ const javascriptFactsViewResultSchema = z.strictObject({
   source_coverage: javascriptApplicationSourceCoverageSchema,
 });
 
+/** Distinct selected property combinations over retained observations. */
+const javascriptFactGroupsViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("javascript-fact-groups"),
+  view: javascriptFactGroupsViewRequestSchema,
+  parent_operation: z.literal("analyze_javascript_application"),
+  rows: z.array(javascriptFactGroupRowSchema),
+  source_coverage: javascriptApplicationSourceCoverageSchema,
+});
+
 const androidPackageViewResultSchema = z.discriminatedUnion("facet", [
   androidManifestViewResultSchema,
   androidComponentsViewResultSchema,
@@ -895,6 +907,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   }),
   javascriptModuleReferencesViewResultSchema,
   javascriptFactsViewResultSchema,
+  javascriptFactGroupsViewResultSchema,
   z.strictObject({
     kind: z.literal("native"),
     view: nativeViewSchema,
