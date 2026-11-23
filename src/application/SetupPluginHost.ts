@@ -4,6 +4,7 @@ import { ok } from "../domain/result.js";
 import { compositeKey } from "../domain/unicodeCodePointOrder.js";
 import { omitEnvironmentSettings } from "../process/snapshotEnvironment.js";
 import { explicitSetupRegistrationEnvironment } from "./SetupRegistrationEnvironment.js";
+import { registrationEnvironmentProposal } from "./UserConfigurationLocation.js";
 import { SetupCleanupOwner } from "./SetupCleanupOwner.js";
 import { throwIfSetupCancelled } from "./SetupCancellation.js";
 import { launchPluginCommand } from "./SetupPluginCommands.js";
@@ -67,6 +68,8 @@ class PluginSetupHost {
     { close: () => this.resources.close() },
   ]);
   private providerSettings = false;
+  /** Non-default config home that direct registration must record. */
+  private configHomeFallback: string | undefined;
   private readonly approvedPluginClients = new Set<string>();
   private readonly pending = new Map<string, Promise<ClientRoute>>();
   private readonly routes = new Map<string, ClientRoute>();
@@ -111,10 +114,9 @@ class PluginSetupHost {
       (state?.status === "available" && state.installed)
     );
   }
-  private inspectRoute = async (id: string): Promise<ClientRoute> => {
-    // Explicit direct setup must not launch a client that can migrate its settings.
-    if (!this.options.preferPlugins || this.providerSettings)
-      return { mode: "direct" };
+  private configHomeRepairGuidance = (configHome: string): string =>
+    `REA settings are stored under XDG_CONFIG_HOME=${configHome}. The installed plugin does not record that location for desktop clients that omit it. Remove the REA plugin and rerun setup so direct registration can preserve the config location, or export XDG_CONFIG_HOME=${configHome} in the desktop client environment.`;
+  private inspectPluginRoute = async (id: string): Promise<ClientRoute> => {
     const commands: Readonly<Record<string, "codex" | "claude" | "cursor">> = {
       codex: "codex",
       claude_code: "claude",
@@ -170,6 +172,23 @@ class PluginSetupHost {
       installed: state?.installed ?? false,
       enabled: state?.enabled ?? false,
     };
+  };
+  private inspectRoute = async (id: string): Promise<ClientRoute> => {
+    // Explicit direct setup must not launch a client that can migrate its settings.
+    if (!this.options.preferPlugins) return { mode: "direct" };
+    const configHome = this.configHomeFallback;
+    if (configHome !== undefined) {
+      const selected = await this.inspectPluginRoute(id);
+      if (selected.mode === "plugin" && selected.installed)
+        return {
+          mode: "blocked",
+          remediation: this.configHomeRepairGuidance(configHome),
+        };
+      // New installs that need the locator use direct registration.
+      return selected.mode === "blocked" ? selected : { mode: "direct" };
+    }
+    if (this.providerSettings) return { mode: "direct" };
+    return this.inspectPluginRoute(id);
   };
   private route = (id: string): Promise<ClientRoute> => {
     let value = this.pending.get(id);
@@ -246,6 +265,7 @@ class PluginSetupHost {
     installHopper,
     settings,
   ) => {
+    const { configHomeFallback } = registrationEnvironmentProposal(settings);
     const providerSettings =
       installHopper ||
       Object.keys(
@@ -253,12 +273,17 @@ class PluginSetupHost {
           explicitSetupRegistrationEnvironment(this.environment),
           this.options.savedDefaults,
         ),
-      ).length > 0;
-    if (providerSettings !== this.providerSettings) {
+      ).length > 0 ||
+      configHomeFallback !== undefined;
+    if (
+      providerSettings !== this.providerSettings ||
+      configHomeFallback !== this.configHomeFallback
+    ) {
       this.pending.clear();
       this.routes.clear();
     }
     this.providerSettings = providerSettings;
+    this.configHomeFallback = configHomeFallback;
     this.host.prepareClientSetup?.(installHopper, settings);
   };
 
@@ -448,9 +473,14 @@ class PluginSetupHost {
         ? scope
         : {
             ...scope,
+            // Drop direct-registration checks for plugin clients, but keep MCP
+            // startup admission required through pluginClients.
             clients: (scope?.clients ?? []).filter(
               (id) => !pluginIds.includes(id),
             ),
+            pluginClients: [
+              ...new Set([...(scope?.pluginClients ?? []), ...pluginIds]),
+            ],
             skill:
               scope?.skill === true &&
               (scope.skillClients === undefined || skillIds.length > 0),

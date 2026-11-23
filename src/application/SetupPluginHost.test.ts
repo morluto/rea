@@ -523,6 +523,65 @@ it("keeps saved config provider settings on the plugin path", async () => {
   expect(f.base.configurations).toBe(0);
 });
 
+const withConfigHomeFallback = (
+  f: ReturnType<typeof fixture>,
+  home: string,
+) => {
+  const original = f.base.initialSetupState.bind(f.base);
+  f.base.initialSetupState = async (scope) => {
+    const state = await original(scope);
+    return {
+      ...state,
+      providerEnvironment: {
+        ...state.providerEnvironment,
+        XDG_CONFIG_HOME: home,
+      },
+    };
+  };
+};
+
+it("keeps a non-default XDG_CONFIG_HOME on the direct registration path", async () => {
+  const f = fixture();
+  withConfigHomeFallback(f, "/custom/config");
+  const result = await runSetup(
+    f.setupOptions,
+    f.host(true, {}, new Set(["GHIDRA_INSTALL_DIR"])),
+  );
+  expect(result.status).toBe("ready");
+  expect(f.mutations()).toEqual([]);
+  expect(f.base.configurations).toBe(1);
+  expect(f.base.configuredProviderEnvironments[0]).toMatchObject({
+    XDG_CONFIG_HOME: "/custom/config",
+  });
+  expect(result.doctor.scope.plugin_clients).toBeUndefined();
+});
+
+it("guides repair when an installed plugin cannot preserve XDG_CONFIG_HOME", async () => {
+  const f = fixture();
+  f.installed(true, true);
+  withConfigHomeFallback(f, "/custom/config");
+  const result = await runSetup(f.setupOptions, f.host());
+  expect(result.status).toBe("needs_human");
+  expect(result.remediation).toContain("XDG_CONFIG_HOME=/custom/config");
+  expect(result.remediation).toContain("Remove the REA plugin");
+  expect(f.mutations()).toEqual([]);
+  expect(f.base.configurations).toBe(0);
+});
+
+it("keeps MCP startup scope for plugin clients during readiness", async () => {
+  const f = fixture();
+  f.installed(true, true);
+  const result = await runSetup(f.setupOptions, f.host());
+  expect(result.status).toBe("ready");
+  expect(result.doctor.scope.plugin_clients).toEqual(["codex"]);
+  expect(f.base.doctorScopes).toContainEqual(
+    expect.objectContaining({
+      clients: [],
+      pluginClients: ["codex"],
+    }),
+  );
+});
+
 it.each([
   {
     label: "--tool-catalog-profile hot-cold",

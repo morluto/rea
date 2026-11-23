@@ -203,6 +203,11 @@ export interface DoctorReport {
 /** Caller-selected readiness boundary; omitted values retain audit semantics. */
 export interface DoctorScope {
   readonly clients?: readonly string[];
+  /**
+   * Clients verified through a plugin manager rather than MCP registration
+   * files. They still exercise MCP startup admission.
+   */
+  readonly pluginClients?: readonly string[];
   readonly skillClients?: readonly string[];
   readonly providers?: readonly string[];
   readonly skill?: boolean;
