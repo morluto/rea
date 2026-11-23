@@ -6,3 +6,6 @@
 
 # Preserve whitespace in original upstream licensing texts.
 licenses/npm-runtime-notices.txt whitespace=-blank-at-eol
+
+# Temporary branch used to check the pull-request creation flow; delete it
+# together with its pull request.
