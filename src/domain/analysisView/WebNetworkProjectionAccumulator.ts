@@ -15,7 +15,6 @@ import {
 import { admitAnalysisViewData } from "./analysisViewDataAdmission.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
-import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ENTRY_BYTES,
@@ -178,23 +177,12 @@ export abstract class WebNetworkProjectionAccumulator {
 }
 
 /** Authenticate and gate a retained HAR parent before a grouping view reads any record. */
-const cachedHarCaptures = new WeakMap<object, WebNetworkCapture>();
-
 const parseHarCapture = (
   parent: AnalysisViewParent,
   operation: string,
   sourceField: string,
 ): Result<WebNetworkCapture, AnalysisError> => {
   const source = parent.normalizedResult;
-  const reusable =
-    parent.sealedResult === true &&
-    typeof source === "object" &&
-    source !== null &&
-    isImmutableJsonSnapshot(source);
-  if (reusable) {
-    const cached = cachedHarCaptures.get(source);
-    if (cached !== undefined) return ok(cached);
-  }
   const parsed = safeParseOwnedWebNetworkCapture(source);
   if (!parsed.success)
     return err(
@@ -208,7 +196,6 @@ const parseHarCapture = (
         { cause: parsed.error },
       ),
     );
-  if (reusable) cachedHarCaptures.set(source, parsed.data);
   return ok(parsed.data);
 };
 
