@@ -138,12 +138,13 @@ export function resolveEvidenceRequest(
         }
         selected = admitted.value;
       }
+      // A synchronous lookup or format admission can initiate cancellation.
+      if (options.signal?.aborted)
+        return err(cancelledBy(operation, options.signal));
       sources.add(selected);
       return ok(selected);
     },
   );
-  if (result.ok && options.signal?.aborted)
-    return err(cancelledBy(operation, options.signal));
   return result.ok
     ? ok({
         input: result.value,

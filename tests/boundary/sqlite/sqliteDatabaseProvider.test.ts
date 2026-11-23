@@ -544,6 +544,12 @@ it.each(["late-cancellation", "cleanup-failure", "cancelled cleanup-failure"])(
       expect(result.ok ? undefined : result.error).toBeInstanceOf(
         ProviderCleanupError,
       );
+      if (result.ok) throw new Error("Expected an unresolved cleanup");
+      if (scenario === "cancelled cleanup-failure") {
+        const [cancellation] = result.error.secondaryFailures;
+        expect(cancellation?._tag).toBe("AnalysisCancelledError");
+        expect(cancellation?.cause).toBe(cancellationReason);
+      }
       expect(result).toMatchObject({
         ok: false,
         error: {
