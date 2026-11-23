@@ -703,96 +703,207 @@ parentPort.on("message", (job) => {
 `;
 
 // Workers are pooled by heap class: spawning one costs ~10 ms, which dominates
-// small searches. A worker is reused only after a clean reply; a deadline,
-// abort, error or exit retires it, so a stuck pattern can never poison a pool.
+// small searches. A worker is reused only after a clean reply. A deadline,
+// abort, error, or exit stops that worker. It stays in the pool, and counts
+// toward the cap, until its thread exits. A failed stop keeps the slot and is
+// retried; the caller's match error keeps its identity and records the stop
+// failure beside it.
 const MAX_POOLED_REGEX_WORKERS = 4;
 const REGEX_WORKER_IDLE_MS = 10_000;
+const REGEX_WORKER_RESOURCE = "regex-worker";
 
 interface PooledRegexWorker {
   readonly worker: Worker;
   readonly heapMiB: number;
   busy: boolean;
-  dead: boolean;
-  idleTimer?: NodeJS.Timeout;
-  stopping?: Promise<number>;
+  /** The thread has exited and the entry has left the pool. */
+  exited: boolean;
+  /** `terminate()` is in flight and has not failed. */
+  stopping: boolean;
+  /** Last `terminate()` rejection. The entry stays counted until a later stop exits. */
+  stopFailure?: unknown;
+  idleTimer?: NodeJS.Timeout | undefined;
+  stopPromise?: Promise<void> | undefined;
+  resolveStop?: (() => void) | undefined;
+  rejectStop?: ((cause: unknown) => void) | undefined;
   onMessage?: ((message: unknown) => void) | undefined;
   onError?: ((cause: Error & { code?: string }) => void) | undefined;
   onExit?: ((code: number) => void) | undefined;
 }
 
-const regexWorkerPool: PooledRegexWorker[] = [];
-const regexWorkerWaiters: {
+interface RegexWorkerWaiter {
   readonly heapMiB: number;
   readonly grant: (entry: PooledRegexWorker) => void;
   readonly fail: (cause: unknown) => void;
-}[] = [];
+}
 
-const retireRegexWorker = (entry: PooledRegexWorker): void => {
-  entry.dead = true;
-  if (entry.idleTimer !== undefined) clearTimeout(entry.idleTimer);
+const regexWorkerPool: PooledRegexWorker[] = [];
+const regexWorkerWaiters: RegexWorkerWaiter[] = [];
+
+const isIdleRegexWorker = (entry: PooledRegexWorker): boolean =>
+  !entry.busy && !entry.stopping && entry.stopFailure === undefined;
+
+const clearRegexWorkerHandlers = (entry: PooledRegexWorker): void => {
+  entry.onMessage = undefined;
+  entry.onError = undefined;
+  entry.onExit = undefined;
+};
+
+const regexWorkerStopFailure = (
+  operation: string,
+  entry: PooledRegexWorker,
+  cause: unknown,
+): AnalysisOutputError =>
+  new AnalysisOutputError(
+    operation,
+    "Regex worker did not stop after its match ended",
+    {
+      cause,
+      diagnostics: { worker_heap_mib: entry.heapMiB },
+      cleanup: {
+        reason: "Regex worker termination failed",
+        resources: [REGEX_WORKER_RESOURCE],
+      },
+    },
+  );
+
+const forgetRegexWorkerStop = (entry: PooledRegexWorker): void => {
+  entry.resolveStop = undefined;
+  entry.rejectStop = undefined;
+};
+
+/** Drop the worker only after its thread exits, then let the allocator use the slot. */
+const settleRegexWorkerExit = (entry: PooledRegexWorker): void => {
+  if (entry.exited) return;
+  entry.exited = true;
+  entry.stopping = false;
+  entry.busy = false;
+  entry.stopFailure = undefined;
+  if (entry.idleTimer !== undefined) {
+    clearTimeout(entry.idleTimer);
+    entry.idleTimer = undefined;
+  }
   const index = regexWorkerPool.indexOf(entry);
   if (index !== -1) regexWorkerPool.splice(index, 1);
-  entry.stopping ??= entry.worker.terminate();
-  // Callers that retire a busy worker await `stopping` themselves; this catch
-  // only keeps idle reaping from surfacing as an unhandled rejection.
-  void entry.stopping.catch(() => undefined);
+  const resolve = entry.resolveStop;
+  forgetRegexWorkerStop(entry);
+  resolve?.();
   serveRegexWaiters();
 };
 
-const spawnForWaiter = (
-  waiter: (typeof regexWorkerWaiters)[number],
-): boolean => {
-  // Reclaim an idle worker of another heap class instead of queueing behind
-  // the idle reap when a new setting changes the requested heap.
-  if (
-    regexWorkerPool.filter((entry) => !entry.dead).length >=
-    MAX_POOLED_REGEX_WORKERS
-  ) {
-    const reclaimable = regexWorkerPool.find(
-      (entry) => !entry.dead && !entry.busy,
-    );
-    if (reclaimable === undefined) return false;
-    retireRegexWorker(reclaimable);
+/**
+ * Stop `entry` and keep it counted until exit. A rejection leaves it owned
+ * with `stopFailure` set so a later allocation can retry. The returned
+ * promise rejects only for that failure; exit fulfills it.
+ */
+const beginStopRegexWorker = (entry: PooledRegexWorker): Promise<void> => {
+  if (entry.exited) return Promise.resolve();
+  if (entry.stopPromise !== undefined && entry.stopFailure === undefined)
+    return entry.stopPromise;
+  entry.stopFailure = undefined;
+  entry.stopping = true;
+  entry.busy = false;
+  if (entry.idleTimer !== undefined) {
+    clearTimeout(entry.idleTimer);
+    entry.idleTimer = undefined;
   }
-  try {
-    waiter.grant(spawnRegexWorker(waiter.heapMiB));
-  } catch (cause: unknown) {
-    waiter.fail(cause);
+  entry.worker.ref();
+  let resolveStop!: () => void;
+  let rejectStop!: (cause: unknown) => void;
+  const promise = new Promise<void>((resolve, reject) => {
+    resolveStop = resolve;
+    rejectStop = reject;
+  });
+  entry.resolveStop = resolveStop;
+  entry.rejectStop = rejectStop;
+  entry.stopPromise = promise;
+  void promise.catch(() => undefined);
+  // `terminate()` fulfills with the exit code once the thread has stopped.
+  // The exit listener settles the same way when the thread dies on its own.
+  void entry.worker.terminate().then(
+    () => {
+      settleRegexWorkerExit(entry);
+    },
+    (cause: unknown) => {
+      if (entry.exited || entry.rejectStop !== rejectStop) return;
+      entry.stopping = false;
+      entry.stopFailure = cause;
+      entry.stopPromise = undefined;
+      forgetRegexWorkerStop(entry);
+      entry.worker.unref();
+      rejectStop(cause);
+    },
+  );
+  return promise;
+};
+
+const grantIdleRegexWorker = (
+  entry: PooledRegexWorker,
+  waiter: RegexWorkerWaiter,
+): void => {
+  entry.busy = true;
+  if (entry.idleTimer !== undefined) {
+    clearTimeout(entry.idleTimer);
+    entry.idleTimer = undefined;
   }
-  return true;
+  entry.worker.ref();
+  waiter.grant(entry);
 };
 
 let servingRegexWaiters = false;
+let regexWaitersNeedService = false;
 
 const serveRegexWaiters = (): void => {
-  if (servingRegexWaiters) return;
+  if (servingRegexWaiters) {
+    regexWaitersNeedService = true;
+    return;
+  }
   servingRegexWaiters = true;
   try {
-    serveRegexWaitersNow();
+    do {
+      regexWaitersNeedService = false;
+      serveRegexWaitersNow();
+    } while (regexWaitersNeedService);
   } finally {
     servingRegexWaiters = false;
   }
 };
 
 const serveRegexWaitersNow = (): void => {
-  for (let i = 0; i < regexWorkerWaiters.length; i += 1) {
+  for (const entry of [...regexWorkerPool]) {
+    if (entry.stopFailure !== undefined && !entry.stopping)
+      beginStopRegexWorker(entry);
+  }
+  for (let i = 0; i < regexWorkerWaiters.length;) {
     const waiter = regexWorkerWaiters[i]!;
     const idle = regexWorkerPool.find(
-      (entry) => !entry.dead && !entry.busy && entry.heapMiB === waiter.heapMiB,
+      (entry) => isIdleRegexWorker(entry) && entry.heapMiB === waiter.heapMiB,
     );
-    if (idle !== undefined) {
-      regexWorkerWaiters.splice(i, 1);
-      i -= 1;
-      idle.busy = true;
-      if (idle.idleTimer !== undefined) clearTimeout(idle.idleTimer);
-      idle.worker.ref();
-      waiter.grant(idle);
+    if (idle === undefined) {
+      i += 1;
       continue;
     }
-    if (spawnForWaiter(waiter)) {
+    regexWorkerWaiters.splice(i, 1);
+    grantIdleRegexWorker(idle, waiter);
+  }
+  for (let i = 0; i < regexWorkerWaiters.length;) {
+    if (regexWorkerPool.length < MAX_POOLED_REGEX_WORKERS) {
+      const waiter = regexWorkerWaiters[i]!;
       regexWorkerWaiters.splice(i, 1);
-      i -= 1;
+      try {
+        waiter.grant(spawnRegexWorker(waiter.heapMiB));
+      } catch (cause: unknown) {
+        waiter.fail(cause);
+      }
+      continue;
     }
+    // One incompatible idle worker fills one queued heap. Stopping every
+    // idle worker here would discard workers the caller did not need.
+    const reclaimable = regexWorkerPool.find((entry) =>
+      isIdleRegexWorker(entry),
+    );
+    if (reclaimable !== undefined) beginStopRegexWorker(reclaimable);
+    break;
   }
 };
 
@@ -801,19 +912,22 @@ const spawnRegexWorker = (heapMiB: number): PooledRegexWorker => {
     eval: true,
     resourceLimits: { maxOldGenerationSizeMb: heapMiB },
   });
-  const entry: PooledRegexWorker = { worker, heapMiB, busy: true, dead: false };
+  const entry: PooledRegexWorker = {
+    worker,
+    heapMiB,
+    busy: true,
+    exited: false,
+    stopping: false,
+  };
   worker.on("message", (message: unknown) => entry.onMessage?.(message));
   worker.on("error", (cause: Error & { code?: string }) => {
     const settle = entry.onError;
-    retireRegexWorker(entry);
     settle?.(cause);
+    beginStopRegexWorker(entry);
   });
   worker.on("exit", (code: number) => {
     const settle = entry.onExit;
-    entry.dead = true;
-    const index = regexWorkerPool.indexOf(entry);
-    if (index !== -1) regexWorkerPool.splice(index, 1);
-    serveRegexWaiters();
+    settleRegexWorkerExit(entry);
     settle?.(code);
   });
   regexWorkerPool.push(entry);
@@ -825,18 +939,19 @@ const acquireRegexWorker = async (
   signal: AbortSignal | undefined,
 ): Promise<PooledRegexWorker | undefined> => {
   const idle = regexWorkerPool.find(
-    (entry) => !entry.dead && !entry.busy && entry.heapMiB === heapMiB,
+    (entry) => isIdleRegexWorker(entry) && entry.heapMiB === heapMiB,
   );
   if (idle !== undefined) {
     idle.busy = true;
     if (idle.idleTimer !== undefined) clearTimeout(idle.idleTimer);
+    idle.idleTimer = undefined;
     idle.worker.ref();
     return idle;
   }
-  // Every allocation goes through serveRegexWaiters so capacity and idle
-  // reclaim are decided in one place, in waiter order.
+  // Spawning and reclaiming go through serveRegexWaiters so one path owns
+  // the cap. An idle match above only borrows a worker already counted.
   return new Promise<PooledRegexWorker | undefined>((resolve, reject) => {
-    const waiter = {
+    const waiter: RegexWorkerWaiter = {
       heapMiB,
       grant: (entry: PooledRegexWorker) => {
         signal?.removeEventListener("abort", onAbort);
@@ -861,28 +976,35 @@ const acquireRegexWorker = async (
   });
 };
 
+const armRegexWorkerIdleTimer = (entry: PooledRegexWorker): void => {
+  entry.idleTimer = setTimeout(() => {
+    entry.idleTimer = undefined;
+    if (isIdleRegexWorker(entry)) beginStopRegexWorker(entry);
+  }, REGEX_WORKER_IDLE_MS);
+  entry.idleTimer.unref();
+};
+
 const releaseRegexWorker = (entry: PooledRegexWorker): void => {
   entry.busy = false;
-  entry.onMessage = undefined;
-  entry.onError = undefined;
-  entry.onExit = undefined;
-  const waiterIndex = regexWorkerWaiters.findIndex(
-    (waiter) => waiter.heapMiB === entry.heapMiB,
-  );
-  if (waiterIndex !== -1) {
-    const waiter = regexWorkerWaiters[waiterIndex]!;
-    regexWorkerWaiters.splice(waiterIndex, 1);
-    entry.busy = true;
-    entry.worker.ref();
-    waiter.grant(entry);
-    return;
-  }
+  clearRegexWorkerHandlers(entry);
   entry.worker.unref();
-  entry.idleTimer = setTimeout(
-    () => retireRegexWorker(entry),
-    REGEX_WORKER_IDLE_MS,
-  );
-  entry.idleTimer.unref();
+  // The shared allocator matches this worker or reclaims it for another heap.
+  // A same-heap-only grant here left that waiter waiting out the idle reap.
+  serveRegexWaiters();
+  if (isIdleRegexWorker(entry)) armRegexWorkerIdleTimer(entry);
+};
+
+const ensureRegexWorkerStopped = async (
+  operation: string,
+  entry: PooledRegexWorker,
+): Promise<AnalysisOutputError | undefined> => {
+  if (entry.exited && entry.stopFailure === undefined) return undefined;
+  try {
+    await beginStopRegexWorker(entry);
+    return undefined;
+  } catch (cause: unknown) {
+    return regexWorkerStopFailure(operation, entry, cause);
+  }
 };
 
 export interface RegexConfigurationSnapshot {
@@ -957,9 +1079,9 @@ export const matchRegexValues = async (input: {
   }
   if (entry === undefined)
     return err(
-      performance.now() - startedAt >= deadline.deadlineMs
-        ? regexMatchingDeadlineError(input.operation, deadline)
-        : cancelledBy(input.operation, carriedReason(input.signal?.reason)),
+      input.signal?.aborted
+        ? cancelledBy(input.operation, carriedReason(input.signal.reason))
+        : regexMatchingDeadlineError(input.operation, deadline),
     );
   const pooled = entry;
   let reusable = false;
@@ -1045,8 +1167,25 @@ export const matchRegexValues = async (input: {
             ),
           ),
         );
-      // Never send a job whose deadline already expired while queueing.
-      if (performance.now() - startedAt >= deadline.deadlineMs) {
+      // A worker that failed or is stopping must not run this call's job.
+      // A job whose deadline already expired while queueing is not sent either.
+      if (
+        pooled.exited ||
+        pooled.stopping ||
+        pooled.stopFailure !== undefined
+      ) {
+        finish(
+          err(
+            new AnalysisOutputError(
+              input.operation,
+              "Regex worker failed before its match started",
+              {
+                diagnostics: { worker_heap_mib: pooled.heapMiB },
+              },
+            ),
+          ),
+        );
+      } else if (performance.now() - startedAt >= deadline.deadlineMs) {
         reusable = true;
         finish(err(regexMatchingDeadlineError(input.operation, deadline)));
       } else {
@@ -1067,25 +1206,22 @@ export const matchRegexValues = async (input: {
       }),
     );
   }
-  // Clean replies return the worker to the pool; every other outcome retires
-  // it and awaits its exit, preserving the old prove-exit guarantee.
-  if (reusable && !pooled.dead) {
+  // Clean replies return the worker to the pool. Every other outcome stops
+  // that worker and waits until it exits, so close() awaiting this promise
+  // does not return while the match is still running. A failed stop keeps
+  // the worker counted and leaves the match error as the primary result.
+  const canReuse =
+    reusable &&
+    !pooled.exited &&
+    !pooled.stopping &&
+    pooled.stopFailure === undefined;
+  if (canReuse) {
     releaseRegexWorker(pooled);
     return outcome;
   }
-  if (!pooled.dead) retireRegexWorker(pooled);
-  if (pooled.stopping !== undefined) {
-    try {
-      await pooled.stopping;
-    } catch (cause: unknown) {
-      return err(
-        new AnalysisOutputError(
-          input.operation,
-          "Regex worker did not stop after its match ended",
-          { cause },
-        ),
-      );
-    }
-  }
+  clearRegexWorkerHandlers(pooled);
+  const stopFailure = await ensureRegexWorkerStopped(input.operation, pooled);
+  if (stopFailure !== undefined && !outcome.ok)
+    outcome.error.retainSecondaryFailure(stopFailure);
   return outcome;
 };

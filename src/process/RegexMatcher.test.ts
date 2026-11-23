@@ -547,7 +547,7 @@ it.each([
   },
 );
 
-it("reuses pooled workers across calls and retires a deadline-stuck worker", async () => {
+it("returns the structured deadline when a real worker pattern does not finish, then matches again", async () => {
   const first = await matchRegexValues({
     operation: "search_strings",
     pattern: "storage",
@@ -555,15 +555,6 @@ it("reuses pooled workers across calls and retires a deadline-stuck worker", asy
     values: ["storage/read", "other"],
   });
   expect(first).toEqual({ ok: true, value: [0] });
-  const second = await matchRegexValues({
-    operation: "search_strings",
-    pattern: "read$",
-    caseSensitive: true,
-    values: ["storage/read", "other"],
-  });
-  expect(second).toEqual({ ok: true, value: [0] });
-  // A catastrophic pattern that hits the deadline retires its worker; the
-  // next call must still succeed on a fresh one.
   const stuck = await matchRegexValues({
     operation: "search_strings",
     pattern: "^(a+)+$",
@@ -571,7 +562,24 @@ it("reuses pooled workers across calls and retires a deadline-stuck worker", asy
     values: [`${"a".repeat(40)}b`],
     deadline: { deadlineMs: 50, source: "runtime" },
   });
-  expect(stuck.ok).toBe(false);
+  if (stuck.ok) throw new Error("expected the real worker to hit its deadline");
+  expect(projectAnalysisError(stuck.error)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      operation: "search_strings",
+      resource: "cpu",
+      reported_limits: {
+        matching_deadline_ms: 50,
+        matching_deadline_source: "runtime",
+      },
+      limit: {
+        setting: "regex.matching_deadline_ms",
+        effective_value: 50,
+        source: "runtime",
+        unit: "ms",
+      },
+    },
+  });
   const after = await matchRegexValues({
     operation: "search_strings",
     pattern: "storage",
