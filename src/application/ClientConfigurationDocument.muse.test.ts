@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  ClientConfigurationShapeError,
-  parseClientConfiguration,
-} from "./ClientConfigurationDocument.js";
+import { parseClientConfiguration } from "./ClientConfigurationDocument.js";
+
+const parsed = (text: string) => {
+  const result = parseClientConfiguration(text, "muse");
+  if (!result.ok)
+    throw new Error(`expected a document, got ${result.error.kind}`);
+  return result.value;
+};
 
 /**
  * Muse Code disables MCP for a session when `settings.json` holds both the
@@ -12,42 +16,36 @@ import {
  */
 describe("Muse Code settings", () => {
   it("reads servers from the canonical table", () => {
-    const parsed = parseClientConfiguration(
+    const document = parsed(
       '{"schema_version":1,"mcpServers":{"rea":{"type":"stdio","command":"rea"}}}',
-      "muse",
     );
-    expect(Object.keys(parsed.servers)).toEqual(["rea"]);
+    expect(Object.keys(document.servers)).toEqual(["rea"]);
   });
 
   it("refuses a document that holds both spellings", () => {
-    let error: unknown;
-    try {
-      parseClientConfiguration(
-        '{"schema_version":1,"mcpServers":{},"mcp_servers":{}}',
-        "muse",
-      );
-    } catch (cause: unknown) {
-      error = cause;
-    }
-    expect(error).toBeInstanceOf(ClientConfigurationShapeError);
-    expect(String((error as Error).message)).toContain("mcp_servers");
+    const result = parseClientConfiguration(
+      '{"schema_version":1,"mcpServers":{},"mcp_servers":{}}',
+      "muse",
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe("shape");
+    expect(result.error.detail).toContain("mcp_servers");
   });
 
   it("keeps a document on its legacy table instead of adding the canonical one", () => {
-    const parsed = parseClientConfiguration(
+    const document = parsed(
       '{"schema_version":1,"mcp_servers":{"rea":{"type":"stdio","command":"rea"}}}',
-      "muse",
     );
-    expect(Object.keys(parsed.servers)).toEqual(["rea"]);
-    expect(parsed.serversPath[0]).toBe("mcp_servers");
+    expect(Object.keys(document.servers)).toEqual(["rea"]);
+    expect(document.serversPath[0]).toBe("mcp_servers");
   });
 
   it("keeps unrelated settings when the table is present", () => {
-    const parsed = parseClientConfiguration(
+    const document = parsed(
       '{"schema_version":2,"theme":"dark","mcpServers":{}}',
-      "muse",
     );
-    expect(parsed.document.theme).toBe("dark");
-    expect(parsed.document.schema_version).toBe(2);
+    expect(document.document.theme).toBe("dark");
+    expect(document.document.schema_version).toBe(2);
   });
 });
