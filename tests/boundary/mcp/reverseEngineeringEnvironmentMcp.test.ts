@@ -6,7 +6,10 @@ import type { Client } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect, it } from "vitest";
 
+import { advertiseToolInput } from "../../../src/contracts/advertisedTool.js";
+import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../../../src/contracts/mcpSchemaPresentation.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../../src/contracts/reverseEngineeringToolContracts.js";
+import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
 import { rizinCommandLimitations } from "../../../src/rizin/RizinCommand.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createProviderEnvironmentMcpHarness } from "../../support/reverseDebuggerMcpTestHelpers.js";
@@ -144,7 +147,7 @@ it("passes Rizin decoder and map inputs as flags before the artifact", async () 
     path: artifact,
     command: "e asm.arch; e asm.bits; e asm.cpu; oml",
     asm_arch: "arm",
-    asm_bits: 16,
+    asm_bits: 16 as const,
     asm_cpu: "cortexm",
     base_address: "0x08000000",
   };
@@ -189,7 +192,45 @@ it("passes Rizin decoder and map inputs as flags before the artifact", async () 
 
   const { tools } = await client.listTools();
   const listed = tools.find((tool) => tool.name === rizinContract.name);
-  expect(listed?.description).toBe(rizinContract.description);
+  // Rizin applies any width that shares a bit with a declared one, so REA
+  // admits only the declared widths. The portable dialect keeps no numeric
+  // enum and the compact listing strips property descriptions, so the listed
+  // tool description names them, and the call below enforces them. The
+  // listing delivers what the advertised projection describes; the projection
+  // test owns its wording.
+  const description = listed?.description ?? "";
+  expect(description).toBe(
+    advertiseToolInput(
+      rizinContract.description,
+      advertisedInputJsonSchema(rizinContract),
+      COMPACT_INPUT_SCHEMA_PRESENTATION,
+    ).description,
+  );
+  expect(listed?.inputSchema.properties?.asm_bits).toEqual({ type: "number" });
+  const admitted = Array.from({ length: 66 }, (_, width) => width).filter(
+    (width) =>
+      rizinContract.inputSchema.safeParse({ ...input, asm_bits: width })
+        .success,
+  );
+  expect(admitted).toEqual([4, 8, 16, 32, 64]);
+  // The guidance after the contract's own description names asm_bits and
+  // exactly the widths the contract admits.
+  expect(description.startsWith(rizinContract.description)).toBe(true);
+  const guidance = description.slice(rizinContract.description.length);
+  expect(guidance).toContain("asm_bits");
+  expect(guidance.match(/\d+/gu)?.map(Number)).toEqual(admitted);
+  const undeclared = await client.callTool({
+    name: "execute_rizin_command",
+    arguments: { ...input, asm_bits: 17 },
+  });
+  expect(undeclared.isError).toBe(true);
+  expect(parseMcpToolError(undeclared as CallToolResult).error).toMatchObject({
+    code: "invalid_request",
+    details: {
+      operation: "execute_rizin_command",
+      issues: [{ path: ["asm_bits"], reason: "invalid_value" }],
+    },
+  });
 
   const refused = await client.callTool({
     name: "execute_rizin_command",

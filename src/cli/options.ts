@@ -13,13 +13,40 @@ type DecimalWrapper =
       readonly kind: "optional" | "exactOptional" | "nullable" | "readonly";
     };
 
-const decimalToken = (domain: z.ZodNumber) =>
-  declaredTokenPattern(
-    z.string().regex(DECIMAL_INTEGER_TOKEN, "Expected a decimal integer"),
-    new RegExp(decimalTokenPattern(domain), "u"),
-  )
-    .pipe(z.coerce.number<string>())
-    .pipe(domain);
+/** A number field, or a set of non-negative integer literals such as Rizin's widths. */
+type NumericCore = z.ZodNumber | z.ZodLiteral<number>;
+
+export const isNumericCore = (field: z.ZodType): field is NumericCore =>
+  field instanceof z.ZodNumber ||
+  (field instanceof z.ZodLiteral &&
+    [...field.values].every(
+      (value) =>
+        typeof value === "number" && Number.isSafeInteger(value) && value >= 0,
+    ));
+
+/** The decimal tokens of a literal set, so `--schema` admits only its members. */
+const literalTokenGrammar = (
+  domain: z.ZodLiteral<number>,
+): { readonly pattern: RegExp; readonly message: string } => {
+  const members = [...domain.values];
+  return {
+    pattern: new RegExp(`^0*(?:${members.join("|")})$`, "u"),
+    message: `Expected one of ${members.join(", ")}`,
+  };
+};
+
+const tokenGrammar = (domain: NumericCore) => {
+  if (domain instanceof z.ZodNumber)
+    return declaredTokenPattern(
+      z.string().regex(DECIMAL_INTEGER_TOKEN, "Expected a decimal integer"),
+      new RegExp(decimalTokenPattern(domain), "u"),
+    );
+  const { pattern, message } = literalTokenGrammar(domain);
+  return z.string().regex(pattern, message);
+};
+
+const decimalToken = (domain: NumericCore) =>
+  tokenGrammar(domain).pipe(z.coerce.number<string>()).pipe(domain);
 
 const unwrapSchema = (field: { unwrap: () => unknown }): z.ZodType =>
   field.unwrap() as z.ZodType;
@@ -41,7 +68,7 @@ const numericStack = (
   field: z.ZodType,
 ):
   | {
-      readonly core: z.ZodNumber;
+      readonly core: NumericCore;
       readonly wrappers: readonly DecimalWrapper[];
       readonly description: string | undefined;
     }
@@ -90,7 +117,7 @@ const numericStack = (
     }
     break;
   }
-  return current instanceof z.ZodNumber
+  return isNumericCore(current)
     ? { core: current, wrappers, description }
     : undefined;
 };
@@ -126,8 +153,15 @@ export const cliDecimalField = <Field extends z.ZodType>(
     throw new Error(
       `cliDecimalField expected a numeric domain field, received ${field.constructor.name}`,
     );
+  const branches = [numeric.core, decimalToken(numeric.core)] as const;
+  // Both branches reject a non-member of a literal set, and incur reports
+  // only the union issue, so the union names the members.
   const admitted = applyDecimalWrappers(
-    z.union([numeric.core, decimalToken(numeric.core)]),
+    numeric.core instanceof z.ZodLiteral
+      ? z.union(branches, {
+          error: literalTokenGrammar(numeric.core).message,
+        })
+      : z.union(branches),
     numeric.wrappers,
   );
   const described =

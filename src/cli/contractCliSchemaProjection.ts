@@ -21,7 +21,7 @@ import type {
   ProjectedContract,
 } from "./contractCliDescriptionTypes.js";
 import { optionFlagName } from "./optionFields.js";
-import { cliDecimalField, cliDecimalShape } from "./options.js";
+import { cliDecimalField, cliDecimalShape, isNumericCore } from "./options.js";
 
 /** The CLI key of a session target, which no contract field supplies. */
 export const SESSION_TARGET_KEY = "path";
@@ -135,7 +135,7 @@ export const assertArgvField = (
       [...member.values].every((value) => typeof value === "string"));
   const scalar =
     current instanceof z.ZodString ||
-    current instanceof z.ZodNumber ||
+    isNumericCore(current) ||
     current instanceof z.ZodBoolean ||
     current instanceof z.ZodEnum ||
     (current instanceof z.ZodUnion &&

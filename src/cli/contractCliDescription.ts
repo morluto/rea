@@ -61,6 +61,7 @@ import {
   viewOptionHelp,
   withoutDefault,
 } from "./contractCliSchemaProjection.js";
+import { isNumericCore } from "./options.js";
 
 /** One contract from a contract group, keeping its exact schema types. */
 export const contractNamed = <
@@ -340,7 +341,7 @@ export const describeContractCommand = <
       booleanFlag: value instanceof z.ZodBoolean,
       cliDefault: projected?.default,
       repeatable: value instanceof z.ZodArray,
-      decimal: value instanceof z.ZodNumber,
+      decimal: isNumericCore(value),
       callerPath,
       delivery,
       jsonText,
@@ -434,7 +435,7 @@ export const describeContractCommand = <
             booleanFlag: value instanceof z.ZodBoolean,
             cliDefault: undefined,
             repeatable: value instanceof z.ZodArray,
-            decimal: value instanceof z.ZodNumber,
+            decimal: isNumericCore(value),
             callerPath,
             delivery: false,
             jsonText: false,
