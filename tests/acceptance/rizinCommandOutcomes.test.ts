@@ -3,7 +3,10 @@ import { createHash } from "node:crypto";
 import { chmod, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
+import { advertiseToolInput } from "../../src/contracts/advertisedTool.js";
+import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../../src/contracts/mcpSchemaPresentation.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
+import { advertisedInputJsonSchema } from "../../src/contracts/toolSchemaMetadata.js";
 import { rizinCommandLimitations } from "../../src/rizin/RizinCommand.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
@@ -89,9 +92,15 @@ cliTest.skipIf(process.platform === "win32").for(outcomes)(
         expect.arrayContaining([...limitations]),
       );
     }
-    // The listing names the widths that the portable dialect cannot carry.
+    // The listing delivers the advertised projection's description, which
+    // adds guidance the portable dialect cannot carry. The MCP boundary test
+    // checks that guidance's facts.
     expect(definition?.description).toBe(
-      `${contract.description}\n\n\`asm_bits\` must be 4, 8, 16, 32 or 64.`,
+      advertiseToolInput(
+        contract.description,
+        advertisedInputJsonSchema(contract),
+        COMPACT_INPUT_SCHEMA_PRESENTATION,
+      ).description,
     );
   },
 );
