@@ -162,6 +162,12 @@ when its records account for every byte before the directory (a well-formed
 APK signing block is accounted for); otherwise coverage is `unknown` and a
 limitation gives the unaccounted bytes, which may hold local entries the
 directory does not list.
+Nonempty single-volume classic and Zip64 ZIPs can be recognized after an
+unclaimed prefix, including an inert launch script. The prefix remains part of
+the root identity and unaccounted-byte coverage; it is never executed. Zip64
+recognition follows a complete end record at its declared location, or the
+fixed-size record immediately before its locator when prepended bytes shifted
+the original offsets. Native executable signatures keep their existing route.
 An extent must fit before the directory and agree with the local header's
 size or deferred-size mode, including local Zip64 sizes. A deferred extent
 requires a matching data descriptor. Conflicting or unreadable extent claims
