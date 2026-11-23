@@ -9,13 +9,17 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { getDefaultEnvironment } from "@modelcontextprotocol/client/stdio";
+import { createOwnedMcpStdioTransport } from "../../lib/owned-mcp-stdio.mjs";
 import { VerifierFixture } from "../../lib/verifier-fixture.mjs";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../../../dist/process/OwnedCommand.js";
-import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "../../lib/verifier-cleanup.mjs";
 import { selectExportedJavaScriptFacts } from "../../lib/javascript-facts-reference.mjs";
 
 const { values } = parseArgs({
@@ -45,17 +49,20 @@ const environment = {
   REA_ANALYSIS_PROVIDER: "auto",
   HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
 };
-const transport = new StdioClientTransport({
+const transport = await createOwnedMcpStdioTransport({
   command: process.execPath,
-  args: [fileURLToPath(new URL("../../rea.mjs", import.meta.url)), "mcp"],
+  arguments: [fileURLToPath(new URL("../../rea.mjs", import.meta.url)), "mcp"],
+  hostEnvironment: getDefaultEnvironment(),
   env: environment,
-  stderr: "pipe",
+  expectedCommand: null,
+  sweepTokenOwnedProcesses: true,
 });
 const client = new Client({
   name: "javascript-retained-facts-verifier",
   version: "1",
 });
 let temporary;
+const closeMcp = [() => client.close(), () => transport.close()];
 let report;
 const serialize = (value) => JSON.stringify(value);
 const digest = (value) =>
@@ -118,8 +125,8 @@ await withVerifierCleanup(async () => {
   temporary = await VerifierFixture.open({
     prefix: "rea-retained-facts-verifier-",
   });
+  for (const close of closeMcp) temporary.releaseAfter(close);
   await client.connect(transport);
-  transport.stderr?.on("data", () => undefined);
   const catalog = (await client.listTools()).tools.map(
     ({ name, description, inputSchema }) => ({
       name,
@@ -347,5 +354,5 @@ await withVerifierCleanup(async () => {
     conditions:
       "Fresh MCP and input hashing (file cache warmed); build/OS caches uncontrolled. First export sample includes export plus caller projection code, later samples reuse that immutable export. View samples precede diagnostic export. Task token projections include preparation, first answer, selected/full name/description/inputSchema catalog and the exact baseline program; exec tool schema, host rendering, output schemas, reasoning and billing unmeasured. At-answer cgroup counters include observer/startup overhead, before repeats/export diagnostics/parity/tokenization; final external observer measures all validation work. No application or native provider executes.",
   };
-}, [() => client.close(), () => transport.close(), () => temporary?.release()]);
+}, [() => temporary?.release() ?? closeVerifierResources(closeMcp)]);
 console.log(serialize(report));

@@ -8,9 +8,13 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { getDefaultEnvironment } from "@modelcontextprotocol/client/stdio";
+import { createOwnedMcpStdioTransport } from "../../lib/owned-mcp-stdio.mjs";
 import { artifactCliEvidence } from "../../lib/artifact-e2e.mjs";
-import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "../../lib/verifier-cleanup.mjs";
 import { VerifierFixture } from "../../lib/verifier-fixture.mjs";
 import {
   OwnedCommandFailure,
@@ -44,15 +48,17 @@ const where = {
   ...(values.path === undefined ? {} : { path: values.path }),
   ...(values.kind === undefined ? {} : { kind: values.kind }),
 };
-const transport = new StdioClientTransport({
+const transport = await createOwnedMcpStdioTransport({
   command: process.execPath,
-  args: [fileURLToPath(new URL("../../rea.mjs", import.meta.url)), "mcp"],
+  arguments: [fileURLToPath(new URL("../../rea.mjs", import.meta.url)), "mcp"],
+  hostEnvironment: getDefaultEnvironment(),
   env: {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     REA_LOG_LEVEL: "silent",
     REA_ANALYSIS_PROVIDER: "auto",
   },
-  stderr: "pipe",
+  expectedCommand: null,
+  sweepTokenOwnedProcesses: true,
 });
 const client = new Client({
   name: "javascript-module-reference-verifier",
@@ -82,9 +88,16 @@ const normalize = (rows) =>
     ),
   }));
 let temporary;
+const closeMcp = [() => client.close(), () => transport.close()];
+const openTemporary = async () => {
+  const fixture = await VerifierFixture.open({
+    prefix: "rea-module-reference-verifier-",
+  });
+  for (const close of closeMcp) fixture.releaseAfter(close);
+  return fixture;
+};
 await withVerifierCleanup(async () => {
   await client.connect(transport);
-  transport.stderr?.resume();
   const tools = (await client.listTools()).tools;
   const relevant = tools.filter(({ name }) =>
     ["analyze_javascript_application", "inspect_analysis_view"].includes(name),
@@ -265,9 +278,7 @@ await withVerifierCleanup(async () => {
   }
   let cliParity = null;
   if (values["cli-parity"]) {
-    temporary = await VerifierFixture.open({
-      prefix: "rea-module-reference-verifier-",
-    });
+    temporary = await openTemporary();
     const bundlePath = join(temporary.path, "bundle.json");
     const exported = await client.callTool({
       name: "export_evidence_bundle",
@@ -311,9 +322,7 @@ await withVerifierCleanup(async () => {
   }
   let tokenCosts = null;
   if (values["tokenizer-python"]) {
-    temporary ??= await VerifierFixture.open({
-      prefix: "rea-module-reference-verifier-",
-    });
+    temporary ??= await openTemporary();
     const input = join(temporary.path, "token-input.json");
     await writeFile(input, serialize(costInputs));
     let result;
@@ -395,4 +404,4 @@ print(json.dumps(dict(tokenizer='cl100k_base',tiktoken_version=tiktoken.__versio
         "First query is after shared artifact analysis; subsequent queries share one MCP session. Legacy item reads are serial; a concurrent legacy baseline is unmeasured. Filesystem/build warmness uncontrolled. Token costs count one post-change catalog, preparation request/summary and each request/structured reply once; client rendering, replay, reasoning, final answer and model latency are unmeasured. Preparation and parity/tokenization overhead are outside per-query elapsed times; external family-resource receipts include the complete verifier and children.",
     })}\n`,
   );
-}, [() => client.close(), () => transport.close(), () => temporary?.release()]);
+}, [() => temporary?.release() ?? closeVerifierResources(closeMcp)]);

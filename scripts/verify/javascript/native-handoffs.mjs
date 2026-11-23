@@ -9,14 +9,18 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { getDefaultEnvironment } from "@modelcontextprotocol/client/stdio";
+import { createOwnedMcpStdioTransport } from "../../lib/owned-mcp-stdio.mjs";
 import { createEvidence } from "../../../dist/domain/evidence.js";
 import { VerifierFixture } from "../../lib/verifier-fixture.mjs";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../../../dist/process/OwnedCommand.js";
-import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "../../lib/verifier-cleanup.mjs";
 import { importVerifierSource } from "../../lib/verifier-source-loader.mjs";
 
 const { matchesStructuredScopeExpectation, structuredScopeExpectationsSchema } =
@@ -91,11 +95,13 @@ const environment = {
   REA_ANALYSIS_PROVIDER: "auto",
   HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
 };
-const transport = new StdioClientTransport({
+const transport = await createOwnedMcpStdioTransport({
   command: process.execPath,
-  args: [fileURLToPath(new URL("../../rea.mjs", import.meta.url)), "mcp"],
+  arguments: [fileURLToPath(new URL("../../rea.mjs", import.meta.url)), "mcp"],
+  hostEnvironment: getDefaultEnvironment(),
   env: environment,
-  stderr: "pipe",
+  expectedCommand: null,
+  sweepTokenOwnedProcesses: true,
 });
 const client = new Client({
   name: "javascript-native-handoff-verifier",
@@ -124,6 +130,14 @@ const simulatedNativeEvidence = (path, sha256) =>
     },
   );
 let temporary;
+const closeMcp = [() => client.close(), () => transport.close()];
+const openTemporary = async () => {
+  const fixture = await VerifierFixture.open({
+    prefix: "rea-native-handoff-verifier-",
+  });
+  for (const close of closeMcp) fixture.releaseAfter(close);
+  return fixture;
+};
 let report;
 const ownedCommand = async (command, arguments_, timeoutMs = 60_000) => {
   try {
@@ -164,7 +178,6 @@ await withVerifierCleanup(async () => {
   const native = simulatedNativeEvidence(companion, values["native-sha256"]);
   const container = simulatedNativeEvidence(values.artifact, archiveSha256);
   await client.connect(transport);
-  transport.stderr?.on("data", () => undefined);
   const tools = (await client.listTools()).tools;
   const catalog = tools.map(({ name, description, inputSchema }) => ({
     name,
@@ -318,9 +331,7 @@ await withVerifierCleanup(async () => {
   }
   let cliParity = null;
   if (values["cli-parity"]) {
-    temporary = await VerifierFixture.open({
-      prefix: "rea-native-handoff-verifier-",
-    });
+    temporary = await openTemporary();
     const bundlePath = join(temporary.path, "bundle.json");
     const exported = await client.callTool({
       name: "export_evidence_bundle",
@@ -385,9 +396,7 @@ await withVerifierCleanup(async () => {
     );
   let tokenCosts = null;
   if (values["tokenizer-python"]) {
-    temporary ??= await VerifierFixture.open({
-      prefix: "rea-native-handoff-verifier-",
-    });
+    temporary ??= await openTemporary();
     const input = join(temporary.path, "token-input.json");
     await writeFile(
       input,
@@ -465,5 +474,5 @@ print(json.dumps(dict(tokenizer='cl100k_base',tiktoken_version=tiktoken.__versio
     assert.ok(safeIdentity, "Native identity/linkage oracle failed");
     assert.ok(safeApplicability, "File analysis applicability oracle failed");
   }
-}, [() => client.close(), () => transport.close(), () => temporary?.release()]);
+}, [() => temporary?.release() ?? closeVerifierResources(closeMcp)]);
 console.log(serialize(report));

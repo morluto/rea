@@ -11,7 +11,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { getDefaultEnvironment } from "@modelcontextprotocol/client/stdio";
+import { createOwnedMcpStdioTransport } from "../../lib/owned-mcp-stdio.mjs";
 import { parseEvidence } from "../../../dist/domain/evidence.js";
 import { javascriptRecoveryResultSchema } from "../../../dist/domain/javascript/javascriptRecovery.js";
 import { buildRecoveryFixtures } from "../../fixtures/javascript-recovery/build.mjs";
@@ -25,17 +26,19 @@ if (!process.env.REA_WAKARU_COMMAND)
   );
 const entrypoint =
   process.argv[2] ?? fileURLToPath(new URL("../../rea.mjs", import.meta.url));
+const environment = { ...process.env, REA_LOG_LEVEL: "silent" };
+const transport = await createOwnedMcpStdioTransport({
+  command: process.execPath,
+  arguments: [entrypoint, "mcp"],
+  hostEnvironment: getDefaultEnvironment(),
+  env: environment,
+  expectedCommand: null,
+  sweepTokenOwnedProcesses: true,
+});
 const rootFixture = await VerifierFixture.open({
   prefix: "rea-real-recovery-",
 });
 const root = rootFixture.path;
-const environment = { ...process.env, REA_LOG_LEVEL: "silent" };
-const transport = new StdioClientTransport({
-  command: process.execPath,
-  args: [entrypoint, "mcp"],
-  env: environment,
-  stderr: "pipe",
-});
 const client = new Client({ name: "real-recovery", version: "1" });
 const run = promisify(execFile);
 const cli = async (...args) => {
