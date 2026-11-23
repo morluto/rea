@@ -37,7 +37,7 @@ import {
 } from "../resources/index.js";
 import type { UefiDecodeFormat } from "./FfsSections.js";
 import { uefiFailureDialect } from "./UefiFailures.js";
-import type { UefiDecodeResult } from "./UefiImageScan.js";
+import type { UefiDecodeResult } from "./UefiScanContext.js";
 import { UefiLzmaByteQueue } from "./UefiLzmaByteQueue.js";
 import {
   encodeLzmaFrameHeader,
