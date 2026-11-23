@@ -14,6 +14,7 @@
 
 * **adb:** add optional limit and offset paging to list_adb_features and list_adb_services ([#13873](https://github.com/morluto/rea/issues/13873)) ([11a7a34](https://github.com/morluto/rea/commit/11a7a34dfc7748b7cf7efcdc6e6c80b7ba123783))
 * **adb:** add optional limit and offset paging to list_adb_packages, list_adb_processes, and list_adb_directory ([#13843](https://github.com/morluto/rea/issues/13843)) ([dbd6057](https://github.com/morluto/rea/commit/dbd60574541fd57bdc4a9f6952dc740d77a65de5))
+* **analysis-view:** filter native exports and ELF dependencies by name prefix ([a148da5](https://github.com/morluto/rea/commit/a148da56ccfb370e7a638832c2a1290fb208ca63))
 * **analysis-view:** page retained UEFI extraction manifests ([5e8388a](https://github.com/morluto/rea/commit/5e8388a655e2eae83c31e6e21a611c2fc9910156))
 * **analysis-view:** page retained UEFI firmware maps ([fc4c453](https://github.com/morluto/rea/commit/fc4c453683213991d2338b25c6752f24236a3052))
 * **android:** add optional limit and offset paging to search_android_classes ([#13846](https://github.com/morluto/rea/issues/13846)) ([f47dbd9](https://github.com/morluto/rea/commit/f47dbd9351ac8624c409d4e37ea630c1cc35edd9))
@@ -27,6 +28,7 @@
 * **frida:** add optional limit and offset paging to list_frida_processes ([#13854](https://github.com/morluto/rea/issues/13854)) ([9ec23ad](https://github.com/morluto/rea/commit/9ec23ad03bb6feef0ad208170652858eabcb3e4a))
 * **ida:** support the official Hex-Rays IDA MCP headlessly ([#4813](https://github.com/morluto/rea/issues/4813)) ([6822ebe](https://github.com/morluto/rea/commit/6822ebe1f3a4caec007fcd046754d66317d3349f))
 * **javascript:** inventory Expo Router require.context route keys ([#10624](https://github.com/morluto/rea/issues/10624)) ([7b6e816](https://github.com/morluto/rea/commit/7b6e816b0b61d24d1a3b79106481f29db676ea65))
+* **native:** report the stored RVA of PE exports ([bf8448c](https://github.com/morluto/rea/commit/bf8448cdfc90c4c077f03b877cf09ea150509092))
 * **native:** retain Apple bundle executable provenance ([b8995f8](https://github.com/morluto/rea/commit/b8995f81489dda3e7f8be61317f366b7fabd97c7))
 * **setup:** discover project-scoped MCP registrations in doctor and … ([#7283](https://github.com/morluto/rea/issues/7283)) ([63c50ec](https://github.com/morluto/rea/commit/63c50ecfc0a849d3298c44b1ce06e2e759f1303c))
 * **tools:** add optional limit and offset paging to find_xrefs_to_name ([#13858](https://github.com/morluto/rea/issues/13858)) ([1d4fadc](https://github.com/morluto/rea/commit/1d4fadceb2720b2db9a2a0674e95385117238d81))
@@ -40,6 +42,7 @@
 
 ### Bug Fixes
 
+* **analysis-view:** read older UEFI extraction Evidence and drop filter-count ceilings ([ca26f2a](https://github.com/morluto/rea/commit/ca26f2ac8499fa06af59f2590ec071af8a020094))
 * **android:** advertise the external-reference inputs the bridge accepts ([85154de](https://github.com/morluto/rea/commit/85154de8ab9107c0f403079a9bec81ab63077ea1))
 * **android:** let the bridge advertise its own tool schemas ([2b6ede2](https://github.com/morluto/rea/commit/2b6ede2d0c0c82ea466c61a6694df3353c998637))
 * **apk:** disclose v1 scan scope without duplicate names ([#13572](https://github.com/morluto/rea/issues/13572)) ([110b990](https://github.com/morluto/rea/commit/110b990c687bdb498de0134dce8b49547983273a))
@@ -650,6 +653,7 @@
 * **install:** describe setup's direct-launch MCP registrations ([c0af3e2](https://github.com/morluto/rea/commit/c0af3e293cd85bfdece21a4e2ce2f7d25ab8e684)), closes [#10252](https://github.com/morluto/rea/issues/10252)
 * **install:** link Windows native build steps from a source checkout ([4a6fa19](https://github.com/morluto/rea/commit/4a6fa1937940f35c0873aff7b63bb6ffd98a583f)), closes [#10317](https://github.com/morluto/rea/issues/10317)
 * **mcp:** clarify DeepSeek catalog refresh compatibility ([#13041](https://github.com/morluto/rea/issues/13041)) ([baad68f](https://github.com/morluto/rea/commit/baad68f437edc5c41116092cbc5bf272b40fd5f7))
+* **native:** describe export RVAs and name-prefix views ([d3773c9](https://github.com/morluto/rea/commit/d3773c910e85770573e2e6c47d8a49205cdb6fe1))
 * **native:** explain resource-only bundle admission ([#5764](https://github.com/morluto/rea/issues/5764)) ([e773afd](https://github.com/morluto/rea/commit/e773afd9c31570a463d988109b1da9b19ad71d2e))
 * **process:** record the capture PTY hangup of same-group children ([#10282](https://github.com/morluto/rea/issues/10282)) ([360bcb4](https://github.com/morluto/rea/commit/360bcb4c6cffc2e4d7f855b200927f508df17163))
 * **process:** state the finalization delivery grace is fixed ([2d71c5c](https://github.com/morluto/rea/commit/2d71c5c3357a2c1d8736f92d1d9b8bf9105a7042))
