@@ -129,3 +129,6 @@ authority questions before integration. -->
 - [ ] Owning docs, contracts, and generated metadata are updated where needed.
 - [ ] User-visible CLI/MCP changes include representative output.
 - [ ] I checked the final diff for secrets, unrelated cleanup, and unsupported claims.
+- [ ] Run every test, build, or measurement needed to validate the change instead of skipping it and adding a caveat that it was not run. Only report a browser, GPU, or environment gap when the required runtime or hardware is genuinely unavailable. Report the checks actually run and their results, and do not present inferred correctness or speedups as measured.
+- [ ] Comments should explain constraints or non-obvious decisions. Keep task history and conversations out of code and user documentation.
+- [ ] Keep documentation concise and factual. Do not use punchy slogans or promotional language.

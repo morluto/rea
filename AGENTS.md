@@ -80,8 +80,12 @@ do not establish fewer tokens or faster analysis.
 Treat code as the source of truth for implemented behavior and architecture.
 Keep specs, implementation plans, task lists, ADRs, and architecture diagrams
 in issue or pull request discussions or in local drafts outside Git.
+Comments should explain constraints or non-obvious decisions. Keep task history
+and conversations out of code and user documentation.
 Use the [documentation directory](docs/README.md) and
 [authoring guide](docs/development/documentation.md) for guides and references.
+Keep documentation concise and factual. Do not use punchy slogans or promotional
+language.
 
 Use [.nvmrc](.nvmrc) and `package.json#packageManager` for the pinned toolchain. Cursor Cloud may place older Node.js first on `PATH`; environment setup installs the pinned toolchain under `/usr/local/bin`. Prefix `PATH="/usr/local/bin:$PATH"` before `node` and `npm`.
 
@@ -93,6 +97,12 @@ Use [.nvmrc](.nvmrc) and `package.json#packageManager` for the pinned toolchain.
 - `npm run docs:check`: validate generated documentation.
 
 Use relevant checks for the change. The complete local gate, `npm run check:pr`, is optional for broad changes or CI diagnosis. See [CONTRIBUTING.md](CONTRIBUTING.md) for development, generated-file ownership, and release conventions.
+
+Run every test, build, or measurement needed to validate the change instead of
+skipping it and adding a caveat that it was not run. Only report a browser, GPU,
+or environment gap when the required runtime or hardware is genuinely
+unavailable. Report the checks actually run and their results, and do not
+present inferred correctness or speedups as measured.
 
 When changing installers or setup recovery, follow
 [Checking installers and publisher downloads](docs/development/testing.md#checking-installers-and-publisher-downloads).
