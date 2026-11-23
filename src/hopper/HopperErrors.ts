@@ -37,7 +37,8 @@ const HOPPER_CLASSIFICATIONS = {
 const hopperRemoteClassification = (
   diagnosticType: HopperDiagnosticType,
 ): AnalysisErrorClassification =>
-  diagnosticType === "invalid_request"
+  diagnosticType === "invalid_request" ||
+  diagnosticType === "selector_not_found"
     ? { code: "invalid_request", category: "invalid_input" }
     : {
         code: "execution_failure",
@@ -239,12 +240,16 @@ export class HopperProtocolError extends HopperError {
   }
 }
 
-export type HopperDiagnosticType =
-  | "remote"
-  | "authorization"
-  | "invalid_request"
-  | "capability_unavailable"
-  | "bridge_exception";
+export const HOPPER_DIAGNOSTIC_TYPES = [
+  "remote",
+  "authorization",
+  "invalid_request",
+  "selector_not_found",
+  "capability_unavailable",
+  "bridge_exception",
+] as const;
+
+export type HopperDiagnosticType = (typeof HOPPER_DIAGNOSTIC_TYPES)[number];
 
 /** Hopper's JSON-RPC endpoint returned an expected remote error response. */
 export interface HopperRemoteErrorContext extends AnalysisErrorOptions {
@@ -288,17 +293,28 @@ export class HopperRemoteError extends HopperError {
   }
 
   override ownPresentation(): AnalysisErrorOwnPresentation {
+    const lookupMiss = this.diagnosticType === "selector_not_found";
     return {
       ...hopperRemoteClassification(this.diagnosticType),
       message: `Hopper ${this.operation ?? "analysis"} failed (${String(this.code)}, ${this.diagnosticType}): ${this.safeMessage}`,
-      remediation:
-        this.diagnosticType === "invalid_request"
+      remediation: lookupMiss
+        ? "Choose an observed name or address from the current Hopper document. For procedures, use CLI rea search <path> . --kind procedures --mode regex --provider hopper or MCP list_procedures. For other symbols, use list_names."
+        : this.diagnosticType === "invalid_request"
           ? "Correct the reported address, document, or arguments and retry."
           : "Review the Hopper diagnostic details and correct the request or target; run `rea doctor` if the provider itself is failing. Repeating the unchanged request is not expected to succeed.",
       details: {
         stage: "analysis",
         provider_code: this.code,
         diagnostic_type: this.diagnosticType,
+        ...(lookupMiss
+          ? {
+              related_operations: [
+                "list_procedures",
+                "search_procedures",
+                "list_names",
+              ],
+            }
+          : {}),
         ...(this.operation === undefined ? {} : { operation: this.operation }),
         ...(this.requestId === undefined ? {} : { request_id: this.requestId }),
       },
@@ -595,14 +611,6 @@ export class HopperStartError extends HopperError {
   }
 }
 
-const HOPPER_DIAGNOSTIC_TYPES = {
-  remote: true,
-  authorization: true,
-  invalid_request: true,
-  capability_unavailable: true,
-  bridge_exception: true,
-} as const satisfies Record<HopperDiagnosticType, true>;
-
 /** Hopper's rows in the generated error catalogue. */
 export const hopperErrorCatalogue =
   (): readonly AnalysisErrorCatalogueEntry[] => [
@@ -621,11 +629,11 @@ export const hopperErrorCatalogue =
       "",
       HOPPER_CLASSIFICATIONS.protocol,
     ),
-    ...Object.keys(HOPPER_DIAGNOSTIC_TYPES).map((diagnosticType) =>
+    ...HOPPER_DIAGNOSTIC_TYPES.map((diagnosticType) =>
       catalogueRow(
         providerErrorTag("HopperRemoteError"),
         `diagnostic_type=${diagnosticType}`,
-        hopperRemoteClassification(diagnosticType as HopperDiagnosticType),
+        hopperRemoteClassification(diagnosticType),
       ),
     ),
     catalogueRow(

@@ -87,25 +87,39 @@ it
         REA_LOG_LEVEL: "silent",
       },
     );
+    const operation = `search_${kind}`;
+    expect(launcher.requests.map(({ method }) => method)).toEqual([
+      "health",
+      operation,
+      "shutdown",
+    ]);
+    const request = launcher.requests[1];
+    if (request === undefined)
+      throw new Error("Missing fixture search request");
+    expect(request.params).toEqual({
+      pattern: "fixture",
+      mode: "literal",
+      case_sensitive: false,
+    });
+
     const output: unknown = JSON.parse(run.stdout);
     if (mode === "valid") {
       expect(process.exitCode ?? run.exitCode, run.stdout).toBe(0);
       const evidence = parseEvidence(output);
-      expect(evidence.operation).toBe(`search_${kind}`);
+      expect(evidence.operation).toBe(operation);
       expect(evidence.normalized_result).toEqual([
         { address: "0x1000", value: "fixture" },
       ]);
     } else {
       expect(process.exitCode ?? run.exitCode, run.stdout).toBe(1);
       const error = analysisCliErrorEnvelopeSchema.parse(output);
-      const request = await launcher.waitForRequest(`list_${kind}`);
       expect(error.code, run.stdout).toBe(
         mode === "capability_unavailable"
           ? "capability_unavailable"
           : "execution_failure",
       );
       expect(error.details).toMatchObject({
-        operation: `search_${kind}`,
+        operation,
         diagnostics: {
           provider_request: {
             operation: request.method,
@@ -116,13 +130,8 @@ it
         },
       });
       if (mode === "bridge_exception")
-        expect(error.message).toContain(`search_${kind}`);
+        expect(error.message).toContain(operation);
     }
-    expect(launcher.requests.map(({ method }) => method)).toEqual([
-      "health",
-      `list_${kind}`,
-      "shutdown",
-    ]);
     expect(launcher.processes).toHaveLength(1);
     const child = launcher.processes[0];
     if (child === undefined) throw new Error("Missing fixture process");

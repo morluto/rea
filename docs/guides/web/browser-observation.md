@@ -99,9 +99,10 @@ evidence, and inventory coverage separate:
 Storage fingerprints decode supported CDP primitive/JSON values before hashing.
 Debugger descriptions, previews, and remote references do not represent storage
 content. Actual JSON properties with those names remain content. Reference-only
-objects, unsupported values, and opaque cookie partition identities remain
-incomplete. Previously exported fingerprints are not recomputed; recapture both
-sides when comparing captures produced across this decoder change.
+objects, unsupported values, and opaque or unreadable cookie partition
+identities remain incomplete. Previously exported fingerprints are not
+recomputed; recapture both sides when comparing captures produced across this
+decoder change.
 IndexedDB schema fingerprints carry `projection_version: 2` and include the
 observed database version and object-store definitions. A missing, malformed, or
 imprecise version leaves the schema fingerprint incomplete while retaining
@@ -422,14 +423,18 @@ main frame.
 
 The web-session timeline uses CDP monotonic seconds where the event producer
 provides a comparable timestamp; absent or invalid timestamps are `null` rather
-than a synthetic zero. Events buffered while REA samples the window boundary are
-retained only when their timestamp places them after that boundary; older events
-are excluded. A buffered event without a comparable timestamp may remain as
-contextual evidence with `timestamp: null`, accompanied by a limitation stating
-that it does not establish activity in the selected window. Main-frame scope
-enforcement still applies to contextual navigation events. Network redirect
-events retain their paired prior-hop response context when the timestamped
-next-request event falls inside the window. Every redirect row, and only a redirect row, has a
+than a synthetic zero. After enabling the Page domain, REA buffers timeline
+events through preparation and clock sampling. Timestamped rows describe
+events after the sampled boundary; earlier requests can still identify a
+document load failure that occurs inside the window. A buffered event without a
+comparable timestamp may remain as contextual evidence with `timestamp: null`,
+accompanied by a limitation stating that it does not establish activity in the
+selected window. Main-frame scope enforcement still applies to contextual
+navigation events. Commit details include the browser-reported navigation kind,
+such as `backforwardcacherestore`. A missing kind remains unknown.
+
+Network redirect events retain their paired prior-hop response context when the
+timestamped next-request event falls inside the window. Every redirect row, and only a redirect row, has a
 `redirect_response` that contains the prior response `url`, CDP-reported `status`,
 and `scope`. The URL has transport credentials removed; URL and status are
 withheld unless its origin is approved. Missing or malformed response URLs have

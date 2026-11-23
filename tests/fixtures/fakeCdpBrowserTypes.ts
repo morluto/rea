@@ -77,10 +77,7 @@ export interface FakeOptions {
   /** Hold selected replies until the test sends an explicit wire response. */
   readonly hangOnCommand?: (command: FakeCdpCommand) => boolean;
   readonly unsupportedMethods?: readonly string[];
-  readonly transitionalFrameReads?: number;
-  readonly attachedFrameUrl?: string;
   readonly frameUrlAfterFirstRead?: string;
-  readonly navigateDuringObservationUrl?: string;
   readonly navigateDuringCaptureUrl?: string;
   readonly navigateDuringScreenshotUrl?: string;
   readonly extraCollections?: boolean;

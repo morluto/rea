@@ -8,8 +8,13 @@ import {
   artifactNameForClassification,
   namedArtifactFormat,
 } from "../domain/artifactNameSelection.js";
-import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
+import {
+  createCachedPrefixReader,
+  readFileHandleRange,
+} from "../filesystem/readFileHandleRange.js";
 import { readPeCoffHeader } from "../domain/peCoffHeader.js";
+import { hasDosMzMagic } from "../domain/dosMz.js";
+import { hasXarMagic } from "../domain/binaryContainer.js";
 import {
   regularFileCancellation,
   RegularFileCleanupFailure,
@@ -124,9 +129,8 @@ import {
   classifyFatContainerIdentity,
   readFatContainerHeader,
   readFatJvmIdentityLimitIssue,
-  readMachoHeaderPrefixFacts,
+  readFatSliceHeaders,
   type FatSliceHeaderEvidence,
-  type MachoHeaderPrefixFacts,
 } from "../domain/apple/machoContainer.js";
 import {
   hasJvmClassHeader,
@@ -203,7 +207,11 @@ export const parseBinaryTarget = async (
     const resolved = await resolveAppBundle(canonical, options);
     if (!resolved.ok) return resolved;
     throwIfTargetResolutionCancelled(signal);
-    const { executable: path, infoPlist } = resolved.value;
+    const {
+      executable: path,
+      infoPlist,
+      bundleExecutableSelection,
+    } = resolved.value;
     const bundle =
       infoPlist === undefined ? {} : { bundleInfoPlist: infoPlist };
     // A bundle directory is selected for its executable, so the executable's
@@ -226,6 +234,9 @@ export const parseBinaryTarget = async (
               selectedPath: candidate,
               classifiedAs,
               ...bundle,
+              ...(bundleExecutableSelection === undefined
+                ? {}
+                : { bundleExecutableSelection }),
             },
             options,
           );
@@ -310,8 +321,7 @@ const readOpenedBinaryTarget = async (
     readonly selectedPath: string;
     /** Spelling whose name supplies format hints: the selected file, or a bundle's executable. */
     readonly classifiedAs: string;
-    readonly bundleInfoPlist?: string;
-  },
+  } & Pick<BinaryTarget, "bundleInfoPlist" | "bundleExecutableSelection">,
   options: BinaryTargetResolverOptions,
 ): Promise<TargetResolution> => {
   const { handle, initial: metadata } = source;
@@ -322,6 +332,7 @@ const readOpenedBinaryTarget = async (
     selectedPath,
     classifiedAs,
     bundleInfoPlist,
+    bundleExecutableSelection,
   } = selected;
   const bundle = bundleInfoPlist === undefined ? {} : { bundleInfoPlist };
   // Every admitted target shares one identity; routes add their own facts.
@@ -330,6 +341,9 @@ const readOpenedBinaryTarget = async (
     sourcePath,
     ...(callerInputPath === path ? {} : { callerInputPath }),
     ...bundle,
+    ...(bundleExecutableSelection === undefined
+      ? {}
+      : { bundleExecutableSelection }),
     sha256: await sha256Handle(source, path, signal),
   });
   const hostArchitecture =
@@ -711,12 +725,8 @@ const detectDatabaseEngine = async (
   handle: FileHandle,
   signal?: AbortSignal,
 ): Promise<AnalysisDatabaseEngine | null> => {
-  throwIfTargetResolutionCancelled(signal);
-  const magic = Buffer.alloc(4);
-  const observed = await handle.read(magic, 0, magic.length, 0);
-  throwIfTargetResolutionCancelled(signal);
-  if (hasIdaDatabaseSignature(magic.subarray(0, observed.bytesRead)))
-    return "ida";
+  const magic = await readHandleRange(handle, 0, 4, signal);
+  if (hasIdaDatabaseSignature(magic)) return "ida";
   return path.toLowerCase().endsWith(".hop") ? "hopper" : null;
 };
 
@@ -757,13 +767,26 @@ const detectArtifactFormat = async (
   throwIfTargetResolutionCancelled(signal);
   if (
     magic.length >= 8 &&
-    magic.subarray(0, 8).equals(Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]))
+    magic[0] === 0 &&
+    magic[1] === 0x61 &&
+    magic[2] === 0x73 &&
+    magic[3] === 0x6d &&
+    magic[4] === 1 &&
+    magic[5] === 0 &&
+    magic[6] === 0 &&
+    magic[7] === 0
   )
     throw new BinaryTargetError(
       path,
       "WebAssembly v1 artifacts are not supported by the native opening route",
       { constraint: "wasm_requires_static_inspection" },
     );
+  const readCachedRange = createCachedPrefixReader(
+    handle,
+    magic,
+    initial.size,
+    () => throwIfTargetResolutionCancelled(signal),
+  );
   // The shared recognizer table decides; this route reads the trailer or
   // locates an ESP flash layout only when a recognizer asks for it, and
   // refuses a file whose header names a format it cannot open.
@@ -790,18 +813,15 @@ const detectArtifactFormat = async (
       suffix =
         initial.size < DFUSE_SUFFIX_BYTES
           ? new Uint8Array(0)
-          : await readHandleRange(
-              handle,
+          : await readCachedRange(
               initial.size - DFUSE_SUFFIX_BYTES,
               DFUSE_SUFFIX_BYTES,
-              signal,
             );
     else
       espFlashLayout = (
         await locateEspFlashLayout(
           initial.size,
-          (position, length) =>
-            readHandleRange(handle, position, length, signal),
+          readCachedRange,
           {},
           { explicit: false, ...(signal === undefined ? {} : { signal }) },
         )
@@ -814,20 +834,19 @@ const detectArtifactFormat = async (
   const named = namedArtifactFormat(lower);
   if (named !== undefined && !claimsExecutableHeader(magic, initial.size))
     return named;
-  if (
-    lower.endsWith(".pkg") &&
-    magic.length >= 4 &&
-    magic.subarray(0, 4).equals(Buffer.from("xar!"))
-  )
-    return "pkg";
+  if (lower.endsWith(".pkg") && hasXarMagic(magic)) return "pkg";
   if (
     lower.endsWith(".dmg") &&
-    (await hasDiskImageSignature(initial.size, (position, length) =>
-      readHandleRange(handle, position, length, signal),
-    ))
+    (await hasDiskImageSignature(initial.size, readCachedRange))
   )
     return "dmg";
-  if (await probeUefiFlashImage(handle, signal)) return "uefi";
+  if (
+    await probeUefiFlashImage(handle, signal, {
+      fileSize: initial.size,
+      prefix: magic,
+    })
+  )
+    return "uefi";
   // XML property lists can use archive-specific suffixes such as .archive.
   // The named-format check above keeps .js, .map, and .asar classifications.
   const xmlProbe = createXmlPlistSignatureProbe();
@@ -992,7 +1011,7 @@ const readExecutableMetadata = async (
   // Header commitments such as Mach-O load commands and FAT slices are
   // checked against the whole file, not the probed prefix.
   const fileSize = initial.size;
-  if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a) {
+  if (hasDosMzMagic(bytes)) {
     let evidence = parseMzHeaderEvidence(bytes, fileSize);
     let signatureEvidence:
       | { readonly offset: number; readonly bytes: Buffer }
@@ -1368,24 +1387,9 @@ const readFatSliceHeaderEvidence = async (
   }
   if (header.state !== "parsed") return undefined;
 
-  const sliceHeadersByOffset = new Map<number, MachoHeaderPrefixFacts>();
-  for (let index = 0; index < header.slices.length; index += 1) {
-    const slice = header.slices[index];
-    if (slice === undefined) continue;
-    if (header.rangeIssues[index] !== null) continue;
-    const observedLength = Math.min(12, slice.size);
-    const thinHeader = await readHandleRange(
-      handle,
-      slice.offset,
-      observedLength,
-      signal,
-    );
-    sliceHeadersByOffset.set(
-      slice.offset,
-      readMachoHeaderPrefixFacts(thinHeader),
-    );
-  }
-  return { header, sliceHeadersByOffset };
+  return readFatSliceHeaders(header, (offset, length) =>
+    readHandleRange(handle, offset, length, signal),
+  );
 };
 
 const readPeMetadata = async (

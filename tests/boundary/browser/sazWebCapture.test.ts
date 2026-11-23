@@ -17,6 +17,9 @@ import {
 } from "vitest";
 import { z } from "zod";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { webNetworkCaptureSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
+import { evidenceRecordSelectionSchema } from "../../../src/domain/evidenceRecordSummary.js";
+import { lifecycleResultOf } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import {
   WEB_NETWORK_CAPTURE_LIMITS,
   webNetworkCaptureSchema,
@@ -552,33 +555,44 @@ it("pages retained SAZ Evidence through public MCP and portable CLI after source
   const path = await fixture(await archive());
   const { call } = await connectSazMcp();
   const args = { capture_path: path, format: "saz", record_ordinals: [1, 0] };
-  const full = await call("inspect_web_network_capture", args);
-  const fromMcp = parseEvidence(full.structuredContent);
-  const capture = webNetworkCaptureSchema.parse(fromMcp.normalized_result);
-  const summaryArgs = { ...args, detail: "summary" };
-  const summaryResponse = await call(
-    "inspect_web_network_capture",
-    summaryArgs,
-  );
+  const summaryResponse = await call("inspect_web_network_capture", {
+    ...args,
+    detail: "summary",
+  });
   expect(summaryResponse.isError, JSON.stringify(summaryResponse)).not.toBe(
     true,
   );
   const summary = parseEvidence(summaryResponse.structuredContent);
-  expect(summary.normalized_result).toMatchObject({
-    kind: "summary",
-    parent_evidence_id: fromMcp.evidence_id,
-    summary: { format: "saz", total_records: 2, retained_records: 2 },
+  const view = webNetworkCaptureSummaryViewResultSchema.parse(
+    summary.normalized_result,
+  );
+  expect(view.summary).toMatchObject({
+    format: "saz",
+    total_records: 2,
+    retained_records: 2,
   });
   expect(JSON.stringify(summary)).not.toContain(
     compressedBody.toString("base64"),
   );
 
-  // Retained pages must keep their snapshot semantics after the input disappears.
   await unlink(path);
   const source = {
     kind: "retained-evidence",
-    evidence_id: fromMcp.evidence_id,
+    evidence_id: view.parent_evidence_id,
   };
+  const bundle = await call("get_evidence_bundle", {
+    detail: "records",
+    filters: { evidence_id: source.evidence_id },
+  });
+  const { records } = lifecycleResultOf(evidenceRecordSelectionSchema).parse(
+    bundle.structuredContent,
+  ).result;
+  expect(records.map(({ evidence_id }) => evidence_id)).toEqual([
+    source.evidence_id,
+  ]);
+  const fromMcp = parseEvidence(records[0]);
+  const capture = webNetworkCaptureSchema.parse(fromMcp.normalized_result);
+  expect(capture.records.map(({ ordinal }) => ordinal)).toEqual([1, 0]);
   const previewArgs = {
     source,
     view: { kind: "capture", offset: 0, limit: 1 },
@@ -677,6 +691,152 @@ it("keeps CRLF separators inside a body after LF-only HTTP headers", async () =>
   expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
 });
 
+it("splits mixed CRLF and bare LF SAZ headers so transport credentials are redacted", async () => {
+  const reqBody = Buffer.from("req-body-1");
+  const respBody = Buffer.from("resp-body-1");
+  const bytes = await archive([
+    [
+      "raw/1_c.txt",
+      Buffer.concat([
+        Buffer.from(
+          "GET /api/me HTTP/1.1\r\nHost: example.test\r\nX-Trace: 1\nAuthorization: Bearer fake-bearer-token-fixture\r\nX-After: req-ok\r\n\r\n",
+        ),
+        reqBody,
+      ]),
+    ],
+    [
+      "raw/1_s.txt",
+      Buffer.concat([
+        Buffer.from(
+          "HTTP/1.1 200 OK\r\nContent-Type: text/plain\nSet-Cookie: session=fake-session-cookie-fixture\r\nX-Folded: first\n second\r\n\r\n",
+        ),
+        respBody,
+      ]),
+    ],
+  ]);
+  const path = await fixture(bytes);
+  const evidence = await cli(path);
+  const capture = webNetworkCaptureSchema.parse(evidence.normalized_result);
+
+  expect(capture.records[0]?.reported).toMatchObject({
+    request: {
+      method: "GET",
+      url: "/api/me",
+      headers: [
+        { name: "Host", value: " example.test" },
+        { name: "X-Trace", value: " 1" },
+        { name: "Authorization", value: null },
+        { name: "X-After", value: " req-ok" },
+      ],
+      body: reqBody.toString("utf8"),
+    },
+    response: {
+      status: "200",
+      reason: "OK",
+      headers: [
+        { name: "Content-Type", value: " text/plain" },
+        { name: "Set-Cookie", value: null },
+        { name: "X-Folded", value: " first\n second" },
+      ],
+      body: respBody.toString("utf8"),
+    },
+  });
+  expect(capture.records[0]?.redactions).toEqual([
+    { pointer: "/request/headers/2/value", reason: "transport-credential" },
+    { pointer: "/response/headers/1/value", reason: "transport-credential" },
+  ]);
+  const serialized = JSON.stringify(evidence);
+  for (const secret of [
+    "fake-bearer-token-fixture",
+    "fake-session-cookie-fixture",
+  ])
+    expect(serialized).not.toContain(secret);
+  expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+});
+
+it("recognizes mixed CRLF and LF SAZ header/body boundaries without altering body bytes", async () => {
+  const respBody1 = Buffer.from("resp-body-1\r\n\r\nrest");
+  const reqBody2 = Buffer.from("\r\nreq-body-2");
+  const respBody2 = Buffer.from("resp-body-2");
+  const bytes = await archive([
+    [
+      "raw/1_s.txt",
+      Buffer.concat([
+        Buffer.from("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\n"),
+        respBody1,
+      ]),
+    ],
+    [
+      "raw/2_c.txt",
+      Buffer.concat([
+        Buffer.from(
+          "POST /mixed-end HTTP/1.1\nHost: example.test\r\nCookie: sid=fake-request-cookie-fixture\nX-Tail: tail-ok\n\r\n",
+        ),
+        reqBody2,
+      ]),
+    ],
+    [
+      "raw/2_s.txt",
+      Buffer.concat([
+        Buffer.from("HTTP/1.1 200 OK\r\nX-One: a\r\n\n"),
+        respBody2,
+      ]),
+    ],
+  ]);
+  const path = await fixture(bytes);
+  const evidence = await cli(path, ["--record", "0", "--record", "1"]);
+  const capture = webNetworkCaptureSchema.parse(evidence.normalized_result);
+
+  expect(capture.records[0]?.reported).toMatchObject({
+    response: {
+      status: "200",
+      reason: "OK",
+      headers: [{ name: "Content-Type", value: " text/plain" }],
+      body: respBody1.toString("utf8"),
+    },
+  });
+  expect(capture.records[0]?.binary_fields).toContainEqual({
+    pointer: "/response/body",
+    representation: "producer-bytes",
+    state: "retained",
+    content_base64: respBody1.toString("base64"),
+    bytes: respBody1.length,
+    sha256: createHash("sha256").update(respBody1).digest("hex"),
+  });
+
+  expect(capture.records[1]?.reported).toMatchObject({
+    request: {
+      method: "POST",
+      url: "/mixed-end",
+      headers: [
+        { name: "Host", value: " example.test" },
+        { name: "Cookie", value: null },
+        { name: "X-Tail", value: " tail-ok" },
+      ],
+      body: reqBody2.toString("utf8"),
+    },
+    response: {
+      status: "200",
+      reason: "OK",
+      headers: [{ name: "X-One", value: " a" }],
+      body: respBody2.toString("utf8"),
+    },
+  });
+  expect(capture.records[1]?.redactions).toEqual([
+    { pointer: "/request/headers/1/value", reason: "transport-credential" },
+  ]);
+  expect(capture.records[1]?.binary_fields).toContainEqual({
+    pointer: "/request/body",
+    representation: "producer-bytes",
+    state: "retained",
+    content_base64: reqBody2.toString("base64"),
+    bytes: reqBody2.length,
+    sha256: createHash("sha256").update(reqBody2).digest("hex"),
+  });
+  expect(JSON.stringify(evidence)).not.toContain("fake-request-cookie-fixture");
+  expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+});
+
 it("reports zero-byte SAZ HTTP members as null instead of rejecting the archive", async () => {
   const bytes = await archive([
     ["raw/1_c.txt", Buffer.from("GET https://example.test/ HTTP/1.1\r\n\r\n")],
@@ -687,9 +847,10 @@ it("reports zero-byte SAZ HTTP members as null instead of rejecting the archive"
   ]);
   const path = await fixture(bytes);
   const capture = webNetworkCaptureSchema.parse(
-    (await cli(path)).normalized_result,
+    (await cli(path, ["--record", "0", "--record", "1"])).normalized_result,
   );
   expect(capture.total_records).toBe(2);
+  expect(capture.records.map(({ ordinal }) => ordinal)).toEqual([0, 1]);
   expect(capture.limitations).toContainEqual(
     expect.stringMatching(
       /\babsent\b[^.]*\bzero-byte\b[^.]*\bHTTP members\b[^.]*\bnull\b/iu,
@@ -714,58 +875,45 @@ it("reports zero-byte SAZ HTTP members as null instead of rejecting the archive"
   expect(capture.records[1]?.limitations).toEqual([
     "The stored request member is empty (zero bytes); the request is reported as null.",
   ]);
-  const selected = webNetworkCaptureSchema.parse(
-    (await cli(path, ["--record", "0"])).normalized_result,
-  );
-  expect(selected.records).toMatchObject([
-    { ordinal: 0, reported: { response: null } },
-  ]);
 });
 
-it("validates SAZ XML declarations against archive member bytes at the CLI boundary", async () => {
-  const withMetadata = (metadata: Buffer): [string, Buffer][] =>
-    members().map(([name, bytes]) =>
-      name === "raw/0042_m.xml" ? [name, metadata] : [name, bytes],
-    );
-  const utf8 = Buffer.from(
-    '<?xml version="1.0" encoding="UTF-8"?><Session SID="0042"/>',
-  );
-  const utf16le = Buffer.concat([
-    Buffer.from([0xff, 0xfe]),
-    Buffer.from(
-      '<?xml version="1.0" encoding="UTF-16"?><Session SID="0042"/>',
-      "utf16le",
+it.each([
+  {
+    name: "a declaration that disagrees with the bytes",
+    metadata: Buffer.from(
+      '<?xml version="1.0" encoding="UTF-16"?><Session SID="1"/>',
     ),
-  ]);
-  for (const metadata of [utf8, utf16le]) {
-    const result = await cli(
-      await fixture(await archive(withMetadata(metadata))),
-    );
-    expect(
-      webNetworkCaptureSchema.parse(result.normalized_result).records,
-    ).toHaveLength(2);
-  }
-  const mismatch = Buffer.from(
-    '<?xml version="1.0" encoding="UTF-16"?><Session SID="0042"/>',
-  );
-  const rejected = await cliResponse(
-    await fixture(await archive(withMetadata(mismatch))),
-    ["--record", "1"],
-  );
-  expect(rejected.ok).toBe(false);
-  expect(JSON.parse(rejected.stdout)).toMatchObject({
-    category: "invalid_input",
-    details: {
-      issues: [
-        expect.objectContaining({
-          message: expect.stringContaining(
-            "SAZ metadata encoding declaration disagrees with its bytes",
-          ),
-        }),
-      ],
-    },
-  });
-});
+    issue: /encoding declaration disagrees/u,
+  },
+  {
+    name: "corrupt UTF-8 bytes",
+    metadata: Buffer.concat([
+      Buffer.from('<?xml version="1.0" encoding="UTF-8"?><Session>'),
+      Buffer.from([0xff]),
+      Buffer.from("</Session>"),
+    ]),
+    issue: /invalid bytes/u,
+  },
+])(
+  "rejects SAZ metadata with $name before selection",
+  async ({ metadata, issue }) => {
+    const bytes = await archive([
+      ["raw/1_m.xml", metadata],
+      ["raw/2_c.txt", Buffer.from("GET /valid HTTP/1.1\r\n\r\n")],
+    ]);
+    const rejected = await cliResponse(await fixture(bytes), ["--record", "1"]);
+    expect(rejected.ok).toBe(false);
+    expect(JSON.parse(rejected.stdout)).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        issues: [
+          expect.objectContaining({ message: expect.stringMatching(issue) }),
+        ],
+      },
+    });
+  },
+);
 
 it("excludes explicit literals from XML, HTTP byte views, member coordinates and binary sidecars", async () => {
   const path = await fixture(await archive());
@@ -807,7 +955,7 @@ it("excludes explicit literals from XML, HTTP byte views, member coordinates and
     expect(text).not.toContain(secret);
 });
 
-it("retains folded headers, stored chunk framing and BOM-marked UTF-16 metadata", async () => {
+it("retains folded headers, stored chunk framing and both XML encodings", async () => {
   const body = "3\r\none\r\n0\r\n\r\n";
   const path = await fixture(
     await archive([
@@ -820,7 +968,7 @@ it("retains folded headers, stored chunk framing and BOM-marked UTF-16 metadata"
       [
         "raw/1_m.xml",
         Buffer.from(
-          '\ufeff<?xml version="1.0" encoding="utf-16"?><Session><Note>\u03b2</Note><Source><![CDATA[<!DOCTYPE html>]]></Source></Session>',
+          '\ufeff<?xml version="1.0" encoding="utf-16"?><Session SID="1"><Note>\u03b2</Note><Source><![CDATA[<!DOCTYPE html>]]></Source></Session>',
           "utf16le",
         ),
       ],
@@ -828,6 +976,12 @@ it("retains folded headers, stored chunk framing and BOM-marked UTF-16 metadata"
         "raw/2_c.txt",
         Buffer.from(
           "CONNECT example.test:443 HTTP/1.1\nHost: example.test:443\n\n",
+        ),
+      ],
+      [
+        "raw/2_m.xml",
+        Buffer.from(
+          '<?xml version="1.0" encoding="UTF-8"?><Session SID="2"><Note>雪</Note></Session>',
         ),
       ],
     ]),
@@ -850,7 +1004,41 @@ it("retains folded headers, stored chunk framing and BOM-marked UTF-16 metadata"
       content_base64: Buffer.from(body).toString("base64"),
     }),
   );
-  expect(JSON.stringify(capture.records[0]?.reported)).toContain("\u03b2");
+  expect(capture.records[0]?.reported).toHaveProperty(
+    "metadata.document.children.1",
+    expect.objectContaining({
+      name: "Session",
+      attributes: [{ name: "SID", value: "1" }],
+      children: [
+        expect.objectContaining({
+          name: "Note",
+          children: [expect.objectContaining({ name: "#text", value: "β" })],
+        }),
+        expect.objectContaining({
+          name: "Source",
+          children: [
+            expect.objectContaining({
+              name: "#cdata-section",
+              value: "<!DOCTYPE html>",
+            }),
+          ],
+        }),
+      ],
+    }),
+  );
+  expect(capture.records[1]?.reported).toHaveProperty(
+    "metadata.document.children.1",
+    expect.objectContaining({
+      name: "Session",
+      attributes: [{ name: "SID", value: "2" }],
+      children: [
+        expect.objectContaining({
+          name: "Note",
+          children: [expect.objectContaining({ name: "#text", value: "雪" })],
+        }),
+      ],
+    }),
+  );
   expect(capture.records[1]?.reported).toMatchObject({
     request: { method: "CONNECT", url: "example.test:443", body: "" },
   });
@@ -875,7 +1063,7 @@ it.each([
     entries.push([
       "raw/8_m.xml",
       Buffer.from(
-        '<!DOCTYPE Session [<!ENTITY external SYSTEM "file:///private-input">]><Session>&external;</Session>',
+        '<!DOCTYPE Session [<!ENTITY external SYSTEM "file:///private-input">]><Session/>',
       ),
     ]);
   if (variant === "unknown-member")
@@ -905,14 +1093,17 @@ it.each([
   const path = await fixture(bytes);
   const result = await cliResponse(path, ["--record", "0"]);
   expect(result.ok, result.stdout).toBe(false);
-  expect(JSON.parse(result.stdout).category, result.stdout).toBe(
+  const failure = JSON.parse(result.stdout);
+  expect(failure.category, result.stdout).toBe(
     ["encrypted", "unknown-member", "dtd"].includes(variant)
       ? "unsupported_provider"
       : "invalid_input",
   );
+  if (variant === "encrypted")
+    expect(failure.message).toContain("export an unencrypted copy");
   // Expanded size is a caller-correctable input bound, not a decoder failure.
   if (variant === "expanded-limit") {
-    const error = JSON.parse(result.stdout);
+    const error = failure;
     expect(error.code).toBe("invalid_request");
     expect(error.details.issues).toEqual([
       expect.objectContaining({

@@ -1,5 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { ChildProcess } from "node:child_process";
 import { once } from "node:events";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect } from "vitest";
@@ -95,35 +96,24 @@ describe("browser process startup", () => {
     });
   });
 
-  it("reports bounded timeout diagnostics", async ({ processes }) => {
-    const root = await temporaryRoot();
-    const child = processes.spawn(process.execPath, [
-      "-e",
-      "setTimeout(() => {}, 1000)",
-    ]);
-    try {
-      const failure = await waitForBrowserDevtoolsPort({
-        child,
+  it("reports bounded timeout diagnostics", async () => {
+    await expect(
+      waitForBrowserDevtoolsPort({
+        child: new ChildProcess(),
         executable: process.execPath,
-        activePortPath: join(root, "DevToolsActivePort"),
+        activePortPath: join(await temporaryRoot(), "DevToolsActivePort"),
         stderr: () => "",
         timeoutMs: 20,
         pollIntervalMs: 5,
-      }).catch((cause: unknown) => cause);
-
-      expect(failure).toBeInstanceOf(BrowserStartupError);
-      expect(failure).toMatchObject({
-        failure: "timeout",
-        exitCode: null,
-        signalCode: null,
-        startupTimeoutMs: 20,
-      });
-      expect(String(failure)).toContain("stderr=<empty>");
-      expect(String(failure)).toContain("timeoutMs=20");
-    } finally {
-      child.kill("SIGKILL");
-      expect(await waitForExit(child, 5_000)).toBe(true);
-    }
+      }),
+    ).rejects.toMatchObject({
+      _tag: "BrowserStartupError",
+      failure: "timeout",
+      exitCode: null,
+      signalCode: null,
+      startupTimeoutMs: 20,
+      message: expect.stringMatching(/timeoutMs=20.*stderr=<empty>$/u),
+    });
   });
 
   it("names the owner's deadline when a caller omits one", async ({
@@ -153,21 +143,30 @@ describe("browser process startup", () => {
     );
   });
 
-  it("keeps one owner for the DevToolsActivePort deadline", async () => {
-    expect(BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS).toBe(60_000);
-    const source = await readFile(
-      new URL(
-        "../../../scripts/lib/browser-runtime-fixture-lifecycle.mjs",
-        import.meta.url,
-      ),
-      "utf8",
-    );
-    expect(source).toContain(
-      "const deadline = performance.now() + BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS",
-    );
-    expect(source).toContain(
-      "timeoutMs: Math.max(1, deadline - performance.now())",
-    );
+  it("keeps a terminal startup outcome observed during a valid port read", async () => {
+    const portPath = join(await temporaryRoot(), "DevToolsActivePort");
+    await writeFile(portPath, "43117\n/devtools/browser/fixture");
+    const spawnError = new Error("fixture launch failed");
+    for (const failure of ["exited", "spawn-error"] as const) {
+      const child = new ChildProcess();
+      const pending = waitForBrowserDevtoolsPort({
+        child,
+        executable: process.execPath,
+        activePortPath: portPath,
+        stderr: () => "fixture startup diagnostic",
+      });
+      // The file read is in flight and already contains a valid port.
+      if (failure === "spawn-error") child.emit("error", spawnError);
+      Object.defineProperty(child, "exitCode", { value: 3 });
+      child.emit("exit", 3, null);
+      await expect(pending, failure).rejects.toMatchObject({
+        _tag: "BrowserStartupError",
+        failure,
+        exitCode: failure === "exited" ? 3 : null,
+        stderr: "fixture startup diagnostic",
+        ...(failure === "spawn-error" ? { cause: spawnError } : {}),
+      });
+    }
   });
 });
 

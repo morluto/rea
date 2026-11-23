@@ -16,10 +16,7 @@ import {
 import { isCdpSessionNotFoundRejection } from "../CdpCommandRejection.js";
 import { CdpTargetSessionOwner } from "../CdpTargetSessionOwner.js";
 import { classifyCdpFrameUrl } from "../CdpCaptureDocuments.js";
-import {
-  observedFrameUrl,
-  type CdpFrameTree,
-} from "../protocol/CdpFrameTree.js";
+import type { CdpFrameTree } from "../protocol/CdpFrameTree.js";
 import type {
   CdpDomainWith,
   CdpCommand,
@@ -39,6 +36,7 @@ import {
   type CdpEndpointDiscovery,
 } from "../CdpEndpoint.js";
 import {
+  cdpRootDocument,
   openCdpTargetSession,
   type CdpTargetSession,
 } from "../CdpTargetSession.js";
@@ -139,8 +137,8 @@ export class CdpRuntimeSession {
           target_id: target.id,
           initial_url: url.url,
           origin: url.origin,
-          frame_id: frame.id,
-          loader_id: frame.loaderId ?? null,
+          frame_id: frame.document.frameId,
+          loader_id: frame.document.loaderId ?? null,
         },
         allowedOrigins,
         operation,
@@ -383,16 +381,14 @@ const runtimeMainFrame = (
   allowedOrigins: ReadonlySet<string>,
   operation: BrowserObservationOperation,
 ) => {
-  const { frameId, loaderId, loaderIssue } = tree.root.facts;
-  if (frameId === null || loaderIssue !== null)
+  const document = cdpRootDocument(tree);
+  if (document === undefined)
     throw new BrowserObservationError(operation, "protocol_error", {
       detail:
         "CDP Page.getFrameTree did not identify the selected main frame's document.",
     });
   return {
-    id: frameId,
-    loaderId,
-    document: { frameId, loaderId, url: observedFrameUrl(tree.root.url) },
+    document,
     ...classifyCdpFrameUrl(tree.root.url, allowedOrigins),
   };
 };

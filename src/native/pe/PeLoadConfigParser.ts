@@ -12,6 +12,7 @@ import {
   createFileMappingIndex,
   imageFileMappings,
   mappedFileOffset,
+  type FileMappingIndex,
 } from "../../domain/binaryContainer.js";
 import {
   peDeclaredFileMappings,
@@ -66,17 +67,17 @@ type DirectorySpan = PeLoadConfigTls["directory"];
 interface SectionSegment {
   readonly start: number;
   readonly owners: number;
-  readonly name: string;
+  readonly name: string | null;
 }
 
 /**
- * Build the RVA-to-section-name lookup once per image. Section spans are split
+ * Build the RVA-to-section lookup once per image. Section spans are split
  * into disjoint segments so each lookup is a binary search; an RVA owned by
  * more than one section still fails as ambiguous.
  */
-const sectionNameIndex = (
+const sectionIndex = (
   sections: PeImage["sections"],
-): ((rva: number) => string | null) => {
+): ((rva: number) => SectionSegment | null) => {
   const events: { at: number; index: number; open: boolean }[] = [];
   sections.forEach((section, index) => {
     if (section.format !== "pe") return;
@@ -101,7 +102,7 @@ const sectionNameIndex = (
     segments.push({
       start: at,
       owners: active.size,
-      name: active.size === 1 ? (sections[only!]?.name ?? "") : "",
+      name: active.size === 1 ? sections[only!]?.name || null : null,
     });
   }
   return (rva) => {
@@ -122,31 +123,37 @@ const sectionNameIndex = (
         "ambiguous",
         `PE RVA ${hex(rva)} belongs to multiple sections`,
       );
-    return found.name.length === 0 ? null : found.name;
+    return found;
   };
 };
 
 /**
- * Read one PE TLS directory and load configuration without executing the image.
- * Yields to the event loop and honors cancellation every
- * `ENTRIES_PER_YIELD` callback slots.
+ * Read one PE TLS directory and load configuration from a parsed PE image
+ * without executing the image. Yields to the event loop and honors cancellation
+ * every `ENTRIES_PER_YIELD` callback slots.
  */
-export const parsePeLoadConfig = async (
+export const parsePeLoadConfigFromImage = async (
   bytes: Buffer,
+  image: PeImage,
   artifact: PeLoadConfig["artifact"],
   input: InspectPeLoadConfigInput,
   signal?: AbortSignal,
 ): Promise<PeLoadConfig> => {
   assertArtifactReadActive(signal);
-  const image = readPeImage(bytes);
   const bits = image.bits;
   const base = image.image_base;
-  const lookup = createFileMappingIndex(
-    imageFileMappings(image),
-    image.zero_fills,
-  );
   const pointerWidth = bits === 64 ? 8 : 4;
   const reader = new BinaryReader(bytes, true, "pe");
+  // Build section and mapping indices only when directory 9 or 10 exists and needs them.
+  let mappingIndex: FileMappingIndex | undefined;
+  const getLookup = (): FileMappingIndex =>
+    (mappingIndex ??= createFileMappingIndex(
+      imageFileMappings(image),
+      image.zero_fills,
+    ));
+  let cachedSections: ReturnType<typeof sectionIndex> | undefined;
+  const sectionAt = (rva: number): SectionSegment | null =>
+    (cachedSections ??= sectionIndex(image.sections))(rva);
 
   const dataDirectory = (index: number): DirectorySpan | null => {
     const entry = image.pe_data_directories[index];
@@ -166,7 +173,7 @@ export const parsePeLoadConfig = async (
     return {
       rva,
       size,
-      file_offset: lookup.offset(base + BigInt(rva), size),
+      file_offset: getLookup().offset(base + BigInt(rva), size),
     };
   };
 
@@ -176,21 +183,19 @@ export const parsePeLoadConfig = async (
     return delta <= 0xffffffffn ? Number(delta) : null;
   };
 
-  const sectionName = sectionNameIndex(image.sections);
-
   const locate = (va: bigint): PeLoadConfigLocated => {
     if (va === 0n)
       return { va: "0x0", rva: null, file_offset: null, section: null };
     const rva = rvaOf(va);
     let fileOffset: number | null = null;
     if (rva !== null) {
-      fileOffset = optionalFileOffset(() => lookup.offset(va, 1));
+      fileOffset = optionalFileOffset(() => getLookup().offset(va, 1));
     }
     return {
       va: hex(va),
       rva,
       file_offset: fileOffset,
-      section: rva === null ? null : sectionName(rva),
+      section: rva === null ? null : (sectionAt(rva)?.name ?? null),
     };
   };
 
@@ -201,8 +206,8 @@ export const parsePeLoadConfig = async (
     pointerWidth,
     locate,
     rvaOf,
-    sectionName,
-    lookup,
+    sectionAt,
+    lookup: { offset: (address, size) => getLookup().offset(address, size) },
     templateFileOffset: (address, size) =>
       optionalFileOffset(() =>
         mappedFileOffset(
@@ -227,7 +232,7 @@ export const parsePeLoadConfig = async (
           `Load configuration Size ${String(size)} extends beyond the 32-bit RVA space`,
         );
       try {
-        return lookup.offset(base + BigInt(rva), size);
+        return getLookup().offset(base + BigInt(rva), size);
       } catch (cause) {
         if (cause instanceof BinaryMappingFailure)
           throw new BinaryFormatFailure(
@@ -251,6 +256,27 @@ export const parsePeLoadConfig = async (
   };
 };
 
+/**
+ * Read one PE TLS directory and load configuration without executing the image.
+ * Yields to the event loop and honors cancellation every
+ * `ENTRIES_PER_YIELD` callback slots.
+ */
+export const parsePeLoadConfig = async (
+  bytes: Buffer,
+  artifact: PeLoadConfig["artifact"],
+  input: InspectPeLoadConfigInput,
+  signal?: AbortSignal,
+): Promise<PeLoadConfig> => {
+  assertArtifactReadActive(signal);
+  return parsePeLoadConfigFromImage(
+    bytes,
+    readPeImage(bytes),
+    artifact,
+    input,
+    signal,
+  );
+};
+
 const readTls = async ({
   reader,
   bits,
@@ -258,7 +284,7 @@ const readTls = async ({
   pointerWidth,
   locate,
   rvaOf,
-  sectionName,
+  sectionAt,
   lookup,
   templateFileOffset,
   maxCallbacks,
@@ -270,7 +296,7 @@ const readTls = async ({
   readonly pointerWidth: number;
   readonly locate: (va: bigint) => PeLoadConfigLocated;
   readonly rvaOf: (va: bigint) => number | null;
-  readonly sectionName: (rva: number) => string | null;
+  readonly sectionAt: (rva: number) => SectionSegment | null;
   readonly lookup: { offset(address: bigint, size: number): number };
   readonly templateFileOffset: (address: bigint, size: number) => number | null;
   readonly maxCallbacks: number;
@@ -308,16 +334,17 @@ const readTls = async ({
   let rawSection: string | null = null;
   if (rawSize === 0) {
     const rva = rvaOf(start);
-    rawSection = rva === null ? null : sectionName(rva);
+    rawSection = rva === null ? null : (sectionAt(rva)?.name ?? null);
   } else {
     rawFile = templateFileOffset(start, rawSize);
     const startRva = rvaOf(start);
     const last = startRva === null ? null : startRva + rawSize - 1;
     if (startRva !== null && last !== null && last <= 0xffffffff) {
-      const startName = sectionName(startRva);
-      const endName = sectionName(last);
+      const firstSection = sectionAt(startRva);
+      const lastSection = sectionAt(last);
+      // A single segment establishes the same unambiguous owner throughout.
       rawSection =
-        startName !== null && startName === endName ? startName : null;
+        firstSection === lastSection ? (firstSection?.name ?? null) : null;
     }
   }
 

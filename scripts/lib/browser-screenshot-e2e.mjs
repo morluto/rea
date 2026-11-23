@@ -4,11 +4,9 @@ import {
   requireMcpToolError,
 } from "./mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { Client } from "@modelcontextprotocol/client";
@@ -16,13 +14,12 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { webScreenshotSchema } from "../../dist/domain/webScreenshot.js";
 import { comparePngScreenshots } from "../../dist/domain/pngVisualDiff.js";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
+import { createVerifierCommands } from "./verify-commands.mjs";
 
 /** Verify a real, large PNG through production CLI and stdio MCP boundaries. */
 export async function verifyLargeScreenshotE2e(endpoint, origin) {
-  const browser = await chromium.connectOverCDP(endpoint);
-  // Independent CLI/MCP sessions must see the same native surface, without
-  // Playwright's session-scoped device-metrics override changing during capture.
-  const context = await browser.newContext({ viewport: null });
+  const commands = await createVerifierCommands();
   const entrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url));
   const env = {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
@@ -31,7 +28,12 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
   };
   let client;
   let transport;
-  try {
+  let browser;
+  let context;
+  return withVerifierCleanup(async () => {
+    browser = await chromium.connectOverCDP(endpoint);
+    // Independent CDP sessions must observe the same native compositor surface.
+    context = await browser.newContext({ viewport: null });
     const page = await context.newPage();
     await page.goto(`${origin}/screenshot-noise`);
     await page.waitForFunction(
@@ -63,6 +65,14 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
       await page.waitForFunction(
         () => globalThis.innerWidth === 2048 && globalThis.innerHeight === 1536,
       );
+      assert.deepEqual(
+        await page.evaluate(() => [
+          globalThis.document.documentElement.scrollWidth,
+          globalThis.document.documentElement.scrollHeight,
+        ]),
+        [2048, 1536],
+        "Noise canvas must fill the intended viewport without document overflow",
+      );
       const result = await session.send("Page.captureScreenshot", {
         format: "png",
         fromSurface: true,
@@ -72,7 +82,7 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
     } finally {
       await session.detach();
     }
-    const { stdout } = await promisify(execFile)(
+    const { stdout } = await commands.exec(
       process.execPath,
       [
         entrypoint,
@@ -102,6 +112,8 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
       bytes.equals(expectedPng),
       "CLI screenshot pixels differ from the owned browser capture",
     );
+    assert.equal(bytes.readUInt32BE(16), 2048);
+    assert.equal(bytes.readUInt32BE(20), 1536);
     assert.deepEqual(screenshot.viewport, {
       width: expectedPng.readUInt32BE(16),
       height: expectedPng.readUInt32BE(20),
@@ -157,18 +169,13 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
       matched_large_buffer: true,
       png_bytes: bytes.byteLength,
     };
-  } finally {
-    try {
-      if (client !== undefined) await client.close();
-    } finally {
-      try {
-        if (transport !== undefined) await transport.close();
-      } finally {
-        await context.close();
-        await browser.close();
-      }
-    }
-  }
+  }, [
+    () => client?.close(),
+    () => transport?.close(),
+    () => context?.close(),
+    () => browser?.close(),
+    () => commands.close(),
+  ]);
 }
 
 const verifyDefaultScreenshotDelivery = async ({

@@ -1,3 +1,4 @@
+import { metroContext } from "../../../tests/fixtures/javascriptMetroContext.js";
 import * as t from "@babel/types";
 import { expect, it } from "vitest";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
@@ -1531,4 +1532,90 @@ it("consumes finite getter chains and owns each returned query object", () => {
     ["/repeated-getter", "navigation-target"],
   ]);
   expect(facts.unresolved).toEqual([]);
+});
+
+it("interprets Expo Router require.context keys as low-confidence file-route candidates", () => {
+  const source = metroContext([
+    "./(app)/_layout.tsx",
+    "./(app)/index.tsx",
+    "./(app)/reports/[id]/edit.tsx",
+    "./(app,admin)/team.tsx",
+    "./+html.tsx",
+    "./+not-found.tsx",
+    "./_layout.tsx",
+    "./api/users+api.ts",
+    "./docs/[...rest].tsx",
+    "./settings/index.web.jsx",
+  ]).replace("enumerable:!0", '["__proto__"]:null,enumerable:!0');
+  const facts = analyze(source);
+  expect(facts.unresolved).toEqual([]);
+  expect(
+    facts.candidates.map(({ path, segments }) => [segments[0]!.value, path]),
+  ).toEqual([
+    ["./(app)/index.tsx", "/"],
+    ["./(app)/reports/[id]/edit.tsx", "/reports/:id/edit"],
+    ["./(app,admin)/team.tsx", "/team"],
+    ["./api/users+api.ts", "/api/users"],
+    ["./docs/[...rest].tsx", "/docs/:rest+"],
+    ["./settings/index.web.jsx", "/settings"],
+  ]);
+  for (const candidate of facts.candidates) {
+    expect(candidate).toMatchObject({
+      mechanism: "expo-router-context-key",
+      confidence: "low",
+      derivation: "inferred",
+      segments: [{ origin: "literal", location: candidate.location }],
+    });
+    expect(
+      source.slice(
+        candidate.location.start.column,
+        candidate.location.end.column,
+      ),
+    ).toBe(JSON.stringify(candidate.segments[0]!.value));
+  }
+});
+
+it("keeps a require.context file map without Expo Router conventions unknown", () => {
+  const source = metroContext(["./Button.stories.tsx", "./Card.stories.tsx"]);
+  const facts = analyze(source);
+  expect(facts.candidates).toEqual([]);
+  expect(facts.unresolved).toEqual([
+    expect.objectContaining({
+      mechanism: "expo-router-context-key",
+      reason: expect.stringContaining("Expo Router"),
+    }),
+  ]);
+});
+
+it.each([
+  metroContext(["./_layout.tsx", "./about.tsx", "./logo.png"]),
+  metroContext(["./_layout.tsx", "about.tsx"]),
+  "Object.defineProperties(target,{'./_layout.tsx':{get(){}},'./about.tsx':{get(){}}});",
+  "Object.defineProperties({},{default:{get(){}},'./_layout.tsx':{get(){}}});",
+  "Object.defineProperties({},{'./_layout.tsx':{get(){}},'./about.tsx':{get(){},value:1}});",
+  "Object.defineProperties({},{'./_layout.tsx':{get(){}},'./about.tsx':{__proto__:{value:1},get(){}}});",
+  "function build(Object){ return Object.defineProperties({},{'./_layout.tsx':{get(){}},'./about.tsx':{get(){}}}); }",
+])("does not read other defineProperties maps as route files: %s", (source) => {
+  const facts = analyze(source);
+  expect(facts.candidates).toEqual([]);
+  expect(facts.unresolved).toEqual([]);
+});
+
+it("admits Expo Router context keys one at a time within the fact budget", () => {
+  const keys = Array.from(
+    { length: 80 },
+    (_, index) => `./${"section".repeat(8)}/${String(index)}/edit.tsx`,
+  );
+  const facts = analyze(metroContext(["./_layout.tsx", ...keys]), 20_000);
+  expect(facts.capacity).toMatchObject({
+    kind: "route-work-or-facts",
+    limit_bytes: 20_000,
+  });
+  expect(Buffer.byteLength(JSON.stringify(facts))).toBeLessThanOrEqual(20_000);
+  // Admitted routes are a prefix of the map, in key order.
+  expect(facts.candidates.map(({ segments }) => segments[0]!.value)).toEqual(
+    keys.slice(0, facts.candidates.length),
+  );
+  expect(facts.candidates.length).toBeGreaterThan(0);
+  expect(facts.candidates.length).toBeLessThan(keys.length);
 });

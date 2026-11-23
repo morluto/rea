@@ -154,13 +154,12 @@ const emitSessionTimeline = (
       timestamp: 10,
     });
     event(socket, "Page.frameNavigated", command.sessionId, {
+      type: "Navigation",
       frame: {
         id: "frame-main",
         loaderId: "loader-reload",
         url: allowed,
-        transitionType: "reload",
       },
-      timestamp: 11,
     });
     event(socket, "Page.navigatedWithinDocument", command.sessionId, {
       frameId: "frame-main",
@@ -274,13 +273,6 @@ const emitNetworkEvents = (
   options: FakeOptions,
 ): void => {
   if (command.method !== "Network.enable") return;
-  if (options.navigateDuringObservationUrl !== undefined)
-    event(socket, "Page.frameNavigated", command.sessionId, {
-      frame: {
-        id: "frame-main",
-        url: options.navigateDuringObservationUrl,
-      },
-    });
   const url = `http://127.0.0.1:${String(port)}/api?token=network-secret`;
   event(socket, "Network.requestWillBeSent", command.sessionId, {
     requestId: "request-1",

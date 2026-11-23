@@ -87,7 +87,5 @@ const validReport = (
 ): boolean => {
   if (report.artifact.bytes > input.max_file_bytes) return false;
   if (report.coverage.examined_bytes !== report.artifact.bytes) return false;
-  if (report.format === "maven-pom" && report.gradle !== null) return false;
-  if (report.format === "gradle-module" && report.parent !== null) return false;
   return true;
 };

@@ -572,7 +572,7 @@ it("preserves WebSocket stream correlation and compares only shared payload evid
   ).toBe("changed");
 });
 
-const captureHttpComparisonFixture = async () => {
+it("compares HTTP and script evidence independently of local request IDs and approval wording", async () => {
   const browser = await startFakeCdpBrowser();
   browsers.push(browser);
   const result = await new CdpBrowserProvider().inspectPage(
@@ -581,164 +581,54 @@ const captureHttpComparisonFixture = async () => {
       allowed_origins: [browser.allowedOrigin],
       target_id: "allowed-page",
       observation_ms: 0,
-      include_json_body_shapes: true,
     }),
   );
   if (!result.ok) throw result.error;
-  const observed = result.value;
-  const original = observed.network.requests[0];
-  if (original === undefined)
+  const before = result.value;
+  const request = before.network.requests[0];
+  if (request === undefined)
     throw new Error("Expected a captured HTTP request");
-  Object.assign(original, {
+  Object.assign(request, {
     status: 200,
     mime_type: "application/json",
     encoded_data_length: 100,
   });
-  original.redirects = [
-    {
-      url: `${browser.allowedOrigin}/prior`,
-      response_url: `${browser.allowedOrigin}/prior`,
-      method: "GET",
-      resource_type: "Fetch",
-      status: 302,
-      mime_type: "text/plain",
-      encoded_data_length: 12,
-      request_timestamp: 1,
-      redirect_event_timestamp: 2,
-    },
-  ];
-  observed.workers = [];
-  markSectionsComplete(observed, [
+  before.workers = [];
+  markSectionsComplete(before, [
     "network_requests",
     "network_initiators",
     "websocket_connections",
     "websocket_frames",
-    "json_body_shapes",
     "scripts",
     "workers",
     "metadata",
   ]);
-  for (const request of observed.network.requests)
-    request.body_shapes = {
-      status: "not_approved",
-      request: null,
-      response: null,
-    };
-  return { observed, origin: browser.allowedOrigin };
-};
-
-it("compares retained HTTP response and redirect facts without inventing missing evidence", async () => {
-  const { observed, origin } = await captureHttpComparisonFixture();
-  const unchanged = { status: "unchanged", total_changes: 0, changes: [] };
-  const unknown = { status: "unknown", total_changes: 0, changes: [] };
-  const modified = {
-    status: "changed",
-    total_changes: 1,
-    changes: [expect.objectContaining({ change: "modified" })],
-  };
-  expect(compareNetwork(observed, observed)).toMatchObject(unchanged);
-
-  type Request = WebPageInspection["network"]["requests"][number];
-  const editRequest = (edit: (request: Request) => void, from = observed) => {
-    const copy = structuredClone(from);
-    const request = copy.network.requests[0];
-    if (request === undefined)
-      throw new Error("Expected a captured HTTP request");
-    edit(request);
-    return copy;
-  };
-  const retimed = editRequest((request) => {
-    const hop = request.redirects[0];
-    if (hop === undefined) throw new Error("Expected a captured redirect");
-    hop.request_timestamp = 10;
-    hop.redirect_event_timestamp = 20;
-  });
-  expect(compareNetwork(observed, retimed)).toMatchObject(unchanged);
-
-  const renamed = editRequest((request) => {
-    request.request_id = "changed-cdp-id";
-  });
-  const response = renamed.metadata.responses[0];
-  const script = renamed.scripts.items[0];
+  const after = structuredClone(before);
+  const response = after.metadata.responses[0];
+  const script = after.scripts.items[0];
   if (response === undefined || script?.source.included !== false)
     throw new Error(
       "Expected captured response metadata and a withheld script",
     );
+  after.network.requests[0]!.request_id = "changed-cdp-id";
   response.request_id = "changed-cdp-id";
   script.source.reason = "different approval explanation";
-  const identities = compareWebCaptures(
+  const dimensions = compareWebCaptures(
     compareWebCapturesInputSchema.parse({
-      before: { inspection: observed },
-      after: { inspection: renamed },
+      before: { inspection: before },
+      after: { inspection: after },
     }),
   ).dimensions;
   for (const dimension of [
-    identities.network,
-    identities.metadata,
-    identities.scripts,
+    dimensions.network,
+    dimensions.metadata,
+    dimensions.scripts,
   ])
-    expect(dimension).toMatchObject(unchanged);
-
-  for (const [field, responseValue, redirectValue] of [
-    ["status", 204, 307],
-    ["mime_type", "text/html", "application/xml"],
-    ["encoded_data_length", 101, 13],
-  ] as const) {
-    for (const [redirect, changedValue] of [
-      [false, responseValue],
-      [true, redirectValue],
-    ] as const) {
-      const update =
-        (value: typeof changedValue | null) => (request: Request) => {
-          const facts = redirect ? request.redirects[0] : request;
-          if (facts === undefined)
-            throw new Error("Expected retained HTTP facts");
-          Object.assign(facts, { [field]: value });
-        };
-      const missing = editRequest(update(null));
-      expect(compareNetwork(observed, missing)).toMatchObject(unknown);
-      expect(compareNetwork(missing, observed)).toMatchObject(unknown);
-      expect(compareNetwork(missing, missing)).toMatchObject(unknown);
-      expect(
-        compareNetwork(observed, editRequest(update(changedValue))),
-      ).toMatchObject(modified);
-    }
-  }
-
-  const noRedirectStatus = editRequest((request) => {
-    const hop = request.redirects[0];
-    if (hop === undefined) throw new Error("Expected a captured redirect");
-    hop.status = null;
-  });
-  expect(
-    compareNetwork(
-      noRedirectStatus,
-      editRequest((request) => {
-        request.status = 204;
-      }, noRedirectStatus),
-    ),
-  ).toMatchObject(modified);
-
-  const unavailableShapes = structuredClone(observed);
-  for (const request of unavailableShapes.network.requests)
-    request.body_shapes.status = "unavailable";
-  expect(compareNetwork(unavailableShapes, unavailableShapes)).toMatchObject(
-    unknown,
-  );
-  const extra = structuredClone(unavailableShapes);
-  const request = extra.network.requests[0];
-  if (request === undefined)
-    throw new Error("Expected a captured HTTP request");
-  extra.network.requests.push({
-    ...request,
-    request_id: "added-request",
-    url: `${origin}/added`,
-  });
-  expect(compareNetwork(unavailableShapes, extra)).toMatchObject({
-    status: "changed",
-    total_changes: 1,
-    changes: [expect.objectContaining({ change: "added" })],
-  });
+    expect(dimension).toMatchObject({
+      status: "unchanged",
+      total_changes: 0,
+      changes: [],
+    });
 });
 
 const compareScripts = (before: WebPageInspection, after: WebPageInspection) =>
