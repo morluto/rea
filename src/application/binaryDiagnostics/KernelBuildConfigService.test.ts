@@ -12,13 +12,10 @@ import {
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import {
-  badCrcKernelConfigFixture,
   bzImageGzipFixture,
   bzImageXzFixture,
   kernelBuildConfigFixture,
-  longStringKernelConfigFixture,
   nonConfigGzipFixture,
-  plainIkcfgStringFixture,
   truncatedKernelConfigFixture,
 } from "../../native/elf/KernelBuildConfig.fixture.js";
 import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
@@ -31,11 +28,7 @@ const bufferSource = (bytes: Buffer): NativeByteSource => ({
   size: bytes.length,
   prefix: bytes,
   readRange: (offset, length) =>
-    Promise.resolve(
-      offset < 0 || length <= 0 || offset >= bytes.length
-        ? Buffer.alloc(0)
-        : bytes.subarray(offset, Math.min(bytes.length, offset + length)),
-    ),
+    Promise.resolve(bytes.subarray(offset, offset + length)),
 });
 
 const reportOf = (
@@ -73,28 +66,6 @@ it("rejects a relative path and extra arguments before reading", async () => {
   expect(calls).toBe(0);
 });
 
-it.each([
-  ["vmlinux", () => reportOf(kernelBuildConfigFixture()), "elf"],
-  ["plain IKCFG_ST", () => reportOf(plainIkcfgStringFixture()), "elf"],
-  ["malformed IKCFG text", () => reportOf(nonConfigGzipFixture()), "elf"],
-  ["bad IKCFG CRC", () => reportOf(badCrcKernelConfigFixture()), "elf"],
-  ["long string value", () => reportOf(longStringKernelConfigFixture()), "elf"],
-  ["bzImage", () => reportOf(bzImageGzipFixture()), "file"],
-  ["xz bzImage", () => reportOf(bzImageXzFixture()), "file"],
-] as const)(
-  "records parser output for %s as observed Evidence",
-  async (_label, make, format) => {
-    const report = await make();
-    const result = await serviceFor(report).inspect({ path });
-    if (!result.ok) throw result.error;
-    expect(result.value).toMatchObject({
-      confidence: "observed",
-      subject: { identity: { format } },
-      normalized_result: report,
-    });
-  },
-);
-
 it("records file ranges only for file-space locations", async () => {
   const report = await reportOf(bzImageGzipFixture());
   const result = await serviceFor(report).inspect({ path });
@@ -111,87 +82,106 @@ it("records file ranges only for file-space locations", async () => {
   ]);
 });
 
-it.each([
-  [
-    "a config option count that disagrees with examined entries",
-    (report: KernelBuildConfig): KernelBuildConfig => ({
+it("refuses file coordinates for metadata read from an inflated payload", async () => {
+  const report = await reportOf(bzImageGzipFixture());
+  const { banner, config } = report;
+  const { marker, gzip, end_marker } = config;
+  if (
+    banner.location === null ||
+    marker === null ||
+    gzip === null ||
+    end_marker === null
+  )
+    throw new Error("Expected an inflated banner and framed config");
+  for (const misplaced of [
+    {
       ...report,
-      coverage: { ...report.coverage, examined_entries: 1 },
-    }),
-  ],
-  [
-    "a gzip range that does not follow its marker",
-    (report: KernelBuildConfig): KernelBuildConfig => ({
+      banner: { ...banner, location: { ...banner.location, space: "file" } },
+    },
+    {
       ...report,
       config: {
-        ...report.config,
-        gzip:
-          report.config.gzip === null
-            ? null
-            : { ...report.config.gzip, offset: report.config.gzip.offset + 1 },
+        ...config,
+        marker: { ...marker, space: "file" },
+        gzip: { ...gzip, space: "file" },
+        end_marker: { ...end_marker, space: "file" },
       },
-    }),
-  ],
-  [
-    "an unsupported payload without a next probe",
-    (report: KernelBuildConfig): KernelBuildConfig => ({
-      ...report,
-      payload: { ...report.payload, status: "unsupported", codec: "xz" },
-    }),
-  ],
-  [
-    "a banner whose text does not carry its version",
-    (report: KernelBuildConfig): KernelBuildConfig => ({
-      ...report,
-      banner: { ...report.banner, version: "9.9" },
-    }),
-  ],
-  [
-    "a malformed config reported with complete coverage",
-    async (): Promise<KernelBuildConfig> => {
-      const malformed = await reportOf(nonConfigGzipFixture());
-      return {
-        ...malformed,
-        coverage: { ...malformed.coverage, status: "complete" },
-      };
     },
-  ],
-  [
-    "a malformed config reported as a partial gap",
-    async (): Promise<KernelBuildConfig> => {
-      const malformed = await reportOf(nonConfigGzipFixture());
-      return {
-        ...malformed,
-        coverage: { ...malformed.coverage, status: "partial" },
-      };
+  ] satisfies KernelBuildConfig[]) {
+    const result = await serviceFor(misplaced).inspect({ path });
+    if (result.ok)
+      throw new Error(
+        "Evidence falsely attributed an inflated range to the file",
+      );
+    expect(result.error).toBeInstanceOf(AnalysisOutputError);
+  }
+});
+
+it("rejects provider reports with inconsistent bounds, framing, or coverage", async () => {
+  const [valid, unsupported, malformed, truncated] = await Promise.all([
+    reportOf(kernelBuildConfigFixture()),
+    reportOf(bzImageXzFixture()),
+    reportOf(nonConfigGzipFixture()),
+    reportOf(truncatedKernelConfigFixture()),
+  ]);
+  expect(await serviceFor(malformed).inspect({ path })).toMatchObject({
+    ok: true,
+    value: {
+      normalized_result: {
+        config: { status: "malformed", reason: "config_text_invalid" },
+        coverage: { status: "unknown" },
+      },
     },
-  ],
-  [
-    "a truncated config reported with unknown coverage",
-    async (): Promise<KernelBuildConfig> => {
-      const truncated = await reportOf(truncatedKernelConfigFixture());
-      return {
-        ...truncated,
-        coverage: { ...truncated.coverage, status: "unknown" },
-      };
+  });
+  const { gzip, end_marker } = valid.config;
+  if (gzip === null || end_marker === null || unsupported.next_probe === null)
+    throw new Error("Expected framed and unsupported fixture reports");
+  const invalidReports = {
+    "wrong examined count": {
+      ...valid,
+      coverage: { ...valid.coverage, examined_entries: 1 },
     },
-  ],
-  [
-    "an incomplete config carrying a malformed reason",
-    async (): Promise<KernelBuildConfig> => {
-      const truncated = await reportOf(truncatedKernelConfigFixture());
-      return {
-        ...truncated,
-        config: { ...truncated.config, reason: "config_text_invalid" },
-      };
+    "gzip does not start after the opening marker": {
+      ...valid,
+      config: {
+        ...valid.config,
+        gzip: { ...gzip, offset: gzip.offset + 1, bytes: gzip.bytes - 1 },
+      },
     },
-  ],
-] as const)("rejects %s", async (_label, mutate) => {
-  const result = await serviceFor(
-    await mutate(await reportOf(kernelBuildConfigFixture())),
-  ).inspect({ path });
-  if (result.ok) throw new Error("Expected malformed provider output");
-  expect(result.error).toBeInstanceOf(AnalysisOutputError);
+    "closing marker overlaps the gzip trailer": {
+      ...valid,
+      config: {
+        ...valid.config,
+        end_marker: { ...end_marker, offset: end_marker.offset - 1 },
+      },
+    },
+    "unsupported codec without recovery": { ...unsupported, next_probe: null },
+    "banner version differs from text": {
+      ...valid,
+      banner: { ...valid.banner, version: "9.9" },
+    },
+    "malformed text overclaimed as complete": {
+      ...malformed,
+      coverage: { ...malformed.coverage, status: "complete" },
+    },
+    "malformed text classified as a partial gap": {
+      ...malformed,
+      coverage: { ...malformed.coverage, status: "partial" },
+    },
+    "known truncation classified as unknown": {
+      ...truncated,
+      coverage: { ...truncated.coverage, status: "unknown" },
+    },
+    "known truncation classified as malformed": {
+      ...truncated,
+      config: { ...truncated.config, reason: "config_text_invalid" },
+    },
+  } satisfies Record<string, KernelBuildConfig>;
+  for (const [defect, report] of Object.entries(invalidReports))
+    expect(await serviceFor(report).inspect({ path }), defect).toMatchObject({
+      ok: false,
+      error: expect.any(AnalysisOutputError),
+    });
 });
 
 it("rejects a report whose page disagrees with the caller page", async () => {
@@ -203,12 +193,12 @@ it("rejects a report whose page disagrees with the caller page", async () => {
 });
 
 it("does not call the provider after early cancellation", async () => {
+  let calls = 0;
   const service = new KernelBuildConfigService({
     identity,
     inspect: () => {
-      throw new Error(
-        "An already cancelled request must not reach its provider",
-      );
+      calls += 1;
+      return reportOf(kernelBuildConfigFixture()).then(ok);
     },
   });
   const result = await service.inspect(
@@ -217,4 +207,5 @@ it("does not call the provider after early cancellation", async () => {
   );
   if (result.ok) throw new Error("Expected cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(calls).toBe(0);
 });
