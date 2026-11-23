@@ -5,7 +5,6 @@ import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectDevicetreeInputSchema,
   devicetreeSchema,
-  type Devicetree,
 } from "../../domain/firmware/devicetree.js";
 import type { Result } from "../../domain/result.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
@@ -37,8 +36,7 @@ export class DevicetreeService {
           report.artifact.path === input.path &&
           report.artifact.bytes <= input.max_file_bytes &&
           report.nodes.length <= input.max_nodes &&
-          report.coverage.examined_properties <= input.max_properties &&
-          validReport(report),
+          report.coverage.examined_properties <= input.max_properties,
         buildEvidence: (value, identity, parameters) =>
           createEvidence(
             {
@@ -64,36 +62,3 @@ export class DevicetreeService {
     );
   }
 }
-
-/** Validate coverage and byte provenance at the provider boundary. */
-const validReport = (report: Devicetree): boolean => {
-  if (
-    report.header.totalsize > report.artifact.bytes ||
-    report.coverage.examined_nodes !== report.nodes.length
-  )
-    return false;
-  let properties = 0;
-  const paths = new Set<string>();
-  for (const node of report.nodes) {
-    if (
-      paths.has(node.path) ||
-      (node.parent !== null && !paths.has(node.parent)) ||
-      node.offset >= report.header.totalsize
-    )
-      return false;
-    paths.add(node.path);
-    properties += node.properties.length;
-    for (const property of node.properties) {
-      if (
-        property.offset > report.header.totalsize - property.bytes ||
-        property.hex.length !== Math.min(property.bytes, 256) * 2 ||
-        property.truncated !== property.bytes > 256
-      )
-        return false;
-    }
-  }
-  return (
-    properties === report.coverage.examined_properties &&
-    report.reservations.every((r) => r.offset <= report.header.totalsize - 16)
-  );
-};
