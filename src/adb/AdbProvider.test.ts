@@ -1941,7 +1941,9 @@ it("lists processes, features, and services through fixed commands", async () =>
         "Found 2 services:\n  1 package: [android.content.pm.IPackageManager]\n  2 activity: [android.app.IActivityManager]\n",
     }),
   );
-  const processes = await evidenceResult(providerOver(binary), {
+  const provider = providerOver(binary);
+  onTestFinished(() => provider.close());
+  const processes = await evidenceResult(provider, {
     operation: "list_adb_processes",
     input: { serial: "emulator-5554" },
   });
@@ -1955,7 +1957,7 @@ it("lists processes, features, and services through fixed commands", async () =>
       name: "com.example.app",
     },
   ]);
-  const features = await evidenceResult(providerOver(binary), {
+  const features = await evidenceResult(provider, {
     operation: "list_adb_features",
     input: { serial: "emulator-5554" },
   });
@@ -1963,15 +1965,19 @@ it("lists processes, features, and services through fixed commands", async () =>
     { name: "android.hardware.camera", version: null },
     { name: "android.hardware.nfc", version: 1 },
   ]);
-  const pagedFeatures = await evidenceResult(providerOver(binary), {
+  const pagedFeatures = await provider.execute({
     operation: "list_adb_features",
     input: { serial: "emulator-5554", limit: 1, offset: 1 },
   });
-  expect(pagedFeatures.features).toEqual([
-    { name: "android.hardware.nfc", version: 1 },
+  if (!pagedFeatures.ok) throw pagedFeatures.error;
+  expect(pagedFeatures.value.result).toMatchObject({
+    features: [{ name: "android.hardware.nfc", version: 1 }],
+    coverage: "partial",
+  });
+  expect(pagedFeatures.value.limitations).toEqual([
+    expect.stringMatching(/1 of 2 features.*offset 1, limit 1/u),
   ]);
-  expect(pagedFeatures.coverage).toBe("partial");
-  const services = await evidenceResult(providerOver(binary), {
+  const services = await evidenceResult(provider, {
     operation: "list_adb_services",
     input: { serial: "emulator-5554" },
   });
@@ -1979,14 +1985,20 @@ it("lists processes, features, and services through fixed commands", async () =>
     { name: "package", interface: "android.content.pm.IPackageManager" },
     { name: "activity", interface: "android.app.IActivityManager" },
   ]);
-  const pagedServices = await evidenceResult(providerOver(binary), {
+  const pagedServices = await provider.execute({
     operation: "list_adb_services",
     input: { serial: "emulator-5554", limit: 1, offset: 0 },
   });
-  expect(pagedServices.services).toEqual([
-    { name: "package", interface: "android.content.pm.IPackageManager" },
+  if (!pagedServices.ok) throw pagedServices.error;
+  expect(pagedServices.value.result).toMatchObject({
+    services: [
+      { name: "package", interface: "android.content.pm.IPackageManager" },
+    ],
+    coverage: "partial",
+  });
+  expect(pagedServices.value.limitations).toEqual([
+    expect.stringMatching(/1 of 2 services.*offset 0, limit 1/u),
   ]);
-  expect(pagedServices.coverage).toBe("partial");
 });
 
 it.each(["complete", "truncated"] as const)(

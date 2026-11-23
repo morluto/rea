@@ -82,15 +82,12 @@ report the resolved policy separately where needed. See the owning guides for
 [Android class search](../guides/android/android-analysis.md), and
 [Frida capture](../guides/runtime/frida-instrumentation.md).
 
-High-cardinality discovery and graph tools also accept optional per-call
-pagination (`limit` and `offset` on `list_adb_packages`, `list_adb_processes`,
-`list_adb_directory`, `list_adb_features`, `list_adb_services`, and
-`search_android_classes`) or traversal bounds
-(`max_depth` and `max_nodes` on `get_call_graph` and `trace_call_path`).
-Omitting these controls preserves the complete query; supplying them bounds
-work and reply size, sets coverage/discovery to `partial` when entries or
-nodes are omitted, and records an explicit limitation or residual unknown so
-the caller can widen the bound or advance `offset` on the next call.
+ADB package, process, directory, feature, and service listings apply `limit`
+and `offset` after capturing the listing. The [ADB guide](../guides/android/adb-device-analysis.md#interpret-the-result)
+describes coverage and how to continue.
+
+Graph tools accept per-call traversal bounds (`max_depth` and `max_nodes` on
+`get_call_graph` and `trace_call_path`).
 
 The same accepted policy must reach acquisition, parsing, worker requests,
 serialization, cached-result admission and generated consumers where those
