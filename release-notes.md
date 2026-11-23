@@ -249,6 +249,7 @@
 * **pwntools:** release each PLT emulator so CET binaries keep their PLT map ([#13213](https://github.com/morluto/rea/issues/13213)) ([6357f77](https://github.com/morluto/rea/commit/6357f775a01f623b96603cf6237951a5c57a0a93))
 * **pyinstaller:** distinguish declared-size overruns from limits ([#13648](https://github.com/morluto/rea/issues/13648)) ([ae3a225](https://github.com/morluto/rea/commit/ae3a225f79c1dfd672ef728c104d2d26cd7cbddc))
 * **python:** validate marshal coverage and consolidate pyc tests ([#14036](https://github.com/morluto/rea/issues/14036)) ([4ff98b8](https://github.com/morluto/rea/commit/4ff98b84fb5a3b231910ac816575bcf798017126))
+* **reference:** preserve file cleanup when directory enumeration fails ([#14081](https://github.com/morluto/rea/issues/14081)) ([26ce3d1](https://github.com/morluto/rea/commit/26ce3d1325e8905be5754fd3c6a65685ce118186))
 * **reference:** preserve host spelling for Git metadata paths ([ae8cd50](https://github.com/morluto/rea/commit/ae8cd50ff755e810643ee7f6918121796becbc31))
 * **reference:** render invalid Git config path with native separators ([0d71123](https://github.com/morluto/rea/commit/0d7112321d52013fb2be5a593b5bfbe7006a8888))
 * **reference:** retain physical Git read failure after cleanup refusal ([#12848](https://github.com/morluto/rea/issues/12848)) ([f4937a0](https://github.com/morluto/rea/commit/f4937a04be3148a7f9a191f1114a8210b7264108))
