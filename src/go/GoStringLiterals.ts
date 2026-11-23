@@ -43,6 +43,12 @@ interface HeaderScanSpan {
   readonly endOffset: number;
 }
 
+type StringScanRead = {
+  readonly offset: number;
+  readonly length: number;
+  readonly label: string;
+};
+
 /**
  * Recover bounded printable UTF-8 Go string literals referenced by word-aligned
  * static `(ptr, len)` pairs in non-executable mapped data.
@@ -53,199 +59,57 @@ export const recoverGoStringLiterals = (
   budgets: GoAnalysisBudgets = GO_ANALYSIS_BUDGET_DEFAULTS,
   checkActive?: () => void,
 ): GoStringLiterals => {
-  const limitsReached = new Set<GoStringBudgetKey>();
-  const maxItems = budgets.max_string_literals;
-  checkActive?.();
-  const index = createFileMappingIndex(
-    imageFileMappings(container),
-    container.zero_fills,
-  );
-  checkActive?.();
-  const readableRegions = createReadableLoadRegionIndex(
-    container.load_regions,
-    checkActive,
-  );
-  const targets = selectTargetSpans(
+  const steps = recoverGoStringLiteralSteps(
     bytes.length,
     container,
-    index,
-    readableRegions,
+    budgets,
     checkActive,
   );
-  const headerSpans = selectHeaderScanSpans(
-    bytes.length,
-    container,
-    index,
-    readableRegions,
-    checkActive,
-  );
-  if (targets.length === 0 || headerSpans.length === 0)
-    return {
-      evidence_kind: "inferred",
-      items: [],
-      discovered_count: 0,
-      aggregate_bytes: 0,
-      max_items: maxItems,
-      truncated: false,
-    };
-
-  const { bits } = container;
-  const reader = new BinaryReader(
-    bytes,
-    container.byte_order === "little",
-    container.format,
-  );
-  const wordBytes = bits === 64 ? 8 : 4;
-  const firstTarget = targets[0] as FileMapping;
-  const lastTarget = targets[targets.length - 1] as FileMapping;
-  const minTargetAddr = firstTarget.address;
-  const maxTargetEnd = lastTarget.address + BigInt(lastTarget.size);
-  const targetEnds = targets.map((t) => t.address + BigInt(t.size));
-
-  const accepted = new Map<string, CandidateLiteral>();
-  const rejected = new Set<string>();
-  const candidates: CandidateLiteral[] = [];
-  let remainingBudget = budgets.max_string_header_scan_bytes;
-  let budgetTruncated = false;
-  let steps = 0;
-
-  outer: for (const { startOffset, endOffset } of headerSpans) {
-    if (remainingBudget < wordBytes * 2) {
-      budgetTruncated = true;
-      limitsReached.add("max_string_header_scan_bytes");
-      break;
-    }
-    remainingBudget -= wordBytes;
-    let word0 = reader.word(startOffset, bits);
-
-    for (
-      let headerOffset = startOffset;
-      headerOffset + wordBytes * 2 <= endOffset;
-      headerOffset += wordBytes
-    ) {
-      if ((++steps & 0xffff) === 0) checkActive?.();
-      if (remainingBudget < wordBytes) {
-        budgetTruncated = true;
-        limitsReached.add("max_string_header_scan_bytes");
-        break outer;
-      }
-      remainingBudget -= wordBytes;
-      const word1 = reader.word(headerOffset + wordBytes, bits);
-      const ptr = word0;
-      const rawLen = word1;
-      word0 = word1;
-
-      if (rawLen < 1n) continue;
-      if (ptr < minTargetAddr || ptr >= maxTargetEnd) continue;
-      const targetIndex = lastSpanAtOrBelow(targets, ptr);
-      if (targetIndex < 0) continue;
-      const target = targets[targetIndex] as FileMapping;
-      if (ptr + rawLen > targetEnds[targetIndex]!) continue;
-
-      const byteLen = Number(rawLen);
-      const sliceOffset = target.offset + Number(ptr - target.address);
-      if (
-        headerOffset < sliceOffset + byteLen &&
-        sliceOffset < headerOffset + wordBytes * 2
-      )
-        continue;
-
-      if (byteLen > budgets.max_string_literal_bytes) {
-        limitsReached.add("max_string_literal_bytes");
-        budgetTruncated = true;
-        continue;
-      }
-
-      const key = `${String(sliceOffset)}:${String(byteLen)}`;
-      const existing = accepted.get(key);
-      if (existing !== undefined) {
-        existing.referenceCount += 1;
-        if (headerOffset < existing.firstHeaderOffset)
-          existing.firstHeaderOffset = headerOffset;
-        continue;
-      }
-      if (rejected.has(key)) continue;
-
-      if (remainingBudget < byteLen) {
-        limitsReached.add("max_string_header_scan_bytes");
-        budgetTruncated = true;
-        break outer;
-      }
-      remainingBudget -= byteLen;
-
-      const slice = bytes.subarray(sliceOffset, sliceOffset + byteLen);
-      if (!isPrintableGoUtf8(slice)) {
-        if (rejected.size >= MAX_REJECTED_SLICE_CACHE) rejected.clear();
-        rejected.add(key);
-        continue;
-      }
-      if (candidates.length >= budgets.max_string_candidates) {
-        limitsReached.add("max_string_candidates");
-        budgetTruncated = true;
-        break outer;
-      }
-      const entry: CandidateLiteral = {
-        offset: sliceOffset,
-        bytes: byteLen,
-        firstHeaderOffset: headerOffset,
-        referenceCount: 1,
-      };
-      accepted.set(key, entry);
-      candidates.push(entry);
-    }
+  let step = steps.next();
+  while (!step.done) {
+    const { offset, length } = step.value;
+    step = steps.next(bytes.subarray(offset, offset + length));
   }
-
-  checkActive?.();
-  candidates.sort(
-    (left, right) => left.offset - right.offset || left.bytes - right.bytes,
-  );
-
-  const items: GoStringLiteral[] = [];
-  let aggregateBytes = 0;
-  let outputTruncated = false;
-  for (const candidate of candidates) {
-    if (
-      items.length >= maxItems ||
-      aggregateBytes + candidate.bytes > budgets.max_string_bytes
-    ) {
-      limitsReached.add(
-        items.length >= maxItems ? "max_string_literals" : "max_string_bytes",
-      );
-      outputTruncated = true;
-      break;
-    }
-    items.push({
-      value: bytes
-        .subarray(candidate.offset, candidate.offset + candidate.bytes)
-        .toString("utf8"),
-      location: { offset: candidate.offset, bytes: candidate.bytes },
-      first_header_offset: candidate.firstHeaderOffset,
-      reference_count: candidate.referenceCount,
-    });
-    aggregateBytes += candidate.bytes;
-  }
-
-  return {
-    evidence_kind: "inferred",
-    items,
-    discovered_count: candidates.length,
-    aggregate_bytes: aggregateBytes,
-    max_items: maxItems,
-    truncated: budgetTruncated || outputTruncated,
-    ...(limitsReached.size === 0 ? {} : { limits_reached: [...limitsReached] }),
-  };
+  return step.value;
 };
 
-/**
- * Stream the same Go string-literal recovery over a bounded FileHandle using
- * chunked header scans and a bounded read-ahead window for target slices.
- */
+/** Read exactly the admitted header and candidate ranges from the file. */
 export const recoverGoStringLiteralsFromReader = async (
   source: NativeByteSource,
   container: BinaryContainer,
   budgets: GoAnalysisBudgets = GO_ANALYSIS_BUDGET_DEFAULTS,
   checkActive?: () => void,
 ): Promise<GoStringLiterals> => {
+  const steps = recoverGoStringLiteralSteps(
+    source.size,
+    container,
+    budgets,
+    checkActive,
+  );
+  let step = steps.next();
+  while (!step.done) {
+    const { offset, length, label } = step.value;
+    const bytes =
+      source.prefix !== undefined && offset + length <= source.prefix.length
+        ? source.prefix.subarray(offset, offset + length)
+        : await source.readRange(offset, length);
+    if (bytes.length !== length)
+      throw new BinaryFormatFailure(
+        "truncated",
+        `${label} range is outside the file`,
+        { format: container.format, offset },
+      );
+    step = steps.next(bytes);
+  }
+  return step.value;
+};
+
+function* recoverGoStringLiteralSteps(
+  fileSize: number,
+  container: BinaryContainer,
+  budgets: GoAnalysisBudgets,
+  checkActive: (() => void) | undefined,
+): Generator<StringScanRead, GoStringLiterals, Buffer> {
   const limitsReached = new Set<GoStringBudgetKey>();
   const maxItems = budgets.max_string_literals;
   checkActive?.();
@@ -259,14 +123,14 @@ export const recoverGoStringLiteralsFromReader = async (
     checkActive,
   );
   const targets = selectTargetSpans(
-    source.size,
+    fileSize,
     container,
     index,
     readableRegions,
     checkActive,
   );
   const headerSpans = selectHeaderScanSpans(
-    source.size,
+    fileSize,
     container,
     index,
     readableRegions,
@@ -291,41 +155,6 @@ export const recoverGoStringLiteralsFromReader = async (
   const maxTargetEnd = lastTarget.address + BigInt(lastTarget.size);
   const targetEnds = targets.map((t) => t.address + BigInt(t.size));
 
-  let targetCacheOffset = 0;
-  let targetCacheBytes: Buffer = Buffer.alloc(0);
-  const readTargetSlice = async (
-    offset: number,
-    length: number,
-  ): Promise<Buffer> => {
-    if (length === 0) return Buffer.alloc(0);
-    if (source.prefix !== undefined && offset + length <= source.prefix.length)
-      return source.prefix.subarray(offset, offset + length);
-    if (
-      offset >= targetCacheOffset &&
-      offset + length <= targetCacheOffset + targetCacheBytes.length
-    )
-      return targetCacheBytes.subarray(
-        offset - targetCacheOffset,
-        offset - targetCacheOffset + length,
-      );
-    const readLen =
-      length <= STREAM_CHUNK_BYTES
-        ? Math.min(STREAM_CHUNK_BYTES, source.size - offset)
-        : length;
-    const loaded = await source.readRange(offset, readLen);
-    if (loaded.length < length)
-      throw new BinaryFormatFailure(
-        "truncated",
-        "Go string literal range is outside the file",
-        { format: container.format, offset },
-      );
-    if (length <= STREAM_CHUNK_BYTES) {
-      targetCacheOffset = offset;
-      targetCacheBytes = loaded;
-    }
-    return loaded.subarray(0, length);
-  };
-
   const accepted = new Map<string, CandidateLiteral>();
   const rejected = new Set<string>();
   const candidates: CandidateLiteral[] = [];
@@ -339,30 +168,29 @@ export const recoverGoStringLiteralsFromReader = async (
       limitsReached.add("max_string_header_scan_bytes");
       break;
     }
-    remainingBudget -= wordBytes;
-    const chunkLimit = Math.floor(STREAM_CHUNK_BYTES / wordBytes) * wordBytes;
+    const chunkLimit = STREAM_CHUNK_BYTES;
     let cursor = startOffset;
-    let word0 = 0n;
-    let initialized = false;
+    let word0: bigint | undefined;
 
     while (cursor < endOffset) {
       checkActive?.();
-      const chunkLen = Math.min(chunkLimit, endOffset - cursor);
-      const chunk =
-        source.prefix !== undefined && cursor + chunkLen <= source.prefix.length
-          ? source.prefix.subarray(cursor, cursor + chunkLen)
-          : await source.readRange(cursor, chunkLen);
-      if (chunk.length < chunkLen)
-        throw new BinaryFormatFailure(
-          "truncated",
-          "Go string header span is outside the file",
-          { format: container.format, offset: cursor },
-        );
+      const admittedBytes = remainingBudget - (remainingBudget % wordBytes);
+      if (admittedBytes < wordBytes) {
+        budgetTruncated = true;
+        limitsReached.add("max_string_header_scan_bytes");
+        break outer;
+      }
+      const chunkLen = Math.min(chunkLimit, endOffset - cursor, admittedBytes);
+      const chunk = yield {
+        offset: cursor,
+        length: chunkLen,
+        label: "Go string header span",
+      };
       const chunkReader = new BinaryReader(chunk, little, container.format);
       let rel = 0;
-      if (!initialized) {
+      if (word0 === undefined) {
         word0 = chunkReader.word(0, bits);
-        initialized = true;
+        remainingBudget -= wordBytes;
         rel = wordBytes;
       }
       for (; rel + wordBytes <= chunkLen; rel += wordBytes) {
@@ -417,7 +245,11 @@ export const recoverGoStringLiteralsFromReader = async (
         }
         remainingBudget -= byteLen;
 
-        const slice = await readTargetSlice(sliceOffset, byteLen);
+        const slice = yield {
+          offset: sliceOffset,
+          length: byteLen,
+          label: "Go string literal",
+        };
         if (!isPrintableGoUtf8(slice)) {
           if (rejected.size >= MAX_REJECTED_SLICE_CACHE) rejected.clear();
           rejected.add(key);
@@ -460,7 +292,11 @@ export const recoverGoStringLiteralsFromReader = async (
       outputTruncated = true;
       break;
     }
-    const slice = await readTargetSlice(candidate.offset, candidate.bytes);
+    const slice = yield {
+      offset: candidate.offset,
+      length: candidate.bytes,
+      label: "Go string literal",
+    };
     items.push({
       value: slice.toString("utf8"),
       location: { offset: candidate.offset, bytes: candidate.bytes },
@@ -479,7 +315,7 @@ export const recoverGoStringLiteralsFromReader = async (
     truncated: budgetTruncated || outputTruncated,
     ...(limitsReached.size === 0 ? {} : { limits_reached: [...limitsReached] }),
   };
-};
+}
 
 const isPrintableGoUtf8 = (slice: Buffer): boolean => {
   let hasNonAscii = false;

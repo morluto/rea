@@ -90,13 +90,6 @@ const fallbackSearchRanges = (
 
 /** Go owns build-info section selection and validity; native readers only own container facts. */
 export const goBuildInfoSearch = (
-  bytes: Buffer,
-  container: BinaryContainer,
-): readonly GoBuildInfoSearchRange[] =>
-  goBuildInfoSearchFromSize(bytes.length, container);
-
-/** Same build-info section selection using only the admitted file size. */
-export const goBuildInfoSearchFromSize = (
   fileSize: number,
   container: BinaryContainer,
 ): readonly GoBuildInfoSearchRange[] => {
