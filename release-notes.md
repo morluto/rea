@@ -538,6 +538,7 @@
 * **sourcemaps/browser/uefi:** event-driven wait, pre-sorted redaction, O(1) queue ([#13707](https://github.com/morluto/rea/issues/13707)) ([c5efbff](https://github.com/morluto/rea/commit/c5efbffc95646b4f17802b0ebbbddc168e8cbb2d))
 * **sqlite:** reuse stateless TextDecoder codecs and skip redundant truncation scan on short pages ([#13274](https://github.com/morluto/rea/issues/13274)) ([264c398](https://github.com/morluto/rea/commit/264c398c0d3299bb4de5a58e23e7f92637a08cdf))
 * **swift:** streamline symbol inventory classification ([#13902](https://github.com/morluto/rea/issues/13902)) ([78756a5](https://github.com/morluto/rea/commit/78756a52b4949125fd181dc9e0d68e7550a0714b))
+* **tests:** supervise direct vitest scripts through run-exclusive on POSIX ([#14104](https://github.com/morluto/rea/issues/14104)) ([e60777b](https://github.com/morluto/rea/commit/e60777b76fba2a91b67e30e9a6175bd9e77d4ddf))
 * **uefi:** pool framed LZMA worker and fuse single-pass publication ([#13338](https://github.com/morluto/rea/issues/13338)) ([6a20a88](https://github.com/morluto/rea/commit/6a20a88e8149ffe2cd03cd5c1da195defbae652f))
 * **uefi:** skip verified erased padding in NVRAM scans ([#14069](https://github.com/morluto/rea/issues/14069)) ([07b6a3d](https://github.com/morluto/rea/commit/07b6a3dc5f496081c60f4d122d08bad292a21509))
 * **uefi:** summarize firmware extraction by default over MCP ([e617a55](https://github.com/morluto/rea/commit/e617a55385daf3dea0243e340a8bf3c33232b42a))
