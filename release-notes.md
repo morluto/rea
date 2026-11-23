@@ -574,6 +574,7 @@
 * **composition:** prune binaryDiagnostics re-export barrel and migrate callers ([#13839](https://github.com/morluto/rea/issues/13839)) ([3843fb2](https://github.com/morluto/rea/commit/3843fb2dd0377a200f984ce8ea444eb1fa69ec51)), closes [#13838](https://github.com/morluto/rea/issues/13838)
 * **config:** extract ClientConfigurationToml from ClientConfigurationDocument ([#13724](https://github.com/morluto/rea/issues/13724)) ([b42f7c2](https://github.com/morluto/rea/commit/b42f7c24afd5b19c19312c8e893ac3ef62f3cc93))
 * **config:** return Result for ConfigurationError in IdaConfiguration and KiloClientLocation ([#14053](https://github.com/morluto/rea/issues/14053)) ([15790f7](https://github.com/morluto/rea/commit/15790f786fe73d2e720c9fa9776af9cbf75a3d5e))
+* **config:** return Result from resolveKiloRegistrationWorktree ([#14055](https://github.com/morluto/rea/issues/14055)) ([b2ae356](https://github.com/morluto/rea/commit/b2ae356f646350d2a1e469a806d4ebffe7df160c))
 * **desktop:** read OpenPGP packet lengths through BinaryReader ([006581b](https://github.com/morluto/rea/commit/006581b838fe64cd2a1b5b22d508c525e92bdf2d)), closes [#11865](https://github.com/morluto/rea/issues/11865)
 * **desktop:** validate task pointer syntax at its shared owner ([7b856fa](https://github.com/morluto/rea/commit/7b856fa5a14d4a361d445c1efd4b1f9037994259))
 * **domain/pe:** unify Asn1BerFailure and PeBinaryFailure ([#13652](https://github.com/morluto/rea/issues/13652)) ([867dacc](https://github.com/morluto/rea/commit/867dacc94688e20a7ab9957c63cd529b5b9729d0))
