@@ -15,12 +15,13 @@ import {
   carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ownershipPreparationError } from "../providers/ownedProcessAvailability.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   InternalInvariantError,
   invariantViolation,
 } from "../domain/internalInvariant.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   prepareOwnedCommand,
@@ -227,22 +228,7 @@ export const inspectJadxJava = async (
           command?.reason !== "timeout" &&
           hostConstraint === undefined
         ) {
-          primary = new ProviderAdapterError("jadx", operation, {
-            cause,
-            ...(output === undefined ? {} : { capturedOutput: output }),
-            diagnostics: {
-              stage: "ownership_preparation",
-              ...(!(
-                preparation instanceof DarwinProcessOwnershipInspectionError
-              ) || preparation.compilerOutcome === undefined
-                ? {}
-                : {
-                    compiler_outcome: jsonValueSchema.parse(
-                      preparation.compilerOutcome,
-                    ),
-                  }),
-            },
-          });
+          primary = ownershipPreparationError("jadx", operation, cause, output);
         } else if (cause instanceof AnalysisError) {
           primary = cause;
         } else if (cause instanceof InternalInvariantError) {
