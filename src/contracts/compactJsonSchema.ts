@@ -398,6 +398,60 @@ class BudgetedSchemaSerializer {
   }
 }
 
+// Placeholder heads stay within three levels, so pruning at this depth keeps
+// the whole schema inside COMPACT_SCHEMA_MAX_DEPTH.
+const DEPTH_PRUNE_START = COMPACT_SCHEMA_MAX_DEPTH - 3;
+
+const depthPlaceholder = (
+  node: Record<string, unknown>,
+): Record<string, unknown> => {
+  const rawType = node.type;
+  const types = (
+    typeof rawType === "string"
+      ? [rawType]
+      : Array.isArray(rawType)
+        ? rawType.filter((type): type is string => typeof type === "string")
+        : []
+  ).filter((type) => jsonValueTypes.includes(type));
+  const arrayBranch = { type: "array", items: jsonValueSchema() };
+  if (types.length === 1)
+    return types[0] === "array" ? arrayBranch : { type: types[0] };
+  if (types.length > 1)
+    return {
+      anyOf: types.map((type) => (type === "array" ? arrayBranch : { type })),
+    };
+  if (isSchemaObject(node.properties)) return { type: "object" };
+  if (node.items !== undefined) return arrayBranch;
+  return {};
+};
+
+/**
+ * Replace only the sub-schemas that push past the advertised depth limit with
+ * type-preserving placeholders, instead of reducing the whole schema. Every
+ * replacement widens acceptance, so canonical validation is unaffected.
+ */
+export const pruneSchemaBeyondDepth = (
+  schema: Record<string, unknown>,
+): Record<string, unknown> => {
+  const prune = (node: unknown, depth: number): unknown => {
+    if (Array.isArray(node))
+      return node.map((child) => prune(child, depth + 1));
+    if (!isSchemaObject(node)) return node;
+    const hasSchemaChild = Object.values(node).some(
+      (child) => isSchemaObject(child) || Array.isArray(child),
+    );
+    if (depth >= DEPTH_PRUNE_START && hasSchemaChild)
+      return depthPlaceholder(node);
+    return Object.fromEntries(
+      Object.entries(node).map(([key, child]) => [
+        key,
+        prune(child, depth + 1),
+      ]),
+    );
+  };
+  return prune(schema, 0) as Record<string, unknown>;
+};
+
 /** Stop serialization at the budget before allocating an expanded schema. */
 export const inlineWithinBudget = (
   root: Record<string, unknown>,

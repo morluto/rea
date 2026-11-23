@@ -9,6 +9,7 @@ import {
 } from "./advertisedDialect.js";
 import { compactAdvertisedInputSchema } from "./compactInputSchema.js";
 import {
+  schemaDepth,
   inlineWithinBudget,
   jsonValueSchema,
   stripAnnotations,
@@ -175,7 +176,7 @@ describe("compact advertised input schema", () => {
       expect(compact(input)).toBe(canonical(input));
   });
 
-  it("does not reintroduce unsupported dialect keywords in reduced schemas", () => {
+  it("does not reintroduce unsupported dialect keywords in deep schemas", () => {
     let nested: Record<string, unknown> = { type: "string" };
     for (let level = 0; level < 12; level += 1)
       nested = { type: "object", properties: { child: nested } };
@@ -188,7 +189,10 @@ describe("compact advertised input schema", () => {
       },
       1_500,
     );
-    expect(presentation).toBe("reduced");
+    // Depth alone no longer forces a whole-schema reduction; only the
+    // branches past the limit are elided.
+    expect(presentation).toBe("inline");
+    expect(schemaDepth(schema)).toBeLessThanOrEqual(10);
     expect(schema).not.toHaveProperty("$schema");
     expect(schema).not.toHaveProperty("dependentRequired");
     expect(guidance).toContain("When detail is provided, also provide target.");
@@ -248,8 +252,8 @@ describe("compact advertised input schema", () => {
   });
 });
 
-it("keeps pattern-admitted property names open in reduced schemas", () => {
-  // Nesting past the dialect's depth limit forces the reduced form.
+it("keeps pattern-admitted property names open in deep schemas", () => {
+  // Nesting past the dialect's depth limit prunes only the deep branches.
   let deep: Record<string, unknown> = { type: "string" };
   for (let level = 0; level < 12; level++)
     deep = { type: "object", properties: { next: deep } };
@@ -263,7 +267,7 @@ it("keeps pattern-admitted property names open in reduced schemas", () => {
     canonical,
     10_000,
   );
-  expect(presentation).toBe("reduced");
+  expect(presentation).toBe("inline");
   const compact = new Ajv2020({ strict: false }).compile(schema);
   expect(new Ajv2020({ strict: false }).compile(canonical)({ b: "ok" })).toBe(
     true,
