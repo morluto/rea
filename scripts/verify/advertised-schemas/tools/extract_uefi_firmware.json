@@ -1,9 +1,12 @@
 {
   "schemas": {
-    "input compact": "ae72c77877e2eae1",
+    "input compact": "bd4ced5a290a86f6",
     "output compact": "4bda7c3651bfc579"
   },
   "patterns": {
-    "input": ["^[^\\x00]*$"]
+    "input": [
+      "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "^[^\\x00]*$"
+    ]
   }
 }

@@ -427,9 +427,13 @@ returns artifact identity, table coverage and row counts. Use its
 }
 ```
 
-Names match exactly and preserve every same-name version or alias. Optional
-`indices` selects original row positions, intersecting a name filter when both
-are supplied; empty filters select nothing. `source_index` always remains and,
+Names match exactly and preserve every same-name version or alias.
+`name_prefixes` selects names that start with any listed prefix, for example
+`["EVP_"]`; with `names`, both must match. Matching is case-sensitive and uses
+the same identities as exact names: an ELF name that is not valid UTF-8 never
+matches. `coverage.total` counts every matching row, so `limit: 1` returns a
+count. Optional `indices` selects original row positions, intersecting a name
+filter when both are supplied; empty filters select nothing. `source_index` always remains and,
 with the parent ID, identifies the original export or issue row. Fields default
 to the complete row; an empty field list returns only its identity. ELF `name`
 selection also returns raw-byte and encoding qualifications. Fields from the
@@ -450,9 +454,10 @@ rea inspect-native-exports ./libexample.so --detail summary --evidence_output ./
 
 - PE rows reproduce the export directory: each used export-address-table slot
   with its biased `ordinal` (`OrdinalBase` plus the slot index), one row per
-  name (aliases share an ordinal), `address`
-  as the preferred-base virtual address, or `forwarder` text when the slot
-  forwards to another DLL. Unused zero-address slots are omitted;
+  name (aliases share an ordinal), `rva` as the slot stores it, `address`
+  as the preferred-base virtual address (image base plus `rva`), or
+  `forwarder` text when the slot forwards to another DLL; a forwarder's `rva`
+  locates that text. Unused zero-address slots are omitted;
   ordinal-only exports have a null `name`. The name-ordinal table stores an
   unbiased 16-bit EAT index; reported biased ordinals may exceed 16 bits. The
   directory's DLL name, ordinal base and timestamp are reported, and an image

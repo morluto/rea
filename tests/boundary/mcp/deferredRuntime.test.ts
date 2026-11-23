@@ -24,7 +24,7 @@ import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
-import { SERVER_START_FAILED } from "../../../src/main/messages.js";
+import { SERVER_START_FAILED } from "../../../src/server/serverStartFailure.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import type { McpServerHandle, McpServe } from "../../../src/main/types.js";
 import { phaseGate, settledCause } from "../../support/lifecycleHarness.js";

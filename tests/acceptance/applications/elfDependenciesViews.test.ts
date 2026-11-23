@@ -147,6 +147,26 @@ cliTest(
         },
       ],
     });
+    const prefixed = await call("inspect_analysis_view", {
+      ...request,
+      view: {
+        ...request.view,
+        collection: "imports",
+        names: undefined,
+        name_prefixes: ["pri"],
+        fields: ["name"],
+        offset: 0,
+        limit: 1,
+      },
+    });
+    expect(prefixed.isError, JSON.stringify(prefixed.content)).not.toBe(true);
+    expect(
+      viewContract.outputSchema.parse(prefixed.structuredContent)
+        .normalized_result,
+    ).toMatchObject({
+      items: [{ source_index: 0, name: "printf" }],
+      coverage: { examined: 1, total: 1 },
+    });
     const { view_digest, ...content } = projectedView;
     expect(view_digest).toBe(digestCanonicalValue(content, "Analysis view"));
   },

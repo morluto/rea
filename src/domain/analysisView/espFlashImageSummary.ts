@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import type { ArtifactFormatMetadata } from "../artifactFormatMetadata.js";
 import {
   espAppDescriptorSchema,
   espBootloaderDescriptorSchema,
@@ -7,10 +8,8 @@ import {
   espFlashImageMetadataSchema,
   espImageMetadataSchema,
   espImageSegmentMetadataSchema,
-  uint8,
-  uint32,
-  type ArtifactFormatMetadata,
-} from "../artifactFormatMetadata.js";
+} from "../formatMetadata/firmwareMetadata.js";
+import { uint8, uint32 } from "../formatMetadata/primitives.js";
 import { summarizeAndroidOtaPayload } from "./androidOtaPayloadSummary.js";
 
 type EspFlashImageFacts = z.infer<typeof espFlashImageFactsSchema>;

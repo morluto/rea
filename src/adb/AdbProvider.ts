@@ -6,7 +6,6 @@ import {
   appendCallerPath,
 } from "../filesystem/callerPath.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
-import { collectNumericIssues } from "./AdbNumericIssues.js";
 import { adbInputFileError } from "./AdbFilesystemAdmission.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { lstat, link, mkdtemp, mkdir, stat, writeFile } from "node:fs/promises";
@@ -21,9 +20,6 @@ import {
 import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
 import { ADB_DEVICE_OBSERVATION_AUTHORITY } from "../domain/adb/adbDeviceAnalysis.js";
 import type {
-  AdbDisplayNumericIssues,
-  AdbDisplayPartialObservation,
-  AdbActivityStartPartialObservation,
   AdbAcquiredFilePartialObservation,
   AdbPackagePullPartialObservation,
   AdbRequest,
@@ -35,10 +31,6 @@ import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "../resources/index.js";
-import {
-  adbDisplayPartialObservationSchema,
-  adbResultSchemas,
-} from "../domain/adb/adbDeviceAnalysis.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
@@ -77,8 +69,6 @@ import {
   runtimeControlCapabilityError,
 } from "../domain/runtimeControlUnavailableError.js";
 import {
-  adbExitedRunOf,
-  adbExitFailure,
   adbArguments,
   runAdb,
   runAdbCapture,
@@ -97,39 +87,25 @@ import {
   type AdbClientIdentity,
 } from "./AdbConfiguration.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import {
-  displayDevicePath,
-  parsePackageListOutput,
-  parsePmPathOutput,
-} from "./AdbDeviceOutput.js";
+import { displayDevicePath, parsePmPathOutput } from "./AdbDeviceOutput.js";
 import { adbHostFileName } from "./AdbHostFileName.js";
 import {
   AdbInputSnapshotFailure,
   snapshotAdbInput,
 } from "./AdbInputSnapshot.js";
 import {
-  ADB_DIRECTORY_BATCH_SCRIPT,
-  parseAdbDirectoryListing,
-} from "./AdbDirectoryListing.js";
-import {
-  parseAmStartOutput,
   parseBugreportCopiedPath,
-  parseDumpsysPackageOutput,
-  parseFeatureListOutput,
   parsePackageChangeOutput,
-  parseProcessListOutput,
-  parseResolveActivityOutput,
-  parseServiceListOutput,
-  parseSettingsGetOutput,
   parseSha256sumOutput,
-  parseWindowFocusOutput,
-  parseWmDensityOutput,
-  parseWmSizeOutput,
 } from "./AdbShellOutput.js";
 import {
+  startAdbActivityOperation,
+  startAdbAppOperation,
+  stopAdbAppOperation,
+  uninstallAdbPackageOperation,
+} from "./AdbAppOperations.js";
+import {
   clientIdentityResult,
-  pageListingItems,
-  parsedListingExecution,
   type AdbClientResult,
   type AdbProviderIdentity,
 } from "./AdbOperationResults.js";
@@ -139,6 +115,19 @@ import {
   listAdbDevicesOperation,
   type AdbCommandContext,
 } from "./AdbDeviceOperations.js";
+import {
+  inspectAdbDisplayOperation,
+  inspectAdbPackageOperation,
+  inspectAdbWindowOperation,
+  listAdbDirectoryOperation,
+  listAdbFeaturesOperation,
+  listAdbPackagesOperation,
+  listAdbProcessesOperation,
+  listAdbServicesOperation,
+  readAdbLogcatOperation,
+  readAdbSettingOperation,
+  resolveAdbPackagesOperation,
+} from "./AdbShellOperations.js";
 import {
   AdbDigestFailure,
   adbDigestError,
@@ -162,21 +151,11 @@ import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const SHELL_TIMEOUT_MS = 30_000;
-const PACKAGE_LIST_TIMEOUT_MS = 60_000;
-const PACKAGE_LIST_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const PM_PATH_TIMEOUT_MS = 30_000;
 const PM_PATH_MAX_OUTPUT_BYTES = 64 * 1024;
 const PULL_TIMEOUT_MS = 600_000;
 const PULL_MAX_OUTPUT_BYTES = 1024 * 1024;
-const LOGCAT_TIMEOUT_MS = 60_000;
-const LOGCAT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
-const DUMPSYS_PACKAGE_TIMEOUT_MS = 60_000;
-const DUMPSYS_PACKAGE_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
-const DUMPSYS_WINDOW_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
-const LISTING_TIMEOUT_MS = 30_000;
-const LISTING_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const SETTINGS_TIMEOUT_MS = 20_000;
-const SETTINGS_MAX_OUTPUT_BYTES = 1024 * 1024;
 const SCREEN_TIMEOUT_MS = 60_000;
 const SCREEN_MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
 const BUGREPORT_TIMEOUT_MS = 600_000;
@@ -785,49 +764,8 @@ export class AdbProvider {
         return listAdbDevicesOperation(context);
       case "inspect_adb_device":
         return inspectAdbDeviceOperation(context);
-      case "list_adb_packages": {
-        const scopeFlag =
-          request.input.scope === "third_party"
-            ? "-3"
-            : request.input.scope === "system"
-              ? "-s"
-              : null;
-        const ran = await shell(
-          [
-            "pm",
-            "list",
-            "packages",
-            "-f",
-            ...(scopeFlag === null ? [] : [scopeFlag]),
-          ],
-          {
-            timeoutMs: PACKAGE_LIST_TIMEOUT_MS,
-            maxOutputBytes: PACKAGE_LIST_MAX_OUTPUT_BYTES,
-          },
-        );
-        if (!ran.ok) return ran;
-        const { packages, unparsedLines } = parsePackageListOutput(
-          ran.value.stdout,
-        );
-        const page = pageListingItems(packages, "packages", request.input);
-        return ok(
-          parsedListingExecution(
-            {
-              client,
-              serial: request.input.serial,
-              scope: request.input.scope,
-              packages: page.items,
-            },
-            unparsedLines,
-            provider,
-            [
-              "base_apk_device_path is a device filesystem path, not a host-local path",
-              ...page.limitations,
-            ],
-            page.truncated,
-          ),
-        );
-      }
+      case "list_adb_packages":
+        return listAdbPackagesOperation({ ...context, operation, request });
       case "pull_adb_package":
         return this.pullPackage(
           operation,
@@ -837,103 +775,10 @@ export class AdbProvider {
           request.input,
           signal,
         );
-      case "read_adb_logcat": {
-        const ran = await shell(
-          [
-            "logcat",
-            "-d",
-            "-b",
-            request.input.buffer,
-            "-t",
-            String(request.input.count),
-            ...(request.input.pid === undefined
-              ? []
-              : ["--pid", String(request.input.pid)]),
-          ],
-          {
-            timeoutMs: LOGCAT_TIMEOUT_MS,
-            maxOutputBytes: LOGCAT_MAX_OUTPUT_BYTES,
-          },
-        );
-        if (!ran.ok) return ran;
-        const lines = ran.value.stdout.split(/\r?\n/u);
-        if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
-        const bounded = lines.slice(-request.input.count);
-        return ok(
-          createAnalysisExecution(
-            {
-              client,
-              serial: request.input.serial,
-              count: request.input.count,
-              buffer: request.input.buffer,
-              pid: request.input.pid ?? null,
-              lines: bounded,
-              total_bytes: ran.value.stdoutBytes,
-              coverage:
-                bounded.length !== lines.length ||
-                bounded.length === request.input.count
-                  ? "partial"
-                  : "complete",
-            },
-            provider,
-            {
-              limitations: [
-                "Reads a bounded dump (logcat -d); the newest lines are kept when the count cap trims",
-                "coverage is partial when the requested count or capture budget truncated the dump",
-              ],
-            },
-          ),
-        );
-      }
-      case "inspect_adb_package": {
-        const ran = await shell(["dumpsys", "package", request.input.package], {
-          timeoutMs: DUMPSYS_PACKAGE_TIMEOUT_MS,
-          maxOutputBytes: DUMPSYS_PACKAGE_MAX_OUTPUT_BYTES,
-        });
-        if (!ran.ok) return ran;
-        const stdout = ran.value.stdout;
-        if (/Unable to find package:/u.test(stdout) || stdout.trim() === "")
-          return err(
-            new AnalysisUnsupportedTargetError(
-              operation,
-              request.input.serial,
-              `Package Manager did not report details for ${request.input.package}; it may not be installed for user 0`,
-            ),
-          );
-        const details = parseDumpsysPackageOutput(stdout);
-        return ok(
-          createAnalysisExecution(
-            {
-              client,
-              serial: request.input.serial,
-              package_name: request.input.package,
-              version_name: details.versionName,
-              version_code: details.versionCode,
-              first_install_time: details.firstInstallTime,
-              last_update_time: details.lastUpdateTime,
-              installer_package_name: details.installerPackageName,
-              user_id: details.userId,
-              pkg_flags: details.pkgFlags,
-              requested_permissions_count: details.requestedPermissions,
-              numeric_issues: details.numericIssues,
-              coverage:
-                details.numericIssues.total > 0 ||
-                details.requestedPermissions === null ||
-                (details.versionCode === null && details.versionName === null)
-                  ? "partial"
-                  : "complete",
-            },
-            provider,
-            {
-              limitations: [
-                "Fields are a fixed projection of dumpsys package output; version-dependent sections are ignored rather than guessed",
-                "requested_permissions_count counts the listed requested permissions section; an absent section is zero only when dumpsys confirms a loaded parsed package",
-                "A null requested_permissions_count means dumpsys reported pkg=null or did not establish that an omitted permission section is an empty inventory",
-              ],
-            },
-          ),
-        );
-      }
+      case "read_adb_logcat":
+        return readAdbLogcatOperation({ ...context, operation, request });
+      case "inspect_adb_package":
+        return inspectAdbPackageOperation({ ...context, operation, request });
       case "pull_adb_file":
         return this.pullFile(
           operation,
@@ -970,294 +815,22 @@ export class AdbProvider {
           request.input,
           signal,
         );
-      case "list_adb_processes": {
-        const ran = await shell(["ps", "-A"], {
-          timeoutMs: LISTING_TIMEOUT_MS,
-          maxOutputBytes: LISTING_MAX_OUTPUT_BYTES,
-        });
-        if (!ran.ok) return ran;
-        const { columns, processes, unparsedLines } = parseProcessListOutput(
-          ran.value.stdout,
-        );
-        const page = pageListingItems(processes, "processes", request.input);
-        return ok(
-          parsedListingExecution(
-            {
-              client,
-              serial: request.input.serial,
-              columns,
-              processes: page.items,
-            },
-            unparsedLines,
-            provider,
-            page.limitations,
-            page.truncated,
-          ),
-        );
-      }
-      case "list_adb_directory": {
-        const ran = await runAdbCapture(
-          operation,
-          { device: request.input.serial, path: request.input.device_path },
-          selection,
-          adbArguments(request.input.serial, [
-            "shell",
-            "sh",
-            "-c",
-            'cd "$1" || exit\nexec find . -mindepth 1 -maxdepth 1 -exec sh -c "$2" rea-list-directory {} +',
-            "rea-list-directory",
-            request.input.device_path,
-            ADB_DIRECTORY_BATCH_SCRIPT,
-          ]),
-          {
-            timeoutMs: LISTING_TIMEOUT_MS,
-            maxOutputBytes: LISTING_MAX_OUTPUT_BYTES,
-            volatileOutput: true,
-          },
-          signal,
-        );
-        if (!ran.ok) return ran;
-        const { entries, unparsedLines } = parseAdbDirectoryListing(
-          ran.value.stdout,
-        );
-        const page = pageListingItems(
-          entries,
-          "directory entries",
-          request.input,
-        );
-        return ok(
-          parsedListingExecution(
-            {
-              client,
-              serial: request.input.serial,
-              device_path: request.input.device_path,
-              entries: page.items,
-            },
-            unparsedLines,
-            provider,
-            [
-              "Entry kinds derive from stat permission mode; directory contents and link targets may change during capture",
-              ...page.limitations,
-            ],
-            page.truncated,
-          ),
-        );
-      }
-      case "list_adb_features": {
-        const ran = await shell(["pm", "list", "features"], {
-          timeoutMs: LISTING_TIMEOUT_MS,
-          maxOutputBytes: LISTING_MAX_OUTPUT_BYTES,
-        });
-        if (!ran.ok) return ran;
-        const { features, unparsedLines } = parseFeatureListOutput(
-          ran.value.stdout,
-        );
-        const page = pageListingItems(features, "features", request.input);
-        return ok(
-          parsedListingExecution(
-            { client, serial: request.input.serial, features: page.items },
-            unparsedLines,
-            provider,
-            page.limitations,
-            page.truncated,
-          ),
-        );
-      }
-      case "list_adb_services": {
-        const ran = await shell(["service", "list"], {
-          timeoutMs: LISTING_TIMEOUT_MS,
-          maxOutputBytes: LISTING_MAX_OUTPUT_BYTES,
-        });
-        if (!ran.ok) return ran;
-        const { services, unparsedLines } = parseServiceListOutput(
-          ran.value.stdout,
-        );
-        const page = pageListingItems(services, "services", request.input);
-        return ok(
-          parsedListingExecution(
-            { client, serial: request.input.serial, services: page.items },
-            unparsedLines,
-            provider,
-            page.limitations,
-            page.truncated,
-          ),
-        );
-      }
-      case "inspect_adb_display": {
-        const size = await shell(["wm", "size"], {
-          timeoutMs: SETTINGS_TIMEOUT_MS,
-          maxOutputBytes: SETTINGS_MAX_OUTPUT_BYTES,
-        });
-        if (!size.ok) return size;
-        const density = await shell(["wm", "density"], {
-          timeoutMs: SETTINGS_TIMEOUT_MS,
-          maxOutputBytes: SETTINGS_MAX_OUTPUT_BYTES,
-        });
-        if (!density.ok) return density;
-        const parsedSize = parseWmSizeOutput(size.value.stdout);
-        const parsedDensity = parseWmDensityOutput(density.value.stdout);
-        const issues =
-          collectNumericIssues<AdbDisplayNumericIssues["sample"][number]>();
-        issues.append(parsedSize.numericIssues);
-        issues.append(parsedDensity.numericIssues);
-        const numericIssues = issues.facts();
-        const displayFacts = {
-          client,
-          serial: request.input.serial,
-          override_size: parsedSize.override,
-          physical_density: parsedDensity.physical,
-          override_density: parsedDensity.override,
-          numeric_issues: numericIssues,
-        };
-        if (parsedSize.physical === null) {
-          const reason = parsedSize.physicalDeclared
-            ? "physical_size_malformed"
-            : "physical_size_absent";
-          const partialObservation: AdbDisplayPartialObservation =
-            adbDisplayPartialObservationSchema.parse({
-              provider_id: "adb",
-              operation: "inspect_adb_display",
-              reason,
-              result: {
-                ...displayFacts,
-                physical_size: null,
-                coverage: "partial",
-              },
-            });
-          return err(
-            new AnalysisProtocolError(
-              parsedSize.physicalDeclared
-                ? "wm size reported a malformed physical size"
-                : "wm size did not report a physical size; the build may use an unsupported format",
-              { partialObservation },
-            ),
-          );
-        }
-        return ok(
-          createAnalysisExecution(
-            {
-              ...displayFacts,
-              physical_size: parsedSize.physical,
-              coverage:
-                numericIssues.total > 0 || parsedDensity.physical === null
-                  ? "partial"
-                  : "complete",
-            },
-            provider,
-            {
-              limitations: [
-                "Override fields are null when no declaration was reported or its value was malformed; numeric_issues retains malformed declarations",
-              ],
-            },
-          ),
-        );
-      }
-      case "inspect_adb_window": {
-        let section: "windows" | "displays" = "windows";
-        const ran = await shell(["dumpsys", "window", section], {
-          timeoutMs: SHELL_TIMEOUT_MS,
-          maxOutputBytes: DUMPSYS_WINDOW_MAX_OUTPUT_BYTES,
-        });
-        if (!ran.ok) return ran;
-        let focus = parseWindowFocusOutput(ran.value.stdout);
-        if (focus.focus_summary === "unavailable") {
-          section = "displays";
-          const fallback = await shell(["dumpsys", "window", section], {
-            timeoutMs: SHELL_TIMEOUT_MS,
-            maxOutputBytes: DUMPSYS_WINDOW_MAX_OUTPUT_BYTES,
-          });
-          if (!fallback.ok) return fallback;
-          focus = parseWindowFocusOutput(fallback.value.stdout);
-        }
-        const declared = focus.focus_summary !== "unavailable";
-        return ok(
-          createAnalysisExecution(
-            {
-              client,
-              serial: request.input.serial,
-              source_section: section,
-              ...focus,
-            },
-            provider,
-            {
-              limitations: [
-                "Focus values are the window manager's declarations at read time; no interaction occurred",
-                declared
-                  ? `Focus declarations were read from \`dumpsys window ${section}\``
-                  : "Neither `dumpsys window windows` nor `dumpsys window displays` declared mCurrentFocus or mFocusedApp; focus is unknown, not absent",
-                ...(focus.focus_summary === "ambiguous"
-                  ? [
-                      "Multiple focus contexts or repeated declarations prevent a singular focus summary; inspect focus_contexts for every declaration",
-                    ]
-                  : []),
-              ],
-            },
-          ),
-        );
-      }
-      case "read_adb_setting": {
-        const ran = await shell(
-          ["settings", "get", request.input.namespace, request.input.key],
-          {
-            timeoutMs: SETTINGS_TIMEOUT_MS,
-            maxOutputBytes: SETTINGS_MAX_OUTPUT_BYTES,
-          },
-        );
-        if (!ran.ok) return ran;
-        const { value, deviceReportedNull } = parseSettingsGetOutput(
-          ran.value.stdout,
-        );
-        return ok(
-          createAnalysisExecution(
-            {
-              client,
-              serial: request.input.serial,
-              namespace: request.input.namespace,
-              key: request.input.key,
-              value,
-              device_reported_null: deviceReportedNull,
-            },
-            provider,
-            {
-              limitations: [
-                "Android prints the literal string null for absent keys; that is reported as a device-side null observation",
-              ],
-            },
-          ),
-        );
-      }
-      case "resolve_adb_packages": {
-        const ran = await shell(["pm", "list", "packages", "-f"], {
-          timeoutMs: PACKAGE_LIST_TIMEOUT_MS,
-          maxOutputBytes: PACKAGE_LIST_MAX_OUTPUT_BYTES,
-        });
-        if (!ran.ok) return ran;
-        const { packages, unparsedLines } = parsePackageListOutput(
-          ran.value.stdout,
-        );
-        const needle = request.input.query.toLowerCase();
-        const matches = packages.filter((entry) =>
-          entry.package_name.toLowerCase().includes(needle),
-        );
-        return ok(
-          parsedListingExecution(
-            {
-              client,
-              serial: request.input.serial,
-              query: request.input.query,
-              matches,
-              exact_match:
-                matches.length === 1 &&
-                matches[0]!.package_name.toLowerCase() === needle,
-            },
-            unparsedLines,
-            provider,
-            [
-              "Matching is a case-insensitive substring over package names; application display labels are not part of pm output",
-            ],
-          ),
-        );
-      }
+      case "list_adb_processes":
+        return listAdbProcessesOperation({ ...context, operation, request });
+      case "list_adb_directory":
+        return listAdbDirectoryOperation({ ...context, operation, request });
+      case "list_adb_features":
+        return listAdbFeaturesOperation({ ...context, operation, request });
+      case "list_adb_services":
+        return listAdbServicesOperation({ ...context, operation, request });
+      case "inspect_adb_display":
+        return inspectAdbDisplayOperation({ ...context, operation, request });
+      case "inspect_adb_window":
+        return inspectAdbWindowOperation({ ...context, operation, request });
+      case "read_adb_setting":
+        return readAdbSettingOperation({ ...context, operation, request });
+      case "resolve_adb_packages":
+        return resolveAdbPackagesOperation({ ...context, operation, request });
       case "install_adb_package":
         return this.installPackage(
           operation,
@@ -1268,7 +841,7 @@ export class AdbProvider {
           signal,
         );
       case "uninstall_adb_package":
-        return this.uninstallPackage(
+        return uninstallAdbPackageOperation(
           operation,
           selection,
           client,
@@ -1277,7 +850,7 @@ export class AdbProvider {
           signal,
         );
       case "start_adb_app":
-        return this.startApp(
+        return startAdbAppOperation(
           operation,
           selection,
           client,
@@ -1286,7 +859,7 @@ export class AdbProvider {
           signal,
         );
       case "start_adb_activity":
-        return this.startActivity(
+        return startAdbActivityOperation(
           operation,
           selection,
           client,
@@ -1295,7 +868,7 @@ export class AdbProvider {
           signal,
         );
       case "stop_adb_app":
-        return this.stopApp(
+        return stopAdbAppOperation(
           operation,
           selection,
           client,
@@ -2172,324 +1745,6 @@ export class AdbProvider {
           ),
         );
       },
-    );
-  }
-
-  private async uninstallPackage(
-    operation: "uninstall_adb_package",
-    selection: AdbCommandHost,
-    client: AdbClientResult,
-    provider: AdbProviderIdentity,
-    input: { readonly serial: string; readonly package: string },
-    signal: AbortSignal | undefined,
-  ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    const uninstalled = await runAdb(
-      operation,
-      { device: input.serial },
-      selection,
-      adbArguments(input.serial, [
-        "shell",
-        "pm",
-        "uninstall",
-        "--user",
-        "0",
-        input.package,
-      ]),
-      {
-        timeoutMs: PACKAGE_LIST_TIMEOUT_MS,
-        maxOutputBytes: PULL_MAX_OUTPUT_BYTES,
-      },
-      signal,
-    );
-    if (!uninstalled.ok)
-      return (
-        packageChangeRefusal(operation, input.serial, uninstalled.error) ??
-        uninstalled
-      );
-    const verdict = parsePackageChangeOutput(uninstalled.value.stdout);
-    if (verdict.status === "unknown")
-      return err(
-        new AnalysisOutputError(operation, "ADB returned no removal verdict", {
-          capturedOutput: {
-            stdout: uninstalled.value.stdout,
-            stderr: uninstalled.value.stderr,
-            truncated: false,
-          },
-        }),
-      );
-    if (verdict.status === "failure")
-      return err(
-        new AnalysisUnsupportedTargetError(
-          operation,
-          input.serial,
-          verdict.reason,
-        ),
-      );
-    return ok(
-      createAnalysisExecution(
-        {
-          client,
-          serial: input.serial,
-          package_name: input.package,
-        },
-        provider,
-        {
-          limitations: [
-            "Uninstall explicitly requests user 0 without data retention (-k); device enforcement is not independently verified",
-          ],
-        },
-      ),
-    );
-  }
-
-  private async startApp(
-    operation: "start_adb_app",
-    selection: AdbCommandHost,
-    client: AdbClientResult,
-    provider: AdbProviderIdentity,
-    input: { readonly serial: string; readonly package: string },
-    signal: AbortSignal | undefined,
-  ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    const resolved = await runAdb(
-      operation,
-      { device: input.serial },
-      selection,
-      adbArguments(input.serial, [
-        "shell",
-        "cmd",
-        "package",
-        "resolve-activity",
-        "--brief",
-        "-c",
-        "android.intent.category.LAUNCHER",
-        input.package,
-      ]),
-      {
-        timeoutMs: SHELL_TIMEOUT_MS,
-        maxOutputBytes: PM_PATH_MAX_OUTPUT_BYTES,
-        volatileOutput: true,
-      },
-      signal,
-    );
-    if (!resolved.ok) return resolved;
-    const component = parseResolveActivityOutput(resolved.value.stdout);
-    if (component === null)
-      return err(
-        new AnalysisUnsupportedTargetError(
-          operation,
-          input.serial,
-          `No launcher activity is declared for ${input.package}`,
-        ),
-      );
-    return this.runAmStart(
-      operation,
-      selection,
-      client,
-      provider,
-      input.serial,
-      ["-n", component],
-      {
-        client,
-        serial: input.serial,
-        package_name: input.package,
-        component,
-      },
-      signal,
-    );
-  }
-
-  private async startActivity(
-    operation: "start_adb_activity",
-    selection: AdbCommandHost,
-    client: AdbClientResult,
-    provider: AdbProviderIdentity,
-    input: {
-      readonly serial: string;
-      readonly action: string;
-      readonly data_uri?: string | undefined;
-      readonly component?: string | undefined;
-      readonly extras: readonly {
-        readonly key: string;
-        readonly type: "string" | "boolean" | "int" | "long" | "float";
-        readonly value: string;
-      }[];
-    },
-    signal: AbortSignal | undefined,
-  ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    const extraFlags: Record<
-      "string" | "boolean" | "int" | "long" | "float",
-      string
-    > = {
-      string: "--es",
-      boolean: "--ez",
-      int: "--ei",
-      long: "--el",
-      float: "--ef",
-    };
-    const arguments_ = [
-      "-a",
-      input.action,
-      ...(input.data_uri === undefined ? [] : ["-d", input.data_uri]),
-      ...(input.component === undefined ? [] : ["-n", input.component]),
-      ...input.extras.flatMap((extra) => [
-        extraFlags[extra.type],
-        extra.key,
-        // Android decodes --ei with Integer.decode, whose leading zero is octal.
-        // Encode decimal intent at this boundary; Evidence retains caller text.
-        extra.type === "int"
-          ? extra.value.replace(/^(-?)0+(?=\d)/u, "$1")
-          : extra.value,
-      ]),
-    ];
-    return this.runAmStart(
-      operation,
-      selection,
-      client,
-      provider,
-      input.serial,
-      arguments_,
-      {
-        client,
-        serial: input.serial,
-        action: input.action,
-        data_uri: input.data_uri ?? null,
-        component: input.component ?? null,
-        extras: input.extras.map((extra) => ({ ...extra })),
-      },
-      signal,
-    );
-  }
-
-  private async runAmStart(
-    operation: "start_adb_app" | "start_adb_activity",
-    selection: AdbCommandHost,
-    client: AdbClientResult,
-    provider: AdbProviderIdentity,
-    serial: string,
-    arguments_: readonly string[],
-    resultFields: Record<string, unknown>,
-    signal: AbortSignal | undefined,
-  ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    const buildActivityObservation = (
-      verdict: ReturnType<typeof parseAmStartOutput>,
-    ): {
-      readonly result: Record<string, unknown>;
-      readonly partialObservation: AdbActivityStartPartialObservation;
-    } => {
-      const result = {
-        ...resultFields,
-        started_activity: verdict.startedActivity,
-        reported_activity: verdict.activity,
-        reported_status: verdict.reportedStatus,
-      };
-      return {
-        result,
-        partialObservation:
-          operation === "start_adb_app"
-            ? {
-                provider_id: "adb",
-                operation,
-                result: adbResultSchemas.start_adb_app.parse(result),
-              }
-            : {
-                provider_id: "adb",
-                operation,
-                result: adbResultSchemas.start_adb_activity.parse(result),
-              },
-      };
-    };
-    const started = await runAdb(
-      operation,
-      { device: serial },
-      selection,
-      adbArguments(serial, ["shell", "am", "start", "-W", ...arguments_]),
-      { timeoutMs: SHELL_TIMEOUT_MS, maxOutputBytes: PM_PATH_MAX_OUTPUT_BYTES },
-      signal,
-      (run) => {
-        if (run.exitCode === 0) return undefined;
-        const failure = adbExitFailure(operation, { device: serial }, run);
-        // AOSP ActivityManagerShellCommand returns 1 for class-not-found and
-        // emits its refusal report on stdout. Other exits remain command errors.
-        if (adbExitedRunOf(failure) === undefined || run.exitCode !== 1)
-          return failure;
-        // Stderr carries adb transport diagnostics, not the Activity Manager
-        // report, so it cannot establish a target refusal on this path.
-        const verdict = parseAmStartOutput(run.capturedOutput.stdout);
-        if (verdict.status !== "refused" || verdict.startedActivity === null)
-          return failure;
-        const { partialObservation } = buildActivityObservation(verdict);
-        return new AnalysisUnsupportedTargetError(
-          operation,
-          serial,
-          verdict.reason ?? "am start refused the intent",
-          { capturedOutput: run.capturedOutput, partialObservation },
-        );
-      },
-    );
-    if (!started.ok) return started;
-    const stdout = started.value.stdout;
-    const stderr = started.value.stderr;
-    const capturedOutput: AnalysisCapturedOutput = {
-      stdout,
-      stderr,
-      truncated: false,
-    };
-    const verdict = parseAmStartOutput(stdout, stderr);
-    const { result, partialObservation } = buildActivityObservation(verdict);
-    if (verdict.status === "refused") {
-      return err(
-        new AnalysisUnsupportedTargetError(
-          operation,
-          serial,
-          verdict.reason ?? "am start refused the intent",
-          { capturedOutput, partialObservation },
-        ),
-      );
-    }
-    return ok(
-      createAnalysisExecution(result, provider, {
-        rawResult: {
-          stdout,
-          stderr,
-        },
-        limitations: [
-          "Starting an activity changes device state; am start -W waits for launch completion but no lifecycle observation is captured",
-        ],
-      }) as AnalysisExecution,
-    );
-  }
-
-  private async stopApp(
-    operation: "stop_adb_app",
-    selection: AdbCommandHost,
-    client: AdbClientResult,
-    provider: AdbProviderIdentity,
-    input: { readonly serial: string; readonly package: string },
-    signal: AbortSignal | undefined,
-  ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    const stopped = await runAdb(
-      operation,
-      { device: input.serial },
-      selection,
-      adbArguments(input.serial, ["shell", "am", "force-stop", input.package]),
-      { timeoutMs: SHELL_TIMEOUT_MS, maxOutputBytes: PM_PATH_MAX_OUTPUT_BYTES },
-      signal,
-    );
-    if (!stopped.ok) return stopped;
-    return ok(
-      createAnalysisExecution(
-        {
-          client,
-          serial: input.serial,
-          package_name: input.package,
-        },
-        provider,
-        {
-          limitations: [
-            "Force-stop succeeds even for packages with no running process; it reports completion, not prior state",
-          ],
-        },
-      ),
     );
   }
 

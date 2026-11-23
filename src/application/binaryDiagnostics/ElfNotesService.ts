@@ -32,6 +32,7 @@ export class ElfNotesService {
         inputSchema: inspectElfNotesInputSchema,
         outputSchema: elfNotesSchema,
         provider: this.provider,
+        retainCompletedReport: true,
         invalidOutputMessage:
           "ELF note provider returned malformed output or changed artifact identity.",
         toParameters: (input) => input,

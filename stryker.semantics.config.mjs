@@ -35,7 +35,7 @@ export default {
         text: "response.current_file === undefined",
       },
     ]),
-    ...mutationRanges("src/rizin/RizinDebugSessionManager.ts", [
+    ...mutationRanges("src/rizin/RizinDebugFrames.ts", [
       {
         kind: "expression",
         text: "remaining <= 0",

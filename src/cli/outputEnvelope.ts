@@ -23,7 +23,7 @@
  */
 import { estimateTokenCount } from "tokenx";
 
-import { renderCliDocument, type CliOutputFormat } from "../cliOutput.js";
+import { renderCliDocument, type CliOutputFormat } from "./cliOutput.js";
 import { jsonLinesErrorRecord } from "./jsonLines.js";
 import { sliceTextByTokenWindow } from "./tokenWindow.js";
 

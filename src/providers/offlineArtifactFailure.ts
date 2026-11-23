@@ -16,6 +16,8 @@ interface OfflineArtifactDialectBase {
   readonly providerId: string;
   readonly path: string;
   readonly description: string;
+  /** The request field that selected the file; `path` when omitted. */
+  readonly field?: string;
   /**
    * Format- or provider-specific errors examined before the shared
    * `ParseFailureError`, owned input, and selected-file projections.
@@ -55,18 +57,26 @@ export const offlineArtifactFailureDialect = (
   facts: ArtifactFilePrimaryFacts,
   options: OfflineArtifactDialectOptions,
 ): ProviderFailureDialect => {
-  const { operation, providerId, path, description } = options;
+  const { operation, providerId, path, description, field } = options;
   const { origin } = facts;
   return {
     providerId,
     operation,
     recognise: (failure) =>
       options.recognise?.(failure, origin) ??
-      parseFailureAnalysisError(operation, path, failure) ??
-      projectOwnedArtifactInputFailure(facts, operation, path),
+      (options.fileSize !== undefined &&
+      origin === "owned-or-classified" &&
+      failure instanceof ArtifactReaderFailure &&
+      failure.reason === "limit" &&
+      (failure.boundary === "file-size" || failure.boundary === undefined)
+        ? options.fileSize(failure)
+        : undefined) ??
+      parseFailureAnalysisError(operation, path, failure, field) ??
+      projectOwnedArtifactInputFailure(facts, operation, path, field),
     file: {
       path,
       description,
+      ...(field === undefined ? {} : { field }),
       ...(options.fileSize === undefined ? {} : { fileSize: options.fileSize }),
     },
     unclassified: (failure) =>

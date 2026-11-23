@@ -13,6 +13,7 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
+import { namePrefixesSchema, startsWithAny } from "./namePrefixFilter.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
@@ -48,6 +49,9 @@ export const nativeExportsViewRequestSchema = z.discriminatedUnion(
         .describe(
           "Exact PE names, or UTF-8 ELF source names. ELF display fallbacks and names with unknown encoding are not identities; use indices for those rows. Omitted includes all names; [] matches none.",
         ),
+      name_prefixes: namePrefixesSchema(
+        "PE names or UTF-8 ELF source names; ELF names that are not valid UTF-8 never match",
+      ),
       indices: z.array(z.int().nonnegative()).optional(),
       fields: z.array(z.union([peRow.keyof(), elfRow.keyof()])).optional(),
     }),
@@ -77,6 +81,62 @@ export const nativeExportsSummarySchema = z.discriminatedUnion("format", [
 ]);
 
 const readReport = createAnalysisViewResultReader(nativeExportsSchema);
+
+type ExportRow = NativeExports["exports"][number];
+
+/**
+ * Match exact names and name prefixes with the identity rules of each format.
+ * ELF identities are bytes: a non-ASCII name compares its exact UTF-8 bytes,
+ * and a name that is not valid UTF-8 has no text to match.
+ */
+const exportNameMatcher = (
+  selectedNames: readonly string[] | undefined,
+  prefixes: readonly string[] | undefined,
+): ((row: ExportRow) => boolean) | undefined => {
+  if (selectedNames === undefined && prefixes === undefined) return undefined;
+  const names =
+    selectedNames === undefined ? undefined : new Set(selectedNames);
+  const encodedNames =
+    names === undefined
+      ? undefined
+      : new Set(
+          [...names].flatMap((name) => {
+            const bytes = Buffer.from(name, "utf8");
+            return bytes.toString("utf8") === name
+              ? [bytes.toString("base64")]
+              : [];
+          }),
+        );
+  // As for exact names, text that does not round-trip through UTF-8 (an
+  // unpaired surrogate) has no bytes to compare and matches nothing.
+  const prefixBytes = prefixes?.flatMap((prefix) => {
+    const bytes = Buffer.from(prefix, "utf8");
+    return bytes.toString("utf8") === prefix ? [bytes] : [];
+  });
+  const exact = (row: ExportRow): boolean =>
+    names === undefined ||
+    ("name_utf8_decodable" in row
+      ? row.name_utf8_decodable &&
+        (row.name_bytes_base64 !== null
+          ? encodedNames!.has(row.name_bytes_base64)
+          : names.has(row.name))
+      : row.name !== null && names.has(row.name));
+  const prefixed = (row: ExportRow): boolean => {
+    if (prefixes === undefined) return true;
+    if (!("name_utf8_decodable" in row))
+      return row.name !== null && startsWithAny(row.name, prefixes);
+    if (!row.name_utf8_decodable) return false;
+    if (row.name_bytes_base64 === null)
+      return startsWithAny(row.name, prefixes);
+    const bytes = Buffer.from(row.name_bytes_base64, "base64");
+    return prefixBytes!.some(
+      (prefix) =>
+        bytes.length >= prefix.length &&
+        bytes.subarray(0, prefix.length).equals(prefix),
+    );
+  };
+  return (row) => exact(row) && prefixed(row);
+};
 
 /** Read selected export facts without reopening the artifact or reinterpreting its tables. */
 export const projectNativeExportsView = (
@@ -170,18 +230,6 @@ export const projectNativeExportsView = (
     return invalid(
       `Selected export fields do not belong to ${report.format}; available fields: ${allowed.join(", ")}.`,
     );
-  const names = view.names === undefined ? undefined : new Set(view.names);
-  const encodedNames =
-    names === undefined
-      ? undefined
-      : new Set(
-          [...names].flatMap((name) => {
-            const bytes = Buffer.from(name, "utf8");
-            return bytes.toString("utf8") === name
-              ? [bytes.toString("base64")]
-              : [];
-          }),
-        );
   // A projected decoded name still carries its exact bytes and encoding qualification.
   const columns = new Set<string>(fields);
   if (report.format === "elf" && columns.has("name")) {
@@ -196,16 +244,7 @@ export const projectNativeExportsView = (
     ...pickFields(row, columns),
     source_index,
   });
-  const matchesName =
-    names === undefined
-      ? undefined
-      : (row: NativeExports["exports"][number]) =>
-          "name_utf8_decodable" in row
-            ? row.name_utf8_decodable === true &&
-              (row.name_bytes_base64 !== null
-                ? encodedNames!.has(row.name_bytes_base64)
-                : names.has(row.name))
-            : row.name !== null && names.has(row.name);
+  const matchesName = exportNameMatcher(view.names, view.name_prefixes);
   const selected =
     indices !== undefined
       ? selectIndexedViewRows(rows, indices, view, matchesName, projectRow)

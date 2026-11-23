@@ -37,6 +37,7 @@ export class GoBinaryService {
         inputSchema: inspectGoBinaryInputSchema,
         outputSchema: goBinarySchema,
         provider: this.provider,
+        retainCompletedReport: true,
         invalidOutputMessage:
           "Go build-information reader returned malformed metadata or changed the selected artifact or slice identity.",
         toParameters: ({ detail: _detail, ...providerInput }) => providerInput,

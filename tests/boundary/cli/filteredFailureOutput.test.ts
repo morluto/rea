@@ -7,7 +7,7 @@ import { z } from "zod";
 import { parse as parseYaml } from "yaml";
 import { expect, it } from "vitest";
 
-import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import { parseCliJsonInput } from "../../../src/cli/cliJsonInput.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
