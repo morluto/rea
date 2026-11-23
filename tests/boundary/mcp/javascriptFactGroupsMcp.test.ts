@@ -101,7 +101,7 @@ it("counts distinct retained IPC channels per operation and reads one group's ob
     {
       properties: { operation: "send", channel: "ready" },
       observation_count: 2,
-      node_count: expect.any(Number),
+      node_count: 1,
     },
     {
       properties: { operation: "send", channel: "window-close" },

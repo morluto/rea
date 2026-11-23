@@ -166,9 +166,11 @@ Each row reports one distinct combination with its `observation_count` and
 `node_count`. A missing key is omitted from the combination, distinct from a
 retained null such as an unresolved dynamic channel. Rows are ordered by the
 canonical JSON of their values; the default offset/limit is 0/256 and the page
-total counts distinct combinations. Read a group's observations, with
-provenance, through `javascript-facts` and the same `where` plus matching
-`where.properties`.
+total counts distinct combinations. When every grouped value is a present JSON
+scalar, read that group's observations, with provenance, through
+`javascript-facts` and the same `where` plus matching `where.properties`.
+`where.properties` cannot select array, object or missing values, so read
+such groups by paging `javascript-facts` with the same `where`.
 
 Rows follow retained node/observation order. The default offset/limit is 0/64;
 follow `coverage.next_offset`. Page totals count matching retained observations,
