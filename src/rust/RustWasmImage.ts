@@ -1,6 +1,6 @@
-import { isUtf8 } from "node:buffer";
 import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
 import { readLeb128, ULEB32 } from "../domain/leb128.js";
+import { isStrictUtf8, strictUtf8Decoder } from "../domain/strictUtf8.js";
 import type { NativeByteSource } from "../domain/native/nativeSectionDirectory.js";
 import {
   decodeLimit,
@@ -250,10 +250,10 @@ const isDependencyName = async (
         "WebAssembly custom section name read ended early",
         { offset, field: "custom section name" },
       );
-    if (!isUtf8(bytes)) throw invalidNameUtf8(offset);
+    if (!isStrictUtf8(bytes)) throw invalidNameUtf8(offset);
     return bytes.equals(DEPENDENCY_SECTION);
   }
-  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const decoder = strictUtf8Decoder("preserve");
   for (let at = 0; at < size; at += WASM_NAME_CHUNK_BYTES) {
     if (at > 0) await pause?.();
     const length = Math.min(WASM_NAME_CHUNK_BYTES, size - at);
@@ -292,7 +292,7 @@ const customSection = (
     );
   const payload = length.end + length.value;
   const name = bytes.subarray(length.end, payload);
-  if (!isUtf8(name)) throw invalidNameUtf8(length.end);
+  if (!isStrictUtf8(name)) throw invalidNameUtf8(length.end);
   return { name, payload };
 };
 
