@@ -1202,13 +1202,16 @@ complete observation.
   names. Class implementation methods have null `is_required` and `is_optional`
   fields because those facts apply to protocol declarations; decoded protocol
   method lists retain their observed required/optional values. Class properties
-  and `__objc_catlist` categories are also decoded. Categories record the
+  and categories are also decoded, from `__objc_catlist` and from
+  `__objc_catlist2`, where Swift lists categories on classes it reaches through
+  a Swift class stub. Categories record the
   extended class, local or external, plus
   their methods, protocols and properties; category methods appear as
   implementations with a `category`. A category whose class reference is null,
-  or is bound to a symbol other than `_OBJC_CLASS_$_`, such as the `_$s…CN`
-  metadata symbol of another module's Swift class, keeps a null class, and
-  `objc_properties_categories` coverage names that reference. A category's
+  is bound to a symbol other than `_OBJC_CLASS_$_`, such as the `_$s…CN`
+  metadata symbol of another module's Swift class, or is a Swift class stub,
+  keeps a null class, and `objc_properties_categories` coverage names that
+  reference. A category's
   class property list (`@property (class)`), present when the image info
   declares it, is not decoded: the category is partial with
   `category_class_properties_not_decoded` and coverage names the list field.

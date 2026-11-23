@@ -1581,6 +1581,89 @@ describe("Objective-C category class references without a class name", () => {
   });
 });
 
+describe("Objective-C categories in __objc_catlist2", () => {
+  /** A category on the local Fixture class, listed in `section`. */
+  const listedCategory = (section: string) => {
+    const bytes = fixture(false, "unmapped-class");
+    bytes.writeBigUInt64LE(base + 0x200n, 0xb48);
+    bytes.fill(0, 184, 200);
+    bytes.write(section, 184);
+    return bytes;
+  };
+  const categoryCoverage = (result: {
+    coverage: readonly { facet: string }[];
+  }) =>
+    result.coverage.find(({ facet }) => facet === "objc_properties_categories");
+
+  it("decodes a category listed in __objc_catlist2 like one in __objc_catlist", () => {
+    const catlist = decodeAppleDispatchMetadata(
+      listedCategory("__objc_catlist"),
+      100,
+      provenance,
+    );
+    const result = decodeAppleDispatchMetadata(
+      listedCategory("__objc_catlist2"),
+      100,
+      provenance,
+    );
+    expect(catlist.objc_categories).toMatchObject([
+      {
+        name: "FixtureCategory",
+        class_name: "Fixture",
+        class_source: "local",
+        instance_methods: ["performAction:"],
+        decode: { status: "decoded", reason: null },
+      },
+    ]);
+    expect(result.objc_categories).toEqual(catlist.objc_categories);
+    expect(result.objc_dispatch_implementations).toEqual(
+      catlist.objc_dispatch_implementations,
+    );
+    expect(categoryCoverage(result)).toEqual({
+      facet: "objc_properties_categories",
+      status: "complete",
+      reason: null,
+      examined: 1,
+      decoded: 1,
+    });
+  });
+
+  it("keeps a category on a Swift class stub without reading the stub as a class", () => {
+    const bytes = listedCategory("__objc_catlist2");
+    // A Swift class stub holds isa 1, then its metadata initializer.
+    bytes.writeBigUInt64LE(1n, 0xc80);
+    bytes.writeBigUInt64LE(base + 0x700n, 0xc88);
+    // Where a class_t keeps its data, the word after the stub can lead to an
+    // unrelated record; here it is Fixture's class_ro_t.
+    bytes.writeBigUInt64LE(base + 0x300n, 0xca0);
+    bytes.writeBigUInt64LE(base + 0xc80n, 0xb48);
+    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+    expect(result.objc_categories).toMatchObject([
+      {
+        name: "FixtureCategory",
+        class_name: null,
+        class_source: "unresolved",
+        instance_methods: ["performAction:"],
+        decode: { status: "partial", reason: "category_class_unresolved" },
+      },
+    ]);
+    expect(result.objc_dispatch_implementations).toContainEqual(
+      expect.objectContaining({
+        category: "FixtureCategory",
+        class_name: "(FixtureCategory)",
+        implementation_address: "0x100000700",
+      }),
+    );
+    expect(categoryCoverage(result)).toMatchObject({
+      status: "partial",
+      reason:
+        "category_class_unresolved at 0x100000b48: Category FixtureCategory class reference 0x100000c80 is a Swift class stub, which is not read as an Objective-C class name",
+      examined: 1,
+      decoded: 0,
+    });
+  });
+});
+
 describe("Objective-C declaration-local record-budget coverage", () => {
   it.each(["protocol", "class"] as const)(
     "preserves the decoded $0 method at a sufficient budget",
