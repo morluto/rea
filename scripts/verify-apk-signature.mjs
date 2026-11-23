@@ -123,9 +123,10 @@ const forgeDeclaredDigests = async (original) => {
     readRange: async (offset, length) =>
       bytes.subarray(offset, offset + length),
   };
-  const tail = await parseZipTailFromReader(source);
-  assert.ok(tail.ok);
-  const block = await locateApkSigningBlockFromReader(source, tail.value.tail);
+  const tailRead = await parseZipTailFromReader(source);
+  assert.ok(tailRead.ok);
+  const { tail } = tailRead.value;
+  const block = await locateApkSigningBlockFromReader(source, tail);
   assert.ok(block.ok && block.value !== null);
   const { blockStart } = block.value;
   const digests = () =>
@@ -133,7 +134,7 @@ const forgeDeclaredDigests = async (original) => {
       Buffer.from(
         computeApkContentDigest(
           bytes,
-          { tail: tail.value.tail, blockStart, algorithm },
+          { tail, blockStart, algorithm },
           nodeHash,
         ),
       ),
@@ -145,7 +146,7 @@ const forgeDeclaredDigests = async (original) => {
   for (const [index, old] of before.entries())
     for (
       let at = bytes.indexOf(old, blockStart);
-      at >= 0 && at < tail.value.centralDirectoryOffset;
+      at >= 0 && at < tail.centralDirectoryOffset;
       at = bytes.indexOf(old, at + old.length)
     ) {
       after[index].copy(bytes, at);

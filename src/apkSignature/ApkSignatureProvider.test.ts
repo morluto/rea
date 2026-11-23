@@ -666,15 +666,20 @@ describe("ApkSignatureProvider output budget", () => {
   });
 });
 
-it.each([8, 99])(
-  "limits V1 payload reads for compression method %s",
-  async (method) => {
+it.each([
+  { method: 8, padding: 0 },
+  { method: 8, padding: 64 * 1024 },
+  { method: 99, padding: 0 },
+])(
+  "limits V1 payload reads for compression method $method and padding $padding",
+  async ({ method, padding }) => {
     const name = "META-INF/A.RSA";
     const rawName = Buffer.from(name);
     const uncompressedSize = 150_000;
-    const payload = deflateRawSync(Buffer.alloc(uncompressedSize), {
+    const compressed = deflateRawSync(Buffer.alloc(uncompressedSize), {
       level: 0,
     });
+    const payload = Buffer.concat([compressed, Buffer.alloc(padding)]);
     const bytes = Buffer.alloc(30 + rawName.length + payload.length);
     const dataStart = 30 + rawName.length;
     bytes.writeUInt32LE(0x04034b50, 0);
@@ -716,9 +721,9 @@ it.each([8, 99])(
       });
       expect(reads.length).toBeGreaterThan(1);
       expect(Math.max(...reads)).toBeLessThanOrEqual(64 * 1024);
-      expect(reads.reduce((total, count) => total + count, 0)).toBe(
-        payload.length,
-      );
+      const readBytes = reads.reduce((total, count) => total + count, 0);
+      expect(readBytes).toBeGreaterThanOrEqual(compressed.length);
+      expect(readBytes).toBeLessThanOrEqual(payload.length);
     } else {
       expect(result.decoded).toEqual({
         ok: false,

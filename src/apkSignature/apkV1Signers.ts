@@ -80,6 +80,8 @@ const inflateSignerBlock = async (
   const chunkBytes = 64 * 1024;
   const output: Buffer[] = [];
   let outputBytes = 0;
+  let suppliedBytes = 0;
+  const inflater = createInflateRaw();
   const exceeded = new Error("APK signer inflation bound exceeded");
   let readingFailed = false;
   let readFailure: unknown;
@@ -102,11 +104,12 @@ const inflateSignerBlock = async (
             readFailure = cause;
             throw cause;
           }
+          suppliedBytes += chunk.length;
           yield chunk;
           offset += expected;
         }
       })(),
-      createInflateRaw(),
+      inflater,
       async (chunks: AsyncIterable<Buffer>) => {
         for await (const chunk of chunks) {
           outputBytes += chunk.length;
@@ -121,15 +124,24 @@ const inflateSignerBlock = async (
       return err(
         `signature block inflates past the ${String(limit)}-byte bound`,
       );
-    if (
-      cause instanceof Error &&
-      "code" in cause &&
-      (cause.code === "Z_DATA_ERROR" ||
-        cause.code === "Z_BUF_ERROR" ||
-        cause.code === "Z_NEED_DICT")
-    )
-      return err("signature block deflate stream is damaged");
-    throw cause;
+    const code =
+      cause instanceof Error && "code" in cause ? cause.code : undefined;
+    // With trailing bytes, zlib can emit EOF before pipeline finishes feeding
+    // the range. Retain the decoded stream only when zlib confirmed EOF and
+    // left input unused. Physical failures above still take precedence.
+    const reachedDeflateEnd =
+      code === "ERR_STREAM_PREMATURE_CLOSE" &&
+      inflater.readableEnded &&
+      inflater.bytesWritten < suppliedBytes;
+    if (!reachedDeflateEnd) {
+      if (
+        code === "Z_DATA_ERROR" ||
+        code === "Z_BUF_ERROR" ||
+        code === "Z_NEED_DICT"
+      )
+        return err("signature block deflate stream is damaged");
+      throw cause;
+    }
   }
   return ok(Buffer.concat(output, outputBytes));
 };
