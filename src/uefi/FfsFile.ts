@@ -65,6 +65,18 @@ interface UnconfirmedFfsState {
  * Checksum findings are observations on the header,
  * not rejections — invalid files stay in the inventory with their notes.
  */
+const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+const ffsFileReaders = new WeakMap<Buffer, BinaryReader>();
+
+function ffsFileReader(buffer: Buffer): BinaryReader {
+  let reader = ffsFileReaders.get(buffer);
+  if (reader === undefined) {
+    reader = new BinaryReader(buffer, true, "FFS file");
+    ffsFileReaders.set(buffer, reader);
+  }
+  return reader;
+}
+
 export function parseFfsFileHeader(
   region: ScanRegion,
   localBase: number,
@@ -115,14 +127,14 @@ function observeFfsFileHeader(
   let headerLength: number = FFS_HEADER_LAYOUT.length;
   let declaredLength = declaredCompact;
   if (largeFile) {
-    const reader = new BinaryReader(region.buffer, true, "FFS file");
     if (!extended) return null;
+    const reader = ffsFileReader(region.buffer);
     headerLength = FFS_HEADER_LAYOUT.extendedLength;
     const size = reader.word(
       localBase + FFS_HEADER_LAYOUT.extendedSizeOffset,
       64,
     );
-    if (size > BigInt(Number.MAX_SAFE_INTEGER))
+    if (size > MAX_SAFE_INTEGER_BIGINT)
       return { kind: "unrepresentable", size, unusableState };
     declaredLength = Number(size);
     if (declaredCompact !== 0)
@@ -166,10 +178,7 @@ function observeFfsFileHeader(
         : null,
     bodyIssue: state === "header-valid" ? "data-not-valid" : null,
     extentIssue,
-    nameGuid: formatGuidLittleEndian(
-      region.buffer.subarray(localBase, localBase + 16),
-      0,
-    ),
+    nameGuid: formatGuidLittleEndian(region.buffer, localBase),
     typeCode: region.buffer[localBase + FFS_HEADER_LAYOUT.typeOffset] ?? 0,
     attributes,
     dataAlignment:
