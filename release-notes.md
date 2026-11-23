@@ -517,6 +517,7 @@
 * **sqlite:** reuse stateless TextDecoder codecs and skip redundant truncation scan on short pages ([#13274](https://github.com/morluto/rea/issues/13274)) ([264c398](https://github.com/morluto/rea/commit/264c398c0d3299bb4de5a58e23e7f92637a08cdf))
 * **swift:** streamline symbol inventory classification ([#13902](https://github.com/morluto/rea/issues/13902)) ([78756a5](https://github.com/morluto/rea/commit/78756a52b4949125fd181dc9e0d68e7550a0714b))
 * **uefi:** pool framed LZMA worker and fuse single-pass publication ([#13338](https://github.com/morluto/rea/issues/13338)) ([6a20a88](https://github.com/morluto/rea/commit/6a20a88e8149ffe2cd03cd5c1da195defbae652f))
+* **uefi:** skip verified erased padding in NVRAM scans ([#14069](https://github.com/morluto/rea/issues/14069)) ([07b6a3d](https://github.com/morluto/rea/commit/07b6a3dc5f496081c60f4d122d08bad292a21509))
 * **uefi:** summarize firmware extraction by default over MCP ([e617a55](https://github.com/morluto/rea/commit/e617a55385daf3dea0243e340a8bf3c33232b42a))
 * **uefi:** summarize firmware inspection by default over MCP ([11ac37a](https://github.com/morluto/rea/commit/11ac37a42ffd9f4036d422f66a369302c7154a60))
 * **uefi:** write LZMA frame headers and bodies separately ([#13768](https://github.com/morluto/rea/issues/13768)) ([6a7767b](https://github.com/morluto/rea/commit/6a7767b609bba770ef43d0b0c574b6d083724888))
