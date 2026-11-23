@@ -154,6 +154,7 @@ const readChainedImportNames = async (
   }
 };
 
+const MH_DSYM = 10;
 const DISCOVERY_COMMANDS = [["lipo", ["-detailed_info"]]] as const;
 
 // llvm-nm's default dyld-info pass fakes up symbols the symbol table lacks
@@ -299,10 +300,9 @@ export const inspectNativeMacho = async (
     size,
     "declaration" in range ? range : undefined,
   );
-  const load = projectMachoBinary(binary);
   const unbackedTextFailure = captures.find(isUnbackedTextDyldFailure);
   if (unbackedTextFailure !== undefined) {
-    if (!["10", "DSYM", "MH_DSYM"].includes(load.fileType ?? ""))
+    if (binary.header.fileType !== MH_DSYM)
       return err(unusableNativeCommandOutput(unbackedTextFailure));
     return err(
       new AnalysisUnsupportedTargetError(
@@ -321,9 +321,9 @@ export const inspectNativeMacho = async (
     const refusal = parseDyldFileTypeRefusal(fileTypeFailure);
     if (refusal === null) continue;
     const { fileType, diagnostic } = refusal;
-    const typeName = fileType === "4" ? "CORE" : "FVMLIB";
-    if (![fileType, typeName, `MH_${typeName}`].includes(load.fileType ?? ""))
+    if (binary.header.fileType !== fileType)
       return err(unusableNativeCommandOutput(fileTypeFailure));
+    const typeName = fileType === 4 ? "CORE" : "FVMLIB";
     return err(
       new AnalysisUnsupportedTargetError(
         "inspect_macho",
@@ -340,9 +340,10 @@ export const inspectNativeMacho = async (
   const uuidlessDyldFailure = captures.find(isMissingUuidDyldFailure);
   if (
     uuidlessDyldFailure !== undefined &&
-    load.commands.some(({ kind }) => kind === "LC_UUID")
+    binary.commands.some(({ command }) => command === LC.UUID)
   )
     return err(conflictingUuidCommandEvidence(uuidlessDyldFailure));
+  const load = projectMachoBinary(binary);
   const imageBase =
     load.segments.find(
       (segment) =>

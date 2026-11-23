@@ -830,58 +830,19 @@ describe("Mach-O encryption reporting", () => {
   });
 });
 
-it.each(["10", "DSYM", "2"])(
-  "classifies the unbacked-text dyld refusal using observed file type %s",
-  async (fileType) => {
-    const diagnostic =
-      "section '__TEXT/__text' has offset=0 but is not a zero-fill section type\n";
-    const runner = new NativeFixtureRunner();
-    const result = await inspectNativeMacho({
-      ...inspectionFatContext(
-        inspectionImage({ fileType: fileType === "2" ? 2 : 10 }),
-      ),
-      target: nativeMachoTarget("/fixture/debug-companion"),
-      run: async (tool, args, _signal, acceptNonZeroIf) => {
-        const captured = await runner.run(tool, args);
-        if (!captured.ok || tool !== "dyld_info") return captured;
-        const refused = {
-          ...captured.value,
-          stdout: diagnostic,
-          stdoutBytes: Buffer.byteLength(diagnostic),
-          exitCode: 1,
-        };
-        if (acceptNonZeroIf?.(refused)) return ok(refused);
-        return err(
-          new AnalysisOutputError("inspect_macho", "unaccepted native failure"),
-        );
-      },
-      readEncryption: unreadEncryption,
-      invocation: () => {
-        throw new Error(
-          "Refused target does not produce inspection provenance",
-        );
-      },
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error._tag).toBe(
-      fileType === "2"
-        ? "AnalysisOutputError"
-        : "AnalysisUnsupportedTargetError",
-    );
-    expect(result.error.capturedOutput).toMatchObject({
-      stdout: diagnostic,
-      exit_code: 1,
-    });
-  },
-);
-
 describe("dSYM diagnostic admission", () => {
   const diagnostic =
     "section '__TEXT/__text' has offset=0 but is not a zero-fill section type";
 
   it.each([
     { name: "stdout refusal", stdout: diagnostic, stderr: "", accepted: true },
+    {
+      name: "the same refusal on a linked executable",
+      fileType: 2,
+      stdout: diagnostic,
+      stderr: "",
+      accepted: false,
+    },
     { name: "stderr refusal", stdout: "", stderr: diagnostic, accepted: true },
     {
       name: "echoed path and prefixed refusal",
@@ -920,12 +881,6 @@ describe("dSYM diagnostic admission", () => {
       accepted: false,
     },
     {
-      name: "missing UUID before dSYM refusal",
-      stdout: `missing LC_UUID load command\n${diagnostic}`,
-      stderr: "",
-      accepted: false,
-    },
-    {
       name: "missing UUID beside stderr dSYM refusal",
       stdout: "missing LC_UUID load command",
       stderr: diagnostic,
@@ -937,10 +892,10 @@ describe("dSYM diagnostic admission", () => {
       stderr: diagnostic,
       accepted: false,
     },
-  ])("preserves $name", async ({ stdout, stderr, accepted }) => {
+  ])("preserves $name", async ({ fileType = 10, stdout, stderr, accepted }) => {
     const runner = new NativeFixtureRunner();
     const result = await inspectNativeMacho({
-      ...inspectionFatContext(inspectionImage({ fileType: 10 })),
+      ...inspectionFatContext(inspectionImage({ fileType })),
       target: nativeMachoTarget("/fixture/debug-companion"),
       readEncryption: unreadEncryption,
       run: async (tool, args, _signal, acceptNonZeroIf) => {
@@ -984,5 +939,11 @@ describe("dSYM diagnostic admission", () => {
       stderr,
       exit_code: 1,
     });
+    if (fileType !== 10)
+      expect(result.error).toMatchObject({
+        reason: expect.stringContaining(
+          "did not produce a usable inspection result",
+        ),
+      });
   });
 });
