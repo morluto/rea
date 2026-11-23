@@ -8127,3 +8127,44 @@ it("marks declared manifest with missing modules property and declared count as 
     await provider.close();
   }
 });
+
+it("records missing modules inventory explanation limitation when manifest is empty object", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-empty-manifest-obj-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "ModA.efi"), createMinimalPeBuffer());
+
+  // Empty manifest {}
+  await writeFile(join(inDir, "firmware_manifest.json"), JSON.stringify({}));
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((l) =>
+        l.includes("contains no modules inventory array"),
+      ),
+    ).toBe(true);
+    const outManifest = JSON.parse(
+      await readFile(join(outDir, "firmware_manifest.json"), "utf8"),
+    );
+    expect(outManifest.source_coverage).toBe("unknown");
+    expect(outManifest.coverage).toBe("partial");
+    expect(
+      outManifest.limitations?.some((l: string) =>
+        l.includes("contains no modules inventory array"),
+      ),
+    ).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});

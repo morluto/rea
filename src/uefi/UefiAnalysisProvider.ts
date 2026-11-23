@@ -3498,6 +3498,16 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   identityRelPath: "firmware_manifest.json#missing_module_rows",
                   reason: `missing_module_rows:${declaredDecompiledCount}`,
                 });
+              } else {
+                if (limitations.length < 50) {
+                  limitations.push(
+                    "Manifest firmware_manifest.json contains no modules inventory array.",
+                  );
+                }
+                omittedCandidates.push({
+                  identityRelPath: "firmware_manifest.json#modules",
+                  reason: "missing_modules_inventory",
+                });
               }
             }
           } catch (manifestErr) {
