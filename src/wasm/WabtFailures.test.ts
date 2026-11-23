@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { expect, it } from "vitest";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { wabtFailureDialect } from "./WabtFailures.js";
+import { wabtFailureDialect, type WabtVersionProbe } from "./WabtFailures.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 
 import {
@@ -178,8 +178,8 @@ it.each([
         ? { cancellation: { reason: callerReason } }
         : undefined,
     );
-    const probe = {
-      configuration_key: "REA_WABT_BIN_DIRECTORY" as const,
+    const probe: WabtVersionProbe = {
+      configuration_key: "REA_WABT_BIN_DIRECTORY",
       executable_path: "/tools/wasm2wat",
       tool: "wasm2wat",
       expected_version: WABT_VERSION,
