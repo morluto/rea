@@ -41,9 +41,8 @@ import {
   readElfImageCooperative,
 } from "../../domain/native/elfImage.js";
 import {
-  ElfNoteStorageFailure,
-  parseElfNotes,
-  parseElfNotesCooperative,
+  readElfBuildIds,
+  readElfBuildIdsCooperative,
 } from "./ElfNoteParser.js";
 import type { ZstandardFramePause } from "../../domain/compression/zstandardExactFrame.js";
 import {
@@ -54,7 +53,7 @@ import {
 import { err, ok, type Result } from "../../domain/result.js";
 
 type PreparedCandidateImage = Result<ReturnType<typeof readElfImage>, unknown>;
-type PreparedNotes = Result<ReturnType<typeof parseElfNotes>, unknown>;
+type PreparedNotes = Result<ReturnType<typeof readElfBuildIds>, unknown>;
 
 type ElfSection = Extract<ImageSection, { format: "elf" }>;
 type Report = ElfDebugLink;
@@ -68,7 +67,6 @@ const DEBUG_SECTION_NAMES = [
   ".gnu_debugdata",
 ] as const;
 const XZ_MAGIC = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
-const GNU_BUILD_ID_NOTE_TYPE = 3;
 
 const fits = (offset: bigint, size: bigint, fileLength: number): boolean =>
   offset >= 0n &&
@@ -396,24 +394,16 @@ const unknownBuildId = (
 
 const observeBuildId = (
   bytes: Buffer,
-  artifact: Report["artifact"],
   input: InspectElfDebugLinkInput,
   preparedNotes?: PreparedNotes,
 ): ObservedBuildId => {
-  let entries: ElfNoteStorageFailure["readableEntries"];
-  let unsupportedStorage: ElfNoteStorageFailure | undefined;
+  let notes: ReturnType<typeof readElfBuildIds>;
   try {
     if (preparedNotes !== undefined && !preparedNotes.ok)
       throw preparedNotes.error;
-    entries = (
+    notes =
       preparedNotes?.value ??
-      parseElfNotes(
-        bytes,
-        artifact,
-        buildIdNoteInput(artifact, input),
-        BUILD_ID_NOTE_OPTIONS,
-      )
-    ).entries;
+      readElfBuildIds(bytes, input, MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES);
   } catch (cause) {
     if (
       isRethrownBudget(cause) ||
@@ -425,44 +415,19 @@ const observeBuildId = (
         "note_tables_malformed",
         `ELF note tables could not be decoded: ${cause.message}`,
       );
-    if (cause instanceof ElfNoteStorageFailure) {
-      unsupportedStorage = cause;
-      entries = cause.readableEntries;
-    } else if (cause instanceof BinaryFormatFailure) {
+    if (cause instanceof BinaryFormatFailure)
       return unknownBuildId(
         cause.kind === "unsupported"
           ? "note_tables_unsupported"
           : "note_tables_malformed",
         `ELF note tables could not be decoded: ${cause.message}`,
       );
-    } else {
-      throw cause;
-    }
+    throw cause;
   }
-  const ids: string[] = [];
-  const sources: BuildId["sources"] = [];
-  let oversized = false;
-  for (const entry of entries) {
-    if (entry.owner !== "GNU" || entry.type !== GNU_BUILD_ID_NOTE_TYPE)
-      continue;
-    // The parser leaves oversized descriptors undecoded, so judge the raw size.
-    if (entry.descsz > MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES) {
-      oversized = true;
-      continue;
-    }
-    const hex = entry.gnu?.build_id_hex;
-    if (hex === null || hex === undefined || hex.length === 0) continue;
-    if (!ids.includes(hex)) ids.push(hex);
-    sources.push({
-      hex,
-      table_kind: entry.table_kind,
-      table_index: entry.table_index,
-      note: entry.location,
-      descriptor: entry.descriptor.location,
-    });
-  }
+  const { sources, oversized, unreadableStorage } = notes;
+  const ids = [...new Set(sources.map(({ hex }) => hex))];
   // Retain readable ids and their note locations when identity is incomplete.
-  if (unsupportedStorage !== undefined || oversized)
+  if (unreadableStorage !== null || oversized)
     return {
       buildId: {
         status: "unknown",
@@ -470,14 +435,13 @@ const observeBuildId = (
         ids,
         sources,
         reason:
-          unsupportedStorage === undefined
+          unreadableStorage === null
             ? "build_id_exceeds_limit"
             : "note_tables_unsupported",
       },
       limitation:
-        unsupportedStorage === undefined
-          ? "A GNU build-id exceeds 256 bytes and was not copied."
-          : unsupportedStorage.message,
+        unreadableStorage ??
+        "A GNU build-id exceeds 256 bytes and was not copied.",
     };
   if (ids.length === 0)
     return {
@@ -512,19 +476,6 @@ const sectionsNamed = (
   sections: readonly ElfSection[],
   name: string,
 ): readonly ElfSection[] => sections.filter((section) => section.name === name);
-
-const BUILD_ID_NOTE_OPTIONS = {
-  maxGnuBuildIdBytes: MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES,
-  retainReadableNotes: true,
-};
-const buildIdNoteInput = (
-  artifact: Report["artifact"],
-  input: InspectElfDebugLinkInput,
-) => ({
-  path: artifact.path,
-  max_file_bytes: input.max_file_bytes,
-  max_entries: input.max_entries,
-});
 
 /** Decode separate-debug linkage from one in-memory ELF image. */
 const ELF_DEBUG_LINK_OPERATION = "inspect_elf_debug_link";
@@ -563,7 +514,7 @@ export const parseElfDebugLink = (
     sectionsNamed(sections, ".gnu_debugdata"),
     namesComplete,
   );
-  const observed = observeBuildId(bytes, artifact, input, preparedNotes);
+  const observed = observeBuildId(bytes, input, preparedNotes);
   const limitations: Limitations = [...ELF_DEBUG_LINK_LIMITATIONS];
   if (image.section_names_limitation !== undefined)
     limitations.push(image.section_names_limitation);
@@ -646,7 +597,6 @@ const candidateSections = (
 const readCandidateIdentity = (
   content: Buffer,
   totalBytes: number,
-  artifact: Report["artifact"],
   input: InspectElfDebugLinkInput,
   preparedImage?: PreparedCandidateImage,
   preparedNotes?: PreparedNotes,
@@ -746,7 +696,7 @@ const readCandidateIdentity = (
   let observed: ObservedBuildId | null = null;
   if (frameAllowance === undefined) {
     try {
-      observed = observeBuildId(content, artifact, input, preparedNotes);
+      observed = observeBuildId(content, input, preparedNotes);
     } catch (cause) {
       frameAllowance = zstandardFrameAllowanceCause(cause);
       if (frameAllowance === undefined && !isRethrownBudget(cause)) throw cause;
@@ -914,7 +864,6 @@ export const verifyElfDebugCandidate = (
   const read = readCandidateIdentity(
     candidate.prefix,
     candidate.bytes,
-    candidateArtifact(candidate),
     input,
     preparedImage,
     preparedNotes,
@@ -956,29 +905,19 @@ export const verifyElfDebugCandidate = (
 const debugLinkPause = (signal?: AbortSignal) => () =>
   yieldArtifactRead(signal);
 
-const candidateArtifact = (candidate: ElfDebugCandidateFile) => ({
-  path: candidate.path,
-  sha256: candidate.sha256,
-  bytes: candidate.bytes,
-});
-
 const prepareBuildIdNotes = async (
   bytes: Buffer,
-  artifact: Report["artifact"],
   input: InspectElfDebugLinkInput,
-  pause: ZstandardFramePause,
   decode: CooperativeElfSectionNameDecoder,
   signal: AbortSignal | undefined,
 ): Promise<PreparedNotes> => {
   assertArtifactReadActive(signal);
   try {
     return ok(
-      await parseElfNotesCooperative(
+      await readElfBuildIdsCooperative(
         bytes,
-        artifact,
-        buildIdNoteInput(artifact, input),
-        pause,
-        BUILD_ID_NOTE_OPTIONS,
+        input,
+        MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES,
         decode,
       ),
     );
@@ -1004,14 +943,7 @@ export const parseElfDebugLinkCooperative = async (
     input.max_file_bytes,
     decode,
   );
-  const notes = await prepareBuildIdNotes(
-    bytes,
-    artifact,
-    input,
-    pause,
-    decode,
-    signal,
-  );
+  const notes = await prepareBuildIdNotes(bytes, input, decode, signal);
   assertArtifactReadActive(signal);
   return parseElfDebugLink(bytes, artifact, input, image, notes);
 };
@@ -1055,9 +987,7 @@ export const verifyElfDebugCandidateCooperative = async (
     return verifyElfDebugCandidate(report, candidate, input, preparedImage);
   const notes = await prepareBuildIdNotes(
     candidate.prefix,
-    candidateArtifact(candidate),
     input,
-    pause,
     decode,
     signal,
   );
