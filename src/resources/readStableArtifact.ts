@@ -287,7 +287,8 @@ export const withStableArtifactHandle = async <Value>(
         throw cause;
       });
       await verifyState();
-      assertArtifactReadActive(options.signal);
+      // The descriptor owner records this verified completion before checking
+      // finalization cancellation, so cleanup errors can retain the value.
       return value;
     },
   });

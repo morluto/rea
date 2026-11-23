@@ -9,6 +9,7 @@ import {
   ArtifactReaderFailure,
   readStableArtifact,
   withStableArtifactHandle,
+  artifactFileCompletion,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
@@ -71,6 +72,7 @@ export class AppleIpsProvider implements AppleIpsPort {
 
   async inspect(input: InspectAppleIpsInput, options?: ExecutionOptions) {
     let completedReport: AppleIps | undefined;
+    let candidateJoin: AppleIps | undefined;
     let activePath = input.path;
     let activeField: "path" | "join_path" = "path";
     let completedSnapshot:
@@ -106,7 +108,7 @@ export class AppleIpsProvider implements AppleIpsPort {
         activePath = joinPath;
         activeField = "join_path";
         completedSnapshot = undefined;
-        await withStableArtifactHandle(
+        completedReport = await withStableArtifactHandle(
           joinPath,
           input.max_join_bytes,
           {
@@ -130,7 +132,7 @@ export class AppleIpsProvider implements AppleIpsPort {
                     joinHandle.prefix.subarray(offset, offset + length),
                   )
                 : joinHandle.readRange(offset, length);
-            completedReport = {
+            candidateJoin = {
               ...report,
               join: await resolveAppleIpsJoin(
                 report,
@@ -147,12 +149,18 @@ export class AppleIpsProvider implements AppleIpsPort {
                 read,
               ),
             };
+            return candidateJoin;
           },
         );
         assertArtifactReadActive(options?.signal);
         return ok(completedReport);
       });
     } catch (cause) {
+      if (
+        candidateJoin !== undefined &&
+        artifactFileCompletion(cause)?.value === candidateJoin
+      )
+        completedReport = candidateJoin;
       const primary = appleIpsFailurePrimary(
         artifactFilePrimaryFacts(cause),
         {
