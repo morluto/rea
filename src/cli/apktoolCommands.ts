@@ -1,5 +1,6 @@
+import type { RequestAnalysisPort } from "../ports/AnalysisProvider.js";
+import type { ApktoolRequest } from "../domain/apktool/apktoolResourceAnalysis.js";
 import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
-import type { ApktoolResourceAnalysisPort } from "../application/apktool/ApktoolResourceAnalysisPort.js";
 import { createApktoolResourceAnalysisProvider } from "../composition/apktool.js";
 import { APKTOOL_TOOL_CONTRACTS } from "../contracts/apktool/apktoolToolContracts.js";
 import type { ApktoolOperation } from "../domain/apktool/apktoolResourceAnalysis.js";
@@ -19,7 +20,7 @@ export const registerApktoolCommands = (
   cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
-  provider: ApktoolResourceAnalysisPort = createApktoolResourceAnalysisProvider(
+  provider: RequestAnalysisPort<ApktoolRequest> = createApktoolResourceAnalysisProvider(
     environment,
   ),
 ): void => {

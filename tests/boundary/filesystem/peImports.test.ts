@@ -2,7 +2,7 @@ import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { peImportsSchema } from "../../../src/domain/native/peImports.js";
-import { createPeImportsService } from "../../../src/composition/binaryDiagnostics.js";
+import { createPeImportsService } from "../../../src/composition/binaryDiagnostics/peImports.js";
 import { peImportImage } from "../../fixtures/binaryDiagnostics/peImports.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 

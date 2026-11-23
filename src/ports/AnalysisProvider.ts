@@ -481,3 +481,13 @@ export interface AnalysisProviderCandidate extends AnalysisProvider {
   /** Release candidate resources that are independent of any active client. */
   closeOwnedResources?(): Promise<Result<null, AnalysisError>>;
 }
+
+/** Request-dispatched provider boundary with availability probing and cleanup. */
+export interface RequestAnalysisPort<TRequest> {
+  inspectAvailability(signal?: AbortSignal): Promise<ProviderAvailability>;
+  close(): Promise<void>;
+  execute(
+    request: TRequest,
+    options?: ExecutionOptions,
+  ): Promise<Result<AnalysisExecution, AnalysisError>>;
+}

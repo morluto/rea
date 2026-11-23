@@ -104,10 +104,11 @@ export const initialStateBytes = (state: EnvironmentState): number =>
  * report always loads back.
  */
 export class EnvironmentStateStore {
-  #entities: ReadonlyMap<string, StateEntity> = new Map();
-  #storedDeleted: ReadonlyMap<string, StateEntity> = new Map();
-  #collections: ReadonlyMap<string, readonly StateEntity[]> = new Map();
-  #typeCollections: ReadonlyMap<string, readonly string[]> = new Map();
+  #entities: Map<string, StateEntity> = new Map();
+  #storedDeleted: Map<string, StateEntity> = new Map();
+  #collections: Map<string, readonly StateEntity[]> = new Map();
+  #typeCollections: Map<string, readonly string[]> = new Map();
+  #collectionEntityCounts: Map<string, number> = new Map();
   #documents: Map<string, HeldDocument> = new Map();
   #content: StateContent = { entities: [], documents: [] };
   #entityIds: ReadonlySet<string> | undefined;
@@ -151,7 +152,7 @@ export class EnvironmentStateStore {
   /** Restore the initial state the Evidence holds; the clock and counter start again. */
   reset(): void {
     this.#install(this.state, this.#initialBytes);
-    this.#evidenceCollections = this.#typeCollections;
+    this.#evidenceCollections = new Map(this.#typeCollections);
     this.#restart();
   }
 
@@ -309,17 +310,40 @@ export class EnvironmentStateStore {
         : members.length > 0
           ? entities.indexOf(members.at(-1)!) + 1
           : entities.length;
-    this.#install(
-      {
-        ...this.#content,
-        entities: [
-          ...entities.slice(0, anchor),
-          entity,
-          ...entities.slice(anchor),
-        ],
-      },
-      bytes.value,
-    );
+    const nextEntities = [
+      ...entities.slice(0, anchor),
+      entity,
+      ...entities.slice(anchor),
+    ];
+    if (replaced !== undefined) {
+      this.#install({ ...this.#content, entities: nextEntities }, bytes.value);
+    } else {
+      const collKey = environmentCollectionKey(entity.type, entity.collection);
+      if (markedDeleted(entity.fields)) {
+        this.#storedDeleted.set(key, entity);
+      } else {
+        this.#entities.set(key, entity);
+        const nextMembers =
+          index < members.length
+            ? [...members.slice(0, index), entity, ...members.slice(index)]
+            : [...members, entity];
+        this.#collections.set(collKey, nextMembers);
+      }
+      const prevCount = this.#collectionEntityCounts.get(collKey) ?? 0;
+      this.#collectionEntityCounts.set(collKey, prevCount + 1);
+      if (prevCount === 0) {
+        const existing = this.#typeCollections.get(entity.type);
+        this.#typeCollections.set(
+          entity.type,
+          existing === undefined
+            ? [entity.collection]
+            : [...existing, entity.collection],
+        );
+      }
+      this.#content = { ...this.#content, entities: nextEntities };
+      this.#entityIds = undefined;
+      this.#bytes = bytes.value;
+    }
     if (newCollectionBytes > 0) {
       this.#rememberCollection(entity.type, entity.collection);
       this.#collectionHistoryBytes += newCollectionBytes;
@@ -355,21 +379,59 @@ export class EnvironmentStateStore {
       delta += jsonByteLength(entity) - jsonByteLength(held);
     const bytes = this.#grown(delta);
     if (!bytes.ok) return bytes;
-    const key = (entity: StateEntity) =>
-      environmentEntityKey(entity.type, entity.collection, entity.id);
-    const placed = new Set(order.map(key));
-    let next = 0;
-    this.#install(
-      {
-        ...this.#content,
-        entities: this.#content.entities.map((candidate) =>
-          placed.has(key(candidate))
-            ? order[next++]!
-            : (replaced.get(candidate) ?? candidate),
-        ),
-      },
-      bytes.value,
-    );
+    if (order.length > 0) {
+      const key = (entity: StateEntity) =>
+        environmentEntityKey(entity.type, entity.collection, entity.id);
+      const placed = new Set(order.map(key));
+      let next = 0;
+      this.#install(
+        {
+          ...this.#content,
+          entities: this.#content.entities.map((candidate) =>
+            placed.has(key(candidate))
+              ? order[next++]!
+              : (replaced.get(candidate) ?? candidate),
+          ),
+        },
+        bytes.value,
+      );
+      return ok(undefined);
+    }
+    const touchedCollections = new Set<string>();
+    for (const [held, entity] of replaced) {
+      const key = environmentEntityKey(
+        entity.type,
+        entity.collection,
+        entity.id,
+      );
+      const collKey = environmentCollectionKey(entity.type, entity.collection);
+      touchedCollections.add(collKey);
+      if (markedDeleted(entity.fields)) {
+        this.#entities.delete(key);
+        this.#storedDeleted.set(key, entity);
+      } else {
+        this.#entities.set(key, entity);
+      }
+    }
+    for (const collKey of touchedCollections) {
+      const current = this.#collections.get(collKey);
+      if (current === undefined) continue;
+      const nextMembers: StateEntity[] = [];
+      for (const member of current) {
+        const updated = replaced.get(member) ?? member;
+        if (!markedDeleted(updated.fields)) nextMembers.push(updated);
+      }
+      if (nextMembers.length === 0) this.#collections.delete(collKey);
+      else this.#collections.set(collKey, nextMembers);
+    }
+    this.#content = {
+      ...this.#content,
+      entities: this.#content.entities.map(
+        (candidate) => replaced.get(candidate) ?? candidate,
+      ),
+    };
+    this.#entityIds = undefined;
+    this.#bytes = bytes.value;
     return ok(undefined);
   }
 
@@ -392,10 +454,67 @@ export class EnvironmentStateStore {
       (candidate) => !held.has(candidate),
     );
     let bytes = this.#bytes;
-    for (const entity of held) bytes -= jsonByteLength(entity);
+    const touchedCollections = new Map<
+      string,
+      { readonly type: string; readonly collection: string; count: number }
+    >();
+    for (const entity of held) {
+      bytes -= jsonByteLength(entity);
+      this.#entities.delete(
+        environmentEntityKey(entity.type, entity.collection, entity.id),
+      );
+      const collKey = environmentCollectionKey(entity.type, entity.collection);
+      const entry = touchedCollections.get(collKey);
+      if (entry !== undefined) entry.count += 1;
+      else
+        touchedCollections.set(collKey, {
+          type: entity.type,
+          collection: entity.collection,
+          count: 1,
+        });
+    }
     // Each removed entity takes its separator, except the last one an emptied list had none for.
     bytes -= held.size - (kept.length === 0 ? 1 : 0);
-    this.#install({ ...this.#content, entities: kept }, bytes);
+    const typesToReorder = new Set<string>();
+    for (const [collKey, { type, collection, count }] of touchedCollections) {
+      const current = this.#collections.get(collKey);
+      const removedFirst =
+        current !== undefined && current.length > 0 && held.has(current[0]!);
+      if (current !== undefined) {
+        const nextMembers = current.filter((member) => !held.has(member));
+        if (nextMembers.length === 0) this.#collections.delete(collKey);
+        else this.#collections.set(collKey, nextMembers);
+      }
+      const nextCount =
+        (this.#collectionEntityCounts.get(collKey) ?? 0) - count;
+      if (nextCount <= 0) {
+        this.#collectionEntityCounts.delete(collKey);
+        const typeColls = this.#typeCollections.get(type);
+        if (typeColls !== undefined) {
+          const filtered = typeColls.filter((c) => c !== collection);
+          if (filtered.length === 0) this.#typeCollections.delete(type);
+          else this.#typeCollections.set(type, filtered);
+        }
+      } else {
+        this.#collectionEntityCounts.set(collKey, nextCount);
+        if (removedFirst && (this.#typeCollections.get(type)?.length ?? 0) > 1)
+          typesToReorder.add(type);
+      }
+    }
+    this.#content = { ...this.#content, entities: kept };
+    for (const type of typesToReorder) {
+      const seen = new Set<string>();
+      const ordered: string[] = [];
+      for (const candidate of kept) {
+        if (candidate.type !== type || seen.has(candidate.collection)) continue;
+        seen.add(candidate.collection);
+        ordered.push(candidate.collection);
+      }
+      if (ordered.length === 0) this.#typeCollections.delete(type);
+      else this.#typeCollections.set(type, ordered);
+    }
+    this.#entityIds = undefined;
+    this.#bytes = bytes;
     if (keep) for (const entity of held) this.#keepDeleted(entity);
   }
 
@@ -547,6 +666,7 @@ export class EnvironmentStateStore {
     const storedDeleted = new Map<string, StateEntity>();
     const collections = new Map<string, StateEntity[]>();
     const typeCollections = new Map<string, string[]>();
+    const collectionEntityCounts = new Map<string, number>();
     const typeCollectionSets = new Map<string, Set<string>>();
     const recordTypeCollection = (type: string, collection: string): void => {
       let seen = typeCollectionSets.get(type);
@@ -562,6 +682,11 @@ export class EnvironmentStateStore {
       }
     };
     for (const entity of content.entities) {
+      const collKey = environmentCollectionKey(entity.type, entity.collection);
+      collectionEntityCounts.set(
+        collKey,
+        (collectionEntityCounts.get(collKey) ?? 0) + 1,
+      );
       if (markedDeleted(entity.fields)) {
         storedDeleted.set(
           environmentEntityKey(entity.type, entity.collection, entity.id),
@@ -574,19 +699,19 @@ export class EnvironmentStateStore {
         environmentEntityKey(entity.type, entity.collection, entity.id),
         entity,
       );
-      const key = environmentCollectionKey(entity.type, entity.collection);
-      const members = collections.get(key);
+      const members = collections.get(collKey);
       if (members !== undefined) {
         members.push(entity);
         continue;
       }
-      collections.set(key, [entity]);
+      collections.set(collKey, [entity]);
       recordTypeCollection(entity.type, entity.collection);
     }
     this.#entities = entities;
     this.#storedDeleted = storedDeleted;
     this.#collections = collections;
     this.#typeCollections = typeCollections;
+    this.#collectionEntityCounts = collectionEntityCounts;
     this.#documents = new Map(
       content.documents.map((document) => [document.tool, document]),
     );

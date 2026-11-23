@@ -79,8 +79,6 @@ interface TextBudget {
   scanned: number;
   readonly hashes: Map<string, string>;
   readonly scans: Map<string, number>;
-  /** GNU build-id descriptors above this many bytes are not hex-encoded. */
-  readonly maxGnuBuildIdBytes?: number | undefined;
 }
 
 const fail = (message: string): never => {
@@ -259,11 +257,6 @@ const decodeGnu = (
 ): ElfNotes["entries"][number]["gnu"] => {
   if (owner !== "GNU") return null;
   if (type === 3 && descriptor.length > 0) {
-    if (
-      text.maxGnuBuildIdBytes !== undefined &&
-      descriptor.length > text.maxGnuBuildIdBytes
-    )
-      return { build_id_hex: null, abi_tag: null, gold_version: null };
     chargeText(text, descriptor.length * 2);
     return {
       build_id_hex: descriptor.toString("hex"),
@@ -651,24 +644,34 @@ const decodeCore = (
   return null;
 };
 
-/** Optional decoding bounds for consumers that retain only part of a note. */
-export interface ElfNoteParseOptions {
-  /** Leave larger GNU build-ids undecoded; `descsz` still reports their size. */
-  readonly maxGnuBuildIdBytes?: number;
-  /** Retain readable notes on the unsupported result for debug-link evidence. */
-  readonly retainReadableNotes?: boolean;
-}
-
 type ElfNoteEntry = Omit<ElfNotes["entries"][number], "index">;
+type ElfNoteTable = ElfNotes["tables"][number];
+type ElfNoteScanInput = Pick<
+  InspectElfNotesInput,
+  "max_entries" | "max_file_bytes"
+>;
+type ElfNoteSteps<T> = Generator<
+  ElfSectionNameDecodeRequest,
+  T,
+  ElfCompressedSectionResult
+>;
+type VisitElfNote = (
+  note: ParsedNote,
+  table: ElfNoteTable,
+  header: ElfFixedHeader,
+  text: TextBudget,
+) => void;
+
+interface ElfNoteTableScan {
+  readonly header: ElfFixedHeader;
+  readonly tables: ElfNotes["tables"];
+  readonly examinedEntries: number;
+  readonly sectionNameLimitations: ReadonlySet<string>;
+  readonly unreadCompressedNotes: boolean;
+}
 
 const COMPRESSED_NOTE_MESSAGE =
   "Compressed ELF note sections are unsupported; descriptor file offsets require uncompressed note storage.";
-
-export class ElfNoteStorageFailure extends BinaryFormatFailure {
-  constructor(readonly readableEntries: readonly ElfNoteEntry[]) {
-    super("unsupported", COMPRESSED_NOTE_MESSAGE);
-  }
-}
 
 const ANDROID_IDENT_SLOT_BYTES = 64;
 const ANDROID_IDENT_MODERN_MIN_BYTES = 4 + ANDROID_IDENT_SLOT_BYTES * 2;
@@ -740,23 +743,18 @@ const decodeAndroid = (
   };
 };
 
-/** Decode PT_NOTE and SHT_NOTE tables from one in-memory ELF image. */
+/** Frame every admitted declaration before projecting the notes a consumer needs. */
 const parseElfNoteSteps = function* (
   bytes: Buffer,
-  artifact: ElfNotes["artifact"],
-  input: InspectElfNotesInput,
-  options: ElfNoteParseOptions = {},
-): Generator<
-  ElfSectionNameDecodeRequest,
-  ElfNotes,
-  ElfCompressedSectionResult
-> {
+  input: ElfNoteScanInput,
+  options: { readonly retainReadableNotes: boolean },
+  visitNote: VisitElfNote,
+): ElfNoteSteps<ElfNoteTableScan> {
   const fixed = readElfFixedHeader(bytes);
   if (!fixed.ok) return fail(fixed.error);
   const header = fixed.value;
   const reader = new ElfReader(bytes, header.byteOrder === "little");
   const wide = header.elfClass === 64;
-  const type = header.type;
   const raw = readElfRawTableDeclarations(bytes, header);
   if (!raw.ok) return fail(raw.error.message);
   const { programs, sections } = raw.value;
@@ -796,12 +794,6 @@ const parseElfNoteSteps = function* (
     scanned: 0,
     hashes: new Map(),
     scans: new Map(),
-    maxGnuBuildIdBytes: options.maxGnuBuildIdBytes,
-  };
-  const fdo: FdoDecodeBudget = {
-    decoded: 0,
-    retained: 0,
-    descriptors: new Map(),
   };
   let shstrtab: Buffer | null = null;
   const sectionNameLimitations = new Set<string>();
@@ -862,7 +854,6 @@ const parseElfNoteSteps = function* (
     );
   }
   const tables: ElfNotes["tables"] = [];
-  const parsed: ElfNoteEntry[] = [];
   let unreadCompressedNotes = false;
   const examined = { count: 0 };
   const noteSections = [];
@@ -936,13 +927,14 @@ const parseElfNoteSteps = function* (
         continue;
       }
       const alignment = noteAlignment(Number(program.alignment));
-      tables.push({
+      const table: ElfNoteTable = {
         kind: "program",
         index,
         name: null,
         location: { offset: fileOffset, bytes: fileSize },
         alignment,
-      });
+      };
+      tables.push(table);
       for (const note of parseNoteStream(
         reader,
         fileOffset,
@@ -952,7 +944,7 @@ const parseElfNoteSteps = function* (
         examined,
         text,
       ))
-        parsed.push(toEntry(note, "program", index, header, text, fdo));
+        visitNote(note, table, header, text);
     }
   }
   if (sectionTableOverlapsHeader)
@@ -993,13 +985,14 @@ const parseElfNoteSteps = function* (
         : reader.cString(shstrtab, nameOffset, text);
     if (sectionName.limitation !== null)
       sectionNameLimitations.add(sectionName.limitation);
-    tables.push({
+    const table: ElfNoteTable = {
       kind: "section",
       index,
       name: sectionName.name,
       location: { offset: fileOffset, bytes: fileSize },
       alignment,
-    });
+    };
+    tables.push(table);
     for (const note of parseNoteStream(
       reader,
       fileOffset,
@@ -1009,35 +1002,65 @@ const parseElfNoteSteps = function* (
       examined,
       text,
     ))
-      parsed.push(toEntry(note, "section", index, header, text, fdo));
+      visitNote(note, table, header, text);
   }
-  if (unreadCompressedNotes) throw new ElfNoteStorageFailure(parsed);
-  const absent = tables.length === 0;
+  return {
+    header,
+    tables,
+    examinedEntries: examined.count,
+    sectionNameLimitations,
+    unreadCompressedNotes,
+  };
+};
+
+const projectElfNoteSteps = function* (
+  bytes: Buffer,
+  artifact: ElfNotes["artifact"],
+  input: ElfNoteScanInput,
+): ElfNoteSteps<ElfNotes> {
+  const fdo: FdoDecodeBudget = {
+    decoded: 0,
+    retained: 0,
+    descriptors: new Map(),
+  };
+  const entries: ElfNotes["entries"] = [];
+  const { header, tables, examinedEntries, sectionNameLimitations } =
+    yield* parseElfNoteSteps(
+      bytes,
+      input,
+      { retainReadableNotes: false },
+      (note, table, header, text) =>
+        entries.push({
+          ...toEntry(note, table.kind, table.index, header, text, fdo),
+          index: entries.length,
+        }),
+    );
+  const { type } = header;
   return {
     artifact,
-    format: wide ? "elf64" : "elf32",
-    byte_order: reader.little ? "little" : "big",
+    format: header.elfClass === 64 ? "elf64" : "elf32",
+    byte_order: header.byteOrder,
     machine: header.machine,
     type,
     type_name: elfObjectTypeName(type),
     tables,
-    entries: parsed.map((entry, index) => ({ ...entry, index })),
+    entries,
     coverage: {
       status: "complete",
       examined_tables: tables.length,
-      examined_entries: examined.count,
+      examined_entries: examinedEntries,
     },
     limitations: [
-      ...(absent ? ABSENT_LIMITATIONS : LIMITATIONS),
+      ...(tables.length === 0 ? ABSENT_LIMITATIONS : LIMITATIONS),
       ...sectionNameLimitations,
-      ...(parsed.some(
+      ...(entries.some(
         ({ fdo: note }) => note !== null && note.metadata !== null,
       )
         ? [
             "FDO packaging and dlopen metadata are unverified producer declarations.",
           ]
         : []),
-      ...(parsed.some(({ owner }) => owner === "CORE")
+      ...(entries.some(({ owner }) => owner === "CORE")
         ? [
             isLinuxCoreProfile(header)
               ? "Linux CORE decoding assumes System V/unspecified or GNU/Linux OSABI with ABI version zero; an unspecified OSABI alone does not establish operating-system origin."
@@ -1048,22 +1071,19 @@ const parseElfNoteSteps = function* (
   };
 };
 
-const driveElfNotes = (
-  steps: Generator<
-    ElfSectionNameDecodeRequest,
-    ElfNotes,
-    ElfCompressedSectionResult
-  >,
-  decode: (
-    request: ElfSectionNameDecodeRequest,
-  ) => ElfCompressedSectionResult | Promise<ElfCompressedSectionResult>,
-): Promise<ElfNotes> => {
-  const run = async (): Promise<ElfNotes> => {
-    let next = steps.next();
-    while (!next.done) next = steps.next(await decode(next.value));
-    return next.value;
-  };
-  return run();
+const decodeElfNoteSteps = <T>(steps: ElfNoteSteps<T>): T => {
+  let next = steps.next();
+  while (!next.done) next = steps.next(decodeElfSectionNameRequest(next.value));
+  return next.value;
+};
+
+const decodeElfNoteStepsCooperative = async <T>(
+  steps: ElfNoteSteps<T>,
+  decode: CooperativeElfSectionNameDecoder,
+): Promise<T> => {
+  let next = steps.next();
+  while (!next.done) next = steps.next(await decode(next.value));
+  return next.value;
 };
 
 /** Decode PT_NOTE and SHT_NOTE tables from one in-memory ELF image. */
@@ -1071,28 +1091,84 @@ export const parseElfNotes = (
   bytes: Buffer,
   artifact: ElfNotes["artifact"],
   input: InspectElfNotesInput,
-  options: ElfNoteParseOptions = {},
-): ElfNotes => {
-  const steps = parseElfNoteSteps(bytes, artifact, input, options);
-  let next = steps.next();
-  while (!next.done) next = steps.next(decodeElfSectionNameRequest(next.value));
-  return next.value;
-};
+): ElfNotes => decodeElfNoteSteps(projectElfNoteSteps(bytes, artifact, input));
 
-/**
- * Same note decode as {@link parseElfNotes}. Section-name Zstandard frames
- * yield through `pause` so an existing caller abort can land between frames.
- */
+/** Same note decode as parseElfNotes, with cooperative section-name decoding. */
 export const parseElfNotesCooperative = (
   bytes: Buffer,
   artifact: ElfNotes["artifact"],
   input: InspectElfNotesInput,
   pause: ZstandardFramePause,
-  options: ElfNoteParseOptions = {},
-  decode: CooperativeElfSectionNameDecoder = (request) =>
-    decodeElfSectionNameRequestCooperative(request, pause),
 ): Promise<ElfNotes> =>
-  driveElfNotes(parseElfNoteSteps(bytes, artifact, input, options), decode);
+  decodeElfNoteStepsCooperative(
+    projectElfNoteSteps(bytes, artifact, input),
+    (request) => decodeElfSectionNameRequestCooperative(request, pause),
+  );
+
+interface ElfGnuBuildIdNotes {
+  readonly sources: {
+    readonly hex: string;
+    readonly table_kind: ElfNoteTable["kind"];
+    readonly table_index: number;
+    readonly note: ParsedNote["location"];
+    readonly descriptor: ParsedNote["location"];
+  }[];
+  readonly oversized: boolean;
+  readonly unreadableStorage: string | null;
+}
+
+const readElfBuildIdSteps = function* (
+  bytes: Buffer,
+  input: ElfNoteScanInput,
+  maximumBuildIdBytes: number,
+): ElfNoteSteps<ElfGnuBuildIdNotes> {
+  const sources: ElfGnuBuildIdNotes["sources"] = [];
+  let oversized = false;
+  const { unreadCompressedNotes } = yield* parseElfNoteSteps(
+    bytes,
+    input,
+    { retainReadableNotes: true },
+    (note, table, _header, text) => {
+      if (note.owner !== "GNU" || note.type !== 3 || note.descsz === 0) return;
+      if (note.descsz > maximumBuildIdBytes) {
+        oversized = true;
+        return;
+      }
+      chargeText(text, note.descsz * 2);
+      sources.push({
+        hex: note.descriptor.toString("hex"),
+        table_kind: table.kind,
+        table_index: table.index,
+        note: note.location,
+        descriptor: { offset: note.descriptor_offset, bytes: note.descsz },
+      });
+    },
+  );
+  return {
+    sources,
+    oversized,
+    unreadableStorage: unreadCompressedNotes ? COMPRESSED_NOTE_MESSAGE : null,
+  };
+};
+
+/** Read GNU build IDs with the same framing and entry allowance as full note inspection. */
+export const readElfBuildIds = (
+  bytes: Buffer,
+  input: ElfNoteScanInput,
+  maximumBuildIdBytes: number,
+): ElfGnuBuildIdNotes =>
+  decodeElfNoteSteps(readElfBuildIdSteps(bytes, input, maximumBuildIdBytes));
+
+export const readElfBuildIdsCooperative = (
+  bytes: Buffer,
+  input: ElfNoteScanInput,
+  maximumBuildIdBytes: number,
+  decode: CooperativeElfSectionNameDecoder,
+): Promise<ElfGnuBuildIdNotes> =>
+  decodeElfNoteStepsCooperative(
+    readElfBuildIdSteps(bytes, input, maximumBuildIdBytes),
+    decode,
+  );
 
 const toEntry = (
   note: ParsedNote,

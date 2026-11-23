@@ -21,10 +21,14 @@ import { javascriptSourceAnalysis } from "../composition/javascriptSourceAnalysi
 import { analysisSettingsConstraints } from "./analysisSettingsConstraints.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import type { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
-import { inspectAndroidJniBindings } from "../application/android/AndroidJniInspection.js";
-import { inspectAndroidPackage } from "../application/android/AndroidPackageInspection.js";
-import { inspectAndroidSymbol } from "../application/android/AndroidSymbolInspection.js";
 import {
+  androidJniInspectionInputSchema,
+  androidPackageInspectionInputSchema,
+  androidSymbolInspectionInputSchemas,
+} from "../domain/android/androidAnalysis.js";
+import { dartAotInspectionInputSchema } from "../domain/flutter/flutterBuildAnalysis.js";
+import {
+  executeRetainedSummaryOperation,
   inspectAnalysisView,
   projectRetainedAnalysis,
   requireAnalysisViewRetention,
@@ -57,7 +61,6 @@ import type { PacketCaptureService } from "../application/captures/PacketCapture
 import type { BeamService } from "../application/erlang/BeamService.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import type { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
-import { inspectDartAot } from "../application/flutter/DartAotInspection.js";
 import type { FlutterBuildAnalysisService } from "../application/flutter/FlutterBuildAnalysisService.js";
 import type { GoBinaryService } from "../application/go/GoBinaryService.js";
 import type { GpuCodeObjectsService } from "../application/gpu/GpuCodeObjectsService.js";
@@ -723,7 +726,14 @@ const SERVICE_TOOL_BINDINGS = {
     inspect_dart_aot: {
       admission: "sdk",
       run: (input, options) =>
-        inspectDartAot(service, input, retention, options),
+        executeRetainedSummaryOperation(
+          service,
+          "inspect_dart_aot",
+          dartAotInspectionInputSchema,
+          input,
+          retention,
+          options,
+        ),
     },
   })) satisfies Bind<FlutterBuildAnalysisService>,
   androidAnalysis: ((service, retention) => ({
@@ -734,19 +744,34 @@ const SERVICE_TOOL_BINDINGS = {
     inspect_android_package: {
       admission: "sdk",
       run: (input, options) =>
-        inspectAndroidPackage(service, input, retention, options),
+        executeRetainedSummaryOperation(
+          service,
+          "inspect_android_package",
+          androidPackageInspectionInputSchema,
+          input,
+          retention,
+          options,
+        ),
     },
     inspect_android_jni_bindings: {
       admission: "sdk",
       run: (input, options) =>
-        inspectAndroidJniBindings(service, input, retention, options),
+        executeRetainedSummaryOperation(
+          service,
+          "inspect_android_jni_bindings",
+          androidJniInspectionInputSchema,
+          input,
+          retention,
+          options,
+        ),
     },
     inspect_android_class: {
       admission: "sdk",
       run: (input, options) =>
-        inspectAndroidSymbol(
+        executeRetainedSummaryOperation(
           service,
           "inspect_android_class",
+          androidSymbolInspectionInputSchemas.inspect_android_class,
           input,
           retention,
           options,
@@ -755,9 +780,10 @@ const SERVICE_TOOL_BINDINGS = {
     inspect_android_method: {
       admission: "sdk",
       run: (input, options) =>
-        inspectAndroidSymbol(
+        executeRetainedSummaryOperation(
           service,
           "inspect_android_method",
+          androidSymbolInspectionInputSchemas.inspect_android_method,
           input,
           retention,
           options,

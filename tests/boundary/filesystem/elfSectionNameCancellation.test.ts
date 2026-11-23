@@ -3,11 +3,9 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
-import {
-  createBinaryHardeningService,
-  createElfUnwindRangesService,
-  createNativeExportsService,
-} from "../../../src/composition/binaryDiagnostics.js";
+import { createBinaryHardeningService } from "../../../src/composition/binaryDiagnostics/binaryHardening.js";
+import { createElfUnwindRangesService } from "../../../src/composition/binaryDiagnostics/elfUnwindRanges.js";
+import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics/nativeExports.js";
 import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
