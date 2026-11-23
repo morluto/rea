@@ -6,8 +6,7 @@ import {
 import {
   ArtifactResourceScope,
   ArtifactReaderFailure,
-  type StableArtifactSnapshot,
-  readStableArtifact,
+  withStableArtifactHandle,
   artifactFilePrimaryFacts,
   artifactSelectedPathErrno,
   type ArtifactFilePrimaryFacts,
@@ -33,9 +32,10 @@ import {
 import { err, ok } from "../domain/result.js";
 import { V8_CODE_CACHE_FORMAT } from "./V8CodeCache.errors.js";
 import { V8_CODE_CACHE_PROVIDER_IDENTITY } from "./V8CodeCacheProviderIdentity.js";
-import { parseV8CodeCache } from "./V8CodeCacheParser.js";
+import { parseV8CodeCacheFromHandle } from "./V8CodeCacheParser.js";
 
 const OPERATION = "inspect_v8_code_cache";
+const HEADER_PREFIX_BYTES = 65_536;
 
 /** Portable parser over one bounded, identity-checked regular file. */
 export class V8CodeCacheProvider implements V8CodeCachePort {
@@ -55,30 +55,41 @@ export class V8CodeCacheProvider implements V8CodeCachePort {
   }
 
   async inspect(input: InspectV8CodeCacheInput, options?: ExecutionOptions) {
-    let snapshot: StableArtifactSnapshot | undefined;
+    let observed:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
       return await this.#resources.run(async () => {
-        snapshot = await readStableArtifact(
+        const result = await withStableArtifactHandle(
           input.path,
           input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        return ok(
-          parseV8CodeCache(
-            snapshot.bytes,
-            {
-              path: input.path,
-              sha256: snapshot.sha256,
-              bytes: snapshot.bytes.length,
+          {
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
+            onIdentity: (identity) => {
+              observed = identity;
             },
-            input,
-          ),
+          },
+          (handle) =>
+            parseV8CodeCacheFromHandle(
+              {
+                size: handle.size,
+                prefix: handle.prefix,
+                readRange: (offset, length) => handle.readRange(offset, length),
+              },
+              {
+                path: input.path,
+                sha256: handle.sha256,
+                bytes: handle.size,
+              },
+              input,
+            ),
         );
+        return ok(result);
       });
     } catch (cause) {
-      return err(v8CodeCacheFailure(cause, input, snapshot));
+      return err(v8CodeCacheFailure(cause, input, observed));
     }
   }
 }
@@ -190,7 +201,7 @@ const v8CodeCacheFailurePrimary = (
 const v8CodeCacheFailure = (
   cause: unknown,
   input: InspectV8CodeCacheInput,
-  snapshot?: StableArtifactSnapshot,
+  observed?: { readonly sha256: string; readonly bytes: number },
 ) => {
   const primary = v8CodeCacheFailurePrimary(
     artifactFilePrimaryFacts(cause),
@@ -202,6 +213,6 @@ const v8CodeCacheFailure = (
     input.path,
     V8_CODE_CACHE_PROVIDER_IDENTITY.id,
     OPERATION,
-    snapshot,
+    observed,
   );
 };
