@@ -1,3 +1,4 @@
+import { registerContractDocumentCommand } from "./contractDocumentCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { executeManagedMemberComparison } from "../application/managed/ManagedMemberComparisonService.js";
 import { executeManagedNativeBoundaries } from "../application/managed/ManagedNativeVerificationService.js";
@@ -8,7 +9,6 @@ import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../contracts/managed/managedWor
 import { contractNamed } from "./contractCliDescription.js";
 import {
   registerContractCommand,
-  registerContractDocumentCommand,
   runOnEvidenceTargets,
   runOnSessionTarget,
 } from "./contractCommand.js";
