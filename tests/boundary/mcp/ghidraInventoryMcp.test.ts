@@ -735,6 +735,25 @@ it("returns a procedure once with the exact-entry names its search matched", asy
       GHIDRA_LITERAL_CANDIDATES_LIMITATION,
     );
 
+    // Narrowing a secondary name alone keeps every procedure but still makes
+    // the reply differ from the matches, so the candidates are retained.
+    output = jsonValueSchema.parse([
+      row("0x1012a0", "source_item_alias", [
+        "source_item_primary",
+        "Śource_item_label",
+      ]),
+      row("0x101380", "ſource_item_plain"),
+    ]);
+    const aliasNarrowed = await search({ pattern: "source_item" });
+    expect(aliasNarrowed.normalized_result).toEqual([
+      row("0x1012a0", "source_item_alias", ["source_item_primary"]),
+      row("0x101380", "ſource_item_plain"),
+    ]);
+    expect(aliasNarrowed.raw_result).toEqual(output);
+    expect(aliasNarrowed.limitations).toContain(
+      GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+    );
+
     output = jsonValueSchema.parse([row("0x101380", "ſource_item_plain")]);
     const regex = await search({
       pattern: "^ſource_item_plain$",
