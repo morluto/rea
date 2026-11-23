@@ -287,19 +287,33 @@ export const immutableSemanticBindings = (
       compareUnicodeCodePoints(left.bindingId, right.bindingId),
     );
 
-const callableKind = (
-  node: t.Node,
-): "function" | "class" | "method" | undefined => {
-  if (
-    t.isClassMethod(node) ||
-    t.isClassPrivateMethod(node) ||
-    t.isObjectMethod(node)
-  )
-    return "method";
-  if (t.isFunction(node)) return "function";
-  if (t.isClass(node)) return "class";
-  return undefined;
+type CallableKind = "function" | "class" | "method";
+
+/**
+ * Callable kind by node type, from Babel's own `Function` and `Class` aliases
+ * with methods taking precedence. Traversals ask this of every node on entry
+ * and exit, so it is one lookup instead of a chain of type guards.
+ */
+const babelAliasTypes = (alias: "Class" | "Function"): readonly string[] => {
+  const types = t.FLIPPED_ALIAS_KEYS[alias];
+  if (types === undefined || types.length === 0)
+    throw new TypeError(`Babel declares no node types for alias ${alias}`);
+  return types;
 };
+
+const CALLABLE_KIND_BY_NODE_TYPE: ReadonlyMap<string, CallableKind> = new Map<
+  string,
+  CallableKind
+>([
+  ...babelAliasTypes("Class").map((type) => [type, "class"] as const),
+  ...babelAliasTypes("Function").map((type) => [type, "function"] as const),
+  ["ClassMethod", "method"],
+  ["ClassPrivateMethod", "method"],
+  ["ObjectMethod", "method"],
+]);
+
+const callableKind = (node: t.Node): CallableKind | undefined =>
+  CALLABLE_KIND_BY_NODE_TYPE.get(node.type);
 
 const callableName = (node: t.Node, parent: t.Node | null): string | null => {
   if (

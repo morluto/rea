@@ -1168,11 +1168,16 @@ export const outerDataEffectBinding = (
   );
 };
 
-/** Traverse with exact callable and ancestor stacks. */
+/**
+ * Traverse once with exact callable and ancestor stacks. Every visitor sees
+ * each node in source order, in the order given, with the same stacks a
+ * traversal of its own would have built; visitors must not read each other's
+ * findings.
+ */
 export const traverseDataEffects = (
   program: t.Program,
   context: DataEffectTraversalContext,
-  visit: (node: t.Node, parent: t.Node | null) => void,
+  ...visitors: readonly ((node: t.Node, parent: t.Node | null) => void)[]
 ): void => {
   const callableStack = createSemanticCallableIdStack(
     context.callableIds,
@@ -1182,7 +1187,7 @@ export const traverseDataEffects = (
   traverseJavaScriptValueAst(program, context.state.erasedSyntaxNodes, {
     enter: (node, parent) => {
       callableStack.enter(node, parent);
-      visit(node, parent);
+      for (const visit of visitors) visit(node, parent);
       context.ancestors.push(node);
     },
     exit: (node) => {
