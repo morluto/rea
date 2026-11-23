@@ -8,18 +8,19 @@ import type {
   ApkSignaturePort,
 } from "../ports/apkSignature/ApkSignaturePort.js";
 import {
-  readStableArtifact,
+  withStableArtifactHandle,
   ArtifactReaderFailure,
   assertArtifactReadActive,
   bindArtifactFileCleanup,
   ArtifactResourceScope,
+  type StableArtifactHandle,
 } from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   APK_BLOCK_ID,
-  locateApkSigningBlock,
-  parseZipTail,
+  locateApkSigningBlockFromReader,
+  parseZipTailFromReader,
   type ApkSigningBlock,
   type ZipTail,
 } from "../domain/apkSignature/apkSigningBlock.js";
@@ -42,7 +43,8 @@ import {
   type ApkSignatureResult,
 } from "../domain/apkSignature/apkSignatureReport.js";
 import {
-  computeApkContentDigest,
+  computeApkContentDigestStreaming,
+  type ContentDigestAlgorithm,
   type HashFactory,
 } from "../domain/apkSignature/apkContentDigest.js";
 import {
@@ -74,7 +76,7 @@ import {
   jsonStringBytes,
 } from "./apkCertificateFacts.js";
 import {
-  decodeV1Signer,
+  decodeV1SignerFromReader,
   projectedV1SignerBytes,
   v1PostureFingerprint,
   v1SignerFacts,
@@ -104,13 +106,40 @@ const nodeHash: HashFactory = (algorithm) => {
   };
 };
 
-/** Recompute each content digest at most once per algorithm, lazily. */
-const digestMatcher = (
-  bytes: Uint8Array,
+/** Recompute each referenced SHA-256/512 content digest at most once, streaming in 1 MiB chunks. */
+const buildDigestMatcher = async (
+  handle: StableArtifactHandle,
   tail: ZipTail,
   blockStart: number | null,
-): DigestMatcher => {
-  const cache = new Map<"sha256" | "sha512", Uint8Array | null>();
+  centralDirectory: Uint8Array,
+  eocdBytes: Uint8Array,
+  schemes: readonly DecodedScheme[],
+): Promise<DigestMatcher> => {
+  const cache = new Map<ContentDigestAlgorithm, Uint8Array | null>();
+  if (blockStart !== null) {
+    const needed = new Set<ContentDigestAlgorithm>();
+    for (const scheme of schemes)
+      for (const { signer } of scheme.signers)
+        for (const digest of signer.digests) {
+          const algorithm = contentDigestAlgorithm(digest.algorithmId);
+          if (algorithm === "sha256" || algorithm === "sha512")
+            needed.add(algorithm);
+        }
+    for (const algorithm of needed)
+      cache.set(
+        algorithm,
+        await computeApkContentDigestStreaming(
+          {
+            size: handle.size,
+            readRange: handle.readRange,
+            centralDirectory,
+            eocd: eocdBytes,
+          },
+          { tail, blockStart, algorithm },
+          nodeHash,
+        ),
+      );
+  }
   return {
     match: (algorithmId, signed) => {
       const algorithm = contentDigestAlgorithm(algorithmId);
@@ -120,15 +149,6 @@ const digestMatcher = (
         (algorithm !== "sha256" && algorithm !== "sha512")
       )
         return null;
-      if (!cache.has(algorithm))
-        cache.set(
-          algorithm,
-          computeApkContentDigest(
-            bytes,
-            { tail, blockStart, algorithm },
-            nodeHash,
-          ),
-        );
       const computed = cache.get(algorithm) ?? null;
       return computed === null ? null : Buffer.from(computed).equals(signed);
     },
@@ -378,21 +398,25 @@ export class ApkSignatureProvider implements ApkSignaturePort {
       return await this.#resources.run(async () => {
         const release = await apkSignatureAdmission.acquire(options?.signal);
         try {
-          const selected = await readStableArtifact(
+          return await withStableArtifactHandle(
             input.path,
             APK_SIGNATURE_LIMITS.inputBytes,
-            options?.signal,
-            undefined,
-            this.#resources,
+            {
+              retainBytes: (size) => Math.min(size, 4),
+              signal: options?.signal,
+              resourceScope: this.#resources,
+            },
+            async (handle) => {
+              assertArtifactReadActive(options?.signal);
+              const analyzed = await this.#analyze(handle, {
+                path: input.path,
+                sha256: handle.sha256,
+                bytes: handle.size,
+              });
+              assertArtifactReadActive(options?.signal);
+              return analyzed;
+            },
           );
-          assertArtifactReadActive(options?.signal);
-          const analyzed = this.#analyze(selected.bytes, {
-            path: input.path,
-            sha256: selected.sha256,
-            bytes: selected.bytes.length,
-          });
-          assertArtifactReadActive(options?.signal);
-          return analyzed;
         } finally {
           release();
         }
@@ -402,16 +426,25 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     }
   }
 
-  #analyze(
-    bytes: Uint8Array,
+  async #analyze(
+    handle: StableArtifactHandle,
     artifact: { path: string; sha256: string; bytes: number },
-  ): Result<ApkSignatureExecution, AnalysisError> {
-    const tail = parseZipTail(bytes);
-    if (!tail.ok) return err(mapApkBlockError(tail.error, artifact.path));
-    const block = locateApkSigningBlock(bytes, tail.value);
+  ): Promise<Result<ApkSignatureExecution, AnalysisError>> {
+    const tailRead = await parseZipTailFromReader(handle);
+    if (!tailRead.ok)
+      return err(mapApkBlockError(tailRead.error, artifact.path));
+    const { tail, eocdBytes } = tailRead.value;
+    const block = await locateApkSigningBlockFromReader(handle, tail);
     if (!block.ok) return err(mapApkBlockError(block.error, artifact.path));
 
-    const v1Read = readV1(bytes, tail.value, block.value);
+    const centralDirectory =
+      tail.centralDirectorySize === 0
+        ? new Uint8Array(0)
+        : await handle.readRange(
+            tail.centralDirectoryOffset,
+            tail.centralDirectorySize,
+          );
+    const v1Read = await readV1(handle, centralDirectory, tail, block.value);
     if (!v1Read.ok) return v1Read;
     const { v1, decoded: v1Decoded, duplicates } = v1Read.value;
 
@@ -432,10 +465,13 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     if (projected > APK_SIGNATURE_LIMITS.outputBytes)
       return err(apkOutputBudgetError(projected));
 
-    const matcher = digestMatcher(
-      bytes,
-      tail.value,
+    const matcher = await buildDigestMatcher(
+      handle,
+      tail,
       block.value?.blockStart ?? null,
+      centralDirectory,
+      eocdBytes,
+      [v2.value, v3.value, v31.value],
     );
     const v1signers = v1Decoded.map(v1SignerFacts);
     const v2signers = v2.value.signers.map((s) =>
@@ -535,24 +571,28 @@ export class ApkSignatureProvider implements ApkSignaturePort {
  * v1 signing from the central directory, with each paired block decoded. A
  * directory that cannot be walked leaves v1 unknown and is refused.
  */
-const readV1 = (
-  bytes: Uint8Array,
+const readV1 = async (
+  handle: StableArtifactHandle,
+  centralDirectory: Uint8Array,
   tail: ZipTail,
   block: ApkSigningBlock | null,
-): Result<
-  {
-    readonly v1: ApkV1Signature;
-    readonly decoded: DecodedV1Signer[];
-    readonly duplicates: ApkDuplicateNames;
-  },
-  AnalysisError
+): Promise<
+  Result<
+    {
+      readonly v1: ApkV1Signature;
+      readonly decoded: DecodedV1Signer[];
+      readonly duplicates: ApkDuplicateNames;
+    },
+    AnalysisError
+  >
 > => {
   const entries = centralDirectoryV1SignatureEntries(
-    bytes,
-    tail.centralDirectoryOffset,
+    centralDirectory,
+    0,
     tail.centralDirectorySize,
     tail.totalEntries,
     tail.classicEntryCount,
+    tail.centralDirectoryOffset,
   );
   if (!entries.ok) return err(mapCentralDirectoryError(entries.error));
   const v1 = detectV1Signature(entries.value.entries);
@@ -560,12 +600,13 @@ const readV1 = (
     return err(v1SignerCapacityError(MAX_V1_SIGNERS));
   // Entry data lies before the signing block, or the directory without one.
   const entriesEnd = block?.blockStart ?? tail.centralDirectoryOffset;
+  const decoded: DecodedV1Signer[] = [];
+  for (const signer of v1.signers)
+    decoded.push(await decodeV1SignerFromReader(handle, signer, entriesEnd));
   return ok({
     v1,
     duplicates: entries.value.duplicates,
-    decoded: v1.signers.map((signer) =>
-      decodeV1Signer(bytes, signer, entriesEnd),
-    ),
+    decoded,
   });
 };
 

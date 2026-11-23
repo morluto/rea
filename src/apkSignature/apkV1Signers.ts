@@ -11,8 +11,10 @@ import type { ApkSignatureResult } from "../domain/apkSignature/apkSignatureRepo
 import {
   centralDeclaresEncryption,
   localEntryData,
+  parseLocalEntryHeader,
   type ApkV1SignerEntry,
 } from "../domain/apkSignature/apkV1Signature.js";
+import { ZIP_LOCAL_HEADER_BYTES } from "../domain/zip/zipLocalHeader.js";
 import {
   decodeV1SignatureBlock,
   type ApkV1SignedData,
@@ -66,6 +68,45 @@ export const projectedV1SignerBytes = ({
   return total + summaries + largest + SIGNER_INFO_BYTES * signerInfos.length;
 };
 
+const decodeV1SignerPayload = (
+  entry: ApkV1SignerEntry,
+  declaresEncryption: boolean,
+  storedData: Uint8Array,
+): DecodedV1Signer => {
+  const { block } = entry;
+  const fail = (error: string): DecodedV1Signer => ({
+    entry,
+    declaresEncryption,
+    decoded: { ok: false, error },
+  });
+  const limit = APK_SIGNATURE_LIMITS.v1BlockBytes;
+  let data: Uint8Array;
+  if (block.method === 0) data = storedData;
+  else if (block.method === 8) {
+    try {
+      data = inflateRawSync(storedData, { maxOutputLength: limit });
+    } catch (cause: unknown) {
+      return fail(
+        hostRangeErrorKind(cause) === "host-capacity"
+          ? `signature block inflates past the ${String(limit)}-byte bound`
+          : "signature block deflate stream is damaged",
+      );
+    }
+  } else
+    return fail(`compression method ${String(block.method)} is not supported`);
+  if (data.length !== block.uncompressedSize)
+    return fail(
+      `signature block holds ${String(data.length)} bytes, the central directory declares ${String(block.uncompressedSize)}`,
+    );
+  const signedData = decodeV1SignatureBlock(data);
+  if (signedData.ok) return { entry, declaresEncryption, decoded: signedData };
+  return fail(
+    signedData.error.kind === "malformed-pkcs7"
+      ? `malformed PKCS#7: ${signedData.error.detail}`
+      : `more ${signedData.error.resource} than ${String(signedData.error.limit)}`,
+  );
+};
+
 /**
  * Read one signature block's bytes (stored or deflated) within the per-block
  * bound and decode its SignedData. Every failure is the signer's own
@@ -99,31 +140,58 @@ export const decodeV1Signer = (
     return fail(
       `signature block declares ${String(block.uncompressedSize)} bytes, over the ${String(limit)}-byte bound`,
     );
-  let data: Uint8Array;
-  if (block.method === 0) data = stored.value.data;
-  else if (block.method === 8) {
-    try {
-      data = inflateRawSync(stored.value.data, { maxOutputLength: limit });
-    } catch (cause: unknown) {
-      return fail(
-        hostRangeErrorKind(cause) === "host-capacity"
-          ? `signature block inflates past the ${String(limit)}-byte bound`
-          : "signature block deflate stream is damaged",
-      );
-    }
-  } else
-    return fail(`compression method ${String(block.method)} is not supported`);
-  if (data.length !== block.uncompressedSize)
-    return fail(
-      `signature block holds ${String(data.length)} bytes, the central directory declares ${String(block.uncompressedSize)}`,
-    );
-  const signedData = decodeV1SignatureBlock(data);
-  if (signedData.ok) return { entry, declaresEncryption, decoded: signedData };
-  return fail(
-    signedData.error.kind === "malformed-pkcs7"
-      ? `malformed PKCS#7: ${signedData.error.detail}`
-      : `more ${signedData.error.resource} than ${String(signedData.error.limit)}`,
+  return decodeV1SignerPayload(entry, declaresEncryption, stored.value.data);
+};
+
+/**
+ * Read one v1 signature block's header and payload via random-access range
+ * reads without buffering the whole archive.
+ */
+export const decodeV1SignerFromReader = async (
+  reader: {
+    readonly size: number;
+    readonly readRange: (offset: number, length: number) => Promise<Uint8Array>;
+  },
+  entry: ApkV1SignerEntry,
+  entriesEnd: number,
+): Promise<DecodedV1Signer> => {
+  const { block } = entry;
+  let declaresEncryption = centralDeclaresEncryption(block);
+  const fail = (error: string): DecodedV1Signer => ({
+    entry,
+    declaresEncryption,
+    decoded: { ok: false, error },
+  });
+  if (entry.duplicate !== null)
+    return fail(`duplicate entry: ${entry.duplicate}`);
+  const limit = APK_SIGNATURE_LIMITS.v1BlockBytes;
+  const maxEnd = Math.min(entriesEnd, reader.size);
+  const at = block.localHeaderOffset;
+  const headerSlice =
+    at !== 0xffffffff && at >= 0 && at + ZIP_LOCAL_HEADER_BYTES <= maxEnd
+      ? await reader.readRange(
+          at,
+          Math.min(ZIP_LOCAL_HEADER_BYTES + block.rawName.length, maxEnd - at),
+        )
+      : new Uint8Array(0);
+  const header = parseLocalEntryHeader(
+    headerSlice,
+    block,
+    entriesEnd,
+    reader.size,
   );
+  if (!header.ok) return fail(header.error.detail);
+  ({ declaresEncryption } = header.value);
+  if (block.uncompressedSize > limit)
+    return fail(
+      `signature block declares ${String(block.uncompressedSize)} bytes, over the ${String(limit)}-byte bound`,
+    );
+  const length = header.value.dataEnd - header.value.dataStart;
+  const data =
+    length === 0
+      ? new Uint8Array(0)
+      : await reader.readRange(header.value.dataStart, length);
+  return decodeV1SignerPayload(entry, declaresEncryption, data);
 };
 
 /** Facts about v1 blocks that the report has no field for. */

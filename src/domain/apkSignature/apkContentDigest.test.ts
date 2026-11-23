@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   computeApkContentDigest,
+  computeApkContentDigestStreaming,
   type HashFactory,
 } from "./apkContentDigest.js";
 import { parseZipTail } from "./apkSigningBlock.js";
@@ -145,5 +146,27 @@ describe("computeApkContentDigest", () => {
         nodeHash,
       ),
     ).toBeNull();
+  });
+
+  it("matches computeApkContentDigestStreaming across multiple 1 MiB chunks without buffering the file", async () => {
+    const bytes = withBlock();
+    const tail = parseZipTail(bytes);
+    if (!tail.ok) throw new Error("bad fixture");
+    for (const algorithm of ["sha256", "sha512"] as const) {
+      let maxReadLength = 0;
+      const streamed = await computeApkContentDigestStreaming(
+        {
+          size: bytes.length,
+          readRange: async (offset, length) => {
+            maxReadLength = Math.max(maxReadLength, length);
+            return bytes.subarray(offset, offset + length);
+          },
+        },
+        { tail: tail.value, blockStart: ENTRIES.length, algorithm },
+        nodeHash,
+      );
+      expect(streamed).toEqual(digestOf(bytes, ENTRIES.length, algorithm));
+      expect(maxReadLength).toBeLessThanOrEqual(1024 * 1024);
+    }
   });
 });

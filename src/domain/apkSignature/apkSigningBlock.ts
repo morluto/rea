@@ -95,6 +95,14 @@ export interface ApkSigningBlock {
   readonly pairs: readonly ApkSigningBlockPair[];
 }
 
+/** Minimal random-access reader for streaming APK ZIP/signing-block parsing. */
+export interface RandomAccessBytes {
+  readonly size: number;
+  /** At least the first `min(size, 4)` bytes of the file. */
+  readonly prefix: Uint8Array;
+  readonly readRange: (offset: number, length: number) => Promise<Uint8Array>;
+}
+
 /** Read an unsigned 64-bit little-endian value as a Number, or null if unsafe/oob. */
 const u64 = (reader: BinaryReader, at: number): number | null => {
   if (at < 0 || at + 8 > reader.bytes.length) return null;
@@ -338,6 +346,66 @@ const hasBlockMagic = (bytes: Uint8Array, cdOffset: number): boolean => {
   return magic === BLOCK_MAGIC;
 };
 
+const parseApkSigningBlockBytes = (
+  blockBytes: Uint8Array,
+  blockStart: number,
+  trailingSize: number,
+): Result<ApkSigningBlock, ApkSigningBlockError> => {
+  const reader = new BinaryReader(
+    Buffer.from(
+      blockBytes.buffer,
+      blockBytes.byteOffset,
+      blockBytes.byteLength,
+    ),
+    true,
+    "zip",
+  );
+  const leadingSize = u64(reader, 0);
+  if (leadingSize === null || leadingSize !== trailingSize)
+    return err({
+      kind: "malformed-block",
+      offset: blockStart,
+      detail: "leading/trailing size mismatch",
+    });
+
+  const pairs: ApkSigningBlockPair[] = [];
+  let cursor = 8;
+  const pairsEnd = blockBytes.length - 24; // stop before trailing size + magic
+  while (cursor < pairsEnd) {
+    const length = u64(reader, cursor);
+    const next =
+      length === null
+        ? undefined
+        : apkSigningPairEnd(BigInt(length), cursor, pairsEnd);
+    if (length === null || next === undefined)
+      return err({
+        kind: "malformed-block",
+        offset: blockStart + cursor,
+        detail: "pair length out of range",
+      });
+    if (pairs.length >= APK_SIGNING_BLOCK_MAX_PAIRS)
+      return err(
+        decodeLimit(
+          "apk-signing-block",
+          `APK Signing Block holds more signing-block-pairs than the ${String(APK_SIGNING_BLOCK_MAX_PAIRS)} limit.`,
+          {
+            name: "max_signing_block_pairs",
+            maximum: APK_SIGNING_BLOCK_MAX_PAIRS,
+          },
+          { offset: blockStart + cursor },
+        ),
+      );
+    const id = reader.u32(cursor + 8);
+    const valueStart = cursor + 12;
+    pairs.push({
+      id,
+      value: blockBytes.subarray(valueStart, valueStart + (length - 4)),
+    });
+    cursor = next;
+  }
+  return ok({ blockStart, pairs });
+};
+
 /**
  * Locate and frame the APK Signing Block immediately before the central
  * directory. Returns `ok(null)` when no block magic is present (v1-only or
@@ -370,48 +438,283 @@ export const locateApkSigningBlock = (
       offset: cdOffset,
       detail: "block extends before file start",
     });
-  const leadingSize = u64(reader, blockStart);
-  if (leadingSize === null || leadingSize !== trailingSize)
+  return parseApkSigningBlockBytes(
+    bytes.subarray(blockStart, cdOffset),
+    blockStart,
+    trailingSize,
+  );
+};
+
+/** Maximum ZIP EOCD + comment + Zip64 locator + fixed Zip64 EOCD tail window. */
+const ZIP_TAIL_WINDOW_BYTES =
+  65535 + ZIP_EOCD_BYTES + ZIP64_LOCATOR.bytes + ZIP64_END.fixedBytes;
+
+/**
+ * Parse the ZIP end-of-central-directory from a random-access reader without
+ * buffering the whole archive. Also returns the raw EOCD bytes when valid.
+ */
+export const parseZipTailFromReader = async (
+  source: RandomAccessBytes,
+): Promise<
+  Result<
+    { readonly tail: ZipTail; readonly eocdBytes: Uint8Array },
+    ApkSigningBlockError
+  >
+> => {
+  if (source.size < ZIP_EOCD_BYTES)
+    return err({ kind: "not-a-zip", detail: "shorter than a ZIP EOCD record" });
+  const tailLength = Math.min(source.size, ZIP_TAIL_WINDOW_BYTES);
+  const tailStart = source.size - tailLength;
+  const tailBuf = await source.readRange(tailStart, tailLength);
+  const candidates = [...zipEndOfCentralDirectoryCandidates(tailBuf)].map(
+    (candidate) => ({
+      ...candidate,
+      offset: candidate.offset + tailStart,
+    }),
+  );
+  if (candidates.length > 1)
+    return err({
+      kind: "malformed-zip",
+      offset: candidates[0]!.offset,
+      detail: `${String(candidates.length)} end-of-central-directory records each end the archive (one inside another's comment); the central directory is ambiguous`,
+    });
+  const eocd = candidates[0];
+  if (eocd === undefined)
+    return hasLocalFileHeader(source.prefix)
+      ? err({
+          kind: "malformed-zip",
+          offset: source.size,
+          detail:
+            "ZIP local headers present but no end-of-central-directory (truncated or damaged archive)",
+        })
+      : err({
+          kind: "not-a-zip",
+          detail: "no end-of-central-directory record",
+        });
+
+  const eocdOffset = eocd.offset;
+  let cd: Result<CentralDirectory, ApkSigningBlockError>;
+  const saturated =
+    eocd.directoryOffset === ZIP_CLASSIC_DIRECTORY_LIMITS.offset ||
+    eocd.directorySize === ZIP_CLASSIC_DIRECTORY_LIMITS.size ||
+    eocd.totalEntries === ZIP_CLASSIC_DIRECTORY_LIMITS.count;
+  if (!saturated) {
+    cd = classicDirectory(eocd);
+  } else {
+    const locatorOffset = eocdOffset - ZIP64_LOCATOR.bytes;
+    const locatorBuf =
+      locatorOffset < 0
+        ? new Uint8Array(0)
+        : locatorOffset >= tailStart
+          ? tailBuf.subarray(
+              locatorOffset - tailStart,
+              locatorOffset - tailStart + ZIP64_LOCATOR.bytes,
+            )
+          : await source.readRange(locatorOffset, ZIP64_LOCATOR.bytes);
+    const locatorReader = new BinaryReader(
+      Buffer.from(
+        locatorBuf.buffer,
+        locatorBuf.byteOffset,
+        locatorBuf.byteLength,
+      ),
+      true,
+      "zip",
+    );
+    const locator =
+      locatorOffset < 0 ? undefined : readZip64Locator(locatorReader, 0);
+    if (locator === undefined) {
+      cd =
+        eocd.directoryOffset !== ZIP_CLASSIC_DIRECTORY_LIMITS.offset &&
+        eocd.directorySize !== ZIP_CLASSIC_DIRECTORY_LIMITS.size
+          ? classicDirectory(eocd)
+          : err({
+              kind: "malformed-zip",
+              offset: eocdOffset,
+              detail: "missing Zip64 EOCD locator",
+            });
+    } else {
+      const {
+        disk: recordDisk,
+        totalDisks,
+        recordOffset: offsetOnDisk,
+      } = locator;
+      const maximumExact = BigInt(Number.MAX_SAFE_INTEGER);
+      if (totalDisks === 0)
+        cd = err({
+          kind: "malformed-zip",
+          offset: locatorOffset + ZIP64_LOCATOR.totalDisksOffset,
+          detail: "Zip64 locator declares zero disks",
+        });
+      else if (recordDisk >= totalDisks)
+        cd = err({
+          kind: "malformed-zip",
+          offset: locatorOffset + ZIP64_LOCATOR.diskOffset,
+          detail: "Zip64 EOCD disk is outside the declared disk count",
+        });
+      else if (!zip64LocatorUsesSingleVolume(locator))
+        cd = err({
+          kind: "zip64-unsupported",
+          detail: "multi-disk Zip64 archives are not supported",
+        });
+      else if (offsetOnDisk > maximumExact)
+        cd = err({
+          kind: "zip64-unsupported",
+          detail: "Zip64 EOCD offset exceeds safe range",
+        });
+      else {
+        const recordOffset = Number(offsetOnDisk);
+        const available = Math.max(0, locatorOffset - recordOffset);
+        const readLength = Math.min(available, ZIP64_END.fixedBytes);
+        const recordBuf =
+          readLength === 0
+            ? new Uint8Array(0)
+            : recordOffset >= tailStart &&
+                recordOffset + readLength <= tailStart + tailBuf.length
+              ? tailBuf.subarray(
+                  recordOffset - tailStart,
+                  recordOffset - tailStart + readLength,
+                )
+              : await source.readRange(recordOffset, readLength);
+        const recordReader = new BinaryReader(
+          Buffer.from(
+            recordBuf.buffer,
+            recordBuf.byteOffset,
+            recordBuf.byteLength,
+          ),
+          true,
+          "zip",
+        );
+        const record = readZip64DirectoryRecord(recordReader, 0, available);
+        if (!record.ok) {
+          switch (record.error) {
+            case "fixed-fields":
+              cd = err({
+                kind: "malformed-zip",
+                offset: locatorOffset + ZIP64_LOCATOR.recordOffset,
+                detail: "Zip64 EOCD record extends beyond its locator",
+              });
+              break;
+            case "signature":
+              cd = err({
+                kind: "malformed-zip",
+                offset: recordOffset,
+                detail: "invalid Zip64 EOCD signature",
+              });
+              break;
+            case "size":
+              cd = err({
+                kind: "malformed-zip",
+                offset: recordOffset + ZIP64_END.sizeOffset,
+                detail: "invalid Zip64 EOCD record size",
+              });
+              break;
+          }
+        } else if (
+          !zipEndUsesSingleVolume(eocd, "zip64Classic") ||
+          !zip64EndUsesSingleVolume(record.value)
+        ) {
+          cd = err({
+            kind: "zip64-unsupported",
+            detail:
+              "Zip64 end records do not describe the selected single disk",
+          });
+        } else if (record.value.entriesOnDisk !== record.value.totalEntries) {
+          cd = err({
+            kind: "malformed-zip",
+            offset: recordOffset + ZIP64_END.entriesOnDiskOffset,
+            detail: "single-disk Zip64 entry counts disagree",
+          });
+        } else if (
+          record.value.directoryOffset > maximumExact ||
+          record.value.directorySize > maximumExact ||
+          record.value.totalEntries > maximumExact
+        ) {
+          cd = err({
+            kind: "zip64-unsupported",
+            detail: "Zip64 sizes exceed safe range",
+          });
+        } else {
+          cd = ok({
+            offset: Number(record.value.directoryOffset),
+            size: Number(record.value.directorySize),
+            entries: Number(record.value.totalEntries),
+            end: recordOffset,
+          });
+        }
+      }
+    }
+  }
+  if (!cd.ok) return cd;
+  if (
+    cd.value.offset > cd.value.end ||
+    cd.value.size > cd.value.end - cd.value.offset
+  )
+    return err({
+      kind: "malformed-zip",
+      offset: eocdOffset,
+      detail:
+        "central-directory extent overlaps or extends past the ZIP end records",
+    });
+  if (
+    (cd.value.entries === 0 || cd.value.size === 0) &&
+    hasLocalFileHeader(source.prefix)
+  )
+    return err({
+      kind: "malformed-zip",
+      offset: eocdOffset,
+      detail:
+        "end-of-central-directory declares no entries, but the archive holds local file entries",
+    });
+  return ok({
+    tail: {
+      eocdOffset,
+      centralDirectoryOffset: cd.value.offset,
+      centralDirectorySize: cd.value.size,
+      totalEntries: cd.value.entries,
+      classicEntryCount: eocd.totalEntries,
+    },
+    eocdBytes: tailBuf.subarray(eocdOffset - tailStart),
+  });
+};
+
+/**
+ * Locate and frame the APK Signing Block from a random-access reader without
+ * buffering the whole archive.
+ */
+export const locateApkSigningBlockFromReader = async (
+  source: RandomAccessBytes,
+  tail: ZipTail,
+): Promise<Result<ApkSigningBlock | null, ApkSigningBlockError>> => {
+  const cdOffset = tail.centralDirectoryOffset;
+  if (cdOffset < 16) return ok(null);
+  const footerStart = Math.max(0, cdOffset - 24);
+  const footer = await source.readRange(footerStart, cdOffset - footerStart);
+  if (!hasBlockMagic(footer, footer.length)) return ok(null);
+  if (cdOffset < 24)
     return err({
       kind: "malformed-block",
-      offset: blockStart,
-      detail: "leading/trailing size mismatch",
+      offset: cdOffset - 24,
+      detail: "bad trailing size",
     });
-
-  const pairs: ApkSigningBlockPair[] = [];
-  let cursor = blockStart + 8;
-  const pairsEnd = cdOffset - 24; // stop before trailing size + magic
-  while (cursor < pairsEnd) {
-    const length = u64(reader, cursor);
-    const next =
-      length === null
-        ? undefined
-        : apkSigningPairEnd(BigInt(length), cursor, pairsEnd);
-    if (length === null || next === undefined)
-      return err({
-        kind: "malformed-block",
-        offset: cursor,
-        detail: "pair length out of range",
-      });
-    if (pairs.length >= APK_SIGNING_BLOCK_MAX_PAIRS)
-      return err(
-        decodeLimit(
-          "apk-signing-block",
-          `APK Signing Block holds more signing-block-pairs than the ${String(APK_SIGNING_BLOCK_MAX_PAIRS)} limit.`,
-          {
-            name: "max_signing_block_pairs",
-            maximum: APK_SIGNING_BLOCK_MAX_PAIRS,
-          },
-          { offset: cursor },
-        ),
-      );
-    const id = reader.u32(cursor + 8);
-    const valueStart = cursor + 12;
-    pairs.push({
-      id,
-      value: bytes.subarray(valueStart, valueStart + (length - 4)),
+  const footerReader = new BinaryReader(
+    Buffer.from(footer.buffer, footer.byteOffset, footer.byteLength),
+    true,
+    "zip",
+  );
+  const trailingSize = u64(footerReader, 0);
+  if (trailingSize === null || trailingSize < 24)
+    return err({
+      kind: "malformed-block",
+      offset: cdOffset - 24,
+      detail: "bad trailing size",
     });
-    cursor = next;
-  }
-  return ok({ blockStart, pairs });
+  const blockStart = cdOffset - trailingSize - 8;
+  if (blockStart < 0)
+    return err({
+      kind: "malformed-block",
+      offset: cdOffset,
+      detail: "block extends before file start",
+    });
+  const blockBytes = await source.readRange(blockStart, cdOffset - blockStart);
+  return parseApkSigningBlockBytes(blockBytes, blockStart, trailingSize);
 };
