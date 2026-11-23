@@ -209,6 +209,7 @@
 * **guidance:** direct workflow errors to the scoped inventory ([#13321](https://github.com/morluto/rea/issues/13321)) ([11a75a5](https://github.com/morluto/rea/commit/11a75a5c19bee0bd030d4bbbab9bcf789a2d26a6))
 * **har:** keep Chromium DevTools captures that report an empty server address ([#13027](https://github.com/morluto/rea/issues/13027)) ([af0d69e](https://github.com/morluto/rea/commit/af0d69ee91e2ae8225b94257d8354382bd0b263b))
 * **hermes:** resolve nested HERMES_HOME selection from the override root ([#13792](https://github.com/morluto/rea/issues/13792)) ([6542e81](https://github.com/morluto/rea/commit/6542e81a120864e2ed0d62476632c506cee1e43c))
+* **hopper:** name xrefs when a selector resolves outside every procedure ([#14188](https://github.com/morluto/rea/issues/14188)) ([b1b0bdf](https://github.com/morluto/rea/commit/b1b0bdf01115df8c66589e059bee45e299e03403))
 * **ida:** extend verifier admission check deadline to 90s ([d7ba8ad](https://github.com/morluto/rea/commit/d7ba8adbc3b8dc009549d6405873e68c8934c814))
 * **ida:** report an idb_open rejection with its upstream reason ([0cf7483](https://github.com/morluto/rea/commit/0cf7483322e0499cec72cc3df06d761871a75929)), closes [#13286](https://github.com/morluto/rea/issues/13286)
 * **ida:** report the supervisor's open deadline as provider_timeout ([ddf2cd9](https://github.com/morluto/rea/commit/ddf2cd9102ddcc6da901aa37f752223de61b289d)), closes [#13286](https://github.com/morluto/rea/issues/13286)
