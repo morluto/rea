@@ -69,6 +69,9 @@ export const argumentNode = (
 ): t.Node | undefined =>
   argument !== null && t.isNode(argument) ? argument : undefined;
 
+/** Webpack 5/Rspack `*Chunk*` globals and webpack 4's default `webpackJsonp`. */
+const CHUNK_RUNTIME_NAME = /(?:webpack|rspack)Chunk|webpackJsonp/iu;
+
 /** Recognize the runtime name for a Webpack/Rspack push call. */
 export const chunkRuntime = (call: t.CallExpression): string | undefined => {
   if (
@@ -89,10 +92,7 @@ const findChunkRuntime = (node: t.Node): string | undefined => {
   while (pending.length > 0) {
     const current = pending.pop();
     if (current === undefined) continue;
-    if (
-      t.isIdentifier(current) &&
-      /(?:webpack|rspack)Chunk/iu.test(current.name)
-    )
+    if (t.isIdentifier(current) && CHUNK_RUNTIME_NAME.test(current.name))
       return current.name;
     if (
       t.isMemberExpression(current) ||
@@ -102,7 +102,7 @@ const findChunkRuntime = (node: t.Node): string | undefined => {
         current.property,
         current.computed,
       );
-      if (/(?:webpack|rspack)Chunk/iu.test(property)) return property;
+      if (CHUNK_RUNTIME_NAME.test(property)) return property;
       if (t.isNode(current.object)) pending.push(current.object);
       continue;
     }
@@ -136,6 +136,84 @@ export const moduleFactory = (
   )
     return property.value;
   return undefined;
+};
+
+/** One module-table slot: its key and, when literal, its factory. */
+export interface ModuleTableEntry {
+  readonly key: string;
+  readonly factory:
+    | t.FunctionExpression
+    | t.ArrowFunctionExpression
+    | t.ObjectMethod
+    | undefined;
+}
+
+/**
+ * List a literal module table's slots. Webpack writes an object keyed by
+ * module id, or, when numeric ids are dense, a sparse array whose index is the
+ * id, optionally offset as `Array(n).concat([...])`. Holes are absent ids.
+ * Returns undefined for any other shape, including arrays with spreads, whose
+ * indexes are not literal.
+ */
+export const moduleTableEntries = (
+  table: t.Node | null | undefined,
+): readonly ModuleTableEntry[] | undefined => {
+  if (t.isObjectExpression(table))
+    return table.properties.map((property) => ({
+      key: modulePropertyName(property),
+      factory: moduleFactory(property),
+    }));
+  const array = moduleTableArray(table);
+  if (array === undefined) return undefined;
+  return array.elements.flatMap((element, index) =>
+    element === null
+      ? []
+      : [
+          {
+            key: String(array.offset + index),
+            factory:
+              t.isFunctionExpression(element) ||
+              t.isArrowFunctionExpression(element)
+                ? element
+                : undefined,
+          },
+        ],
+  );
+};
+
+const moduleTableArray = (
+  table: t.Node | null | undefined,
+):
+  | {
+      readonly elements: t.ArrayExpression["elements"];
+      readonly offset: number;
+    }
+  | undefined => {
+  let offset = 0;
+  let elements: t.Node | null | undefined = table;
+  // `Array(n).concat([...])` places the first listed element at index n.
+  if (
+    t.isCallExpression(table) &&
+    table.arguments.length === 1 &&
+    t.isMemberExpression(table.callee) &&
+    semanticStaticPropertyName(table.callee.property, table.callee.computed) ===
+      "concat" &&
+    t.isCallExpression(table.callee.object) &&
+    t.isIdentifier(table.callee.object.callee, { name: "Array" }) &&
+    table.callee.object.arguments.length === 1 &&
+    t.isNumericLiteral(table.callee.object.arguments[0]) &&
+    Number.isSafeInteger(table.callee.object.arguments[0].value) &&
+    table.callee.object.arguments[0].value >= 0
+  ) {
+    offset = table.callee.object.arguments[0].value;
+    elements = table.arguments[0];
+  }
+  if (
+    !t.isArrayExpression(elements) ||
+    elements.elements.some((element) => t.isSpreadElement(element))
+  )
+    return undefined;
+  return { elements: elements.elements, offset };
 };
 
 /** Derive a literal or explicitly computed module key. */

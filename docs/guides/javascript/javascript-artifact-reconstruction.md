@@ -429,8 +429,12 @@ Selected bounded text is then parsed as inert data to recover:
   files loaded through proven BrowserWindow instances;
 - local HTML script entrypoints;
 - Webpack and Rspack chunk registrations and module factories represented as
-  AST literals, plus esbuild `__commonJS` module tables; recovered esbuild
-  CommonJS exports use its factory's `exports`-then-`module` parameter order.
+  AST literals, including webpack 4 `webpackJsonp` chunks and chunk module
+  tables written as sparse arrays (an element's index, plus any
+  `Array(n).concat` offset, is its module id), plus esbuild `__commonJS` module
+  tables; standalone bootstrap tables are recovered only in object form;
+  recovered esbuild CommonJS exports use its factory's `exports`-then-`module`
+  parameter order.
   Export receivers and loader helpers retain those calling-convention roles only
   while the binding at the read still holds its original parameter value;
   replacing a parameter does not give the replacement object that role;

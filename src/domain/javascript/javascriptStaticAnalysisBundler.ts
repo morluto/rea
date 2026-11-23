@@ -21,12 +21,12 @@ import {
   argumentValue,
   calleeName,
   chunkRuntime,
-  moduleFactory,
-  modulePropertyName,
+  moduleTableEntries,
   range,
   registrationKey,
   sourceSlice,
   staticArrayValues,
+  type ModuleTableEntry,
 } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptAnalysisAccumulator as AnalysisAccumulator } from "./javascriptStaticAnalysisState.js";
 import type {
@@ -48,13 +48,14 @@ export const inspectBundlerRegistration = (
   if (runtime === undefined || !t.isArrayExpression(entry)) return;
   const chunkIds = entry.elements[0];
   const table = entry.elements[1];
-  if (!t.isArrayExpression(chunkIds) || !t.isObjectExpression(table)) return;
+  const tableEntries = moduleTableEntries(table);
+  if (!t.isArrayExpression(chunkIds) || tableEntries === undefined) return;
   const runtimeValue = runtimeMetadata(
     entry.elements[2],
     bindings,
     accumulator,
   );
-  const recovered = recoverBundlerModules(source, table, accumulator, {
+  const recovered = recoverBundlerModules(source, tableEntries, accumulator, {
     runtime,
     bindings,
   });
@@ -109,7 +110,7 @@ export const inspectBundlerBootstrap = (
   const runtime = `webpack-bootstrap@${String(call.start ?? 0)}`;
   const recovered = recoverBundlerModules(
     source,
-    bootstrap.table,
+    moduleTableEntries(bootstrap.table) ?? [],
     accumulator,
     { runtime, bindings },
   );
@@ -172,10 +173,12 @@ export const inspectEsbuildWrapper = (
   const table = call.arguments[0];
   if (wrapperKind === null || !t.isObjectExpression(table)) return;
   const runtime = `esbuild-${wrapperKind}`;
-  const recovered = recoverBundlerModules(source, table, accumulator, {
-    runtime,
-    bindings,
-  });
+  const recovered = recoverBundlerModules(
+    source,
+    moduleTableEntries(table) ?? [],
+    accumulator,
+    { runtime, bindings },
+  );
   if (recovered.modules.length === 0) return;
   accumulator.unknownFindings += recovered.unknownAsyncChunkKeys;
   const registration: JavaScriptBundlerRegistration = {
@@ -214,20 +217,15 @@ interface BundlerRecoveryContext {
 
 const recoverBundlerModules = (
   source: string,
-  table: t.ObjectExpression,
+  entries: readonly ModuleTableEntry[],
   accumulator: AnalysisAccumulator,
   context: BundlerRecoveryContext,
 ): RecoveredBundlerModules => {
   const modules: JavaScriptBundlerModule[] = [];
   const asyncChunkKeys: string[] = [];
   let unknownAsyncChunkKeys = 0;
-  for (const property of table.properties) {
-    const recovered = recoverBundlerModule(
-      source,
-      property,
-      accumulator,
-      context,
-    );
+  for (const entry of entries) {
+    const recovered = recoverBundlerModule(source, entry, accumulator, context);
     if (recovered === null) continue;
     modules.push(recovered.module);
     for (const key of recovered.asyncChunkKeys) asyncChunkKeys.push(key);
@@ -242,7 +240,7 @@ const recoverBundlerModules = (
 
 const recoverBundlerModule = (
   source: string,
-  property: t.ObjectMethod | t.ObjectProperty | t.SpreadElement,
+  { key, factory }: ModuleTableEntry,
   accumulator: AnalysisAccumulator,
   context: BundlerRecoveryContext,
 ): {
@@ -251,9 +249,7 @@ const recoverBundlerModule = (
   readonly unknownAsyncChunkKeys: number;
 } | null => {
   const { runtime, bindings } = context;
-  const factory = moduleFactory(property);
   if (factory === undefined) return null;
-  const key = modulePropertyName(property);
   if (key.startsWith("[computed@") || key.startsWith("[unknown@"))
     accumulator.unknownFindings += 1;
   const fingerprint = fingerprintJavaScriptAst(factory);
