@@ -184,6 +184,9 @@ another context could help, describe it as an explicit choice and state any
 relevant loss of state; do not switch or select a candidate automatically.
 Preserve uncertainty, partial observations, and session or cleanup state. A
 suggested retry must be safe and explain any required change or wait.
+`retryable` claims only an idempotent retry. If a timed-out or cancelled
+operation may already have taken effect, say so instead of offering a blind
+retry.
 
 Verify recovery through the public workflow: reproduce the failure, follow
 the suggested next step when feasible, and check the result and session state.
@@ -214,6 +217,9 @@ does not establish another instance.
 - Keep result semantics provider-neutral. If an operation means the same
   thing on several providers, it resolves the same selector the same way on
   each. Otherwise the contract declares the difference.
+- Page cursors over mutable state, such as a live provider session that accepts
+  annotations, carry the source revision. A cursor from an older revision fails
+  instead of returning shifted rows.
 - Name the address space of every location: RVA, virtual address or file
   offset, in one documented spelling. Report the image base wherever results
   mix those spaces.
