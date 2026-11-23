@@ -29,6 +29,53 @@ const approvedInput = {
   allowed_origins: [new URL(request.fetchUrl).origin],
 };
 
+it("fetches ahead with bounded concurrency but admits in request order", async () => {
+  const mapText = (name: string) =>
+    JSON.stringify({
+      version: 3,
+      sources: [`${name}.js`],
+      names: [],
+      mappings: "AAAA",
+    });
+  let active = 0;
+  let maxActive = 0;
+  const requests = [0, 1, 2].map((index) => ({
+    ...request,
+    scriptKey: `scr_${String(index + 1).repeat(64)}`,
+    declaredUrl: `https://app.example.test/map${index}.js.map`,
+    fetchUrl: `https://app.example.test/map${index}.js.map`,
+  }));
+  const result = await fetchWebSourceMaps(requests, approvedInput, undefined, {
+    fetch: async (url) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      // Later requests finish first; admission must still be in request order.
+      const index = Number(/map(\d)/.exec(String(url))?.[1] ?? 0);
+      await new Promise((resolve) => setTimeout(resolve, (2 - index) * 5));
+      active -= 1;
+      return new Response(mapText(`map${index}`), { status: 200 });
+    },
+  });
+  if (!result.ok) throw result.error;
+  expect(maxActive).toBeGreaterThan(1);
+  expect(result.value.items.map((item) => item.status)).toEqual([
+    "included",
+    "included",
+    "included",
+  ]);
+  expect(
+    result.value.items.map((item) =>
+      item.status === "included"
+        ? item.original_sources.map(({ source }) => source)
+        : [],
+    ),
+  ).toEqual([
+    ["https://app.example.test/map0.js"],
+    ["https://app.example.test/map1.js"],
+    ["https://app.example.test/map2.js"],
+  ]);
+});
+
 it("checks cancellation before returning an empty source-map selection", async () => {
   const controller = new AbortController();
   const host = {

@@ -190,9 +190,28 @@ export const fetchWebSourceMaps = async (
       kind: "web-source-map-fetch",
       source_maps: completedMaps(),
     });
+  // Responses are fetched with bounded lookahead, but every budget is still
+  // consumed in request order, so inclusion and limitations stay deterministic.
+  const FETCH_LOOKAHEAD = 4;
+  const prefetches = new Map<number, Promise<PrefetchedSourceMap>>();
+  const startPrefetch = (index: number): void => {
+    if (index >= requests.length || prefetches.has(index)) return;
+    if (operationSignal.aborted || performance.now() >= deadlineAt) return;
+    const request = requests[index]!;
+    if (!approvedUrl(request.fetchUrl, input.allowed_origins)) return;
+    prefetches.set(
+      index,
+      prefetchSourceMap(request, input, operationSignal, host),
+    );
+  };
   try {
-    for (const request of requests) {
-      if (signal?.aborted === true) throw signal.reason;
+    for (const [index, request] of requests.entries()) {
+      // A started prefetch carries retained-cleanup ownership; admitting it
+      // through fetchOne surfaces that cleanup instead of dropping it.
+      if (signal?.aborted === true && !prefetches.has(index))
+        throw signal.reason;
+      for (let ahead = 0; ahead < FETCH_LOOKAHEAD; ahead += 1)
+        startPrefetch(index + ahead);
       const reservation = sourceMapFailureReservation(request) + 1;
       if (
         reservation >
@@ -206,18 +225,25 @@ export const fetchWebSourceMaps = async (
       }
       const expandedBytesBeforeItem = budget.decodedRecords.expandedBytes;
       budget.decodedRecords.expandedBytes += reservation;
-      if (operationSignal.aborted || performance.now() >= deadlineAt) {
+      if (
+        (operationSignal.aborted || performance.now() >= deadlineAt) &&
+        !prefetches.has(index)
+      ) {
         items.push(
           emptySourceMapItem(request, "fetch_failed", fetchDeadlineLimitation),
         );
         continue;
       }
+      const prefetched = prefetches.has(index)
+        ? await prefetches.get(index)
+        : undefined;
       const item = await fetchOne(
         request,
         input,
         operationSignal,
         host,
         budget,
+        prefetched,
       );
       if (item.status !== "included" && item.status !== "partial") {
         const failureBytes = jsonByteLength(item) + 1;
@@ -269,6 +295,21 @@ export const fetchWebSourceMaps = async (
   } finally {
     clearTimeout(timeout);
     signal?.removeEventListener("abort", abortFromCaller);
+    // Responses fetched ahead but never admitted stay owned until cancelled;
+    // their cleanup settles asynchronously and must not block this return.
+    for (const pending of prefetches.values()) {
+      void pending
+        .then(async (prefetched) => {
+          if (!prefetched.consumed && prefetched.fetched !== undefined)
+            await cancelUnreadResponse(
+              prefetched.fetched.response,
+              prefetched.fetched.fetchedUrl,
+              new Error("Source-map fetch was not admitted."),
+              operationSignal,
+            );
+        })
+        .catch(() => undefined);
+    }
   }
   if (signal?.aborted === true)
     return err(retainCompleted(cancelledBy("analyze_web_bundle", signal)));
@@ -565,6 +606,39 @@ const cancelUnreadResponse = async (
   }
 };
 
+/** A response fetched ahead of admission; budgets are still consumed in request order. */
+interface PrefetchedSourceMap {
+  readonly fetched:
+    | { readonly response: Response; readonly fetchedUrl: string }
+    | undefined;
+  readonly effectiveUrl: string | null;
+  readonly failure?: unknown;
+  consumed: boolean;
+}
+
+const prefetchSourceMap = async (
+  request: WebSourceMapRequest,
+  input: AnalyzeWebBundleInput,
+  signal: AbortSignal | undefined,
+  host: SourceMapFetchHost,
+): Promise<PrefetchedSourceMap> => {
+  let effectiveUrl: string | null = null;
+  try {
+    const fetched = await fetchFollowingApprovedRedirects(
+      request.fetchUrl,
+      input.allowed_origins,
+      signal,
+      host,
+      (url) => {
+        effectiveUrl = url;
+      },
+    );
+    return { fetched, effectiveUrl, consumed: false };
+  } catch (failure: unknown) {
+    return { fetched: undefined, effectiveUrl, failure, consumed: false };
+  }
+};
+
 const fetchOne = async (
   request: WebSourceMapRequest,
   input: AnalyzeWebBundleInput,
@@ -576,6 +650,7 @@ const fetchOne = async (
     deadlineLimitation: string;
     decodedRecords: SourceMapCollectionBudget;
   },
+  prefetched?: PrefetchedSourceMap,
 ): Promise<WebSourceMapItem> => {
   if (!approvedUrl(request.fetchUrl, input.allowed_origins))
     return emptySourceMapItem(
@@ -586,15 +661,23 @@ const fetchOne = async (
   let effectiveUrl: string | null = null;
   let completedResponseIdentity: ResponseIdentity | undefined;
   try {
-    const fetched = await fetchFollowingApprovedRedirects(
-      request.fetchUrl,
-      input.allowed_origins,
-      signal,
-      host,
-      (url) => {
-        effectiveUrl = url;
-      },
-    );
+    let fetched: { response: Response; fetchedUrl: string } | undefined;
+    if (prefetched === undefined) {
+      fetched = await fetchFollowingApprovedRedirects(
+        request.fetchUrl,
+        input.allowed_origins,
+        signal,
+        host,
+        (url) => {
+          effectiveUrl = url;
+        },
+      );
+    } else {
+      prefetched.consumed = true;
+      effectiveUrl = prefetched.effectiveUrl;
+      if (prefetched.failure !== undefined) throw prefetched.failure;
+      fetched = prefetched.fetched;
+    }
     if (fetched === undefined)
       return emptySourceMapItem(
         request,
