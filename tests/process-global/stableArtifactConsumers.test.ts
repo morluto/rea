@@ -313,7 +313,10 @@ it.each(
   "retains completed caller input for $consumer through $outcome",
   async ({ consumer, outcome }) => {
     const path = await selectedImage();
-    const bytes = Buffer.from("selected completed input");
+    const bytes =
+      consumer === "Rust service"
+        ? Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00])
+        : Buffer.from("selected completed input");
     await writeFile(path, bytes);
     const controller = new AbortController();
     const reason = { source: "caller input finalization" };

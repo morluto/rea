@@ -17,7 +17,7 @@ import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 /** Compressed zlib stream limit. */
-const RUST_SECTION_BYTES = 1024 * 1024;
+export const RUST_SECTION_BYTES = 1024 * 1024;
 /** Inflated JSON may grow by at most this multiple of the compressed stream. */
 export const RUST_INFLATE_RATIO = 64;
 /** Absolute inflated JSON limit, applied together with the ratio. */
@@ -64,6 +64,16 @@ const compressedSectionLimit = (required: number) =>
     },
   );
 
+export const assertAuditableSectionSize = (
+  sectionBytes: number,
+  peFileAlignment?: number,
+): void => {
+  if (sectionBytes === 0)
+    throw malformedInput(RUST_AUDITABLE_FORMAT, "Dependency section is empty");
+  if (sectionBytes > RUST_SECTION_BYTES && peFileAlignment === undefined)
+    throw compressedSectionLimit(sectionBytes);
+};
+
 /** Parsed section payload. Cycles are listed and are not walked. */
 export const readAuditableSection = (
   sectionName: RustAuditableMetadata["section_name"],
@@ -74,13 +84,7 @@ export const readAuditableSection = (
     readonly maxOutputBytes?: number | undefined;
   } = {},
 ): RustAuditableMetadata => {
-  if (bytes.length === 0)
-    throw malformedInput(RUST_AUDITABLE_FORMAT, "Dependency section is empty");
-  if (
-    bytes.length > RUST_SECTION_BYTES &&
-    options.peFileAlignment === undefined
-  )
-    throw compressedSectionLimit(bytes.length);
+  assertAuditableSectionSize(bytes.length, options.peFileAlignment);
   const inflated = inflateSection(bytes, options.peFileAlignment);
   const document = parseDocument(
     inflated.bytes,
