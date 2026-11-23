@@ -17,6 +17,7 @@ import { inspectApkSignatureInputSchema } from "../../../src/domain/apkSignature
 import { PeResourcesProvider } from "../../../src/native/pe/PeResourcesProvider.js";
 import { PeCertificatesProvider } from "../../../src/native/pe/PeCertificatesProvider.js";
 import { PeImportsProvider } from "../../../src/native/pe/PeImportsProvider.js";
+import { elfNoteFixture } from "../../../src/native/elf/ElfNotes.fixture.js";
 import { ElfNotesProvider } from "../../../src/native/elf/ElfNotesProvider.js";
 import { KernelModuleProvider } from "../../../src/native/elf/KernelModuleProvider.js";
 import { ElfDependenciesProvider } from "../../../src/native/elf/ElfDependenciesProvider.js";
@@ -69,6 +70,7 @@ const cases = [
   },
   {
     name: "ELF notes",
+    fixture: elfNoteFixture,
     make: () => {
       const provider = new ElfNotesProvider();
       return {
@@ -167,18 +169,14 @@ const modes = [
   "close-both",
 ] as const;
 
-it.each(
-  cases.flatMap(({ name, make }) =>
-    modes.map((mode) => ({ name, make, mode })),
-  ),
-)(
+it.each(cases.flatMap((entry) => modes.map((mode) => ({ ...entry, mode }))))(
   "retains completed $name acquisition through $mode",
-  async ({ make, mode }) => {
+  async (entry) => {
+    const { make, mode } = entry;
     const root = await createTestTempDirectory("rea-native-finalization-");
     const path = join(root, "selected.bin");
-    // The descriptor must finalize before any format parser runs, so one
-    // physical file can exercise every acquisition boundary.
-    const bytes = peResourceFixture().bytes;
+    const bytes =
+      "fixture" in entry ? entry.fixture() : peResourceFixture().bytes;
     await writeFile(path, bytes);
     const controller = new AbortController();
     const reason =
