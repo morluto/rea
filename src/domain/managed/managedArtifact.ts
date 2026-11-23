@@ -273,6 +273,19 @@ const managedInstructionAnchorSchema = z.object({
     "unknown",
   ]),
   operand: z.string().nullable(),
+  switch_targets: z
+    .array(z.int())
+    .exactOptional()
+    .describe(
+      "Ordered CIL byte offsets derived from signed switch displacements relative to the end of the complete table; targets are observed, not validated control-flow edges. Omitted in historical evidence.",
+    ),
+  switch_fallthrough: z
+    .int()
+    .min(0)
+    .exactOptional()
+    .describe(
+      "CIL byte offset immediately after the complete switch table; also the base for its signed displacements. Omitted in historical evidence.",
+    ),
 });
 
 const managedMethodBodySchema = z.object({

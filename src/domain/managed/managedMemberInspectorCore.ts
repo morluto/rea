@@ -145,6 +145,10 @@ export interface ParsedInstruction {
   readonly operandKind: ManagedInstructionAnchor["operand_kind"];
   readonly operand: string | null;
   readonly reference: MetadataTokenFact | null;
+  readonly switchTable?: {
+    readonly targets: number[];
+    readonly fallthrough: number;
+  };
 }
 
 export type ParsedTokenInstruction = ParsedInstruction & {

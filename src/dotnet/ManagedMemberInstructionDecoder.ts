@@ -260,6 +260,7 @@ type OperandResult = {
   readonly anchorKind: ManagedInstructionAnchor["operand_kind"];
   readonly value: string | null;
   readonly reference?: MetadataTokenFact;
+  readonly switchTable?: NonNullable<ParsedInstruction["switchTable"]>;
 };
 
 type OperandReader = (reader: BinaryReader, offset: number) => OperandResult;
@@ -384,8 +385,19 @@ const readOperand = (
   memberRefKind?: (token: string) => "field" | "method" | undefined,
 ): OperandResult => {
   if (fixedOperand !== undefined) return fixedOperand.read(reader, offset);
-  if (switchCount !== undefined)
-    return { anchorKind: "switch", value: String(switchCount) };
+  if (switchCount !== undefined) {
+    const fallthrough = offset + SWITCH_WORD_BYTES * (1 + switchCount);
+    const targets = Array.from(
+      { length: switchCount },
+      (_, index) =>
+        fallthrough + reader.i32(offset + SWITCH_WORD_BYTES * (1 + index)),
+    );
+    return {
+      anchorKind: "switch",
+      value: String(switchCount),
+      switchTable: { targets, fallthrough },
+    };
+  }
   if (!hasReference) return { anchorKind: "unknown", value: null };
   const reference = metadataTokenFact(reader.u32(offset));
   const { token } = reference;
@@ -401,7 +413,11 @@ const readOperand = (
 
 export const decodeInstructions = (
   il: Buffer,
-  admitInstruction?: (offset: number, hasReference: boolean) => void,
+  admitInstruction?: (
+    offset: number,
+    hasReference: boolean,
+    switchCount: number | undefined,
+  ) => void,
   memberRefKind?: (token: string) => "field" | "method" | undefined,
 ): {
   readonly parsed: readonly ParsedInstruction[];
@@ -450,7 +466,7 @@ export const decodeInstructions = (
         issue = `Instruction ${descriptor.name} at IL offset ${String(start)} leaves method body`;
         break;
       }
-      admitInstruction?.(start, hasReference);
+      admitInstruction?.(start, hasReference, switchCount);
       const operand = readOperand(
         reader,
         offset,
@@ -473,6 +489,9 @@ export const decodeInstructions = (
         operandKind: operand.anchorKind,
         operand: operand.value,
         reference: operand.reference ?? null,
+        ...(operand.switchTable === undefined
+          ? {}
+          : { switchTable: operand.switchTable }),
       });
     }
   } catch (cause: unknown) {
