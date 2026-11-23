@@ -1,22 +1,15 @@
 import { ERLANG_BEAM_PROVIDER_IDENTITY } from "./ErlangBeamProviderIdentity.js";
 import {
-  projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
-  stableArtifactInputFailure,
   projectArtifactCloseFailure,
   ArtifactReaderFailure,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
-  artifactSelectedPathErrno,
   ArtifactResourceScope,
 } from "../resources/index.js";
 import type { BeamPort } from "../ports/erlang/BeamPort.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
-import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import {
-  AnalysisAccessDeniedError,
-  AnalysisInputError,
   AnalysisResourceConstraintError,
   type ResourceConstraintRecovery,
 } from "../domain/analysisErrorCore.js";
@@ -33,6 +26,8 @@ import {
   isParseLimit,
   parseLimitConstraint,
 } from "../domain/parseFailureAnalysisError.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../providers/offlineArtifactFailure.js";
 import { parseErlangBeamFromHandle } from "./BeamParser.js";
 
 const OPERATION = "inspect_erlang_beam";
@@ -110,97 +105,71 @@ const parserBudgetRemediation = ({ name, maximum }: LimitRef) => {
   return undefined;
 };
 
-const beamFailurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
-  input: InspectErlangBeamInput,
-) => {
-  const { cause, origin } = facts;
-  const identityFailure = projectOwnedArtifactIdentityFailure(
-    facts,
-    OPERATION,
-    input.path,
-  );
-  if (identityFailure !== undefined) return identityFailure;
-  const reportedLimits = {
-    max_file_bytes: input.max_file_bytes,
-    max_chunks: input.max_chunks,
-    max_atoms: input.max_atoms,
-  };
-  if (origin === "owned-or-classified" && isParseLimit(cause, "beam")) {
-    const { limit } = cause.failure;
-    const remediationAction = parserBudgetRemediation(limit);
-    const recovery: ResourceConstraintRecovery =
-      limit.name === "max_table_rows"
-        ? fixedAllowanceOptions("BEAM table row ceiling", "parser", {
-            limit: limit.maximum,
-            unit: "rows",
-          })
-        : remediationAction === undefined
-          ? {}
-          : { remediationAction };
-    return parseLimitConstraint(OPERATION, "capacity", cause, {
-      reportedLimitContext: reportedLimits,
-      legacyMaximumKey: limit.name,
-      retryable: false,
-      ...recovery,
-    });
-  }
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit") {
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        cause.boundary ?? "memory",
-        cause.message,
-        reportedLimits,
-        {
-          cause,
-          ...(cause.boundary === "file-size"
-            ? {
-                retryable: false,
-                remediationAction: fileBudgetRemediation(input.max_file_bytes),
-              }
-            : {}),
-        },
-      );
-    }
-    if (cause.reason === "path" || cause.reason === "format")
-      return stableArtifactInputFailure(cause, OPERATION);
-  }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    const pathErrno = artifactSelectedPathErrno(cause);
-    if (pathErrno !== undefined)
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected BEAM file could not be read (${pathErrno}): ${input.path}.`,
-        },
-      ]);
-  }
-  return new ArtifactOperationError(
-    OPERATION,
-    origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure
-      ? cause.reason
-      : "io",
-    undefined,
-    cause instanceof Error ? cause.message : "BEAM inspection failed.",
-    { cause },
-  );
-};
-
 const beamFailure = (
   cause: unknown,
   input: InspectErlangBeamInput,
   observed?: { readonly sha256: string; readonly bytes: number },
 ) => {
-  const primary = beamFailurePrimary(artifactFilePrimaryFacts(cause), input);
+  const facts = artifactFilePrimaryFacts(cause);
+  const reportedLimits = {
+    max_file_bytes: input.max_file_bytes,
+    max_chunks: input.max_chunks,
+    max_atoms: input.max_atoms,
+  };
+  const primary = classifyProviderFailure(
+    facts.cause,
+    offlineArtifactFailureDialect(facts, {
+      providerId: ERLANG_BEAM_PROVIDER_IDENTITY.id,
+      operation: OPERATION,
+      path: input.path,
+      description: "BEAM file",
+      fallbackMessage: "BEAM inspection failed.",
+      recognise: (failure, origin) => {
+        if (origin === "owned-or-classified" && isParseLimit(failure, "beam")) {
+          const { limit } = failure.failure;
+          const remediationAction = parserBudgetRemediation(limit);
+          const recovery: ResourceConstraintRecovery =
+            limit.name === "max_table_rows"
+              ? fixedAllowanceOptions("BEAM table row ceiling", "parser", {
+                  limit: limit.maximum,
+                  unit: "rows",
+                })
+              : remediationAction === undefined
+                ? {}
+                : { remediationAction };
+          return parseLimitConstraint(OPERATION, "capacity", failure, {
+            reportedLimitContext: reportedLimits,
+            legacyMaximumKey: limit.name,
+            retryable: false,
+            ...recovery,
+          });
+        }
+        if (
+          origin === "owned-or-classified" &&
+          failure instanceof ArtifactReaderFailure &&
+          failure.reason === "limit"
+        )
+          return new AnalysisResourceConstraintError(
+            OPERATION,
+            failure.boundary ?? "memory",
+            failure.message,
+            reportedLimits,
+            {
+              cause: failure,
+              ...(failure.boundary === "file-size"
+                ? {
+                    retryable: false,
+                    remediationAction: fileBudgetRemediation(
+                      input.max_file_bytes,
+                    ),
+                  }
+                : {}),
+            },
+          );
+        return undefined;
+      },
+    }),
+  );
   return projectStableArtifactFailure(
     cause,
     primary,
