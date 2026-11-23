@@ -333,8 +333,7 @@ const persistClientConfiguration = async ({
   fallbackServers,
   platform,
 }: ClientConfigurationUpdate): Promise<ClientConfigurationResult> => {
-  // The plan chose this file; an MSIX package may have switched to its
-  // private copy since, for example when it quit.
+  // Quitting the app after reviewing the plan can change its active file.
   if (client.msixPackage !== undefined) {
     const target = await packageReadTargetChanged(
       client.msixPackage,

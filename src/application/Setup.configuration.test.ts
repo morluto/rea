@@ -42,8 +42,11 @@ const msixClaudeDesktop = (
   quitBeforeSetup: true,
   msixPackage: {
     packageFamilyName: "Claude_pzs8sxrjxfjjc",
-    privateConfigPath: PRIVATE_CONFIG,
-    appDataConfigPath: APPDATA_CONFIG,
+    storage: {
+      kind: "roaming_overlay",
+      privateConfigPath: PRIVATE_CONFIG,
+      appDataConfigPath: APPDATA_CONFIG,
+    },
     virtualizedRoots: [ROAMING, LOCAL],
     processView,
   },
@@ -411,12 +414,7 @@ it("offers shared skill intent when the detected personal copy is current", asyn
   expect(result.plannedActions).toEqual([
     expect.objectContaining({
       id: "install_skill",
-      target: join(
-        host.homeDirectory,
-        ".agents",
-        "skills",
-        "reverse-engineer-anything",
-      ),
+      target: `${host.homeDirectory}/.agents/skills/reverse-engineer-anything`,
     }),
   ]);
   expect(host.configurations).toBe(0);

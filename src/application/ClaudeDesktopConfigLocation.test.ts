@@ -541,7 +541,53 @@ describe("Claude Desktop MSIX process view when a probe changes during the compa
 });
 
 describe("unresolved Claude Desktop package identity", () => {
-  it.each(["AnthropicPBC.Claude_fnn82j28hfe8t", "Claude_fnn82j28hfe8t"])(
+  it("does not infer an active installation from an orphaned Microsoft Store profile", () => {
+    const profile = join(
+      env.LOCALAPPDATA,
+      "Claude-Data",
+      "anthropicpbc.claude_fnn82j28hfe8t",
+    );
+    const location = resolveWindowsClaudeDesktopLocation(home, env, {
+      readdir: () => [],
+      lstat: (path) => {
+        if (path === profile) return folder;
+        throw failure("ENOENT");
+      },
+      realpath: (path) => path,
+    });
+    expect(location).toEqual({
+      ok: false,
+      error: {
+        path: profile,
+        message: expect.stringContaining("without its package directory"),
+      },
+    });
+  });
+
+  it("reports coexisting Store and legacy packages in either enumeration order", () => {
+    const families = [
+      CLAUDE_DESKTOP_PACKAGE_FAMILY,
+      "AnthropicPBC.Claude_fnn82j28hfe8t",
+    ];
+    for (const names of [families, families.toReversed()]) {
+      const location = resolveWindowsClaudeDesktopLocation(home, env, {
+        readdir: () => names,
+        lstat: () => folder,
+        realpath: (path) => path,
+      });
+      expect(location).toMatchObject({
+        ok: false,
+        error: {
+          path: packages,
+          message: expect.stringContaining(
+            "multiple Claude Desktop package families",
+          ),
+        },
+      });
+    }
+  });
+
+  it.each(["AnthropicPBC.Claude_abcdefghjkmnp", "Claude_fnn82j28hfe8t"])(
     "refuses an unrecognized package deployment %s instead of selecting AppData",
     (name) => {
       const location = resolveWindowsClaudeDesktopLocation(home, env, {
@@ -711,8 +757,11 @@ describe("package-private REA launchers", () => {
 describe("writes from a redirected AppData view", () => {
   const view: MsixPackageView = {
     packageFamilyName: CLAUDE_DESKTOP_PACKAGE_FAMILY,
-    privateConfigPath: privateConfig,
-    appDataConfigPath: appDataConfig,
+    storage: {
+      kind: "roaming_overlay",
+      privateConfigPath: privateConfig,
+      appDataConfigPath: appDataConfig,
+    },
     virtualizedRoots: [env.APPDATA, env.LOCALAPPDATA],
     processView: "redirected",
   };

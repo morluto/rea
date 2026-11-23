@@ -154,6 +154,8 @@ export interface PiProjectSettings {
 }
 
 export interface ClientPathFailure extends ClientRootFailure {
+  /** Installation evidence established independently of the unresolved configuration. */
+  readonly markerPath?: string;
   readonly msixPackage?: MsixPackageView;
   /** The access failure that left the path unresolved, with its cause. */
   readonly failure?: ConfigurationError;
@@ -431,12 +433,17 @@ export const registrationPersistenceDetail = (
 ): string | undefined => {
   const name = client.displayName ?? client.name;
   const msix = client.msixPackage;
-  const packageDetail =
-    msix === undefined
-      ? undefined
-      : client.configPath === msix.privateConfigPath
-        ? `${name} is installed as MSIX package ${msix.packageFamilyName}, which reads this package-private file instead of ${msix.appDataConfigPath}.`
-        : `${name} is installed as MSIX package ${msix.packageFamilyName}, which reads this file until it saves its own copy at ${msix.privateConfigPath}.`;
+  let packageDetail: string | undefined;
+  if (msix !== undefined) {
+    const { storage } = msix;
+    if (storage.kind === "store_profile")
+      packageDetail = `Microsoft Store package ${msix.packageFamilyName} reads ${client.configPath}.`;
+    else
+      packageDetail =
+        client.configPath === storage.privateConfigPath
+          ? `${name} is installed as MSIX package ${msix.packageFamilyName}, which reads this package-private file instead of ${storage.appDataConfigPath}.`
+          : `${name} is installed as MSIX package ${msix.packageFamilyName}, which reads this file until it saves its own copy at ${storage.privateConfigPath}.`;
+  }
   const quitDetail =
     client.quitBeforeSetup === true
       ? `Quit ${name} fully before approving; closing its window is not enough. A running ${name} can rewrite this file from memory and drop the registration. Start it again after setup.`
@@ -472,13 +479,19 @@ export const registrationWriteBlocker = (
   if (msix === undefined || msix.processView === "direct") return undefined;
   const name = client.displayName ?? client.name;
   if (msix.processView === "redirected")
-    return `This process was started from ${name}'s MSIX package ${msix.packageFamilyName}: its AppData is redirected into that package, so ${name} is running and would overwrite ${msix.privateConfigPath} from memory. Quit ${name} fully, then rerun ${operation} from a terminal that ${name} did not start.`;
-  // Registration writes the configuration the app reads; uninstall cleans both files.
+    return `This process was started from ${name}'s MSIX package ${msix.packageFamilyName}. Its AppData is redirected into that package, so the running app could overwrite changes to ${client.configPath}. Quit ${name} fully, then rerun ${operation} from a terminal that ${name} did not start.`;
+  const { storage } = msix;
+  const comparison =
+    storage.kind === "roaming_overlay"
+      ? `no private file under ${dirname(dirname(storage.privateConfigPath))} could be compared with ${dirname(dirname(storage.appDataConfigPath))}`
+      : "its private roaming files could not be compared with their AppData paths";
   const manualEdit =
     operation !== "uninstall"
       ? `Add REA's entry to ${client.configPath} by hand`
-      : `Remove REA's entry by hand from each of ${msix.privateConfigPath} and ${msix.appDataConfigPath} that has one`;
-  return `REA cannot tell whether ${name}'s MSIX package ${msix.packageFamilyName} started this process, because no private file under ${dirname(dirname(msix.privateConfigPath))} could be compared with ${dirname(dirname(msix.appDataConfigPath))}, and a ${name} that started it would overwrite the change from memory. ${manualEdit} while ${name} is fully quit, or rerun ${operation} from a terminal that ${name} did not start once REA can compare a private file there.`;
+      : storage.kind === "roaming_overlay"
+        ? `Remove REA's entry by hand from each of ${storage.privateConfigPath} and ${storage.appDataConfigPath} that has one`
+        : `Remove REA's entry by hand from ${client.configPath}`;
+  return `REA cannot tell whether ${name}'s MSIX package ${msix.packageFamilyName} started this process, because ${comparison}. The running app could overwrite the change. ${manualEdit} while ${name} is fully quit, or rerun ${operation} from a terminal that ${name} did not start once REA can compare a private file there.`;
 };
 
 /** The MSIX package view, if any, that redirects this process's AppData writes. */
@@ -1239,25 +1252,34 @@ export const supportedClientDefinition = (
  * Paths whose presence means the product itself is applicable, so doctor and
  * setup should inspect the client. Layered sources count: OpenCode still loads
  * its XDG files when a custom directory override does not exist. Shared
- * registration storage never establishes applicability; see
- * {@link clientOwnershipEvidencePaths}.
+ * registration storage never establishes applicability. An unresolved config
+ * path identifies the failed lookup; only its independently established
+ * installation marker can support detection. See {@link clientOwnershipEvidencePaths}.
  */
 export const clientEvidencePaths = (
   client: Pick<
     SetupClient,
-    "configPath" | "configPaths" | "markerPath" | "discoveryPaths"
+    | "configPath"
+    | "configPathError"
+    | "configPaths"
+    | "markerPath"
+    | "discoveryPaths"
   >,
-): readonly string[] => [
-  ...new Set(
-    (
-      client.discoveryPaths ?? [
-        client.configPath,
-        ...(client.configPaths ?? []),
-        client.markerPath,
-      ]
-    ).filter((path): path is string => path !== undefined && path.length > 0),
-  ),
-];
+): readonly string[] => {
+  if (client.configPathError !== undefined)
+    return client.markerPath ? [client.markerPath] : [];
+  return [
+    ...new Set(
+      (
+        client.discoveryPaths ?? [
+          client.configPath,
+          ...(client.configPaths ?? []),
+          client.markerPath,
+        ]
+      ).filter((path): path is string => path !== undefined && path.length > 0),
+    ),
+  ];
+};
 
 /**
  * Paths where a recognizable REA-owned row proves ownership of a registration
@@ -1319,6 +1341,16 @@ const resolveLocation = (
     : marker;
 };
 
+const unresolvedLocation = (error: ClientPathFailure) => ({
+  configPath: error.path,
+  configPathError: error.message,
+  ...(error.markerPath === undefined ? {} : { markerPath: error.markerPath }),
+  ...(error.msixPackage === undefined
+    ? {}
+    : { msixPackage: error.msixPackage }),
+  ...(error.failure === undefined ? {} : { configPathFailure: error.failure }),
+});
+
 /**
  * Layers in increasing precedence, ending with the writable file unless the
  * row already places it. A file loaded more than once takes effect at its last
@@ -1355,11 +1387,7 @@ export const supportedClients = (
           registrationProfile: definition.registrationProfile,
           displayName: definition.displayName,
           format: definition.format,
-          configPath: location.error.path,
-          configPathError: location.error.message,
-          ...(location.error.msixPackage === undefined
-            ? {}
-            : { msixPackage: location.error.msixPackage }),
+          ...unresolvedLocation(location.error),
         };
       const { configPath, markerPath, msixPackage } = location.value;
       const userOverridePaths =
@@ -1462,16 +1490,11 @@ export const resolveSupportedClients = async (
       if (resolve === undefined || row.configPathError !== undefined)
         return row;
       const location = await resolve(context);
-      return location.ok
-        ? { ...row, ...location.value }
-        : {
-            ...row,
-            configPath: location.error.path,
-            configPathError: location.error.message,
-            ...(location.error.failure === undefined
-              ? {}
-              : { configPathFailure: location.error.failure }),
-          };
+      if (location.ok) return { ...row, ...location.value };
+      // The default marker is a candidate. Only the location owner can confirm
+      // installation independently when resolving the active layers fails.
+      const { markerPath: _defaultMarker, ...client } = row;
+      return { ...client, ...unresolvedLocation(location.error) };
     }),
   );
 };

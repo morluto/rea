@@ -283,22 +283,31 @@ in the file the installed app reads:
   private copy when it exists. Before the package has saved one, they use the
   `%APPDATA%` file it still reads; with neither file, setup creates the
   private copy.
-- If `%LOCALAPPDATA%\Claude-Data\claude_pzs8sxrjxfjjc` exists, setup, doctor
+- For the **Microsoft Store** package `AnthropicPBC.Claude_fnn82j28hfe8t`,
+  the standard profile uses
+  `%LOCALAPPDATA%\Claude-Data\anthropicpbc.claude_fnn82j28hfe8t\claude_desktop_config.json`.
+  REA checks the app's profile-move marker or its initialized device identity
+  and empty old profile. Setup, doctor, and uninstall use the confirmed Store
+  profile. Uninstall removes REA's entry only from that file.
+- Setup also lists a recognized Store installation whose profile is unresolved.
+  Launch the app once if it has not initialized its profile. If a rollback,
+  an old device identity, a custom user-data path, or a populated `Claude-3p`
+  directory leaves the target unclear, use **Settings > Developer > Edit Config**
+  to locate the active file. An empty `Claude-3p` directory is normal in a
+  standard installation. The same Store package can run both standard and
+  third-party (3P) deployments. See [the verified 3P configuration](https://github.com/morluto/rea/issues/4432)
+  and [Anthropic's data storage guide](https://claude.com/docs/third-party/claude-desktop/data-storage#where-data-lives).
+- For the legacy package, if `%LOCALAPPDATA%\Claude-Data\claude_pzs8sxrjxfjjc` exists, setup, doctor
   and uninstall report an unresolved location. Migrated MSIX installations
   have been observed reading `claude_desktop_config.json` in this directory.
   Quit Claude Desktop and verify its active configuration before registering
   manually. See [#8968](https://github.com/morluto/rea/issues/8968).
-- If `%LOCALAPPDATA%\Packages` holds a `Claude_<publisher ID>` package from
-  another publisher, an `AnthropicPBC.Claude_<publisher ID>` package, or cannot
+- If `%LOCALAPPDATA%\Packages` holds multiple Claude package families, an
+  unrecognized publisher of `Claude` or `AnthropicPBC.Claude`, or cannot
   be read, REA cannot establish which file Claude
-  Desktop reads. Setup, doctor and uninstall report that instead of falling
-  back to `%APPDATA%`. Doctor then reports `claude_desktop` as invalid, and
+  Desktop reads. Setup, doctor and uninstall report the unresolved location.
+  Doctor then reports the `claude_desktop` registration as unknown, and
   uninstall stops before removing anything for any client.
-  The reported `AnthropicPBC.Claude_fnn82j28hfe8t` build can use the `Claude-3p`
-  deployment directory. REA recognizes that package as an unresolved location;
-  it does not assume that it reads the legacy AppData file or automatically
-  register in `Claude-3p`. See [#4432](https://github.com/morluto/rea/issues/4432)
-  for the reported build and manual registration evidence.
 
 Quit Claude Desktop fully before approving setup; closing its window is not
 enough. A running Claude Desktop can rewrite its configuration from memory and
@@ -319,7 +328,8 @@ Desktop's configuration; rerun them from a terminal that Claude Desktop did not
 start. If the package keeps no private roaming file at all, setup and
 uninstall cannot rule that out and also refuse. With Claude Desktop fully
 quit, add REA's entry by hand to the file setup names, which is the one the
-app reads, or remove it from both the private copy and the `%APPDATA%` file.
+app reads. For manual removal, use that same Store profile, or both the private
+copy and the `%APPDATA%` file for a legacy installation.
 Doctor reads the same file from either kind of process.
 
 The same process also writes everything under `%APPDATA%` and
@@ -332,13 +342,13 @@ path. Setup and the default `rea mcp add` launcher reject runtimes and REA
 scripts stored in any MSIX package's private storage. Install REA from an
 ordinary terminal and retry the registration there.
 
-Uninstall removes REA's entry from both the private copy and the `%APPDATA%`
+For the legacy layout, uninstall removes REA's entry from both the private copy and the `%APPDATA%`
 file, including registrations that earlier releases wrote to `%APPDATA%`.
 
-REA recognizes only the MSIX package. A non-MSIX Claude Desktop installed
+When MSIX storage is present, REA recognizes only the MSIX package. A non-MSIX Claude Desktop installed
 beside it, which would read the `%APPDATA%` file, is not detected.
 
-The package identity, both file locations, the redirected view, and these
+The legacy package identity, both file locations, the redirected view, and these
 setup and doctor results were observed on Windows 11 with the MSIX build
 2.31226.1.0, using read-only `doctor` and `setup --dry-run` runs both inside
 and outside the app. On that host, setup run from an ordinary terminal with
@@ -346,6 +356,11 @@ the app quit wrote the package-private copy; after the app restarted, the
 entry was still present, doctor reported it aligned, and Claude Desktop's MCP
 log showed REA starting and answering `tools/list`. Uninstall against the real
 app is unverified.
+
+On Windows with Microsoft Store build **6.28899.2.0**, `rea setup --client
+claude_desktop --dry-run` and `rea doctor --client claude_desktop` both
+selected the standard Store configuration under `Claude-Data`. The old
+package-private profile held the move marker and `Claude-3p` was empty.
 
 ## Claude Code
 

@@ -31,6 +31,7 @@ const PROBES_PER_DIRECTORY = 2;
  * L=San Francisco, S=California, C=US, …`.
  */
 const CLAUDE_DESKTOP_PACKAGE_FAMILY = "Claude_pzs8sxrjxfjjc";
+const STORE_PACKAGE_FAMILY = "AnthropicPBC.Claude_fnn82j28hfe8t";
 
 /** Observed Claude package names plus Windows' 13-character publisher ID. */
 const CLAUDE_PACKAGE_FAMILY =
@@ -47,6 +48,8 @@ export interface ClaudeDesktopLocation {
 export interface ClaudeDesktopLocationFailure {
   readonly path: string;
   readonly message: string;
+  /** Installation evidence even when the deployment's configuration is unresolved. */
+  readonly markerPath?: string;
   readonly msixPackage?: MsixPackageView;
 }
 
@@ -87,9 +90,8 @@ const systemFileSystem: ClaudeDesktopLocationFileSystem = {
 /**
  * Resolve the `claude_desktop_config.json` that Windows Claude Desktop reads.
  * Without its MSIX package storage, that is the AppData file. With it, the
- * package reads its private copy when one exists and the AppData file
- * otherwise; a new registration goes to the private copy. Other Claude
- * package identities and deployments leave the reader unknown.
+ * legacy package reads its private copy when one exists and the AppData file
+ * otherwise. The Store package can move its standard profile out of AppData.
  */
 export const resolveWindowsClaudeDesktopLocation = (
   home: string,
@@ -113,15 +115,28 @@ export const resolveWindowsClaudeDesktopLocation = (
       });
     families = [];
   }
-  const foreign = families.filter(
-    (name) =>
-      name.toLowerCase() !== CLAUDE_DESKTOP_PACKAGE_FAMILY.toLowerCase(),
-  );
-  if (foreign.length > 0)
+  const family = families[0];
+  if (families.length > 1)
     return err({
-      path: join(packagesDirectory, foreign[0] ?? ""),
-      message: `MSIX package storage ${foreign.map((name) => join(packagesDirectory, name)).join(", ")} has an unrecognized Claude Desktop package identity or deployment (the supported identity is ${CLAUDE_DESKTOP_PACKAGE_FAMILY}). REA cannot establish which ${CONFIG_FILE} that package reads and does not fall back to ${appDataConfigPath}. Quit Claude Desktop fully and register REA in the configuration the installed app reads.`,
+      path: packagesDirectory,
+      message: `Found multiple Claude Desktop package families under ${packagesDirectory}: ${families.join(", ")}. Open Settings > Developer > Edit Config in the intended app to identify its configuration.`,
     });
+  if (family !== undefined) {
+    const container = join(packagesDirectory, family);
+    if (family.toLowerCase() === STORE_PACKAGE_FAMILY.toLowerCase())
+      return resolveStoreLocation(
+        fileSystem,
+        roots,
+        family,
+        container,
+        env.CLAUDE_USER_DATA_DIR,
+      );
+    if (family.toLowerCase() !== CLAUDE_DESKTOP_PACKAGE_FAMILY.toLowerCase())
+      return err({
+        path: container,
+        message: `MSIX package storage ${container} has an unrecognized Claude Desktop package identity. REA cannot establish which ${CONFIG_FILE} that package reads and does not fall back to ${appDataConfigPath}. Open Settings > Developer > Edit Config in Claude Desktop to locate its configuration.`,
+      });
+  }
   const migratedDirectory = join(
     roots.local,
     "Claude-Data",
@@ -137,11 +152,22 @@ export const resolveWindowsClaudeDesktopLocation = (
           message: `Found migrated Claude Desktop storage at ${migratedDirectory}. REA cannot verify which configuration the installed app reads. Quit Claude Desktop fully, verify whether it reads ${migratedConfigPath}, then register REA manually in the active file.`,
         }
       : undefined;
-  const family = families[0];
-  if (family === undefined)
-    return migrationFailure === undefined
-      ? ok({ configPath: appDataConfigPath, markerPath: appDataDirectory })
-      : err(migrationFailure);
+  if (family === undefined) {
+    if (migrationFailure !== undefined) return err(migrationFailure);
+    const storeProfile = join(
+      roots.local,
+      "Claude-Data",
+      STORE_PACKAGE_FAMILY.toLowerCase(),
+    );
+    const remaining = present(fileSystem, storeProfile);
+    if (!remaining.ok) return remaining;
+    if (remaining.value)
+      return err({
+        path: storeProfile,
+        message: `Found Microsoft Store Claude Desktop profile data at ${storeProfile} without its package directory. Open Settings > Developer > Edit Config in the installed app to confirm its configuration.`,
+      });
+    return ok({ configPath: appDataConfigPath, markerPath: appDataDirectory });
+  }
   const container = join(packagesDirectory, family);
   const privateRoaming = join(container, "LocalCache", "Roaming");
   const privateDirectory = join(privateRoaming, "Claude");
@@ -149,8 +175,7 @@ export const resolveWindowsClaudeDesktopLocation = (
   const privateCopy = present(fileSystem, privateConfigPath);
   const packageView = (): MsixPackageView => ({
     packageFamilyName: family,
-    privateConfigPath,
-    appDataConfigPath,
+    storage: { kind: "roaming_overlay", privateConfigPath, appDataConfigPath },
     virtualizedRoots: [roots.roaming, roots.local],
     processView: processView(
       fileSystem,
@@ -175,6 +200,116 @@ export const resolveWindowsClaudeDesktopLocation = (
     markerPath: container,
     msixPackage: packageView(),
   });
+};
+
+/** The Store app can use a migrated standard profile or a separate 3P deployment. */
+const resolveStoreLocation = (
+  fileSystem: ClaudeDesktopLocationFileSystem,
+  roots: ReturnType<typeof windowsAppDataRoots>,
+  family: string,
+  container: string,
+  userDataOverride: string | undefined,
+): Result<ClaudeDesktopLocation, ClaudeDesktopLocationFailure> => {
+  const installed = inspectPath(fileSystem, container);
+  if (!installed.ok) return installed;
+  if (!installed.value?.isDirectory())
+    return err({
+      path: container,
+      message: `Expected a Microsoft Store Claude Desktop package directory at ${container}. Check the installation and rerun.`,
+    });
+  const privateRoaming = join(container, "LocalCache", "Roaming");
+  const privateClaude = join(privateRoaming, "Claude");
+  const roamingClaude = join(roots.roaming, "Claude");
+  const profile = join(roots.local, "Claude-Data", family.toLowerCase());
+  const left = `.user-data-left.${family.toLowerCase()}`;
+  const back = `.user-data-back.${family.toLowerCase()}`;
+  const unresolved = (path: string, reason: string) =>
+    err({
+      path,
+      message: `Microsoft Store Claude Desktop (${family}): ${reason}. Launch Claude Desktop and use Settings > Developer > Edit Config to confirm the active configuration. Quit the app fully before registering REA in that file.`,
+    });
+  const checkConfigPath = (): Result<string, ClaudeDesktopLocationFailure> => {
+    if (userDataOverride)
+      return unresolved(
+        userDataOverride,
+        "CLAUDE_USER_DATA_DIR selects a custom profile",
+      );
+    // Both modes can keep settings in Claude-3p. An empty folder is also
+    // present on standard installations. A populated one needs mode selection.
+    for (const root of [
+      roots.local,
+      roots.roaming,
+      join(container, "LocalCache", "Local"),
+      privateRoaming,
+    ]) {
+      const path = join(root, "Claude-3p");
+      const contents = inspectOptional(path, () => fileSystem.readdir(path, 1));
+      if (!contents.ok) return contents;
+      if (contents.value?.length)
+        return unresolved(
+          path,
+          `found 3P profile data at ${path} and cannot determine the active deployment`,
+        );
+    }
+    const target = inspectPath(fileSystem, profile);
+    if (!target.ok) return target;
+    if (!target.value?.isDirectory())
+      return unresolved(
+        profile,
+        `the standard profile at ${profile} has not been established`,
+      );
+    // The app uses the old profile after rollback. A remaining device identity
+    // also requires the app's migration reconciliation before choosing a side.
+    let handedOff = false;
+    for (const directory of [privateClaude, roamingClaude]) {
+      for (const name of [back, "ant-did"]) {
+        const path = join(directory, name);
+        const entry = inspectPath(fileSystem, path);
+        if (!entry.ok) return entry;
+        if (entry.value !== undefined)
+          return unresolved(
+            path,
+            `found legacy profile evidence at ${path} alongside ${profile}`,
+          );
+      }
+      const marker = inspectPath(fileSystem, join(directory, left));
+      if (!marker.ok) return marker;
+      if (marker.value?.isFile()) handedOff = true;
+    }
+    if (!handedOff) {
+      // A fresh Store profile can have no previous data to move. When the
+      // old location still has content, only the app can finish the handoff.
+      const identity = inspectPath(fileSystem, join(profile, "ant-did"));
+      if (!identity.ok) return identity;
+      if (!identity.value?.isFile())
+        return unresolved(
+          profile,
+          `the app has not initialized its standard profile at ${profile}`,
+        );
+      for (const directory of [privateClaude, roamingClaude]) {
+        const entries = inspectOptional(directory, () =>
+          fileSystem.readdir(directory, 1),
+        );
+        if (!entries.ok) return entries;
+        if (entries.value?.length)
+          return unresolved(
+            directory,
+            `found an earlier profile at ${directory} without a completed move to ${profile}`,
+          );
+      }
+    }
+    return ok(join(profile, CONFIG_FILE));
+  };
+  const config = checkConfigPath();
+  const msixPackage: MsixPackageView = {
+    packageFamilyName: family,
+    storage: { kind: "store_profile", checkConfigPath },
+    virtualizedRoots: [roots.roaming, roots.local],
+    processView: processView(fileSystem, privateRoaming, roots.roaming, false),
+  };
+  return config.ok
+    ? ok({ configPath: config.value, markerPath: container, msixPackage })
+    : err({ ...config.error, markerPath: container, msixPackage });
 };
 
 /**
@@ -358,20 +493,32 @@ const entryKind = (
   }
 };
 
-const present = (
-  fileSystem: ClaudeDesktopLocationFileSystem,
+const inspectOptional = <T>(
   path: string,
-): Result<boolean, ClaudeDesktopLocationFailure> => {
+  inspect: () => T,
+): Result<T | undefined, ClaudeDesktopLocationFailure> => {
   try {
-    fileSystem.lstat(path);
-    return ok(true);
+    return ok(inspect());
   } catch (cause: unknown) {
-    if (isMissing(cause)) return ok(false);
+    if (isMissing(cause)) return ok(undefined);
     return err({
       path,
       message: `${path} could not be inspected, so REA cannot establish which ${CONFIG_FILE} Claude Desktop's MSIX package reads: ${errorMessage(cause)}. Repair access to that path, then rerun.`,
     });
   }
+};
+
+const inspectPath = (
+  fileSystem: ClaudeDesktopLocationFileSystem,
+  path: string,
+) => inspectOptional(path, () => fileSystem.lstat(path));
+
+const present = (
+  fileSystem: ClaudeDesktopLocationFileSystem,
+  path: string,
+): Result<boolean, ClaudeDesktopLocationFailure> => {
+  const entry = inspectPath(fileSystem, path);
+  return entry.ok ? ok(entry.value !== undefined) : entry;
 };
 
 const isMissing = (cause: unknown): boolean =>
