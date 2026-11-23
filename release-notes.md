@@ -861,6 +861,7 @@
 * **json:** verify structured CLI file diagnostics ([#13051](https://github.com/morluto/rea/issues/13051)) ([243b9a3](https://github.com/morluto/rea/commit/243b9a37f678d27169786cab2f74861958400261))
 * **kuna:** exercise contradictory rows and coordinate shared cancellation ([#12802](https://github.com/morluto/rea/issues/12802)) ([766fb9e](https://github.com/morluto/rea/commit/766fb9e78e4b1f169f210239aef1c5fdbe535988))
 * **lldb:** consolidate bridge journal and FIFO checks ([#12808](https://github.com/morluto/rea/issues/12808)) ([7f5a39c](https://github.com/morluto/rea/commit/7f5a39c0c10c49e637cdf13b9dd8fabd7fe296b7))
+* **macho:** consolidate fixed header and extent proofs ([#13919](https://github.com/morluto/rea/issues/13919)) ([2f79fa8](https://github.com/morluto/rea/commit/2f79fa8ef0565b7d2c18dff42ae075890c019c83))
 * **managed:** bound projection budget fixtures ([337fd43](https://github.com/morluto/rea/commit/337fd43a0f91aa63c9697fd5dc912f7807454ba3))
 * **managed:** consolidate ambiguous heap and Module identity checks ([#13377](https://github.com/morluto/rea/issues/13377)) ([5fc6b33](https://github.com/morluto/rea/commit/5fc6b3351e897860dc213fce3a7bfde63848b34a))
 * **managed:** consolidate graph projection checks ([#12979](https://github.com/morluto/rea/issues/12979)) ([7cc9fa1](https://github.com/morluto/rea/commit/7cc9fa1166b04d97c38dac63a83a41b0045aa29d))
