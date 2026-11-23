@@ -128,7 +128,10 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     ConfigurationError
   >;
 
-  readonly #endpointLiterals: () => WebBundleEndpointLiteralAdmission;
+  readonly #endpointLiterals: () => Result<
+    WebBundleEndpointLiteralAdmission,
+    ConfigurationError
+  >;
 
   /**
    * `memberMutationAllowance` and `endpointLiterals` resolve the accepted
@@ -141,8 +144,10 @@ export class CdpBrowserProvider implements BrowserObservationPort {
       JavaScriptMemberMutationAllowance,
       ConfigurationError
     > = () => ok(DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE),
-    endpointLiterals: () => WebBundleEndpointLiteralAdmission = () =>
-      DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_ADMISSION,
+    endpointLiterals: () => Result<
+      WebBundleEndpointLiteralAdmission,
+      ConfigurationError
+    > = () => ok(DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_ADMISSION),
   ) {
     this.#bundleAnalyzer = new IsolatedWebBundleAnalyzer(undefined, admission);
     this.#memberMutationAllowance = memberMutationAllowance;
@@ -313,6 +318,8 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     // An invalid setting is refused before capture, never replaced by the default.
     const memberMutationAllowance = this.#memberMutationAllowance();
     if (!memberMutationAllowance.ok) return memberMutationAllowance;
+    const endpointLiterals = this.#endpointLiterals();
+    if (!endpointLiterals.ok) return endpointLiterals;
     const admission = await this.#bundleAnalyzer.reserve();
     if (!admission.ok) return admission;
     let captured: CapturedPage | undefined;
@@ -366,7 +373,7 @@ export class CdpBrowserProvider implements BrowserObservationPort {
         input,
         options.signal,
         memberMutationAllowance.value,
-        this.#endpointLiterals(),
+        endpointLiterals.value,
       );
     } catch (cause: unknown) {
       // Capture and analyzer work can still throw the exact caller reason.

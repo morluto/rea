@@ -174,3 +174,22 @@ it.each(["complete", "cancelled"] as const)(
     }
   },
 );
+
+it("refuses a malformed literal ceiling before capture", async () => {
+  // A lazy ceiling reported the rejected seed once per script as a worker
+  // failure, so the capture produced a partial result that still read as
+  // success. The refusal has to happen before the target is opened.
+  const provider = createBrowserObservationProvider(undefined, {
+    REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES: "0",
+  });
+  try {
+    const refused = await provider.analyzeBundle(input);
+    if (refused.ok) throw new Error("A malformed ceiling was admitted");
+    expect(refused.error._tag).toBe("ConfigurationError");
+    expect(projectAnalysisError(refused.error)).toMatchObject({
+      code: "configuration_invalid",
+    });
+  } finally {
+    await provider.close?.();
+  }
+});

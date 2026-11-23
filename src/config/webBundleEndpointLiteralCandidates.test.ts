@@ -98,10 +98,8 @@ describe("web bundle literal endpoint candidate admission", () => {
         agent_editable: true,
       }),
     ]);
-    const admission = runtimeWebBundleEndpointLiteralAdmission(
-      {},
-      settings.read,
-    );
+    const admission = () =>
+      runtimeWebBundleEndpointLiteralAdmission({}, settings.read);
     const rejected = settings.update({
       changes: [
         {
@@ -126,10 +124,13 @@ describe("web bundle literal endpoint candidate admission", () => {
         ]),
       },
     });
-    expect(admission.maximumCount).toBe(
-      DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
-    );
-    expect(admission.source).toBe("default");
+    expect(admission()).toEqual({
+      ok: true,
+      value: {
+        maximumCount: DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES,
+        source: "default",
+      },
+    });
     const above = settings.update({
       changes: [
         {
@@ -161,6 +162,23 @@ describe("web bundle literal endpoint candidate admission", () => {
         ],
       }).ok,
     ).toBe(true);
-    expect(admission).toMatchObject({ maximumCount: 2, source: "runtime" });
+    const overridden = admission();
+    expect(overridden.ok).toBe(true);
+    if (!overridden.ok) return;
+    expect(overridden.value).toMatchObject({
+      maximumCount: 2,
+      source: "runtime",
+    });
+  });
+
+  it("refuses an invalid launch seed instead of leaving it to the worker", () => {
+    // The ceiling used to be a lazy getter, so a rejected seed surfaced as one
+    // worker failure per script and the partial result still reported success.
+    const refused = runtimeWebBundleEndpointLiteralAdmission({
+      [WEB_BUNDLE_ENDPOINT_LITERAL_SETTING]: "0",
+    });
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.error.settings).toEqual([rejectedSetting]);
   });
 });

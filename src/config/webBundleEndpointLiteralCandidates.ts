@@ -47,32 +47,20 @@ export const parseWebBundleEndpointLiteralAdmission = (
 
 /**
  * Resolve the per-script ceiling for one analysis. An accepted runtime override
- * replaces the launch seed. Values are read when the analysis consumes them, so
- * a queued call observes the snapshot it was admitted with.
+ * replaces the launch seed. The seed is parsed here, before capture starts, so
+ * a rejected value reaches the caller as a configuration error instead of a
+ * per-script worker failure that a partial result reports as success.
  */
 export const runtimeWebBundleEndpointLiteralAdmission = (
   environment: Readonly<Record<string, string | undefined>>,
   read?: AnalysisSettingsReader,
-): WebBundleEndpointLiteralAdmission => {
-  const parsed = parseWebBundleEndpointLiteralAdmission(
+): Result<WebBundleEndpointLiteralAdmission, ConfigurationError> => {
+  const override =
+    read?.().overrides["web.bundle_endpoint_literal_candidates"] ??
+    currentAnalysisSettingOverride("web.bundle_endpoint_literal_candidates");
+  if (override !== undefined)
+    return ok({ maximumCount: override, source: "runtime" });
+  return parseWebBundleEndpointLiteralAdmission(
     environment[WEB_BUNDLE_ENDPOINT_LITERAL_SETTING],
   );
-  const effective = (): WebBundleEndpointLiteralAdmission => {
-    const override =
-      read?.().overrides["web.bundle_endpoint_literal_candidates"] ??
-      currentAnalysisSettingOverride("web.bundle_endpoint_literal_candidates");
-    if (override !== undefined)
-      return { maximumCount: override, source: "runtime" };
-    if (!parsed.ok) throw parsed.error;
-    return parsed.value;
-  };
-  if (read === undefined) return effective();
-  return {
-    get maximumCount() {
-      return effective().maximumCount;
-    },
-    get source() {
-      return effective().source;
-    },
-  };
 };
