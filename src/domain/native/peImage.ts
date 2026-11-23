@@ -18,8 +18,25 @@ import {
   type ImageSection,
 } from "../binaryContainer.js";
 
-const peHeaderOffset = (reader: BinaryReader): number => {
-  const evidence = parseMzHeaderEvidence(reader.bytes);
+const requireFileRange = (
+  fileSize: number,
+  offset: bigint,
+  size: bigint,
+  label: string,
+): { readonly offset: number; readonly size: number } => {
+  const range = declaredFileRange(fileSize, offset, size);
+  if (!range.file_backed)
+    throw new BinaryFormatFailure(
+      "truncated",
+      `${label} range exceeds the artifact size`,
+    );
+  return { offset: range.offset, size: range.size };
+};
+
+const admitPeHeaderEvidence = (
+  evidence: ReturnType<typeof parseMzHeaderEvidence>,
+  fileSize: number,
+): number => {
   if (!evidence.declarations.ok)
     throw new BinaryFormatFailure("malformed", evidence.declarations.error);
   const { windowsHeader } = evidence;
@@ -50,9 +67,15 @@ const peHeaderOffset = (reader: BinaryReader): number => {
       "malformed",
       "PE signature is invalid or overlaps the DOS header",
     );
-  reader.range(pe, 24, "PE signature and COFF header");
+  requireFileRange(fileSize, BigInt(pe), 24n, "PE signature and COFF header");
   return pe;
 };
+
+const peHeaderOffset = (reader: BinaryReader): number =>
+  admitPeHeaderEvidence(
+    parseMzHeaderEvidence(reader.bytes),
+    reader.bytes.length,
+  );
 
 /** Declared PE fields retained by their parsing owner for format consumers. */
 export type PeImageSection = Extract<
@@ -94,28 +117,18 @@ export const peDeclaredFileMappings = (
   return mappings;
 };
 
-/** Read PE32/PE32+ native image mappings and section facts. */
-export const readPeImage = (bytes: Buffer): PeImage => {
-  const reader = new BinaryReader(bytes, true, "pe");
-  const pe = peHeaderOffset(reader);
-  const optional = pe + 24;
-  const coff = readPeCoffHeader(bytes.subarray(pe + 4, pe + 24));
-  if (!coff.ok)
-    throw new BinaryFormatFailure(coff.error.kind, coff.error.message);
-  const {
-    machine,
-    sectionCount: count,
-    optionalHeaderSize: optionalSize,
-  } = coff.value;
-  const optionalBytes = reader.range(
-    optional,
-    optionalSize,
-    "PE optional header",
-  );
-  const facts = readPeOptionalHeader(optionalBytes, machine);
-  if (!facts.ok)
-    throw new BinaryFormatFailure(facts.error.kind, facts.error.message);
-  const dllCharacteristics = facts.value.dllCharacteristics;
+const buildPeImage = (
+  fileSize: number,
+  optional: number,
+  machine: number,
+  count: number,
+  factsValue: Extract<
+    ReturnType<typeof readPeOptionalHeader>,
+    { ok: true }
+  >["value"],
+  sectionTable: Buffer,
+): PeImage => {
+  const dllCharacteristics = factsValue.dllCharacteristics;
   const {
     bits,
     dataDirectories,
@@ -123,23 +136,12 @@ export const readPeImage = (bytes: Buffer): PeImage => {
     imageBase,
     sectionAlignment,
     fileAlignment,
-  } = facts.value;
+  } = factsValue;
   const headerMapping: FileMapping = {
     address: imageBase,
     offset: 0,
-    size: Math.min(sizeOfHeaders, bytes.length),
+    size: Math.min(sizeOfHeaders, fileSize),
   };
-  const { sectionTableOffset, sectionTableBytes } = peSectionTableExtent(
-    optional,
-    optionalSize,
-    count,
-  );
-  const { offset: tableAt, size: tableSize } = reader.fileRange(
-    BigInt(sectionTableOffset),
-    BigInt(sectionTableBytes),
-    "PE sections",
-  );
-  const sectionTable = bytes.subarray(tableAt, tableAt + tableSize);
   const mappings: FileMapping[] = [];
   const executableMappings: FileMapping[] = [];
   const zeroFills: ZeroFillMapping[] = [];
@@ -162,7 +164,7 @@ export const readPeImage = (bytes: Buffer): PeImage => {
     } = section.value;
     sections.push(
       peImageSection({
-        reader,
+        fileSize,
         name: sectionName,
         size: contentSize,
         offset,
@@ -182,7 +184,12 @@ export const readPeImage = (bytes: Buffer): PeImage => {
     const mapping = {
       ...(size === 0
         ? { offset: 0, size: 0 }
-        : reader.fileRange(BigInt(offset), BigInt(size), "PE section")),
+        : requireFileRange(
+            fileSize,
+            BigInt(offset),
+            BigInt(size),
+            "PE section",
+          )),
       address,
     };
     if (size !== 0) {
@@ -196,7 +203,7 @@ export const readPeImage = (bytes: Buffer): PeImage => {
         size: BigInt(virtualSize - size),
       });
   }
-  const architecture = facts.value.machine?.architecture;
+  const architecture = factsValue.machine?.architecture;
   return {
     format: "pe",
     image_base: imageBase,
@@ -223,8 +230,121 @@ export const readPeImage = (bytes: Buffer): PeImage => {
   };
 };
 
+/** Read PE32/PE32+ native image mappings and section facts. */
+export const readPeImage = (bytes: Buffer): PeImage => {
+  const reader = new BinaryReader(bytes, true, "pe");
+  const pe = peHeaderOffset(reader);
+  const optional = pe + 24;
+  const coff = readPeCoffHeader(bytes.subarray(pe + 4, pe + 24));
+  if (!coff.ok)
+    throw new BinaryFormatFailure(coff.error.kind, coff.error.message);
+  const {
+    machine,
+    sectionCount: count,
+    optionalHeaderSize: optionalSize,
+  } = coff.value;
+  const optionalBytes = reader.range(
+    optional,
+    optionalSize,
+    "PE optional header",
+  );
+  const facts = readPeOptionalHeader(optionalBytes, machine);
+  if (!facts.ok)
+    throw new BinaryFormatFailure(facts.error.kind, facts.error.message);
+  const { sectionTableOffset, sectionTableBytes } = peSectionTableExtent(
+    optional,
+    optionalSize,
+    count,
+  );
+  const { offset: tableAt, size: tableSize } = reader.fileRange(
+    BigInt(sectionTableOffset),
+    BigInt(sectionTableBytes),
+    "PE sections",
+  );
+  const sectionTable = bytes.subarray(tableAt, tableAt + tableSize);
+  return buildPeImage(
+    bytes.length,
+    optional,
+    machine,
+    count,
+    facts.value,
+    sectionTable,
+  );
+};
+
+/**
+ * Read PE32/PE32+ native image mappings and section facts from a random-access
+ * reader without buffering the whole PE file in memory.
+ */
+export const readPeImageFromReader = async (source: {
+  readonly size: number;
+  readonly prefix: Buffer;
+  readonly readRange: (offset: number, length: number) => Promise<Buffer>;
+}): Promise<PeImage> => {
+  const readBytes = (offset: number, length: number): Promise<Buffer> => {
+    if (length === 0) return Promise.resolve(Buffer.alloc(0));
+    if (offset >= 0 && offset + length <= source.prefix.length)
+      return Promise.resolve(source.prefix.subarray(offset, offset + length));
+    return source.readRange(offset, length);
+  };
+  let evidence = parseMzHeaderEvidence(source.prefix, source.size);
+  if (evidence.windowsHeader.state === "signature-needed") {
+    const sigOffset = evidence.windowsHeader.offset;
+    const sigLength = Math.min(4, Math.max(0, source.size - sigOffset));
+    const sigBytes = await readBytes(sigOffset, sigLength);
+    evidence = parseMzHeaderEvidence(source.prefix, source.size, {
+      offset: sigOffset,
+      bytes: sigBytes,
+    });
+  }
+  const pe = admitPeHeaderEvidence(evidence, source.size);
+  const optional = pe + 24;
+  const coffBytes = await readBytes(pe + 4, 20);
+  const coff = readPeCoffHeader(coffBytes);
+  if (!coff.ok)
+    throw new BinaryFormatFailure(coff.error.kind, coff.error.message);
+  const {
+    machine,
+    sectionCount: count,
+    optionalHeaderSize: optionalSize,
+  } = coff.value;
+  const optionalRange = requireFileRange(
+    source.size,
+    BigInt(optional),
+    BigInt(optionalSize),
+    "PE optional header",
+  );
+  const optionalBytes = await readBytes(
+    optionalRange.offset,
+    optionalRange.size,
+  );
+  const facts = readPeOptionalHeader(optionalBytes, machine);
+  if (!facts.ok)
+    throw new BinaryFormatFailure(facts.error.kind, facts.error.message);
+  const { sectionTableOffset, sectionTableBytes } = peSectionTableExtent(
+    optional,
+    optionalSize,
+    count,
+  );
+  const tableRange = requireFileRange(
+    source.size,
+    BigInt(sectionTableOffset),
+    BigInt(sectionTableBytes),
+    "PE sections",
+  );
+  const sectionTable = await readBytes(tableRange.offset, tableRange.size);
+  return buildPeImage(
+    source.size,
+    optional,
+    machine,
+    count,
+    facts.value,
+    sectionTable,
+  );
+};
+
 const peImageSection = ({
-  reader,
+  fileSize,
   name,
   size,
   offset,
@@ -234,7 +354,7 @@ const peImageSection = ({
   rawSize,
   fileAlignment,
 }: {
-  readonly reader: BinaryReader;
+  readonly fileSize: number;
   readonly name: string;
   readonly size: number;
   readonly offset: number;
@@ -244,11 +364,7 @@ const peImageSection = ({
   readonly rawSize: number;
   readonly fileAlignment: number;
 }): PeImageSection => {
-  const range = declaredFileRange(
-    reader.bytes.length,
-    BigInt(offset),
-    BigInt(size),
-  );
+  const range = declaredFileRange(fileSize, BigInt(offset), BigInt(size));
   const readOnly =
     range.file_backed &&
     (characteristics & 0x40000000) !== 0 &&

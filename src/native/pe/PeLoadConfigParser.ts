@@ -3,7 +3,10 @@ import {
   appendPeConsumedSpan as consume,
 } from "./PeRvaSpans.js";
 import { setImmediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../../resources/index.js";
+import {
+  assertArtifactReadActive,
+  type StableArtifactHandle,
+} from "../../resources/index.js";
 import {
   BinaryFormatFailure,
   BinaryReader,
@@ -17,6 +20,7 @@ import {
 import {
   peDeclaredFileMappings,
   readPeImage,
+  readPeImageFromReader,
   type PeImage,
 } from "../../domain/native/peImage.js";
 import { peSectionVirtualExtent } from "../../domain/peSectionHeader.js";
@@ -127,6 +131,10 @@ const sectionIndex = (
   };
 };
 
+const MAX_LOAD_CONFIG_READ_BYTES = 512;
+
+type PeRangeReader = (offset: number, length: number) => Promise<Buffer>;
+
 /**
  * Read one PE TLS directory and load configuration from a parsed PE image
  * without executing the image. Yields to the event loop and honors cancellation
@@ -138,12 +146,27 @@ export const parsePeLoadConfigFromImage = async (
   artifact: PeLoadConfig["artifact"],
   input: InspectPeLoadConfigInput,
   signal?: AbortSignal,
+): Promise<PeLoadConfig> =>
+  parsePeLoadConfigCore(
+    (offset, length) =>
+      Promise.resolve(bytes.subarray(offset, offset + length)),
+    image,
+    artifact,
+    input,
+    signal,
+  );
+
+const parsePeLoadConfigCore = async (
+  readBytes: PeRangeReader,
+  image: PeImage,
+  artifact: PeLoadConfig["artifact"],
+  input: InspectPeLoadConfigInput,
+  signal?: AbortSignal,
 ): Promise<PeLoadConfig> => {
   assertArtifactReadActive(signal);
   const bits = image.bits;
   const base = image.image_base;
   const pointerWidth = bits === 64 ? 8 : 4;
-  const reader = new BinaryReader(bytes, true, "pe");
   // Build section and mapping indices only when directory 9 or 10 exists and needs them.
   let mappingIndex: FileMappingIndex | undefined;
   const getLookup = (): FileMappingIndex =>
@@ -200,7 +223,7 @@ export const parsePeLoadConfigFromImage = async (
   };
 
   const tls = await readTls({
-    reader,
+    readBytes,
     bits,
     directory: dataDirectory(PE_TLS_DIRECTORY),
     pointerWidth,
@@ -220,8 +243,8 @@ export const parsePeLoadConfigFromImage = async (
     maxCallbacks: input.max_callbacks,
     signal,
   });
-  const loadConfig = readLoadConfig({
-    reader,
+  const loadConfig = await readLoadConfig({
+    readBytes,
     bits,
     directory: dataDirectory(PE_LOAD_CONFIG_DIRECTORY),
     locate,
@@ -277,8 +300,29 @@ export const parsePeLoadConfig = async (
   );
 };
 
+/**
+ * Read one PE TLS directory and load configuration from a verified
+ * random-access handle without buffering the full PE image in memory.
+ */
+export const parsePeLoadConfigFromHandle = async (
+  handle: StableArtifactHandle,
+  artifact: PeLoadConfig["artifact"],
+  input: InspectPeLoadConfigInput,
+  signal?: AbortSignal,
+): Promise<PeLoadConfig> => {
+  assertArtifactReadActive(signal);
+  const image = await readPeImageFromReader(handle);
+  const readBytes: PeRangeReader = (offset, length) =>
+    length === 0
+      ? Promise.resolve(Buffer.alloc(0))
+      : offset >= 0 && offset + length <= handle.prefix.length
+        ? Promise.resolve(handle.prefix.subarray(offset, offset + length))
+        : handle.readRange(offset, length);
+  return parsePeLoadConfigCore(readBytes, image, artifact, input, signal);
+};
+
 const readTls = async ({
-  reader,
+  readBytes,
   bits,
   directory,
   pointerWidth,
@@ -290,7 +334,7 @@ const readTls = async ({
   maxCallbacks,
   signal,
 }: {
-  readonly reader: BinaryReader;
+  readonly readBytes: PeRangeReader;
   readonly bits: 32 | 64;
   readonly directory: DirectorySpan | null;
   readonly pointerWidth: number;
@@ -309,15 +353,17 @@ const readTls = async ({
       "malformed",
       `TLS directory is ${String(directory.size)} bytes; PE${String(bits)} requires ${String(structBytes)}`,
     );
-  const readPointer = (offset: number) => reader.word(offset, bits);
-  const start = readPointer(directory.file_offset);
-  const end = readPointer(directory.file_offset + pointerWidth);
-  const index = readPointer(directory.file_offset + pointerWidth * 2);
-  const callbacksVa = readPointer(directory.file_offset + pointerWidth * 3);
-  const sizeOfZeroFill = reader.u32(directory.file_offset + pointerWidth * 4);
-  const characteristics = reader.u32(
-    directory.file_offset + pointerWidth * 4 + 4,
+  const tlsReader = new BinaryReader(
+    await readBytes(directory.file_offset, structBytes),
+    true,
+    "pe",
   );
+  const start = tlsReader.word(0, bits);
+  const end = tlsReader.word(pointerWidth, bits);
+  const index = tlsReader.word(pointerWidth * 2, bits);
+  const callbacksVa = tlsReader.word(pointerWidth * 3, bits);
+  const sizeOfZeroFill = tlsReader.u32(pointerWidth * 4);
+  const characteristics = tlsReader.u32(pointerWidth * 4 + 4);
   if (end < start)
     throw new BinaryFormatFailure(
       "malformed",
@@ -360,7 +406,12 @@ const readTls = async ({
         assertArtifactReadActive(signal);
       }
       const slotOffset = lookup.offset(slot, pointerWidth);
-      const value = readPointer(slotOffset);
+      const slotReader = new BinaryReader(
+        await readBytes(slotOffset, pointerWidth),
+        true,
+        "pe",
+      );
+      const value = slotReader.word(0, bits);
       consume(callbackArrayLocations, slotOffset, pointerWidth);
       if (value === 0n) break;
       if (callbacks.length >= maxCallbacks)
@@ -392,26 +443,30 @@ const readTls = async ({
   };
 };
 
-const readLoadConfig = ({
-  reader,
+const readLoadConfig = async ({
+  readBytes,
   bits,
   directory,
   locate,
   structOffset,
 }: {
-  readonly reader: BinaryReader;
+  readonly readBytes: PeRangeReader;
   readonly bits: 32 | 64;
   readonly directory: DirectorySpan | null;
   readonly locate: (va: bigint) => PeLoadConfigLocated;
   readonly structOffset: (rva: number, size: number) => number;
-}): PeLoadConfigDirectory | null => {
+}): Promise<PeLoadConfigDirectory | null> => {
   if (directory === null) return null;
   if (directory.size < 4)
     throw new BinaryFormatFailure(
       "malformed",
       "Load configuration directory is shorter than its Size field",
     );
-  const size = reader.u32(directory.file_offset);
+  const size = new BinaryReader(
+    await readBytes(directory.file_offset, 4),
+    true,
+    "pe",
+  ).u32(0);
   if (size < 4)
     throw new BinaryFormatFailure(
       "malformed",
@@ -428,13 +483,20 @@ const readLoadConfig = ({
       "malformed",
       `Load configuration Size ${String(size)} is not contiguously file-backed`,
     );
+  const structReader = new BinaryReader(
+    await readBytes(
+      directory.file_offset,
+      Math.min(size, MAX_LOAD_CONFIG_READ_BYTES),
+    ),
+    true,
+    "pe",
+  );
   const readField = (name: PeLoadConfigField): bigint | null => {
     if (!loadConfigFieldCovered(bits, size, name)) return null;
     const field = loadConfigFieldLayout(bits, name);
-    const offset = directory.file_offset + field.offset;
     return field.width === 2
-      ? BigInt(reader.u16(offset))
-      : reader.word(offset, field.width === 4 ? 32 : 64);
+      ? BigInt(structReader.u16(field.offset))
+      : structReader.word(field.offset, field.width === 4 ? 32 : 64);
   };
   const located = (
     name: PeLoadConfigLocatedField,
