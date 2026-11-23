@@ -10,7 +10,7 @@ import {
   type NodeSeaReaderLimits,
 } from "../../domain/artifactReaderLimits.js";
 import { BinaryReader } from "../../domain/binaryContainer.js";
-import type { NodeSeaMainCodeFormat } from "../../domain/artifactFormatMetadata.js";
+import type { NodeSeaMainCodeFormat } from "../../domain/formatMetadata/packageAndGameMetadata.js";
 import { hostRangeErrorKind } from "../../domain/parseFailure.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 

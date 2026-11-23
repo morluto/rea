@@ -8,7 +8,7 @@ import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { registerMcpClient } from "./McpClientRegistration.js";
 import { parseGooseConfigurationYaml } from "./GooseConfigurationYaml.js";
-import { clientConfigurationRecordSchema } from "./ClientConfigurationDocument.js";
+import { clientConfigurationRecordSchema } from "./ClientConfigurationValues.js";
 import {
   mcpClientRegistrationProfile,
   type McpRegistrationClient,
