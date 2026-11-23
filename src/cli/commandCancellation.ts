@@ -1,4 +1,7 @@
-import { CallerAbort } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  CallerAbort,
+} from "../domain/analysisErrorCore.js";
 
 /** Process signal boundary injectable without emitting signals into a test runner. */
 export interface CommandCancellationHost {
@@ -62,6 +65,39 @@ export class CommandCancellationScope {
   }
 }
 
+// Only this cancellation owner can attest a process disposition for a
+// command outcome; the final exit decision reads it instead of inferring a
+// status from ambient process state.
+const cancellationStatuses = new WeakMap<object, 130 | 143 | 149>();
+
+const attestCancellationStatus = (
+  outcome: unknown,
+  status: 130 | 143 | 149 | undefined,
+): void => {
+  if (status !== undefined && typeof outcome === "object" && outcome !== null)
+    cancellationStatuses.set(outcome, status);
+};
+
+/** Read the cancellation disposition attested for a command outcome or cause. */
+export const commandCancellationStatus = (
+  outcome: unknown,
+): 130 | 143 | 149 | undefined => {
+  if (typeof outcome !== "object" || outcome === null) return undefined;
+  const attested = cancellationStatuses.get(outcome);
+  if (attested !== undefined) return attested;
+  const reason =
+    outcome instanceof AnalysisCancelledError ? outcome.cause : outcome;
+  if (reason instanceof CallerAbort)
+    return reason.kind === "interrupt"
+      ? 130
+      : reason.kind === "terminate"
+        ? 143
+        : reason.kind === "break"
+          ? 149
+          : undefined;
+  return undefined;
+};
+
 /** Translate one-shot CLI interrupts into awaited cleanup and conventional exit codes. */
 export const withCommandCancellation = async <Value>(
   operation: (signal: AbortSignal) => Promise<Value>,
@@ -69,7 +105,12 @@ export const withCommandCancellation = async <Value>(
 ): Promise<Value> => {
   const scope = new CommandCancellationScope(host);
   try {
-    return await operation(scope.signal);
+    const value = await operation(scope.signal);
+    attestCancellationStatus(value, scope.exitStatus);
+    return value;
+  } catch (cause: unknown) {
+    attestCancellationStatus(cause, scope.exitStatus);
+    throw cause;
   } finally {
     scope.close();
   }

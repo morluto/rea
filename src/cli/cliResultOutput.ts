@@ -51,7 +51,13 @@ import {
   writeOutputParts,
   writeOutputText,
 } from "./jsonOutput.js";
-export { toonOutputCancellationStatus as cliOutputCancellationStatus } from "./toonOutput.js";
+import { commandCancellationStatus } from "./commandCancellation.js";
+
+/** Cancellation disposition attested by either output staging or the command scope. */
+export const cliOutputCancellationStatus = (
+  cause: unknown,
+): 130 | 143 | 149 | undefined =>
+  toonOutputCancellationStatus(cause) ?? commandCancellationStatus(cause);
 
 /** Result metadata supplied by the command that actually ran. */
 export interface CliResultOutputMetadata {
