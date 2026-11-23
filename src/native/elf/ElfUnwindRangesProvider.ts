@@ -18,6 +18,7 @@ import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js
 import {
   MAX_INSPECT_ELF_UNWIND_FILE_BYTES,
   MAX_INSPECT_ELF_UNWIND_RANGES,
+  type ElfUnwindRanges,
   type InspectElfUnwindRangesInput,
 } from "../../domain/native/elfUnwindRanges.js";
 import { err, ok } from "../../domain/result.js";
@@ -57,12 +58,13 @@ export class ElfUnwindRangesProvider implements ElfUnwindRangesPort {
     options?: ExecutionOptions,
   ) {
     const signal = options?.signal;
+    let completed: ElfUnwindRanges | undefined;
     let snapshot:
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
     try {
       return await this.#resources.run(async () => {
-        const report = await withStableArtifactHandle(
+        const report = await withStableArtifactHandle<ElfUnwindRanges>(
           input.path,
           input.max_file_bytes,
           {
@@ -71,6 +73,9 @@ export class ElfUnwindRangesProvider implements ElfUnwindRangesPort {
             retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
             onIdentity: (identity) => {
               snapshot = identity;
+            },
+            onVerifiedResult: (value) => {
+              completed = value;
             },
           },
           (handle) =>
@@ -88,7 +93,7 @@ export class ElfUnwindRangesProvider implements ElfUnwindRangesPort {
         return ok(report);
       });
     } catch (cause) {
-      return err(elfUnwindFailure(cause, input, snapshot));
+      return err(elfUnwindFailure(cause, input, snapshot, completed));
     }
   }
 }
@@ -107,6 +112,7 @@ const elfUnwindFailure = (
   cause: unknown,
   input: InspectElfUnwindRangesInput,
   snapshot?: { readonly sha256: string; readonly bytes: number },
+  completed?: ElfUnwindRanges,
 ) => {
   const facts = artifactFilePrimaryFacts(cause);
   const primary = classifyProviderFailure(
@@ -162,6 +168,7 @@ const elfUnwindFailure = (
         ),
     }),
   );
+  if (completed !== undefined) primary.retainPartialObservation(completed);
   return projectStableArtifactFailure(
     cause,
     primary,

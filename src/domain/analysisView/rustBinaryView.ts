@@ -217,8 +217,12 @@ export const projectRustBinaryView = (
     const names = view.names === undefined ? undefined : new Set(view.names);
     const versions =
       view.versions === undefined ? undefined : new Set(view.versions);
-    const matchPackage = (row: (typeof metadata.packages)[number]) =>
-      (names?.has(row.name) ?? true) && (versions?.has(row.version) ?? true);
+    const matchPackage =
+      names === undefined && versions === undefined
+        ? undefined
+        : (row: (typeof metadata.packages)[number]) =>
+            (names?.has(row.name) ?? true) &&
+            (versions?.has(row.version) ?? true);
     const projectPackage = (
       row: (typeof metadata.packages)[number],
       index: number,
@@ -263,8 +267,12 @@ export const projectRustBinaryView = (
     view.from_indices === undefined ? undefined : new Set(view.from_indices);
   const to =
     view.to_indices === undefined ? undefined : new Set(view.to_indices);
-  const matchEdge = (row: (typeof metadata.dependency_edges)[number]) =>
-    (from?.has(row.from_index) ?? true) && (to?.has(row.to_index) ?? true);
+  const matchEdge =
+    from === undefined && to === undefined
+      ? undefined
+      : (row: (typeof metadata.dependency_edges)[number]) =>
+          (from?.has(row.from_index) ?? true) &&
+          (to?.has(row.to_index) ?? true);
   const projectEdge = (
     row: (typeof metadata.dependency_edges)[number],
     index: number,

@@ -4,7 +4,6 @@ import {
   readUniversalMachoSlice,
   validateUniversalMachoSliceFromReader,
 } from "./machoImageSelection.js";
-import type { NativeByteSource } from "../native/nativeSectionDirectory.js";
 import {
   readMachoHeaderPrefixFacts,
   type FatSliceDeclaration,
@@ -20,6 +19,7 @@ import { AnalysisInputError } from "../analysisErrorCore.js";
 import { err, ok, type Result } from "../result.js";
 import { MACHO_ARCHITECTURE_POLICIES } from "./machoArchitectureSelection.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
+import type { ByteSource } from "../byteSource.js";
 
 const cpuName = (cpuType: number, cpuSubtype: number): string => {
   const name = Object.entries(MACHO_CPU_TYPES).find(
@@ -383,7 +383,7 @@ const selectArchitectureSlice = (
 
 /** The one thin image an inspector reads over a random-access handle, and where it lies in the selected file. */
 export interface SelectedNativeImageSource {
-  readonly source: NativeByteSource;
+  readonly source: ByteSource;
   /** File offset of `source`; add it to image-relative offsets to locate them in the file. */
   readonly fileOffset: number;
   /** Selected universal slice identity; null when the file is not a universal Mach-O. */
@@ -393,10 +393,10 @@ export interface SelectedNativeImageSource {
 }
 
 const sliceByteSource = (
-  source: NativeByteSource,
+  source: ByteSource,
   sliceOffset: number,
   sliceSize: number,
-): NativeByteSource => ({
+): ByteSource => ({
   size: sliceSize,
   ...(source.prefix !== undefined && sliceOffset < source.prefix.length
     ? {
@@ -421,7 +421,7 @@ const sliceByteSource = (
 export const requireSelectedNativeImageFromReader = async (
   operation: string,
   path: string,
-  source: NativeByteSource,
+  source: ByteSource,
   architecture: MachoSliceArchitecture | undefined,
   input: SliceSelectionInput = SHARED_SLICE_SELECTION_INPUT,
 ): Promise<SelectedNativeImageSource> => {

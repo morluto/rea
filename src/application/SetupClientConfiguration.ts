@@ -15,7 +15,7 @@ import {
   type ClientConfigurationFileError,
 } from "./ClientConfigurationFiles.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { ConfigurationError } from "../domain/configurationErrors.js";
+import type { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   effectiveClientServer,
   clientServerListedDisabled,
@@ -24,7 +24,6 @@ import {
   shadowedClientServers,
   OMP_DISABLED_SERVERS_KEY,
   parseClientConfiguration,
-  parseZcodeFallbackConfiguration,
   parseGgcodeLegacyConfiguration,
   serializeClientConfiguration,
   withClientServers,
@@ -41,6 +40,7 @@ import { ggcodeConfigurationHasUnnamedServers } from "./GgcodeConfigurationYaml.
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
+  ClientPrivateProfileError,
   PRIVATE_PROFILE_MODES,
   privateProfileModesCurrent,
   securePrivateDirectory,
@@ -134,25 +134,20 @@ export const configureClientConfiguration = async (
   );
   if (transactionPath === undefined)
     return { status: "failed", reason: "path" };
-  try {
-    return await withClientConfigurationTransaction(transactionPath, () =>
-      configureClientDocument(
-        { client, transactionPath, platform, launcherEnvironment },
-        environment,
-        command,
-        resolveProviderRequestBudget,
-      ),
-    );
-  } catch (cause: unknown) {
-    if (cause instanceof ConfigurationError && !cause.cleanupIncomplete)
-      return { status: "failed", reason: "readback" };
-    throw cause;
-  }
+  return withClientConfigurationTransaction(transactionPath, () =>
+    configureClientDocument(
+      { client, transactionPath, platform, launcherEnvironment },
+      environment,
+      command,
+      resolveProviderRequestBudget,
+    ),
+  );
 };
 
-/** An error that still owns an unreleased resource must reach the caller. */
-const cleanupIncomplete = (cause: unknown): boolean =>
-  cause instanceof ConfigurationError && cause.cleanupIncomplete;
+const configurationRemediation = (error: ConfigurationError): string =>
+  error.settings.length === 0
+    ? error.message
+    : `${error.message}: ${error.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}`;
 
 const configureClientDocument = async (
   {
@@ -206,97 +201,78 @@ const configureClientDocument = async (
     if (!isMissing(cause)) return { status: "failed", reason: "readback" };
   }
   const original = snapshot?.text;
-  let parsed: ClientConfigurationDocument;
-  let seeded: ClientConfigurationDocument;
-  let fallbackServers: Readonly<Record<string, unknown>> = {};
-  try {
-    parsed = parseClientConfiguration(
-      original ??
-        (format === "toml" ||
-        format === "grok" ||
-        format === "dsh" ||
-        format === "ggcode"
-          ? ""
-          : "{}"),
-      format,
-    );
-    parsed = clientConfigurationForWrite(parsed, files.value);
-    const ownershipBlocker = registrationOwnershipBlocker(
-      client,
-      parsed,
-      original ?? "",
-      files.value,
-      platform,
-    );
-    if (ownershipBlocker !== undefined)
-      return {
-        status: "failed",
-        reason: "registration_ownership",
-        detail: ownershipBlocker,
-      };
-    const fallback = await readZcodeFallbackServers(client, platform, parsed);
-    if (!fallback.ok) {
-      if (fallback.error.kind !== "registration_ownership")
-        throwCleanupFailure(fallback.error);
-      return fallback.error.kind === "registration_ownership"
-        ? {
-            status: "failed",
-            reason: "registration_ownership",
-            detail: fallback.error.detail,
-          }
-        : { status: "failed", reason: "readback" };
-    }
-    const superseded = await readSupersededServers(
-      client,
-      original !== undefined,
-    );
-    if (!superseded.ok) {
-      if (superseded.error.kind !== "registration_ownership")
-        throwCleanupFailure(superseded.error);
-      return superseded.error.kind === "registration_ownership"
-        ? {
-            status: "failed",
-            reason: "registration_ownership",
-            detail: superseded.error.detail,
-          }
-        : { status: "failed", reason: "readback" };
-    }
-    // The seeded candidate carries the legacy sources into the effective
-    // view the desired entry validates against, so a legacy setting paired
-    // with a proposed override passes admission instead of blocking the
-    // migration of an otherwise valid registration.
-    seeded = {
-      ...parsed,
-      servers: { ...superseded.value, ...fallback.value, ...parsed.servers },
+  const document = parseClientConfiguration(
+    original ??
+      (format === "toml" ||
+      format === "grok" ||
+      format === "dsh" ||
+      format === "ggcode"
+        ? ""
+        : "{}"),
+    format,
+  );
+  if (!document.ok) return { status: "failed", reason: "readback" };
+  const writeDocument = clientConfigurationForWrite(
+    document.value,
+    files.value,
+  );
+  if (!writeDocument.ok)
+    return {
+      status: "failed",
+      reason: "invalid_configuration",
+      detail: configurationRemediation(writeDocument.error),
     };
-    fallbackServers = { ...superseded.value, ...fallback.value };
-    const policy = await readClientPolicyBlock(
-      client,
-      seeded,
-      await clientConfigurationDesired(
-        client,
-        environment,
-        command,
-        seeded,
-        files.value,
-        platform,
-        launcherEnvironment,
-        resolveProviderRequestBudget,
-      ),
-    );
-    if (!policy.ok) {
-      throwCleanupFailure(policy.error);
-      return { status: "failed", reason: "readback" };
-    }
-    if (policy.value !== undefined)
-      return { status: "failed", reason: "readback" };
-  } catch (cause: unknown) {
-    if (cause instanceof RegularFileCleanupFailure) throw cause;
-    // Malformed existing configuration fails the readback gate.
-    void cause;
-    return { status: "failed", reason: "readback" };
+  const parsed = writeDocument.value;
+  const ownershipBlocker = registrationOwnershipBlocker(
+    client,
+    parsed,
+    original ?? "",
+    files.value,
+    platform,
+  );
+  if (ownershipBlocker !== undefined)
+    return {
+      status: "failed",
+      reason: "registration_ownership",
+      detail: ownershipBlocker,
+    };
+  const fallback = await readZcodeFallbackServers(client, platform, parsed);
+  if (!fallback.ok) {
+    if (fallback.error.kind !== "registration_ownership")
+      throwCleanupFailure(fallback.error);
+    return fallback.error.kind === "registration_ownership"
+      ? {
+          status: "failed",
+          reason: "registration_ownership",
+          detail: fallback.error.detail,
+        }
+      : { status: "failed", reason: "readback" };
   }
-  const desired = await clientConfigurationDesired(
+  const superseded = await readSupersededServers(client, original !== undefined);
+  if (!superseded.ok) {
+    if (superseded.error.kind !== "registration_ownership")
+      throwCleanupFailure(superseded.error);
+    return superseded.error.kind === "registration_ownership"
+      ? {
+          status: "failed",
+          reason: "registration_ownership",
+          detail: superseded.error.detail,
+        }
+      : { status: "failed", reason: "readback" };
+  }
+  const fallbackServers: Readonly<Record<string, unknown>> = {
+    ...superseded.value,
+    ...fallback.value,
+  };
+  // The seeded candidate carries the legacy sources into the effective
+  // view the desired entry validates against, so a legacy setting paired
+  // with a proposed override passes admission instead of blocking the
+  // migration of an otherwise valid registration.
+  const seeded: ClientConfigurationDocument = {
+    ...parsed,
+    servers: { ...fallbackServers, ...parsed.servers },
+  };
+  const policyEntry = await clientConfigurationDesired(
     client,
     environment,
     command,
@@ -306,6 +282,30 @@ const configureClientDocument = async (
     launcherEnvironment,
     resolveProviderRequestBudget,
   );
+  if (!policyEntry.ok) return desiredReadbackFailure(policyEntry.error);
+  const policy = await readClientPolicyBlock(
+    client,
+    seeded,
+    policyEntry.value,
+  );
+  if (!policy.ok) {
+    throwCleanupFailure(policy.error);
+    return { status: "failed", reason: "readback" };
+  }
+  if (policy.value !== undefined)
+    return { status: "failed", reason: "readback" };
+  const desiredResult = await clientConfigurationDesired(
+    client,
+    environment,
+    command,
+    seeded,
+    files.value,
+    platform,
+    launcherEnvironment,
+    resolveProviderRequestBudget,
+  );
+  if (!desiredResult.ok) return desiredReadbackFailure(desiredResult.error);
+  const desired = desiredResult.value;
   // The settings written now can differ from the ones inspection admitted,
   // for example a Hopper path set by an installation earlier in this setup.
   const override = inlineOverrideBlocker(
@@ -332,6 +332,13 @@ const configureClientDocument = async (
     fallbackServers,
     platform,
   });
+};
+
+const desiredReadbackFailure = (
+  error: ConfigurationError,
+): ClientConfigurationResult => {
+  if (error.cleanupIncomplete) throw error;
+  return { status: "failed", reason: "readback" };
 };
 
 interface ClientConfigurationUpdate {
@@ -411,41 +418,37 @@ const persistClientConfiguration = async ({
           ),
         }
       : registered;
-  let serialized: ReturnType<typeof serializeClientConfiguration>;
-  try {
-    serialized = serializeClientConfiguration(
-      document,
-      format,
-      original,
-      [
-        ...Object.keys(fallbackServers)
-          .filter((name) => name !== PRODUCT_IDENTITY.mcpServerKey)
-          .map((name) => clientServerPath(parsed, name)),
-        clientServerPath(parsed, PRODUCT_IDENTITY.mcpServerKey),
-        ...(legacyPath === undefined ? [] : [legacyPath]),
-        ...(enableOmp ? [[OMP_DISABLED_SERVERS_KEY]] : []),
-      ],
-      // Ownership admission above covers every legacy member removed here.
-      { removeShadowedMembersAt: legacyPath === undefined ? [] : [legacyPath] },
-    );
-  } catch (cause: unknown) {
-    // An unserializable edit is reported before any file is written.
-    return {
-      status: "failed",
-      reason: "write",
-      failure: new ClientConfigurationWriteError(
-        client.configPath,
-        "serialize",
-        cause,
-      ).problem,
-    };
-  }
+  const serialized = serializeClientConfiguration(
+    document,
+    format,
+    original,
+    [
+      ...Object.keys(fallbackServers)
+        .filter((name) => name !== PRODUCT_IDENTITY.mcpServerKey)
+        .map((name) => clientServerPath(parsed, name)),
+      clientServerPath(parsed, PRODUCT_IDENTITY.mcpServerKey),
+      ...(legacyPath === undefined ? [] : [legacyPath]),
+      ...(enableOmp ? [[OMP_DISABLED_SERVERS_KEY]] : []),
+    ],
+    // Ownership admission above covers every legacy member removed here.
+    { removeShadowedMembersAt: legacyPath === undefined ? [] : [legacyPath] },
+  );
   if (!serialized.ok)
-    return {
-      status: "failed",
-      reason: "shadowed_member",
-      path: serialized.error.path,
-    };
+    return serialized.error.kind === "shadowed_member"
+      ? {
+          status: "failed",
+          reason: "shadowed_member",
+          path: serialized.error.path,
+        }
+      : {
+          status: "failed",
+          reason: "write",
+          failure: new ClientConfigurationWriteError(
+            client.configPath,
+            "serialize",
+            serialized.error.cause,
+          ).problem,
+        };
   let recoveryBackupPath: string | undefined;
   if (original !== undefined) {
     // A private profile's backup stays owner-only even when it sits beside
@@ -490,7 +493,8 @@ const persistClientConfiguration = async ({
       },
     );
   } catch (cause: unknown) {
-    if (isClientConfigurationCleanupFailure(cause) || cleanupIncomplete(cause))
+    if (isClientConfigurationCleanupFailure(cause)) throw cause;
+    if (cause instanceof ClientPrivateProfileError && cause.cleanupIncomplete)
       throw cause;
     if (isConfigurationConflict(cause))
       return conflictFailure(recoveryBackupPath);
@@ -512,11 +516,15 @@ const persistClientConfiguration = async ({
       await publication.assertCurrent(text);
       const readback = parseClientConfiguration(text, format);
       if (
-        !registrationCurrent(readback, desired) ||
+        !readback.ok ||
+        !registrationCurrent(readback.value, desired) ||
         Object.entries(fallbackServers).some(
           ([name, entry]) =>
             name !== PRODUCT_IDENTITY.mcpServerKey &&
-            !clientConfigurationValuesEqual(readback.servers[name], entry),
+            !clientConfigurationValuesEqual(
+              readback.value.servers[name],
+              entry,
+            ),
         )
       ) {
         return await rollbackOrReadbackFailure(
@@ -610,14 +618,28 @@ const readClientRefresh = async (
   } catch (cause: unknown) {
     if (!isMissing(cause)) throw cause;
   }
-  const parsed =
+  const document =
     original === undefined
       ? undefined
-      : clientConfigurationForWrite(
-          parseClientConfiguration(original, client.format),
-          files.value,
-        );
-  const desired = await clientConfigurationDesired(
+      : parseClientConfiguration(original, client.format);
+  if (document?.ok === false)
+    return err({
+      kind: "malformed",
+      path: client.configPath,
+      detail: document.error.detail,
+    });
+  const writeDocument =
+    document === undefined
+      ? undefined
+      : clientConfigurationForWrite(document.value, files.value);
+  if (writeDocument?.ok === false)
+    return err({
+      kind: "malformed",
+      path: client.configPath,
+      detail: configurationRemediation(writeDocument.error),
+    });
+  const parsed = writeDocument?.value;
+  const desiredResult = await clientConfigurationDesired(
     client,
     providerEnvironment,
     command,
@@ -627,6 +649,13 @@ const readClientRefresh = async (
     launcherEnvironment,
     resolveProviderRequestBudget,
   );
+  if (!desiredResult.ok)
+    return err({
+      kind: "malformed",
+      path: client.configPath,
+      detail: configurationRemediation(desiredResult.error),
+    });
+  const desired = desiredResult.value;
   const target =
     dshEditabilityBlocker(client, files.value) ??
     writeTargetOwnershipBlocker(
@@ -777,7 +806,7 @@ export const clientRefreshRefusal = async (
     // An unreadable or malformed layer is a refusal too: setup's preflight
     // reports it the same way.
     if (!refresh.ok) return refused(refresh.error.detail);
-    const discovered = await discoveredInlineSettings(
+    const discoveredResult = await discoveredInlineSettings(
       client,
       providerEnvironment,
       command,
@@ -785,6 +814,9 @@ export const clientRefreshRefusal = async (
       platform,
       launcherEnvironment,
     );
+    if (!discoveredResult.ok)
+      return refused(configurationRemediation(discoveredResult.error));
+    const discovered = discoveredResult.value;
     if (discovered !== undefined)
       return {
         alignment: "unknown",
@@ -795,10 +827,6 @@ export const clientRefreshRefusal = async (
       : refused(refresh.value.refusal);
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
-    if (cause instanceof ConfigurationError)
-      return refused(
-        `${cause.message}: ${cause.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}`,
-      );
     return refused(
       `The configuration could not be read. Check its permissions before rerunning setup. ${errorMessage(cause)}`,
     );
@@ -822,16 +850,19 @@ const discoveredInlineSettings = async (
   platform: NodeJS.Platform,
   launcherEnvironment: Readonly<NodeJS.ProcessEnv>,
 ): Promise<
-  | {
-      readonly origin: ClientInlineConfiguration["origin"];
-      readonly settings: readonly string[];
-    }
-  | undefined
+  Result<
+    | {
+        readonly origin: ClientInlineConfiguration["origin"];
+        readonly settings: readonly string[];
+      }
+    | undefined,
+    ConfigurationError
+  >
 > => {
   const [origin] = inlineRegistrationOrigins(client);
-  if (origin === undefined) return undefined;
+  if (origin === undefined) return ok(undefined);
   if (refresh.refusal !== undefined && refresh.overrideOrigin === undefined)
-    return undefined;
+    return ok(undefined);
   // Setting names are matched by the platform's environment identity, so a
   // Windows layer's `Java_Home` is the discovered `JAVA_HOME`.
   const declared = snapshotEnvironment(
@@ -848,8 +879,8 @@ const discoveredInlineSettings = async (
     }),
   );
   const settings = Object.keys(adopted);
-  if (settings.length === 0) return undefined;
-  if (refresh.overrideOrigin === undefined) return { origin, settings };
+  if (settings.length === 0) return ok(undefined);
+  if (refresh.overrideOrigin === undefined) return ok({ origin, settings });
   const desired = await clientConfigurationDesired(
     client,
     { ...providerEnvironment, ...adopted },
@@ -859,14 +890,17 @@ const discoveredInlineSettings = async (
     platform,
     launcherEnvironment,
   );
-  return inlineRegistrationOverride(
-    client,
-    refresh.sources,
-    desired,
-    platform,
-  ) === undefined
-    ? { origin, settings }
-    : undefined;
+  if (!desired.ok) return desired;
+  return ok(
+    inlineRegistrationOverride(
+      client,
+      refresh.sources,
+      desired.value,
+      platform,
+    ) === undefined
+      ? { origin, settings }
+      : undefined,
+  );
 };
 
 /** Preflight one client configuration before setup presents any mutations. */
@@ -879,23 +913,14 @@ export const inspectClientConfiguration = async (
   platform: NodeJS.Platform = HOST_PLATFORM.platform,
   launcherEnvironment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): Promise<ClientConfigurationInspection> => {
-  let inspection: ClientConfigurationInspection;
-  try {
-    inspection = await inspectClientDocument(
-      client,
-      providerEnvironment,
-      command,
-      platform,
-      launcherEnvironment,
-      resolveProviderRequestBudget,
-    );
-  } catch (cause: unknown) {
-    if (!(cause instanceof ConfigurationError)) throw cause;
-    return {
-      status: "invalid",
-      remediation: `${cause.message}: ${cause.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}`,
-    };
-  }
+  const inspection = await inspectClientDocument(
+    client,
+    providerEnvironment,
+    command,
+    platform,
+    launcherEnvironment,
+    resolveProviderRequestBudget,
+  );
   if (inspection.status !== "create" && inspection.status !== "update")
     return inspection;
   // A change the running client would overwrite is not a persisted registration.
@@ -966,16 +991,25 @@ const inspectClientDocument = async (
         launcherEnvironment,
         resolveProviderRequestBudget,
       );
+      if (!desired.ok)
+        return {
+          status: "invalid",
+          remediation: configurationRemediation(desired.error),
+        };
       const override = inlineOverrideBlocker(
         client,
         files.value,
-        desired,
+        desired.value,
         platform,
       );
       if (override !== undefined)
         return { status: "invalid", remediation: override };
       // This read establishes absence; do not reuse an earlier user-file policy.
-      const policy = await readClientPolicyBlock(client, undefined, desired);
+      const policy = await readClientPolicyBlock(
+        client,
+        undefined,
+        desired.value,
+      );
       if (!policy.ok) {
         throwCleanupFailure(policy.error);
         return {
@@ -1005,10 +1039,25 @@ const inspectClientDocument = async (
     };
   }
   try {
-    const parsed = clientConfigurationForWrite(
-      parseClientConfiguration(original, client.format),
+    const document = parseClientConfiguration(original, client.format);
+    if (!document.ok)
+      return {
+        status: "invalid",
+        remediation:
+          document.error.kind === "document"
+            ? configurationRemediation(document.error.cause)
+            : "The existing configuration is malformed. Repair it before setup applies any other changes.",
+      };
+    const writeDocument = clientConfigurationForWrite(
+      document.value,
       files.value,
     );
+    if (!writeDocument.ok)
+      return {
+        status: "invalid",
+        remediation: configurationRemediation(writeDocument.error),
+      };
+    const parsed = writeDocument.value;
     const ownershipBlocker = writeTargetOwnershipBlocker(
       client,
       files.value,
@@ -1028,15 +1077,20 @@ const inspectClientDocument = async (
       launcherEnvironment,
       resolveProviderRequestBudget,
     );
+    if (!desired.ok)
+      return {
+        status: "invalid",
+        remediation: configurationRemediation(desired.error),
+      };
     const override = inlineOverrideBlocker(
       client,
       files.value,
-      desired,
+      desired.value,
       platform,
     );
     if (override !== undefined)
       return { status: "invalid", remediation: override };
-    const policy = await readClientPolicyBlock(client, parsed, desired);
+    const policy = await readClientPolicyBlock(client, parsed, desired.value);
     if (!policy.ok) {
       throwCleanupFailure(policy.error);
       return {
@@ -1047,7 +1101,7 @@ const inspectClientDocument = async (
     if (policy.value !== undefined)
       return { status: "invalid", remediation: policy.value };
     if (
-      registrationCurrent(parsed, desired) &&
+      registrationCurrent(parsed, desired.value) &&
       (await privateProfileCurrent(client, original))
     )
       return { status: "already_current" };
@@ -1058,11 +1112,7 @@ const inspectClientDocument = async (
       return { status: "invalid", remediation: fallback.error.detail };
     }
   } catch (cause: unknown) {
-    if (
-      cause instanceof RegularFileCleanupFailure ||
-      cause instanceof ConfigurationError
-    )
-      throw cause;
+    if (cause instanceof RegularFileCleanupFailure) throw cause;
     // Malformed configuration is reported with the invalid remediation.
     void cause;
     return {
@@ -1320,11 +1370,18 @@ const readZcodeFallbackServers = async (
   if (!source.ok)
     return err({ ...source.error, detail: `${detail} ${source.error.detail}` });
   if (source.value === undefined) return ok({});
+  const document = parseClientConfiguration(source.value, "zcode_fallback");
+  if (!document.ok)
+    return err({
+      kind: "malformed",
+      path,
+      detail: `${detail} ${document.error.detail}`,
+    });
+  const fallback = document.value;
   try {
-    const parsed = parseZcodeFallbackConfiguration(source.value);
     const ownershipBlocker = registrationOwnershipBlocker(
       { ...client, configPath: path, format: "zcode_fallback" },
-      parsed,
+      fallback,
       source.value,
       [],
       platform,
@@ -1335,14 +1392,18 @@ const readZcodeFallbackServers = async (
         path,
         detail: ownershipBlocker,
       });
-    const environment = clientRegistrationEnvironment(parsed, client, platform);
+    const environment = clientRegistrationEnvironment(
+      fallback,
+      client,
+      platform,
+    );
     if (!environment.ok)
       return err({
         kind: "malformed",
         path,
         detail: `${detail} ${environment.error.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}`,
       });
-    return ok(parsed.servers);
+    return ok(fallback.servers);
   } catch (cause: unknown) {
     return err({
       kind: "malformed",
@@ -1457,7 +1518,7 @@ const clientConfigurationDesired = async (
   platform: NodeJS.Platform,
   launcherEnvironment: Readonly<NodeJS.ProcessEnv>,
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
-): Promise<unknown> => {
+): Promise<Result<unknown, ConfigurationError>> => {
   const effective = effectiveClientConfiguration(
     sources,
     { client, document: parsed },
@@ -1481,7 +1542,7 @@ const clientConfigurationDesired = async (
       resolveProviderRequestBudget,
       platform,
     );
-    if (!validated.ok) throw validated.error;
+    if (!validated.ok) return validated;
     const desired = (
       parsed === undefined
         ? new DshCordisDocument("")
@@ -1492,8 +1553,7 @@ const clientConfigurationDesired = async (
       platform,
       recommendedMcpToolTimeoutMs(validated.value.timeoutInputs),
     );
-    if (!desired.ok) throw desired.error;
-    return desired.value;
+    return desired;
   }
   const validated = await clientRegistrationEnvironmentDetailsWithBudget(
     effective,
@@ -1505,7 +1565,7 @@ const clientConfigurationDesired = async (
       : undefined,
     platform,
   );
-  if (!validated.ok) throw validated.error;
+  if (!validated.ok) return validated;
   // Decide the fallback from the effective layers, then edit only the target.
   // A lower layer's locator still applies when the target has no value of its own.
   const writeEnvironment =
@@ -1522,7 +1582,7 @@ const clientConfigurationDesired = async (
     writeEnvironment,
     "fragment",
   );
-  if (!environment.ok) throw environment.error;
+  if (!environment.ok) return environment;
   const registration = refreshClientRegistration(
     client,
     format,
@@ -1535,7 +1595,7 @@ const clientConfigurationDesired = async (
     launcherEnvironment,
     platform,
   );
-  if (!registration.ok) throw registration.error;
+  if (!registration.ok) return registration;
   return withInheritedGooseSettings(
     registration.value,
     format,
@@ -1571,8 +1631,8 @@ const withInheritedGooseSettings = (
   effective: ClientConfigurationDocument | undefined,
   providerEnvironment: SetupProviderEnvironment,
   platform: NodeJS.Platform,
-): Record<string, unknown> => {
-  if (format !== "goose") return withoutInherited;
+): Result<Record<string, unknown>, ConfigurationError> => {
+  if (format !== "goose") return ok(withoutInherited);
   // The layers below the user file, which the user entry overlays field by field.
   const lower = effectiveClientConfiguration(
     sources,
@@ -1617,9 +1677,9 @@ const withInheritedGooseSettings = (
   );
   const environmentKeys = ["envs", "env"];
   if (userDeclares(environmentKeys) || !declares(lower, environmentKeys))
-    return spelled(registration);
+    return ok(spelled(registration));
   const { envs: _generated, ...rest } = registration;
-  if (Object.keys(providerEnvironment).length === 0) return rest;
+  if (Object.keys(providerEnvironment).length === 0) return ok(rest);
   const inherited = clientRegistrationEnvironment(
     effective,
     client,
@@ -1627,6 +1687,7 @@ const withInheritedGooseSettings = (
     providerEnvironment,
     "fragment",
   );
-  if (!inherited.ok) throw inherited.error;
-  return spelled({ ...rest, envs: { ...inherited.value } });
+  return inherited.ok
+    ? ok(spelled({ ...rest, envs: { ...inherited.value } }))
+    : inherited;
 };

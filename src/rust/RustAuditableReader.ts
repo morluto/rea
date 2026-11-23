@@ -86,29 +86,6 @@ type InflatedDependency = {
   readonly compressedBytes: number;
 };
 
-/** Parsed section payload. Cycles are listed and are not walked. */
-export const readAuditableSection = (
-  sectionName: RustAuditableMetadata["section_name"],
-  fileOffset: number,
-  bytes: Buffer,
-  options: AuditableSectionOptions = {},
-): RustAuditableMetadata => {
-  assertAuditableSectionSize(bytes.length, options.peFileAlignment);
-  const inflated = inflateSectionPrefix(
-    bytes,
-    bytes.length,
-    options.peFileAlignment,
-  );
-  assertZeroPadding(bytes.subarray(inflated.compressedBytes));
-  return projectAuditableSection(
-    sectionName,
-    fileOffset,
-    bytes.length,
-    inflated,
-    options,
-  );
-};
-
 /** Decode a bounded zlib prefix and verify the remaining PE storage in chunks. */
 export const readAuditableSectionFromReader = async (
   sectionName: RustAuditableMetadata["section_name"],

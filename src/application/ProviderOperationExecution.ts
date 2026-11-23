@@ -148,6 +148,22 @@ export const completeProviderEvidence = (
   return ok(evidence);
 };
 
+/** Use the admitted Evidence on every failure retaining the same report. */
+export const retainCompletedArtifactEvidence = (
+  error: AnalysisError,
+  evidence: Evidence,
+): void => {
+  const source = error.partialObservation;
+  if (source === undefined) return;
+  for (
+    let owner: AnalysisError | undefined = error;
+    owner !== undefined;
+    owner = owner.cleanupPrimary
+  )
+    if (owner.partialObservation === source)
+      owner.partialObservation = evidence;
+};
+
 /**
  * Retain an incomplete observation when projection can serialize it.
  * A JSON partial is replaced by one frozen snapshot, so a later mutation

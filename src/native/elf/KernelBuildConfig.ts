@@ -16,8 +16,8 @@ import {
 } from "../../domain/native/kernelBuildConfig.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
 import { BinaryReader } from "../../domain/binaryContainer.js";
-import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
+import type { ByteSource } from "../../domain/byteSource.js";
 
 interface ByteSpan {
   readonly size: number;
@@ -35,7 +35,7 @@ const bufferSpan = (bytes: Buffer): ByteSpan => ({
   },
 });
 
-const sourceSpan = (source: NativeByteSource): ByteSpan => ({
+const sourceSpan = (source: ByteSource): ByteSpan => ({
   size: source.size,
   readRange: async (offset, length) => {
     if (offset < 0 || length <= 0 || offset >= source.size)
@@ -533,6 +533,10 @@ const findConfig = async (
         candidateLen < span.size - gzipAt &&
         (closing < 0 || closing >= gzipAt + candidateLen)
       ) {
+        if (closing < 0) {
+          truncated = true;
+          break;
+        }
         compressedLimit ??= maxCandidateBytes;
         continue;
       }
@@ -891,7 +895,7 @@ const reportFromSearch = async (
       ...search.extraLimitations,
       ...(found === "truncated"
         ? [
-            "An IKCFG_ST gzip member runs past the searched bytes. The config is incomplete and is not reported as absent.",
+            "An IKCFG_ST gzip candidate has incomplete framing in the searched bytes.",
           ]
         : []),
       ...(found === "exhausted"
@@ -1153,7 +1157,7 @@ const parseKernelBuildConfigCore = async (
  * runs to its output bound once started.
  */
 export const parseKernelBuildConfigFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   artifact: Report["artifact"],
   input: InspectKernelBuildConfigInput,
   signal?: AbortSignal,

@@ -49,6 +49,7 @@ import type { ZstandardFramePause } from "../../domain/compression/zstandardExac
 import { ZstandardFrameAllowanceError } from "../../domain/compression/zstandardFrameAllowance.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 import { decodeFdoNote, type FdoDecodeBudget } from "./ElfFdoNote.js";
+import type { PrefixedByteSource } from "../../domain/byteSource.js";
 
 const PT_NOTE = 4;
 const SHT_STRTAB = 3;
@@ -677,12 +678,6 @@ const decodeSectionNamesStep = function* (
   }) as ElfCompressedSectionResult;
 };
 
-/** Random-access source for streaming ELF note inspection without buffering the whole image. */
-export interface ElfNoteByteSource {
-  readonly size: number;
-  readonly prefix: Buffer;
-  readRange(offset: number, length: number): Promise<Buffer>;
-}
 type VisitElfNote = (
   note: ParsedNote,
   table: ElfNoteTable,
@@ -1161,7 +1156,7 @@ const decodeElfNoteStepsCooperative = async <T>(
 };
 
 const decodeElfNoteStepsFromSource = async <T>(
-  source: ElfNoteByteSource,
+  source: PrefixedByteSource,
   steps: ElfNoteSteps<T>,
   decode: CooperativeElfSectionNameDecoder,
 ): Promise<T> => {
@@ -1206,7 +1201,7 @@ const decodeElfNoteStepsFromSource = async <T>(
 
 /** Decode PT_NOTE and SHT_NOTE tables positionally over a bounded file handle. */
 export const parseElfNotesFromHandle = (
-  source: ElfNoteByteSource,
+  source: PrefixedByteSource,
   artifact: ElfNotes["artifact"],
   input: InspectElfNotesInput,
   pause: ZstandardFramePause,
@@ -1288,7 +1283,7 @@ export const readElfBuildIdsCooperative = (
 
 /** Read GNU build IDs positionally over a bounded file handle. */
 export const readElfBuildIdsFromHandle = (
-  source: ElfNoteByteSource,
+  source: PrefixedByteSource,
   input: ElfNoteScanInput,
   maximumBuildIdBytes: number,
   decode: CooperativeElfSectionNameDecoder,

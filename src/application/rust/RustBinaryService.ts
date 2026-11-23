@@ -38,6 +38,7 @@ export class RustBinaryService {
         inputSchema: inspectRustBinaryRequestSchema,
         outputSchema: rustBinarySchema,
         provider: this.provider,
+        retainCompletedReport: true,
         invalidOutputMessage:
           "Rust dependency reader returned malformed metadata or changed the selected artifact or slice identity.",
         toParameters: ({ detail: _detail, view: _view, ...parameters }) =>

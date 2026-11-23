@@ -18,8 +18,6 @@ import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 const OPERATION = "inspect_kernel_build_config";
 const MARKER_BYTES = KERNEL_BUILD_CONFIG_MARKER_BYTES;
 
-type Range = KernelBuildConfig["config"]["marker"];
-
 /** Shared caller validation, output parsing and Evidence provenance for CLI/MCP. */
 export class KernelBuildConfigService {
   constructor(readonly provider: KernelBuildConfigPort) {}
@@ -38,6 +36,7 @@ export class KernelBuildConfigService {
         inputSchema: inspectKernelBuildConfigInputSchema,
         outputSchema: kernelBuildConfigSchema,
         provider: this.provider,
+        retainCompletedReport: true,
         invalidOutputMessage:
           "Kernel build config provider returned malformed output or changed artifact identity.",
         toParameters: (input) => input,
@@ -73,21 +72,17 @@ const fits = (
   range: { offset: number; bytes: number },
 ): boolean => range.bytes <= length && range.offset <= length - range.bytes;
 
-const fileRanges = (
-  report: KernelBuildConfig,
-): { offset: number; bytes: number }[] => {
-  const found: { offset: number; bytes: number }[] = [];
-  const add = (range: Range): void => {
-    if (range !== null && range.space === "file") found.push(range);
-  };
-  if (report.payload.offset !== null && report.payload.bytes !== null)
-    found.push({ offset: report.payload.offset, bytes: report.payload.bytes });
-  add(report.banner.location);
-  add(report.config.marker);
-  add(report.config.gzip);
-  add(report.config.end_marker);
-  return found;
-};
+const metadataRanges = ({ banner, config }: KernelBuildConfig) =>
+  [banner.location, config.marker, config.gzip, config.end_marker].filter(
+    (range) => range !== null,
+  );
+
+const fileRanges = (report: KernelBuildConfig) => [
+  ...(report.payload.offset !== null && report.payload.bytes !== null
+    ? [{ offset: report.payload.offset, bytes: report.payload.bytes }]
+    : []),
+  ...metadataRanges(report).filter((range) => range.space === "file"),
+];
 
 const locationsOf = (report: KernelBuildConfig) => [
   { kind: "artifact-path" as const, path: report.artifact.path },
@@ -122,18 +117,17 @@ const markersAgree = (config: KernelBuildConfig["config"]): boolean => {
 };
 
 const rangesAgree = (report: KernelBuildConfig): boolean => {
-  if (!fileRanges(report).every((range) => fits(report.artifact.bytes, range)))
+  const { bytes, offset, inflated_bytes: inflated } = report.payload;
+  if (
+    offset !== null &&
+    bytes !== null &&
+    !fits(report.artifact.bytes, { offset, bytes })
+  )
     return false;
-  const inflated = report.payload.inflated_bytes;
-  const inflatedRanges = [
-    report.banner.location,
-    report.config.marker,
-    report.config.gzip,
-    report.config.end_marker,
-  ].filter((range) => range !== null && range.space === "inflated_payload");
-  if (inflated === null) return inflatedRanges.length === 0;
-  return inflatedRanges.every(
-    (range) => range !== null && fits(inflated, range),
+  const space = inflated === null ? "file" : "inflated_payload";
+  const extent = inflated ?? report.artifact.bytes;
+  return metadataRanges(report).every(
+    (range) => range.space === space && fits(extent, range),
   );
 };
 

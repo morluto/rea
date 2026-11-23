@@ -23,6 +23,7 @@ import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js
 import {
   MAX_INSPECT_ELF_NOTE_ENTRIES,
   MAX_INSPECT_ELF_NOTE_FILE_BYTES,
+  type ElfNotes,
   type InspectElfNotesInput,
 } from "../../domain/native/elfNotes.js";
 import { err, ok } from "../../domain/result.js";
@@ -54,12 +55,13 @@ export class ElfNotesProvider implements ElfNotesPort {
   }
 
   async inspect(input: InspectElfNotesInput, options?: ExecutionOptions) {
+    let completed: ElfNotes | undefined;
     let observed:
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
     try {
       return await this.#resources.run(async () => {
-        const result = await withStableArtifactHandle(
+        const result = await withStableArtifactHandle<ElfNotes>(
           input.path,
           input.max_file_bytes,
           {
@@ -68,6 +70,9 @@ export class ElfNotesProvider implements ElfNotesPort {
             retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
             onIdentity: (identity) => {
               observed = identity;
+            },
+            onVerifiedResult: (value) => {
+              completed = value;
             },
           },
           (handle) =>
@@ -89,7 +94,7 @@ export class ElfNotesProvider implements ElfNotesPort {
         return ok(result);
       });
     } catch (cause) {
-      return err(elfNotesFailure(cause, input, observed));
+      return err(elfNotesFailure(cause, input, observed, completed));
     }
   }
 }
@@ -115,6 +120,7 @@ const elfNotesFailure = (
   cause: unknown,
   input: InspectElfNotesInput,
   observed?: { readonly sha256: string; readonly bytes: number },
+  completed?: ElfNotes,
 ) => {
   const facts = artifactFilePrimaryFacts(cause);
   const primary = classifyProviderFailure(
@@ -172,6 +178,7 @@ const elfNotesFailure = (
         ),
     }),
   );
+  if (completed !== undefined) primary.retainPartialObservation(completed);
   return projectStableArtifactFailure(
     cause,
     primary,

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -194,6 +194,7 @@ it("maps a flash image end to end through CLI inspection and MCP session invento
     path: imagePath,
     output_directory: join(root, "extracted"),
     target: { kind: "ffs-file", offset: sourceLocation.offset },
+    detail: "complete",
   });
   expect(extractedSession.isError, JSON.stringify(extractedSession)).not.toBe(
     true,
@@ -407,6 +408,7 @@ it("retains an opaque volume and reports only the unparsed ranges in the selecte
             path,
             output_directory: join(root, name),
             ...(target === undefined ? {} : { target }),
+            detail: "complete",
           })
         ).structuredContent,
       ).normalized_result,
@@ -535,6 +537,7 @@ cliTest(
         max_volumes: 513,
         max_files: maxFiles,
         target: { kind: "ffs-file", offset, source_stream: null },
+        detail: "complete",
       });
     const extractCli = (maxFiles: number) =>
       command.run({
@@ -589,3 +592,28 @@ cliTest(
     }
   },
 );
+
+it("attributes an existing output directory to output_directory", async () => {
+  const root = await createTestTempDirectory("rea-uefi-existing-output-");
+  const imagePath = join(root, "flash.fd");
+  await writeFile(imagePath, buildFlashImage());
+  const existing = join(root, "existing");
+  await mkdir(existing);
+  const { call } = await connectLocalToolsMcp();
+
+  const refused = await call("extract_uefi_firmware", {
+    path: imagePath,
+    output_directory: existing,
+  });
+  expect(parseMcpToolError(refused).error).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["output_directory"],
+          message: "Output root already exists",
+        },
+      ],
+    },
+  });
+});

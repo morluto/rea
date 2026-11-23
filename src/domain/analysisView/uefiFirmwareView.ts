@@ -48,7 +48,6 @@ const exactNames = <Schema extends z.ZodType>(schema: Schema, what: string) =>
   z
     .array(schema)
     .min(1)
-    .max(64)
     .optional()
     .describe(`Exact ${what}; any listed value matches`);
 

@@ -1,3 +1,16 @@
+import type { PrefixedByteSource } from "../../domain/byteSource.js";
+
+export const elfDependencyByteSource = (
+  bytes: Buffer,
+  prefixBytes = 4096,
+  readRange: PrefixedByteSource["readRange"] = async (offset, length) =>
+    bytes.subarray(offset, offset + length),
+): PrefixedByteSource => ({
+  size: bytes.length,
+  prefix: bytes.subarray(0, prefixBytes),
+  readRange,
+});
+
 /** SysV ELF hash used by GNU version aux records. */
 export const elfHash = (name: string): number => {
   let h = 0;
