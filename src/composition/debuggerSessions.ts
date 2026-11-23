@@ -1,6 +1,8 @@
 import { GdbSessionManager } from "../gdb/GdbSessionManager.js";
 import { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
 
+export { gdbOneShotCommandMayInvalidateDetachProof } from "../gdb/GdbSessionManager.js";
+
 /** Allocate a GDB session owner; acquisition remains explicit in start(). */
 export const createGdbSessionManager = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
