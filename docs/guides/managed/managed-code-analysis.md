@@ -72,9 +72,48 @@ keeping original field identity and source offsets. These values are metadata
 declarations, including enum members' encoded underlying constants, not observed
 runtime state or inferred enum-name mappings. Parameter/property defaults are
 not exposed by this field-focused reader. Member comparison still covers field
-names, flags and signatures; it does not compare constant defaults.
+names, flags, signatures and declared layout; it does not compare constant defaults.
 
 The encoding follows [ECMA-335, Partition II, sections 22.9 and 23.1.16](https://ecma-international.org/publications-and-standards/standards/ecma-335/).
+
+### Declared type and field layout
+
+`inspect_managed_members` returns `layout_declarations.classes` for `ClassLayout`
+rows and `layout_declarations.fields` for `FieldLayout` rows. These follow the
+declaring-type selection independently of MethodDef paging. Each row retains its
+metadata token, physical row offset, raw owner index and any resolved owner token
+or name. Field references use physical Field RIDs, including when FieldPtr
+reorders a type's field list.
+
+`packing_size`, `class_size` and `offset_bytes` are declarations from the file.
+Zero packing selects the runtime platform default; zero class size means no size
+was specified. The reader does not compute runtime sizes, inherited offsets,
+alignment, object headers or native ABI compatibility. Explicitly overlapping
+fields remain observable declarations. The encoding follows
+[ECMA-335, Partition II, sections 22.8 and 22.16](https://ecma-international.org/publications-and-standards/standards/ecma-335/).
+
+The layout inventory has its own `state` and `issues`. Duplicate, invalid-owner
+or contradictory flag declarations are retained with partial coverage. Missing
+or null inventory in an earlier or capacity-limited result means unexamined,
+while complete empty arrays establish no corresponding table declarations.
+The layout reader spends the shared metadata representation allowance after
+members and user strings, so a layout capacity failure preserves those facts.
+
+Use retained `managed-members` collections `class_layouts` and `field_layouts`
+to page the same declarations after the source is no longer available. Class
+layout `names` selects exact TypeDef names; field layout `names` selects field
+names and `declaring_types` selects their declaring type. Projection always
+retains the source row and owner coordinates. The summary reports both counts
+and the independent layout coverage.
+
+Member comparison includes a `layout` snapshot beside each matched field's
+identity. Changes to layout kind, declared packing, size or explicit offset
+make an otherwise identical field `changed`. An absent ClassLayout row and a
+zero/default ClassLayout declaration compare alike. Static fields do not inherit
+the instance layout. Missing explicit offsets, partial declarations or historical
+results that did not inspect layouts leave that dimension `unknown`; an identical
+authenticated artifact and field token can still prove source identity. This
+field comparison does not compare empty types or establish runtime compatibility.
 
 ### Metadata overview and retained rows
 

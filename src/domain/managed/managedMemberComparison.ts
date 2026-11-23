@@ -27,6 +27,10 @@ import {
 import { keyMembers } from "./managedMemberComparisonMatch.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { nonEmptyTextSchema } from "../textSchemas.js";
+import {
+  managedFieldLayoutReader,
+  managedFieldLayoutSchema,
+} from "./managedFieldLayout.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 
@@ -151,6 +155,7 @@ export const MANAGED_MEMBER_COMPARISON_LIMITATION_CODES = [
   "call-target-unavailable",
   "field-target-unavailable",
   "catch-type-unavailable",
+  "layout-declarations-unavailable",
 ] as const;
 
 /** One reason a comparison item's facts stayed limited, with its explanation. */
@@ -199,7 +204,9 @@ const fieldComparisonItemSchema = comparisonItemSchema(
     ...comparisonItemContextShape,
     item_id: prefixedDigestSchema("mmc_field"),
   },
-  memberIdentitySchema.omit({ normalized_il_sha256: true }),
+  memberIdentitySchema
+    .omit({ normalized_il_sha256: true })
+    .extend({ layout: managedFieldLayoutSchema.exactOptional() }),
 );
 
 const comparisonSideSchema = z.strictObject({
@@ -334,6 +341,8 @@ export const compareManagedMembers = (
     sameArtifact: left.result.artifact.sha256 === right.result.artifact.sha256,
     leftAssembly: left.result.assembly,
     rightAssembly: right.result.assembly,
+    leftFieldLayout: managedFieldLayoutReader(left.result),
+    rightFieldLayout: managedFieldLayoutReader(right.result),
     leftCallEdgesByCaller: callEdgesByCaller(left.result),
     rightCallEdgesByCaller: callEdgesByCaller(right.result),
     leftFieldAccessesByCaller: fieldAccessesByCaller(

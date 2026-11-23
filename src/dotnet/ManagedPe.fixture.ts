@@ -4,6 +4,8 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 
 interface ManagedPeFixtureOptions {
   readonly additionalEmptyTypes?: number;
+  /** ClassLayout rows as [PackingSize, ClassSize, Parent TypeDef row]. */
+  readonly classLayouts?: readonly (readonly [number, number, number])[];
   readonly customAttributeRowCount?: number;
   readonly cliFlags?: number;
   readonly corruptMetadataSignature?: boolean;
@@ -17,6 +19,9 @@ interface ManagedPeFixtureOptions {
     readonly implementationRaw: number;
   }[];
   readonly fieldName?: string;
+  readonly fieldFlags?: number;
+  /** FieldLayout rows as [Offset, Field row]. */
+  readonly fieldLayouts?: readonly (readonly [number, number])[];
   readonly fieldSignature?: Buffer;
   /** Field rows; the last TypeDef owns them all, as with MethodDef rows. */
   readonly fieldRowCount?: number;
@@ -73,6 +78,8 @@ interface ManagedPeFixtureOptions {
   readonly resourceData?: Buffer;
   readonly targetFramework?: string | null;
   readonly typeName?: string;
+  /** TypeDef flags in physical row order; omitted rows retain the defaults. */
+  readonly typeFlags?: readonly number[];
   readonly typeNamespace?: string;
   /** NestedClass rows as [nested, enclosing] TypeDef rows. */
   readonly nestedTypes?: readonly (readonly [number, number])[];
@@ -265,9 +272,10 @@ const fieldRow = (
   signature: number,
   stringSize: MetadataIndexSize,
   blobSize: MetadataIndexSize,
+  flags = 0x0001,
 ): Buffer =>
   Buffer.concat([
-    u16(0x0001),
+    u16(flags),
     metadataIndex(name, stringSize),
     metadataIndex(signature, blobSize),
   ]);
@@ -840,6 +848,8 @@ const fixtureIndexWidths = ({
     ...(indexes.pinvokeImportName === null ? [] : ([[28, 1]] as const)),
     [27, indexes.typeSpecSignatures.length],
     [17, indexes.standaloneSignatures.length],
+    [15, options.classLayouts?.length ?? 0],
+    [16, options.fieldLayouts?.length ?? 0],
     [32, options.assemblyRowCount ?? 1],
     [35, referenceStringIndexes.length],
     [39, indexes.exportedTypes.length],
@@ -882,7 +892,9 @@ const typeDefTable = (
   [...indexes.additionalTypeNames, indexes.typeName].map((name, index) =>
     typeDefRow({
       name,
-      flags: nestedRows.has(index + 1) ? 0x0010_0002 : 0x0010_0001,
+      flags:
+        options.typeFlags?.[index] ??
+        (nestedRows.has(index + 1) ? 0x0010_0002 : 0x0010_0001),
       namespace: indexes.typeNamespace,
       fieldList: index === 0 ? 1 : 1 + (options.firstTypeFieldRowCount ?? 0),
       methodList: index === 0 ? 1 : 1 + (options.firstTypeMethodRowCount ?? 0),
@@ -895,6 +907,36 @@ const typeDefTable = (
         : { extendsRaw: options.extendsRaw }),
     }),
   ),
+];
+
+const declaredLayoutTables = (
+  options: ManagedPeFixtureOptions,
+  widths: FixtureIndexWidths,
+): readonly (readonly [number, readonly Buffer[]])[] => [
+  ...(options.classLayouts === undefined
+    ? []
+    : ([
+        [
+          15,
+          options.classLayouts.map(([packing, size, parent]) =>
+            Buffer.concat([
+              u16(packing),
+              u32(size),
+              metadataIndex(parent, widths.table(2)),
+            ]),
+          ),
+        ],
+      ] as const)),
+  ...(options.fieldLayouts === undefined
+    ? []
+    : ([
+        [
+          16,
+          options.fieldLayouts.map(([offset, field]) =>
+            Buffer.concat([u32(offset), metadataIndex(field, widths.table(4))]),
+          ),
+        ],
+      ] as const)),
 ];
 
 const fixtureMetadataRows = ({
@@ -931,6 +973,7 @@ const fixtureMetadataRows = ({
           indexes.fieldSignature,
           heapSizes.strings,
           heapSizes.blobs,
+          options.fieldFlags,
         ),
       ),
     ],
@@ -966,6 +1009,7 @@ const fixtureMetadataRows = ({
       ),
     ],
     [12, customAttributeRows({ options, indexes, heapSizes }, widths)],
+    ...declaredLayoutTables(options, widths),
     ...(indexes.pinvokeModuleName === null
       ? []
       : ([
@@ -1316,6 +1360,7 @@ export const buildManagedMemberPointerFixture = (
     readonly fieldPointers?: readonly number[] | null;
     readonly methodPointers?: readonly number[] | null;
     readonly streamName?: "#~" | "#-";
+    readonly fieldLayouts?: readonly (readonly [number, number])[];
   } = {},
 ): Buffer => {
   const fieldPointers =
@@ -1370,7 +1415,12 @@ export const buildManagedMemberPointerFixture = (
             fieldListSize: 2,
             methodListSize: 2,
             extendsRaw: index === 0 ? 0 : (1 << 2) | 1,
-            flags: index === 0 ? 0 : 0x0010_0001,
+            flags:
+              index === 0
+                ? 0
+                : options.fieldLayouts === undefined
+                  ? 0x0010_0001
+                  : 0x0010_0011,
           }),
         ),
       ],
@@ -1421,6 +1471,13 @@ export const buildManagedMemberPointerFixture = (
     ]);
     if (fieldPointers !== null) rows.set(3, fieldPointers.map(u16));
     if (methodPointers !== null) rows.set(5, methodPointers.map(u16));
+    if (options.fieldLayouts !== undefined)
+      rows.set(
+        16,
+        options.fieldLayouts.map(([offset, field]) =>
+          Buffer.concat([u32(offset), u16(field)]),
+        ),
+      );
     return metadataRoot(
       {
         tables: tablesStream(rows, 0n, 0),

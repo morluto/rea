@@ -40,7 +40,7 @@ export const managedMembersInputSchema = managedArtifactInputSchema.extend({
     "type_names must not repeat a name",
   )
     .describe(
-      "Inspect only the fields, methods, call edges, and field accesses declared by these exact type full names, and the user strings their method bodies load; omit to inspect every type. Unmatched names are reported in selection.unmatched_type_names.",
+      "Inspect only the fields, methods, call edges, and field accesses declared by these exact type full names, their declared ClassLayout/FieldLayout rows, and the user strings their method bodies load; omit to inspect every type. Unmatched names are reported in selection.unmatched_type_names.",
     )
     .optional(),
 });
@@ -88,7 +88,7 @@ export const MANAGED_TOOL_CONTRACTS = [
     retainedSummary: { evidenceParameters: "omit-detail" },
     ...toolContractMetadata("inspect_managed_members", evidenceEffects),
     description:
-      "Inspect PE/CLI types, members, signatures, CIL hashes/instruction tuples, exception regions, static calls, field accesses and loaded #US strings without executing code. type_names selects exact declaring types and their body literals; assembly-wide member_refs/exported_types are still included. Tokens remain local to artifact SHA-256/MVID; tuple hashes do not resolve them or fully commit control flow. Default complete returns collections; detail summary retains them for inspect_analysis_view kind managed-members using parent_evidence_id. Page types/exported_types/fields/methods/member_refs/call_edges/field_accesses/user_strings or unresolved_definitions for checked rows with failed name columns. Exact names/declaring_types and fields narrow supported rows. Omit body to avoid IL anchors. Unmatched names and incomplete coverage stay explicit.",
+      "Inspect PE/CLI types, members, signatures, CIL hashes/instruction tuples, exception regions, static calls, field accesses, ClassLayout/FieldLayout declarations and loaded #US strings without executing code. type_names selects exact declaring types and their body literals; assembly-wide member_refs/exported_types are still included. Tokens remain local to artifact SHA-256/MVID; tuple hashes do not resolve them or fully commit control flow. Default complete returns collections; detail summary retains them for inspect_analysis_view kind managed-members using parent_evidence_id. Page types/exported_types/fields/methods/member_refs/call_edges/field_accesses/user_strings/class_layouts/field_layouts or unresolved_definitions for checked rows with failed name columns. Exact names/declaring_types and fields narrow supported rows. Omit body to avoid IL anchors. Unmatched names and incomplete coverage stay explicit.",
     kind: "managed-provider",
     inputSchema: managedMembersInputSchema,
     outputSchema: memberOutputSchema,

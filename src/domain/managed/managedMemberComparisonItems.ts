@@ -10,6 +10,7 @@ import type {
 import { signatureIdentity } from "./managedMemberSignatureIdentity.js";
 import { isManagedMemberReferenceInstruction } from "./managedMemberInstructionFacts.js";
 import type { ManagedComparisonScope } from "./managedMemberComparisonCoverage.js";
+import type { ManagedFieldLayout } from "./managedFieldLayout.js";
 
 type Method = ManagedMemberInspection["methods"][number];
 type Field = ManagedMemberInspection["fields"][number];
@@ -52,6 +53,8 @@ interface ComparisonItemContext {
   readonly sameArtifact: boolean;
   readonly leftAssembly: ManagedMemberInspection["assembly"];
   readonly rightAssembly: ManagedMemberInspection["assembly"];
+  readonly leftFieldLayout: (field: Field) => ManagedFieldLayout;
+  readonly rightFieldLayout: (field: Field) => ManagedFieldLayout;
   readonly leftCallEdgesByCaller: CallEdgesByCaller;
   readonly rightCallEdgesByCaller: CallEdgesByCaller;
   readonly leftFieldAccessesByCaller: FieldAccessesByCaller;
@@ -731,7 +734,10 @@ const fieldOnlyItem = (
     return {
       item_id: `mmc_field_${digestCanonicalValue({ token: member.left.token, side: "left" }, "Managed comparison")}`,
       status: limitations.length === 0 ? "removed" : "unknown",
-      left: fieldIdentity(member.left),
+      left: {
+        ...fieldIdentity(member.left),
+        layout: context.leftFieldLayout(member.left),
+      },
       right: null,
       match: unmatchedComparison(),
       evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
@@ -755,7 +761,10 @@ const fieldOnlyItem = (
     item_id: `mmc_field_${digestCanonicalValue({ token: member.right.token, side: "right" }, "Managed comparison")}`,
     status: limitations.length === 0 ? "added" : "unknown",
     left: null,
-    right: fieldIdentity(member.right),
+    right: {
+      ...fieldIdentity(member.right),
+      layout: context.rightFieldLayout(member.right),
+    },
     match: unmatchedComparison(),
     evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
     limitations,
@@ -1014,10 +1023,29 @@ export const buildFieldItems = (
       pair.left.item,
       pair.right.item,
     );
+    const leftLayout = context.leftFieldLayout(pair.left.item);
+    const rightLayout = context.rightFieldLayout(pair.right.item);
+    const sameField =
+      context.sameArtifact && pair.left.item.token === pair.right.item.token;
+    if (
+      !sameField &&
+      (leftLayout.state === "unknown" || rightLayout.state === "unknown")
+    )
+      signatureLimitations.push(
+        limitation(
+          "layout-declarations-unavailable",
+          "Declared layout is unexamined, partial, ambiguous, or missing an explicit field offset; declared field layout equivalence is not established.",
+        ),
+      );
+    const layoutChanged =
+      leftLayout.state === "known" &&
+      rightLayout.state === "known" &&
+      canonicalize(leftLayout) !== canonicalize(rightLayout);
     const changed =
       signatureIdentity(pair.left.item.signature) !==
         signatureIdentity(pair.right.item.signature) ||
-      pair.left.item.flags !== pair.right.item.flags;
+      pair.left.item.flags !== pair.right.item.flags ||
+      layoutChanged;
     items.push({
       item_id: `mmc_field_${digestCanonicalValue(
         {
@@ -1031,8 +1059,8 @@ export const buildFieldItems = (
         : signatureLimitations.length > 0
           ? "unknown"
           : "unchanged",
-      left: fieldIdentity(pair.left.item),
-      right: fieldIdentity(pair.right.item),
+      left: { ...fieldIdentity(pair.left.item), layout: leftLayout },
+      right: { ...fieldIdentity(pair.right.item), layout: rightLayout },
       match: {
         status: "matched",
         basis: pair.basis,
