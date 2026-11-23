@@ -675,16 +675,17 @@ const packRegexValues = (values: readonly string[]): PackedRegexTransfer => {
 // process.getBuiltinModule loads synchronously in both CJS and ESM workers
 // without async import overhead or ESM customization hook startup.
 const WORKER_SOURCE = String.raw`
-const { parentPort, workerData } = process.getBuiltinModule("node:worker_threads");
-let expression;
-try {
-  expression = new RegExp(workerData.pattern, workerData.caseSensitive ? "u" : "iu");
-} catch (cause) {
-  parentPort.postMessage({ status: "invalid_pattern", reason: cause instanceof Error ? cause.message : String(cause) });
-}
-if (expression !== undefined) {
+const { parentPort } = process.getBuiltinModule("node:worker_threads");
+parentPort.on("message", (job) => {
+  let expression;
+  try {
+    expression = new RegExp(job.pattern, job.caseSensitive ? "u" : "iu");
+  } catch (cause) {
+    parentPort.postMessage({ status: "invalid_pattern", reason: cause instanceof Error ? cause.message : String(cause) });
+    return;
+  }
   const indices = [];
-  const { lengthsBuffer, chunks } = workerData.packed;
+  const { lengthsBuffer, chunks } = job.packed;
   const lengths = new Uint32Array(lengthsBuffer);
   for (let c = 0; c < chunks.length; c += 1) {
     const chunk = chunks[c];
@@ -698,8 +699,151 @@ if (expression !== undefined) {
     }
   }
   parentPort.postMessage({ status: "matched", indices });
-}
+});
 `;
+
+// Workers are pooled by heap class: spawning one costs ~10 ms, which dominates
+// small searches. A worker is reused only after a clean reply; a deadline,
+// abort, error or exit retires it, so a stuck pattern can never poison a pool.
+const MAX_POOLED_REGEX_WORKERS = 4;
+const REGEX_WORKER_IDLE_MS = 10_000;
+
+interface PooledRegexWorker {
+  readonly worker: Worker;
+  readonly heapMiB: number;
+  busy: boolean;
+  dead: boolean;
+  idleTimer?: NodeJS.Timeout;
+  onMessage?: ((message: unknown) => void) | undefined;
+  onError?: ((cause: Error & { code?: string }) => void) | undefined;
+  onExit?: ((code: number) => void) | undefined;
+}
+
+const regexWorkerPool: PooledRegexWorker[] = [];
+const regexWorkerWaiters: {
+  readonly heapMiB: number;
+  readonly grant: (entry: PooledRegexWorker) => void;
+}[] = [];
+
+const retireRegexWorker = (entry: PooledRegexWorker): void => {
+  entry.dead = true;
+  if (entry.idleTimer !== undefined) clearTimeout(entry.idleTimer);
+  const index = regexWorkerPool.indexOf(entry);
+  if (index !== -1) regexWorkerPool.splice(index, 1);
+  void entry.worker.terminate().catch(() => undefined);
+  serveRegexWaiters();
+};
+
+const serveRegexWaiters = (): void => {
+  for (let i = 0; i < regexWorkerWaiters.length; i += 1) {
+    const waiter = regexWorkerWaiters[i]!;
+    const idle = regexWorkerPool.find(
+      (entry) => !entry.dead && !entry.busy && entry.heapMiB === waiter.heapMiB,
+    );
+    if (idle !== undefined) {
+      regexWorkerWaiters.splice(i, 1);
+      i -= 1;
+      idle.busy = true;
+      if (idle.idleTimer !== undefined) clearTimeout(idle.idleTimer);
+      idle.worker.ref();
+      waiter.grant(idle);
+      continue;
+    }
+    if (
+      regexWorkerPool.filter((entry) => !entry.dead).length <
+      MAX_POOLED_REGEX_WORKERS
+    ) {
+      regexWorkerWaiters.splice(i, 1);
+      i -= 1;
+      waiter.grant(spawnRegexWorker(waiter.heapMiB));
+    }
+  }
+};
+
+const spawnRegexWorker = (heapMiB: number): PooledRegexWorker => {
+  const worker = new Worker(WORKER_SOURCE, {
+    eval: true,
+    resourceLimits: { maxOldGenerationSizeMb: heapMiB },
+  });
+  const entry: PooledRegexWorker = { worker, heapMiB, busy: true, dead: false };
+  worker.on("message", (message: unknown) => entry.onMessage?.(message));
+  worker.on("error", (cause: Error & { code?: string }) => {
+    const settle = entry.onError;
+    retireRegexWorker(entry);
+    settle?.(cause);
+  });
+  worker.on("exit", (code: number) => {
+    const settle = entry.onExit;
+    entry.dead = true;
+    const index = regexWorkerPool.indexOf(entry);
+    if (index !== -1) regexWorkerPool.splice(index, 1);
+    serveRegexWaiters();
+    settle?.(code);
+  });
+  regexWorkerPool.push(entry);
+  return entry;
+};
+
+const acquireRegexWorker = async (
+  heapMiB: number,
+  signal: AbortSignal | undefined,
+): Promise<PooledRegexWorker | undefined> => {
+  const idle = regexWorkerPool.find(
+    (entry) => !entry.dead && !entry.busy && entry.heapMiB === heapMiB,
+  );
+  if (idle !== undefined) {
+    idle.busy = true;
+    if (idle.idleTimer !== undefined) clearTimeout(idle.idleTimer);
+    idle.worker.ref();
+    return idle;
+  }
+  if (
+    regexWorkerPool.filter((entry) => !entry.dead).length <
+    MAX_POOLED_REGEX_WORKERS
+  )
+    return spawnRegexWorker(heapMiB);
+  return new Promise<PooledRegexWorker | undefined>((resolve) => {
+    const waiter = {
+      heapMiB,
+      grant: (entry: PooledRegexWorker) => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve(entry);
+      },
+    };
+    const onAbort = (): void => {
+      const index = regexWorkerWaiters.indexOf(waiter);
+      if (index !== -1) regexWorkerWaiters.splice(index, 1);
+      resolve(undefined);
+    };
+    regexWorkerWaiters.push(waiter);
+    if (signal?.aborted) onAbort();
+    else signal?.addEventListener("abort", onAbort, { once: true });
+  });
+};
+
+const releaseRegexWorker = (entry: PooledRegexWorker): void => {
+  entry.busy = false;
+  entry.onMessage = undefined;
+  entry.onError = undefined;
+  entry.onExit = undefined;
+  const waiterIndex = regexWorkerWaiters.findIndex(
+    (waiter) => waiter.heapMiB === entry.heapMiB,
+  );
+  if (waiterIndex !== -1) {
+    const waiter = regexWorkerWaiters[waiterIndex]!;
+    regexWorkerWaiters.splice(waiterIndex, 1);
+    entry.busy = true;
+    entry.worker.ref();
+    waiter.grant(entry);
+    return;
+  }
+  entry.worker.unref();
+  entry.idleTimer = setTimeout(
+    () => retireRegexWorker(entry),
+    REGEX_WORKER_IDLE_MS,
+  );
+  entry.idleTimer.unref();
+};
 
 export interface RegexConfigurationSnapshot {
   readonly deadline: RegexMatchingDeadline;
@@ -722,7 +866,7 @@ export const snapshotRegexConfiguration = (
     },
   }));
 
-/** Match an inventory off the service thread, and prove worker exit before returning. */
+/** Match an inventory off the service thread; clean workers return to the pool, stuck ones are retired. */
 export const matchRegexValues = async (input: {
   readonly operation: string;
   readonly pattern: string;
@@ -753,18 +897,10 @@ export const matchRegexValues = async (input: {
   }
   const { deadline, heapRequest } = admitted.value;
   const transfer = packRegexValues(input.values);
-  let worker: Worker;
+  const startedAt = performance.now();
+  let entry: PooledRegexWorker | undefined;
   try {
-    worker = new Worker(WORKER_SOURCE, {
-      eval: true,
-      workerData: {
-        pattern: input.pattern,
-        caseSensitive: input.caseSensitive,
-        packed: transfer.packed,
-      },
-      transferList: transfer.transferList,
-      resourceLimits: { maxOldGenerationSizeMb: heapRequest.heapMiB },
-    });
+    entry = await acquireRegexWorker(heapRequest.heapMiB, input.signal);
   } catch (cause: unknown) {
     return err(
       new AnalysisOutputError(input.operation, "Cannot start regex worker", {
@@ -772,6 +908,12 @@ export const matchRegexValues = async (input: {
       }),
     );
   }
+  if (entry === undefined)
+    return err(
+      cancelledBy(input.operation, carriedReason(input.signal?.reason)),
+    );
+  const pooled = entry;
+  let reusable = false;
   try {
     return await new Promise((resolve) => {
       let settled = false;
@@ -788,14 +930,15 @@ export const matchRegexValues = async (input: {
             cancelledBy(input.operation, carriedReason(input.signal?.reason)),
           ),
         );
+      // Queueing for a pooled worker counts toward the caller's deadline.
       const timer = setTimeout(
         () =>
           finish(err(regexMatchingDeadlineError(input.operation, deadline))),
-        deadline.deadlineMs,
+        Math.max(0, deadline.deadlineMs - (performance.now() - startedAt)),
       );
       input.signal?.addEventListener("abort", onAbort, { once: true });
       if (input.signal?.aborted) onAbort();
-      worker.once("message", (message: unknown) => {
+      pooled.onMessage = (message: unknown) => {
         const reply = parseWorkerReply(message, input.values.length);
         switch (reply.kind) {
           case "malformed":
@@ -808,6 +951,7 @@ export const matchRegexValues = async (input: {
               ),
             );
           case "invalid_pattern":
+            reusable = true;
             return finish(
               err(invalidRegexPatternError(input.operation, reply.reason)),
             );
@@ -821,10 +965,11 @@ export const matchRegexValues = async (input: {
               ),
             );
           case "matched":
+            reusable = true;
             return finish(ok(reply.indices));
         }
-      });
-      worker.once("error", (cause: Error & { code?: string }) =>
+      };
+      pooled.onError = (cause: Error & { code?: string }) =>
         finish(
           err(
             cause.code === "ERR_WORKER_OUT_OF_MEMORY"
@@ -840,9 +985,8 @@ export const matchRegexValues = async (input: {
                   { cause },
                 ),
           ),
-        ),
-      );
-      worker.once("exit", (code) =>
+        );
+      pooled.onExit = (code: number) =>
         finish(
           err(
             new AnalysisOutputError(
@@ -850,10 +994,20 @@ export const matchRegexValues = async (input: {
               `Regex worker exited without a result (${String(code)})`,
             ),
           ),
-        ),
+        );
+      pooled.worker.postMessage(
+        {
+          pattern: input.pattern,
+          caseSensitive: input.caseSensitive,
+          packed: transfer.packed,
+        },
+        transfer.transferList,
       );
     });
   } finally {
-    await worker.terminate();
+    // Clean replies return the worker to the pool; every other outcome
+    // retires it, preserving the old prove-exit guarantee for stuck work.
+    if (reusable && !pooled.dead) releaseRegexWorker(pooled);
+    else if (!pooled.dead) retireRegexWorker(pooled);
   }
 };

@@ -547,6 +547,40 @@ it.each([
   },
 );
 
+it("reuses pooled workers across calls and retires a deadline-stuck worker", async () => {
+  const first = await matchRegexValues({
+    operation: "search_strings",
+    pattern: "storage",
+    caseSensitive: true,
+    values: ["storage/read", "other"],
+  });
+  expect(first).toEqual({ ok: true, value: [0] });
+  const second = await matchRegexValues({
+    operation: "search_strings",
+    pattern: "read$",
+    caseSensitive: true,
+    values: ["storage/read", "other"],
+  });
+  expect(second).toEqual({ ok: true, value: [0] });
+  // A catastrophic pattern that hits the deadline retires its worker; the
+  // next call must still succeed on a fresh one.
+  const stuck = await matchRegexValues({
+    operation: "search_strings",
+    pattern: "^(a+)+$",
+    caseSensitive: true,
+    values: [`${"a".repeat(40)}b`],
+    deadline: { deadlineMs: 50, source: "runtime-setting" },
+  });
+  expect(stuck.ok).toBe(false);
+  const after = await matchRegexValues({
+    operation: "search_strings",
+    pattern: "storage",
+    caseSensitive: true,
+    values: ["storage/read"],
+  });
+  expect(after).toEqual({ ok: true, value: [0] });
+});
+
 it("validates patterns even when the worker has no candidate values", async () => {
   const invalid = await matchRegexValues({
     operation: "search_procedures",
