@@ -105,8 +105,8 @@ const decodeSection = (
   blockIdentifier: string,
   stored: Buffer,
   budget: DecodeBudget,
-  cacheKey: number,
-  cache: Map<number, SectionDecoding>,
+  cacheKey: string,
+  cache: Map<string, SectionDecoding>,
 ): SectionDecoding => {
   const cached = cache.get(cacheKey);
   if (cached !== undefined) return cached;
@@ -307,7 +307,7 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
       decodedRemaining: MAX_DECODED_BYTES,
       inputRemaining: MAX_COMPRESSED_BYTES,
     };
-    const decodedSections = new Map<number, SectionDecoding>();
+    const decodedSections = new Map<string, SectionDecoding>();
     let totalSections = 0;
     for (let blockIndex = 0; blockIndex < blockCount; blockIndex += 1) {
       const headerAt = blockHeadersAt + blockIndex * BLOCK_HEADER_BYTES;
@@ -370,7 +370,7 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
           identifier,
           stored,
           budget,
-          sectionOffset,
+          `${identifier}:${String(sectionOffset)}`,
           decodedSections,
         );
         if (identifier === "vers")

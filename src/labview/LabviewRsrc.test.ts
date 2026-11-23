@@ -72,6 +72,26 @@ describe("parseLabviewRsrc", () => {
     expect(parsed.value.labviewVersion).toBe("11.0");
   });
 
+  it("keeps each block's interpretation of shared stored bytes", () => {
+    // Point the second block's section start at the first block's stored data.
+    // The two blocks must keep their own coding: LVzp is XOR even when the
+    // bytes it shares were classified for a DFDS block first.
+    const container = buildLabviewRsrc([
+      { ident: "DFDS", sections: [labviewZlibSection("hello")] },
+      { ident: "LVzp", sections: [Buffer.from("ignored")] },
+    ]);
+    const infoOffset = container.readUInt32BE(16);
+    const blockInfo = infoOffset + container.readUInt32BE(infoOffset + 44);
+    const starts0 = container.readUInt32BE(blockInfo + 4 + 8);
+    const starts1 = container.readUInt32BE(blockInfo + 4 + 12 + 8);
+    const sharedOffset = container.readUInt32BE(blockInfo + starts0 + 12);
+    container.writeUInt32BE(sharedOffset, blockInfo + starts1 + 12);
+    const parsed = parseLabviewRsrc(container);
+    if (!parsed.ok) throw new Error(parsed.failure.message);
+    expect(parsed.value.blocks[0]?.sections[0]?.coding).toBe("zlib");
+    expect(parsed.value.blocks[1]?.sections[0]?.coding).toBe("xor");
+  });
+
   it("accepts a list extent that runs past the resource payload", () => {
     // A real LabVIEW-built PE declares more list bytes than its resource
     // payload holds; the records it actually uses still fit.
