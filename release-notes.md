@@ -200,6 +200,7 @@
 * **gpu:** decode UTF-8 CUBIN kernel symbol names ([#13101](https://github.com/morluto/rea/issues/13101)) ([23cf85e](https://github.com/morluto/rea/commit/23cf85ef24fbc598125d0d3a2cddb42eeb2337b5))
 * **gpu:** keep kernel resources in their owning coordinate space ([#13564](https://github.com/morluto/rea/issues/13564)) ([2be4cc4](https://github.com/morluto/rea/commit/2be4cc468e2bcfc62b0818049297fa1ee59c6f5b))
 * **gpu:** mark conflicting CUDA shared sections partial and clear register provenance ([#13963](https://github.com/morluto/rea/issues/13963)) ([4c27f48](https://github.com/morluto/rea/commit/4c27f4866715bdf08e2deaf205e4654176a2ccd4))
+* **gpu:** name an unreadable shared section instead of a bare null count ([#14133](https://github.com/morluto/rea/issues/14133)) ([4d7594f](https://github.com/morluto/rea/commit/4d7594f6728d73dcf891f322cbf03920d499af7a))
 * **guidance:** direct workflow errors to the scoped inventory ([#13321](https://github.com/morluto/rea/issues/13321)) ([11a75a5](https://github.com/morluto/rea/commit/11a75a5c19bee0bd030d4bbbab9bcf789a2d26a6))
 * **har:** keep Chromium DevTools captures that report an empty server address ([#13027](https://github.com/morluto/rea/issues/13027)) ([af0d69e](https://github.com/morluto/rea/commit/af0d69ee91e2ae8225b94257d8354382bd0b263b))
 * **hermes:** resolve nested HERMES_HOME selection from the override root ([#13792](https://github.com/morluto/rea/issues/13792)) ([6542e81](https://github.com/morluto/rea/commit/6542e81a120864e2ed0d62476632c506cee1e43c))
