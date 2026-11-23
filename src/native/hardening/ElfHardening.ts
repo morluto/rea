@@ -55,6 +55,7 @@ import {
 import { MAX_INSPECT_ELF_NOTE_ENTRIES } from "../../domain/native/elfNotes.js";
 import {
   elfStringTableText,
+  observeElfStringTableEntry,
   observeElfStringTableWindow,
 } from "../../domain/elfStringTable.js";
 import {
@@ -203,7 +204,7 @@ function* readSlice(
   length: number,
 ): Generator<HardeningStep, Buffer, HardeningStepResult> {
   if (length <= 0) return Buffer.alloc(0);
-  return (yield { kind: "read", offset, length }) as Buffer;
+  return yield { kind: "read", offset, length };
 }
 
 /** Read ELF hardening from headers, program headers, notes, and dynamic symbols. */
