@@ -5,8 +5,7 @@ import {
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
   ArtifactReaderFailure,
-  type StableArtifactSnapshot,
-  readStableArtifact,
+  withStableArtifactHandle,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   ArtifactResourceScope,
@@ -14,10 +13,7 @@ import {
 import type { PeCertificatesPort } from "../../ports/binaryDiagnostics/PeCertificatesPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
-import {
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import {
   MAX_INSPECT_PE_CERTIFICATE_ENTRIES,
   MAX_INSPECT_PE_CERTIFICATE_FILE_BYTES,
@@ -30,9 +26,10 @@ import {
   PeCertificateAsn1Failure,
   type PeCertificateDecodeAllowance,
 } from "./PeCertificateAsn1.js";
-import { parsePeCertificates } from "./PeCertificateParser.js";
+import { parsePeCertificatesFromHandle } from "./PeCertificateParser.js";
 
 const OPERATION = "inspect_pe_certificates";
+const PE_HEADER_PREFIX_BYTES = 4096;
 
 /** Portable parser over one bounded, identity-checked regular file. */
 export class PeCertificatesProvider implements PeCertificatesPort {
@@ -52,30 +49,38 @@ export class PeCertificatesProvider implements PeCertificatesPort {
   }
 
   async inspect(input: InspectPeCertificatesInput, options?: ExecutionOptions) {
-    let snapshot: StableArtifactSnapshot | undefined;
+    let observed:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
-      return await this.#resources.run(async () => {
-        snapshot = await readStableArtifact(
+      return await this.#resources.run(async () =>
+        withStableArtifactHandle(
           input.path,
           input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        return ok(
-          parsePeCertificates(
-            snapshot.bytes,
-            {
-              path: input.path,
-              sha256: snapshot.sha256,
-              bytes: snapshot.bytes.length,
+          {
+            retainBytes: (size) => Math.min(size, PE_HEADER_PREFIX_BYTES),
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            onIdentity: (identity) => {
+              observed = identity;
             },
-            input,
-          ),
-        );
-      });
+          },
+          async (handle) =>
+            ok(
+              await parsePeCertificatesFromHandle(
+                handle,
+                {
+                  path: input.path,
+                  sha256: handle.sha256,
+                  bytes: handle.size,
+                },
+                input,
+              ),
+            ),
+        ),
+      );
     } catch (cause) {
-      return err(peCertificatesFailure(cause, input, snapshot));
+      return err(peCertificatesFailure(cause, input, observed));
     }
   }
 }
@@ -212,7 +217,7 @@ const peCertificatesFailurePrimary = (
 const peCertificatesFailure = (
   cause: unknown,
   input: InspectPeCertificatesInput,
-  snapshot?: StableArtifactSnapshot,
+  observed?: { readonly sha256: string; readonly bytes: number },
 ) => {
   const primary = peCertificatesFailurePrimary(
     artifactFilePrimaryFacts(cause),
@@ -224,6 +229,6 @@ const peCertificatesFailure = (
     input.path,
     PE_CERTIFICATES_PROVIDER.id,
     OPERATION,
-    snapshot,
+    observed,
   );
 };
