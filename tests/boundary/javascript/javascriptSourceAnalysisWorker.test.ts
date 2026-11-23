@@ -1005,11 +1005,13 @@ it("keeps wrapped route ancestry, navigation and unknown named parents in the re
 });
 
 it.each([
-  ["preload-discovery", 1],
-  ["analysis", 2],
+  ["preload-discovery", "before", 1],
+  ["preload-discovery", "after", 1],
+  ["analysis", "before", 2],
+  ["analysis", "after", 2],
 ] as const)(
-  "after a %s member-mutation refusal, the next checkout uses %i launch(es)",
-  async (purpose, expectedLaunches) => {
+  "after a %s member-mutation refusal %s an accepted source, the next checkout uses %i launch(es)",
+  async (purpose, order, expectedLaunches) => {
     const scope = new ArtifactResourceScope();
     const launches: number[] = [];
     const launcher: typeof spawnOwnedProviderProcess = async (request) => {
@@ -1043,24 +1045,24 @@ it.each([
       });
       try {
         const capacity = { nodes: 0, unknowns: 0 };
-        const refusal = await first.analyze(
-          refused,
-          capacity,
-          undefined,
-          undefined,
-          "commonjs",
-          purpose,
-        );
-        expect(refusal.ok).toBe(false);
-        const success = await first.analyze(
-          accepted,
-          capacity,
-          undefined,
-          undefined,
-          "commonjs",
-          purpose,
-        );
-        if (!success.ok) throw success.error.error;
+        const analyze = (file: typeof accepted) =>
+          first.analyze(
+            file,
+            capacity,
+            undefined,
+            undefined,
+            "commonjs",
+            purpose,
+          );
+        // A refusal of the last discovered source must not discard the
+        // healthy worker either.
+        for (const file of order === "before"
+          ? [refused, accepted]
+          : [accepted, refused]) {
+          const result = await analyze(file);
+          if (file === accepted && !result.ok) throw result.error.error;
+          if (file === refused) expect(result.ok).toBe(false);
+        }
       } finally {
         await first.close();
       }
