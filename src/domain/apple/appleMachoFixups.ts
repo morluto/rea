@@ -1532,26 +1532,30 @@ function* parseLegacyBindsSteps(
       failures.push(`${stream.stream} bind opcodes: ${errorMessage(cause)}`);
     }
   }
+  // Applicability is complete when every write location is known, even if
+  // an individual binding target could not be decoded.
   const complete = failures.length === 0;
   const issues = failures.map((message) =>
     issue("pointer_fixups", "bind_stream_decode_failed", message),
   );
   for (const run of runs) {
-    if (run.binding.kind !== "unsupported" || run.binding.binding === undefined)
-      continue;
+    const { binding } = run;
+    if (binding.kind !== "unsupported") continue;
     issues.push(
       issue(
         "pointer_fixups",
-        run.type !== 1
-          ? "non_pointer_bind"
-          : run.binding.binding.symbol === null
-            ? "bind_symbol_text_unavailable"
-            : "bind_library_text_unavailable",
-        run.binding.reason,
+        binding.binding === undefined
+          ? "bind_target_unresolved"
+          : run.type !== 1
+            ? "non_pointer_bind"
+            : binding.binding.symbol === null
+              ? "bind_symbol_text_unavailable"
+              : "bind_library_text_unavailable",
+        binding.reason,
         `0x${run.start.toString(16)}`,
       ),
     );
-    failures.push(run.binding.reason);
+    failures.push(binding.reason);
   }
   return {
     index: indexBindRuns(runs, image.bytes.length),

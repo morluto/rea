@@ -1939,6 +1939,14 @@ describe("legacy bind target registers", () => {
         reason: expect.stringContaining(missing),
       });
       expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x4008n, 8)).toBe(true);
+      expect(fixups.issues).toEqual([
+        expect.objectContaining({
+          facet: "pointer_fixups",
+          code: "bind_target_unresolved",
+          location: `0x${(BASE + 0x4008n).toString(16)}`,
+          message: expect.stringContaining(missing),
+        }),
+      ]);
       expect(fixups.decode(BASE + 0x4010n, 0n)).toMatchObject({
         kind: "bind",
         symbol: "",
