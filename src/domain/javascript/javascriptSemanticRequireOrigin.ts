@@ -13,6 +13,10 @@ import {
   type GlobalReferenceRead,
 } from "./javascriptSemanticAmbientWrites.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
+import {
+  clearSemanticModuleSourceQueries,
+  semanticModuleSourceQueries,
+} from "./javascriptSemanticModuleSourceCache.js";
 
 import { BUILTIN_RESOURCE_METHODS } from "./javascriptBuiltinResourceMethods.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
@@ -129,6 +133,7 @@ export const invalidateSemanticRequireDelegateWrites = (
 ): void => {
   moduleRequireWrites.delete(state);
   moduleReturnedReferences.delete(state);
+  clearSemanticModuleSourceQueries(state);
 };
 
 const commonJsDelegateChangedAt = (
@@ -1030,19 +1035,24 @@ type ModuleObjectSource = {
     | undefined;
 };
 
-/** Both loader queries retain the same read and shallow-copy selection owner. */
-const loaderSourceContextKey = (source: ModuleObjectSource): string =>
-  JSON.stringify([
-    source.eligibility,
-    source.readAt?.start,
-    source.readAt?.end,
-    source.capturedSelections?.map(({ at, depth, ownEnumerable }) => [
-      at.start,
-      at.end,
-      depth,
-      ownEnumerable,
-    ]),
-  ]);
+/** A source position, with null and absent positions sharing one key. */
+const positionKey = (position: number | null | undefined): string =>
+  position === null || position === undefined ? "-" : String(position);
+
+/**
+ * Both loader queries retain the same read and shallow-copy selection owner.
+ * Absent captures differ from an empty capture list. This hot key is built
+ * without JSON serialization.
+ */
+const loaderSourceContextKey = (source: ModuleObjectSource): string => {
+  let key = `${source.eligibility === true ? "e" : "-"}|${positionKey(source.readAt?.start)}|${positionKey(source.readAt?.end)}|`;
+  const captures = source.capturedSelections;
+  if (captures === undefined) return `${key}-`;
+  key += "[";
+  for (const { at, depth, ownEnumerable } of captures)
+    key += `${positionKey(at.start)},${positionKey(at.end)},${String(depth)},${ownEnumerable === true ? "o" : "-"};`;
+  return key;
+};
 
 const inheritLoaderSourceContext = (
   current: ModuleObjectSource,
@@ -1181,7 +1191,59 @@ export const isCommonJsRequireDelegate = (
   hasCommonJsModuleSource(node, state, includeUnknown, "delegate", readAt) ===
   "possible";
 
+/**
+ * Complete member-mutation facts fix every input of this query until the next
+ * value-cache or require-delegate invalidation, so an identical query reuses
+ * its answer and re-records the resource limits the first walk reached.
+ */
 const hasCommonJsModuleSource = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  includeUnknown: boolean,
+  target: "module" | "delegate",
+  readAt?: t.Node,
+): ModuleSourceMatch => {
+  if (!state.memberMutationFactsComplete)
+    return walkCommonJsModuleSource(
+      node,
+      state,
+      includeUnknown,
+      target,
+      readAt,
+    );
+  const queries = semanticModuleSourceQueries<ModuleSourceMatch>(state, node);
+  let byOptions = queries.get(readAt);
+  if (byOptions === undefined) {
+    byOptions = new Map();
+    queries.set(readAt, byOptions);
+  }
+  const key = `${target}:${String(includeUnknown)}`;
+  const cached = byOptions.get(key);
+  if (cached !== undefined) {
+    for (const limit of cached.limits) state.valueResourceLimits.add(limit);
+    return cached.match;
+  }
+  const before = new Set(state.valueResourceLimits);
+  const match = walkCommonJsModuleSource(
+    node,
+    state,
+    includeUnknown,
+    target,
+    readAt,
+  );
+  // The walk can clear this state's queries; retain the answer only if the
+  // same generation still owns them.
+  if (semanticModuleSourceQueries<ModuleSourceMatch>(state, node) === queries)
+    byOptions.set(key, {
+      match,
+      limits: [...state.valueResourceLimits].filter(
+        (limit) => !before.has(limit),
+      ),
+    });
+  return match;
+};
+
+const walkCommonJsModuleSource = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
   includeUnknown: boolean,
@@ -1232,7 +1294,7 @@ const hasCommonJsModuleSource = (
     const byMode =
       contexts.get(value) ??
       new Map<string, { readonly identities: Map<string, object> }>();
-    const modeKey = JSON.stringify([awaitDepths, loaderSourceContextKey(next)]);
+    const modeKey = `${awaitDepths.join(",")}#${loaderSourceContextKey(next)}`;
     let context = byMode.get(modeKey);
     if (context === undefined) {
       context = { identities: new Map() };

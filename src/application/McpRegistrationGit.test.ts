@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { err } from "../domain/result.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import * as exec from "../process/ExecFileOutput.js";
 import { resolveKiloRegistrationWorktree } from "./McpRegistrationGit.js";
@@ -201,7 +202,7 @@ it("preserves a native location access failure and late cancellation through sel
     .spyOn(locations, "present")
     .mockImplementationOnce(async () => {
       controller.abort(reason);
-      throw failure;
+      return err(failure);
     });
   try {
     const selected = await context(controller.signal);
