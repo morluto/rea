@@ -33,7 +33,6 @@ import { createEvidence } from "../domain/evidence.js";
 import { ownedJsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
   mcpResponseOverflowProjection,
-  projectedErrorEncoding,
   type ToolResultDelivery,
 } from "./ToolResultDelivery.js";
 import { toolReturnsTargetContent } from "../contracts/toolEffects.js";
