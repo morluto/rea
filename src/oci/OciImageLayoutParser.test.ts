@@ -12,6 +12,8 @@ import {
 } from "node:fs/promises";
 import { fstatSync } from "node:fs";
 import { join } from "node:path";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { expect, it, vi } from "vitest";
 
 import {
@@ -163,6 +165,39 @@ it("omits Env values when include_env_values is false", async () => {
   expect(report.limitations).toContain(
     OCI_IMAGE_LAYOUT_LIMITATIONS.envRedacted,
   );
+});
+
+it("does not keep redacted Env values alive through their names", async () => {
+  setFlagsFromString("--expose-gc");
+  const gc = runInNewContext("gc") as () => void;
+  // Longer than V8's 13-character minimum for a sliced string.
+  const NAME = "A_REDACTED_ENV_NAME_LONG_ENOUGH_TO_SLICE";
+  const roots = [];
+  for (let layout = 0; layout < 8; layout += 1) {
+    const root = await createTestTempDirectory("rea-oci-env-retention-");
+    // About 0.9 MiB per value, below the size Node hands out as an external
+    // string, so a pinned binding is counted in heapUsed.
+    await writeOciImageLayoutFixture(root, {
+      config: {
+        env: [`${NAME}=${"v".repeat(900_000)}${String(layout)}`],
+      },
+    });
+    roots.push(root);
+  }
+  const reports = [];
+  gc();
+  gc();
+  const before = process.memoryUsage().heapUsed;
+  for (const root of roots)
+    reports.push(await inspectLayout(root, { include_env_values: false }));
+  gc();
+  gc();
+  const retained = process.memoryUsage().heapUsed - before;
+  expect(reports.map((report) => report.images[0]?.env)).toEqual(
+    Array.from({ length: 8 }, () => [{ name: NAME, value: null }]),
+  );
+  // Eight names that each pinned their binding would hold about 7 MiB.
+  expect(retained).toBeLessThan(2 << 20);
 });
 
 it("reads the platform os.version member", async () => {

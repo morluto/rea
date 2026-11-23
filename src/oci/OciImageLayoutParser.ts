@@ -438,6 +438,10 @@ const jsonStringBytes = (value: string): number =>
     ? Buffer.byteLength(JSON.stringify(value), "utf8")
     : jsonByteLength(value);
 
+// UTF-16 keeps unpaired surrogates in a name byte-for-byte.
+const detached = (value: string): string =>
+  Buffer.from(value, "utf16le").toString("utf16le");
+
 const EMPTY_ENV_BINDING_BYTES = jsonByteLength({ name: "", value: null });
 const envBindingBytes = (name: string, value: string | null): number =>
   EMPTY_ENV_BINDING_BYTES +
@@ -480,7 +484,12 @@ const envBindings = (
     const envValue =
       includeValues && separator !== -1 ? item.slice(separator + 1) : null;
     chargeArrayItem(charge, bindings.length, envBindingBytes(name, envValue));
-    bindings.push({ name, value: envValue });
+    // A V8 slice keeps the whole NAME=value string alive, so a redacted
+    // binding keeps a standalone copy of its name.
+    bindings.push({
+      name: envValue === null && separator !== -1 ? detached(name) : name,
+      value: envValue,
+    });
   }
   if (invalid > 0)
     defects.push(
