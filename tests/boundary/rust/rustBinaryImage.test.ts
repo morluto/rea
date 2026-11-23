@@ -1,3 +1,4 @@
+import { readGoFixture } from "../../fixtures/go/image.js";
 import { deflateSync } from "node:zlib";
 import { expect, it, vi } from "vitest";
 import { machoImageWithUnknownCommand } from "../../../src/artifacts/apple/MachoImage.fixture.js";
@@ -21,7 +22,6 @@ import {
   readRustBinaryImageFromHandle,
 } from "../../../src/rust/RustBinaryImage.js";
 import { readBinaryContainer } from "../../../src/domain/native/readBinaryContainer.js";
-import { readGoBinaryImage } from "../../../src/go/GoBinaryImage.js";
 import { ParseFailureError } from "../../../src/domain/parseFailure.js";
 
 const packages = [
@@ -605,7 +605,7 @@ it.each([
   ["macho", "out-of-file"],
 ] as const)(
   "retains Rust evidence beside an unrelated %s %s Go section",
-  (format, fault) => {
+  async (format, fault) => {
     const bytes = createRustImageWithGoSection(format, fault);
     const control = Buffer.from(bytes);
     const sectionOffset = format === "elf" ? 768 + 11 : 408;
@@ -631,7 +631,7 @@ it.each([
         : fault === "out-of-file"
           ? "truncated"
           : "malformed";
-    expect(() => readGoBinaryImage(bytes)).toThrow(
+    await expect(readGoFixture(bytes)).rejects.toThrow(
       expect.objectContaining({
         message: expect.stringMatching(/build-info|mapped/i),
         failure: expect.objectContaining({ kind: failureKind }),

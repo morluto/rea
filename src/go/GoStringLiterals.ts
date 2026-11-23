@@ -51,30 +51,6 @@ type StringScanRead = {
   readonly kind: "header" | "target";
 };
 
-/**
- * Recover bounded printable UTF-8 Go string literals referenced by word-aligned
- * static `(ptr, len)` pairs in non-executable mapped data.
- */
-export const recoverGoStringLiterals = (
-  bytes: Buffer,
-  container: BinaryContainer,
-  budgets: GoAnalysisBudgets = GO_ANALYSIS_BUDGET_DEFAULTS,
-  checkActive?: () => void,
-): GoStringLiterals => {
-  const steps = recoverGoStringLiteralSteps(
-    bytes.length,
-    container,
-    budgets,
-    checkActive,
-  );
-  let step = steps.next();
-  while (!step.done) {
-    const { offset, length } = step.value;
-    step = steps.next(bytes.subarray(offset, offset + length));
-  }
-  return step.value;
-};
-
 /** Read exactly the admitted header and candidate ranges from the file. */
 export const recoverGoStringLiteralsFromReader = async (
   source: NativeByteSource,
