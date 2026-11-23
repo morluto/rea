@@ -450,17 +450,22 @@ export class BinaryReader {
   table(offset: bigint, count: number, width: number, label: string): number {
     const size = BigInt(count) * BigInt(width);
     const range = this.fileRange(offset, size, label);
-    if (size > 16n * 1024n * 1024n)
-      throw new BinaryResourceFailure(
-        "structure",
-        16 * 1024 * 1024,
-        `${label} exceeds the 16 MiB structural decoding budget`,
-        "structure",
-        "bytes",
-      );
+    requireBinaryTableBudget(size, label);
     return range.offset;
   }
 }
+
+/** Reject oversized structural tables before reading their bytes. */
+export const requireBinaryTableBudget = (size: bigint, label: string): void => {
+  if (size > 16n * 1024n * 1024n)
+    throw new BinaryResourceFailure(
+      "structure",
+      16 * 1024 * 1024,
+      `${label} exceeds the 16 MiB structural decoding budget`,
+      "structure",
+      "bytes",
+    );
+};
 
 /** Admit a declared file span, or mark it unbacked when it leaves the file. */
 export const declaredFileRange = (

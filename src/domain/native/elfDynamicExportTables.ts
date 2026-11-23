@@ -16,13 +16,10 @@ import {
   BinaryReader,
   BinaryResourceFailure,
   createFileMappingIndex,
-  type ElfDynamicSegment,
+  requireBinaryTableBudget,
   type FileMappingIndex,
 } from "../binaryContainer.js";
-import {
-  readElfImageFromDirectory,
-  readElfImageFromDirectorySize,
-} from "./elfImage.js";
+import { readElfImageFromDirectorySize } from "./elfImage.js";
 import type { ZstandardFramePause } from "../compression/zstandardExactFrame.js";
 import type {
   ElfProgramDeclaration,
@@ -50,11 +47,10 @@ const SELECTED_TAGS = new Set([
 /** One admitted symbol inventory, independent of section or dynamic declarations. */
 export interface ElfExportTables {
   readonly table: number;
-  readonly tableBytes?: Buffer;
+  readonly tableBytes: Buffer;
   readonly count: number;
   readonly names: Buffer;
-  readonly versions: number | null;
-  readonly versionBytes?: Buffer | null;
+  readonly versionBytes: Buffer | null;
   readonly versionsDeclared: boolean;
   readonly issues: NativeExportIssue[];
 }
@@ -95,36 +91,59 @@ const admitCount = (
   return overBudget(result.error.label, result.error.count);
 };
 
+type ElfExportDirectory = ReturnType<typeof readElfDirectoryFromBuffer>;
+type Unavailable = Extract<ElfExportTableSelection, { state: "unavailable" }>;
+type DynamicRead = { readonly offset: number; readonly length: number };
+
+const dynamicProgramRange = (
+  fileSize: number,
+  directory: ElfExportDirectory,
+): DynamicRead | Unavailable => {
+  const programs = directory.programs.filter(
+    (program): program is Extract<ElfProgramDeclaration, { type: 2 }> =>
+      program.type === 2,
+  );
+  if (programs.length > 1)
+    malformed("ELF image has more than one PT_DYNAMIC segment");
+  const program = programs[0];
+  if (program === undefined || program.size === 0n)
+    return {
+      state: "unavailable",
+      reason:
+        "No readable dynamic segment establishes a dynamic symbol table or its symbol count",
+      issues: [],
+    };
+  const width = directory.bits === 64 ? 16 : 8;
+  if (program.size % BigInt(width) !== 0n)
+    malformed("ELF PT_DYNAMIC size is not a whole number of entries");
+  const count = exact(program.size / BigInt(width), "PT_DYNAMIC count");
+  if (count > MAX_NATIVE_EXPORT_ROWS) overBudget("ELF dynamic table", count);
+  return {
+    offset: requireRangeWithin(
+      fileSize,
+      program.offset,
+      count,
+      width,
+      "ELF dynamic table",
+    ),
+    length: count * width,
+  };
+};
+
 /** Admit singular declarations through DT_NULL without interpreting unknown tags. */
 function* readDynamicEntries(
-  reader: BinaryReader,
-  bits: 32 | 64,
-  program: ElfDynamicSegment,
+  bytes: Buffer,
+  { bits, little }: ElfExportDirectory,
 ): Generator<void, ReadonlyMap<bigint, bigint>> {
-  const dynamicWidth = bits === 64 ? 16 : 8;
-  if (program.size % BigInt(dynamicWidth) !== 0n)
-    malformed("ELF PT_DYNAMIC size is not a whole number of entries");
-  const dynamicCount = exact(
-    program.size / BigInt(dynamicWidth),
-    "PT_DYNAMIC count",
-  );
-  if (dynamicCount > MAX_NATIVE_EXPORT_ROWS)
-    overBudget("ELF dynamic table", dynamicCount);
-  const dynamicAt = reader.table(
-    program.offset,
-    dynamicCount,
-    dynamicWidth,
-    "ELF dynamic table",
-  );
+  const width = bits === 64 ? 16 : 8;
   const entries = new Map<bigint, bigint>();
   let terminated = false;
-  for (let index = 0; index < dynamicCount; index++) {
-    if (index % 1024 === 0) yield;
-    const at = dynamicAt + index * dynamicWidth;
+  for (let at = 0; at < bytes.length; at += width) {
+    if ((at / width) % 1024 === 0) yield;
     const parsed = readElfDynamicEntry(
-      reader.bytes.subarray(at, at + dynamicWidth),
+      bytes.subarray(at, at + width),
       bits,
-      reader.little,
+      little,
     );
     if (!parsed.ok) return malformed(parsed.error.message);
     const { tag, value } = parsed.value;
@@ -179,32 +198,29 @@ function* readDynamicSymbolCount(
             MAX_NATIVE_EXPORT_ROWS,
           ),
         );
-  if (classicCount !== null && gnuCount !== null && classicCount !== gnuCount)
-    malformed("ELF DT_HASH and DT_GNU_HASH report different symbol counts");
-  return classicCount ?? gnuCount;
+  return combineSymbolCounts(classicCount, gnuCount);
 }
 
-/** Locate sectionless symbols through bounded, unambiguous PT_LOAD mappings. */
-export function* readElfDynamicExportTables(
-  bytes: Buffer,
-  directory: ReturnType<typeof readElfDirectoryFromBuffer>,
-): Generator<void, ElfExportTableSelection> {
-  const programs = directory.programs.filter(
-    (program): program is Extract<ElfProgramDeclaration, { type: 2 }> =>
-      program.type === 2,
-  );
-  if (programs.length > 1)
-    malformed("ELF image has more than one PT_DYNAMIC segment");
-  const program = programs[0];
-  if (program === undefined || program.size === 0n)
-    return {
-      state: "unavailable",
-      reason:
-        "No readable dynamic segment establishes a dynamic symbol table or its symbol count",
-      issues: [],
-    };
-  const reader = new BinaryReader(bytes, directory.little, "elf");
-  const entries = yield* readDynamicEntries(reader, directory.bits, program);
+const combineSymbolCounts = (
+  classic: number | null,
+  gnu: number | null,
+): number | null => {
+  if (classic !== null && gnu !== null && classic !== gnu)
+    malformed("ELF DT_HASH and DT_GNU_HASH report different symbol counts");
+  return classic ?? gnu;
+};
+
+type DynamicSymbolDeclarations = {
+  readonly symbols: bigint;
+  readonly strings: bigint;
+  readonly stringBytes: bigint;
+  readonly width: number;
+};
+
+const dynamicSymbolDeclarations = (
+  entries: ReadonlyMap<bigint, bigint>,
+  bits: 32 | 64,
+): DynamicSymbolDeclarations | Unavailable => {
   const symbols = entries.get(DT_SYMTAB);
   if (symbols === undefined)
     return {
@@ -213,7 +229,7 @@ export function* readElfDynamicExportTables(
         "The dynamic segment does not declare DT_SYMTAB, so its export inventory is unavailable",
       issues: [],
     };
-  const width = elfSymbolSize(directory.bits);
+  const width = elfSymbolSize(bits);
   if (entries.get(DT_SYMENT) !== BigInt(width))
     malformed(
       "ELF DT_SYMENT is missing or does not match its class symbol width",
@@ -222,14 +238,16 @@ export function* readElfDynamicExportTables(
   const stringBytes = entries.get(DT_STRSZ);
   if (strings === undefined || stringBytes === undefined)
     return malformed("ELF DT_SYMTAB is present without DT_STRTAB and DT_STRSZ");
-  const image = readElfImageFromDirectory(bytes, directory);
-  const mapping = createFileMappingIndex(image.mappings, image.zero_fills);
-  const count = yield* readDynamicSymbolCount(
-    reader,
-    mapping,
-    entries,
-    directory.bits,
-  );
+  return { symbols, strings, stringBytes, width };
+};
+
+function* readAdmittedDynamicTables(
+  fileSize: number,
+  mapping: FileMappingIndex,
+  entries: ReadonlyMap<bigint, bigint>,
+  { symbols, strings, stringBytes, width }: DynamicSymbolDeclarations,
+  count: number | null,
+): Generator<DynamicRead, ElfExportTableSelection, Buffer> {
   if (count === null)
     return {
       state: "unavailable",
@@ -240,38 +258,99 @@ export function* readElfDynamicExportTables(
   if (count === 0)
     malformed("ELF dynamic symbol table is missing its null entry");
   const table = mapping.offset(symbols, count * width);
-  reader.table(BigInt(table), count, width, "ELF dynamic symbols");
+  requireRangeWithin(
+    fileSize,
+    BigInt(table),
+    count,
+    width,
+    "ELF dynamic symbols",
+  );
+  const tableBytes = yield { offset: table, length: count * width };
   const nameBytes = exact(stringBytes, "DT_STRSZ");
   const namesAt = mapping.offset(strings, nameBytes);
-  const names = reader.range(namesAt, nameBytes, "ELF dynamic strings");
+  requireRangeWithin(
+    fileSize,
+    BigInt(namesAt),
+    nameBytes,
+    1,
+    "ELF dynamic strings",
+    false,
+  );
+  const names = yield { offset: namesAt, length: nameBytes };
   const issues: NativeExportIssue[] = [];
   const versionAddress = entries.get(DT_VERSYM);
-  let versions: number | null = null;
+  let versionBytes: Buffer | null = null;
   if (versionAddress !== undefined) {
+    let versions: number | null = null;
     try {
-      versions = mapping.offset(versionAddress, count * 2);
-      reader.table(BigInt(versions), count, 2, "ELF symbol versions");
+      const offset = mapping.offset(versionAddress, count * 2);
+      requireRangeWithin(
+        fileSize,
+        BigInt(offset),
+        count,
+        2,
+        "ELF symbol versions",
+      );
+      versions = offset;
     } catch (cause) {
       if (!(cause instanceof BinaryFormatFailure)) throw cause;
-      versions = null;
       issues.push({
         code: "version_unresolved",
         location: `0x${versionAddress.toString(16)}`,
         message: cause.message,
       });
     }
+    if (versions !== null)
+      versionBytes = yield { offset: versions, length: count * 2 };
   }
   return {
     state: "tables",
     tables: {
       table,
+      tableBytes,
       count,
       names,
-      versions,
+      versionBytes,
       versionsDeclared: versionAddress !== undefined,
       issues,
     },
   };
+}
+
+/** Locate sectionless symbols through bounded, unambiguous PT_LOAD mappings. */
+export function* readElfDynamicExportTables(
+  bytes: Buffer,
+  directory: ElfExportDirectory,
+): Generator<void, ElfExportTableSelection> {
+  const range = dynamicProgramRange(bytes.length, directory);
+  if ("state" in range) return range;
+  const entries = yield* readDynamicEntries(
+    bytes.subarray(range.offset, range.offset + range.length),
+    directory,
+  );
+  const declarations = dynamicSymbolDeclarations(entries, directory.bits);
+  if ("state" in declarations) return declarations;
+  const image = readElfImageFromDirectorySize(bytes.length, directory);
+  const mapping = createFileMappingIndex(image.mappings, image.zero_fills);
+  const count = yield* readDynamicSymbolCount(
+    new BinaryReader(bytes, directory.little, "elf"),
+    mapping,
+    entries,
+    directory.bits,
+  );
+  const steps = readAdmittedDynamicTables(
+    bytes.length,
+    mapping,
+    entries,
+    declarations,
+    count,
+  );
+  let step = steps.next();
+  while (!step.done) {
+    const { offset, length } = step.value;
+    step = steps.next(bytes.subarray(offset, offset + length));
+  }
+  return step.value;
 }
 
 const requireRangeWithin = (
@@ -280,6 +359,7 @@ const requireRangeWithin = (
   count: number,
   width: number,
   label: string,
+  table = true,
 ): number => {
   const bytes = BigInt(count) * BigInt(width);
   if (offset < 0n || offset > BigInt(fileSize))
@@ -301,6 +381,7 @@ const requireRangeWithin = (
         offset: Number(offset),
       },
     );
+  if (table) requireBinaryTableBudget(bytes, label);
   return Number(offset);
 };
 
@@ -311,90 +392,34 @@ export const readElfDynamicExportTablesFromReader = async (
   directory: ReturnType<typeof readElfDirectoryFromBuffer>,
   pause: ZstandardFramePause,
 ): Promise<ElfExportTableSelection> => {
-  const programs = directory.programs.filter(
-    (program): program is Extract<ElfProgramDeclaration, { type: 2 }> =>
-      program.type === 2,
+  const range = dynamicProgramRange(fileSize, directory);
+  if ("state" in range) return range;
+  const entrySteps = readDynamicEntries(
+    await readRange(range.offset, range.length),
+    directory,
   );
-  if (programs.length > 1)
-    malformed("ELF image has more than one PT_DYNAMIC segment");
-  const program = programs[0];
-  if (program === undefined || program.size === 0n)
-    return {
-      state: "unavailable",
-      reason:
-        "No readable dynamic segment establishes a dynamic symbol table or its symbol count",
-      issues: [],
-    };
-  const dynamicWidth = directory.bits === 64 ? 16 : 8;
-  if (program.size % BigInt(dynamicWidth) !== 0n)
-    malformed("ELF PT_DYNAMIC size is not a whole number of entries");
-  const dynamicCount = exact(
-    program.size / BigInt(dynamicWidth),
-    "PT_DYNAMIC count",
-  );
-  if (dynamicCount > MAX_NATIVE_EXPORT_ROWS)
-    overBudget("ELF dynamic table", dynamicCount);
-  const dynamicAt = requireRangeWithin(
-    fileSize,
-    program.offset,
-    dynamicCount,
-    dynamicWidth,
-    "ELF dynamic table",
-  );
-  const dynamicBytes = await readRange(dynamicAt, dynamicCount * dynamicWidth);
-  const entries = new Map<bigint, bigint>();
-  let terminated = false;
-  for (let index = 0; index < dynamicCount; index++) {
-    if (index % 1024 === 0) await pause();
-    const at = index * dynamicWidth;
-    const parsed = readElfDynamicEntry(
-      dynamicBytes.subarray(at, at + dynamicWidth),
-      directory.bits,
-      directory.little,
-    );
-    if (!parsed.ok) return malformed(parsed.error.message);
-    const { tag, value } = parsed.value;
-    if (tag === DT_NULL) {
-      terminated = true;
-      break;
-    }
-    if (!SELECTED_TAGS.has(tag)) continue;
-    if (entries.has(tag))
-      malformed(`ELF dynamic tag ${tag.toString()} is duplicated`);
-    entries.set(tag, value);
+  let entryStep = entrySteps.next();
+  while (!entryStep.done) {
+    await pause();
+    entryStep = entrySteps.next();
   }
-  if (!terminated) malformed("ELF dynamic table has no DT_NULL terminator");
-  const symbols = entries.get(DT_SYMTAB);
-  if (symbols === undefined)
-    return {
-      state: "unavailable",
-      reason:
-        "The dynamic segment does not declare DT_SYMTAB, so its export inventory is unavailable",
-      issues: [],
-    };
-  const width = elfSymbolSize(directory.bits);
-  if (entries.get(DT_SYMENT) !== BigInt(width))
-    malformed(
-      "ELF DT_SYMENT is missing or does not match its class symbol width",
-    );
-  const strings = entries.get(DT_STRTAB);
-  const stringBytes = entries.get(DT_STRSZ);
-  if (strings === undefined || stringBytes === undefined)
-    return malformed("ELF DT_SYMTAB is present without DT_STRTAB and DT_STRSZ");
+  const entries = entryStep.value;
+  const declarations = dynamicSymbolDeclarations(entries, directory.bits);
+  if ("state" in declarations) return declarations;
   const image = readElfImageFromDirectorySize(fileSize, directory);
   const mapping = createFileMappingIndex(image.mappings, image.zero_fills);
   const hash = entries.get(DT_HASH);
   const gnu = entries.get(DT_GNU_HASH);
   let classicCount: number | null = null;
   if (hash !== undefined) {
-    let headerBuf: Buffer = Buffer.alloc(0);
     let headerAt = -1;
     try {
       headerAt = mapping.offset(hash, 8);
-      headerBuf = await readRange(headerAt, 8);
-    } catch {
-      headerAt = -1;
+    } catch (cause) {
+      if (!(cause instanceof BinaryFormatFailure)) throw cause;
     }
+    const headerBuf =
+      headerAt < 0 ? Buffer.alloc(0) : await readRange(headerAt, 8);
     const headerReader = new BinaryReader(headerBuf, directory.little, "elf");
     const readHashWord: ElfHashWordReader = (relative) => {
       try {
@@ -414,14 +439,14 @@ export const readElfDynamicExportTablesFromReader = async (
   let gnuCount: number | null = null;
   if (gnu !== undefined) {
     const wordBytes = directory.bits === 64 ? 8 : 4;
-    let headerBuf: Buffer = Buffer.alloc(0);
     let headerAt = -1;
     try {
       headerAt = mapping.offset(gnu, 16);
-      headerBuf = await readRange(headerAt, 16);
-    } catch {
-      headerAt = -1;
+    } catch (cause) {
+      if (!(cause instanceof BinaryFormatFailure)) throw cause;
     }
+    const headerBuf =
+      headerAt < 0 ? Buffer.alloc(0) : await readRange(headerAt, 16);
     const headerReader = new BinaryReader(headerBuf, directory.little, "elf");
     let tailStart = 0;
     let tailBuf: Buffer = Buffer.alloc(0);
@@ -483,74 +508,18 @@ export const readElfDynamicExportTablesFromReader = async (
     }
     gnuCount = admitCount(step.value);
   }
-  if (classicCount !== null && gnuCount !== null && classicCount !== gnuCount)
-    malformed("ELF DT_HASH and DT_GNU_HASH report different symbol counts");
-  const count = classicCount ?? gnuCount;
-  if (count === null)
-    return {
-      state: "unavailable",
-      reason:
-        "The dynamic segment has no hash table establishing the complete symbol count; empty GNU buckets do not establish an empty inventory",
-      issues: [],
-    };
-  if (count === 0)
-    malformed("ELF dynamic symbol table is missing its null entry");
-  const table = mapping.offset(symbols, count * width);
-  requireRangeWithin(
+  const count = combineSymbolCounts(classicCount, gnuCount);
+  const steps = readAdmittedDynamicTables(
     fileSize,
-    BigInt(table),
+    mapping,
+    entries,
+    declarations,
     count,
-    width,
-    "ELF dynamic symbols",
   );
-  const tableBytes = await readRange(table, count * width);
-  const nameBytes = exact(stringBytes, "DT_STRSZ");
-  const namesAt = mapping.offset(strings, nameBytes);
-  requireRangeWithin(
-    fileSize,
-    BigInt(namesAt),
-    nameBytes,
-    1,
-    "ELF dynamic strings",
-  );
-  const names = await readRange(namesAt, nameBytes);
-  const issues: NativeExportIssue[] = [];
-  const versionAddress = entries.get(DT_VERSYM);
-  let versions: number | null = null;
-  let versionBytes: Buffer | null = null;
-  if (versionAddress !== undefined) {
-    try {
-      versions = mapping.offset(versionAddress, count * 2);
-      requireRangeWithin(
-        fileSize,
-        BigInt(versions),
-        count,
-        2,
-        "ELF symbol versions",
-      );
-      versionBytes = await readRange(versions, count * 2);
-    } catch (cause) {
-      if (!(cause instanceof BinaryFormatFailure)) throw cause;
-      versions = null;
-      versionBytes = null;
-      issues.push({
-        code: "version_unresolved",
-        location: `0x${versionAddress.toString(16)}`,
-        message: cause.message,
-      });
-    }
+  let step = steps.next();
+  while (!step.done) {
+    const { offset, length } = step.value;
+    step = steps.next(await readRange(offset, length));
   }
-  return {
-    state: "tables",
-    tables: {
-      table,
-      tableBytes,
-      count,
-      names,
-      versions,
-      versionBytes,
-      versionsDeclared: versionAddress !== undefined,
-      issues,
-    },
-  };
+  return step.value;
 };
