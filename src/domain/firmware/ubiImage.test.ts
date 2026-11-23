@@ -1792,6 +1792,50 @@ it.each([
   },
 );
 
+it("rejects an image sequence conflict outside the undersized LEB span", async () => {
+  const narrow = { pebSize: 64 * 1024, dataOffset: 4096 };
+  const rootfs: UbiFixturePeb = {
+    kind: "leb",
+    volId: 0,
+    lnum: 0,
+    // Written data across the 32 KiB boundary rules out a finer grid.
+    data: Buffer.alloc(narrow.pebSize - narrow.dataOffset, 0x52),
+    sqnum: 2n,
+  };
+  const [layout0, layout1] = ubiLayoutPebs(RECORDS, narrow);
+  const bytes = Buffer.concat([
+    ubiImage([rootfs], { ...narrow, imageSeq: 5 }),
+    ubiImage([{ kind: "free" }], { ...narrow, imageSeq: 6 }),
+    ubiImage(
+      [
+        layout0!,
+        { kind: "erased" },
+        layout1!,
+        { kind: "erased" },
+        {
+          kind: "leb",
+          volId: 1,
+          lnum: 0,
+          data: Buffer.from("orphan"),
+          dataSize: 81_920,
+          sqnum: 3n,
+        },
+        { kind: "erased" },
+      ],
+      { ...narrow, imageSeq: 5 },
+    ),
+  ]);
+  expect(await parse(bytes)).toMatchObject({
+    ok: false,
+    error: {
+      kind: "malformed",
+      message: expect.stringContaining(
+        "eraseblock 1 declares image_seq 6, which differs from image_seq 5",
+      ),
+    },
+  });
+});
+
 describe("passed-over candidate boundaries", () => {
   const narrow = { pebSize: 64 * 1024, dataOffset: 4096 };
   const wide = { pebSize: 128 * 1024, dataOffset: 4096 };

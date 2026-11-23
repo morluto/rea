@@ -1423,12 +1423,11 @@ interface UbiPebCandidateCheck {
  * whose table validates still cannot be accepted when a valid EC header on a
  * passed-over candidate grid lies outside every mapped non-layout LEB's data
  * area; it stays retryable so the caller keeps the first failure unless a
- * later geometry explains every passed-over header. A candidate whose LEB is
- * too small for a CRC-valid VID header's data_pad and data_size also stays
- * retryable (even alongside a PEB error from a header inside that split LEB,
- * without a fallback), so a larger eraseblock that holds every LEB in full
- * wins; when the candidate is otherwise valid, its image is kept as the
- * fallback if no later candidate is accepted.
+ * later geometry explains every passed-over header. With a valid table, a
+ * PEB error stays fatal unless its header lies in the continuation of an
+ * undersized LEB, within the minimum span required by its CRC-valid VID
+ * header. An undersized LEB in an otherwise valid candidate also allows a
+ * retry, with the candidate image kept as a fallback.
  */
 const judgeUbiPebCandidate = ({
   geometry,
@@ -1443,12 +1442,19 @@ const judgeUbiPebCandidate = ({
     return { state: "reject", error: smallerGridError };
   const table = parseUbiVolumeTable(tableCopies, geometry);
   if (!table.ok) return { state: "retry", error: pebError ?? table.error };
-  const undersized = pebs.findIndex(
-    (peb) =>
-      peb.state === "corrupt" &&
-      peb.vidMinPebSize !== undefined &&
-      peb.vidMinPebSize > geometry.pebSize,
-  );
+  const errorOffset = pebError?.failure.offset;
+  const undersized = pebs.findIndex((peb, index) => {
+    if (
+      peb.state !== "corrupt" ||
+      peb.vidMinPebSize === undefined ||
+      peb.vidMinPebSize <= geometry.pebSize
+    )
+      return false;
+    if (pebError === null) return true;
+    if (errorOffset === undefined) return false;
+    const distance = errorOffset - index * geometry.pebSize;
+    return distance >= geometry.pebSize && distance < peb.vidMinPebSize;
+  });
   if (pebError !== null)
     return { state: undersized !== -1 ? "retry" : "reject", error: pebError };
   if (passedOverHeaderOffset !== null)
