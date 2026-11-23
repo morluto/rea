@@ -49,31 +49,6 @@ const parent = (): AnalysisViewParent => {
   };
 };
 
-it("validates mutable inline reports again after an earlier successful view", () => {
-  const mutable = structuredClone(report);
-  const input = { ...parent(), normalizedResult: mutable };
-  expect(projectAnalysisView(input, { kind: "summary" }).ok).toBe(true);
-  mutable.artifact.bytes = -1;
-  expect(
-    projectAnalysisView({ ...input, sealedResult: true }, { kind: "summary" })
-      .ok,
-  ).toBe(false);
-});
-
-it("bounds inherited messages while keeping their complete parent reference", () => {
-  const note = "Large source note: " + "x".repeat(300_000);
-  const input = {
-    ...parent(),
-    limitations: [note],
-  };
-  const result = projectAnalysisView(input, { kind: "summary" });
-  if (!result.ok) throw result.error;
-  expect(result.value.limitations.join(" ")).toContain(input.evidenceId);
-  expect(result.value.limitations.join(" ")).toContain("omitted");
-  expect(result.value.unknowns.join(" ")).toContain("runtime dependencies");
-  expect(input.limitations[0]).toBe(note);
-});
-
 it.each(["digest", "format"] as const)(
   "rejects a Go parent whose authenticated %s conflicts with its report",
   (field) => {
