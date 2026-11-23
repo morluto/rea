@@ -1,5 +1,9 @@
 import { keyedBy, uniqueKeyed } from "../../domain/keyedCollection.js";
-import { elfNote, gnuBuildIdNote } from "../elf/ElfNotes.fixture.js";
+import {
+  elfCompressedNoteStorage,
+  elfNote,
+  gnuBuildIdNote,
+} from "../elf/ElfNotes.fixture.js";
 import {
   peLoadConfigImage,
   type PeLoadConfigFixtureMalformed,
@@ -86,7 +90,7 @@ export interface ElfHardeningFixtureOptions {
   readonly longSymbolName?: boolean;
   /** Replace `__memcpy_chk`; bytes are written as latin1. */
   readonly fortifyName?: string;
-  /** Mark `.note.gnu.property` as SHF_COMPRESSED. */
+  /** Store `.note.gnu.property` as an ELF zlib section with SHF_COMPRESSED. */
   readonly compressedPropertyNote?: boolean;
   /** Disjoint `.note.gnu.property` sections holding one empty note each. */
   readonly disjointNoteSections?: number;
@@ -887,7 +891,11 @@ export const elfHardeningFixture = (
   const shentsize = bits === 64 ? 64 : 40;
   const propertyAlign = bits === 64 ? 8 : 4;
   const symbols = elfSymbolPayload(options, bits, little);
-  const note = elfPropertyNote(options, bits, little);
+  const rawNote = elfPropertyNote(options, bits, little);
+  const note =
+    options.compressedPropertyNote === true && rawNote.length !== 0
+      ? elfCompressedNoteStorage(rawNote, bits, little, propertyAlign)
+      : rawNote;
   const buildIdCount =
     options.buildIdCount ??
     (options.buildId === true || (options.buildIdSections ?? 0) > 0 ? 1 : 0);

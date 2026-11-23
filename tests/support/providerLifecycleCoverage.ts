@@ -1325,7 +1325,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/elfNotesCli.test.ts",
-        "resolves section note names from zlib and Zstandard string tables through the CLI",
+        "resolves section note names from a compressed string table through the CLI",
       ),
     ),
     typedFailures("tests/boundary/filesystem/elfNotes.test.ts"),

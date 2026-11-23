@@ -1215,10 +1215,17 @@ const hasCommonJsModuleSource = (
   // created after exhaustion. Unnormalized paths can grow without a binding.
   let exhausted = false;
   let drained = 0;
+  let pendingHead = 0;
   for (
     let next = pending.pop();
     next !== undefined;
-    next = exhausted ? pending.shift() : pending.pop()
+    next = exhausted
+      ? pendingHead < pending.length
+        ? pending[pendingHead++]
+        : undefined
+      : pendingHead < pending.length
+        ? pending.pop()
+        : undefined
   ) {
     const value = unwrapJavaScriptExpression(next.node).node;
     const { awaitDepths } = next;

@@ -1,11 +1,46 @@
 import type { FileMapping } from "../domain/virtualFileMapping.js";
 import {
   BinaryFormatFailure,
-  BinaryReader,
   mappedFileOffset,
   type BinaryContainer,
 } from "../domain/binaryContainer.js";
 import { firstKeyed, keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
+
+const fileRangeFromSize = (
+  fileSize: number,
+  format: BinaryContainer["format"],
+  offset: bigint,
+  size: bigint,
+  label: string,
+): FileMapping => {
+  const length = BigInt(fileSize);
+  if (offset < 0n || offset > length)
+    throw new BinaryFormatFailure(
+      "malformed",
+      `${label} range is outside the file`,
+      {
+        format,
+        field: label,
+        ...(offset >= BigInt(Number.MIN_SAFE_INTEGER) &&
+        offset <= BigInt(Number.MAX_SAFE_INTEGER)
+          ? { offset: Number(offset) }
+          : {}),
+      },
+    );
+  if (size < 0n)
+    throw new BinaryFormatFailure("malformed", `${label} size is negative`, {
+      format,
+      offset: Number(offset),
+      field: label,
+    });
+  if (size > length - offset)
+    throw new BinaryFormatFailure(
+      "truncated",
+      `${label} range is outside the file`,
+      { format, offset: Number(offset), field: label },
+    );
+  return { address: 0n, offset: Number(offset), size: Number(size) };
+};
 
 export interface GoBuildInfoSearchRange extends FileMapping {
   /** Native file mapping containing inline strings after a named Mach-O header. */
@@ -55,14 +90,9 @@ const fallbackSearchRanges = (
 
 /** Go owns build-info section selection and validity; native readers only own container facts. */
 export const goBuildInfoSearch = (
-  bytes: Buffer,
+  fileSize: number,
   container: BinaryContainer,
 ): readonly GoBuildInfoSearchRange[] => {
-  const reader = new BinaryReader(
-    bytes,
-    container.byte_order === "little",
-    container.format,
-  );
   const named: GoBuildInfoSearchRange[] = [];
   // The build-info section is declared once; a repeat leaves Go's reader
   // with no defined choice, whatever the repeated sections contain.
@@ -98,7 +128,9 @@ export const goBuildInfoSearch = (
           { undecodedContent: true },
         );
       const search = {
-        ...reader.fileRange(
+        ...fileRangeFromSize(
+          fileSize,
+          container.format,
           section.declared_range.offset,
           section.declared_range.size,
           "ELF build-info section",
@@ -135,7 +167,9 @@ export const goBuildInfoSearch = (
           "Mach-O build-info section is zero-fill data",
         );
       const search = {
-        ...reader.fileRange(
+        ...fileRangeFromSize(
+          fileSize,
+          container.format,
           section.declared_range.offset,
           section.declared_range.size,
           "Mach-O build-info section",

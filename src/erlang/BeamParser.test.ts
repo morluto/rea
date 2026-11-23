@@ -13,7 +13,7 @@ import {
   erlangBeamLegacyAtomsFixture,
   erlangBeamOtp29Fixture,
 } from "./Beam.fixture.js";
-import { parseErlangBeam } from "./BeamParser.js";
+import { parseErlangBeam, parseErlangBeamFromHandle } from "./BeamParser.js";
 import { BeamProvider } from "./BeamProvider.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 
@@ -31,6 +31,56 @@ const parse = (bytes: Buffer, input = defaults) =>
     },
     input,
   );
+
+const streamBeam = (bytes: Buffer, reads: number[] = []) => {
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  return parseErlangBeamFromHandle(
+    {
+      sha256,
+      size: bytes.length,
+      prefix: bytes.subarray(0, 12),
+      readRange: async (offset, length) => {
+        reads.push(length);
+        return bytes.subarray(offset, offset + length);
+      },
+    },
+    { path: defaults.path, sha256, bytes: bytes.length },
+    defaults,
+  );
+};
+
+it("streams bulk BEAM chunks and selects the last Code header", async () => {
+  const code = Buffer.alloc(1024 * 1024 + 123, 0x62);
+  [16, 0, 169, 4, 2].forEach((field, index) =>
+    code.writeUInt32BE(field, 4 * index),
+  );
+  const decoy = Buffer.from(code.subarray(0, 20));
+  decoy.writeUInt32BE(99, 16);
+  const bytes = erlangBeamChunksFixture([
+    ["Code", decoy],
+    ["Code", code],
+  ]);
+  const reads: number[] = [];
+  const streamed = await streamBeam(bytes, reads);
+  expect(streamed).toEqual(parse(bytes));
+  expect(streamed.code?.functions).toBe(2);
+  expect(streamed.chunks.map(({ payload }) => payload.sha256)).toEqual(
+    [decoy, code].map((payload) =>
+      createHash("sha256").update(payload).digest("hex"),
+    ),
+  );
+  expect(reads).toEqual([8, 20, 8, 1024 * 1024, 123]);
+});
+
+it("preserves the buffered failure for an invalid chunk extent", async () => {
+  const bytes = erlangBeamChunksFixture([["Code", Buffer.alloc(20)]]);
+  bytes.writeUInt32BE(100, 16);
+  expect(() => parse(bytes)).toThrow("BEAM chunk payload exceeds the form.");
+  await expect(streamBeam(bytes)).rejects.toMatchObject({
+    reason: "format",
+    message: "BEAM chunk payload exceeds the form.",
+  });
+});
 
 it("selects the last table and Code payload for every repeated chunk name", () => {
   const original = erlangBeamFixture("selected");

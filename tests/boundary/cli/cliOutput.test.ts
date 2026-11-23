@@ -13,7 +13,7 @@ import {
   renderCliDocument,
   renderVersionReport,
   parseCliOutputArguments,
-} from "../../../src/cliOutput.js";
+} from "../../../src/cli/cliOutput.js";
 
 describe("CLI output argument boundary", () => {
   it("requires an exact row selector and explicit columns for delimited formats", () => {

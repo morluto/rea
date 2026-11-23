@@ -188,16 +188,37 @@ export const findLegacyCcobRecoveryTotal = async (
 ): Promise<number> => {
   const searchEnd = Math.min(source.size, base + GPU_OBJECT_BYTES);
   let position = base + 20;
-  let tail: Buffer = Buffer.alloc(0);
+  const seam = Buffer.allocUnsafe(6);
+  let tailLen = 0;
   while (position < searchEnd) {
     const bytes = await source.read(
       position,
       Math.min(64 * 1024, searchEnd - position),
     );
-    const haystack = tail.length === 0 ? bytes : Buffer.concat([tail, bytes]);
-    const index = haystack.indexOf("CCOB");
-    if (index >= 0) return position - tail.length + index - base;
-    tail = haystack.subarray(Math.max(0, haystack.length - 3));
+    if (bytes.length === 0) break;
+    if (tailLen > 0) {
+      const headLen = Math.min(3, bytes.length);
+      bytes.copy(seam, tailLen, 0, headLen);
+      const seamIndex = seam.subarray(0, tailLen + headLen).indexOf("CCOB");
+      if (seamIndex >= 0) return position - tailLen + seamIndex - base;
+    }
+    const index = bytes.indexOf("CCOB");
+    if (index >= 0) return position + index - base;
+    if (bytes.length >= 3) {
+      bytes.copy(seam, 0, bytes.length - 3, bytes.length);
+      tailLen = 3;
+    } else {
+      const total = tailLen + bytes.length;
+      if (total <= 3) {
+        bytes.copy(seam, tailLen);
+        tailLen = total;
+      } else {
+        const drop = total - 3;
+        seam.copyWithin(0, drop, tailLen);
+        bytes.copy(seam, tailLen - drop);
+        tailLen = 3;
+      }
+    }
     position += bytes.length;
   }
   if (searchEnd < source.size)

@@ -409,13 +409,19 @@ export const resolveLaunchRegexWorkerHeap = (
         request,
       );
 
-const launchExecArgv = readLaunchExecArgv(HOST_PLATFORM.platform);
-const launchNodeOptions = readLaunchNodeOptions(HOST_PLATFORM.platform);
-
 const launchRegexWorkerHeap = resolveLaunchRegexWorkerHeap(
-  launchExecArgv,
-  launchNodeOptions,
+  readLaunchExecArgv(HOST_PLATFORM.platform),
+  readLaunchNodeOptions(HOST_PLATFORM.platform),
 );
+
+/** Runtime requests can change the worker's heap only when launch left it configurable. */
+const heapForWorkerRequest = (
+  request: RegexWorkerHeapRequest,
+): RegexWorkerHeapLimit =>
+  launchRegexWorkerHeap.kind === "effective" &&
+  !launchRegexWorkerHeap.overridden
+    ? { ...launchRegexWorkerHeap, mib: request.heapMiB }
+    : launchRegexWorkerHeap;
 
 const heapBound = (
   heap: RegexWorkerHeapLimit,
@@ -457,11 +463,7 @@ export const launchRegexMatchingLimitation = (
   request: RegexWorkerHeapRequest = DEFAULT_REGEX_WORKER_HEAP_REQUEST,
 ): string => {
   const limitation = readRuntimeSetting(() =>
-    regexMatchingLimitation(
-      resolveLaunchRegexWorkerHeap(launchExecArgv, launchNodeOptions, request),
-      deadline,
-      request,
-    ),
+    regexMatchingLimitation(heapForWorkerRequest(request), deadline, request),
   );
   return limitation.ok
     ? limitation.value
@@ -622,11 +624,8 @@ interface PackedRegexTransfer {
   readonly transferList: ArrayBuffer[];
 }
 
-const packRegexValues = (
-  values: readonly string[],
-): PackedRegexTransfer | undefined => {
+const packRegexValues = (values: readonly string[]): PackedRegexTransfer => {
   const count = values.length;
-  if (count === 0) return undefined;
   const lengths = new Uint32Array(count);
   const chunks: PackedRegexChunk[] = [];
   const transferList: ArrayBuffer[] = [lengths.buffer];
@@ -685,24 +684,18 @@ try {
 }
 if (expression !== undefined) {
   const indices = [];
-  if (workerData.packed !== undefined) {
-    const lengths = new Uint32Array(workerData.packed.lengthsBuffer);
-    const { chunks } = workerData.packed;
-    for (let c = 0; c < chunks.length; c += 1) {
-      const chunk = chunks[c];
-      const block = Buffer.from(chunk.buffer).toString(chunk.encoding);
-      let offset = 0;
-      for (let index = chunk.startIndex, end = index + chunk.count; index < end; index += 1) {
-        const len = lengths[index];
-        if (expression.test(block.slice(offset, offset + len)))
-          indices.push(index);
-        offset += len;
-      }
+  const { lengthsBuffer, chunks } = workerData.packed;
+  const lengths = new Uint32Array(lengthsBuffer);
+  for (let c = 0; c < chunks.length; c += 1) {
+    const chunk = chunks[c];
+    const block = Buffer.from(chunk.buffer).toString(chunk.encoding);
+    let offset = 0;
+    for (let index = chunk.startIndex, end = index + chunk.count; index < end; index += 1) {
+      const len = lengths[index];
+      if (expression.test(block.slice(offset, offset + len)))
+        indices.push(index);
+      offset += len;
     }
-  } else {
-    const { values } = workerData;
-    for (let index = 0, length = values.length; index < length; index += 1)
-      if (expression.test(values[index])) indices.push(index);
   }
   parentPort.postMessage({ status: "matched", indices });
 }
@@ -764,21 +757,12 @@ export const matchRegexValues = async (input: {
   try {
     worker = new Worker(WORKER_SOURCE, {
       eval: true,
-      workerData:
-        transfer === undefined
-          ? {
-              pattern: input.pattern,
-              caseSensitive: input.caseSensitive,
-              values: input.values,
-            }
-          : {
-              pattern: input.pattern,
-              caseSensitive: input.caseSensitive,
-              packed: transfer.packed,
-            },
-      ...(transfer === undefined
-        ? {}
-        : { transferList: transfer.transferList }),
+      workerData: {
+        pattern: input.pattern,
+        caseSensitive: input.caseSensitive,
+        packed: transfer.packed,
+      },
+      transferList: transfer.transferList,
       resourceLimits: { maxOldGenerationSizeMb: heapRequest.heapMiB },
     });
   } catch (cause: unknown) {
@@ -847,11 +831,7 @@ export const matchRegexValues = async (input: {
               ? regexWorkerHeapError(
                   input.operation,
                   cause,
-                  resolveLaunchRegexWorkerHeap(
-                    launchExecArgv,
-                    launchNodeOptions,
-                    heapRequest,
-                  ),
+                  heapForWorkerRequest(heapRequest),
                   heapRequest,
                 )
               : new AnalysisOutputError(
