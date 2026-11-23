@@ -1,11 +1,24 @@
+import {
+  PE_RESOURCE_DATA_ENTRY_BYTES,
+  PE_RESOURCE_DIRECTORY_BYTES,
+  PE_RESOURCE_ENTRY_BYTES,
+  peResourceRangeFits,
+  readPeResourceDataEntryFacts,
+  readPeResourceDirectoryFacts,
+  readPeResourceEntryFacts,
+} from "../domain/pe/peResourceTreeFacts.js";
+import { readPeResourceLayout } from "../domain/pe/peResourceLayout.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
 import { decodeLimit, ParseFailureError } from "../domain/parseFailure.js";
 
 const FORMAT = "pe-rsrc";
 const RSRC_MAGIC = "RSRC\r\n";
-/** Directory visits one scan may spend; cycles share offsets, not new visits. */
+/** Directory visits one scan may spend; a repeated offset adds no visit. */
 const MAX_DIRECTORY_VISITS = 1024;
-const MAX_DIRECTORY_ENTRIES = 4096;
+/** Entry records one directory may declare. */
+const MAX_ENTRIES_PER_DIRECTORY = 4096;
+/** Entry records one scan may examine across every directory it reaches. */
+const MAX_RESOURCE_ENTRIES = 4096;
 const MAX_CONTAINERS = 64;
 
 export interface EmbeddedRsrc {
@@ -18,170 +31,159 @@ export type EmbeddedRsrcScan =
   | { readonly ok: true; readonly containers: readonly EmbeddedRsrc[] }
   | { readonly ok: false; readonly failure: ParseFailureError<"limit"> };
 
-interface Section {
-  readonly virtualAddress: number;
-  readonly virtualBytes: number;
-  readonly rawBytes: number;
-  readonly rawOffset: number;
-}
-
 /**
  * Locate RSRC containers stored as PE resources, as a LabVIEW-built executable
- * does. This is a bounded static walk of the resource directory: visited
- * directories, a total visit budget, directory and container allowances, and
- * every target checked against the declared resource range. It never executes
- * or extracts anything, and it fails rather than returning a partial scan.
+ * does. The shared PE owner admits the image and maps every RVA, so section
+ * lookup is indexed and a payload may live in any admitted section. This walk
+ * only reads directory records, under visit and entry budgets, and never
+ * executes or extracts anything.
  */
 export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
-  const reader = new BinaryReader(bytes, true, "pe");
+  let layout: ReturnType<typeof readPeResourceLayout>;
   try {
-    if (
-      bytes.length < 0x40 ||
-      reader.range(0, 2, "DOS signature").toString("latin1") !== "MZ"
-    )
-      return { ok: true, containers: [] };
-    const peOffset = reader.u32(0x3c);
-    if (
-      !Number.isSafeInteger(peOffset) ||
-      peOffset + 24 > bytes.length ||
-      reader.range(peOffset, 4, "PE signature").toString("latin1") !== "PE\0\0"
-    )
-      return { ok: true, containers: [] };
-    const coff = peOffset + 4;
-    const sectionCount = reader.u16(coff + 2);
-    const optionalBytes = reader.u16(coff + 16);
-    const optional = coff + 20;
-    if (optional + optionalBytes > bytes.length)
-      return { ok: true, containers: [] };
-    const magic = reader.u16(optional);
-    const directoryOffset =
-      magic === 0x20b ? 112 : magic === 0x10b ? 96 : undefined;
-    if (
-      directoryOffset === undefined ||
-      optional + directoryOffset + 24 > bytes.length
-    )
-      return { ok: true, containers: [] };
-    const resourceRva = reader.u32(optional + directoryOffset + 16);
-    const resourceBytes = reader.u32(optional + directoryOffset + 20);
-    if (resourceRva === 0 || resourceBytes === 0)
-      return { ok: true, containers: [] };
-    const resourceEnd = resourceRva + resourceBytes;
+    layout = readPeResourceLayout(bytes);
+  } catch (cause) {
+    // Not an admitted PE, or a malformed one: this file carries no embedded
+    // RSRC container that this reader can locate.
+    if (cause instanceof ParseFailureError) return { ok: true, containers: [] };
+    throw cause;
+  }
+  if (layout.rva === 0 || layout.size < PE_RESOURCE_DIRECTORY_BYTES)
+    return { ok: true, containers: [] };
 
-    const sections: Section[] = [];
-    const sectionsAt = optional + optionalBytes;
-    for (let index = 0; index < sectionCount; index += 1) {
-      const at = sectionsAt + index * 40;
-      if (at + 40 > bytes.length) return { ok: true, containers: [] };
-      sections.push({
-        virtualBytes: reader.u32(at + 8),
-        virtualAddress: reader.u32(at + 12),
-        rawBytes: reader.u32(at + 16),
-        rawOffset: reader.u32(at + 20),
-      });
-    }
+  const reader = new BinaryReader(bytes, true, "pe");
+  const root = layout.rva;
+  const found: EmbeddedRsrc[] = [];
+  const visited = new Set<number>();
+  let visits = 0;
+  let examinedEntries = 0;
 
-    const fileOffsetOf = (rva: number): number | undefined => {
-      for (const section of sections) {
-        const span = Math.max(section.virtualBytes, section.rawBytes);
-        if (
-          rva >= section.virtualAddress &&
-          rva < section.virtualAddress + span
-        ) {
-          const offset = section.rawOffset + (rva - section.virtualAddress);
-          return offset < bytes.length ? offset : undefined;
-        }
-      }
+  /** File offset of directory metadata, which must stay inside the resource span. */
+  const metadataOffset = (
+    relative: number,
+    length: number,
+  ): number | undefined => {
+    if (!Number.isSafeInteger(relative) || relative < 0) return undefined;
+    if (!peResourceRangeFits(relative, length, layout.size)) return undefined;
+    try {
+      return layout.map(root + relative, length);
+    } catch {
       return undefined;
-    };
+    }
+  };
 
-    /**
-     * Resolve an RVA that must lie wholly inside the declared resource range.
-     * The directory and its data entries are children of that range, so a
-     * target outside it is not part of this resource.
-     */
-    const resourceOffsetOf = (
-      rva: number,
-      length: number,
-    ): number | undefined => {
-      if (!Number.isSafeInteger(rva) || rva < resourceRva) return undefined;
-      if (length > resourceEnd - rva) return undefined;
-      return fileOffsetOf(rva);
-    };
+  /** File offset of one payload; its RVA may map through any admitted section. */
+  const payloadOffset = (rva: number, length: number): number | undefined => {
+    try {
+      return layout.map(rva, length);
+    } catch {
+      return undefined;
+    }
+  };
 
-    const found: EmbeddedRsrc[] = [];
-    const visited = new Set<number>();
-    let visits = 0;
-    // Resource directory entry offsets are relative to the resource directory,
-    // so every target is resolved against the resource RVA, never the file
-    // start.
-    const visit = (relativeOffset: number, depth: number): void => {
-      if (depth > 3) return;
-      visits += 1;
-      if (visits > MAX_DIRECTORY_VISITS)
-        throw decodeLimit(
-          FORMAT,
-          "The PE resource-directory walk exceeded its visit allowance",
-          {
-            name: "pe_resource_directory_visits",
-            maximum: MAX_DIRECTORY_VISITS,
-            required: visits,
-          },
-        );
-      // A repeated offset is a cycle or a shared directory: its subtree was
-      // already examined, so following it again adds nothing.
-      if (visited.has(relativeOffset)) return;
-      visited.add(relativeOffset);
-      const directory = resourceOffsetOf(resourceRva + relativeOffset, 16);
-      if (directory === undefined) return;
-      const entries = reader.u16(directory + 12) + reader.u16(directory + 14);
-      if (entries > MAX_DIRECTORY_ENTRIES)
-        throw decodeLimit(
-          FORMAT,
-          "A PE resource directory exceeds its entry allowance",
-          {
-            name: "pe_resource_directory_entries",
-            maximum: MAX_DIRECTORY_ENTRIES,
-            required: entries,
-          },
-        );
-      if (directory + 16 + entries * 8 > bytes.length) return;
-      for (let index = 0; index < entries; index += 1) {
-        const entry = directory + 16 + index * 8;
-        const target = reader.u32(entry + 4);
-        if ((target & 0x80000000) !== 0) {
-          visit(target & 0x7fffffff, depth + 1);
-          continue;
-        }
-        const dataEntry = resourceOffsetOf(resourceRva + target, 8);
-        if (dataEntry === undefined) continue;
-        const dataRva = reader.u32(dataEntry);
-        const dataBytes = reader.u32(dataEntry + 4);
-        if (dataBytes < 6) continue;
-        const dataOffset = resourceOffsetOf(dataRva, dataBytes);
-        if (dataOffset === undefined) continue;
-        if (
-          reader.range(dataOffset, 6, "resource payload").toString("latin1") ===
-          RSRC_MAGIC
-        ) {
-          found.push({
-            offset: dataOffset,
-            bytes: bytes.subarray(dataOffset, dataOffset + dataBytes),
-          });
-          if (found.length > MAX_CONTAINERS)
-            throw decodeLimit(
-              FORMAT,
-              "The file carries more embedded RSRC containers than the inspection allowance admits",
-              {
-                name: "pe_embedded_rsrc_containers",
-                maximum: MAX_CONTAINERS,
-                required: found.length,
-              },
-            );
-        }
+  const visit = (relativeOffset: number, depth: number): void => {
+    if (depth > 3) return;
+    visits += 1;
+    if (visits > MAX_DIRECTORY_VISITS)
+      throw decodeLimit(
+        FORMAT,
+        "The PE resource-directory walk exceeded its visit allowance",
+        {
+          name: "pe_resource_directory_visits",
+          maximum: MAX_DIRECTORY_VISITS,
+          required: visits,
+        },
+      );
+    // A repeated offset is a cycle or a shared directory: its subtree was
+    // already examined, so following it again adds nothing.
+    if (visited.has(relativeOffset)) return;
+    visited.add(relativeOffset);
+    const directory = metadataOffset(
+      relativeOffset,
+      PE_RESOURCE_DIRECTORY_BYTES,
+    );
+    if (directory === undefined) return;
+    const { entryCount } = readPeResourceDirectoryFacts(
+      reader.range(
+        directory,
+        PE_RESOURCE_DIRECTORY_BYTES,
+        "resource directory",
+      ),
+    );
+    if (entryCount > MAX_ENTRIES_PER_DIRECTORY)
+      throw decodeLimit(
+        FORMAT,
+        "A PE resource directory exceeds its entry allowance",
+        {
+          name: "pe_resource_directory_entries",
+          maximum: MAX_ENTRIES_PER_DIRECTORY,
+          required: entryCount,
+        },
+      );
+    examinedEntries += entryCount;
+    if (examinedEntries > MAX_RESOURCE_ENTRIES)
+      throw decodeLimit(
+        FORMAT,
+        "The PE resource walk exceeded its total entry allowance",
+        {
+          name: "pe_resource_entries",
+          maximum: MAX_RESOURCE_ENTRIES,
+          required: examinedEntries,
+        },
+      );
+    const rows = metadataOffset(
+      relativeOffset + PE_RESOURCE_DIRECTORY_BYTES,
+      entryCount * PE_RESOURCE_ENTRY_BYTES,
+    );
+    if (rows === undefined) return;
+    for (let index = 0; index < entryCount; index += 1) {
+      const at = rows + index * PE_RESOURCE_ENTRY_BYTES;
+      const { target } = readPeResourceEntryFacts(
+        reader.range(at, PE_RESOURCE_ENTRY_BYTES, "resource entry"),
+      );
+      if (target.kind === "directory") {
+        visit(target.offset, depth + 1);
+        continue;
       }
-    };
+      const dataEntry = metadataOffset(
+        target.offset,
+        PE_RESOURCE_DATA_ENTRY_BYTES,
+      );
+      if (dataEntry === undefined) continue;
+      const { rva, size } = readPeResourceDataEntryFacts(
+        reader.range(
+          dataEntry,
+          PE_RESOURCE_DATA_ENTRY_BYTES,
+          "resource data entry",
+        ),
+      );
+      if (size < 6) continue;
+      const dataOffset = payloadOffset(rva, size);
+      if (dataOffset === undefined) continue;
+      if (
+        reader.range(dataOffset, 6, "resource payload").toString("latin1") !==
+        RSRC_MAGIC
+      )
+        continue;
+      found.push({
+        offset: dataOffset,
+        bytes: bytes.subarray(dataOffset, dataOffset + size),
+      });
+      if (found.length > MAX_CONTAINERS)
+        throw decodeLimit(
+          FORMAT,
+          "The file carries more embedded RSRC containers than the inspection allowance admits",
+          {
+            name: "pe_embedded_rsrc_containers",
+            maximum: MAX_CONTAINERS,
+            required: found.length,
+          },
+        );
+    }
+  };
+
+  try {
     visit(0, 0);
-    return { ok: true, containers: found };
   } catch (cause) {
     if (
       cause instanceof ParseFailureError &&
@@ -189,8 +191,7 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
       cause.failure.format === FORMAT
     )
       return { ok: false, failure: cause as ParseFailureError<"limit"> };
-    // A file whose PE structure cannot be read is not a LabVIEW PE; the
-    // provider reports the absence of an embedded container.
-    return { ok: true, containers: [] };
+    throw cause;
   }
+  return { ok: true, containers: found };
 };

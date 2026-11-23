@@ -67,6 +67,8 @@ const allowanceName = (name: string): string => {
       return "The PE resource-directory walk allowance";
     case "pe_resource_directory_entries":
       return "The PE resource-directory entry allowance";
+    case "pe_resource_entries":
+      return "The PE resource entry allowance";
     case "pe_embedded_rsrc_containers":
       return "The embedded RSRC container allowance";
     default:
@@ -192,7 +194,7 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
     const chosen = containers.reduce((largest, candidate) =>
       candidate.bytes.length > largest.bytes.length ? candidate : largest,
     );
-    const parsed = parseLabviewRsrc(Buffer.from(chosen.bytes));
+    const parsed = parseLabviewRsrc(chosen.bytes);
     if (!parsed.ok) {
       const limit = limitCause(parsed.failure);
       if (limit !== undefined) return err(limitFailure(limit));

@@ -106,32 +106,44 @@ const decodeSection = (
     return { coding: "none", decodedBytes: null };
   if (declared > budget.remaining)
     return { coding: "unknown", decodedBytes: null };
+  // Charge the attempt, not only a successful decode: several section records
+  // may point at the same stored bytes, and the budget bounds total work.
+  budget.remaining -= declared;
   try {
     const decoded = inflateSync(stored.subarray(4), {
       // Bound the allocation by the declared length, not by the input size.
       maxOutputLength: Math.max(1, declared),
     });
-    if (decoded.length !== declared)
-      return { coding: "unknown", decodedBytes: null };
-    budget.remaining -= decoded.length;
-    return { coding: "zlib", decodedBytes: decoded.length };
+    return decoded.length === declared
+      ? { coding: "zlib", decodedBytes: decoded.length }
+      : { coding: "unknown", decodedBytes: null };
   } catch {
     return { coding: "unknown", decodedBytes: null };
   }
 };
 
-/** Read one Pascal name from a block's name list, bounded by the info section. */
+/** Read one Pascal name from a block's name list, bounded by the declared list. */
 const sectionName = (
   reader: BinaryReader,
   nameBase: number,
   nameOffset: number,
   infoEnd: number,
 ): string | null => {
+  // Only the sentinel means "this section has no name". A name that leaves
+  // the declared list is malformed input, not an observed omission.
   if (nameOffset === 0xffffffff) return null;
   const at = nameBase + nameOffset;
-  if (!inside(at, 1, infoEnd)) return null;
+  if (!inside(at, 1, infoEnd))
+    throw truncatedInput(FORMAT, "RSRC section name leaves the info section", {
+      offset: at,
+      field: "section name",
+    });
   const length = reader.u8(at);
-  if (!inside(at + 1, length, infoEnd)) return null;
+  if (!inside(at + 1, length, infoEnd))
+    throw truncatedInput(FORMAT, "RSRC section name exceeds the info section", {
+      offset: at,
+      field: "section name",
+    });
   return reader.range(at + 1, length, "section name").toString("latin1");
 };
 
@@ -233,6 +245,17 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
           offset: blockInfo,
         },
       );
+    // The list declares its own extent at infoOffset + 48; records outside it
+    // are not part of this container, so it owns the records that follow.
+    const blockInfoBytes = reader.u32(infoOffset + 48);
+    // Real containers can declare a list extent that runs past the resource
+    // payload's own end, so the declared extent and the container both bound
+    // the records: neither may be exceeded.
+    if (blockInfoBytes < 4)
+      throw truncatedInput(FORMAT, "RSRC block-info list declares no records", {
+        offset: infoOffset + 48,
+      });
+    const listEnd = Math.min(blockInfo + blockInfoBytes, bytes.length);
     const blockCount = reader.u32(blockInfo) + 1;
     if (blockCount > MAX_BLOCKS)
       throw decodeLimit(
@@ -242,7 +265,7 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
         { offset: blockInfo },
       );
     const blockHeadersAt = blockInfo + 4;
-    if (!inside(blockHeadersAt, blockCount * BLOCK_HEADER_BYTES, infoEnd))
+    if (!inside(blockHeadersAt, blockCount * BLOCK_HEADER_BYTES, listEnd))
       throw truncatedInput(FORMAT, "truncated RSRC block headers", {
         offset: blockHeadersAt,
       });
@@ -282,7 +305,7 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
         );
       const sectionStartsOffset = reader.u32(headerAt + 8);
       const startsAt = blockInfo + sectionStartsOffset;
-      if (!inside(startsAt, sectionCount * SECTION_START_BYTES, infoEnd))
+      if (!inside(startsAt, sectionCount * SECTION_START_BYTES, listEnd))
         throw truncatedInput(FORMAT, "truncated RSRC section starts", {
           offset: startsAt,
           field: identifier,
@@ -312,7 +335,7 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
         if (identifier === "vers") versionSections.push(stored);
         sections.push({
           index: declaredIndex >= 0 ? declaredIndex : index,
-          name: sectionName(reader, nameBase, nameOffset, infoEnd),
+          name: sectionName(reader, nameBase, nameOffset, listEnd),
           storedBytes,
           decodedBytes: decoded.decodedBytes,
           coding: decoded.coding,

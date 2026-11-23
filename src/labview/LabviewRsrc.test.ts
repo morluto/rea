@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { peResourceFixture } from "../domain/pe/peResources.fixture.js";
+import { findEmbeddedRsrcContainers } from "./LabviewPeContainer.js";
 import { parseLabviewRsrc } from "./LabviewRsrc.js";
 import {
   LabviewArtifactProvider,
@@ -43,6 +45,33 @@ describe("parseLabviewRsrc", () => {
       { coding: "none", decodedBytes: null },
     ]);
     expect(dfds?.sections[1]?.storedBytes).toBe(4);
+  });
+
+  it("locates an RSRC container stored as a PE resource", () => {
+    const bytes = peResourceFixture(true, [
+      { type: 10, name: 1, language: 1033, payload: labviewContainer() },
+    ]).bytes;
+    const scan = findEmbeddedRsrcContainers(bytes);
+    if (!scan.ok) throw scan.failure;
+    expect(scan.containers).toHaveLength(1);
+    expect(scan.containers[0]?.bytes.equals(labviewContainer())).toBe(true);
+  });
+
+  it("accepts a list extent that runs past the resource payload", () => {
+    // A real LabVIEW-built PE declares more list bytes than its resource
+    // payload holds; the records it actually uses still fit.
+    const container = Buffer.from(labviewContainer());
+    const infoOffset = container.readUInt32BE(16);
+    container.writeUInt32BE(
+      container.readUInt32BE(infoOffset + 48) + 1000,
+      infoOffset + 48,
+    );
+    const parsed = parseLabviewRsrc(container);
+    if (!parsed.ok) throw new Error(parsed.failure.message);
+    expect(parsed.value.blocks.map(({ identifier }) => identifier)).toEqual([
+      "vers",
+      "DFDS",
+    ]);
   });
 
   it("reports the XOR-coded program tree and retained heaps", () => {
