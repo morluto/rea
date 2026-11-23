@@ -42,3 +42,25 @@ it.each([false, true])(
       });
   },
 );
+
+it.each([false, true])(
+  "reads note headers at an explicit offset within a shared buffer (littleEndian=%s)",
+  (littleEndian) => {
+    const table = Buffer.alloc(32, 0);
+    const view = new DataView(table.buffer, table.byteOffset, table.byteLength);
+    view.setUint32(16, 4, littleEndian);
+    view.setUint32(20, 16, littleEndian);
+    view.setUint32(24, 3, littleEndian);
+    expect(readElfNoteHeader(table, littleEndian, 16)).toEqual({
+      ok: true,
+      value: { namesz: 4, descsz: 16, type: 3 },
+    });
+    expect(readElfNoteHeader(table, littleEndian, 24)).toEqual({
+      ok: false,
+      error: {
+        kind: "malformed",
+        message: expect.stringContaining("truncated"),
+      },
+    });
+  },
+);

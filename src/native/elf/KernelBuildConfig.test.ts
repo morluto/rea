@@ -27,20 +27,32 @@ import {
   trailingBytesKernelConfigFixture,
   truncatedKernelConfigFixture,
 } from "./KernelBuildConfig.fixture.js";
+import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
 import {
   KernelBuildConfigBudgetFailure,
-  parseKernelBuildConfig,
+  parseKernelBuildConfigFromHandle,
 } from "./KernelBuildConfig.js";
 
 const artifactPath = "/artifacts/vmlinux";
+
+const bufferSource = (bytes: Buffer): NativeByteSource => ({
+  size: bytes.length,
+  prefix: bytes,
+  readRange: (offset, length) =>
+    Promise.resolve(
+      offset < 0 || length <= 0 || offset >= bytes.length
+        ? Buffer.alloc(0)
+        : bytes.subarray(offset, Math.min(bytes.length, offset + length)),
+    ),
+});
 
 const parse = async (
   bytes: Buffer,
   extra: Partial<Omit<InspectKernelBuildConfigInput, "path">> = {},
 ) =>
   kernelBuildConfigSchema.parse(
-    await parseKernelBuildConfig(
-      bytes,
+    await parseKernelBuildConfigFromHandle(
+      bufferSource(bytes),
       { path: artifactPath, sha256: "ab".repeat(32), bytes: bytes.length },
       inspectKernelBuildConfigInputSchema.parse({
         path: artifactPath,
@@ -429,6 +441,75 @@ it("ignores banner-shaped text that is unterminated or lacks a version", async (
 const framed = (member: Buffer): Buffer =>
   Buffer.concat([Buffer.from("IKCFG_ST"), member, Buffer.from("IKCFG_ED")]);
 
+it("reuses a positional scan window across nearby marker probes", async () => {
+  const image = Buffer.concat([
+    Buffer.from("IKCFG_ST compatible sample text\0".repeat(6)),
+    embeddedKernelConfig(),
+  ]);
+  let reads = 0;
+  const input = inspectKernelBuildConfigInputSchema.parse({
+    path: artifactPath,
+  });
+  const report = await parseKernelBuildConfigFromHandle(
+    {
+      size: image.length,
+      readRange: async (offset, length) => {
+        reads++;
+        return image.subarray(offset, offset + length);
+      },
+    },
+    { path: artifactPath, sha256: "ab".repeat(32), bytes: image.length },
+    input,
+  );
+  expect(report).toEqual(await parse(image));
+  expect(report.config.status).toBe("present");
+  expect(reads).toBeLessThanOrEqual(5);
+});
+
+it("reports a compressed candidate allowance separately from invalid gzip", async () => {
+  const plain = gzipSync("CONFIG_X=y\n");
+  const header = Buffer.from(plain.subarray(0, 10));
+  header[3] = 0x10;
+  const comment = Buffer.alloc(1024 * 1024, 0x61);
+  const image = framed(
+    Buffer.concat([header, comment, Buffer.alloc(1), plain.subarray(10)]),
+  );
+  await expect(parse(image, { max_config_bytes: 64 })).rejects.toMatchObject({
+    failure: {
+      kind: "limit",
+      limit: { name: "compressed_candidate_bytes", maximum: 1024 * 1024 },
+    },
+  });
+  expect((await parse(image)).config).toMatchObject({
+    status: "present",
+    option_count: 1,
+  });
+});
+
+it("rejects a short positional read of an admitted banner range", async () => {
+  const image = Buffer.concat([
+    Buffer.from(SAMPLE_KERNEL_BANNER),
+    Buffer.alloc(1),
+  ]);
+  const input = inspectKernelBuildConfigInputSchema.parse({
+    path: artifactPath,
+  });
+  await expect(
+    parseKernelBuildConfigFromHandle(
+      {
+        size: image.length,
+        readRange: async (offset, length) =>
+          image.subarray(offset, offset + length - 1),
+      },
+      { path: artifactPath, sha256: "ab".repeat(32), bytes: image.length },
+      input,
+    ),
+  ).rejects.toMatchObject({
+    reason: "format",
+    message: "Kernel image ended before the admitted file range.",
+  });
+});
+
 it("stops inflating decoy candidates after the candidate cap and reports incomplete", async () => {
   const decoy = framed(gzipSync(Buffer.from("hello world\n")));
   const report = await parse(
@@ -582,7 +663,12 @@ it("honors cancellation during the marker, inflate, and banner scans", async () 
   const decoy = framed(gzipSync(Buffer.from("hello world\n")));
   const cancelled = async (bytes: Buffer, checks: number): Promise<unknown> => {
     try {
-      await parseKernelBuildConfig(bytes, artifact, input, abortAfter(checks));
+      await parseKernelBuildConfigFromHandle(
+        bufferSource(bytes),
+        artifact,
+        input,
+        abortAfter(checks),
+      );
     } catch (error) {
       return error;
     }
@@ -611,8 +697,8 @@ it("honors an abort raised while the parse is running", async () => {
     Buffer.from("Linux version ".repeat(300_000)),
   ]) {
     const controller = new AbortController();
-    const pending = parseKernelBuildConfig(
-      bytes,
+    const pending = parseKernelBuildConfigFromHandle(
+      bufferSource(bytes),
       artifact,
       input,
       controller.signal,
@@ -655,7 +741,12 @@ it("yields to the event loop while decoding and validating one long value", asyn
     reason: undefined,
   } as unknown as AbortSignal;
   try {
-    const report = await parseKernelBuildConfig(bytes, artifact, input, signal);
+    const report = await parseKernelBuildConfigFromHandle(
+      bufferSource(bytes),
+      artifact,
+      input,
+      signal,
+    );
     expect(report.config).toMatchObject({ status: "present", option_count: 1 });
   } finally {
     running = false;
@@ -721,7 +812,12 @@ it("yields to the event loop while marker searches find nothing", async () => {
     reason: undefined,
   } as unknown as AbortSignal;
   try {
-    const report = await parseKernelBuildConfig(bytes, artifact, input, signal);
+    const report = await parseKernelBuildConfigFromHandle(
+      bufferSource(bytes),
+      artifact,
+      input,
+      signal,
+    );
     expect(report.config.status).toBe("absent");
     expect(report.banner.status).toBe("absent");
   } finally {

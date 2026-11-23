@@ -25,7 +25,7 @@ import {
   cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../../domain/browserObservationError.js";
-import { jsonObjectSchema } from "../../domain/jsonValue.js";
+import { ownedJsonObjectSchema } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -506,7 +506,7 @@ const resolveInBrowser = async (
     engine,
     resolutions: parsed.data.entries.map((entry) => entry.resolution),
     diagnostics,
-    rawResult: jsonObjectSchema.parse({
+    rawResult: ownedJsonObjectSchema.parse({
       native_report: parsed.data,
       requests,
       diagnostics,

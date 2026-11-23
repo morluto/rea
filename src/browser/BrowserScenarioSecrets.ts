@@ -348,7 +348,11 @@ export class BrowserScenarioSecrets {
       "text",
       this.textPatterns,
     );
-    this.textNeedles = secretNeedles(this.textReplacements);
+    this.textNeedles = secretNeedles(this.textReplacements).sort(
+      (left, right) =>
+        right.needle.length - left.needle.length ||
+        (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
+    );
     this.redactionCostPerCharacter = this.costOf(
       this.textReplacements,
       this.urlReplacements,
@@ -760,39 +764,37 @@ export class BrowserScenarioSecrets {
       hasPercentPatterns && value.indexOf(37) >= 0
         ? normalizePercentEscapesBytes(value)
         : value;
-    const sortedCandidates = candidates
-      .map((candidate) => ({
-        ...candidate,
-        index: (candidate.percentInsensitive ? normalizedValue : value).indexOf(
-          candidate.needle,
-        ),
-      }))
-      .sort(
-        (left, right) =>
-          right.needle.length - left.needle.length ||
-          (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
-      );
+    const indices = new Int32Array(candidates.length).fill(-2);
     const parts: Buffer[] = [];
     let offset = 0;
     while (true) {
-      let next: (typeof sortedCandidates)[number] | undefined;
-      for (const candidate of sortedCandidates) {
-        if (candidate.index >= 0 && candidate.index < offset)
-          candidate.index = (
+      let nextIndex = -1;
+      let nextPos = -1;
+      let nextLen = -1;
+      for (let i = 0; i < candidates.length; i += 1) {
+        const candidate = candidates[i]!;
+        let pos = indices[i]!;
+        if (pos === -2 || (pos >= 0 && pos < offset)) {
+          pos = (
             candidate.percentInsensitive ? normalizedValue : value
           ).indexOf(candidate.needle, offset);
+          indices[i] = pos;
+        }
         if (
-          candidate.index >= 0 &&
-          (next === undefined ||
-            candidate.index < next.index ||
-            (candidate.index === next.index &&
-              candidate.needle.length > next.needle.length))
-        )
-          next = candidate;
+          pos >= 0 &&
+          (nextIndex < 0 ||
+            pos < nextPos ||
+            (pos === nextPos && candidate.needle.length > nextLen))
+        ) {
+          nextIndex = i;
+          nextPos = pos;
+          nextLen = candidate.needle.length;
+        }
       }
-      if (next === undefined) break;
-      parts.push(value.subarray(offset, next.index), next.marker);
-      offset = next.index + next.needle.length;
+      if (nextIndex < 0) break;
+      const next = candidates[nextIndex]!;
+      parts.push(value.subarray(offset, nextPos), next.marker);
+      offset = nextPos + nextLen;
     }
     if (parts.length === 0) return value;
     parts.push(value.subarray(offset));

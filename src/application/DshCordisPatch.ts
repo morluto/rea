@@ -1,4 +1,7 @@
-import { validateRegistrationEnvironment } from "./RegistrationEnvironmentValidation.js";
+import {
+  validateRegistrationEnvironment,
+  type ValidatedRegistrationEnvironment,
+} from "./RegistrationEnvironmentValidation.js";
 import {
   isAlias,
   isMap,
@@ -9,7 +12,6 @@ import {
   type YAMLMap,
   type YAMLSeq,
 } from "yaml";
-import type { Environment } from "../config/environment.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ClientConfigurationDocument } from "./ClientConfigurationDocument.js";
@@ -255,11 +257,9 @@ export class DshCordisDocument {
     validation: "fragment" | "effective",
     platform: NodeJS.Platform,
   ): Result<
-    {
+    ValidatedRegistrationEnvironment & {
       readonly values: Readonly<Record<string, string>>;
       readonly sourceValues: Readonly<Record<string, unknown>>;
-      readonly configuration: Environment;
-      readonly unresolvedSettings: ReadonlySet<string>;
     },
     ConfigurationError
   > {

@@ -737,7 +737,7 @@ export function* collectSemanticMemberMutationsSteps(
   const recordBindingEffect = (
     records: JavaScriptSemanticMemberEffect[],
     effect: JavaScriptSemanticMemberEffect,
-  ): void => {
+  ): boolean => {
     const fields: {
       readonly [Field in keyof JavaScriptSemanticMemberEffect]-?: unknown;
     } = {
@@ -758,9 +758,10 @@ export function* collectSemanticMemberMutationsSteps(
       recorded = new Set();
       recordedBindingEffects.set(records, recorded);
     }
-    if (recorded.has(key)) return;
+    if (recorded.has(key)) return false;
     recorded.add(key);
     records.push(effect);
+    return true;
   };
   // Ambient indexing owns aliases of global objects. Consume its canonical
   // writes instead of reparsing qualified or aliased process assignments.
@@ -1148,11 +1149,6 @@ export function* collectSemanticMemberMutationsSteps(
         // An alias restored from a saved reference can revisit the same binding
         // at an earlier capture or a shorter getter-receiver path. Only a
         // repeated capture and path closes a cycle.
-        const captureSelectionIdentity = JSON.stringify([
-          current.memberReadAt?.start,
-          current.memberReadAt?.end,
-          capturedSelectionKey(current.capturedSelections),
-        ]);
         // Ancestry closes repeated source identities before recursively selected
         // copy vectors grow; independent contexts remain distinct in coverage.
         const captureKey = JSON.stringify([
@@ -1177,6 +1173,11 @@ export function* collectSemanticMemberMutationsSteps(
         );
         const selector = path[selectorIndex];
         if (selector !== null && typeof selector === "object") {
+          const captureSelectionIdentity = JSON.stringify([
+            current.memberReadAt?.start,
+            current.memberReadAt?.end,
+            capturedSelectionKey(current.capturedSelections),
+          ]);
           const selectionIdentity = JSON.stringify([
             binding.bindingId,
             effect,
@@ -1353,8 +1354,6 @@ export function* collectSemanticMemberMutationsSteps(
             : undefined;
         const primitiveWrite =
           value?.status === "literal" || value?.status === "union";
-        // The coverage index already owns binding-effect deduplication.
-        recordedEffectCount += 1;
         const nested = new Set(current.bindings);
         nested.add(lifetime);
         nested.add(captureKey);
@@ -1412,23 +1411,26 @@ export function* collectSemanticMemberMutationsSteps(
             current.path.length > 1
               ? (current.memberReadAt ?? current.originAt)
               : current.originAt;
-          if (effect === "escape")
-            recordBindingEffect(binding.escapedPaths, {
-              path,
-              node: mutation,
-              receiverInitializers,
-              ...(receiverAt === undefined ? {} : { receiverAt }),
-            });
-          else
-            recordBindingEffect(binding.memberWrites, {
-              receiverIdentity: definiteReceiver ? "definite" : "possible",
-              path,
-              node: mutation,
-              receiverInitializers,
-              ...(receiverAt === undefined ? {} : { receiverAt }),
-              ...(assignedSources === undefined ? {} : { assignedSources }),
-            });
-          clearSemanticValueCaches(state);
+          const added =
+            effect === "escape"
+              ? recordBindingEffect(binding.escapedPaths, {
+                  path,
+                  node: mutation,
+                  receiverInitializers,
+                  ...(receiverAt === undefined ? {} : { receiverAt }),
+                })
+              : recordBindingEffect(binding.memberWrites, {
+                  receiverIdentity: definiteReceiver ? "definite" : "possible",
+                  path,
+                  node: mutation,
+                  receiverInitializers,
+                  ...(receiverAt === undefined ? {} : { receiverAt }),
+                  ...(assignedSources === undefined ? {} : { assignedSources }),
+                });
+          if (added) {
+            recordedEffectCount += 1;
+            clearSemanticValueCaches(state);
+          }
           // Resolve a stored child at the receiver capture, before selecting
           // the final written slot. The source owner preserves replacements
           // and captures; a local container does not isolate its children.
@@ -2209,7 +2211,9 @@ export function* collectSemanticMemberMutationsSteps(
           reference,
         );
     }
-    for (const [index, reference] of [...iterableReferences].entries()) {
+    const iterableSnapshotLength = iterableReferences.length;
+    for (let index = 0; index < iterableSnapshotLength; index += 1) {
+      const reference = iterableReferences[index]!;
       if (index % 64 === 0) yield;
       if (semanticReferenceSourcesInactive(reference, state)) continue;
       if (reference.iterationOnly) {
@@ -2606,6 +2610,10 @@ const observableMutationPaths = (
         link(expressionNode(source.node), observer);
     }
   }
+  const expandedOrigins = new WeakMap<
+    MutationObserverNode,
+    Set<MutationObservableOrigin>
+  >();
   const settle = (): void => {
     while (pendingExpressions.length > 0 || pending.length > 0) {
       while (pendingExpressions.length > 0) {
@@ -2761,6 +2769,13 @@ const observableMutationPaths = (
               )
                 add("array-prototype");
             } else {
+              let expanded = expandedOrigins.get(observer);
+              if (expanded === undefined) {
+                expanded = new Set();
+                expandedOrigins.set(observer, expanded);
+              }
+              if (expanded.has(origin)) continue;
+              expanded.add(origin);
               for (const reference of referencedValues(
                 origin,
                 [key],

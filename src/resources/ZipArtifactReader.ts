@@ -574,6 +574,7 @@ const extractStream = (
   const writable = new WritableStream<Uint8Array>({
     write: async (chunk) => {
       assertArtifactReadActive(signal);
+      // The stream owns this copy for as long as downstream retains it.
       if (!output.write(Buffer.from(chunk)))
         await once(output, "drain", { signal: controller.signal });
     },

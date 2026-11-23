@@ -1,3 +1,4 @@
+import { isManagedUserStringLoad } from "../domain/managed/managedMemberInstructionFacts.js";
 import {
   admitManagedProjection,
   managedDecodeBudget,
@@ -325,6 +326,15 @@ export const inspectManagedMembersBytes = (
       declarationTypeName,
     });
     appendManagedParseIssues(issues, memberRefs.issues);
+    const memberRefKinds = new Map<string, "field" | "method">();
+    for (let index = 0; index < memberRefs.refs.length; index += 1) {
+      const memberRef = memberRefs.refs[index]!;
+      if (
+        memberRef.signature.kind === "field" ||
+        memberRef.signature.kind === "method"
+      )
+        memberRefKinds.set(memberRef.token, memberRef.signature.kind);
+    }
     const methods = parseMethods({
       bytes,
       layout,
@@ -333,14 +343,7 @@ export const inspectManagedMembersBytes = (
       signatureTypeName,
       displayTypeName,
       declarationTypeName,
-      memberRefKinds: new Map(
-        memberRefs.refs.flatMap((memberRef) =>
-          memberRef.signature.kind === "field" ||
-          memberRef.signature.kind === "method"
-            ? [[memberRef.token, memberRef.signature.kind] as const]
-            : [],
-        ),
-      ),
+      memberRefKinds,
       memberLists,
       selected,
       methodOffset,
@@ -365,7 +368,8 @@ export const inspectManagedMembersBytes = (
     // retain their cores; only missing edge targets need the recovery pass.
     if (selected !== null)
       for (const { tokenInstructions } of methods.methods)
-        for (const { reference } of tokenInstructions) {
+        for (const { opcode, reference } of tokenInstructions) {
+          if (isManagedUserStringLoad(opcode)) continue;
           if (needsCore(reference)) referenced.set(reference.token, reference);
           else if (
             reference.table === 0x2b &&
@@ -433,14 +437,15 @@ export const inspectManagedMembersBytes = (
     );
     appendManagedParseIssues(issues, targets.issues);
     const incompleteMembers =
-      [...fields.fields, ...memberRefs.refs].some(
+      fields.fields.some(
+        (member) => member.signature.parse_status !== "decoded",
+      ) ||
+      memberRefs.refs.some(
         (member) => member.signature.parse_status !== "decoded",
       ) ||
       resolvedMethods.some(
-        (method) => method.signature.parse_status !== "decoded",
-      ) ||
-      resolvedMethods.some(
         (method) =>
+          method.signature.parse_status !== "decoded" ||
           method.body.status === "partial" ||
           method.body.status === "malformed",
       );

@@ -596,8 +596,9 @@ const JAVA_PROBE_DRIVER = String.raw`
             String[] fields = line.split("\\|", -1);
             String pattern = "0".equals(fields[0]) ? null : decodeHex(fields[1]);
             String value = decodeHex(fields[2]);
+            String substring = fields[3].isEmpty() ? null : decodeHex(fields[3]);
             try {
-                ValueMatcher matcher = literalCandidateMatcher(pattern);
+                ValueMatcher matcher = literalCandidateMatcher(pattern, substring);
                 System.out.println(matcher.matches(value) ? "1" : "0");
             }
             catch (RequestFailure failure) {
@@ -882,8 +883,8 @@ const JAVA_PROBE_DRIVER = String.raw`
             String aliasLeaf = decodeHex(fields[5]);
             ValueMatcher delegate = switch (factory) {
                 case "literal" -> literalMatcher(expr);
-                case "candidate-ascii" -> literalCandidateMatcher(expr);
-                case "candidate-null" -> literalCandidateMatcher(null);
+                case "candidate-ascii" -> literalCandidateMatcher(expr, null);
+                case "candidate-null" -> literalCandidateMatcher(null, null);
                 case "regex-cs" -> regexMatcher(expr, true);
                 case "regex-ci" -> regexMatcher(expr, false);
                 default -> throw new IllegalArgumentException("Unknown matcher factory: " + factory);

@@ -1,6 +1,6 @@
 import { promptArgumentsSchema } from "./promptArguments.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
-import { currentMcpRequestSignal } from "./EvidenceMcpServerCore.js";
+import { currentMcpRequestSignal } from "./ErrorEvidenceTransport.js";
 import type { RegisteredPrompt } from "@modelcontextprotocol/server";
 
 import type { AnalysisOperationPort } from "../ports/AnalysisProvider.js";

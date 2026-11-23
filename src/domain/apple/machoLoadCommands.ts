@@ -6,6 +6,9 @@ import {
   readMachoHeaderPrefixFacts,
 } from "./machoContainer.js";
 
+/** Fixed fields present in both thin header widths, before the 64-bit reserved word. */
+export const MACHO_COMMON_HEADER_BYTES = 28;
+
 const MACHO_LOAD_COMMAND_HEADER_BYTES = 8;
 
 /** Read numeric fields from exactly the supplied Mach-O view. */
@@ -47,7 +50,7 @@ export const readMachoHeaderDeclarations = (
   const prefix = readMachoHeaderPrefixFacts(bytes);
   if (prefix.format === null) return ok(null);
   const { wide, headerSize, littleEndian } = prefix.format;
-  if (bytes.byteLength < 28 || prefix.identity === null)
+  if (bytes.byteLength < MACHO_COMMON_HEADER_BYTES || prefix.identity === null)
     return err(
       `truncated Mach-O header: a ${wide ? 64 : 32}-bit header needs ${headerSize} bytes; the file has ${fileSize}`,
     );

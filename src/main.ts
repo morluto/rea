@@ -15,7 +15,7 @@ import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { RuntimeDependencies } from "./main/types.js";
 import { runDeferred } from "./main/deferredRuntime.js";
 import { RECORDED_MCP_CATALOG_SHA256 } from "./recordedMcpCatalog.js";
-import { SERVER_START_FAILED } from "./main/messages.js";
+import { SERVER_START_FAILED } from "./server/serverStartFailure.js";
 
 import {
   createExitStatus,

@@ -359,9 +359,9 @@ const guardField = (
   const own = !readsSelector(sibling, rest);
   if (rest.length > 0 && varies(rest) && own) return rest;
   const selected = new Set(
-    [...sibling.member.matchAll(/\[@(?<key>[^=\]]+)=/gu)].map(
-      ({ groups }) => groups?.key ?? "",
-    ),
+    conditionsOf(sibling.member)
+      .filter(({ prefix }) => prefix === "@")
+      .map(({ key }) => key),
   );
   const [best] = rankAttributes(
     Object.entries(attributesOf(sibling.element)).flatMap(([key, value]) =>

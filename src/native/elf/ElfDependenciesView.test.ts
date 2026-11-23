@@ -1,24 +1,26 @@
 import { expect, it } from "vitest";
-import { readElfDependenciesSteps } from "./ElfDependencyParser.js";
-import { elfDependencyFixture } from "./ElfDependencies.fixture.js";
+import { parseElfDependenciesFromHandle } from "./ElfDependencyParser.js";
+import {
+  elfDependencyByteSource,
+  elfDependencyFixture,
+} from "./ElfDependencies.fixture.js";
+import { inspectElfDependenciesInputSchema } from "../../domain/native/elfDependencies.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import { projectAnalysisView } from "../../domain/analysisView/analysisView.js";
 import type { AnalysisViewParent } from "../../domain/analysisView/analysisViewParent.js";
 import { analysisViewRequestSchema } from "../../domain/analysisView/analysisViewRequest.js";
 
-const parseElfDependencies = (
-  ...arguments_: Parameters<typeof readElfDependenciesSteps>
-) => {
-  const steps = readElfDependenciesSteps(...arguments_);
-  for (let next = steps.next(); ; next = steps.next())
-    if (next.done) return next.value;
-};
-
-const artifact = {
+const input = inspectElfDependenciesInputSchema.parse({
   path: "/artifacts/program",
-  sha256: "a".repeat(64),
-  bytes: 2048,
-};
+});
+
+const decode = (bytes: Buffer) =>
+  parseElfDependenciesFromHandle(
+    elfDependencyByteSource(bytes),
+    { path: input.path, sha256: "a".repeat(64), bytes: bytes.length },
+    input,
+    async () => {},
+  );
 
 const parent = (report: unknown): AnalysisViewParent => ({
   predicateType: "rea.analysis",
@@ -37,23 +39,11 @@ const project = (report: unknown, input: unknown) => {
   return result.value;
 };
 
-const reportOf = () =>
-  parseElfDependencies(
-    elfDependencyFixture({
-      needed: ["libc.so.6", "libc.so.6", "libm.so.6"],
-    }),
-    artifact,
-    {
-      path: artifact.path,
-      max_file_bytes: 67108864,
-      max_needed: 1024,
-      max_versions: 4096,
-      max_imports: 65536,
-    },
-  );
+const report = await decode(
+  elfDependencyFixture({ needed: ["libc.so.6", "libc.so.6", "libm.so.6"] }),
+);
 
 it("pages duplicate DT_NEEDED names with original indices and selected fields", () => {
-  const report = reportOf();
   const input = {
     kind: "elf-dependencies",
     collection: "needed",
@@ -80,7 +70,6 @@ it("pages duplicate DT_NEEDED names with original indices and selected fields", 
 });
 
 it("pages GNU version requirements independently of definition rows", () => {
-  const report = reportOf();
   expect(
     project(report, {
       kind: "elf-dependencies",
@@ -109,7 +98,6 @@ it("pages GNU version requirements independently of definition rows", () => {
 });
 
 it("keeps import library@version identity through selected fields", () => {
-  const report = reportOf();
   expect(
     project(report, {
       kind: "elf-dependencies",
@@ -133,7 +121,6 @@ it("keeps import library@version identity through selected fields", () => {
 });
 
 it("returns a summary without row bodies and a stable view digest", () => {
-  const report = reportOf();
   const viewed = project(report, { kind: "summary" });
   expect(viewed).toMatchObject({
     kind: "summary",
@@ -162,7 +149,6 @@ it("returns a summary without row bodies and a stable view digest", () => {
 });
 
 it("pages version definitions and derived maxima instead of repeating them", () => {
-  const report = reportOf();
   expect(
     project(report, {
       kind: "elf-dependencies",
@@ -187,20 +173,12 @@ it("pages version definitions and derived maxima instead of repeating them", () 
   expect(maxima).not.toHaveProperty("dependencies.derived_version_maxima");
 });
 
-it("pages issues by original index and refuses name or field selection", () => {
-  const report = parseElfDependencies(
+it("pages issues by original index and refuses name or field selection", async () => {
+  const report = await decode(
     elfDependencyFixture({
       truncateDynstr: true,
       sectionSizes: { ".dynsym": 3 * 24 + 1 },
     }),
-    artifact,
-    {
-      path: artifact.path,
-      max_file_bytes: 67108864,
-      max_needed: 1024,
-      max_versions: 4096,
-      max_imports: 65536,
-    },
   );
   expect(report.issues.length).toBeGreaterThan(1);
   const view = { kind: "elf-dependencies", collection: "issues" };

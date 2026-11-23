@@ -202,3 +202,77 @@ it.each(["dependencies", "settings"] as const)(
     });
   },
 );
+
+const indexedNames = ["keep-0", "drop-1", "keep-2", "keep-3", "keep-4"];
+const indexedReport: GoBinary = {
+  ...report,
+  build_info: {
+    header_offset: 0,
+    encoding: "inline",
+    go_version: null,
+    go_version_bytes_base64: "",
+    module_text: null,
+    module_bytes_base64: "",
+    version_location: { offset: 32, bytes: 0 },
+    module_location: { offset: 32, bytes: 0 },
+    module: {
+      path: null,
+      main: null,
+      dependencies: indexedNames.map((path) => ({
+        path,
+        version: "v1.0.0",
+        sum: null,
+        replacement: null,
+      })),
+      settings: indexedNames.map((key) => ({ key, value: "value" })),
+      unparsed_lines: [],
+      unparsed_line_bytes_base64: [],
+      complete: true,
+    },
+  },
+  string_literals: {
+    evidence_kind: "inferred",
+    items: indexedNames.map((value, index) => ({
+      value,
+      location: { offset: 256 + index * 16, bytes: Buffer.byteLength(value) },
+      first_header_offset: 64 + index * 16,
+      reference_count: 1,
+    })),
+    discovered_count: indexedNames.length,
+    aggregate_bytes: Buffer.byteLength(indexedNames.join("")),
+    max_items: indexedNames.length,
+    truncated: false,
+  },
+};
+
+const selectedNames = indexedNames.filter((name) => name.startsWith("keep-"));
+it.each([
+  { collection: "dependencies", paths: selectedNames },
+  { collection: "settings", keys: selectedNames },
+  { collection: "string_literals", contains: "keep-" },
+] as const)("pages filtered $collection indices in source order", (filter) => {
+  const result = projectAnalysisView(
+    { ...parent(), normalizedResult: indexedReport },
+    {
+      kind: "go",
+      indices: [3, 90, 0, 2, 1, 3],
+      offset: 1,
+      limit: 1,
+      ...filter,
+    },
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value).toMatchObject({
+    page: {
+      collection: filter.collection,
+      rows: [{ index: 2 }],
+    },
+    coverage: {
+      status: "page",
+      examined: 1,
+      total: 3,
+      next_offset: 2,
+      exhausted: false,
+    },
+  });
+});

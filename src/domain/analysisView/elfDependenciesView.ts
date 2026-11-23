@@ -18,7 +18,11 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { selectViewRows } from "./selectViewRows.js";
+import {
+  pickFields,
+  selectIndexedViewRows,
+  selectViewRows,
+} from "./selectViewRows.js";
 
 const neededRow = elfDependenciesReportSchema.shape.needed.element;
 const importRow = elfDependenciesReportSchema.shape.imports.element;
@@ -240,19 +244,17 @@ export const projectElfDependenciesView = (
   if (view.collection === "issues") {
     const selected =
       indices === undefined
-        ? {
-            rows: report.issues
-              .slice(view.offset, view.offset + view.limit)
-              .map((row, index) => ({
-                ...row,
-                source_index: view.offset + index,
-              })),
-            total: report.issues.length,
-          }
-        : selectViewRows(
+        ? selectViewRows(
             report.issues,
             view,
-            (_, index) => indices.has(index),
+            undefined,
+            (row, source_index) => ({ ...row, source_index }),
+          )
+        : selectIndexedViewRows(
+            report.issues,
+            indices,
+            view,
+            undefined,
             (row, source_index) => ({ ...row, source_index }),
           );
     return ok({
@@ -283,31 +285,20 @@ export const projectElfDependenciesView = (
       );
     const columns = new Set<string>(fields);
     const projectRow = (row: Row, source_index: number) => ({
-      ...Object.fromEntries(
-        Object.entries(row).filter(([key]) => columns.has(key)),
-      ),
+      ...pickFields(row, columns),
       source_index,
     });
+    const matchesName =
+      names === undefined
+        ? undefined
+        : (row: Row) => {
+            const name = nameOf(row);
+            return name !== null && names.has(name);
+          };
     const selected =
-      names === undefined && indices === undefined
-        ? {
-            rows: rows
-              .slice(view.offset, view.offset + view.limit)
-              .map((row, index) => projectRow(row, view.offset + index)),
-            total: rows.length,
-          }
-        : selectViewRows(
-            rows,
-            view,
-            (row, index) => {
-              const name = nameOf(row);
-              return (
-                (indices === undefined || indices.has(index)) &&
-                (names === undefined || (name !== null && names.has(name)))
-              );
-            },
-            projectRow,
-          );
+      indices !== undefined
+        ? selectIndexedViewRows(rows, indices, view, matchesName, projectRow)
+        : selectViewRows(rows, view, matchesName, projectRow);
     return ok({
       ...shared,
       kind: "elf-dependencies" as const,

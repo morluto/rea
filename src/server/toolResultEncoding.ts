@@ -98,13 +98,49 @@ const measureJsonPart = (
   readonly escapedBytes: number;
   readonly escapedCodeUnits: number;
 } => {
-  const rawBytes = Buffer.byteLength(part);
-  const escaped = JSON.stringify(part);
-  const escapedCodeUnits = escaped.length - 2;
-  const escapedBytes =
-    rawBytes === part.length
-      ? escapedCodeUnits
-      : Buffer.byteLength(escaped) - 2;
+  const len = part.length;
+  let rawBytes = 0;
+  let escapedBytes = 0;
+  let escapedCodeUnits = len;
+  for (let index = 0; index < len; index += 1) {
+    const code = part.charCodeAt(index);
+    if (code < 0x80) {
+      rawBytes += 1;
+      if (code === 34 || code === 92) {
+        escapedBytes += 2;
+        escapedCodeUnits += 1;
+      } else if (code < 32) {
+        const extra =
+          code === 8 || code === 9 || code === 10 || code === 12 || code === 13
+            ? 1
+            : 5;
+        escapedBytes += 1 + extra;
+        escapedCodeUnits += extra;
+      } else {
+        escapedBytes += 1;
+      }
+    } else if (code < 0x800) {
+      rawBytes += 2;
+      escapedBytes += 2;
+    } else if (code >= 0xd800 && code <= 0xdfff) {
+      if (code <= 0xdbff && index + 1 < len) {
+        const next = part.charCodeAt(index + 1);
+        if (next >= 0xdc00 && next <= 0xdfff) {
+          rawBytes += 4;
+          escapedBytes += 4;
+          index += 1;
+          continue;
+        }
+      }
+      // Unpaired surrogate: UTF-8 emits U+FFFD (3 bytes); JSON.stringify emits \udxxx (6 ASCII bytes / code units).
+      rawBytes += 3;
+      escapedBytes += 6;
+      escapedCodeUnits += 5;
+    } else {
+      rawBytes += 3;
+      escapedBytes += 3;
+    }
+  }
   return { rawBytes, escapedBytes, escapedCodeUnits };
 };
 
@@ -150,6 +186,14 @@ export const errorTextWireBytes = (
   value: JsonValue,
   budgetBytes: number,
 ): number => {
-  const encoded = encodeToolResult(value, budgetBytes, "error-text");
-  return encoded.ok ? encoded.bytes : encoded.bytesAtLeast;
+  let bytes = ERROR_RESULT_ENVELOPE_BYTES;
+  let codeUnits = bytes;
+  for (const part of bufferedJsonParts(jsonParts(value))) {
+    const measured = measureJsonPart(part);
+    bytes += measured.escapedBytes;
+    codeUnits += measured.escapedCodeUnits;
+    if (bytes > budgetBytes || codeUnits > MCP_RESULT_STRING_LIMIT)
+      return bytes;
+  }
+  return bytes;
 };

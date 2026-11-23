@@ -1,4 +1,7 @@
-import { ghidraAsciiLiteralCandidate } from "./GhidraLiteralSearch.js";
+import {
+  ghidraAsciiLiteralCandidate,
+  ghidraAsciiLiteralSubstring,
+} from "./GhidraLiteralSearch.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   fileSnapshotPartialObservationSchema,
@@ -511,12 +514,21 @@ export class GhidraClient {
       typeof parameters.pattern === "string"
         ? parameters.pattern
         : undefined;
+    const asciiCandidate =
+      pattern === undefined ? undefined : ghidraAsciiLiteralCandidate(pattern);
+    const asciiSubstring =
+      pattern !== undefined && asciiCandidate === null
+        ? ghidraAsciiLiteralSubstring(pattern)
+        : null;
     const pending = this.#enqueue(
       operation,
       pattern !== undefined
         ? {
             ...parameters,
-            literal_ascii_candidate: ghidraAsciiLiteralCandidate(pattern),
+            literal_ascii_candidate: asciiCandidate ?? null,
+            ...(asciiSubstring === null
+              ? {}
+              : { literal_ascii_substring: asciiSubstring }),
           }
         : parameters,
       {

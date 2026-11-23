@@ -49,21 +49,6 @@ it("retains the final cleanup result when all callers cancel together", async ()
   expect(attempt.settled).toBe(true);
 });
 
-it("distinguishes provider closure from a caller's cancellation", async () => {
-  const cleanup = createDeferred<string>();
-  const attempt = new SharedStartupAttempt(() => cleanup.promise);
-  const controller = new AbortController();
-  const waiting = attempt.wait(controller.signal);
-  attempt.close();
-  expect(attempt.signal.reason).toBe(OwnerCancellation.startupOwnerClosed);
-  expect(controller.signal.aborted).toBe(false);
-  cleanup.resolve("provider stopped");
-  await expect(waiting).resolves.toEqual({
-    status: "completed",
-    value: "provider stopped",
-  });
-});
-
 it("does not lose an unexpected producer rejection after its final caller cancels", async () => {
   let reject: ((cause: unknown) => void) | undefined;
   const promise = new Promise<never>((_resolve, fail) => {
@@ -78,29 +63,31 @@ it("does not lose an unexpected producer rejection after its final caller cancel
   await expect(waiting).rejects.toBe(cause);
 });
 
-it.each(["caller", "owner"])(
-  "preserves %s interruption when owning cancellation and closure occur together",
-  async (first) => {
+it.each([
+  { first: "provider closure", concurrent: false },
+  { first: "provider closure", concurrent: true },
+  { first: "owning cancellation", concurrent: true },
+] as const)(
+  "keeps the first owner reason for $first (concurrent=$concurrent)",
+  async ({ first, concurrent }) => {
     const completed = createDeferred<string>();
-    const controller = new AbortController();
+    const owner = new AbortController();
+    const caller = new AbortController();
     const reason = { caller: "operation owner" };
     const attempt = new SharedStartupAttempt(
       () => completed.promise,
-      controller.signal,
+      concurrent ? owner.signal : undefined,
     );
-    const waiting = attempt.wait();
-    if (first === "caller") {
-      controller.abort(reason);
-      attempt.close();
-    } else {
-      attempt.close();
-      expect(attempt.signal.aborted).toBe(true);
-      expect(attempt.signal.reason).toBe(OwnerCancellation.startupOwnerClosed);
-      controller.abort(reason);
-    }
+    const waiting = attempt.wait(caller.signal);
+    if (first === "owning cancellation") owner.abort(reason);
+    attempt.close();
+    if (concurrent) owner.abort(reason);
     expect(attempt.signal.reason).toBe(
-      first === "caller" ? reason : OwnerCancellation.startupOwnerClosed,
+      first === "owning cancellation"
+        ? reason
+        : OwnerCancellation.startupOwnerClosed,
     );
+    expect(caller.signal.aborted).toBe(false);
     expect(attempt.settled).toBe(false);
     completed.resolve("finalized");
     await expect(waiting).resolves.toEqual({

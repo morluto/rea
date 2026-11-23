@@ -9,7 +9,7 @@ import {
   parseCliGlobalArguments,
   type CliGlobalArguments,
 } from "../cliBuiltinArguments.js";
-import { CLI_OUTPUT_FORMATS, readCliOutputArguments } from "../cliOutput.js";
+import { CLI_OUTPUT_FORMATS, readCliOutputArguments } from "./cliOutput.js";
 import {
   bashCompletionInput,
   completeWords,
@@ -21,7 +21,7 @@ import { cliCommands } from "./commandRegistry.js";
 import { COMPLETIONS_DESCRIPTION, MCP_GROUP_DESCRIPTION } from "./discovery.js";
 import { MCP_SUBCOMMANDS } from "./mcpBuiltinCommands.js";
 import type { CliInstance } from "./types.js";
-import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "../mcpDoctorOptions.js";
+import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "./mcpDoctorOptions.js";
 
 type ServeOptions = NonNullable<Parameters<CliInstance["serve"]>[1]>;
 const ROOT_FLAGS = new Set(["--mcp", "--update", "--version"]);

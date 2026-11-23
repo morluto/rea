@@ -1,13 +1,9 @@
 import { ARTIFACT_TOOL_CONTRACTS } from "../contracts/artifactToolContracts.js";
 import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/openBinaryToolContract.js";
-import {
-  contractNamed,
-  type CliSessionTarget,
-} from "./contractCliDescription.js";
-import {
-  registerContractCommand,
-  runOnSessionTarget,
-} from "./contractCommand.js";
+import { contractNamed } from "./contractCliDescription.js";
+import type { CliSessionTarget } from "./contractCliDescriptionTypes.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { runOnSessionTarget } from "./contractCommandRunners.js";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { createArtifactExtractionDestination } from "../application/artifacts/ArtifactExtractionDestination.js";
