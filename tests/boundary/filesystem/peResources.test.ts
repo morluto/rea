@@ -6,7 +6,7 @@ import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("PE resource stable filesystem boundary", () => {
-  it("reports non-file and malformed PE selections as caller input errors", async () => {
+  it("refuses malformed PE bytes as a target and non-file selections as caller input", async () => {
     const root = await createTestTempDirectory("rea-pe-resource-files-");
     const path = join(root, "image.exe");
     const alias = join(root, "alias.exe");
@@ -18,7 +18,6 @@ describe("PE resource stable filesystem boundary", () => {
     for (const [candidate, reason] of [
       [root, "invalid_format"],
       [alias, "invalid_format"],
-      [malformed, "invalid_format"],
       [join(root, "missing.exe"), "invalid_value"],
       [join(path, "child.exe"), "invalid_value"],
     ] as const) {
@@ -36,6 +35,15 @@ describe("PE resource stable filesystem boundary", () => {
         ],
       });
     }
+    // The bytes, not the request, are at fault.
+    const refused = await service.inspect({ path: malformed });
+    if (refused.ok) throw new Error("Expected a malformed-target refusal");
+    expect(refused.error).toMatchObject({
+      _tag: "AnalysisMalformedTargetError",
+      operation: "inspect_pe_resources",
+      path: malformed,
+      failure: { kind: "malformed", format: "pe" },
+    });
   });
 
   it.skipIf(process.platform === "win32")(
