@@ -119,6 +119,7 @@ export const providerCleanupErrorFromFailures = (
     readonly operation: string;
     readonly causes?: readonly unknown[];
     readonly message?: string;
+    readonly remediationAction?: string;
   },
 ): ProviderCleanupError =>
   new ProviderCleanupError(
@@ -128,6 +129,9 @@ export const providerCleanupErrorFromFailures = (
     {
       operation: options.operation,
       cause: new AggregateError(options.causes ?? failures, options.message),
+      ...(options.remediationAction === undefined
+        ? {}
+        : { remediationAction: options.remediationAction }),
     },
   ).bindCleanupDependencies(failures);
 
@@ -198,3 +202,17 @@ export const withInheritedCleanupOwnership = <Failure extends AnalysisError>(
   owner: AnalysisError,
 ): Failure =>
   owner.cleanupIncomplete ? failure.bindCleanupDependencies([owner]) : failure;
+
+/** Delegate both cleanup completion and live resource reporting to `owner`. */
+export const withDelegatedCleanupOwner = <Failure extends AnalysisError>(
+  failure: Failure,
+  owner: AnalysisError,
+): Failure =>
+  failure.bindCleanupDependencies([owner]).bindCleanupResourceOwner(owner);
+
+/** Retain `cleanup` as a secondary failure and follow its cleanup completion. */
+export const withSecondaryCleanupFailure = <Failure extends AnalysisError>(
+  primary: Failure,
+  cleanup: AnalysisError,
+): Failure =>
+  primary.retainSecondaryFailure(cleanup).bindCleanupDependencies([cleanup]);
