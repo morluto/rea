@@ -18,7 +18,11 @@ import {
   ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
   inspectElfDebugLinkInputSchema,
 } from "../../domain/native/elfDebugLink.js";
-import { parseElfDebugLink, verifyElfDebugCandidate } from "./ElfDebugLink.js";
+import {
+  parseElfDebugLink,
+  parseElfDebugLinkFromHandle,
+  verifyElfDebugCandidate,
+} from "./ElfDebugLink.js";
 import {
   elfDebugCandidateFixture,
   elfDebugLinkFixture,
@@ -86,6 +90,43 @@ const inputFor = (maxFileBytes: number) =>
     path: "/artifacts/prog",
     max_file_bytes: maxFileBytes,
   });
+
+it("reuses compressed section names beyond the retained prefix for build IDs", async () => {
+  const template = withCompressedNames(elfDebugLinkFixture());
+  const shoff = Number(template.readBigUInt64LE(40));
+  const header = shoff + (template.readUInt16LE(60) - 1) * 64;
+  const previousOffset = Number(template.readBigUInt64LE(header + 24));
+  const table = template.subarray(previousOffset);
+  const namesOffset = 8192;
+  const image = Buffer.concat([
+    template.subarray(0, previousOffset),
+    Buffer.alloc(namesOffset - previousOffset),
+    table,
+  ]);
+  image.writeBigUInt64LE(BigInt(namesOffset), header + 24);
+  const artifact = {
+    path: "/artifacts/prog",
+    sha256: "ab".repeat(32),
+    bytes: image.length,
+  };
+  let tableReads = 0;
+  const report = await parseElfDebugLinkFromHandle(
+    {
+      size: image.length,
+      prefix: image.subarray(0, 4096),
+      readRange: async (offset, length) => {
+        if (offset === namesOffset && length === table.length) tableReads++;
+        return Buffer.from(image.subarray(offset, offset + length));
+      },
+    },
+    artifact,
+    inputFor(image.length + DECODED_NAME_BYTES),
+  );
+  expect(report.debuglink.status).toBe("present");
+  expect(report.build_id.status).toBe("observed");
+  expect(tableReads).toBe(1);
+  expect(zlib.inflated).toBe(1);
+});
 
 it.each(["direct", "extended"] as const)(
   "checks the decoded image-name budget with a %s section count",

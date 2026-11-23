@@ -257,11 +257,12 @@ export function* readElfSectionDirectory(
       const namesSection = parsedNames.value;
       if (namesSection.type !== 3)
         reject("ELF section name table is not a string table");
-      const rawNames = yield request(
+      const namesRange = request(
         fileSize,
         namesSection.offset,
         namesSection.size,
       );
+      const rawNames = yield namesRange;
       const structuralRemaining = Math.max(
         0,
         STRUCTURE_BYTES - rawNames.length,
@@ -272,6 +273,7 @@ export function* readElfSectionDirectory(
           : Math.max(0, maximumSourceAndDecodedNamesBytes - fileSize);
       let decoded: ElfCompressedSectionResult | undefined;
       const sectionNames: ElfSectionNameDecodeRequest = {
+        fileOffset: namesRange.offset,
         raw: rawNames,
         flags: namesSection.flags,
         bits,

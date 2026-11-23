@@ -13,9 +13,8 @@ import {
   stableArtifactInputFailure,
   ArtifactReaderFailure,
   completedStableArtifactStream,
-  readStableArtifact,
+  withStableArtifactHandle,
   streamStableArtifact,
-  type StableArtifactSnapshot,
   type StableArtifactStream,
   artifactFilePrimaryFacts,
   artifactFileCompletion,
@@ -44,7 +43,7 @@ import {
 } from "../../domain/binaryContainer.js";
 import {
   continueGnuDebuglinkCrc32,
-  parseElfDebugLinkCooperative,
+  parseElfDebugLinkFromHandle,
   unreadableElfDebugCandidate,
   verifyElfDebugCandidate,
   verifyElfDebugCandidateCooperative,
@@ -54,6 +53,7 @@ import { ELF_NOTE_TEXT_ALLOWANCE } from "./ElfNoteParser.js";
 import { elfSectionNameBudget } from "../../domain/native/elfSectionNameTable.js";
 
 const OPERATION = "inspect_elf_debug_link";
+const HEADER_PREFIX_BYTES = 4096;
 
 type SelectedField = "path" | "candidate_path";
 
@@ -79,26 +79,38 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
     let candidatePhase: CandidatePhase | undefined;
     let candidate: StableArtifactStream | undefined;
     let crc32 = 0;
-    let snapshot: StableArtifactSnapshot | undefined;
+    let observedImage:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
       return await this.#resources.run(async () => {
         field = "path";
-        snapshot = await readStableArtifact(
+        const image = await withStableArtifactHandle(
           input.path,
           input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        const image = await parseElfDebugLinkCooperative(
-          snapshot.bytes,
           {
-            path: input.path,
-            sha256: snapshot.sha256,
-            bytes: snapshot.bytes.length,
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
+            onIdentity: (identity) => {
+              observedImage = identity;
+            },
           },
-          input,
-          options?.signal,
+          (handle) =>
+            parseElfDebugLinkFromHandle(
+              {
+                size: handle.size,
+                prefix: handle.prefix,
+                readRange: (offset, length) => handle.readRange(offset, length),
+              },
+              {
+                path: input.path,
+                sha256: handle.sha256,
+                bytes: handle.size,
+              },
+              input,
+              options?.signal,
+            ),
         );
         if (input.candidate_path === undefined) return ok(image);
         field = "candidate_path";
@@ -141,7 +153,7 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
           input,
           field,
           candidatePhase === undefined
-            ? { imageSnapshot: snapshot }
+            ? { imageSnapshot: observedImage }
             : {
                 retained: candidatePhaseObservation(
                   candidatePhase,
@@ -434,7 +446,9 @@ const elfDebugLinkFailure = (
     // The decoded report from a failed candidate phase.
     readonly retained?: AnalysisPartialObservation;
     // A fully read image whose ELF decoding then failed keeps its identity.
-    readonly imageSnapshot?: StableArtifactSnapshot | undefined;
+    readonly imageSnapshot?:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
   },
 ) => {
   const primary = elfDebugLinkFailurePrimary(
