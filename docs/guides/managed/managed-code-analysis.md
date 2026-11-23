@@ -257,8 +257,7 @@ bundle format and prints `{"summary": …, "evidence_bundle": {"path", "bytes"}}
 Its parent directory must exist, and it never replaces an existing path.
 Relative paths resolve against the command's working directory. The option
 also works with complete delivery when a saved bundle is useful. Summary
-without a destination is rejected before analysis. Earlier releases spelled
-this option `--evidence-bundle` and printed the summary Evidence alone. For partial Evidence
+without a destination is rejected before analysis. For partial Evidence
 and committed-file receipts after failure or cancellation, see
 [Evidence publication and source recovery](../../reference/mcp-contracts.md#evidence-publication-and-source-recovery).
 
