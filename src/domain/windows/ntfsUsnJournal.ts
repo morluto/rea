@@ -100,14 +100,9 @@ export function* readUsnJournal(
     if ((major !== 2 && major !== 3 && major !== 4) || minor !== 0) {
       yield err({ kind: "unsupported", fileOffset, major, minor });
     } else {
-      const record = new BinaryReader(
-        journal.range(fileOffset, length, "USN record"),
-        journal.little,
-        journal.format,
-      );
       yield major === 4
-        ? readExtentRecord(record, fileOffset)
-        : readNamedRecord(record, fileOffset, major);
+        ? readExtentRecord(journal, fileOffset, length)
+        : readNamedRecord(journal, fileOffset, length, major);
     }
     fileOffset += length;
   }
@@ -123,17 +118,17 @@ const readReference = (
   (width === 16 ? record.word(offset + 8, 64) << 64n : 0n);
 
 const readNamedRecord = (
-  record: BinaryReader,
+  journal: BinaryReader,
   fileOffset: number,
+  recordBytes: number,
   majorVersion: 2 | 3,
 ): Result<UsnRecord, UsnRecordIssue> => {
   const referenceBytes = majorVersion === 2 ? 8 : 16;
   const body = COMMON_HEADER_BYTES + referenceBytes * 2;
   const headerBytes = body + 36;
-  const recordBytes = record.bytes.length;
   if (recordBytes < headerBytes) return err({ kind: "malformed", fileOffset });
-  const nameBytes = record.u16(body + 32);
-  const nameOffset = record.u16(body + 34);
+  const nameBytes = journal.u16(fileOffset + body + 32);
+  const nameOffset = journal.u16(fileOffset + body + 34);
   if (
     nameOffset < headerBytes ||
     nameOffset % 2 !== 0 ||
@@ -147,28 +142,32 @@ const readNamedRecord = (
     referenceBytes,
     fileOffset,
     recordBytes,
-    fileReference: readReference(record, 8, referenceBytes),
-    parentReference: readReference(record, 8 + referenceBytes, referenceBytes),
-    usn: BigInt.asIntN(64, record.word(body, 64)),
-    timestampFileTime: record.word(body + 8, 64),
-    reasonFlags: record.u32(body + 16),
-    sourceFlags: record.u32(body + 20),
-    securityId: record.u32(body + 24),
-    fileAttributes: record.u32(body + 28),
-    name: record
-      .range(nameOffset, nameBytes, "USN filename")
+    fileReference: readReference(journal, fileOffset + 8, referenceBytes),
+    parentReference: readReference(
+      journal,
+      fileOffset + 8 + referenceBytes,
+      referenceBytes,
+    ),
+    usn: BigInt.asIntN(64, journal.word(fileOffset + body, 64)),
+    timestampFileTime: journal.word(fileOffset + body + 8, 64),
+    reasonFlags: journal.u32(fileOffset + body + 16),
+    sourceFlags: journal.u32(fileOffset + body + 20),
+    securityId: journal.u32(fileOffset + body + 24),
+    fileAttributes: journal.u32(fileOffset + body + 28),
+    name: journal
+      .range(fileOffset + nameOffset, nameBytes, "USN filename")
       .toString("utf16le"),
   });
 };
 
 const readExtentRecord = (
-  record: BinaryReader,
+  journal: BinaryReader,
   fileOffset: number,
+  recordBytes: number,
 ): Result<UsnRecord, UsnRecordIssue> => {
-  const recordBytes = record.bytes.length;
   if (recordBytes < 64) return err({ kind: "malformed", fileOffset });
-  const extentCount = record.u16(60),
-    extentSize = record.u16(62);
+  const extentCount = journal.u16(fileOffset + 60),
+    extentSize = journal.u16(fileOffset + 62);
   // Validate the complete declared array before allocating the fixed-size sample.
   if (
     extentSize < 16 ||
@@ -186,8 +185,8 @@ const readExtentRecord = (
     const cursor = 64 + index * extentSize;
     extentSample.push({
       fileOffset: fileOffset + cursor,
-      offset: BigInt.asIntN(64, record.word(cursor, 64)),
-      length: BigInt.asIntN(64, record.word(cursor + 8, 64)),
+      offset: BigInt.asIntN(64, journal.word(fileOffset + cursor, 64)),
+      length: BigInt.asIntN(64, journal.word(fileOffset + cursor + 8, 64)),
     });
   }
   return ok({
@@ -195,16 +194,16 @@ const readExtentRecord = (
     referenceBytes: 16,
     fileOffset,
     recordBytes,
-    fileReference: readReference(record, 8, 16),
-    parentReference: readReference(record, 24, 16),
-    usn: BigInt.asIntN(64, record.word(40, 64)),
-    reasonFlags: record.u32(48),
-    sourceFlags: record.u32(52),
+    fileReference: readReference(journal, fileOffset + 8, 16),
+    parentReference: readReference(journal, fileOffset + 24, 16),
+    usn: BigInt.asIntN(64, journal.word(fileOffset + 40, 64)),
+    reasonFlags: journal.u32(fileOffset + 48),
+    sourceFlags: journal.u32(fileOffset + 52),
     timestampFileTime: null,
     securityId: null,
     fileAttributes: null,
     name: null,
-    remainingExtents: record.u32(56),
+    remainingExtents: journal.u32(fileOffset + 56),
     extentCount,
     extentSize,
     omittedExtents: extentCount - extentSample.length,

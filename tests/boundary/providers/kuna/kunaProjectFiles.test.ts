@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  createKunaProjectSourceScanner,
   parseKunaExportSummary,
   parseKunaInventory,
   scanKunaAssembly,
@@ -77,6 +78,39 @@ it("splits Kuna's .c into function blocks at any chunk size", async () => {
   expect(block.startsWith("// Function: sub_1080 @ 0x1080  (error:")).toBe(
     true,
   );
+});
+
+it("retains split UTF-8 headers and byte spans when the input buffer is reused", () => {
+  const preamble = "// generated\n";
+  const first = "// Function: café @ 0x10\nvoid a() {}\n";
+  const second = "// Function: 雪 @ 0x20\nvoid b() {}\n";
+  const source = Buffer.from(preamble + first + second);
+  const scanner = createKunaProjectSourceScanner({ decompiled: 2, failed: 0 });
+  const scratch = Buffer.alloc(1);
+  for (const byte of source) {
+    scratch[0] = byte;
+    scanner.push(scratch);
+    scratch.fill(0xff);
+  }
+  expect(scanner.finish()).toEqual({
+    ok: true,
+    value: [
+      {
+        name: "café",
+        address: "0x10",
+        cOffset: Buffer.byteLength(preamble),
+        cLength: Buffer.byteLength(first),
+        error: null,
+      },
+      {
+        name: "雪",
+        address: "0x20",
+        cOffset: Buffer.byteLength(preamble + first),
+        cLength: Buffer.byteLength(second),
+        error: null,
+      },
+    ],
+  });
 });
 
 it.each([
@@ -246,6 +280,47 @@ it.each([
     ]);
   },
 );
+
+it("preserves parseKunaInventory fast-path acceptance and Zod error fallback", () => {
+  expect(
+    parseKunaInventory(
+      JSON.stringify({
+        functions: [
+          {
+            name: "zero_padded",
+            address_hex: "0x0010",
+            aliases: ["a0", "a1"],
+            size: 0,
+            extra: true,
+          },
+        ],
+      }),
+    ),
+  ).toEqual({
+    ok: true,
+    value: [
+      {
+        name: "zero_padded",
+        address: "0x0010",
+        aliases: ["a0", "a1"],
+        size: 0,
+      },
+    ],
+  });
+  for (const invalid of [
+    { functions: [{ name: "x", address_hex: "0xABC", aliases: [], size: 0 }] },
+    { functions: [{ name: "x", address_hex: "0x10", aliases: [7], size: 0 }] },
+    { functions: [{ name: "x", address_hex: "0x10", aliases: [], size: -1 }] },
+    { functions: "not-an-array" },
+  ]) {
+    expect(parseKunaInventory(JSON.stringify(invalid))).toMatchObject({
+      ok: false,
+      error: expect.stringContaining(
+        "the function inventory does not match Kuna's document:",
+      ),
+    });
+  }
+});
 
 describe("Kuna streaming line-scanner chunk boundary parity", () => {
   it("handles empty lines, overlong skipped lines, cross-chunk kept lines, and unterminated EOF lines across chunk sizes", async () => {

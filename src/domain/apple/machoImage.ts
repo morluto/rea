@@ -13,6 +13,7 @@ import {
 } from "./machoSegmentHeader.js";
 import {
   declaredFileRange,
+  requireBinaryTableBudget,
   BinaryFormatFailure,
   BinaryReader,
   type BinaryContainer,
@@ -24,17 +25,58 @@ import {
   machoCommandTableIssue,
   readMachoLoadCommandDeclarations,
 } from "./machoLoadCommands.js";
+import type { NativeByteSource } from "../native/nativeSectionDirectory.js";
 
 /** Read thin Mach-O images, retaining the slice's exact file-backed mappings. */
 export const readMachoImage = (
   bytes: Buffer,
-): Extract<BinaryContainer, { format: "macho" }> => {
-  const parsed = readMachoLoadCommandDeclarations(bytes, bytes.length);
+): Extract<BinaryContainer, { format: "macho" }> =>
+  readMachoImageCore(bytes, bytes.length);
+
+/** Same thin Mach-O header and section read over a random-access source without buffering the full image. */
+export const readMachoImageFromReader = async (
+  source: NativeByteSource,
+): Promise<Extract<BinaryContainer, { format: "macho" }>> => {
+  const readSlice = (offset: number, length: number): Promise<Buffer> => {
+    if (length <= 0 || offset >= source.size)
+      return Promise.resolve(Buffer.alloc(0));
+    const clamped = Math.min(length, source.size - offset);
+    if (source.prefix !== undefined && offset + clamped <= source.prefix.length)
+      return Promise.resolve(source.prefix.subarray(offset, offset + clamped));
+    return source.readRange(offset, clamped);
+  };
+  const headerPrefix = await readSlice(0, Math.min(32, source.size));
+  const parsed = readMachoLoadCommandDeclarations(headerPrefix, source.size);
   if (!parsed.ok) throw new BinaryFormatFailure("malformed", parsed.error);
   if (parsed.value === null)
     throw new BinaryFormatFailure("malformed", "Unrecognized Mach-O header");
   const table = parsed.value;
-  const issue = machoCommandTableIssue(table, bytes.length);
+  const issue = machoCommandTableIssue(table, source.size);
+  if (issue !== null)
+    throw new BinaryFormatFailure(
+      issue.kind === "extent" ? "truncated" : "malformed",
+      issue.message,
+      {
+        format: "macho",
+        field: "Mach-O load commands",
+        offset: table.headerSize,
+      },
+    );
+  requireBinaryTableBudget(BigInt(table.commandBytes), "Mach-O load commands");
+  const tableBytes = await readSlice(0, table.headerSize + table.commandBytes);
+  return readMachoImageCore(tableBytes, source.size);
+};
+
+const readMachoImageCore = (
+  bytes: Buffer,
+  fileBytes: number,
+): Extract<BinaryContainer, { format: "macho" }> => {
+  const parsed = readMachoLoadCommandDeclarations(bytes, fileBytes);
+  if (!parsed.ok) throw new BinaryFormatFailure("malformed", parsed.error);
+  if (parsed.value === null)
+    throw new BinaryFormatFailure("malformed", "Unrecognized Mach-O header");
+  const table = parsed.value;
+  const issue = machoCommandTableIssue(table, fileBytes);
   if (issue !== null)
     throw new BinaryFormatFailure(
       issue.kind === "extent" ? "truncated" : "malformed",
@@ -99,7 +141,7 @@ export const readMachoImage = (
         parsedSegment.value,
         size,
         bits,
-        bytes.length,
+        fileBytes,
       );
       if (!admitted.ok)
         throw new BinaryFormatFailure(
@@ -110,7 +152,7 @@ export const readMachoImage = (
       const fileRange =
         fileSize === 0n
           ? undefined
-          : reader.fileRange(fileOffset, fileSize, "Mach-O segment");
+          : { offset: Number(fileOffset), size: Number(fileSize) };
       const mapping =
         unmapped || fileRange === undefined
           ? undefined
@@ -146,7 +188,7 @@ export const readMachoImage = (
           );
         sections.push(
           machoImageSection({
-            fileBytes: bytes.length,
+            fileBytes,
             section: parsedSection.value,
             protection,
             segmentMapping: mapping ?? null,

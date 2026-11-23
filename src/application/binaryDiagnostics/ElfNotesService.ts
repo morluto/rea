@@ -2,7 +2,6 @@ import { insideArtifact } from "./artifactRange.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { ElfNotesPort } from "../../ports/binaryDiagnostics/ElfNotesPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectElfNotesInputSchema,
@@ -10,9 +9,8 @@ import {
   type ElfNotes,
 } from "../../domain/native/elfNotes.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
-import { err, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import type { Result } from "../../domain/result.js";
+import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_elf_notes";
 
@@ -24,64 +22,52 @@ export class ElfNotesService {
     return this.provider.close?.() ?? Promise.resolve();
   }
 
-  async inspect(
+  inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    const input = parseAnalysisInput(
-      OPERATION,
-      rawInput,
-      inspectElfNotesInputSchema,
-      options?.signal,
-    );
-    if (!input.ok) return input;
-    const result = await this.provider.inspect(input.value, options);
-    if (!result.ok) return result;
-    const report = elfNotesSchema.safeParse(result.value);
-    if (
-      !report.success ||
-      report.data.artifact.path !== input.value.path ||
-      !validReport(
-        report.data,
-        input.value.max_entries,
-        input.value.max_file_bytes,
-      )
-    )
-      return err(
-        new AnalysisOutputError(
-          OPERATION,
+    return executeArtifactInspection(
+      {
+        operation: OPERATION,
+        inputSchema: inspectElfNotesInputSchema,
+        outputSchema: elfNotesSchema,
+        provider: this.provider,
+        invalidOutputMessage:
           "ELF note provider returned malformed output or changed artifact identity.",
-        ),
-      );
-    const value = report.data;
-    const architecture = elfArchitecture(value.machine);
-    const locations = [
-      { kind: "artifact-path" as const, path: value.artifact.path },
-      ...value.tables.map((table) => ({
-        kind: "file-offset-range" as const,
-        start: table.location.offset,
-        end: table.location.offset + table.location.bytes,
-      })),
-    ];
-    return completeProviderEvidence(
-      createEvidence(
-        {
-          path: value.artifact.path,
-          format: "elf",
-          sha256: value.artifact.sha256,
-          ...(architecture === undefined ? {} : { architecture }),
+        toParameters: (input) => input,
+        validateReport: (report, input) =>
+          report.artifact.path === input.path &&
+          validReport(report, input.max_entries, input.max_file_bytes),
+        buildEvidence: (value, identity, parameters) => {
+          const architecture = elfArchitecture(value.machine);
+          return createEvidence(
+            {
+              path: value.artifact.path,
+              format: "elf",
+              sha256: value.artifact.sha256,
+              ...(architecture === undefined ? {} : { architecture }),
+            },
+            identity,
+            {
+              operation: OPERATION,
+              parameters,
+              result: value,
+              confidence: "observed",
+              limitations: value.limitations,
+              locations: [
+                { kind: "artifact-path" as const, path: value.artifact.path },
+                ...value.tables.map((table) => ({
+                  kind: "file-offset-range" as const,
+                  start: table.location.offset,
+                  end: table.location.offset + table.location.bytes,
+                })),
+              ],
+            },
+          );
         },
-        this.provider.identity,
-        {
-          operation: OPERATION,
-          parameters: input.value,
-          result: value,
-          confidence: "observed",
-          limitations: value.limitations,
-          locations,
-        },
-      ),
-      options?.signal,
+      },
+      rawInput,
+      options,
     );
   }
 }

@@ -194,11 +194,11 @@ it("bounds a growing linker option before reading its remaining payload", async 
 });
 
 it.each([
-  ["rpath", 0x8000001c, 12],
-  ["fileset", 0x80000035, 32],
+  ["rpath", 0x8000001c, 12, 32],
+  ["fileset", 0x80000035, 32, 4097],
 ] as const)(
   "bounds %s strings before reading their declared extent",
-  async (_name, command, nameOffset) => {
+  async (_name, command, nameOffset, allowance) => {
     const commandSize = 8208;
     const image = Buffer.alloc(32 + commandSize);
     image.writeUInt32LE(0xfeedfacf, 0);
@@ -209,9 +209,9 @@ it.each([
     image.writeUInt32LE(nameOffset, command === 0x80000035 ? 56 : 40);
     const stringAt = 32 + nameOffset;
     image.fill(0x41, stringAt, stringAt + 8000);
-    const projectedBudget = 8192 + 2048 + 32 * 24;
+    const projectedBudget = 8192 + 2048 + allowance * 24;
     const read = async (offset: number, size: number) => {
-      if (offset === stringAt && size > 33)
+      if (offset >= stringAt && offset + size > stringAt + allowance + 1)
         throw new Error("string read beyond its projection allowance");
       return image.subarray(offset, offset + size);
     };
@@ -226,9 +226,10 @@ it.each([
         },
       },
     });
-    image[stringAt + 32] = 0;
+    image[stringAt + allowance - 1] = 0x42;
+    image[stringAt + allowance] = 0;
     const parsed = await readMachoCommandNames(
-      async (offset, size) => image.subarray(offset, offset + size),
+      read,
       image.length,
       16384,
       1,
@@ -236,6 +237,6 @@ it.each([
     );
     const name =
       parsed.commands[0]?.commandString ?? parsed.commands[0]?.fileset?.entryId;
-    expect(name).toHaveLength(32);
+    expect(Buffer.from(name!).toString()).toBe("A".repeat(allowance - 1) + "B");
   },
 );

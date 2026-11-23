@@ -275,7 +275,11 @@ to `tools/list` and an advertised operation instead of repeating the unknown
 name.
 
 `get_call_graph` returns a `graph` keyed by traversal depth and a top-level
-`limitations` array with deduplicated execution caveats. Each node keeps its
+`limitations` array with deduplicated execution caveats. Both `get_call_graph`
+and `trace_call_path` accept optional `max_depth` and `max_nodes` bounds to
+cap traversal work and reply size; when a bound stops expansion, discovery is
+marked partial and the remaining frontier is reported in `limitations` or
+`residual_unknowns`. Each node keeps its
 relationship coverage and read-specific `limitations`, alongside observed
 `calls`. When a provider does not classify its caveats, they remain on that
 node and coverage is `unknown`. An empty call list with partial or unknown
@@ -568,22 +572,35 @@ To find missing sources before a downstream analysis refuses them, read
 record payload. `filters` select the starting records, while membership is
 checked against every record in the session or file, so a filtered-out source is
 `retained`, not missing. Rows (`evidence_id`, `linked_evidence_id`, `status`) are
-in canonical order, default to `link_status: "missing"` and page with `offset` and
-`limit` (default 64); `links` counts every inspected link regardless of that
-selection. `traversal: "direct"` (the default) reads the selected records' own
+in canonical order and page with `offset` and `limit` (default 64).
+`linked_evidence_id` optionally selects direct citations to one exact Evidence
+ID, including an ID missing from the current session or file. With this selector,
+`link_status` defaults to `"all"`; otherwise it defaults to `"missing"`.
+`links` counts target-matching links before status filtering or paging.
+`traversal: "direct"` (the default) reads the selected records' own
 links and sets `retained_closure` to null, because it makes no closure claim.
 `traversal: "retained-closure"` also follows retained links, as composed workflows
 such as `build_call_path` do, and reports `complete` or `incomplete`; anything
-beyond a missing link remains unknown. Missing means absent from this session or
+beyond a missing link remains unknown. Closure completeness covers all examined
+outgoing links, even when the target selector hides some rows. The target
+selector does not change source filters or traverse incoming links transitively.
+Missing means absent from this session or
 file, not nonexistent, and neither status describes analysis coverage. Importing
 a missing source changes this membership without changing any Evidence ID.
+For example, `{"detail":"links","linked_evidence_id":"ev_<64 lowercase hex characters>"}`
+returns the retained direct referrers in the current investigation. An optional
+`filters.evidence_id` still selects a source record, not the cited target.
+No matches means no direct referrers among the examined retained records; it
+does not establish absence elsewhere or validate a conclusion.
 
 For a portable exported bundle, the CLI shares this projection:
 `rea inspect-evidence-bundle '{"path":"/tmp/evidence.json","detail":"summary","filters":{"operation":"analyze_function"},"offset":0,"limit":64}' --format json`.
 Follow `page.next_offset` to discover further matching records without their
 payloads, or omit both paging fields for the complete summary.
 `"detail":"records"` with an `evidence_id` filter returns that complete record,
-and `"detail":"links"` reads link membership.
+and `"detail":"links"` reads link membership. Add `linked_evidence_id` to that
+links request to select direct referrers in the file, using the same semantics
+as MCP. The target selector is rejected for other detail modes.
 The CLI validates and materializes that local bundle under its existing memory
 budget; summary delivery does not make arbitrary large files cheap to import.
 

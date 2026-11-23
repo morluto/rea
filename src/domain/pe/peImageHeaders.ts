@@ -1,4 +1,4 @@
-import { parseMzHeaderEvidence } from "../dosMz.js";
+import { hasDosMzMagic, parseMzHeaderEvidence } from "../dosMz.js";
 import { BinaryFormatFailure } from "../binaryContainer.js";
 import { malformedInput } from "../parseFailure.js";
 import { observePeCoffFrame, PE_COFF_FRAME_BYTES } from "../peCoffHeader.js";
@@ -83,8 +83,7 @@ function* peImageHeaderReads(
   fileSize: number,
 ): Generator<HeaderRead, PeImageHeaders, Buffer> {
   requirePeRange(prefix, 0, 64);
-  if (prefix[0] !== 0x4d || prefix[1] !== 0x5a)
-    peFailure("Expected an MZ PE image.");
+  if (!hasDosMzMagic(prefix)) peFailure("Expected an MZ PE image.");
   const evidence = parseMzHeaderEvidence(prefix, fileSize);
   const frame = yield* observePeCoffFrame(prefix, fileSize, evidence);
   const observed = frame.observation;

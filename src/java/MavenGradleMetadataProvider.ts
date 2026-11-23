@@ -2,20 +2,15 @@ import {
   ArtifactReaderFailure,
   ArtifactResourceScope,
   artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
   projectArtifactCloseFailure,
-  projectOwnedArtifactIdentityFailure,
-  projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
   readStableArtifact,
-  projectOwnedArtifactInputFailure,
   translateArtifactFailure,
   type StableArtifactSnapshot,
 } from "../resources/index.js";
 import {
   isParseLimit,
   parseLimitConstraint,
-  parseFailureAnalysisError,
 } from "../domain/parseFailureAnalysisError.js";
 import { decodeLimit } from "../domain/parseFailure.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -32,6 +27,8 @@ import {
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { MAVEN_GRADLE_METADATA_PROVIDER_IDENTITY } from "./MavenGradleMetadataProviderIdentity.js";
 import { parseMavenGradleMetadata } from "./MavenGradleMetadataParser.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../providers/offlineArtifactFailure.js";
 
 const OPERATION = "inspect_maven_gradle_metadata";
 
@@ -110,101 +107,77 @@ const REPORT_ALLOWANCE_SUBJECTS: Readonly<
     `The ${String(limit)}-character allowance for variant names repeated across Gradle dependency rows`,
 };
 
-const mavenGradleMetadataFailurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
-  input: InspectMavenGradleMetadataInput,
-) => {
-  const { cause, origin } = facts;
-  if (isParseLimit(cause, MAVEN_GRADLE_METADATA_FORMAT)) {
-    const { name, maximum } = cause.failure.limit;
-    return parseLimitConstraint(OPERATION, "memory", cause, {
-      path: input.path,
-      ...fixedAllowanceOptions(
-        Object.entries(REPORT_ALLOWANCE_SUBJECTS).find(
-          ([key]) => key === name,
-        )?.[1](maximum) ?? name,
-        name === "xml_nodes" ? "parser" : "report",
-        {
-          limit: maximum,
-          unit:
-            name === "repeated_variant_name_chars"
-              ? "UTF-16 code units"
-              : name === "unresolved_records"
-                ? "records"
-                : name === "dependency_rows"
-                  ? "rows"
-                  : name === "xml_nodes"
-                    ? "nodes"
-                    : name,
-        },
-      ),
-    });
-  }
-  const identityFailure = projectOwnedArtifactIdentityFailure(
-    facts,
-    OPERATION,
-    input.path,
-  );
-  if (identityFailure !== undefined) return identityFailure;
-  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
-  if (formatFailure !== undefined) return formatFailure;
-  const inputFailure = projectOwnedArtifactInputFailure(
-    facts,
-    OPERATION,
-    input.path,
-  );
-  if (inputFailure !== undefined) return inputFailure;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit" && cause.boundary === "file-size")
-      return parseLimitConstraint(
-        OPERATION,
-        "file-size",
-        decodeLimit(
-          MAVEN_GRADLE_METADATA_FORMAT,
-          cause.message,
-          { name: "max_file_bytes", maximum: input.max_file_bytes },
-          { cause },
-        ),
-        {
-          retryable: false,
-          remediationAction: inputBudgetRemediation(input),
-        },
-      );
-    return translateArtifactFailure(OPERATION, cause);
-  }
-  const fileFailure = projectSelectedArtifactFileFailure(
-    cause,
-    OPERATION,
-    input.path,
-    "Maven POM or Gradle module metadata",
-  );
-  if (fileFailure !== undefined) return fileFailure;
-  return new ArtifactOperationError(
-    OPERATION,
-    origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure
-      ? cause.reason
-      : "io",
-    undefined,
-    errorMessage(cause),
-    { cause },
-  );
-};
-
 const mavenGradleMetadataFailure = (
   cause: unknown,
   input: InspectMavenGradleMetadataInput,
   snapshot?: StableArtifactSnapshot,
 ) => {
-  const primary = mavenGradleMetadataFailurePrimary(
-    artifactFilePrimaryFacts(cause),
-    input,
-  );
+  const facts = artifactFilePrimaryFacts(cause);
   return projectStableArtifactFailure(
     cause,
-    primary,
+    classifyProviderFailure(
+      facts.cause,
+      offlineArtifactFailureDialect(facts, {
+        operation: OPERATION,
+        providerId: MAVEN_GRADLE_METADATA_PROVIDER_IDENTITY.id,
+        path: input.path,
+        description: "Maven POM or Gradle module metadata",
+        fallbackMessage: "Maven/Gradle metadata inspection failed.",
+        recognise: (failure) => {
+          if (!isParseLimit(failure, MAVEN_GRADLE_METADATA_FORMAT))
+            return undefined;
+          const { name, maximum } = failure.failure.limit;
+          return parseLimitConstraint(OPERATION, "memory", failure, {
+            path: input.path,
+            ...fixedAllowanceOptions(
+              Object.entries(REPORT_ALLOWANCE_SUBJECTS).find(
+                ([key]) => key === name,
+              )?.[1](maximum) ?? name,
+              name === "xml_nodes" ? "parser" : "report",
+              {
+                limit: maximum,
+                unit:
+                  name === "repeated_variant_name_chars"
+                    ? "UTF-16 code units"
+                    : name === "unresolved_records"
+                      ? "records"
+                      : name === "dependency_rows"
+                        ? "rows"
+                        : name === "xml_nodes"
+                          ? "nodes"
+                          : name,
+              },
+            ),
+          });
+        },
+        fileSize: (failure) =>
+          parseLimitConstraint(
+            OPERATION,
+            "file-size",
+            decodeLimit(
+              MAVEN_GRADLE_METADATA_FORMAT,
+              failure.message,
+              { name: "max_file_bytes", maximum: input.max_file_bytes },
+              { cause: failure },
+            ),
+            {
+              retryable: false,
+              remediationAction: inputBudgetRemediation(input),
+            },
+          ),
+        unclassified: (failure, origin) =>
+          origin === "owned-or-classified" &&
+          failure instanceof ArtifactReaderFailure
+            ? translateArtifactFailure(OPERATION, failure)
+            : new ArtifactOperationError(
+                OPERATION,
+                "io",
+                undefined,
+                errorMessage(failure),
+                { cause: failure },
+              ),
+      }),
+    ),
     input.path,
     MAVEN_GRADLE_METADATA_PROVIDER_IDENTITY.id,
     OPERATION,

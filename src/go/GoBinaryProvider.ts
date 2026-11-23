@@ -1,21 +1,14 @@
 import { basename } from "node:path";
 import type { AnalysisControlLimit } from "../domain/analysisSettings.js";
-import {
-  parseFailureAnalysisError,
-  parseLimitConstraint,
-} from "../domain/parseFailureAnalysisError.js";
+import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { GO_BINARY_PROVIDER_IDENTITY } from "./GoBinaryProviderIdentity.js";
 import {
-  projectSelectedArtifactFileFailure,
-  projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
-  stableArtifactInputFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
   artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
   yieldArtifactRead,
   ArtifactResourceScope,
@@ -23,11 +16,13 @@ import {
 } from "../resources/index.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { GoBinaryPort } from "../ports/go/GoBinaryPort.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../providers/offlineArtifactFailure.js";
 import {
   goBinarySchema,
   goAnalysisBudgets,
@@ -83,99 +78,80 @@ const budgetLimit = (
       }
     : {};
 
-const failureForPrimary = (
-  facts: ArtifactFilePrimaryFacts,
-  path: string,
-  budgets: GoAnalysisBudgets,
-): AnalysisError => {
-  const { cause, origin } = facts;
-  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
-    return cause;
-  const identityFailure = projectOwnedArtifactIdentityFailure(
-    facts,
-    OPERATION,
-    path,
-  );
-  if (identityFailure !== undefined) return identityFailure;
-  if (cause instanceof BinaryResourceFailure) {
-    const parameter =
-      cause.boundary === "search"
-        ? "max_header_search_bytes"
-        : cause.boundary === "build-info"
-          ? "max_build_info_bytes"
-          : undefined;
-    return parseLimitConstraint(
-      OPERATION,
-      cause.boundary === "search" ? "cpu" : "memory",
-      cause,
-      {
-        path,
-        ...(parameter === undefined
-          ? fixedAllowanceOptions(
-              "The Go structural decoding allowance",
-              "parser",
-              binaryResourceCeiling(cause),
-            )
-          : {
-              retryable: false,
-              remediationAction: `${cause.boundary === "search" ? "The Go build-info header-search allowance" : "The Go build-info string allowance"} is ${String(budgets[parameter])} bytes. ${budgetRecovery(parameter, budgets[parameter])} Other byte and report budgets are independent. Repeating the unchanged request cannot raise this allowance.`,
-              ...budgetLimit(parameter, budgets[parameter]),
-            }),
-      },
-    );
-  }
-  const formatFailure = parseFailureAnalysisError(OPERATION, path, cause);
-  if (formatFailure !== undefined) return formatFailure;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        cause.message,
-        {
-          maximum_input_bytes: budgets.max_input_bytes,
-          parameter: "max_input_bytes",
-          unit: "bytes",
-        },
-        {
-          cause,
-          retryable: false,
-          remediationAction: `${budgetRecovery("max_input_bytes", budgets.max_input_bytes)} Report, build-info and structural allowances remain independent. Preserve the complete artifact; do not truncate required bytes.`,
-          ...budgetLimit("max_input_bytes", budgets.max_input_bytes),
-        },
-      );
-    if (cause.reason === "path")
-      return stableArtifactInputFailure(cause, OPERATION);
-  }
-  const fileFailure = projectSelectedArtifactFileFailure(
-    cause,
-    OPERATION,
-    path,
-    "artifact",
-  );
-  if (fileFailure !== undefined) return fileFailure;
-  return new ProviderAdapterError(GO_BINARY_PROVIDER_IDENTITY.id, OPERATION, {
-    cause,
-    diagnostics: {
-      path,
-      reason: errorMessage(cause),
-    },
-  });
-};
-
 const failureFor = (
   cause: unknown,
   path: string,
   budgets: GoAnalysisBudgets,
   snapshot?: StableArtifactSnapshot,
 ): AnalysisError => {
-  const primary = failureForPrimary(
-    artifactFilePrimaryFacts(cause),
-    path,
-    budgets,
+  const facts = artifactFilePrimaryFacts(cause);
+  const primary = classifyProviderFailure(
+    facts.cause,
+    offlineArtifactFailureDialect(facts, {
+      providerId: GO_BINARY_PROVIDER_IDENTITY.id,
+      operation: OPERATION,
+      path,
+      description: "artifact",
+      recognise: (failure, origin) => {
+        if (failure instanceof BinaryResourceFailure) {
+          const parameter =
+            failure.boundary === "search"
+              ? "max_header_search_bytes"
+              : failure.boundary === "build-info"
+                ? "max_build_info_bytes"
+                : undefined;
+          return parseLimitConstraint(
+            OPERATION,
+            failure.boundary === "search" ? "cpu" : "memory",
+            failure,
+            {
+              path,
+              ...(parameter === undefined
+                ? fixedAllowanceOptions(
+                    "The Go structural decoding allowance",
+                    "parser",
+                    binaryResourceCeiling(failure),
+                  )
+                : {
+                    retryable: false,
+                    remediationAction: `${failure.boundary === "search" ? "The Go build-info header-search allowance" : "The Go build-info string allowance"} is ${String(budgets[parameter])} bytes. ${budgetRecovery(parameter, budgets[parameter])} Other byte and report budgets are independent. Repeating the unchanged request cannot raise this allowance.`,
+                    ...budgetLimit(parameter, budgets[parameter]),
+                  }),
+            },
+          );
+        }
+        if (
+          origin === "owned-or-classified" &&
+          failure instanceof ArtifactReaderFailure &&
+          failure.reason === "limit"
+        )
+          return new AnalysisResourceConstraintError(
+            OPERATION,
+            "file-size",
+            failure.message,
+            {
+              maximum_input_bytes: budgets.max_input_bytes,
+              parameter: "max_input_bytes",
+              unit: "bytes",
+            },
+            {
+              cause: failure,
+              retryable: false,
+              remediationAction: `${budgetRecovery("max_input_bytes", budgets.max_input_bytes)} Report, build-info and structural allowances remain independent. Preserve the complete artifact; do not truncate required bytes.`,
+              ...budgetLimit("max_input_bytes", budgets.max_input_bytes),
+            },
+          );
+        return undefined;
+      },
+      unclassified: (failure) =>
+        new ProviderAdapterError(GO_BINARY_PROVIDER_IDENTITY.id, OPERATION, {
+          cause: failure,
+          diagnostics: {
+            path,
+            reason: errorMessage(failure),
+          },
+        }),
+    }),
   );
   return projectStableArtifactFailure(
     cause,

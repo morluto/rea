@@ -155,7 +155,7 @@ export const startMcpTransport = async (
             },
           );
           return server;
-        }),
+        }, dependencies.closeServer),
       {
         onerror: (error) =>
           reportMcpTransportError(

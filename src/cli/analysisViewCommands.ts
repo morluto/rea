@@ -1,6 +1,5 @@
 import { z } from "zod";
 
-import { inspectAnalysisView } from "../application/analysisView/AnalysisViewService.js";
 import { ArtifactResourceScope } from "../resources/index.js";
 import { ANALYSIS_VIEW_PROVIDER } from "../domain/investigationProviders.js";
 import { inspectEvidenceBundleCommand } from "../application/EvidenceBundleCommands.js";
@@ -20,7 +19,7 @@ import type { CliInstance } from "./types.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { contractNamed } from "./contractCliDescription.js";
-import { registerContractDocumentCommand } from "./contractCommand.js";
+import { registerContractDocumentCommand } from "./contractDocumentCommand.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { jsonInputArgument } from "./jsonInputArgument.js";
 
@@ -36,10 +35,10 @@ export const registerAnalysisViewCommands = (
 ): void => {
   registerCliCommand(cli, CLI_COMMANDS.inspectEvidenceBundle, {
     description:
-      "Inspect a local Evidence bundle completely, as optionally paged discovery metadata, as a page of selected complete records, or as direct-link and retained-closure membership.",
+      "Inspect a local Evidence bundle completely, as optionally paged discovery metadata, as a page of selected complete records, or as direct-link and retained-closure membership and direct referrers.",
     args: z.object({
       inputJson: jsonInputArgument(
-        "JSON or JSON file with absolute path, detail, optional record filters, summary/records/links offset/limit, and links traversal/link_status",
+        "JSON or JSON file with absolute path, detail, optional source-record filters, summary/records/links offset/limit, and links traversal/linked_evidence_id/link_status (default all with a linked ID, otherwise missing)",
         inspectEvidenceBundleCliInputSchema,
       ),
     }),
@@ -101,14 +100,17 @@ export const registerAnalysisViewCommands = (
       const resources = new ArtifactResourceScope();
       const bundlePath = cliOptions.evidenceBundle;
       const result = await finishAnalysisCommand(
-        () =>
-          inspectAnalysisView(document, undefined, {
+        async () => {
+          const { inspectAnalysisView } =
+            await import("../application/analysisView/AnalysisViewService.js");
+          return inspectAnalysisView(document, undefined, {
             signal,
             resources,
             ...(bundlePath === undefined
               ? {}
               : { evidenceBundlePath: bundlePath }),
-          }),
+          });
+        },
         resources,
         ANALYSIS_VIEW_PROVIDER.id,
         operation,

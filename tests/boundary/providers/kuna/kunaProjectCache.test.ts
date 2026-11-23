@@ -23,10 +23,8 @@ import { inspectKunaInstallationOwned as inspectKunaInstallation } from "./kunaR
 import { cleanupOwnedProcessGroup } from "../../../../src/process/ProcessOwnership.js";
 import { spawnOwnedProviderProcess } from "../../../../src/process/ProviderProcess.js";
 import type { KunaInstallation } from "../../../../src/kuna/KunaInstallation.js";
-import {
-  KunaProjectCache,
-  kunaProjectKey,
-} from "../../../../src/kuna/KunaProjectCache.js";
+import { kunaProjectKey } from "../../../../src/kuna/KunaCacheManifest.js";
+import { KunaProjectCache } from "../../../../src/kuna/KunaProjectCache.js";
 import type { KunaExportStatus } from "../../../../src/kuna/KunaProjectExport.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { phaseGate } from "../../../support/lifecycleHarness.js";

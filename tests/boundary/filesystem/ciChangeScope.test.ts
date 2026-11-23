@@ -259,6 +259,8 @@ it.each([
   ["src/ports/apkSignature/ApkSignaturePort.ts", "apk_signature"],
   ["src/ports/javascript/JavaScriptRecoveryPort.ts", "javascript_recovery"],
   ["src/ports/WebRuntimePort.ts", "web_runtime"],
+  ["src/server/browserToolBindings.ts", "browser"],
+  ["src/server/browserToolBindings.ts", "web_runtime"],
   ["src/go/GoBinaryProvider.ts", "go_binary"],
   ["scripts/verify-go-binary.mjs", "go_binary"],
   ["bridge/android/ReaJadxBridge.java", "android_metadata"],

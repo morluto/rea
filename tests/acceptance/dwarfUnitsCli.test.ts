@@ -9,6 +9,7 @@ import {
   elfImage,
   macho64,
   namedUnit,
+  peImage,
 } from "../../src/native/dwarf/DwarfUnits.fixture.js";
 import {
   CPU_ARM64,
@@ -84,3 +85,42 @@ cliTest("requires an architecture for a universal Mach-O", async ({ cli }) => {
     details: { operation: "inspect_dwarf_units" },
   });
 });
+
+cliTest(
+  "rejects a PE long section name when PointerToSymbolTable is zero",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-dwarf-units-cli-pe-");
+    const path = join(root, "zero-symtab.exe");
+    const named = namedUnit({ name: "spoof.c" });
+    const base = peImage([
+      { name: "/32", body: named.info },
+      { name: ".debug_abbrev", body: named.abbrev },
+    ]);
+    const image = Buffer.alloc(Math.max(base.length, 0x5a4d + 4));
+    base.copy(image);
+    image.write(".debug_info\0", 32, "latin1");
+    const pe = image.readUInt32LE(0x3c);
+    image.writeUInt32LE(0, pe + 12);
+    image.writeUInt32LE(0, pe + 16);
+    await writeFile(path, image);
+    const result = await cli.run({
+      arguments: ["inspect-dwarf-units", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "inspect_dwarf_units",
+        issues: [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+            message: expect.stringContaining(
+              "PE long section name string table is unavailable",
+            ),
+          },
+        ],
+      },
+    });
+  },
+);

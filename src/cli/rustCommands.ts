@@ -3,10 +3,8 @@ import type { Logger } from "pino";
 import { createRustBinaryService } from "../composition/rust.js";
 import { RUST_TOOL_CONTRACTS } from "../contracts/rust/rustToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  deliverWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { deliverWithService } from "./contractCommandRunners.js";
 import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
 import type { CliInstance } from "./types.js";
 

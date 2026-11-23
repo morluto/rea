@@ -411,6 +411,9 @@ const unsigned = (value: unknown, pointer: string): bigint | null => {
   return result;
 };
 
+const QLOG_HTTP_HEADER_VALUE_RE = /^\/data\/frame\/headers\/\d+\/value$/u;
+const QLOG_TRANSPORT_URL_HEADERS = new Set(["location", "referer", "origin"]);
+
 /** Preserve JSON values/lexemes and structurally exclude only transport credentials and declared values. */
 const project = (
   value: unknown,
@@ -419,6 +422,7 @@ const project = (
   const redactor = new CaptureRedaction(sensitiveValues);
   const numeric_literals: Projection["numeric_literals"] = [];
   const eventName = object(value) ? value.name : null;
+  const hasSensitiveValues = sensitiveValues.length > 0;
   const visit = (
     item: unknown,
     pointer: string,
@@ -427,7 +431,7 @@ const project = (
     const header =
       (eventName === "http:frame_created" ||
         eventName === "http:frame_parsed") &&
-      /^\/data\/frame\/headers\/\d+\/value$/u.test(pointer) &&
+      QLOG_HTTP_HEADER_VALUE_RE.test(pointer) &&
       typeof parent?.name === "string";
     if (
       (header && isTransportCredentialHeader(String(parent?.name))) ||
@@ -449,9 +453,7 @@ const project = (
         item,
         pointer,
         header &&
-          ["location", "referer", "origin"].includes(
-            String(parent?.name).toLowerCase(),
-          )
+          QLOG_TRANSPORT_URL_HEADERS.has(String(parent?.name).toLowerCase())
           ? {}
           : undefined,
       );
@@ -460,20 +462,32 @@ const project = (
       return item.map((child, index) =>
         visit(child, capturePointer(pointer, String(index))),
       );
-    if (object(item))
-      return Object.fromEntries(
-        Object.entries(item).flatMap(([key, child]) => {
-          if (sensitiveValues.some((literal) => key.includes(literal))) {
-            redactor.redactions.push({
-              pointer,
-              reason: "explicit-sensitive-value",
-              scope: "property-name",
-            });
-            return [];
-          }
-          return [[key, visit(child, capturePointer(pointer, key), item)]];
-        }),
-      );
+    if (object(item)) {
+      const projected: Record<string, JsonValue> = {};
+      for (const [key, child] of Object.entries(item)) {
+        if (
+          hasSensitiveValues &&
+          sensitiveValues.some((literal) => key.includes(literal))
+        ) {
+          redactor.redactions.push({
+            pointer,
+            reason: "explicit-sensitive-value",
+            scope: "property-name",
+          });
+          continue;
+        }
+        const projectedValue = visit(child, capturePointer(pointer, key), item);
+        if (key === "__proto__")
+          Object.defineProperty(projected, key, {
+            value: projectedValue,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          });
+        else projected[key] = projectedValue;
+      }
+      return projected;
+    }
     return invalid("qlog parser returned a non-JSON value.", pointer);
   };
   return {

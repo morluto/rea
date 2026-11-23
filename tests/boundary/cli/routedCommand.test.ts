@@ -7,7 +7,7 @@ import { expect, it } from "vitest";
 import {
   registerRoutedCommand,
   commandRoute,
-} from "../../../src/cli/contractCommand.js";
+} from "../../../src/cli/routedContractCommand.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import { absoluteLocalPathStringSchema } from "../../../src/domain/localPath.js";
 
@@ -173,4 +173,62 @@ it("refuses routes that check a shared JSON input differently", () => {
       ],
     ),
   ).toThrow("probe routes check --policy differently");
+});
+
+it("accepts structurally matching shared options and rejects differing constraints or metadata", () => {
+  const cli = createCommandCli();
+  const command = { command: "probe", description: "Probe" };
+  const route = (name: string, extra: z.ZodType) =>
+    commandRoute(
+      {
+        name,
+        inputSchema: z.object({
+          path: absoluteLocalPathStringSchema,
+          flag: z.boolean().optional(),
+          mode: z.enum(["a", "b"]).optional(),
+          extra,
+        }),
+      },
+      {
+        ...command,
+        positionals: ["path"],
+      },
+      async () => ({}),
+      { takes: async () => true, requirement: name },
+    );
+  expect(() =>
+    registerRoutedCommand(
+      cli as unknown as CliInstance,
+      pino({ enabled: false }),
+      command,
+      [
+        route("one_probe", z.string().optional()),
+        route("two_probe", z.string().optional()),
+      ],
+    ),
+  ).not.toThrow();
+
+  expect(() =>
+    registerRoutedCommand(
+      createCommandCli() as unknown as CliInstance,
+      pino({ enabled: false }),
+      command,
+      [
+        route("one_probe", z.string().optional()),
+        route("two_probe", z.string().min(2).optional()),
+      ],
+    ),
+  ).toThrow("probe routes disagree on --extra");
+
+  expect(() =>
+    registerRoutedCommand(
+      createCommandCli() as unknown as CliInstance,
+      pino({ enabled: false }),
+      command,
+      [
+        route("one_probe", z.string().describe("first").optional()),
+        route("two_probe", z.string().describe("second").optional()),
+      ],
+    ),
+  ).toThrow("probe routes disagree on --extra");
 });

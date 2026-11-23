@@ -3,10 +3,8 @@ import type { Logger } from "pino";
 import { createLabviewArtifactService } from "../composition/labview.js";
 import { LABVIEW_TOOL_CONTRACTS } from "../contracts/labview/labviewToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  inspectWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { inspectWithService } from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 /** CLI and MCP share inspection; the reader never starts a process. */
