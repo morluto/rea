@@ -11,7 +11,7 @@ import {
   javascriptArtifactAnalysisScopes,
   isSkippedJavaScriptAnalysis,
 } from "./JavaScriptArtifactAnalysisTypes.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
+import { ownedJsonValueSchema } from "../../domain/jsonValue.js";
 import { freezeJsonSnapshot } from "../../domain/immutableJson.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import { unexaminedJavaScriptStaticCoverage } from "../../domain/javascript/javascriptStaticCoverage.js";
@@ -171,13 +171,13 @@ export const addJavaScriptArtifactFiles = (
             label: file.path,
             properties: {
               static_analysis: freezeJsonSnapshot(
-                jsonValueSchema.parse(analyzed.javascript),
+                ownedJsonValueSchema.parse(analyzed.javascript),
               ),
               semantic_module_analysis:
                 analyzed.semantic === null
                   ? null
                   : freezeJsonSnapshot(
-                      jsonValueSchema.parse(analyzed.semantic.ir),
+                      ownedJsonValueSchema.parse(analyzed.semantic.ir),
                     ),
               application_projection_failure:
                 analyzed.application_projection_failure.error,

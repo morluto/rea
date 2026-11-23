@@ -5,9 +5,15 @@ import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
-import { createElfDebugLinkService } from "../../../src/composition/binaryDiagnostics.js";
+import {
+  primaryAnalysisError,
+  resolvedAnalysisError,
+} from "../../../src/domain/analysisErrorBase.js";
+import { createElfDebugLinkService } from "../../../src/composition/binaryDiagnostics/elfDebugLink.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
+  ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
   ELF_DEBUG_LINK_CANDIDATE_PREFIX_LIMITATION,
   ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION,
   ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION,
@@ -150,23 +156,15 @@ describe("ELF debug-link stable filesystem boundary", () => {
           reason: "candidate_unreadable",
         },
       });
-      const linked = await service.inspect({ path, candidate_path: alias });
-      const relative = await service.inspect({
-        path,
-        candidate_path: "prog.debug",
-      });
-      if (linked.ok)
-        throw new Error("Expected a symlinked candidate rejection");
-      expect(linked.error).toMatchObject({
-        _tag: "AnalysisInputError",
-        issues: [{ path: ["candidate_path"], reason: "invalid_format" }],
-      });
-      if (relative.ok)
-        throw new Error("Expected a relative candidate rejection");
-      expect(relative.error).toMatchObject({
-        _tag: "AnalysisInputError",
-        issues: [{ path: ["candidate_path"], reason: "invalid_format" }],
-      });
+      for (const candidate_path of [alias, "prog.debug"]) {
+        const refusal = await service.inspect({ path, candidate_path });
+        if (refusal.ok)
+          throw new Error(`Expected refusal for ${candidate_path}`);
+        expect(refusal.error).toMatchObject({
+          _tag: "AnalysisInputError",
+          issues: [{ path: ["candidate_path"], reason: "invalid_format" }],
+        });
+      }
     } finally {
       await service.close();
     }
@@ -234,53 +232,118 @@ it("does not open a conventional lookup path when no candidate is selected", asy
   }
 });
 
-describe("ELF debug-link streamed candidate boundary", () => {
-  it("retains streamed candidate identity when cancellation stops ELF comparison", async () => {
+it.each(["comparison", "descriptor close", "failed descriptor close"] as const)(
+  "retains streamed candidate Evidence when cancelled during %s",
+  async (stage) => {
     const root = await createTestTempDirectory(
       "rea-elf-debug-link-cancel-candidate-",
     );
     const path = join(root, "prog");
     const candidatePath = join(root, "prog.debug");
-    const candidate = elfFrameAllowanceFixture();
-    await writeFile(path, elfDebugLinkFixture());
+    const candidateFixture = elfFrameAllowanceFixture();
+    const image = elfDebugLinkFixture();
+    const closing = stage !== "comparison";
+    const closeFailed = stage === "failed descriptor close";
+    const candidate = closing
+      ? Buffer.concat([candidateFixture, Buffer.alloc(160_000)])
+      : candidateFixture;
+    const parameters = {
+      path,
+      candidate_path: candidatePath,
+      ...(closing ? { max_file_bytes: image.length } : {}),
+    };
+    await writeFile(path, image);
     await writeFile(candidatePath, candidate);
     const service = createElfDebugLinkService();
     const controller = new AbortController();
-    const reason = new Error("stop while decoding candidate names");
+    const reason = new Error(`stop during the candidate ${stage}`);
     const yieldToEventLoop = scheduler.yield.bind(scheduler);
-    const pause = vi
-      .spyOn(scheduler, "yield")
-      .mockImplementationOnce(async () => {
+    const pause = vi.spyOn(scheduler, "yield");
+    const openFile = vi.mocked(open);
+    if (stage === "comparison") {
+      pause.mockImplementationOnce(async () => {
         await yieldToEventLoop();
         controller.abort(reason);
       });
+    } else {
+      const real =
+        await vi.importActual<typeof import("node:fs/promises")>(
+          "node:fs/promises",
+        );
+      openFile.mockImplementation(async (...args) => {
+        const handle = await real.open(...args);
+        if (args[0] === candidatePath) {
+          const close = handle.close.bind(handle);
+          vi.spyOn(handle, "close").mockImplementationOnce(async () => {
+            if (!closeFailed) await close();
+            controller.abort(reason);
+            if (closeFailed)
+              throw new Error("candidate descriptor not released");
+          });
+        }
+        return handle;
+      });
+    }
     try {
-      const result = await service.inspect(
-        { path, candidate_path: candidatePath },
-        { signal: controller.signal },
-      );
+      const result = await service.inspect(parameters, {
+        signal: controller.signal,
+      });
       if (result.ok)
         throw new Error("Expected candidate comparison cancellation");
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisCancelledError",
-        cause: reason,
-        partialObservation: {
-          build_id: { status: "observed", hex: FIXTURE_BUILD_ID_HEX },
-          candidate: {
-            path: candidatePath,
-            sha256: createHash("sha256").update(candidate).digest("hex"),
-            bytes: candidate.length,
-            debug_info: "unknown",
-            symtab: "unknown",
-          },
-          verification: null,
+      const primary = primaryAnalysisError(result.error);
+      expect(primary._tag).toBe("AnalysisCancelledError");
+      expect(primary.cause).toBe(reason);
+      expect(result.error.cleanupIncomplete).toBe(closeFailed);
+      expect(result.error.cleanupResources).toEqual(
+        closeFailed ? [candidatePath] : [],
+      );
+      const evidence = parseEvidence(result.error.partialObservation);
+      expect(evidence.parameters).toEqual(parameters);
+      expect(evidence.subject).toMatchObject({
+        identity: {
+          kind: "file",
+          format: "elf",
+          sha256: createHash("sha256").update(image).digest("hex"),
         },
+        local_path: path,
       });
+      expect(evidence.locations.slice(0, 2)).toEqual([
+        { kind: "artifact-path", path },
+        { kind: "artifact-path", path: candidatePath },
+      ]);
+      const report = elfDebugLinkSchema.parse(evidence.normalized_result);
+      expect(report.build_id).toMatchObject({
+        status: "observed",
+        hex: FIXTURE_BUILD_ID_HEX,
+      });
+      expect(report.candidate).toEqual({
+        path: candidatePath,
+        sha256: createHash("sha256").update(candidate).digest("hex"),
+        bytes: candidate.length,
+        format: null,
+        byte_order: null,
+        debug_info: "unknown",
+        symtab: "unknown",
+      });
+      expect(report.verification).toBeNull();
+      expect(report.limitations).toContain(
+        ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
+      );
+      if (closeFailed) {
+        await service.close();
+        expect(result.error.cleanupIncomplete).toBe(false);
+        expect(result.error.cleanupResources).toEqual([]);
+        expect(resolvedAnalysisError(result.error)).toBe(primary);
+        expect(parseEvidence(primary.partialObservation)).toEqual(evidence);
+      }
     } finally {
       pause.mockRestore();
+      openFile.mockReset();
       await service.close();
     }
-  });
+  },
+);
+describe("ELF debug-link streamed candidate boundary", () => {
   it("matches the known CRC32 of a non-ELF candidate", async () => {
     const root = await createTestTempDirectory("rea-elf-debug-link-crc32-");
     const path = join(root, "prog");

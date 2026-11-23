@@ -1,10 +1,8 @@
 import type { z } from "zod";
 
 import { cliCommandFor } from "../contracts/cliCommandNames.js";
-import type {
-  ContractCliDescription,
-  ContractCliDocumentDescription,
-} from "./contractCliDescription.js";
+import type { ContractCliDocumentDescription } from "./contractCliDocumentDescription.js";
+import type { ContractCliDescription } from "./contractCliDescriptionTypes.js";
 import type { CliInstance } from "./types.js";
 import { optionFlagName } from "./optionFields.js";
 
@@ -86,7 +84,12 @@ export interface CliCommandEntry {
   readonly source: CliCommandSource;
 }
 
-const registries = new WeakMap<CliInstance, CliCommandEntry[]>();
+interface CliRegistry {
+  readonly entries: CliCommandEntry[];
+  readonly byName: Map<string, CliCommandEntry>;
+}
+
+const registries = new WeakMap<CliInstance, CliRegistry>();
 
 /**
  * Register one command: record it in REA's command table, in registration
@@ -104,28 +107,33 @@ export const registerCliCommand = <
     readonly source?: CliCommandSource;
   } = {},
 ): void => {
-  const entries = registries.get(cli) ?? [];
-  if (entries.some((entry) => entry.name === name))
+  let registry = registries.get(cli);
+  if (registry === undefined) {
+    registry = { entries: [], byName: new Map() };
+    registries.set(cli, registry);
+  }
+  if (registry.byName.has(name))
     throw new Error(`CLI command ${name} is registered twice`);
-  entries.push({
+  const entry: CliCommandEntry = {
     name,
     definition: definition as CliCommandEntry["definition"],
     operations: registration.operations ?? [],
     source: registration.source ?? { kind: "host" },
-  });
-  registries.set(cli, entries);
+  };
+  registry.entries.push(entry);
+  operationCommandIndexes.delete(registry.entries);
+  registry.byName.set(name, entry);
 };
 
 /** Commands registered on this CLI, in registration order. */
 export const cliCommands = (cli: CliInstance): readonly CliCommandEntry[] =>
-  registries.get(cli) ?? [];
+  registries.get(cli)?.entries ?? [];
 
 /** Resolve a command identity from the same records the dispatcher serves. */
 export const cliCommand = (
   cli: CliInstance,
   name: string,
-): CliCommandEntry | undefined =>
-  cliCommands(cli).find((entry) => entry.name === name);
+): CliCommandEntry | undefined => registries.get(cli)?.byName.get(name);
 
 /**
  * The operations one contract description runs: its own contract, the
@@ -202,6 +210,56 @@ export const commandOwnOperations = (
   return operations;
 };
 
+interface OperationCommandIndex {
+  readonly canonical: ReadonlyMap<string, string>;
+  readonly contractPrimary: ReadonlyMap<string, string>;
+  readonly contractSecondary: ReadonlyMap<string, string>;
+  readonly otherMatch: ReadonlyMap<string, string>;
+}
+
+const operationCommandIndexes = new WeakMap<
+  readonly CliCommandEntry[],
+  OperationCommandIndex
+>();
+
+const getOperationCommandIndex = (
+  entries: readonly CliCommandEntry[],
+): OperationCommandIndex => {
+  let cached = operationCommandIndexes.get(entries);
+  if (cached !== undefined) return cached;
+  const canonical = new Map<string, string>();
+  const contractPrimary = new Map<string, string>();
+  const contractSecondary = new Map<string, string>();
+  const otherMatch = new Map<string, string>();
+  for (const entry of entries) {
+    const own = commandOwnOperations(entry);
+    const primaryName = own[0]?.name;
+    for (let index = 0; index < own.length; index += 1) {
+      const matched = own[index]!;
+      const opName = matched.name;
+      const command =
+        matched.selector === undefined
+          ? entry.name
+          : `${entry.name} ${matched.selector}`;
+      if (entry.name === cliCommandFor(opName) && !canonical.has(opName))
+        canonical.set(opName, command);
+      if (entry.source.kind === "contract") {
+        if (primaryName === opName) {
+          if (!contractPrimary.has(opName))
+            contractPrimary.set(opName, command);
+        } else if (!contractSecondary.has(opName)) {
+          contractSecondary.set(opName, command);
+        }
+      } else if (!otherMatch.has(opName)) {
+        otherMatch.set(opName, command);
+      }
+    }
+  }
+  cached = { canonical, contractPrimary, contractSecondary, otherMatch };
+  operationCommandIndexes.set(entries, cached);
+  return cached;
+};
+
 /**
  * The CLI command spelling (`rea <command>`) that runs a contract operation,
  * or undefined when no CLI command answers it. Prefers the canonical
@@ -215,31 +273,18 @@ export const cliCommandForOperation = (
   cliName: string,
   recordedCommands?: Readonly<Record<string, string>>,
 ): string | undefined => {
+  const index = getOperationCommandIndex(entries);
+  const direct = index.canonical.get(operation);
+  if (direct !== undefined) return `${cliName} ${direct}`;
   const canonical = cliCommandFor(operation);
-  let contractPrimary: string | undefined;
-  let contractSecondary: string | undefined;
-  let otherMatch: string | undefined;
-  for (const entry of entries) {
-    const own = commandOwnOperations(entry);
-    const matched = own.find(({ name }) => name === operation);
-    if (matched === undefined) continue;
-    const command =
-      matched.selector === undefined
-        ? entry.name
-        : `${entry.name} ${matched.selector}`;
-    if (entry.name === canonical) return `${cliName} ${command}`;
-    if (entry.source.kind === "contract") {
-      if (own[0]?.name === operation) contractPrimary ??= command;
-      else contractSecondary ??= command;
-    } else {
-      otherMatch ??= command;
-    }
-  }
   if (
     recordedCommands !== undefined &&
     Object.hasOwn(recordedCommands, canonical)
   )
     return `${cliName} ${canonical}`;
-  const selected = contractPrimary ?? contractSecondary ?? otherMatch;
+  const selected =
+    index.contractPrimary.get(operation) ??
+    index.contractSecondary.get(operation) ??
+    index.otherMatch.get(operation);
   return selected === undefined ? undefined : `${cliName} ${selected}`;
 };

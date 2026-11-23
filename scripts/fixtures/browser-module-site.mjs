@@ -1,12 +1,9 @@
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 
 /** Source-owned module graph with actual native loading and an uncalled lazy edge. */
 export async function startBrowserModuleSite() {
   const requests = [];
-  const importMap = {
-    imports: { "pkg/": "/pkg/", alias: "./global.js", blocked: null },
-    scopes: { "/scoped/": { alias: "./scoped.js" } },
-  };
   const main = `
 import {marker as alias} from 'alias';
 import {marker as pkg} from 'pkg/nested.js';
@@ -24,6 +21,13 @@ function encodedEscape(){return import('pkg/%2e%2e/escape.js')}
 function empty(){return import('')}
 function computed(name){return import(name)}
 `;
+  const importMap = {
+    imports: { "pkg/": "/pkg/", alias: "./global.js", blocked: null },
+    integrity: {
+      "/scoped/main.js?build=2#entry": `sha256-${createHash("sha256").update(main).digest("base64")}`,
+    },
+    scopes: { "/scoped/": { alias: "./scoped.js" } },
+  };
   const server = createServer((request, response) => {
     requests.push(request.url);
     if (request.url === "/")

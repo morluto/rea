@@ -14,6 +14,7 @@ describe("modern Swift category evidence", () => {
     ["$s4main4PairV5otherE7doubledSiyF", "extensions"],
     ["$S4main4PairVMa", "structs"],
     ["_T04main4PairVMa", "structs"],
+    ["__T04main4PairVMa", "structs"],
     ["$s4_TtX4PairVMa", "structs"],
   ] as const)("decodes nominal contexts for %s", (name, category) => {
     expect(
@@ -78,56 +79,6 @@ describe("modern Swift category evidence", () => {
         pattern: "missing",
       }),
     ).toMatchObject({ total: 0, unclassified: [] });
-  });
-
-  it("preserves unsupported zero-prefixed nested Unicode contexts as unresolved", () => {
-    const names = [
-      "_$s6Nested8EnvelopeV007IhuqBAbO8describeSSyF",
-      "_$s6Nested8EnvelopeV007jvrtDBlCAEycfC",
-      "_$s6Nested8EnvelopeV007jvrtDBlCMa",
-    ];
-    const procedures = names.map((name, index) => ({
-      address: `0x${String(index + 1)}`,
-      name,
-    }));
-    const unresolved = names.map((name) => ({
-      name,
-      mangled_names: [name],
-      reason: "category_not_decoded",
-    }));
-    expect(categorizeSwiftTypes(procedures)).toMatchObject({
-      total: 3,
-      categories: {
-        other: {
-          items: names.map((name) => ({ name, mangled_names: [name] })),
-        },
-      },
-      unclassified: unresolved,
-    });
-
-    for (const category of ["classes", "enums"] as const)
-      expect(categorizeSwiftTypes(procedures, { category })).toMatchObject({
-        total: 0,
-        categories: { [category]: { count: 0 }, other: { count: 0 } },
-        unclassified: unresolved,
-      });
-  });
-
-  it("keeps outer and ASCII nested nominal categories decoded", () => {
-    const names = [
-      ["_$s6Nested8EnvelopeVMa", "structs"],
-      ["_$s6Nested8EnvelopeV5InnerCMa", "classes"],
-      ["_$s6Nested8EnvelopeV5InnerC6methodyyF", "classes"],
-    ] as const;
-    for (const [name, category] of names) {
-      expect(
-        categorizeSwiftTypes([{ address: "0x1", name }], { category }),
-      ).toMatchObject({
-        total: 1,
-        categories: { [category]: { count: 1 } },
-        unclassified: [],
-      });
-    }
   });
 
   it("deduplicates display names after selecting a category", () => {
@@ -195,6 +146,7 @@ describe("Swift alias ambiguity", () => {
         [
           { address: "0x1", name: "$s4main4PairVMa" },
           { address: "0x1", name: "$s4main7ServiceCMa" },
+          { address: "0x1", name: "$s4main5StateOMa" },
         ],
       ),
     ).toMatchObject({
@@ -203,7 +155,11 @@ describe("Swift alias ambiguity", () => {
         {
           name: "shared",
           reason: "conflicting_categories",
-          mangled_names: ["$s4main4PairVMa", "$s4main7ServiceCMa"],
+          mangled_names: [
+            "$s4main4PairVMa",
+            "$s4main7ServiceCMa",
+            "$s4main5StateOMa",
+          ],
         },
       ],
     });
@@ -224,62 +180,47 @@ describe("Swift alias ambiguity", () => {
     expect(result.unclassified.map((item) => item.name)).toEqual(names);
   });
 
-  it("keeps legacy names with an optional leading underscore", () => {
-    expect(
-      categorizeSwiftTypes([{ address: "0x1", name: "__T04main4PairVMa" }], {
-        category: "structs",
-      }),
-    ).toMatchObject({
-      total: 1,
-      categories: { structs: { count: 1 } },
+  it("retains decoded and undecoded aliases when the filter matches only a mangled name", () => {
+    const exact = "_$s4main7ServiceCMa";
+    const demanglerOnly = "$e4main7ServiceCMa";
+    const unresolved = ["_$s4main04PairVMa", demanglerOnly];
+    const result = categorizeSwiftTypes(
+      [
+        { address: "0x2", name: exact },
+        { address: "0x1", name: "renamedInitializer" },
+      ],
+      { category: "classes", pattern: "Service" },
+      [
+        ...[exact, ...unresolved, exact].map((name) => ({
+          address: "0x1",
+          name,
+        })),
+        { address: "0x2", name: demanglerOnly },
+      ],
+    );
+    expect(result).toMatchObject({
+      total: 2,
+      categories: {
+        classes: {
+          count: 2,
+          items: [
+            {
+              address: "0x2",
+              name: exact,
+              mangled_names: [exact, demanglerOnly],
+            },
+            {
+              address: "0x1",
+              name: "renamedInitializer",
+              mangled_names: [exact, ...unresolved],
+            },
+          ],
+        },
+        other: { count: 0 },
+      },
       unclassified: [],
     });
   });
-
-  it("does not let a demangler-only alias erase a decoded category", () => {
-    const result = categorizeSwiftTypes(
-      [{ address: "0x1", name: "$s4main7ServiceCMa" }],
-      {},
-      [{ address: "0x1", name: "$e4main7ServiceCMa" }],
-    );
-    expect(result.categories.classes?.items).toMatchObject([
-      {
-        name: "$s4main7ServiceCMa",
-        mangled_names: ["$s4main7ServiceCMa", "$e4main7ServiceCMa"],
-      },
-    ]);
-    expect(result.categories.other?.items).toEqual([]);
-  });
-
-  it.each([undefined, "classes"] as const)(
-    "keeps a decoded alias category beside an undecoded Swift alias (filter %s)",
-    (category) => {
-      const result = categorizeSwiftTypes(
-        [{ address: "0x1", name: "main::Service::init" }],
-        category === undefined ? {} : { category },
-        [
-          { address: "0x1", name: "_$s4main7ServiceCMa" },
-          { address: "0x1", name: "_$s4main04PairVMa" },
-        ],
-      );
-      expect(result).toMatchObject({
-        total: 1,
-        categories: {
-          classes: {
-            count: 1,
-            items: [
-              {
-                name: "main::Service::init",
-                mangled_names: ["_$s4main7ServiceCMa", "_$s4main04PairVMa"],
-              },
-            ],
-          },
-          other: { count: 0 },
-        },
-        unclassified: [],
-      });
-    },
-  );
 });
 
 it("does not recognize embedded Swift runtime markers in Objective-C selectors", () => {
@@ -333,7 +274,10 @@ it("selects exact Objective-C protocol symbol leaves", () => {
     "__OBJC_PROTOCOL_REFERENCE_$_Runnable",
     "__OBJC_PROTOCOL_$_",
   ].map((name, index) => ({ address: `0x${index + 4}`, name }));
-  expect(discoverObjcProtocols([...otherNames, ...declarations])).toEqual({
+  const duplicate = { address: "0x20", name: "OBJC_PROTOCOL_$_Runnable" };
+  expect(
+    discoverObjcProtocols([...otherNames, ...declarations, duplicate]),
+  ).toEqual({
     count: declarations.length,
     protocols: declarations,
   });

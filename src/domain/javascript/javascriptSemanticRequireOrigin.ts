@@ -1215,10 +1215,17 @@ const hasCommonJsModuleSource = (
   // created after exhaustion. Unnormalized paths can grow without a binding.
   let exhausted = false;
   let drained = 0;
+  let pendingHead = 0;
   for (
     let next = pending.pop();
     next !== undefined;
-    next = exhausted ? pending.shift() : pending.pop()
+    next = exhausted
+      ? pendingHead < pending.length
+        ? pending[pendingHead++]
+        : undefined
+      : pendingHead < pending.length
+        ? pending.pop()
+        : undefined
   ) {
     const value = unwrapJavaScriptExpression(next.node).node;
     const { awaitDepths } = next;
@@ -1971,6 +1978,12 @@ export const semanticMutableBuiltinOrigin = <Key = never>(
   if (specifier === "events" && path[0] === "EventEmitter" && path.length > 1)
     return { specifier, path };
   if (specifier === "process" && (path[0] === "env" || path[0] === "argv"))
+    return { specifier, path };
+  // Named and namespace exports still expose the same mutable Agent object.
+  if (
+    (specifier === "http" || specifier === "https") &&
+    path[0] === "globalAgent"
+  )
     return { specifier, path };
   return specifier === "fs" && path[0] === "promises"
     ? { specifier, path }

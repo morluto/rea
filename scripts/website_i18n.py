@@ -272,6 +272,7 @@ def prose_units(source, path):
 
 def attribute_units(source, path):
     """Extract accessibility labels and authored metadata without translating URLs."""
+    from website import DEFAULT_IMAGE_ALT
     units = []
     document = Document(source)
     for node in document.nodes:
@@ -284,7 +285,7 @@ def attribute_units(source, path):
             text = node.attrs.get(name)
             if text and translatable(text):
                 context = "shared" if "<!-- website:header:start -->" in source[:node.start] and "<!-- website:header:end -->" not in source[:node.start] else "page:" + path
-                if name == "content" and node.attrs.get("name") != "description":
+                if text == DEFAULT_IMAGE_ALT and name == "content":
                     context = "shared"
                 units.append((context, text, {}, node, name))
     return units
@@ -559,10 +560,13 @@ def render_page(root, source_path, language, messages, available, figures, page_
     payload = json.dumps(runtime, ensure_ascii=False).replace("<", "\\u003c").replace("&", "\\u0026")
     # Only Korean editions request the font stylesheet; English fallbacks keep
     # their system fonts. The variable face also supplies the site's 650 weight.
-    font_stylesheet = (
-        '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@100..900&amp;display=swap" />\n  '
-        if code == "ko" else ""
-    )
+    font_stylesheet = ""
+    if code == "ko":
+        href = "https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@100..900&amp;display=swap"
+        font_stylesheet = (
+            f"""<link rel="preload" as="style" fetchpriority="low" href="{href}" onload="this.onload=null;this.rel='stylesheet'" />"""
+            f'<noscript><link rel="stylesheet" href="{href}" /></noscript>\n  '
+        )
     source = source.replace("</head>", f'{font_stylesheet}<script id="website-messages" type="application/json">{payload}</script>\n  </head>')
     return source
 

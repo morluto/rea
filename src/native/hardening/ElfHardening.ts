@@ -25,7 +25,10 @@ import {
 } from "../../domain/elfDynamicEntry.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";
-import { elfSymbolSize, readElfSymbol } from "../../domain/elfSymbol.js";
+import {
+  elfSymbolSize,
+  readElfSymbolFieldsAt,
+} from "../../domain/elfSymbol.js";
 import {
   readElfGnuHashSymbolCount,
   readElfHashSymbolCount,
@@ -274,7 +277,11 @@ const hardeningFromDirectory = (
     // One import table above the entry budget must not drop PIE, NX, or RELRO.
     // The import rows stay unknown.
     if (!(cause instanceof BinaryResourceFailure)) throw cause;
-    symbols = { state: "unresolved", reason: cause.message, names: [] };
+    symbols = {
+      state: "unresolved",
+      reason: cause.message,
+      ...EMPTY_SYMBOL_MATCHES,
+    };
   }
   const features = readFeatureNotes(
     bytes,
@@ -309,18 +316,14 @@ const hardeningFromDirectory = (
     symbolRow(
       "stack_protector",
       symbols,
-      (name) =>
-        name === "__stack_chk_fail" || name === "__stack_chk_fail_local",
+      symbols.stackProtector,
       "No __stack_chk_fail symbol was found in the dynamic symbol table. A static or stripped image can omit that import while still using a stack protector.",
       "The dynamic symbol table is absent, so stack protector use is unknown.",
     ),
     symbolRow(
       "fortify",
       symbols,
-      (name) =>
-        name === "__fortify_fail" ||
-        name === "__chk_fail" ||
-        (name.startsWith("__") && name.endsWith("_chk")),
+      symbols.fortify,
       "No fortify symbol was found in the dynamic symbol table. A static or stripped image can omit those imports while still using FORTIFY.",
       "The dynamic symbol table is absent, so FORTIFY use is unknown.",
     ),
@@ -496,17 +499,32 @@ type SymbolName = {
   readonly offset: number;
   readonly bytes: number;
 };
-/** `unresolved` keeps the names read so far. A sign among them still counts. */
+/** `unresolved` keeps any hardening signs read so far. A sign among them still counts. */
 type SymbolScan =
   | {
       readonly state: "absent" | "scanned";
-      readonly names: readonly SymbolName[];
+      readonly stackProtector: SymbolName | undefined;
+      readonly fortify: SymbolName | undefined;
     }
   | {
       readonly state: "unresolved";
       readonly reason: string;
-      readonly names: readonly SymbolName[];
+      readonly stackProtector: SymbolName | undefined;
+      readonly fortify: SymbolName | undefined;
     };
+
+const EMPTY_SYMBOL_MATCHES = {
+  stackProtector: undefined,
+  fortify: undefined,
+} as const;
+
+const isStackProtectorSymbol = (name: string): boolean =>
+  name === "__stack_chk_fail" || name === "__stack_chk_fail_local";
+
+const isFortifySymbol = (name: string): boolean =>
+  name === "__fortify_fail" ||
+  name === "__chk_fail" ||
+  (name.startsWith("__") && name.endsWith("_chk"));
 
 /**
  * The loader reads DT_SYMTAB and DT_STRTAB, so section headers cannot declare
@@ -531,12 +549,12 @@ const readSymbols = (
   const symtab = dynamic?.entries.get(DT_SYMTAB);
   if (dynamic === null || symtab === undefined)
     return section === undefined
-      ? { state: "absent", names: [] }
+      ? { state: "absent", ...EMPTY_SYMBOL_MATCHES }
       : {
           state: "unresolved",
           reason:
             "An SHT_DYNSYM section exists, but no DT_SYMTAB declares it, so its names are not established as imports.",
-          names: [],
+          ...EMPTY_SYMBOL_MATCHES,
         };
   const width = elfSymbolSize(bits);
   const syment = dynamic.entries.get(DT_SYMENT);
@@ -553,7 +571,7 @@ const readSymbols = (
       reason: dynamic.entries.has(DT_GNU_HASH)
         ? "DT_GNU_HASH has no hashed symbols and no agreeing SHT_DYNSYM section gives the count, so the dynamic symbol table could not be read."
         : "Neither DT_HASH nor DT_GNU_HASH is present and no agreeing SHT_DYNSYM section gives the count, so the dynamic symbol table could not be read.",
-      names: [],
+      ...EMPTY_SYMBOL_MATCHES,
     };
   budget(count, "ELF dynamic symbol table");
   const base = mapVa(symtab.value, BigInt(count * width)).offset;
@@ -618,21 +636,25 @@ const readSymbolNames = (
   stringFileOffset: number,
 ): SymbolScan => {
   const width = elfSymbolSize(bits);
-  const names: SymbolName[] = [];
+  let stackProtector: SymbolName | undefined;
+  let fortify: SymbolName | undefined;
   let scanned = 0;
   let unterminated = false;
   for (let index = 0; index < count; index += 1) {
-    const at = offset + index * width;
-    const symbol = readElfSymbol(bytes.subarray(at, at + width), bits, little);
-    if (!symbol.ok) malformed(symbol.error.message);
-    const nameOffset = symbol.value.name_offset;
-    if (nameOffset === 0) continue;
-    // SHN_UNDEF is an import. A defined export of the same name is not a sign
-    // that this image references the protector.
-    if (symbol.value.section_index !== 0) continue;
-    // An STB_LOCAL symbol is never resolved against another object, so it
-    // does not establish an external import.
-    if (symbol.value.binding === STB_LOCAL) continue;
+    const symbol = readElfSymbolFieldsAt(
+      bytes,
+      offset + index * width,
+      bits,
+      little,
+    );
+    if (symbol === null) malformed("ELF symbol record is truncated");
+    if (
+      symbol.name_offset === 0 ||
+      symbol.section_index !== 0 ||
+      symbol.binding === STB_LOCAL
+    )
+      continue;
+    const nameOffset = symbol.name_offset;
     const observed = observeElfStringTableEntry(
       strings,
       nameOffset,
@@ -643,7 +665,8 @@ const readSymbolNames = (
       return {
         state: "unresolved",
         reason: `ELF symbol name scans examined more than the ${String(MAX_BINARY_HARDENING_SYMBOL_SCAN_BYTES)}-byte structural budget, so this import sign is unknown.`,
-        names,
+        stackProtector,
+        fortify,
       };
     if (observed.state === "outside")
       malformed("ELF dynamic symbol name offset is outside the string table");
@@ -652,19 +675,36 @@ const readSymbolNames = (
       unterminated = true;
       continue;
     }
-    names.push({
-      name: elfStringTableText(observed) ?? "",
-      offset: stringFileOffset + nameOffset,
-      bytes: observed.contentBytes,
-    });
+    // The "__" prefix and "_chk" suffix can overlap in "__chk".
+    if (
+      (stackProtector === undefined || fortify === undefined) &&
+      observed.contentBytes >= 5 &&
+      strings[nameOffset] === 0x5f &&
+      strings[nameOffset + 1] === 0x5f
+    ) {
+      const name = elfStringTableText(observed) ?? "";
+      if (stackProtector === undefined && isStackProtectorSymbol(name))
+        stackProtector = {
+          name,
+          offset: stringFileOffset + nameOffset,
+          bytes: observed.contentBytes,
+        };
+      if (fortify === undefined && isFortifySymbol(name))
+        fortify = {
+          name,
+          offset: stringFileOffset + nameOffset,
+          bytes: observed.contentBytes,
+        };
+    }
   }
   return unterminated
     ? {
         state: "unresolved",
         reason: `An undefined dynamic symbol name has no NUL within the string table or the ${String(MAX_BINARY_HARDENING_SYMBOL_NAME_BYTES)}-byte name budget, so this import sign is unknown.`,
-        names,
+        stackProtector,
+        fortify,
       }
-    : { state: "scanned", names };
+    : { state: "scanned", stackProtector, fortify };
 };
 
 const hashWords = (
@@ -888,7 +928,7 @@ const readFeatureNotes = (
           ),
         ];
   const propertySections: ElfNoteTableWalk[] = [];
-  const otherSpans: NoteSpan[] = [];
+  const compressedSpans: NoteSpan[] = [];
   let incomplete: string | null = null;
   for (const section of sections) {
     const storage = elfNoteSectionStorage(section);
@@ -899,7 +939,7 @@ const readFeatureNotes = (
       incomplete ??=
         "A compressed SHT_NOTE section may hold GNU property notes, and its descriptors were not read.";
       if (!section.file_backed) continue;
-      otherSpans.push({
+      compressedSpans.push({
         offset: exact(section.offset, "SHT_NOTE offset"),
         size: exact(section.size, "SHT_NOTE size"),
       });
@@ -916,29 +956,20 @@ const readFeatureNotes = (
       ),
     );
   }
-  const overlapsProperty = overlapIndex([
-    ...propertyProgram,
-    ...propertySections,
-  ]);
-  const overlapsOther = overlapIndex(otherSpans);
+  const compressedOverlap = overlapIndex(compressedSpans);
+  // Aliased declarations cannot reinterpret compressed bytes as raw notes.
+  const independentlyFramed = (table: NoteSpan) =>
+    compressedOverlap(table) === "none";
   const programTables: ElfNoteTableWalk[] = [];
   for (const noteProgram of notePrograms) {
-    const span = {
-      offset: exact(noteProgram.file_offset, "PT_NOTE offset"),
-      size: exact(noteProgram.file_size, "PT_NOTE size"),
-    };
-    const property = overlapsProperty(span) !== "none";
-    // Do not reinterpret compressed section bytes through a program alias.
-    if (overlapsOther(span) !== "none" && !property) continue;
-    programTables.push(
-      noteTable(
-        bytes,
-        span.offset,
-        span.size,
-        noteProgram.alignment,
-        "PT_NOTE",
-      ),
+    const table = noteTable(
+      bytes,
+      exact(noteProgram.file_offset, "PT_NOTE offset"),
+      exact(noteProgram.file_size, "PT_NOTE size"),
+      noteProgram.alignment,
+      "PT_NOTE",
     );
+    if (independentlyFramed(table)) programTables.push(table);
   }
   const unresolvedOverlap = (overlap: NoteOverlap): void => {
     incomplete ??= {
@@ -951,8 +982,8 @@ const readFeatureNotes = (
   };
   const tables = admitDisjointTables(
     admitDisjointTables(
-      byOffset(propertyProgram),
-      propertySections,
+      byOffset(propertyProgram).filter(independentlyFramed),
+      propertySections.filter(independentlyFramed),
       unresolvedOverlap,
     ),
     programTables,
@@ -1109,11 +1140,10 @@ const relroRow = (
 const symbolRow = (
   property: "stack_protector" | "fortify",
   symbols: SymbolScan,
-  match: (name: string) => boolean,
+  found: SymbolName | undefined,
   missing: string,
   absent: string,
 ): BinaryHardeningRow => {
-  const found = symbols.names.find(({ name }) => match(name));
   if (found !== undefined)
     return row({
       property,

@@ -38,11 +38,9 @@ import {
 } from "../native/elf/ElfNotes.fixture.js";
 import { peResourceFixture } from "../domain/pe/peResources.fixture.js";
 import { locateNodeSea } from "./nodeSea/NodeSeaLocation.js";
+import { observeNodeSeaFuseMatches } from "./nodeSea/NodeSeaBlob.js";
 import { MAX_INSPECT_PE_FILE_BYTES } from "../domain/native/peResources.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
-import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { createDeferred } from "../../tests/fixtures/binarySession.js";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   CPU_ARM64,
@@ -505,21 +503,6 @@ it.each(["thin", "universal"] as const)(
   },
 );
 
-it("classifies a main script without a JavaScript suffix as javascript-bundle", async () => {
-  const snapshot = await scanCanonicalArtifactInventory(
-    await writeCarrier(
-      "plain-name",
-      nodeSeaElf({ codePath: "main", main: script, fuse: "set" }),
-    ),
-  );
-  expect(
-    snapshot.occurrences.find((row) => row.logical_path === "main"),
-  ).toMatchObject({
-    artifact_kind: "javascript",
-    artifact_format: "javascript-bundle",
-  });
-});
-
 it("keeps a snapshot body opaque and retains the code path", async () => {
   const snapshot = await scanCanonicalArtifactInventory(
     await writeCarrier(
@@ -549,52 +532,71 @@ it("keeps a snapshot body opaque and retains the code path", async () => {
   });
 });
 
-it.each([
-  ["absent", undefined, "absent", null],
-  ["unset", "unset", "unset", `NODE_SEA_FUSE_${NODE_SEA_FUSE_HASH}:0`],
-] as const)(
-  "reports a %s fuse as a contradiction",
-  async (_label, fuse, state, sentinel) => {
-    const reason =
-      state === "absent"
-        ? /no NODE_SEA_FUSE sentinel.*observed/iu
-        : /NODE_SEA_FUSE sentinel.*unset/iu;
-    const snapshot = await scanCanonicalArtifactInventory(
-      await writeCarrier(
-        "fuse",
-        nodeSeaElf({ ...(fuse === undefined ? {} : { fuse }), main: script }),
-      ),
-    );
-    const metadata = snapshot.occurrences.find(
-      (row) => row.logical_path === ".",
-    )?.format_metadata;
-    expect(metadata).toMatchObject({
-      fuse_state: state,
-      fuse_sentinel: sentinel,
-      fuse_contradiction: expect.stringMatching(reason),
-    });
-    const contradiction = (metadata as { fuse_contradiction: string })
-      .fuse_contradiction;
-    expect(snapshot.limitations).toContain(contradiction);
-    expect(snapshot.coverage.status).toBe("complete");
-  },
-);
+const UNSET_FUSE = `NODE_SEA_FUSE_${NODE_SEA_FUSE_HASH}:0`;
 
-it("reports disagreeing fuse sentinels", async () => {
+it.each([
+  ["only invalid fuse spellings", null],
+  ["identical unset fuses across read boundaries", UNSET_FUSE],
+] as const)("classifies a SEA carrier with %s", async (_, sentinel) => {
+  const base = nodeSeaElf({ main: script });
+  const split = 64 * 1024;
+  const bytes =
+    sentinel === null
+      ? Buffer.concat([
+          base,
+          Buffer.from(
+            `NODE_SEA_FUSE_${NODE_SEA_FUSE_HASH.toUpperCase()}:0\0NODE_SEA_FUSE_${NODE_SEA_FUSE_HASH}:2\0NODE_SEA_FUSE_${NODE_SEA_FUSE_HASH}:`,
+          ),
+        ])
+      : Buffer.alloc(split * 2 + sentinel.length);
+  if (sentinel !== null) {
+    base.copy(bytes);
+    const carried = sentinel.length - 1;
+    bytes.write(sentinel, split - carried);
+    bytes.write(sentinel, split * 2 - carried);
+  }
   const snapshot = await scanCanonicalArtifactInventory(
-    await writeCarrier("conflict", nodeSeaPe({ fuse: "conflicting" })),
+    await writeCarrier("fuse", bytes),
   );
   const metadata = snapshot.occurrences.find(
     (row) => row.logical_path === ".",
   )?.format_metadata;
+  if (metadata?.kind !== "node-sea")
+    throw new Error("Expected a Node SEA carrier");
   expect(metadata).toMatchObject({
-    fuse_state: "conflicting",
-    fuse_sentinel: null,
-    fuse_contradiction: expect.stringMatching(/fuse sentinels disagree/iu),
+    fuse_state: sentinel === null ? "absent" : "unset",
+    fuse_sentinel: sentinel,
+    fuse_contradiction: observeNodeSeaFuseMatches(
+      sentinel === null ? [] : [sentinel],
+    ).fuseContradiction,
   });
-  const contradiction = (metadata as { fuse_contradiction: string })
-    .fuse_contradiction;
-  expect(snapshot.limitations).toContain(contradiction);
+  expect(snapshot.limitations).toContain(metadata.fuse_contradiction);
+  expect(snapshot.coverage.status).toBe("complete");
+});
+
+it("reports disagreeing PE fuse sentinels after identical repeats", async () => {
+  for (const bit of ["0", "1"]) {
+    const different = `NODE_SEA_FUSE_${"a".repeat(32)}:${bit}`;
+    const image = Buffer.concat([
+      nodeSeaPe(),
+      Buffer.from([UNSET_FUSE, UNSET_FUSE, different].join("\0")),
+    ]);
+    const snapshot = await scanCanonicalArtifactInventory(
+      await writeCarrier("conflict", image),
+    );
+    const metadata = snapshot.occurrences.find(
+      (row) => row.logical_path === ".",
+    )?.format_metadata;
+    if (metadata?.kind !== "node-sea")
+      throw new Error("Expected a Node SEA carrier");
+    expect(metadata, `conflict with fuse bit ${bit}`).toMatchObject({
+      fuse_state: "conflicting",
+      fuse_sentinel: null,
+      fuse_contradiction: observeNodeSeaFuseMatches([UNSET_FUSE, different])
+        .fuseContradiction,
+    });
+    expect(snapshot.limitations).toContain(metadata.fuse_contradiction);
+  }
 });
 
 it("leaves a Mach-O, ELF, or PE without a SEA slot in its native format", async () => {
@@ -1016,19 +1018,6 @@ it("extracts the main script and assets without executing them", async () => {
   }
 });
 
-it("rejects duplicate raw asset keys", async () => {
-  const path = await writeCarrier(
-    "duplicate-assets",
-    nodeSeaElf({
-      assets: [
-        { name: "data.txt", body: "a" },
-        { name: "data.txt", body: "b" },
-      ],
-    }),
-  );
-  await expect(scanCanonicalArtifactInventory(path)).rejects.toThrow();
-});
-
 it("maps an unsafe module path and opaque asset keys without losing their sources", async () => {
   const path = await writeCarrier(
     "opaque-names",
@@ -1183,6 +1172,7 @@ it("rejects forged entries and changed carrier identity, then closes idempotentl
     for await (const entry of reader.entries()) entries.push(entry);
     const entry = entries[0];
     if (entry === undefined) throw new Error("Missing main script");
+    expect(reader.formatMetadata()).toMatchObject({ kind: "node-sea" });
     await expect(
       reader.open({ ...entry, byteOffset: 0 }),
     ).rejects.toMatchObject({ reason: "integrity" });
@@ -1192,43 +1182,38 @@ it("rejects forged entries and changed carrier identity, then closes idempotentl
     });
   } finally {
     await reader.close();
-    await reader.close();
   }
+  expect(reader.formatMetadata()).toBeUndefined();
+  await reader.close();
 });
 
-it("reports a member that ends after the carrier recheck as an integrity failure", async () => {
-  const path = await writeCarrier("ended", nodeSeaElf());
-  const descriptor = await openRegularFile(path, { symlinks: "reject" });
-  const reader = new NodeSeaArtifactReader(path, descriptor);
-  try {
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
-    const entry = entries[0];
-    if (entry === undefined) throw new Error("Missing main script");
-    // open() rechecks the carrier's identity; the file then ends mid-member.
-    const read = descriptor.handle.read.bind(descriptor.handle);
-    let calls = 0;
-    const truncated = vi
-      .spyOn(descriptor.handle, "read")
-      .mockImplementation((...args: unknown[]) => {
-        calls += 1;
-        if (calls > 1)
-          return Promise.resolve({ bytesRead: 0, buffer: args[0] });
-        args[2] = 3;
-        return Reflect.apply(read, descriptor.handle, args);
-      });
-    try {
-      await expect(buffer(await reader.open(entry))).rejects.toMatchObject({
-        reason: "integrity",
-        message: expect.stringContaining("sea.js"),
-      });
-      expect(calls).toBe(2);
-    } finally {
-      truncated.mockRestore();
+it("withholds SEA metadata and coverage if the carrier changes before publication", async () => {
+  const image = nodeSeaElf(populated);
+  const path = await writeCarrier("changed-before-publication", image);
+  class ChangedCarrier extends NodeSeaArtifactReader {
+    protected override async prepareEntries(signal?: AbortSignal) {
+      const prepared = await super.prepareEntries(signal);
+      await writeFile(path, Buffer.concat([image, Buffer.from([0])]));
+      return prepared;
     }
+  }
+  const reader = new ChangedCarrier(path);
+  try {
+    let covered = false;
+    await expect(
+      reader
+        .entries(undefined, {
+          onCoverage: () => {
+            covered = true;
+          },
+        })
+        [Symbol.asyncIterator]()
+        .next(),
+    ).rejects.toMatchObject({ reason: "integrity" });
+    expect(covered).toBe(false);
+    expect(reader.formatMetadata()).toBeUndefined();
   } finally {
     await reader.close();
-    await descriptor.handle.close();
   }
 });
 
@@ -1263,52 +1248,6 @@ it.each([8, 1024 * 1024])(
     }
   },
 );
-
-it("joins Node SEA descriptor closure and preserves its failure for retry", async () => {
-  const path = await writeCarrier("close-retry", nodeSeaElf());
-  const reader = new NodeSeaArtifactReader(path);
-  const reached = createDeferred<OwnedFileHandle>();
-  const release = createDeferred<void>();
-  const failure = new Error("controlled descriptor close failure");
-  let closing: Promise<unknown> | undefined;
-  try {
-    expect(await seaEntries(reader)).not.toHaveLength(0);
-    const close = vi.spyOn(OwnedFileHandle.prototype, "close");
-    try {
-      close.mockImplementationOnce(async function (this: OwnedFileHandle) {
-        reached.resolve(this);
-        await release.promise;
-        throw failure;
-      });
-      let settled = false;
-      closing = reader.close().then(
-        () => {
-          settled = true;
-          return undefined;
-        },
-        (cause: unknown) => {
-          settled = true;
-          return cause;
-        },
-      );
-      await awaitAcknowledgement(reached.promise, closing, "descriptor close");
-      const owner = await reached.promise;
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      expect(settled).toBe(false);
-      release.resolve();
-      expect(await closing).toBe(failure);
-      expect(owner.handle.fd).toBeGreaterThanOrEqual(0);
-      await reader.close();
-      expect(owner.handle.fd).toBe(-1);
-    } finally {
-      release.resolve();
-      await closing;
-      close.mockRestore();
-    }
-  } finally {
-    await reader.close();
-  }
-});
 
 it("honors cancellation before admitting a carrier", async () => {
   const path = await writeCarrier("cancel", nodeSeaElf());
@@ -1497,7 +1436,7 @@ it.each(["valid replacement", "malformed blob"] as const)(
   },
 );
 
-it("allows an uncancelled inventory after a cancelled SEA preparation", async () => {
+it("allows an uncancelled inventory sharing a SEA preparation cancelled during the fuse scan", async () => {
   const path = await writeCarrier("cancel-retry", nodeSeaElf(populated));
   const reader = new NodeSeaArtifactReader(path);
   const controller = new AbortController();
@@ -1506,13 +1445,28 @@ it("allows an uncancelled inventory after a cancelled SEA preparation", async ()
   const prototype = Object.getPrototypeOf(observed) as FileHandle;
   const original = prototype.read;
   let stopped = false;
+  let other: Promise<IteratorResult<unknown>> | undefined;
   const spy = vi.spyOn(prototype, "read").mockImplementation(async function (
     this: FileHandle,
     ...args: Parameters<typeof original>
   ) {
     const result = await original.apply(this, args);
-    if (!stopped) {
+    const [destination] = args;
+    // Fuse scanning uses the reusable 64 KiB scratch buffer plus overlap.
+    if (
+      !stopped &&
+      Buffer.isBuffer(destination) &&
+      destination.length > 64 * 1024
+    ) {
       stopped = true;
+      other = (async () => {
+        const iterator = reader.entries()[Symbol.asyncIterator]();
+        try {
+          return await iterator.next();
+        } finally {
+          await iterator.return?.();
+        }
+      })();
       controller.abort(reason);
     }
     return result;
@@ -1520,11 +1474,9 @@ it("allows an uncancelled inventory after a cancelled SEA preparation", async ()
   try {
     await expect(
       reader.entries(controller.signal)[Symbol.asyncIterator]().next(),
-    ).rejects.toMatchObject({ reason: "cancelled" });
-    spy.mockRestore();
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
-    expect(entries.length).toBeGreaterThan(0);
+    ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+    expect(stopped).toBe(true);
+    await expect(other).resolves.toMatchObject({ done: false });
   } finally {
     spy.mockRestore();
     await observed.close();

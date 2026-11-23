@@ -307,8 +307,10 @@ const readSliceImage = async (
 
 /** Facts the rows need. A load command table can hold millions of small frames. */
 type CommandFacts = {
-  /** Table-relative offset of the first `__RESTRICT` segment command. */
+  /** Table-relative offset of the first `__restrict` section header in a `__RESTRICT` segment. */
   restrict: number | null;
+  /** Table-relative offset of the first `__RESTRICT` segment command. */
+  restrictSegment: number | null;
   /** Table-relative offset of the first `LC_CODE_SIGNATURE` command. */
   signature: number | null;
   symtab: MachoLoadCommand | null;
@@ -320,10 +322,19 @@ const readCommandFacts = (
   wide: boolean,
   sliceSize: number,
 ): CommandFacts => {
-  const facts: CommandFacts = { restrict: null, signature: null, symtab: null };
+  const facts: CommandFacts = {
+    restrict: null,
+    restrictSegment: null,
+    signature: null,
+    symtab: null,
+  };
   const framed = frameLoadCommands(table, (command) => {
-    if (segmentName(command, wide, sliceSize) === "__RESTRICT")
-      facts.restrict ??= command.offset;
+    const segment = readSegment(command, wide, sliceSize);
+    if (segment?.name === "__RESTRICT") {
+      facts.restrictSegment ??= command.offset;
+      if (segment.restrictSection !== null)
+        facts.restrict ??= command.offset + segment.restrictSection;
+    }
     if (command.command === LC.CODE_SIGNATURE) {
       admitCodeSignature(command, sliceSize);
       facts.signature ??= command.offset;
@@ -373,7 +384,7 @@ const buildRows = (
   bytes: Buffer,
   ref: SliceRef,
   header: MachoSliceHeader,
-  { restrict, signature, symtab }: CommandFacts,
+  { restrict, restrictSegment, signature, symtab }: CommandFacts,
   encrypted: MachoSliceEncryption,
 ): BinaryHardeningRow[] => {
   const flagLocation = {
@@ -419,12 +430,29 @@ const buildRows = (
       "MH_ALLOW_STACK_EXECUTION",
     ),
     bit("no_heap_execution", MH_NO_HEAP_EXECUTION, "MH_NO_HEAP_EXECUTION"),
-    restrict === null
-      ? row("restrict_segment", "disabled", "No segment is named __RESTRICT.")
-      : row("restrict_segment", "enabled", "A segment is named __RESTRICT.", {
-          offset: ref.offset + header.headerSize + restrict + 8,
-          bytes: 16,
-        }),
+    // dyld restricts an image only for a __restrict section in a __RESTRICT segment.
+    restrict !== null
+      ? row(
+          "restrict_segment",
+          "enabled",
+          "A __RESTRICT segment holds a __restrict section.",
+          { offset: ref.offset + header.headerSize + restrict, bytes: 16 },
+        )
+      : restrictSegment !== null
+        ? row(
+            "restrict_segment",
+            "disabled",
+            "A __RESTRICT segment holds no __restrict section, which dyld requires.",
+            {
+              offset: ref.offset + header.headerSize + restrictSegment + 8,
+              bytes: 16,
+            },
+          )
+        : row(
+            "restrict_segment",
+            "disabled",
+            "No __RESTRICT segment is present.",
+          ),
     signature === null
       ? row(
           "code_signature_present",
@@ -460,11 +488,12 @@ const buildRows = (
   return rows;
 };
 
-const segmentName = (
+/** A segment's name and the command-relative offset of its first `__restrict` section header. */
+const readSegment = (
   command: MachoLoadCommand,
   wide: boolean,
   sliceSize: number,
-): string | null => {
+): { name: string; restrictSection: number | null } | null => {
   const expected = wide ? LC.SEGMENT_64 : LC.SEGMENT;
   if (command.command !== expected) {
     if (command.command === LC.SEGMENT || command.command === LC.SEGMENT_64)
@@ -482,6 +511,7 @@ const segmentName = (
   );
   if (!admitted.ok) malformed(admitted.error.message);
   const sectionWidth = wide ? 80 : 68;
+  let restrictSection: number | null = null;
   for (let index = 0; index < header.value.sectionCount; index += 1) {
     const at = header.value.headerSize + index * sectionWidth;
     const section = readMachoSectionHeader(
@@ -492,10 +522,15 @@ const segmentName = (
     if (!section.ok) malformed(section.error.message);
     const payload = admitMachoSectionPayload(section.value, sliceSize);
     if (!payload.ok) malformed(payload.error.message);
+    if (decodeMachoFixedName(section.value.nameBytes) === "__restrict")
+      restrictSection ??= at;
   }
   // The fixed 16-byte name ends at the first NUL. Trailing-only stripping
   // would keep junk after an embedded NUL and miss __RESTRICT.
-  return decodeMachoFixedName(header.value.nameBytes);
+  return {
+    name: decodeMachoFixedName(header.value.nameBytes),
+    restrictSection,
+  };
 };
 
 const unknownStackBudget = (
@@ -606,7 +641,8 @@ const stackRow = (
       continue;
     // A common definition shares those type bits but carries its size in
     // n_value, so only a zero n_value names an import.
-    if (symbols.word(entry + 8, wide ? 64 : 32) !== 0n) continue;
+    if (symbols.u32(entry + 8) !== 0 || (wide && symbols.u32(entry + 12) !== 0))
+      continue;
     // After a match, later records are still admitted so symbol order cannot
     // hide a damaged table; their names need not be read.
     if (found !== null) {
@@ -629,6 +665,12 @@ const stackRow = (
       unterminated = true;
       continue;
     }
+    if (
+      (observed.contentBytes !== 16 && observed.contentBytes !== 17) ||
+      strings[nameOffset] !== 0x5f ||
+      strings[nameOffset + 1] !== 0x5f
+    )
+      continue;
     const name = elfStringTableText(observed) ?? "";
     if (name === "__stack_chk_fail" || name === "___stack_chk_fail")
       found = row(

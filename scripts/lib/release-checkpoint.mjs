@@ -1,6 +1,9 @@
 import { gt, major, valid } from "semver";
 import { z } from "zod";
 import {
+  canonicalGitHubReleaseUrl,
+  githubReleaseReference,
+  plainReleaseNumbers,
   releaseBreakingFooters,
   releaseMigrationWording,
   releaseSection,
@@ -8,6 +11,12 @@ import {
 
 const shaSchema = z.string().regex(/^[a-f0-9]{40}$/u);
 const versionSchema = z.object({ version: z.string() });
+const sourcePackageSchema = versionSchema.extend({
+  repository: z
+    .union([z.string(), z.object({ url: z.string() })])
+    .optional()
+    .catch(undefined),
+});
 const manifestSchema = z.object({ ".": z.string() });
 const PLUGIN_MANIFEST_PATHS = [
   ".claude-plugin/plugin.json",
@@ -124,14 +133,22 @@ function readCommits(text) {
   return commits;
 }
 
-function referencesCommit(text, commit) {
-  if (text.includes(commit.sha.slice(0, 7))) return true;
+function repositoryName(repository) {
+  const source = typeof repository === "string" ? repository : repository?.url;
+  const url = canonicalGitHubReleaseUrl(source?.replace(/^git\+/iu, ""));
+  const match = /^\/([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/u.exec(
+    url?.pathname ?? "",
+  );
+  return match?.[1].toLowerCase();
+}
+
+function referencesCommit(references, commit) {
+  if (references.shas.has(commit.sha)) return true;
   const pullRequest =
     GITHUB_MERGE_SUBJECT.exec(commit.subject)?.[1] ??
     /\(#(\d+)\)$/u.exec(commit.subject)?.[1];
   return (
-    pullRequest !== undefined &&
-    new RegExp(`#${pullRequest}(?!\\d)`, "u").test(text)
+    pullRequest !== undefined && references.numbers.has(Number(pullRequest))
   );
 }
 
@@ -152,14 +169,43 @@ function breakingSection(blocks) {
   return end < 0 ? body : body.slice(0, end);
 }
 
-function referenceProse(blocks) {
-  return blocks
-    .map(({ parts }) =>
-      parts
-        .map(({ text, href }) => (href ? `${text} ${href} ` : text))
-        .join(""),
-    )
-    .join("\n");
+function releaseReferences(blocks, repository, commits) {
+  const numbers = new Set();
+  const shas = new Set();
+  const linked = (href) => {
+    const reference = githubReleaseReference(href);
+    if (reference === undefined || reference.repository !== repository) return;
+    if (reference.commit !== undefined) shas.add(reference.commit);
+    else if (Number.isSafeInteger(reference.number) && reference.number > 0)
+      numbers.add(reference.number);
+  };
+  for (const { parts } of blocks) {
+    const prose = parts
+      .map(({ text, href }) => {
+        if (!href) return text;
+        linked(href);
+        return " ";
+      })
+      .join("")
+      .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s<>]+/giu, (href) => {
+        linked(href.replace(/[.,;:)]+$/u, ""));
+        return " ";
+      });
+    for (const number of plainReleaseNumbers(prose))
+      if (Number.isSafeInteger(number) && number > 0) numbers.add(number);
+    for (const match of prose.matchAll(/\b[a-f0-9]{7,40}\b/giu))
+      shas.add(match[0].toLowerCase());
+  }
+  // Resolve each abbreviation once in the frozen history. A shared prefix
+  // alone cannot establish which of its candidate commits the notes name.
+  const matches = new Map();
+  for (const { sha } of commits)
+    for (let length = 7; length <= sha.length; length++) {
+      const prefix = sha.slice(0, length);
+      if (shas.has(prefix))
+        matches.set(prefix, matches.has(prefix) ? null : sha);
+    }
+  return { numbers, shas: new Set([...matches.values()].filter(Boolean)) };
 }
 
 async function requireAncestor(git, ancestor, descendant, description) {
@@ -188,7 +234,14 @@ async function resolveBaseline(git, tag) {
   }
 }
 
-async function validateCandidate(git, sha, version, commits) {
+async function validateCandidate(
+  git,
+  sha,
+  version,
+  commits,
+  history,
+  repository,
+) {
   const versions = [
     [
       "package.json",
@@ -321,7 +374,11 @@ async function validateCandidate(git, sha, version, commits) {
     version,
   );
   const breakingNotes = breakingSection(notes);
-  const breakingReferences = referenceProse(breakingNotes);
+  const breakingReferences = releaseReferences(
+    breakingNotes,
+    repository,
+    history,
+  );
   const containsMigrationWording = releaseMigrationWording(breakingNotes);
   const missingBreaking = commits.filter(
     (commit) =>
@@ -335,7 +392,7 @@ async function validateCandidate(git, sha, version, commits) {
       `Release ${version} migration notes omit unreleased breaking changes: ${missingBreaking.map((commit) => `${commit.sha} ${commit.subject}`).join("; ")}`,
     );
   }
-  const references = referenceProse(notes);
+  const references = releaseReferences(notes, repository, history);
   return commits.filter((commit) => !referencesCommit(references, commit));
 }
 
@@ -387,7 +444,7 @@ export async function inspectReleaseCheckpoint(git, options) {
     git,
     applicationSha,
     "package.json",
-    versionSchema,
+    sourcePackageSchema,
   );
   if (sourcePackage.version !== baselineVersion) {
     throw new Error(
@@ -418,7 +475,7 @@ export async function inspectReleaseCheckpoint(git, options) {
       .filter((section) => !section.hidden)
       .map((section) => section.type),
   );
-  const commits = readCommits(
+  const history = readCommits(
     await git([
       "log",
       "--first-parent",
@@ -426,7 +483,10 @@ export async function inspectReleaseCheckpoint(git, options) {
       "--format=%H%x00%s%x00%B",
       `${baselineSha}..${applicationSha}`,
     ]),
-  ).filter((commit) => commit.breaking || visibleTypes.has(commit.type));
+  );
+  const commits = history.filter(
+    (commit) => commit.breaking || visibleTypes.has(commit.type),
+  );
   const breaking = commits.filter((commit) => commit.breaking);
   if (
     configuration.versioning !== "always-bump-minor" &&
@@ -452,7 +512,14 @@ export async function inspectReleaseCheckpoint(git, options) {
   }
   const missingNotes =
     phase === "publish" || stage === "candidate"
-      ? await validateCandidate(git, snapshot, expectedVersion, commits)
+      ? await validateCandidate(
+          git,
+          snapshot,
+          expectedVersion,
+          commits,
+          history,
+          repositoryName(sourcePackage.repository),
+        )
       : [];
   return {
     expectedVersion,

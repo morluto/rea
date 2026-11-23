@@ -17,7 +17,7 @@ cliTest(
   async ({ cli }) => {
     const browser = await startFakeCdpBrowser({
       malformedRedirectResponse: true,
-      redirectResponseEnvelope: null,
+      eventsBeforeReply: ["Network.enable"],
     });
     browsers.push(browser);
     const commonArgs = [

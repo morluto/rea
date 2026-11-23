@@ -1,8 +1,70 @@
 import { expect, it } from "vitest";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
-import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
+import {
+  analyzeWebBundleInputSchema,
+  webBundleAnalysisSchema,
+  type WebBundleAnalysis,
+  type WebSourceMaps,
+} from "../../../src/domain/webBundleAnalysis.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
+
+const expectMapCoverageIssue = (
+  analysis: WebBundleAnalysis,
+  changes: Partial<WebSourceMaps>,
+  ...path: string[]
+): void => {
+  expect(
+    webBundleAnalysisSchema.safeParse({
+      ...analysis,
+      observations: {
+        ...analysis.observations,
+        source_maps: { ...analysis.observations.source_maps, ...changes },
+      },
+    }),
+  ).toMatchObject({
+    success: false,
+    error: { issues: [{ path: ["observations", "source_maps", ...path] }] },
+  });
+};
+
+const expectMaplessCoverageRefusals = (analysis: WebBundleAnalysis): void => {
+  expectMapCoverageIssue(analysis, {
+    status: "unavailable",
+    requested: 1,
+    processed: 1,
+  });
+  expectMapCoverageIssue(
+    analysis,
+    { status: "unavailable", requested: 1 },
+    "limitation",
+  );
+  expectMapCoverageIssue(
+    analysis,
+    { requested: 1, limitation: "Source map pending" },
+    "status",
+  );
+};
+
+const expectRedirectCoverage = (analysis: WebBundleAnalysis): void => {
+  const { chunks, source_maps: maps } = analysis.observations;
+  const scriptKey = chunks.nodes[0]?.script_key;
+  expect(maps).toMatchObject({
+    status: "unavailable",
+    requested: 1,
+    processed: 1,
+    items: [{ script_key: scriptKey, status: "policy_filtered" }],
+  });
+  expect(maps.excluded).toBeUndefined();
+  expectMapCoverageIssue(analysis, { requested: 0 });
+  expect(analysis.unknowns).toContainEqual({
+    dimension: "source_maps",
+    reason: expect.stringMatching(
+      /requested source maps.*unavailable or incomplete/i,
+    ),
+    affected_script_keys: [scriptKey],
+  });
+};
 
 it("distinguishes unrequested maps, map exclusions, and usable map evidence", async () => {
   const modes = [
@@ -80,18 +142,15 @@ it("distinguishes unrequested maps, map exclusions, and usable map evidence", as
         });
         expect(result.value.completeness.status, mode).toBe("complete");
         expect(result.value.unknowns, mode).toEqual([]);
+        if (mode === "none") expectMaplessCoverageRefusals(result.value);
       } else {
         expect(result.value.completeness.status, mode).toBe("partial");
-        expect(result.value.unknowns, mode).toContainEqual(
-          expect.objectContaining({ dimension: "source_maps" }),
-        );
         if (mode === "redirect") {
-          expect(maps, mode).toMatchObject({
-            status: "unavailable",
-            items: [{ status: "policy_filtered" }],
-          });
-          expect(maps.excluded).toBeUndefined();
+          expectRedirectCoverage(result.value);
         } else {
+          expect(result.value.unknowns, mode).toContainEqual(
+            expect.objectContaining({ dimension: "source_maps" }),
+          );
           expect(maps.excluded, mode).toEqual([
             { section: "source_maps", reason: "disallowed_origin", count: 1 },
           ]);

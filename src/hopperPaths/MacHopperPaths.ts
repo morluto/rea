@@ -32,14 +32,18 @@ export const macHopperApplicationRoots = (
 ];
 
 export const macHopperCanonicalLauncherCandidates = (
-  homeDirectory: string,
+  homeDirectory: string | undefined,
 ): readonly string[] => [
   MAC_HOPPER_SYSTEM_LAUNCHER,
-  appendCallerPath(
-    macHopperUserApplicationPath(homeDirectory),
-    "Contents/MacOS/hopper",
-    "darwin",
-  ),
+  ...(homeDirectory === undefined
+    ? []
+    : [
+        appendCallerPath(
+          macHopperUserApplicationPath(homeDirectory),
+          "Contents/MacOS/hopper",
+          "darwin",
+        ),
+      ]),
 ];
 
 /** Build deterministic candidates from the discovered app bundle names. */
