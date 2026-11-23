@@ -348,9 +348,11 @@ type RecordedPath = {
 };
 
 type TargetPathUncertainty = {
+  linkInfo: boolean;
   local: boolean;
   network: boolean;
   suffix: boolean;
+  relativePath: boolean;
   environment: boolean;
 };
 
@@ -524,9 +526,11 @@ const observationsOf = (
         : "";
   const targets = targetPaths(report, uncertainty);
   const targetPathUnknown =
+    uncertainty.linkInfo ||
     uncertainty.local ||
     uncertainty.network ||
     uncertainty.suffix ||
+    uncertainty.relativePath ||
     uncertainty.environment;
   const iconDifference = iconDiffersFromTarget(
     report.string_data.icon_location,
@@ -981,20 +985,24 @@ const parseLinkInfo = (
       stringOffset,
     ),
   };
+  const missingUnicodeOffsets = declaresUnicodeOffsets && !hasUnicodeOffsets;
   walk.pathUncertainty.local ||=
     (flags & 0x1) !== 0 &&
+    (missingUnicodeOffsets ||
+      selectedPathUnreadable(
+        localOffset,
+        info.local_base_path,
+        localUnicodeOffset,
+        info.local_base_path_unicode,
+      ));
+  walk.pathUncertainty.suffix ||=
+    missingUnicodeOffsets ||
     selectedPathUnreadable(
-      localOffset,
-      info.local_base_path,
-      localUnicodeOffset,
-      info.local_base_path_unicode,
+      suffixOffset,
+      info.common_path_suffix,
+      suffixUnicodeOffset,
+      info.common_path_suffix_unicode,
     );
-  walk.pathUncertainty.suffix ||= selectedPathUnreadable(
-    suffixOffset,
-    info.common_path_suffix,
-    suffixUnicodeOffset,
-    info.common_path_suffix_unicode,
-  );
   walk.pathUncertainty.network ||=
     (flags & 0x2) !== 0 &&
     networkOffset !== 0 &&
@@ -1395,9 +1403,11 @@ export const parseWindowsShortcut = async (
     stringBytes: 0,
     maxStringBytes: input.max_string_bytes,
     pathUncertainty: {
+      linkInfo: false,
       local: false,
       network: false,
       suffix: false,
+      relativePath: false,
       environment: false,
     },
   };
@@ -1409,6 +1419,9 @@ export const parseWindowsShortcut = async (
     (flags & 0x00000002) !== 0 && !walk.stopped
       ? parseLinkInfo(reader, walk)
       : null;
+  if ((flags & 0x00000002) !== 0 && linkInfo === null) {
+    walk.pathUncertainty.linkInfo = true;
+  }
   const stringData: WindowsShortcut["string_data"] = {
     name: null,
     relative_path: null,
@@ -1432,6 +1445,9 @@ export const parseWindowsShortcut = async (
       stringData[key] = field;
       if (field === null) break;
     }
+  }
+  if ((flags & 0x00000008) !== 0 && stringData.relative_path === null) {
+    walk.pathUncertainty.relativePath = true;
   }
   const extraData = !walk.stopped
     ? await parseExtraData(reader, walk, input.max_extra_data_blocks, signal)
