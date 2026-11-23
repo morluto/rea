@@ -3987,6 +3987,82 @@ it("keeps unreferenced blobs definite when the declared type is the same documen
   );
 });
 
+const DOCKER_MANIFEST = "application/vnd.docker.distribution.manifest.v2+json";
+const DOCKER_MANIFEST_LIST =
+  "application/vnd.docker.distribution.manifest.list.v2+json";
+
+const declarationConflicts = (
+  report: Awaited<ReturnType<typeof inspectLayout>>,
+  digest: string,
+) =>
+  report.findings.filter(
+    (finding) =>
+      finding.kind === "malformed_blob_json" &&
+      finding.digest === digest &&
+      finding.message.includes("conflicts with its descriptor media type"),
+  );
+
+it("checks every media type a repeated manifest reference admits, in either order", async () => {
+  for (const order of [
+    ["application/vnd.oci.image.manifest.v1+json", DOCKER_MANIFEST],
+    [DOCKER_MANIFEST, "application/vnd.oci.image.manifest.v1+json"],
+  ]) {
+    const root = await createTestTempDirectory("rea-oci-manifest-repeat-");
+    const written = await writeOciImageLayoutFixture(root);
+    const indexPath = join(root, "index.json");
+    const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+      manifests: Record<string, unknown>[];
+    };
+    const [entry] = index.manifests;
+    index.manifests = order.map((mediaType) => ({ ...entry, mediaType }));
+    await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+    const report = await inspectLayout(root);
+    expect(declarationConflicts(report, written.manifestDigest)).toEqual([
+      expect.objectContaining({
+        message: expect.stringContaining(
+          `descriptor media type ${JSON.stringify(DOCKER_MANIFEST)}`,
+        ),
+      }),
+    ]);
+    expect(report.images).toHaveLength(1);
+  }
+});
+
+it("checks every media type a repeated nested index reference admits", async () => {
+  const root = await createTestTempDirectory("rea-oci-index-repeat-");
+  const written = await writeOciImageLayoutFixture(root);
+  const indexPath = join(root, "index.json");
+  const rootIndex = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: Record<string, unknown>[];
+  };
+  const nestedJson = `${JSON.stringify({
+    schemaVersion: 2,
+    mediaType: "application/vnd.oci.image.index.v1+json",
+    manifests: rootIndex.manifests,
+  })}\n`;
+  const nested = await putOciBlob(root, nestedJson);
+  rootIndex.manifests = [
+    "application/vnd.oci.image.index.v1+json",
+    DOCKER_MANIFEST_LIST,
+  ].map((mediaType) => ({
+    mediaType,
+    digest: nested,
+    size: Buffer.byteLength(nestedJson),
+  }));
+  await writeFile(indexPath, `${JSON.stringify(rootIndex)}\n`);
+  const report = await inspectLayout(root);
+  expect(declarationConflicts(report, nested)).toEqual([
+    expect.objectContaining({
+      message: expect.stringContaining(
+        `descriptor media type ${JSON.stringify(DOCKER_MANIFEST_LIST)}`,
+      ),
+    }),
+  ]);
+  expect(report.images).toEqual([
+    expect.objectContaining({ digest: written.manifestDigest }),
+  ]);
+});
+
 it("checks the root index.json declaration against the index document kind", async () => {
   // A root that declares the manifest type carries manifest members the
   // index walk never reads, so the blobs they name cannot be unreferenced.

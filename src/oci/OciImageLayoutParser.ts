@@ -1437,8 +1437,12 @@ const inventoryOciImageLayout = async (
     depth: number,
   ): void => {
     // Breadth-first, an index already queued was reached at this depth or a
-    // shallower one.
-    if (queuedIndexes.has(traversalKey(digest))) return;
+    // shallower one. Its declaration is still checked against this
+    // reference's media type.
+    if (queuedIndexes.has(traversalKey(digest))) {
+      admitAgain("Index", traversalKey(digest), digest, mediaType);
+      return;
+    }
     if (depth > input.max_index_depth) {
       referenceGraphTruncated = true;
       recordFinding(
@@ -1592,6 +1596,59 @@ const inventoryOciImageLayout = async (
     );
   };
 
+  // A document reached again is not decoded or walked again, but each
+  // distinct media type a descriptor admits it under is still checked
+  // against the declaration its first decode recorded, so conflict findings
+  // and completeness do not depend on descriptor order. A media type that
+  // names a document not yet decoded waits for that decode.
+  const declarations = new Map<
+    string,
+    { readonly declared: unknown; readonly checked: Set<string> }
+  >();
+  const pendingAdmissions = new Map<string, Set<string>>();
+  const admitAgain = (
+    owner: string,
+    identity: string,
+    digest: string,
+    admitted: string,
+  ): void => {
+    const known = declarations.get(identity);
+    if (known === undefined) {
+      const pending = pendingAdmissions.get(identity) ?? new Set<string>();
+      pending.add(admitted);
+      pendingAdmissions.set(identity, pending);
+      return;
+    }
+    if (known.checked.has(admitted)) return;
+    known.checked.add(admitted);
+    checkDeclaredMediaType(owner, digest, admitted, {
+      mediaType: known.declared,
+    });
+  };
+  const checkFirstDeclaration = ({
+    owner,
+    identity,
+    digest,
+    admitted,
+    document,
+  }: {
+    readonly owner: string;
+    readonly identity: string;
+    readonly digest: string;
+    readonly admitted: string;
+    readonly document: Record<string, unknown>;
+  }): void => {
+    checkDeclaredMediaType(owner, digest, admitted, document);
+    declarations.set(identity, {
+      declared: document.mediaType,
+      checked: new Set([admitted]),
+    });
+    const pending = pendingAdmissions.get(identity);
+    pendingAdmissions.delete(identity);
+    for (const mediaType of pending ?? [])
+      admitAgain(owner, identity, digest, mediaType);
+  };
+
   const walkIndex = async (
     digest: string,
     mediaType: string,
@@ -1629,7 +1686,13 @@ const inventoryOciImageLayout = async (
       identity !== ROOT_INDEX_IDENTITY || isOciIndexMediaType(mediaType)
         ? mediaType
         : OCI_INDEX_MEDIA_TYPE;
-    checkDeclaredMediaType("Index", digest, admitted, document.value);
+    checkFirstDeclaration({
+      owner: "Index",
+      identity,
+      digest,
+      admitted,
+      document: document.value,
+    });
     await rememberSubject("Index", digest, document.value.subject, depth);
     const schemaVersion =
       typeof document.value.schemaVersion === "number" &&
@@ -1718,8 +1781,12 @@ const inventoryOciImageLayout = async (
     mediaType: string,
     depth: number,
   ): Promise<void> => {
-    if (visited.has(`manifest:${traversalKey(digest)}`)) return;
-    visited.add(`manifest:${traversalKey(digest)}`);
+    const identity = `manifest:${traversalKey(digest)}`;
+    if (visited.has(identity)) {
+      admitAgain("Manifest", identity, digest, mediaType);
+      return;
+    }
+    visited.add(identity);
     chargeDescriptor();
     const document = await readReferencedJson(digest, `manifest ${digest}`);
     if (document === undefined) {
@@ -1736,7 +1803,13 @@ const inventoryOciImageLayout = async (
       );
       return;
     }
-    checkDeclaredMediaType("Manifest", digest, mediaType, document.value);
+    checkFirstDeclaration({
+      owner: "Manifest",
+      identity,
+      digest,
+      admitted: mediaType,
+      document: document.value,
+    });
     await rememberSubject("Manifest", digest, document.value.subject, depth);
     // config is required; a manifest without one is as damaged as one whose
     // config descriptor cannot be modeled.
