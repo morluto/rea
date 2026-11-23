@@ -102,6 +102,7 @@
 * **ci:** retry release history reads after transport disconnects ([dcb36f6](https://github.com/morluto/rea/commit/dcb36f66c7ae28b9fd7ea529a914eeea3d37cbaa))
 * **ci:** run type-aware lint on changed files in fast PRs ([#14068](https://github.com/morluto/rea/issues/14068)) ([313f2f8](https://github.com/morluto/rea/commit/313f2f8372e3d9d6944197ebe4aa6ea48034a532))
 * **ci:** select coverage guards for modified test registrations ([#12860](https://github.com/morluto/rea/issues/12860)) ([75fe508](https://github.com/morluto/rea/commit/75fe508eb45982447521be4d5849ccadf3ab8401))
+* **ci:** trace test dependencies through static template imports ([#14079](https://github.com/morluto/rea/issues/14079)) ([9e24673](https://github.com/morluto/rea/commit/9e24673620e08e939980b910db7936bda1532c92))
 * **ci:** track configuration inputs across cached checks ([#14015](https://github.com/morluto/rea/issues/14015)) ([4fdacbf](https://github.com/morluto/rea/commit/4fdacbf982c1bb409dda50cb80ba3eec74dd259e))
 * **ci:** verify packaged Agent Environment bridges ([#12874](https://github.com/morluto/rea/issues/12874)) ([41fc470](https://github.com/morluto/rea/commit/41fc470072d441eefc3536a3de4a3ebb7902b5e4))
 * **cli:** complete inline option values ([#13366](https://github.com/morluto/rea/issues/13366)) ([0451a86](https://github.com/morluto/rea/commit/0451a8688d55c389c67048fa7764af0c0d5a8ab1))
