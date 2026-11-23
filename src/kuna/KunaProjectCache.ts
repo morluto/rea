@@ -4,7 +4,6 @@ import {
   type RegularFileState,
 } from "../filesystem/RegularFile.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
-import { withInheritedCleanupOwnership } from "../domain/analysisErrorCleanup.js";
 import type { Stats } from "node:fs";
 import {
   assertKunaProjectState,
@@ -31,7 +30,10 @@ import {
   bindArtifactFileCleanup,
   AnalysisCleanupLease,
 } from "../resources/index.js";
-import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  withDelegatedCleanupOwner,
+} from "../domain/analysisErrorCleanup.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisResourceConstraintError,
@@ -102,7 +104,7 @@ export class KunaPublishedProjectCleanupError extends ProviderCleanupError {
           "The immutable project export is published and remains available. Retry only the retained staging cleanup with close_binary; do not rerun the export to recover it.",
       },
     );
-    withInheritedCleanupOwnership(this, cleanup);
+    withDelegatedCleanupOwner(this, cleanup);
   }
 }
 
