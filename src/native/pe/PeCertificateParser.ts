@@ -83,20 +83,34 @@ const ABSENT_LIMITATIONS = [
 
 type CertificateHeaders = ReturnType<typeof readPeImageHeaders>;
 
-const parsePeCertificatesFromHeaders = (
+const certificateTableRange = (
   headers: CertificateHeaders,
   fileSize: number,
-  readTable: (tableOffset: number, tableSize: number) => Buffer,
+) => {
+  const security = headers.dataDirectories[4];
+  if (security === undefined || (security.address === 0 && security.size === 0))
+    return null;
+  const { address: tableOffset, size: tableSize } = security;
+  if (tableSize === 0 || tableOffset < headers.headerSize)
+    fail("PE certificate table offset overlaps headers or has zero size.");
+  if (tableOffset % 8 !== 0)
+    fail("PE certificate table offset must be aligned to eight bytes.");
+  requireRange(fileSize, tableOffset, tableSize);
+  return {
+    tableOffset,
+    tableSize,
+    directoryAt: headers.optionalHeaderOffset + security.offset,
+  };
+};
+
+const parsePeCertificateTable = (
+  { machine, format }: CertificateHeaders,
+  range: ReturnType<typeof certificateTableRange>,
+  table: Buffer,
   artifact: PeCertificates["artifact"],
   input: InspectPeCertificatesInput,
 ): PeCertificates => {
-  const { machine, format, dataDirectories, headerSize, optionalHeaderOffset } =
-    headers;
-  const security = dataDirectories[4];
-  if (
-    security === undefined ||
-    (security.address === 0 && security.size === 0)
-  ) {
+  if (range === null)
     return {
       artifact,
       format,
@@ -106,16 +120,13 @@ const parsePeCertificatesFromHeaders = (
       coverage: { status: "complete", examined_entries: 0, certificates: 0 },
       limitations: [...ABSENT_LIMITATIONS],
     };
-  }
-  const tableOffset = security.address;
-  const tableSize = security.size;
-  const directoryAt = optionalHeaderOffset + security.offset;
-  if (tableSize === 0 || tableOffset < headerSize)
-    fail("PE certificate table offset overlaps headers or has zero size.");
-  if (tableOffset % 8 !== 0)
-    fail("PE certificate table offset must be aligned to eight bytes.");
-  requireRange(fileSize, tableOffset, tableSize);
-  const table = readTable(tableOffset, tableSize);
+  const { tableOffset, tableSize, directoryAt } = range;
+  if (table.length !== tableSize)
+    throw new ArtifactReaderFailure(
+      "integrity",
+      "PE certificate table ended before its admitted extent.",
+      { integrityCheck: "read-coverage" },
+    );
   const entries: PeCertificates["entries"] = [];
   let at = 0;
   const reader = new BinaryReader(table, true, "pe-certificate-table");
@@ -277,15 +288,15 @@ export const parsePeCertificates = (
   bytes: Buffer,
   artifact: PeCertificates["artifact"],
   input: InspectPeCertificatesInput,
-): PeCertificates =>
-  parsePeCertificatesFromHeaders(
-    readCertificateImageHeaders(bytes),
-    bytes.length,
-    (tableOffset, tableSize) =>
-      bytes.subarray(tableOffset, tableOffset + tableSize),
-    artifact,
-    input,
-  );
+): PeCertificates => {
+  const headers = readCertificateImageHeaders(bytes);
+  const range = certificateTableRange(headers, bytes.length);
+  const table =
+    range === null
+      ? Buffer.alloc(0)
+      : bytes.subarray(range.tableOffset, range.tableOffset + range.tableSize);
+  return parsePeCertificateTable(headers, range, table, artifact, input);
+};
 
 /**
  * Decode IMAGE_DIRECTORY_ENTRY_SECURITY from a verified random-access handle,
@@ -297,26 +308,10 @@ export const parsePeCertificatesFromHandle = async (
   input: InspectPeCertificatesInput,
 ): Promise<PeCertificates> => {
   const headers = await readCertificateImageHeadersAt(handle);
-  const security = headers.dataDirectories[4];
-  let tableBytes: Buffer | undefined;
-  if (
-    security !== undefined &&
-    !(security.address === 0 && security.size === 0)
-  ) {
-    const tableOffset = security.address;
-    const tableSize = security.size;
-    if (tableSize === 0 || tableOffset < headers.headerSize)
-      fail("PE certificate table offset overlaps headers or has zero size.");
-    if (tableOffset % 8 !== 0)
-      fail("PE certificate table offset must be aligned to eight bytes.");
-    requireRange(handle.size, tableOffset, tableSize);
-    tableBytes = await handle.readRange(tableOffset, tableSize);
-  }
-  return parsePeCertificatesFromHeaders(
-    headers,
-    handle.size,
-    () => tableBytes!,
-    artifact,
-    input,
-  );
+  const range = certificateTableRange(headers, handle.size);
+  const table =
+    range === null
+      ? Buffer.alloc(0)
+      : await handle.readRange(range.tableOffset, range.tableSize);
+  return parsePeCertificateTable(headers, range, table, artifact, input);
 };
