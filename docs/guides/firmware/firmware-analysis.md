@@ -106,6 +106,38 @@ extraction. The equivalent CLI options are `--max-volumes`, `--max-files`, and
 `--max-depth`. Unparsed ranges
 within the selection appear in `extraction_gaps` and make extraction partial.
 The gap names the owning volume, file, or section and its source stream.
+
+Each published file records its owning FFS file in `ffs_file` (GUID, UI name,
+type and logical path), or null for bytes outside any mapped file. A whole
+OVMF image publishes 560 files, so MCP `extract_uefi_firmware` also defaults
+to `detail: "summary"`. The summary returns file, byte, derivation and gap
+counts, source, media-type and gap-kind tallies, and the first 8 published
+files; a targeted extraction usually fits in that preview. Page the rest with
+a `uefi-extraction` view through `inspect_analysis_view` and
+`normalized_result.parent_evidence_id`. Calling `extract_uefi_firmware` again
+needs another absent output directory and repeats the extraction. For
+example, the three largest PE32 files:
+
+```json
+{
+  "name": "inspect_analysis_view",
+  "arguments": {
+    "source": { "kind": "retained-evidence", "evidence_id": "ev_..." },
+    "view": {
+      "kind": "uefi-extraction",
+      "collection": "files",
+      "media_types": ["application/vnd.microsoft.portable-executable"],
+      "order": "size-desc",
+      "limit": 3
+    }
+  }
+}
+```
+
+Collections are `files`, `derivations` and `gaps`. Files match exact
+`media_types`, `sources`, `ffs_guids`, `ffs_ui_names` and `ffs_type_names`
+and are ordered by publication (`source`) or by `size-desc`. Gaps match exact
+`gap_kinds`. Pass `detail: "complete"` to list every file inline.
 Bytes outside the file and volume headers that occupy an FFS alignment span
 and differ from the volume's erase polarity are reported under the volume.
 A gap in one volume leaves a fully extracted sibling's coverage complete.
