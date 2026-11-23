@@ -415,13 +415,6 @@ export class OwnedMcpStdioTransport implements Transport {
           offset = newline + 1;
           continue;
         }
-        if (this.#frameLength === 0 && newline !== -1) {
-          // Fast path: complete line in a single chunk needs no scratch buffer copy.
-          const line = decodeStrictUtf8(fragment, "preserve");
-          this.onmessage?.(deserializeMessage(line));
-          offset = newline + 1;
-          continue;
-        }
         this.#appendFrame(fragment, frameBytes);
         if (newline === -1) return;
         // Preserve a leading BOM so the JSON-RPC parser can reject it.
