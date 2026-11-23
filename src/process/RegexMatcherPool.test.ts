@@ -167,6 +167,17 @@ beforeEach(async () => {
     await import("../domain/analysisErrorProjection.js"));
 });
 
+const releaseHeldWorkers = (): void => {
+  for (const worker of fakeWorkers.instances) {
+    const reply = worker.releaseReply;
+    const stop = worker.releaseTerminate;
+    worker.releaseReply = undefined;
+    worker.releaseTerminate = undefined;
+    reply?.();
+    stop?.();
+  }
+};
+
 it("reclaims the incompatible idle worker instead of starting a fifth", async () => {
   const held = [0, 1, 2, 3].map((index) =>
     search(`HOLD-${String(index)}`, [`HOLD-${String(index)}`], {
@@ -174,44 +185,49 @@ it("reclaims the incompatible idle worker instead of starting a fifth", async ()
       deadlineMs: 2_000,
     }),
   );
-  await waitFor(() => {
-    expect(fakeWorkers.constructed).toBe(4);
-    expect(
-      fakeWorkers.instances.every(
-        (worker) => worker.releaseReply !== undefined,
-      ),
-    ).toBe(true);
-  });
   const queued = search("storage", ["storage"], {
     heapMiB: 64,
     deadlineMs: 2_000,
   });
-  await Promise.resolve();
-  expect(fakeWorkers.constructed).toBe(4);
-  const finished = fakeWorkers.instances[0];
-  if (finished?.releaseReply === undefined)
-    throw new Error("expected the first worker to be holding its reply");
-  finished.releaseReply();
-  expect(await held[0]).toEqual({ ok: true, value: [0] });
-  const second = await search("other", ["other"], {
-    heapMiB: 64,
-    deadlineMs: 500,
-  });
-  expect(second).toEqual({ ok: true, value: [0] });
-  expect(await queued).toEqual({ ok: true, value: [0] });
-  const exited = fakeWorkers.instances.filter((worker) => worker.exited);
-  const replacements = fakeWorkers.instances.filter((worker) =>
-    worker.patterns.includes("storage"),
-  );
-  // Four original workers plus the one replacement. A second spawn is a fifth live worker.
-  expect(fakeWorkers.constructed).toBe(5);
-  expect(fakeWorkers.maxAlive).toBeLessThanOrEqual(4);
-  expect(exited).toEqual([finished]);
-  expect(finished.patterns).toEqual(["HOLD-0"]);
-  expect(replacements).toHaveLength(1);
-  expect(replacements[0]?.patterns).toEqual(["storage", "other"]);
-  for (const worker of fakeWorkers.instances) worker.releaseReply?.();
-  await Promise.all(held);
+  try {
+    await waitFor(() => {
+      expect(fakeWorkers.constructed).toBe(4);
+      expect(
+        fakeWorkers.instances.every(
+          (worker) => worker.releaseReply !== undefined,
+        ),
+      ).toBe(true);
+    });
+    await Promise.resolve();
+    expect(fakeWorkers.constructed).toBe(4);
+    const finished = fakeWorkers.instances[0];
+    const release = finished?.releaseReply;
+    if (finished === undefined || release === undefined)
+      throw new Error("expected the first worker to be holding its reply");
+    finished.releaseReply = undefined;
+    release();
+    expect(await held[0]).toEqual({ ok: true, value: [0] });
+    const second = await search("other", ["other"], {
+      heapMiB: 64,
+      deadlineMs: 500,
+    });
+    expect(second).toEqual({ ok: true, value: [0] });
+    expect(await queued).toEqual({ ok: true, value: [0] });
+    const exited = fakeWorkers.instances.filter((worker) => worker.exited);
+    const replacements = fakeWorkers.instances.filter((worker) =>
+      worker.patterns.includes("storage"),
+    );
+    // Four original workers plus the one replacement. A second spawn is a fifth live worker.
+    expect(fakeWorkers.constructed).toBe(5);
+    expect(fakeWorkers.maxAlive).toBeLessThanOrEqual(4);
+    expect(exited).toEqual([finished]);
+    expect(finished.patterns).toEqual(["HOLD-0"]);
+    expect(replacements).toHaveLength(1);
+    expect(replacements[0]?.patterns).toEqual(["storage", "other"]);
+  } finally {
+    releaseHeldWorkers();
+    await Promise.allSettled([...held, queued]);
+  }
 });
 
 it("reclaims idle workers of another heap before the idle timeout", async () => {
@@ -248,44 +264,50 @@ it("shares one worker across clean calls and replaces only the timed-out worker"
   expect(fakeWorkers.instances[0]?.patterns).toEqual(["alpha", "beta"]);
 
   const held = search("HOLD", ["HOLD"], { deadlineMs: 2_000 });
-  await waitFor(() => {
-    expect(fakeWorkers.instances[0]?.patterns).toContain("HOLD");
-  });
-  const stuck = await search(
-    "^(a+)+$",
-    ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa b"],
-    { deadlineMs: 25 },
-  );
-  if (stuck.ok)
-    throw new Error("expected the stuck pattern to miss its deadline");
-  expect(projectAnalysisError(stuck.error)).toMatchObject({
-    code: "resource_constraint",
-    details: {
-      operation: "search_strings",
-      resource: "cpu",
-      reported_limits: {
-        matching_deadline_ms: 25,
-        matching_deadline_source: "runtime",
+  try {
+    await waitFor(() => {
+      expect(fakeWorkers.instances[0]?.patterns).toContain("HOLD");
+    });
+    const stuck = await search(
+      "^(a+)+$",
+      ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa b"],
+      { deadlineMs: 25 },
+    );
+    if (stuck.ok)
+      throw new Error("expected the stuck pattern to miss its deadline");
+    expect(projectAnalysisError(stuck.error)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        operation: "search_strings",
+        resource: "cpu",
+        reported_limits: {
+          matching_deadline_ms: 25,
+          matching_deadline_source: "runtime",
+        },
       },
-    },
-  });
-  expect(fakeWorkers.instances[0]?.terminated).toBe(false);
-  expect(fakeWorkers.instances[1]?.terminated).toBe(true);
-  expect(fakeWorkers.instances[1]?.exited).toBe(true);
-  expect(fakeWorkers.constructed).toBe(2);
-  const release = fakeWorkers.instances[0]?.releaseReply;
-  if (release === undefined)
-    throw new Error("expected the held worker to stay in use");
-  release();
-  expect(await held).toEqual({ ok: true, value: [0] });
-  expect(fakeWorkers.instances[0]?.terminated).toBe(false);
-  expect(fakeWorkers.maxAlive).toBeLessThanOrEqual(2);
+    });
+    expect(fakeWorkers.instances[0]?.terminated).toBe(false);
+    expect(fakeWorkers.instances[1]?.terminated).toBe(true);
+    expect(fakeWorkers.instances[1]?.exited).toBe(true);
+    expect(fakeWorkers.constructed).toBe(2);
+    const release = fakeWorkers.instances[0]?.releaseReply;
+    if (release === undefined)
+      throw new Error("expected the held worker to stay in use");
+    fakeWorkers.instances[0]!.releaseReply = undefined;
+    release();
+    expect(await held).toEqual({ ok: true, value: [0] });
+    expect(fakeWorkers.instances[0]?.terminated).toBe(false);
+    expect(fakeWorkers.maxAlive).toBeLessThanOrEqual(2);
 
-  const after = await search("storage", ["storage/read"]);
-  expect(after).toEqual({ ok: true, value: [0] });
-  expect(fakeWorkers.instances[0]?.patterns).toContain("storage");
-  expect(fakeWorkers.instances[1]?.patterns).not.toContain("storage");
-  expect(fakeWorkers.constructed).toBe(2);
+    const after = await search("storage", ["storage/read"]);
+    expect(after).toEqual({ ok: true, value: [0] });
+    expect(fakeWorkers.instances[0]?.patterns).toContain("storage");
+    expect(fakeWorkers.instances[1]?.patterns).not.toContain("storage");
+    expect(fakeWorkers.constructed).toBe(2);
+  } finally {
+    releaseHeldWorkers();
+    await Promise.allSettled([held]);
+  }
 });
 
 it("waits for worker exit when the caller aborts during termination", async () => {
@@ -299,43 +321,50 @@ it("waits for worker exit when the caller aborts during termination", async () =
     exitedBeforeReturn = fakeWorkers.instances[0]?.exited === true;
     return result;
   });
-  await waitFor(() => {
-    expect(fakeWorkers.instances[0]?.releaseReply).toBeTypeOf("function");
-  });
-  const worker = fakeWorkers.instances[0];
-  if (worker === undefined) throw new Error("expected a worker");
-  worker.releaseTerminate = () => undefined;
-  controller.abort(reason);
-  await waitFor(() => {
-    expect(worker.terminated).toBe(true);
-  });
-  let settled = false;
-  void pending.then(
-    () => {
-      settled = true;
-    },
-    () => {
-      settled = true;
-    },
-  );
-  await Promise.resolve();
-  await Promise.resolve();
-  expect(settled).toBe(false);
-  const release = worker.releaseTerminate;
-  if (release === undefined) throw new Error("expected termination to be held");
-  release();
-  const result = await pending;
-  expect(exitedBeforeReturn).toBe(true);
-  if (result.ok) throw new Error("expected cancellation");
-  expect(result.error.cause).toBe(reason);
-  expect(projectAnalysisError(result.error)).toMatchObject({
-    code: "cancelled",
-    details: {
-      operation: "search_strings",
-      cleanup: "complete",
-    },
-  });
-  expect(result.error.secondaryFailures).toEqual([]);
+  try {
+    await waitFor(() => {
+      expect(fakeWorkers.instances[0]?.releaseReply).toBeTypeOf("function");
+    });
+    const worker = fakeWorkers.instances[0];
+    if (worker === undefined) throw new Error("expected a worker");
+    worker.releaseTerminate = () => undefined;
+    controller.abort(reason);
+    await waitFor(() => {
+      expect(worker.terminated).toBe(true);
+    });
+    let settled = false;
+    void pending.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    const release = worker.releaseTerminate;
+    if (release === undefined)
+      throw new Error("expected termination to be held");
+    worker.releaseTerminate = undefined;
+    release();
+    const result = await pending;
+    expect(exitedBeforeReturn).toBe(true);
+    if (result.ok) throw new Error("expected cancellation");
+    expect(result.error.cause).toBe(reason);
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cancelled",
+      details: {
+        operation: "search_strings",
+        cleanup: "complete",
+      },
+    });
+    expect(result.error.secondaryFailures).toEqual([]);
+  } finally {
+    releaseHeldWorkers();
+    await pending;
+  }
 });
 
 it("keeps the deadline when termination fails and retries the owned worker", async () => {

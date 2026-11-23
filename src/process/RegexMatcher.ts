@@ -870,9 +870,9 @@ const serveRegexWaiters = (): void => {
 };
 
 const serveRegexWaitersNow = (): void => {
-  for (const entry of [...regexWorkerPool]) {
+  for (const entry of regexWorkerPool) {
     if (entry.stopFailure !== undefined && !entry.stopping)
-      beginStopRegexWorker(entry);
+      void beginStopRegexWorker(entry);
   }
   for (let i = 0; i < regexWorkerWaiters.length;) {
     const waiter = regexWorkerWaiters[i]!;
@@ -902,7 +902,7 @@ const serveRegexWaitersNow = (): void => {
     const reclaimable = regexWorkerPool.find((entry) =>
       isIdleRegexWorker(entry),
     );
-    if (reclaimable !== undefined) beginStopRegexWorker(reclaimable);
+    if (reclaimable !== undefined) void beginStopRegexWorker(reclaimable);
     break;
   }
 };
@@ -923,7 +923,7 @@ const spawnRegexWorker = (heapMiB: number): PooledRegexWorker => {
   worker.on("error", (cause: Error & { code?: string }) => {
     const settle = entry.onError;
     settle?.(cause);
-    beginStopRegexWorker(entry);
+    void beginStopRegexWorker(entry);
   });
   worker.on("exit", (code: number) => {
     const settle = entry.onExit;
@@ -979,7 +979,7 @@ const acquireRegexWorker = async (
 const armRegexWorkerIdleTimer = (entry: PooledRegexWorker): void => {
   entry.idleTimer = setTimeout(() => {
     entry.idleTimer = undefined;
-    if (isIdleRegexWorker(entry)) beginStopRegexWorker(entry);
+    if (isIdleRegexWorker(entry)) void beginStopRegexWorker(entry);
   }, REGEX_WORKER_IDLE_MS);
   entry.idleTimer.unref();
 };
