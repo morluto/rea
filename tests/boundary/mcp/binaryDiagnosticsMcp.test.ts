@@ -32,7 +32,7 @@ import {
   peRepeatedExportNamesImage,
 } from "../../fixtures/binaryDiagnostics/nativeExports.js";
 import { parseNativeExports } from "../../../src/domain/native/nativeExportParser.js";
-import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics.js";
+import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics/nativeExports.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("reports the exhausted native export allowance through MCP", async () => {

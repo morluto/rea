@@ -1,15 +1,16 @@
-import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
-import type { ApktoolResourceAnalysisPort } from "../application/apktool/ApktoolResourceAnalysisPort.js";
+import type { RequestAnalysisPort } from "../ports/AnalysisProvider.js";
+import type { ApktoolRequest } from "../domain/apktool/apktoolResourceAnalysis.js";
+import { createApktoolResourceAnalysisService } from "../application/ProviderOperationServices.js";
 import { createApktoolResourceAnalysisProvider } from "../composition/apktool.js";
 import { APKTOOL_TOOL_CONTRACTS } from "../contracts/apktool/apktoolToolContracts.js";
 import type { ApktoolOperation } from "../domain/apktool/apktoolResourceAnalysis.js";
 import type { Logger } from "pino";
 import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
 import {
   analyzeWithService,
-  registerContractCommand,
   type EvidenceInspectionService,
-} from "./contractCommand.js";
+} from "./contractCommandRunners.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import type { CliInstance } from "./types.js";
@@ -19,11 +20,11 @@ export const registerApktoolCommands = (
   cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
-  provider: ApktoolResourceAnalysisPort = createApktoolResourceAnalysisProvider(
+  provider: RequestAnalysisPort<ApktoolRequest> = createApktoolResourceAnalysisProvider(
     environment,
   ),
 ): void => {
-  const service = new ApktoolResourceAnalysisService(provider);
+  const service = createApktoolResourceAnalysisService(provider);
   const run =
     (operation: ApktoolOperation) => (): EvidenceInspectionService => ({
       inspect: (input, { signal }) =>

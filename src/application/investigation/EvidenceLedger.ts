@@ -79,6 +79,7 @@ export class EvidenceLedger {
   #records = new Map<string, Evidence>();
   #unknownRevisions = new Map<string, ResidualUnknown>();
   #unknownHeads = new Map<string, ResidualUnknown>();
+  #sortedUnknownHeads: readonly ResidualUnknown[] | undefined;
   #recordBytes = new Map<string, number>();
   #cachedImmutableBundle: EvidenceBundle | undefined;
   readonly #retained: Budget;
@@ -461,20 +462,33 @@ export class EvidenceLedger {
     return this.listUnknownsPage(filters).items;
   }
 
+  #getSortedUnknownHeads(): readonly ResidualUnknown[] {
+    if (this.#sortedUnknownHeads === undefined) {
+      this.#sortedUnknownHeads = [...this.#unknownHeads.values()].sort(
+        (left, right) =>
+          compareUnicodeCodePoints(left.unknown_id, right.unknown_id),
+      );
+    }
+    return this.#sortedUnknownHeads;
+  }
+
   /** Select a stable page of current heads before detaching record payloads. */
   listUnknownsPage(query: UnknownQuery = {}): UnknownPage {
     const offset = query.offset ?? 0;
-    const matching = [...this.#unknownHeads.values()]
-      .filter(
-        (unknown) =>
-          (query.status === undefined || unknown.status === query.status) &&
-          (query.severity === undefined ||
-            unknown.severity === query.severity) &&
-          (query.domain === undefined || unknown.domain === query.domain),
-      )
-      .sort((left, right) =>
-        compareUnicodeCodePoints(left.unknown_id, right.unknown_id),
-      );
+    const sorted = this.#getSortedUnknownHeads();
+    const unfiltered =
+      query.status === undefined &&
+      query.severity === undefined &&
+      query.domain === undefined;
+    const matching = unfiltered
+      ? sorted
+      : sorted.filter(
+          (unknown) =>
+            (query.status === undefined || unknown.status === query.status) &&
+            (query.severity === undefined ||
+              unknown.severity === query.severity) &&
+            (query.domain === undefined || unknown.domain === query.domain),
+        );
     const start = Math.min(offset, matching.length);
     const end =
       query.limit === undefined
@@ -518,6 +532,7 @@ export class EvidenceLedger {
     this.#unknownRevisions.clear();
     this.#cachedImmutableBundle = undefined;
     this.#unknownHeads.clear();
+    this.#sortedUnknownHeads = undefined;
     this.#retained.restore(0);
     this.#recordBytes.clear();
   }
@@ -574,6 +589,7 @@ export class EvidenceLedger {
     if (unknown !== undefined && unknownKey !== undefined) {
       this.#unknownRevisions.set(unknownKey, unknown);
       this.#unknownHeads.set(unknown.unknown_id, unknown);
+      this.#sortedUnknownHeads = undefined;
     }
     this.#commitAccounting(admitted.value);
     return ok(undefined);
@@ -630,6 +646,7 @@ export class EvidenceLedger {
     this.#records = records;
     this.#unknownRevisions = unknownRevisions;
     this.#unknownHeads = unknownHeads;
+    this.#sortedUnknownHeads = undefined;
   }
 
   #readEvidence(

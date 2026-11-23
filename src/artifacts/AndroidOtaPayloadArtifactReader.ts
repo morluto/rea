@@ -5,7 +5,7 @@ import { setImmediate } from "node:timers/promises";
 import type {
   AndroidOtaPartitionMetadata,
   AndroidOtaPayloadMetadata,
-} from "../domain/artifactFormatMetadata.js";
+} from "../domain/formatMetadata/androidAndSystemMetadata.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import {
   assertArtifactReadActive,

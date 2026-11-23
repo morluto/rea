@@ -10,7 +10,7 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { modelArtifactSchema } from "../../../src/domain/model/modelArtifact.js";
-import { renderCliDocument } from "../../../src/cliOutput.js";
+import { renderCliDocument } from "../../../src/cli/cliOutput.js";
 import { safetensorsFixture } from "../../fixtures/model/model.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -431,5 +431,59 @@ cliTest(
       expect(html).not.toContain('href="wrong"');
       expect(html).not.toContain("<h1");
     }
+  },
+);
+
+cliTest(
+  "scales linearly when escaping Markdown headings with long leading whitespace",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-markdown-heading-scale-");
+    const writeBundle = async (name: string, spaces: number) => {
+      const path = join(root, name);
+      const key = `${" ".repeat(spaces)}x`;
+      const record = createEvidence(
+        unknownTarget("not-observed"),
+        { id: "fixture", name: "Fixture", version: "1" },
+        {
+          operation: "ordinary-json",
+          parameters: {},
+          result: { [key]: { value: 1 } },
+        },
+      );
+      await writeFile(path, JSON.stringify(createEvidenceBundle([record])));
+      return path;
+    };
+    const warmupPath = await writeBundle("warmup.json", 8);
+    const smallPath = await writeBundle("small.json", 40_000);
+    const largePath = await writeBundle("large.json", 120_000);
+    const runMd = async (path: string) => {
+      const started = performance.now();
+      const result = await cli.run({
+        arguments: [
+          "inspect-evidence-bundle",
+          JSON.stringify({ path, detail: "complete" }),
+          "--filter-output",
+          "records.0.normalized_result",
+          "--format",
+          "md",
+        ],
+      });
+      const elapsedMs = performance.now() - started;
+      expect(result.exitCode, result.stderr).toBe(0);
+      return { stdout: result.stdout, elapsedMs };
+    };
+    const medianMs = async (path: string, expectedSpaces: number) => {
+      const runs = [await runMd(path), await runMd(path), await runMd(path)];
+      const expectedHeading = `## records.0.normalized_result.${" ".repeat(expectedSpaces)}x`;
+      expect(runs[0]?.stdout).toContain(expectedHeading);
+      const times = runs.map((run) => run.elapsedMs).sort((a, b) => a - b);
+      return times[1]!;
+    };
+
+    await runMd(warmupPath);
+    const smallMs = await medianMs(smallPath, 40_000);
+    const largeMs = await medianMs(largePath, 120_000);
+    // 3x input size grows ~9x under quadratic `$` regex backtracking vs ~1-3x linearly.
+    expect(largeMs / Math.max(smallMs, 1)).toBeLessThan(5);
   },
 );

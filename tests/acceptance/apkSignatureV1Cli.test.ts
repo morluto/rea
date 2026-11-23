@@ -2,7 +2,7 @@ import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
 } from "../fixtures/canonicalOutputSchema.js";
-import { parseZipTail } from "../../src/domain/apkSignature/apkSigningBlock.js";
+import { parseZipTailFromReader } from "../../src/domain/apkSignature/apkSigningBlock.js";
 import { centralDirectoryV1SignatureEntries } from "../../src/domain/apkSignature/apkV1Signature.js";
 import { apkSignatureResultSchema } from "../../src/domain/apkSignature/apkSignatureReport.js";
 import { writeFile } from "node:fs/promises";
@@ -37,6 +37,7 @@ import {
   zipEntryOffsets,
   zipWith,
 } from "../fixtures/apkSignature/v1SignatureBlock.js";
+import { apkFixtureReader } from "../fixtures/apkSignature/randomAccess.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
@@ -686,10 +687,11 @@ cliTest(
       stored: true,
     }));
     const bytes = await zipWith(entries, { dataDescriptor: false });
-    const tail = parseZipTail(bytes);
+    const reader = apkFixtureReader(bytes);
+    const tail = await parseZipTailFromReader(reader);
     if (!tail.ok) throw new Error("Expected a framed ZIP tail");
     const { centralDirectoryOffset, centralDirectorySize, totalEntries } =
-      tail.value;
+      tail.value.tail;
     const parsed = centralDirectoryV1SignatureEntries(
       bytes,
       centralDirectoryOffset,

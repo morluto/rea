@@ -1,4 +1,10 @@
+import type { GoBinary } from "./go/goBinary.js";
 import type { ElfDebugLink } from "./native/elfDebugLink.js";
+import type { ElfDependencies } from "./native/elfDependencies.js";
+import type { ElfNotes } from "./native/elfNotes.js";
+import type { ElfUnwindRanges } from "./native/elfUnwindRanges.js";
+import type { KernelBuildConfig } from "./native/kernelBuildConfig.js";
+import type { KernelModule } from "./native/kernelModule.js";
 import type { InterfaceBuilderAnalysis } from "./apple/interfaceBuilderGraph.js";
 import type { PartialTaskMeasurement } from "./desktop/taskDifficulty.js";
 import type { AppleIpsPartialObservation } from "./native/appleIps.js";
@@ -689,7 +695,13 @@ import type { WebArtifactAcquisition } from "./webArtifactAcquisition.js";
 
 /** Provider-neutral evidence collected before a typed analysis failure. */
 export type AnalysisPartialObservation =
+  | GoBinary
   | ElfDebugLink
+  | ElfDependencies
+  | ElfNotes
+  | ElfUnwindRanges
+  | KernelBuildConfig
+  | KernelModule
   | InterfaceBuilderAnalysis
   | PartialTaskMeasurement
   | {

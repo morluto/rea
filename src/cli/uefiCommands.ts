@@ -1,7 +1,7 @@
 import type { Logger } from "pino";
 import { z } from "zod";
 
-import { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
+import { createUefiAnalysisService } from "../application/ProviderOperationServices.js";
 import { createUefiAnalysisProvider } from "../composition/uefi.js";
 import { UEFI_TOOL_CONTRACTS } from "../contracts/uefi/uefiToolContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
@@ -9,10 +9,8 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { UefiOperation } from "../domain/uefi/uefiFirmwareAnalysis.js";
 import { UEFI_PROVIDER_IDENTITY } from "../uefi/UefiProviderIdentity.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  inspectWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { inspectWithService } from "./contractCommandRunners.js";
 import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
 
@@ -29,7 +27,7 @@ export const registerUefiCommands = (
   cli: CliInstance,
   logger: Logger,
 ): void => {
-  const service = new UefiAnalysisService(createUefiAnalysisProvider());
+  const service = createUefiAnalysisService(createUefiAnalysisProvider());
   const run = (operation: UefiOperation) =>
     inspectWithService(
       () => ({
@@ -49,6 +47,11 @@ export const registerUefiCommands = (
       positionals: ["path"],
       callerPaths: ["path"],
       fields: { path: FLASH_PATH },
+      omit: {
+        detail:
+          "The one-shot command returns complete Evidence; summaries are retained by MCP sessions.",
+        view: "Views page Evidence retained by MCP sessions.",
+      },
     },
     run("inspect_uefi_firmware"),
   );
@@ -80,6 +83,11 @@ export const registerUefiCommands = (
         "Extract selected UEFI firmware bytes with provenance and decode gaps",
       positionals: ["path", "output_directory"],
       callerPaths: ["path", "output_directory"],
+      omit: {
+        detail:
+          "The one-shot command returns complete Evidence; summaries are retained by MCP sessions.",
+        view: "Views page Evidence retained by MCP sessions.",
+      },
       fields: {
         path: FLASH_PATH,
         output_directory: {

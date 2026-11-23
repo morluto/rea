@@ -566,17 +566,24 @@ const inspectState = async (
   const facts = roleFacts(capture);
   const index = indexState(capture);
   const candidates = statePaths(index);
-  for (const selected of options.paths ?? [])
-    if (!candidates.includes(selected))
-      throw new AnalysisInputError(
-        OPERATION,
-        {
-          userMessage: `Captured path ${JSON.stringify(selected)} was not found.`,
-          remediationAction:
-            "Use an exact path from this capture's state view; no current filesystem path is substituted.",
-        },
-        [{ path: ["paths"], reason: "invalid_value" }],
-      );
+  let selectedSet: Set<string> | undefined;
+  if (options.paths !== undefined) {
+    const candidateSet = new Set(candidates);
+    selectedSet = new Set<string>();
+    for (const selected of options.paths) {
+      if (!candidateSet.has(selected))
+        throw new AnalysisInputError(
+          OPERATION,
+          {
+            userMessage: `Captured path ${JSON.stringify(selected)} was not found.`,
+            remediationAction:
+              "Use an exact path from this capture's state view; no current filesystem path is substituted.",
+          },
+          [{ path: ["paths"], reason: "invalid_value" }],
+        );
+      selectedSet.add(selected);
+    }
+  }
   const paths = await withRetainedContent(
     folder,
     async (content) => {
@@ -590,7 +597,7 @@ const inspectState = async (
       };
       const described: DesktopStatePath[] = [];
       for (const path of candidates)
-        if (options.paths === undefined || options.paths.includes(path))
+        if (selectedSet === undefined || selectedSet.has(path))
           described.push(await describePath(capture, path, facts, context));
       return described;
     },

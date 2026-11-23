@@ -112,6 +112,9 @@ const windowsPathEntries = (value: string): readonly string[] => {
 /** Image extensions Windows starts directly; anything else needs a host such as cmd.exe. */
 const WINDOWS_IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([".com", ".exe"]);
 
+/** Launchers cmd.exe starts; a dot before these names an explicit extension. */
+const WINDOWS_BATCH_EXTENSIONS: ReadonlySet<string> = new Set([".bat", ".cmd"]);
+
 /** A PATHEXT entry that is not a filename extension, so the search is unknown. */
 export interface WindowsPathSearchFailure {
   readonly kind: "invalid_extension";
@@ -147,7 +150,22 @@ export const windowsPathCandidates = (
   const extensions = (selected.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
     .split(";")
     .filter((extension) => extension !== "");
-  const invalid = listed.every((command) => win32.extname(command) !== "")
+  // Like libuv and cmd.exe, a dot names an extension only when the suffix is
+  // an executable one; in `python3.12` it is part of the name, so PATHEXT is
+  // still appended. A trailing dot still suppresses PATHEXT.
+  const namedExtension = (command: string): string | undefined => {
+    const extension = win32.extname(command).toLowerCase();
+    return extension !== "" &&
+      (extension === "." ||
+        WINDOWS_IMAGE_EXTENSIONS.has(extension) ||
+        WINDOWS_BATCH_EXTENSIONS.has(extension) ||
+        extensions.some((listed) => listed.toLowerCase() === extension))
+      ? extension
+      : undefined;
+  };
+  const invalid = listed.every(
+    (command) => namedExtension(command) !== undefined,
+  )
     ? undefined
     : extensions.find(
         (extension) =>
@@ -159,8 +177,8 @@ export const windowsPathCandidates = (
     search.allowBatch === true ||
     WINDOWS_IMAGE_EXTENSIONS.has(extension.toLowerCase());
   const spelled = (command: string): string[] => {
-    const explicit = win32.extname(command);
-    if (explicit !== "") return runnable(explicit) ? [command] : [];
+    const explicit = namedExtension(command);
+    if (explicit !== undefined) return runnable(explicit) ? [command] : [];
     return extensions
       .filter(runnable)
       .map((extension) => `${command}${extension}`);

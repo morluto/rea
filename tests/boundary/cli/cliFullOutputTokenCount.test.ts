@@ -4,7 +4,7 @@ import { estimateTokenCount } from "tokenx";
 import { describe, expect, it } from "vitest";
 
 import { formatCliOutput } from "../../../src/cli/cliOutputFormatter.js";
-import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 
 const countFor = async (

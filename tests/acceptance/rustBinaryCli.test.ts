@@ -264,6 +264,7 @@ cliTest(
       architecture: "arm64_32",
       bits: 64,
       auditable_metadata: null,
+      rustc_commit: null,
     });
   },
 );
