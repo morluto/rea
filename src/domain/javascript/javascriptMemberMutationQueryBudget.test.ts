@@ -89,6 +89,25 @@ describe("a member-mutation query that outgrows its state budget", () => {
     );
   });
 
+  it("follows a long chain of projected aliases without nesting a walk per link", () => {
+    // Each link reads a member of the previous object. A collapsed query
+    // that started a walk per link overflowed the call stack here.
+    const links = 1_500;
+    const { ir, value } = analyze(
+      `const b0 = { v: 1 };
+       ${Array.from(
+         { length: links },
+         (_, index) =>
+           `const a${String(index + 1)} = { p: b${String(index)} }; const b${String(index + 1)} = a${String(index + 1)}.p;`,
+       ).join(" ")}
+       unknown(b${String(links)});
+       return b0.v;`,
+      tightPrecision,
+    );
+    expect(ir.coverage.resourceLimits).toContain("alias-selections");
+    expect(value?.status).not.toBe("literal");
+  });
+
   it("leaves a query within its budget exact and undisclosed", () => {
     const { ir, value } = analyze(
       `const y = { v: 1 };

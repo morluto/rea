@@ -1300,19 +1300,40 @@ export function* collectSemanticMemberMutationsSteps(
           ]);
           if (collapsedEscapes.has(identity)) continue;
           collapsedEscapes.add(identity);
-          markValue(
-            current.node,
-            [],
-            new Set(),
-            "escape",
-            mutation,
-            current.originAt,
-            current.ownerInitializer,
-            widenedGetterResult,
-            undefined,
-            undefined,
-            current,
-          );
+          // An escape walk queues the whole-object escape as one more state.
+          // Starting a walk for each projected alias would nest one call per
+          // link of an alias chain and overflow the stack on a long one.
+          if (effect === "escape" && assignedSources === undefined)
+            enqueue({
+              node: current.node,
+              path: [],
+              bindings: new Set(),
+              originAt: current.originAt,
+              definiteReceiver: true,
+              memberReadAt:
+                current.memberReadAt ??
+                patternClose ??
+                mutation ??
+                current.originAt,
+              capturedSelections: current.capturedSelections,
+              ...(current.ownerInitializer === undefined
+                ? {}
+                : { ownerInitializer: current.ownerInitializer }),
+            });
+          else
+            markValue(
+              current.node,
+              [],
+              new Set(),
+              "escape",
+              mutation,
+              current.originAt,
+              current.ownerInitializer,
+              widenedGetterResult,
+              undefined,
+              undefined,
+              current,
+            );
           continue;
         }
         // A self alias such as `node = node[key]` revisits its capture with the
