@@ -43,6 +43,19 @@ export const androidInputSchemas = {
     query: z
       .string()
       .describe("Case-sensitive class-name substring; empty lists all classes"),
+    limit: z
+      .int()
+      .positive()
+      .max(10_000)
+      .optional()
+      .describe(
+        "Maximum number of matching class names to return; omit to return all matches",
+      ),
+    offset: z
+      .int()
+      .nonnegative()
+      .optional()
+      .describe("Zero-based starting match index; defaults to 0"),
   }),
   inspect_android_class: z.strictObject({ ...classTarget, ...mappingPath }),
   inspect_android_method: z.strictObject({
@@ -258,7 +271,7 @@ export const androidResultSchemas = {
         occurrences: z.int().min(2),
       }),
     ),
-    coverage: z.literal("complete"),
+    coverage: knownCoverageStatusSchema,
   }),
   inspect_android_class: z.strictObject({
     ...common,
