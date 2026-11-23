@@ -108,7 +108,9 @@ export interface ProviderProcessHandle extends Pick<
   readonly stderr: Readable | null;
   readonly exitCode: number | null;
   readonly signalCode: NodeJS.Signals | null;
-  /** True once an enforced process memory limit reported an allocation failure. */
+  /** True once an enforced process memory limit reported an allocation failure.
+   * A live owner emits `memory-limit` on the first transition to true.
+   */
   readonly memoryLimitReached?: boolean;
   /** True if a Windows backpressured stream was destroyed before output drained. */
   readonly outputIncomplete?: boolean;
@@ -258,6 +260,8 @@ export interface ProviderProcessSupervisorOptions {
    */
   readonly diagnosticRetention?: "head" | "tail";
   readonly onDiagnostic?: (event: ProviderProcessDiagnostic) => void;
+  /** Wake a waiter when a live process owner first observes a memory refusal. */
+  readonly onMemoryLimit?: () => void;
 }
 
 /** One output token located before retention applies, so it survives an exhausted budget. */
@@ -505,6 +509,9 @@ export class ProviderProcessSupervisor {
     }
     this.#outputClose.resolve(undefined);
   };
+  readonly #onMemoryLimit = (): void => {
+    this.#options.onMemoryLimit?.();
+  };
   readonly #onError = (cause: Error): void => {
     this.#options.onDiagnostic?.({
       type: "error",
@@ -551,6 +558,8 @@ export class ProviderProcessSupervisor {
     launch.process.once("exit", this.#onExit);
     launch.process.once("close", this.#onClose);
     launch.process.on("error", this.#onError);
+    if (this.#options.onMemoryLimit !== undefined)
+      launch.process.once("memory-limit", this.#onMemoryLimit);
     if (launch.process.exitCode !== null || launch.process.signalCode !== null)
       this.#recordExit(launch.process.exitCode, launch.process.signalCode);
   }
@@ -910,6 +919,7 @@ export class ProviderProcessSupervisor {
     this.launch.process.off("exit", this.#onExit);
     this.launch.process.off("close", this.#onClose);
     this.launch.process.off("error", this.#onError);
+    this.launch.process.off("memory-limit", this.#onMemoryLimit);
   }
 
   /** Release event-loop references so incomplete cleanup does not prevent host exit. */
