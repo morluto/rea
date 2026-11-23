@@ -86,8 +86,9 @@ const readConsent = async (path: string | undefined) => {
     );
   }
   const parsed = safeParseUtf8Json(bytes);
-  const consent =
-    parsed.ok ? consentFileSchema.safeParse(parsed.value) : undefined;
+  const consent = parsed.ok
+    ? consentFileSchema.safeParse(parsed.value)
+    : undefined;
   if (consent?.success !== true)
     throw refused(
       "consent",
