@@ -222,7 +222,7 @@ export interface StableArtifactHandle {
 }
 
 /** Options for {@link withStableArtifactHandle}. */
-export interface StableArtifactHandleOptions {
+export interface StableArtifactHandleOptions<Value = unknown> {
   /** Bytes to retain from the start of the file, given its admitted size. */
   readonly retainBytes: (size: number) => number;
   /** Maximum streaming hash chunk size in bytes; defaults to 65536. */
@@ -235,6 +235,8 @@ export interface StableArtifactHandleOptions {
     readonly sha256: string;
     readonly bytes: number;
   }) => void;
+  /** Called after the parsed result passes the final identity check, before closing. */
+  readonly onVerifiedResult?: (value: Value) => void;
 }
 
 /**
@@ -245,7 +247,7 @@ export interface StableArtifactHandleOptions {
 export const withStableArtifactHandle = async <Value>(
   path: string,
   maximumBytes: number,
-  options: StableArtifactHandleOptions,
+  options: StableArtifactHandleOptions<Value>,
   useFile: (handle: StableArtifactHandle) => Promise<Value>,
 ): Promise<Value> => {
   const chunkBytes = options.chunkBytes ?? DEFAULT_STREAM_CHUNK_BYTES;
@@ -287,7 +289,9 @@ export const withStableArtifactHandle = async <Value>(
         throw cause;
       });
       await verifyState();
-      assertArtifactReadActive(options.signal);
+      options.onVerifiedResult?.(value);
+      // The descriptor owner records this verified completion before checking
+      // finalization cancellation, so cleanup errors can retain the value.
       return value;
     },
   });

@@ -3,7 +3,7 @@ import type { ApktoolRequest } from "../domain/apktool/apktoolResourceAnalysis.j
 import type { FlutterRequest } from "../domain/flutter/flutterBuildAnalysis.js";
 import type { PcapRequest } from "../domain/pcap/pcapAnalysis.js";
 import type { AdbRequest } from "../domain/adb/adbDeviceAnalysis.js";
-import { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
+import { createUefiAnalysisService } from "../application/ProviderOperationServices.js";
 import type { UefiAnalysisPort } from "../ports/uefi/UefiAnalysisPort.js";
 import { createUefiAnalysisProvider } from "./uefi.js";
 import type { OptionalProviderLoadFailures } from "../ports/OptionalObservationProviders.js";
@@ -491,11 +491,10 @@ const modules = {
       },
     }),
   ),
-  uefiAnalysis: service(
-    ({ options }) =>
-      new UefiAnalysisService(
-        options.uefiAnalysis ?? createUefiAnalysisProvider(),
-      ),
+  uefiAnalysis: service(({ options }) =>
+    createUefiAnalysisService(
+      options.uefiAnalysis ?? createUefiAnalysisProvider(),
+    ),
   ),
   gdbSessions: capability(
     ({ providerEnvironment, platform }) =>

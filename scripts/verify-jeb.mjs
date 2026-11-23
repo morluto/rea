@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { JebAnalysisService } from "../dist/application/jeb/JebAnalysisService.js";
+import { createJebAnalysisService } from "../dist/application/ProviderOperationServices.js";
 import { createJebAnalysisProvider } from "../dist/composition/jeb.js";
 import {
   verifierFailureReasons,
@@ -28,7 +28,7 @@ if (options.help) {
 }
 
 const provider = createJebAnalysisProvider(process.env);
-const service = new JebAnalysisService(provider);
+const service = createJebAnalysisService(provider);
 let fixture;
 let fixtureDirectory;
 try {

@@ -5,10 +5,8 @@ import { logCliCommand } from "../cliLogging.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { withCommandCancellation } from "./commandCancellation.js";
-import {
-  describeContractCommand,
-  withoutDefault,
-} from "./contractCliDescription.js";
+import { describeContractCommand } from "./contractCliDescription.js";
+import { withoutDefault } from "./contractCliSchemaProjection.js";
 import type {
   CliContractProjection,
   CliOptionShape,

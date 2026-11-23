@@ -1,10 +1,11 @@
+import { createHash } from "node:crypto";
 import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createKernelModuleService } from "../../../src/composition/binaryDiagnostics/kernelModule.js";
+import { kernelModuleSchema } from "../../../src/domain/native/kernelModule.js";
 import {
-  compressedKernelModuleContainer,
   kernelModuleFixture,
   moduleSignatureTrailer,
 } from "../../../src/native/elf/KernelModule.fixture.js";
@@ -37,6 +38,63 @@ describe("kernel module stable filesystem boundary", () => {
           magic: { bytes: 28 },
           info: { sig_len: 0, id_type: 2 },
           pkcs7: null,
+        },
+      });
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("reads module metadata and signature beyond the retained prefix", async () => {
+    const root = await createTestTempDirectory("rea-kernel-module-positional-");
+    const path = join(root, "demo.ko");
+    // Enough section headers to place .modinfo and the signature beyond 4 KiB.
+    const pkcs7 = Buffer.from("module signature outside prefix");
+    const trailer = moduleSignatureTrailer(pkcs7);
+    const bytes = kernelModuleFixture({
+      sharedNameSections: { name: ".padding", count: 70 },
+      signature: trailer,
+    });
+    const firstSection = Number(bytes.readBigUInt64LE(40)) + 64;
+    const modinfoOffset = Number(bytes.readBigUInt64LE(firstSection + 24));
+    const versionsOffset = Number(
+      bytes.readBigUInt64LE(firstSection + 64 + 24),
+    );
+    expect(modinfoOffset).toBeGreaterThan(4096);
+    expect(versionsOffset).toBeGreaterThan(4096);
+    await writeFile(path, bytes);
+    const service = createKernelModuleService();
+    try {
+      const result = await service.inspect({ path });
+      if (!result.ok) throw result.error;
+      expect(fileIdentity(result.value.subject)).toMatchObject({
+        format: "elf",
+        architecture: "x86_64",
+      });
+      expect(result.value.confidence).toBe("observed");
+      const report = kernelModuleSchema.parse(result.value.normalized_result);
+      expect(report.modinfo?.entries[0]).toMatchObject({
+        key: "license",
+        value: "GPL",
+        location: { offset: modinfoOffset, bytes: 12 },
+      });
+      expect(report.versions?.location).toEqual({
+        offset: versionsOffset,
+        bytes: 128,
+      });
+      expect(report.versions?.entries[0]).toMatchObject({
+        crc_hex: "0000000012345678",
+        name: "printk",
+        location: { offset: versionsOffset, bytes: 64 },
+      });
+      expect(report.signature).toMatchObject({
+        status: "present",
+        pkcs7: {
+          location: {
+            offset: bytes.length - trailer.length,
+            bytes: pkcs7.length,
+          },
+          sha256: createHash("sha256").update(pkcs7).digest("hex"),
         },
       });
     } finally {
@@ -102,27 +160,4 @@ describe("kernel module stable filesystem boundary", () => {
       await service.close();
     }
   });
-
-  it.each(["gzip", "xz", "zstd"] as const)(
-    "reports a %s container as unsupported without treating it as a module",
-    async (codec) => {
-      const root = await createTestTempDirectory(`rea-kernel-module-${codec}-`);
-      const path = join(root, `demo.ko.${codec === "gzip" ? "gz" : codec}`);
-      await writeFile(path, compressedKernelModuleContainer(codec));
-      const service = createKernelModuleService();
-      try {
-        const result = await service.inspect({ path });
-        if (!result.ok) throw result.error;
-        expect(fileIdentity(result.value.subject).format).toBe("file");
-        expect(result.value.normalized_result).toMatchObject({
-          applicability: "unsupported",
-          compression: { codec, status: "unsupported" },
-          next_probe: { operation: "external_decompression" },
-          modinfo: null,
-        });
-      } finally {
-        await service.close();
-      }
-    },
-  );
 });

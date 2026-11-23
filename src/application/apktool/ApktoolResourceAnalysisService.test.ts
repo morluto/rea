@@ -2,7 +2,7 @@ import type { RequestAnalysisPort } from "../../ports/AnalysisProvider.js";
 import type { ApktoolRequest } from "../../domain/apktool/apktoolResourceAnalysis.js";
 import { expect, it } from "vitest";
 
-import { ApktoolResourceAnalysisService } from "./ApktoolResourceAnalysisService.js";
+import { createApktoolResourceAnalysisService } from "../ProviderOperationServices.js";
 import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { parseEvidence } from "../../domain/evidence.js";
@@ -45,7 +45,7 @@ it.each([
   ],
   [{ path: "/targets/app.apk", extra: true }],
 ])("rejects invalid decode selection before any effect: %j", async (input) => {
-  const service = new ApktoolResourceAnalysisService(refusedPort);
+  const service = createApktoolResourceAnalysisService(refusedPort);
   expect(
     await service.execute("decode_android_resources", input),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
@@ -69,7 +69,7 @@ it("admits valid batched locales and forwards them to provider", async () => {
       return ok(execution);
     },
   };
-  const result = await new ApktoolResourceAnalysisService(port).execute(
+  const result = await createApktoolResourceAnalysisService(port).execute(
     "decode_android_resources",
     {
       path: "/targets/app.apk",
@@ -100,7 +100,7 @@ it("composes observed Evidence with the caller parameters inline", async () => {
       return ok(execution);
     },
   };
-  const result = await new ApktoolResourceAnalysisService(port).execute(
+  const result = await createApktoolResourceAnalysisService(port).execute(
     "decode_android_resources",
     { path: "/targets/app.apk", include_strings: true },
   );
@@ -118,7 +118,7 @@ it("composes observed Evidence with the caller parameters inline", async () => {
 it("preserves cancellation before execution", async () => {
   const controller = new AbortController();
   controller.abort();
-  const service = new ApktoolResourceAnalysisService(refusedPort);
+  const service = createApktoolResourceAnalysisService(refusedPort);
   const result = await service.execute(
     "decode_android_resources",
     { path: "/targets/app.apk", include_strings: true },
@@ -143,7 +143,7 @@ it("preserves a cancellation that races a completed observation", async () => {
       return ok(execution);
     },
   };
-  const result = await new ApktoolResourceAnalysisService(racingPort).execute(
+  const result = await createApktoolResourceAnalysisService(racingPort).execute(
     "decode_android_resources",
     { path: "/targets/app.apk", include_strings: true },
     { signal: controller.signal },

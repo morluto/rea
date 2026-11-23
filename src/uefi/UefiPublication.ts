@@ -7,6 +7,7 @@ import {
   AnalysisCleanupLeaseGroup,
   SafeOutputTree,
   SafeOutputTreeCreationFailure,
+  outputDirectoryAdmissionRefusal,
 } from "../resources/index.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -106,8 +107,13 @@ export const publishUefiFiles = async (context: {
     return { result };
   } catch (cause: unknown) {
     if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
+    // A refused destination is the caller's output_directory, not the image path.
     const primary = classifyProviderFailure(
-      cause,
+      outputDirectoryAdmissionRefusal(
+        context.operation,
+        "output_directory",
+        cause,
+      ),
       uefiFailureDialect(context.operation, context.outputDirectory),
     );
     if (tree === undefined) throw primary;

@@ -21,10 +21,8 @@ import { registerDecompileDirectoryCommand } from "./decompileDirectoryCommand.j
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
 import { ELECTRON_TOOL_CONTRACTS } from "../contracts/javascript/electronToolContracts.js";
-import {
-  registerContractCommand,
-  runDirectOnTarget,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { runDirectOnTarget } from "./contractCommandRunners.js";
 import {
   commandRoute,
   registerRoutedCommand,

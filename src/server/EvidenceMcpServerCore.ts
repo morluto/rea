@@ -106,9 +106,26 @@ export interface StandardToolRegistration {
   readonly _meta?: Record<string, unknown>;
 }
 
+/** Lifecycle hook registered on {@link EvidenceMcpServerCore} for awaitable close. */
+export interface ServerCloseHookOptions {
+  /** Message used when wrapping failures in an {@link AggregateError}. */
+  readonly failureMessage?: string | undefined;
+  /** Wrap even a single failure in an {@link AggregateError} with `failureMessage`. */
+  readonly alwaysAggregate?: boolean | undefined;
+}
+
+interface RegisteredCloseHook {
+  readonly close: () => Promise<void>;
+  readonly failureMessage: string | undefined;
+  readonly alwaysAggregate: boolean;
+}
+
 /** Bind oversized MCP error recovery to this server's Evidence ledger. */
 export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   private readonly registrations = new Map<string, RegisteredTool>();
+  private readonly closeHooks: RegisteredCloseHook[] = [];
+  private readonly transportCloseHooks: (() => void)[] = [];
+  private transportOncloseInstalled = false;
   private progressiveCatalog: ProgressiveToolCatalog | undefined;
   private catalogChangeDepth = 0;
   private catalogChanged = false;
@@ -116,6 +133,82 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   /** Transport-owned Evidence uses the same lifetime as application writes. */
   withAdmittedAnalysis: WithAdmittedAnalysis | undefined;
   private identity: ReturnType<typeof createCatalogIdentity> | undefined;
+
+  /** Register an awaitable cleanup hook settled during {@link close}. */
+  registerCloseHook(
+    close: () => Promise<void>,
+    options: ServerCloseHookOptions = {},
+  ): void {
+    this.closeHooks.push({
+      close,
+      failureMessage: options.failureMessage,
+      alwaysAggregate: options.alwaysAggregate === true,
+    });
+  }
+
+  /** Register a synchronous cleanup notification fired when the transport closes. */
+  registerTransportCloseHook(onClose: () => void): void {
+    this.transportCloseHooks.push(onClose);
+    if (this.transportOncloseInstalled) return;
+    this.transportOncloseInstalled = true;
+    const previousOnclose = this.server.onclose;
+    this.server.onclose = () => {
+      try {
+        previousOnclose?.();
+      } finally {
+        for (const hook of this.transportCloseHooks) {
+          try {
+            hook();
+          } catch {
+            // Hooks own their own error logging; one failure must not block the rest.
+          }
+        }
+      }
+    };
+  }
+
+  /** Close only the underlying MCP protocol/transport without running registered hooks. */
+  protected closeProtocol(): Promise<void> {
+    return super.close();
+  }
+
+  /** Settle all registered close hooks without closing the underlying transport. */
+  protected async closeRegisteredHooks(): Promise<void> {
+    if (this.closeHooks.length === 0) return;
+    await this.settleCloseTasks(this.closeHooks.map((hook) => hook.close()));
+  }
+
+  override async close(): Promise<void> {
+    await this.settleCloseTasks([
+      super.close(),
+      ...this.closeHooks.map((hook) => hook.close()),
+    ]);
+  }
+
+  private async settleCloseTasks(
+    tasks: readonly Promise<void>[],
+  ): Promise<void> {
+    const results = await Promise.allSettled(tasks);
+    const failures = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason as unknown] : [],
+    );
+    if (failures.length === 0) return;
+    const alwaysAggregateHook = [...this.closeHooks]
+      .reverse()
+      .find((hook) => hook.alwaysAggregate);
+    if (alwaysAggregateHook !== undefined)
+      throw new AggregateError(
+        failures,
+        alwaysAggregateHook.failureMessage ?? "REA server cleanup failed",
+      );
+    if (failures.length === 1) throw failures[0];
+    const message =
+      [...this.closeHooks]
+        .reverse()
+        .find((hook) => hook.failureMessage !== undefined)?.failureMessage ??
+      "REA server cleanup failed";
+    throw new AggregateError(failures, message);
+  }
 
   /** Composition supplies identity without importing the canonical schema graph. */
   get catalogIdentity(): ReturnType<typeof createCatalogIdentity> {

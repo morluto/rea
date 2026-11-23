@@ -4,7 +4,7 @@ import { join } from "node:path";
 import pino from "pino";
 import { expect, it } from "vitest";
 
-import { registerBrowserScenarioCommands } from "../../../src/cliBrowserScenarioCommands.js";
+import { registerBrowserScenarioCommands } from "../../../src/cli/browserScenarioCommands.js";
 import { ok } from "../../../src/domain/result.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";

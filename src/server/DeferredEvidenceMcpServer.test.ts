@@ -108,7 +108,7 @@ const fixture = async (
       target.ownRuntimeCleanup(async () => {
         closed();
         if (options.failClose?.()) throw new Error("cleanup denied");
-        await target.closePartialRuntime();
+        await target.closeRuntimeHooks();
       });
       await options.startup?.hold();
       if (options.failLoad) throw new Error("PRIVATE startup cause");

@@ -11,10 +11,8 @@ import type { CliInstance } from "./types.js";
 import { contractNamed } from "./contractCliDescription.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
-import {
-  registerContractCommand,
-  runDirectOnTarget,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { runDirectOnTarget } from "./contractCommandRunners.js";
 
 const executable = nativeTarget("Local executable path");
 const nativeApplication = nativeTarget("Local native executable or app path");

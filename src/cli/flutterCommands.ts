@@ -3,7 +3,7 @@ import type { FlutterRequest } from "../domain/flutter/flutterBuildAnalysis.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { withEvidenceCallerInputPath } from "../domain/evidence.js";
 import { recognizeEvidence } from "../domain/evidenceValidation.js";
-import { FlutterBuildAnalysisService } from "../application/flutter/FlutterBuildAnalysisService.js";
+import { createFlutterBuildAnalysisService } from "../application/ProviderOperationServices.js";
 import { createFlutterBuildAnalysisProvider } from "../composition/flutter.js";
 import { FLUTTER_TOOL_CONTRACTS } from "../contracts/flutter/flutterToolContracts.js";
 import type { FlutterOperation } from "../domain/flutter/flutterBuildAnalysis.js";
@@ -34,9 +34,13 @@ export const registerFlutterCommands = (
     (input: { readonly path: string }, { signal }: ContractCommandContext) =>
       finishAnalysisCommand(
         bindCliEvidenceCallerPath(input.path, () =>
-          new FlutterBuildAnalysisService(provider).execute(operation, input, {
-            signal,
-          }),
+          createFlutterBuildAnalysisService(provider).execute(
+            operation,
+            input,
+            {
+              signal,
+            },
+          ),
         ),
         { close: () => provider.close() },
         "flutter",
