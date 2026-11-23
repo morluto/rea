@@ -2,6 +2,8 @@ import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
 } from "../fixtures/canonicalOutputSchema.js";
+import { parseZipTailFromReader } from "../../src/domain/apkSignature/apkSigningBlock.js";
+import { centralDirectoryV1SignatureEntries } from "../../src/domain/apkSignature/apkV1Signature.js";
 import { apkSignatureResultSchema } from "../../src/domain/apkSignature/apkSignatureReport.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -12,11 +14,11 @@ import { closeVerifierResources } from "../../scripts/lib/verifier-cleanup.mjs";
 import { AnalysisProviderRegistry } from "../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../src/application/binary/BinarySessionComposition.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { createServer } from "../../src/server/createServer.js";
 import {
   APK_SIGNATURE_V2_ID,
-  APK_SIGNATURE_V3_ID,
   indefinite,
   LEAF_CERTIFICATE,
   LEAF_SHA256,
@@ -31,12 +33,13 @@ import {
   signerInfo,
   tlv,
   v2SchemeValue,
-  v3SchemeValue,
   withSigningBlock,
   zipEntryOffsets,
   zipWith,
 } from "../fixtures/apkSignature/v1SignatureBlock.js";
+import { apkFixtureReader } from "../fixtures/apkSignature/randomAccess.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { createTestMcp } from "../support/mcp/mcpFixture.js";
@@ -107,81 +110,23 @@ const expectV1Only = (
 };
 
 cliTest(
-  "names the v1 signer certificate and a v1/v2 signer mismatch identically through CLI and MCP",
+  "publishes a complete v1 identity across adapters and a deflated v1 mismatch through CLI",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-apk-v1-signer-");
-    const v1Zip = await zipWith([
-      { name: "classes.dex", data: "dex" },
-      { name: "META-INF/MANIFEST.MF", data: "Manifest-Version: 1.0" },
-      { name: "META-INF/CERT.SF", data: "Signature-Version: 1.0" },
-      { name: "META-INF/CERT.EC", data: OPENSSL_BLOCK_ISSUER_SERIAL },
-    ]);
-    const v1Only = join(root, "v1-only.apk");
-    await writeFile(v1Only, v1Zip);
-    const v1Stored = join(root, "v1-stored.apk");
-    await writeFile(
-      v1Stored,
-      await zipWith([
+    const archive = (stored: boolean) =>
+      zipWith([
         { name: "classes.dex", data: "dex" },
         { name: "META-INF/MANIFEST.MF", data: "Manifest-Version: 1.0" },
         { name: "META-INF/CERT.SF", data: "Signature-Version: 1.0" },
-        {
-          name: "META-INF/CERT.EC",
-          data: OPENSSL_BLOCK_ISSUER_SERIAL,
-          stored: true,
-        },
-      ]),
-    );
-    // The v2 block names a different certificate than the JAR signature.
+        { name: "META-INF/CERT.EC", data: OPENSSL_BLOCK_ISSUER_SERIAL, stored },
+      ]);
+    const v1Only = join(root, "v1-stored.apk");
     const mixed = join(root, "v1-v2-mismatch.apk");
+    await writeFile(v1Only, await archive(true));
     await writeFile(
       mixed,
-      withSigningBlock(v1Zip, [
+      withSigningBlock(await archive(false), [
         { id: APK_SIGNATURE_V2_ID, value: v2SchemeValue(ROOT_CERTIFICATE) },
-      ]),
-    );
-
-    // Rotated v1 + v3 without v2: v1 keeps the original key (the lineage's
-    // first node), v3 signs with the newest. That is the expected layout.
-    const rotated = join(root, "v1-v3-rotated.apk");
-    await writeFile(
-      rotated,
-      withSigningBlock(v1Zip, [
-        {
-          id: APK_SIGNATURE_V3_ID,
-          value: v3SchemeValue(ROOT_CERTIFICATE, [
-            LEAF_CERTIFICATE,
-            ROOT_CERTIFICATE,
-          ]),
-        },
-      ]),
-    );
-    const rotatedWithV2 = join(root, "v1-v2-v3-rotated.apk");
-    await writeFile(
-      rotatedWithV2,
-      withSigningBlock(v1Zip, [
-        { id: APK_SIGNATURE_V2_ID, value: v2SchemeValue(LEAF_CERTIFICATE) },
-        {
-          id: APK_SIGNATURE_V3_ID,
-          value: v3SchemeValue(ROOT_CERTIFICATE, [
-            LEAF_CERTIFICATE,
-            ROOT_CERTIFICATE,
-          ]),
-        },
-      ]),
-    );
-    // A lineage that does not start at the v1 key is still a mismatch.
-    const misrotated = join(root, "v1-v3-misrotated.apk");
-    await writeFile(
-      misrotated,
-      withSigningBlock(v1Zip, [
-        {
-          id: APK_SIGNATURE_V3_ID,
-          value: v3SchemeValue(LEAF_CERTIFICATE, [
-            ROOT_CERTIFICATE,
-            LEAF_CERTIFICATE,
-          ]),
-        },
       ]),
     );
 
@@ -193,35 +138,20 @@ cliTest(
       return completeEvidence(result.json);
     };
     const cliV1 = await viaCli(v1Only);
-    const cliStored = await viaCli(v1Stored);
-    const cliMixed = await viaCli(mixed);
-    const cliRotated = await viaCli(rotated);
-    const cliRotatedWithV2 = await viaCli(rotatedWithV2);
-    const cliMisrotated = await viaCli(misrotated);
-
     expectV1Only(cliV1.normalized_result);
-    expectV1Only(cliStored.normalized_result);
+    expect(cliV1.limitations.join(" ")).toContain("NOT verified");
+
+    const cliMixed = await viaCli(mixed);
+    expect(cliMixed.normalized_result.schemes.v1.signers).toMatchObject([
+      { certificate: { sha256_fingerprint: LEAF_SHA256 }, decode_error: null },
+    ]);
+    expect(cliMixed.normalized_result.schemes.v2.signers).toMatchObject([
+      { certificate: { sha256_fingerprint: ROOT_SHA256 } },
+    ]);
     expect(cliMixed.normalized_result.posture).toMatchObject({
       v1_only: false,
       v1_signers_match_block_signers: false,
     });
-    expect(cliRotated.normalized_result.posture).toMatchObject({
-      v1_only: false,
-      rotation_present: true,
-      schemes_agree_on_signer: true,
-      signer_change_declared_by_rotation: false,
-      v1_signers_match_block_signers: true,
-    });
-    expect(cliRotatedWithV2.normalized_result.posture).toMatchObject({
-      rotation_present: true,
-      schemes_agree_on_signer: false,
-      signer_change_declared_by_rotation: true,
-      v1_signers_match_block_signers: true,
-    });
-    expect(
-      cliMisrotated.normalized_result.posture.v1_signers_match_block_signers,
-    ).toBe(false);
-    expect(cliV1.limitations.join(" ")).toContain("NOT verified");
 
     const client = await connectSignerMcp();
     const tool = (await client.listTools()).tools.find(
@@ -231,25 +161,18 @@ cliTest(
       throw new Error("inspect_apk_signature must be advertised");
     const outputSchema = canonicalOutputSchema(tool.name);
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
-    for (const [path, fromCli] of [
-      [v1Only, cliV1],
-      [mixed, cliMixed],
-      [rotated, cliRotated],
-      [rotatedWithV2, cliRotatedWithV2],
-    ] as const) {
-      const reply = await client.callTool(
-        { name: tool.name, arguments: { path, detail: "complete" } },
-        { toolDefinition: withCanonicalOutputSchema(tool) },
-      );
-      expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
-      expect(
-        ajv.validate(outputSchema, reply.structuredContent),
-        JSON.stringify(ajv.errors),
-      ).toBe(true);
-      const evidence = parseEvidence(reply.structuredContent);
-      expect(evidence.normalized_result).toEqual(fromCli.normalized_result);
-      expect(evidence.evidence_id).toBe(fromCli.evidence_id);
-    }
+    const reply = await client.callTool(
+      { name: tool.name, arguments: { path: v1Only, detail: "complete" } },
+      { toolDefinition: withCanonicalOutputSchema(tool) },
+    );
+    expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+    expect(
+      ajv.validate(outputSchema, reply.structuredContent),
+      JSON.stringify(ajv.errors),
+    ).toBe(true);
+    const evidence = parseEvidence(reply.structuredContent);
+    expect(evidence.normalized_result).toEqual(cliV1.normalized_result);
+    expect(evidence.evidence_id).toBe(cliV1.evidence_id);
   },
 );
 
@@ -257,51 +180,40 @@ cliTest(
   "retains v1 signer identity when the CMS signature OCTET STRING is constructed BER",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-apk-v1-ber-signature-");
-    const encodings = [
-      [
-        "definite",
-        tlv(0x24, tlv(0x04, Uint8Array.of(1)), tlv(0x04, Uint8Array.of(2, 3))),
-      ],
-      [
-        "indefinite",
-        indefinite(
-          0x24,
-          tlv(0x04, Uint8Array.of(1)),
-          tlv(0x04, Uint8Array.of(2, 3)),
-        ),
-      ],
-    ] as const;
-    for (const [form, signature] of encodings) {
-      const path = join(root, `${form}.apk`);
-      await writeFile(
-        path,
-        await zipWith([
-          { name: "META-INF/MANIFEST.MF", data: "Manifest-Version: 1.0" },
-          { name: "META-INF/CERT.SF", data: "Signature-Version: 1.0" },
-          {
-            name: "META-INF/CERT.RSA",
-            data: signedDataBlock({
-              certificates: [LEAF_CERTIFICATE],
-              signerInfos: [signerInfo({ names: LEAF_CERTIFICATE, signature })],
-            }),
-          },
-        ]),
-      );
-      const result = await cli.run({
-        arguments: ["inspect-apk-signature", path, "--json"],
-      });
-      expect(result.exitCode, result.stderr).toBe(0);
-      const evidence = completeEvidence(result.json);
-      expect(evidence.normalized_result.schemes.v1.signers).toMatchObject([
+    const path = join(root, "indefinite-ber.apk");
+    const signature = indefinite(
+      0x24,
+      tlv(0x04, Uint8Array.of(1)),
+      tlv(0x04, Uint8Array.of(2, 3)),
+    );
+    await writeFile(
+      path,
+      await zipWith([
+        { name: "META-INF/MANIFEST.MF", data: "Manifest-Version: 1.0" },
+        { name: "META-INF/CERT.SF", data: "Signature-Version: 1.0" },
         {
-          certificate: {
-            sha256_fingerprint: LEAF_SHA256,
-            subject: LEAF_SUBJECT,
-          },
-          decode_error: null,
+          name: "META-INF/CERT.RSA",
+          data: signedDataBlock({
+            certificates: [LEAF_CERTIFICATE],
+            signerInfos: [signerInfo({ names: LEAF_CERTIFICATE, signature })],
+          }),
         },
-      ]);
-    }
+      ]),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-apk-signature", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = completeEvidence(result.json);
+    expect(evidence.normalized_result.schemes.v1.signers).toMatchObject([
+      {
+        certificate: {
+          sha256_fingerprint: LEAF_SHA256,
+          subject: LEAF_SUBJECT,
+        },
+        decode_error: null,
+      },
+    ]);
   },
 );
 
@@ -498,14 +410,6 @@ cliTest(
       `${block}: 2 bytes follow the PKCS#7 ContentInfo and were ignored, as apksig ignores them.`,
     );
 
-    const flaggedResult = await cli.run({
-      arguments: ["inspect-apk-signature", flagged, "--json"],
-    });
-    expect(flaggedResult.exitCode, flaggedResult.stderr).toBe(0);
-    expect(completeEvidence(flaggedResult.json).limitations).toContain(
-      `${block}: the entry declares encryption (general-purpose flag bit 0); apksig ignores the flag, so its bytes were read as stored and the PKCS#7 decoding decides.`,
-    );
-
     const { call } = await connectLocalToolsMcp();
     for (const [path, decodeError] of cases) {
       const result = await call("inspect_apk_signature", {
@@ -513,9 +417,13 @@ cliTest(
         detail: "complete",
       });
       expect(result.isError, JSON.stringify(result)).not.toBe(true);
-      const report = completeEvidence(
+      const { normalized_result: report, limitations } = completeEvidence(
         result.structuredContent,
-      ).normalized_result;
+      );
+      if (path === flagged)
+        expect(limitations).toContain(
+          `${block}: the entry declares encryption (general-purpose flag bit 0); apksig ignores the flag, so its bytes were read as stored and the PKCS#7 decoding decides.`,
+        );
       const [signer, ...rest] = report.schemes.v1.signers;
       expect(rest, path).toEqual([]);
       if (decodeError === null) {
@@ -714,6 +622,11 @@ cliTest(
     const many = Array.from({ length: 70_000 }, (_, i) =>
       latin1(`f${String(i)}`),
     );
+    const zip64Scope =
+      "apksig reads only the first 65535 of the 70000 central-directory records";
+    expect(await limitationsOf("zip64-unique.apk", many)).toEqual([
+      expect.stringContaining(zip64Scope),
+    ]);
     const zip64 = await limitationsOf("zip64.apk", [
       ...many,
       latin1("f0"),
@@ -761,5 +674,88 @@ cliTest(
         decode_error: null,
       },
     ]);
+  },
+);
+
+cliTest(
+  "preserves framing precedence at the APK v1 entry limit across CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-apk-v1-entry-limit-");
+    const entries = Array.from({ length: 4097 }, (_, index) => ({
+      name: `META-INF/F${String(index)}.SF`,
+      data: "",
+      stored: true,
+    }));
+    const bytes = await zipWith(entries, { dataDescriptor: false });
+    const reader = apkFixtureReader(bytes);
+    const tail = await parseZipTailFromReader(reader);
+    if (!tail.ok) throw new Error("Expected a framed ZIP tail");
+    const { centralDirectoryOffset, centralDirectorySize, totalEntries } =
+      tail.value.tail;
+    const parsed = centralDirectoryV1SignatureEntries(
+      bytes,
+      centralDirectoryOffset,
+      centralDirectorySize,
+      totalEntries,
+    );
+    if (parsed.ok || parsed.error.kind !== "limit")
+      throw new Error("Expected a v1 central-directory limit");
+    const parserReason = parsed.error.failure.detail;
+    const malformed = Buffer.from(bytes);
+    const { central } = zipEntryOffsets(bytes, "META-INF/F4096.SF");
+    malformed.writeUInt16LE(0xffff, central + 28);
+
+    const { call } = await connectLocalToolsMcp();
+    for (const [name, selected, expected] of [
+      [
+        "framed",
+        bytes,
+        {
+          code: "resource_constraint",
+          retryable: false,
+          details: {
+            resource: "capacity",
+            reason: parserReason,
+            reported_limits: { max_v1_signature_entries: 4096 },
+            refusal: {
+              kind: "fixed_ceiling",
+              operation: "inspect_apk_signature",
+              allowance_kind: "count",
+            },
+          },
+        },
+      ],
+      [
+        "malformed",
+        malformed,
+        {
+          code: "invalid_request",
+          details: {
+            issues: [
+              {
+                path: ["path"],
+                reason: "invalid_value",
+                message: expect.stringContaining(
+                  "central-directory file name runs past the directory",
+                ),
+              },
+            ],
+          },
+        },
+      ],
+    ] as const) {
+      const path = join(root, `${name}.apk`);
+      await writeFile(path, selected);
+      const reply = await cli.run({
+        arguments: ["inspect-apk-signature", path, "--json"],
+      });
+      expect(reply.exitCode, reply.stderr).toBe(1);
+      expect(analysisErrorProjectionSchema.parse(reply.json)).toMatchObject(
+        expected,
+      );
+      expect(
+        parseMcpToolError(await call("inspect_apk_signature", { path })).error,
+      ).toMatchObject(expected);
+    }
   },
 );

@@ -22,7 +22,7 @@ and subsequent fixes through `9f5191ab0` were compared. Its query redaction and 
 pinning were incorporated. Existing heap-derived URL/JSON/envelope admission
 remains the owner of expansion bounds, rather than adding the upstream fixed
 fill ceiling. Original multi-app/model
-results are [attributed historical evidence](../specs/agent-environments/scenario-saved-values/verification.md),
+results are [attributed historical evidence](https://github.com/morluto/rea/blob/3fcbabe593611435ebc26e1eac86706fe60abb6e/docs/specs/agent-environments/scenario-saved-values/verification.md),
 not executions performed here.
 
 ## Real application and correctness oracles

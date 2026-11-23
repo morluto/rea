@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { BinaryReader } from "../binaryContainer.js";
 import { err, ok, type Result } from "../result.js";
 import { dearmorPublicKeys, isArmoredKey } from "./aptRepositories.js";
 
@@ -22,10 +23,16 @@ const packetHeader = (
   if ((first & 0x40) === 0) {
     const width = [1, 2, 4][first & 0x03];
     if (width === undefined || at + 1 + width > bytes.length) return undefined;
+    const reader = new BinaryReader(bytes, false, "openpgp");
     return {
       tag: (first >> 2) & 0x0f,
       header: 1 + width,
-      body: bytes.readUIntBE(at + 1, width),
+      body:
+        width === 1
+          ? reader.u8(at + 1)
+          : width === 2
+            ? reader.u16(at + 1)
+            : reader.u32(at + 1),
     };
   }
   const tag = first & 0x3f;
@@ -39,7 +46,11 @@ const packetHeader = (
       : { tag, header: 3, body: ((length - 192) << 8) + next + 192 };
   }
   if (length !== 255 || at + 6 > bytes.length) return undefined;
-  return { tag, header: 6, body: bytes.readUInt32BE(at + 2) };
+  return {
+    tag,
+    header: 6,
+    body: new BinaryReader(bytes, false, "openpgp").u32(at + 2),
+  };
 };
 
 /** A primary key's fingerprint from its packet body: SHA-1 for version 4, SHA-256 for versions 5 and 6. */
@@ -93,8 +104,8 @@ export const transferablePublicKeys = (
 
 /**
  * What to keep of a key file whose key verified a release: the file as it is
- * when it holds one key, or else only the transferable key with the
- * verifying primary fingerprint, so the bundle trusts no other key.
+ * when it holds one key block, or else every transferable version with the
+ * verifying primary fingerprint, so the bundle trusts no other primary key.
  */
 export const verifyingKey = (
   file: Buffer,
@@ -111,10 +122,15 @@ export const verifyingKey = (
     return err("REA could not split the key file into OpenPGP keys");
   if (keys.length === 1)
     return ok({ bytes: file, format: armored ? "armored" : "binary" });
-  const key = keys.find((each) => each.fingerprint === primaryFingerprint);
-  return key === undefined
+  const matching = keys.filter(
+    (each) => each.fingerprint === primaryFingerprint,
+  );
+  return matching.length === 0
     ? err(
         `the key file holds ${String(keys.length)} keys and REA found none with the verifying fingerprint ${primaryFingerprint}`,
       )
-    : ok({ bytes: Buffer.from(key.bytes), format: "binary" });
+    : ok({
+        bytes: Buffer.concat(matching.map((key) => key.bytes)),
+        format: "binary",
+      });
 };

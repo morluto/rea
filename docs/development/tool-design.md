@@ -200,12 +200,31 @@ does not establish another instance.
   and qualify negative and shortest-path claims by discovery scope. Missing
   relationship coverage remains `unknown`. Computed candidates and unestablished incoming targets qualify directional discovery; they do not by themselves mean that recorded edges were omitted.
 - Declare process, filesystem, network, UI, and mutation effects truthfully;
-  enforce the requested target and lifecycle.
+  enforce the requested target and lifecycle. A private temporary copy is a
+  filesystem write even when the selected artifact remains untouched. Derive
+  overlapping tool and provider effect declarations from the same fact.
 - Add limits only for real format, protocol, authority, or measured resource
   constraints. Report pagination, truncation, cancellation, and partial failure.
   An assumed agent budget is insufficient justification for a limit. Name the
   ceiling and its recovery as described in
-  [admission limits and recovery](../design/limits-and-recovery.md).
+  [admission limits and recovery](../reference/limits-and-recovery.md).
+- Give high-cardinality discovery (`list_*`, `search_*`, `find_xrefs_*`) and
+  graph-traversal (`get_call_graph`, `trace_call_path`) tools optional per-call
+  bounds (`limit`/`offset` or `max_depth`/`max_nodes`). Omitting them preserves
+  unpaged behavior; supplying them should stop producer work early where
+  possible, mark truncated coverage/discovery `partial`, and report explicit
+  continuation facts (`total_*`, `truncated`, `limitations`, or
+  `residual_unknowns`).
+- Keep input schemas flat for compact advertisement: avoid redundant root
+  unions (`z.discriminatedUnion` whose branches share identical properties
+  differing only by a boolean), which double schema size and introduce root
+  `anyOf` violations that force compact-profile reduction.
+- Keep application ownership flat: reuse shared runners
+  (`executeArtifactInspection`, `executeProviderOperation`,
+  `executeRetainedSummaryOperation`) instead of
+  duplicating per-operation wrappers. When moving or extracting symbols, migrate
+  all callers directly rather than leaving re-export shims or pure barrel files
+  outside enforced module-boundary entrypoints (`src/resources/index.ts`).
 
 ### Compose declared Evidence inputs
 
@@ -262,6 +281,85 @@ activation independently of readiness. An owned registration may be disabled
 or stale; unresolved ownership remains unknown. Consumers use those facts
 instead of reclassifying the raw command.
 
+During review, name the fact or resource whose ownership must agree across
+entry points. Trace where it is established, which consumers rely on it,
+and where fallback, retry, or cleanup can change the outcome. Search for
+other code that derives the same fact or claims the same responsibility.
+Different implementations can still make the same decision independently.
+
+Have the owner carry the result, its source and scope, and any uncertainty.
+Each consumer applies its own policy to those shared facts. Keep proof of
+identity and ownership separate from validity, readiness, and authority to
+act. For an operation that needs fresh evidence, ask the same owner to
+revalidate. For a proposed change, use the owner's rules to evaluate what
+would remain before applying it.
+
+Keep the reader's observation independent of the operation that needs it.
+For example, the Evidence file reader can recognize the shape of an
+analysis snapshot before authenticating it. Import and comparison can
+recommend different next steps while reporting the same observed kind.
+The reader also retains disagreements in the input. If two observed header
+fields conflict, carry that uncertainty forward before projecting the fields
+into a single value. A command launcher likewise needs the parser's token
+boundaries so an option value cannot select a transport mode.
+
+When one operation can show partial results and another requires a complete
+document, share the grammar and give each operation an explicit policy for
+handling diagnostics. Preserve source spelling and offset units alongside any
+normalized lookup value. Use the stored name when a package format requires
+an exact member path. Verify both operations with the same authored inputs and
+independently specified expectations. See [boundary regressions](testing.md#boundary-regressions).
+
+For example, APT one-line sources can spell a suite as `"stable"` and a
+component as `main%2Cextra`. With APT 2.8.4, those words select suite
+`stable` and component `main,extra`. The source reader owns the word
+decoding. Capture retains the authored spelling and uses the effective
+identity to match the observed index. Replay uses that same identity
+when deciding what it can write to a deb822 declaration.
+
+Test an accepted pair and a refusal. The quoted suite and escaped
+component should select the same index as their deb822 equivalents.
+A one-line component written as `"main extra"` should be withheld from
+replay because deb822 would read it as two components. Check the captured
+facts and the emitted or withheld declaration. Pin the reference reader
+version and record which steps ran. The [offline APT reproduction](https://github.com/morluto/rea/issues/12694)
+checked source and index identity without installing or deploying the app.
+
+Keep format recognition, validation, and the operation's decision separate.
+A recognizable PTX header can identify a candidate even when its text is
+invalid or only a prefix was examined. Derive effective fields and completeness
+from the validated extent. Likewise, retain fields for tolerant Desktop Entry
+inspection while carrying group diagnostics to application-ID lookup, where
+an invalid entry cannot establish that the application is hidden.
+
+When Evidence includes a source digest, bind it to the admitted bytes used
+by the parser and any converter. A pathname identifies a selection whose
+contents can change between reads. If a native command needs a file, give it
+the same owned byte snapshot used for the digest. Keep the Evidence subject
+and selected source distinct when they identify different artifacts.
+
+Give each nested parser the admitted extent of its containing record.
+Check a child's declared encoded range against that extent before applying
+its decoding allowance. If the format declares more fields or rows after the
+child, leave room for their minimum required framing. When the range cannot
+fit, report the format failure even if the decoded size would also exceed a
+budget. Keep encoded ranges separate from declared decoded lengths so an
+expansion limit can preserve the source range and any independently readable
+siblings.
+Retain the source offset and the reason when a field is malformed or its
+encoding is unsupported. A stream may need more bytes to complete a frame.
+A completed artifact with the same missing bytes has truncated data. Carry
+that distinction into coverage and preserve any independently observed facts.
+
+When consumers in different runtimes receive raw input independently, reuse
+the same reader where the runtime is available. If separate implementations
+are needed, prefer generating them from one authored set of parsing rules.
+For example, desktop capture and an offline AppImage installer need the same
+rules to locate the executable after an `env` prefix. The installer also needs
+the executable's source span so it can replace that token while preserving the
+rest of the entry. Use shared fixtures with explicit expected results to check
+the common interpretation through both entry points.
+
 Owned provider commands follow the same rule. `providerOutcomeOf` in
 `src/process/ProviderOutcome.ts` reads what the supervisor observed (launch
 refusal, cancellation, deadline, output or memory limit, resource signal, exit
@@ -315,7 +413,16 @@ A byte-format parser reports failure with `ParseFailureError` from
 fields through `BinaryReader` (`src/domain/binaryContainer.ts`), which
 raises that failure instead of a bare `RangeError`. Providers project the
 failure with `parseFailureAnalysisError` rather than their own `instanceof`
-ladder; a `limit` stays with its producer, which knows the budget to name.
+ladder. The producing reader identifies the named limit and effective maximum.
+Use those facts for the public refusal and recovery. When decoding stops before
+the reader can measure the final allowance, report the bound that actually
+stopped it.
+
+For retained managed metadata rows, use `metadataRowCursor` in
+`src/domain/managed/managedMetadataHeaps.ts`. Its column reads use
+`BinaryReader` within the admitted row and preserve managed issue offsets and
+per-row budget accounting.
+
 Do not use `RangeError` as a failure channel: a stack overflow, a host string
 or buffer limit, and an unchecked read past the end of a buffer are all
 `RangeError`s. `hostRangeErrorKind` is the one interpreter of a host
@@ -531,9 +638,13 @@ the application layer.
 CLI commands register through
 [`cliCommandRegistrations.ts`](https://github.com/morluto/rea/blob/main/src/cli/cliCommandRegistrations.ts):
 add the registrar to its family there and its module to `src/cli.ts`. The build
-records which registrar defines each top-level command, and a one-shot command
-loads only that registrar's module graph; help, completions, `--llms` and unknown
-names load the complete CLI. A registrar's command definitions must not depend
+records which registrar defines each top-level command, and running a known
+non-built-in command (including single-command discovery with `--help`, `-h`,
+`--schema`, `--llms`, or `--llms-full`) loads only that registrar's module
+graph. Root discovery, unknown command names, built-in requests (`completions`,
+`mcp` CLI subcommands, shell completion, and other built-in flags outside
+standalone `--version` and retired per-command `--mcp`), and a missing or
+unusable recording load the complete CLI. A registrar's command definitions must not depend
 on other registrars, and `tests/boundary/cli/cliLazyRegistration.test.ts` checks
 that each one registers alone with the definitions the complete CLI gives it.
 Modules that every registrar imports set the startup cost of every command; load
@@ -568,6 +679,71 @@ retained reference only after recording succeeds. An absent writer or a writer
 returning a failure `Result` leaves the partial inline, as does a partial that
 is not valid Evidence. Unexpected recorder exceptions propagate. An `evidence_id`
 member alone does not establish Evidence validity or retention.
+
+### Design hot paths for single-pass work and zero redundant copies
+
+Apply these general patterns when implementing providers, bridges, adapters,
+and shared application workflows so performance is built into the owning
+boundary rather than patched downstream:
+
+- **Validate once at the trust boundary; avoid full-tree deep-clones on owned
+  payloads.** Use `ownedJsonValueSchema` / `ownedJsonObjectSchema` (in-place
+  validation without cloning) for freshly constructed, exclusively owned
+  objects instead of `jsonValueSchema.parse` / `jsonObjectSchema.parse`. Keep
+  cloning only when a downstream consumer mutates or freezes shared input
+  (such as `freezeJsonSnapshot`). When an upstream decoder has already
+  validated a large payload schema (for example `binaryLayoutPayloadSchema` or
+  `recordedCrashPayloadSchema`), validate only the added envelope fields and
+  cross-field invariants rather than re-parsing the full payload tree. Hoist
+  Zod schemas, regular expressions, and constant lookup `Set`s to module scope;
+  never construct `z.object(...)` inside per-record or per-field loops.
+- **Derive classifications, counts, and pruning summaries in a single pass.**
+  Fuse independent `.filter()`, `.some()`, and `.flatMap()` passes over the
+  same inventory or stream into one loop, and count matches with a loop rather
+  than allocating `.filter(...).length` intermediate arrays. Compute tiny
+  derived existence summaries during pass 1 (such as whether any packet uses a
+  protocol or whether any managed directory exists) to short-circuit expensive
+  secondary subprocesses or scans when no matching records exist.
+- **Use hash joins and reuse existing indexes instead of nested-loop scans.**
+  Before calling `.find()`, `.includes()`, or `.indexOf()` inside a loop over
+  another collection, reuse an existing `Map`/`Set` index on the context or
+  build one once outside the loop. In bridges (Java/Python), index tables,
+  procedures, and tokens by address or type path during analysis/loading (using
+  `putIfAbsent` when first-match precedence matters) and gate expensive engine
+  queries (such as SLEIGH p-code or flow resolution) behind cheap control-flow
+  checks.
+- **Bound I/O and cache freshness without breaking cancellation or cleanup
+  contracts.** Prefer single-pass streaming reads/hashes (such as
+  `ArtifactAnalysisResources.hash()` via `streamStableArtifact` with
+  `retainBytes: () => 0` when only identity and byte length are needed) and pass
+  `expectedSize` to `readBoundedFileBytes` for regular files so reads avoid
+  double-allocation copies. Bound concurrent filesystem and process fan-out
+  rather than issuing unbounded `Promise.all` over variable-length path or PID
+  lists, and prefer event-driven wakeups (`AbortSignal` or `WorkerFrameSignal`)
+  over fixed polling intervals. When caching external tool digests or PATH
+  probes with `(dev, ino, size, mtimeNs, ctimeNs)` stat verification, bypass the
+  fast path when a caller or test injects a custom `artifactReader`, and never
+  skip a read whose contract requires observing mid-read cancellation or access
+  errors on every call.
+- **Reuse binary/stream primitives and avoid full-chunk or per-record copies.**
+  Hold or `WeakMap`-cache `BinaryReader` per `Buffer` instead of allocating one
+  per symbol, note, GUID, or header field; reuse `strictUtf8Decoder`
+  (`src/domain/strictUtf8.ts`) for stateless UTF-8 decoding (never cache
+  `{ stream: true }` decoders); use `FifoQueue` (`src/kernel/FifoQueue.ts`)
+  rather than `Array.shift()` for message/frame queues; scan streaming binary
+  payloads with `Buffer.prototype.indexOf` and tiny fixed seam buffers instead
+  of copying full chunks or concatenating strings per byte; and write framed IPC
+  headers separately from large body buffers rather than copying multi-megabyte
+  payloads into one combined frame.
+- **Keep analysis views and MCP wire delivery O(limit) and lazy.** Reuse
+  validated immutable parent snapshots through `createAnalysisViewResultReader`
+  and `WeakMap` lookup indexes; route explicit `indices` queries through
+  `selectIndexedViewRows`, fast-path unfiltered pages through `selectViewRows`
+  with an omitted predicate, and pick projected columns with `pickFields` rather
+  than `Object.entries(...).filter(...)`. On the MCP delivery path, skip
+  duplicate Zod validation when the SDK already admitted `inputSchema`, evaluate
+  overflow recovery metadata lazily only when a response exceeds its budget, and
+  measure wire sizes without joining discarded JSON strings.
 
 Measure the resource before choosing a budget and enforce it before the costly
 step. Account for value alternatives, trace-frame products, retained records,

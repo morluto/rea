@@ -14,11 +14,9 @@ import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
-import { kunaInstallationDialect } from "./KunaCommand.js";
-import {
-  createKunaResourceScope,
-  inspectKunaInstallation,
-  type KunaReadinessFailure,
+import type {
+  KunaReadinessFailure,
+  KunaResourceScope,
 } from "./KunaInstallation.js";
 import {
   KUNA_COMMAND_REMEDIATION,
@@ -28,33 +26,39 @@ import {
   KUNA_VERSION_PROBE_REMEDIATION,
 } from "./KunaRelease.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { kunaCacheLocationSettings } from "./KunaConfiguration.js";
 
-/** Client settings consulted by this readiness probe. */
-export const KUNA_DOCTOR_SETTINGS = [
+/** Settings setup writes into a client registration. */
+export const KUNA_REGISTRATION_SETTINGS = [
   "REA_KUNA_COMMAND",
   "REA_KUNA_CACHE_DIR",
-  // The cache root falls back to these when REA_KUNA_CACHE_DIR is unset, so an
-  // unresolved expression in either leaves the probed directory unknown.
-  "HOME",
-  "USERPROFILE",
-  "XDG_CACHE_HOME",
   "REA_KUNA_CACHE_MAX_BYTES",
   "REA_KUNA_PROJECT_TIMEOUT_MS",
   "REA_KUNA_TIMEOUT_MS",
   "REA_KUNA_JOBS",
 ] as const;
 
-/**
- * Settings setup writes into a client registration.
- *
- * `HOME` and `XDG_CACHE_HOME` are readiness inputs only: they decide where the
- * cache root falls back to, and recording them would persist the ambient
- * environment a child already inherits.
- */
-export const KUNA_REGISTRATION_SETTINGS = KUNA_DOCTOR_SETTINGS.filter(
-  (name) =>
-    name !== "HOME" && name !== "USERPROFILE" && name !== "XDG_CACHE_HOME",
-);
+// These affect readiness when they select a cache root. Setup leaves them
+// inherited by the child process.
+const CACHE_FALLBACK_SETTINGS = [
+  "HOME",
+  "USERPROFILE",
+  "XDG_CACHE_HOME",
+] as const;
+
+/** Client settings consulted by this readiness probe. */
+export const KUNA_DOCTOR_SETTINGS = [
+  ...KUNA_REGISTRATION_SETTINGS,
+  ...CACHE_FALLBACK_SETTINGS,
+] as const;
+
+export const kunaSettingAffectsProbe = (
+  name: string,
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
+): boolean =>
+  !CACHE_FALLBACK_SETTINGS.some((setting) => setting === name) ||
+  kunaCacheLocationSettings(environment, platform).includes(name);
 
 /**
  * Project Kuna readiness into the doctor contract without writing anything.
@@ -125,6 +129,8 @@ const versionCheck = async (
   readonly version: string | null;
   readonly check: DoctorProviderCheck;
 }> => {
+  const { createKunaResourceScope, inspectKunaInstallation } =
+    await import("./KunaInstallation.js");
   const kunaResources = createKunaResourceScope(options.resourceScope);
   let installation: Awaited<ReturnType<typeof inspectKunaInstallation>>;
   try {
@@ -134,7 +140,11 @@ const versionCheck = async (
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   } catch (cause: unknown) {
-    return { version: null, check: probeCleanupFailure(cause, kunaResources) };
+    const { kunaInstallationDialect } = await import("./KunaCommand.js");
+    return {
+      version: null,
+      check: probeCleanupFailure(cause, kunaResources, kunaInstallationDialect),
+    };
   }
   if (!installation.ok) {
     const check = probeFailure(installation.error);
@@ -217,7 +227,8 @@ const cleanupIncompleteCheck = (
  */
 const probeCleanupFailure = (
   cause: unknown,
-  kunaResources: ReturnType<typeof createKunaResourceScope>,
+  kunaResources: KunaResourceScope,
+  kunaInstallationDialect: (typeof import("./KunaCommand.js"))["kunaInstallationDialect"],
 ): DoctorProviderCheck => {
   let recognised = true;
   const failure = classifyProviderFailure(

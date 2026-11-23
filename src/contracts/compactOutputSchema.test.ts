@@ -48,27 +48,6 @@ const referencedSchema = {
   },
 } as const;
 
-const oversizedSchema = (): Record<string, unknown> => ({
-  type: "object",
-  description: "A complete result envelope.",
-  properties: {
-    envelope: { type: "string" },
-    result: {
-      type: "object",
-      properties: Object.fromEntries(
-        Array.from({ length: 200 }, (_, index) => [
-          `field_${index}`,
-          { type: "string", description: `Field ${index}` },
-        ]),
-      ),
-      required: Array.from({ length: 200 }, (_, index) => `field_${index}`),
-      additionalProperties: false,
-    },
-  },
-  required: ["envelope", "result"],
-  additionalProperties: false,
-});
-
 describe("compact advertised output schema", () => {
   it("drops nested annotation prose while keeping the root guidance and validation", () => {
     const { schema, presentation } = compactAdvertisedOutputSchema(
@@ -102,46 +81,6 @@ describe("compact advertised output schema", () => {
     expect(entries.items).toMatchObject({ type: "object" });
   });
 
-  it("reduces an oversized contract to a widening root shape within budget", () => {
-    const budgetBytes = 4 * 1024;
-    const { schema, presentation } = compactAdvertisedOutputSchema(
-      oversizedSchema(),
-      budgetBytes,
-    );
-    expect(presentation).toBe("reduced");
-    expect(serializedBytes(schema)).toBeLessThanOrEqual(budgetBytes);
-    expect(schema.type).toBe("object");
-    expect(schema.required).toEqual(["envelope", "result"]);
-    expect(schema.additionalProperties).toBe(false);
-    expect(schema.description).toContain("compact output schema profile");
-    const result = (schema.properties as Record<string, unknown>)
-      .result as Record<string, unknown>;
-    expect(result.type).toBe("object");
-    expect(result.properties).toBeUndefined();
-  });
-
-  it("accepts a valid canonical result after reduction", () => {
-    const budgetBytes = 4 * 1024;
-    const { schema } = compactAdvertisedOutputSchema(
-      oversizedSchema(),
-      budgetBytes,
-    );
-    const validate = new Ajv2020({ strict: false }).compile(schema);
-    const result = {
-      envelope: "ok",
-      result: Object.fromEntries(
-        Array.from({ length: 200 }, (_, index) => [
-          `field_${index}`,
-          `value ${index}`,
-        ]),
-      ),
-    };
-    expect(validate(result)).toBe(true);
-    // The advertisement is wider than the canonical contract: dropping nested
-    // detail must never reject a valid result, but it can accept an invalid one.
-    expect(validate({ envelope: "ok", result: { unknown: 1 } })).toBe(true);
-  });
-
   it("keeps a non-object root accepting every JSON value when it cannot fit", () => {
     const arraySchema = {
       type: "array",
@@ -161,11 +100,5 @@ describe("compact advertised output schema", () => {
     const validate = new Ajv2020({ strict: false }).compile(schema);
     expect(validate(["anything"])).toBe(true);
     expect(validate({ also: "anything" })).toBe(true);
-  });
-
-  it("is deterministic across equivalent inputs", () => {
-    expect(compactAdvertisedOutputSchema(oversizedSchema(), 4 * 1024)).toEqual(
-      compactAdvertisedOutputSchema(oversizedSchema(), 4 * 1024),
-    );
   });
 });

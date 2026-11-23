@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -8,10 +8,29 @@ const execFileAsync = promisify(execFile);
 const MAX_BUFFER = 16 * 1024 * 1024;
 const TIMEOUT_MS = 30_000;
 const OUTPUT_DIRECTORY = join(".cache", "ci-job-timings");
+// The jobs API returns display names, without the action reference. Tests
+// check these exceptions against the CI and Release workflow definitions.
 const STEP_COSTS = [
   { key: "npmCi", pattern: /\bnpm ci\b/iu },
-  { key: "artifactUpload", pattern: /upload.*artifact/iu },
-  { key: "artifactDownload", pattern: /download.*artifact/iu },
+  {
+    key: "artifactUpload",
+    pattern: /upload.*artifact/iu,
+    names: new Set([
+      "Upload complete static diagnostics",
+      "Upload complete deep static diagnostics",
+      "Retain available reverse tools diagnostics",
+      "Publish successful timing history",
+      "Retain the exact qualified release package",
+    ]),
+  },
+  {
+    key: "artifactDownload",
+    pattern: /download.*artifact/iu,
+    names: new Set([
+      "Download previous timing report",
+      "Download the original qualified package",
+    ]),
+  },
 ];
 
 /** Fetch and summarize one workflow attempt without turning telemetry into a gate. */
@@ -26,6 +45,8 @@ export async function collectJobTimings({
   timeoutMs = TIMEOUT_MS,
 }) {
   const identity = validateIdentity({ repository, runId, runAttempt });
+  const reportPath = join(outputDirectory, "report.json");
+  await rm(reportPath, { force: true });
   const endpoint = `repos/${identity.repository}/actions/runs/${identity.runId}/attempts/${identity.runAttempt}/jobs?per_page=100`;
   const { stdout } = await execFileAsync(
     "gh",
@@ -33,13 +54,26 @@ export async function collectJobTimings({
     { env, encoding: "utf8", maxBuffer: MAX_BUFFER, timeout: timeoutMs },
   );
   const rawPath = join(outputDirectory, "jobs.json");
-  const reportPath = join(outputDirectory, "report.json");
   await mkdir(outputDirectory, { recursive: true });
   await writeFile(rawPath, stdout, "utf8");
   const pages = parsePages(stdout);
   const jobs = pages.flatMap(({ jobs: pageJobs }, index) =>
     validateJobs(pageJobs, index),
   );
+  if (
+    pages.some(
+      ({ total_count }) =>
+        total_count !== undefined && total_count !== jobs.length,
+    )
+  )
+    throw new Error(
+      "GitHub jobs API total_count does not match the collected jobs",
+    );
+  const ids = jobs
+    .map(({ id }) => id)
+    .filter((id) => Number.isSafeInteger(id) && id > 0);
+  if (new Set(ids).size !== ids.length)
+    throw new Error("GitHub jobs API contains duplicate job IDs");
   const report = normalizeReport({ identity, jobs, observedAt });
 
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
@@ -221,7 +255,15 @@ function normalizeStep(step) {
     typeof step.name !== "string"
   )
     throw new Error("GitHub jobs API contains a malformed job step");
-  const cost = STEP_COSTS.find(({ pattern }) => pattern.test(step.name));
+  if (step.conclusion === "skipped")
+    return {
+      name: step.name,
+      costKey: null,
+      duration: unknownDuration("step was skipped"),
+    };
+  const cost = STEP_COSTS.find(
+    ({ pattern, names }) => names?.has(step.name) || pattern.test(step.name),
+  );
   return {
     name: step.name,
     costKey: cost?.key ?? null,

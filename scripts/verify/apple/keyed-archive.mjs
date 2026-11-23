@@ -11,6 +11,7 @@ import {
   artifactMcpCall,
   withArtifactMcp,
 } from "../../lib/artifact-e2e.mjs";
+import { requireMcpToolError } from "../../lib/mcp-verifier-results.mjs";
 import {
   assertKeyedArchiveIntegerResult,
   verifyKeyedArchiveIntegerArchives,
@@ -62,7 +63,15 @@ await withVerifierFixture(fixture, async () => {
       name: "inspect_keyed_archive",
       arguments: { path: "../other.plist" },
     });
-    assert.equal(invalid.isError, true);
+    // Standalone archives reject a path other than the admitted basename.
+    // KeyedArchiveReader throws AnalysisInputError; classification is invalid_request.
+    assert.partialDeepStrictEqual(requireMcpToolError(invalid), {
+      code: "invalid_request",
+      details: {
+        operation: "inspect_keyed_archive",
+        issues: [{ path: ["path"], reason: "invalid_value" }],
+      },
+    });
   });
   const xml = join(root, "model.xml.plist");
   await promisify(execFile)("/usr/bin/plutil", [

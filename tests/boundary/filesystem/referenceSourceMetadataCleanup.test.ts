@@ -16,7 +16,6 @@ import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { importReferenceSource } from "../../../src/application/ReferenceSourceImport.js";
 import { readReferenceSourceVcs } from "../../../src/application/ReferenceSourceVcsAdapter.js";
-import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -83,41 +82,6 @@ const failCloseUntilAllowed = (
   };
 };
 
-const createPackedRefRepository = async () => {
-  const root = await createTestTempDirectory("rea-reference-packed-owner-");
-  await execFileOutput("git", ["init", "--initial-branch=main"], { cwd: root });
-  await writeFile(join(root, "main.ts"), "export const value = 1;\n");
-  await execFileOutput(
-    "git",
-    [
-      "-c",
-      "user.name=REA fixture",
-      "-c",
-      "user.email=fixture@example.invalid",
-      "-c",
-      "commit.gpgsign=false",
-      "commit",
-      "--allow-empty",
-      "-m",
-      "fixture",
-    ],
-    { cwd: root },
-  );
-  const head = (
-    await execFileOutput("git", ["rev-parse", "HEAD"], { cwd: root })
-  ).stdout.trim();
-  await execFileOutput("git", ["pack-refs", "--all", "--prune"], {
-    cwd: root,
-  });
-  const looseRef = join(root, ".git", "refs", "heads", "main");
-  const packedRefs = join(root, ".git", "packed-refs");
-  await actual.mkdir(join(root, ".git", "refs", "heads"), {
-    recursive: true,
-  });
-  await writeFile(looseRef, `${head}\n`);
-  return { root, looseRef, packedRefs };
-};
-
 it.each([".", "nested"])(
   "retains failed %s/.gitignore cleanup under the caller's scope",
   async (directory) => {
@@ -160,8 +124,9 @@ it.each([".", "nested"])(
 
 it("retains local Git configuration cleanup before trusting ignore policy", async () => {
   const root = await createTestTempDirectory("rea-reference-config-owner-");
-  await execFileOutput("git", ["init", "--initial-branch=main"], { cwd: root });
+  await mkdir(join(root, ".git"));
   const path = join(root, ".git", "config");
+  await writeFile(path, "[core]\nignorecase = true\n");
   const resources = new ArtifactResourceScope();
   const close = failCloseUntilAllowed(path);
   onTestFinished(async () => {
@@ -190,15 +155,16 @@ it("preserves Git metadata cleanup failure and the completed source read", async
   const root = await createTestTempDirectory("rea-reference-head-owner-");
   const repository = join(root, "repository");
   const sourceRoot = join(root, "source");
-  await Promise.all([mkdir(repository), mkdir(sourceRoot)]);
-  await execFileOutput("git", ["init", "--initial-branch=main"], {
-    cwd: repository,
-  });
+  await Promise.all([
+    mkdir(join(repository, ".git"), { recursive: true }),
+    mkdir(sourceRoot),
+  ]);
   const source = join(sourceRoot, "main.ts");
   const bytes = "export const value = 1;\n";
   await writeFile(source, bytes);
   await writeFile(join(sourceRoot, ".git"), "gitdir: ../repository/.git\n");
   const head = join(repository, ".git", "HEAD");
+  await writeFile(head, "ref: refs/heads/main\n");
   const resources = new ArtifactResourceScope();
   const close = failCloseUntilAllowed(head);
   onTestFinished(async () => {
@@ -241,111 +207,79 @@ it("preserves Git metadata cleanup failure and the completed source read", async
   expect(close.calls()).toBe(3);
 });
 
-it("retains later packed-ref cleanup after an earlier loose-ref read failure", async () => {
-  const { root, looseRef, packedRefs } = await createPackedRefRepository();
+it.each([
+  { read: "loose", close: "packed" },
+  { read: "packed", close: "loose" },
+] as const)(
+  "keeps the $read ref read failure primary and retains $close ref cleanup",
+  async ({ read, close }) => {
+    const root = await createTestTempDirectory("rea-reference-packed-owner-");
+    const gitdir = join(root, ".git");
+    const loose = join(gitdir, "refs", "heads", "main");
+    const packed = join(gitdir, "packed-refs");
+    const head = "0123456789abcdef0123456789abcdef01234567";
+    await mkdir(join(gitdir, "refs", "heads"), { recursive: true });
+    await Promise.all([
+      writeFile(join(gitdir, "HEAD"), "ref: refs/heads/main\n"),
+      writeFile(loose, `${head}\n`),
+      writeFile(packed, `${head} refs/heads/main\n`),
+    ]);
 
-  const resources = new ArtifactResourceScope();
-  let allowClose = false;
-  let looseReadFailed = false;
-  const packedCloseCalls = new Map<object, number>();
-  openMock.mockImplementation(async (...args) => {
-    const handle = await actual.open(...args);
-    const path = resolve(String(args[0]));
-    if (path === resolve(looseRef)) {
-      vi.spyOn(handle, "read").mockImplementation(async () => {
-        looseReadFailed = true;
-        throw Object.assign(new Error("injected loose ref EIO"), {
-          code: "EIO",
+    const paths = { loose, packed };
+    const readFailure = Object.assign(new Error(`injected ${read} ref EIO`), {
+      code: "EIO",
+    });
+    const closeFailure = new Error(`injected ${close} ref close failure`);
+    const closeCalls = new Map<FileHandle, number>();
+    let readAttempted = false;
+    let allowClose = false;
+    const resources = new ArtifactResourceScope();
+    openMock.mockImplementation(async (...args) => {
+      const handle = await actual.open(...args);
+      const path = resolve(String(args[0]));
+      if (path === paths[read])
+        vi.spyOn(handle, "read").mockImplementation(async () => {
+          readAttempted = true;
+          throw readFailure;
         });
-      });
-    }
-    if (path === resolve(packedRefs)) {
-      const close = handle.close.bind(handle);
-      vi.spyOn(handle, "close").mockImplementation(async () => {
-        packedCloseCalls.set(handle, (packedCloseCalls.get(handle) ?? 0) + 1);
-        if (!allowClose) throw new Error("injected packed-refs close failure");
-        await close();
-      });
-    }
-    return handle;
-  });
-  onTestFinished(async () => {
-    allowClose = true;
-    await resources.close().catch(() => undefined);
-  });
-
-  const result = await readReferenceSourceVcs(root, resources);
-  expect(looseReadFailed).toBe(true);
-  expect(result).toMatchObject({
-    ok: false,
-    error: {
-      code: "io",
-      cleanup: {
-        resources: [packedRefs],
-        reason: expect.stringContaining("injected packed-refs close failure"),
-      },
-    },
-  });
-  expect([...packedCloseCalls.values()]).toEqual(
-    Array.from({ length: packedCloseCalls.size }, () => 2),
-  );
-
-  allowClose = true;
-  await resources.close();
-  expect([...packedCloseCalls.values()]).toEqual(
-    Array.from({ length: packedCloseCalls.size }, () => 3),
-  );
-});
-
-it("keeps a later packed-ref read error primary over earlier loose-ref cleanup", async () => {
-  const { root, looseRef, packedRefs } = await createPackedRefRepository();
-  const resources = new ArtifactResourceScope();
-  let allowClose = false;
-  const looseCloseCalls = new Map<object, number>();
-  openMock.mockImplementation(async (...args) => {
-    const handle = await actual.open(...args);
-    const path = resolve(String(args[0]));
-    if (path === resolve(looseRef)) {
-      const close = handle.close.bind(handle);
-      vi.spyOn(handle, "close").mockImplementation(async () => {
-        looseCloseCalls.set(handle, (looseCloseCalls.get(handle) ?? 0) + 1);
-        if (!allowClose) throw new Error("injected loose ref close failure");
-        await close();
-      });
-    }
-    if (path === resolve(packedRefs))
-      vi.spyOn(handle, "read").mockImplementation(async () => {
-        throw Object.assign(new Error("injected packed-refs EIO"), {
-          code: "EIO",
+      if (path === paths[close]) {
+        const closeHandle = handle.close.bind(handle);
+        vi.spyOn(handle, "close").mockImplementation(async () => {
+          closeCalls.set(handle, (closeCalls.get(handle) ?? 0) + 1);
+          if (!allowClose) throw closeFailure;
+          await closeHandle();
         });
+      }
+      return handle;
+    });
+    try {
+      const result = await readReferenceSourceVcs(root, resources);
+      if (result.ok) throw new Error("Expected Git metadata read failure");
+      expect(result.error).toMatchObject({
+        code: "io",
+        cleanup: {
+          resources: [paths[close]],
+          reason: expect.stringContaining(closeFailure.message),
+        },
       });
-    return handle;
-  });
-  onTestFinished(async () => {
-    allowClose = true;
-    await resources.close().catch(() => undefined);
-  });
-
-  const result = await readReferenceSourceVcs(root, resources);
-  if (result.ok) throw new Error("Expected Git metadata read to fail");
-  expect(result.error.message).toContain("injected packed-refs EIO");
-  expect(result.error.message).not.toContain(
-    "injected loose ref close failure",
-  );
-  expect(result.error.cleanup).toMatchObject({
-    resources: [looseRef],
-    reason: expect.stringContaining("injected loose ref close failure"),
-  });
-  expect([...looseCloseCalls.values()]).toEqual(
-    Array.from({ length: looseCloseCalls.size }, () => 2),
-  );
-
-  allowClose = true;
-  await resources.close();
-  expect([...looseCloseCalls.values()]).toEqual(
-    Array.from({ length: looseCloseCalls.size }, () => 3),
-  );
-});
+      expect(readAttempted).toBe(true);
+      const failure = result.error.cause;
+      if (
+        !(failure instanceof Error && failure.cause instanceof AggregateError)
+      )
+        throw new Error("Expected the Git metadata failure aggregate");
+      expect(failure.cause.cause).toBe(readFailure);
+      expect(result.error.message).toContain(readFailure.message);
+      expect(new Set(closeCalls.values())).toEqual(new Set([2]));
+      expect(resources.cleanupResources).toEqual([paths[close]]);
+    } finally {
+      allowClose = true;
+      await resources.close();
+    }
+    expect(new Set(closeCalls.values())).toEqual(new Set([3]));
+    expect(resources.hasPending).toBe(false);
+  },
+);
 
 it.each([
   ["stat", false],
@@ -490,6 +424,59 @@ it.each([
     }
   },
 );
+
+it("preserves cancellation during final policy close and retains the descriptor for retry", async () => {
+  const root = await createTestTempDirectory("rea-reference-policy-cancel-");
+  const policyPath = join(root, ".gitignore");
+  await writeFile(policyPath, "ignored\n");
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = { source: "caller" };
+  const closeFailure = new Error("policy close failed");
+  let policyHandle: FileHandle | undefined;
+  let closeAttempts = 0;
+  let allowClose = false;
+  openMock.mockImplementation(async (...args) => {
+    const handle = await actual.open(...args);
+    if (resolve(String(args[0])) !== resolve(policyPath)) return handle;
+    policyHandle = handle;
+    const close = handle.close.bind(handle);
+    vi.spyOn(handle, "close").mockImplementation(async () => {
+      closeAttempts += 1;
+      controller.abort(reason);
+      if (!allowClose) throw closeFailure;
+      await close();
+    });
+    return handle;
+  });
+  try {
+    const result = await importReferenceSource(
+      {
+        root,
+        caller: "test",
+        policy: { secretPatterns: [] },
+        signal: controller.signal,
+      },
+      resources,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "cancelled", cleanup: { resources: [policyPath] } },
+    });
+    if (result.ok) throw new Error("Expected policy cancellation");
+    expect(result.error.cause).toBe(reason);
+    expect(result.error.secondaryCancellation).toBeUndefined();
+    expect(result.error.cleanup?.reason).toContain(closeFailure.message);
+    expect(closeAttempts).toBe(2);
+    expect(policyHandle?.fd).toBeGreaterThanOrEqual(0);
+    expect(resources.cleanupResources).toEqual([policyPath]);
+  } finally {
+    allowClose = true;
+    await resources.close();
+  }
+  expect(policyHandle?.fd).toBe(-1);
+  expect(resources.hasPending).toBe(false);
+});
 
 it.each([false, true])(
   "preserves a policy read failure and later cancellation (close fails: %s)",

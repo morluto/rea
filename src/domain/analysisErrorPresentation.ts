@@ -11,7 +11,10 @@ import {
   AnalysisTimeoutError,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
-import { OPENABLE_APPLE_BUNDLE_TYPES_TEXT } from "./apple/appleBundleTypes.js";
+import {
+  INFO_PLIST_DECODE_MIB,
+  OPENABLE_APPLE_BUNDLE_TYPES_TEXT,
+} from "./apple/appleBundleTypes.js";
 import {
   BinaryTargetError,
   ConfigurationError,
@@ -57,7 +60,10 @@ export const MCP_TRANSPORT_EVIDENCE_EXPORT =
   "Export complete retained session evidence through export_evidence_bundle to a caller-selected path, or use complete CLI JSON output. The connection remains usable.";
 
 /** Next step when one MCP frame cannot carry a complete retained session bundle. */
-export const MCP_TRANSPORT_EVIDENCE_DISCOVERY = `Discover retained records with get_evidence_bundle and detail: summary, then read selected complete records with detail: records and an exact evidence_id, or inspect compatible records through inspect_analysis_view using an exact Evidence reference. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;
+export const MCP_TRANSPORT_EVIDENCE_DISCOVERY = `Discover retained records with get_evidence_bundle and detail: summary, selecting a limit and following page.next_offset; then read selected complete records with detail: records and an exact evidence_id, or inspect compatible records through inspect_analysis_view using an exact Evidence reference. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;
+
+/** Next step when one MCP frame cannot carry the selected metadata rows. */
+export const MCP_TRANSPORT_EVIDENCE_SUMMARY = `Request fewer metadata rows with get_evidence_bundle detail: summary, the same filters and offset, and a smaller limit; follow page.next_offset after each successful page. A single metadata row larger than one response still needs export. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;
 
 /** Next step when one MCP frame cannot carry a selected page of complete records. */
 export const MCP_TRANSPORT_EVIDENCE_RECORDS = `Request fewer records with get_evidence_bundle detail: records, a smaller limit or an exact evidence_id filter; inspect compatible records in pages through inspect_analysis_view. A single record larger than one response needs export. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;
@@ -186,6 +192,11 @@ export const analysisErrorRemediationAction = (
     error.infoPlist !== undefined
   )
     return `Read ${error.infoPlist} with inspect_plist to review its CFBundleExecutable, then select an existing program file directly.`;
+  if (
+    error instanceof BinaryTargetError &&
+    error.constraint === "bundle_info_plist_decode_budget_exceeded"
+  )
+    return `Reduce the Info.plist below the ${INFO_PLIST_DECODE_MIB} MiB decoded representation allowance, then retry opening the bundle.`;
   if (
     error instanceof BinaryTargetError &&
     (error.constraint === "bundle_info_plist_missing" ||
@@ -545,6 +556,12 @@ const artifactMessage = ({
       detail ??
       "Artifact processing reached a resource limit. Select an artifact within the reported limits and retry."
     );
+  if (reason === "unsupported")
+    return "Artifact structure uses an unsupported format or revision. Use a decoder that supports the reported form.";
+  if (reason === "truncated")
+    return "A declared artifact structure is truncated. Select a complete copy and retry; do not pad or truncate required bytes.";
+  if (reason === "malformed")
+    return "Artifact bytes contain malformed format structure. Review the reported field and select a valid copy.";
   if (reason === "path")
     return (
       detail ??

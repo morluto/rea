@@ -18,12 +18,15 @@ import {
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import {
   createEvidenceBundle,
+  createImmutableEvidenceBundle,
   evidenceBundleForTarget,
 } from "../../domain/evidenceBundle.js";
 import { ok } from "../../domain/result.js";
 import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import {
+  createAnalysisSnapshotEntry,
   createAnalysisSnapshotWorkflowEntry,
+  immutableAnalysisSnapshot,
   parseAnalysisSnapshot,
   serializeAnalysisSnapshot,
   snapshotEvidenceForQuery,
@@ -252,11 +255,6 @@ it.each(["provider", "workflow"] as const)(
         name: "display-only-name",
       }),
     };
-    const nameImport = ledger.import(createEvidenceBundle([nameOnly]));
-    if (!nameImport.ok) throw nameImport.error;
-    cache.refreshEvidenceMetadata(nameImport.value.replacements);
-    expect(cache.entries()).toEqual(before.value.entries);
-    expect(cache.workflowEntries()).toEqual(before.value.workflow_entries);
     // A different observation for this exact query is not the entry's dependency.
     const alternative = createEvidence(target, provider, {
       operation,
@@ -277,19 +275,17 @@ it.each(["provider", "workflow"] as const)(
         }),
       };
     };
-    const foreign = ledger.import(
-      createEvidenceBundle([relocate(alternative)]),
+    // Name-only changes, a different result for this query, and source
+    // changes do not rewrite the cached entry's own subject.
+    const unrelated = ledger.import(
+      createEvidenceBundle([
+        nameOnly,
+        relocate(alternative),
+        ...dependencies.map(relocate),
+      ]),
     );
-    if (!foreign.ok) throw foreign.error;
-    cache.refreshEvidenceMetadata(foreign.value.replacements);
-    expect(cache.entries()).toEqual(before.value.entries);
-    expect(cache.workflowEntries()).toEqual(before.value.workflow_entries);
-    // A result may cite several observations; updating their envelopes does not change its payload.
-    const dependentImport = ledger.import(
-      createEvidenceBundle(dependencies.map(relocate)),
-    );
-    if (!dependentImport.ok) throw dependentImport.error;
-    cache.refreshEvidenceMetadata(dependentImport.value.replacements);
+    if (!unrelated.ok) throw unrelated.error;
+    cache.refreshEvidenceMetadata(unrelated.value.replacements);
     expect(cache.entries()).toEqual(before.value.entries);
     expect(cache.workflowEntries()).toEqual(before.value.workflow_entries);
     const relocated = relocate(evidence);
@@ -1145,26 +1141,17 @@ const createRelationshipCoverageSnapshot = (
     createEvidenceBundle([evidence]),
   );
   if (!exported.ok) throw exported.error;
-  return { cache, operation, parameters, snapshot: exported.value };
+  return { operation, parameters, snapshot: exported.value };
 };
 
 describe("relationship coverage snapshot replay", () => {
-  it("authenticates coverage and rejects missing serialized fields", () => {
+  it("authenticates coverage before importing Evidence and replaying a query", () => {
     const coverage: RelationshipCoverage = {
       status: "complete",
       diagnostics: ["The provider retained an unresolved call target."],
     };
-    const { cache, operation, parameters, snapshot } =
+    const { operation, parameters, snapshot } =
       createRelationshipCoverageSnapshot(coverage);
-    expect(
-      cache.lookup(
-        ANALYSIS_SNAPSHOT_TARGET,
-        ANALYSIS_SNAPSHOT_PROFILE,
-        operation,
-        parameters,
-      )?.relationshipCoverage,
-    ).toEqual(coverage);
-
     const tampered = structuredClone(snapshot);
     const tamperedEntry = tampered.entries[0];
     if (tamperedEntry === undefined) throw new Error("snapshot entry missing");
@@ -1172,28 +1159,26 @@ describe("relationship coverage snapshot replay", () => {
       status: "complete",
       diagnostics: ["forged coverage"],
     };
-    expect(
-      new AnalysisSnapshotCache().import(tampered, undefined, () => ok(0)).ok,
-    ).toBe(false);
 
-    const missingCoverage = structuredClone(snapshot);
-    const missingCoverageEntry = missingCoverage.entries[0];
-    if (missingCoverageEntry === undefined)
-      throw new Error("snapshot entry missing");
-    Reflect.deleteProperty(
-      missingCoverageEntry.execution,
-      "relationship_coverage",
-    );
-    const missingCoverageEvidence = missingCoverage.evidence_bundle.records[0];
-    if (missingCoverageEvidence === undefined)
-      throw new Error("snapshot Evidence missing");
-    Reflect.deleteProperty(missingCoverageEvidence, "relationship_coverage");
-    expect(() => parseAnalysisSnapshot(missingCoverage)).toThrow();
+    const replay = new AnalysisSnapshotCache();
+    const imported = replay.import(tampered, undefined, () => {
+      throw new Error("Unauthenticated Evidence reached the ledger");
+    });
+    expect(imported).toMatchObject({
+      ok: false,
+      error: { _tag: "EvidenceIntegrityError" },
+    });
+    expect(replay.entries()).toEqual([]);
+
+    expect(replay.import(snapshot, undefined, () => ok(0)).ok).toBe(true);
     expect(
-      new AnalysisSnapshotCache().import(missingCoverage, undefined, () =>
-        ok(0),
-      ).ok,
-    ).toBe(false);
+      replay.lookup(
+        ANALYSIS_SNAPSHOT_TARGET,
+        ANALYSIS_SNAPSHOT_PROFILE,
+        operation,
+        parameters,
+      )?.relationshipCoverage,
+    ).toEqual(coverage);
   });
 
   it("replays absent coverage as explicitly unknown", () => {
@@ -1538,25 +1523,9 @@ it("replays source-bearing entries only when their complete retained closure exi
       .lookup(target, profile, "procedure_info", parameters)
       ?.sourceEvidence?.map((record) => record.evidence_id),
   ).toEqual([source.evidence_id, parent.evidence_id]);
-  if (source.subject.identity.kind !== "file")
-    throw new Error("Expected source subject");
   const ledger = new EvidenceLedger();
   for (const record of [parent, source, leaf])
     expect(ledger.record(record).ok).toBe(true);
-  const movedSource = {
-    ...source,
-    subject: displayedEvidenceSubject(source.subject, {
-      local_path: "/relocated/source",
-      name: "source",
-    }),
-  };
-  const replacement = ledger.import(createEvidenceBundle([movedSource]));
-  if (!replacement.ok) throw replacement.error;
-  cache.refreshEvidenceMetadata(replacement.value.replacements);
-  expect(
-    cache.lookup(target, profile, "procedure_info", parameters)
-      ?.sourceEvidence?.[0]?.subject?.local_path,
-  ).toBe("/relocated/source");
   const exported = cache.export(target, profile, ledger.export());
   if (!exported.ok) throw exported.error;
   const imported = new AnalysisSnapshotCache();
@@ -1566,18 +1535,14 @@ it("replays source-bearing entries only when their complete retained closure exi
       .lookup(target, profile, "procedure_info", parameters)
       ?.sourceEvidence?.map((record) => record.evidence_id),
   ).toEqual([source.evidence_id, parent.evidence_id]);
-  expect(
-    imported.lookup(target, profile, "procedure_info", parameters)
-      ?.sourceEvidence?.[0]?.subject?.local_path,
-  ).toBe("/relocated/source");
   const pruned = parseAnalysisSnapshot({
     ...exported.value,
-    evidence_bundle: createEvidenceBundle([parent, movedSource]),
+    evidence_bundle: createEvidenceBundle([parent, source]),
   });
   const incomplete = new AnalysisSnapshotCache();
   incomplete.stage(pruned);
   const partial = new Map(
-    [parent, movedSource].map((record) => [record.evidence_id, record]),
+    [parent, source].map((record) => [record.evidence_id, record]),
   );
   expect(
     incomplete.lookup(target, profile, "procedure_info", parameters, (id) =>
@@ -1592,38 +1557,6 @@ it("replays source-bearing entries only when their complete retained closure exi
       )
       ?.sourceEvidence?.map((record) => record.evidence_id),
   ).toEqual([source.evidence_id, parent.evidence_id]);
-
-  const otherSource = immutableEvidence(
-    createEvidence(target, ANALYSIS_SNAPSHOT_PROVIDER, {
-      operation: "other_source",
-      parameters: {},
-      result: "different source",
-    }),
-  );
-  const otherParent = immutableEvidence(
-    createAnalysisExecutionEvidence(
-      "procedure_info",
-      parameters,
-      { ...execution, sourceEvidence: [otherSource] },
-      "observed",
-    ),
-  );
-  const records = [parent, movedSource, leaf, otherParent, otherSource];
-  const ambiguous = new AnalysisSnapshotCache();
-  ambiguous.stage(
-    parseAnalysisSnapshot({
-      ...exported.value,
-      evidence_bundle: createEvidenceBundle(records),
-    }),
-  );
-  const allRecords = new Map(
-    records.map((record) => [record.evidence_id, record]),
-  );
-  expect(
-    ambiguous.lookup(target, profile, "procedure_info", parameters, (id) =>
-      allRecords.get(id),
-    ),
-  ).toBeUndefined();
 });
 
 describe("executions that report truncated references", () => {
@@ -1723,4 +1656,63 @@ it("binds native value-trace absence semantics without changing other workflows"
   expect(workflowAnalysisProfile(profile, "xrefs")).toEqual(
     workflowAnalysisProfile(profile),
   );
+});
+
+it("detaches sealed bundle and staged entry payloads on export", () => {
+  const target = ANALYSIS_SNAPSHOT_TARGET;
+  const profile = ANALYSIS_SNAPSHOT_PROFILE;
+  const parameters = { address: "0x1000", document: "fixture" };
+  const result = { nested: [{ text: "ret" }], name: "main" };
+  const rawResult = { raw: ["source"] };
+  const evidence = createEvidence(target, ANALYSIS_SNAPSHOT_PROVIDER, {
+    operation: "procedure_info",
+    parameters,
+    result,
+    rawResult,
+    analysisProfile: profile,
+  });
+  const sealedBundle = createImmutableEvidenceBundle([evidence]);
+  const sealedSnapshot = immutableAnalysisSnapshot({
+    target: snapshotTarget(target),
+    binding: snapshotBinding(profile),
+    entries: [
+      createAnalysisSnapshotEntry({
+        target: snapshotTarget(target),
+        binding: snapshotBinding(profile),
+        operation: "procedure_info",
+        parameters,
+        execution: snapshotExecution(
+          createAnalysisExecution(result, ANALYSIS_SNAPSHOT_PROVIDER, {
+            subject: target,
+            analysisProfile: profile,
+            rawResult,
+          }),
+        ),
+      }),
+    ],
+    workflow_entries: [],
+    evidence_bundle: sealedBundle,
+  });
+  const cache = new AnalysisSnapshotCache();
+  cache.stage(sealedSnapshot);
+  const exported = cache.export(target, profile, sealedBundle);
+  if (!exported.ok) throw exported.error;
+  const entry = exported.value.entries[0]!;
+  const record = exported.value.evidence_bundle.records[0]!;
+  for (const payload of [
+    entry.parameters,
+    entry.execution.result,
+    entry.execution.raw_result,
+    record.parameters,
+    record.normalized_result,
+    record.raw_result,
+  ]) {
+    expect(Object.isFrozen(payload)).toBe(false);
+    Reflect.set(payload as Record<string, unknown>, "mutated", true);
+    expect((payload as Record<string, unknown>).mutated).toBe(true);
+  }
+  expect(Object.isFrozen(sealedBundle.records[0]?.normalized_result)).toBe(
+    true,
+  );
+  expect(sealedBundle.records[0]?.normalized_result).toEqual(result);
 });

@@ -290,7 +290,7 @@ const inspectHopperMachOImage = async (
         cancelledBy("open_binary", carriedReason(reason)),
     })) {
       if (signal?.aborted) return err(cancelledBy("open_binary", signal));
-      const bytes = Buffer.from(chunk);
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       hash.update(bytes);
       size += bytes.length;
       if (!Number.isSafeInteger(size))

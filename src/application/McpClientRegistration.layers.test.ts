@@ -2,17 +2,20 @@ import { registerMcpClientOnHost } from "../../tests/fixtures/mcpRegistration.js
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import {
   effectiveClientServer,
   parseClientConfiguration,
 } from "./ClientConfigurationDocument.js";
+import { ClientConfigurationPublication } from "./ClientConfigurationPublication.js";
 import { mergeClientConfigurationDocuments } from "./ClientConfigurationFiles.js";
 import {
   mcpClientRegistrationProfile,
+  resolveMcpRegistrationClients,
   type McpRegistrationClient,
 } from "./McpRegistrationCatalog.js";
 
@@ -21,6 +24,7 @@ beforeEach(() => {
   resources = new ArtifactResourceScope();
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
   await resources.close();
 });
 const launcher = { command: "/fixture/server path", args: ["", "--mcp"] };
@@ -135,6 +139,86 @@ it("refuses a higher Kilo file launcher before creating the lower selected targe
   });
 });
 
+it.each(["kilo", "opencode"] as const)(
+  "reports the retained backup when a higher %s layer invalidates publication",
+  async (format) => {
+    const root = await createTestTempDirectory(
+      "rea-registration-layer-readback-",
+    );
+    const project = join(root, "project");
+    const target = join(
+      project,
+      format === "kilo" ? "kilo.json" : "opencode.jsonc",
+    );
+    const higher =
+      format === "kilo"
+        ? join(root, "higher", "kilo.json")
+        : join(project, ".opencode", "opencode.json");
+    const original = await write(target, {
+      theme: "target",
+      ...(format === "opencode" ? { mcp: { servers: {} } } : {}),
+    });
+    const higherRow = { type: "local", command: ["higher-server"] };
+    const higherDocument = {
+      mcp:
+        format === "kilo"
+          ? { rea: higherRow }
+          : { servers: { rea: higherRow } },
+    };
+    let client: McpRegistrationClient;
+    if (format === "kilo") client = clientFor(target, [target, higher]);
+    else {
+      const selected = await resolveMcpRegistrationClients(
+        {
+          agents: ["opencode"],
+          global: false,
+          home: join(root, "home"),
+          cwd: project,
+          platform: HOST_PLATFORM.platform,
+          environment: {},
+        },
+        resources,
+      );
+      if (!selected.ok) throw selected.error;
+      const [projectClient] = selected.value;
+      if (projectClient === undefined)
+        throw new Error("OpenCode project was not selected");
+      client = projectClient;
+    }
+    const publish = ClientConfigurationPublication.write;
+    let higherText: string | undefined;
+    vi.spyOn(ClientConfigurationPublication, "write").mockImplementation(
+      async (...args) => {
+        const publication = await publish(...args);
+        higherText = await write(higher, higherDocument);
+        return publication;
+      },
+    );
+    const result = await registerMcpClientOnHost(
+      client,
+      launcher,
+      undefined,
+      resources,
+    );
+    if (result.ok)
+      throw new Error("Registration should refuse the changed launcher");
+    const backup = `${target}.rea.backup`;
+    expect(result.error.message).toContain(
+      "overrides the selected stdio launcher",
+    );
+    expect(
+      projectAnalysisError(result.error).details?.diagnostics,
+    ).toMatchObject({
+      settings_path: target,
+      backup_path: backup,
+      ...(format === "opencode" ? { override_path: higher } : {}),
+    });
+    expect(await readFile(target, "utf8")).toBe(original);
+    expect(await readFile(backup, "utf8")).toBe(original);
+    expect(await readFile(higher, "utf8")).toBe(higherText);
+  },
+);
+
 it("refuses a conflicting KILO_CONFIG_CONTENT launcher without mutating the inline source or creating a target", async () => {
   const root = await createTestTempDirectory(
     "rea-registration-inline-conflict-",
@@ -227,7 +311,7 @@ it("retains harmless higher file and inline metadata as read-only inherited fact
   expect(inline).toEqual(beforeInline);
 });
 
-it("uses the effective OpenCode V2 dialect in its target fragment while preserving lower policy", async () => {
+it("writes a complete OpenCode V2 row while leaving the lower policy file intact", async () => {
   const root = await createTestTempDirectory(
     "rea-registration-native-dialect-",
   );
@@ -260,14 +344,18 @@ it("uses the effective OpenCode V2 dialect in its target fragment while preservi
     mcp: {
       peer,
       servers: {
-        rea: { type: "local", command: [launcher.command, ...launcher.args] },
+        rea: {
+          type: "local",
+          command: [launcher.command, ...launcher.args],
+          disabled: false,
+        },
       },
     },
   });
-  expect(effective([lowerText, targetText], "opencode")).toMatchObject({
+  expect(effective([lowerText, targetText], "opencode")).toEqual({
+    type: "local",
     command: [launcher.command, ...launcher.args],
-    disabled: true,
-    environment: { LOWER: "1" },
+    disabled: false,
   });
   expect(await readFile(lower, "utf8")).toBe(lowerText);
 });

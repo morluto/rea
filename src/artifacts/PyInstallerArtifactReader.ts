@@ -19,14 +19,14 @@ import {
 } from "../resources/index.js";
 import type { FileHandle } from "node:fs/promises";
 
-import type { PyInstallerMetadata } from "../domain/artifactFormatMetadata.js";
+import type { PyInstallerMetadata } from "../domain/formatMetadata/packageAndGameMetadata.js";
 import {
   cookieMetadata,
   scriptPythonMagic,
 } from "./pyinstaller/PyInstallerMetadata.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { parseMzHeaderEvidence } from "../domain/dosMz.js";
+import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import {
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
@@ -74,7 +74,7 @@ const carrierPathDialect = async (
   });
   if (!prefixRead.ok) return "unknown";
   const prefix = prefixRead.value;
-  let windowsHeader = parseMzHeaderEvidence(prefix, fileSize).windowsHeader;
+  let windowsHeader = observeMzWindowsHeader(prefix, fileSize);
   if (windowsHeader.state === "signature-needed") {
     const signatureRead = await readPyInstallerBytes(handle, {
       position: windowsHeader.offset,
@@ -83,10 +83,10 @@ const carrierPathDialect = async (
       signal,
     });
     if (!signatureRead.ok) return "unknown";
-    windowsHeader = parseMzHeaderEvidence(prefix, fileSize, {
+    windowsHeader = observeMzWindowsHeader(prefix, fileSize, {
       offset: windowsHeader.offset,
       bytes: signatureRead.value,
-    }).windowsHeader;
+    });
   }
   if (windowsHeader.state === "declared")
     return windowsHeader.signature === "PE" ? "windows" : "unknown";

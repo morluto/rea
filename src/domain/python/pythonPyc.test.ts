@@ -5,7 +5,10 @@ import {
   PYTHON_PYC_MARSHAL_PROFILES,
   pythonPycHeaderSchema,
 } from "./pythonPyc.js";
-import { pythonBytecodeIdentity } from "./pythonBytecodeIdentity.js";
+import {
+  observePythonBytecodePrefix,
+  pythonBytecodeIdentity,
+} from "./pythonBytecodeIdentity.js";
 
 const hashHeader = {
   magic: 3531,
@@ -98,6 +101,29 @@ it("keeps pinned CPython identity separate from standalone marshal coverage", ()
   expect(pythonPycMarshalProfile(3450)).toBeNull();
   expect(pythonPycMarshalProfile(62171)).toBeNull();
   expect(PYTHON_PYC_MARSHAL_PROFILES.size).toBeGreaterThan(80);
+});
+
+it("retains little-endian magic inside a borrowed, partially available prefix", () => {
+  const bytes = Uint8Array.of(0xff, 0xcb, 0x0d, 0x0d, 0x0a, 0xff).subarray(1);
+  expect(observePythonBytecodePrefix(bytes.subarray(0, 1))).toMatchObject({
+    state: "incomplete",
+    magic: null,
+    identity: null,
+  });
+  expect(observePythonBytecodePrefix(bytes.subarray(0, 2))).toMatchObject({
+    state: "incomplete",
+    magic: 3531,
+    identity: null,
+  });
+  const complete = observePythonBytecodePrefix(bytes);
+  expect(complete).toMatchObject({
+    state: "framed",
+    magic: 3531,
+    identity: { pythonVersion: "3.12", headerBytes: 16 },
+  });
+  expect(complete.prefix.buffer).toBe(bytes.buffer);
+  expect(complete.prefix.byteOffset).toBe(bytes.byteOffset);
+  expect(complete.prefix.byteLength).toBe(4);
 });
 
 it("rejects extra inspect arguments", () => {

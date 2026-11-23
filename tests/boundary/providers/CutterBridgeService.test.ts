@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
+import { cutterDiscoveryLimitations } from "../../../src/domain/cutterDiscovery.js";
 import {
   AnalysisInputError,
   AnalysisCancelledError,
@@ -43,6 +44,7 @@ it.each(["descriptor-first", "command-first"] as const)(
         bridge_directory: "/fixture",
         discovery_status: "no_live_bridge_found",
         bridge_directory_security: "private_verified",
+        limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
       }),
       confirmCommandCompletion: async () =>
         readFails
@@ -101,6 +103,49 @@ it.each(["descriptor-first", "command-first"] as const)(
   },
 );
 
+it("classifies confirmed command observations as external-service, not controlled-replay", async () => {
+  const service = new CutterBridgeService({
+    listSessions: async () => ({
+      sessions: [],
+      bridge_directory: "/private/bridge",
+      discovery_status: "no_live_bridge_found",
+      bridge_directory_security: "private_verified",
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
+    }),
+    execute: async () => ({
+      requestId: "4b18ce4d-bf31-456e-ae31-e8c547b2f9db",
+      output: { sections: "4" },
+      currentFile: "/fixtures/sample.bin",
+      documentGeneration: 7,
+      identityStatus: "partial",
+      cutterVersion: "Cutter fixture version",
+      executionState: "complete",
+      error: null,
+      message: null,
+      outputTruncated: false,
+    }),
+  });
+
+  const result = await service.execute({
+    session_id: "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a",
+    expected_generation: 7,
+    command: "pd 4",
+  });
+  if (!result.ok) throw new Error("Expected confirmed dispatch to succeed");
+
+  expect(result.value).toMatchObject({
+    authority: "external-service",
+    normalized_result: {
+      command: "pd 4",
+      execution_state: "complete",
+    },
+    limitations: expect.arrayContaining([
+      "Document identity is partial: the bridge uses a plugin instance UUID and observed generation; a same-path tab switch or reload may not be distinguishable.",
+    ]),
+  });
+  expect(result.value).not.toHaveProperty("authority", "controlled-replay");
+});
+
 it("retains uncertain command completion as Evidence without encouraging a retry", async () => {
   const service = new CutterBridgeService({
     listSessions: async () => ({
@@ -108,6 +153,7 @@ it("retains uncertain command completion as Evidence without encouraging a retry
       bridge_directory: "/private/bridge",
       discovery_status: "no_live_bridge_found",
       bridge_directory_security: "private_verified",
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
     }),
     execute: async () => ({
       requestId: "4b18ce4d-bf31-456e-ae31-e8c547b2f9db",
@@ -180,6 +226,7 @@ it("clears a poisoned command only after its exact UI-dispatcher receipt", async
       bridge_directory: "/private/bridge",
       discovery_status: "no_live_bridge_found",
       bridge_directory_security: "private_verified",
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
     }),
     confirmCommandCompletion,
     execute: async () => {
@@ -313,6 +360,7 @@ it("recovers canceled command A after B and does not retain poisoned B", async (
       bridge_directory: "/private/bridge",
       discovery_status: "no_live_bridge_found" as const,
       bridge_directory_security: "private_verified" as const,
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
     }),
     confirmCommandCompletion,
     execute,
@@ -352,6 +400,7 @@ it("rejects malformed Cutter commands and pre-aborted calls", async () => {
       bridge_directory: "/private/bridge",
       discovery_status: "no_live_bridge_found",
       bridge_directory_security: "private_verified",
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
     }),
     execute: async () => {
       throw new Error("must not dispatch");
@@ -385,6 +434,7 @@ it.each([
       bridge_directory: "/private/bridge",
       discovery_status: "no_live_bridge_found",
       bridge_directory_security: "private_verified",
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
     }),
     execute: async () => {
       throw failure;
@@ -406,6 +456,7 @@ it.each(["transport cancelled", "command may have completed"])(
         bridge_directory: "/private/bridge",
         discovery_status: "no_live_bridge_found",
         bridge_directory_security: "private_verified",
+        limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
       }),
       execute: async () => {
         controller.abort(new Error("later cancellation"));
@@ -446,6 +497,7 @@ it("shares one cleanup attempt when commands retry the same receipt together", a
       bridge_directory: "/private/bridge",
       discovery_status: "no_live_bridge_found",
       bridge_directory_security: "private_verified",
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
     }),
     confirmCommandCompletion,
     execute: async () => {
@@ -530,6 +582,7 @@ it.each([
           bridge_directory: "/private/bridge",
           discovery_status: "no_live_bridge_found",
           bridge_directory_security: "private_verified",
+          limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
         };
       },
       execute: async () => {
@@ -571,6 +624,7 @@ it.each(["descriptor-first", "command-first"])(
         bridge_directory: "/fixture",
         discovery_status: "no_live_bridge_found",
         bridge_directory_security: "private_verified",
+        limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
       }),
       confirmCommandCompletion: async () => ({ ok: true, value: terminal }),
       retryDescriptorCleanup: releaseDescriptors,
@@ -619,6 +673,7 @@ it.each([
         bridge_directory: "/private/bridge",
         discovery_status: "no_live_bridge_found",
         bridge_directory_security: "private_verified",
+        limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
       }),
       execute: async () => {
         throw cause;
@@ -648,6 +703,7 @@ it.each([
         bridge_directory: "/private/bridge",
         discovery_status: "no_live_bridge_found",
         bridge_directory_security: "private_verified",
+        limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
       }),
       execute: async () => {
         controller.abort(reason);

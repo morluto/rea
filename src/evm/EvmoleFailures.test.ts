@@ -120,12 +120,12 @@ it("names timeout_ms, the omitted default, and the caps it does not raise", () =
     parameter: "timeout_ms",
     effective_value: 45_000,
     default_value: DEFAULT_EVM_TIMEOUT_MS,
+    applies_at: "next_call",
   });
   expect(projected.remediation.action).toContain(
     String(MAX_NODE_TIMER_DELAY_MS),
   );
   expect(projected.remediation.action).toContain("does not raise");
-  expect(projected.remediation.action).toContain("no server restart");
 });
 
 it("names the selected CPU budget separately from tighter inherited limits", () => {
@@ -144,9 +144,9 @@ it("names the selected CPU budget separately from tighter inherited limits", () 
       phase: "worker",
       path: "/selected.hex",
       workerLimits: {
-        addressSpaceBytes: 1024,
-        cpuSeconds: 30,
-        fileSizeBytes: 1024,
+        address_space_bytes: 1024,
+        cpu_seconds: 30,
+        file_bytes: 1024,
       },
     }),
   );

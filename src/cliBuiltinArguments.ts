@@ -9,6 +9,11 @@ export const VALUED_OUTPUT_FLAGS: ReadonlySet<string> = new Set([
   "--token-offset",
 ]);
 
+const spacedOutputValue = (
+  flag: string,
+  next: string | undefined,
+): string | undefined => (VALUED_OUTPUT_FLAGS.has(flag) ? next : undefined);
+
 export const OUTPUT_SWITCHES: ReadonlySet<string> = new Set([
   "--json",
   "--full-output",
@@ -59,7 +64,7 @@ export interface CliGlobalArguments {
   readonly commandIndices: readonly number[];
   /** Valueless global flags and timing spellings taken out before command parsing. */
   readonly flags: ReadonlySet<string>;
-  /** Positions of nonempty values consumed by valued output flags. */
+  /** Positions of explicit values consumed by valued output flags, including empty values. */
   readonly outputValues: readonly {
     readonly flag: string;
     readonly index: number;
@@ -80,10 +85,11 @@ const normalizeCliArguments = (arguments_: readonly string[]): string[] => {
   let rootUpdate = true;
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index]!;
-    if (VALUED_OUTPUT_FLAGS.has(argument) && arguments_[index + 1]) {
-      // A nonempty spaced value is consumed before looking for more flags.
+    const outputValue = spacedOutputValue(argument, arguments_[index + 1]);
+    if (outputValue !== undefined) {
+      // A spaced value is consumed before looking for more flags.
       // Its contents belong to that option, even when they look like a flag.
-      normalized.push(argument, arguments_[index + 1]!);
+      normalized.push(argument, outputValue);
       index += 1;
       continue;
     }
@@ -111,7 +117,7 @@ const normalizeCliArguments = (arguments_: readonly string[]): string[] => {
 /**
  * Read one invocation's global arguments. Builtin switches are taken from any
  * position, including after `--`; a valued output flag consumes the next
- * nonempty token as data. The timing global is then read from the remaining
+ * token as data even when it is empty. The timing global is then read from the remaining
  * tokens until `--`. The output argument reader reports malformed output
  * values from these same positions.
  */
@@ -134,7 +140,7 @@ export const parseCliGlobalArguments = (
       flags.add(argument);
       continue;
     }
-    if (VALUED_OUTPUT_FLAGS.has(argument) && next) {
+    if (spacedOutputValue(argument, next) !== undefined) {
       outputValues.push({ flag: argument, index: index + 1 });
       index += 1;
       continue;
@@ -275,7 +281,7 @@ export const isProjectScopedAmpRegistration = ({
  * the `mcp doctor` words and the timing global the launcher measures. Returns
  * undefined for any other command.
  */
-export const productionMcpDoctorArguments = (
+const productionMcpDoctorArguments = (
   arguments_: readonly string[],
 ):
   | { readonly arguments: readonly string[]; readonly timings: boolean }
@@ -336,3 +342,122 @@ export const CLI_COMPLETION_SHELLS = [
 ] as const;
 export const cliCompletionShell = (environment: Readonly<NodeJS.ProcessEnv>) =>
   CLI_COMPLETION_SHELLS.find((shell) => shell === environment.COMPLETE);
+
+type McpHttpCommandProblem =
+  | { readonly kind: "help" }
+  | { readonly kind: "invalid"; readonly message: string };
+
+export type McpHttpCommand =
+  | McpHttpCommandProblem
+  | {
+      readonly kind: "listen";
+      readonly host: string | undefined;
+      readonly port: string | undefined;
+      readonly allowedHosts: readonly string[];
+    };
+
+const invalidMcpHttpCommand = (message: string): McpHttpCommandProblem => ({
+  kind: "invalid",
+  message,
+});
+
+const MCP_HTTP_VALUED_FLAGS: ReadonlySet<string> = new Set([
+  "--host",
+  "--port",
+  "--allowed-hosts",
+]);
+
+const MCP_HTTP_HELP_FLAGS: ReadonlySet<string> = new Set(["--help", "-h"]);
+
+const readMcpHttpOption = (argument: string, next: string | undefined) => {
+  const separator = argument.indexOf("=");
+  return separator === -1
+    ? {
+        flag: argument,
+        inline: false,
+        value: next?.startsWith("-") ? undefined : next,
+      }
+    : {
+        flag: argument.slice(0, separator),
+        inline: true,
+        value: argument.slice(separator + 1),
+      };
+};
+
+/** Read the transport syntax once, retaining the first help or refusal while looking for the mode. */
+const readMcpHttpCommand = (
+  arguments_: readonly string[],
+): McpHttpCommand | undefined => {
+  let transportFlag: string | undefined;
+  const values = new Map<string, string>();
+  const allowedHosts: string[] = [];
+  let problem: McpHttpCommandProblem | undefined;
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const argument = arguments_[index]!;
+    if (MCP_HTTP_HELP_FLAGS.has(argument)) {
+      problem ??= { kind: "help" };
+      continue;
+    }
+    if (argument === "--http") {
+      transportFlag = "--http";
+      continue;
+    }
+    const next = arguments_[index + 1];
+    const { flag, inline, value } = readMcpHttpOption(argument, next);
+    if (MCP_HTTP_VALUED_FLAGS.has(flag)) {
+      transportFlag ??= flag;
+      if (value === undefined) {
+        problem ??= invalidMcpHttpCommand(`Missing value for ${flag}`);
+      } else {
+        if (flag === "--allowed-hosts") allowedHosts.push(value);
+        else values.set(flag, value);
+        if (!inline) index += 1;
+      }
+      continue;
+    }
+    problem ??= invalidMcpHttpCommand(
+      `Unknown mcp --http argument: ${argument}`,
+    );
+    // A subcommand or an option delimiter ends mode selection. Global
+    // output values belong to the one-shot CLI even if they spell --http.
+    if (!argument.startsWith("-") || argument === "--") break;
+    if (!inline && spacedOutputValue(flag, next) !== undefined) index += 1;
+  }
+  if (transportFlag === undefined) return undefined;
+  if (problem !== undefined) return problem;
+  if (transportFlag !== "--http")
+    return invalidMcpHttpCommand(`${transportFlag} requires --http`);
+  return {
+    kind: "listen",
+    host: values.get("--host"),
+    port: values.get("--port"),
+    allowedHosts,
+  };
+};
+
+type CliEntrypoint =
+  | { readonly kind: "cli" | "mcp-stdio" }
+  | { readonly kind: "mcp-http"; readonly command: McpHttpCommand }
+  | {
+      readonly kind: "mcp-doctor";
+      readonly arguments: readonly string[];
+      readonly timings: boolean;
+    };
+
+/** Select the process entry before loading its runtime, including completion requests. */
+export const classifyCliEntrypoint = (
+  arguments_: readonly string[],
+  environment: Readonly<NodeJS.ProcessEnv>,
+): CliEntrypoint => {
+  if (cliCompletionShell(environment) !== undefined) return { kind: "cli" };
+  const entry = arguments_[0];
+  if (entry === "mcp" || entry === "--mcp") {
+    if (arguments_.length === 1) return { kind: "mcp-stdio" };
+    const command = readMcpHttpCommand(arguments_.slice(1));
+    if (command !== undefined) return { kind: "mcp-http", command };
+  }
+  const doctor = productionMcpDoctorArguments(arguments_);
+  return doctor === undefined
+    ? { kind: "cli" }
+    : { kind: "mcp-doctor", ...doctor };
+};

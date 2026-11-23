@@ -1,8 +1,15 @@
 import { readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { createBinaryHardeningService } from "../../../src/composition/binaryDiagnostics.js";
+import { scheduler } from "node:timers/promises";
+import { describe, expect, it, vi } from "vitest";
+import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
+import {
+  MAXIMUM_ZSTD_MAX_FRAMES,
+  MINIMUM_ZSTD_MAX_FRAMES,
+} from "../../../src/domain/analysisResourceLimits.js";
+import { createBinaryHardeningService } from "../../../src/composition/binaryDiagnostics/binaryHardening.js";
 import { elfHardeningFixture } from "../../../src/native/hardening/BinaryHardening.fixture.js";
+import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("binary hardening stable filesystem boundary", () => {
@@ -94,6 +101,71 @@ describe("binary hardening stable filesystem boundary", () => {
         fixedAllowance: { limit: 65_536, unit: "entries" },
       });
     } finally {
+      await service.close();
+    }
+  });
+});
+
+describe("binary hardening compressed ELF names", () => {
+  it("projects a section-name frame cap as an adjustable zstd.max_frames limit", async () => {
+    const root = await createTestTempDirectory("rea-binary-hardening-zstd-");
+    const path = join(root, "app");
+    await writeFile(path, elfFrameAllowanceFixture());
+    const service = createBinaryHardeningService();
+    try {
+      const result = await runWithAnalysisOperationSnapshot(
+        { revision: 1, overrides: { "zstd.max_frames": 1 } },
+        () =>
+          service.inspect({ path }, { signal: new AbortController().signal }),
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        operation: "inspect_binary_hardening",
+        resource: "cpu",
+        limit: {
+          setting: "zstd.max_frames",
+          effective_value: 1,
+          source: "runtime",
+          minimum: MINIMUM_ZSTD_MAX_FRAMES,
+          maximum: MAXIMUM_ZSTD_MAX_FRAMES,
+          unit: "count",
+        },
+      });
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("cancels a many-frame compressed section-name table", async () => {
+    const root = await createTestTempDirectory("rea-binary-hardening-cancel-");
+    const path = join(root, "app");
+    await writeFile(path, elfFrameAllowanceFixture());
+    const reason = new Error("stop hardening frames");
+    const controller = new AbortController();
+    const yieldImpl = scheduler.yield.bind(scheduler);
+    let yields = 0;
+    const spy = vi.spyOn(scheduler, "yield").mockImplementation(async () => {
+      yields += 1;
+      await yieldImpl();
+      if (yields === 1) controller.abort(reason);
+    });
+    const service = createBinaryHardeningService();
+    try {
+      const result = await service.inspect(
+        { path },
+        { signal: controller.signal },
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        operation: "inspect_binary_hardening",
+        cause: reason,
+      });
+    } finally {
+      spy.mockRestore();
       await service.close();
     }
   });

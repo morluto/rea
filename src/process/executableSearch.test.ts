@@ -142,6 +142,58 @@ describe("windowsPathCandidates", () => {
     expect(paths("npm.cmd", environment, { cwd: "C:\\" })).toEqual([]);
   });
 
+  it("appends PATHEXT when a command's dot is part of its name, as Windows does", () => {
+    const environment = { PATH: "C:\\Python", PATHEXT: ".COM;.EXE;.BAT;.CMD" };
+    expect(paths("python3.12", environment, { cwd: "C:\\" })).toEqual([
+      "C:\\Python\\python3.12.COM",
+      "C:\\Python\\python3.12.EXE",
+    ]);
+    expect(paths("python3.12.exe", environment, { cwd: "C:\\" })).toEqual([
+      "C:\\Python\\python3.12.exe",
+    ]);
+    // An image extension stays explicit even when PATHEXT omits it.
+    expect(
+      paths("tool.com", { PATH: "C:\\bin", PATHEXT: ".EXE" }, { cwd: "C:\\" }),
+    ).toEqual(["C:\\bin\\tool.com"]);
+    // Appending PATHEXT validates it, as for a command without a dot.
+    expect(
+      windowsPathCandidates("pip3.12", {
+        PATH: "C:\\bin",
+        PATHEXT: ".EXE;C:\\bad",
+      }),
+    ).toEqual({
+      ok: false,
+      error: { kind: "invalid_extension", extension: "C:\\bad" },
+    });
+  });
+
+  it("uses the selected working drive for a root-relative command", () => {
+    expect(
+      paths("\\bin\\tool", { PATHEXT: ".EXE" }, { cwd: "Z:\\work" }),
+    ).toEqual(["Z:\\bin\\tool.EXE"]);
+    // A UNC working directory roots it at the share, as Win32 does.
+    expect(
+      paths(
+        "\\bin\\tool",
+        { PATHEXT: ".EXE" },
+        { cwd: "\\\\server\\share\\work" },
+      ),
+    ).toEqual(["\\\\server\\share\\bin\\tool.EXE"]);
+  });
+
+  it("marks a PATH entry without a drive as relative to the working drive", () => {
+    const search = windowsPathCandidates(
+      "tool.exe",
+      { PATH: "\\bin;D:\\tools" },
+      { cwd: "Z:\\work" },
+    );
+    if (!search.ok) throw new Error(search.error.extension);
+    expect([...search.value]).toEqual([
+      { path: "Z:\\bin\\tool.exe", relativeEntry: true },
+      { path: "D:\\tools\\tool.exe", relativeEntry: false },
+    ]);
+  });
+
   it("tries every launcher name in an entry before the next entry", () => {
     expect(
       paths(

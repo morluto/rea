@@ -142,8 +142,8 @@ entry explicitly. Windows Ghidra P0 does not admit m68k.
 annotated hex in the verifier, so it needs no assembler. The lane checks real
 CLI/MCP load-image parity, mapped bytes, a decoded call, decompilation by address
 and file offset, misaligned and out-of-range mappings, unchanged source bytes and
-runtime cleanup. It has been run with Ghidra 12.1.4 on macOS; Linux has not been
-exercised.
+runtime cleanup. Recorded on Ghidra 12.1.4 (no longer accepted); not yet re-run
+on 12.2. The recorded run was on macOS; Linux has not been exercised.
 
 ## Limitations
 

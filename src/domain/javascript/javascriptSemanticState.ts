@@ -32,6 +32,8 @@ import type {
 export interface JavaScriptSemanticInitializer {
   readonly node: t.Node;
   readonly projection: readonly (string | number | null)[];
+  /** Binding occurrence that must be reached before this source is used. */
+  readonly patternTarget?: t.Identifier;
   readonly entryBody?: t.BlockStatement;
   readonly iterationSources?: readonly {
     readonly node: t.Node;
@@ -95,6 +97,8 @@ export interface JavaScriptSemanticBindingState {
   kind: JavaScriptSemanticDefinition["kind"];
   /** Source declaration form retained internally for CommonJS wrapper bindings. */
   declarationKinds: Set<"var" | "let" | "const" | "using" | "await using">;
+  /** Declaration site even when a let binding has no initializer. */
+  letDeclarator?: t.VariableDeclarator | null;
   mutable: boolean;
   readonly memberWrites: JavaScriptSemanticMemberEffect[];
   readonly escapedPaths: JavaScriptSemanticMemberEffect[];
@@ -104,6 +108,8 @@ export interface JavaScriptSemanticBindingState {
   readonly directOrigins: JavaScriptModuleOrigin[];
   /** An ECMAScript import that exists at runtime, excluding type-only and import-equals syntax. */
   runtimeImport: boolean;
+  /** Immutable self-name binding created by evaluating a class or named function expression. */
+  selfNameAssignment?: "always-throws" | "throws-in-strict-mode";
 }
 
 /** Mutable lexical-scope state used only during AST recovery. */

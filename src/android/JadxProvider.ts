@@ -11,7 +11,8 @@ import type {
 } from "../ports/AnalysisProvider.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { throwIfJadxInterrupted } from "./JadxInterruption.js";
-import { chmod, copyFile } from "node:fs/promises";
+import type { BigIntStats } from "node:fs";
+import { chmod, copyFile, lstat } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AndroidAnalysisPort } from "../ports/android/AndroidAnalysisPort.js";
@@ -297,6 +298,30 @@ const cleanup = async (
   return ok(undefined);
 };
 
+interface VerifiedFileDigest {
+  readonly dev: bigint;
+  readonly ino: bigint;
+  readonly size: bigint;
+  readonly mtimeNs: bigint;
+  readonly ctimeNs: bigint;
+  readonly sha256: string;
+}
+
+const MAX_VERIFIED_DIGEST_ENTRIES = 16;
+
+const isRegularNonSymlinkFile = (observed: BigIntStats): boolean =>
+  observed.isFile() && !observed.isSymbolicLink();
+
+const sameFileStat = (
+  expected: Omit<VerifiedFileDigest, "sha256">,
+  observed: BigIntStats,
+): boolean =>
+  observed.dev === expected.dev &&
+  observed.ino === expected.ino &&
+  observed.size === expected.size &&
+  observed.mtimeNs === expected.mtimeNs &&
+  observed.ctimeNs === expected.ctimeNs;
+
 interface RetainedSession {
   readonly key: string;
   readonly root: JadxWorkspaceRoot;
@@ -313,6 +338,7 @@ export class JadxProvider implements AndroidAnalysisPort {
   #pendingCleanup: PendingCleanup | undefined;
   #retained: RetainedSession | undefined;
   #mappingCache: AndroidMappingSource | undefined;
+  readonly #verifiedDigests = new Map<string, VerifiedFileDigest>();
   #idle: NodeJS.Timeout | undefined;
   readonly #shutdown = new AbortController();
   readonly #prerequisites = new ArtifactResourceScope();
@@ -582,17 +608,27 @@ export class JadxProvider implements AndroidAnalysisPort {
         signal,
       );
       throwIfJadxInterrupted(signal);
-      const jarHash = await hashAndroidSource(
+      const jarHash = await this.#verifiedFileDigest(
         configuration.jar,
-        request.operation,
         signal,
-        retainFailedClose(configuration.jar),
+        () =>
+          hashAndroidSource(
+            configuration.jar,
+            request.operation,
+            signal,
+            retainFailedClose(configuration.jar),
+          ),
       );
-      const bridgeHash = await hashAndroidSource(
+      const bridgeHash = await this.#verifiedFileDigest(
         BRIDGE_SOURCE,
-        request.operation,
         signal,
-        retainFailedClose(BRIDGE_SOURCE),
+        () =>
+          hashAndroidSource(
+            BRIDGE_SOURCE,
+            request.operation,
+            signal,
+            retainFailedClose(BRIDGE_SOURCE),
+          ),
       );
       // Read before any child or workspace exists, so a malformed packaged
       // bridge is refused without resources to clean up.
@@ -606,12 +642,17 @@ export class JadxProvider implements AndroidAnalysisPort {
       const bridgeIdentity = identity.value;
       let targetHash: string;
       try {
-        targetHash = (
-          await hashStableFile(target.path, {
-            signal,
-            retainFailedClose: retainFailedClose(target.path),
-          })
-        ).sha256;
+        targetHash = await this.#verifiedFileDigest(
+          target.path,
+          signal,
+          async () =>
+            (
+              await hashStableFile(target.path, {
+                signal,
+                retainFailedClose: retainFailedClose(target.path),
+              })
+            ).sha256,
+        );
       } catch (cause: unknown) {
         if (signal.aborted) throw cause;
         if (cause instanceof RegularFileChangedError)
@@ -780,5 +821,53 @@ export class JadxProvider implements AndroidAnalysisPort {
       const retired = await this.#retire();
       return retired.ok ? err(admissionFailure()) : retired;
     }
+  }
+
+  /**
+   * Reuse a verified SHA-256 digest when the regular file's stat identity is
+   * unchanged, falling back to full streaming hash on any metadata change.
+   */
+  async #verifiedFileDigest(
+    path: string,
+    signal: AbortSignal,
+    computeHash: () => Promise<string>,
+  ): Promise<string> {
+    const before = await lstat(path, { bigint: true }).catch(() => undefined);
+    const cached = this.#verifiedDigests.get(path);
+    if (
+      cached !== undefined &&
+      before !== undefined &&
+      isRegularNonSymlinkFile(before) &&
+      sameFileStat(cached, before)
+    ) {
+      throwIfJadxInterrupted(signal);
+      return cached.sha256;
+    }
+    const sha256 = await computeHash();
+    if (before !== undefined && isRegularNonSymlinkFile(before)) {
+      const after = await lstat(path, { bigint: true }).catch(() => undefined);
+      if (
+        after !== undefined &&
+        isRegularNonSymlinkFile(after) &&
+        sameFileStat(before, after)
+      ) {
+        if (
+          !this.#verifiedDigests.has(path) &&
+          this.#verifiedDigests.size >= MAX_VERIFIED_DIGEST_ENTRIES
+        ) {
+          const oldest = this.#verifiedDigests.keys().next().value;
+          if (oldest !== undefined) this.#verifiedDigests.delete(oldest);
+        }
+        this.#verifiedDigests.set(path, {
+          dev: after.dev,
+          ino: after.ino,
+          size: after.size,
+          mtimeNs: after.mtimeNs,
+          ctimeNs: after.ctimeNs,
+          sha256,
+        });
+      }
+    }
+    return sha256;
   }
 }

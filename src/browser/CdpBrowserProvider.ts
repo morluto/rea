@@ -57,7 +57,10 @@ import {
   AnalysisError,
   type AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupFailure,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisInputError,
   cancelledBy,
@@ -87,6 +90,7 @@ import {
 } from "../domain/browserDeadline.js";
 import { fetchWebSourceMaps } from "./WebSourceMapFetcher.js";
 import { authorizeCdpTarget } from "./CdpAuthorizedTarget.js";
+import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import { observeCdpSession } from "./CdpObservationSession.js";
 import { discoverWebMcp } from "./CdpWebMcpDiscovery.js";
 import { captureCdpScreenshot } from "./CdpScreenshot.js";
@@ -158,15 +162,12 @@ export class CdpBrowserProvider implements BrowserObservationPort {
       const typed = failures.filter(
         (failure): failure is AnalysisError => failure instanceof AnalysisError,
       );
-      throw new ProviderCleanupError(
+      throw providerCleanupErrorFromFailures(
         CDP_BROWSER_PROVIDER_IDENTITY.id,
-        typed.flatMap((failure) => failure.cleanupResources),
-        { reason: "Browser transport and analyzer cleanup remain incomplete" },
-        {
-          operation: "analyze_web_bundle",
-          cause: new AggregateError(failures),
-        },
-      ).bindCleanupDependencies(typed);
+        typed,
+        "Browser transport and analyzer cleanup remain incomplete",
+        { operation: "analyze_web_bundle", causes: failures },
+      );
     }
   }
 
@@ -621,7 +622,11 @@ const withTargetSession = async <
       endpoint.connection !== targetSession?.connection
     ) {
       if (endpoint.reusableBrowserSocket === true) {
-        if (attachAttempted)
+        // A correlated rejection confirms this attach created no session.
+        // A lost or unusable reply can leave an attachment on the socket.
+        const rejected =
+          !outcome.ok && outcome.error instanceof CdpCommandRejection;
+        if (attachAttempted && !rejected)
           await owner.evictBrowserSocket(endpoint.connection);
         else await owner.releaseBrowserSocket(endpoint.connection);
       } else {

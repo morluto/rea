@@ -1,9 +1,9 @@
-import { expect, it } from "vitest";
-import {
-  zipEndOfCentralDirectoryCandidates,
-  ZIP_EOCD_BYTES,
-  ZIP_MAX_COMMENT_BYTES,
-} from "./zipEndOfCentralDirectory.js";
+import { expect, it, vi } from "vitest";
+import { zipEndOfCentralDirectoryCandidates } from "./zipEndOfCentralDirectory.js";
+
+// Wire sizes for the fixture and its expectations are independent of the reader.
+const CLASSIC_END_RECORD_BYTES = 22;
+const MAXIMUM_COMMENT_BYTES = 65_535;
 
 const record = (
   bytes: Uint8Array,
@@ -13,7 +13,7 @@ const record = (
   const view = new DataView(
     bytes.buffer,
     bytes.byteOffset + offset,
-    ZIP_EOCD_BYTES,
+    CLASSIC_END_RECORD_BYTES,
   );
   view.setUint32(0, 0x06054b50, true);
   view.setUint16(20, commentLength, true);
@@ -32,6 +32,14 @@ it("preserves raw disk/count/Zip64 sentinel declarations from a nonzero byte win
   view.setUint32(16, 0xffffffff, true);
   const before = Buffer.from(backing);
   const candidates = [...zipEndOfCentralDirectoryCandidates(window)];
+  const uint8Window = new Uint8Array(
+    backing.buffer,
+    backing.byteOffset + 7,
+    37,
+  );
+  expect([...zipEndOfCentralDirectoryCandidates(uint8Window)]).toEqual(
+    candidates,
+  );
   expect(backing.equals(before)).toBe(true);
   backing.fill(0);
   expect(candidates).toEqual([
@@ -49,34 +57,82 @@ it("preserves raw disk/count/Zip64 sentinel declarations from a nonzero byte win
 });
 
 it("observes every exact-ending candidate latest first without resolving ambiguity", () => {
-  const bytes = Buffer.alloc(ZIP_EOCD_BYTES * 2);
-  record(bytes, 0, ZIP_EOCD_BYTES);
-  record(bytes, ZIP_EOCD_BYTES, 0);
+  const bytes = Buffer.alloc(CLASSIC_END_RECORD_BYTES * 3);
+  record(bytes, 0, CLASSIC_END_RECORD_BYTES * 2);
+  // Decoy EOCD signature inside the outer comment whose declared comment does not end the archive.
+  record(bytes, CLASSIC_END_RECORD_BYTES, 1);
+  record(bytes, CLASSIC_END_RECORD_BYTES * 2, 0);
   expect(
     [...zipEndOfCentralDirectoryCandidates(bytes)].map(({ offset }) => offset),
-  ).toEqual([ZIP_EOCD_BYTES, 0]);
+  ).toEqual([CLASSIC_END_RECORD_BYTES * 2, 0]);
 });
 
 it("includes the oldest candidate permitted by the maximum ZIP comment", () => {
-  const bytes = Buffer.alloc(ZIP_EOCD_BYTES + ZIP_MAX_COMMENT_BYTES + 9, 0xa5);
-  record(bytes, 9, ZIP_MAX_COMMENT_BYTES);
+  const bytes = Buffer.alloc(
+    CLASSIC_END_RECORD_BYTES + MAXIMUM_COMMENT_BYTES + 9,
+    0xa5,
+  );
+  record(bytes, 8, MAXIMUM_COMMENT_BYTES);
+  expect([...zipEndOfCentralDirectoryCandidates(bytes)]).toEqual([]);
+  bytes.fill(0xa5);
+  record(bytes, 9, MAXIMUM_COMMENT_BYTES);
   expect(
     [...zipEndOfCentralDirectoryCandidates(bytes)].map(
       ({ offset, commentLength }) => ({ offset, commentLength }),
     ),
-  ).toEqual([{ offset: 9, commentLength: ZIP_MAX_COMMENT_BYTES }]);
+  ).toEqual([{ offset: 9, commentLength: MAXIMUM_COMMENT_BYTES }]);
 });
 
 it("does not promote short records or non-ending EOCD-like bytes to candidates", () => {
-  const bytes = Buffer.alloc(ZIP_EOCD_BYTES + 3);
+  const bytes = Buffer.alloc(CLASSIC_END_RECORD_BYTES + 3);
   record(bytes, 0, 0);
   expect([...zipEndOfCentralDirectoryCandidates(bytes)]).toEqual([]);
-  for (let observed = 0; observed < ZIP_EOCD_BYTES; observed++)
+  for (let observed = 0; observed < CLASSIC_END_RECORD_BYTES; observed++)
     expect([
       ...zipEndOfCentralDirectoryCandidates(bytes.subarray(0, observed)),
     ]).toEqual([]);
   bytes[0] = 0;
   expect([
-    ...zipEndOfCentralDirectoryCandidates(bytes.subarray(0, ZIP_EOCD_BYTES)),
+    ...zipEndOfCentralDirectoryCandidates(
+      bytes.subarray(0, CLASSIC_END_RECORD_BYTES),
+    ),
   ]).toEqual([]);
+  bytes[0] = 0x50;
+  bytes[1] = 0;
+  expect([
+    ...zipEndOfCentralDirectoryCandidates(
+      bytes.subarray(0, CLASSIC_END_RECORD_BYTES),
+    ),
+  ]).toEqual([]);
+  const withoutSignature = Buffer.alloc(CLASSIC_END_RECORD_BYTES);
+  withoutSignature.writeUInt16LE(1, 19);
+  expect([...zipEndOfCentralDirectoryCandidates(withoutSignature)]).toEqual([]);
+});
+
+it("restricts reverse signature search to the maximum EOCD tail window", () => {
+  const prefixBytes = 100_000;
+  const bytes = Buffer.alloc(
+    prefixBytes + CLASSIC_END_RECORD_BYTES + MAXIMUM_COMMENT_BYTES,
+    0xa5,
+  );
+  record(bytes, 16, MAXIMUM_COMMENT_BYTES);
+  record(bytes, bytes.length - CLASSIC_END_RECORD_BYTES, 0);
+
+  const spy = vi.spyOn(Buffer.prototype, "lastIndexOf");
+  try {
+    const candidates = [...zipEndOfCentralDirectoryCandidates(bytes)];
+    expect(candidates.map(({ offset }) => offset)).toEqual([
+      bytes.length - CLASSIC_END_RECORD_BYTES,
+    ]);
+    expect(spy).toHaveBeenCalled();
+    for (const receiver of spy.mock.contexts) {
+      const searched = receiver as Buffer;
+      expect(searched.byteOffset).toBe(bytes.byteOffset + prefixBytes);
+      expect(searched.length).toBe(
+        CLASSIC_END_RECORD_BYTES + MAXIMUM_COMMENT_BYTES,
+      );
+    }
+  } finally {
+    spy.mockRestore();
+  }
 });

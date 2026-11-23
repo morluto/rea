@@ -17,6 +17,7 @@ import {
   AnalysisResourceConstraintError,
   AnalysisCapabilityUnavailableError,
 } from "../domain/analysisErrorCore.js";
+import { hostRangeErrorKind } from "../domain/parseFailure.js";
 import type { ProviderOutcome } from "../process/ProviderOutcome.js";
 import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
 import {
@@ -132,16 +133,13 @@ const wabtUnavailable = (
 
 /** Past the output budget, retained text is a prefix of an oversized stream; keep a bounded excerpt of each. */
 const outputLimitExcerpt = (snapshot: ProviderProcessSnapshot) => ({
+  ...capturedProviderOutput(snapshot),
   stdout: utf8HeadExcerpt(snapshot.stdout.text, OUTPUT_LIMIT_EXCERPT_BYTES)
     .text,
   stderr: utf8HeadExcerpt(snapshot.stderr.text, OUTPUT_LIMIT_EXCERPT_BYTES)
     .text,
   // The command reports output-limit only after retention was truncated.
   truncated: true,
-  stdout_bytes: snapshot.stdout.bytes,
-  stderr_bytes: snapshot.stderr.bytes,
-  exit_code: snapshot.exitCode ?? null,
-  signal: snapshot.signal ?? null,
 });
 /** WABT's per-call command deadline and the setting that changes it. */
 const wabtCommandTimeout = (execution: WabtFailureContext | undefined) => {
@@ -177,7 +175,7 @@ const allocationRefused = (cause: unknown): boolean => {
         "ERR_MEMORY_ALLOCATION_FAILED",
         "ERR_BUFFER_TOO_LARGE",
       ].includes(String(physical.code))) ||
-      (physical instanceof RangeError &&
+      (hostRangeErrorKind(physical) === "host-capacity" &&
         physical.message === "Array buffer allocation failed"))
   );
 };

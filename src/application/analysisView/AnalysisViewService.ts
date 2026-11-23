@@ -1,3 +1,5 @@
+import type { z } from "zod";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { unknownTarget } from "../../domain/targetIdentity.js";
 import { projectAnalysisErrorWithoutCapturedOutput } from "../../domain/analysisErrorProjection.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
@@ -305,6 +307,53 @@ export const summarizeRetainedAnalysis = (
   retention: AnalysisViewRetention,
 ): Result<Evidence, AnalysisError> =>
   projectRetainedAnalysis(evidence, retention, { kind: "summary" });
+
+/**
+ * Parse a retained-delivery operation request, enforce session retention when
+ * `detail: "summary"` is selected, run the underlying provider operation, and
+ * project the requested view (or summary).
+ */
+export const executeRetainedSummaryOperation = async <
+  TOperation extends string,
+  TInput extends {
+    readonly detail?: "complete" | "summary" | undefined;
+    readonly view?: AnalysisViewRequest | undefined;
+  },
+>(
+  service: {
+    execute(
+      operation: TOperation,
+      input: unknown,
+      options?: ExecutionOptions,
+    ): Promise<Result<Evidence, AnalysisError>>;
+  },
+  operation: TOperation,
+  schema: z.ZodType<TInput>,
+  rawInput: unknown,
+  retention: AnalysisViewRetention,
+  options?: ExecutionOptions,
+): Promise<Result<Evidence, AnalysisError>> => {
+  const parsed = parseAnalysisInput(
+    operation,
+    rawInput,
+    schema,
+    options?.signal,
+  );
+  if (!parsed.ok) return parsed;
+  const { detail, view, ...providerInput } = parsed.value;
+  if (detail === "summary") {
+    const ready = requireAnalysisViewRetention(operation, retention);
+    if (!ready.ok) return ready;
+  }
+  const executed = await service.execute(operation, providerInput, options);
+  return !executed.ok || detail !== "summary"
+    ? executed
+    : projectRetainedAnalysis(
+        executed.value,
+        retention,
+        view ?? { kind: "summary" },
+      );
+};
 
 /** Retain the complete owner observation and deliver one explicitly selected view. */
 export const projectRetainedAnalysis = (

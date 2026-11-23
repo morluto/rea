@@ -1,8 +1,9 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
 import { ApkSignatureProvider } from "../../apkSignature/ApkSignatureProvider.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
@@ -31,7 +32,7 @@ it("preserves pre-aborted cancellation reasons without starting the provider", a
 it.each([false, true])(
   "retains completed APK provenance with late cancellation=%s",
   async (cancelled) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-apk-service-"));
+    const root = await createTestTempDirectory("rea-apk-service-");
     const provider = new ApkSignatureProvider();
     try {
       const path = join(root, "unsigned.apk");
@@ -86,7 +87,6 @@ it.each([false, true])(
       });
     } finally {
       await provider.close();
-      await rm(root, { recursive: true, force: true });
     }
   },
 );
@@ -108,7 +108,7 @@ it("refuses summary acquisition before reading when complete Evidence cannot be 
 });
 
 it("rejects a live provider subject path that differs from the selected APK", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-apk-subject-"));
+  const root = await createTestTempDirectory("rea-apk-subject-");
   const provider = new ApkSignatureProvider();
   try {
     const path = join(root, "selected.apk");
@@ -132,6 +132,5 @@ it("rejects a live provider subject path that differs from the selected APK", as
     });
   } finally {
     await provider.close();
-    await rm(root, { recursive: true, force: true });
   }
 });

@@ -1,8 +1,6 @@
 {
   "src/application/EvidenceInputResolver.ts": 1,
   "src/application/binary/BinarySession.ts": 1,
-  "src/application/desktop/DesktopApplicationState.ts": 1,
-  "src/application/frida/FridaInstrumentationService.ts": 1,
   "src/browser/CdpBrowserProvider.ts": 1,
   "src/browser/CdpElectronProvider.ts": 1,
   "src/browser/PlaywrightBrowserScenarioProvider.ts": 1,

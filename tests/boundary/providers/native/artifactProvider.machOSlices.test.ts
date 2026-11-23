@@ -412,6 +412,9 @@ describe("artifact Mach-O arm64e variant slices", () => {
   const ARM64E_V1 = { type: 0x0100000c, subtype: 0x81000002 } as const;
   // CPU_SUBTYPE_ARM64E_X1 (12) with the pointer-auth ABI bit, as in macOS 27 /bin/ls.
   const ARM64E_X1 = { type: 0x0100000c, subtype: 0x8000000c } as const;
+  const numericX1 = "(cputype (16777228) cpusubtype (12))";
+  const userspaceX1 =
+    " cputype (16777228)\n cpusubtype cpusubtype (12)\n capabilities PTR_AUTH_VERSION USERSPACE 0";
   const variantSlices = async (
     cpu: { readonly type: number; readonly subtype: number },
     lipo: (size: number) => string,
@@ -451,6 +454,18 @@ describe("artifact Mach-O arm64e variant slices", () => {
       ARM64E_X1,
       " cputype CPU_TYPE_ARM64\n cpusubtype unknown arm64 cpusubtype",
     ],
+    [
+      "arm64e",
+      ARM64E_V1,
+      " cputype CPU_TYPE_ARM64\n cpusubtype CPU_SUBTYPE_ARM64E\n capabilities PTR_AUTH_VERSION USERSPACE 0",
+    ],
+    [numericX1, ARM64E_X1, userspaceX1],
+    [numericX1, { ...ARM64E_X1, subtype: 0x8100000c }, userspaceX1],
+    [
+      numericX1,
+      { ...ARM64E_X1, subtype: 0xc100000c },
+      userspaceX1.replace("USERSPACE", "KERNEL"),
+    ],
   ])(
     "accepts lipo's %s name for the FAT arm64e slice",
     async (name, fatCpu, cpu) => {
@@ -464,6 +479,33 @@ describe("artifact Mach-O arm64e variant slices", () => {
         ["slices/x86_64", 4096],
         [`slices/${name}`, 8192],
       ]);
+    },
+  );
+
+  it.each([
+    {
+      reason: "architecture label",
+      name: "(cputype (16777228) cpusubtype (2))",
+    },
+    { reason: "subtype field", subtype: "2" },
+    { reason: "exact capabilities field", capabilities: "0x0" },
+    { reason: "missing ABI flag", fatSubtype: 12 },
+    { reason: "kernel ABI flag", fatSubtype: 0xc000000c },
+  ])(
+    "refuses a conflicting numeric lipo $reason",
+    async ({
+      name = numericX1,
+      subtype = "12",
+      capabilities = "PTR_AUTH_VERSION USERSPACE 0",
+      fatSubtype = ARM64E_X1.subtype,
+    }) => {
+      await expect(
+        variantSlices(
+          { ...ARM64E_X1, subtype: fatSubtype },
+          (size) =>
+            `architecture ${name}\n cputype (16777228)\n cpusubtype cpusubtype (${subtype})\n capabilities ${capabilities}\n offset 8192\n size ${String(size)}\n align 2^12 (4096)\n`,
+        ),
+      ).rejects.toMatchObject({ reason: "integrity" });
     },
   );
 

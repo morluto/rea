@@ -14,7 +14,7 @@ import {
 } from "../../domain/apple/appleArchiveFormat.js";
 import {
   artifactEdgeId,
-  artifactIdForContent,
+  artifactIdForNode,
   occurrenceIdForLocation,
   logicalPathNfc,
 } from "../../domain/artifactIdentity.js";
@@ -33,12 +33,15 @@ import {
   zipPackageFormatForPath,
   type ZipPackageFormat,
 } from "../../domain/zipPackageFormat.js";
-import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
+import { hasDosMzMagic, parseMzHeaderEvidence } from "../../domain/dosMz.js";
 import {
   classifyFatContainerEvidence,
   readFatContainerHeader,
 } from "../../domain/apple/machoContainer.js";
-import { readNativeHeaderFormat } from "../../domain/binaryTarget.js";
+import {
+  parsePeRecordStructure,
+  readNativeHeaderFormat,
+} from "../../domain/binaryTarget.js";
 
 /** Mutable internal occurrence used until root-bound IDs are known. */
 export interface MutableOccurrence {
@@ -254,7 +257,10 @@ export const createArtifactNode = (input: {
   readonly format: ArtifactNode["format"];
   readonly contentState: ArtifactNode["content_state"];
 }): ArtifactNode => ({
-  artifact_id: artifactIdForContent(input.sha256),
+  artifact_id: artifactIdForNode({
+    sha256: input.sha256,
+    content_state: input.contentState,
+  }),
   format: input.format,
   sha256: input.sha256,
   size: input.size,
@@ -591,6 +597,7 @@ const artifactRoleForFormat = (
       kind: "container",
       format: zipPackageFormatForPath(path) ?? format,
     };
+  if (format === "uefi") return { kind: "resource", format };
   if (format === "plist") return { kind: "plist", format };
   if (artifactFormatDescriptor(format)?.roleContainer === true)
     return { kind: "container", format };
@@ -607,7 +614,8 @@ export const classifyArtifactBytes = (
   evidence: ArtifactClassificationEvidence,
   fileSize: number,
 ): ArtifactNode["format"] => {
-  const { prefix, suffix, mzWindowsHeaderSignature } = evidence;
+  const { prefix, suffix, mzWindowsHeaderSignature, mzWindowsHeaderRecord } =
+    evidence;
   // A refused claim falls through: a header-only iNES region, for example,
   // has the signature but not the declared cartridge extent, so it stays a
   // file instead of becoming another container. A claim that needs more
@@ -633,7 +641,7 @@ export const classifyArtifactBytes = (
   const native = readNativeHeaderFormat(prefix, fileSize);
   if (!native.ok) return "unknown";
   if (native.value !== null) return native.value;
-  if (prefix.length >= 2 && prefix[0] === 0x4d && prefix[1] === 0x5a) {
+  if (hasDosMzMagic(prefix)) {
     if (
       !Number.isSafeInteger(fileSize) ||
       fileSize < prefix.length ||
@@ -650,14 +658,20 @@ export const classifyArtifactBytes = (
     if (windowsHeader.state === "candidate") return "unknown";
     if (windowsHeader.state === "declared") {
       const windowsOffset = windowsHeader.offset;
-      if (
-        windowsHeader.signature === "PE" &&
-        windowsOffset >= 64 &&
-        (windowsOffset <= prefix.length - 4 ||
-          (mzWindowsHeaderSignature?.offset === windowsOffset &&
-            mzWindowsHeaderSignature.bytes.length >= 4))
-      )
-        return "pe";
+      if (windowsHeader.signature === "PE" && windowsOffset >= 64) {
+        const inline =
+          windowsOffset < prefix.length
+            ? prefix.subarray(windowsOffset)
+            : undefined;
+        const observed =
+          mzWindowsHeaderRecord?.offset === windowsOffset
+            ? mzWindowsHeaderRecord.bytes
+            : undefined;
+        const record =
+          (observed?.length ?? 0) > (inline?.length ?? 0) ? observed : inline;
+        if (record !== undefined && parsePeRecordStructure(record).ok)
+          return "pe";
+      }
       return "unknown";
     }
     if (mzEvidence.dos.ok) return "dos-mz";

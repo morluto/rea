@@ -35,6 +35,7 @@ import {
 import {
   createEvidence,
   evidenceSubject,
+  evidenceSubjectTarget,
   parseEvidence,
   type Evidence,
 } from "../../../src/domain/evidence.js";
@@ -42,6 +43,7 @@ import { REA_WORKFLOW_PROVIDER } from "../../../src/domain/investigationProvider
 import { workflowAnalysisProfile } from "../../../src/application/WorkflowAnalysisProfile.js";
 import {
   analysisQueryId,
+  evidenceMatchesEntry,
   createAnalysisSnapshotWorkflowEntry,
   type AnalysisSnapshot,
 } from "../../../src/domain/analysisSnapshot.js";
@@ -363,7 +365,7 @@ describe("one-shot Ghidra pseudocode snapshots", () => {
   });
 
   it.skipIf(process.platform === "win32")(
-    "replays the exact selected-target answer without opening another provider",
+    "replays the exact selected-target answer and reruns when provenance is ambiguous",
     async () => {
       const fixture = await createSnapshotReplayFixture("rea-one-shot-code-");
       const profile = createAnalysisProfile(
@@ -376,30 +378,85 @@ describe("one-shot Ghidra pseudocode snapshots", () => {
           supportedOperations: ["procedure_pseudo_code"],
         }),
       );
-      const options = { snapshotPath: fixture.snapshotPath };
       const parameters = { procedure: "fixture" };
-      const first = await runDirectAnalysis(
-        dependencies,
-        fixture.path,
-        "procedure_pseudo_code",
-        parameters,
-        options,
-      );
-      expect(first.ok).toBe(true);
-      const second = await runDirectAnalysis(
-        dependencies,
-        fixture.path,
-        "procedure_pseudo_code",
-        parameters,
-        options,
-      );
-      expect(second).toEqual(first);
+      const query = (selected = dependencies) =>
+        runDirectAnalysis(
+          selected,
+          fixture.path,
+          "procedure_pseudo_code",
+          parameters,
+          { snapshotPath: fixture.snapshotPath },
+        );
+      const first = await query();
+      if (!first.ok) throw first.error;
+      expect(await query()).toEqual(first);
       expect(fixture.starts).toHaveLength(1);
       const saved = await readAnalysisSnapshot(fixture.snapshotPath);
       if (!saved.ok) throw saved.error;
       expect(saved.value.entries).toMatchObject([
         { operation: "procedure_pseudo_code", parameters },
       ]);
+      expect(first.value.caller_input_path).toBe(fixture.path);
+      expect(
+        saved.value.evidence_bundle.records.filter(
+          ({ operation }) => operation === "procedure_pseudo_code",
+        ),
+      ).toEqual([first.value]);
+
+      const parent = first.value;
+      const target = evidenceSubjectTarget(parent.subject);
+      if (target === undefined)
+        throw new Error("Expected a file Evidence subject");
+      const alternative = createEvidence(target, parent.provider, {
+        operation: parent.operation,
+        parameters: parent.parameters,
+        result: parent.normalized_result,
+        rawResult: parent.raw_result,
+        analysisProfile: profile,
+        limitations: parent.limitations,
+        ...(parent.relationship_coverage === null
+          ? {}
+          : { relationshipCoverage: parent.relationship_coverage }),
+        locations: parent.locations,
+        evidenceLinks: [parent.evidence_id],
+      });
+      expect(alternative.evidence_id).not.toBe(parent.evidence_id);
+      const entry = saved.value.entries[0]!;
+      expect(evidenceMatchesEntry(alternative, entry, saved.value)).toBe(true);
+      const written = await withArtifactResourceScope((resources) =>
+        writeAnalysisSnapshot(
+          {
+            ...saved.value,
+            evidence_bundle: createEvidenceBundle([
+              ...saved.value.evidence_bundle.records,
+              alternative,
+            ]),
+          },
+          fixture.snapshotPath,
+          true,
+          resources,
+        ),
+      );
+      if (!written.ok) throw written.error;
+      const fresh = await query(
+        fixture.dependencies(
+          fixture.createProvider({
+            profile,
+            supportedOperations: ["procedure_pseudo_code"],
+            limitations: ["Observed after ambiguous snapshot"],
+          }),
+        ),
+      );
+      if (!fresh.ok) throw fresh.error;
+      expect(fresh.value.limitations).toContain(
+        "Observed after ambiguous snapshot",
+      );
+      expect(
+        fixture.calls.filter(
+          (operation) => operation === "procedure_pseudo_code",
+        ),
+      ).toHaveLength(2);
+      expect(fixture.starts).toHaveLength(2);
     },
   );
 

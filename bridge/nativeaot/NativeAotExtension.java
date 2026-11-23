@@ -11,17 +11,21 @@ import ghidra.program.model.listing.Program;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.task.TaskMonitor;
 import nativeaot.objectmodel.FrozenObjectAnnotator;
+import nativeaot.objectmodel.MethodTable;
 import nativeaot.objectmodel.MethodTableCrawler;
 import nativeaot.objectmodel.MethodTableManager;
 import nativeaot.rehydration.MetadataRehydratorNet80;
 import nativeaot.rtr.ReadyToRunSection;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.security.MessageDigest;
 
 /** Optional headless facade over the unchanged upstream analysis primitives. */
 public final class NativeAotExtension {
     private MethodTableManager manager;
+    private Map<String, MethodTable> tablesByTypePath = Map.of();
     private NativeAotDirectory.Located located;
     private JsonObject report;
     private final List<String> diagnostics = new ArrayList<>();
@@ -82,13 +86,20 @@ public final class NativeAotExtension {
             if (coverage.get("frozen_objects_annotated").getAsInt() != coverage.get("frozen_object_candidates").getAsInt())
                 diagnostics.add("Some frozen-object candidates lack committed instance annotations; inspect coverage counts and Ghidra diagnostics.");
             JsonArray tables = new JsonArray();
+            Map<String, MethodTable> typeIndex = new HashMap<>();
             for (var mt : manager.getMethodTables()) {
                 monitor.checkCancelled();
+                String mtPath = mt.getMTType().getPathName();
+                typeIndex.putIfAbsent(mtPath, mt);
+                if (mt.getInstanceType() != null) {
+                    typeIndex.putIfAbsent(mt.getInstanceType().getPathName(), mt);
+                }
                 JsonObject identity = new JsonObject();
                 identity.addProperty("address", address(mt.getAddress()));
-                identity.addProperty("type", mt.getMTType().getPathName());
+                identity.addProperty("type", mtPath);
                 tables.add(identity);
             }
+            tablesByTypePath = typeIndex;
             // Publish recovery facts only after every fallible recovery and audit step.
             // A failed transaction is rolled back, so it cannot report committed metadata.
             report.addProperty("method_tables", manager.getMethodTableCount());
@@ -101,9 +112,11 @@ public final class NativeAotExtension {
             return finish(log);
         } catch (CancelledException ex) {
             manager = null;
+            tablesByTypePath = Map.of();
             throw ex;
         } catch (Exception ex) {
             manager = null;
+            tablesByTypePath = Map.of();
             diagnostics.add(stage + ": " + ex.getClass().getSimpleName() + ": " + ex.getMessage());
             report.addProperty("status", ex instanceof UnsupportedOperationException ? "unsupported" : "failed");
             report.addProperty("reason", stage + ": " + ex.getMessage());
@@ -131,7 +144,7 @@ public final class NativeAotExtension {
     /** Read recovered relationships without restoring or mutating database state. */
     public JsonObject inspectDataType(Program program, DataType type, Address selected, TaskMonitor monitor) throws Exception {
         if (manager == null) return null;
-        return NativeAotTypeMetadata.describe(program, manager, located, type, report, derivedRange, monitor);
+        return NativeAotTypeMetadata.describe(program, manager, tablesByTypePath, located, type, report, derivedRange, monitor);
     }
 
     private JsonObject auditFrozenObjects(Program program, Address[] pointerLocations, TaskMonitor monitor) throws Exception {

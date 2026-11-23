@@ -1,14 +1,6 @@
 {
   "upward": {},
-  "cycles": [
-    "cli <-> cli.ts",
-    "cli <-> cliBrowserScenarioCommands.ts",
-    "cli <-> cliEvidenceCommands.ts",
-    "cli <-> cliOutput.ts",
-    "main <-> server"
-  ],
+  "cycles": [],
   "crossProvider": {},
-  "entry": {
-    "application -> desktop": 14
-  }
+  "entry": {}
 }

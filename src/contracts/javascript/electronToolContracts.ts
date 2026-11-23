@@ -7,7 +7,7 @@ import {
   evidenceEffects,
   toolEffects,
 } from "../toolEffects.js";
-import { electronFuseOutputSchemas } from "../toolOutputSchemaGroups.js";
+import { electronFuseOutputSchemas } from "./electronFuseOutputSchema.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import { inspectElectronFusesInputSchema } from "../../domain/electron/electronFuses.js";
 import {
@@ -24,10 +24,8 @@ import {
   javaScriptRoutesCompleteDeliveryShape,
   javaScriptRoutesSummaryDeliveryShape,
 } from "../../domain/analysisView/javascriptRoutesView.js";
-import {
-  javaScriptRoutesViewResultSchema,
-  javascriptApplicationSummaryViewResultSchema,
-} from "../../domain/analysisView/analysisViewResult.js";
+import { javascriptApplicationSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/javascriptApplicationSummarySchema.js";
+import { javaScriptRoutesViewResultSchema } from "../../domain/analysisView/summarySchemas/javascriptRoutesSummarySchema.js";
 import { analysisDetailOutputSchemaOf } from "../analysisDetail.js";
 import {
   analyzeJavaScriptApplicationInputSchema,

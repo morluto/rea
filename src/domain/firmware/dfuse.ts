@@ -1,11 +1,7 @@
-import {
-  boundedList,
-  describeBoundedList,
-  type BoundedList,
-} from "../boundedList.js";
+import { boundedList, describeBoundedList } from "../boundedList.js";
 import { crc32 } from "node:zlib";
 
-import type { DfuSeMetadata } from "../artifactFormatMetadata.js";
+import type { DfuSeMetadata } from "../formatMetadata/firmwareMetadata.js";
 import { err, ok, type Result } from "../result.js";
 import type { RegionDecodeFailure, RegionDecoder } from "./regionDecoder.js";
 
@@ -197,7 +193,6 @@ const parseDfuSe = (
     );
   const { elements } = walk;
   const overlaps = overlappingElements(elements);
-  const overlapCount = overlaps.items.length + overlaps.omitted;
   return ok({
     metadata: {
       kind: "dfuse",
@@ -205,7 +200,7 @@ const parseDfuSe = (
       target_count: targetCount,
       element_count: walk.elementCount,
       empty_element_count: walk.emptyElements,
-      overlapping_element_count: overlapCount,
+      overlapping_element_count: overlaps.count,
       data_bytes: elements.reduce(
         (sum, element) => sum + element.bytes.length,
         0,
@@ -218,10 +213,10 @@ const parseDfuSe = (
     },
     elements,
     limitations: [
-      ...(overlapCount === 0
+      ...(overlaps.count === 0
         ? []
         : [
-            `${String(overlapCount)} DfuSe element(s) overlap an element earlier in address order within the same alternate setting; each stays a separate entry and no bytes were merged: ${describeBoundedList(overlaps, "; ")}.`,
+            `${String(overlaps.count)} DfuSe element(s) overlap an element earlier in address order within the same alternate setting; each stays a separate entry and no bytes were merged: ${named(overlaps.descriptions, overlaps.count)}.`,
           ]),
       ...(walk.unlistedCount === 0
         ? []
@@ -391,17 +386,15 @@ const latin1UntilNul = (field: Uint8Array): string => {
 const elementText = (element: DfuSeElement): string =>
   `target ${String(element.targetIndex)} element ${String(element.elementIndex)} (${hex32(element.address)}-${hex32(element.address + element.bytes.length - 1)})`;
 
-/** Elements that overlap an earlier one in address order within one alternate setting. */
-const overlappingElements = (
-  elements: readonly DfuSeElement[],
-): BoundedList<string> => {
+/** Count every overlap within an alternate setting and describe only the preview. */
+const overlappingElements = (elements: readonly DfuSeElement[]) => {
   const ordered = [...elements].sort(
     (left, right) =>
       left.alternateSetting - right.alternateSetting ||
       left.address - right.address,
   );
-  const overlaps: string[] = [];
-  let omitted = 0;
+  let count = 0;
+  const descriptions: string[] = [];
   let reach: DfuSeElement | undefined;
   for (const element of ordered) {
     if (
@@ -409,11 +402,11 @@ const overlappingElements = (
       reach.alternateSetting === element.alternateSetting &&
       element.address < reach.address + reach.bytes.length
     ) {
-      if (overlaps.length < NAMED_ELEMENTS)
-        overlaps.push(
+      count += 1;
+      if (descriptions.length < NAMED_ELEMENTS)
+        descriptions.push(
           `${elementText(element)} overlaps ${elementText(reach)} in alternate setting ${String(element.alternateSetting)}`,
         );
-      else omitted += 1;
     }
     if (
       reach === undefined ||
@@ -423,5 +416,5 @@ const overlappingElements = (
     )
       reach = element;
   }
-  return boundedList(overlaps, NAMED_ELEMENTS, omitted);
+  return { count, descriptions };
 };

@@ -46,6 +46,7 @@ export async function verifySwitchEvidenceControls({
   target,
   workspace,
   runId,
+  signal,
 }) {
   const { spawnOwnedProviderProcess, ProviderProcessSupervisor } =
     await import("../dist/process/ProviderProcess.js");
@@ -61,6 +62,7 @@ export async function verifySwitchEvidenceControls({
   await mkdir(project);
   const sourceDigest = digest(await readFile(bridge));
   const targetDigest = digest(await readFile(target));
+  if (signal?.aborted) throw signal.reason;
   const launch = await spawnOwnedProviderProcess({
     command: installation.analyzeHeadlessPath,
     arguments: [
@@ -79,6 +81,7 @@ export async function verifySwitchEvidenceControls({
     ],
     runId,
     expectedCommand: null,
+    ...(signal === undefined ? {} : { signal }),
   });
   const supervisor = new ProviderProcessSupervisor({
     ...launch,
@@ -87,7 +90,7 @@ export async function verifySwitchEvidenceControls({
   });
   try {
     assert.ok(
-      await supervisor.waitForExit(120000),
+      await waitForExitOrSignal(supervisor, signal),
       "Production switch guard lane exceeded its 120-second headless deadline",
     );
     const snapshot = supervisor.snapshot();
@@ -126,6 +129,28 @@ export async function verifySwitchEvidenceControls({
     assert.notEqual(stopped.status, "incomplete", JSON.stringify(stopped));
   }
 }
+
+// The caller may suppress SIGINT and SIGTERM. Stop this wait when that signal
+// aborts so `finally` can reach supervisor.stop() before a later SIGKILL.
+const waitForExitOrSignal = (supervisor, signal) =>
+  new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const onAbort = () => reject(signal.reason);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    supervisor.waitForExit(120000).then(
+      (exited) => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve(exited);
+      },
+      (cause) => {
+        signal?.removeEventListener("abort", onAbort);
+        reject(cause);
+      },
+    );
+  });
 
 function digest(bytes) {
   return createHash("sha256").update(bytes).digest("hex");

@@ -265,9 +265,13 @@ describe("IDA Basic authentication payload components", () => {
       expect(redactor.text(reason + "; path=/caller/input?token=visible")).toBe(
         safe + "; path=/caller/input?token=visible",
       );
-      expect(
-        redactor.json(JSON.stringify({ reason, path: "/caller/input" })),
-      ).toBe(JSON.stringify({ reason: safe, path: "/caller/input" }));
+      const json = JSON.stringify({ reason, path: "/caller/input" }).replace(
+        "password=fixture-password",
+        String.raw`password=\u0066ixture-password`,
+      );
+      expect(redactor.json(json)).toBe(
+        JSON.stringify({ reason: safe, path: "/caller/input" }),
+      );
     },
   );
 
@@ -424,61 +428,19 @@ describe("IDA Basic authentication charset and invalid data", () => {
   });
 });
 
-it("redacts protocol-decoded Basic credentials and password without treating ordinary names as secrets", () => {
-  const redactor = createIdaDiagnosticRedactor({
-    url: "http://127.0.0.1:12345/mcp",
-    mode: "attached",
-    protocol: "native",
-    timeoutMs: 1000,
-    headers: {
-      Authorization: `Basic ${Buffer.from("user:secret").toString("base64")}`,
-    },
-  });
-  expect(redactor.text("user:secret / secret / user")).toBe(
-    "[redacted transport credential] / [redacted transport credential] / user",
-  );
-  expect(redactor.json('"\\u0073ecret"')).toBe(
-    '"[redacted transport credential]"',
-  );
-});
-
 it.each(["text", "json"] as const)(
-  "bounds short-secret diagnostic expansion before %s redaction",
-  (format) => {
-    const redactor = createIdaDiagnosticRedactor({
-      url: "http://127.0.0.1:12345/mcp",
-      mode: "attached",
-      protocol: "native",
-      timeoutMs: 1000,
-      headers: { Cookie: "a=Q" },
-    });
-    const result = redactor[format]("Q".repeat(2 * 1024 * 1024));
-    expect(result).toBe("[IDA diagnostic omitted: exceeds 65536 UTF-8 bytes]");
-  },
-);
-
-it.each(["text", "json"] as const)(
-  "applies the UTF-8 source-byte budget before %s processing even without credentials",
+  "bounds UTF-8 diagnostic source before %s processing and replacement expansion",
   (format) => {
     const atBudget = "£".repeat(IDA_DIAGNOSTIC_SOURCE_BYTES / 2);
-    const overBudget = atBudget + "£";
-    const configuredHeaders: readonly Readonly<Record<string, string>>[] = [
-      {},
-      { Cookie: "a=Q" },
-    ];
-    for (const headers of configuredHeaders) {
-      const redactor = createIdaDiagnosticRedactor({
-        url: "http://127.0.0.1:12345/mcp",
-        mode: "attached",
-        protocol: "native",
-        timeoutMs: 1000,
-        headers,
-      });
+    const omitted = "[IDA diagnostic omitted: exceeds 65536 UTF-8 bytes]";
+    const configured = redactorFor("Custom Q");
+    for (const redactor of [createIdaDiagnosticRedactor(), configured]) {
       expect(redactor[format](atBudget)).toBe(atBudget);
-      expect(redactor[format](overBudget)).toBe(
-        "[IDA diagnostic omitted: exceeds 65536 UTF-8 bytes]",
-      );
+      expect(redactor[format](atBudget + "£")).toBe(omitted);
     }
+    expect(
+      configured[format]("Q".repeat(IDA_DIAGNOSTIC_SOURCE_BYTES + 1)),
+    ).toBe(omitted);
   },
 );
 

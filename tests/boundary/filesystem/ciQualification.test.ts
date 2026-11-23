@@ -57,7 +57,12 @@ function run(overrides: Record<string, unknown> = {}) {
 async function admissionFixture(
   candidate: Record<string, unknown> = artifact(),
   candidateRun: Record<string, unknown> = run(),
-  options: { apiError?: boolean; malformed?: boolean; force?: boolean } = {},
+  options: {
+    apiError?: boolean;
+    malformed?: boolean;
+    force?: boolean;
+    missingFirstRun?: boolean;
+  } = {},
 ) {
   const directory = await createTestTempDirectory("rea-ci-qualification-");
   const bin = join(directory, "bin");
@@ -67,7 +72,18 @@ async function admissionFixture(
     fixturePath,
     options.malformed
       ? "not-json"
-      : JSON.stringify({ artifacts: [candidate], run: candidateRun }),
+      : JSON.stringify({
+          artifacts: options.missingFirstRun
+            ? [
+                {
+                  ...artifact(),
+                  workflow_run: { ...artifact().workflow_run, id: 8 },
+                },
+                candidate,
+              ]
+            : [candidate],
+          run: candidateRun,
+        }),
   );
   const gh = join(bin, "gh");
   await writeFile(
@@ -105,7 +121,12 @@ async function admissionFixture(
 async function decide(
   candidate?: Record<string, unknown>,
   candidateRun?: Record<string, unknown>,
-  options?: { apiError?: boolean; malformed?: boolean; force?: boolean },
+  options?: {
+    apiError?: boolean;
+    malformed?: boolean;
+    force?: boolean;
+    missingFirstRun?: boolean;
+  },
 ) {
   const fixture = await admissionFixture(candidate, candidateRun, options);
   const result = await executeWorkflowFixture(
@@ -135,6 +156,13 @@ it("reuses only a recent trusted full qualification for the exact default-branch
   ]);
   expect(outputText).toContain("run_full=false\n");
   expect(outputText).toContain("run_id=7\n");
+});
+
+it("reuses the next verified qualification after a run disappears", async () => {
+  const { decision } = await decide(undefined, undefined, {
+    missingFirstRun: true,
+  });
+  expect(decision).toMatchObject({ run_full: false, run_id: 7 });
 });
 
 const rejectedCandidates: Array<

@@ -262,7 +262,9 @@ const server = createServer((socket) => {
       } else if (
         inventoryFailure !== "none" &&
         (request.method === "list_strings" ||
-          request.method === "list_procedures")
+          request.method === "list_procedures" ||
+          request.method === "search_strings" ||
+          request.method === "search_procedures")
       ) {
         send({
           id: request.id,

@@ -10,12 +10,49 @@ import {
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
-import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 import { playwrightTraceSchema } from "../../../src/domain/playwrightTrace/playwrightTrace.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 
-type McpCall = Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"];
+import { lifecycleResultOf } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { evidenceRecordSelectionSchema } from "../../../src/domain/evidenceRecordSummary.js";
+
+cliTest(
+  "reports the fixed trace nesting limit through CLI and MCP",
+  async ({ cli }) => {
+    const trace =
+      '{"type":"context-options","version":10}\n' +
+      `{"type":"console","args":${"[".repeat(65)}${"]".repeat(65)}}\n`;
+    const fixture = await playwrightTraceFixture({ trace, network: "" });
+    const expected = {
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        reason: expect.stringContaining("fixed JSON nesting allowance"),
+        reported_limits: {
+          boundary: "nesting-depth",
+          maximum: 64,
+          nesting_levels: 64,
+        },
+        refusal: { kind: "fixed_ceiling", limit: 64, unit: "nesting levels" },
+      },
+    };
+    const result = await cli.run({
+      arguments: ["inspect-playwright-trace", fixture.path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(1);
+    expect(result.json).toMatchObject(expected);
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_TOOL_FAMILIES: "application",
+    });
+    const response = await call("inspect_playwright_trace", {
+      path: fixture.path,
+    });
+    expect(response.isError).toBe(true);
+    expect(parseMcpToolError(response).error).toMatchObject(expected);
+  },
+);
 
 cliTest(
   "preserves original ZIP paths across CLI/MCP, resource lookup and exact member filters",
@@ -26,20 +63,6 @@ cliTest(
       REA_MCP_TOOL_FAMILIES: "application,session",
       PLAYWRIGHT_BROWSERS_PATH: "/rea-no-browser-required",
     });
-    const parent = parseEvidence(
-      (
-        await call("inspect_playwright_trace", {
-          path: fixture.path,
-          detail: "complete",
-        })
-      ).structuredContent,
-    );
-    const report = playwrightTraceSchema.parse(parent.normalized_result);
-    expect(report.events).toHaveLength(4);
-    expect(report.summary.unavailable_references).toBe(0);
-    expect(report.streams.every((stream) => stream.state === "supported")).toBe(
-      true,
-    );
     const view = {
       kind: "playwright-trace",
       collection: "members",
@@ -47,18 +70,17 @@ cliTest(
       fields: [],
     };
     const selected = parseEvidence(
-      (
-        await call("inspect_analysis_view", {
-          source: {
-            kind: "retained-evidence",
-            evidence_id: parent.evidence_id,
-          },
-          view,
-        })
-      ).structuredContent,
+      (await call("inspect_playwright_trace", { path: fixture.path, view }))
+        .structuredContent,
     );
+    const result = await cli.run({
+      arguments: ["inspect-playwright-trace", fixture.path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const parent = parseEvidence(result.json);
     expect(selected.normalized_result).toMatchObject({
       kind: "playwright-trace",
+      parent_evidence_id: parent.evidence_id,
       items: [
         {
           path: "./resources/x",
@@ -69,50 +91,66 @@ cliTest(
       coverage: { total: 1, exhausted: true },
       source_coverage: { interpretation: "partial" },
     });
+    const { members, streams, events, summary } = playwrightTraceSchema.parse(
+      parent.normalized_result,
+    );
+    expect(members).toContainEqual(
+      expect.objectContaining({
+        path: "resources/x",
+        logical_path: "resources/x",
+        limitations: [],
+      }),
+    );
+    expect(streams.map((row) => row.state)).toEqual(Array(4).fill("supported"));
+    expect(events).toHaveLength(4);
+    expect(summary.unavailable_references).toBe(0);
+    for (const event of events) {
+      const source = members.find(
+        (row) => row.member_id === event.source.member_id,
+      );
+      if (!source) throw new Error("Expected an exact source member");
+      const path = source.path.startsWith("./")
+        ? "./resources/x"
+        : "resources/x";
+      expect(event.resource_references).toEqual([
+        expect.objectContaining({
+          path,
+          state: "present-unread",
+          member_id: members.find((row) => row.path === path)?.member_id,
+          matching_members: 1,
+        }),
+      ]);
+    }
     expect(
-      (await call("inspect_playwright_trace", { path: fixture.path, view }))
-        .structuredContent,
+      events.filter((row) => row.kind === "network").map((row) => row.status),
+    ).toEqual([200, 201]);
+    expect(
+      (
+        await call("inspect_analysis_view", {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: parent.evidence_id,
+          },
+          view,
+        })
+      ).structuredContent,
     ).toEqual(selected);
-    const run = cli.run.bind(cli);
-    const result = await run({
-      arguments: ["inspect-playwright-trace", fixture.path, "--json"],
-    });
-    expect(result.exitCode, result.stderr).toBe(0);
-    expect(parseEvidence(result.json)).toEqual({
-      ...parent,
-      caller_input_path: fixture.path,
-    });
     expect((await readFile(fixture.path)).equals(original)).toBe(true);
   },
 );
 
-const checkCliPublication = async ({
-  cli,
-  fixture,
-  parent,
-  selected,
-  view,
-  call,
-}: {
-  cli: TestCli;
-  fixture: Awaited<ReturnType<typeof playwrightTraceFixture>>;
-  parent: Evidence;
-  selected: Evidence;
-  view: Record<string, unknown>;
-  call: McpCall;
-}) => {
-  const source = { kind: "retained-evidence", evidence_id: parent.evidence_id };
-  const run = cli.run.bind(cli);
-  const fullCli = await run({
+const publishCliTrace = async (
+  cli: TestCli,
+  fixture: Awaited<ReturnType<typeof playwrightTraceFixture>>,
+  view: Record<string, unknown>,
+) => {
+  const full = await cli.run({
     arguments: ["inspect-playwright-trace", fixture.path, "--json"],
   });
-  expect(fullCli.exitCode, fullCli.stderr).toBe(0);
-  expect(parseEvidence(fullCli.json)).toEqual({
-    ...parent,
-    caller_input_path: fixture.path,
-  });
+  expect(full.exitCode, full.stderr).toBe(0);
+  const parent = parseEvidence(full.json);
   const bundlePath = join(fixture.root, "retained.bundle.json");
-  const receipt = await run({
+  const receipt = await cli.run({
     arguments: [
       "inspect-playwright-trace",
       fixture.path,
@@ -126,36 +164,11 @@ const checkCliPublication = async ({
     ],
   });
   expect(receipt.exitCode, receipt.stderr).toBe(0);
-  expect(receipt.json).toMatchObject({
-    summary: {
-      ...selected,
-      caller_input_path: fixture.path,
-    },
-  });
   expect(
     evidenceBundleSchema.parse(JSON.parse(await readFile(bundlePath, "utf8")))
       .records,
-  ).toEqual([{ ...parent, caller_input_path: fixture.path }]);
-  await rm(fixture.path);
-  const retained = await call("inspect_analysis_view", { source, view });
-  expect(parseEvidence(retained.structuredContent)).toEqual(selected);
-  const request = join(fixture.root, "page.json");
-  await writeFile(
-    request,
-    JSON.stringify({
-      source: {
-        kind: "evidence-file",
-        path: bundlePath,
-        evidence_id: parent.evidence_id,
-      },
-      view,
-    }),
-  );
-  const fromBundle = await run({
-    arguments: ["inspect-analysis-view", request, "--json"],
-  });
-  expect(fromBundle.exitCode, fromBundle.stderr).toBe(0);
-  expect(parseEvidence(fromBundle.json)).toEqual(selected);
+  ).toEqual([parent]);
+  return { parent, receipt, bundlePath };
 };
 
 cliTest(
@@ -199,27 +212,46 @@ cliTest(
     expect(JSON.stringify(first.structuredContent)).not.toContain(
       "fixture loaded",
     );
-    const complete = await call("inspect_playwright_trace", {
-      path: fixture.path,
-      detail: "complete",
-    });
-    expect(complete.isError).not.toBe(true);
-    const parent = parseEvidence(complete.structuredContent);
-    const report = playwrightTraceSchema.parse(parent.normalized_result);
-    expect(summary.parent_evidence_id).toBe(parent.evidence_id);
+    if (summary.kind !== "summary") throw new Error("Expected trace summary");
     const source = {
       kind: "retained-evidence",
-      evidence_id: parent.evidence_id,
+      evidence_id: summary.parent_evidence_id,
     };
+    const view = {
+      kind: "playwright-trace",
+      collection: "events",
+      kinds: ["network"],
+      fields: [],
+      limit: 1,
+    };
+    const {
+      parent: cliParent,
+      receipt,
+      bundlePath,
+    } = await publishCliTrace(cli, fixture, view);
+    await rm(fixture.path);
+    const bundle = await call("get_evidence_bundle", {
+      detail: "records",
+      filters: { evidence_id: source.evidence_id },
+    });
+    const { records } = lifecycleResultOf(evidenceRecordSelectionSchema).parse(
+      bundle.structuredContent,
+    ).result;
+    expect(records.map(({ evidence_id }) => evidence_id)).toEqual([
+      source.evidence_id,
+    ]);
+    const parent = parseEvidence(records[0]);
+    expect(cliParent).toEqual({ ...parent, caller_input_path: fixture.path });
+    const report = playwrightTraceSchema.parse(parent.normalized_result);
     const rows = [];
-    for (let offset = 0; offset < 23; offset += 5) {
+    for (const offset of [0, 12]) {
       const page = await call("inspect_analysis_view", {
         source,
         view: {
           kind: "playwright-trace",
           collection: "events",
           offset,
-          limit: 5,
+          limit: 12,
           fields: Object.keys(report.events[0]!),
         },
       });
@@ -233,20 +265,14 @@ cliTest(
       expect(view.source_coverage).toEqual(report.source_coverage);
     }
     expect(rows).toEqual(report.events);
-    const view = {
-      kind: "playwright-trace",
-      collection: "events",
-      kinds: ["network"],
-      fields: [],
-      limit: 1,
-    };
-    const selected = await call("inspect_playwright_trace", {
-      path: fixture.path,
-      view,
-    });
+    const selected = await call("inspect_analysis_view", { source, view });
     expect(selected.isError).not.toBe(true);
+    const selectedEvidence = parseEvidence(selected.structuredContent);
+    expect(receipt.json).toMatchObject({
+      summary: { ...selectedEvidence, caller_input_path: fixture.path },
+    });
     const selectedView = analysisViewResultSchema.parse(
-      parseEvidence(selected.structuredContent).normalized_result,
+      selectedEvidence.normalized_result,
     );
     expect(selectedView).toMatchObject({
       kind: "playwright-trace",
@@ -277,14 +303,23 @@ cliTest(
         parseEvidence(response.structuredContent).normalized_result,
       ).toMatchObject({ items: [], coverage: { total: 0, exhausted: true } });
     }
-    await checkCliPublication({
-      cli,
-      fixture,
-      parent,
-      selected: parseEvidence(selected.structuredContent),
-      view,
-      call,
+    const request = join(fixture.root, "page.json");
+    await writeFile(
+      request,
+      JSON.stringify({
+        source: {
+          kind: "evidence-file",
+          path: bundlePath,
+          evidence_id: source.evidence_id,
+        },
+        view,
+      }),
+    );
+    const fromBundle = await cli.run({
+      arguments: ["inspect-analysis-view", request, "--json"],
     });
+    expect(fromBundle.exitCode, fromBundle.stderr).toBe(0);
+    expect(parseEvidence(fromBundle.json)).toEqual(selectedEvidence);
   },
 );
 
@@ -315,11 +350,10 @@ cliTest(
     const recordedOrigin = new URL(
       JSON.parse(base.network.split("\n")[0]!).snapshot.request.url,
     ).origin;
+    const origin = `http://127.0.0.1:${address.port}`;
+    const validTrace = base.trace.replaceAll(recordedOrigin, origin);
     const trace =
-      base.trace.replaceAll(
-        recordedOrigin,
-        `http://127.0.0.1:${address.port}`,
-      ) +
+      validTrace +
       JSON.stringify({
         type: "console",
         messageType: "log",
@@ -327,23 +361,13 @@ cliTest(
         time: 123,
       }) +
       '\n{"type":"console","text":NaN}\n';
-    const network = base.network.replaceAll(
-      recordedOrigin,
-      `http://127.0.0.1:${address.port}`,
-    );
+    const network = base.network.replaceAll(recordedOrigin, origin);
     const fixture = await playwrightTraceFixture({ trace, network });
     const { call } = await connectLocalToolsMcp({
       REA_MCP_TOOL_FAMILIES: "application,session",
       PLAYWRIGHT_BROWSERS_PATH: "/rea-no-browser-required",
     });
-    const valid = await playwrightTraceFixture({
-      trace: base.trace.replaceAll(
-        recordedOrigin,
-        `http://127.0.0.1:${address.port}`,
-      ),
-      network,
-      resources: true,
-    });
+    const valid = await playwrightTraceFixture({ trace: validTrace, network });
     const control = await call("inspect_playwright_trace", {
       path: valid.path,
       detail: "complete",
@@ -352,8 +376,15 @@ cliTest(
     expect(
       playwrightTraceSchema.parse(
         parseEvidence(control.structuredContent).normalized_result,
-      ).source_coverage.interpretation,
-    ).toBe("scoped");
+      ),
+    ).toMatchObject({
+      diagnostics: [],
+      summary: { unavailable_references: 8 },
+      source_coverage: {
+        interpretation: "partial",
+        recording_completeness: "unknown",
+      },
+    });
     const response = await call("inspect_playwright_trace", {
       path: fixture.path,
       view: {
@@ -421,8 +452,7 @@ cliTest(
     expect(
       parseEvidence(full.structuredContent).normalized_result,
     ).toMatchObject({ items: [{ text: message }] });
-    const run = cli.run.bind(cli);
-    const result = await run({
+    const result = await cli.run({
       arguments: ["inspect-playwright-trace", fixture.path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -437,12 +467,27 @@ cliTest(
 cliTest(
   "retains partial MCP Evidence when a trace stream fails after earlier streams were read",
   async () => {
-    const fixture = await playwrightTraceFixture({ level: 0 });
+    const event = JSON.stringify({
+      type: "resource-snapshot",
+      snapshot: {
+        request: { method: "GET", url: "https://recorded.invalid/value" },
+        response: { status: 200 },
+      },
+    });
+    const padding = JSON.stringify({
+      type: "frame-snapshot",
+      snapshot: "x".repeat(8192),
+    });
+    const tail = "trace-crc-tail";
+    // Send the network event before the stored member's late CRC failure.
+    const fixture = await playwrightTraceFixture({
+      level: 0,
+      network: `${event}\n${`${padding}\n`.repeat(80)}{"type":"${tail}"}\n`,
+    });
     const bytes = await readFile(fixture.path);
-    // A stored network byte breaks only that member's ZIP CRC.
-    const offset = bytes.indexOf(Buffer.from('"method":"GET"'));
+    const offset = bytes.indexOf(tail);
     expect(offset).toBeGreaterThan(0);
-    bytes[offset + 10] = 80;
+    bytes[offset] = bytes[offset]! ^ 1;
     await writeFile(fixture.path, bytes);
     const { call } = await connectLocalToolsMcp({
       REA_MCP_TOOL_FAMILIES: "application,session",
@@ -454,6 +499,7 @@ cliTest(
         detail: "complete",
       }),
     );
+    expect(failed.error.code).toBe("invalid_request");
     const reference = failed.error.details?.partial_observation;
     expect(reference).toEqual({
       kind: "retained-evidence",
@@ -465,12 +511,18 @@ cliTest(
       view: { kind: "playwright-trace", collection: "events", fields: [] },
     });
     expect(page.isError, JSON.stringify(page.content)).not.toBe(true);
-    expect(
+    const partial = analysisViewResultSchema.parse(
       parseEvidence(page.structuredContent).normalized_result,
-    ).toMatchObject({
+    );
+    expect(partial).toMatchObject({
       coverage: { total: 20, exhausted: true },
       source_coverage: { interpretation: "partial" },
     });
+    if (partial.kind !== "playwright-trace")
+      throw new Error("Expected a trace page");
+    expect(
+      partial.items.map((row) => ("kind" in row ? row.kind : undefined)),
+    ).not.toContain("network");
   },
 );
 

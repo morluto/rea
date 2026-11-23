@@ -4,7 +4,6 @@ import {
   mkdir,
   mkdtemp,
   readdir,
-  readFile,
   rename,
   rm,
   writeFile,
@@ -36,7 +35,9 @@ import {
   macHopperReleaseMinimumSystemVersion,
 } from "./HopperReleaseFeed.js";
 import type { HopperInstallFailureReason } from "./SetupInstallFailure.js";
-import { decodeInfoPlistValue } from "./AppBundleExecutable.js";
+import { regularFileCleanupLeases } from "../process/RegularFileRead.js";
+import { readBundleInfoPlist } from "./AppBundleExecutable.js";
+import { decodeInfoPlistValue } from "../domain/apple/infoPlist.js";
 import {
   macosMajorVersion,
   macosVersionMeetsMinimum,
@@ -520,8 +521,19 @@ export const systemMacHopperInstallHost = (
     macosVersion,
     async minimumSystemVersion(appPath) {
       const plist = posix.join(appPath, "Contents", "Info.plist");
+      let bytes: Buffer;
+      try {
+        bytes = await readBundleInfoPlist(plist);
+      } catch (cause: unknown) {
+        for (const lease of regularFileCleanupLeases(cause) ?? [])
+          pendingCleanup.set(
+            () => lease.release(),
+            lease.cleanupResources ?? [plist],
+          );
+        throw cause;
+      }
       const declared = minimumSystemVersionSchema.safeParse(
-        decodeInfoPlistValue(await readFile(plist), ["LSMinimumSystemVersion"]),
+        decodeInfoPlistValue(bytes, ["LSMinimumSystemVersion"]),
       );
       if (!declared.success)
         throw new TypeError(

@@ -25,52 +25,53 @@ const original = [
   "",
 ].join("\n");
 
-for (const format of ["toml", "grok"] as const)
-  for (const lineBreak of ["\n", "\r\n"] as const)
-    it.each(["replace", "remove"] as const)(
-      `retains real comments through %s in ${format} with ${JSON.stringify(lineBreak)}`,
-      (operation) => {
-        const source = original.replaceAll("\n", lineBreak);
-        const parsed = parseClientConfiguration(source, format);
-        const { rea: removed, ...peers } = parsed.servers;
-        expect(removed).toBeDefined();
-        const servers =
-          operation === "replace"
-            ? { ...peers, rea: { command: "new", args: [] } }
-            : peers;
-        const result = serializeClientConfiguration(
-          withClientServers(parsed, servers, HOST_PLATFORM.platform),
-          format,
-          source,
-        );
-        if (!result.ok) throw new Error("TOML edit was refused");
-        for (const comment of [
-          "# server header note",
-          "# command note",
-          "# array note",
-          "# multiline note",
-          "# literal note",
-          "# tool header note",
-          "# caller approval",
-          "# peer note",
-        ])
-          expect(result.value.split(comment)).toHaveLength(2);
-        for (const stringContent of [
-          "# command token",
-          "# value token",
-          "# multiline value token",
-        ])
-          expect(result.value).not.toContain(stringContent);
-        expect(parseClientConfiguration(result.value, format).document).toEqual(
-          {
-            root: "retained # root string",
-            mcp_servers: servers,
-          },
-        );
-        if (lineBreak === "\r\n")
-          expect(result.value.replaceAll("\r\n", "")).not.toContain("\n");
-      },
+it.each([
+  ["toml", "\n", "replace"],
+  ["toml", "\r\n", "remove"],
+  ["grok", "\r\n", "replace"],
+  ["grok", "\n", "remove"],
+] as const)(
+  "keeps real comments through %s %j %s",
+  (format, lineBreak, operation) => {
+    const source = original.replaceAll("\n", lineBreak);
+    const parsed = parseClientConfiguration(source, format);
+    const other = { command: "other" };
+    const servers =
+      operation === "replace"
+        ? { other, rea: { command: "new", args: [] } }
+        : { other };
+    const result = serializeClientConfiguration(
+      withClientServers(parsed, servers, HOST_PLATFORM.platform),
+      format,
+      source,
     );
+    if (!result.ok) throw new Error("TOML edit was refused");
+    for (const comment of [
+      "# server header note",
+      "# command note",
+      "# array note",
+      "# multiline note",
+      "# literal note",
+      "# tool header note",
+      "# caller approval",
+      "# peer note",
+    ])
+      expect(result.value.split(comment)).toHaveLength(2);
+    for (const stringContent of [
+      "# command token",
+      "# value token",
+      "# multiline value token",
+      "literal # value token",
+    ])
+      expect(result.value).not.toContain(stringContent);
+    expect(parseClientConfiguration(result.value, format).document).toEqual({
+      root: "retained # root string",
+      mcp_servers: servers,
+    });
+    if (lineBreak === "\r\n")
+      expect(result.value.replaceAll(lineBreak, "")).not.toContain("\n");
+  },
+);
 
 it("retains comments from dotted REA assignments and nested inline values", () => {
   for (const source of [

@@ -162,7 +162,11 @@ export type ElectronIpcFinding = ElectronIpcDescriptor &
   ElectronIpcHandler &
   ElectronIpcFindingContext &
   (
-    | { readonly channel: string; readonly channel_expression: null }
+    | {
+        readonly channel: string;
+        readonly channel_expression: null;
+        readonly channel_basis?: "static-value";
+      }
     | {
         readonly channel: null;
         readonly channel_expression: string;

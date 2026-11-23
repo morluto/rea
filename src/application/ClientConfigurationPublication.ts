@@ -9,6 +9,7 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
 import {
+  assertStableRegularFileIdentity,
   RegularFileChangedError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
@@ -236,8 +237,12 @@ export class ClientConfigurationPublication {
       position += bytesWritten;
     }
     await handle.truncate(bytes.length);
-    if (!sameRegularFileState(await handle.stat(), await lstat(this.path)))
+    const restored = await handle.stat();
+    if (!(await fileHandleMatchesBytes(handle, bytes)))
       throw new RegularFileChangedError(this.path);
+    await assertStableRegularFileIdentity(handle, this.path, restored, {
+      symlinks: "reject",
+    });
   }
 }
 

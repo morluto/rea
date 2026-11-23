@@ -1,8 +1,21 @@
-import { readElfSectionHeader } from "./elfSectionHeader.js";
-import { readElfProgramHeader } from "./elfProgramHeader.js";
+import {
+  elfSectionHeaderWidth,
+  readElfSectionHeader,
+} from "./elfSectionHeader.js";
+import {
+  elfProgramHeaderWidth,
+  readElfProgramHeader,
+  PT_INTERP,
+} from "./elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "./elfRawTableDeclarations.js";
 import { readElfFixedHeader, type ElfFixedHeader } from "./elfFixedHeader.js";
 import { err, ok, type Result } from "./result.js";
+
+const SHN_LORESERVE = 0xff00;
+
+export interface ElfDeclaredRangeFacts {
+  readonly hasInterpreter: boolean;
+}
 
 /** Positional source requests; the caller owns the descriptor and cancellation. */
 export interface ElfDeclarationRead {
@@ -46,8 +59,10 @@ const tableFailure = (
   fileSize: number,
 ): string | undefined => {
   if (table.count === 0n) return undefined;
-  const wide = header.elfClass === 64;
-  const minimumWidth = kind === "program" ? (wide ? 56 : 32) : wide ? 64 : 40;
+  const minimumWidth =
+    kind === "program"
+      ? elfProgramHeaderWidth(header.elfClass)
+      : elfSectionHeaderWidth(header.elfClass);
   const label = `${kind} header table`;
   if (table.width < minimumWidth) return `invalid ELF ${label} entry width`;
   // e_ehsize can extend past the class minimum. Bytes below it are the header.
@@ -72,8 +87,7 @@ const extendedCounts = (
   header: ElfFixedHeader,
   initial: TableCounts,
 ): Result<TableCounts, string> => {
-  const wide = header.elfClass === 64;
-  if (first.length !== (wide ? 64 : 40))
+  if (first.length !== elfSectionHeaderWidth(header.elfClass))
     return err("truncated ELF extended section-zero header");
   const parsed = readElfSectionHeader(
     first,
@@ -89,12 +103,12 @@ const extendedCounts = (
   const counts = { ...initial };
   if (counts.sectionCount === 0n) {
     counts.sectionCount = zero.size;
-    if (counts.sectionCount < 0xff00n)
+    if (counts.sectionCount < BigInt(SHN_LORESERVE))
       return err("invalid ELF extended section count");
   }
   if (counts.namesIndex === 0xffff) {
     counts.namesIndex = zero.link;
-    if (counts.namesIndex < 0xff00)
+    if (counts.namesIndex < SHN_LORESERVE)
       return err("invalid ELF extended section-name index");
   }
   if (counts.programCount === 0xffffn) {
@@ -105,21 +119,26 @@ const extendedCounts = (
   return ok(counts);
 };
 
-/** A name index or extended count cannot refer to an absent section table. */
-export const validateElfSectionTablePresence = (tables: {
+/** Admit the fixed section table declarations before inspecting any rows. */
+export const validateElfSectionTableFields = (tables: {
   readonly programs: { readonly count: number };
   readonly sections: {
     readonly offset: bigint;
     readonly count: number;
     readonly namesIndex: number;
   };
-}): Result<null, string> =>
-  tables.sections.offset === 0n &&
-  (tables.sections.count !== 0 ||
-    tables.sections.namesIndex !== 0 ||
-    tables.programs.count === 0xffff)
-    ? err("ELF section table is missing")
-    : ok(null);
+}): Result<null, string> => {
+  if (tables.sections.count >= SHN_LORESERVE)
+    return err("ELF e_shnum uses a reserved direct section count");
+  if (
+    tables.sections.offset === 0n &&
+    (tables.sections.count !== 0 ||
+      tables.sections.namesIndex !== 0 ||
+      tables.programs.count === 0xffff)
+  )
+    return err("ELF section table is missing");
+  return ok(null);
+};
 
 /** Canonical table declarations, including extended counts in inactive section zero. */
 export function* readElfTableDeclarations(
@@ -139,8 +158,8 @@ export function* readElfTableDeclarations(
   let programCount = BigInt(programs.count);
   let sectionCount = BigInt(sections.count);
   let namesIndex = sections.namesIndex;
-  const presence = validateElfSectionTablePresence(raw.value);
-  if (!presence.ok) return presence;
+  const sectionTable = validateElfSectionTableFields(raw.value);
+  if (!sectionTable.ok) return sectionTable;
   if (
     sectionOffset !== 0n &&
     (sectionCount === 0n || namesIndex === 0xffff || programCount === 0xffffn)
@@ -154,7 +173,7 @@ export function* readElfTableDeclarations(
     if (failure !== undefined) return err(failure);
     const first = yield {
       offset: Number(sectionOffset),
-      size: header.elfClass === 64 ? 64 : 40,
+      size: elfSectionHeaderWidth(header.elfClass),
     };
     const counts = extendedCounts(first, header, {
       programCount,
@@ -203,7 +222,12 @@ function* inspectTableRanges(
   table: ElfDeclaredTable,
   header: ElfFixedHeader,
   fileSize: number,
-): Generator<ElfDeclarationRead, Result<null, string>, Buffer> {
+): Generator<
+  ElfDeclarationRead,
+  Result<{ readonly hasInterpreter: boolean }, string>,
+  Buffer
+> {
+  let hasInterpreter = false;
   const perRead = Math.max(1, Math.floor((64 * 1024) / table.width));
   for (let index = 0; index < table.count; index += perRead) {
     const count = Math.min(perRead, table.count - index);
@@ -240,19 +264,29 @@ function* inspectTableRanges(
         fileSize,
       );
       if (failure !== undefined) return err(failure);
+      if (kind === "program" && facts.type === PT_INTERP) {
+        // The declared range must fit at least one pathname byte and its NUL.
+        if (length < 2n) return err("invalid ELF PT_INTERP file size");
+        hasInterpreter = true;
+      }
     }
   }
-  return ok(null);
+  return ok({ hasInterpreter });
 }
 
 /** Physical extent admission, independent of section names, CPU lanes and decoder budgets. */
 export function* validateElfDeclaredRanges(
   prefix: Buffer,
   fileSize: number,
-): Generator<ElfDeclarationRead, Result<null, string>, Buffer> {
+): Generator<
+  ElfDeclarationRead,
+  Result<ElfDeclaredRangeFacts, string>,
+  Buffer
+> {
   const declarations = yield* readElfTableDeclarations(prefix, fileSize);
   if (!declarations.ok) return declarations;
   const { header, programs, sections } = declarations.value;
+  let hasInterpreter = false;
   for (const [kind, table] of [
     ["program", programs],
     ["section", sections],
@@ -260,6 +294,9 @@ export function* validateElfDeclaredRanges(
     if (table.count === 0) continue;
     const inspected = yield* inspectTableRanges(kind, table, header, fileSize);
     if (!inspected.ok) return inspected;
+    if (kind === "program") {
+      hasInterpreter = inspected.value.hasInterpreter;
+    }
   }
-  return ok(null);
+  return ok({ hasInterpreter });
 }

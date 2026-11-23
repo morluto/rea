@@ -8,6 +8,11 @@ it("keeps text within the budget unchanged", () => {
     bytes: 3,
     truncated: false,
   });
+  expect(utf8HeadExcerpt("𐐷\uD800", 9)).toEqual({
+    text: "𐐷\uD800",
+    bytes: 7,
+    truncated: false,
+  });
   expect(utf8HeadExcerpt("", 0)).toEqual({
     text: "",
     bytes: 0,

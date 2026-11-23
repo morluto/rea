@@ -21,10 +21,11 @@
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
  * IN THE SOFTWARE.
  */
-import { estimateTokenCount, sliceByTokens } from "tokenx";
+import { estimateTokenCount } from "tokenx";
 
-import { renderCliDocument, type CliOutputFormat } from "../cliOutput.js";
+import { renderCliDocument, type CliOutputFormat } from "./cliOutput.js";
 import { jsonLinesErrorRecord } from "./jsonLines.js";
+import { sliceTextByTokenWindow } from "./tokenWindow.js";
 
 /** Suggested commands that follow a document. */
 export interface CallToAction {
@@ -87,15 +88,12 @@ const tokenWindow = (
     } => {
   if (tokenLimit === undefined && tokenOffset === undefined)
     return { truncated: false, text };
-  const total = estimateTokenCount(text);
-  const offset = tokenOffset ?? 0;
-  const end = tokenLimit === undefined ? total : offset + tokenLimit;
-  if (offset === 0 && end >= total) return { truncated: false, text };
-  const shown = Math.min(end, total);
+  const window = sliceTextByTokenWindow(text, tokenOffset ?? 0, tokenLimit);
+  if (!window.truncated) return { truncated: false, text: window.text };
   return {
     truncated: true,
-    text: `${sliceByTokens(text, offset, end)}\n[truncated: showing tokens ${offset}–${shown} of ${total}]`,
-    nextOffset: shown < total ? shown : undefined,
+    text: `${window.text}\n[truncated: showing tokens ${window.start}–${window.end} of ${window.total}]`,
+    nextOffset: window.end < window.total ? window.end : undefined,
   };
 };
 

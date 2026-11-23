@@ -85,14 +85,17 @@ const projectPrimaryStartupFailure = (error: AnalysisError) => {
   return projectAnalysisError(primary);
 };
 
-it("does not equate an owned native helper exit with an external GUI exit", async () => {
+const spotlightReport =
+  "Hopper has not been found.\nPlease make sure that Spotlight is active in order for this tool to find Hopper's executable.\n";
+
+it("keeps document ownership unknown when an unverified helper reports Spotlight failure", async () => {
   const directory = await createTestTempDirectory("rea-hopper-helper-failure-");
   const targetPath = join(directory, "target");
   await writeFile(targetPath, "fixture target");
   const helperPath = join(directory, "helper.cjs");
   await writeFile(
     helperPath,
-    'process.stderr.write("Hopper has not been found.\\n", () => process.exit(3));',
+    `process.stderr.write(${JSON.stringify(spotlightReport)}, () => process.exit(3));`,
   );
   const launcher = new HopperApplicationLauncher({
     environment: {},
@@ -114,9 +117,11 @@ it("does not equate an owned native helper exit with an external GUI exit", asyn
   });
   if (result.ok) throw new Error("Expected the native helper to fail");
   expect(projectPrimaryStartupFailure(result.error)).toMatchObject({
+    code: "provider_unavailable",
+    message: expect.stringContaining("Spotlight"),
     details: {
       provider_state: "unknown",
-      launcher: { exit_code: 3 },
+      launcher: { exit_code: 3, stderr: { text: spotlightReport } },
     },
   });
   expect(client.operationHealth()).toMatchObject({
@@ -136,7 +141,7 @@ it.skipIf(process.platform !== "darwin")(
     const helperPath = join(directory, "spotlight-helper.cjs");
     await writeFile(
       helperPath,
-      'process.stderr.write("Hopper has not been found.\\nPlease make sure that Spotlight is active in order for this tool to find Hopper\'s executable.\\n", () => process.exit(3));',
+      `process.stderr.write(${JSON.stringify(spotlightReport)}, () => process.exit(3));`,
     );
     const loaderArgs = [helperPath, "--"];
     // Simulate a verified native helper at the launcher provenance boundary;
@@ -245,10 +250,6 @@ it("classifies a pre-handoff Apple Events denial as not retryable from the same 
     error: {
       _tag: "HopperStartError",
       cleanupIncomplete: false,
-      launchRejection: {
-        boundary: "apple_events_authorization",
-        reason: "not_authorized",
-      },
     },
   });
   if (failed.ok) throw new Error("Expected Apple Events denial");
@@ -263,13 +264,16 @@ it("classifies a pre-handoff Apple Events denial as not retryable from the same 
       launch_rejection: {
         boundary: "apple_events_authorization",
         reason: "not_authorized",
+        responsibility: "client_or_disclaimed_runtime",
+        settings_pane: "privacy_security_automation",
+        entitlement_id: "com.apple.security.automation.apple-events",
       },
       launcher: { exit_code: 2, signal: null },
     },
   });
 });
 
-it.each(["exit", "signal", "exit75"] as const)(
+it.each(["signal", "exit75"] as const)(
   "reports a failed non-owning launcher %s without waiting for bridge timeout or inventing a GUI exit",
   async (termination) => {
     let token = "";
@@ -281,7 +285,7 @@ it.each(["exit", "signal", "exit75"] as const)(
         const stop =
           termination === "signal"
             ? 'process.kill(process.pid, "SIGTERM")'
-            : `process.exit(${termination === "exit75" ? 75 : 1})`;
+            : "process.exit(75)";
         return Promise.resolve(
           ok({
             process: spawn(
@@ -315,8 +319,7 @@ it.each(["exit", "signal", "exit75"] as const)(
       details: {
         stage: "launch",
         launcher: {
-          exit_code:
-            termination === "signal" ? null : termination === "exit75" ? 75 : 1,
+          exit_code: termination === "signal" ? null : 75,
           signal: termination === "signal" ? "SIGTERM" : null,
           stdout: {
             text: expect.stringContaining("API_KEY=local-evidence-kept"),

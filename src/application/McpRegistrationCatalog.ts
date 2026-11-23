@@ -15,6 +15,7 @@ import {
   clientEvidencePaths,
   registrationWriteBlocker,
   supportedClientDefinition,
+  supportedClients,
   resolveSupportedClients,
   type ClientSystemPaths,
   type SetupClient,
@@ -127,6 +128,11 @@ export interface McpRegistrationClient {
   readonly configPaths?: readonly string[];
   readonly inlineConfiguration?: ClientInlineConfiguration;
   readonly scope: "global" | "project";
+  /** OpenCode's native project read scope, independent of the selected write target. */
+  readonly projectConfiguration?: {
+    readonly directory: string;
+    readonly userClient: SetupClient;
+  };
   readonly format: ClientConfigurationFormat;
   readonly privateProfile?: SetupClient["privateProfile"];
   /**
@@ -181,12 +187,29 @@ const projectTarget = async (
       `${descriptor.displayName} has no project-scoped registration. Remove --no-global or select a project-capable client; no settings were written.`,
     );
   const resolved = await descriptor.projectLocation(context);
+  const [userClient] =
+    id === "opencode"
+      ? supportedClients(
+          context.home,
+          context.platform,
+          context.environment,
+          undefined,
+          "opencode",
+        )
+      : [];
+  if (id === "opencode" && userClient === undefined)
+    throw new ConfigurationError(
+      "OpenCode's user configuration could not be located for project registration.",
+    );
   return {
     id,
     displayName: descriptor.displayName,
     registrationProfile: mcpClientRegistrationProfile(id),
     ...resolved,
     scope: "project",
+    ...(userClient === undefined
+      ? {}
+      : { projectConfiguration: { directory: context.cwd, userClient } }),
     format: descriptor.projectFormat ?? descriptor.format,
   };
 };

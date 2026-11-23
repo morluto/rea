@@ -1,25 +1,14 @@
-import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import {
-  projectSelectedArtifactFileFailure,
-  projectOwnedArtifactIdentityFailure,
-  projectStableArtifactFailure,
-  stableArtifactInputFailure,
-  projectArtifactCloseFailure,
-  ArtifactReaderFailure,
-  type StableArtifactSnapshot,
-  readStableArtifact,
   artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
+  projectArtifactCloseFailure,
+  projectStableArtifactFailure,
+  ArtifactReaderFailure,
+  withStableArtifactHandle,
   ArtifactResourceScope,
 } from "../../resources/index.js";
 import type { PeCertificatesPort } from "../../ports/binaryDiagnostics/PeCertificatesPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
-import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
-import {
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import {
   MAX_INSPECT_PE_CERTIFICATE_ENTRIES,
   MAX_INSPECT_PE_CERTIFICATE_FILE_BYTES,
@@ -32,9 +21,12 @@ import {
   PeCertificateAsn1Failure,
   type PeCertificateDecodeAllowance,
 } from "./PeCertificateAsn1.js";
-import { parsePeCertificates } from "./PeCertificateParser.js";
+import { parsePeCertificatesFromHandle } from "./PeCertificateParser.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 
 const OPERATION = "inspect_pe_certificates";
+const PE_HEADER_PREFIX_BYTES = 4096;
 
 /** Portable parser over one bounded, identity-checked regular file. */
 export class PeCertificatesProvider implements PeCertificatesPort {
@@ -54,30 +46,38 @@ export class PeCertificatesProvider implements PeCertificatesPort {
   }
 
   async inspect(input: InspectPeCertificatesInput, options?: ExecutionOptions) {
-    let snapshot: StableArtifactSnapshot | undefined;
+    let observed:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
-      return await this.#resources.run(async () => {
-        snapshot = await readStableArtifact(
+      return await this.#resources.run(async () =>
+        withStableArtifactHandle(
           input.path,
           input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        return ok(
-          parsePeCertificates(
-            snapshot.bytes,
-            {
-              path: input.path,
-              sha256: snapshot.sha256,
-              bytes: snapshot.bytes.length,
+          {
+            retainBytes: (size) => Math.min(size, PE_HEADER_PREFIX_BYTES),
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            onIdentity: (identity) => {
+              observed = identity;
             },
-            input,
-          ),
-        );
-      });
+          },
+          async (handle) =>
+            ok(
+              await parsePeCertificatesFromHandle(
+                handle,
+                {
+                  path: input.path,
+                  sha256: handle.sha256,
+                  bytes: handle.size,
+                },
+                input,
+              ),
+            ),
+        ),
+      );
     } catch (cause) {
-      return err(peCertificatesFailure(cause, input, snapshot));
+      return err(peCertificatesFailure(cause, input, observed));
     }
   }
 }
@@ -141,95 +141,63 @@ const decoderAllowanceFailure = (
   );
 };
 
-const peCertificatesFailurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
-  input: InspectPeCertificatesInput,
-) => {
-  const { cause, origin } = facts;
-  if (cause instanceof BinaryFormatFailure && cause.kind === "unsupported")
-    return new AnalysisUnsupportedTargetError(
-      OPERATION,
-      input.path,
-      cause.message,
-      { cause },
-    );
-
-  const identityFailure = projectOwnedArtifactIdentityFailure(
-    facts,
-    OPERATION,
-    input.path,
-  );
-  if (identityFailure !== undefined) return identityFailure;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof PeCertificateAsn1Failure &&
-    cause.exhausted !== null
-  )
-    return decoderAllowanceFailure(cause, cause.exhausted);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        cause.boundary ?? "memory",
-        cause.message,
-        {
-          max_file_bytes: input.max_file_bytes,
-          max_entries: input.max_entries,
-        },
-        {
-          cause,
-          ...(cause.boundary === undefined || cause.boundary === "memory"
-            ? {}
-            : {
-                retryable: false,
-                remediationAction: inputBudgetRemediation(
-                  cause.boundary,
-                  input,
-                ),
-              }),
-        },
-      );
-    if (cause.reason === "path" || cause.reason === "format")
-      return stableArtifactInputFailure(cause, OPERATION);
-  }
-  const fileFailure = projectSelectedArtifactFileFailure(
-    cause,
-    OPERATION,
-    input.path,
-    "PE image",
-  );
-  if (fileFailure !== undefined) return fileFailure;
-  return new ArtifactOperationError(
-    OPERATION,
-    origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure
-      ? cause.reason
-      : "io",
-    undefined,
-    cause instanceof Error
-      ? cause.message
-      : "PE certificate inspection failed.",
-    { cause },
-  );
-};
-
 const peCertificatesFailure = (
   cause: unknown,
   input: InspectPeCertificatesInput,
-  snapshot?: StableArtifactSnapshot,
+  observed?: { readonly sha256: string; readonly bytes: number },
 ) => {
-  const primary = peCertificatesFailurePrimary(
-    artifactFilePrimaryFacts(cause),
-    input,
-  );
+  const facts = artifactFilePrimaryFacts(cause);
   return projectStableArtifactFailure(
     cause,
-    primary,
+    classifyProviderFailure(
+      facts.cause,
+      offlineArtifactFailureDialect(facts, {
+        operation: OPERATION,
+        providerId: PE_CERTIFICATES_PROVIDER.id,
+        path: input.path,
+        description: "PE image",
+        fallbackMessage: "PE certificate inspection failed.",
+        recognise: (failure, origin) => {
+          if (
+            origin === "owned-or-classified" &&
+            failure instanceof PeCertificateAsn1Failure &&
+            failure.exhausted !== null
+          )
+            return decoderAllowanceFailure(failure, failure.exhausted);
+          if (
+            origin === "owned-or-classified" &&
+            failure instanceof ArtifactReaderFailure &&
+            failure.reason === "limit"
+          )
+            return new AnalysisResourceConstraintError(
+              OPERATION,
+              failure.boundary ?? "memory",
+              failure.message,
+              {
+                max_file_bytes: input.max_file_bytes,
+                max_entries: input.max_entries,
+              },
+              {
+                cause: failure,
+                ...(failure.boundary === undefined ||
+                failure.boundary === "memory"
+                  ? {}
+                  : {
+                      retryable: false,
+                      remediationAction: inputBudgetRemediation(
+                        failure.boundary,
+                        input,
+                      ),
+                    }),
+              },
+            );
+          return undefined;
+        },
+      }),
+    ),
     input.path,
     PE_CERTIFICATES_PROVIDER.id,
     OPERATION,
-    snapshot,
+    observed,
   );
 };

@@ -4,6 +4,8 @@ import {
   Asn1BerReader,
   type Asn1BerNode,
 } from "../../domain/asn1Ber.js";
+import { BinaryReader } from "../../domain/binaryContainer.js";
+import { isStrictUtf8 } from "../../domain/strictUtf8.js";
 import { byteToHex } from "../../kernel/byteToHex.js";
 
 const OID_NAMES: Readonly<Record<string, string>> = {
@@ -57,10 +59,17 @@ const fail = (message: string): never => {
 // few thousand nodes; the budget bounds sibling fan-out, which depth does not.
 const ASN1_NODE_BUDGET = 16_384;
 
+// Windows dual signing embeds whole SignedData values in unsigned attributes:
+// a nested signature (1.3.6.1.4.1.311.2.4.1) holding an RFC 3161 timestamp
+// (1.3.6.1.4.1.311.3.3.1). Each embedding adds eight levels, and signed system
+// binaries put values 33 levels below the outermost one, past the shared
+// reader's default of 32. The cap still bounds recursion for hostile input.
+const ASN1_DEPTH_BUDGET = 64;
+
 /** Decode one bounded ASN.1 TLV, including indefinite constructed BER values. */
 export const readAsn1 = (bytes: Buffer): Asn1BerNode => {
   try {
-    return new Asn1BerReader(bytes, ASN1_NODE_BUDGET).read();
+    return new Asn1BerReader(bytes, ASN1_NODE_BUDGET, ASN1_DEPTH_BUDGET).read();
   } catch (cause: unknown) {
     if (cause instanceof Asn1BerFailure)
       throw new PeCertificateAsn1Failure(
@@ -143,9 +152,10 @@ const decodeBmpString = (bytes: Buffer, budget: DecodedNameBudget): string => {
   // cons-string chain of about sixteen heap bytes per source byte.
   chargeDecodedName(budget, bytes.length);
   if (bytes.length === 0) return "";
+  const reader = new BinaryReader(bytes, false, "pe-certificate-table");
   const decoded = Buffer.allocUnsafe(bytes.length);
   for (let index = 0; index < bytes.length; index += 2) {
-    const codeUnit = bytes.readUInt16BE(index);
+    const codeUnit = reader.u16(index);
     // BMPString is UCS-2: even a paired UTF-16 surrogate is not a BMP character.
     if (codeUnit >= 0xd800 && codeUnit <= 0xdfff)
       return fail("BMPString holds a surrogate code point.");
@@ -160,10 +170,11 @@ const decodeUtf32Be = (bytes: Buffer, budget: DecodedNameBudget): string => {
   // Four source bytes become at most four UTF-16 bytes, so the source length
   // bounds the decoded string before any code point is copied.
   chargeDecodedName(budget, bytes.length);
+  const reader = new BinaryReader(bytes, false, "pe-certificate-table");
   const decoded = Buffer.allocUnsafe(bytes.length);
   let at = 0;
   for (let index = 0; index < bytes.length; index += 4) {
-    const codePoint = bytes.readUInt32BE(index);
+    const codePoint = reader.u32(index);
     if (codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff))
       return fail("UniversalString holds an invalid code point.");
     if (codePoint > 0xffff) {
@@ -181,11 +192,9 @@ const decodeUtf32Be = (bytes: Buffer, budget: DecodedNameBudget): string => {
 
 const decodeUtf8 = (bytes: Buffer, budget: DecodedNameBudget): string => {
   chargeDecodedName(budget, bytes.length);
-  const decoded = bytes.toString("utf8");
   // U+FFFD would hide the original bytes and collapse distinct invalid names.
-  if (!Buffer.from(decoded, "utf8").equals(bytes))
-    return fail("DirectoryString is not valid UTF-8.");
-  return decoded;
+  if (!isStrictUtf8(bytes)) return fail("DirectoryString is not valid UTF-8.");
+  return bytes.toString("utf8");
 };
 
 const decodeDirectoryString = (

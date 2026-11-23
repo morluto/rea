@@ -20,7 +20,7 @@ import type { McpRegistrationLocationContext } from "./McpRegistrationLocations.
 export interface KiloRegistrationWorktree {
   readonly activeDirectory: string;
   readonly root: string;
-  readonly primaryRoot: string;
+  readonly primaryRoot: string | undefined;
 }
 
 export const pathWithin = (root: string, path: string): boolean => {
@@ -123,9 +123,9 @@ const primaryRoot = async (
   root: string,
   gitDirectory: string,
   commonDirectory: string,
-): Promise<string> => {
+): Promise<string | undefined> => {
   if (gitDirectory === commonDirectory) return root;
-  // Kilo's primaryPaths uses the first non-bare porcelain worktree record.
+  // Kilo reads the first record. A bare repository has no primary checkout.
   const listing = await gitOutput(context, root, [
     "worktree",
     "list",
@@ -134,7 +134,7 @@ const primaryRoot = async (
   ]);
   const record = listing.split("\0\0", 1)[0]?.split("\0");
   const field = record?.find((item) => item.startsWith("worktree "));
-  if (field === undefined || record?.includes("bare"))
+  if (field === undefined)
     throw new ConfigurationError(
       "Kilo primary worktree is unknown; no project settings were written.",
     );
@@ -143,6 +143,7 @@ const primaryRoot = async (
     throw new ConfigurationError(
       "Git returned incomplete worktree metadata; no project settings were written.",
     );
+  if (record?.includes("bare")) return undefined;
   return directoryPath(
     absoluteCallerPath(value, { cwd: root, platform: context.platform }),
   );

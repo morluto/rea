@@ -24,7 +24,7 @@ const CONFIGURATION_PROGRAM = `
     await import(${JSON.stringify(new URL("./SetupClientConfiguration.ts", import.meta.url).href)});
   const { currentClientRegistrationCommand } =
     await import(${JSON.stringify(new URL("./ClientRegistrationIdentity.ts", import.meta.url).href)});
-  const { supportedClientRegistrationProfile } =
+  const { supportedClientDefinition } =
     await import(${JSON.stringify(new URL("./SupportedClients.ts", import.meta.url).href)});
   const command = currentClientRegistrationCommand();
   if (command.length === 0) throw Error('Fixture process has no owned current entrypoint.');
@@ -32,7 +32,7 @@ const CONFIGURATION_PROGRAM = `
     const directory = insideHome(join(home, 'config', name));
     const configPath = insideHome(join(directory, 'mcp.json'));
     await mkdir(directory, { recursive: true });
-    const client = { name, format, configPath, registrationProfile: supportedClientRegistrationProfile(name) };
+    const client = { name, format, configPath, registrationProfile: supportedClientDefinition(name).registrationProfile };
     await writeFile(configPath, '{}');
     const initial = await configureClientConfiguration(client, {}, command);
     if (initial.status !== 'configured') throw Error('Initial fixture configuration failed: ' + JSON.stringify(initial));

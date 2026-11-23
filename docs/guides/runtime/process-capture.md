@@ -112,6 +112,21 @@ event includes that field. Semantic fields such as output, interaction outcome,
 exit status, finalization delivery, process identity/command, and filesystem
 contents still participate in the default comparison.
 
+A located divergence names the compared fields that differed, so a report does
+not have to be diffed by hand: `first_divergence.fields` lists sorted leaf names
+such as `files[0].path`, `pid`, or `finalization.signals[0].delivery`, with array
+positions as bracketed indices, `$` for a whole observation, and at most eight
+names for a wide difference. The names describe only the projection the
+comparison actually judged, so capture-local timing is never named unless a
+`trace_spec` made it part of the question. `left` and `right` still retain the
+complete observations. `fields` is optional in the contract because records
+authenticated before it existed remain readable; new reports always populate it.
+Naming a volatile value is not a claim of equivalence: when a per-run temporary
+path or PID is not behavior, exclude it at capture time with
+`normalization.paths`, `normalization.pids`, or an explicit
+`normalization.patterns` replacement, and recapture both sides under the same
+rules. Comparison refuses captures whose normalization rules differ.
+
 For scenarios where independent scheduling can change event order, the CLI
 also accepts an optional trace-specification JSON file as the third argument.
 That specification must state the exact events and ordering constraints to
@@ -441,6 +456,8 @@ run the same owned-process cleanup path. Settlement reports whether the
 sampled process group quiesced or whether cleanup was needed or unverifiable;
 sampling cannot prove that every short-lived or detached descendant was seen.
 
+The target is the session leader of the capture PTY. When that leader exits, the terminal delivers SIGHUP to processes that are still in its foreground process group, as `script -c` and `ssh -t` do. A child that should outlive the target has to leave the group, for example with `setsid`, or ignore SIGHUP. This hangup comes from the terminal, not from REA's owned-process cleanup, and the capture result does not record it.
+
 ### Finalization interval
 
 By default a deadline sends `SIGKILL` at once. Set `finalization_ms` to give the
@@ -506,7 +523,9 @@ absent when no finalization was attempted:
   exited.
   An `unverified` attempt may carry a `reason` string naming why: an unavailable
   identity and its reason, an inspection or signal error, or delivery that did
-  not settle within the bound (1000 ms). An attempt recorded `unverified` after
+  not settle within the fixed bound (1000 ms). That bound is implementation
+  policy with no runtime override, and a larger `finalization_ms` does not
+  extend it. An attempt recorded `unverified` after
   that bound can still complete later; it stays identity-checked, and its late
   result is not added to the record.
 - `elapsed_ms` is when REA observed the exit, relative to the start of
@@ -601,8 +620,10 @@ Every capture requires `truncation_details`, with separate accounting for:
   remain available and issued reads settle before final coverage is returned.
 
 The aggregate `truncated` flag summarizes these observations. Comparisons retain
-results for unaffected dimensions and mark affected dimensions unknown; an
-incomplete capture cannot locate the first divergence across all dimensions.
+results for unaffected dimensions. If the hash budget omits a file's digest,
+different retained digests for another path still mark the filesystem dimension
+`changed`. Incomplete captures leave the first divergence across all dimensions
+unknown.
 Trace assertions use coverage for the sources they select, so an assertion
 about complete raw terminal output need not fail because rendered snapshots
 were omitted. A trace difference applies to the dimensions identified by its

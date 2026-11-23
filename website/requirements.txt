@@ -2,6 +2,12 @@
 CairoSVG==2.9.1
 # Standard gettext PO/POT catalogs; no translation service is used by builds.
 polib==1.2.0
-# Build Markdown reading pages and parse the maintained skill's YAML metadata.
+# Read authored Markdown destinations for the website link checks.
+markdown-it-py==4.3.0
+# Build Markdown reading pages and emit their YAML frontmatter.
 markdownify==1.2.3
 PyYAML==6.0.3
+# Rasterize the README contributor grid during a manual snapshot refresh.
+Pillow==13.0.0
+# Compress the shared first-paint stylesheet in the published build.
+rcssmin==1.2.2

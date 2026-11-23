@@ -6,7 +6,7 @@ import type {
   BatchDecompileItem,
   BatchProcedureIdentity,
 } from "../domain/native/batchDecompile.js";
-import { nativeProcedureInputSchema } from "../domain/native/nativeProcedureInput.js";
+import type { nativeProcedureInputSchema } from "../domain/native/nativeProcedureInput.js";
 import {
   cleanupStoppedTraversal,
   readCallRelationships,
@@ -23,7 +23,6 @@ import type {
 import {
   enhancedInputSchemas,
   type CallRelationshipDirection,
-  type EnhancedToolName,
 } from "../contracts/enhancedInputs.js";
 import {
   AnalysisOutputError,
@@ -55,7 +54,7 @@ import { inspectNativeDispatch } from "./native/NativeDispatchMetadataInspection
 import { traceNativeValues } from "./native/NativeValueTrace.js";
 import { traceNativeUiAction } from "./native/NativeUiActionTrace.js";
 import { decompileAll } from "./decompileDirectory/decompileAll.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
   nativeDispatchMetadataResultSchema,
   MAX_DISPATCH_METADATA_RECORDS,
@@ -75,6 +74,7 @@ import {
   type EnhancedResult,
   type ValidatedEnhancedCall,
 } from "./EnhancedToolTypes.js";
+import type { DirectEnhancedToolName } from "./oneShotOperationInput.js";
 import { resolveAnalysisDocument } from "./AnalysisDocument.js";
 import { traceCallPath } from "./CallPathTracing.js";
 import { resolveXrefsName } from "./XrefsAddressResolution.js";
@@ -124,30 +124,25 @@ const batchDecompileResult = (items: BatchDecompileItem[]) => {
 export class EnhancedTools {
   constructor(private readonly analysis: AnalysisOperationPort) {}
 
-  /** Parse an untrusted direct-call input once, then dispatch exhaustively. */
+  /** Parse direct workflow input and dispatch it with schema defaults. */
   execute(
-    name: EnhancedToolName,
+    name: DirectEnhancedToolName,
     input: unknown,
     signal?: AbortSignal,
   ): EnhancedResult {
-    if (name === "trace_feature" || name === "trace_call_path")
-      return this.#executeTracing(name, input, signal);
-    if (name === "trace_native_values") {
-      const parsed = enhancedInputSchemas.trace_native_values.safeParse(input);
-      return parsed.success
-        ? this.executeValidated({ name, input: parsed.data }, signal)
-        : invalidEnhancedInput(name, parsed.error, input);
-    }
-    if (name === "trace_native_ui_action") {
-      const parsed =
-        enhancedInputSchemas.trace_native_ui_action.safeParse(input);
-      return parsed.success
-        ? this.executeValidated({ name, input: parsed.data }, signal)
-        : invalidEnhancedInput(name, parsed.error, input);
-    }
-    if (name === "analyze_function" || name === "inspect_native_api")
-      return this.#executeFunctionAnalysis(name, input, signal);
     switch (name) {
+      case "binary_overview": {
+        const parsed = enhancedInputSchemas.binary_overview.safeParse(input);
+        return parsed.success
+          ? this.executeValidated({ name, input: parsed.data }, signal)
+          : invalidEnhancedInput(name, parsed.error, input);
+      }
+      case "inspect_native_api": {
+        const parsed = enhancedInputSchemas.inspect_native_api.safeParse(input);
+        return parsed.success
+          ? this.executeValidated({ name, input: parsed.data }, signal)
+          : invalidEnhancedInput(name, parsed.error, input);
+      }
       case "inspect_native_dispatch_metadata": {
         const parsed =
           enhancedInputSchemas.inspect_native_dispatch_metadata.safeParse(
@@ -157,51 +152,28 @@ export class EnhancedTools {
           ? this.executeValidated({ name, input: parsed.data }, signal)
           : invalidEnhancedInput(name, parsed.error, input);
       }
-      case "get_objc_classes": {
-        const parsed = enhancedInputSchemas.get_objc_classes.safeParse(input);
+      case "trace_feature": {
+        const parsed = enhancedInputSchemas.trace_feature.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
           : invalidEnhancedInput(name, parsed.error, input);
       }
-      case "get_objc_protocols": {
-        const parsed = enhancedInputSchemas.get_objc_protocols.safeParse(input);
+      case "trace_native_values": {
+        const parsed =
+          enhancedInputSchemas.trace_native_values.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
           : invalidEnhancedInput(name, parsed.error, input);
       }
-      case "batch_decompile": {
-        const parsed = enhancedInputSchemas.batch_decompile.safeParse(input);
+      case "trace_native_ui_action": {
+        const parsed =
+          enhancedInputSchemas.trace_native_ui_action.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
           : invalidEnhancedInput(name, parsed.error, input);
       }
       case "decompile_all": {
         const parsed = enhancedInputSchemas.decompile_all.safeParse(input);
-        return parsed.success
-          ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error, input);
-      }
-      case "get_call_graph": {
-        const parsed = enhancedInputSchemas.get_call_graph.safeParse(input);
-        return parsed.success
-          ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error, input);
-      }
-      case "analyze_swift_types": {
-        const parsed =
-          enhancedInputSchemas.analyze_swift_types.safeParse(input);
-        return parsed.success
-          ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error, input);
-      }
-      case "find_xrefs_to_name": {
-        const parsed = enhancedInputSchemas.find_xrefs_to_name.safeParse(input);
-        return parsed.success
-          ? this.executeValidated({ name, input: parsed.data }, signal)
-          : invalidEnhancedInput(name, parsed.error, input);
-      }
-      case "binary_overview": {
-        const parsed = enhancedInputSchemas.binary_overview.safeParse(input);
         return parsed.success
           ? this.executeValidated({ name, input: parsed.data }, signal)
           : invalidEnhancedInput(name, parsed.error, input);
@@ -236,7 +208,7 @@ export class EnhancedTools {
       case "analyze_swift_types":
         return this.#analyzeSwiftTypes(call.input, signal);
       case "find_xrefs_to_name":
-        return this.#findXrefs(call.input.name, signal);
+        return this.#findXrefs(call.input, signal);
       case "binary_overview":
         return this.#binaryOverview(signal);
       case "analyze_function":
@@ -262,32 +234,6 @@ export class EnhancedTools {
     }
   }
 
-  #executeTracing(
-    name: "trace_feature" | "trace_call_path",
-    input: unknown,
-    signal?: AbortSignal,
-  ): EnhancedResult {
-    if (name === "trace_call_path") {
-      const parsed = enhancedInputSchemas.trace_call_path.safeParse(input);
-      if (!parsed.success)
-        return invalidEnhancedInput(name, parsed.error, input);
-      return this.executeValidated({ name, input: parsed.data }, signal);
-    }
-    const parsed = enhancedInputSchemas.trace_feature.safeParse(input);
-    if (!parsed.success) return invalidEnhancedInput(name, parsed.error, input);
-    return this.executeValidated({ name, input: parsed.data }, signal);
-  }
-
-  #executeFunctionAnalysis(
-    name: "analyze_function" | "inspect_native_api",
-    input: unknown,
-    signal?: AbortSignal,
-  ): EnhancedResult {
-    const parsed = nativeProcedureInputSchema.safeParse(input);
-    if (!parsed.success) return invalidEnhancedInput(name, parsed.error, input);
-    return this.executeValidated({ name, input: parsed.data }, signal);
-  }
-
   async #analyzeFunction(
     input: Readonly<Record<string, JsonValue>>,
     signal?: AbortSignal,
@@ -304,7 +250,9 @@ export class EnhancedTools {
     if (!result.ok) return result;
     const parsed = parseFunctionDossier(result.value);
     if (!parsed.ok) return parsed;
-    return ok(jsonValueSchema.parse(projectNativeApiInspection(parsed.value)));
+    return ok(
+      ownedJsonValueSchema.parse(projectNativeApiInspection(parsed.value)),
+    );
   }
 
   async #objcClasses(pattern: string, signal?: AbortSignal): EnhancedResult {
@@ -580,6 +528,8 @@ export class EnhancedTools {
     input: {
       readonly address: string;
       readonly direction: CallRelationshipDirection;
+      readonly max_depth?: number | undefined;
+      readonly max_nodes?: number | undefined;
     },
     signal?: AbortSignal,
   ): EnhancedResult {
@@ -600,13 +550,23 @@ export class EnhancedTools {
       { address: startAddress, depth: 0 },
     ];
     let queueIndex = 0;
+    let expandedNodes = 0;
+    let depthLimitRecorded = false;
     const graph: Record<string, JsonValue[]> = {};
     const sortedLimitations = () =>
       [...limitations].sort(compareUnicodeCodePoints);
 
     while (queueIndex < queue.length) {
+      if (input.max_nodes !== undefined && expandedNodes >= input.max_nodes) {
+        const remaining = queue.length - queueIndex;
+        limitations.add(
+          `Call graph traversal stopped at caller-selected max_nodes ${String(input.max_nodes)} with ${String(remaining)} queued procedure(s) unexpanded. Raise or omit max_nodes to inspect further.`,
+        );
+        break;
+      }
       const current = queue[queueIndex++];
       if (current === undefined) continue;
+      expandedNodes += 1;
       const read = await readCallRelationships(
         this.#observe.bind(this),
         input.direction,
@@ -670,6 +630,18 @@ export class EnhancedTools {
       } satisfies NativeCallGraph["graph"][string][number]);
       for (const address of related) {
         if (!discovered.has(address)) {
+          if (
+            input.max_depth !== undefined &&
+            current.depth >= input.max_depth
+          ) {
+            if (!depthLimitRecorded) {
+              limitations.add(
+                `Call graph traversal stopped at caller-selected max_depth ${String(input.max_depth)}; deeper call relationships were not expanded. Raise or omit max_depth to inspect further.`,
+              );
+              depthLimitRecorded = true;
+            }
+            continue;
+          }
           discovered.add(address);
           queue.push({ address, depth: current.depth + 1 });
         }
@@ -706,7 +678,15 @@ export class EnhancedTools {
     );
   }
 
-  async #findXrefs(name: string, signal?: AbortSignal): EnhancedResult {
+  async #findXrefs(
+    input: {
+      readonly name: string;
+      readonly limit?: number | undefined;
+      readonly offset?: number | undefined;
+    },
+    signal?: AbortSignal,
+  ): EnhancedResult {
+    const { name, limit, offset } = input;
     const resolved = await resolveXrefsName(
       this.analysis,
       name,
@@ -717,27 +697,39 @@ export class EnhancedTools {
     if (resolved.value === null)
       return ok({ status: "unresolved", name, reason: "name_not_found" });
 
-    const xrefs = await this.#call(
+    const observed = await this.#observe(
       "xrefs",
       { address: resolved.value },
       signal,
     );
-    if (!xrefs.ok) return xrefs;
-    if (
-      !Array.isArray(xrefs.value) ||
-      xrefs.value.some((xref) => typeof xref !== "string")
-    )
+    if (!observed.ok) return observed;
+    const { result: xrefs, referencesTruncated } = observed.value;
+    if (!Array.isArray(xrefs) || xrefs.some((xref) => typeof xref !== "string"))
       return err(
         new AnalysisOutputError(
           "xrefs",
           "provider returned an invalid address list",
         ),
       );
+    const hasPaging = limit !== undefined || offset !== undefined;
+    const start = offset ?? 0;
+    const page = hasPaging
+      ? xrefs.slice(start, limit === undefined ? undefined : start + limit)
+      : xrefs;
     return ok({
       status: "resolved",
       name,
       address: resolved.value,
-      xrefs: xrefs.value,
+      xrefs: page,
+      ...(hasPaging
+        ? {
+            observed_xrefs: xrefs.length,
+            total_xrefs: referencesTruncated === false ? xrefs.length : null,
+            provider_truncated: referencesTruncated ?? null,
+            truncated:
+              page.length < xrefs.length ? true : (referencesTruncated ?? null),
+          }
+        : {}),
     });
   }
 

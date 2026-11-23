@@ -2,15 +2,15 @@ import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { open, writeFile, symlink, truncate } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { ModelArtifactProvider } from "../../../src/model/ModelArtifactProvider.js";
 import { ModelHeaderReader } from "../../../src/model/ModelHeaderReader.js";
 import {
   MODEL_JSON_NESTING,
   MODEL_METADATA_NESTING,
   MODEL_REPORT_BYTES,
-  modelCapacityRemediation,
-  modelCapacityReportedLimits,
+  modelCapacityConstraint,
+  modelCapacityFailure,
 } from "../../../src/model/ModelFormat.js";
 import { readSafetensorsHeader } from "../../../src/model/SafetensorsHeader.js";
 import { ParseFailureError } from "../../../src/domain/parseFailure.js";
@@ -36,13 +36,18 @@ const INVALID_FORMAT = {
 
 const hash = (bytes: Buffer) =>
   createHash("sha256").update(bytes).digest("hex");
-const providerAt = async (bytes: Buffer) => {
+const writeModelFixture = async (bytes: Buffer) => {
   const root = await createTestTempDirectory("rea-model-reader-");
   const path = join(root, "content.without-format-extension");
   await writeFile(path, bytes);
+  return { path, root };
+};
+
+const providerAt = async (bytes: Buffer) => {
+  const fixture = await writeModelFixture(bytes);
   const provider = new ModelArtifactProvider();
   onTestFinished(() => provider.close());
-  return { provider, path, root };
+  return { provider, ...fixture };
 };
 
 it.each([
@@ -723,6 +728,7 @@ it("retains established storage for stable GGUF types and zero-byte K declaratio
       { name: "integer", type: 26, shape: [3n], offset: 0n, bytes: 12 },
       { name: "empty-k", type: 10, shape: [64n, 0n], offset: 32n, bytes: 0 },
       { name: "quant", type: 2, shape: [32n], offset: 32n, bytes: 18 },
+      { name: "fp8", type: 43, shape: [3n], offset: 64n, bytes: 3 },
     ],
   });
   const { provider, path } = await providerAt(fixture.bytes);
@@ -732,8 +738,9 @@ it("retains established storage for stable GGUF types and zero-byte K declaratio
     { type: "I32", byte_length: 12, storage_validation: "consistent" },
     { type: "Q2_K", byte_length: 0, storage_validation: "consistent" },
     { type: "Q4_0", byte_length: 18, storage_validation: "consistent" },
+    { type: "F8_E4M3", byte_length: 3, storage_validation: "consistent" },
   ]);
-  expect(result.value.totals.tensor_bytes).toBe(30);
+  expect(result.value.totals.tensor_bytes).toBe(33);
   expect(result.value.coverage).toMatchObject({
     tensor_ranges: "complete",
     storage_sizes: "complete",
@@ -758,6 +765,65 @@ it("keeps unknown safetensors storage validation separate from observed valid by
     storage_sizes: "partial",
   });
 });
+
+it.each([false, true])(
+  "decodes every fixed-width GGUF scalar type, big-endian=%s",
+  async (bigEndian) => {
+    const scalar = (width: number, write: (b: Buffer) => void) => {
+      const b = Buffer.alloc(width);
+      write(b);
+      return b;
+    };
+    const order = bigEndian ? "BE" : "LE";
+    const rows = [
+      [0, "UINT8", scalar(1, (b) => b.writeUInt8(0xfe)), 0xfe],
+      [1, "INT8", scalar(1, (b) => b.writeInt8(-2)), -2],
+      [2, "UINT16", scalar(2, (b) => b[`writeUInt16${order}`](0xfffe)), 0xfffe],
+      [3, "INT16", scalar(2, (b) => b[`writeInt16${order}`](-300)), -300],
+      [
+        4,
+        "UINT32",
+        scalar(4, (b) => b[`writeUInt32${order}`](0xfffffffe)),
+        0xfffffffe,
+      ],
+      [5, "INT32", scalar(4, (b) => b[`writeInt32${order}`](-70000)), -70000],
+      [6, "FLOAT32", scalar(4, (b) => b[`writeFloat${order}`](-1.5)), -1.5],
+      [7, "BOOL", scalar(1, (b) => b.writeUInt8(1)), true],
+      [
+        10,
+        "UINT64",
+        scalar(8, (b) => b[`writeBigUInt64${order}`](2n ** 63n)),
+        "9223372036854775808",
+      ],
+      [
+        11,
+        "INT64",
+        scalar(8, (b) => b[`writeBigInt64${order}`](-(2n ** 62n))),
+        "-4611686018427387904",
+      ],
+      [
+        12,
+        "FLOAT64",
+        scalar(8, (b) => b[`writeDouble${order}`](-0.125)),
+        -0.125,
+      ],
+    ] as const;
+    const fixture = ggufFixture({
+      bigEndian,
+      metadata: rows.map(([type, name, value]) => ({
+        key: `custom.${name.toLowerCase()}`,
+        type,
+        value,
+      })),
+    });
+    const { path, provider } = await providerAt(fixture.bytes);
+    const result = await provider.inspect({ path, hash: "header" });
+    if (!result.ok) throw result.error;
+    expect(result.value.metadata.map((row) => [row.type, row.value])).toEqual(
+      rows.map(([, name, , expected]) => [name, expected]),
+    );
+  },
+);
 
 it("preserves nonfinite floating metadata and negative zero without JSON coercion", async () => {
   const values = [NaN, Infinity, -Infinity, -0];
@@ -887,36 +953,50 @@ it.each([
   },
 );
 
-it("chooses model recovery from the producing limit", () => {
-  const header = modelCapacityRemediation("header-bytes");
-  expect(header).toContain("100,000,000 bytes");
-  expect(header).not.toContain("Safetensors");
-  expect(header).not.toContain(String(MODEL_REPORT_BYTES));
-  const report = modelCapacityRemediation("report-bytes");
-  expect(report).toContain(`report allowance is ${String(MODEL_REPORT_BYTES)}`);
-  expect(report).not.toContain("representation");
-  const representation = modelCapacityRemediation("representation-bytes");
-  expect(representation).toContain("representation allowance");
-  expect(representation).not.toContain("report allowance");
-  const offset = modelCapacityRemediation("exact-offset");
-  expect(offset).toContain(String(Number.MAX_SAFE_INTEGER));
-  expect(offset).not.toContain(String(MODEL_REPORT_BYTES));
-  const nesting = modelCapacityRemediation("metadata-nesting");
-  expect(nesting).toContain(`${String(MODEL_METADATA_NESTING)} array frames`);
-  expect(nesting).not.toContain(String(MODEL_REPORT_BYTES));
-  const jsonNesting = modelCapacityRemediation("json-nesting");
-  expect(jsonNesting).toContain(`${String(MODEL_JSON_NESTING)} levels`);
-  expect(jsonNesting).not.toContain(String(MODEL_REPORT_BYTES));
-  expect(modelCapacityReportedLimits("report-bytes")).toEqual({
-    maximum_report_bytes: MODEL_REPORT_BYTES,
-  });
-  expect(modelCapacityReportedLimits("exact-offset")).toEqual({
-    maximum_exact_offset: Number.MAX_SAFE_INTEGER,
-  });
-  expect(modelCapacityReportedLimits("json-nesting")).toEqual({
-    maximum_json_depth: MODEL_JSON_NESTING,
-  });
-});
+it.each([
+  [
+    "header-bytes",
+    { maximum_header_bytes: 100_000_000 },
+    "header allowance is 100,000,000 bytes",
+  ],
+  [
+    "report-bytes",
+    { maximum_report_bytes: MODEL_REPORT_BYTES },
+    `report allowance is ${String(MODEL_REPORT_BYTES)} bytes`,
+  ],
+  [
+    "representation-bytes",
+    { maximum_representation_bytes: MODEL_REPORT_BYTES },
+    `representation allowance is ${String(MODEL_REPORT_BYTES)} bytes`,
+  ],
+  [
+    "exact-offset",
+    { maximum_exact_offset: Number.MAX_SAFE_INTEGER },
+    `offset precision stops at ${String(Number.MAX_SAFE_INTEGER)}`,
+  ],
+  [
+    "metadata-nesting",
+    { maximum_array_frames: MODEL_METADATA_NESTING },
+    `GGUF metadata nesting is limited to ${String(MODEL_METADATA_NESTING)} array frames`,
+  ],
+  [
+    "json-nesting",
+    { maximum_json_depth: MODEL_JSON_NESTING },
+    `Safetensors JSON nesting is limited to ${String(MODEL_JSON_NESTING)} levels`,
+  ],
+] as const)(
+  "projects legacy fields and recovery for %s",
+  (limit, reportedLimits, remediation) => {
+    const cause = modelCapacityFailure(limit, "Model allowance exhausted");
+    const error = modelCapacityConstraint("inspect_model_artifact", cause);
+    expect(error).toMatchObject({
+      reason: "Model allowance exhausted",
+      remediationAction: expect.stringContaining(remediation),
+      cause,
+    });
+    expect(error?.reportedLimits).toEqual(reportedLimits);
+  },
+);
 
 it("refuses an oversized declared header before reading or expanding it", async () => {
   const bytes = Buffer.alloc(9);
@@ -1162,6 +1242,88 @@ it("retains GGUF representation capacity when declared string bytes can fit", as
   });
 });
 
+it.each([
+  "metadata row",
+  "tensor descriptor",
+  "array element",
+  "outer array sibling",
+] as const)(
+  "checks required GGUF %s framing before charging a large string",
+  async (following) => {
+    const seed = ggufFixture({ tensors: [] });
+    const largeStringBytes = 6_000_000;
+    const stringLength = seed.u64(BigInt(largeStringBytes));
+    const twoStrings = Buffer.concat([seed.u32(8), seed.u64(2n)]);
+    const array =
+      following === "array element" || following === "outer array sibling";
+    const outer = following === "outer array sibling";
+    const prefix = ggufFixture({
+      tensors: [],
+      metadata: [
+        {
+          key: "custom.value",
+          type: array ? 9 : 8,
+          value: Buffer.concat([
+            ...(outer ? [seed.u32(9), seed.u64(2n)] : []),
+            ...(array ? [twoStrings] : []),
+            stringLength,
+          ]),
+        },
+      ],
+    }).header;
+    if (following === "metadata row") prefix.writeBigUInt64LE(2n, 16);
+    if (following === "tensor descriptor") prefix.writeBigUInt64LE(1n, 8);
+    const stringEnd = prefix.length + largeStringBytes;
+    const emptyString = seed.text("");
+    const tail = {
+      "metadata row": Buffer.concat([
+        seed.text("custom.tail"),
+        seed.u32(0),
+        Buffer.from([1]),
+      ]),
+      "tensor descriptor": Buffer.concat([
+        seed.text("weight"),
+        seed.u32(1),
+        seed.u64(1n),
+        seed.u32(0),
+        seed.u64(0n),
+      ]),
+      "array element": emptyString,
+      "outer array sibling": Buffer.concat([
+        emptyString,
+        seed.u32(8),
+        seed.u64(0n),
+      ]),
+    }[following];
+    const { provider, path } = await providerAt(prefix);
+    const handle = await open(path, "r+");
+    try {
+      // For nested arrays the immediate string sibling fits. Only the outer
+      // array's second element is missing, so its minimum must propagate.
+      if (outer)
+        await handle.write(emptyString, 0, emptyString.length, stringEnd);
+      else await handle.truncate(stringEnd);
+      const malformed = await provider.inspect({ path, hash: "header" });
+      if (malformed.ok) throw new Error("Missing GGUF framing was accepted");
+      expect.soft(malformed.error).toMatchObject(INVALID_FORMAT);
+
+      await handle.write(tail, 0, tail.length, stringEnd);
+      if (following === "tensor descriptor")
+        await handle.truncate(
+          Math.ceil((stringEnd + tail.length) / 32) * 32 + 4,
+        );
+      const limited = await provider.inspect({ path, hash: "header" });
+      if (limited.ok) throw new Error("Oversized representation was accepted");
+      expect(limited.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        reportedLimits: { maximum_representation_bytes: MODEL_REPORT_BYTES },
+      });
+    } finally {
+      await handle.close();
+    }
+  },
+);
+
 it("retains GGUF representation capacity when the declared directory can fit", async () => {
   const header = Buffer.alloc(24);
   header.write("GGUF");
@@ -1343,17 +1505,14 @@ it("reports a truncated safetensors header whose length resembles a pickle marke
   });
 });
 
-it("bounds expansion before allocation and distinguishes unsupported pickle and paths", async () => {
-  const fixture = ggufFixture();
-  fixture.bytes.writeBigUInt64LE(0xffffffffffffffffn, 8);
-  const { provider, path, root } = await providerAt(fixture.bytes);
-  const huge = await provider.inspect({ path, hash: "header" });
-  if (huge.ok) throw new Error("Huge count admitted");
-  expect(huge.error).toMatchObject(INVALID_FORMAT);
-  await writeFile(path, Buffer.from([0x80, 4, 0, 0]));
-  const pickle = await provider.inspect({ path, hash: "header" });
-  if (pickle.ok) throw new Error("Pickle admitted");
-  expect(pickle.error._tag).toBe("AnalysisUnsupportedTargetError");
+it("admits a valid model after refusing pickle and rejects unapproved path types", async () => {
+  const { provider, path, root } = await providerAt(
+    Buffer.from([0x80, 4, 0, 0]),
+  );
+  expect(await provider.inspect({ path, hash: "header" })).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisUnsupportedTargetError" },
+  });
   await writeFile(path, ggufFixture().bytes);
   expect((await provider.inspect({ path, hash: "header" })).ok).toBe(true);
   const alias = join(root, "link");
@@ -1371,44 +1530,53 @@ it("bounds expansion before allocation and distinguishes unsupported pickle and 
   expect(invalid.error._tag).toBe("AnalysisInputError");
 });
 
-it("reads only the exact header, even when it ends in the middle of a normal buffer", async () => {
-  const fixture = safetensorsFixture();
-  const { path } = await providerAt(fixture.bytes);
-  const file = await open(path, "r");
-  onTestFinished(() => file.close());
-  const requests: [number, number][] = [];
-  const read = file.read.bind(file);
-  const boundary = {
-    read: async (
+it.each([
+  ["GGUF", ggufFixture],
+  ["safetensors", safetensorsFixture],
+] as const)(
+  "reads and hashes the exact %s header across short positional reads",
+  async (format, build) => {
+    const fixture = build();
+    const { path } = await writeModelFixture(fixture.bytes);
+    const file = await open(path, "r");
+    const read = file.read.bind(file);
+    let bytesRead = 0;
+    const shortRead = async (
       buffer: Buffer,
       offset: number,
       length: number,
       position: number,
     ) => {
-      requests.push([position, length]);
       expect(position + length).toBeLessThanOrEqual(fixture.header.length);
-      return read(buffer, offset, length, position);
-    },
-  } as Pick<typeof file, "read">;
-  const reader = new ModelHeaderReader(
-    boundary as typeof file,
-    fixture.bytes.length,
-  );
-  await readSafetensorsHeader(reader, await reader.take(4));
-  expect(await reader.finish(false)).toMatchObject({
-    bytes_read: fixture.header.length,
-    header_sha256: hash(fixture.header),
-  });
-  expect(requests.reduce((n, [, length]) => n + length, 0)).toBe(
-    fixture.header.length,
-  );
-});
+      const result = await read(buffer, offset, Math.min(length, 3), position);
+      bytesRead += result.bytesRead;
+      return result;
+    };
+    const spy = vi
+      .spyOn(file, "read")
+      .mockImplementation(shortRead as typeof file.read);
+    onTestFinished(async () => {
+      spy.mockRestore();
+      await file.close();
+    });
+    const reader = new ModelHeaderReader(file, fixture.bytes.length);
+    const first = await reader.take(4);
+    if (format === "GGUF") await new GgufHeader(reader).read();
+    else await readSafetensorsHeader(reader, first);
+    expect(await reader.finish(false)).toEqual({
+      bytes_read: fixture.header.length,
+      header_sha256: hash(fixture.header),
+      sha256: null,
+    });
+    expect(bytesRead).toBe(fixture.header.length);
+  },
+);
 
 it.each(["header", "full"] as const)(
-  "classifies real truncation after admission during %s reading as an identity change",
+  "classifies real EOF after admission during %s reading as incomplete coverage",
   async (mode) => {
     const fixture = ggufFixture();
-    const { path } = await providerAt(fixture.bytes);
+    const { path } = await writeModelFixture(fixture.bytes);
     const file = await open(path, "r");
     onTestFinished(() => file.close());
     const admitted = await file.stat();
@@ -1416,39 +1584,12 @@ it.each(["header", "full"] as const)(
     if (mode === "full") await reader.take(fixture.header.length);
     await truncate(path, mode === "header" ? 0 : fixture.header.length);
     const reading = mode === "header" ? reader.take(4) : reader.finish(true);
-    await expect(reading).rejects.toMatchObject({ reason: "integrity" });
+    await expect(reading).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "read-coverage",
+    });
   },
 );
-
-it("keeps GGUF read-ahead inside the directory and hashes precisely that prefix", async () => {
-  const fixture = ggufFixture();
-  const { path } = await providerAt(fixture.bytes);
-  const file = await open(path, "r");
-  onTestFinished(() => file.close());
-  const read = file.read.bind(file);
-  let bytesRead = 0;
-  const boundary = {
-    read: async (
-      buffer: Buffer,
-      offset: number,
-      length: number,
-      position: number,
-    ) => {
-      expect(position + length).toBeLessThanOrEqual(fixture.header.length);
-      const result = await read(buffer, offset, length, position);
-      bytesRead += result.bytesRead;
-      return result;
-    },
-  } as Pick<typeof file, "read">;
-  const reader = new ModelHeaderReader(
-    boundary as typeof file,
-    fixture.bytes.length,
-  );
-  await reader.take(4);
-  await new GgufHeader(reader).read();
-  await reader.finish(false);
-  expect(bytesRead).toBe(fixture.header.length);
-});
 
 it("inspects a 1 GiB sparse safetensors declaration using only its small header", async () => {
   const dataBytes = 1024 ** 3;
@@ -1491,43 +1632,6 @@ it("supports true scalar shapes and prototype-named metadata without changing th
     ["__proto__", "raw"],
     ["constructor", "kept"],
   ]);
-});
-
-it("yields while validating a large metadata array, preserves cancellation and releases admission", async () => {
-  const f = ggufFixture();
-  const count = 1_000_000;
-  const fixture = ggufFixture({
-    metadata: [
-      {
-        key: "custom.bools",
-        type: 9,
-        value: Buffer.concat([
-          f.u32(7),
-          f.u64(BigInt(count)),
-          Buffer.alloc(count),
-        ]),
-      },
-    ],
-  });
-  const { path, provider } = await providerAt(fixture.bytes);
-  const controller = new AbortController();
-  const reason = new Error("stop large array");
-  const pending = provider.inspect(
-    { path, hash: "header" },
-    { signal: controller.signal },
-  );
-  setTimeout(() => controller.abort(reason), 0);
-  const result = await pending;
-  if (result.ok) throw new Error("Cancellation ignored");
-  expect(result.error).toMatchObject({
-    _tag: "AnalysisCancelledError",
-    cause: reason,
-  });
-  expect(result.error.cause).toBe(reason);
-  await writeFile(path, ggufFixture().bytes);
-  const recovered = await provider.inspect({ path, hash: "header" });
-  if (!recovered.ok) throw recovered.error;
-  expect(recovered.value.tensors).toHaveLength(2);
 });
 
 it("retains explicit scoped identity through shared service and preserves caller abort reasons", async () => {
@@ -1639,6 +1743,31 @@ it("rejects a tensor directory whose old 20-byte estimate fits but fixed fields 
     error: INVALID_FORMAT,
   });
 });
+
+it.each([false, true])(
+  "reserves later GGUF tensor framing before publishing a dimensioned row (big endian: %s)",
+  async (bigEndian) => {
+    const fixture = ggufFixture({
+      bigEndian,
+      metadata: [],
+      tensors: [
+        { name: "first", type: 0, shape: [1n], offset: 0n, bytes: 4 },
+        { name: "next", type: 0, shape: [], offset: 32n, bytes: 4 },
+      ],
+    });
+    // Leave 23 bytes after the first descriptor, one short of the
+    // second descriptor’s minimum framing even with an empty name.
+    const { provider, path } = await providerAt(
+      fixture.header.subarray(0, fixture.header.length - 5),
+    );
+    const result = await provider.inspect({ path, hash: "header" });
+    if (result.ok) throw new Error("Truncated GGUF directory admitted");
+    expect(result.error).toMatchObject(INVALID_FORMAT);
+    expect(
+      parseEvidence(result.error.partialObservation).normalized_result,
+    ).toMatchObject({ declared_tensor_count: 2, tensor_declarations: [] });
+  },
+);
 
 it("retains decoded counts when a physically fitting GGUF header exceeds the header budget", async () => {
   const count = 4_166_667;

@@ -9,6 +9,8 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   createRustImage,
   createRustHashOverflowImage,
+  createRustWasmModule,
+  createWasmSectionFlood,
 } from "../../fixtures/rust/image.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
@@ -72,6 +74,26 @@ mcpTest(
         rustBinarySchema.parse(absentEvidence.normalized_result)
           .auditable_metadata,
       ).toBeNull();
+      // The listed tools let the client check WebAssembly's null word size
+      // against the advertised output schema, not only the source contract.
+      const module = join(root, "sample.wasm");
+      await writeFile(module, createRustWasmModule());
+      const wasm = await client.callTool({
+        name: "inspect_rust_binary",
+        arguments: { path: module },
+      });
+      expect(wasm.isError, JSON.stringify(wasm.content)).not.toBe(true);
+      expect(
+        rustBinarySchema.parse(
+          toolContract("inspect_rust_binary").outputSchema.parse(
+            wasm.structuredContent,
+          ).normalized_result,
+        ),
+      ).toMatchObject({
+        format: "wasm",
+        bits: null,
+        auditable_metadata: { section_name: ".dep-v0", root_package_index: 1 },
+      });
     } finally {
       await session.close();
     }
@@ -124,6 +146,53 @@ mcpTest(
           control_kind: "parameter",
           parameter: "max_rustc_hashes",
         }),
+      });
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+mcpTest(
+  "refuses a WebAssembly section walk past its fixed work allowance",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    try {
+      const root = await createTestTempDirectory("rea-rust-mcp-");
+      const path = join(root, "many-sections.wasm");
+      const complete = createWasmSectionFlood(65_537);
+      await writeFile(path, complete);
+      const response = await client.callTool({
+        name: "inspect_rust_binary",
+        arguments: { path },
+      });
+      expect(parseMcpToolError(response).error).toMatchObject({
+        code: "resource_constraint",
+        retryable: false,
+        details: {
+          operation: "inspect_rust_binary",
+          resource: "cpu",
+          reported_limits: { boundary: "max_wasm_sections", maximum: 65_536 },
+          refusal: {
+            kind: "fixed_ceiling",
+            allowance_kind: "work",
+            limit: 65_536,
+            unit: "sections",
+          },
+        },
+      });
+
+      await writeFile(path, complete.subarray(0, complete.length - 1));
+      const truncated = await client.callTool({
+        name: "inspect_rust_binary",
+        arguments: { path },
+      });
+      expect(parseMcpToolError(truncated).error).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "inspect_rust_binary",
+          issues: [{ path: ["path"], reason: "invalid_format" }],
+        },
       });
     } finally {
       await session.close();

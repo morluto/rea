@@ -202,6 +202,27 @@ export const builtinDataEffectIdentity = (
     : { path: candidate, builtinAuthority: "candidate" };
 };
 
+/** Recover the default HTTP agent protocol only while its shared slot is intact. */
+export const semanticDefaultHttpProtocol = (
+  callee: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): "http:" | "https:" | undefined => {
+  for (const family of ["http", "https"] as const) {
+    const identity = builtinDataEffectIdentity(callee, state, [
+      family,
+      `node:${family}`,
+    ]);
+    if (
+      identity?.builtinAuthority === undefined &&
+      identity?.path.length === 1 &&
+      (identity.path[0] === "request" || identity.path[0] === "get") &&
+      !requiredModuleChanged(family, ["globalAgent", "protocol"], callee, state)
+    )
+      return family === "http" ? "http:" : "https:";
+  }
+  return undefined;
+};
+
 const builtinDataEffectCallablePathWithAuthority = (
   callee: t.Node,
   state: JavaScriptSemanticAnalysisState,
@@ -848,7 +869,7 @@ const processSnapshotObjectRoot = (
 };
 
 /** Check shared exports at the use or method-capture point, not at every later call. */
-const requiredModuleChanged = (
+export const requiredModuleChanged = (
   specifier: string,
   selected: readonly string[],
   capture: t.Node,

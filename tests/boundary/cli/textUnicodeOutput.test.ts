@@ -2,7 +2,7 @@ import { Writable } from "node:stream";
 import { expect, it } from "vitest";
 import { decode } from "@toon-format/toon";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
-import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
 import { silentLogger } from "../../../src/logger.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";

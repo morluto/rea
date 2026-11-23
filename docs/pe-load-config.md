@@ -17,6 +17,9 @@ and callback-array file ranges. `tls` reports the raw data range, index address,
 zero-fill size, characteristics and null-terminated callback array. Callback VAs
 are hexadecimal strings to preserve 64-bit precision. RVA, mapped file offset,
 and section are derived locations; unknown mappings are `null`.
+TLS template file offsets require file-backed bytes within the declared image;
+file-alignment padding outside a section's virtual extent leaves the offset
+unknown while retaining the stored address range.
 
 `load_config` reports fields only when its declared `Size` covers the entire
 field. MSVC x86 images often declare a 64-byte load-config data directory while

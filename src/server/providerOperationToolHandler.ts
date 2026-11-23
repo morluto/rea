@@ -19,13 +19,15 @@ import type { ToolContract } from "../contracts/toolContractTypes.js";
 import { ok } from "../domain/result.js";
 import type { RecoveryAdmission } from "../application/investigation/InvestigationRetention.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import { logToolExecution } from "./toolLogging.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { recordEvidenceSources } from "../application/investigation/recordEvidenceSources.js";
 import { createOperationProgress } from "./operationProgress.js";
+
+import { currentMcpToolRequest } from "./McpToolRequest.js";
 
 /** A provider operation a tool contract names. */
 export type ProviderOperation = Exclude<AnalysisOperation, "health">;
@@ -82,8 +84,14 @@ export const createProviderOperationToolHandler =
       input: unknown,
       context: ServerContext,
     ): Promise<CallToolResult> => {
-      const parameters = jsonObjectSchema.parse(input);
-      const ready = delivery?.preflight(parameters) ?? ok(null);
+      const resolved = ownedJsonObjectSchema.parse(input);
+      const parameters =
+        currentMcpToolRequest()?.callerParameters(
+          contract.name,
+          input,
+          resolved,
+        ) ?? resolved;
+      const ready = delivery?.preflight(resolved) ?? ok(null);
       if (!ready.ok) return server.delivery.toCallToolResult(ready, contract);
       const admitted = await dependencies.withAdmittedAnalysis(
         contract.name,
@@ -147,7 +155,7 @@ export const createProviderOperationToolHandler =
               server.delivery.toCallToolResult(evidence, contract),
             );
           const projected =
-            delivery?.projectEvidence(parameters, evidence.value) ??
+            delivery?.projectEvidence(resolved, evidence.value) ??
             ok(evidence.value);
           if (!projected.ok)
             return progress.complete(
