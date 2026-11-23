@@ -95,6 +95,15 @@ describe("release exposure checks", () => {
     expect(statusOf(report, "native.hardening")).toBe("not_assessed");
     expect(statusOf(report, "macho.hardened_runtime")).toBe("not_assessed");
     expect(statusOf(report, "android.manifest")).toBe("not_assessed");
+    expect(
+      report.checks.find((check) => check.id === "macho.hardened_runtime"),
+    ).toMatchObject({ next_probe: "inspect_signature" });
+    expect(
+      report.checks.find((check) => check.id === "android.manifest"),
+    ).toMatchObject({ next_probe: "inspect_android_package" });
+    expect(
+      report.checks.find((check) => check.id === "electron.run_as_node"),
+    ).toMatchObject({ status: "not_applicable", next_probe: null });
   });
 
   it("grades shipped source maps separately from embedded sources", () => {
@@ -182,6 +191,9 @@ describe("release exposure fuse and package checks", () => {
       }),
     );
     expect(statusOf(insecure, "electron.run_as_node")).toBe("exposed");
+    expect(
+      insecure.checks.find((check) => check.id === "electron.run_as_node"),
+    ).toMatchObject({ next_probe: "inspect_electron_fuses" });
     expect(statusOf(insecure, "electron.node_cli_inspect")).toBe("exposed");
     expect(statusOf(insecure, "electron.asar_integrity")).toBe("exposed");
     expect(statusOf(insecure, "electron.only_load_from_asar")).toBe("exposed");
@@ -237,6 +249,9 @@ describe("release exposure fuse and package checks", () => {
       }),
     );
     expect(statusOf(plain, "electron.run_as_node")).toBe("not_applicable");
+    expect(
+      plain.checks.find((check) => check.id === "electron.run_as_node"),
+    ).toMatchObject({ next_probe: null });
 
     const bundle = reportFor(
       scan(),
@@ -643,6 +658,12 @@ describe("release exposure native and text checks", () => {
     );
     expect(statusOf(other, "go.build_paths")).toBe("not_applicable");
     expect(statusOf(other, "rust.dependency_metadata")).toBe("not_applicable");
+    expect(
+      other.checks.find((check) => check.id === "go.build_paths"),
+    ).toMatchObject({ next_probe: null });
+    expect(
+      unknown.checks.find((check) => check.id === "go.build_paths"),
+    ).toMatchObject({ next_probe: "inspect_go_binary" });
   });
 });
 
@@ -777,5 +798,138 @@ describe("electron host fuses beside other images", () => {
       "not_observed",
     );
     expect(statusOf(report(), "electron.run_as_node")).toBe("not_observed");
+  });
+});
+
+describe("release exposure format applicability", () => {
+  const fileScan = (
+    format: string,
+    kind: ReleaseExposureScan["target"]["kind"] = "executable",
+  ) =>
+    scan({
+      target: {
+        selected_path: `/work/sample.${format}`,
+        kind,
+        format,
+        sha256: SHA,
+      },
+      subject: { path: `/work/sample.${format}`, sha256: SHA, format },
+      pdb: {
+        examined: format === "pe" ? 1 : 0,
+        paths: [],
+        failed: 0,
+      },
+      text_members: { scanned: 0, skipped: 0 },
+    });
+
+  const row = (
+    report: ReturnType<typeof reportFor>,
+    id: ReleaseExposureCheckId,
+  ) => report.checks.find((check) => check.id === id);
+
+  const absentMetadata = owners({
+    go_images: [{ kind: "absent" }],
+    rust_images: [{ kind: "absent" }],
+  });
+
+  it("marks format-inapplicable checks on a PE without a next probe", () => {
+    const report = reportFor(fileScan("pe"), absentMetadata);
+    expect(row(report, "native.hardening")).toMatchObject({
+      status: "not_assessed",
+      next_probe: "inspect_binary_hardening",
+    });
+    expect(row(report, "macho.hardened_runtime")).toMatchObject({
+      status: "not_applicable",
+      next_probe: null,
+    });
+    expect(row(report, "android.manifest")).toMatchObject({
+      status: "not_applicable",
+      next_probe: null,
+    });
+    expect(row(report, "electron.run_as_node")).toMatchObject({
+      status: "not_applicable",
+      next_probe: null,
+    });
+    expect(row(report, "go.build_paths")).toMatchObject({
+      status: "unknown",
+      next_probe: "inspect_go_binary",
+    });
+    expect(report.summary.by_status.not_assessed).toBe(1);
+  });
+
+  it.each(["mach-o", "mach-o-universal"] as const)(
+    "keeps Mach-O hardened runtime unassessed on %s and drops the Android probe",
+    (format) => {
+      const report = reportFor(fileScan(format), absentMetadata);
+      expect(row(report, "native.pdb_path")).toMatchObject({
+        status: "not_applicable",
+        next_probe: null,
+      });
+      expect(row(report, "native.hardening")).toMatchObject({
+        status: "not_assessed",
+        next_probe: "inspect_binary_hardening",
+      });
+      expect(row(report, "macho.hardened_runtime")).toMatchObject({
+        status: "not_assessed",
+        next_probe: "inspect_signature",
+      });
+      expect(row(report, "android.manifest")).toMatchObject({
+        status: "not_applicable",
+        next_probe: null,
+      });
+    },
+  );
+
+  it("treats an ELF the same way as a PE for Mach-O and Android checks", () => {
+    const report = reportFor(fileScan("elf"), absentMetadata);
+    expect(row(report, "macho.hardened_runtime")?.status).toBe(
+      "not_applicable",
+    );
+    expect(row(report, "android.manifest")).toMatchObject({
+      status: "not_applicable",
+      next_probe: null,
+    });
+    expect(row(report, "native.hardening")?.status).toBe("not_assessed");
+  });
+
+  it("keeps deferred checks unassessed for a package and an app bundle", () => {
+    for (const scanned of [
+      fileScan("apk", "file"),
+      fileScan("asar", "asar"),
+      fileScan("pyinstaller"),
+      scan({
+        target: {
+          selected_path: "/work/Sample.app",
+          kind: "app",
+          format: "directory",
+          sha256: null,
+        },
+      }),
+    ]) {
+      const report = reportFor(scanned);
+      expect(row(report, "native.hardening")?.status).toBe("not_assessed");
+      expect(row(report, "macho.hardened_runtime")).toMatchObject({
+        status: "not_assessed",
+        next_probe: "inspect_signature",
+      });
+      expect(row(report, "android.manifest")).toMatchObject({
+        status: "not_assessed",
+        next_probe: "inspect_android_package",
+      });
+    }
+  });
+
+  it("drops deferred probes on a known single file that is not a native image", () => {
+    const report = reportFor(fileScan("plist", "file"));
+    for (const id of [
+      "native.hardening",
+      "macho.hardened_runtime",
+      "android.manifest",
+    ] as const) {
+      expect(row(report, id)).toMatchObject({
+        status: "not_applicable",
+        next_probe: null,
+      });
+    }
   });
 });

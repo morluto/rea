@@ -68,7 +68,7 @@ Use `audit_release_exposure` (`rea audit-release-exposure PATH`) when the questi
 
 `text.credential_markers` reports a rule id and location only. Matched bytes, previews, lengths, and hashes of matched bytes are omitted.
 
-`native.hardening`, `macho.hardened_runtime`, and `android.manifest` are not assessed here. Their next probes are `inspect_binary_hardening`, `inspect_signature`, and `inspect_android_package`.
+`native.hardening`, `macho.hardened_runtime`, and `android.manifest` are not run here. On a directory, app bundle, or package they stay `not_assessed`, with next probes `inspect_binary_hardening`, `inspect_signature`, and `inspect_android_package`. On a single file whose format is known, a check that cannot apply is `not_applicable` and has no next probe. `native.hardening` still applies to ELF, PE, and Mach-O, and `macho.hardened_runtime` still applies to Mach-O. Any `not_applicable` check has no next probe.
 
 See [release exposure](https://github.com/morluto/rea/blob/main/docs/release-exposure.md).
 

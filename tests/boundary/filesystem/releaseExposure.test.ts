@@ -20,6 +20,7 @@ import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErr
 import { releaseExposureReportSchema } from "../../../src/domain/releaseExposure.js";
 import { prependAsarJsonWhitespace } from "../../fixtures/asarHeader.js";
 import { thinFuseImage } from "../../fixtures/electron/fuseImage.js";
+import { minimalMachoImage } from "../../fixtures/nativeHeaders.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("release exposure Deno filesystem boundary", () => {
@@ -367,4 +368,72 @@ describe("release exposure ASAR header admission", () => {
       await lowered.close();
     }
   });
+});
+
+/** Inert PE32+ header. It has no code and is never executed. */
+const inertPeImage = (): Buffer => {
+  const offset = 128;
+  const bytes = Buffer.alloc(offset + 24 + 240);
+  bytes.write("MZ", 0, "ascii");
+  bytes.writeUInt16LE(4, 8);
+  bytes.writeUInt16LE(64, 24);
+  bytes.writeUInt32LE(offset, 60);
+  bytes.set([0x50, 0x45, 0, 0], offset);
+  bytes.writeUInt16LE(0x8664, offset + 4);
+  bytes.writeUInt16LE(240, offset + 20);
+  bytes.writeUInt16LE(0x0002, offset + 22);
+  bytes.writeUInt16LE(0x20b, offset + 24);
+  return bytes;
+};
+
+describe("release exposure single-file format", () => {
+  it.each([
+    { format: "pe" as const, bytes: inertPeImage() },
+    { format: "mach-o" as const, bytes: minimalMachoImage() },
+  ])(
+    "does not probe a format that cannot apply to a $format file",
+    async ({ format, bytes }) => {
+      const root = await createTestTempDirectory(
+        `rea-release-exposure-${format}-`,
+      );
+      const path = join(root, format === "pe" ? "sample.exe" : "sample");
+      await writeFile(path, bytes);
+      const service = createReleaseExposureService();
+      try {
+        const result = await service.inspect({ path });
+        if (!result.ok) throw result.error;
+        const report = releaseExposureReportSchema.parse(
+          result.value.normalized_result,
+        );
+        expect(report.target).toMatchObject({ kind: "executable", format });
+        const row = (id: (typeof report.checks)[number]["id"]) =>
+          report.checks.find((check) => check.id === id);
+        expect(row("native.hardening")).toMatchObject({
+          status: "not_assessed",
+          next_probe: "inspect_binary_hardening",
+        });
+        expect(row("android.manifest")).toMatchObject({
+          status: "not_applicable",
+          next_probe: null,
+        });
+        expect(row("macho.hardened_runtime")).toMatchObject(
+          format === "mach-o"
+            ? { status: "not_assessed", next_probe: "inspect_signature" }
+            : { status: "not_applicable", next_probe: null },
+        );
+        if (format === "mach-o") {
+          expect(row("native.pdb_path")).toMatchObject({
+            status: "not_applicable",
+            next_probe: null,
+          });
+        }
+        expect(row("electron.run_as_node")).toMatchObject({
+          status: "not_applicable",
+          next_probe: null,
+        });
+      } finally {
+        await service.close();
+      }
+    },
+  );
 });

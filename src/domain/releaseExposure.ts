@@ -282,14 +282,25 @@ export const releaseExposureReportSchema = z
       });
     for (const [index, check] of report.checks.entries()) {
       const policy = CHECK_TABLE[check.id];
-      if (
-        check.remediation !== policy.remediation ||
-        check.next_probe !== policy.next_probe
-      )
+      if (check.remediation !== policy.remediation)
         context.addIssue({
           code: "custom",
-          path: ["checks", index],
-          message: "Remediation and next probe are fixed per check.",
+          path: ["checks", index, "remediation"],
+          message: "Remediation is fixed per check.",
+        });
+      // A check that does not apply has nothing further to run on this target.
+      if (check.status === "not_applicable") {
+        if (check.next_probe !== null)
+          context.addIssue({
+            code: "custom",
+            path: ["checks", index, "next_probe"],
+            message: "A check that does not apply has no next probe.",
+          });
+      } else if (check.next_probe !== policy.next_probe)
+        context.addIssue({
+          code: "custom",
+          path: ["checks", index, "next_probe"],
+          message: "Next probe is fixed per check.",
         });
       if (check.status === "exposed" && check.severity !== policy.severity)
         context.addIssue({
@@ -501,7 +512,7 @@ const makeCheck = (
     observation: { counts, samples: boundSamples(samples) },
     locations: boundLocations(locations),
     remediation: policy.remediation,
-    next_probe: policy.next_probe,
+    next_probe: status === "not_applicable" ? null : policy.next_probe,
   };
 };
 
@@ -868,25 +879,69 @@ const credentialCheck = (
   );
 };
 
-const notAssessed = (
-  id: "native.hardening" | "macho.hardened_runtime" | "android.manifest",
-  path: string,
-): ReleaseExposureCheck =>
-  makeCheck(
+type DeferredCheckId =
+  | "native.hardening"
+  | "macho.hardened_runtime"
+  | "android.manifest";
+
+/**
+ * Formats of one selected file that is that format itself.
+ * A directory, app bundle, or package can hold another format among its
+ * members, so those selections stay out of this set.
+ */
+const SINGLE_FILE_FORMATS = new Set([
+  "dos-com",
+  "dos-mz",
+  "elf",
+  "entitlements",
+  "mach-o",
+  "mach-o-universal",
+  "pe",
+  "plist",
+  "source-map",
+]);
+
+/**
+ * Formats on which a deferred check could still be run.
+ * An Android manifest is a package member, so no format in
+ * {@link SINGLE_FILE_FORMATS} is its subject.
+ */
+const DEFERRED_APPLICABLE_FORMATS: Record<
+  DeferredCheckId,
+  ReadonlySet<string>
+> = {
+  "native.hardening": new Set(["elf", "pe", "mach-o", "mach-o-universal"]),
+  "macho.hardened_runtime": new Set(["mach-o", "mach-o-universal"]),
+  "android.manifest": new Set<string>(),
+};
+
+const deferredCheck = (
+  id: DeferredCheckId,
+  scan: ReleaseExposureScan,
+): ReleaseExposureCheck => {
+  const { kind, format, selected_path: path } = scan.target;
+  const decided =
+    (kind === "executable" || kind === "file") &&
+    SINGLE_FILE_FORMATS.has(format);
+  const status: Status =
+    decided && !DEFERRED_APPLICABLE_FORMATS[id].has(format)
+      ? "not_applicable"
+      : "not_assessed";
+  return makeCheck(
     id,
-    "not_assessed",
+    status,
     "inferred",
     { assessed: 0 },
     [],
     targetLocation(path),
   );
+};
 
 /** Build the fixed check list from reader facts and owner results. */
 export const assembleReleaseExposureReport = (
   scan: ReleaseExposureScan,
   owners: ReleaseExposureOwnerFacts,
 ): ReleaseExposureReport => {
-  const path = scan.target.selected_path;
   const checks = [
     sourceMapCheck(
       "javascript.source_map_sources",
@@ -908,9 +963,9 @@ export const assembleReleaseExposureReport = (
     goCheck(scan, owners.go_images),
     rustCheck(scan, owners.rust_images),
     credentialCheck(scan, owners.credential_markers),
-    notAssessed("native.hardening", path),
-    notAssessed("macho.hardened_runtime", path),
-    notAssessed("android.manifest", path),
+    deferredCheck("native.hardening", scan),
+    deferredCheck("macho.hardened_runtime", scan),
+    deferredCheck("android.manifest", scan),
   ];
   return releaseExposureReportSchema.parse({
     target: scan.target,
