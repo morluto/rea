@@ -4098,6 +4098,72 @@ it("checks every media type a repeated nested index reference admits", async () 
   ]);
 });
 
+it("does not keep rejected non-string manifest declarations alive during the walk", async () => {
+  setFlagsFromString("--expose-gc");
+  const gc = runInNewContext("gc") as () => void;
+  const MANIFESTS = 10;
+  const root = await createTestTempDirectory("rea-oci-declaration-retention-");
+  const written = await writeOciImageLayoutFixture(root);
+  const manifest = JSON.parse(
+    await readFile(
+      join(root, "blobs", "sha256", written.manifestDigest.slice(7)),
+      "utf8",
+    ),
+  ) as Record<string, unknown>;
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: Record<string, unknown>[];
+  };
+  const [entry] = index.manifests;
+  const entries = [];
+  for (let at = 0; at < MANIFESTS; at += 1) {
+    // About 0.9 MiB per declaration, below the size Node hands out as an
+    // external string, so a retained declaration is counted in heapUsed.
+    const json = `${JSON.stringify({
+      ...manifest,
+      mediaType: { padding: `${"p".repeat(900_000)}${String(at)}` },
+    })}\n`;
+    entries.push({
+      ...entry,
+      digest: await putOciBlob(root, json),
+      size: Buffer.byteLength(json),
+    });
+  }
+  index.manifests = entries;
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  let peak = 0;
+  class SamplingReader extends DirectoryArtifactReader {
+    override async open(
+      ...args: Parameters<DirectoryArtifactReader["open"]>
+    ): ReturnType<DirectoryArtifactReader["open"]> {
+      gc();
+      peak = Math.max(peak, process.memoryUsage().heapUsed);
+      return super.open(...args);
+    }
+  }
+  const reader = new SamplingReader(root);
+  try {
+    gc();
+    gc();
+    const before = process.memoryUsage().heapUsed;
+    const report = ociImageLayoutSchema.parse(
+      await parseOciImageLayout(
+        reader,
+        inspectOciImageLayoutInputSchema.parse({ path: root }),
+      ),
+    );
+    expect(
+      report.findings.filter((finding) =>
+        finding.message.includes("mediaType is not a string"),
+      ),
+    ).toHaveLength(MANIFESTS);
+    // Ten retained declarations would hold about 9 MiB at the last read.
+    expect(peak - before).toBeLessThan(5 << 20);
+  } finally {
+    await reader.close();
+  }
+});
+
 it("checks the root index.json declaration against the index document kind", async () => {
   // A root that declares the manifest type carries manifest members the
   // index walk never reads, so the blobs they name cannot be unreferenced.

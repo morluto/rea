@@ -1609,10 +1609,16 @@ const inventoryOciImageLayout = async (
   // distinct media type a descriptor admits it under is still checked
   // against the declaration its first decode recorded, so conflict findings
   // and completeness do not depend on descriptor order. A media type that
-  // names a document not yet decoded waits for that decode.
+  // names a document not yet decoded waits for that decode. Only a string
+  // declaration is kept; a non-string one is rejected whatever it holds, so
+  // null stands in for it rather than retaining untrusted JSON no budget
+  // charges.
   const declarations = new Map<
     string,
-    { readonly declared: unknown; readonly checked: Set<string> }
+    {
+      readonly declared: string | null | undefined;
+      readonly checked: Set<string>;
+    }
   >();
   const pendingAdmissions = new Map<string, Set<string>>();
   const admitAgain = (
@@ -1648,8 +1654,12 @@ const inventoryOciImageLayout = async (
     readonly document: Record<string, unknown>;
   }): void => {
     checkDeclaredMediaType(owner, digest, admitted, document);
+    const declared: unknown = document.mediaType;
     declarations.set(identity, {
-      declared: document.mediaType,
+      declared:
+        declared === undefined || typeof declared === "string"
+          ? declared
+          : null,
       checked: new Set([admitted]),
     });
     const pending = pendingAdmissions.get(identity);
