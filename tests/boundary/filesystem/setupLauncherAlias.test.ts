@@ -89,14 +89,13 @@ it.skipIf(process.platform === "win32").each(["node", "bun"] as const)(
       "linux",
     );
     expect(selected).toBe(alias);
-    expect(await realpath(selected)).toBe(executable);
+    expect(await realpath(alias)).toBe(executable);
 
     await rm(latest);
     await symlink(next, latest, "dir");
     await rm(old, { recursive: true });
     await expect(access(executable)).rejects.toMatchObject({ code: "ENOENT" });
-    await access(selected);
-    expect(await realpath(selected)).toBe(join(next, runtime));
+    expect(await realpath(alias)).toBe(join(next, runtime));
     expect(
       registrationRuntimePath(
         join(next, runtime),
@@ -105,6 +104,33 @@ it.skipIf(process.platform === "win32").each(["node", "bun"] as const)(
         "linux",
       ),
     ).toBe(selected);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "resolves an explicitly selected session script to the installed file",
+  async () => {
+    const root = await createTestTempDirectory("rea-session-entrypoint-");
+    const directory = join(root, "custom-session");
+    await mkdir(directory);
+    const script = join(root, "rea.mjs");
+    const entrypoint = join(directory, "rea");
+    await writeFile(script, "// installed REA script\n");
+    await symlink(script, entrypoint);
+    const command = () =>
+      currentClientRegistrationCommand({
+        platform: "linux",
+        entrypointPath: entrypoint,
+        environment: { FNM_MULTISHELL_PATH: directory, PATH: directory },
+      });
+    expect(command()).toEqual([process.execPath, script, "mcp"]);
+
+    await rm(entrypoint);
+    await writeFile(
+      entrypoint,
+      "// script installed only inside the session\n",
+    );
+    expect(command()).toEqual([]);
   },
 );
 

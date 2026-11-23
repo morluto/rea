@@ -4,10 +4,13 @@ import { JavaScriptAnalysisWorker } from "./JavaScriptAnalysisWorker.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "../../domain/analysisErrorCore.js";
 import { primaryAnalysisError } from "../../domain/analysisErrorBase.js";
 import { spawnOwnedProviderProcess } from "../../process/ProviderProcess.js";
+import { WorkerFrameSignal } from "../../process/WorkerFrameSignal.js";
+import { EventEmitter } from "node:events";
 import { phaseArrival } from "../../../tests/support/lifecycleHarness.js";
 
 const text = "export const observed = 1;";
@@ -99,4 +102,50 @@ it("times out a worker whose ready frame never arrives and stops it", async () =
   // The refusal itself stops the child; close() is only teardown.
   expect(fixture.pids).toHaveLength(1);
   expect(fixture.pids.filter(alive)).toEqual([]);
+});
+
+it("wakes a silent worker on an owned memory refusal before the deadline", async () => {
+  const fixture = standInWorker("setInterval(() => {}, 1000);");
+  let notify: (() => void) | undefined;
+  const worker = new JavaScriptAnalysisWorker(
+    { heapMb: 128, timeoutMs: 30_000 },
+    async (options) => {
+      const owned = await fixture.launcher(options);
+      let reached = false;
+      Object.defineProperty(owned.process, "memoryLimitReached", {
+        get: () => reached,
+      });
+      if (!(owned.process instanceof EventEmitter))
+        throw new Error("Expected an event-emitting worker");
+      const child = owned.process;
+      notify = () => {
+        reached = true;
+        child.emit("memory-limit");
+      };
+      return owned;
+    },
+  );
+  onTestFinished(() => worker.close());
+  const waiting = phaseArrival();
+  const original = WorkerFrameSignal.prototype.wait;
+  const wait = vi
+    .spyOn(WorkerFrameSignal.prototype, "wait")
+    .mockImplementation(function (this: WorkerFrameSignal, signal) {
+      const pending = original.call(this, signal);
+      waiting.arrive();
+      return pending;
+    });
+  onTestFinished(() => {
+    wait.mockRestore();
+  });
+  const analysis = worker.analyze(file, budget);
+  await waiting.reached(analysis, "silent worker waiting for a frame");
+  if (notify === undefined) throw new Error("Worker was not launched");
+  notify();
+  const refused = await analysis;
+  if (refused.ok) throw new Error("Expected a memory refusal");
+  const primary = primaryAnalysisError(refused.error.error);
+  expect(primary).toBeInstanceOf(AnalysisResourceConstraintError);
+  expect(primary).toMatchObject({ resource: "memory" });
+  expect(refused.error.error.cleanupIncomplete).toBe(false);
 });

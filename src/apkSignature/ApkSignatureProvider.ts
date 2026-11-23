@@ -165,12 +165,13 @@ interface DecodedScheme {
 
 const lineageOf = (
   signer: ApkSigner,
+  version: Exclude<ApkSchemeVersion, "v2">,
 ): Result<DecodedSigner["rotation"], ApkSchemeError> => {
   const attribute = signer.attributes.find(
     (a) => a.id === PROOF_OF_ROTATION_ATTR_ID,
   );
   if (attribute === undefined) return ok({ present: false });
-  const nodes = decodeRotationLineage(attribute.value);
+  const nodes = decodeRotationLineage(attribute.value, version);
   if (nodes.ok) return ok({ present: true, nodes: nodes.value });
   // A malformed lineage is reported, not dropped; an over-cap lineage is refused.
   return nodes.error.kind === "malformed-signer"
@@ -320,15 +321,15 @@ const listed = ({ count, sample }: ApkDuplicateNameSample): string => {
 const plural = (count: number): string =>
   `${String(count)} ${count === 1 ? "name" : "names"}`;
 
-/** Why apksig would reject the v1 signature of an archive with duplicate names. */
-const duplicateEntriesLimitation = (
+/** What apksig can read and which duplicate names affect its v1 inspection. */
+const v1DirectoryLimitation = (
   duplicates: ApkDuplicateNames,
 ): string | null => {
   const { count, records, apksigRecords, unread } = duplicates;
-  if (count === 0 && unread.count === 0) return null;
   const partial = apksigRecords < records;
+  if (!partial && count === 0 && unread.count === 0) return null;
   const scope = partial
-    ? `apksig reads only the first ${String(apksigRecords)} of the ${String(records)} central-directory records (it takes the count from the classic end-of-central-directory record's 16-bit field and ignores the Zip64 count). `
+    ? `apksig reads only the first ${String(apksigRecords)} of the ${String(records)} central-directory records (it takes the count from the classic end-of-central-directory record's 16-bit field and ignores the Zip64 count).`
     : "";
   const within =
     count > 0
@@ -336,9 +337,9 @@ const duplicateEntriesLimitation = (
       : "";
   const beyond =
     unread.count > 0
-      ? `${count > 0 ? " " : ""}${plural(unread.count)} (${listed(unread)}) ${unread.count === 1 ? "is" : "are"} duplicated only by records past those, which apksig does not read.`
+      ? `${plural(unread.count)} (${listed(unread)}) ${unread.count === 1 ? "is" : "are"} duplicated only by records past those, which apksig does not read.`
       : "";
-  return `${scope}${within}${beyond}`;
+  return [scope, within, beyond].filter(Boolean).join(" ");
 };
 
 const LAYOUT_LIMITATION =
@@ -503,7 +504,7 @@ export class ApkSignatureProvider implements ApkSignaturePort {
           ]),
       ...APK_SIGNATURE_LIMITATIONS,
       ...(matcher.layoutPreventedRecompute() ? [LAYOUT_LIMITATION] : []),
-      ...[duplicateEntriesLimitation(duplicates)].filter(
+      ...[v1DirectoryLimitation(duplicates)].filter(
         (note): note is string => note !== null,
       ),
       ...v1SignerNotes(v1Decoded),
@@ -589,10 +590,7 @@ const sourceStampFacts = (
     : {
         present: true,
         certificate: null,
-        decode_error:
-          certificate.error.kind === "malformed-signer"
-            ? certificate.error.detail
-            : `more ${certificate.error.resource} than ${String(certificate.error.limit)}`,
+        decode_error: certificate.error.detail,
       };
 };
 
@@ -610,7 +608,9 @@ const decodeScheme = (
   const decoded: DecodedSigner[] = [];
   for (const signer of signers.value.signers) {
     const rotation =
-      version === "v2" ? ok({ present: false } as const) : lineageOf(signer);
+      version === "v2"
+        ? ok({ present: false } as const)
+        : lineageOf(signer, version);
     if (!rotation.ok) return err(mapApkSchemeError(rotation.error, version));
     decoded.push({ signer, rotation: rotation.value });
   }

@@ -12,11 +12,23 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 
+import { callerAnalysisParameters } from "../application/AnalysisInput.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+import type { ProjectedErrorEncoding } from "./ToolResultDelivery.js";
+
 const currentRequest = new AsyncLocalStorage<McpToolRequest>();
 
 /** One SDK request owns validation, cancellation and its publication boundary. */
 export class McpToolRequest {
   readonly cancellation = new AbortController();
+  projectedErrorEncoding?: ProjectedErrorEncoding | undefined;
+  readonly #parameterSelections = new WeakMap<
+    object,
+    {
+      readonly tool: string;
+      readonly select: ReturnType<typeof callerAnalysisParameters>;
+    }
+  >();
   validation?: {
     readonly issues: readonly z.core.$ZodIssue[];
     readonly input: unknown;
@@ -40,6 +52,31 @@ export class McpToolRequest {
     readonly id: RequestId,
     readonly tool: string,
   ) {}
+
+  /** Capture only selected names at canonical validation, not the raw input tree. */
+  captureCallerParameters(tool: string, input: unknown, parsed: unknown): void {
+    if (parsed !== null && typeof parsed === "object")
+      this.#parameterSelections.set(parsed, {
+        tool,
+        select: callerAnalysisParameters(input),
+      });
+  }
+
+  /** The exact parsed object identifies its validation, including nested tool calls. */
+  callerParameters(
+    tool: string,
+    parsed: unknown,
+    parameters: Readonly<Record<string, JsonValue>>,
+  ): Readonly<Record<string, JsonValue>> {
+    const selection =
+      parsed !== null && typeof parsed === "object"
+        ? this.#parameterSelections.get(parsed)
+        : undefined;
+    // Dropping properties from a validated JSON object preserves its value type.
+    return (
+      selection?.tool === tool ? selection.select(parameters) : parameters
+    ) as Readonly<Record<string, JsonValue>>;
+  }
 
   beginHandler(): void {
     this.#handlerStarted = true;

@@ -108,8 +108,9 @@ export class EnvironmentStateStore {
   #storedDeleted: ReadonlyMap<string, StateEntity> = new Map();
   #collections: ReadonlyMap<string, readonly StateEntity[]> = new Map();
   #typeCollections: ReadonlyMap<string, readonly string[]> = new Map();
-  #documents: ReadonlyMap<string, HeldDocument> = new Map();
+  #documents: Map<string, HeldDocument> = new Map();
   #content: StateContent = { entities: [], documents: [] };
+  #entityIds: ReadonlySet<string> | undefined;
   readonly #types: ReadonlyMap<string, StateType>;
   readonly #clockStart: number;
   /** What `data/get` writes for the current state, in UTF-8 bytes; kept by each mutation rather than reserialized. */
@@ -429,6 +430,16 @@ export class EnvironmentStateStore {
     if (kept) this.#deleted.set(key, entity);
   }
 
+  /** Lazily cached set of entity IDs currently held in the store (invalidated on entity mutations). */
+  entityIds(): ReadonlySet<string> {
+    if (this.#entityIds === undefined) {
+      const ids = new Set<string>();
+      for (const entity of this.#content.entities) ids.add(entity.id);
+      this.#entityIds = ids;
+    }
+    return this.#entityIds;
+  }
+
   /** Set a held document's value, unless the state would outgrow what `data/add` loads; a value that is not the Evidence's cites no record. */
   setDocument(
     tool: string,
@@ -439,15 +450,14 @@ export class EnvironmentStateStore {
     const written = { tool: held.tool, path: held.path, value };
     const bytes = this.#grown(jsonByteLength(written) - jsonByteLength(held));
     if (!bytes.ok) return bytes;
-    this.#install(
-      {
-        ...this.#content,
-        documents: this.#content.documents.map((document) =>
-          document === held ? written : document,
-        ),
-      },
-      bytes.value,
-    );
+    this.#documents.set(tool, written);
+    this.#content = {
+      ...this.#content,
+      documents: this.#content.documents.map((document) =>
+        document === held ? written : document,
+      ),
+    };
+    this.#bytes = bytes.value;
     return ok(undefined);
   }
 
@@ -496,10 +506,12 @@ export class EnvironmentStateStore {
 
   /** Every collection spelling in the active, baseline, Evidence, or generated history, with active entities first. */
   knownCollectionsOf(type: string): readonly string[] {
-    const known = new Set([
-      ...this.collectionsOf(type),
-      ...(this.#knownCollections.get(type) ?? []),
-    ]);
+    const known = new Set<string>();
+    for (const collection of this.collectionsOf(type))
+      if (this.#collections.has(environmentCollectionKey(type, collection)))
+        known.add(collection);
+    for (const collection of this.#knownCollections.get(type) ?? [])
+      known.add(collection);
     return [...known];
   }
 
@@ -535,15 +547,27 @@ export class EnvironmentStateStore {
     const storedDeleted = new Map<string, StateEntity>();
     const collections = new Map<string, StateEntity[]>();
     const typeCollections = new Map<string, string[]>();
+    const typeCollectionSets = new Map<string, Set<string>>();
+    const recordTypeCollection = (type: string, collection: string): void => {
+      let seen = typeCollectionSets.get(type);
+      if (seen === undefined) {
+        seen = new Set([collection]);
+        typeCollectionSets.set(type, seen);
+        typeCollections.set(type, [collection]);
+        return;
+      }
+      if (!seen.has(collection)) {
+        seen.add(collection);
+        typeCollections.get(type)!.push(collection);
+      }
+    };
     for (const entity of content.entities) {
       if (markedDeleted(entity.fields)) {
         storedDeleted.set(
           environmentEntityKey(entity.type, entity.collection, entity.id),
           entity,
         );
-        const named = typeCollections.get(entity.type) ?? [];
-        if (!named.includes(entity.collection)) named.push(entity.collection);
-        typeCollections.set(entity.type, named);
+        recordTypeCollection(entity.type, entity.collection);
         continue;
       }
       entities.set(
@@ -557,11 +581,7 @@ export class EnvironmentStateStore {
         continue;
       }
       collections.set(key, [entity]);
-      const named = typeCollections.get(entity.type);
-      if (named === undefined)
-        typeCollections.set(entity.type, [entity.collection]);
-      else if (!named.includes(entity.collection))
-        named.push(entity.collection);
+      recordTypeCollection(entity.type, entity.collection);
     }
     this.#entities = entities;
     this.#storedDeleted = storedDeleted;
@@ -571,6 +591,7 @@ export class EnvironmentStateStore {
       content.documents.map((document) => [document.tool, document]),
     );
     this.#content = content;
+    this.#entityIds = undefined;
     this.#bytes = bytes;
   }
 }

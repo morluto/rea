@@ -11,10 +11,9 @@ import {
   analysisProfilesEqual,
 } from "../domain/analysisProfile.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
-import {
-  isElfMetadataArchitecture,
-  type BinaryArchitecture,
-  type BinaryTarget,
+import type {
+  BinaryArchitecture,
+  BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
 import { err, ok } from "../domain/result.js";
 import { cancelledBy } from "../domain/analysisErrorCore.js";
@@ -59,16 +58,23 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { ProviderInspectionScope } from "../ports/ProviderInspectionScope.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
-/**
- * Families IDA admits today. Every other family is refused, including families
- * that REA recognizes after this list was written.
- */
-const IDA_ARCHITECTURES = new Set<BinaryArchitecture>([
-  "x86",
-  "x86_64",
-  "arm",
-  "arm64",
-]);
+const IDA_ARCHITECTURES = {
+  x86: "supported",
+  x86_64: "supported",
+  arm: "supported",
+  arm64: "supported",
+  arm64_32: "unsupported",
+  mips: "ghidra",
+  "6502": "unsupported",
+  riscv: "ghidra",
+  powerpc: "ghidra",
+  m68k: "unsupported",
+  hexagon: "ghidra",
+  xtensa: "unsupported",
+} as const satisfies Record<
+  BinaryArchitecture,
+  "supported" | "unsupported" | "ghidra"
+>;
 
 /** Bring-your-own IDA MCP candidate; discovery performs no provider startup. */
 export class IdaProvider implements AnalysisProviderCandidate {
@@ -272,12 +278,28 @@ export class IdaProvider implements AnalysisProviderCandidate {
           "IDA does not admit caller-selected GameCube DOL images. Open the target with Ghidra and select format gamecube-dol.",
         diagnostics,
       };
+    if (target.kind === "database")
+      return target.databaseEngine !== "ida"
+        ? {
+            status: "unsupported",
+            code: "target_format_unsupported",
+            reason:
+              "IDA opens only IDA .idb/.i64 databases. Select the original input binary or an IDA database.",
+            diagnostics,
+          }
+        : {
+            status: "unknown",
+            code: null,
+            reason:
+              "IDA registration has not been resolved, so whether it can open an existing database is unknown.",
+            diagnostics,
+          };
     if (target.kind !== "executable")
       return {
         status: "unsupported",
         code: "target_kind_unsupported",
         reason:
-          "IDA MCP integration admits executable inputs, not analysis databases. Select the original input binary.",
+          "IDA MCP integration admits executable inputs and IDA databases. Select the original input binary.",
         diagnostics,
       };
     if (target.format === "raw-binary")
@@ -288,14 +310,14 @@ export class IdaProvider implements AnalysisProviderCandidate {
           "IDA does not admit headerless raw binaries. Open the target with Ghidra and supply architecture and entry_point.",
         diagnostics,
       };
-    if (!IDA_ARCHITECTURES.has(target.architecture))
+    const lane = IDA_ARCHITECTURES[target.architecture];
+    if (lane !== "supported")
       return {
         status: "unsupported",
         code: "architecture_unsupported",
         // Header-declared families that Ghidra admits keep the pointer there.
         reason:
-          isElfMetadataArchitecture(target.architecture) ||
-          target.architecture === "hexagon"
+          lane === "ghidra"
             ? `REA's IDA adapter has no verified ${target.architecture} lane. Select a supported Ghidra profile instead.`
             : `REA's IDA adapter has no verified ${target.architecture} lane.`,
         diagnostics,
@@ -315,19 +337,45 @@ export class IdaProvider implements AnalysisProviderCandidate {
     options: AnalysisProviderInspectionOptions,
   ): Promise<ProviderTargetSupport> {
     const base = this.inspectTargetSupport(target);
-    if (base.status === "unsupported" || target.format !== "mach-o-universal")
-      return base;
-    // Attached identity is the recorded whole-input digest, which every slice
-    // of a universal file shares, so it cannot prove the GUI loaded the slice
-    // admission selected. Headless mode thins that slice into its own input.
+    // Only IDA databases and universal Mach-O depend on the registration.
+    if (base.status !== "unknown") return base;
     const config = await this.#configuration(options);
     if (!config.ok)
       return {
         status: "unknown",
         code: null,
-        reason: "IDA mode could not be resolved from the registration.",
+        reason: "IDA registration could not be resolved.",
         diagnostics: base.diagnostics,
       };
+    // Only a Hex-Rays lease opens a private database copy; attached GUIs and
+    // database supervisors have no verified route for an existing database.
+    if (target.kind === "database") {
+      if (config.value.protocol !== "hexrays")
+        return {
+          status: "unsupported",
+          code: "target_kind_unsupported",
+          reason:
+            'Opening an existing IDA database requires the "hexrays" headless registration. Select the original input binary with this registration.',
+          diagnostics: base.diagnostics,
+        };
+      if (!/\.(?:idb|i64)$/iu.test(target.path))
+        return {
+          status: "unsupported",
+          code: "target_format_unsupported",
+          reason:
+            "The Hex-Rays IDA MCP requires a .idb or .i64 filename for a saved database. Select a packed database with its filename suffix.",
+          diagnostics: base.diagnostics,
+        };
+      return {
+        status: "supported",
+        code: null,
+        reason: null,
+        diagnostics: base.diagnostics,
+      };
+    }
+    // Attached identity is the recorded whole-input digest, which every slice
+    // of a universal file shares, so it cannot prove the GUI loaded the slice
+    // admission selected. Headless mode thins that slice into its own input.
     if (config.value.mode === "attached")
       return {
         status: "unsupported",

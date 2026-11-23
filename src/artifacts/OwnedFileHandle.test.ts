@@ -1,57 +1,52 @@
+import { open, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, it, vi } from "vitest";
-
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 
-it("shares one in-flight successful close between concurrent owners", async () => {
-  let resolveClose: (() => void) | undefined;
-  const file = {
-    fd: 17,
-    close: vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          file.fd = -1;
-          resolveClose = resolve;
-        }),
-    ),
-  };
-  const owner = new OwnedFileHandle(file);
+it.each(["confirmed", "unconfirmed"] as const)(
+  "shares a %s descriptor close across callers and subsequent attempts",
+  async (outcome) => {
+    const path = join(
+      await createTestTempDirectory("rea-owned-close-"),
+      "input",
+    );
+    await writeFile(path, "owned file");
+    const descriptor = await open(path);
+    const nativeClose = descriptor.close.bind(descriptor);
+    const held = phaseGate();
+    const refusal = new Error("native close failed after invalidation");
+    const physicalClose = vi
+      .spyOn(descriptor, "close")
+      .mockImplementation(async () => {
+        await held.hold();
+        await nativeClose();
+        if (outcome === "unconfirmed") throw refusal;
+      });
+    const owner = new OwnedFileHandle(descriptor);
+    const first = owner.close();
+    let concurrent: Promise<void> | undefined;
 
-  const first = owner.close();
-  const second = owner.close();
-  await Promise.resolve();
-  expect(file.close).toHaveBeenCalledTimes(1);
-  resolveClose?.();
-
-  await expect(Promise.all([first, second])).resolves.toEqual([
-    undefined,
-    undefined,
-  ]);
-  await expect(owner.close()).resolves.toBeUndefined();
-  expect(file.close).toHaveBeenCalledTimes(1);
-});
-
-it("shares one in-flight failed close and keeps its unconfirmed result sticky", async () => {
-  const failure = new Error("native close failed");
-  let rejectClose: (() => void) | undefined;
-  const file = {
-    fd: 17,
-    close: vi.fn(
-      () =>
-        new Promise<void>((_resolve, reject) => {
-          file.fd = -1;
-          rejectClose = () => reject(failure);
-        }),
-    ),
-  };
-  const owner = new OwnedFileHandle(file);
-
-  const first = owner.close();
-  const second = owner.close();
-  await Promise.resolve();
-  expect(file.close).toHaveBeenCalledTimes(1);
-  rejectClose?.();
-
-  await expect(Promise.all([first, second])).rejects.toBe(failure);
-  await expect(owner.close()).rejects.toBe(failure);
-  expect(file.close).toHaveBeenCalledTimes(1);
-});
+    try {
+      await held.reached(first, "physical descriptor close");
+      concurrent = owner.close();
+      const callers = Promise.allSettled([first, concurrent]);
+      held.release();
+      const initial = await callers;
+      const later = await Promise.allSettled([owner.close()]);
+      for (const result of [...initial, ...later]) {
+        expect(result.status).toBe(
+          outcome === "confirmed" ? "fulfilled" : "rejected",
+        );
+        if (result.status === "rejected") expect(result.reason).toBe(refusal);
+      }
+      expect(descriptor.fd).toBe(-1);
+      expect(physicalClose).toHaveBeenCalledTimes(1);
+    } finally {
+      held.release();
+      await Promise.allSettled([first, concurrent]);
+      if (descriptor.fd >= 0) await nativeClose();
+    }
+  },
+);

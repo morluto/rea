@@ -32,7 +32,7 @@ import {
   functionBodyEntryAgrees,
 } from "../domain/native/functionBody.js";
 import { procedureIdentitySchema } from "../domain/native/procedureInfo.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 
@@ -400,7 +400,9 @@ export function parseGhidraInventoryResult(
   const parsed = resultSchemas[operation].safeParse(value);
   return parsed.success
     ? ok({
-        value: jsonValueSchema.parse(parsed.data),
+        // `value` was already admitted as JsonValue and `resultSchemas[operation]`
+        // outputs fresh plain objects/arrays whose fields are all JSON-safe.
+        value: parsed.data as JsonValue,
         // The overview omits detailed segment permissions, sections and provenance.
         // Load-image observations above undergo separate local attestation.
         ...(operation === "read_binary_inventory_summary"

@@ -88,10 +88,27 @@ cliTest(
     const peer = join(directory, "peer.dll");
     const bad = join(directory, "bad.dll");
     const bytes = buildManagedPeFixture();
+    const candidate = Buffer.concat([
+      buildManagedPeFixture({ methodName: "Renamed" }),
+      Buffer.from([0xa5]),
+    ]);
+    const malformed = Buffer.from(bytes);
+    malformed.writeUInt16LE(0, malformed.readUInt32LE(0x3c) + 6);
     await writeFile(good, bytes);
-    await writeFile(peer, bytes);
-    bytes.writeUInt16LE(0, bytes.readUInt32LE(0x3c) + 6);
-    await writeFile(bad, bytes);
+    await writeFile(peer, candidate);
+    await writeFile(bad, malformed);
+    const leftSource = {
+      argument: "left",
+      observation: {
+        operation: "inspect_managed_members",
+        subject: {
+          local_path: good,
+          identity: {
+            sha256: createHash("sha256").update(bytes).digest("hex"),
+          },
+        },
+      },
+    };
 
     const healthy = await cli.run({
       arguments: [
@@ -99,42 +116,55 @@ cliTest(
         good,
         peer,
         "--max-snapshot-bytes",
-        String(bytes.length),
+        String(candidate.length),
         "--max-metadata-representation-bytes",
         "1048576",
         "--json",
       ],
     });
     expect(healthy.exitCode, healthy.stderr).toBe(0);
-    expect(healthy.json).toMatchObject({
+    const comparison = parseEvidence(healthy.json);
+    expect(comparison).toMatchObject({
       operation: "compare_managed_members",
+      confidence: "inferred",
+      authority: "analyst-inference",
+      locations: [
+        { kind: "artifact-path", path: good },
+        { kind: "artifact-path", path: peer },
+      ],
       parameters: {
         left_path: good,
         right_path: peer,
-        max_snapshot_bytes: bytes.length,
+        max_snapshot_bytes: candidate.length,
         max_metadata_representation_bytes: 1048576,
       },
     });
 
-    // A source refused by its snapshot budget names the source option that
-    // raises it; the remediation names only the contract field.
+    expect(
+      managedMemberComparisonResultSchema.parse(comparison.normalized_result)
+        .matching.exact_il_signature,
+    ).toBe(1);
     const refused = await cli.run({
       arguments: [
         "compare-managed-members",
         good,
         peer,
         "--max-snapshot-bytes",
-        String(bytes.length - 1),
+        String(bytes.length),
         "--json",
       ],
     });
     expect(refused.exitCode, refused.stderr).toBe(1);
     expect(refused.json).toMatchObject({
+      code: "resource_constraint",
       details: {
+        operation: "inspect_managed_members",
+        argument_observations: [leftSource],
         limit: {
           control_kind: "parameter",
           parameter: "max_snapshot_bytes",
           cli_flag: "--max-snapshot-bytes",
+          effective_value: bytes.length,
         },
       },
     });
@@ -169,15 +199,7 @@ cliTest(
       if (field === "rightPath")
         expect(result.json).toMatchObject({
           details: {
-            argument_observations: [
-              {
-                argument: "left",
-                observation: {
-                  operation: "inspect_managed_members",
-                  subject: { local_path: good },
-                },
-              },
-            ],
+            argument_observations: [leftSource],
           },
         });
       else

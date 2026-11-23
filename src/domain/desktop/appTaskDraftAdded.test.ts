@@ -47,25 +47,6 @@ it("does not include a sibling generated UUID when a record field changes", () =
   expect(passing(FILE, xml(later), checks).every(Boolean)).toBe(true);
 });
 
-it("keeps stable added field text while omitting nested save times and generated IDs", () => {
-  const before =
-    '<doc><record id="old"><details><name>Old</name></details></record></doc>';
-  const after =
-    '<doc><record id="old"><details><name>Old</name></details></record><record id="new"><details><name>Water filter</name><modified>1793870600</modified><session>123e4567-e89b-12d3-a456-426614174000</session></details></record></doc>';
-  const later = after
-    .replace("1793870600", "1793870700")
-    .replace(
-      "123e4567-e89b-12d3-a456-426614174000",
-      "123e4567-e89b-12d3-a456-426614174001",
-    );
-  const checks = xmlDraft(before, after).suggested;
-  expect(checks.length).toBeGreaterThan(0);
-  expect(JSON.stringify(checks)).not.toMatch(
-    /1793870600|123e4567-e89b-12d3-a456-426614174000/u,
-  );
-  expect(passing(FILE, xml(later), checks).every(Boolean)).toBe(true);
-});
-
 it("keeps a nested phone number that resembles an epoch timestamp", () => {
   const before =
     '<doc><contact name="old"><phone><country>+1</country><number>2125550100</number></phone></contact></doc>';
@@ -109,14 +90,38 @@ it("treats a changed epoch-shaped phone field as an edit", () => {
   expect(file.values.every(({ note }) => note !== "volatile")).toBe(true);
 });
 
-it("omits oversized added attributes while retaining shorter checks and reporting the omitted pointer", () => {
+it("keeps authored attributes distinct from selector text and reports the text boundary", () => {
   const before = '<doc><item name="old" note="old"/></doc>';
-  const after = `<doc><item name="old" note="old"/><item name="new" note="${"x".repeat(100_000)}" wording="edited"/></doc>`;
+  const oversized = "x".repeat(2_001);
+  const after = `<doc><item name="old" note="old"/><item name="Project[@wording=old" note="${oversized}" wording="edited"/></doc>`;
   const file = xmlDraft(before, after);
-  expect(JSON.stringify(file.suggested)).not.toContain("x".repeat(2001));
+  expect(
+    file.suggested.some(
+      (check) =>
+        "pointer" in check && check.pointer.endsWith("/attributes/note"),
+    ),
+  ).toBe(false);
   expect(file.suggested).toEqual(
-    expect.arrayContaining([expect.objectContaining({ value: "edited" })]),
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "value_equals",
+        pointer: expect.stringContaining("/attributes/wording"),
+        value: "edited",
+      }),
+    ]),
   );
+  const wording = file.suggested.filter(
+    (check) =>
+      "pointer" in check && check.pointer.endsWith("/attributes/wording"),
+  );
+  expect(passing(FILE, xml(after), wording)).toEqual([true]);
+  expect(
+    passing(
+      FILE,
+      xml(after.replace('wording="edited"', 'wording="wrong"')),
+      wording,
+    ),
+  ).toEqual([false]);
   expect(file.notes).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
@@ -128,6 +133,42 @@ it("omits oversized added attributes while retaining shorter checks and reportin
     ]),
   );
 });
+
+it.each([2_000, 2_001])(
+  "keeps shorter field text and reports any omitted %i-character save-time fragment",
+  (length) => {
+    const before =
+      '<doc><record id="old"><details>Before</details></record></doc>';
+    const tail = "n".repeat(length);
+    const record = `<record id="new"><title>Shopping</title><details>Water filter<modified>2026-11-07T10:12:00Z</modified>${tail}</details></record>`;
+    const after = before.replace("</doc>", `${record}</doc>`);
+    const file = xmlDraft(before, after);
+    const fragments = file.suggested.filter(
+      (check) => check.kind === "text_contains",
+    );
+    expect(fragments.map(({ value }) => value)).toEqual(
+      length === 2_000 ? ["Water filter", tail] : ["Water filter"],
+    );
+    expect(
+      passing(
+        FILE,
+        xml(after.replace("2026-11-07T10:12:00Z", "2026-11-08T10:12:00Z")),
+        fragments,
+      ),
+    ).toEqual(fragments.map(() => true));
+    expect(passing(FILE, xml(before), fragments)).toEqual(
+      fragments.map(() => false),
+    );
+    const omission = file.notes.find(({ code }) => code === "long_text");
+    if (length === 2_000) expect(omission).toBeUndefined();
+    else
+      expect(omission).toMatchObject({
+        pointers: expect.arrayContaining([
+          expect.stringMatching(/\/children\/\[name=details\]$/u),
+        ]),
+      });
+  },
+);
 
 describe("draftTaskFiles for elements no attribute names", () => {
   /** A score whose title frame holds untitled texts, as MuseScore 3 saves one, each with its style or none. */
@@ -377,14 +418,17 @@ describe("draftTaskFiles for records whatever their fields are called", () => {
     ]);
   });
 
-  it("checks the name inside a nested field and leaves its save time out", () => {
+  it("checks the name of a nested field despite save-time and session changes", () => {
     const records = (extra: string) =>
       `<records><record><field>Hannah</field></record>${extra}</records>`;
-    const added = `<record><details><name>Delphine</name><modified>2026-11-07T10:12:00Z</modified></details></record>`;
+    const session = "123e4567-e89b-12d3-a456-426614174000";
+    const added = `<record><details><name>Delphine</name><modified>2026-11-07T10:12:00Z</modified><session>${session}</session></details></record>`;
     const before = records("");
     const after = records(added);
     const restamped = records(
-      added.replace("2026-11-07T10:12:00Z", "2026-11-08T09:00:00Z"),
+      added
+        .replace("2026-11-07T10:12:00Z", "2026-11-08T09:00:00Z")
+        .replace(session, "123e4567-e89b-12d3-a456-426614174001"),
     );
     const file = xmlDraft(before, after);
     const values = file.suggested.flatMap((check) =>
@@ -395,21 +439,6 @@ describe("draftTaskFiles for records whatever their fields are called", () => {
     expect(passing(FILE, xml(restamped), file.suggested).every(Boolean)).toBe(
       true,
     );
-  });
-
-  it("checks each name around a nested save time, not the two names joined", () => {
-    const records = (extra: string) =>
-      `<records><record><field>Hannah</field></record>${extra}</records>`;
-    const added = `<record><details><name>Delphine</name><modified>2026-11-07T10:12:00Z</modified><name>Moreau</name></details></record>`;
-    const file = xmlDraft(records(""), records(added));
-    const values = file.suggested.flatMap((check) =>
-      check.kind === "text_contains" ? [check.value] : [],
-    );
-
-    expect(values).toEqual(["Delphine", "Moreau"]);
-    expect(
-      passing(FILE, xml(records(added)), file.suggested).every(Boolean),
-    ).toBe(true);
   });
 
   it.each([

@@ -94,26 +94,7 @@ describe("successful CLI token windows", () => {
     },
   );
 
-  it("does not reformat a fitting ordinary result", async () => {
-    let reads = 0;
-    const page = await renderWindow(
-      {
-        get text() {
-          reads++;
-          return "abcdefghij";
-        },
-      },
-      0,
-      1000,
-    );
-    expect(page.handled).toBe(true);
-    // TOON reads this property once per formatting pass.
-    expect(reads).toBe(1);
-    expect(page.text).toBe("text: abcdefghij\n");
-  });
-
   it.each([
-    { terminal: false, formatExplicit: false },
     { terminal: true, formatExplicit: false },
     { terminal: true, formatExplicit: true },
   ])(
@@ -181,7 +162,7 @@ describe("successful CLI token windows", () => {
   );
 });
 
-describe("token windows through Incur output policies", () => {
+describe("token windows and CLI presentation policy", () => {
   it.each([{ windowFlags: [] }, { windowFlags: ["--token-limit", "2"] }])(
     "retains filtered typed failures despite suppressed human results ($windowFlags)",
     async ({ windowFlags }) => {

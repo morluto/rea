@@ -1,4 +1,5 @@
 import { unknownTarget } from "../../domain/targetIdentity.js";
+import { capturedProviderOutput } from "../../process/capturedProviderOutput.js";
 import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { nativeDeadlineRecovery } from "../../domain/native/nativeDeadlines.js";
 import { Budget } from "../../domain/budget.js";
@@ -1372,39 +1373,29 @@ const runOwnedCommandOutput =
         },
         { signal: options.signal },
       );
-      if (snapshot.signal !== null && snapshot.signal !== undefined)
-        throw new OwnedOutputFailure({
-          stdout: snapshot.stdout.text,
-          stderr: snapshot.stderr.text,
-          code: snapshot.exitCode ?? null,
-          signal: snapshot.signal,
-          outputTruncated: snapshot.diagnosticTruncated === true,
-          stdoutInvalidUtf8: snapshot.stdout.invalidUtf8 === true,
-          stderrInvalidUtf8: snapshot.stderr.invalidUtf8 === true,
-          stdoutBytes: snapshot.stdout.bytes,
-          stderrBytes: snapshot.stderr.bytes,
-        });
-      if (snapshot.exitCode !== 0)
-        throw new OwnedOutputFailure({
-          stdout: snapshot.stdout.text,
-          stderr: snapshot.stderr.text,
-          code: snapshot.exitCode ?? null,
-          signal: null,
-          outputTruncated: snapshot.diagnosticTruncated === true,
-          stdoutInvalidUtf8: snapshot.stdout.invalidUtf8 === true,
-          stderrInvalidUtf8: snapshot.stderr.invalidUtf8 === true,
-          stdoutBytes: snapshot.stdout.bytes,
-          stderrBytes: snapshot.stderr.bytes,
-        });
-      return {
-        stdout: snapshot.stdout.text,
-        stderr: snapshot.stderr.text,
-        outputTruncated: snapshot.diagnosticTruncated === true,
+      const captured = capturedProviderOutput(snapshot);
+      const output = {
+        stdout: captured.stdout,
+        stderr: captured.stderr,
+        outputTruncated: captured.truncated,
         stdoutInvalidUtf8: snapshot.stdout.invalidUtf8 === true,
         stderrInvalidUtf8: snapshot.stderr.invalidUtf8 === true,
         stdoutBytes: snapshot.stdout.bytes,
         stderrBytes: snapshot.stderr.bytes,
       };
+      if (snapshot.signal !== null && snapshot.signal !== undefined)
+        throw new OwnedOutputFailure({
+          ...output,
+          code: captured.exit_code ?? null,
+          signal: snapshot.signal,
+        });
+      if (snapshot.exitCode !== 0)
+        throw new OwnedOutputFailure({
+          ...output,
+          code: captured.exit_code ?? null,
+          signal: null,
+        });
+      return output;
     } catch (cause) {
       if (!(cause instanceof OwnedCommandFailure)) throw cause;
       if (cause.cleanupOwner !== undefined && cause.cleanupFailure !== null)

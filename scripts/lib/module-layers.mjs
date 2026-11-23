@@ -4,13 +4,9 @@
  * layer. An undeclared unit fails the check, so a new directory must choose
  * its layer when it is added.
  *
- * The order follows docs/architecture/architecture.mermaid: the dependency-free
- * kernel helpers that every layer may use, domain and
- * contracts at the centre, the process/filesystem foundation, the ports
- * that providers implement and application consumes, the shared provider
- * core (src/providers), provider adapters,
- * shared application workflows, production composition, then the CLI and
- * MCP entry points.
+ * The order starts with dependency-free kernel helpers that every layer may
+ * use, then the domain, contracts, process/filesystem foundation, and ports.
+ * Providers implement the ports and application workflows consume them.
  */
 export const LAYER_ORDER = Object.freeze([
   "kernel",
@@ -77,10 +73,12 @@ export const UNIT_LAYERS = Object.freeze(
       "il2cpp",
       "inspector",
       "javascript",
+      "java",
       "jeb",
       "kuna",
       "model",
       "native",
+      "nuget",
       "objdump",
       "pcap",
       "python",
@@ -89,6 +87,7 @@ export const UNIT_LAYERS = Object.freeze(
       "rust",
       "signals",
       "sqlite",
+      "uefi",
       "v8",
       "wasm",
     ]),
@@ -121,17 +120,7 @@ export const UNIT_LAYERS = Object.freeze(
  * a deliberate decision, not a baseline debt: it is not counted, and any other
  * import between the same units still is. Keep the list short and say why.
  */
-export const LAYER_EXCEPTIONS = Object.freeze([
-  Object.freeze({
-    file: "src/domain/localPath.ts",
-    target: "src/platform/HostPlatform.ts",
-    // `absoluteLocalPathStringSchema` states which paths are absolute on the
-    // host running REA; that is a fact about the host's path rules, and
-    // HostPlatform is its only reader (maintainer decision, W8).
-    reason:
-      "the absolute local path schema follows the running host's path rules",
-  }),
-]);
+export const LAYER_EXCEPTIONS = Object.freeze([]);
 
 const sourcePath = (path) => path.replace(/\.js$/u, ".ts");
 /** Whether one resolved import is a declared layer exception. */
@@ -287,11 +276,18 @@ export const ENTRY_FILES = Object.freeze(
         "DesktopBuildDoctorFacts.ts",
         "DesktopCaptureProvider.ts",
         "DesktopSessionRequests.ts",
+        // Build-computer composition (`capabilityServices`) wires `readHostFile` into `DesktopBuildComputers`.
+        "HostFileRead.ts",
       ],
       dotnet: ["ManagedStaticProvider.ts", "ManagedStaticProviderMetadata.ts"],
       electron: ["ElectronFuseProvider.ts", "ElectronFuseProviderIdentity.ts"],
       erlang: ["BeamProvider.ts", "ErlangBeamProviderIdentity.ts"],
       evm: ["EvmoleInterfaceProvider.ts", "EvmoleProviderIdentity.ts"],
+      uefi: [
+        "UefiAnalysisProvider.ts",
+        "UefiProviderIdentity.ts",
+        "UefiFormatProbe.ts",
+      ],
       firmware: [
         "FirmwareCommand.ts",
         "FirmwareProvider.ts",
@@ -326,6 +322,10 @@ export const ENTRY_FILES = Object.freeze(
         "Il2cppMetadataProvider.ts",
       ],
       inspector: ["V8InspectorProvider.ts", "providerIdentity.ts"],
+      java: [
+        "MavenGradleMetadataProvider.ts",
+        "MavenGradleMetadataProviderIdentity.ts",
+      ],
       javascript: [
         "analysis/JavaScriptAnalysisTransfer.ts",
         "analysis/JavaScriptAnalysisWorkerServer.ts",
@@ -343,6 +343,9 @@ export const ENTRY_FILES = Object.freeze(
         "NativeMacOSProviderMetadata.ts",
         "NativeMacosProviderIdentity.ts",
         "apple/AppleIpsProvider.ts",
+        "dwarf/DwarfUnitsProvider.ts",
+        "elf/ElfDebugLinkProvider.ts",
+        "elf/ElfDependenciesProvider.ts",
         "elf/ElfNotesProvider.ts",
         "elf/ElfUnwindRangesProvider.ts",
         "elf/KernelBuildConfigProvider.ts",
@@ -360,6 +363,7 @@ export const ENTRY_FILES = Object.freeze(
         "pwntools/PwntoolsRecordedCrashProvider.ts",
         "windows/WindowsShortcutProvider.ts",
       ],
+      nuget: ["NugetNupkgProvider.ts", "NugetNupkgProviderIdentity.ts"],
       objdump: ["ObjdumpCommand.ts", "ObjdumpProviderIdentity.ts"],
       pcap: [
         "PcapConfiguration.ts",
@@ -417,6 +421,13 @@ const isEntryFile = (unit, target) =>
  * still is. Keep the list short and say why.
  */
 export const PROVIDER_DEPENDENCIES = Object.freeze([
+  Object.freeze({
+    from: "artifacts",
+    to: "uefi",
+    files: Object.freeze(["UefiArtifactReader.ts", "UefiFormatProbe.ts"]),
+    reason:
+      "artifact inventory uses the UEFI provider's format admission and FV/FFS reader",
+  }),
   Object.freeze({
     from: "il2cpp",
     to: "wasm",

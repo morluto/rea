@@ -21,7 +21,12 @@ cliTest(
     const root = await createTestTempDirectory("rea-binary-hardening-cli-");
     const call = await cli.sharedMcpCall!();
     const elfPath = join(root, "app");
-    const elfBytes = elfHardeningFixture({ interp: true, gnuRelro: true });
+    const elfBytes = elfHardeningFixture({
+      interp: true,
+      gnuRelro: true,
+      compressedPropertyNote: true,
+      property: { arch: "x86", value: 3 },
+    });
     await writeFile(elfPath, elfBytes);
     const elfResult = await cli.run({
       arguments: ["inspect-binary-hardening", "app", "--json"],
@@ -42,6 +47,7 @@ cliTest(
         nx: "enabled",
         relro: "partial",
         stack_protector: "unknown",
+        cet_ibt_shstk: "unknown",
       });
     }
     expect(

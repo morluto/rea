@@ -2,8 +2,8 @@ import { lstat, mkdir, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
-import { createPackage } from "@electron/asar";
-import { describe, expect, it } from "vitest";
+import { createPackage, createPackageWithOptions } from "@electron/asar";
+import { describe, expect, it, vi } from "vitest";
 
 import { scanArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { readJavaScriptArtifactFiles } from "../../support/javascriptApplicationScope.js";
@@ -343,3 +343,160 @@ it.each(["file-first", "link-first"] as const)(
     });
   },
 );
+
+const createSelectiveAsarFixture = async () => {
+  const root = await createTestTempDirectory("rea-asar-source-paths-");
+  const source = join(root, "source");
+  const archive = join(root, "app.asar");
+  await mkdir(source);
+  const largeBody = `export const payload = "${"x".repeat(300 * 1024)}";\n`;
+  await writeFile(join(source, "main.js"), "export const main = 1;\n");
+  await writeFile(join(source, "unselected.js"), "export const unused = 2;\n");
+  await writeFile(join(source, "small.js"), "");
+  await writeFile(join(source, "large.js"), largeBody);
+  await writeFile(
+    join(source, "addon.node"),
+    Buffer.from([0xcf, 0xfa, 0xed, 0xfe, 1]),
+  );
+  await createPackageWithOptions(source, archive, { unpack: "addon.node" });
+  return { source, archive, largeBody };
+};
+
+describe("JavaScript ASAR source_paths verification", () => {
+  it("skips opening unselected packed entries while reading selected files and verifying unpacked binaries", async () => {
+    const { archive, largeBody } = await createSelectiveAsarFixture();
+    const snapshot = await scanArtifactInventory(archive);
+    const reader = new AsarArtifactReader(archive);
+    const openSpy = vi.spyOn(reader, "open");
+    try {
+      const result = await readJavaScriptArtifactFiles(
+        reader,
+        snapshot,
+        undefined,
+        ["main.js", "large.js", "small.js"],
+      );
+      const openedPaths = openSpy.mock.calls.map(([entry]) => entry.path);
+      expect(openedPaths).not.toContain("unselected.js");
+      expect(openedPaths).toEqual(
+        expect.arrayContaining([
+          "main.js",
+          "large.js",
+          "small.js",
+          "addon.node",
+        ]),
+      );
+      expect(result.files.find(({ path }) => path === "main.js")?.text).toEqual(
+        {
+          included: true,
+          value: "export const main = 1;\n",
+        },
+      );
+      expect(
+        result.files.find(({ path }) => path === "small.js")?.text,
+      ).toEqual({
+        included: true,
+        value: "",
+      });
+      expect(
+        result.files.find(({ path }) => path === "large.js")?.text,
+      ).toEqual({
+        included: true,
+        value: largeBody,
+      });
+      expect(
+        result.files.find(({ path }) => path === "unselected.js")?.text,
+      ).toEqual({
+        included: false,
+        reason: "outside-analysis-scope",
+      });
+      expect(
+        result.files.find(({ path }) => path === "addon.node")?.text,
+      ).toEqual({
+        included: false,
+        reason: "outside-analysis-scope",
+      });
+      expect(result.source_selection).toEqual({
+        requested_paths: ["main.js", "large.js", "small.js"],
+        unselected_files: 2,
+      });
+    } finally {
+      openSpy.mockRestore();
+      await reader.close();
+    }
+  });
+
+  it("rejects same-size packed archive replacement even when only main.js is selected", async () => {
+    const { source, archive } = await createSelectiveAsarFixture();
+    const snapshot = await scanArtifactInventory(archive);
+    const original = await lstat(archive);
+    await writeFile(
+      join(source, "unselected.js"),
+      "export const unused = 3;\n",
+    );
+    await createPackageWithOptions(source, archive, { unpack: "addon.node" });
+    expect((await lstat(archive)).size).toBe(original.size);
+
+    const reader = new AsarArtifactReader(archive);
+    try {
+      await expect(
+        readJavaScriptArtifactFiles(reader, snapshot, undefined, ["main.js"]),
+      ).rejects.toMatchObject({ reason: "integrity" });
+    } finally {
+      await reader.close();
+    }
+  });
+
+  it("rejects unselected packed entry size mismatch against inventory under source_paths", async () => {
+    const { archive } = await createSelectiveAsarFixture();
+    const snapshot = await scanArtifactInventory(archive);
+    const unselectedOccurrence = snapshot.occurrences.find(
+      ({ logical_path }) => logical_path === "unselected.js",
+    );
+    if (
+      unselectedOccurrence === undefined ||
+      unselectedOccurrence.artifact_id === null
+    )
+      throw new Error("Expected unselected.js occurrence in snapshot");
+    const tamperedSnapshot = {
+      ...snapshot,
+      nodes: snapshot.nodes.map((node) =>
+        node.artifact_id === unselectedOccurrence.artifact_id
+          ? { ...node, size: node.size + 1 }
+          : node,
+      ),
+    };
+    const reader = new AsarArtifactReader(archive);
+    try {
+      await expect(
+        readJavaScriptArtifactFiles(reader, tamperedSnapshot, undefined, [
+          "main.js",
+        ]),
+      ).rejects.toMatchObject({
+        reason: "integrity",
+        integrityCheck: "member-identity",
+      });
+    } finally {
+      await reader.close();
+    }
+  });
+
+  it("rejects mutated unpacked companion bytes even when only packed main.js is selected", async () => {
+    const { archive } = await createSelectiveAsarFixture();
+    const snapshot = await scanArtifactInventory(archive);
+    await writeFile(
+      join(`${archive}.unpacked`, "addon.node"),
+      Buffer.from([0xcf, 0xfa, 0xed, 0xfe, 2]),
+    );
+    const reader = new AsarArtifactReader(archive);
+    try {
+      await expect(
+        readJavaScriptArtifactFiles(reader, snapshot, undefined, ["main.js"]),
+      ).rejects.toMatchObject({
+        reason: "integrity",
+        integrityCheck: "member-identity",
+      });
+    } finally {
+      await reader.close();
+    }
+  });
+});

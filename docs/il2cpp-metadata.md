@@ -377,8 +377,6 @@ linked code row matched Il2CppDumper's slot and `Type$$Method` name (9,557 and
 entry starts with the IL2CPP method name. Other Unity and Emscripten versions
 are unchecked.
 
-The feature record is [IL2CPP method linking for Unity WebGL](specs/native/il2cpp-webgl-wasm/spec.md).
-
 Without `binary_path`, `binary` is `null` and the four binary collections are
 empty in the complete producer report to indicate unrequested observations. Their summary counts, including state counts, are `null`, and native page requests report unavailable observations. This does not establish an empty native inventory. Missing native fields in historical Evidence remain unknown too.
 

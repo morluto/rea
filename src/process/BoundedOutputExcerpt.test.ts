@@ -94,3 +94,34 @@ describe("bounded output excerpts", () => {
     expect(excerpt.text).toBe("�A … [output omitted] … B�");
   });
 });
+
+describe("bounded output ring buffer", () => {
+  it.each([
+    [19, "🙂0_1__2 … [output omitted] … 8_🙂119"],
+    [13, "🙂0_1 … [output omitted] … 119"],
+  ])(
+    "retains complete head and tail characters after wrapping the %i byte buffer",
+    (limit, expected) => {
+      const excerpt = new BoundedOutputExcerpt(limit);
+      for (let index = 0; index < 120; index += 1)
+        excerpt.append(
+          Buffer.from(index % 7 === 0 ? `🙂${index}` : `_${index}_`),
+        );
+      expect(excerpt.truncated).toBe(true);
+      expect(excerpt.text).toBe(expected);
+    },
+  );
+
+  it("handles zero budget and oversized tail replacement after partial writes", () => {
+    const empty = new BoundedOutputExcerpt(0);
+    empty.append(Buffer.from("abcdef"));
+    expect(empty.truncated).toBe(true);
+    expect(empty.text).toBe(" … [output omitted] … ");
+
+    const replaced = new BoundedOutputExcerpt(10);
+    replaced.append(Buffer.from("1234567"));
+    replaced.append(Buffer.from("ABCDEFGHIJK"));
+    expect(replaced.truncated).toBe(true);
+    expect(replaced.text).toBe("12345 … [output omitted] … GHIJK");
+  });
+});

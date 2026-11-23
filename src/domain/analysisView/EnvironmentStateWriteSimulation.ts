@@ -1,3 +1,4 @@
+import { ENTRY_BYTES } from "./webNetworkRouteTemplates.js";
 import { CapturedWriteCompletion } from "./environmentStateWriteCompletion.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
@@ -32,6 +33,11 @@ import {
 import { projectedRead } from "./environmentStateWriteObserve.js";
 import { OmittedFields } from "./environmentStateWriteOmitted.js";
 import { SortedArrays } from "./environmentStateWriteSorted.js";
+
+const sortRuleKey = (rule: {
+  readonly field: string;
+  readonly direction: "ascending" | "descending";
+}): string => `${rule.direction === "ascending" ? "a:" : "d:"}${rule.field}`;
 import { sameQuery } from "./environmentStateWriteStamps.js";
 import {
   checkDocumentRead,
@@ -178,15 +184,13 @@ export class EnvironmentStateWriteSimulation {
   readonly #lastCheck = new Map<string, number>();
   /** When the latest modelled write to each target since its last check ended. */
   readonly #touchedSince: PendingTargets = new Map();
-  /** Timeline indexes of writes the gate does not model. */
-  readonly #unmodelledAt: number[] = [];
   readonly #writeCompletion: CapturedWriteCompletion;
-  readonly #history: WriteHistory = {
+  readonly #history = {
     touched: this.#touched,
     pending: this.#touchedSince,
     checked: this.#lastCheck,
-    unmodelledAt: this.#unmodelledAt,
-  };
+    lastUnmodelledAt: -1,
+  } satisfies WriteHistory;
   readonly #log: {
     readonly index: number;
     readonly tool: string;
@@ -211,9 +215,28 @@ export class EnvironmentStateWriteSimulation {
   /** Entities writes no plan models made, taken when an item read first shows them. */
   readonly #unseen: UnseenEntities;
   readonly #blame: FailedReadBlame;
+  readonly #documentsByTool = new Map<
+    string,
+    WriteSimulationInput["documents"][number]
+  >();
+  readonly #entitiesByType = new Map<string, StateEntity[]>();
+  readonly #laterFieldsByType = new Map<string, ReadonlySet<string>>();
 
   constructor(input: WriteSimulationInput) {
     this.#input = input;
+    for (const document of input.documents) {
+      if (this.#documentsByTool.has(document.tool)) continue;
+      input.io.retain(ENTRY_BYTES);
+      this.#documentsByTool.set(document.tool, document);
+    }
+    for (const entity of input.entities) {
+      const list = this.#entitiesByType.get(entity.type);
+      input.io.retain(ENTRY_BYTES);
+      if (list === undefined) {
+        input.io.retain(ENTRY_BYTES);
+        this.#entitiesByType.set(entity.type, [entity]);
+      } else list.push(entity);
+    }
     this.#writeCompletion = new CapturedWriteCompletion(input.io.retain);
     this.#state = new SimulatedState(input.entities, input.documents);
     this.#unseen = new UnseenEntities(input.entities, {
@@ -426,16 +449,28 @@ export class EnvironmentStateWriteSimulation {
         ),
       unknown: (type, collection, id) =>
         this.#taint.unknown(type, collection, id),
-      initialDocument: (tool) =>
-        this.#input.documents.find((document) => document.tool === tool),
-      startedWith: (type) =>
-        this.#input.entities.filter((entity) => entity.type === type),
-      laterFields: (type) =>
-        laterItemFields(this.#input.views.values(), this.#input.entities, type),
-      pending: (target) =>
-        [...(this.#touched.get(target)?.keys() ?? [])].some(
-          (name) => name !== writer,
-        ),
+      initialDocument: (tool) => this.#documentsByTool.get(tool),
+      startedWith: (type) => this.#entitiesByType.get(type) ?? [],
+      laterFields: (type) => {
+        let cached = this.#laterFieldsByType.get(type);
+        if (cached === undefined) {
+          this.#input.io.retain(ENTRY_BYTES);
+          cached = laterItemFields(
+            this.#input.views.values(),
+            this.#input.entities,
+            type,
+            this.#input.io.retain,
+          );
+          this.#laterFieldsByType.set(type, cached);
+        }
+        return cached;
+      },
+      pending: (target) => {
+        const touched = this.#touched.get(target);
+        if (touched === undefined) return false;
+        for (const name of touched.keys()) if (name !== writer) return true;
+        return false;
+      },
     };
   }
 
@@ -580,7 +615,6 @@ export class EnvironmentStateWriteSimulation {
   /** Whether an item read shows an entity an unmodelled write made, or one left unknown, again rather than checks it. */
   #resynced(view: StateView, record: StateRecordFacts, index: number): boolean {
     if (view.shape !== "item") return false;
-    if (this.#overlapsWrite(record)) return true;
     const adopted = this.#unseen.adopt(view, { record, index });
     if (adopted !== undefined) {
       this.#taint.known(adopted.type, adopted.collection, adopted.id);
@@ -760,7 +794,6 @@ export class EnvironmentStateWriteSimulation {
     }
     // Retain omissions only after the final check's coverage passes the ownership guards.
     this.omitted.keep(view, outcome);
-    const interferes = interference(this.#history, outcome);
     const unseen = outcome.pass
       ? this.#confirm(view, record, outcome, exercised)
       : undefined;
@@ -776,6 +809,7 @@ export class EnvironmentStateWriteSimulation {
       this.#pending = this.#pending.filter((write) => !shown.has(write.target));
     }
     if (!outcome.pass) {
+      const interferes = interference(this.#history, outcome);
       const interfered = new Set([...exercised].filter(interferes));
       if (interfered.size === 0)
         this.#mismatch({ record, index, keys, exercised, view });
@@ -845,7 +879,7 @@ export class EnvironmentStateWriteSimulation {
 
   #unmodelled(path: string, index: number): void {
     this.#taint.write(path);
-    this.#unmodelledAt.push(index);
+    this.#history.lastUnmodelledAt = index;
   }
 
   /** Check the writes to an item read's entity on the members they sent, as a resynchronising read does. */
@@ -986,7 +1020,7 @@ export class EnvironmentStateWriteSimulation {
       const sorts = listedSorts(items);
       const unfollowed = this.#unfollowedSorts.get(name) ?? new Set<string>();
       for (const { rule, follows } of sorts)
-        if (!follows) unfollowed.add(JSON.stringify(rule));
+        if (!follows) unfollowed.add(sortRuleKey(rule));
       this.#unfollowedSorts.set(name, unfollowed);
       // A list shown in the order of the field that names its items says less than one in a field people read.
       const idField = this.#types.get(view.type)?.id_field;
@@ -994,7 +1028,7 @@ export class EnvironmentStateWriteSimulation {
         .map(({ rule }) => rule)
         .filter(
           (rule) =>
-            !unfollowed.has(JSON.stringify(rule)) &&
+            !unfollowed.has(sortRuleKey(rule)) &&
             !followed.some((candidate) => same(candidate, rule)),
         )
         .sort(
@@ -1065,7 +1099,7 @@ export class EnvironmentStateWriteSimulation {
     for (const rule of rules.filter(
       (candidate) =>
         (current === undefined || !same(candidate, current)) &&
-        refuted?.has(JSON.stringify(candidate)) !== true &&
+        refuted?.has(sortRuleKey(candidate)) !== true &&
         keptInOrder(kept, candidate),
     )) {
       // A create placed by another sort shows the collection is not kept in this order.
@@ -1116,14 +1150,19 @@ export class EnvironmentStateWriteSimulation {
     );
     const writes = this.#pending.filter((write) => members.has(write.target));
     const fields = new Set<string>();
-    for (const [index, { target, before }] of writes.entries()) {
-      if (before === null) continue;
-      const after =
-        writes.slice(index + 1).find((later) => later.target === target)
-          ?.before ?? members.get(target)!;
-      for (const field of Object.keys(after))
-        if (!same(ownMember(before, field), ownMember(after, field)))
-          fields.add(field);
+    const nextBeforeByTarget = new Map<
+      string,
+      (typeof writes)[number]["before"]
+    >();
+    for (let index = writes.length - 1; index >= 0; index -= 1) {
+      const { target, before } = writes[index]!;
+      if (before !== null) {
+        const after = nextBeforeByTarget.get(target) ?? members.get(target)!;
+        for (const field of Object.keys(after))
+          if (!same(ownMember(before, field), ownMember(after, field)))
+            fields.add(field);
+      }
+      nextBeforeByTarget.set(target, before);
     }
     const order = [...members.keys()];
     const refuted = this.#refutedSorts.get(view.type) ?? new Set<string>();
@@ -1137,7 +1176,7 @@ export class EnvironmentStateWriteSimulation {
           writes,
         );
         if (replayed !== undefined && !same(replayed, order))
-          refuted.add(JSON.stringify(rule));
+          refuted.add(sortRuleKey(rule));
       }
     if (refuted.size > 0) this.#refutedSorts.set(view.type, refuted);
   }
@@ -1178,7 +1217,7 @@ export class EnvironmentStateWriteSimulation {
     for (const candidate of options) {
       if (
         candidate.rule === "sorted" &&
-        refuted?.has(JSON.stringify(candidate)) === true
+        refuted?.has(sortRuleKey(candidate)) === true
       )
         continue;
       this.#state.reinsert(view.type, line.collection, inserted, candidate);

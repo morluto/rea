@@ -3,10 +3,10 @@ import { z } from "zod";
 import { apiContractSchema } from "../domain/apiContract/apiContract.js";
 import { inspectApiContractInputSchema } from "../domain/apiContract/apiContractQuery.js";
 import {
-  apiContractSummaryViewResultSchema,
   apiContractPageViewResultSchema,
+  apiContractSummaryViewResultSchema,
   graphqlContractPageViewResultSchema,
-} from "../domain/analysisView/analysisViewResult.js";
+} from "../domain/analysisView/summarySchemas/apiContractSummarySchemas.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import { toolContractMetadata, evidenceEffects } from "./toolEffects.js";
 import type { ToolContract } from "./toolContractTypes.js";
