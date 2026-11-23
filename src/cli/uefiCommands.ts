@@ -47,6 +47,11 @@ export const registerUefiCommands = (
       positionals: ["path"],
       callerPaths: ["path"],
       fields: { path: FLASH_PATH },
+      omit: {
+        detail:
+          "The one-shot command returns complete Evidence; summaries are retained by MCP sessions.",
+        view: "Views page Evidence retained by MCP sessions.",
+      },
     },
     run("inspect_uefi_firmware"),
   );
