@@ -38,3 +38,58 @@ it("requires the AMD target metadata fact that every inventory row records", () 
   expect(field.safeParse(null).success).toBe(true);
   expect(field.safeParse(undefined).success).toBe(false);
 });
+
+it("keeps AMD notes valid when PAL pipelines are omitted or declared", () => {
+  const field = gpuObjectSchema.shape.amd_target_metadata;
+  const location = {
+    container_id: "object",
+    offset: 0,
+    size: 64,
+    section_index: null,
+    section_name: null,
+  };
+  const note = {
+    target: null,
+    target_state: "absent" as const,
+    location: { ...location, section_index: 1, section_name: ".note", size: 8 },
+  };
+  const metadata = {
+    flags: "0x00000036",
+    processor: "gfx1030",
+    header_location: location,
+    note_coverage: "complete" as const,
+    notes: [note],
+  };
+  expect(field.safeParse(metadata).success).toBe(true);
+  expect(
+    field.safeParse({
+      ...metadata,
+      notes: [
+        {
+          ...note,
+          pal_pipelines: [
+            {
+              api: "Vulkan",
+              type: "VsPs",
+              stages: [
+                {
+                  name: ".vs",
+                  entry_point: "_amdgpu_vs_main",
+                  sgpr_count: 20,
+                  vgpr_count: 12,
+                  wavefront_size: 32,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }).success,
+  ).toBe(true);
+  expect(
+    field.safeParse({
+      ...metadata,
+      notes: [{ ...note, pal_pipelines: [{ api: 1 }] }],
+    }).success,
+  ).toBe(false);
+});

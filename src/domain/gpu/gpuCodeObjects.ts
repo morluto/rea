@@ -7,6 +7,18 @@ import {
 } from "../localPath.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const gpuPalStageSchema = z.strictObject({
+  name: z.string(),
+  entry_point: z.string().nullable(),
+  sgpr_count: count.nullable(),
+  vgpr_count: count.nullable(),
+  wavefront_size: count.nullable(),
+});
+const gpuPalPipelineSchema = z.strictObject({
+  api: z.string().nullable(),
+  type: z.string().nullable(),
+  stages: z.array(gpuPalStageSchema).nullable(),
+});
 /**
  * GPU inventories report known coverage: discovery, note and payload
  * producers derive `partial` from the gaps they recorded, so they never
@@ -19,6 +31,23 @@ export const gpuLocationSchema = z.strictObject({
   section_index: count.nullable(),
   section_name: z.string().nullable(),
 });
+const gpuAmdNoteFields = {
+  target: z.string().nullable(),
+  target_state: z.enum(["absent", "declared", "invalid"]),
+  location: gpuLocationSchema,
+};
+// A present array and an omitted key stay distinct JSON values; undefined is not a value.
+const gpuAmdNoteSchema = z.union([
+  z.strictObject(gpuAmdNoteFields),
+  z.strictObject({
+    ...gpuAmdNoteFields,
+    pal_pipelines: z
+      .array(gpuPalPipelineSchema)
+      .describe(
+        "Pipelines declared by an ELF OS ABI 65 MessagePack note. Omitted for other ABIs. Hardware stages are not HSA kernels.",
+      ),
+  }),
+]);
 export const gpuObjectSchema = z.strictObject({
   id: z.string(),
   parent_id: z.string().nullable(),
@@ -49,13 +78,7 @@ export const gpuObjectSchema = z.strictObject({
       note_coverage: knownCoverageStatusSchema.describe(
         "Complete only after all declared ELF note sections were examined within supported AMD metadata coverage; partial retains only examined facts.",
       ),
-      notes: z.array(
-        z.strictObject({
-          target: z.string().nullable(),
-          target_state: z.enum(["absent", "declared", "invalid"]),
-          location: gpuLocationSchema,
-        }),
-      ),
+      notes: z.array(gpuAmdNoteSchema),
     })
     .nullable(),
   target_consistency: z.enum([

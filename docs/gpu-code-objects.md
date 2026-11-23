@@ -155,6 +155,14 @@ Kernel representations have different meanings:
   unresolved. Argument counts include hidden ABI arguments
   when present; SGPR/VGPR counts and fixed group/private segment sizes retain
   their declared meanings. Legacy YAML metadata remains unsupported.
+  ELF OS ABI 65 (`ELFOSABI_AMDGPU_PAL`) selects PAL MessagePack notes. Those
+  notes declare `amdpal.pipelines` and do not carry `amdhsa.kernels`. Each
+  pipeline is retained on its note as `pal_pipelines`: API, pipeline type, and
+  hardware stages with their declared names, entry points, SGPR counts, VGPR
+  counts, and wavefront sizes. Omitted or non-string fields stay unknown.
+  Hardware stages are not reported as HSA kernels, and register programming is
+  not interpreted. A PAL note is not malformed for lacking a kernel array. A
+  PAL object with no v3+ MessagePack note stays unsupported.
 
 Each selected PTX payload becomes a retained UTF-8 text artifact with a SHA-256,
 byte length and source coordinates. It is omitted from compact replies. Read it

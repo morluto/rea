@@ -48,7 +48,11 @@ import {
   amdRecord,
   amdString,
   readAmdMetadata,
+  readAmdPalPipelines,
 } from "./AmdGpuMetadata.js";
+
+/** ELFOSABI_AMDGPU_PAL. PAL notes declare amdpal.pipelines, not amdhsa.kernels. */
+const ELFOSABI_AMDGPU_PAL = 65;
 const sectionBytes = (
   source: GpuSource,
   section: NativeSection,
@@ -436,6 +440,7 @@ export const readAmdElfMetadata = async (
   const notes: AmdElfMetadata["notes"] = [];
   let retainedBytes = 0;
   let unsupportedNotes = false;
+  let acceptedPal = false;
   let targetMetadata: AmdElfMetadata["targetMetadata"] = null;
   const observed = (): AmdElfMetadata => {
     const targets = new Set(
@@ -540,15 +545,40 @@ export const readAmdElfMetadata = async (
               ? "invalid"
               : "declared";
           if (target_state === "invalid") unsupportedNotes = true;
-          targetMetadata.notes.push({
-            target,
-            target_state,
-            location: site(source, section, desc, size),
-          });
-          const kernels = metadata?.["amdhsa.kernels"];
-          if (!Array.isArray(kernels))
-            return rejectGpu("AMDGPU metadata has no valid kernel array");
-          notes.push({ section, noteOffset: p, desc, size, kernels });
+          const location = site(source, section, desc, size);
+          // OS ABI selects the schema. Key names do not turn PAL into HSA.
+          if (directory.elf_os_abi === ELFOSABI_AMDGPU_PAL) {
+            if (!Object.hasOwn(metadata!, "amdpal.pipelines")) {
+              unsupportedNotes = true;
+              targetMetadata.notes.push({ target, target_state, location });
+            } else if (!Array.isArray(metadata!["amdpal.pipelines"])) {
+              targetMetadata.notes.push({ target, target_state, location });
+              return rejectGpu(
+                "AMDGPU PAL metadata has no valid pipeline array",
+              );
+            } else {
+              const decoded = readAmdPalPipelines(
+                metadata!["amdpal.pipelines"],
+              );
+              for (const limitation of decoded.limitations)
+                if (!limitations.includes(limitation))
+                  limitations.push(limitation);
+              if (decoded.limitations.length > 0) unsupportedNotes = true;
+              acceptedPal = true;
+              targetMetadata.notes.push({
+                target,
+                target_state,
+                location,
+                pal_pipelines: decoded.pipelines,
+              });
+            }
+          } else {
+            targetMetadata.notes.push({ target, target_state, location });
+            const kernels = metadata?.["amdhsa.kernels"];
+            if (!Array.isArray(kernels))
+              return rejectGpu("AMDGPU metadata has no valid kernel array");
+            notes.push({ section, noteOffset: p, desc, size, kernels });
+          }
         } else if (vendor === "AMD" && (type === 10 || type === 11)) {
           unsupportedNotes = true;
           limitations.push(
@@ -562,7 +592,7 @@ export const readAmdElfMetadata = async (
       unsupportedNotes || directory.sections.length === 0
         ? "partial"
         : "complete";
-    if (notes.length === 0)
+    if (notes.length === 0 && !acceptedPal)
       throw new BinaryFormatFailure(
         "unsupported",
         "No AMDGPU v3+ MessagePack kernel metadata was available",

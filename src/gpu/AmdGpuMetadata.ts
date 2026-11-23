@@ -211,3 +211,88 @@ export const amdCount = (value: unknown): number | null => {
 };
 export const amdString = (value: unknown): string | null =>
   typeof value === "string" ? value : null;
+
+const PAL_PIPELINE_SHAPE =
+  "AMDGPU PAL pipeline metadata is not a map; pipeline fields remain unknown";
+const PAL_STAGE_SHAPE =
+  "AMDGPU PAL hardware stage metadata is not a map; stage fields remain unknown";
+
+export interface AmdPalStage {
+  readonly name: string;
+  readonly entry_point: string | null;
+  readonly sgpr_count: number | null;
+  readonly vgpr_count: number | null;
+  readonly wavefront_size: number | null;
+}
+
+export interface AmdPalPipeline {
+  readonly api: string | null;
+  readonly type: string | null;
+  readonly stages: AmdPalStage[] | null;
+}
+
+const palStage = (
+  name: string,
+  stage: unknown,
+  limitations: string[],
+): AmdPalStage => {
+  const fields = amdRecord(stage);
+  if (fields === null) {
+    if (!limitations.includes(PAL_STAGE_SHAPE))
+      limitations.push(PAL_STAGE_SHAPE);
+    return {
+      name,
+      entry_point: null,
+      sgpr_count: null,
+      vgpr_count: null,
+      wavefront_size: null,
+    };
+  }
+  return {
+    name,
+    entry_point: amdString(fields[".entry_point"]),
+    sgpr_count: amdCount(fields[".sgpr_count"]),
+    vgpr_count: amdCount(fields[".vgpr_count"]),
+    wavefront_size: amdCount(fields[".wavefront_size"]),
+  };
+};
+
+const palStages = (
+  value: unknown,
+  limitations: string[],
+): AmdPalStage[] | null => {
+  const stages = amdRecord(value);
+  if (stages === null) {
+    if (!limitations.includes(PAL_STAGE_SHAPE))
+      limitations.push(PAL_STAGE_SHAPE);
+    return null;
+  }
+  return Object.entries(stages).map(([name, stage]) =>
+    palStage(name, stage, limitations),
+  );
+};
+
+/** Declared PAL pipeline facts. Register maps and shader bytes stay unread. */
+export const readAmdPalPipelines = (
+  pipelines: readonly unknown[],
+): { readonly pipelines: AmdPalPipeline[]; readonly limitations: string[] } => {
+  const limitations: string[] = [];
+  return {
+    pipelines: pipelines.map((entry) => {
+      const row = amdRecord(entry);
+      if (row === null) {
+        if (!limitations.includes(PAL_PIPELINE_SHAPE))
+          limitations.push(PAL_PIPELINE_SHAPE);
+        return { api: null, type: null, stages: null };
+      }
+      return {
+        api: amdString(row[".api"]),
+        type: amdString(row[".type"]),
+        stages: Object.hasOwn(row, ".hardware_stages")
+          ? palStages(row[".hardware_stages"], limitations)
+          : null,
+      };
+    }),
+    limitations,
+  };
+};

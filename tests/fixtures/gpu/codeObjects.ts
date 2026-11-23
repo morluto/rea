@@ -269,6 +269,78 @@ export const amdFixture = (
     },
   ]);
 };
+const GFX1030_TRIPLE = "amdgcn-amd-amdhsa--gfx1030";
+/** HSA MessagePack note from the PAL/HSA code-object control. */
+export const amdHsaMetadata = (): Record<string, unknown> => ({
+  "amdhsa.version": [1, 2],
+  "amdhsa.target": GFX1030_TRIPLE,
+  "amdhsa.kernels": [
+    {
+      ".name": "k0",
+      ".symbol": "k0.kd",
+      ".kernarg_segment_size": 8,
+      ".group_segment_fixed_size": 0,
+      ".private_segment_fixed_size": 0,
+      ".kernarg_segment_align": 8,
+      ".wavefront_size": 32,
+      ".sgpr_count": 16,
+      ".vgpr_count": 8,
+      ".max_flat_workgroup_size": 256,
+    },
+  ],
+});
+/** PAL MessagePack note: pipelines and hardware stages, never amdhsa.kernels. */
+export const amdPalMetadata = (): Record<string, unknown> => ({
+  "amdpal.version": [3, 0],
+  "amdpal.pipelines": [
+    {
+      ".api": "Vulkan",
+      ".type": "VsPs",
+      ".hardware_stages": {
+        ".vs": {
+          ".entry_point": "_amdgpu_vs_main",
+          ".sgpr_count": 20,
+          ".vgpr_count": 12,
+          ".wavefront_size": 32,
+        },
+        ".ps": {
+          ".entry_point": "_amdgpu_ps_main",
+          ".sgpr_count": 10,
+          ".vgpr_count": 6,
+          ".wavefront_size": 32,
+        },
+      },
+      ".registers": {},
+    },
+  ],
+});
+/**
+ * gfx1030 ELF64 code object. OS ABI 64 is HSA, 65 is PAL.
+ * `nometa` is PAL with no note section.
+ */
+export const amdAbiCodeObject = (
+  mode: "hsa" | "pal" | "nometa",
+  metadata?: Record<string, unknown>,
+): Buffer => {
+  const document =
+    mode === "nometa"
+      ? undefined
+      : (metadata ?? (mode === "hsa" ? amdHsaMetadata() : amdPalMetadata()));
+  const note =
+    document === undefined
+      ? undefined
+      : amdDescriptorNoteFixture(Buffer.from(encode(document)));
+  const result = elfFixture(
+    224,
+    note === undefined
+      ? [{ name: ".text", type: 1, flags: 6n, bytes: Buffer.alloc(16) }]
+      : [{ name: ".note", type: 7, bytes: note }],
+  );
+  result[7] = mode === "hsa" ? 64 : 65;
+  result[8] = mode === "hsa" ? 3 : 0;
+  result.writeUInt32LE(0x36, 48);
+  return result;
+};
 /**
  * One final LZ4 literal sequence, the block form CUDA's 0x2000 profile stores.
  * A single sequence is valid LZ4: separate sequences need an intervening match.
