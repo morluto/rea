@@ -177,15 +177,14 @@ export const readConfigurationFile = async (
   if (!source.ok) return source;
   const content = source.value;
   if (content === undefined) return ok(undefined);
-  try {
-    return ok(parseClientConfiguration(content, format));
-  } catch (cause: unknown) {
-    return err({
-      kind: "malformed",
-      path,
-      detail: `Configuration ${path} is malformed: ${errorMessage(cause)}`,
-    });
-  }
+  const parsed = parseClientConfiguration(content, format);
+  return parsed.ok
+    ? parsed
+    : err({
+        kind: "malformed",
+        path,
+        detail: `Configuration ${path} is malformed: ${parsed.error.detail}`,
+      });
 };
 
 /** Read each layer; setup may validate its writable layer with proposed overrides. */

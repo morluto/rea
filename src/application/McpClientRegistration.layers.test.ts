@@ -1,3 +1,4 @@
+import { expectResultValue } from "../../tests/support/expectResultValue.js";
 import { registerMcpClientOnHost } from "../../tests/fixtures/mcpRegistration.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -54,7 +55,9 @@ const effective = (
   format: "kilo" | "opencode" = "kilo",
 ) => {
   const parsed = mergeClientConfigurationDocuments(
-    texts.map((text) => parseClientConfiguration(text, format)),
+    texts.map((text) =>
+      expectResultValue(parseClientConfiguration(text, format)),
+    ),
     HOST_PLATFORM.platform,
   );
   if (parsed === undefined)
@@ -226,9 +229,11 @@ it("refuses a conflicting KILO_CONFIG_CONTENT launcher without mutating the inli
   const target = join(root, "project", "kilo.json");
   const inline = {
     origin: "KILO_CONFIG_CONTENT",
-    parsed: parseClientConfiguration(
-      '{"mcp":{"rea":{"type":"local","command":["inline-server"]}}}',
-      "kilo",
+    parsed: expectResultValue(
+      parseClientConfiguration(
+        '{"mcp":{"rea":{"type":"local","command":["inline-server"]}}}',
+        "kilo",
+      ),
     ),
   } as const;
   const beforeInline = structuredClone(inline);
@@ -283,7 +288,7 @@ it("retains harmless higher file and inline metadata as read-only inherited fact
     '{"mcp":{"rea":{"environment":{"INLINE":"1"},"custom":{"inline":true}}}}';
   const inline = {
     origin: "KILO_CONFIG_CONTENT",
-    parsed: parseClientConfiguration(inlineText, "kilo"),
+    parsed: expectResultValue(parseClientConfiguration(inlineText, "kilo")),
   } as const;
   const beforeInline = structuredClone(inline);
   const client = {

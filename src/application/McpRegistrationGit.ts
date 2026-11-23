@@ -2,12 +2,13 @@ import { lstat, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, sep } from "node:path";
 
 import {
-  AnalysisCancelledError,
+  type AnalysisCancelledError,
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { err, ok, type Result } from "../domain/result.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
@@ -31,9 +32,9 @@ export const pathWithin = (root: string, path: string): boolean => {
 /** Git metadata replies are paths and porcelain records, never bulk data. */
 const GIT_METADATA_BYTES = 1024 * 1024;
 
-const gitFailure = (
-  cause: unknown,
-): ConfigurationError | AnalysisCancelledError =>
+type GitFailure = ConfigurationError | AnalysisCancelledError;
+
+const gitFailure = (cause: unknown): GitFailure =>
   cause instanceof ExecFileOutputCancelledError
     ? cancelledBy("Kilo project root discovery", carriedReason(cause.cause))
     : new ConfigurationError(
@@ -50,7 +51,7 @@ const gitOutput = async (
   context: McpRegistrationLocationContext,
   cwd: string,
   arguments_: readonly string[],
-): Promise<string> => {
+): Promise<Result<string, GitFailure>> => {
   let observation: { readonly stdout: Buffer; readonly stderr: Buffer };
   try {
     observation = await execFileBytes("git", arguments_, {
@@ -63,16 +64,21 @@ const gitOutput = async (
       ...(context.signal === undefined ? {} : { signal: context.signal }),
     });
   } catch (cause: unknown) {
-    throw gitFailure(cause);
+    return err(gitFailure(cause));
   }
   try {
-    return decodeStrictUtf8(observation.stdout, "strip-signature");
+    return ok(decodeStrictUtf8(observation.stdout, "strip-signature"));
   } catch {
     // The failure keeps the exact observation it could not decode.
-    throw gitFailure(
-      new Error("Git did not provide a complete UTF-8 metadata observation.", {
-        cause: observation,
-      }),
+    return err(
+      gitFailure(
+        new Error(
+          "Git did not provide a complete UTF-8 metadata observation.",
+          {
+            cause: observation,
+          },
+        ),
+      ),
     );
   }
 };
@@ -82,20 +88,26 @@ const gitPath = async (
   context: McpRegistrationLocationContext,
   cwd: string,
   field: string,
-): Promise<string> => {
-  const text = await gitOutput(context, cwd, ["rev-parse", field]);
+): Promise<Result<string, GitFailure>> => {
+  const output = await gitOutput(context, cwd, ["rev-parse", field]);
+  if (!output.ok) return output;
+  const text = output.value;
   if (!text.endsWith("\n"))
-    throw new ConfigurationError(
-      "Git metadata path has no protocol terminator; Kilo project root remains unknown.",
+    return err(
+      new ConfigurationError(
+        "Git metadata path has no protocol terminator; Kilo project root remains unknown.",
+      ),
     );
   let value = text.slice(0, -1);
   if (context.platform === "win32" && value.endsWith("\r"))
     value = value.slice(0, -1);
   if (value.length === 0)
-    throw new ConfigurationError(
-      "Git returned an empty path; Kilo project root remains unknown.",
+    return err(
+      new ConfigurationError(
+        "Git returned an empty path; Kilo project root remains unknown.",
+      ),
     );
-  return absoluteCallerPath(value, { cwd, platform: context.platform });
+  return ok(absoluteCallerPath(value, { cwd, platform: context.platform }));
 };
 
 const nearestGitDirectory = async (
@@ -123,88 +135,104 @@ const primaryRoot = async (
   root: string,
   gitDirectory: string,
   commonDirectory: string,
-): Promise<string | undefined> => {
-  if (gitDirectory === commonDirectory) return root;
+): Promise<Result<string | undefined, GitFailure>> => {
+  if (gitDirectory === commonDirectory) return ok(root);
   // Kilo reads the first record. A bare repository has no primary checkout.
-  const listing = await gitOutput(context, root, [
+  const output = await gitOutput(context, root, [
     "worktree",
     "list",
     "--porcelain",
     "-z",
   ]);
+  if (!output.ok) return output;
+  const listing = output.value;
   const record = listing.split("\0\0", 1)[0]?.split("\0");
   const field = record?.find((item) => item.startsWith("worktree "));
   if (field === undefined)
-    throw new ConfigurationError(
-      "Kilo primary worktree is unknown; no project settings were written.",
+    return err(
+      new ConfigurationError(
+        "Kilo primary worktree is unknown; no project settings were written.",
+      ),
     );
   const value = field.slice("worktree ".length);
   if (value.length === 0 || !listing.includes("\0\0"))
-    throw new ConfigurationError(
-      "Git returned incomplete worktree metadata; no project settings were written.",
+    return err(
+      new ConfigurationError(
+        "Git returned incomplete worktree metadata; no project settings were written.",
+      ),
     );
-  if (record?.includes("bare")) return undefined;
+  if (record?.includes("bare")) return ok(undefined);
   return directoryPath(
     absoluteCallerPath(value, { cwd: root, platform: context.platform }),
   );
 };
 
-const directoryPath = async (path: string): Promise<string> => {
+const directoryPath = async (
+  path: string,
+): Promise<Result<string, GitFailure>> => {
   const resolved = await realpath(path);
   if (!(await lstat(resolved)).isDirectory())
-    throw new ConfigurationError(
-      "Git metadata did not identify a directory; repair repository access or register globally. No settings were written.",
+    return err(
+      new ConfigurationError(
+        "Git metadata did not identify a directory; repair repository access or register globally. No settings were written.",
+      ),
     );
-  return resolved;
+  return ok(resolved);
+};
+
+const resolveWorktree = async (
+  context: McpRegistrationLocationContext,
+): Promise<Result<KiloRegistrationWorktree, GitFailure>> => {
+  const active = await directoryPath(
+    absoluteCallerPath(context.cwd, { platform: context.platform }),
+  );
+  if (!active.ok) return active;
+  const activeDirectory = active.value;
+  const gitCwd = await nearestGitDirectory(activeDirectory);
+  if (gitCwd === undefined)
+    return err(
+      new ConfigurationError(
+        "Kilo project registration needs a verified Git worktree boundary. Open a repository or register globally; no client settings were written.",
+      ),
+    );
+  const readDirectory = async (field: string) => {
+    const path = await gitPath(context, gitCwd, field);
+    return path.ok ? directoryPath(path.value) : path;
+  };
+  const root = await readDirectory("--show-toplevel");
+  if (!root.ok) return root;
+  const gitDirectory = await readDirectory("--git-dir");
+  if (!gitDirectory.ok) return gitDirectory;
+  const commonDirectory = await readDirectory("--git-common-dir");
+  if (!commonDirectory.ok) return commonDirectory;
+  if (!pathWithin(root.value, activeDirectory))
+    return err(
+      new ConfigurationError(
+        "Git's worktree does not contain the selected directory; Kilo project scope remains unknown.",
+      ),
+    );
+  const primary = await primaryRoot(
+    context,
+    root.value,
+    gitDirectory.value,
+    commonDirectory.value,
+  );
+  return primary.ok
+    ? ok({ activeDirectory, root: root.value, primaryRoot: primary.value })
+    : primary;
 };
 
 /** Match the native nearest-.git and authoritative rev-parse worktree boundary. */
 export const resolveKiloRegistrationWorktree = async (
   context: McpRegistrationLocationContext,
-): Promise<KiloRegistrationWorktree> => {
-  try {
-    const activeDirectory = await directoryPath(
-      absoluteCallerPath(context.cwd, { platform: context.platform }),
+): Promise<Result<KiloRegistrationWorktree, GitFailure>> => {
+  const result = await resolveWorktree(context).catch((cause: unknown) =>
+    err(gitFailure(cause)),
+  );
+  if (!result.ok && context.signal?.aborted === true)
+    analysisErrorWithCancellation(
+      result.error,
+      cancelledBy("Kilo project root discovery", context.signal),
     );
-    const gitCwd = await nearestGitDirectory(activeDirectory);
-    if (gitCwd === undefined)
-      throw new ConfigurationError(
-        "Kilo project registration needs a verified Git worktree boundary. Open a repository or register globally; no client settings were written.",
-      );
-    const root = await directoryPath(
-      await gitPath(context, gitCwd, "--show-toplevel"),
-    );
-    const gitDirectory = await directoryPath(
-      await gitPath(context, gitCwd, "--git-dir"),
-    );
-    const commonDirectory = await directoryPath(
-      await gitPath(context, gitCwd, "--git-common-dir"),
-    );
-    if (!pathWithin(root, activeDirectory))
-      throw new ConfigurationError(
-        "Git's worktree does not contain the selected directory; Kilo project scope remains unknown.",
-      );
-    return {
-      activeDirectory,
-      root,
-      primaryRoot: await primaryRoot(
-        context,
-        root,
-        gitDirectory,
-        commonDirectory,
-      ),
-    };
-  } catch (cause: unknown) {
-    const failure =
-      cause instanceof ConfigurationError ||
-      cause instanceof AnalysisCancelledError
-        ? cause
-        : gitFailure(cause);
-    if (context.signal?.aborted === true)
-      analysisErrorWithCancellation(
-        failure,
-        cancelledBy("Kilo project root discovery", context.signal),
-      );
-    throw failure;
-  }
+  return result;
 };

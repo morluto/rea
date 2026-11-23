@@ -1,3 +1,4 @@
+import { WindowsChangeTimeConfigurationError } from "../config/windowsChangeTimeSettle.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
@@ -184,8 +185,15 @@ export const readIdaConfiguration = (
 ): Promise<Result<IdaConfiguration, ConfigurationError>> =>
   options.resourceScope.run(async () => {
     let closeLease: AnalysisCleanupLease | undefined;
+    let textSizeFailure: ConfigurationError | undefined;
+    const sizeRefusal = () => {
+      textSizeFailure = registrationTooLarge();
+      return err(textSizeFailure);
+    };
     try {
-      const text = await withOwnedRegularFile<string>(
+      const text = await withOwnedRegularFile<
+        Result<string, ConfigurationError>
+      >(
         path,
         {
           ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -203,8 +211,7 @@ export const readIdaConfiguration = (
           },
         },
         async ({ handle, initial: metadata }) => {
-          if (metadata.size > MAXIMUM_REGISTRATION_BYTES)
-            throw registrationTooLarge();
+          if (metadata.size > MAXIMUM_REGISTRATION_BYTES) return sizeRefusal();
           const bytes = await readBoundedFileBytes(
             handle,
             MAXIMUM_REGISTRATION_BYTES,
@@ -215,11 +222,13 @@ export const readIdaConfiguration = (
                 new RegularFileOperationCancelled(reason),
             },
           );
-          if (bytes === undefined) throw registrationTooLarge();
-          return bytes.toString("utf8");
+          return bytes === undefined
+            ? sizeRefusal()
+            : ok(bytes.toString("utf8"));
         },
       );
-      const input: unknown = JSON.parse(text);
+      if (!text.ok) return text;
+      const input: unknown = JSON.parse(text.value);
       const envelope = z
         .object({ mcpServers: z.object({ "ida-pro-mcp": z.unknown() }) })
         .safeParse(input);
@@ -257,7 +266,13 @@ export const readIdaConfiguration = (
         ),
       );
     } catch (cause: unknown) {
-      if (cause instanceof ConfigurationError) return err(cause);
+      if (
+        textSizeFailure !== undefined &&
+        !(cause instanceof RegularFileCleanupFailure)
+      )
+        return err(textSizeFailure);
+      if (cause instanceof WindowsChangeTimeConfigurationError)
+        return err(cause);
       if (cause instanceof NonRegularFileReadError)
         return err(
           idaConfigurationError(
@@ -267,7 +282,7 @@ export const readIdaConfiguration = (
         );
       if (cause instanceof AnalysisCancelledError) throw cause;
       const cancellation = regularFileCancellation(cause);
-      if (cancellation !== undefined) {
+      if (cancellation !== undefined && textSizeFailure === undefined) {
         if (cause instanceof RegularFileCleanupFailure) {
           const error = cancelledBy(
             "ida:registration",
@@ -292,14 +307,17 @@ export const readIdaConfiguration = (
           cause.outcome.kind === "failed"
             ? cause.outcome.cause
             : cause.cleanupCause;
+        const sizeFailure = textSizeFailure;
         const primaryMessage =
-          cause.outcome.kind === "failed"
-            ? primary instanceof ConfigurationError
-              ? primary.message
-              : primary instanceof NonRegularFileReadError
-                ? `REA_IDA_MCP_CONFIG must select a regular JSON file: ${path}`
-                : `Cannot read IDA MCP registration ${path}: ${errorMessage(primary)}`
-            : `Cannot close IDA MCP registration ${path}; provide a readable JSON configuration.`;
+          sizeFailure !== undefined
+            ? sizeFailure.message
+            : cause.outcome.kind === "failed"
+              ? primary instanceof WindowsChangeTimeConfigurationError
+                ? primary.message
+                : primary instanceof NonRegularFileReadError
+                  ? `REA_IDA_MCP_CONFIG must select a regular JSON file: ${path}`
+                  : `Cannot read IDA MCP registration ${path}: ${errorMessage(primary)}`
+              : `Cannot close IDA MCP registration ${path}; provide a readable JSON configuration.`;
         const error = new ConfigurationError(primaryMessage, {
           cause,
           cleanup: {

@@ -1057,6 +1057,7 @@ export class GhidraClient {
           "admission",
           startupTimeout.error.message,
           startupTimeout.error,
+          { configurationFailure: startupTimeout.error },
         ),
       );
     const deadline = new ProviderStartupDeadline(startupTimeout.value, signal, {
