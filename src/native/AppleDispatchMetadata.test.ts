@@ -1138,9 +1138,14 @@ describe("Apple dispatch pointer fixup metadata", () => {
       name: "oversized addend whose tail resembles DO_BIND",
       operand: [0x60, ...Array<number>(10).fill(0x80), 0x90, 0x00],
     },
+    {
+      name: "a located bind with no selected symbol",
+      operand: [0x51, 0x70, 0x80, 0x1d, 0x90, 0],
+      missingTarget: true,
+    },
   ])(
     "keeps decoded bindings when an independent stream has $name",
-    ({ operand }) => {
+    ({ operand, missingTarget }) => {
       const bytes = fixture();
       bytes.writeUInt32LE(2, 16);
       bytes.writeUInt32LE(200, 20);
@@ -1158,7 +1163,10 @@ describe("Apple dispatch pointer fixup metadata", () => {
         0x00,
       ]);
       bindings.copy(bytes, 0xc00);
-      const invalid = Buffer.from([...bindings.subarray(0, -2), ...operand]);
+      const invalid = Buffer.from([
+        ...(missingTarget ? [] : bindings.subarray(0, -2)),
+        ...operand,
+      ]);
       invalid.copy(bytes, 0xc80);
       bytes.writeUInt32LE(0xc00, 200);
       bytes.writeUInt32LE(bindings.length, 204);
@@ -1172,7 +1180,16 @@ describe("Apple dispatch pointer fixup metadata", () => {
       });
       expect(
         result.coverage.find(({ facet }) => facet === "pointer_fixups"),
-      ).toMatchObject({ status: "partial", examined: 2, decoded: 1 });
+      ).toMatchObject({
+        status: "partial",
+        examined: 2,
+        decoded: missingTarget ? 2 : 1,
+        reason: expect.stringContaining(
+          missingTarget
+            ? "bind_target_unresolved at 0x100000e80: Legacy bind has no selected symbol"
+            : "bind_stream_decode_failed",
+        ),
+      });
     },
   );
 

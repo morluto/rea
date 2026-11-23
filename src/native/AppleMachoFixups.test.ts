@@ -1912,12 +1912,36 @@ describe("legacy pointer fixup streams", () => {
 });
 
 describe("legacy bind target registers", () => {
+  const selectedName = [0x40, ...Buffer.from("_name\0")];
   it.each([
-    { missing: "symbol", initial: [0x30] },
-    { missing: "library ordinal", initial: [0x40, ...Buffer.from("_name\0")] },
+    {
+      target: "unset symbol",
+      initial: [0x30],
+      reason: "Legacy bind has no selected symbol",
+    },
+    {
+      target: "unset ordinal",
+      initial: selectedName,
+      reason: "Legacy bind has no selected library ordinal",
+    },
+    {
+      target: "ordinal outside the dependency table",
+      initial: [0x11, ...selectedName],
+      reason: "Dylib ordinal 1 exceeds the 0 declared dependencies",
+    },
+    {
+      target: "unknown special ordinal",
+      initial: [0x3c, ...selectedName],
+      reason: "Unsupported dylib ordinal -4",
+    },
+    {
+      target: "unsafe unsigned ordinal",
+      initial: [0x20, ...Array<number>(7).fill(0x80), 0x10, ...selectedName],
+      reason: "Dylib ordinal 9007199254740992 exceeds the safe integer range",
+    },
   ])(
-    "retains a slot with an unset $missing and keeps later explicit registers",
-    ({ missing, initial }) => {
+    "reports a bind with an $target and keeps later explicit registers",
+    ({ initial, reason }) => {
       const opcodes = Buffer.from([
         0x51,
         0x71,
@@ -1934,19 +1958,24 @@ describe("legacy bind target registers", () => {
         0,
       ]);
       const fixups = legacyBind(opcodes, []);
-      expect(fixups.decode(BASE + 0x4008n, 0x99n)).toMatchObject({
-        kind: "unsupported",
-        reason: expect.stringContaining(missing),
+      expect(fixups).toMatchObject({
+        examined: 1,
+        decoded: 1,
+        failures: [reason],
       });
-      expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x4008n, 8)).toBe(true);
       expect(fixups.issues).toEqual([
-        expect.objectContaining({
+        {
           facet: "pointer_fixups",
           code: "bind_target_unresolved",
-          location: `0x${(BASE + 0x4008n).toString(16)}`,
-          message: expect.stringContaining(missing),
-        }),
+          location: "0x100004008",
+          message: reason,
+        },
       ]);
+      expect(fixups.decode(BASE + 0x4008n, 0x99n)).toEqual({
+        kind: "unsupported",
+        reason,
+      });
+      expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x4008n, 8)).toBe(true);
       expect(fixups.decode(BASE + 0x4010n, 0n)).toMatchObject({
         kind: "bind",
         symbol: "",
@@ -1957,6 +1986,7 @@ describe("legacy bind target registers", () => {
         symbol: "_following",
         library_ordinal: 0,
       });
+      expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x4020n, 8)).toBe(false);
       expect(fixups.decode(BASE + 0x4020n, 0x12n)).toEqual({
         kind: "raw",
         target: 0x12n,
@@ -2119,12 +2149,11 @@ describe("legacy bind operand decoding", () => {
   });
 });
 
-it("preserves classic special ordinals and returns unsupported at invalid bind locations", () => {
-  const parseOrdinal = (ordinal: number, dylibs: readonly string[]) => {
-    const immediate = ordinal < 0 ? ordinal + 16 : ordinal;
+it("preserves explicit classic special ordinals", () => {
+  for (const ordinal of [0, -1, -2, -3]) {
     const opcodes = Buffer.from([
       0x51,
-      ordinal > 0 ? 0x10 | ordinal : 0x30 | immediate,
+      0x30 | (ordinal & 0x0f),
       0x40,
       ...Buffer.from("_OBJC_CLASS_$_NSObject\0"),
       0x71,
@@ -2132,10 +2161,7 @@ it("preserves classic special ordinals and returns unsupported at invalid bind l
       0x90,
       0x00,
     ]);
-    return legacyBind(opcodes, dylibs);
-  };
-  for (const ordinal of [0, -1, -2, -3]) {
-    const fixups = parseOrdinal(ordinal, []);
+    const fixups = legacyBind(opcodes, []);
     expect(fixups.decode(BASE + 0x4008n, 0n)).toMatchObject({
       kind: "bind",
       symbol: "_OBJC_CLASS_$_NSObject",
@@ -2143,48 +2169,4 @@ it("preserves classic special ordinals and returns unsupported at invalid bind l
       library: null,
     });
   }
-  for (const [ordinal, dylibs, reason] of [
-    [1, [], "Dylib ordinal 1 exceeds the 0 declared dependencies"],
-    [-4, [], "Unsupported dylib ordinal -4"],
-  ] as const) {
-    const fixups = parseOrdinal(ordinal, dylibs);
-    expect(fixups.decode(BASE + 0x4008n, 0n)).toEqual({
-      kind: "unsupported",
-      reason,
-    });
-  }
-  const oversized = BigInt(Number.MAX_SAFE_INTEGER) + 1n;
-  let remaining = oversized;
-  const encoded: number[] = [];
-  while (remaining >= 0x80n) {
-    encoded.push(Number(remaining & 0x7fn) | 0x80);
-    remaining >>= 7n;
-  }
-  encoded.push(Number(remaining));
-  const oversizedStream = Buffer.from([
-    0x51,
-    0x20,
-    ...encoded,
-    0x40,
-    ...Buffer.from("_OBJC_CLASS_$_NSObject\0"),
-    0x71,
-    0x08,
-    0x90,
-    0x00,
-  ]);
-  const oversizedFixups = parsePointerFixups(
-    oversizedStream,
-    {
-      chained: null,
-      binds: [{ offset: 0, size: oversizedStream.length, stream: "bind" }],
-      rebases: [],
-      dylibs: [],
-    },
-    SEGMENTS,
-    BASE,
-  );
-  expect(oversizedFixups.decode(BASE + 0x4008n, 0n)).toEqual({
-    kind: "unsupported",
-    reason: `Dylib ordinal ${oversized} exceeds the safe integer range`,
-  });
 });
