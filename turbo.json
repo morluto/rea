@@ -137,6 +137,7 @@
       "outputs": [".cache/static-checks/jscpd/jscpd-report.json"]
     },
     "scan:todos": {
+      "cache": false,
       "inputs": [
         "bridge/**/*.{java,py}",
         "scripts/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
