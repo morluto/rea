@@ -326,7 +326,9 @@ const typeListForm = (out: Schema): Schema => {
       branches.push({
         type: "array",
         ...constraints,
-        items: isRecord(items) ? items : { type: "object" },
+        // An open item schema can require reduced presentation, but it
+        // cannot imply that the array accepts only object items.
+        items: isRecord(items) ? items : {},
       });
     } else {
       branches.push({ type: member, ...constraints });
