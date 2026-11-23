@@ -241,6 +241,10 @@ export class IdaOperationRunner {
         `IDA function lookup failed for ${query}: ${outcome.missing}`,
       );
     const message = `IDA could not resolve procedure ${JSON.stringify(query)}: ${outcome.missing}.`;
+    const isAddress = /^0x[0-9a-fA-F]+$/i.test(query);
+    const remediationAction = isAddress
+      ? `IDA couldn't resolve address ${query} to a function in this project. Choose an observed procedure entry from the current IDA inventory. CLI: rea search <path> . --kind procedures --mode regex --provider ida. MCP: use list_procedures or search_procedures. An inventory miss leaves the function's presence in the artifact unknown.`
+      : `IDA couldn't resolve procedure ${JSON.stringify(query)} in this project. Search the procedure inventory for ${JSON.stringify(query)}. If you find a matching entry procedure, retry with its address. CLI: rea search <path> ${JSON.stringify(query)} --kind procedures --provider ida. MCP: use search_procedures with ${JSON.stringify({ pattern: query })} or list_procedures. An inventory miss leaves the function's presence in the artifact unknown.`;
     throw new AnalysisInputError(
       requestedBy,
       {
@@ -250,8 +254,7 @@ export class IdaOperationRunner {
         userMessage: message,
         conformsToInputContract: true,
         related: { operations: ["list_procedures", "search_procedures"] },
-        remediationAction:
-          "Choose an observed name or address from the current IDA inventory. CLI: rea search <path> . --kind procedures --mode regex --provider ida. MCP: use search_procedures or list_procedures. An inventory miss leaves the function's presence in the artifact unknown.",
+        remediationAction,
       },
       [
         {

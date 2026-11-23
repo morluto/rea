@@ -568,4 +568,39 @@ describe("Hopper error catalogue", () => {
       });
     },
   );
+
+  it("projects actionable procedure resolution recovery for procedure operations on lookup miss", () => {
+    const error = new HopperRemoteError(7, "Cannot find procedure", {
+      operation: "procedure_address",
+      diagnosticType: "selector_not_found",
+    });
+    const projected = projectAnalysisError(error);
+    expect(projected.remediation.action).toContain(
+      "Hopper couldn't resolve the procedure in this document",
+    );
+    expect(projected.remediation.action).toContain("search_procedures");
+    expect(projected.remediation.action).toContain(
+      "CLI: rea search <path> . --kind procedures --provider hopper",
+    );
+    expect(projected.details?.related_operations).toEqual([
+      "search_procedures",
+      "list_procedures",
+    ]);
+  });
+
+  it("keeps argument correction advice for malformed addresses under invalid_request", () => {
+    const error = new HopperRemoteError(
+      7,
+      "Invalid hexadecimal Hopper address: 0xZZ",
+      {
+        operation: "procedure_address",
+        diagnosticType: "invalid_request",
+      },
+    );
+    const projected = projectAnalysisError(error);
+    expect(projected.remediation.action).toBe(
+      "Correct the reported address, document, or arguments and retry.",
+    );
+    expect(projected.details?.related_operations).toBeUndefined();
+  });
 });

@@ -128,3 +128,56 @@ it.each([
     }
   },
 );
+
+it("emits actionable procedure lookup remediation on missing function", async () => {
+  const producer = new RecordingIdaMcp(target, "headless");
+  producer.overrideCall = (tool) =>
+    tool === "lookup_funcs"
+      ? [{ query: "missing_fn", fn: null, error: "Not found" }]
+      : undefined;
+  const runner = new IdaOperationRunner(producer, "modern");
+  let caughtError: unknown;
+  try {
+    await runner.resolve("missing_fn", "procedure_pseudo_code");
+  } catch (err) {
+    caughtError = err;
+  }
+  expect(caughtError).toMatchObject({
+    _tag: "AnalysisInputError",
+    operation: "procedure_pseudo_code",
+    conformsToInputContract: true,
+    remediationAction: expect.stringContaining("search_procedures"),
+  });
+  expect((caughtError as any).remediationAction).toContain(
+    'CLI: rea search <path> "missing_fn" --kind procedures --provider ida',
+  );
+  expect((caughtError as any).remediationAction).toContain(
+    'MCP: use search_procedures with {"pattern":"missing_fn"} or list_procedures',
+  );
+});
+
+it("emits address-aware procedure lookup remediation for missing address selectors", async () => {
+  const producer = new RecordingIdaMcp(target, "headless");
+  producer.overrideCall = (tool) =>
+    tool === "lookup_funcs"
+      ? [{ query: "0x1000", fn: null, error: "Not a function" }]
+      : undefined;
+  const runner = new IdaOperationRunner(producer, "modern");
+  let caughtError: unknown;
+  try {
+    await runner.resolve("0x1000", "procedure_pseudo_code");
+  } catch (err) {
+    caughtError = err;
+  }
+  expect(caughtError).toMatchObject({
+    _tag: "AnalysisInputError",
+    operation: "procedure_pseudo_code",
+    conformsToInputContract: true,
+  });
+  expect((caughtError as any).remediationAction).toContain(
+    "IDA couldn't resolve address 0x1000 to a function in this project",
+  );
+  expect((caughtError as any).remediationAction).toContain(
+    "CLI: rea search <path> . --kind procedures --mode regex --provider ida",
+  );
+});
