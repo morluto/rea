@@ -7675,6 +7675,56 @@ it("reconciles manifest row with conflicting phase and FFS type and neutralizes 
   }
 });
 
+it("preserves combined module types when paired with either supported phase", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-combined-phases-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Mod1.efi"), createMinimalPeBuffer());
+  await writeFile(join(inDir, "Mod2.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      coverage: "complete",
+      source_coverage: "complete",
+      total_modules_found: 2,
+      total_modules_decompiled: 2,
+      modules: [
+        {
+          name: "Mod1",
+          payload_file: "Mod1.efi",
+          phase: "DXE",
+          type: "combined-smm-dxe",
+        },
+        {
+          name: "Mod2",
+          payload_file: "Mod2.efi",
+          phase: "DXE",
+          type: "combined-peim-driver",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("complete");
+    expect(result.modules[0]?.type).toBe("combined-smm-dxe");
+    expect(result.modules[1]?.type).toBe("combined-peim-driver");
+    expect(
+      result.limitations.some((l) => l.includes("declares conflicting phase")),
+    ).toBe(false);
+  } finally {
+    await provider.close();
+  }
+});
+
 it("omits disassembly when remaining time cannot cover publication reserve and shutdown grace", async () => {
   const directory = await createTestTempDirectory("rea-uefi-disasm-grace-");
   const inDir = join(directory, "in");

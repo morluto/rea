@@ -286,6 +286,33 @@ export const phaseFromFfsTypeName = (
   return undefined;
 };
 
+export const isPhaseSupportedByFfsType = (
+  phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC",
+  typeName?: string,
+): boolean => {
+  if (!typeName) return true;
+  const norm = typeName.toLowerCase().trim();
+  if (norm === "combined-peim-driver") {
+    return phase === "PEI" || phase === "DXE";
+  }
+  if (norm === "combined-smm-dxe") {
+    return phase === "SMM" || phase === "DXE";
+  }
+  if (norm === "security-core") return phase === "SEC";
+  if (norm === "pei-core" || norm === "peim") return phase === "PEI";
+  if (norm === "driver" || norm === "dxe-core") return phase === "DXE";
+  if (
+    norm === "smm" ||
+    norm === "smm-core" ||
+    norm === "mm-standalone" ||
+    norm === "mm-core-standalone"
+  ) {
+    return phase === "SMM";
+  }
+  if (norm === "application") return phase === "APP";
+  return true;
+};
+
 export const buildUefiEntryPointScaffolding = (
   identifier: string,
   rawName: string,
@@ -340,7 +367,7 @@ export const buildUefiEntryPointScaffolding = (
 
   if (
     normType === "peim" ||
-    normType === "combined-peim-driver" ||
+    (normType === "combined-peim-driver" && phase === "PEI") ||
     phase === "PEI"
   ) {
     return {
@@ -468,7 +495,8 @@ export const buildUefiEntryPointScaffolding = (
   const isSupportedDxeEntryType =
     normType === "driver" ||
     normType === "application" ||
-    normType === "combined-smm-dxe";
+    normType === "combined-smm-dxe" ||
+    normType === "combined-peim-driver";
 
   if (
     (phase === "MISC" || !["DXE", "APP", "SMM"].includes(phase)) &&
@@ -3596,8 +3624,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         }
 
         let typeName = fromManifest?.type;
-        const typePhase = phaseFromFfsTypeName(typeName);
-        if (manifestPhase && typePhase !== undefined && typePhase !== phase) {
+        if (
+          manifestPhase &&
+          typeName &&
+          !isPhaseSupportedByFfsType(phase, typeName)
+        ) {
           isCoveragePartial = true;
           const safeEntryName = formatMarkdownCodeSpan(
             ellipsisExcerpt(entryName.replace(/[\r\n]+/g, " "), 64),
