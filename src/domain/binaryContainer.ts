@@ -719,8 +719,8 @@ export const createFileMappingIndex = (
     prefix,
     readCString: (bytes, address, maximumBytes) =>
       readMappedString(bytes, access, address, maximumBytes),
-    readCStringFromReader: (readRange, address, maximumBytes) =>
-      readMappedStringFromReader(readRange, access, address, maximumBytes),
+    readCStringFromReader: (readPrefix, address, maximumBytes) =>
+      readMappedStringFromReader(readPrefix, access, address, maximumBytes),
   };
 };
 
@@ -739,8 +739,9 @@ export interface FileMappingIndex {
     address: bigint,
     maximumBytes: number,
   ) => Buffer;
+  /** Supply a nonempty prefix within each requested file range. */
   readonly readCStringFromReader: (
-    readRange: (offset: number, length: number) => Promise<Buffer>,
+    readPrefix: (offset: number, maximum: number) => Promise<Buffer>,
     address: bigint,
     maximumBytes: number,
   ) => Promise<Buffer>;
@@ -816,7 +817,7 @@ const readMappedString = (
 };
 
 const readMappedStringFromReader = async (
-  readRange: (offset: number, length: number) => Promise<Buffer>,
+  readPrefix: (offset: number, maximum: number) => Promise<Buffer>,
   access: MappedStringAccess,
   address: bigint,
   maximumBytes: number,
@@ -838,9 +839,14 @@ const readMappedStringFromReader = async (
       Number(mapping.address + BigInt(mapping.size) - cursor),
     );
     const offset = mapping.offset + Number(cursor - mapping.address);
-    const chunk = await readRange(offset, size);
+    const chunk = await readPrefix(offset, size);
+    if (chunk.length === 0 || chunk.length > size)
+      throw new BinaryFormatFailure(
+        "truncated",
+        "Mapped string reader did not supply an admitted byte prefix",
+      );
     const terminator = chunk.indexOf(0);
-    const consumed = terminator < 0 ? size : terminator + 1;
+    const consumed = terminator < 0 ? chunk.length : terminator + 1;
     access.offset(cursor, consumed);
     if (terminator >= 0) {
       const tail = chunk.subarray(0, terminator);
@@ -849,7 +855,7 @@ const readMappedStringFromReader = async (
       return Buffer.concat(chunks, length + terminator);
     }
     chunks.push(chunk);
-    length += size;
+    length += chunk.length;
   }
   throw binaryStringReadLimit(maximumBytes);
 };

@@ -132,6 +132,8 @@ const coverage = (
       };
 
 const WINDOW_READ_BYTES = 4096;
+// The lookup table, address table, and names can occupy different file ranges.
+const RETAINED_WINDOWS = 3;
 
 /** Random-access source for streaming PE import inspection without buffering the whole image. */
 export interface PeImportByteSource {
@@ -143,6 +145,7 @@ export interface PeImportByteSource {
 interface PeImportReader {
   readonly fileSize: number;
   readRange(offset: number, length: number): Promise<Buffer>;
+  readPrefix(offset: number, maximum: number): Promise<Buffer>;
   u16(offset: number): Promise<number>;
   u32(offset: number): Promise<number>;
   word(offset: number, bits: 32 | 64): Promise<bigint>;
@@ -154,6 +157,8 @@ const createBufferPeImportReader = (bytes: Buffer): PeImportReader => {
     fileSize: bytes.length,
     readRange: async (offset, length) =>
       bytes.subarray(offset, offset + length),
+    readPrefix: async (offset, maximum) =>
+      bytes.subarray(offset, offset + maximum),
     u16: async (offset) => reader.u16(offset),
     u32: async (offset) => reader.u32(offset),
     word: async (offset, bits) => reader.word(offset, bits),
@@ -163,53 +168,69 @@ const createBufferPeImportReader = (bytes: Buffer): PeImportReader => {
 const createHandlePeImportReader = (
   source: PeImportByteSource,
 ): PeImportReader => {
-  let windowStart = 0;
-  let windowBytes: Buffer = source.prefix;
-  let windowReader = new BinaryReader(windowBytes, true, "pe");
+  const prefix = new BinaryReader(source.prefix, true, "pe");
+  const windows: Array<{
+    readonly offset: number;
+    readonly reader: BinaryReader;
+  }> = [];
 
-  const ensureWindow = async (
-    offset: number,
-    length: number,
-  ): Promise<number> => {
-    if (
-      offset >= windowStart &&
-      offset + length <= windowStart + windowBytes.length
-    )
-      return offset - windowStart;
-    if (offset + length <= source.prefix.length) {
-      windowStart = 0;
-      windowBytes = source.prefix;
-      windowReader = new BinaryReader(windowBytes, true, "pe");
-      return offset;
+  const windowFor = async (offset: number, length: number) => {
+    const end = offset + length;
+    if (end <= source.prefix.length) return { offset: 0, reader: prefix };
+    const hit = windows.findIndex(
+      (window) =>
+        offset >= window.offset &&
+        end <= window.offset + window.reader.bytes.length,
+    );
+    const cached = windows[hit];
+    if (cached !== undefined) {
+      windows.splice(hit, 1);
+      windows.unshift(cached);
+      return cached;
     }
     const fetchLength = Math.min(
       Math.max(length, WINDOW_READ_BYTES),
       source.size - offset,
     );
-    windowStart = offset;
-    windowBytes = await source.readRange(offset, fetchLength);
-    windowReader = new BinaryReader(windowBytes, true, "pe");
-    return 0;
+    const window = {
+      offset,
+      reader: new BinaryReader(
+        await source.readRange(offset, fetchLength),
+        true,
+        "pe",
+      ),
+    };
+    if (fetchLength <= WINDOW_READ_BYTES) {
+      windows.unshift(window);
+      if (windows.length > RETAINED_WINDOWS) windows.pop();
+    }
+    return window;
   };
 
   return {
     fileSize: source.size,
     async readRange(offset, length) {
       if (length === 0) return Buffer.alloc(0);
-      const rel = await ensureWindow(offset, length);
-      return windowBytes.subarray(rel, rel + length);
+      const window = await windowFor(offset, length);
+      const rel = offset - window.offset;
+      return window.reader.bytes.subarray(rel, rel + length);
+    },
+    async readPrefix(offset, maximum) {
+      const window = await windowFor(offset, 1);
+      const rel = offset - window.offset;
+      return window.reader.bytes.subarray(rel, rel + maximum);
     },
     async u16(offset) {
-      const rel = await ensureWindow(offset, 2);
-      return windowReader.u16(rel);
+      const window = await windowFor(offset, 2);
+      return window.reader.u16(offset - window.offset);
     },
     async u32(offset) {
-      const rel = await ensureWindow(offset, 4);
-      return windowReader.u32(rel);
+      const window = await windowFor(offset, 4);
+      return window.reader.u32(offset - window.offset);
     },
     async word(offset, bits) {
-      const rel = await ensureWindow(offset, bits === 64 ? 8 : 4);
-      return windowReader.word(rel, bits);
+      const window = await windowFor(offset, bits === 64 ? 8 : 4);
+      return window.reader.word(offset - window.offset, bits);
     },
   };
 };
@@ -283,7 +304,7 @@ const parsePeImportsCore = async (
   const cString = async (rva: number): Promise<string> => {
     requireRva(rva, 1);
     const raw = await lookup.readCStringFromReader(
-      (offset, length) => reader.readRange(offset, length),
+      (offset, maximum) => reader.readPrefix(offset, maximum),
       base + BigInt(rva),
       Math.min(MAXIMUM_NAME_BYTES, PE_RVA_END - rva - 1),
     );
