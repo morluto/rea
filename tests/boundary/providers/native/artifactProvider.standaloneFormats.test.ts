@@ -71,46 +71,62 @@ const inspect = async (path: string) => {
   };
 };
 
+const writeBytes =
+  (file: string, bytes: () => Uint8Array) =>
+  async (directory: string): Promise<string> => {
+    const path = join(directory, file);
+    await writeFile(path, bytes());
+    return path;
+  };
+
 it.each([
   {
     name: "a Windows shortcut",
-    file: "target.lnk",
-    bytes: () => windowsShortcutBytes(),
+    create: writeBytes("target.lnk", () => windowsShortcutBytes()),
     format: "windows-shortcut",
     operation: "inspect_windows_shortcut",
   },
   {
     name: "a Python pyc",
-    file: "module.pyc",
-    bytes: pythonPyc,
+    create: writeBytes("module.pyc", pythonPyc),
     format: "python-pyc",
     operation: "inspect_python_pyc",
   },
   {
     name: "a flattened devicetree",
-    file: "board.dtb",
-    bytes: devicetreeBlob,
+    create: writeBytes("board.dtb", devicetreeBlob),
     format: "devicetree",
     operation: "inspect_devicetree",
   },
   {
     // An NVRAM variable store declares a file-system GUID REA does not walk.
     name: "a UEFI variable-store volume",
-    file: "vars.fd",
-    bytes: () =>
-      buildFv({
-        files: [],
-        fileSystemGuid: "fff12b8d-7696-4c8b-a985-2747075b4f50",
-      }).buffer,
+    create: writeBytes(
+      "vars.fd",
+      () =>
+        buildFv({
+          files: [],
+          fileSystemGuid: "fff12b8d-7696-4c8b-a985-2747075b4f50",
+        }).buffer,
+    ),
     format: "uefi",
     operation: "inspect_uefi_firmware",
   },
+  {
+    name: "a SQLite database",
+    create: async (directory: string) => {
+      const fixture = createSqliteDatabaseFixture(directory);
+      fixture.close();
+      return fixture.path;
+    },
+    format: "sqlite",
+    operation: "inspect_sqlite_database",
+  },
 ])(
   "inventories $name and routes it to $operation",
-  async ({ file, bytes, format, operation }) => {
+  async ({ create, format, operation }) => {
     const directory = await createTestTempDirectory("rea-standalone-format-");
-    const path = join(directory, file);
-    await writeFile(path, bytes());
+    const path = await create(directory);
 
     expect(await inspect(path)).toEqual({
       format,
@@ -119,21 +135,6 @@ it.each([
     });
   },
 );
-
-it("inventories a SQLite database and routes it to inspect_sqlite_database", async () => {
-  const directory = await createTestTempDirectory("rea-standalone-format-");
-  const fixture = createSqliteDatabaseFixture(directory);
-  fixture.close();
-  const { path } = fixture;
-
-  expect(await inspect(path)).toEqual({
-    format: "sqlite",
-    subject: "sqlite",
-    probes: [
-      { operation: "inspect_sqlite_database", authority: "artifact-bytes" },
-    ],
-  });
-});
 
 it("keeps bytes that only resemble a pyc frame unsupported", async () => {
   const directory = await createTestTempDirectory("rea-standalone-format-");
