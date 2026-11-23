@@ -614,6 +614,7 @@
 * remove internal re-export shims and guard against new ones ([#14009](https://github.com/morluto/rea/issues/14009)) ([88dfad5](https://github.com/morluto/rea/commit/88dfad5bb7eb1dd673143acc0405ed802537592c))
 * **rizin:** extract NUL-frame reader and wait helpers from RizinDebugSessionManager ([#14001](https://github.com/morluto/rea/issues/14001)) ([a1747df](https://github.com/morluto/rea/commit/a1747df7a70b9a51c434d917cad52b5b06183dec))
 * **rizin:** extract RizinDebugEvidence from RizinDebugSessionManager ([#13823](https://github.com/morluto/rea/issues/13823)) ([e69c42d](https://github.com/morluto/rea/commit/e69c42deeb2ba74cbfa2287d9c27b1464451cb9d))
+* **rust:** consolidate binary parser checks on positional reads ([#14033](https://github.com/morluto/rea/issues/14033)) ([d0a9e6b](https://github.com/morluto/rea/commit/d0a9e6b912395c8ecb6f1f08cc40b76910392006))
 * **server:** extract browser, Electron, and JavaScript runtime tool bindings ([#13939](https://github.com/morluto/rea/issues/13939)) ([209bee0](https://github.com/morluto/rea/commit/209bee0bf35b69599093837c8e6c0ab2321b925f))
 * **server:** extract debugger and instrumentation tool bindings ([#13909](https://github.com/morluto/rea/issues/13909)) ([7f939d7](https://github.com/morluto/rea/commit/7f939d750855de9db3e54b2dea44d3874c5ac61f))
 * **server:** extract desktop build tool bindings ([#13891](https://github.com/morluto/rea/issues/13891)) ([841e5f8](https://github.com/morluto/rea/commit/841e5f84876485683643e91bd7bfab275f02cf90))
