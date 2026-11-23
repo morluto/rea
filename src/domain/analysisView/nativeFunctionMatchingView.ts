@@ -185,9 +185,8 @@ const filterRows = (entry: Checked, view: MatchRequest): readonly number[] => {
       if (
         matchesIdentity(row) &&
         (functions === undefined ||
-          [...row.left, ...row.right].some((member) =>
-            functions.has(member.function_id),
-          ))
+          row.left.some((member) => functions.has(member.function_id)) ||
+          row.right.some((member) => functions.has(member.function_id)))
       )
         rows.push(index);
     });
@@ -206,12 +205,18 @@ const filterRows = (entry: Checked, view: MatchRequest): readonly number[] => {
   if (key.length <= Math.max(256, count * 8)) entry.recent = { key, rows };
   return rows;
 };
+const isUnfilteredMatchRequest = (view: MatchRequest): boolean =>
+  view.states === undefined &&
+  view.match_ids === undefined &&
+  view.function_ids === undefined &&
+  (view.collection !== "functions" ||
+    (view.sides === undefined && view.names === undefined));
+
 const selectedItems = (
   entry: Checked,
   view: MatchRequest,
-  rows: readonly number[],
+  indices: readonly number[],
 ) => {
-  const indices = rows.slice(view.offset, view.offset + view.limit);
   const defaults =
     view.collection === "matches"
       ? [
@@ -412,14 +417,30 @@ export const projectNativeFunctionMatchingView = (
       coverage: pageViewCoverage(view.offset, items.length, total),
     });
   }
-  const rows = filterRows(entry, view),
-    items = selectedItems(entry, view, rows);
+  let total: number;
+  let pageIndices: readonly number[];
+  if (isUnfilteredMatchRequest(view)) {
+    total =
+      view.collection === "matches"
+        ? entry.report.matches.length
+        : functionRows(entry).length;
+    const start = Math.max(0, view.offset);
+    const end = Math.min(total, start + Math.max(0, view.limit));
+    const slice: number[] = [];
+    for (let i = start; i < end; i += 1) slice.push(i);
+    pageIndices = slice;
+  } else {
+    const rows = filterRows(entry, view);
+    total = rows.length;
+    pageIndices = rows.slice(view.offset, view.offset + view.limit);
+  }
+  const items = selectedItems(entry, view, pageIndices);
   return ok({
     kind: "function-matches" as const,
     view,
     ...shared,
     ...context,
     items,
-    coverage: pageViewCoverage(view.offset, items.length, rows.length),
+    coverage: pageViewCoverage(view.offset, items.length, total),
   });
 };
