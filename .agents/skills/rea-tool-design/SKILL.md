@@ -41,15 +41,15 @@ When adding or revising contracts and services:
 
 - Check high-cardinality discovery and graph tools for optional per-call
   pagination (`limit`/`offset`) or traversal bounds (`max_depth`/`max_nodes`)
-  that stop producer work early when supplied, keep complete-by-default
-  behavior when omitted, and report `partial` coverage with explicit
+  that stop producer work early when supplied, preserve unpaged behavior
+  when omitted, and report `partial` coverage with explicit
   continuation facts when truncated.
 - Keep input schemas flat (avoid redundant root unions whose branches share
   identical fields) so compact advertised schemas stay `inline`; refresh
   advertised schemas (`npm run verify:advertised-schemas -- --update-summary`)
   and run `npm run docs:check` after contract changes.
 - Reuse shared application runners (`executeArtifactInspection`,
-  `ProviderOperationService`, `executeRetainedSummaryOperation`) instead of
+  `executeProviderOperation`, `executeRetainedSummaryOperation`) instead of
   adding pass-through wrapper services, and migrate callers directly with zero
   re-export shims (grep `stryker*.config.mjs`, `scripts/ci/scopes.mjs`, and
   `tests/boundary/cli/cliStartupImports.test.ts` whenever moving or deleting

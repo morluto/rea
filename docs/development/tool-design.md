@@ -211,7 +211,7 @@ does not establish another instance.
 - Give high-cardinality discovery (`list_*`, `search_*`, `find_xrefs_*`) and
   graph-traversal (`get_call_graph`, `trace_call_path`) tools optional per-call
   bounds (`limit`/`offset` or `max_depth`/`max_nodes`). Omitting them preserves
-  complete behavior; supplying them should stop producer work early where
+  unpaged behavior; supplying them should stop producer work early where
   possible, mark truncated coverage/discovery `partial`, and report explicit
   continuation facts (`total_*`, `truncated`, `limitations`, or
   `residual_unknowns`).
@@ -220,8 +220,8 @@ does not establish another instance.
   differing only by a boolean), which double schema size and introduce root
   `anyOf` violations that force compact-profile reduction.
 - Keep application ownership flat: reuse shared runners
-  (`executeArtifactInspection`, `executeProviderOperation` /
-  `ProviderOperationService`, `executeRetainedSummaryOperation`) instead of
+  (`executeArtifactInspection`, `executeProviderOperation`,
+  `executeRetainedSummaryOperation`) instead of
   duplicating per-operation wrappers. When moving or extracting symbols, migrate
   all callers directly rather than leaving re-export shims or pure barrel files
   outside enforced module-boundary entrypoints (`src/resources/index.ts`).
