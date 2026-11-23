@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   MAX_INSPECT_V8_CODE_CACHE_STRING_BYTES,
   V8_CODE_CACHE_COMPILE_FUNCTION_BIT,
@@ -19,7 +20,6 @@ import {
   malformedInput,
   unsupportedInput,
 } from "../domain/parseFailure.js";
-import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const unsupported = (message: string): never => {
   throw unsupportedInput(V8_CODE_CACHE_FORMAT, message);
@@ -79,28 +79,36 @@ const MODULE_BITS = V8_CODE_CACHE_MODULE_BIT | V8_CODE_CACHE_LEGACY_MODULE_BIT;
 const isPrintable = (byte: number): boolean =>
   (byte >= 0x20 && byte <= 0x7e) || byte === 0x09;
 
-/**
- * Read one V8 code cache container without executing it.
- *
- * Admission is deliberately narrow: a header layout this reader pins, the V8 code cache
- * magic high half, and payload length reaching exactly the end of the file. Everything
- * else is reported as an observation so a producer this reader has never seen still
- * yields its facts instead of a false parse.
- */
-export const parseV8CodeCache = (
-  bytes: Buffer,
-  artifact: { path: string; sha256: string; bytes: number },
-  input: V8CodeCacheInputBudget,
-): V8CodeCache => {
-  if (bytes.length !== artifact.bytes)
-    malformed("Selected artifact length disagrees with the retained bytes.");
-  if (bytes.length < V8_CODE_CACHE_MIN_HEADER_BYTES)
+const STREAM_CHUNK_BYTES = 1024 * 1024;
+
+/** Random-access source for streaming V8 code cache inspection without buffering the whole file. */
+export interface V8CodeCacheByteSource {
+  readonly size: number;
+  readonly prefix: Buffer;
+  readRange(offset: number, length: number): Promise<Buffer>;
+}
+
+interface ParsedV8Header {
+  readonly header: V8CodeCache["header"];
+  readonly payloadOffset: number;
+  readonly payloadLength: number;
+  readonly sixWords: boolean;
+}
+
+const parseV8CodeCacheHeader = (
+  headerBytes: Buffer,
+  totalBytes: number,
+): ParsedV8Header => {
+  if (totalBytes < V8_CODE_CACHE_MIN_HEADER_BYTES)
     malformed(
       `Selected file is shorter than the ${String(V8_CODE_CACHE_MIN_HEADER_BYTES)}-byte V8 code cache header.`,
     );
 
   const headerReader = new BinaryReader(
-    bytes.subarray(0, V8_CODE_CACHE_HEADER_BYTES),
+    headerBytes.subarray(
+      0,
+      Math.min(headerBytes.length, V8_CODE_CACHE_HEADER_BYTES),
+    ),
     true,
     V8_CODE_CACHE_FORMAT,
   );
@@ -116,12 +124,12 @@ export const parseV8CodeCache = (
   // extents. Seven words pad to 28 or 32 bytes; six words are 24 bytes on
   // both pointer widths.
   const declaredPayload = headerReader.u32(0x14);
-  const alignedOffset = bytes.length - declaredPayload;
+  const alignedOffset = totalBytes - declaredPayload;
   const sevenWords =
     alignedOffset === V8_CODE_CACHE_NARROW_HEADER_BYTES ||
     alignedOffset === V8_CODE_CACHE_HEADER_BYTES;
   const legacyPayload = headerReader.u32(0x10);
-  const legacyOffset = bytes.length - legacyPayload;
+  const legacyOffset = totalBytes - legacyPayload;
   const sixWords = legacyOffset === V8_CODE_CACHE_LEGACY_HEADER_BYTES;
   // The word at 0x10 is a build constant in one layout and the payload length
   // in the other, so a container fits both only by coincidence, and nothing
@@ -140,7 +148,7 @@ export const parseV8CodeCache = (
   // and a narrow payload beginning with a zero word are indistinguishable here.
   if (
     payloadOffset === V8_CODE_CACHE_NARROW_HEADER_BYTES &&
-    bytes.length >= V8_CODE_CACHE_HEADER_BYTES &&
+    totalBytes >= V8_CODE_CACHE_HEADER_BYTES &&
     headerReader.u32(V8_CODE_CACHE_NARROW_HEADER_BYTES) === 0
   )
     malformed(
@@ -174,52 +182,7 @@ export const parseV8CodeCache = (
         ? ("compile_function" as const)
         : ("unknown" as const);
 
-  const payload = bytes.subarray(payloadOffset);
-  const observations: V8CodeCache["embedded_strings"] = [];
-  let runStart = -1;
-  const flush = (end: number): void => {
-    if (runStart < 0) return;
-    const runBytes = end - runStart;
-    if (runBytes >= input.min_string_bytes) {
-      if (observations.length >= input.max_strings)
-        // The message states the fact. Recovery advice belongs to the provider, which
-        // can see whether either budget still has headroom before recommending a retry.
-        throw decodeLimit(
-          V8_CODE_CACHE_FORMAT,
-          `Payload contains more than ${String(input.max_strings)} printable runs of at least ${String(input.min_string_bytes)} bytes, so the max_strings observation budget was exhausted before the scan finished.`,
-          { name: "max_strings", maximum: input.max_strings },
-        );
-      const retained = Math.min(
-        runBytes,
-        MAX_INSPECT_V8_CODE_CACHE_STRING_BYTES,
-      );
-      const absolute = payloadOffset + runStart;
-      observations.push({
-        offset: absolute,
-        bytes: runBytes,
-        retained_bytes: retained,
-        truncated: retained < runBytes,
-        text: payload
-          .subarray(runStart, runStart + retained)
-          .toString("latin1"),
-      });
-    }
-    runStart = -1;
-  };
-  // Indexed reads over the payload view: `payload.entries()` allocates a two-element
-  // array per byte, which dominated this scan on large caches.
-  const payloadLength = payload.length;
-  for (let index = 0; index < payloadLength; index += 1) {
-    if (isPrintable(payload[index]!)) {
-      if (runStart < 0) runStart = index;
-    } else {
-      flush(index);
-    }
-  }
-  flush(payloadLength);
-
   return {
-    artifact,
     header: {
       magic,
       magic_build_stable: magicHigh,
@@ -228,18 +191,162 @@ export const parseV8CodeCache = (
       source_length: sourceLength,
       producer,
     },
-    payload: {
-      offset: payloadOffset,
-      bytes: payload.length,
-      sha256: sha256Hex(payload),
-      trailing_bytes: 0,
-    },
-    embedded_strings: observations,
-    coverage: {
-      status: "complete",
-      scanned_bytes: payload.length,
-      strings: observations.length,
-    },
-    limitations: sixWords ? [...LIMITATIONS, LEGACY_LIMITATION] : LIMITATIONS,
+    payloadOffset,
+    payloadLength: totalBytes - payloadOffset,
+    sixWords,
   };
+};
+
+class V8CodeCachePayloadScanner {
+  readonly #hash = createHash("sha256");
+  readonly #observations: V8CodeCache["embedded_strings"] = [];
+  readonly #runBuffer = Buffer.allocUnsafe(
+    MAX_INSPECT_V8_CODE_CACHE_STRING_BYTES,
+  );
+  readonly #payloadOffset: number;
+  readonly #minStringBytes: number;
+  readonly #maxStrings: number;
+  #cursor = 0;
+  #runStart = -1;
+  #runLength = 0;
+  // not-an-allowance: fixed scratch buffer write length capped at MAX_INSPECT_V8_CODE_CACHE_STRING_BYTES
+  #retainedLength = 0;
+
+  constructor(payloadOffset: number, input: V8CodeCacheInputBudget) {
+    this.#payloadOffset = payloadOffset;
+    this.#minStringBytes = input.min_string_bytes;
+    this.#maxStrings = input.max_strings;
+  }
+
+  #flush(): void {
+    if (this.#runStart < 0) return;
+    const runBytes = this.#runLength;
+    if (runBytes >= this.#minStringBytes) {
+      if (this.#observations.length >= this.#maxStrings)
+        // The message states the fact. Recovery advice belongs to the provider, which
+        // can see whether either budget still has headroom before recommending a retry.
+        throw decodeLimit(
+          V8_CODE_CACHE_FORMAT,
+          `Payload contains more than ${String(this.#maxStrings)} printable runs of at least ${String(this.#minStringBytes)} bytes, so the max_strings observation budget was exhausted before the scan finished.`,
+          { name: "max_strings", maximum: this.#maxStrings },
+        );
+      const retained = this.#retainedLength;
+      this.#observations.push({
+        offset: this.#payloadOffset + this.#runStart,
+        bytes: runBytes,
+        retained_bytes: retained,
+        truncated: retained < runBytes,
+        text: this.#runBuffer.toString("latin1", 0, retained),
+      });
+    }
+    this.#runStart = -1;
+    this.#runLength = 0;
+    this.#retainedLength = 0;
+  }
+
+  update(chunk: Buffer): void {
+    if (chunk.length === 0) return;
+    this.#hash.update(chunk);
+    const length = chunk.length;
+    for (let index = 0; index < length; index += 1) {
+      const byte = chunk[index]!;
+      if (isPrintable(byte)) {
+        if (this.#runStart < 0) this.#runStart = this.#cursor;
+        if (this.#retainedLength < MAX_INSPECT_V8_CODE_CACHE_STRING_BYTES) {
+          this.#runBuffer[this.#retainedLength] = byte;
+          this.#retainedLength += 1;
+        }
+        this.#runLength += 1;
+      } else {
+        this.#flush();
+      }
+      this.#cursor += 1;
+    }
+  }
+
+  finish(): {
+    readonly sha256: string;
+    readonly scannedBytes: number;
+    readonly observations: V8CodeCache["embedded_strings"];
+  } {
+    this.#flush();
+    return {
+      sha256: this.#hash.digest("hex"),
+      scannedBytes: this.#cursor,
+      observations: this.#observations,
+    };
+  }
+}
+
+const buildV8CodeCacheReport = (
+  parsed: ParsedV8Header,
+  artifact: { path: string; sha256: string; bytes: number },
+  scanned: ReturnType<V8CodeCachePayloadScanner["finish"]>,
+): V8CodeCache => ({
+  artifact,
+  header: parsed.header,
+  payload: {
+    offset: parsed.payloadOffset,
+    bytes: parsed.payloadLength,
+    sha256: scanned.sha256,
+    trailing_bytes: 0,
+  },
+  embedded_strings: scanned.observations,
+  coverage: {
+    status: "complete",
+    scanned_bytes: scanned.scannedBytes,
+    strings: scanned.observations.length,
+  },
+  limitations: parsed.sixWords
+    ? [...LIMITATIONS, LEGACY_LIMITATION]
+    : LIMITATIONS,
+});
+
+/**
+ * Read one V8 code cache container without executing it.
+ *
+ * Admission is deliberately narrow: a header layout this reader pins, the V8 code cache
+ * magic high half, and payload length reaching exactly the end of the file. Everything
+ * else is reported as an observation so a producer this reader has never seen still
+ * yields its facts instead of a false parse.
+ */
+export const parseV8CodeCache = (
+  bytes: Buffer,
+  artifact: { path: string; sha256: string; bytes: number },
+  input: V8CodeCacheInputBudget,
+): V8CodeCache => {
+  if (bytes.length !== artifact.bytes)
+    malformed("Selected artifact length disagrees with the retained bytes.");
+  const parsed = parseV8CodeCacheHeader(bytes, bytes.length);
+  const scanner = new V8CodeCachePayloadScanner(parsed.payloadOffset, input);
+  scanner.update(bytes.subarray(parsed.payloadOffset));
+  return buildV8CodeCacheReport(parsed, artifact, scanner.finish());
+};
+
+/** Stream one V8 code cache container over a bounded file handle in fixed chunks. */
+export const parseV8CodeCacheFromHandle = async (
+  source: V8CodeCacheByteSource,
+  artifact: { path: string; sha256: string; bytes: number },
+  input: V8CodeCacheInputBudget,
+): Promise<V8CodeCache> => {
+  if (source.size !== artifact.bytes)
+    malformed("Selected artifact length disagrees with the retained bytes.");
+  const headerNeeded = Math.min(source.size, V8_CODE_CACHE_HEADER_BYTES);
+  const headerBytes =
+    source.prefix.length >= headerNeeded
+      ? source.prefix
+      : await source.readRange(0, headerNeeded);
+  const parsed = parseV8CodeCacheHeader(headerBytes, source.size);
+  const scanner = new V8CodeCachePayloadScanner(parsed.payloadOffset, input);
+  let cursor = parsed.payloadOffset;
+  if (source.prefix.length > cursor) {
+    scanner.update(source.prefix.subarray(cursor));
+    cursor = source.prefix.length;
+  }
+  while (cursor < source.size) {
+    const length = Math.min(STREAM_CHUNK_BYTES, source.size - cursor);
+    scanner.update(await source.readRange(cursor, length));
+    cursor += length;
+  }
+  return buildV8CodeCacheReport(parsed, artifact, scanner.finish());
 };

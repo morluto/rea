@@ -5,11 +5,12 @@ import {
   fatImage,
   machoImage,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
-import { readGoBinaryImage } from "../../../src/go/GoBinaryImage.js";
-import { goBuildInfoSearch } from "../../../src/go/GoBuildInfoSearch.js";
+import {
+  readGoBinaryImage,
+  readGoBinaryImageFromHandle,
+} from "../../../src/go/GoBinaryImage.js";
 import { BinaryResourceFailure } from "../../../src/domain/binaryContainer.js";
 import { readMachoImage } from "../../../src/domain/apple/machoImage.js";
-import { readBinaryContainer } from "../../../src/domain/native/readBinaryContainer.js";
 import {
   createGoBinaryFixture,
   createGoPeHeaderPointerFixture,
@@ -28,38 +29,48 @@ it("uses the shared ELF classifier for Go image architecture", () => {
   });
 });
 
-it("preserves exact Mach-O protection masks for Go fallback selection", () => {
-  const { bytes } = createGoBinaryFixture({
-    format: "macho",
-    sectionless: true,
-  });
+it("skips a readable, writable Mach-O decoy with extra protection bits", () => {
+  const { bytes, headerOffset, versionOffset, moduleOffset, moduleBytes } =
+    createGoBinaryFixture({ format: "macho", sectionless: true });
   const firstSegment = 32;
   const secondSegment = 104;
+  const decoyOffset = 512;
+  const secondBytes = BigInt(bytes.length - headerOffset);
+  bytes.copy(
+    bytes,
+    decoyOffset,
+    headerOffset,
+    moduleOffset + moduleBytes.length,
+  );
+  bytes.write("go-decoy", decoyOffset + versionOffset - headerOffset);
   bytes.writeUInt32LE(2, 16);
   bytes.writeUInt32LE(144, 20);
-  bytes.writeUInt32LE(11, firstSegment + 56);
-  bytes.writeUInt32LE(11, firstSegment + 60);
+  bytes.writeBigUInt64LE(BigInt(headerOffset), firstSegment + 32);
+  bytes.writeBigUInt64LE(BigInt(headerOffset), firstSegment + 48);
+  bytes.writeUInt32LE(3, firstSegment + 56);
+  bytes.writeUInt32LE(3, firstSegment + 60);
   bytes.writeUInt32LE(0x19, secondSegment);
   bytes.writeUInt32LE(72, secondSegment + 4);
   bytes.write("__DATA2", secondSegment + 8, "ascii");
   bytes.writeBigUInt64LE(0x20000n, secondSegment + 24);
-  bytes.writeBigUInt64LE(BigInt(bytes.length), secondSegment + 32);
-  bytes.writeBigUInt64LE(0n, secondSegment + 40);
-  bytes.writeBigUInt64LE(BigInt(bytes.length), secondSegment + 48);
+  bytes.writeBigUInt64LE(secondBytes, secondSegment + 32);
+  bytes.writeBigUInt64LE(BigInt(headerOffset), secondSegment + 40);
+  bytes.writeBigUInt64LE(secondBytes, secondSegment + 48);
   bytes.writeUInt32LE(3, secondSegment + 56);
   bytes.writeUInt32LE(3, secondSegment + 60);
 
-  const container = readBinaryContainer(bytes, "elf-directory");
-  expect(
-    container.load_regions?.map((region) => region.protection_masks),
-  ).toEqual([
-    { current: 11, maximum: 11 },
-    { current: 3, maximum: 3 },
-  ]);
-  expect(goBuildInfoSearch(bytes, container)).toMatchObject([
-    { address: 0x20000n, offset: 0, size: bytes.length },
-  ]);
-  expect(readGoBinaryImage(bytes).build_info?.go_version).toBe("go1.26.0");
+  for (const protection of [firstSegment + 56, firstSegment + 60]) {
+    bytes.writeUInt32LE(11, protection);
+    expect(readGoBinaryImage(bytes).build_info).toMatchObject({
+      header_offset: headerOffset,
+      go_version: "go1.26.0",
+    });
+    bytes.writeUInt32LE(3, protection);
+  }
+  expect(readGoBinaryImage(bytes).build_info).toMatchObject({
+    header_offset: decoyOffset,
+    go_version: "go-decoy",
+  });
 });
 
 it("counts overlapping ELF spans once per distinct search", () => {
@@ -98,7 +109,7 @@ it.each([
   [64, "big", "pointer"],
 ] as const)(
   "retains later-load ELF metadata without sections (%d %s %s)",
-  (bits, byteOrder, encoding) => {
+  async (bits, byteOrder, encoding) => {
     const original = createGoSplitElfFixture({ bits, byteOrder, encoding });
     const sectionless = createGoSplitElfFixture({
       bits,
@@ -109,6 +120,24 @@ it.each([
     const expected = readGoBinaryImage(original.bytes).build_info;
     expect(expected).not.toBeNull();
     expect(readGoBinaryImage(sectionless.bytes).build_info).toEqual(expected);
+    const { bytes } = sectionless;
+    const positional = await readGoBinaryImageFromHandle(
+      {
+        size: bytes.length,
+        readRange: async (offset, length) =>
+          bytes.subarray(offset, offset + length),
+      },
+      undefined,
+      async () => {},
+    );
+    expect(positional.build_info).toMatchObject({
+      encoding,
+      header_offset: sectionless.headerOffset,
+      go_version: "go1.26.0",
+      version_location: { offset: sectionless.versionOffset },
+      module_location: { offset: sectionless.moduleOffset },
+    });
+    expect(positional.build_info).toEqual(expected);
   },
 );
 

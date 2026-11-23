@@ -241,6 +241,8 @@ const dataDescriptorBytes = async (
   return first;
 };
 
+const LATIN1_DECODER = new TextDecoder("latin1");
+
 /** Where a well-formed APK signing block ending at the directory starts, else the directory. */
 const apkSigningBlockStart = async (
   cursor: number,
@@ -253,7 +255,7 @@ const apkSigningBlockStart = async (
     directoryOffset - APK_SIGNING_BLOCK_FOOTER_BYTES,
     APK_SIGNING_BLOCK_FOOTER_BYTES,
   );
-  const magic = new TextDecoder("latin1").decode(
+  const magic = LATIN1_DECODER.decode(
     footer.range(8, 16, "APK signing block magic"),
   );
   if (magic !== APK_SIGNING_BLOCK_MAGIC) return directoryOffset;

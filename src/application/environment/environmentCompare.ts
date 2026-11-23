@@ -279,12 +279,11 @@ interface ProbeRun {
   readonly normalised: Normalised;
 }
 
+const EMPTY_HELD_IDS: ReadonlySet<string> = new Set();
+
 const heldIds = (
   store: EnvironmentStateStore | undefined,
-): ReadonlySet<string> =>
-  new Set(
-    store?.snapshot().rea_state.entities.map((entity) => entity.id) ?? [],
-  );
+): ReadonlySet<string> => store?.entityIds() ?? EMPTY_HELD_IDS;
 
 const stepOf = (
   base: Pick<CompareStep, "ordinal" | "method" | "path" | "live_status">,

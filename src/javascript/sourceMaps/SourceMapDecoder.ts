@@ -26,6 +26,10 @@ import {
   type SourceMapDecoderDependencies,
 } from "./SourceMapCommand.js";
 import { jsonParts } from "../../domain/jsonSerialization.js";
+import {
+  AbortedWait,
+  waitForAbortable,
+} from "../../process/AbortablePromise.js";
 const OPERATION = "trace_web_source_location";
 
 /** Integrate the pinned upstream codec through an independently bounded owned process. */
@@ -37,22 +41,32 @@ export class SourceMapDecoder implements WebSourceMapPort {
 
   constructor(readonly dependencies: SourceMapDecoderDependencies = {}) {}
   /** Return complete point evidence after process and private-root cleanup. */
-  trace(
+  async trace(
     input: Parameters<WebSourceMapPort["trace"]>[0],
     options?: ExecutionOptions,
   ): Promise<Result<WebSourceMapReport, AnalysisError>> {
     if (this.#closing)
-      return Promise.resolve(
-        err(
-          new AnalysisCapabilityUnavailableError(
-            "source-map-decoder",
-            OPERATION,
-            "Provider is closing",
-          ),
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "source-map-decoder",
+          OPERATION,
+          "Provider is closing",
         ),
       );
-    const operation = this.#tail.then(() =>
-      this.#closing
+    const predecessor = this.#tail;
+    let releaseTurn!: () => void;
+    this.#tail = new Promise<void>((resolve) => {
+      releaseTurn = resolve;
+    });
+    const ready = await waitForAbortable(predecessor, options?.signal);
+    if (ready instanceof AbortedWait) {
+      // The caller can leave before admission, but later work still queues
+      // behind the request that owns the decoder and its cleanup.
+      void predecessor.then(releaseTurn);
+      return err(cancelledBy(OPERATION, ready));
+    }
+    try {
+      return this.#closing
         ? err(
             new AnalysisCapabilityUnavailableError(
               "source-map-decoder",
@@ -60,13 +74,10 @@ export class SourceMapDecoder implements WebSourceMapPort {
               "Provider is closing",
             ),
           )
-        : this.#trace(input, options),
-    );
-    this.#tail = operation.then(
-      () => undefined,
-      () => undefined,
-    );
-    return operation;
+        : await this.#trace(input, options);
+    } finally {
+      releaseTurn();
+    }
   }
 
   async #trace(

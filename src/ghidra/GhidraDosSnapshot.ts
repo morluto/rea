@@ -12,7 +12,6 @@ import {
 } from "../domain/dosMz.js";
 import { err } from "../domain/result.js";
 import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
-import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import {
   attestGhidraDosLoadImage,
@@ -34,13 +33,20 @@ export const attestGhidraDosSnapshot = async (
   signal?: AbortSignal,
 ) => {
   const headerBytes = Math.min(fileBytes, 64);
-  const header = await readBoundedFileBytes(handle, headerBytes, {
-    signal,
-    expectedSize: headerBytes,
-    cancellationFailure: cancelled,
-  });
-  if (header === undefined || header.length !== headerBytes)
-    throw new RegularFileChangedError(path);
+  const header = Buffer.allocUnsafe(headerBytes);
+  let headerRead = 0;
+  while (headerRead < headerBytes) {
+    if (signal?.aborted) throw cancelled(signal.reason);
+    const { bytesRead } = await handle.read(
+      header,
+      headerRead,
+      headerBytes - headerRead,
+      headerRead,
+    );
+    if (signal?.aborted) throw cancelled(signal.reason);
+    if (bytesRead === 0) throw new RegularFileChangedError(path);
+    headerRead += bytesRead;
+  }
   const declarations = readDosMzDeclarations(header);
   if (!declarations.ok) return declarations;
   const extent = dosMzDeclaredImageByteLength(declarations.value);

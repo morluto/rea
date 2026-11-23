@@ -3,11 +3,11 @@ import {
   javaScriptRoutesCompleteDeliveryShape,
   webRoutesSummaryDeliveryShape,
 } from "../domain/analysisView/javascriptRoutesView.js";
+import { javaScriptRoutesViewResultSchema } from "../domain/analysisView/summarySchemas/javascriptRoutesSummarySchema.js";
 import {
-  javaScriptRoutesViewResultSchema,
-  webBundleSummaryViewResultSchema,
   webBundlePageViewResultSchema,
-} from "../domain/analysisView/analysisViewResult.js";
+  webBundleSummaryViewResultSchema,
+} from "../domain/analysisView/summarySchemas/webBundleSummarySchemas.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import {
   inspectWebPageInputSchema,

@@ -2,22 +2,20 @@ import {
   inspectDevicetreeInputSchema,
   devicetreeSchema,
 } from "../../domain/firmware/devicetree.js";
+import { binaryLayoutSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/binaryLayoutSummarySchema.js";
+import { devicetreeSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/devicetreeSummarySchema.js";
+import { elfDependenciesSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/elfDependenciesSummarySchema.js";
+import { nativeExportsSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/nativeExportsSummarySchema.js";
 import {
-  devicetreeSummaryViewResultSchema,
-  binaryLayoutSummaryViewResultSchema,
-  nativeExportsSummaryViewResultSchema,
-  elfDependenciesSummaryViewResultSchema,
-} from "../../domain/analysisView/analysisViewResult.js";
-import {
-  inspectPeLoadConfigInputSchema,
   peLoadConfigSchema,
+  inspectPeLoadConfigInputSchema,
 } from "../../domain/native/peLoadConfig.js";
 import {
   binaryHardeningSchema,
   inspectBinaryHardeningInputSchema,
 } from "../../domain/native/binaryHardening.js";
 import { inspectByteEntropyInputSchema } from "../../domain/native/byteEntropy.js";
-import { byteEntropyOutputSchema } from "../toolOutputSchemaGroups.js";
+import { byteEntropyOutputSchema } from "./byteEntropyOutputSchema.js";
 import {
   inspectRecordedCrashInputSchema,
   recordedCrashSchema,

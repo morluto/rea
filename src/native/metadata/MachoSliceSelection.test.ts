@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { MachoSliceArchitecture } from "../../domain/apple/machoTargetSelection.js";
-import { machoArm64Initializers } from "../initializers/NativeInitializers.fixture.js";
+import {
+  fatImage,
+  fatSliceRange,
+  machoImage,
+} from "../../artifacts/apple/MachoImage.fixture.js";
 import { selectMachoSlice } from "../../domain/apple/machoSliceSelection.js";
 
 const selectNativeImage = (
@@ -12,32 +16,23 @@ const selectNativeImage = (
 const CPU_ARM = 12;
 const CPU_X86_64 = 0x01000007;
 const CPU_ARM64 = 0x0100000c;
-const ALIGN = 0x1000;
-
-/**
- * A FAT32 file whose 4 KiB-aligned slices are the arm64 initializer image with
- * each declared CPU; a third entry overrides the embedded header's subtype.
- */
+/** Each tuple names the FAT declaration and optionally another header subtype. */
 const fat = (cpus: readonly (readonly [number, number, number?])[]) => {
-  const thin = machoArm64Initializers();
-  const stride = Math.ceil(thin.length / ALIGN) * ALIGN;
-  const offsets = cpus.map((_, index) => ALIGN + index * stride);
-  const bytes = Buffer.alloc(ALIGN + cpus.length * stride);
-  bytes.writeUInt32BE(0xcafebabe, 0);
-  bytes.writeUInt32BE(cpus.length, 4);
-  for (const [index, [cpuType, cpuSubtype, headerSubtype]] of cpus.entries()) {
-    const entry = 8 + index * 20;
-    bytes.writeUInt32BE(cpuType, entry);
-    bytes.writeUInt32BE(cpuSubtype, entry + 4);
-    bytes.writeUInt32BE(offsets[index]!, entry + 8);
-    bytes.writeUInt32BE(thin.length, entry + 12);
-    bytes.writeUInt32BE(12, entry + 16);
-    const image = Buffer.from(thin);
-    image.writeUInt32LE(cpuType, 4);
-    image.writeUInt32LE(headerSubtype ?? cpuSubtype, 8);
-    image.copy(bytes, offsets[index]);
-  }
-  return { bytes, offsets };
+  const bytes = Buffer.from(
+    fatImage(
+      cpus.map(([type, subtype, embedded = subtype]) => ({
+        cpu: { type, subtype },
+        bytes: machoImage({
+          cpu: { type, subtype: embedded },
+          wide: type !== CPU_ARM,
+        }),
+      })),
+    ),
+  );
+  return {
+    bytes,
+    offsets: cpus.map((_, index) => fatSliceRange(bytes, index).offset),
+  };
 };
 
 const select = (
@@ -56,37 +51,48 @@ const select = (
 };
 
 describe("selectNativeImage subtype names", () => {
-  it("reads arm64v8 as arm64 and arm64e.x1 as arm64e", () => {
-    const v8 = select(
-      [
-        [CPU_ARM64, 1],
-        [CPU_ARM64, 2],
-      ],
-      "arm64",
-    );
-    expect(v8.offset).toBe(v8.offsets[0]);
-    const x1 = select(
-      [
-        [CPU_ARM64, 0],
-        [CPU_ARM64, 12],
-      ],
-      "arm64e",
-    );
-    expect(x1.offset).toBe(x1.offsets[1]);
+  it("reads arm64v8 and arm64e.x1 by their exact selectors", () => {
+    const { bytes, offsets } = fat([
+      [CPU_ARM64, 1],
+      [CPU_ARM64, 12],
+    ]);
+    for (const [architecture, index, other] of [
+      ["arm64", 0, "arm64e"],
+      ["arm64e", 1, "arm64"],
+    ] as const) {
+      expect(selectNativeImage(bytes, architecture)).toMatchObject({
+        ok: true,
+        value: {
+          fileOffset: offsets[index],
+          limitations: [
+            expect.stringContaining(`architecture ${other} selects it`),
+          ],
+        },
+      });
+    }
   });
 
-  it("refuses arm64e beside arm64e.x1, which the value names alike", () => {
-    expect(
-      select(
-        [
-          [CPU_ARM64, 2],
-          [CPU_ARM64, 12],
-        ],
-        "arm64e",
-      ).message,
-    ).toBe(
-      "Universal Mach-O holds several arm64e slices (arm64 (subtype 0x2), arm64 (subtype 0xc)); no slice was selected.",
-    );
+  it("distinguishes ambiguous and absent selectors for the same subtype table", () => {
+    const { bytes } = fat([
+      [CPU_ARM64, 2],
+      [CPU_ARM64, 12],
+    ]);
+    expect(selectNativeImage(bytes, "arm64e")).toEqual({
+      ok: false,
+      error: {
+        kind: "ambiguous_architecture",
+        message:
+          "Universal Mach-O holds several arm64e slices (arm64 (subtype 0x2), arm64 (subtype 0xc)); no slice was selected.",
+      },
+    });
+    expect(selectNativeImage(bytes, "arm64")).toEqual({
+      ok: false,
+      error: {
+        kind: "architecture_not_present",
+        message:
+          "Universal Mach-O holds arm64 (subtype 0x2), arm64 (subtype 0xc); no slice has the arm64 subtype.",
+      },
+    });
   });
 
   it("ignores capability bits when naming a subtype", () => {
@@ -100,24 +106,36 @@ describe("selectNativeImage subtype names", () => {
     expect(capable.offset).toBe(capable.offsets[1]);
   });
 
-  it("refuses a subtype name that several slices share and names the value that works", () => {
-    const cpus = [
-      [CPU_ARM64, 2],
-      [CPU_ARM64, 0x80000002],
-      [CPU_ARM64, 0],
-    ] as const;
-    const arm64e = select(cpus, "arm64e");
-    // The refusal is the caller's to correct and names a selector that works,
-    // which the next selection proves.
-    expect(arm64e.kind).toBe("ambiguous_architecture");
-    expect(arm64e.offset).toBeUndefined();
-    expect(arm64e.message).toMatch(/Select architecture arm64\.$/u);
-    const arm64 = select(cpus, "arm64");
-    expect(arm64.offset).toBe(arm64.offsets[2]);
-    expect(arm64.limitations).toEqual([
-      `Only the selected arm64 slice (arm64 (subtype 0x0) at file offset ${String(arm64.offsets[2])}) was read; this universal Mach-O also holds arm64 (subtype 0x2) at file offset ${String(arm64.offsets[0])} (no architecture value selects it), arm64 (subtype 0x80000002) at file offset ${String(arm64.offsets[1])} (no architecture value selects it).`,
-    ]);
-  });
+  it.each([false, true])(
+    "keeps the alternate selector ambiguous even with a mismatched header=%s",
+    (mismatched) => {
+      const { bytes, offsets } = fat([
+        [CPU_ARM64, 2],
+        [CPU_ARM64, 0x80000002, mismatched ? 0 : 0x80000002],
+        [CPU_ARM64, 0],
+      ]);
+      const arm64e = selectNativeImage(bytes, "arm64e");
+      expect(arm64e).toMatchObject({
+        ok: false,
+        error: {
+          kind: "ambiguous_architecture",
+          message: expect.stringMatching(/Select architecture arm64\.$/u),
+        },
+      });
+      const lastSibling = mismatched
+        ? "unverified: FAT architecture 1 CPU type/subtype disagrees with its Mach-O header; no architecture value reads it"
+        : "no architecture value selects it";
+      expect(selectNativeImage(bytes, "arm64")).toMatchObject({
+        ok: true,
+        value: {
+          fileOffset: offsets[2],
+          limitations: [
+            `Only the selected arm64 slice (arm64 (subtype 0x0) at file offset ${String(offsets[2])}) was read; this universal Mach-O also holds arm64 (subtype 0x2) at file offset ${String(offsets[0])} (no architecture value selects it), arm64 (subtype 0x80000002) at file offset ${String(offsets[1])} (${lastSibling}).`,
+          ],
+        },
+      });
+    },
+  );
 
   it("refuses a subtype that no slice of the family has", () => {
     // Two same-family slices leave no single selector to offer.
@@ -152,20 +170,6 @@ describe("selectNativeImage subtype names", () => {
       ).message,
     ).toBe(
       "Universal Mach-O holds several arm64 slices (arm64 (subtype 0x0), arm64 (subtype 0x80000000)); no slice was selected.",
-    );
-  });
-
-  it("reports a family with no slice of the named subtype rather than several", () => {
-    expect(
-      select(
-        [
-          [CPU_ARM64, 2],
-          [CPU_ARM64, 12],
-        ],
-        "arm64",
-      ).message,
-    ).toBe(
-      "Universal Mach-O holds arm64 (subtype 0x2), arm64 (subtype 0xc); no slice has the arm64 subtype.",
     );
   });
 });

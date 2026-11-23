@@ -395,7 +395,7 @@ it("refuses a gzip file that expands past what REA checks for known secrets", as
     Buffer.from(`token=${token}\n`),
     Buffer.alloc(65 * 1024 * 1024),
   ]);
-  await writeFile(join(seed, "large.txt.gz"), gzipSync(inside));
+  await writeFile(join(seed, "large.txt.gz"), gzipSync(inside, { level: 1 }));
   const directory = join(await createTestTempDirectory("build-out-"), "notes");
   const refused = await client.callTool({
     name: "export_build_environment",

@@ -8,6 +8,7 @@ import { PassThrough } from "node:stream";
 import { expect, it as test, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { stopTestChild } from "../../tests/support/process/stopTestChild.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
@@ -540,105 +541,138 @@ test.each([
     const reason = { caller: "cancel during final cleanup" };
     let cleanupCalls = 0;
     const retained: ProviderProcessSupervisor[] = [];
-    const failure: unknown = await runFirmwareCommand({
-      resources: createTestArtifactResourceScope(),
-      engine: "binwalk",
-      operation: "inspect_firmware_regions",
-      command: process.execPath,
-      limiter: process.execPath,
-      fileSizeCeiling: Number.MAX_SAFE_INTEGER,
-      args: [],
-      cwd: root,
-      environment: process.env,
-      signal: caller.signal,
-      deadline: {
-        phase: "analysis",
-        signal: new AbortController().signal,
-        timeoutMs: 30_000,
-        expiresAtMs: performance.now() + 30_000,
-      },
-      launcher: async (options) => {
-        const owned = await spawnOwnedProviderProcess({
-          ...options,
-          command: process.execPath,
-          arguments: [
-            "-e",
-            `process.stdout.write("scan evidence\\n"); process.stderr.write("producer diagnostics\\n"); process.exitCode = ${exitCode}`,
-          ],
+    let ownedProcess: ProviderProcessHandle | undefined;
+    try {
+      const failure: unknown = await runFirmwareCommand({
+        resources: createTestArtifactResourceScope(),
+        engine: "binwalk",
+        operation: "inspect_firmware_regions",
+        command: process.execPath,
+        limiter: process.execPath,
+        fileSizeCeiling: Number.MAX_SAFE_INTEGER,
+        args: [],
+        cwd: root,
+        environment: process.env,
+        signal: caller.signal,
+        deadline: {
+          phase: "analysis",
+          signal: new AbortController().signal,
+          timeoutMs: 30_000,
+          expiresAtMs: performance.now() + 30_000,
+        },
+        launcher: async (options) => {
+          const owned = await spawnOwnedProviderProcess({
+            ...options,
+            command: process.execPath,
+            arguments: [
+              "-e",
+              `process.stdout.write("scan evidence\\n"); process.stderr.write("producer diagnostics\\n"); process.exitCode = ${exitCode}`,
+            ],
+          });
+          ownedProcess = owned.process;
+          return {
+            ...owned,
+            cleanup: async () => {
+              cleanupCalls += 1;
+              expect(owned.process.exitCode).toBe(exitCode);
+              caller.abort(reason);
+              const cleaned = await cleanupOwnedProcessGroup(owned.ownership);
+              if (cleanupFails && cleanupCalls === 1)
+                return {
+                  cleaned: false as const,
+                  reason: "controlled cleanup refusal after real release",
+                };
+              return cleaned;
+            },
+          };
+        },
+        retainCleanup: (owner) => {
+          retained.push(owner);
+        },
+      }).catch((cause: unknown) => cause);
+      expect(cleanupCalls).toBe(1);
+      expect(failure).toBeInstanceOf(AnalysisError);
+      if (!(failure instanceof AnalysisError))
+        throw new Error("Expected typed failure");
+      if (exitCode === 0) {
+        expect(failure).toMatchObject({
+          _tag: "AnalysisCancelledError",
+          cause: reason,
         });
-        return {
-          ...owned,
-          cleanup: async () => {
-            cleanupCalls += 1;
-            expect(owned.process.exitCode).toBe(exitCode);
-            caller.abort(reason);
-            const cleaned = await cleanupOwnedProcessGroup(owned.ownership);
-            if (cleanupFails && cleanupCalls === 1)
-              return {
-                cleaned: false as const,
-                reason: "controlled cleanup refusal after real release",
-              };
-            return cleaned;
+      } else if (cleanupFails) {
+        expect(retained).toHaveLength(1);
+        expect(await retained[0]!.stop()).toMatchObject({
+          status: "verified-cleanup",
+        });
+        expect(cleanupCalls).toBe(2);
+        retained[0]!.dispose();
+        expect(failure).toMatchObject({
+          diagnostics: {
+            previous_error: {
+              code: "execution_failure",
+              details: { diagnostics: { exit_code: 7 } },
+            },
           },
-        };
-      },
-      retainCleanup: (owner) => {
-        retained.push(owner);
-      },
-    }).catch((cause: unknown) => cause);
-    expect(cleanupCalls).toBe(1);
-    expect(failure).toBeInstanceOf(AnalysisError);
-    if (!(failure instanceof AnalysisError))
-      throw new Error("Expected typed failure");
-    if (exitCode === 0) {
-      expect(failure).toMatchObject({
-        _tag: "AnalysisCancelledError",
-        cause: reason,
-      });
-    } else if (cleanupFails) {
-      expect(retained).toHaveLength(1);
-      expect(await retained[0]!.stop()).toMatchObject({
-        status: "verified-cleanup",
-      });
-      expect(cleanupCalls).toBe(2);
-      retained[0]!.dispose();
-      expect(failure).toMatchObject({
-        diagnostics: {
-          previous_error: {
-            code: "execution_failure",
-            details: { diagnostics: { exit_code: 7 } },
+          capturedOutput: {
+            stdout: "scan evidence\n",
+            stderr: "producer diagnostics\n",
+            exit_code: 7,
           },
-        },
-        capturedOutput: {
-          stdout: "scan evidence\n",
-          stderr: "producer diagnostics\n",
-          exit_code: 7,
-        },
-      });
-    } else {
-      expect(failure).toMatchObject({
-        _tag: "ProviderAdapterError",
-        diagnostics: {
-          exit_code: 7,
-          stdout: "scan evidence\n",
-          stderr: "producer diagnostics\n",
-        },
-      });
-      const projected = projectAnalysisError(failure);
-      expect(projected.code).toBe("execution_failure");
-      const action = projected.remediation.action;
-      expect(action).toContain(`cpuSeconds is ${FIRMWARE_LIMITS.cpuSeconds}`);
-      expect(action).toContain(
-        `address-space allowance is ${FIRMWARE_LIMITS.addressSpaceBytes} bytes`,
-      );
-      expect(action).toContain(
-        `file-size allowance is ${FIRMWARE_LIMITS.reportBytes + 1} bytes`,
-      );
-      expect(action).toContain("no runtime override");
-      expect(action).toMatch(/analysis_timeout_ms\b.*does not raise/u);
+        });
+      } else {
+        expect(failure).toMatchObject({
+          _tag: "ProviderAdapterError",
+          diagnostics: {
+            exit_code: 7,
+            stdout: "scan evidence\n",
+            stderr: "producer diagnostics\n",
+          },
+        });
+        const projected = projectAnalysisError(failure);
+        expect(projected.code).toBe("execution_failure");
+        const action = projected.remediation.action;
+        expect(action).toContain(`cpuSeconds is ${FIRMWARE_LIMITS.cpuSeconds}`);
+        expect(action).toContain(
+          `address-space allowance is ${FIRMWARE_LIMITS.addressSpaceBytes} bytes`,
+        );
+        expect(action).toContain(
+          `file-size allowance is ${FIRMWARE_LIMITS.reportBytes + 1} bytes`,
+        );
+        expect(action).toContain("no runtime override");
+        expect(action).toMatch(/analysis_timeout_ms\b.*does not raise/u);
+      }
+    } finally {
+      if (ownedProcess !== undefined) await stopTestChild(ownedProcess);
     }
   },
 );
+
+const waitForStreamClose = async (
+  closedPromise: Promise<void> | undefined,
+  timeoutMs: number,
+): Promise<void> => {
+  if (closedPromise === undefined) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      closedPromise,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+};
+
+const signalTestGroupKill = (groupId: number): void => {
+  try {
+    process.kill(-groupId, "SIGKILL");
+  } catch (cause: unknown) {
+    if (!(cause instanceof Error && "code" in cause && cause.code === "ESRCH"))
+      throw cause;
+  }
+};
 
 // The injected launcher runs real owned Node processes on every POSIX host;
 // Linux firmware binaries and prlimit are deliberately outside this lifecycle seam.
@@ -684,121 +718,148 @@ test.skipIf(process.platform === "win32").each([
     const root = await createTestTempDirectory(
       "rea-firmware-inherited-output-",
     );
+    const descendantExit = join(root, "descendant-exit");
     const caller = new AbortController();
     const reason = { caller: "cancel with inherited output still open" };
     let cleanupCalls = 0;
+    let cleanupVerified = false;
+    let ownedGroupId: number | undefined;
+    let closedPromise: Promise<void> | undefined;
     let closed = false;
     let exited = false;
-    const failure: unknown = await runFirmwareCommand({
-      resources: createTestArtifactResourceScope(),
-      engine: "binwalk",
-      operation: "inspect_firmware_regions",
-      command: process.execPath,
-      limiter: process.execPath,
-      fileSizeCeiling: Number.MAX_SAFE_INTEGER,
-      args: [],
-      cwd: root,
-      environment: process.env,
-      signal: caller.signal,
-      deadline: {
-        phase: "analysis",
-        signal: new AbortController().signal,
-        timeoutMs: 30_000,
-        expiresAtMs: performance.now() + 30_000,
-      },
-      acceptReportedExtractionFailure: acceptFailure,
-      launcher: async (options) => {
-        const exitRelease = join(root, "exit-release");
-        const tailRelease = join(root, "tail-release");
-        const descendant = `
-          const { existsSync } = require("node:fs");
-          setInterval(() => {}, 1000);
-          const tail = setInterval(() => {
-            if (!existsSync(${JSON.stringify(tailRelease)})) return;
-            clearInterval(tail);
-            process.stderr.write(Buffer.alloc(${overflow ? FIRMWARE_LIMITS.diagnosticBytes : 0}, 120), () => {
-              process.stderr.write("descendant-tail\\n");
-            });
-          }, 10);
-          process.send("ready");
-        `;
-        const owned = await spawnOwnedProviderProcess({
-          ...options,
-          command: process.execPath,
-          arguments: [
-            "-e",
-            `
-            const { spawn } = require("node:child_process");
-            const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], {
-              stdio: ["ignore", "inherit", "inherit", "ipc"],
-            });
-            child.once("message", () => {
-              process.stderr.write("descendant-ready\\n");
-              child.disconnect();
-              child.unref();
-              if (${cancelBeforeExit}) {
-                const release = setInterval(() => {
-                  if (!require("node:fs").existsSync(${JSON.stringify(exitRelease)})) return;
-                  clearInterval(release);
-                  process.exitCode = ${exitCode};
-                }, 10);
-              } else process.exitCode = ${exitCode};
-            });
-          `,
-          ],
-        });
-        owned.process.once("close", () => {
-          closed = true;
-        });
-        let diagnostics = "";
-        owned.process.stderr?.on("data", (chunk: Buffer) => {
-          diagnostics += chunk.toString();
-          if (cancelBeforeExit && !caller.signal.aborted) {
-            expect(exited).toBe(false);
-            caller.abort(reason);
-            void writeFile(exitRelease, "release");
-          } else if (
-            !cancelBeforeExit &&
-            diagnostics.includes("descendant-tail")
-          ) {
-            expect(exited).toBe(true);
-            expect(closed).toBe(false);
-            caller.abort(reason);
-          }
-        });
-        owned.process.once("exit", () => {
-          exited = true;
-          // Release descendant diagnostics only after the supervisor has also
-          // observed the root's exit, leaving inherited pipes open until cleanup.
-          queueMicrotask(() => {
-            void writeFile(tailRelease, "release");
-          });
-        });
-        return {
-          ...owned,
-          cleanup: async () => {
-            cleanupCalls += 1;
-            return cleanupOwnedProcessGroup(owned.ownership);
-          },
-        };
-      },
-      retainCleanup: () => {
-        throw new Error("Real descendant cleanup must complete");
-      },
-    }).catch((cause: unknown) => cause);
-    expect(exited).toBe(true);
-    expect(cleanupCalls).toBe(1);
-    expect(failure).toMatchObject({ _tag: expected });
-    if (expected === "ProviderAdapterError")
-      expect(failure).toMatchObject({
-        diagnostics: {
-          exit_code: 7,
-          stderr: overflow
-            ? expect.stringMatching(/^descendant-ready\nxxx/)
-            : "descendant-ready\ndescendant-tail\n",
-          truncated: overflow,
+    try {
+      const failure: unknown = await runFirmwareCommand({
+        resources: createTestArtifactResourceScope(),
+        engine: "binwalk",
+        operation: "inspect_firmware_regions",
+        command: process.execPath,
+        limiter: process.execPath,
+        fileSizeCeiling: Number.MAX_SAFE_INTEGER,
+        args: [],
+        cwd: root,
+        environment: process.env,
+        signal: caller.signal,
+        deadline: {
+          phase: "analysis",
+          signal: new AbortController().signal,
+          timeoutMs: 30_000,
+          expiresAtMs: performance.now() + 30_000,
         },
-      });
-    else expect(failure).toMatchObject({ cause: reason });
+        acceptReportedExtractionFailure: acceptFailure,
+        launcher: async (options) => {
+          const exitRelease = join(root, "exit-release");
+          const tailRelease = join(root, "tail-release");
+          const descendant = `
+            const { existsSync } = require("node:fs");
+            const keepAlive = setInterval(() => {}, 1000);
+            const exitCheck = setInterval(() => {
+              if (!existsSync(${JSON.stringify(descendantExit)})) return;
+              clearInterval(exitCheck);
+              clearInterval(keepAlive);
+              process.exit(0);
+            }, 50);
+            const tail = setInterval(() => {
+              if (!existsSync(${JSON.stringify(tailRelease)})) return;
+              clearInterval(tail);
+              process.stderr.write(Buffer.alloc(${overflow ? FIRMWARE_LIMITS.diagnosticBytes : 0}, 120), () => {
+                process.stderr.write("descendant-tail\\n");
+              });
+            }, 10);
+            process.send("ready");
+          `;
+          const owned = await spawnOwnedProviderProcess({
+            ...options,
+            command: process.execPath,
+            arguments: [
+              "-e",
+              `
+              const { spawn } = require("node:child_process");
+              const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], {
+                stdio: ["ignore", "inherit", "inherit", "ipc"],
+              });
+              child.once("message", () => {
+                process.stderr.write("descendant-ready\\n");
+                child.disconnect();
+                child.unref();
+                if (${cancelBeforeExit}) {
+                  const release = setInterval(() => {
+                    if (!require("node:fs").existsSync(${JSON.stringify(exitRelease)})) return;
+                    clearInterval(release);
+                    process.exitCode = ${exitCode};
+                  }, 10);
+                } else process.exitCode = ${exitCode};
+              });
+            `,
+            ],
+          });
+          ownedGroupId = owned.ownership.processGroupId;
+          closedPromise = new Promise<void>((resolve) => {
+            owned.process.once("close", () => {
+              closed = true;
+              resolve();
+            });
+          });
+          let diagnostics = "";
+          owned.process.stderr?.on("data", (chunk: Buffer) => {
+            diagnostics += chunk.toString();
+            if (cancelBeforeExit && !caller.signal.aborted) {
+              expect(exited).toBe(false);
+              caller.abort(reason);
+              void writeFile(exitRelease, "release");
+            } else if (
+              !cancelBeforeExit &&
+              diagnostics.includes("descendant-tail")
+            ) {
+              expect(exited).toBe(true);
+              expect(closed).toBe(false);
+              caller.abort(reason);
+            }
+          });
+          owned.process.once("exit", () => {
+            exited = true;
+            // Release descendant diagnostics only after the supervisor has also
+            // observed the root's exit, leaving inherited pipes open until cleanup.
+            queueMicrotask(() => {
+              void writeFile(tailRelease, "release");
+            });
+          });
+          return {
+            ...owned,
+            cleanup: async () => {
+              cleanupCalls += 1;
+              const result = await cleanupOwnedProcessGroup(owned.ownership);
+              cleanupVerified = result.cleaned;
+              return result;
+            },
+          };
+        },
+        retainCleanup: () => {
+          throw new Error("Real descendant cleanup must complete");
+        },
+      }).catch((cause: unknown) => cause);
+      expect(exited).toBe(true);
+      expect(cleanupCalls).toBe(1);
+      expect(failure).toMatchObject({ _tag: expected });
+      if (expected === "ProviderAdapterError")
+        expect(failure).toMatchObject({
+          diagnostics: {
+            exit_code: 7,
+            stderr: overflow
+              ? expect.stringMatching(/^descendant-ready\nxxx/)
+              : "descendant-ready\ndescendant-tail\n",
+            truncated: overflow,
+          },
+        });
+      else expect(failure).toMatchObject({ cause: reason });
+    } finally {
+      if (!closed) {
+        await writeFile(descendantExit, "exit").catch(() => undefined);
+        await waitForStreamClose(closedPromise, 1_000);
+      }
+      if (!closed && !cleanupVerified && ownedGroupId !== undefined) {
+        signalTestGroupKill(ownedGroupId);
+        await waitForStreamClose(closedPromise, 1_000);
+      }
+    }
   },
 );

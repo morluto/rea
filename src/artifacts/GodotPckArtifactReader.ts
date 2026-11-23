@@ -22,7 +22,7 @@ import {
   type GodotPckAdmission,
   type GodotPckLocation,
 } from "./GodotPckLocation.js";
-import type { GodotPckMetadata } from "../domain/artifactFormatMetadata.js";
+import type { GodotPckMetadata } from "../domain/formatMetadata/packageAndGameMetadata.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {
@@ -324,6 +324,11 @@ const pckMemberPath = (raw: Buffer): string => {
 /** One bounded read window; no whole-pack buffer or per-member source reopening. */
 class PckCursor {
   #buffer: Buffer = Buffer.alloc(0);
+  #bufferReader: BinaryReader = new BinaryReader(
+    this.#buffer,
+    true,
+    "godot-pck",
+  );
   #bufferStart = 0;
   constructor(
     private readonly handle: FileHandle,
@@ -342,10 +347,8 @@ class PckCursor {
       throw formatFailure("directory entry exceeds the pack");
   }
   async bytes(length: number): Promise<Buffer> {
-    this.requireBytes(length);
-    if (length > this.options.limits.directory_bytes / 18)
-      throw metadataLimit(this.options.limits, length * 18);
     if (length > DIRECTORY_CHUNK_BYTES) {
+      this.#requireRead(length);
       // A large valid virtual path is bounded by retained representation, not
       // the host filesystem's PATH_MAX. Only this path receives a larger read.
       const value = await readArtifactFileBytes(
@@ -358,6 +361,16 @@ class PckCursor {
       this.position += length;
       return value;
     }
+    const start = await this.#ensureBuffered(length);
+    return this.#buffer.subarray(start, start + length);
+  }
+  #requireRead(length: number): void {
+    this.requireBytes(length);
+    if (length > this.options.limits.directory_bytes / 18)
+      throw metadataLimit(this.options.limits, length * 18);
+  }
+  async #ensureBuffered(length: number): Promise<number> {
+    this.#requireRead(length);
     const offset = this.position - this.#bufferStart;
     if (offset < 0 || offset + length > this.#buffer.length) {
       this.#buffer = await readArtifactFileBytes(
@@ -367,17 +380,20 @@ class PckCursor {
         this.end,
         this.options.signal,
       );
+      this.#bufferReader = new BinaryReader(this.#buffer, true, "godot-pck");
       this.#bufferStart = this.position;
     }
     const start = this.position - this.#bufferStart;
     this.position += length;
-    return this.#buffer.subarray(start, start + length);
+    return start;
   }
   async uint32(): Promise<number> {
-    return new BinaryReader(await this.bytes(4), true, "godot-pck").u32(0);
+    const start = await this.#ensureBuffered(4);
+    return this.#bufferReader.u32(start);
   }
   async uint64(): Promise<bigint> {
-    return new BinaryReader(await this.bytes(8), true, "godot-pck").word(0, 64);
+    const start = await this.#ensureBuffered(8);
+    return this.#bufferReader.word(start, 64);
   }
 }
 

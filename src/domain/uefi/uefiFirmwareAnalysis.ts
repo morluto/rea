@@ -102,7 +102,7 @@ export const uefiSectionTypeNameSchema = z.enum([
  * Compression classification for guided or uncompressed sections; kinds that
  * cannot be decoded are reported as gaps, never silently skipped.
  */
-export const uefiCompressionSchema = z.union([
+export const uefiCompressionSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("none") }),
   z.strictObject({
     kind: z.enum([
