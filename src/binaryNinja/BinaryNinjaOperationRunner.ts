@@ -1,6 +1,12 @@
 import { BinaryReader } from "../domain/binaryContainer.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
-import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
+import {
+  cancelledBy,
+  carriedReason,
+  AnalysisInputError,
+  AnalysisProtocolError,
+  measuredResourceConstraint,
+} from "../domain/analysisErrorCore.js";
 import { constants as bufferConstants } from "node:buffer";
 import { getHeapStatistics } from "node:v8";
 import type { RegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
@@ -10,11 +16,6 @@ import {
   analysisSearchPredicate,
   analysisSearchQuerySchema,
 } from "../domain/analysisSearch.js";
-import {
-  AnalysisInputError,
-  AnalysisProtocolError,
-  measuredResourceConstraint,
-} from "../domain/analysisErrorCore.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import { combineFunctionRelationshipCoverage } from "../domain/functionCallCoverage.js";
 import {
@@ -358,7 +359,9 @@ export class BinaryNinjaOperationRunner {
     );
   }
 
-  async strings(): Promise<{ address: string; value: string }[]> {
+  async strings(
+    selectedAddress?: string,
+  ): Promise<{ address: string; value: string }[]> {
     const littleEndian = LITTLE_ENDIAN_ARCHITECTURES.has(
       this.options.architecture,
     );
@@ -368,11 +371,13 @@ export class BinaryNinjaOperationRunner {
       await this.table("bn_string_list", {
         previewBytes: STRING_PREVIEW_BYTES,
       })
-    ).map((row) => ({
-      row,
-      address: binaryNinjaAddressSchema.parse(row.string),
-      length: BigInt(binaryNinjaAddressSchema.parse(row.length)),
-    }));
+    ).flatMap((row) => {
+      const address = binaryNinjaAddressSchema.parse(row.string);
+      if (selectedAddress !== undefined && address !== selectedAddress)
+        return [];
+      const length = BigInt(binaryNinjaAddressSchema.parse(row.length));
+      return [{ row, address, length }];
+    });
     this.requireStringCapacity(entries);
     for (const { row, address, length: declaredLength } of entries) {
       const length = Number(declaredLength);
@@ -427,7 +432,7 @@ export class BinaryNinjaOperationRunner {
         throw measuredResourceConstraint(
           "binary_ninja_strings",
           "memory",
-          "Insufficient runtime capacity for the complete string inventory, retained replies, and serialized Evidence.",
+          "Insufficient runtime capacity for the requested strings, retained replies, and serialized Evidence.",
           {
             required_bytes: requiredBytes.toString(),
             maximum_buffer_bytes: bufferConstants.MAX_LENGTH,
@@ -668,15 +673,15 @@ export class BinaryNinjaOperationRunner {
       if (operation === "list_procedures") return items;
       return this.search(operation, parameters, items);
     }
-    if (operation === "list_strings" || operation === "search_strings") {
-      const items = await this.strings();
-      if (operation === "search_strings") {
-        return this.search(operation, parameters, items);
-      }
-      if (parameters.address === undefined) return items;
-      const address = binaryNinjaAddressSchema.parse(parameters.address);
-      return items.filter((item) => item.address === address);
+    if (operation === "list_strings") {
+      const address =
+        parameters.address === undefined
+          ? undefined
+          : binaryNinjaAddressSchema.parse(parameters.address);
+      return this.strings(address);
     }
+    if (operation === "search_strings")
+      return this.search(operation, parameters, await this.strings());
     if (operation === "list_documents") return [this.options.admittedDocument];
     if (operation === "xrefs") {
       const address = binaryNinjaAddressSchema.parse(parameters.address);

@@ -94,7 +94,7 @@ The [official Binary Ninja MCP guide](https://docs.binary.ninja/guide/mcp.html) 
 
 Complete body ranges, typed reference edges, comments, referenced strings and names, basic blocks, and source locals are unavailable; empty dossier facets mean **unknown**, not observed absence. `provider.version` identifies the REA adapter; the Binary Ninja build is not reported by the MCP server, and `serverInfo` is recorded separately. Results are live and never replayed from snapshots. Binary Ninja MCP does not yet forward cancellation, so a cancelled REA request stops waiting without interrupting work Binary Ninja already started.
 
-String reads use chunks of at most 64 KiB. Before reading string bytes, REA checks the complete inventory's estimated buffer, decoded text, retained replies, and serialized Evidence against current heap and process memory headroom. Insufficient capacity returns a typed memory error rather than omitting strings or allocating their declared size. Free memory or increase REA's Node.js heap allowance before retrying; `maxInputBytes` only controls Raw-view identity hashing.
+String reads use chunks of at most 64 KiB. An address-filtered `list_strings` request scans the inventory pages and reads string bodies only at the matching address. Before reading string bytes, REA checks the requested strings' estimated buffer, decoded text, retained replies, and serialized Evidence against current heap and process memory headroom. Insufficient capacity returns a typed memory error. Free memory or increase REA's Node.js heap allowance before retrying. The `maxInputBytes` setting controls Raw-view identity hashing.
 
 ## Verification
 

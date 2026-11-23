@@ -1,16 +1,17 @@
-import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
-import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  createBinaryNinjaTarget,
-  RecordingBinaryNinjaMcp,
-} from "../../tests/fixtures/binaryNinjaMcp.js";
-import {
+  cancelledBy,
+  carriedReason,
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisProtocolError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  createBinaryNinjaTarget,
+  RecordingBinaryNinjaMcp,
+} from "../../tests/fixtures/binaryNinjaMcp.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { BinaryNinjaConfiguration } from "./BinaryNinjaConfiguration.js";
@@ -735,6 +736,26 @@ describe("Binary Ninja string capacity", () => {
               BigInt(String(args.address)) >= 0x500000n,
           ),
       ).toBe(false);
+
+      producer.pageSize = 1;
+      const selectedStart = producer.calls.length;
+      expect(
+        (await value(client, "list_strings", { address: "0x00501000" })).result,
+      ).toEqual([{ address: "0x501000", value: "b".repeat(1024) }]);
+      expect(
+        producer.calls
+          .slice(selectedStart)
+          .filter(
+            ({ name, args }) =>
+              name === "bn_memory_read" &&
+              BigInt(String(args.address)) >= 0x500000n,
+          )
+          .map(({ args }) => args.address),
+      ).toEqual(["0x501000"]);
+
+      expect(
+        (await value(client, "list_strings", { address: "0x501001" })).result,
+      ).toEqual([]);
     } finally {
       expect((await client.close()).ok).toBe(true);
     }
