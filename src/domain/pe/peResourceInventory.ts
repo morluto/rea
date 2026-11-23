@@ -466,15 +466,29 @@ const readIconGroups = async (
   for (const group of resources) {
     if (group.type.kind !== "id" || group.type.id !== 14) continue;
     const { offset, bytes: size } = group.payload.location;
-    const reader = new BinaryReader(await readBytes(offset, size), true, "pe");
-    if (size < 6 || reader.u16(0) !== 0 || reader.u16(2) !== 1)
+    const headerBytes = 6;
+    const entryBytes = 14;
+    if (size < headerBytes) peFailure("Malformed RT_GROUP_ICON header.");
+    const header = new BinaryReader(
+      await readBytes(offset, headerBytes),
+      true,
+      "pe",
+    );
+    if (header.u16(0) !== 0 || header.u16(2) !== 1)
       peFailure("Malformed RT_GROUP_ICON header.");
-    const count = reader.u16(4);
-    if (size !== 6 + count * 14)
+    const count = header.u16(4);
+    const entriesBytes = count * entryBytes;
+    if (size !== headerBytes + entriesBytes)
       peFailure("RT_GROUP_ICON length does not match its image count.");
+    const entriesOffset = offset + headerBytes;
+    const reader = new BinaryReader(
+      await readBytes(entriesOffset, entriesBytes),
+      true,
+      "pe",
+    );
     const images: PeResources["icon_groups"][number]["images"] = [];
     for (let index = 0; index < count; index++) {
-      const at = 6 + index * 14;
+      const at = index * entryBytes;
       const id = reader.u16(at + 12);
       const candidates = imagesById.get(id) ?? [];
       const exact = candidates.find(
@@ -486,7 +500,7 @@ const readIconGroups = async (
       ensureCapacity(302 + candidates.length * 11);
       const declaredBytes = reader.u32(at + 8);
       const image = {
-        location: { offset: offset + at, bytes: 14 },
+        location: { offset: entriesOffset + at, bytes: entryBytes },
         width: reader.u8(at),
         height: reader.u8(at + 1),
         color_count: reader.u8(at + 2),
