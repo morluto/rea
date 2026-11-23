@@ -21,7 +21,6 @@ describe("Apple IPS stable filesystem boundary", () => {
     for (const [candidate, reason] of [
       [root, "invalid_format"],
       [alias, "invalid_format"],
-      [malformed, "invalid_format"],
       [join(root, "missing.ips"), "invalid_value"],
       [join(path, "child.ips"), "invalid_value"],
     ] as const) {
@@ -39,6 +38,14 @@ describe("Apple IPS stable filesystem boundary", () => {
         ],
       });
     }
+    // Malformed bytes are a target refusal, not a request-field error.
+    const malformedResult = await service.inspect({ path: malformed });
+    if (malformedResult.ok) throw new Error("Expected a malformed target");
+    expect(malformedResult.error).toMatchObject({
+      _tag: "AnalysisMalformedTargetError",
+      operation: "inspect_apple_ips",
+      path: malformed,
+    });
   });
 
   it("returns typed resource and cancellation failures", async () => {
@@ -94,14 +101,8 @@ describe("Apple IPS stable filesystem boundary", () => {
     const invalid = await service.inspect({ path: corrupt });
     if (invalid.ok) throw new Error("Expected invalid UTF-8 failure");
     expect(invalid.error).toMatchObject({
-      _tag: "AnalysisInputError",
-      issues: [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: expect.stringContaining("UTF-8"),
-        },
-      ],
+      _tag: "AnalysisMalformedTargetError",
+      failure: { detail: expect.stringContaining("UTF-8") },
     });
 
     const complete = await service.inspect({ path: report });

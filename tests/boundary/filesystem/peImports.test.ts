@@ -19,7 +19,6 @@ describe("PE import stable filesystem boundary", () => {
     for (const [candidate, reason] of [
       [root, "invalid_format"],
       [alias, "invalid_format"],
-      [malformed, "invalid_format"],
       [join(root, "missing.exe"), "invalid_value"],
       [join(path, "child.exe"), "invalid_value"],
     ] as const) {
@@ -37,6 +36,14 @@ describe("PE import stable filesystem boundary", () => {
         ],
       });
     }
+    // Malformed bytes are a target refusal, not a request-field error.
+    const malformedResult = await service.inspect({ path: malformed });
+    if (malformedResult.ok) throw new Error("Expected a malformed target");
+    expect(malformedResult.error).toMatchObject({
+      _tag: "AnalysisMalformedTargetError",
+      operation: "inspect_pe_imports",
+      path: malformed,
+    });
   });
 
   it("retains partial Evidence for an import name beyond the read allowance", async () => {

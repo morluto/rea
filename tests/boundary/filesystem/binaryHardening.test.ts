@@ -27,7 +27,6 @@ describe("binary hardening stable filesystem boundary", () => {
       for (const [candidate, reason] of [
         [root, "invalid_format"],
         [alias, "invalid_format"],
-        [malformed, "invalid_format"],
         [join(root, "missing"), "invalid_value"],
         [join(path, "child"), "invalid_value"],
       ] as const) {
@@ -39,6 +38,14 @@ describe("binary hardening stable filesystem boundary", () => {
           issues: [{ path: ["path"], reason, message: expect.any(String) }],
         });
       }
+      // Malformed bytes are a target refusal, not a request-field error.
+      const malformedResult = await service.inspect({ path: malformed });
+      if (malformedResult.ok) throw new Error("Expected a malformed target");
+      expect(malformedResult.error).toMatchObject({
+        _tag: "AnalysisMalformedTargetError",
+        operation: "inspect_binary_hardening",
+        path: malformed,
+      });
       const foreign = join(root, "foreign");
       await writeFile(foreign, Buffer.from("not a binary"));
       const unsupported = await service.inspect({ path: foreign });

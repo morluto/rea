@@ -115,7 +115,6 @@ describe("kernel module stable filesystem boundary", () => {
       for (const [candidate, reason] of [
         [root, "invalid_format"],
         [alias, "invalid_format"],
-        [malformed, "invalid_format"],
         [join(root, "missing"), "invalid_value"],
         [join(path, "child"), "invalid_value"],
       ] as const) {
@@ -133,6 +132,11 @@ describe("kernel module stable filesystem boundary", () => {
           ],
         });
       }
+      // Malformed bytes are a target refusal, not a request-field error.
+      expect(await service.inspect({ path: malformed })).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisMalformedTargetError", path: malformed },
+      });
     } finally {
       await service.close();
     }

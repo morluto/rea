@@ -56,7 +56,6 @@ describe("native initializer stable filesystem boundary", () => {
     for (const [candidate, reason] of [
       [root, "invalid_format"],
       [alias, "invalid_format"],
-      [malformed, "invalid_format"],
       [join(root, "missing"), "invalid_value"],
       [join(path, "child"), "invalid_value"],
     ] as const) {
@@ -68,6 +67,14 @@ describe("native initializer stable filesystem boundary", () => {
         issues: [{ path: ["path"], reason, message: expect.any(String) }],
       });
     }
+    // Malformed bytes are a target refusal, not a request-field error.
+    const malformedResult = await service.inspect({ path: malformed });
+    if (malformedResult.ok) throw new Error("Expected a malformed target");
+    expect(malformedResult.error).toMatchObject({
+      _tag: "AnalysisMalformedTargetError",
+      operation: "inspect_native_initializers",
+      path: malformed,
+    });
   });
 
   it("reads a stable file and returns typed budget and cancellation failures", async () => {

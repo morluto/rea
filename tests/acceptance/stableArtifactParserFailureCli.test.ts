@@ -31,7 +31,7 @@ for (const command of [
       await writeFile(path, bytes);
       const result = await cli.run({ arguments: [command, path, "--json"] });
       expect(result.exitCode, result.stderr).toBe(1);
-      if (isBeam || command === "inspect-kernel-module") {
+      if (isBeam) {
         expect(result.json).toMatchObject({
           code: "invalid_request",
           details: {
@@ -39,6 +39,19 @@ for (const command of [
             issues: [{ path: ["path"], reason: "invalid_format" }],
           },
         });
+      }
+      if (command === "inspect-kernel-module") {
+        // Malformed bytes are a target refusal, not a request-field error.
+        expect(result.json).toMatchObject({
+          code: "unsupported_target",
+          category: "unsupported_target",
+          details: {
+            operation: "inspect_kernel_module",
+            path,
+            format_failure: "malformed",
+          },
+        });
+        expect(result.json).not.toHaveProperty("recovery");
       }
       expect(result.json).toMatchObject({
         details: {

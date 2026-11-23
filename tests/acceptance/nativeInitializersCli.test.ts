@@ -202,13 +202,13 @@ cliTest.for([
     name: "oversized unbacked declaration",
     size: dynamicTableCeiling + 16,
     backed: false,
-    code: "invalid_request",
+    code: "unsupported_target",
   },
   {
     name: "oversized backed partial row",
     size: dynamicTableCeiling + 1,
     backed: true,
-    code: "invalid_request",
+    code: "unsupported_target",
   },
   {
     name: "oversized backed whole rows",
@@ -235,8 +235,8 @@ cliTest.for([
       code,
       details: {
         operation: "inspect_native_initializers",
-        ...(code === "invalid_request"
-          ? { issues: [{ path: ["path"], reason: "invalid_format" }] }
+        ...(code === "unsupported_target"
+          ? { path, format_failure: "malformed" }
           : {
               reported_limits: {
                 boundary: "structure",

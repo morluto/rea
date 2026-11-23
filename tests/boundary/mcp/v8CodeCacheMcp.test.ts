@@ -109,7 +109,7 @@ mcpTest(
 );
 
 mcpTest(
-  "reports a payload-length disagreement as invalid input",
+  "reports a payload-length disagreement as a malformed target",
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);
     try {
@@ -124,9 +124,10 @@ mcpTest(
       });
       expect(response.isError).toBe(true);
       expect(parseMcpToolError(response).error).toMatchObject({
-        code: "invalid_request",
+        code: "unsupported_target",
         details: {
           operation: "inspect_v8_code_cache",
+          format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
           partial_observation: {
             kind: "file-snapshot-hash",
             path,

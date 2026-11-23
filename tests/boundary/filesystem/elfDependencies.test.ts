@@ -19,7 +19,6 @@ describe("ELF dependency stable filesystem boundary", () => {
       for (const [candidate, reason] of [
         [root, "invalid_format"],
         [alias, "invalid_format"],
-        [malformed, "invalid_format"],
         [join(root, "missing"), "invalid_value"],
         [join(path, "child"), "invalid_value"],
       ] as const) {
@@ -37,6 +36,14 @@ describe("ELF dependency stable filesystem boundary", () => {
           ],
         });
       }
+      // Malformed bytes are a target refusal, not a request-field error.
+      const malformedResult = await service.inspect({ path: malformed });
+      if (malformedResult.ok) throw new Error("Expected a malformed target");
+      expect(malformedResult.error).toMatchObject({
+        _tag: "AnalysisMalformedTargetError",
+        operation: "inspect_elf_dependencies",
+        path: malformed,
+      });
     } finally {
       await service.close();
     }

@@ -425,8 +425,8 @@ export const androidBootImageRefusals = () => {
       name: "bad-page",
       bytes: malformed,
       kind: "malformed",
-      code: "invalid_request",
-      category: "invalid_input",
+      code: "unsupported_target",
+      category: "unsupported_target",
     },
   ] as const;
 };

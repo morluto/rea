@@ -133,7 +133,8 @@ cliTest(
     });
     expect(malformed.exitCode).toBe(1);
     expect(malformed.json).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
+      category: "unsupported_target",
       details: { reason: "malformed" },
     });
   },

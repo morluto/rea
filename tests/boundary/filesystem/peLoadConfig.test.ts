@@ -21,7 +21,6 @@ describe("PE load-config stable filesystem boundary", () => {
     for (const [candidate, reason] of [
       [root, "invalid_format"],
       [alias, "invalid_format"],
-      [malformed, "invalid_format"],
       [join(root, "missing.exe"), "invalid_value"],
       [join(path, "child.exe"), "invalid_value"],
     ] as const) {
@@ -39,6 +38,14 @@ describe("PE load-config stable filesystem boundary", () => {
         ],
       });
     }
+    // Malformed bytes are a target refusal, not a request-field error.
+    const malformedResult = await service.inspect({ path: malformed });
+    if (malformedResult.ok) throw new Error("Expected a malformed target");
+    expect(malformedResult.error).toMatchObject({
+      _tag: "AnalysisMalformedTargetError",
+      operation: "inspect_pe_load_config",
+      path: malformed,
+    });
   });
 
   it("returns typed resource and cancellation failures", async () => {
