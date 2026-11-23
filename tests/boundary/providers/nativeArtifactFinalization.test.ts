@@ -18,6 +18,7 @@ import { PeResourcesProvider } from "../../../src/native/pe/PeResourcesProvider.
 import { PeCertificatesProvider } from "../../../src/native/pe/PeCertificatesProvider.js";
 import { PeImportsProvider } from "../../../src/native/pe/PeImportsProvider.js";
 import { ElfNotesProvider } from "../../../src/native/elf/ElfNotesProvider.js";
+import { kernelModuleFixture } from "../../../src/native/elf/KernelModule.fixture.js";
 import { KernelModuleProvider } from "../../../src/native/elf/KernelModuleProvider.js";
 import { ElfDependenciesProvider } from "../../../src/native/elf/ElfDependenciesProvider.js";
 import { NativeExportsProvider } from "../../../src/native/exports/NativeExportsProvider.js";
@@ -82,6 +83,7 @@ const cases = [
   },
   {
     name: "kernel modules",
+    fixture: kernelModuleFixture,
     make: () => {
       const provider = new KernelModuleProvider();
       return {
@@ -167,18 +169,14 @@ const modes = [
   "close-both",
 ] as const;
 
-it.each(
-  cases.flatMap(({ name, make }) =>
-    modes.map((mode) => ({ name, make, mode })),
-  ),
-)(
+it.each(cases.flatMap((entry) => modes.map((mode) => ({ ...entry, mode }))))(
   "retains completed $name acquisition through $mode",
-  async ({ make, mode }) => {
+  async (entry) => {
+    const { make, mode } = entry;
     const root = await createTestTempDirectory("rea-native-finalization-");
     const path = join(root, "selected.bin");
-    // The descriptor must finalize before any format parser runs, so one
-    // physical file can exercise every acquisition boundary.
-    const bytes = peResourceFixture().bytes;
+    const bytes =
+      "fixture" in entry ? entry.fixture() : peResourceFixture().bytes;
     await writeFile(path, bytes);
     const controller = new AbortController();
     const reason =
