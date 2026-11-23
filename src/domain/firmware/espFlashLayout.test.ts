@@ -248,6 +248,19 @@ describe("ESP otadata selection", () => {
       slot: 1,
       partition_index: 5,
     });
+    // The documented rule is the valid record with the highest ota_seq, so a third
+    // valid record must win too; reading only the first two would ignore it.
+    expect(
+      selectEspBootPartition(espBootPartitions(partitions()), {
+        offset: 0xd000,
+        size: 0x2000,
+        records: [
+          decodeEspOtaRecord(otaRecord({ seq: 4 }), 0),
+          decodeEspOtaRecord(otaRecord({ seq: 5 }), 1),
+          decodeEspOtaRecord(otaRecord({ seq: 6 }), 2),
+        ],
+      }),
+    ).toMatchObject({ basis: "otadata", active_record: 2, slot: 1 });
     // ota_seq 0 is set; (0 - 1) wraps to 0xFFFFFFFF, and 0xFFFFFFFF % 2 is 1.
     expect(select(otaRecord({ seq: 0 }), erased)).toMatchObject({
       active_record: 0,

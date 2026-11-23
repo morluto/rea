@@ -178,13 +178,15 @@ export const selectEspBootPartition = (
   if (records.length < 2) return selection("unknown");
   if (records.every(unusable)) return fallback;
   const valid = records.filter(({ valid }) => valid);
-  const [first, second] = valid;
-  const active =
-    first !== undefined &&
-    second !== undefined &&
-    second.ota_seq > first.ota_seq
-      ? second
-      : first;
+  // The documented rule is the valid record with the highest ota_seq, keeping
+  // record 0 on a tie. Reading only the first two would ignore a later record.
+  const active = valid.reduce<EspOtaRecord | undefined>(
+    (selected, candidate) =>
+      selected === undefined || candidate.ota_seq > selected.ota_seq
+        ? candidate
+        : selected,
+    undefined,
+  );
   if (active === undefined) return factory;
   const slot = ((active.ota_seq - 1) >>> 0) % boot.otaAppCount;
   return selection("otadata", {
