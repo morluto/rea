@@ -10,8 +10,7 @@ import {
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
   ArtifactReaderFailure,
-  type StableArtifactSnapshot,
-  readStableArtifact,
+  withStableArtifactHandle,
   yieldArtifactRead,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -37,10 +36,11 @@ import { ELF_NOTES_PROVIDER } from "../../domain/investigationProviders.js";
 import { elfSectionNameBudget } from "../../domain/native/elfSectionNameTable.js";
 import {
   ELF_NOTE_TEXT_ALLOWANCE,
-  parseElfNotesCooperative,
+  parseElfNotesFromHandle,
 } from "./ElfNoteParser.js";
 
 const OPERATION = "inspect_elf_notes";
+const HEADER_PREFIX_BYTES = 4096;
 
 /** Portable parser over one bounded, identity-checked regular file. */
 export class ElfNotesProvider implements ElfNotesPort {
@@ -60,31 +60,42 @@ export class ElfNotesProvider implements ElfNotesPort {
   }
 
   async inspect(input: InspectElfNotesInput, options?: ExecutionOptions) {
-    let snapshot: StableArtifactSnapshot | undefined;
+    let observed:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
       return await this.#resources.run(async () => {
-        snapshot = await readStableArtifact(
+        const result = await withStableArtifactHandle(
           input.path,
           input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        return ok(
-          await parseElfNotesCooperative(
-            snapshot.bytes,
-            {
-              path: input.path,
-              sha256: snapshot.sha256,
-              bytes: snapshot.bytes.length,
+          {
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
+            onIdentity: (identity) => {
+              observed = identity;
             },
-            input,
-            () => yieldArtifactRead(options?.signal),
-          ),
+          },
+          (handle) =>
+            parseElfNotesFromHandle(
+              {
+                size: handle.size,
+                prefix: handle.prefix,
+                readRange: (offset, length) => handle.readRange(offset, length),
+              },
+              {
+                path: input.path,
+                sha256: handle.sha256,
+                bytes: handle.size,
+              },
+              input,
+              () => yieldArtifactRead(options?.signal),
+            ),
         );
+        return ok(result);
       });
     } catch (cause) {
-      return err(elfNotesFailure(cause, input, snapshot));
+      return err(elfNotesFailure(cause, input, observed));
     }
   }
 }
@@ -190,7 +201,7 @@ const elfNotesFailurePrimary = (
 const elfNotesFailure = (
   cause: unknown,
   input: InspectElfNotesInput,
-  snapshot?: StableArtifactSnapshot,
+  observed?: { readonly sha256: string; readonly bytes: number },
 ) => {
   const primary = elfNotesFailurePrimary(
     artifactFilePrimaryFacts(cause),
@@ -202,6 +213,6 @@ const elfNotesFailure = (
     input.path,
     ELF_NOTES_PROVIDER.id,
     OPERATION,
-    snapshot,
+    observed,
   );
 };
