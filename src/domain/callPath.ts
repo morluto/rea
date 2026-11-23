@@ -7,6 +7,8 @@ import {
 import {
   callPathInputSchema,
   callPathResultSchema,
+  CALL_PATH_REPRESENTATION_BUDGET_BYTES,
+  DEFAULT_CALL_PATH_MAX_PATHS,
   type CallPathResult,
   type OutputCallPath,
 } from "./callPathSchemas.js";
@@ -75,6 +77,55 @@ const distancesToGoal = (
   return depth;
 };
 
+/** First count past the exactly representable range: 2^53. */
+const SHORTEST_PATH_COUNT_CAP = BigInt(Number.MAX_SAFE_INTEGER) + 1n;
+
+/**
+ * Count shortest start-to-goal paths without enumerating them.
+ *
+ * Every path uses only edges that reduce the distance to the goal by one, so the
+ * count follows from one pass over those nodes in increasing distance order. The
+ * walk is bounded by the graph, which is why the reported total stays cheap even
+ * when the number of paths is far past what any inline list could hold.
+ *
+ * Each stored count is capped as it is computed. A total that reaches the cap is
+ * reported together with `capped`, so a caller can tell an exact count from one
+ * that only bounds the true value; without that flag the capped number would be
+ * indistinguishable from an exact count one below it.
+ */
+const countShortestPaths = (
+  graph: CallGraph,
+  start: string,
+  goal: string,
+  goalDistances: ReadonlyMap<string, number>,
+): { readonly total: number; readonly capped: boolean } => {
+  if (!goalDistances.has(start)) return { total: 0, capped: false };
+  const byDistance = [...goalDistances.entries()].sort(
+    (left, right) => left[1] - right[1],
+  );
+  const counts = new Map<string, bigint>();
+  for (const [node, distance] of byDistance) {
+    if (node === goal) {
+      counts.set(node, 1n);
+      continue;
+    }
+    let total = 0n;
+    for (const neighbor of graph.outNeighbors(node))
+      if (goalDistances.get(neighbor) === distance - 1)
+        total += counts.get(neighbor) ?? 0n;
+    counts.set(
+      node,
+      total > SHORTEST_PATH_COUNT_CAP ? SHORTEST_PATH_COUNT_CAP : total,
+    );
+  }
+  const total = counts.get(start) ?? 0n;
+  const capped = total >= SHORTEST_PATH_COUNT_CAP;
+  return {
+    total: capped ? Number.MAX_SAFE_INTEGER : Number(total),
+    capped,
+  };
+};
+
 interface SearchState {
   readonly graph: CallGraph;
   readonly snapshots: ReadonlyMap<string, FunctionSnapshot>;
@@ -113,26 +164,50 @@ export const buildCallPath = (input: unknown): CallPathResult => {
   });
   const goalDistances = distancesToGoal(graph, parsed.goal.address);
   const shortestDepth = goalDistances.get(parsed.start.address) ?? null;
-  const paths =
+  // Counting and enumerating are separate costs. The exact total is derived from
+  // the same distance graph without materializing a path, so a caller always
+  // learns how many paths exist even when only a prefix is returned.
+  const shortestPathCount = countShortestPaths(
+    graph,
+    parsed.start.address,
+    parsed.goal.address,
+    goalDistances,
+  );
+  const enumeration =
     shortestDepth === null
-      ? []
+      ? { paths: [] as OutputCallPath[], limitedByBytes: false }
       : enumeratePaths({
           graph,
           start: parsed.start.address,
           goal: parsed.goal.address,
           goalDistances,
-        }).paths.map((path) => citePath(path, snapshots));
-  const shortestHops = paths[0]?.hops;
-  const found = shortestHops !== undefined;
+          snapshots,
+          byteBudget: CALL_PATH_REPRESENTATION_BUDGET_BYTES,
+          // The default belongs to this owner, not to input parsing: admission
+          // must keep omission distinguishable from an explicit `max_paths`.
+          maxPaths: parsed.max_paths ?? DEFAULT_CALL_PATH_MAX_PATHS,
+        });
+  const paths = enumeration.paths;
   const exhaustive = search.exhaustive;
-  const limitations = search.limitations;
+  const limitations = enumeration.limitedByBytes
+    ? [
+        ...search.limitations,
+        `The inline shortest-path list reached its ${String(CALL_PATH_REPRESENTATION_BUDGET_BYTES)}-byte serialized representation budget; a canonical prefix is returned.`,
+      ]
+    : search.limitations;
   const resultContext = {
     start: parsed.start.address,
     goal: parsed.goal.address,
     explored: search.explored,
+    total_shortest_paths: shortestPathCount.total,
+    total_shortest_paths_capped: shortestPathCount.capped,
+    paths_truncated:
+      paths.length < shortestPathCount.total || shortestPathCount.capped,
+    paths_limited_by_bytes: enumeration.limitedByBytes,
     evidence_links: uniqueEvidence(snapshots.values()),
     limitations: [...new Set(limitations)].sort(compareUnicodeCodePoints),
   };
+  const found = shortestDepth !== null;
   const searchScope = {
     exhaustive,
     graph: "supplied_evidence" as const,
@@ -147,7 +222,7 @@ export const buildCallPath = (input: unknown): CallPathResult => {
     return callPathResultSchema.parse({
       ...resultContext,
       status: "found",
-      shortest_hops: shortestHops,
+      shortest_hops: shortestDepth,
       search_scope: searchScope,
       paths,
     });
@@ -367,6 +442,10 @@ interface EnumerationInput {
   readonly start: string;
   readonly goal: string;
   readonly goalDistances: ReadonlyMap<string, number>;
+  readonly snapshots: ReadonlyMap<string, FunctionSnapshot>;
+  readonly byteBudget: number;
+  /** Caller-selected count preference, subordinate to the representation bound. */
+  readonly maxPaths: number;
 }
 
 const enumeratePaths = ({
@@ -374,10 +453,19 @@ const enumeratePaths = ({
   start,
   goal,
   goalDistances,
+  snapshots,
+  byteBudget,
+  maxPaths,
 }: EnumerationInput): {
-  readonly paths: string[][];
+  readonly paths: OutputCallPath[];
+  readonly limitedByBytes: boolean;
 } => {
-  const output: string[][] = [];
+  const output: OutputCallPath[] = [];
+  // The `paths` array's brackets frame every cited path: one before the first
+  // and one after the last. Both are reserved here because
+  // estimatedPathRepresentationBytes measures one cited path, not the array.
+  let retainedBytes = 2;
+  let limitedByBytes = false;
   const path = [start];
   const neighbors = new Map<string, readonly string[]>();
   const frame = (node: string): EnumerationFrame => {
@@ -401,9 +489,22 @@ const enumeratePaths = ({
     const current = pending.at(-1);
     if (current === undefined) break;
     if (path.at(-1) === goal) {
-      output.push([...path]);
+      const estimatedBytes = estimatedPathRepresentationBytes(path, snapshots);
+      const separatorBytes = output.length === 0 ? 0 : 1;
+      // `retainedBytes` holds the opening bracket and every cited path, so the
+      // budget left for this path and its separator also has to keep room for the
+      // closing bracket that follows the last path.
+      if (estimatedBytes + separatorBytes > byteBudget - retainedBytes) {
+        limitedByBytes = true;
+        break;
+      }
+      output.push(citePath(path, snapshots));
+      retainedBytes += estimatedBytes + separatorBytes;
       pending.pop();
       path.pop();
+      // Count capacity is a caller preference. Serialized representation size
+      // is the resource bound, so stop before forming the next cited path.
+      if (output.length >= maxPaths) break;
       continue;
     }
     const neighbor = current.neighbors[current.nextIndex];
@@ -416,7 +517,104 @@ const enumeratePaths = ({
     path.push(neighbor);
     pending.push(frame(neighbor));
   }
-  return { paths: output };
+  return { paths: output, limitedByBytes };
+};
+
+/**
+ * Exact UTF-8 size of one JSON string, quotes included, without allocating it.
+ * An upper bound of six bytes per code unit charges an ASCII address or
+ * Evidence id six times what it serializes to, which stopped enumeration while
+ * the budget still had room; this measures what `JSON.stringify` writes:
+ * two-byte escapes for the five short forms, `\uXXXX` for other control
+ * characters, raw UTF-8 for everything else, and a surrogate pair as its
+ * encoded code point.
+ */
+const jsonStringBytes = (value: string): number => {
+  let bytes = 2;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code === 0x22 || code === 0x5c) bytes += 2;
+    else if (code >= 0x20 && code <= 0x7e) bytes += 1;
+    else if (
+      code === 0x08 ||
+      code === 0x09 ||
+      code === 0x0a ||
+      code === 0x0c ||
+      code === 0x0d
+    )
+      bytes += 2;
+    else if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) bytes += 6;
+    else if (code >= 0xd800 && code <= 0xdfff) {
+      const low = value.charCodeAt(index + 1);
+      if (code <= 0xdbff && low >= 0xdc00 && low <= 0xdfff) {
+        bytes += 4;
+        index += 1;
+      } else bytes += 6;
+    } else bytes += Buffer.byteLength(value[index] ?? "");
+  }
+  return bytes;
+};
+
+/**
+ * Serialized size of the cited path, measured exactly rather than bounded:
+ * fixed structure uses the actual skeleton sizes, and every string uses its
+ * JSON size. `evidence_links` on a node repeats the link already counted on the
+ * path, so the shared array is charged once per element, matching how
+ * {@link citePath} deduplicates it.
+ */
+const estimatedPathRepresentationBytes = (
+  addresses: readonly string[],
+  snapshots: ReadonlyMap<string, FunctionSnapshot>,
+): number => {
+  const nodeSkeletonBytes = Buffer.byteLength(
+    '{"address":"","name":null,"evidence_links":[""]}',
+  );
+  const edgeSkeletonBytes = Buffer.byteLength(
+    '{"source":"","target":"","evidence_links":[""]}',
+  );
+  let bytes =
+    Buffer.byteLength('{"hops":0,"nodes":[],"edges":[],"evidence_links":[]}') +
+    String(Math.max(0, addresses.length - 1)).length -
+    1;
+  for (let index = 0; index < addresses.length; index += 1) {
+    const address = addresses[index] ?? "";
+    const snapshot =
+      snapshots.get(address) ??
+      (index > 0 ? snapshots.get(addresses[index - 1] ?? "") : undefined);
+    const name = snapshots.get(address)?.dossier.procedure.name ?? null;
+    const evidence = snapshotLinks(snapshot)[0] ?? "";
+    bytes +=
+      nodeSkeletonBytes +
+      jsonStringBytes(address) -
+      2 +
+      (name === null ? 0 : jsonStringBytes(name) - 4) +
+      jsonStringBytes(evidence) -
+      2;
+    if (index > 0) bytes += 1;
+  }
+  for (let index = 0; index < addresses.length - 1; index += 1) {
+    const source = addresses[index] ?? "";
+    const target = addresses[index + 1] ?? "";
+    const evidence = snapshotLinks(snapshots.get(source))[0] ?? "";
+    bytes +=
+      edgeSkeletonBytes +
+      jsonStringBytes(source) -
+      2 +
+      jsonStringBytes(target) -
+      2 +
+      jsonStringBytes(evidence) -
+      2;
+    if (index > 0) bytes += 1;
+  }
+  for (let index = 0; index < addresses.length; index += 1) {
+    const address = addresses[index] ?? "";
+    const snapshot =
+      snapshots.get(address) ??
+      (index > 0 ? snapshots.get(addresses[index - 1] ?? "") : undefined);
+    bytes += jsonStringBytes(snapshotLinks(snapshot)[0] ?? "");
+    if (index > 0) bytes += 1;
+  }
+  return bytes;
 };
 
 interface EnumerationFrame {
