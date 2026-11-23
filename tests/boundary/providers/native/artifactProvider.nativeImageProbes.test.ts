@@ -74,6 +74,7 @@ const inspect = async (name: string, bytes: Buffer) => {
       operation,
       authority,
     })),
+    nextProbes: inspection.next_probes,
   };
 };
 
@@ -113,6 +114,13 @@ it("leads with managed inspection only when the PE declares a CLI header", async
     ...PE_STATIC_READERS,
     "open_binary",
   ]);
+  // A pure managed assembly needs no deep native provider.
+  expect(inspected.nextProbes.at(-1)).toEqual({
+    operation: "open_binary",
+    rationale:
+      "Bind a deep native provider only when managed inspection reports a native or mixed boundary.",
+    authority: "native-analysis-provider",
+  });
 });
 
 it("names each archived image's header architecture and keeps an undecoded machine unknown", async () => {

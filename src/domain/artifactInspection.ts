@@ -640,8 +640,8 @@ const managedProbe = (
 /**
  * Execution-free readers for one native image format, then one deep provider
  * for function-level work. A PE that declares a CLI header leads with managed
- * inspection; an unknown declaration (a directory member) keeps it
- * conditional.
+ * inspection and binds the deep provider only for a native or mixed boundary;
+ * an unknown declaration (a directory member) keeps both conditional.
  */
 const nativeImageProbes = ({
   format,
@@ -663,10 +663,25 @@ const nativeImageProbes = ({
     : []),
   {
     operation: "open_binary",
-    rationale: "Bind a deep native provider for function-level analysis.",
+    rationale: deepNativeRationale(format, managed),
     authority: "native-analysis-provider",
   },
 ];
+
+// A CLI header makes the PE managed code first; a deep native provider adds
+// value only where managed inspection finds native code.
+const MANAGED_NATIVE_BOUNDARY =
+  "only when managed inspection reports a native or mixed boundary";
+
+const deepNativeRationale = (
+  format: NativeImageFormat,
+  managed: boolean | undefined,
+): string => {
+  if (format !== "pe" || managed === false)
+    return "Bind a deep native provider for function-level analysis.";
+  if (managed) return `Bind a deep native provider ${MANAGED_NATIVE_BOUNDARY}.`;
+  return `Bind a deep native provider for function-level analysis; if the PE declares a CLI header, ${MANAGED_NATIVE_BOUNDARY}.`;
+};
 
 const allUnexploredBranches = (
   inventory: ArtifactInventoryResult,
