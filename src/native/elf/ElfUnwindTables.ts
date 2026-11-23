@@ -12,7 +12,11 @@ import {
 } from "../../resources/index.js";
 import { decodeLimit } from "../../domain/parseFailure.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
-import { elfSymbolSize, readElfSymbolAt } from "../../domain/elfSymbol.js";
+import {
+  elfSymbolSize,
+  readElfSymbolFieldsAt,
+  readElfSymbolValueAt,
+} from "../../domain/elfSymbol.js";
 import {
   elfStringTableText,
   observeElfStringTableEntry,
@@ -1890,7 +1894,7 @@ const scanSymbols = (
     for (let index = 0; index < count; index += 1) {
       assertArtifactReadActive(signal);
       const at = start + index * width;
-      const symbol = readElfSymbolAt(
+      const symbol = readElfSymbolFieldsAt(
         bytes,
         at,
         directory.bits,
@@ -1913,7 +1917,12 @@ const scanSymbols = (
         continue;
       if (sectionIndex === SHN_UNDEF) continue;
       if (sectionIndex >= SHN_LORESERVE && sectionIndex !== SHN_ABS) continue;
-      let address = symbol.value;
+      let address = readElfSymbolValueAt(
+        bytes,
+        at,
+        directory.bits,
+        directory.little,
+      );
       if (relocatable && sectionIndex !== SHN_ABS) {
         const owner = byIndex.get(sectionIndex);
         if (owner !== undefined) address += owner.address;

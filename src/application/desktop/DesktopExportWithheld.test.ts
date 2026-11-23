@@ -570,7 +570,15 @@ describe("exportDesktopApplication of withheld sign-in state", () => {
 
     const { root } = refused;
     const consent = join(root, "consent.json");
-    await writeFile(consent, JSON.stringify(CONSENT));
+    const consents = {
+      consents: Array.from({ length: 8_192 }, (_, index) => ({
+        ...CONSENT.consents[0]!,
+        subject: `record ${String(index)}`,
+      })),
+    };
+    const bytes = JSON.stringify(consents);
+    expect(Buffer.byteLength(bytes)).toBeGreaterThan(1024 * 1024);
+    await writeFile(consent, bytes);
     const { result, directory } = await exportWithheld({
       withhold: { paths: [SETTINGS] },
       seedWithheld: true,
@@ -583,7 +591,7 @@ describe("exportDesktopApplication of withheld sign-in state", () => {
     });
     expect(
       JSON.parse(await readFile(join(directory, "consent.json"), "utf8")),
-    ).toEqual(CONSENT);
+    ).toEqual(consents);
     expect(
       await readFile(join(directory, "envs/notes/env.toml"), "utf8"),
     ).not.toContain("[settings]");

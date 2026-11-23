@@ -67,17 +67,17 @@ type DirectorySpan = PeLoadConfigTls["directory"];
 interface SectionSegment {
   readonly start: number;
   readonly owners: number;
-  readonly name: string;
+  readonly name: string | null;
 }
 
 /**
- * Build the RVA-to-section-name lookup once per image. Section spans are split
+ * Build the RVA-to-section lookup once per image. Section spans are split
  * into disjoint segments so each lookup is a binary search; an RVA owned by
  * more than one section still fails as ambiguous.
  */
-const sectionNameIndex = (
+const sectionIndex = (
   sections: PeImage["sections"],
-): ((rva: number) => string | null) => {
+): ((rva: number) => SectionSegment | null) => {
   const events: { at: number; index: number; open: boolean }[] = [];
   sections.forEach((section, index) => {
     if (section.format !== "pe") return;
@@ -102,7 +102,7 @@ const sectionNameIndex = (
     segments.push({
       start: at,
       owners: active.size,
-      name: active.size === 1 ? (sections[only!]?.name ?? "") : "",
+      name: active.size === 1 ? sections[only!]?.name || null : null,
     });
   }
   return (rva) => {
@@ -123,7 +123,7 @@ const sectionNameIndex = (
         "ambiguous",
         `PE RVA ${hex(rva)} belongs to multiple sections`,
       );
-    return found.name.length === 0 ? null : found.name;
+    return found;
   };
 };
 
@@ -151,9 +151,9 @@ export const parsePeLoadConfigFromImage = async (
       imageFileMappings(image),
       image.zero_fills,
     ));
-  let cachedSectionName: ((rva: number) => string | null) | undefined;
-  const sectionName = (rva: number): string | null =>
-    (cachedSectionName ??= sectionNameIndex(image.sections))(rva);
+  let cachedSections: ReturnType<typeof sectionIndex> | undefined;
+  const sectionAt = (rva: number): SectionSegment | null =>
+    (cachedSections ??= sectionIndex(image.sections))(rva);
 
   const dataDirectory = (index: number): DirectorySpan | null => {
     const entry = image.pe_data_directories[index];
@@ -195,7 +195,7 @@ export const parsePeLoadConfigFromImage = async (
       va: hex(va),
       rva,
       file_offset: fileOffset,
-      section: rva === null ? null : sectionName(rva),
+      section: rva === null ? null : (sectionAt(rva)?.name ?? null),
     };
   };
 
@@ -206,7 +206,7 @@ export const parsePeLoadConfigFromImage = async (
     pointerWidth,
     locate,
     rvaOf,
-    sectionName,
+    sectionAt,
     lookup: { offset: (address, size) => getLookup().offset(address, size) },
     templateFileOffset: (address, size) =>
       optionalFileOffset(() =>
@@ -284,7 +284,7 @@ const readTls = async ({
   pointerWidth,
   locate,
   rvaOf,
-  sectionName,
+  sectionAt,
   lookup,
   templateFileOffset,
   maxCallbacks,
@@ -296,7 +296,7 @@ const readTls = async ({
   readonly pointerWidth: number;
   readonly locate: (va: bigint) => PeLoadConfigLocated;
   readonly rvaOf: (va: bigint) => number | null;
-  readonly sectionName: (rva: number) => string | null;
+  readonly sectionAt: (rva: number) => SectionSegment | null;
   readonly lookup: { offset(address: bigint, size: number): number };
   readonly templateFileOffset: (address: bigint, size: number) => number | null;
   readonly maxCallbacks: number;
@@ -334,16 +334,17 @@ const readTls = async ({
   let rawSection: string | null = null;
   if (rawSize === 0) {
     const rva = rvaOf(start);
-    rawSection = rva === null ? null : sectionName(rva);
+    rawSection = rva === null ? null : (sectionAt(rva)?.name ?? null);
   } else {
     rawFile = templateFileOffset(start, rawSize);
     const startRva = rvaOf(start);
     const last = startRva === null ? null : startRva + rawSize - 1;
     if (startRva !== null && last !== null && last <= 0xffffffff) {
-      const startName = sectionName(startRva);
-      const endName = sectionName(last);
+      const firstSection = sectionAt(startRva);
+      const lastSection = sectionAt(last);
+      // A single segment establishes the same unambiguous owner throughout.
       rawSection =
-        startName !== null && startName === endName ? startName : null;
+        firstSection === lastSection ? (firstSection?.name ?? null) : null;
     }
   }
 

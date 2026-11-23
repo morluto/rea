@@ -1,13 +1,11 @@
+import { registerContractDocumentCommand } from "../../../src/cli/contractDocumentCommand.js";
 import { cliCommand } from "../../../src/cli/commandRegistry.js";
 import { createCommandCli } from "../../support/cli/commandCli.js";
 import { z } from "zod";
 import pino from "pino";
 import { expect, it } from "vitest";
 
-import {
-  registerContractCommand,
-  registerContractDocumentCommand,
-} from "../../../src/cli/contractCommand.js";
+import { registerContractCommand } from "../../../src/cli/contractCommand.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 
 const viewSchema = z.strictObject({ page: z.number().int() }).optional();

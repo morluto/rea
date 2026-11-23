@@ -1,3 +1,4 @@
+import { registerContractDocumentCommand } from "./contractDocumentCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 
 import type { CliInstance } from "./types.js";
@@ -9,7 +10,6 @@ import {
   admittedContractInput,
   inspectWithService,
   registerContractCommand,
-  registerContractDocumentCommand,
   type ContractCommandContext,
 } from "./contractCommand.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";

@@ -73,6 +73,17 @@ export const readElfSymbolFieldsAt = (
   };
 };
 
+/** Decode only the `st_value` word of a symbol already bounds-checked by `readElfSymbolFieldsAt`. */
+export const readElfSymbolValueAt = (
+  bytes: Uint8Array,
+  offset: number,
+  bits: 32 | 64,
+  littleEndian: boolean,
+): bigint =>
+  bits === 64
+    ? readUint64At(bytes, offset + 8, littleEndian)
+    : BigInt(readUint32At(bytes, offset + 4, littleEndian));
+
 /** Decode one fixed ELF32/ELF64 symbol record without slicing its bytes. */
 export const readElfSymbolAt = (
   bytes: Uint8Array,

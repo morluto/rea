@@ -10,14 +10,22 @@ import {
   optionalBrowserDeadlineMs,
   selectedBrowserDeadlineMs,
 } from "./browserDeadline.js";
-import { jsonValueSchema, MAX_JSON_DEPTH } from "./jsonValue.js";
+import {
+  jsonValueSchema,
+  MAX_JSON_DEPTH,
+  ownedJsonValueSchema,
+} from "./jsonValue.js";
 import { absoluteLocalPathStringSchema } from "./localPath.js";
 import {
   protobufDecodingSchema,
   protobufOptionsSchema,
 } from "./protobufWire.js";
 import { qlogCaptureFactsSchema } from "./qlogCapture.js";
-import { canBorrowParsedJsonSnapshot } from "./immutableJson.js";
+import {
+  canBorrowParsedJsonSnapshot,
+  freezeOwnedJsonTreeSnapshot,
+  isImmutableJsonSnapshot,
+} from "./immutableJson.js";
 
 /** Default historical evidence budgets; exceeding a budget returns no partial capture. */
 export const WEB_NETWORK_CAPTURE_LIMITS = {
@@ -418,24 +426,30 @@ export type WebNetworkCaptureRecord = z.output<
   typeof webNetworkCaptureRecordSchema
 >;
 
-const validatedImmutableCaptures = new WeakSet<object>();
+const validatedImmutableCaptures = new WeakMap<object, WebNetworkCapture>();
 
-/** Reuse successful validation of the exact owned snapshot, without a retained copy. */
+/** Reuse an authenticated capture, sealing normalized copies before sharing. */
 export const safeParseOwnedWebNetworkCapture = (
   input: unknown,
 ): z.ZodSafeParseResult<WebNetworkCapture> => {
-  if (
+  const reusable =
     typeof input === "object" &&
     input !== null &&
-    validatedImmutableCaptures.has(input)
-  )
-    return { success: true, data: input as WebNetworkCapture };
+    isImmutableJsonSnapshot(input);
+  const known = reusable ? validatedImmutableCaptures.get(input) : undefined;
+  if (known !== undefined) return { success: true, data: known };
   const parsed = webNetworkCaptureSchema.safeParse(input);
-  if (parsed.success && canBorrowParsedJsonSnapshot(input, parsed.data)) {
-    // Borrow only when full validation preserves values, schema normalization
-    // and alias topology. Merely frozen or mutable objects never gain a proof.
-    validatedImmutableCaptures.add(input);
+  if (!parsed.success || !reusable) return parsed;
+  if (canBorrowParsedJsonSnapshot(input, parsed.data)) {
+    // Borrow only when full validation preserves normalization and topology.
+    validatedImmutableCaptures.set(input, input);
     return { success: true, data: input };
   }
-  return parsed;
+  const normalized = ownedJsonValueSchema.safeParse(parsed.data);
+  if (!normalized.success) return parsed;
+  const sealed = freezeOwnedJsonTreeSnapshot(
+    normalized.data,
+  ) as WebNetworkCapture;
+  validatedImmutableCaptures.set(input, sealed);
+  return { success: true, data: sealed };
 };

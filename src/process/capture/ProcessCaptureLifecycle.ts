@@ -810,9 +810,10 @@ export const observeSettlement = async ({
       consecutiveEmpty = 0;
       sawLive = true;
     }
-    deadlineReached = monotonicProcessCaptureClock() - started >= settleMs;
+    const elapsed = monotonicProcessCaptureClock() - started;
+    deadlineReached = elapsed >= settleMs;
     if (deadlineReached) break;
-    await delay(50, undefined, { signal });
+    await delay(Math.min(50, settleMs - elapsed), undefined, { signal });
   }
   recordEvent("lifecycle", 1);
   // A lone empty observation proves neither liveness nor quiescence; only an

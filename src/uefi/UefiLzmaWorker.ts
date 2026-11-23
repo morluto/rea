@@ -17,7 +17,7 @@ import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import { UefiLzmaByteQueue } from "./UefiLzmaByteQueue.js";
 import {
-  encodeLzmaFrame,
+  encodeLzmaFrameHeader,
   LZMA_FRAME_HEADER_BYTES,
   lzmaRequestSchema,
   lzmaStreamRequestSchema,
@@ -302,7 +302,11 @@ const runStdioWorker = async (): Promise<void> => {
     const serialized = serializeReply(reply);
     const body =
       serialized.ok && decoded !== undefined ? decoded : Buffer.alloc(0);
-    await writeFramed(process.stdout, encodeLzmaFrame(serialized.text, body));
+    await writeFramed(
+      process.stdout,
+      encodeLzmaFrameHeader(serialized.text, body.length),
+    );
+    if (body.length > 0) await writeFramed(process.stdout, body);
   }
 };
 
