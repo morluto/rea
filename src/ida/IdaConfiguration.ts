@@ -185,7 +185,9 @@ export const readIdaConfiguration = (
   options.resourceScope.run(async () => {
     let closeLease: AnalysisCleanupLease | undefined;
     try {
-      const text = await withOwnedRegularFile<string>(
+      const text = await withOwnedRegularFile<
+        Result<string, ConfigurationError>
+      >(
         path,
         {
           ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -204,7 +206,7 @@ export const readIdaConfiguration = (
         },
         async ({ handle, initial: metadata }) => {
           if (metadata.size > MAXIMUM_REGISTRATION_BYTES)
-            throw registrationTooLarge();
+            return err(registrationTooLarge());
           const bytes = await readBoundedFileBytes(
             handle,
             MAXIMUM_REGISTRATION_BYTES,
@@ -215,11 +217,12 @@ export const readIdaConfiguration = (
                 new RegularFileOperationCancelled(reason),
             },
           );
-          if (bytes === undefined) throw registrationTooLarge();
-          return bytes.toString("utf8");
+          if (bytes === undefined) return err(registrationTooLarge());
+          return ok(bytes.toString("utf8"));
         },
       );
-      const input: unknown = JSON.parse(text);
+      if (!text.ok) return text;
+      const input: unknown = JSON.parse(text.value);
       const envelope = z
         .object({ mcpServers: z.object({ "ida-pro-mcp": z.unknown() }) })
         .safeParse(input);
@@ -257,7 +260,6 @@ export const readIdaConfiguration = (
         ),
       );
     } catch (cause: unknown) {
-      if (cause instanceof ConfigurationError) return err(cause);
       if (cause instanceof NonRegularFileReadError)
         return err(
           idaConfigurationError(

@@ -5,6 +5,7 @@ import {
 } from "./ClientConfigRoots.js";
 import { present } from "./McpRegistrationLocations.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { err, ok, type Result } from "../domain/result.js";
 import {
   parseClientConfiguration,
   type ClientInlineConfiguration,
@@ -135,18 +136,20 @@ export const kiloExplicitDirectory = ({
  */
 export const kiloInlineConfiguration = (
   root: ClientRootContext,
-): ClientInlineConfiguration | undefined => {
+): Result<ClientInlineConfiguration | undefined, ConfigurationError> => {
   const text = root.env.KILO_CONFIG_CONTENT;
-  if (!text) return undefined;
+  if (!text) return ok(undefined);
   try {
-    return {
+    return ok({
       origin: "KILO_CONFIG_CONTENT",
       parsed: parseClientConfiguration(text, "kilo"),
-    };
+    });
   } catch (cause: unknown) {
-    throw new ConfigurationError(
-      "KILO_CONFIG_CONTENT cannot be admitted as Kilo configuration. Repair that selected inline configuration; no settings were written.",
-      { cause },
+    return err(
+      new ConfigurationError(
+        "KILO_CONFIG_CONTENT cannot be admitted as Kilo configuration. Repair that selected inline configuration; no settings were written.",
+        { cause },
+      ),
     );
   }
 };
@@ -207,7 +210,7 @@ export const kiloDefaultLocation = (
  */
 export const kiloGlobalLocation = async (
   context: KiloLocationContext,
-): Promise<KiloGlobalLocation> => {
+): Promise<Result<KiloGlobalLocation, ConfigurationError>> => {
   const root = kiloRoot(context);
   const layers = await observedFiles(root, KILO_GLOBAL_FILES, "global");
   const explicit = kiloExplicitFile(context);
@@ -239,12 +242,15 @@ export const kiloGlobalLocation = async (
   } else layers.push(...observed);
   configPath ??= join(root, "kilo.json");
   const inlineConfiguration = kiloInlineConfiguration(context.root);
-  return {
+  if (!inlineConfiguration.ok) return inlineConfiguration;
+  return ok({
     configPath,
     configPaths:
       layers.length === 0 ? [configPath] : layers.map((layer) => layer.path),
-    ...(inlineConfiguration === undefined ? {} : { inlineConfiguration }),
+    ...(inlineConfiguration.value === undefined
+      ? {}
+      : { inlineConfiguration: inlineConfiguration.value }),
     markerPath: root,
     discoveryPaths: [kiloExtensionStorage(context.root)],
-  };
+  });
 };
