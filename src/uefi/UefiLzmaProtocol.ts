@@ -20,18 +20,6 @@ export const lzmaStreamRequestSchema = z.strictObject({
     .max(UEFI_FIRMWARE_LIMITS.lzmaOutputBytes),
 });
 
-export const lzmaRequestSchema = z.strictObject({
-  format: z.enum(["lzma", "lzmaf86"]),
-  payload_path: z.string(),
-  output_path: z.string(),
-  reply_path: z.string(),
-  max_output_bytes: z
-    .number()
-    .int()
-    .min(1)
-    .max(UEFI_FIRMWARE_LIMITS.lzmaOutputBytes),
-});
-
 export const lzmaReplySchema = z.discriminatedUnion("ok", [
   z.strictObject({
     ok: z.literal(true),
