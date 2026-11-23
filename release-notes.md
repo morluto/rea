@@ -287,6 +287,7 @@
 * **browser:** precompile redaction markers, eliminate quadratic secret scans, and scope HAR validation ([#13267](https://github.com/morluto/rea/issues/13267)) ([2afc34e](https://github.com/morluto/rea/commit/2afc34ec6eb2aee43c87a60eee9636db38d22c37))
 * **browser:** single-pass CaptureJson parser and zero-allocation Playwright trace skipping ([#13427](https://github.com/morluto/rea/issues/13427)) ([275b574](https://github.com/morluto/rea/commit/275b5740f6c7b52db6556bd555d6e5acc2302982))
 * **browser:** wake the bundle worker on observed events ([#13225](https://github.com/morluto/rea/issues/13225)) ([60e0998](https://github.com/morluto/rea/commit/60e099848d3a78860cf8982b28ce88e3a469d52f))
+* **captures/io:** stream artifact hashes and preserve bounded export reads ([#13755](https://github.com/morluto/rea/issues/13755)) ([16c827a](https://github.com/morluto/rea/commit/16c827a25f0e29098d9625292580a6ee19656faa))
 * **cli/mcp:** decouple analysis view contracts and defer tshark PATH probes ([#13316](https://github.com/morluto/rea/issues/13316)) ([787b5aa](https://github.com/morluto/rea/commit/787b5aafb94f69f3b529a13bf47235a1b5ec4295))
 * **cli/mcp:** eliminate eager JSON schema work, double projection, and O(N^2) error compaction ([#13466](https://github.com/morluto/rea/issues/13466)) ([8688eb0](https://github.com/morluto/rea/commit/8688eb0195896d3083271dd73c8a490122f64c80))
 * **cli/server/dotnet:** single-pass --token-count JSON, indexed CLI command lookup, single status parse, and direct loops ([#13631](https://github.com/morluto/rea/issues/13631)) ([2532add](https://github.com/morluto/rea/commit/2532adda8449989fc12bebef215fbcb3494ff243))
@@ -439,6 +440,7 @@
 
 * **adb:** extract AdbFileStaging module from AdbProvider ([#13705](https://github.com/morluto/rea/issues/13705)) ([5a163e8](https://github.com/morluto/rea/commit/5a163e8e7511a65ce5f804d64d30761d4fe78075))
 * **apple:** read dispatch relative displacements through the shared readers ([0ae58b4](https://github.com/morluto/rea/commit/0ae58b4a1fe1778f49def9920a214498a2ce084d)), closes [#11865](https://github.com/morluto/rea/issues/11865)
+* **apple:** share chained import decoding and proofs ([#13788](https://github.com/morluto/rea/issues/13788)) ([e012b68](https://github.com/morluto/rea/commit/e012b68371e52210785adec3c8f50e613cb4c685))
 * **apple:** share readFatSliceHeaders between resolver and inventory ([#13692](https://github.com/morluto/rea/issues/13692)) ([12658e2](https://github.com/morluto/rea/commit/12658e23e7803f605d9b3166bd7d719cecb0ad52))
 * **artifacts:** consolidate magic checks and range reads ([#13643](https://github.com/morluto/rea/issues/13643)) ([94e0386](https://github.com/morluto/rea/commit/94e038678e66b8ed6d0e593404bde8c3b5eac5d7))
 * **artifacts:** consolidate magic checks, probe windows, and range reads ([94e0386](https://github.com/morluto/rea/commit/94e038678e66b8ed6d0e593404bde8c3b5eac5d7))
@@ -478,11 +480,13 @@
 * **nuget:** select declared manifest occurrences in one pass ([#13402](https://github.com/morluto/rea/issues/13402)) ([4bb5c87](https://github.com/morluto/rea/commit/4bb5c87d2b1a06abcdf26ccf68dfd2551aebd9bd))
 * **pe:** decode certificate BMP and UTF-32 strings through BinaryReader ([6543a3c](https://github.com/morluto/rea/commit/6543a3c1a182aeeb797c3e9e27a3ec887e71d00f)), closes [#11865](https://github.com/morluto/rea/issues/11865)
 * **process:** compose analysis runtime cleanup through the shared owner ([2d36025](https://github.com/morluto/rea/commit/2d360253ddf8c2ab2c0c4a6a3186a8e981a8e090)), closes [#11859](https://github.com/morluto/rea/issues/11859)
+* **python:** extract PycReportProjection from PythonPycParser ([#13773](https://github.com/morluto/rea/issues/13773)) ([70045e6](https://github.com/morluto/rea/commit/70045e6ffddcdda03564ac8c783cba97a6809d1f))
 * **regex:** consolidate worker input and deadline proofs ([#13732](https://github.com/morluto/rea/issues/13732)) ([588b257](https://github.com/morluto/rea/commit/588b257e486a3cdb3a02c98681da20375434f02d))
 * **server:** extract ErrorEvidenceTransport from EvidenceMcpServerCore ([#13761](https://github.com/morluto/rea/issues/13761)) ([6738853](https://github.com/morluto/rea/commit/67388539e0bfdf3d495363b82cb49f613dc146ca))
 * **setup:** extract SupportedClientLocations from SupportedClients ([#13731](https://github.com/morluto/rea/issues/13731)) ([8e619be](https://github.com/morluto/rea/commit/8e619be40c3074a36fe21d319d1c9dde11ae533d))
 * **uefi/native:** cache UEFI BinaryReader and reuse hasDosMzMagic ([#13659](https://github.com/morluto/rea/issues/13659)) ([0fc591d](https://github.com/morluto/rea/commit/0fc591da7c2309f59a46933658de8591a4c90c41))
 * **uefi/native:** cache UEFI BinaryReader per buffer and reuse hasDosMzMagic ([0fc591d](https://github.com/morluto/rea/commit/0fc591da7c2309f59a46933658de8591a4c90c41))
+* **uninstall:** extract UninstallDataAndSkills from Uninstall ([#13736](https://github.com/morluto/rea/issues/13736)) ([054bbbc](https://github.com/morluto/rea/commit/054bbbc55e63ff8d4b617a04cb681145f2ca134f))
 * **verify:** exclude negated .ok checks from the abort-reclassification guard ([a80dc68](https://github.com/morluto/rea/commit/a80dc68318d2b9e2abca08ae5d4eaf1206b83bde)), closes [#11920](https://github.com/morluto/rea/issues/11920)
 
 
