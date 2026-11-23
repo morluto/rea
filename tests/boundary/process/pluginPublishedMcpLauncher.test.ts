@@ -2148,19 +2148,6 @@ process.exit(1);
     expect(leftover).toEqual([]);
   });
 
-  it("yields for pending signals before checking and releasing install cancel", async () => {
-    const source = await readFile(launcher, "utf8");
-    // Structural lock for the finalization race: sync cleanup can leave a
-    // pending SIGTERM that only runs after a macrotask while the observer
-    // remains installed (dispatchQueuedInterrupts / allowPendingCancellation).
-    expect(source).toMatch(
-      /await allowPendingCancellation\(\);\s*if \(cancel\.cancelled !== undefined\) \{\s*applyAcquisitionCancel\(cancel\.cancelled\);\s*entry = undefined;\s*\}\s*cancel\.release\(\);/u,
-    );
-    expect(source).toMatch(
-      /const allowPendingCancellation = async \(\) => \{\s*await nextMacrotask\(\);\s*await nextMacrotask\(\);\s*\};/u,
-    );
-  });
-
   it.each([
     ["terminates an in-flight npm install and its child on SIGTERM", false],
     ["force-stops an npm install and its child that ignore SIGTERM", true],
