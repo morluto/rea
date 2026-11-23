@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   ArtifactReaderFailure,
   assertArtifactReadActive,
@@ -32,6 +33,7 @@ type Report = KernelModule;
 type Limitations = string[];
 
 const MAGIC = Buffer.from(MODULE_SIGNATURE_MAGIC, "latin1");
+const SIGNATURE_HASH_CHUNK_BYTES = 1 << 20;
 const MODULE_CODECS = ["gzip", "xz", "zstd"] as const;
 
 const exceeds = (examined: number, maxEntries: number): void => {
@@ -482,38 +484,51 @@ const parseSignatureTrailer = (
   };
 };
 
+const readSourceRange = async (
+  source: NativeByteSource,
+  offset: number,
+  length: number,
+): Promise<Buffer> => {
+  if (length === 0) return Buffer.alloc(0);
+  const { prefix } = source;
+  if (prefix !== undefined && offset + length <= prefix.length)
+    return prefix.subarray(offset, offset + length);
+  const bytes = await source.readRange(offset, length);
+  if (bytes.length !== length)
+    throw new ArtifactReaderFailure(
+      "format",
+      "Kernel module ended before the admitted file range.",
+    );
+  return bytes;
+};
+
 const parseSignatureFromSource = async (
   source: NativeByteSource,
+  signal: AbortSignal | undefined,
 ): Promise<Report["signature"]> => {
   const tailLen = Math.min(
     source.size,
     MAGIC.length + MODULE_SIGNATURE_INFO_BYTES,
   );
-  const tailOffset = source.size - tailLen;
-  const tail =
-    tailLen === 0
-      ? Buffer.alloc(0)
-      : source.prefix !== undefined &&
-          tailOffset + tailLen <= source.prefix.length
-        ? source.prefix.subarray(tailOffset, tailOffset + tailLen)
-        : await source.readRange(tailOffset, tailLen);
+  const tail = await readSourceRange(source, source.size - tailLen, tailLen);
   const trailer = parseSignatureTrailer(source.size, tail);
   if (trailer.done) return trailer.signature;
-  const pkcs7 =
-    source.prefix !== undefined &&
-    trailer.pkcs7Offset + trailer.pkcs7Bytes <= source.prefix.length
-      ? source.prefix.subarray(
-          trailer.pkcs7Offset,
-          trailer.pkcs7Offset + trailer.pkcs7Bytes,
-        )
-      : await source.readRange(trailer.pkcs7Offset, trailer.pkcs7Bytes);
+
+  const hash = createHash("sha256");
+  const end = trailer.pkcs7Offset + trailer.pkcs7Bytes;
+  for (let offset = trailer.pkcs7Offset; offset < end;) {
+    assertArtifactReadActive(signal);
+    const length = Math.min(end - offset, SIGNATURE_HASH_CHUNK_BYTES);
+    hash.update(await readSourceRange(source, offset, length));
+    offset += length;
+  }
   return {
     status: "present",
     magic: trailer.magic,
     info: trailer.info,
     pkcs7: {
       location: { offset: trailer.pkcs7Offset, bytes: trailer.pkcs7Bytes },
-      sha256: sha256Hex(pkcs7),
+      sha256: hash.digest("hex"),
     },
     reason: null,
   };
@@ -608,17 +623,6 @@ const versionsSectionLocation = (
     };
   return { ready: true, location, compressed: section.compressed };
 };
-
-const readSourceRange = async (
-  source: NativeByteSource,
-  offset: number,
-  length: number,
-): Promise<Buffer> =>
-  length === 0
-    ? Buffer.alloc(0)
-    : source.prefix !== undefined && offset + length <= source.prefix.length
-      ? source.prefix.subarray(offset, offset + length)
-      : source.readRange(offset, length);
 
 interface KernelModulePrepared {
   readonly facts: ReturnType<typeof headerFacts>;
@@ -858,7 +862,7 @@ export const parseKernelModuleFromHandle = async (
         input.max_entries,
       )
     : versionsLoc.result;
-  const signature = await parseSignatureFromSource(source);
+  const signature = await parseSignatureFromSource(source, signal);
   return finalizeKernelModule(
     source.size,
     artifact,

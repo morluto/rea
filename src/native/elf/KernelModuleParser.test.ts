@@ -242,6 +242,57 @@ it("observes a version name with nonzero padding and rejects a missing NUL", asy
   });
 });
 
+it("hashes the entire appended signature through bounded source reads", async () => {
+  const pkcs7 = Buffer.alloc((2 << 20) + 17, 0x6a);
+  pkcs7[0] = 0x31;
+  pkcs7[pkcs7.length - 1] = 0x7f;
+  const trailer = moduleSignatureTrailer(pkcs7);
+  const bytes = kernelModuleFixture({ signature: trailer });
+  const signatureOffset = bytes.length - trailer.length;
+  const end = signatureOffset + pkcs7.length;
+  const reads: Array<{ offset: number; length: number }> = [];
+  const source = {
+    size: bytes.length,
+    prefix: bytes.subarray(0, 4096),
+    readRange: async (offset: number, length: number) => {
+      if (offset < end && offset + length > signatureOffset)
+        reads.push({ offset, length });
+      return bytes.subarray(offset, offset + length);
+    },
+  };
+  const artifact = {
+    path: artifactPath,
+    sha256: "ab".repeat(32),
+    bytes: bytes.length,
+  };
+  const input = inspectKernelModuleInputSchema.parse({ path: artifactPath });
+  const report = await parseKernelModuleFromHandle(source, artifact, input);
+  expect(report.signature?.pkcs7).toEqual({
+    location: { offset: signatureOffset, bytes: pkcs7.length },
+    sha256: createHash("sha256").update(pkcs7).digest("hex"),
+  });
+  let nextOffset = signatureOffset;
+  for (const { offset, length } of reads) {
+    expect(offset).toBe(nextOffset);
+    expect(length).toBeLessThanOrEqual(1 << 20);
+    nextOffset += length;
+  }
+  expect(nextOffset).toBe(end);
+  await expect(
+    parseKernelModuleFromHandle(
+      {
+        ...source,
+        readRange: async (offset, length) =>
+          offset + length === end
+            ? bytes.subarray(offset, end - 1)
+            : source.readRange(offset, length),
+      },
+      artifact,
+      input,
+    ),
+  ).rejects.toMatchObject({ reason: "format" });
+});
+
 it("reports an inconsistent signature length without a PKCS#7 range", async () => {
   const report = await parse(
     kernelModuleFixture({
