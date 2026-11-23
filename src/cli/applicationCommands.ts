@@ -115,7 +115,7 @@ export const registerApplicationCommands = (
       "Project authenticated APK inventory Evidence into an Android application graph",
     workflow: async (input, lookup, signal) => {
       const { projectAndroidApplicationEvidence } =
-        await import("../application/android/AndroidApplicationService.js");
+        await import("../application/InventoryProjectionEvidence.js");
       const result = projectAndroidApplicationEvidence(input, lookup, {
         signal,
       });
@@ -131,7 +131,7 @@ export const registerApplicationCommands = (
       "Project authenticated IPA or macOS app inventory Evidence into an Apple application graph",
     workflow: async (input, lookup, signal) => {
       const { projectAppleApplicationEvidence } =
-        await import("../application/apple/AppleApplicationService.js");
+        await import("../application/InventoryProjectionEvidence.js");
       const result = projectAppleApplicationEvidence(input, lookup, { signal });
       return result.ok ? { ok: true, value: result.value.evidence } : result;
     },
@@ -145,7 +145,7 @@ export const registerApplicationCommands = (
       "Project authenticated HarmonyOS HAP, HSP, or App Pack inventory Evidence into an application graph",
     workflow: async (input, lookup, signal) => {
       const { projectHarmonyApplicationEvidence } =
-        await import("../application/harmony/HarmonyApplicationService.js");
+        await import("../application/InventoryProjectionEvidence.js");
       const result = projectHarmonyApplicationEvidence(input, lookup, {
         signal,
       });
