@@ -98,6 +98,12 @@ export default {
         name: "execFileOutputFailure",
       },
     ]),
+    ...mutationRanges("src/server/createServer.ts", [
+      {
+        kind: "declaration",
+        name: "providerEnvironment",
+      },
+    ]),
     ...mutationRanges("src/server/externalMutationToolHandler.ts", [
       {
         kind: "declaration",
