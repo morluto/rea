@@ -1173,6 +1173,12 @@ it("refuses unsupported hosts before launching or allocating a workspace", async
     _tag: "AnalysisCapabilityUnavailableError",
     reason: expect.stringContaining("Linux"),
   });
+  // The host is the limit: recovery must not ask for a sigrok command that this
+  // host cannot use, which is what the tool-path branch is for.
+  const unavailable = result.error as { remediationAction?: string };
+  expect(unavailable.remediationAction).toBeDefined();
+  expect(unavailable.remediationAction).toContain("Linux");
+  expect(unavailable.remediationAction).not.toContain("REA_SIGROK_COMMAND");
 });
 
 it("preserves complete Evidence when aborted during post-run integrity checks", async () => {
