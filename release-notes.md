@@ -521,6 +521,7 @@
 * **application:** unify 5 pass-through analysis services into ProviderOperationService ([#13856](https://github.com/morluto/rea/issues/13856)) ([2cf600f](https://github.com/morluto/rea/commit/2cf600fc7f36abbca858493c6eac7da4fda27368)), closes [#13855](https://github.com/morluto/rea/issues/13855)
 * **artifacts:** consolidate magic checks and range reads ([#13643](https://github.com/morluto/rea/issues/13643)) ([94e0386](https://github.com/morluto/rea/commit/94e038678e66b8ed6d0e593404bde8c3b5eac5d7))
 * **artifacts:** consolidate magic checks, probe windows, and range reads ([94e0386](https://github.com/morluto/rea/commit/94e038678e66b8ed6d0e593404bde8c3b5eac5d7))
+* **artifacts:** extract bounded member I/O helpers from ReleaseExposureReader ([#13990](https://github.com/morluto/rea/issues/13990)) ([2915278](https://github.com/morluto/rea/commit/2915278d503f99f156898811126c346f6e58ca99))
 * **artifacts:** extract memberClassification from ReleaseExposureReader ([#13673](https://github.com/morluto/rea/issues/13673)) ([dc1380d](https://github.com/morluto/rea/commit/dc1380d9d223bd2e766d6e3f391f4c4541af7f76))
 * **artifacts:** extract nodeShebang and memberTextDecoding from ReleaseExposureReader ([eb13f0c](https://github.com/morluto/rea/commit/eb13f0cb0c85adb594b390976ac1c1fbf70748dc))
 * **artifacts:** extract releaseExposureFailures from ReleaseExposureReader ([#13739](https://github.com/morluto/rea/issues/13739)) ([c4be5b7](https://github.com/morluto/rea/commit/c4be5b70657b6feff3043c8c688ea469b4c3a01e))
