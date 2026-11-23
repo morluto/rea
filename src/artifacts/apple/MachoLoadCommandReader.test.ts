@@ -18,6 +18,7 @@ import {
   lazyLoadDylibInfoCommand,
   lazyLoadDylibInfoPayload,
   machoImage,
+  machoImageWithUnknownCommand,
   machoImageWithLazyLoadDylibInfo,
   segmentCommand,
   readerOf,
@@ -1767,14 +1768,16 @@ describe("Mach-O load command reader failures", () => {
   };
 
   it("reports malformed command tables with the failing command", async () => {
-    expect(await read(withCommandSize(0))).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("load command 0"),
-    });
-    expect(await read(withCommandSize(4096))).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("invalid cmdsize"),
-    });
+    for (const size of [0, 4096])
+      expect(await read(withCommandSize(size))).toMatchObject({
+        status: "malformed",
+        reason: expect.stringMatching(
+          new RegExp(
+            `load command 0\\b.*offset 0\\b.*invalid.*cmdsize ${size}\\b`,
+            "iu",
+          ),
+        ),
+      });
     const extraCommand = machoImage({ commands: [rpathCommand("x")] });
     new DataView(extraCommand.buffer).setUint32(16, 2, true);
     expect(await read(extraCommand)).toMatchObject({
@@ -1784,24 +1787,16 @@ describe("Mach-O load command reader failures", () => {
   });
 
   it("requires 8-byte command alignment in 64-bit images", async () => {
-    // A command the reader does not decode; only its size is checked.
-    const command = new Uint8Array(12);
-    const view = new DataView(command.buffer);
-    view.setUint32(0, 0x7f000001, true);
-    view.setUint32(4, 12, true);
-    expect(await read(machoImage({ commands: [command] }))).toMatchObject({
+    expect(await read(machoImageWithUnknownCommand(true, 12))).toMatchObject({
       status: "malformed",
-      reason: expect.stringContaining("invalid cmdsize 12"),
-    });
-    expect(
-      await read(
-        machoImage({
-          cpu: { type: 7, subtype: 3 },
-          wide: false,
-          commands: [command],
-        }),
+      reason: expect.stringMatching(
+        /load command 0\b.*invalid.*cmdsize 12\b/iu,
       ),
-    ).toMatchObject({ status: "parsed" });
+    });
+    expect(await read(machoImageWithUnknownCommand(false, 12))).toMatchObject({
+      status: "parsed",
+      slices: [{ architecture: "i386" }],
+    });
   });
 
   it("accepts FAT tables up to 128 records that name a Mach-O CPU", async () => {
@@ -1822,43 +1817,41 @@ describe("Mach-O load command reader failures", () => {
       });
   });
 
-  it("rejects string commands too short to hold their string offset", async () => {
-    const short = new Uint8Array(8);
-    const view = new DataView(short.buffer);
-    view.setUint32(0, LC.RPATH, true);
-    view.setUint32(4, 8, true);
-    expect(await read(machoImage({ commands: [short] }))).toMatchObject({
-      status: "malformed",
-      reason: expect.stringMatching(
-        /load command 0\b.*too short.*string offset/iu,
-      ),
-    });
-    view.setUint32(0, LC.CODE_SIGNATURE, true);
-    expect(await read(machoImage({ commands: [short] }))).toMatchObject({
-      status: "malformed",
-      reason: "load command 0 is too short for LC_CODE_SIGNATURE",
-    });
-  });
-
-  it("rejects strings that are unterminated, misplaced or not UTF-8", async () => {
-    const unterminated = rpathCommand("abcd");
+  it("reports command-specific payload defects after accepting the frame", async () => {
+    const short = Uint8Array.of(LC.CODE_SIGNATURE, 0, 0, 0, 8, 0, 0, 0);
+    const shortRpath = short.slice();
+    new DataView(shortRpath.buffer).setUint32(0, LC.RPATH, true);
+    const withOffset = (command: Uint8Array, offset: number) => {
+      new DataView(command.buffer).setUint32(8, offset, true);
+      return command;
+    };
+    const unterminated = rpathCommand("ab");
     unterminated.fill(0x41, 12);
-    expect(await read(machoImage({ commands: [unterminated] }))).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("unterminated"),
-    });
-    const misplaced = rpathCommand("abcd");
-    new DataView(misplaced.buffer).setUint32(8, 4, true);
-    expect(await read(machoImage({ commands: [misplaced] }))).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("string offset 4"),
-    });
     const invalid = rpathCommand("ab");
     invalid[12] = 0xff;
-    expect(await read(machoImage({ commands: [invalid] }))).toMatchObject({
-      status: "malformed",
-      reason: expect.stringContaining("not UTF-8"),
-    });
+    const atEnd = rpathCommand("ab");
+    for (const [command, issue] of [
+      [short, /too short.*LC_CODE_SIGNATURE/iu],
+      [shortRpath, /too short.*string offset/iu],
+      [unterminated, /unterminated/iu],
+      [withOffset(rpathCommand("ab"), 11), /string offset 11\b.*outside/iu],
+      [
+        withOffset(atEnd, atEnd.length),
+        new RegExp(`string offset ${atEnd.length}\\b.*outside`, "iu"),
+      ],
+      [
+        withOffset(dylibCommand(LC.LOAD_DYLIB, "ab"), 23),
+        /string offset 23\b.*outside/iu,
+      ],
+      [invalid, /not UTF-8/iu],
+    ] as const) {
+      const result = await read(machoImage({ commands: [command] }));
+      expect(result).toMatchObject({ status: "malformed" });
+      if (result.status !== "malformed")
+        throw new Error("Expected a malformed command");
+      expect(result.reason).toMatch(/load command 0\b/iu);
+      expect(result.reason).toMatch(issue);
+    }
   });
 
   it("refuses truncated, oversized, big-endian and out-of-range images", async () => {
@@ -1867,12 +1860,19 @@ describe("Mach-O load command reader failures", () => {
       status: "malformed",
       reason: "Mach-O header is truncated",
     });
-    const commandBytes = MAX_LOAD_COMMAND_BYTES + 8;
-    const header = machoImage({});
-    const oversized = Buffer.alloc(header.byteLength + commandBytes);
-    oversized.set(header);
-    oversized.writeUInt32LE(commandBytes, 20);
-    expect(await read(oversized)).toMatchObject({
+    const payloadRead = new Error("Mach-O command table read");
+    const readDeclaredTable = (commandBytes: number) => {
+      const prefix = machoImage({}).subarray(0, 32);
+      new DataView(prefix.buffer).setUint32(20, commandBytes, true);
+      return readMachoImage(async (offset, length) => {
+        if (offset + length > prefix.length) throw payloadRead;
+        return prefix.subarray(offset, offset + length);
+      }, prefix.length + commandBytes);
+    };
+    await expect(readDeclaredTable(MAX_LOAD_COMMAND_BYTES)).rejects.toBe(
+      payloadRead,
+    );
+    expect(await readDeclaredTable(MAX_LOAD_COMMAND_BYTES + 8)).toMatchObject({
       status: "unsupported",
       reason: expect.stringMatching(/above the .* limit/iu),
     });
