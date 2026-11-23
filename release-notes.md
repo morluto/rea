@@ -705,6 +705,7 @@
 * **firmware:** describe UEFI summaries and views ([89fc51b](https://github.com/morluto/rea/commit/89fc51ba975e630743f2718d7cac3d4d817cc22c))
 * **ghidra:** link the native build steps for Linux arm64 ([dc10161](https://github.com/morluto/rea/commit/dc10161a9e0663c005fffb038e697306ca224482)), closes [#7018](https://github.com/morluto/rea/issues/7018)
 * **github:** require reported verification and factual docs in PR template ([#14130](https://github.com/morluto/rea/issues/14130)) ([a92d502](https://github.com/morluto/rea/commit/a92d5024724333f7169450a321101bb3e9dbd848))
+* **i18n:** standardize Vietnamese translations for guides and common terms ([#14141](https://github.com/morluto/rea/issues/14141)) ([bf913bc](https://github.com/morluto/rea/commit/bf913bc3dc3b710c9f46594fe4b8dfca6f59d5fb))
 * **ida:** name the database supervisor's deadlines for long analyses ([6b7b09f](https://github.com/morluto/rea/commit/6b7b09f00808431ac948e2c4eae8222e3b107afd)), closes [#13286](https://github.com/morluto/rea/issues/13286)
 * **install:** describe setup's direct-launch MCP registrations ([c0af3e2](https://github.com/morluto/rea/commit/c0af3e293cd85bfdece21a4e2ce2f7d25ab8e684)), closes [#10252](https://github.com/morluto/rea/issues/10252)
 * **install:** link Windows native build steps from a source checkout ([4a6fa19](https://github.com/morluto/rea/commit/4a6fa1937940f35c0873aff7b63bb6ffd98a583f)), closes [#10317](https://github.com/morluto/rea/issues/10317)
