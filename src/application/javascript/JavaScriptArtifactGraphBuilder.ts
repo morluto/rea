@@ -371,6 +371,12 @@ const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
       );
     return partialApplicationCoverage([], nestedArchiveWasOpaque ? null : 0);
   }
+  // Structure-only keeps static and Electron facts and does not build
+  // source-module or export-binding nodes. The omitted node count is unknown
+  // without semantic analysis. Complete coverage would let a comparison treat
+  // those unchanged bindings as removed.
+  if (context.analysis.semantic_analysis === "structure-only")
+    return partialApplicationCoverage([], null);
   return completeApplicationCoverage();
 };
 

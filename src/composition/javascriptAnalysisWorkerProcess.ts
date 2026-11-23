@@ -48,7 +48,9 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     precision,
     memberMutationAllowance,
   );
-  if (static_ === null) return null;
+  // Structure-only keeps the full static facts and skips semantic analysis;
+  // no semantic result budget is consumed.
+  if (static_ === null || purpose === "structure-only") return null;
   const { resultBudgetBytes, callPaths } = static_;
   if (resultBudgetBytes === 0)
     throw new AnalysisResourceConstraintError(
@@ -95,7 +97,9 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
 /**
  * Checkpoint static facts, reusing the ones preload discovery retained for
  * this exact request. Null ends the job: discovery returns only declarations,
- * and a failed parse has no semantic phase.
+ * and a failed parse has no semantic phase. The caller stops after this
+ * checkpoint for structure-only, so that pass reuses the same facts and
+ * still does not start semantic analysis.
  */
 const staticCheckpoint = async (
   source: string,
@@ -108,7 +112,8 @@ const staticCheckpoint = async (
   readonly resultBudgetBytes: number;
   readonly callPaths: JavaScriptStaticAnalysis["electron"]["call_paths"];
 } | null> => {
-  const reused = purpose === "analysis" ? callbacks.reusedStatic() : undefined;
+  const reused =
+    purpose === "preload-discovery" ? undefined : callbacks.reusedStatic();
   if (reused !== undefined) {
     const resultBudgetBytes = await callbacks.checkpointReused(reused);
     return reused.parse_status === "failed"
@@ -128,7 +133,13 @@ const staticCheckpoint = async (
   } catch (cause: unknown) {
     // The semantic phase indexes the same mutations under the same
     // allowance, so it is not started; the syntax facts cross first.
-    if (purpose === "analysis" && isJavaScriptMemberMutationRefusal(cause))
+    // Structure-only has no later semantic phase, so the same refusal must
+    // still cross the syntax facts. Discovery leaves that report to the
+    // normal pass, which recomputes this source.
+    if (
+      purpose !== "preload-discovery" &&
+      isJavaScriptMemberMutationRefusal(cause)
+    )
       await callbacks.checkpoint(
         memberMutationRefusedJavaScriptStaticAnalysis(source, parsed, cause),
       );
