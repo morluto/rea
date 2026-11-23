@@ -6,6 +6,7 @@ import type { ElfNotes } from "./native/elfNotes.js";
 import type { ElfUnwindRanges } from "./native/elfUnwindRanges.js";
 import type { KernelBuildConfig } from "./native/kernelBuildConfig.js";
 import type { KernelModule } from "./native/kernelModule.js";
+import type { V8CodeCache } from "./v8/v8CodeCache.js";
 import type { InterfaceBuilderAnalysis } from "./apple/interfaceBuilderGraph.js";
 import type { PartialTaskMeasurement } from "./desktop/taskDifficulty.js";
 import type { AppleIpsPartialObservation } from "./native/appleIps.js";
@@ -704,6 +705,7 @@ export type AnalysisPartialObservation =
   | ElfUnwindRanges
   | KernelBuildConfig
   | KernelModule
+  | V8CodeCache
   | InterfaceBuilderAnalysis
   | PartialTaskMeasurement
   | {

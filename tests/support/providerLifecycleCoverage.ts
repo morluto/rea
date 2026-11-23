@@ -1668,8 +1668,8 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     covered(
       test(
-        "src/application/v8CodeCache/V8CodeCacheService.test.ts",
-        "retains a completed V8 code cache observation when the caller cancels as the provider completes",
+        "tests/boundary/filesystem/v8CodeCacheArtifact.test.ts",
+        "retains verified V8 Evidence during $stage",
       ),
     ),
   ),
