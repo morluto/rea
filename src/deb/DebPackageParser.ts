@@ -453,6 +453,11 @@ type PaxFields = {
   readonly undecodable: ReadonlySet<string>;
   /** Offset of the first record that could not be read, if any. */
   readonly incompleteAt: number | undefined;
+  /**
+   * Whether any `GNU.sparse.*` record was present. Sparse entries store a
+   * map and data segments, not the file's bytes, under a synthetic name.
+   */
+  readonly sparse: boolean;
 };
 
 export const parsePax = (bytes: Uint8Array): PaxFields => {
@@ -462,11 +467,13 @@ export const parsePax = (bytes: Uint8Array): PaxFields => {
   // keys would otherwise grow one object property per record.
   const fields: Partial<Record<PaxKey, string>> = {};
   const undecodable = new Set<string>();
+  let sparse = false;
   // A record that cannot be read leaves the extended header's facts unknown.
   const incomplete = (at: number): PaxFields => ({
     fields,
     undecodable,
     incompleteAt: at,
+    sparse,
   });
   let index = 0;
   while (index < bytes.length) {
@@ -483,6 +490,7 @@ export const parsePax = (bytes: Uint8Array): PaxFields => {
     const record = tarText(bytes.subarray(space + 1, index + length));
     const eq = record.text.indexOf("=");
     const key = eq === -1 ? undefined : record.text.slice(0, eq);
+    if (key?.startsWith("GNU.sparse.") === true) sparse = true;
     if (key !== undefined && isPaxKey(key)) {
       fields[key] = record.text.slice(eq + 1).replace(/\n$/u, "");
       if (record.undecodable) undecodable.add(key);
@@ -490,8 +498,14 @@ export const parsePax = (bytes: Uint8Array): PaxFields => {
     }
     index += length;
   }
-  return { fields, undecodable, incompleteAt: undefined };
+  return { fields, undecodable, incompleteAt: undefined, sparse };
 };
+
+const sparseTarFailure = (memberName: string, offset: number) =>
+  new DebPackageFormatFailure(
+    "unsupported",
+    `${memberName} has a GNU sparse entry at offset ${String(offset)}; this reader does not expand sparse files.`,
+  );
 
 const parseTar = (
   bytes: Uint8Array,
@@ -542,6 +556,15 @@ const parseTar = (
         ),
       };
     const typeFlag = header[156] ?? 0;
+    // Old GNU sparse entries ('S') carry a sparse map and may be followed by
+    // extension blocks their size field does not count.
+    if (typeFlag === 83)
+      return {
+        entries,
+        files,
+        undecodableNames,
+        error: sparseTarFailure(memberName, offset),
+      };
     const extension =
       typeFlag === 76 ||
       typeFlag === 75 ||
@@ -633,6 +656,15 @@ const parseTar = (
             "malformed",
             `PAX extended header in ${memberName} at offset ${String(offset)} has an unreadable record at byte ${String(parsed.incompleteAt)}.`,
           ),
+        };
+      // GNU PAX sparse formats rename the entry and store only the mapped
+      // segments, so its name, size and bytes would all be wrong as a file.
+      if (parsed.sparse)
+        return {
+          entries,
+          files,
+          undecodableNames,
+          error: sparseTarFailure(memberName, offset),
         };
       const target = typeFlag === 103 ? globalPax : pax;
       const targetUndecodable =

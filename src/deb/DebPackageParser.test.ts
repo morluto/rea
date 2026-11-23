@@ -547,6 +547,47 @@ it("keeps only the PAX keys it applies, so distinct unknown keys cost no storage
   expect([...parsed.undecodable]).toEqual(["uname"]);
 });
 
+it("refuses a GNU PAX sparse entry instead of reporting its stored name and size", () => {
+  const error = expectFailure(
+    () =>
+      parse(
+        debPackageFixture({
+          dataEntries: [
+            { name: "./", type: "5", mode: 0o755, content: "" },
+            {
+              name: "./PaxHeaders/sparse",
+              type: "x",
+              content: Buffer.concat([
+                paxRecord("GNU.sparse.major", "1"),
+                paxRecord("GNU.sparse.minor", "0"),
+                paxRecord("GNU.sparse.name", "./usr/lib/big"),
+                paxRecord("GNU.sparse.realsize", "1048576"),
+              ]),
+            },
+            { name: "./GNUSparseFile.0/big", content: "1\n0\n4\nabcd" },
+          ],
+        }),
+      ),
+    DebPackageFormatFailure,
+  );
+  expect(error.kind).toBe("unsupported");
+  expect(error.message).toMatch(/GNU sparse entry/u);
+});
+
+it("refuses an old GNU sparse entry", () => {
+  const error = expectFailure(
+    () =>
+      parse(
+        debPackageFixture({
+          dataEntries: [{ name: "./usr/lib/big", type: "S", content: "abcd" }],
+        }),
+      ),
+    DebPackageFormatFailure,
+  );
+  expect(error.kind).toBe("unsupported");
+  expect(error.message).toMatch(/GNU sparse entry/u);
+});
+
 it("reports a PAX path that is not UTF-8 as a limitation", () => {
   const report = parse(
     debPackageFixture({
