@@ -233,6 +233,12 @@ public class ReaNoReturnProbe extends GhidraScript {
             RefType.COMPUTED_CALL, SourceType.ANALYSIS, 0);
     }
 
+    private void forgetOtherTargets(Instruction call, Function target) {
+        for (Reference reference : call.getReferencesFrom())
+            if (reference.getReferenceType().isCall() && !reference.getToAddress().equals(target.getEntryPoint()))
+                currentProgram.getReferenceManager().delete(reference);
+    }
+
     private String pseudocode(Function function) {
         DecompInterface decompiler = new DecompInterface();
         try {
@@ -249,9 +255,11 @@ public class ReaNoReturnProbe extends GhidraScript {
 
     /**
      * Real decoded computed calls to a local no-return function. Inline assembly fixes three call
-     * targets in the instruction stream; a writable slot supplies the fourth. Only the injected
-     * state differs: a second recorded target, an existing override, and the one reference
-     * Ghidra records for the slot's initial value. Only the first call may end.
+     * targets in the instruction stream, and a writable slot supplies the fourth. The fifth
+     * target is a conditional move between a returning and the no-return address, which Ghidra's
+     * p-code expresses as a CBRANCH over the COPY. Besides the code, only the injected state
+     * differs: a second recorded target, an existing override, and the one reference recorded
+     * for the no-return value of the slot and the conditional move. Only the first call may end.
      */
     private List<ComputedCall> computedCalls() throws Exception {
         Function stop = function("rea_computed_stop");
@@ -261,16 +269,24 @@ public class ReaNoReturnProbe extends GhidraScript {
         callers.put("rea_constant_call_two_targets", false);
         callers.put("rea_constant_call_overridden", false);
         callers.put("rea_hook_call", false);
+        callers.put("rea_conditional_call", false);
+        // The decompiler can resolve only the fixed targets; it continues past the other calls.
+        Set<String> variable = Set.of("rea_hook_call", "rea_conditional_call");
         List<ComputedCall> calls = new ArrayList<>();
         for (var item : callers.entrySet()) {
             Function caller = function(item.getKey());
             Instruction call = computedCall(caller);
             recordTarget(call, stop);
+            // Ghidra 12.2 records both arms of the conditional move. Keep only the no-return arm,
+            // as an analysis that resolves one arm would, so the target proof alone must refuse it.
+            if (item.getKey().equals("rea_conditional_call")) forgetOtherTargets(call, stop);
             if (item.getKey().endsWith("_two_targets")) recordTarget(call, function("rea_strlen"));
             if (item.getKey().endsWith("_overridden")) call.setFlowOverride(FlowOverride.CALL);
             require("computed_call_stays_open_" + item.getKey(), call.getFlowType().isCall() &&
                 !call.getFlowType().isTerminal() && call.getFallThrough() != null);
-            calls.add(new ComputedCall(item.getKey(), item.getValue(), !item.getKey().equals("rea_hook_call"), call.getAddress(), call.getFallThrough(),
+            require("computed_call_recorded_targets_" + item.getKey(), callTargets(call).size() ==
+                (item.getKey().endsWith("_two_targets") ? 2 : 1));
+            calls.add(new ComputedCall(item.getKey(), item.getValue(), !variable.contains(item.getKey()), call.getAddress(), call.getFallThrough(),
                 call.getFlowOverride(), callTargets(call), new AddressSet(caller.getBody()), pseudocode(caller)));
         }
         return calls;

@@ -148,9 +148,11 @@ public final class ReaGhidraNoReturnFix extends GhidraScript {
    * TARGET_INSTRUCTIONS - 1 fallthrough predecessors. It accepts COPY, INT_ADD, INT_SUB,
    * INT_AND, INT_NEGATE, INT_LEFT, INT_ZEXT and INT_SEXT on constants, registers and unique
    * values that it defines; RISC-V auipc+jalr needs INT_LEFT, INT_ADD, INT_NEGATE and INT_AND.
-   * It refuses memory, a register defined outside the window, a partial definition, control
-   * flow or delay slots inside the window, and a join: a function entry, an external entry or
-   * any referenced instruction between the oldest instruction it reads and the call.
+   * The window must be straight-line as a whole: a control-flow op anywhere in a predecessor's
+   * p-code or before the CALLIND, such as the CBRANCH of x86 CMOVcc or ARM ADREQ, can skip a
+   * definition the trace relies on. It also refuses memory, a register defined outside the
+   * window, a partial definition, delay slots, and a join: a function entry, an external entry
+   * or any referenced instruction between the oldest instruction it reads and the call.
    */
   private boolean constantTarget(Instruction call, Address callee) {
     if (call.getDelaySlotDepth() != 0) return false;
@@ -161,7 +163,7 @@ public final class ReaGhidraNoReturnFix extends GhidraScript {
       if (index >= 0) return false;
       index = i;
     }
-    if (index < 0) return false;
+    if (index < 0 || !straightLine(operations, index)) return false;
     Varnode target = operations[index].getInput(0);
     Long value = new TargetTrace(call, operations).before(target, 0, index);
     return value != null && callee.getAddressSpace().getPhysicalSpace().equals(
@@ -187,7 +189,6 @@ public final class ReaGhidraNoReturnFix extends GhidraScript {
       while (true) {
         PcodeOp[] ops = operations.get(position);
         for (int i = index - 1; i >= 0; i--) {
-          if (controlFlow(ops[i].getOpcode())) return null;
           Varnode output = ops[i].getOutput();
           if (output == null || !output.intersects(varnode)) continue;
           if (output.getOffset() != varnode.getOffset() || output.getSize() != varnode.getSize()) return null;
@@ -239,10 +240,20 @@ public final class ReaGhidraNoReturnFix extends GhidraScript {
       if (older == null || older.isInDelaySlot() || older.getDelaySlotDepth() != 0) return false;
       FlowType flow = older.getFlowType();
       if (flow.isCall() || flow.isJump() || flow.isTerminal() || !flow.isFallthrough()) return false;
+      PcodeOp[] pcode = older.getPcode();
+      if (!straightLine(pcode, pcode.length)) return false;
       instructions.add(older);
-      operations.add(older.getPcode());
+      operations.add(pcode);
       return true;
     }
+  }
+
+  /** No operation before `end` can transfer control, so every one of them runs. */
+  private static boolean straightLine(PcodeOp[] operations, int end) {
+    for (int i = 0; i < end; i++) {
+      if (controlFlow(operations[i].getOpcode())) return false;
+    }
+    return true;
   }
 
   private static boolean controlFlow(int opcode) {

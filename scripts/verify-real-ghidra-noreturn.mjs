@@ -174,6 +174,7 @@ await withVerifierFixture(workspaceFixture, async () => {
         "computed_call_kept_rea_constant_call_two_targets",
         "computed_call_kept_rea_constant_call_overridden",
         "computed_call_kept_rea_hook_call",
+        "computed_call_kept_rea_conditional_call",
       ])
         assert.ok(probe.checks.includes(check), check);
     } finally {

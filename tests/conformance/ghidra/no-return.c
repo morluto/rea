@@ -68,21 +68,38 @@ int rea_local_return(void) { return 1658; }
 #define REA_TEXT(value) #value
 #define REA_STRING(value) REA_TEXT(value)
 #define REA_SYMBOL(name) REA_STRING(__USER_LABEL_PREFIX__) #name
+/* REA_ADDRESS loads a symbol's address from constants in the instruction stream. */
 #if defined(__x86_64__)
-#define REA_CONSTANT_CALL(name) \
-    __asm__ volatile("leaq " REA_SYMBOL(name) "(%%rip), %%rax\n\tcall *%%rax" ::: "rax", "memory")
-#elif defined(__aarch64__) && defined(__APPLE__)
-#define REA_CONSTANT_CALL(name) \
-    __asm__ volatile("adrp x16, " REA_SYMBOL(name) "@PAGE\n\tadd x16, x16, " REA_SYMBOL(name) \
-                     "@PAGEOFF\n\tblr x16" ::: "x16", "x30", "memory")
+#define REA_ADDRESS(reg, name) "leaq " REA_SYMBOL(name) "(%%rip), %%" reg "\n\t"
+#define REA_CALL "call *%%rax"
+#define REA_CLOBBERS "rax", "rcx", "memory"
+/* cmove's p-code is a CBRANCH over the COPY, so the call may use either address. */
+#define REA_SELECT "testl %k0, %k0\n\t" REA_ADDRESS("rax", rea_computed_return) \
+    REA_ADDRESS("rcx", rea_computed_stop) "cmoveq %%rcx, %%rax\n\t"
 #elif defined(__aarch64__)
-#define REA_CONSTANT_CALL(name) \
-    __asm__ volatile("adrp x16, " REA_SYMBOL(name) "\n\tadd x16, x16, :lo12:" REA_SYMBOL(name) \
-                     "\n\tblr x16" ::: "x16", "x30", "memory")
+#if defined(__APPLE__)
+#define REA_ADDRESS(reg, name) \
+    "adrp " reg ", " REA_SYMBOL(name) "@PAGE\n\tadd " reg ", " reg ", " REA_SYMBOL(name) "@PAGEOFF\n\t"
+#else
+#define REA_ADDRESS(reg, name) \
+    "adrp " reg ", " REA_SYMBOL(name) "\n\tadd " reg ", " reg ", :lo12:" REA_SYMBOL(name) "\n\t"
+#endif
+#define REA_CALL "blr x16"
+#define REA_CLOBBERS "x16", "x17", "x30", "cc", "memory"
+#define REA_SELECT "cmp %w0, #0\n\t" REA_ADDRESS("x16", rea_computed_return) \
+    REA_ADDRESS("x17", rea_computed_stop) "csel x16, x17, x16, eq\n\t"
 #else
 #error "no-return.c needs an x86-64 or AArch64 computed call"
 #endif
+#if defined(__x86_64__)
+#define REA_TARGET "rax"
+#else
+#define REA_TARGET "x16"
+#endif
+#define REA_CONSTANT_CALL(name) __asm__ volatile(REA_ADDRESS(REA_TARGET, name) REA_CALL ::: REA_CLOBBERS)
+#define REA_CONDITIONAL_CALL(code) __asm__ volatile(REA_SELECT REA_CALL :: "r"(code) : REA_CLOBBERS)
 __attribute__((visibility("hidden"), noreturn, noinline)) void rea_computed_stop(void) { __builtin_trap(); }
+__attribute__((visibility("hidden"), noinline)) void rea_computed_return(void) { rea_after_call++; }
 void rea_constant_call(void) {
     REA_CONSTANT_CALL(rea_computed_stop);
     rea_after_call++;
@@ -100,5 +117,10 @@ static void (*rea_stop_hook)(void) = rea_computed_stop;
 void rea_set_stop_hook(void (*hook)(void)) { rea_stop_hook = hook; }
 void rea_hook_call(void) {
     rea_stop_hook();
+    rea_after_call++;
+}
+/* Only a zero code selects the no-return address. */
+void rea_conditional_call(int code) {
+    REA_CONDITIONAL_CALL(code);
     rea_after_call++;
 }
