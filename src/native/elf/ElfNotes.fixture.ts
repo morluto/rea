@@ -456,6 +456,47 @@ export interface CorePrpsinfoOptions {
   readonly idWidth?: 2 | 4;
 }
 
+/** Encode a full ELF32 Linux process record and a shortened record under the same ABI. */
+export const elf32ProcessIdentityFixture = (
+  machine: number,
+  little: boolean,
+  idWidth: 2 | 4,
+  flags = 0,
+) => {
+  const expected = {
+    state: 1,
+    uid: idWidth === 4 ? 70001 : 500,
+    gid: idWidth === 4 ? 90002 : 600,
+    pid: 1234,
+    ppid: 12,
+    pgrp: 4321,
+    sid: 5678,
+    filename: "core-probe",
+    psargs: "core-probe --flag",
+  };
+  const descriptor = corePrpsinfoDescriptor({
+    ...expected,
+    bits: 32,
+    idWidth,
+    little,
+    fname: expected.filename,
+  });
+  const shortened = descriptor.subarray(0, descriptor.length - 4);
+  const bytes = elfNoteFixture({
+    bits: 32,
+    little,
+    machine,
+    type: 4,
+    ownership: "program",
+    notes: concat(
+      elfNote("CORE", 3, descriptor, little),
+      elfNote("CORE", 3, shortened, little),
+    ),
+  });
+  write32(bytes, 36, flags, little);
+  return { bytes, shortened, expected };
+};
+
 /** Descriptor bytes for a Linux NT_PRPSINFO note. */
 export const corePrpsinfoDescriptor = (
   options: CorePrpsinfoOptions = {},

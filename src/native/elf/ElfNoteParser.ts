@@ -464,11 +464,6 @@ const decodeCoreFile = (
   if (BigInt(descriptor.length) < neededBytes) return null;
   const tableBytes = Number(neededBytes);
 
-  const rowBytes = count * (bits === 64 ? 54 : 30);
-  if (rowBytes > text.limit - text.used) {
-    throw noteTextLimit(text);
-  }
-
   const scanKey = `file:${String(descriptor.byteOffset)}:${String(descriptor.length)}`;
   const cachedScan = text.scans.get(scanKey);
   if (cachedScan === -1) return null;
@@ -500,8 +495,9 @@ const decodeCoreFile = (
   }
   text.scans.set(scanKey, count);
 
-  const pathBytes = totalPathBytes * 3;
-  chargeText(text, rowBytes + pathBytes);
+  // Charge retained rows only after every pathname is framed.
+  const rowBytes = count * (bits === 64 ? 54 : 30);
+  chargeText(text, rowBytes + totalPathBytes * 3);
 
   const mappings: {
     start_address: string;
