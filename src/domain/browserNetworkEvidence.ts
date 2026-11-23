@@ -55,7 +55,7 @@ const unavailableBrowserNetworkBodySchema = z.discriminatedUnion("reason", [
   }),
 ]);
 
-export const browserNetworkBodySchema = z.union([
+export const browserNetworkBodySchema = z.discriminatedUnion("state", [
   z.strictObject({ state: z.literal("not_requested") }),
   z.strictObject({ state: z.literal("not_exposed") }),
   unavailableBrowserNetworkBodySchema,
@@ -124,7 +124,7 @@ export const browserNetworkBodySchema = z.union([
 ]);
 
 /** Headers retain producer order and duplicates, with credential values removed. */
-export const browserNetworkHeadersSchema = z.union([
+export const browserNetworkHeadersSchema = z.discriminatedUnion("state", [
   z.strictObject({ state: z.literal("not_requested") }),
   z.strictObject({
     state: z.literal("unavailable"),

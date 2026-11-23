@@ -160,7 +160,7 @@ const inventoryFor = (
   source_range: shape.source_range,
   properties: uniqueSorted([
     ...shape.fields
-      .filter((field) => fieldPresence(shape, field, field.path) === "present")
+      .filter((field) => field.presence === "present")
       .map(({ path }) => path),
     ...shape.property_coverage.map(({ path }) => path),
   ]).filter((path) => path !== ""),
@@ -177,10 +177,7 @@ export const hasPartialJavaScriptExportPropertyCoverage = (
   shapes.some(
     (shape) =>
       shape.property_coverage.some(({ status }) => status === "partial") ||
-      shape.fields.some(
-        (field) =>
-          fieldPresence(shape, field, field.path) === "unknown-coverage",
-      ),
+      shape.fields.some((field) => field.presence === "unknown-coverage"),
   );
 
 interface DiscriminantOccurrence {
@@ -194,7 +191,7 @@ const discriminantOccurrences = (
   const output = new Map<string, DiscriminantOccurrence>();
   shapes.forEach((shape, index) => {
     for (const field of shape.fields) {
-      if (fieldPresence(shape, field, field.path) !== "present") continue;
+      if (field.presence !== "present") continue;
       if (field.state !== "literal") continue;
       const discriminant = { path: field.path, value: field.value };
       const key = canonicalJson(
@@ -305,19 +302,39 @@ const diffPair = (
   discriminant: Discriminant,
   evidenceLinks: [string, string],
 ): JavaScriptExportShapeComparisonChange[] => {
-  const leftFields = new Map(left.fields.map((field) => [field.path, field]));
-  const rightFields = new Map(right.fields.map((field) => [field.path, field]));
+  const leftFields = new Map<string, Field>();
+  for (const field of left.fields)
+    if (!leftFields.has(field.path)) leftFields.set(field.path, field);
+  const rightFields = new Map<string, Field>();
+  for (const field of right.fields)
+    if (!rightFields.has(field.path)) rightFields.set(field.path, field);
+  const leftCoverage = new Map<string, Shape["property_coverage"][number]>();
+  for (const entry of left.property_coverage)
+    if (!leftCoverage.has(entry.path)) leftCoverage.set(entry.path, entry);
+  const rightCoverage = new Map<string, Shape["property_coverage"][number]>();
+  for (const entry of right.property_coverage)
+    if (!rightCoverage.has(entry.path)) rightCoverage.set(entry.path, entry);
   const paths = uniqueSorted([
     ...leftFields.keys(),
     ...rightFields.keys(),
-    ...left.property_coverage.map(({ path }) => path),
-    ...right.property_coverage.map(({ path }) => path),
+    ...leftCoverage.keys(),
+    ...rightCoverage.keys(),
   ]);
   return paths.flatMap((path) => {
-    const leftField = fieldAtPath(left, leftFields, path);
-    const rightField = fieldAtPath(right, rightFields, path);
-    const leftPresence = fieldPresence(left, leftField, path);
-    const rightPresence = fieldPresence(right, rightField, path);
+    const leftField = fieldAtPath(leftFields, leftCoverage, path);
+    const rightField = fieldAtPath(rightFields, rightCoverage, path);
+    const leftPresence = fieldPresence(
+      leftFields,
+      leftCoverage,
+      leftField,
+      path,
+    );
+    const rightPresence = fieldPresence(
+      rightFields,
+      rightCoverage,
+      rightField,
+      path,
+    );
     const status = fieldChangeStatus({
       leftPresence,
       rightPresence,
@@ -351,14 +368,13 @@ const diffPair = (
 };
 
 const fieldAtPath = (
-  shape: Shape,
   fields: ReadonlyMap<string, Field>,
+  coverageByPath: ReadonlyMap<string, Shape["property_coverage"][number]>,
   path: string,
 ): Field | undefined => {
   const field = fields.get(path);
   if (field !== undefined) return field;
-  if (!shape.property_coverage.some((coverage) => coverage.path === path))
-    return undefined;
+  if (!coverageByPath.has(path)) return undefined;
   return {
     path,
     presence: "present",
@@ -405,7 +421,8 @@ const fieldChangeStatus = ({
 };
 
 const fieldPresence = (
-  shape: Shape,
+  fields: ReadonlyMap<string, Field>,
+  coverageByPath: ReadonlyMap<string, Shape["property_coverage"][number]>,
   field: Field | undefined,
   path: string,
 ): PropertyPresence => {
@@ -415,11 +432,9 @@ const fieldPresence = (
     parent !== null;
     parent = parentPointer(parent)
   ) {
-    const coverage = shape.property_coverage.find(
-      (entry) => entry.path === parent,
-    );
+    const coverage = coverageByPath.get(parent);
     if (coverage?.status === "complete") return "absent";
-    const ancestor = shape.fields.find((entry) => entry.path === parent);
+    const ancestor = fields.get(parent);
     if (ancestor !== undefined)
       return ancestor.presence === "absent" ? "absent" : "unknown-coverage";
     if (coverage !== undefined) return "unknown-coverage";

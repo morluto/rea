@@ -54,7 +54,7 @@ import { inspectNativeDispatch } from "./native/NativeDispatchMetadataInspection
 import { traceNativeValues } from "./native/NativeValueTrace.js";
 import { traceNativeUiAction } from "./native/NativeUiActionTrace.js";
 import { decompileAll } from "./decompileDirectory/decompileAll.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
   nativeDispatchMetadataResultSchema,
   MAX_DISPATCH_METADATA_RECORDS,
@@ -250,7 +250,9 @@ export class EnhancedTools {
     if (!result.ok) return result;
     const parsed = parseFunctionDossier(result.value);
     if (!parsed.ok) return parsed;
-    return ok(jsonValueSchema.parse(projectNativeApiInspection(parsed.value)));
+    return ok(
+      ownedJsonValueSchema.parse(projectNativeApiInspection(parsed.value)),
+    );
   }
 
   async #objcClasses(pattern: string, signal?: AbortSignal): EnhancedResult {
@@ -526,6 +528,8 @@ export class EnhancedTools {
     input: {
       readonly address: string;
       readonly direction: CallRelationshipDirection;
+      readonly max_depth?: number | undefined;
+      readonly max_nodes?: number | undefined;
     },
     signal?: AbortSignal,
   ): EnhancedResult {
@@ -546,13 +550,23 @@ export class EnhancedTools {
       { address: startAddress, depth: 0 },
     ];
     let queueIndex = 0;
+    let expandedNodes = 0;
+    let depthLimitRecorded = false;
     const graph: Record<string, JsonValue[]> = {};
     const sortedLimitations = () =>
       [...limitations].sort(compareUnicodeCodePoints);
 
     while (queueIndex < queue.length) {
+      if (input.max_nodes !== undefined && expandedNodes >= input.max_nodes) {
+        const remaining = queue.length - queueIndex;
+        limitations.add(
+          `Call graph traversal stopped at caller-selected max_nodes ${String(input.max_nodes)} with ${String(remaining)} queued procedure(s) unexpanded. Raise or omit max_nodes to inspect further.`,
+        );
+        break;
+      }
       const current = queue[queueIndex++];
       if (current === undefined) continue;
+      expandedNodes += 1;
       const read = await readCallRelationships(
         this.#observe.bind(this),
         input.direction,
@@ -616,6 +630,18 @@ export class EnhancedTools {
       } satisfies NativeCallGraph["graph"][string][number]);
       for (const address of related) {
         if (!discovered.has(address)) {
+          if (
+            input.max_depth !== undefined &&
+            current.depth >= input.max_depth
+          ) {
+            if (!depthLimitRecorded) {
+              limitations.add(
+                `Call graph traversal stopped at caller-selected max_depth ${String(input.max_depth)}; deeper call relationships were not expanded. Raise or omit max_depth to inspect further.`,
+              );
+              depthLimitRecorded = true;
+            }
+            continue;
+          }
           discovered.add(address);
           queue.push({ address, depth: current.depth + 1 });
         }

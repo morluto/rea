@@ -654,6 +654,7 @@ export class NativeDmgArtifactReader implements ArtifactReader {
         )
           throw cause;
         await (this.host.delay ?? delay)(delayMs);
+        this.#throwIfVerificationCancelled(signal);
         if (performance.now() >= deadline) throw cause;
       }
     }

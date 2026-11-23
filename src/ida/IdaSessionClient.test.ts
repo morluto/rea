@@ -2159,3 +2159,158 @@ it("keeps the session cleanup owner until an ignored-abort HTTP acquisition and 
     vi.unstubAllGlobals();
   }
 });
+
+describe("headless IDA literal string predicate pushdown", () => {
+  it("pushes ASCII literal patterns with U+017F/U+212A folds to modern find_regex while keeping regex and non-ASCII fallback intact", async () => {
+    const { producer, client } = await fixture("headless");
+    const values = [
+      "中文菜单",
+      "other",
+      "Warfare/Storage/Read-Write",
+      "warfare/\u017ftoragE/read-write",
+      "\u212aelvin",
+      "İstanbul",
+      "🧪",
+    ];
+    producer.overrideCall = (name, args) => {
+      if (name !== "find_regex") return undefined;
+      const pattern = String(args.pattern);
+      const regex = pattern.startsWith("(?s)")
+        ? new RegExp(pattern.slice(4), "su")
+        : new RegExp(pattern, "u");
+      return {
+        matches: values.flatMap((value, index) =>
+          regex.test(value)
+            ? [{ addr: `0x${(0x5000 + index).toString(16)}`, string: value }]
+            : [],
+        ),
+        cursor: { done: true },
+      };
+    };
+    try {
+      const lastFindRegexPattern = () =>
+        String(
+          producer.calls.filter(({ name }) => name === "find_regex").at(-1)
+            ?.args.pattern ?? "",
+        );
+
+      const storage = await client.execute("search_strings", {
+        pattern: "warfare/storage/read-write",
+      });
+      if (!storage.ok) throw storage.error;
+      expect(storage.value.result).toEqual([
+        { address: "0x5002", value: "Warfare/Storage/Read-Write" },
+        { address: "0x5003", value: "warfare/\u017ftoragE/read-write" },
+      ]);
+      const storagePattern = lastFindRegexPattern();
+      expect(storagePattern).not.toBe("(?s).*");
+      expect(storagePattern).toContain("(?:[sS]|\u017f)");
+
+      const emoji = await client.execute("search_strings", {
+        pattern: "🧪",
+        case_sensitive: true,
+      });
+      if (!emoji.ok) throw emoji.error;
+      expect(emoji.value.result).toEqual([{ address: "0x5006", value: "🧪" }]);
+      expect(lastFindRegexPattern()).toBe("🧪");
+
+      const kelvin = await client.execute("search_strings", {
+        pattern: "kelvin",
+      });
+      if (!kelvin.ok) throw kelvin.error;
+      expect(kelvin.value.result).toEqual([
+        { address: "0x5004", value: "\u212aelvin" },
+      ]);
+
+      await client.execute("list_strings", {});
+      expect(lastFindRegexPattern()).toBe("(?s).*");
+
+      const regexMatch = await client.execute("search_strings", {
+        pattern: "^warfare/storage/.+$",
+        mode: "regex",
+      });
+      if (!regexMatch.ok) throw regexMatch.error;
+      expect(regexMatch.value.result).toEqual([
+        { address: "0x5002", value: "Warfare/Storage/Read-Write" },
+        { address: "0x5003", value: "warfare/\u017ftoragE/read-write" },
+      ]);
+      const pushedRegexPattern = lastFindRegexPattern();
+      expect(pushedRegexPattern).not.toBe("(?s).*");
+      expect(pushedRegexPattern).toContain("(?:[sS]|\u017f)");
+
+      await client.execute("search_strings", {
+        pattern: "Storage|Other",
+        mode: "regex",
+      });
+      expect(lastFindRegexPattern()).toBe("(?s).*");
+
+      await client.execute("search_strings", {
+        pattern: "[0-9]+",
+        mode: "regex",
+      });
+      expect(lastFindRegexPattern()).toBe("(?s).*");
+
+      await client.execute("search_strings", {
+        pattern: "İ.*",
+        mode: "regex",
+      });
+      expect(lastFindRegexPattern()).toBe("(?s).*");
+
+      const sigma = await client.execute("search_strings", {
+        pattern: "İ",
+      });
+      if (!sigma.ok) throw sigma.error;
+      expect(lastFindRegexPattern()).toBe("(?s).*");
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+describe("headless IDA open rejection", () => {
+  it("reports the supervisor's open deadline as a provider timeout", async () => {
+    const { producer, client } = await fixture("headless");
+    // ida-pro-mcp c133c385 idalib_supervisor.py reports a reaped open this way.
+    producer.overrideCall = (name) =>
+      name === "idb_open"
+        ? {
+            error:
+              "idalib worker timed out after 1800s while opening and analyzing /work/target.exe. The binary may drive auto-analysis into an unbounded loop. Retry with run_auto_analysis=false (open without analysis and decompile on demand), or raise IDA_MCP_OPEN_TIMEOUT.",
+          }
+        : undefined;
+
+    const result = await client.execute("health", {});
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("provider_timeout");
+    expect(projected.message).toContain(
+      "IDA_MCP_OPEN_TIMEOUT deadline of 1800 s",
+    );
+    expect(projected.remediation.action).toContain(
+      "Raise IDA_MCP_OPEN_TIMEOUT",
+    );
+    expect(result.error.diagnostics).toMatchObject({
+      upstream_setting: "IDA_MCP_OPEN_TIMEOUT",
+      upstream_timeout_seconds: 1800,
+    });
+    expect((await client.close()).ok).toBe(true);
+  });
+
+  it("reports an idb_open rejection with its upstream reason", async () => {
+    const { producer, client } = await fixture("headless");
+    producer.overrideCall = (name) =>
+      name === "idb_open"
+        ? { error: "Input was rejected before creating a session" }
+        : undefined;
+
+    const result = await client.execute("health", {});
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain(
+      "Input was rejected before creating a session",
+    );
+    expect(result.error.message).not.toContain("malformed or unsupported");
+    expect((await client.close()).ok).toBe(true);
+  });
+});

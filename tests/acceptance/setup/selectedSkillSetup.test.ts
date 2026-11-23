@@ -34,6 +34,13 @@ cliTest.for(["root", "references"] as const)(
     if (kind === "references")
       await cp(join(source, "SKILL.md"), join(selected, "SKILL.md"));
     const link = kind === "root" ? selected : join(selected, "references");
+    const manifest = join(kind === "root" ? managed : selected, "SKILL.md");
+    const reference = join(
+      kind === "root" ? join(managed, "references") : managed,
+      "native-and-artifacts.md",
+    );
+    const originalManifest = await readFile(manifest);
+    const originalReference = await readFile(reference);
     await symlink(
       managed,
       link,
@@ -52,12 +59,22 @@ cliTest.for(["root", "references"] as const)(
       "--dry-run",
     ]);
     const applied = await run(["setup", "--client", "claude_code", "--yes"]);
-    await expect(access(join(directory, ".claude.json"))).rejects.toMatchObject(
-      {
-        code: "ENOENT",
-      },
-    );
-    for (const result of [preview, applied]) {
+    const failures = [preview, applied];
+    if (kind === "root") {
+      const skillOnly = await run([
+        "setup",
+        "--skill-client",
+        "claude_code",
+        "--yes",
+      ]);
+      expect(skillOnly.stdout).toContain("symbolic link");
+      failures.push(skillOnly);
+    }
+    const configuration = join(directory, ".claude.json");
+    await expect(access(configuration)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    for (const result of failures) {
       expect(result.exitCode, result.stdout).toBe(1);
       expect(result.json).toMatchObject({
         status: "needs_human",
@@ -74,68 +91,25 @@ cliTest.for(["root", "references"] as const)(
       identity: { skill: { state: "unmanaged" } },
     });
     expect(doctor.stdout).toContain(link);
+    if (kind === "root") {
+      const registration = await run([
+        "setup",
+        "--client",
+        "claude_code",
+        "--skill=false",
+        "--yes",
+      ]);
+      expect(registration.exitCode, registration.stdout).toBe(0);
+      expect(registration.json).toMatchObject({ status: "ready" });
+      await access(configuration);
+      expect((await readdir(managed)).sort()).toEqual([
+        "SKILL.md",
+        "references",
+      ]);
+    }
     expect((await lstat(link)).isSymbolicLink()).toBe(true);
-  },
-);
-
-cliTest(
-  "setup refuses a linked skill while allowing registration-only setup",
-  async ({ cli }) => {
-    const directory = await createTestTempDirectory("rea-linked-skill-cli-");
-    const managed = join(directory, "managed");
-    const selected = join(
-      directory,
-      ".claude/skills/reverse-engineer-anything",
-    );
-    await mkdir(managed);
-    await mkdir(join(directory, ".claude/skills"), { recursive: true });
-    await cp(resolve("skills/reverse-engineer-anything"), managed, {
-      recursive: true,
-    });
-    const original = await readFile(join(managed, "SKILL.md"), "utf8");
-    await symlink(
-      managed,
-      selected,
-      process.platform === "win32" ? "junction" : "dir",
-    );
-    const run = (arguments_: readonly string[]) =>
-      cli.run({
-        arguments: [...arguments_, "--json"],
-        cwd: directory,
-        environment: { USERPROFILE: directory },
-      });
-
-    const refused = await run([
-      "setup",
-      "--skill-client",
-      "claude_code",
-      "--yes",
-    ]);
-    expect(refused.exitCode, refused.stdout).toBe(1);
-    expect(refused.json).toMatchObject({
-      status: "needs_human",
-      code: "skill_install_failed",
-    });
-    expect(refused.stdout).toContain("symbolic link");
-    const doctor = await run(["doctor", "--client", "claude_code", "--skill"]);
-    expect(doctor.exitCode, doctor.stdout).toBe(1);
-    expect(doctor.json).toMatchObject({
-      healthy: false,
-      identity: { skill: { state: "unmanaged" } },
-    });
-    const registration = await run([
-      "setup",
-      "--client",
-      "claude_code",
-      "--skill=false",
-      "--yes",
-    ]);
-    expect(registration.exitCode, registration.stdout).toBe(0);
-    expect(registration.json).toMatchObject({ status: "ready" });
-    await access(join(directory, ".claude.json"));
-    expect((await lstat(selected)).isSymbolicLink()).toBe(true);
-    expect((await readdir(managed)).sort()).toEqual(["SKILL.md", "references"]);
-    expect(await readFile(join(managed, "SKILL.md"), "utf8")).toBe(original);
+    expect((await readFile(manifest)).equals(originalManifest)).toBe(true);
+    expect((await readFile(reference)).equals(originalReference)).toBe(true);
   },
 );
 

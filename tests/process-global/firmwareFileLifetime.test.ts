@@ -997,14 +997,7 @@ it.each(["source-first", "tree-first"])(
     const path = join(fixture.context.workspacePath, "payload.bin");
     const bytes = Buffer.from("published bytes");
     await writeFile(path, bytes);
-    const hash = fixture.context.files.hash.bind(fixture.context.files);
-    vi.spyOn(fixture.context.files, "hash").mockImplementation(
-      async (...args) => {
-        const digest = await hash(...args);
-        fault.selected = "payload.bin";
-        return digest;
-      },
-    );
+    fault.selected = "payload.bin";
     const error = await publishFirmwareExtraction({
       ...fixture.context,
       entries: [

@@ -77,8 +77,14 @@ report the resolved policy separately where needed. See the owning guides for
 [source maps](../guides/web/web-source-location.md),
 [historical captures](../guides/web/web-network-captures.md),
 [JavaScript precision](../guides/javascript/javascript-application-graph.md),
-[managed inspection](../guides/managed/managed-code-analysis.md), and
+[managed inspection](../guides/managed/managed-code-analysis.md),
+[ADB listings](../guides/android/adb-device-analysis.md),
+[Android class search](../guides/android/android-analysis.md), and
 [Frida capture](../guides/runtime/frida-instrumentation.md).
+
+Frida process discovery applies `limit` and `offset` after enumerating the
+selected device. It reports `total_processes` and `truncated`. Moving to another
+page runs a fresh discovery on that device.
 
 The same accepted policy must reach acquisition, parsing, worker requests,
 serialization, cached-result admission and generated consumers where those

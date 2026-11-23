@@ -1,8 +1,9 @@
+import type { RequestAnalysisPort } from "../ports/AnalysisProvider.js";
+import type { AdbRequest } from "../domain/adb/adbDeviceAnalysis.js";
 import { z } from "zod";
 import type { Logger } from "pino";
 
 import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
-import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
 import { createAdbDeviceAnalysisProvider } from "../composition/adb.js";
 import { ADB_TOOL_CONTRACTS } from "../contracts/adb/adbToolContracts.js";
 import { cliCommandFor } from "../contracts/cliCommandNames.js";
@@ -13,11 +14,11 @@ import {
 } from "../domain/adb/adbDeviceAnalysis.js";
 import { publishArgvInput } from "./options.js";
 import type { CliInstance } from "./types.js";
-import {
-  contractNamed,
-  type CliContractProjection,
-  type ContractField,
-} from "./contractCliDescription.js";
+import { contractNamed } from "./contractCliDescription.js";
+import type {
+  CliContractProjection,
+  ContractField,
+} from "./contractCliDescriptionTypes.js";
 import {
   analyzeWithService,
   registerContractCommand,
@@ -247,7 +248,7 @@ export const registerAdbCommands = (
   cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
-  provider: AdbDeviceAnalysisPort = createAdbDeviceAnalysisProvider(
+  provider: RequestAnalysisPort<AdbRequest> = createAdbDeviceAnalysisProvider(
     environment,
   ),
 ): void => {

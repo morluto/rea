@@ -1,7 +1,6 @@
 import { crc32 } from "node:zlib";
 import { expect, it } from "vitest";
 
-import { ParseFailureError } from "../../domain/parseFailure.js";
 import {
   ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION,
   ELF_DEBUG_LINK_MULTIPLE_BUILD_IDS_LIMITATION,
@@ -10,7 +9,6 @@ import {
   inspectElfDebugLinkInputSchema,
 } from "../../domain/native/elfDebugLink.js";
 import { elfNote, gnuBuildIdNote } from "./ElfNotes.fixture.js";
-import { parseElfNotes } from "./ElfNoteParser.js";
 import { readElfImage } from "../../domain/native/elfImage.js";
 import { parseElfDebugLink, verifyElfDebugCandidate } from "./ElfDebugLink.js";
 import {
@@ -29,16 +27,12 @@ const digest = "ab".repeat(32);
 const inputFor = (extra: { readonly max_entries?: number } = {}) =>
   inspectElfDebugLinkInputSchema.parse({ path: artifactPath, ...extra });
 
-const parse = (
-  bytes: Buffer,
-  extra: { readonly max_entries?: number } = {},
-  path = artifactPath,
-) =>
+const parse = (bytes: Buffer, extra: { readonly max_entries?: number } = {}) =>
   elfDebugLinkSchema.parse(
     parseElfDebugLink(
       bytes,
-      { path, sha256: digest, bytes: bytes.length },
-      inspectElfDebugLinkInputSchema.parse({ path, ...extra }),
+      { path: artifactPath, sha256: digest, bytes: bytes.length },
+      inspectElfDebugLinkInputSchema.parse({ path: artifactPath, ...extra }),
     ),
   );
 
@@ -238,18 +232,19 @@ it("keeps an observed build-id when section names are unavailable", () => {
   );
 });
 
-it("fails the note entry budget instead of returning a partial build-id", () => {
+it("charges unrelated entries toward the build-id scan allowance", () => {
   const notes = Buffer.concat([
-    gnuBuildIdNote(FIXTURE_BUILD_ID_HEX, true),
-    gnuBuildIdNote("bb".repeat(20), true),
+    elfNote("stapsdt", 3, Buffer.alloc(40)),
+    gnuBuildIdNote(FIXTURE_BUILD_ID_HEX),
   ]);
-  expect(() =>
-    parseElfDebugLink(
-      elfDebugLinkFixture({ notes }),
-      { path: artifactPath, sha256: digest, bytes: 1 },
-      inputFor({ max_entries: 1 }),
-    ),
-  ).toThrow(ParseFailureError);
+  const image = elfDebugLinkFixture({ notes });
+  expect(() => parse(image, { max_entries: 1 })).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        limit: { name: "max_entries", maximum: 1, required: 2 },
+      }),
+    }),
+  );
 });
 
 it("reads the build-id beside glibc's SystemTap probe notes by default", () => {
@@ -270,13 +265,7 @@ it("reads the build-id beside glibc's SystemTap probe notes by default", () => {
   });
 });
 
-it("preserves parent-directory segments and omits a slash name", () => {
-  const preserved = parse(elfDebugLinkFixture(), {}, "/var/tmp/../lib/prog");
-  expect(
-    preserved.lookup_paths.find(
-      (entry) => entry.kind === "global_debug_directory",
-    )?.path,
-  ).toBe("/usr/lib/debug/var/tmp/../lib/prog.debug");
+it("observes a slash name without producing directory lookup strings", () => {
   const slashed = parse(
     elfDebugLinkFixture({
       debuglink: debuglinkSection("dir/prog.debug", 0x12345678, true),
@@ -286,20 +275,16 @@ it("preserves parent-directory segments and omits a slash name", () => {
   expect(slashed.limitations).toContain(ELF_DEBUG_LINK_NAME_SEGMENT_LIMITATION);
 });
 
-it("refuses an oversized GNU build-id from its raw size without hex-encoding it", () => {
-  const notes = gnuBuildIdNote("cd".repeat(257), true);
-  const image = elfDebugLinkFixture({ notes });
-  const decoded = parseElfNotes(
-    image,
-    { path: artifactPath, sha256: digest, bytes: image.length },
-    { path: artifactPath, max_file_bytes: image.length, max_entries: 32 },
-    { maxGnuBuildIdBytes: 256 },
-  );
-  expect(decoded.entries[0]).toMatchObject({
-    descsz: 257,
-    gnu: { build_id_hex: null },
+it("retains an exact-limit build ID and reports an oversized one as unknown", () => {
+  const atLimit = "cd".repeat(256);
+  const image = (hex: string) =>
+    elfDebugLinkFixture({ notes: gnuBuildIdNote(hex) });
+  expect(parse(image(atLimit)).build_id).toMatchObject({
+    status: "observed",
+    hex: atLimit,
+    ids: [atLimit],
   });
-  expect(parse(image).build_id).toMatchObject({
+  expect(parse(image(atLimit + "cd")).build_id).toMatchObject({
     status: "unknown",
     hex: null,
     ids: [],

@@ -12,6 +12,8 @@ export type SazValue =
   | { readonly [key: string]: SazValue }
   | readonly SazValue[];
 
+const SAZ_HTTP_FIELD_POINTER_RE = /^\/(request|response)\//;
+
 /** Project native byte fields with the same credential and explicit-literal exclusions as HAR. */
 export const projectSazRecord = (
   source: SazValue,
@@ -73,7 +75,8 @@ export const projectSazRecord = (
       // HTTP fields are Latin-1 views of bytes. A UTF-8 declaration must also
       // exclude its byte spelling, even when its display is mojibake.
       if (
-        /^\/(request|response)\//.test(pointer) &&
+        sensitiveValues.length > 0 &&
+        SAZ_HTTP_FIELD_POINTER_RE.test(pointer) &&
         !pointer.endsWith("/member") &&
         redactor.sensitiveBytes(Buffer.from(value, "latin1"))
       ) {

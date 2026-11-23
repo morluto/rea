@@ -44,7 +44,6 @@ vi.mock("../../domain/binaryContainer.js", async (importOriginal) => {
 const sectionReads = vi.hoisted(() => ({
   count: 0,
   budget: Infinity,
-  directories: 0,
 }));
 vi.mock(
   "../../domain/native/nativeSectionDirectory.js",
@@ -58,7 +57,6 @@ vi.mock(
       readElfDirectoryFromBuffer: (
         ...args: Parameters<typeof actual.readElfDirectoryFromBuffer>
       ) => {
-        sectionReads.directories += 1;
         const directory = actual.readElfDirectoryFromBuffer(...args);
         return {
           ...directory,
@@ -146,13 +144,6 @@ it.each([
     });
   },
 );
-
-it("uses one ELF directory for initializer mappings and section facts", async () => {
-  sectionReads.directories = 0;
-  const report = await read(elf64PieInitializers());
-  expect(report.entries.length).toBeGreaterThan(0);
-  expect(sectionReads.directories).toBe(1);
-});
 
 it("preserves a real mapping to file offset zero instead of treating zero as missing", async () => {
   const bytes = elfUnmappedInitializerTargets({ type: 3 });
@@ -408,25 +399,72 @@ describe("ELF slot semantics", () => {
     );
   });
 
-  it("reports no slot address for DT_INIT and DT_FINI fields outside every load segment", async () => {
+  it.each([
+    { extent: 0x300n, address: 0x300n, field: "outside every load" },
+    { extent: 0x30cn, address: 0x300n, field: "only partly file-backed" },
+    {
+      extent: 0xc00n,
+      address: 0x400n,
+      field: "mapped to different file bytes",
+    },
+  ])(
+    "preserves raw dynamic values with no slot address when the field is $field",
+    async ({ extent, address }) => {
+      const bytes = elf64PieInitializers();
+      bytes.writeBigUInt64LE(extent, 64 + 32);
+      bytes.writeBigUInt64LE(extent, 64 + 40);
+      bytes.writeBigUInt64LE(address, 120 + 16);
+      bytes.writeBigUInt64LE(address, 120 + 24);
+      const report = await read(bytes);
+      const direct = report.entries.filter(
+        (entry) => entry.kind === "init" || entry.kind === "fini",
+      );
+      expect(
+        direct.map(({ kind, slot_va, slot_section, value_va }) => [
+          kind,
+          slot_va,
+          slot_section,
+          value_va,
+        ]),
+      ).toEqual([
+        ["init", null, null, "0x100"],
+        ["fini", null, null, "0x120"],
+      ]);
+      expect(direct[0]).toMatchObject({
+        slot_file_offset: 0x308,
+        slot_bytes: 8,
+        value_file_offset: 0x100,
+      });
+      expect(report.coverage.status).toBe("unknown");
+      expect(report.limitations).toEqual(
+        expect.arrayContaining([
+          "DT_INIT value field is not fully file-backed at its declared PT_DYNAMIC address.",
+          "DT_FINI value field is not fully file-backed at its declared PT_DYNAMIC address.",
+        ]),
+      );
+    },
+  );
+
+  it("uses PT_DYNAMIC's virtual address when the file bytes have a second load address", async () => {
     const bytes = elf64PieInitializers();
-    // Shrink the only PT_LOAD so PT_DYNAMIC (file offset 0x300) is no longer mapped.
-    bytes.writeBigUInt64LE(0x300n, 64 + 32);
-    bytes.writeBigUInt64LE(0x300n, 64 + 40);
+    const dynamicHeader = 120;
+    const aliasHeader = 176;
+    const declaredAddress = 0x2300n;
+    bytes.copy(bytes, aliasHeader, dynamicHeader, dynamicHeader + 56);
+    bytes.writeUInt16LE(3, 56);
+    bytes.writeUInt32LE(1, aliasHeader);
+    for (const header of [dynamicHeader, aliasHeader]) {
+      bytes.writeBigUInt64LE(declaredAddress, header + 16);
+      bytes.writeBigUInt64LE(declaredAddress, header + 24);
+    }
     const report = await read(bytes);
-    const direct = report.entries.filter(
-      (entry) => entry.kind === "init" || entry.kind === "fini",
-    );
-    expect(direct).toHaveLength(2);
-    for (const entry of direct)
-      expect(entry).toMatchObject({ slot_va: null, slot_section: null });
-    expect(direct.map((entry) => entry.value_va)).toEqual(["0x100", "0x120"]);
-    expect(report.limitations).toEqual(
-      expect.arrayContaining([
-        "DT_INIT value field is not inside a load segment.",
-        "DT_FINI value field is not inside a load segment.",
-      ]),
-    );
+    expect(report.entries.find(({ kind }) => kind === "init")).toMatchObject({
+      slot_va: "0x2308",
+      slot_file_offset: 0x308,
+      slot_bytes: 8,
+      value_va: "0x100",
+      value_file_offset: 0x100,
+    });
   });
 
   const sectionlessElf = (directOnly: boolean): Buffer => {

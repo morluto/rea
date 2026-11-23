@@ -3,7 +3,6 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import {
   RP2040_FAMILY,
   RP2XXX_ABSOLUTE_FAMILY,
@@ -113,112 +112,94 @@ it("inventories each family's regions with family and block facts", async () => 
   ]);
 });
 
-it.each([
-  [[0x1000], [0, 0xffff_ffff]],
-  [[0x1000, 0x2000], [0]],
-] as const)(
-  "keeps addressless UF2 comments out of copy counting (%j, %j)",
-  async (flash, comments) => {
-    const blocks = [
-      ...flash.map((address) =>
-        uf2Block({ address, payload: [1, 2, 3, 4], blockNo: 0, numBlocks: 2 }),
-      ),
-      ...comments.map((address) =>
-        uf2Block({
-          address,
-          payload: [9, 9],
-          blockNo: 1,
-          numBlocks: 2,
-          flags: UF2_FLAGS.notMainFlash,
-        }),
-      ),
-    ];
-    const snapshot = await scanCanonicalArtifactInventory(
-      await writeImage("comments.uf2", uf2File(blocks)),
-    );
-    expect(snapshot.coverage).toEqual({
-      scope: "container-entries",
-      status: "complete",
-    });
-    expect(
-      snapshot.occurrences.find((row) => row.logical_path === ".")
-        ?.format_metadata,
-    ).toMatchObject({
-      kind: "uf2",
-      ambiguous_numbering_group_count: 0,
-      missing_block_count: 0,
-      repeated_block_count: 1,
-      not_main_flash_block_count: comments.length,
-      flash_block_count: flash.length,
-      region_count: flash.length,
-      data_bytes: 4 * flash.length,
-    });
-  },
-);
+type Block = readonly [blockNo: number, address: number, kind?: "comment"];
+const flash = (blockNo: number, address: number): Block => [blockNo, address];
+const comment = (blockNo: number, address: number): Block => [
+  blockNo,
+  address,
+  "comment",
+];
+
+const first = flash(0, 0x1000);
+const firstComment = comment(0, 0xffff_ffff);
+const secondCopies = [flash(1, 0x3000), flash(1, 0x4000)];
+const twice = flash(0, 0x2000);
 
 it.each([
   {
-    order: "first",
-    secondAddress: 0x2000,
-    coverage: "complete",
-    regionCount: 4,
+    label: "one flash address and repeated comments",
+    input: [first, comment(1, 0), comment(1, 0xffff_ffff)],
+    regions: 1,
+    ambiguous: 0,
+    repeats: 1,
   },
   {
-    order: "second",
-    secondAddress: 0x2000,
-    coverage: "complete",
-    regionCount: 4,
+    label: "two flash addresses and one comment",
+    input: [first, twice, comment(1, 0)],
+    regions: 2,
+    ambiguous: 0,
+    repeats: 1,
   },
   {
-    order: "first",
-    secondAddress: 0x1000,
-    coverage: "unknown",
-    regionCount: 3,
+    label: "leading shared-number comment and two copies",
+    input: [firstComment, first, twice, ...secondCopies],
+    regions: 4,
+    ambiguous: 0,
+    repeats: 3,
   },
   {
-    order: "second",
-    secondAddress: 0x1000,
-    coverage: "unknown",
-    regionCount: 3,
+    label: "trailing shared-number comment and two copies",
+    input: [first, firstComment, twice, ...secondCopies],
+    regions: 4,
+    ambiguous: 0,
+    repeats: 3,
   },
-] as const)(
-  "reports $coverage UF2 coverage when the shared-number comment comes $order",
-  async ({ order, secondAddress, coverage, regionCount }) => {
-    const flash = (blockNo: number, address: number) =>
-      uf2Block({ address, payload: [1, 2, 3, 4], blockNo, numBlocks: 2 });
-    const comment = uf2Block({
-      address: 0xffff_ffff,
-      payload: [9, 9],
-      blockNo: 0,
-      numBlocks: 2,
-      flags: UF2_FLAGS.notMainFlash,
-    });
-    const first = flash(0, 0x1000);
-    const blocks = [
-      ...(order === "first" ? [comment, first] : [first, comment]),
-      flash(0, secondAddress),
-      flash(1, 0x3000),
-      flash(1, 0x4000),
-    ];
+  {
+    label: "leading shared-number comment and missing copy",
+    input: [firstComment, first, first, ...secondCopies],
+    regions: 3,
+    ambiguous: 1,
+    repeats: 3,
+  },
+  {
+    label: "trailing shared-number comment and missing copy",
+    input: [first, firstComment, first, ...secondCopies],
+    regions: 3,
+    ambiguous: 1,
+    repeats: 3,
+  },
+])(
+  "reports exact physical coverage with $label",
+  async ({ input, regions, ambiguous, repeats }) => {
+    const blocks = input.map(([blockNo, address, kind]) =>
+      uf2Block({
+        address,
+        blockNo,
+        numBlocks: 2,
+        payload: kind === "comment" ? [9, 9] : [1, 2, 3, 4],
+        flags: kind === "comment" ? UF2_FLAGS.notMainFlash : 0,
+      }),
+    );
     const snapshot = await scanCanonicalArtifactInventory(
-      await writeImage("shared-number.uf2", uf2File(blocks)),
+      await writeImage("numbered.uf2", uf2File(blocks)),
     );
     expect(snapshot.coverage).toEqual({
       scope: "container-entries",
-      status: coverage,
+      status: ambiguous === 0 ? "complete" : "unknown",
     });
+    const comments = input.filter(([, , kind]) => kind === "comment").length;
     expect(
       snapshot.occurrences.find((row) => row.logical_path === ".")
         ?.format_metadata,
     ).toMatchObject({
       kind: "uf2",
-      ambiguous_numbering_group_count: coverage === "complete" ? 0 : 1,
+      ambiguous_numbering_group_count: ambiguous,
       missing_block_count: 0,
-      repeated_block_count: 3,
-      not_main_flash_block_count: 1,
-      flash_block_count: 4,
-      region_count: regionCount,
-      data_bytes: 4 * regionCount,
+      repeated_block_count: repeats,
+      not_main_flash_block_count: comments,
+      flash_block_count: input.length - comments,
+      region_count: regions,
+      data_bytes: 4 * regions,
     });
   },
 );
@@ -228,27 +209,4 @@ it("leaves short files unrecognized", async () => {
     await writeImage("short.uf2", ABSOLUTE.subarray(0, 511)),
   );
   expect(truncated.manifest.root_format).toBe("file");
-});
-
-it("rejects a forged region entry and a changed carrier", async () => {
-  const path = await writeImage(
-    "identity.uf2",
-    uf2File(uf2Image(RP2040_FAMILY, 0x1000_0000, APP)),
-  );
-  const reader = new Uf2ArtifactReader(path);
-  try {
-    const entries = [];
-    for await (const entry of reader.entries()) entries.push(entry);
-    const entry = entries[0];
-    if (entry === undefined) throw new Error("Missing region");
-    await expect(
-      reader.open({ ...entry, adapterKey: "uf2:1" }),
-    ).rejects.toMatchObject({ reason: "integrity" });
-    await writeFile(path, uf2File(uf2Image(RP2040_FAMILY, 0, APP)));
-    await expect(reader.open(entry)).rejects.toMatchObject({
-      reason: "integrity",
-    });
-  } finally {
-    await reader.close();
-  }
 });

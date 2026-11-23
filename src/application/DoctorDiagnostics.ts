@@ -88,10 +88,11 @@ const collectProviderDiagnostics = async (
   const { hopperPath, hopperVersionCheck, hopperDemoCheck, hopperFailure } =
     hopperOutcome;
   const checks = [hopperFailure ?? hopperCheck(providerHost, hopperPath)];
-  if (hopperFailure === undefined) {
-    const timeout = optionalHopperStartupTimeoutCheck(providerHost);
-    if (timeout !== undefined) checks.push(timeout);
-  }
+  const timeout = optionalHopperStartupTimeoutCheck(
+    providerHost,
+    configuration,
+  );
+  if (timeout !== undefined) checks.push(timeout);
   // Process admission still describes the original terminal invocation.
   checks.push(...runtimeConfigurationChecks(host));
   if (hopperVersionCheck !== undefined) checks.push(hopperVersionCheck);
@@ -360,7 +361,13 @@ const hopperCheck = (
 
 const optionalHopperStartupTimeoutCheck = (
   host: DoctorProviderProbeHost,
+  configuration: DoctorProviderConfiguration | undefined,
 ): DoctorCheck | undefined => {
+  if (configuration?.unresolved?.has("REA_HOPPER_STARTUP_TIMEOUT_MS") === true)
+    return unresolvedSettingCheck(
+      "hopper-startup-timeout",
+      "REA_HOPPER_STARTUP_TIMEOUT_MS",
+    );
   const parsed = host.nativeConfiguration?.configuredHopperStartupTimeout;
   if (parsed === undefined) return undefined;
   return check(
@@ -487,14 +494,7 @@ const optionalTargetCheck = async (
   target: string | undefined,
   host: DoctorHost,
 ): Promise<DoctorCheck | undefined> =>
-  target === undefined
-    ? undefined
-    : host.inspectTarget !== undefined
-      ? host.inspectTarget(target)
-      : check("target", await host.validTarget(target), target, {
-          remediation: "Supply a readable local app or program path.",
-          classification: "config_drift",
-        });
+  target === undefined ? undefined : host.inspectTarget(target);
 
 const check = (
   name: string,

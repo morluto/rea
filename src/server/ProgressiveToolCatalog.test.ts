@@ -195,6 +195,37 @@ it("loads exact names atomically and emits one notification for a batch", async 
   expect(f.changed).toHaveBeenCalledTimes(1);
 });
 
+it("accepts its own advertised name like an already-loaded tool", async () => {
+  const f = await connect();
+  const advertised = (await f.client.listTools()).tools.find(
+    ({ name }) => name === "discover_tools",
+  );
+  const self = await f.discover({ names: ["discover_tools"] });
+  expect(self.isError).not.toBe(true);
+  expect(self.structuredContent).toMatchObject({
+    inventory_count: 4,
+    loaded_count: 2,
+    total_matches: 1,
+    tools: [{ name: "discover_tools", input_schema: advertised?.inputSchema }],
+  });
+  expect(f.changed).not.toHaveBeenCalled();
+  expect(
+    (await f.discover({ names: ["discover_tools", "missing"] })).isError,
+  ).toBe(true);
+  expect(f.changed).not.toHaveBeenCalled();
+  const mixed = await f.discover({ names: ["alpha_sqlite", "discover_tools"] });
+  expect(mixed.structuredContent).toMatchObject({
+    loaded_count: 3,
+    tools: [{ name: "alpha_sqlite" }, { name: "discover_tools" }],
+  });
+  expect((await f.client.listTools()).tools.map(({ name }) => name)).toEqual([
+    "binary_session",
+    "alpha_sqlite",
+    "discover_tools",
+  ]);
+  expect(f.changed).toHaveBeenCalledTimes(1);
+});
+
 it("rejects every malformed discovery without changing visibility", async () => {
   const f = await connect();
   const initial = await f.client.listTools();
@@ -210,4 +241,25 @@ it("rejects every malformed discovery without changing visibility", async () => 
     expect(await f.client.listTools()).toEqual(initial);
     expect(f.changed).not.toHaveBeenCalled();
   }
+});
+
+it("ranks name matches ahead of description-only matches and caches projected input schemas", async () => {
+  const f = await connect({ bulk: true });
+  const first = await f.discover({ query: "sqlite", limit: 3 });
+  const firstPage = DISCOVER_TOOLS.outputSchema.parse(first.structuredContent);
+  expect(firstPage.tools.map(({ name }) => name)).toEqual([
+    "alpha_sqlite",
+    "beta_sqlite",
+    "binary_session",
+  ]);
+  const repeat = await f.discover({
+    names: ["alpha_sqlite", "bulk_00"],
+  });
+  const repeatPage = DISCOVER_TOOLS.outputSchema.parse(
+    repeat.structuredContent,
+  );
+  expect(repeatPage.tools[0]?.input_schema).toEqual(
+    firstPage.tools[0]?.input_schema,
+  );
+  expect(repeatPage.loaded_count).toBe(5);
 });

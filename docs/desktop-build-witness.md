@@ -159,8 +159,9 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
 
 A checkpoint name is lowercase letters, digits, dot, dash and underscore; the
 capture's own `baseline`, `stop`, `time-limit` and `exit` are refused, and so
-is a name already taken. The acknowledgement comes from the capture after it
-has walked the home and retained what changed: `entries` walked, `changes`
+is a name already reported. If cancellation interrupts the optional screenshot,
+retry the same name to recover the original acknowledgement. The capture
+acknowledges once it has walked the home and retained what changed: `entries` walked, `changes`
 since the checkpoint before, `retained_files` and `retained_bytes`, and up to
 ten `changed_files`, home-relative, with `more_changed_files` counting the
 rest. Folders are left out. Files an app window's title has named so far

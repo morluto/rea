@@ -4,7 +4,7 @@ import { captureBrowserScenario } from "./application/BrowserScenarioCaptureServ
 import type { BrowserScenarioCapturePort } from "./ports/BrowserScenarioCapturePort.js";
 import { publishCliAnalysisEvidence } from "./cli/analysisEvidenceDelivery.js";
 import { contractNamed } from "./cli/contractCliDescription.js";
-import { registerContractDocumentCommand } from "./cli/contractCommand.js";
+import { registerContractDocumentCommand } from "./cli/contractDocumentCommand.js";
 import { finishAnalysisCommand } from "./cli/finishAnalysisCommand.js";
 import type { CliInstance } from "./cli/types.js";
 import { CLI_COMMANDS } from "./contracts/cliCommandNames.js";

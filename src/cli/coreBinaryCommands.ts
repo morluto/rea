@@ -11,7 +11,7 @@ import {
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import type { Logger } from "pino";
-import { nativeTarget } from "./options.js";
+import { nativeTarget } from "./nativeTargetOption.js";
 import type { CliInstance } from "./types.js";
 import {
   javaScriptApplicationCliProjection,
@@ -23,10 +23,12 @@ import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
 import { ELECTRON_TOOL_CONTRACTS } from "../contracts/javascript/electronToolContracts.js";
 import {
   registerContractCommand,
-  registerRoutedCommand,
   runDirectOnTarget,
-  commandRoute,
 } from "./contractCommand.js";
+import {
+  commandRoute,
+  registerRoutedCommand,
+} from "./routedContractCommand.js";
 
 const decompileSelectorGuidance = `${addressOrProcedureGuidance} Alternatively, use --file-offset alone.`;
 const namedAddressGuidance = requiredSelectorGuidance(
