@@ -405,14 +405,22 @@ export function carveMipsElfBeforeSectionTable(bytes, byteOrder) {
 /**
  * Opening the carved copy fails before provider selection, naming the declared
  * range and the captured size; it is not admitted as a smaller program.
+ * When the carved file's size is given, the refusal must also carry the
+ * static file identity for those exact bytes: the byte count matches and
+ * the digest is a full SHA-256 hex string. Callers without the size keep the
+ * strict refusal shape and do not inspect the identity.
  */
-export function assertMipsCarvedTargetRefusal(error, path, reason) {
+export function assertMipsCarvedTargetRefusal(error, path, reason, byteCount) {
   assert.equal(error.code, "target_unavailable");
-  assert.deepEqual(error.details, {
+  const { target_identity: targetIdentity, ...rest } = error.details ?? {};
+  assert.deepEqual(rest, {
     path,
     reason,
     constraint: "file_format_rejected",
   });
+  if (byteCount === undefined) return;
+  assert.equal(targetIdentity?.byte_count, byteCount);
+  assert.match(targetIdentity?.sha256 ?? "", /^[0-9a-f]{64}$/u);
 }
 
 /**

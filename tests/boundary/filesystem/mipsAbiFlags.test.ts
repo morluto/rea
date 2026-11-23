@@ -329,6 +329,7 @@ for (const little of [true, false]) {
       projectAnalysisError(error),
       await realpath(path),
       carve.reason,
+      carve.bytes.length,
     );
     assert.deepEqual(await readFile(path), carve.bytes);
   });

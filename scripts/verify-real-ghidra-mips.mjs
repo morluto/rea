@@ -827,7 +827,12 @@ try {
             { timeout: 60000 },
           ),
         );
-        assertMipsCarvedTargetRefusal(carvedError, openedPath, carve.reason);
+        assertMipsCarvedTargetRefusal(
+          carvedError,
+          openedPath,
+          carve.reason,
+          carve.bytes.length,
+        );
         let carvedCliError;
         try {
           await commands.exec(
@@ -857,6 +862,7 @@ try {
           JSON.parse(carvedOutput.stdout),
           openedPath,
           carve.reason,
+          carve.bytes.length,
         );
         assert.deepEqual(await readFile(carvedPath), carve.bytes);
         carved = {

@@ -143,6 +143,40 @@ it("preserves unsupported-format diagnostics when admission is not cancelled", a
   expect(admission.handles[0]?.fd).toBe(-1);
 });
 
+it("keeps the file-format refusal when cancellation arrives during its identity hash", async () => {
+  const reason = { caller: "cancel during refusal hash" };
+  // Descriptor stats 1-3 are admission and the format/metadata reads; the
+  // fourth stat is the identity hash's finalization check.
+  const { path, controller } = await fixture(4, reason);
+  const resolved = await parseBinaryTarget(path, {
+    signal: controller.signal,
+  });
+  if (resolved.ok) throw new Error("Expected the file-format refusal");
+  if (resolved.error._tag !== "BinaryTargetError")
+    throw new Error("Expected the file-format refusal, not cancellation");
+  // The refusal is the primary failure; the digest was never established,
+  // so no identity is claimed, and the cancellation is retained separately.
+  expect(resolved.error).toMatchObject({
+    constraint: "file_format_rejected",
+    targetIdentity: undefined,
+  });
+  expect(resolved.error.secondaryFailures).toHaveLength(1);
+  expect(resolved.error.secondaryFailures[0]?._tag).toBe(
+    "AnalysisCancelledError",
+  );
+  expect(resolved.error.secondaryFailures[0]?.cause).toBe(reason);
+  const projected = projectAnalysisError(resolved.error);
+  expect(projected).toMatchObject({
+    code: "target_unavailable",
+    details: {
+      constraint: "file_format_rejected",
+      secondary_failures: [expect.objectContaining({ code: "cancelled" })],
+    },
+  });
+  expect(projected.details).not.toHaveProperty("target_identity");
+  expect(admission.handles[0]?.fd).toBe(-1);
+});
+
 it.each([
   { checkpoint: 1, sameReason: false, closeFails: false },
   { checkpoint: 1, sameReason: true, closeFails: false },

@@ -53,6 +53,7 @@ export function assertMipsCarvedTargetRefusal(
   error: unknown,
   path: string,
   reason: string,
+  byteCount?: number,
 ): void;
 export function assertMipsSoftFloatStorage(
   boundaries: Record<string, unknown>,
