@@ -20,7 +20,7 @@ or an MCP client. It does not promise support for every REA provider.
    | `analysis.stderr` | Original diagnostics/progress; an empty file is normal when there are none.                        |
    | `exit-code.txt`   | Original analysis process exit code.                                                               |
 
-The example pins Node.js 24.22.1, REA 6.7.0, and action commit revisions. It installs
+The example pins Node.js 24.22.1, the current REA release, and action commit revisions. It installs
 REA into the runner's temporary directory rather than changing the application's
 dependencies. This pins the tool version, not every transitive npm dependency;
 use a reviewed, committed package lock and `npm ci` if your integration requires
