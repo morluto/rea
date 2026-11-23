@@ -450,6 +450,7 @@
 * **javascript:** index feature, semantic, IPC, and source map lookups ([#13319](https://github.com/morluto/rea/issues/13319)) ([fde2c87](https://github.com/morluto/rea/commit/fde2c87b86bea29c4b536685c19581e6d61834ef))
 * **javascript:** index widened summary coverage by root ([#13007](https://github.com/morluto/rea/issues/13007)) ([f2d5cd6](https://github.com/morluto/rea/commit/f2d5cd633734c1baeda7ac73a31fc7f2e40550fe))
 * **javascript:** keep the worker reusable after a final discovery refusal ([c2779ae](https://github.com/morluto/rea/commit/c2779ae514730f8fd1e568d60d3ca107698aaceb))
+* **javascript:** merge data-effect traversals and look up callable kinds ([#14149](https://github.com/morluto/rea/issues/14149)) ([8f4f397](https://github.com/morluto/rea/commit/8f4f397341df68fbe665da34082f8649ab86721d)), closes [#14147](https://github.com/morluto/rea/issues/14147)
 * **javascript:** park the worker after preload-discovery allowance refusals ([ef59a1f](https://github.com/morluto/rea/commit/ef59a1f0a331c61f1fcfea184ff734dc49fa0d34))
 * **javascript:** reuse completed CommonJS module-source queries ([2e0a791](https://github.com/morluto/rea/commit/2e0a79115a9f8a7c4999c47fa724cc7a58792fdf))
 * **javascript:** reuse lexical returned-reference facts across ambient writes ([#13004](https://github.com/morluto/rea/issues/13004)) ([d43fc10](https://github.com/morluto/rea/commit/d43fc1051134823b1f52a7a3ed564051948e0aa1))
