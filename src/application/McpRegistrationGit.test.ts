@@ -53,9 +53,11 @@ it("keeps an observed Git failure primary when cancellation arrives during compl
     abort.abort(opaque);
     throw failure;
   });
-  const observed: unknown = await resolveKiloRegistrationWorktree(
+  const result = await resolveKiloRegistrationWorktree(
     await context(abort.signal),
-  ).catch((cause: unknown) => cause);
+  );
+  if (result.ok) throw new Error("Expected Git failure");
+  const observed = result.error;
   if (!(observed instanceof ConfigurationError)) throw observed;
   expect(observed.cause).toBe(failure);
   expect(observed.secondaryFailures).toEqual([
@@ -68,9 +70,9 @@ it("retains primary cancellation and its opaque caller reason", async () => {
   vi.mocked(exec.execFileBytes).mockRejectedValue(
     new exec.ExecFileOutputCancelledError(opaque),
   );
-  const observed: unknown = await resolveKiloRegistrationWorktree(
-    await context(),
-  ).catch((cause: unknown) => cause);
+  const result = await resolveKiloRegistrationWorktree(await context());
+  if (result.ok) throw new Error("Expected cancellation failure");
+  const observed = result.error;
   expect(observed).toBeInstanceOf(AnalysisCancelledError);
   if (!(observed instanceof AnalysisCancelledError))
     throw new Error("Primary cancellation lost its classification");
@@ -80,7 +82,7 @@ it("retains primary cancellation and its opaque caller reason", async () => {
 it("runs each Git query as a stoppable process group with the caller's environment", async () => {
   const selected = await context();
   vi.mocked(exec.execFileBytes).mockRejectedValue(new Error("stop here"));
-  await resolveKiloRegistrationWorktree(selected).catch(() => undefined);
+  await resolveKiloRegistrationWorktree(selected);
   expect(exec.execFileBytes).toHaveBeenCalledWith(
     "git",
     ["rev-parse", "--show-toplevel"],
