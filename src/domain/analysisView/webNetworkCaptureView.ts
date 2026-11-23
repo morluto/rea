@@ -3,7 +3,6 @@ import {
   protobufViewRequestSchema,
 } from "./protobufCaptureView.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
-import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
@@ -36,10 +35,13 @@ import {
   summarizeQlogCapture,
   projectQlogCapturePage,
 } from "./qlogCaptureView.js";
+import { evidenceFileTarget } from "../evidence.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** Offsets page the parent's retained record order, preserving producer ordinals. */
 export const captureViewRequestSchema = z.strictObject({
   kind: z.literal("capture"),
+  // detail-level: how much of the capture the caller asks to see, not what was examined.
   detail: z.enum(["preview", "complete"]).default("preview"),
   offset: z.int().nonnegative().default(0),
   limit: z.int().positive().default(64),
@@ -174,7 +176,7 @@ const describesText = (descriptor: BinaryField, text: string): boolean => {
     utf8.toString("utf8") === text &&
     descriptor.bytes === utf8.length &&
     descriptor.content_base64 === utf8.toString("base64") &&
-    descriptor.sha256 === createHash("sha256").update(utf8).digest("hex")
+    descriptor.sha256 === sha256Hex(utf8)
   );
 };
 /**
@@ -458,19 +460,20 @@ const preview = (record: WebNetworkCaptureRecord, format: string) => {
   };
 };
 
-const captureParser = { safeParse: safeParseOwnedWebNetworkCapture };
-
 /** Authenticate the retained report and its subject at one owning boundary. */
 const parseCaptureParent = (
   parent: AnalysisViewParent,
 ): Result<WebNetworkCapture, AnalysisError> => {
-  const parsed = parseAnalysisViewResult(captureParser, parent);
+  const parsed = parseAnalysisViewResult(
+    { safeParse: safeParseOwnedWebNetworkCapture },
+    parent,
+  );
   if (!parsed.ok) return parsed;
   const report = parsed.value;
-  const subject = parent.subject;
+  const subject = evidenceFileTarget(parent);
   if (
     report.artifact.sha256 !== null &&
-    (subject == null || subject.digest.sha256 !== report.artifact.sha256)
+    (subject == null || subject.sha256 !== report.artifact.sha256)
   )
     return err(
       analysisViewInputError([
@@ -542,7 +545,8 @@ export const projectWebNetworkCaptureView = (
         "Decoding covers selected retained bodies only. Exhausting wire fields does not establish schema completeness or business meaning; compressed bodies and unsupported schema facets remain unknown.",
       ],
     });
-  if (view.kind === "summary")
+  if (view.kind === "summary") {
+    const protobufSummary = summarizeProtobuf(report.records);
     return ok({
       kind: "summary" as const,
       view,
@@ -557,18 +561,14 @@ export const projectWebNetworkCaptureView = (
         ...(report.protobuf_coverage === undefined
           ? {}
           : { protobuf_coverage: report.protobuf_coverage }),
-        ...(summarizeProtobuf(report.records) === undefined
-          ? {}
-          : { protobuf: summarizeProtobuf(report.records)! }),
+        ...(protobufSummary === undefined ? {} : { protobuf: protobufSummary }),
         ...(report.format === "qlog"
           ? { qlog: summarizeQlogCapture(report.qlog) }
           : {}),
       },
-      coverage: completeWithinViewCoverage(
-        report.records.length,
-        report.records.length,
-      ),
+      coverage: completeWithinViewCoverage(report.records.length),
     });
+  }
   if (view.kind === "qlog") {
     if (report.format !== "qlog")
       return err(

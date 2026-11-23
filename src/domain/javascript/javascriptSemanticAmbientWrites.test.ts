@@ -1,11 +1,9 @@
 import * as t from "@babel/types";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
-import {
-  indexJavaScriptBindingsSteps,
-  indexJavaScriptBindingsWithReceiversSteps,
-} from "./javascriptSemanticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import {
   completeSemanticSteps,
   traverseJavaScriptAst,
@@ -15,6 +13,44 @@ import {
   createGlobalReferenceReader,
 } from "./javascriptSemanticAmbientWrites.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import { ambientPathMayObserveAt } from "./javascriptSemanticEffectLog.js";
+
+it.each([
+  ["writes", "protos[0].return = () => ({});", true],
+  ["escapes", "configure(protos[0]);", true],
+  ["unrelated writes", "protos[0].unrelated = true;", false],
+] as const)(
+  "indexes %s to spread-stored Iterator.prototype before member analysis",
+  (_name, effect, observed) => {
+    const parsed = parseJavaScriptSource(`
+    const protos = [...[Iterator.prototype]];
+    const box = [0, { mode: 'before' }];
+    const [before] = box;
+    ${effect}
+    const [after] = box;
+  `);
+    if (parsed === null) throw new Error("Expected a parsed iterator fixture");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    completeSemanticSteps(index.indexAmbientWritesSteps());
+    const observations: boolean[] = [];
+    traverseJavaScriptAst(parsed.program, {
+      enter(node) {
+        if (t.isArrayPattern(node))
+          observations.push(
+            ambientPathMayObserveAt(
+              index.bindings,
+              node,
+              ["global", "Iterator", "prototype", "return"],
+              "contents",
+            ),
+          );
+      },
+    });
+    expect(observations).toEqual([false, observed]);
+  },
+);
 
 it.each([
   [
@@ -251,21 +287,38 @@ new Worker(new URL("./worker.js", import.meta.url));`).references.find(
   expect(worker?.specifier).toBe("./worker.js");
 });
 
-it("indexes unknown-key stores of fresh objects in linear stored-value work", () => {
-  // Count reads of the stored values' own syntax during ambient indexing only.
+const widenedStoreCycle = "var a=[],b=[],k=[];a[k[0]]=b;b[k[0]]=a;";
+
+it.each([
+  {
+    name: "unknown-key slot replacements",
+    setup: "var t={},k=[];",
+    store: (i: number) => `t[k[${String(i)}]]={v:${String(i)}};`,
+    finish: "",
+  },
+  {
+    name: "nested writes through a cycle with conflicting projection depths",
+    setup: widenedStoreCycle,
+    store: (i: number) => `a[k[0]][k[1]].p${String(i)}={v:${String(i)}};`,
+    finish: "consume(a);",
+  },
+])("indexes $name in linear stored-value work", ({ setup, store, finish }) => {
   const work = (count: number): number => {
-    const source = `var t={},k=[];${Array.from({ length: count }, (_, i) => `t[k[${String(i)}]]={v:${String(i)}};`).join("")}`;
+    const source =
+      setup +
+      Array.from({ length: count }, (_, i) => store(i)).join("") +
+      finish;
     const parsed = parseJavaScriptSource(source);
     if (parsed === null) throw new Error("Expected stored-object fixture");
     const index = completeSemanticSteps(
       indexJavaScriptBindingsWithReceiversSteps(parsed.program),
     );
-    let counting = false;
     let reads = 0;
     for (const statement of parsed.program.body) {
       if (
         !t.isExpressionStatement(statement) ||
-        !t.isAssignmentExpression(statement.expression)
+        !t.isAssignmentExpression(statement.expression) ||
+        !t.isObjectExpression(statement.expression.right)
       )
         continue;
       const value = statement.expression.right;
@@ -274,19 +327,268 @@ it("indexes unknown-key stores of fresh objects in linear stored-value work", ()
         enumerable: true,
         configurable: true,
         get: () => {
-          if (counting) reads += 1;
+          reads += 1;
           return type;
         },
       });
     }
+    completeSemanticSteps(index.indexAmbientWritesSteps());
+    expect(index.bindings.ambientWriteEffects).toEqual([]);
+    expect(index.bindings.ambientEscapeEffects).toEqual([]);
+    return reads;
+  };
+  // Re-expanding the cycle's stored values separately for each store or
+  // effect query makes doubling the fixture quadruple stored-value work.
+  const small = work(32);
+  expect(small).toBeGreaterThan(0);
+  expect(work(64)).toBeLessThan(3 * small);
+});
+
+it("shares settled call continuations at any depth", () => {
+  const work = (count: number): number => {
+    const source =
+      "function make(){return window;}" +
+      widenedStoreCycle +
+      Array.from(
+        { length: count },
+        (_, index) => `a[k[0]][k[1]].p${index}=make();`,
+      ).join("") +
+      "consume(a);";
+    const parsed = parseJavaScriptSource(source);
+    if (parsed === null) throw new Error("Expected widened calls fixture");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    let reads = 0;
+    traverseJavaScriptAst(parsed.program, {
+      enter(node) {
+        if (!t.isAssignmentExpression(node) || !t.isCallExpression(node.right))
+          return;
+        const value = node.right;
+        const type = value.type;
+        Object.defineProperty(value, "type", {
+          get: () => {
+            reads += 1;
+            return type;
+          },
+        });
+      },
+    });
+    completeSemanticSteps(index.indexAmbientWritesSteps());
+    const consumption = parsed.program.body.at(-1);
+    if (!t.isExpressionStatement(consumption))
+      throw new Error("Expected consumption site");
+    expect(
+      index.bindings.ambientEscapeEffects
+        .filter(({ node }) => node === consumption.expression)
+        .map(({ path }) => path),
+    ).toEqual([["global", null]]);
+    return reads;
+  };
+
+  const small = work(32);
+  expect(small).toBeGreaterThan(0);
+  expect(work(64)).toBeLessThan(3 * small);
+});
+
+it("merges widened effects with their existing canonical path keys", () => {
+  const work = (count: number): number => {
+    const source =
+      widenedStoreCycle +
+      Array.from(
+        { length: count },
+        (_, index) => `a[k[0]][k[1]].p${index}=witness${index};`,
+      ).join("") +
+      "consume(a);".repeat(16);
+    const parsed = parseJavaScriptSource(source);
+    if (parsed === null) throw new Error("Expected widened path fixture");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    const stringify = vi.spyOn(JSON, "stringify");
+    let keys: number;
+    try {
+      completeSemanticSteps(index.indexAmbientWritesSteps());
+      keys = stringify.mock.calls.filter(
+        ([path]) =>
+          Array.isArray(path) &&
+          path[0] === "global" &&
+          typeof path[1] === "string" &&
+          path[1].startsWith("witness"),
+      ).length;
+    } finally {
+      stringify.mockRestore();
+    }
+    const last = parsed.program.body.at(-1);
+    if (!t.isExpressionStatement(last))
+      throw new Error("Expected final escape site");
+    expect(
+      new Set(
+        index.bindings.ambientEscapeEffects
+          .filter(({ node }) => node === last.expression)
+          .map(({ path }) => path[1]),
+      ),
+    ).toEqual(new Set(Array.from({ length: count }, (_, i) => `witness${i}`)));
+    return keys;
+  };
+
+  const small = work(64);
+  expect(small).toBeGreaterThan(0);
+  expect(work(128)).toBeLessThan(3 * small);
+});
+
+it("queries settled widening coverage without scanning unrelated groups", () => {
+  const work = (count: number): number => {
+    const groups = Array.from({ length: count }, (_, index) => ({
+      a: `a${index}`,
+      b: `b${index}`,
+      value: index === 0 ? "window" : index === count - 1 ? "module" : "{}",
+    }));
+    const source =
+      "var k=[];" +
+      groups
+        .map(
+          ({ a, b, value }) =>
+            `var ${a}=[],${b}=[];${a}[k[0]]=${b};${b}[k[0]]=${a};${a}[k[0]][k[1]].slot=${value};`,
+        )
+        .join("") +
+      `consume([${groups.map(({ a }) => a).join(",")}]);`;
+    const parsed = parseJavaScriptSource(source);
+    if (parsed === null) throw new Error("Expected widened groups fixture");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+
+    // The old resolver used one WeakMap membership probe per earlier group
+    // for each root reached by the escape query. Count those probes without
+    // wall-clock thresholds, and check that both distant groups contribute.
+    const original = WeakMap.prototype.has;
+    let probes = 0;
+    WeakMap.prototype.has = function (key) {
+      probes += 1;
+      return original.call(this, key);
+    };
+    try {
+      completeSemanticSteps(index.indexAmbientWritesSteps());
+    } finally {
+      WeakMap.prototype.has = original;
+    }
+    const call = parsed.program.body.at(-1);
+    const escape = t.isExpressionStatement(call) ? call.expression : undefined;
+    expect(
+      index.bindings.ambientEscapeEffects
+        .filter(({ node }) => node === escape)
+        .map(({ path }) => path[0])
+        .sort(),
+    ).toEqual(["commonjs-module", "global"]);
+    return probes;
+  };
+
+  const small = work(24);
+  expect(work(48)).toBeLessThanOrEqual(3 * small + 96);
+});
+
+it("propagates widened values through reference stores discovered later", () => {
+  const source =
+    widenedStoreCycle +
+    [
+      "var reached={},tail={},unrelated={};",
+      "a[k[0]][k[1]].slot=window;",
+      "a[k[2]]=reached;",
+      "reached.child=tail;",
+      "tail.fetch=1;",
+      "unrelated.fetch=2;",
+      "consume(tail);",
+      "consume(unrelated);",
+    ].join("");
+  const parsed = parseJavaScriptSource(source);
+  if (parsed === null) throw new Error("Expected late-store fixture");
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  const site = (node: t.Node | undefined) =>
+    source.slice(node?.start ?? 0, node?.end ?? 0);
+  expect(
+    state.ambientWriteEffects
+      .filter(
+        ({ path }) =>
+          path.length === 2 && path[0] === "global" && path[1] === "fetch",
+      )
+      .map(({ node }) => site(node)),
+  ).toEqual(["tail.fetch=1"]);
+  expect(
+    state.ambientEscapeEffects
+      .filter(({ node }) => site(node).startsWith("consume("))
+      .map(({ path, node }) => [path, site(node)]),
+  ).toEqual([[["global", null], "consume(tail)"]]);
+});
+
+it("keeps widened store values distinct from their upstream receiver", () => {
+  const source = [
+    "var a,k=[],leaf={};",
+    "while(flag){a=[a,import.meta];}",
+    "a[k[0]][k[1]].p=leaf;",
+    "leaf.x.url=5;",
+    "consume(leaf);",
+    "consume(a);",
+  ].join("");
+  const parsed = parseJavaScriptSource(source, "app.mjs");
+  if (parsed === null) throw new Error("Expected directed-region fixture");
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  const site = (node: t.Node | undefined) =>
+    source.slice(node?.start ?? 0, node?.end ?? 0);
+  expect(state.ambientWriteEffects.map(({ node }) => site(node))).toEqual([
+    "a[k[0]][k[1]].p=leaf",
+    "a[k[0]][k[1]].p=leaf",
+  ]);
+  expect(
+    state.ambientEscapeEffects.map(({ path, node }) => [path, site(node)]),
+  ).toEqual([[["import-meta", null], "consume(a)"]]);
+});
+
+it("escapes a looping alias cycle in linear initializer work", () => {
+  // Every copy in the loop reads a binding whose initializers are the other
+  // binding's reads. Count reads of the copied values' own syntax only.
+  const work = (count: number): number => {
+    const copies = Array.from({ length: count }, (_, i) =>
+      i % 2 === 0 ? "a=b;" : "b=a;",
+    ).join("");
+    const parsed = parseJavaScriptSource(
+      `function run(){var a={},b=globalThis;while(flag){${copies}}consume(a);}`,
+    );
+    if (parsed === null) throw new Error("Expected alias-cycle fixture");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    let counting = false;
+    let reads = 0;
+    traverseJavaScriptAst(parsed.program, {
+      enter(node) {
+        if (!t.isAssignmentExpression(node)) return;
+        const value = node.right;
+        const type = value.type;
+        Object.defineProperty(value, "type", {
+          enumerable: true,
+          configurable: true,
+          get: () => {
+            if (counting) reads += 1;
+            return type;
+          },
+        });
+      },
+    });
     counting = true;
     completeSemanticSteps(index.indexAmbientWritesSteps());
     counting = false;
-    expect(index.bindings.ambientWriteEffects).toEqual([]);
+    expect(index.bindings.ambientEscapeEffects.map(({ path }) => path)).toEqual(
+      [["global", null]],
+    );
     return reads;
   };
-  // Each stored value is examined a bounded number of times. Re-reading every
-  // earlier value from every later store grows at least quadratically.
+  // The escape query takes each copied value once. Requeueing every
+  // initializer at each read of the other binding grows quadratically.
   expect(work(64)).toBeLessThan(3 * work(32));
 });
 
@@ -387,3 +689,189 @@ it.each([
     expect(statuses).toEqual(expected);
   },
 );
+
+// An argument of a directly invoked source function expression reaches only
+// that function's parameter, whose effects are indexed like any other source
+// effect. Only arguments the body may reach another way escape.
+function expectAmbientEffectPaths({
+  source,
+  writes,
+  escapes,
+}: {
+  readonly source: string;
+  readonly writes: readonly (readonly unknown[])[];
+  readonly escapes: readonly (readonly unknown[])[];
+}): void {
+  const parsed = parseJavaScriptSource(source, "app.js");
+  if (parsed === null) throw new Error("Expected ambient effect fixture");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  completeSemanticSteps(index.indexMemberMutationFactsSteps());
+  const paths = (effects: readonly { readonly path: unknown }[]) => [
+    ...new Set(effects.map(({ path }) => JSON.stringify(path))),
+  ];
+  expect({
+    writes: paths(index.bindings.ambientWriteEffects),
+    escapes: paths(index.bindings.ambientEscapeEffects),
+  }).toEqual({
+    writes: writes.map((path) => JSON.stringify(path)),
+    escapes: escapes.map((path) => JSON.stringify(path)),
+  });
+}
+
+it.each([
+  {
+    source:
+      "const proto=Object.getPrototypeOf([]);proto[Symbol.iterator]=function*(){};",
+    writes: [["global", "Array", "prototype", null]],
+    escapes: [],
+  },
+  {
+    source:
+      "change();function change(){const proto=Reflect.getPrototypeOf([]);proto[Symbol.iterator]=function*(){};}",
+    writes: [["global", "Array", "prototype", null]],
+    escapes: [],
+  },
+  {
+    source:
+      "const Object={getPrototypeOf:()=>({})};const proto=Object.getPrototypeOf([]);proto[Symbol.iterator]=function*(){};",
+    writes: [],
+    escapes: [],
+  },
+])(
+  "keeps native array prototype identity through $source",
+  expectAmbientEffectPaths,
+);
+
+it.each([
+  { source: "(function(g){})(this);", writes: [], escapes: [] },
+  { source: "(function(){})(this);", writes: [], escapes: [] },
+  {
+    source: "(function(g){g.x=1})(this);",
+    writes: [["global", "x"]],
+    escapes: [],
+  },
+  {
+    source: "(function(g){var h=g;h.y=2})(this);",
+    writes: [["global", "y"]],
+    escapes: [],
+  },
+  {
+    source: "(function(g){later(function(){g.w=1})})(this);",
+    writes: [["global", "w"]],
+    escapes: [],
+  },
+  {
+    source: "(function(g){return g})(this).z=1;",
+    writes: [["global", "z"]],
+    escapes: [],
+  },
+  {
+    source: "(function(g,y){y(1)})(this,function(g){});",
+    writes: [],
+    escapes: [],
+  },
+  {
+    source: "(function(g){patch(g)})(this);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+  {
+    source: "(function(g){arguments[0].x=1})(this);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+  {
+    source: "(function(g){})(...[this]);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+  {
+    source: "(function({x}){})(this);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+  {
+    source: "(function(g=d){})(this);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+  {
+    source: "(function(...r){})(this);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+  { source: "unknown(this);", writes: [], escapes: [["global", null]] },
+  {
+    source: "(function(g){g.x=1})(globalThis);",
+    writes: [["global", "x"]],
+    escapes: [],
+  },
+  {
+    source: "(function(m){m.exports=1})(module);",
+    writes: [["commonjs-module", "exports"]],
+    escapes: [],
+  },
+  {
+    source: "(function(g){patch(g)})(window);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+  {
+    source: "(function(g){throw g})(this);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+])(
+  "tracks arguments of directly invoked functions through parameters: $source",
+  expectAmbientEffectPaths,
+);
+
+// A value thrown uncaught at the top level reaches the host's
+// uncaught-exception handlers, which may change it.
+it.each([
+  ...[
+    "throw this;",
+    "{ throw this; }",
+    "try { throw this; } finally {}",
+    "try {} catch { throw this; }",
+  ].map((source) => ({
+    source,
+    writes: [],
+    escapes: [["global", null]],
+  })),
+  { source: "try { throw this; } catch {}", writes: [], escapes: [] },
+])(
+  "escapes values thrown uncaught at the top level: $source",
+  expectAmbientEffectPaths,
+);
+
+it("yields between ambient effect sites after the reference-store fixpoint", () => {
+  const count = 16;
+  const source = Array.from(
+    { length: count },
+    (_, index) => `globalThis.p${index} = 0; consume(globalThis.q${index});`,
+  ).join("");
+  const parsed = parseJavaScriptSource(source);
+  if (parsed === null) throw new Error("Expected ambient checkpoint fixture");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  const steps = index.indexAmbientWritesSteps();
+  const effects = () =>
+    [
+      index.bindings.ambientWriteEffects.length,
+      index.bindings.ambientEscapeEffects.length,
+    ] as const;
+  let previous = effects();
+  for (;;) {
+    const step = steps.next();
+    const current = effects();
+    expect(current[0] - previous[0]).toBeLessThanOrEqual(1);
+    expect(current[1] - previous[1]).toBeLessThanOrEqual(1);
+    previous = current;
+    if (step.done) break;
+  }
+  expect(previous).toEqual([count, count]);
+});

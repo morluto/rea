@@ -1,3 +1,5 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { readLeb128, ULEB64 } from "../domain/leb128.js";
 import type {
   FileMapping,
   ZeroFillMapping,
@@ -10,8 +12,10 @@ import {
   imageFileMappings,
   isZeroFilledSpan,
   type BinaryContainer,
-} from "../native/metadata/BinaryContainer.js";
-import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
+} from "../domain/binaryContainer.js";
+import type { NativeByteSource } from "../domain/native/nativeSectionDirectory.js";
+import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
+import { readBinaryContainerFromReader } from "../domain/native/readBinaryContainer.js";
 import {
   goAnalysisBudgets,
   type GoAnalysisBudgets,
@@ -23,8 +27,9 @@ import {
   goBuildInfoSearch,
   type GoBuildInfoSearchRange,
 } from "./GoBuildInfoSearch.js";
-import { recoverGoStringLiterals } from "./GoStringLiterals.js";
+import { recoverGoStringLiteralsFromReader } from "./GoStringLiterals.js";
 
+const SEARCH_CHUNK_BYTES = 64 * 1024;
 const MAGIC = Buffer.from("ff20476f206275696c64696e663a", "hex");
 const MODULE_START = Buffer.from("3077af0c9274080241e1c107e6d618e6", "hex");
 const MODULE_END = Buffer.from("f932433186182072008242104116d8f2", "hex");
@@ -52,18 +57,58 @@ export interface ReadGoBinaryImageOptions {
   readonly budgets?: Partial<GoAnalysisBudgets>;
 }
 
-/** Inspect bounded executable bytes using native mappings, without loading or executing code. */
-export const readGoBinaryImage = (
-  bytes: Buffer,
-  options?: ReadGoBinaryImageOptions,
-): GoBinaryImage => {
+/** Stream Go build-info and optional string-literal inspection over a bounded FileHandle. */
+export const readGoBinaryImageFromHandle = async (
+  source: NativeByteSource,
+  options: ReadGoBinaryImageOptions | undefined,
+  pause: ZstandardFramePause,
+): Promise<GoBinaryImage> => {
+  const container = await readBinaryContainerFromReader(
+    source,
+    "inspect_go_binary",
+    pause,
+  );
   const budgets = goAnalysisBudgets(options?.budgets);
-  const container = readBinaryContainer(bytes);
-  const { format, architecture, bits, byte_order } = container;
   const stringLiterals =
     options?.includeStringLiterals === true
-      ? recoverGoStringLiterals(bytes, container, budgets, options.checkActive)
+      ? await recoverGoStringLiteralsFromReader(
+          source,
+          container,
+          budgets,
+          options.checkActive,
+        )
       : undefined;
+  const steps = scanGoBuildInfo(
+    source.size,
+    container,
+    budgets,
+    stringLiterals,
+    options?.checkActive,
+  );
+  let step = steps.next();
+  while (!step.done) {
+    const { offset, length, label } = step.value;
+    step = steps.next(
+      await readExactSlice(source, offset, length, container.format, label),
+    );
+  }
+  return step.value;
+};
+
+type BuildInfoRead = {
+  readonly offset: number;
+  readonly length: number;
+  readonly label: string;
+};
+
+function* scanGoBuildInfo(
+  fileSize: number,
+  container: BinaryContainer,
+  budgets: GoAnalysisBudgets,
+  stringLiterals: GoStringLiterals | undefined,
+  checkActive: (() => void) | undefined,
+): Generator<BuildInfoRead, GoBinaryImage, Buffer> {
+  const { format, architecture, bits, byte_order } = container;
   const stringMetadata =
     stringLiterals === undefined
       ? {}
@@ -78,9 +123,7 @@ export const readGoBinaryImage = (
   const searched = new Set<string>();
   let remainingSearchBytes = budgets.max_header_search_bytes;
   const sectionNamesLimitation = container.section_names_limitation;
-  for (const search of goBuildInfoSearch(bytes, container)) {
-    // Identical file spans and alignment inspect the same candidate bytes.
-    // Partially overlapping spans still consume a cumulative work budget.
+  for (const search of goBuildInfoSearch(fileSize, container)) {
     const identity = `${search.offset}:${search.size}:${search.address % 16n}`;
     if (searched.has(identity)) continue;
     searched.add(identity);
@@ -91,7 +134,7 @@ export const readGoBinaryImage = (
         `Go build-info discovery exceeds max_header_search_bytes=${String(budgets.max_header_search_bytes)}`,
       );
     remainingSearchBytes -= search.size;
-    const header = findHeader(bytes, search);
+    const header = yield* findHeaderSteps(search, checkActive);
     if (header !== null) {
       selected = { search, header };
       break;
@@ -122,14 +165,20 @@ export const readGoBinaryImage = (
       );
   };
   verifyMapping(32);
-  const reader = new BinaryReader(bytes, byte_order === "little");
-  const ptrSize = bytes[header + 14];
-  const flags = bytes[header + 15] ?? 0;
+  const headerBytes = yield {
+    offset: header,
+    length: 32,
+    label: "Go build-info header",
+  };
+  const little = byte_order === "little";
+  const headerReader = new BinaryReader(headerBytes, little, container.format);
+  const ptrSize = headerBytes[14];
+  const flags = headerBytes[15] ?? 0;
   if ((flags & ~3) !== 0)
     throw new BinaryFormatFailure(
       "unsupported",
       "Go build-info flags contain an unsupported format bit",
-      true,
+      { undecodedContent: true },
     );
   if ((flags & 2) === 0 && (flags & 1) !== (byte_order === "big" ? 1 : 0))
     throw new BinaryFormatFailure(
@@ -141,14 +190,12 @@ export const readGoBinaryImage = (
   let module: LocatedString;
   if (encoding === "inline") {
     const sourceEnd = inlineDataEnd(header, search, container);
-    const versionExtent = readInlineExtent(
-      reader,
+    const versionExtent = yield* readInlineExtentSteps(
       header + 32,
       sourceEnd - header - 32,
       budgets.max_build_info_bytes,
     );
-    const moduleExtent = readInlineExtent(
-      reader,
+    const moduleExtent = yield* readInlineExtentSteps(
       versionExtent.next,
       sourceEnd - versionExtent.next,
       budgets.max_build_info_bytes,
@@ -161,19 +208,11 @@ export const readGoBinaryImage = (
     );
     version = {
       location: versionExtent.location,
-      bytes: reader.range(
-        versionExtent.location.offset,
-        versionExtent.location.bytes,
-        "Go build-info string",
-      ),
+      bytes: yield* readBuildInfoString(versionExtent.location),
     };
     module = {
       location: moduleExtent.location,
-      bytes: reader.range(
-        moduleExtent.location.offset,
-        moduleExtent.location.bytes,
-        "Go build-info string",
-      ),
+      bytes: yield* readBuildInfoString(moduleExtent.location),
     };
   } else {
     if (ptrSize !== 4 && ptrSize !== 8)
@@ -182,21 +221,23 @@ export const readGoBinaryImage = (
         "Go build-info pointer width must be 4 or 8",
       );
     const pointerBits = ptrSize === 4 ? 32 : 64;
-    const pointerStrings: PointerStringContext = {
-      reader,
+    const pointerContext: PointerStringContext = {
+      fileSize,
+      little,
+      format: container.format,
       mappings,
       zeroFills: container.zero_fills,
       maximumBytes: budgets.max_build_info_bytes,
     };
-    version = readPointerString(
-      pointerStrings,
-      reader.word(header + 16, pointerBits),
+    version = yield* readPointerStringSteps(
+      pointerContext,
+      headerReader.word(16, pointerBits),
       pointerBits,
     );
     const moduleField = header + 16 + ptrSize;
-    module = readOptionalModuleString(
-      pointerStrings,
-      reader.word(moduleField, pointerBits),
+    module = yield* readOptionalModuleStringSteps(
+      pointerContext,
+      headerReader.word(16 + ptrSize, pointerBits),
       moduleField,
       pointerBits,
     );
@@ -206,6 +247,32 @@ export const readGoBinaryImage = (
       budgets.max_build_info_bytes,
     );
   }
+  return buildGoBinaryImageReport(
+    container,
+    header,
+    encoding,
+    version,
+    module,
+    stringMetadata,
+    sectionNamesLimitation,
+  );
+}
+
+const buildGoBinaryImageReport = (
+  container: BinaryContainer,
+  header: number,
+  encoding: "inline" | "pointer",
+  version: LocatedString,
+  module: LocatedString,
+  stringMetadata:
+    | {
+        readonly string_literals: GoStringLiterals;
+        readonly macho_chained_fixups?: boolean;
+      }
+    | Record<string, never>,
+  sectionNamesLimitation: string | undefined,
+): GoBinaryImage => {
+  const { format, architecture, bits, byte_order } = container;
   if (version.bytes.length === 0)
     throw new BinaryFormatFailure(
       "malformed",
@@ -289,9 +356,7 @@ const inlineDataEnd = (
 
 const observedText = (bytes: Buffer): string | null => {
   try {
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes,
-    );
+    return decodeStrictUtf8(bytes, "preserve");
   } catch (cause) {
     if (cause instanceof TypeError) return null;
     throw cause;
@@ -316,96 +381,147 @@ const assertAggregateContentLimit = (
     );
 };
 
-const findHeader = (bytes: Buffer, search: FileMapping): number | null => {
-  if (search.size === 0) return null;
-  const end = search.offset + search.size;
-  const selected = bytes.subarray(search.offset, end);
-  let offset = Number((16n - (search.address % 16n)) % 16n);
-  while (offset < selected.length) {
-    const match = selected.indexOf(MAGIC, offset);
-    if (match < 0) return null;
-    const candidate = search.offset + match;
-    const address = search.address + BigInt(candidate - search.offset);
-    if (address % 16n === 0n) {
-      if (end - candidate < 32)
-        throw new BinaryFormatFailure(
-          "malformed",
-          "Go build-info header is truncated",
-        );
-      return candidate;
-    }
-    offset = match + 1;
-  }
-  return null;
+const readExactSlice = async (
+  source: NativeByteSource,
+  offset: number,
+  size: number,
+  format: BinaryContainer["format"],
+  label: string,
+): Promise<Buffer> => {
+  if (size === 0) return Buffer.alloc(0);
+  if (offset < 0 || size < 0 || offset > source.size - size)
+    throw new BinaryFormatFailure(
+      "truncated",
+      `${label} range is outside the file`,
+      { format, offset, field: label },
+    );
+  if (source.prefix !== undefined && offset + size <= source.prefix.length)
+    return source.prefix.subarray(offset, offset + size);
+  const loaded = await source.readRange(offset, size);
+  if (loaded.length < size)
+    throw new BinaryFormatFailure(
+      "truncated",
+      `${label} range is outside the file`,
+      { format, offset, field: label },
+    );
+  return loaded.subarray(0, size);
 };
 
-const readInlineExtent = (
-  reader: BinaryReader,
+function* findHeaderSteps(
+  search: FileMapping,
+  checkActive: (() => void) | undefined,
+): Generator<BuildInfoRead, number | null, Buffer> {
+  if (search.size === 0) return null;
+  const end = search.offset + search.size;
+  const overlap = MAGIC.length - 1;
+  let chunkStart = search.offset;
+  while (chunkStart < end) {
+    checkActive?.();
+    const chunkEnd = Math.min(end, chunkStart + SEARCH_CHUNK_BYTES);
+    const chunk = yield {
+      offset: chunkStart,
+      length: chunkEnd - chunkStart,
+      label: "Go build-info search",
+    };
+    let offset = 0;
+    while (offset < chunk.length) {
+      const match = chunk.indexOf(MAGIC, offset);
+      if (match < 0) break;
+      const candidate = chunkStart + match;
+      const address = search.address + BigInt(candidate - search.offset);
+      if (address % 16n === 0n) {
+        if (end - candidate < 32)
+          throw new BinaryFormatFailure(
+            "malformed",
+            "Go build-info header is truncated",
+          );
+        return candidate;
+      }
+      offset = match + 1;
+    }
+    if (chunkEnd >= end) break;
+    chunkStart = chunkEnd - overlap;
+  }
+  return null;
+}
+
+function* readInlineExtentSteps(
   offset: number,
   remaining: number,
   maximumBytes: number,
-): { readonly location: GoStringLocation; readonly next: number } => {
-  let length = 0n;
-  for (let index = 0; index < 10; index++) {
-    if (index >= remaining)
-      throw new BinaryFormatFailure(
-        "malformed",
-        "Go build-info varint is truncated",
-      );
-    const byte = reader.bytes[offset + index] ?? 0;
-    if (index === 9 && byte > 1)
-      throw new BinaryFormatFailure(
-        "malformed",
-        "Go build-info varint overflows 64 bits",
-      );
-    length |= BigInt(byte & 127) << BigInt(index * 7);
-    if ((byte & 128) === 0) {
-      if (length > BigInt(maximumBytes))
-        throw new BinaryResourceFailure(
-          "build-info",
-          maximumBytes,
-          `Go build-info string length exceeds max_build_info_bytes=${String(maximumBytes)}`,
-        );
-      const size = Number(length);
-      if (size > remaining - index - 1)
-        throw new BinaryFormatFailure(
-          "malformed",
-          "Go build-info string range is truncated",
-        );
-      const start = offset + index + 1;
-      return {
-        location: { offset: start, bytes: size },
-        next: start + size,
-      };
-    }
-  }
-  throw new BinaryFormatFailure(
-    "malformed",
-    "Go build-info varint is unterminated",
-  );
-};
+): Generator<
+  BuildInfoRead,
+  { readonly location: GoStringLocation; readonly next: number },
+  Buffer
+> {
+  const probeLength = Math.min(10, Math.max(0, remaining));
+  const probe =
+    probeLength === 0
+      ? Buffer.alloc(0)
+      : yield { offset, length: probeLength, label: "Go build-info varint" };
+  const read = readLeb128(probe, 0, probe.length, ULEB64);
+  if ("failure" in read)
+    throw new BinaryFormatFailure(
+      "malformed",
+      read.failure === "truncated"
+        ? "Go build-info varint is truncated"
+        : "Go build-info varint overflows 64 bits",
+    );
+  const start = offset + read.next;
+  const length = read.value;
+  if (length > BigInt(remaining - read.next))
+    throw new BinaryFormatFailure(
+      "malformed",
+      "Go build-info string range is truncated",
+    );
+  if (length > BigInt(maximumBytes))
+    throw new BinaryResourceFailure(
+      "build-info",
+      maximumBytes,
+      `Go build-info string length exceeds max_build_info_bytes=${String(maximumBytes)}`,
+    );
+  const size = Number(length);
+  return {
+    location: { offset: start, bytes: size },
+    next: start + size,
+  };
+}
 
 interface PointerStringContext {
-  readonly reader: BinaryReader;
+  readonly fileSize: number;
+  readonly little: boolean;
+  readonly format: BinaryContainer["format"];
   readonly mappings: readonly FileMapping[];
   readonly zeroFills: readonly ZeroFillMapping[];
   readonly maximumBytes: number;
 }
 
-const readPointerString = (
-  { reader, mappings, zeroFills, maximumBytes }: PointerStringContext,
+function* readPointerStringSteps(
+  {
+    fileSize,
+    little,
+    format,
+    mappings,
+    zeroFills,
+    maximumBytes,
+  }: PointerStringContext,
   address: bigint,
   pointerBits: 32 | 64,
-): LocatedString => {
+): Generator<BuildInfoRead, LocatedString, Buffer> {
   const width = pointerBits / 8;
   const header = mappedFileOffset(mappings, address, width * 2, zeroFills);
-  const valueAddress = reader.word(header, pointerBits);
-  const length = reader.word(header + width, pointerBits);
-  if (length > BigInt(maximumBytes))
-    throw new BinaryResourceFailure(
-      "build-info",
-      maximumBytes,
-      `Go build-info pointer string length exceeds max_build_info_bytes=${String(maximumBytes)}`,
+  const headerBytes = yield {
+    offset: header,
+    length: width * 2,
+    label: "Go build-info pointer header",
+  };
+  const headerReader = new BinaryReader(headerBytes, little, format);
+  const valueAddress = headerReader.word(0, pointerBits);
+  const length = headerReader.word(width, pointerBits);
+  if (length > BigInt(fileSize))
+    throw new BinaryFormatFailure(
+      "malformed",
+      "Go build-info pointer string length exceeds the file extent",
     );
   const size = Number(length);
   // Zero-length Go strings may carry a zero data pointer.
@@ -413,23 +529,47 @@ const readPointerString = (
     size === 0 && valueAddress === 0n
       ? header
       : mappedFileOffset(mappings, valueAddress, size, zeroFills);
+  if (length > BigInt(maximumBytes))
+    throw new BinaryResourceFailure(
+      "build-info",
+      maximumBytes,
+      `Go build-info pointer string length exceeds max_build_info_bytes=${String(maximumBytes)}`,
+    );
   return {
-    bytes: reader.range(offset, size, "Go build-info pointer string"),
+    bytes:
+      size === 0
+        ? Buffer.alloc(0)
+        : yield { offset, length: size, label: "Go build-info pointer string" },
     location: { offset, bytes: size },
   };
-};
+}
 
-const readOptionalModuleString = (
+function* readOptionalModuleStringSteps(
   context: PointerStringContext,
   address: bigint,
   pointerField: number,
   pointerBits: 32 | 64,
-): LocatedString =>
-  isZeroFilledSpan(
-    context.mappings,
-    context.zeroFills,
-    address,
-    (pointerBits / 8) * 2,
+): Generator<BuildInfoRead, LocatedString, Buffer> {
+  if (
+    isZeroFilledSpan(
+      context.mappings,
+      context.zeroFills,
+      address,
+      (pointerBits / 8) * 2,
+    )
   )
-    ? { bytes: Buffer.alloc(0), location: { offset: pointerField, bytes: 0 } }
-    : readPointerString(context, address, pointerBits);
+    return {
+      bytes: Buffer.alloc(0),
+      location: { offset: pointerField, bytes: 0 },
+    };
+  return yield* readPointerStringSteps(context, address, pointerBits);
+}
+
+function* readBuildInfoString({
+  offset,
+  bytes: length,
+}: GoStringLocation): Generator<BuildInfoRead, Buffer, Buffer> {
+  return length === 0
+    ? Buffer.alloc(0)
+    : yield { offset, length, label: "Go build-info string" };
+}

@@ -1,15 +1,14 @@
 import { Writable } from "node:stream";
 
-import { Cli, z } from "incur";
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
+import { z } from "zod";
 import { estimateTokenCount } from "tokenx";
 import { describe, expect, it } from "vitest";
 
-import {
-  createCliResultOutput,
-  streamCliCommandResults,
-} from "../../../src/cli/cliResultOutput.js";
+import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import { jsonLinesErrorRecord } from "../../../src/cli/jsonLines.js";
-import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
 import { silentLogger } from "../../../src/logger.js";
 
@@ -466,25 +465,23 @@ describe("JSON Lines counting and transport", () => {
       },
     ];
     const stream = capture(["--format", "jsonl"]);
-    const cli = Cli.create("explicit-success", { sync: false }).command(
-      "rows",
-      {
-        run: () =>
-          logCliCommand(
-            silentLogger,
-            "rows",
-            async () => value,
-            () => false,
-          ),
-      },
-    );
-    streamCliCommandResults(cli, stream.output);
+    const cli = createCommandCli(stream.output);
+    registerCliCommand(cli, "rows", {
+      run: () =>
+        logCliCommand(
+          silentLogger,
+          "rows",
+          async () => value,
+          () => false,
+        ),
+    });
+
     await cli.serve(["rows", "--format", "jsonl"], { stdout: () => undefined });
     expect(lines(stream.text())).toEqual(value);
   });
 });
 
-describe("SDK-owned JSON Lines parser diagnostics", () => {
+describe("Command-owned JSON Lines parser diagnostics", () => {
   it.each([false, true])(
     "retains counted parser diagnostics (full: %s)",
     async (full) => {
@@ -497,21 +494,22 @@ describe("SDK-owned JSON Lines parser diagnostics", () => {
       ];
       for (const extra of [[], ["--zzz-bogus"]]) {
         const stream = capture(args);
-        const cli = Cli.create("sdk-count", { sync: false }).command("rows", {
+        const cli = createCommandCli(stream.output);
+        registerCliCommand(cli, "rows", {
           args: z.object({ required: z.string() }),
           run: () => [{ id: "row" }],
         });
-        streamCliCommandResults(cli, stream.output);
+
         let status = 0;
         await cli.serve([...args, ...extra], {
           stdout: (text) => {
-            stream.output.captureSdkOutput(text);
+            stream.destination.write(text);
           },
           exit: (code) => {
             status = code;
           },
         });
-        await stream.output.finishSdkOutput(status);
+        await stream.output.finish();
         expect(status).toBe(1);
         const diagnostic = {
           code: extra.length === 0 ? "VALIDATION_ERROR" : "UNKNOWN",
@@ -536,27 +534,27 @@ describe("SDK-owned JSON Lines parser diagnostics", () => {
   );
 });
 
-describe("SDK-owned JSON Lines outcomes", () => {
-  it("uses SDK status to frame validation errors and resets ownership between invocations", async () => {
+describe("Command-owned JSON Lines outcomes", () => {
+  it("frames parsed validation failures and resets output ownership between invocations", async () => {
     const stream = capture(["--format", "jsonl"]);
-    const cli = Cli.create("sdk-status", { sync: false }).command("rows", {
+    const cli = createCommandCli(stream.output);
+    registerCliCommand(cli, "rows", {
       args: z.object({ required: z.string() }),
       run: () => [{ id: "row" }],
     });
-    streamCliCommandResults(cli, stream.output);
+
     const serve = async (args: string[]) => {
       let status = 0;
       stream.output.begin(parseCliOutputArguments(args));
       await cli.serve(args, {
         stdout: (text) => {
-          if (!stream.output.handled && !stream.output.captureSdkOutput(text))
-            throw new Error("Unexpected delegation");
+          stream.destination.write(text);
         },
         exit: (code) => {
           status = code;
         },
       });
-      await stream.output.finishSdkOutput(status);
+      await stream.output.finish();
       return status;
     };
     expect(await serve(["rows", "--format", "jsonl"])).toBe(1);
@@ -568,88 +566,5 @@ describe("SDK-owned JSON Lines outcomes", () => {
     expect(await serve(["rows", "present", "--format", "jsonl"])).toBe(0);
     expect(lines(stream.text())[1]).toEqual({ id: "row" });
     expect(stream.output.error).toBeUndefined();
-  });
-
-  it.each([
-    { failure: false, count: false },
-    { failure: true, count: false },
-    { failure: false, count: true },
-    { failure: true, count: true },
-  ])(
-    "preserves sentinel outcomes under counting (%j)",
-    async ({ failure, count }) => {
-      const args = [
-        "result",
-        "--format",
-        "jsonl",
-        ...(count ? ["--token-count"] : []),
-      ];
-      const stream = capture(args);
-      const cli = Cli.create("sdk-sentinel", { sync: false }).command(
-        "result",
-        {
-          run: (context) =>
-            failure
-              ? context.error({
-                  code: "EXPLICIT_FAILURE",
-                  message: "Caller-owned error",
-                })
-              : context.ok({
-                  code: "EXPLICIT_FAILURE",
-                  message: "Successful data",
-                }),
-        },
-      );
-      streamCliCommandResults(cli, stream.output);
-      let status = 0;
-      await cli.serve(args, {
-        stdout: (text) => {
-          stream.output.captureSdkOutput(text);
-        },
-        exit: (code) => {
-          status = code;
-        },
-      });
-      expect(stream.text()).toBe("");
-      await stream.output.finishSdkOutput(status);
-      expect(lines(stream.text())[0]).toEqual(
-        count && !failure
-          ? estimateTokenCount(
-              JSON.stringify({
-                code: "EXPLICIT_FAILURE",
-                message: "Successful data",
-              }) + "\n",
-            )
-          : failure
-            ? jsonLinesErrorRecord({
-                code: "EXPLICIT_FAILURE",
-                message: "Caller-owned error",
-              })
-            : { code: "EXPLICIT_FAILURE", message: "Successful data" },
-      );
-    },
-  );
-
-  it("delegates generator events immediately without retaining the stream", async () => {
-    const stream = capture(["--format", "jsonl"]);
-    const delegated: string[] = [];
-    const cli = Cli.create("sdk-stream", { sync: false }).command("events", {
-      run: async function* () {
-        yield { text: "first" };
-        expect(delegated.length).toBeGreaterThan(0);
-        yield { text: "second" };
-      },
-    });
-    streamCliCommandResults(cli, stream.output);
-    await cli.serve(["events", "--format", "jsonl"], {
-      stdout: (text) => {
-        expect(stream.output.captureSdkOutput(text)).toBe(false);
-        delegated.push(text);
-      },
-    });
-    await stream.output.finishSdkOutput(0);
-    expect(stream.text()).toBe("");
-    expect(delegated.join("")).toContain("first");
-    expect(delegated.join("")).toContain("second");
   });
 });

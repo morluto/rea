@@ -90,7 +90,7 @@ it("keeps debugger lifetimes fresh and honors platform admission before any laun
     const input = { path: "fixture", inferior_tty: "fixture-tty" };
     expect(await rizin[0].start(input)).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisInputError" },
+      error: { _tag: "AnalysisCancelledError" },
     });
     expect(await rizin[1].start(input)).toMatchObject({
       ok: false,

@@ -1,6 +1,9 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { parseJsonStringLiteral } from "../domain/jsonDuplicateMember.js";
+import { escapeJsonPointerToken } from "../domain/jsonPointer.js";
 import { setImmediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
-import { TextDecoder } from "node:util";
+import { assertArtifactReadActive } from "../resources/index.js";
 import type {
   ModelMetadata,
   ModelTensor,
@@ -9,7 +12,7 @@ import { ModelHeaderReader } from "./ModelHeaderReader.js";
 import {
   MODEL_HEADER_BYTES,
   MODEL_JSON_NESTING,
-  ModelFormatFailure,
+  modelCapacityFailure,
   ModelReportBudget,
   rejectModel,
   rejectPickle,
@@ -37,25 +40,45 @@ class HeaderJson {
     readonly budget: ModelReportBudget,
   ) {}
   #space(): void {
-    while (" \t\r\n".includes(this.text[this.#position] ?? "x"))
-      this.#position++;
+    const text = this.text;
+    const len = text.length;
+    while (this.#position < len) {
+      const code = text.charCodeAt(this.#position);
+      if (code === 0x20 || code === 0x09 || code === 0x0d || code === 0x0a)
+        this.#position++;
+      else break;
+    }
   }
   #string(): string {
     const start = this.#position++;
-    while (this.#position < this.text.length) {
-      const c = this.text[this.#position++];
-      if (c === "\\") this.#position++;
-      else if (c === '"') {
-        const raw = this.text.slice(start, this.#position);
+    const text = this.text;
+    const len = text.length;
+    while (this.#position < len) {
+      const code = text.charCodeAt(this.#position++);
+      if (code === 0x5c) this.#position++;
+      else if (code === 0x22) {
+        const raw = text.slice(start, this.#position);
         this.budget.charge(6 * raw.length + 2);
         try {
-          const value: unknown = JSON.parse(raw);
+          const value: unknown = parseJsonStringLiteral(raw);
           if (typeof value !== "string")
             return rejectModel("Invalid JSON string");
-          for (const unit of value) {
-            const code = unit.codePointAt(0) ?? 0;
-            if (code >= 0xd800 && code <= 0xdfff)
-              rejectModel("Safetensors JSON contains an unpaired surrogate");
+          // `text` was decoded via strict UTF-8, so only `\u` escapes can
+          // introduce unpaired UTF-16 surrogates.
+          if (raw.includes("\\u")) {
+            for (let i = 0; i < value.length; i++) {
+              const code = value.charCodeAt(i);
+              if (code >= 0xd800 && code <= 0xdbff) {
+                const next = value.charCodeAt(i + 1);
+                if (next >= 0xdc00 && next <= 0xdfff) i++;
+                else
+                  rejectModel(
+                    "Safetensors JSON contains an unpaired surrogate",
+                  );
+              } else if (code >= 0xdc00 && code <= 0xdfff) {
+                rejectModel("Safetensors JSON contains an unpaired surrogate");
+              }
+            }
           }
           return value;
         } catch (cause) {
@@ -67,88 +90,64 @@ class HeaderJson {
     }
     return rejectModel("Unterminated safetensors JSON string");
   }
-  *#value(depth: number): Generator<void, HeaderValue> {
-    if (++this.#nodes % 4096 === 0) yield;
-    this.#space();
-    this.budget.charge(64);
-    if (depth > MODEL_JSON_NESTING)
-      throw new ModelFormatFailure(
-        "capacity",
-        `Safetensors JSON nesting exceeds ${String(MODEL_JSON_NESTING)} levels`,
-        "json-nesting",
-      );
-    const c = this.text[this.#position];
-    if (c === '"') return this.#string();
-    if (this.text.startsWith("null", this.#position)) {
-      this.#position += 4;
-      return null;
-    }
-    if (this.text.startsWith("true", this.#position)) {
-      this.#position += 4;
-      return true;
-    }
-    if (this.text.startsWith("false", this.#position)) {
-      this.#position += 5;
-      return false;
-    }
-    if (c === "{" || c === "[") {
-      this.#position++;
-      const object: { [key: string]: HeaderValue } = Object.create(null) as {
-        [key: string]: HeaderValue;
-      };
-      const array: HeaderValue[] = [];
-      const close = c === "{" ? "}" : "]";
-      this.#space();
-      if (this.text[this.#position] === close) {
-        this.#position++;
-        return c === "{" ? object : array;
-      }
-      while (true) {
-        this.#space();
-        if (c === "{") {
-          if (this.text[this.#position] !== '"')
-            rejectModel("Expected safetensors JSON object key");
-          const key = this.#string();
-          if (Object.hasOwn(object, key))
-            rejectModel(`Duplicate safetensors JSON key ${key}`);
-          this.#space();
-          if (this.text[this.#position++] !== ":")
-            rejectModel("Expected safetensors JSON colon");
-          object[key] = yield* this.#value(depth + 1);
-        } else array.push(yield* this.#value(depth + 1));
-        this.#space();
-        const next = this.text[this.#position++];
-        if (next === close) return c === "{" ? object : array;
-        if (next !== ",") rejectModel("Invalid safetensors JSON container");
-      }
-    }
+  #number(): bigint | JsonNumber {
+    const text = this.text;
+    const len = text.length;
     const start = this.#position;
-    if (this.text[this.#position] === "-") this.#position++;
-    const integerStart = this.#position;
-    if (this.text[this.#position] === "0") this.#position++;
-    else if (/^[1-9]$/u.test(this.text[this.#position] ?? "")) {
+    let isNonNegativeInt = true;
+    if (this.#position < len && text.charCodeAt(this.#position) === 0x2d) {
       this.#position++;
-      while (/^[0-9]$/u.test(this.text[this.#position] ?? "")) this.#position++;
+      isNonNegativeInt = false;
+    }
+    const integerStart = this.#position;
+    if (this.#position < len) {
+      const firstDigit = text.charCodeAt(this.#position);
+      if (firstDigit === 0x30) {
+        this.#position++;
+      } else if (firstDigit >= 0x31 && firstDigit <= 0x39) {
+        this.#position++;
+        while (this.#position < len) {
+          const d = text.charCodeAt(this.#position);
+          if (d >= 0x30 && d <= 0x39) this.#position++;
+          else break;
+        }
+      }
     }
     if (this.#position === integerStart)
       return rejectModel("Invalid safetensors JSON value");
-    if (this.text[this.#position] === ".") {
+    if (this.#position < len && text.charCodeAt(this.#position) === 0x2e) {
+      isNonNegativeInt = false;
       this.#position++;
       const fractionStart = this.#position;
-      while (/^[0-9]$/u.test(this.text[this.#position] ?? "")) this.#position++;
+      while (this.#position < len) {
+        const d = text.charCodeAt(this.#position);
+        if (d >= 0x30 && d <= 0x39) this.#position++;
+        else break;
+      }
       if (this.#position === fractionStart)
         return rejectModel("Invalid safetensors JSON value");
     }
-    if (/[eE]/u.test(this.text[this.#position] ?? "")) {
-      this.#position++;
-      if (/[+-]/u.test(this.text[this.#position] ?? "")) this.#position++;
-      const exponentStart = this.#position;
-      while (/^[0-9]$/u.test(this.text[this.#position] ?? "")) this.#position++;
-      if (this.#position === exponentStart)
-        return rejectModel("Invalid safetensors JSON value");
+    if (this.#position < len) {
+      const exp = text.charCodeAt(this.#position);
+      if (exp === 0x65 || exp === 0x45) {
+        isNonNegativeInt = false;
+        this.#position++;
+        if (this.#position < len) {
+          const sign = text.charCodeAt(this.#position);
+          if (sign === 0x2b || sign === 0x2d) this.#position++;
+        }
+        const exponentStart = this.#position;
+        while (this.#position < len) {
+          const d = text.charCodeAt(this.#position);
+          if (d >= 0x30 && d <= 0x39) this.#position++;
+          else break;
+        }
+        if (this.#position === exponentStart)
+          return rejectModel("Invalid safetensors JSON value");
+      }
     }
-    const numeric = this.text.slice(start, this.#position);
-    if (/^(?:0|[1-9][0-9]*)$/u.test(numeric)) {
+    const numeric = text.slice(start, this.#position);
+    if (isNonNegativeInt) {
       if (numeric.length > 20) return new JsonNumber(numeric);
       const integer = BigInt(numeric);
       if (integer <= 0xffffffffffffffffn) return integer;
@@ -158,11 +157,100 @@ class HeaderJson {
   *read(): Generator<void, HeaderValue> {
     if (this.text[0] !== "{")
       rejectModel("Safetensors header must begin with a JSON object");
-    const value = yield* this.#value(0);
+    type Frame =
+      | {
+          readonly kind: "object";
+          readonly value: { [key: string]: HeaderValue };
+          key: string;
+        }
+      | { readonly kind: "array"; readonly value: HeaderValue[] };
+    const stack: Frame[] = [];
+    let root: HeaderValue | undefined;
+    // Iterative descent avoids allocating a JS Generator frame per JSON value.
+    parseValue: while (true) {
+      if (++this.#nodes % 4096 === 0) yield;
+      this.#space();
+      this.budget.charge(64);
+      if (stack.length > MODEL_JSON_NESTING)
+        throw modelCapacityFailure(
+          "json-nesting",
+          `Safetensors JSON nesting exceeds ${String(MODEL_JSON_NESTING)} levels`,
+        );
+      const c = this.text[this.#position];
+      let value: HeaderValue;
+      if (c === "{" || c === "[") {
+        this.#position++;
+        const close = c === "{" ? "}" : "]";
+        this.#space();
+        if (this.text[this.#position] === close) {
+          this.#position++;
+          value =
+            c === "{"
+              ? (Object.create(null) as { [key: string]: HeaderValue })
+              : [];
+        } else if (c === "{") {
+          const object = Object.create(null) as { [key: string]: HeaderValue };
+          if (this.text[this.#position] !== '"')
+            rejectModel("Expected safetensors JSON object key");
+          const key = this.#string();
+          this.#space();
+          if (this.text[this.#position++] !== ":")
+            rejectModel("Expected safetensors JSON colon");
+          stack.push({ kind: "object", value: object, key });
+          continue parseValue;
+        } else {
+          stack.push({ kind: "array", value: [] });
+          continue parseValue;
+        }
+      } else if (c === '"') {
+        value = this.#string();
+      } else if (this.text.startsWith("null", this.#position)) {
+        this.#position += 4;
+        value = null;
+      } else if (this.text.startsWith("true", this.#position)) {
+        this.#position += 4;
+        value = true;
+      } else if (this.text.startsWith("false", this.#position)) {
+        this.#position += 5;
+        value = false;
+      } else {
+        value = this.#number();
+      }
+      // Attach the completed value to its parent container and advance.
+      while (stack.length > 0) {
+        const frame = stack[stack.length - 1]!;
+        if (frame.kind === "object") frame.value[frame.key] = value;
+        else frame.value.push(value);
+        this.#space();
+        const next = this.text[this.#position++];
+        const close = frame.kind === "object" ? "}" : "]";
+        if (next === close) {
+          stack.pop();
+          value = frame.value;
+          continue;
+        }
+        if (next !== ",") rejectModel("Invalid safetensors JSON container");
+        if (frame.kind === "object") {
+          this.#space();
+          if (this.text[this.#position] !== '"')
+            rejectModel("Expected safetensors JSON object key");
+          const key = this.#string();
+          if (Object.hasOwn(frame.value, key))
+            rejectModel(`Duplicate safetensors JSON key ${key}`);
+          this.#space();
+          if (this.text[this.#position++] !== ":")
+            rejectModel("Expected safetensors JSON colon");
+          frame.key = key;
+        }
+        continue parseValue;
+      }
+      root = value;
+      break;
+    }
     this.#space();
     if (this.#position !== this.text.length)
       rejectModel("Trailing non-whitespace safetensors header bytes");
-    return value;
+    return root;
   }
 }
 
@@ -189,15 +277,12 @@ const integersOf = (value: HeaderValue | undefined): bigint[] => {
 };
 const exactOffset = (value: bigint): number => {
   if (value > BigInt(Number.MAX_SAFE_INTEGER))
-    throw new ModelFormatFailure(
-      "capacity",
-      "Safetensors data offset exceeds exact host offset precision",
+    throw modelCapacityFailure(
       "exact-offset",
+      "Safetensors data offset exceeds exact host offset precision",
     );
   return Number(value);
 };
-const pointer = (value: string): string =>
-  value.replaceAll("~", "~0").replaceAll("/", "~1");
 
 export const readSafetensorsHeader = async (
   reader: ModelHeaderReader,
@@ -220,8 +305,10 @@ export const readSafetensorsHeader = async (
   if ((pickle || zip) && reader.size < 9) rejectPickle();
   const second = await reader.take(4);
   reader.excludeSafetensorsLengthPrefix();
+  // first and second are exact four-byte takes of the little-endian u64 prefix.
   const length =
-    BigInt(first.readUInt32LE()) + (BigInt(second.readUInt32LE()) << 32n);
+    new BinaryReader(first, true, "safetensors").word(0, 32) +
+    (new BinaryReader(second, true, "safetensors").word(0, 32) << 32n);
   const brace = length === 0n ? undefined : (await reader.take(1))[0];
   // A brace after an admissible length is safetensors, even if truncated.
   if (
@@ -238,11 +325,7 @@ export const readSafetensorsHeader = async (
   budget.charge(2 * size);
   let text: string;
   try {
-    text =
-      "{" +
-      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-        await reader.take(size - 1),
-      );
+    text = "{" + decodeStrictUtf8(await reader.take(size - 1), "preserve");
   } catch (cause) {
     if (cause instanceof TypeError)
       rejectModel("Safetensors header is not valid UTF-8");
@@ -271,7 +354,7 @@ export const readSafetensorsHeader = async (
         element_count: null,
         preview_complete: true,
         ...source,
-        json_pointer: `/__metadata__/${pointer(key)}`,
+        json_pointer: `/__metadata__/${escapeJsonPointerToken(key)}`,
       });
     }
   }
@@ -336,7 +419,7 @@ export const readSafetensorsHeader = async (
       byte_length_state: "declared",
       storage_validation: bits === undefined ? "unknown" : "consistent",
       ...source,
-      json_pointer: `/${pointer(name)}`,
+      json_pointer: `/${escapeJsonPointerToken(name)}`,
     });
   }
   const ordered = [...tensors].sort(

@@ -1,3 +1,4 @@
+import { isParseLimit } from "../parseFailureAnalysisError.js";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -5,10 +6,12 @@ import {
   centralDirectoryV1SignatureEntries,
   detectV1Signature,
   localEntryData,
-  MAX_DUPLICATE_NAME_SAMPLE,
-  MAX_V1_SIGNATURE_ENTRIES,
   type ApkV1Entry,
 } from "./apkV1Signature.js";
+
+// Fixed examples keep the entry and output-sample limits independently checked.
+const MAX_V1_SIGNATURE_ENTRIES = 4096;
+const MAX_DUPLICATE_NAME_SAMPLE = 5;
 
 /** A central-directory entry with no stored data. */
 const entry = (name: string): ApkV1Entry => ({
@@ -138,10 +141,14 @@ describe("APK v1 (JAR) signature detection", () => {
     );
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error).toEqual({
-      kind: "budget-exceeded",
-      resource: "v1-signature-entries",
-      limit: MAX_V1_SIGNATURE_ENTRIES,
+    expect(isParseLimit(result.error, "apk-v1-central-directory")).toBe(true);
+    expect(result.error).toMatchObject({
+      failure: {
+        limit: {
+          name: "max_v1_signature_entries",
+          maximum: MAX_V1_SIGNATURE_ENTRIES,
+        },
+      },
     });
   });
 

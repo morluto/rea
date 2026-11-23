@@ -16,6 +16,11 @@ import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import type { JsonValue } from "../jsonValue.js";
+import {
+  pickFields,
+  selectIndexedViewRows,
+  selectViewRows,
+} from "./selectViewRows.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
@@ -28,6 +33,7 @@ import {
   boundedViewMessages,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 const HEADLINE_TEXT_LIMIT = 512;
 
@@ -146,8 +152,8 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
   const report = parsed.value;
   const reusable = isImmutableJsonSnapshot(report);
   const cached = reusable ? checked.get(report) : undefined;
-  const subject = parent.subject;
-  if (subject != null && subject.digest.sha256 !== report.artifact.sha256)
+  const subject = evidenceFileTarget(parent);
+  if (subject != null && subject.sha256 !== report.artifact.sha256)
     return err(
       analysisViewInputError([
         {
@@ -243,7 +249,7 @@ export const projectModelArtifactView = (
           "limitations",
         ),
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const rows =
     view.collection === "tensors"
@@ -273,57 +279,42 @@ export const projectModelArtifactView = (
     view.collection === "tensors" && view.storage_validation !== undefined
       ? new Set(view.storage_validation)
       : undefined;
-  let selected: number[] | undefined;
-  if (selectedNames !== undefined)
-    selected = [
-      ...new Set(
-        selectedNames.flatMap((name) => {
-          const index = lookup.get(name);
-          return index === undefined ? [] : [index];
-        }),
-      ),
-    ].sort((a, b) => a - b);
-  else if (indices !== undefined)
-    selected = [...indices]
-      .filter((index) => index < rows.length)
-      .sort((a, b) => a - b);
-  if (
-    indices !== undefined ||
-    types !== undefined ||
-    storageStates !== undefined
-  )
-    selected = (selected ?? rows.map((row) => row.index)).filter((index) => {
-      const row = rows[index]!;
-      return (
-        (indices === undefined || indices.has(index)) &&
-        (types === undefined || types.has(row.type)) &&
-        (storageStates === undefined ||
-          ("storage_validation" in row &&
-            storageStates.has(row.storage_validation)))
-      );
-    });
-  const total = selected?.length ?? rows.length;
-  const pageIndices =
-    selected === undefined
-      ? Array.from(
-          {
-            length: Math.max(
-              0,
-              Math.min(view.limit, rows.length - view.offset),
-            ),
-          },
-          (_, index) => view.offset + index,
-        )
-      : selected.slice(view.offset, view.offset + view.limit);
   const fields =
     view.fields === undefined ? undefined : new Set<string>(view.fields);
-  const items = pageIndices.map((index) => {
-    const row = rows[index]!;
-    const result: Record<string, JsonValue> = { index };
-    for (const [name, value] of Object.entries(row))
-      if (fields === undefined || fields.has(name)) result[name] = value;
-    return result;
-  });
+  const projectRow = (row: (typeof rows)[number], index: number) =>
+    fields === undefined
+      ? { ...row, index }
+      : { ...pickFields(row as Record<string, unknown>, fields), index };
+  const matchesRow =
+    types === undefined && storageStates === undefined
+      ? undefined
+      : (row: (typeof rows)[number]) =>
+          (types === undefined || types.has(row.type)) &&
+          (storageStates === undefined ||
+            ("storage_validation" in row &&
+              storageStates.has(row.storage_validation)));
+  let candidateIndices: ReadonlySet<number> | undefined;
+  if (selectedNames !== undefined) {
+    const matched = new Set<number>();
+    for (const name of selectedNames) {
+      const index = lookup.get(name);
+      if (index !== undefined && (indices === undefined || indices.has(index)))
+        matched.add(index);
+    }
+    candidateIndices = matched;
+  } else if (indices !== undefined) {
+    candidateIndices = indices;
+  }
+  const paged =
+    candidateIndices !== undefined
+      ? selectIndexedViewRows(
+          rows,
+          candidateIndices,
+          view,
+          matchesRow,
+          projectRow,
+        )
+      : selectViewRows(rows, view, matchesRow, projectRow);
   return ok({
     kind: "model-artifact" as const,
     view,
@@ -331,7 +322,7 @@ export const projectModelArtifactView = (
     source: report.artifact,
     model,
     source_coverage: report.coverage,
-    items: modelArtifactViewItemsSchema.parse(items),
-    coverage: pageViewCoverage(view.offset, items.length, total),
+    items: modelArtifactViewItemsSchema.parse(paged.rows),
+    coverage: pageViewCoverage(view.offset, paged.rows.length, paged.total),
   });
 };

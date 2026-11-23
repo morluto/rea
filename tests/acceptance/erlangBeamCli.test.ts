@@ -66,19 +66,20 @@ const extendedFirstAtomLength = (): Buffer => {
 };
 
 cliTest(
-  "reports BEAM tables and code through the public CLI",
+  "reports BEAM tables and code for a path relative to the CLI working directory",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-beam-cli-");
     const path = join(root, "app.beam");
     await writeFile(path, erlangBeamFixture("cli_mod"));
     const result = await cli.run({
-      arguments: ["inspect-erlang-beam", path, "--json"],
+      arguments: ["inspect-erlang-beam", "app.beam", "--json"],
+      cwd: root,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = completeBeamEvidenceSchema.parse(result.json);
     expect(evidence).toMatchObject({
       confidence: "observed",
-      subject: { local_path: path, format: "file" },
+      subject: { local_path: path, identity: { format: "file" } },
     });
     expect(evidence.normalized_result).toMatchObject({
       atom_encoding: "utf8",
@@ -366,6 +367,40 @@ cliTest(
 );
 
 cliTest(
+  "reports a selected BEAM table tail through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-beam-table-tail-");
+    const path = join(root, "table-tail.beam");
+    const bytes = oneAtomBeam(0xab);
+    // Move one byte of alignment padding into the AtU8 payload.
+    bytes.writeUInt32BE(7, 16);
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-erlang-beam", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = completeBeamEvidenceSchema.parse(
+      result.json,
+    ).normalized_result;
+    expect(report).toMatchObject({
+      module: "m",
+      chunks: [{ name: "AtU8", payload: { location: { bytes: 7 } } }],
+      coverage: { status: "partial", trailing_bytes: 0 },
+    });
+    expect(report.limitations).toContain(
+      "The selected AtU8 table has 1 trailing byte that was not examined.",
+    );
+    const { call } = await connectLocalToolsMcp();
+    const reply = await call("inspect_erlang_beam", { path });
+    expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+    expect(
+      completeBeamEvidenceSchema.parse(reply.structuredContent)
+        .normalized_result,
+    ).toEqual(report);
+  },
+);
+
+cliTest(
   "inspects the declared BEAM form while retaining trailing bytes in artifact identity",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-beam-trailer-");
@@ -403,6 +438,19 @@ cliTest(
     expect(trailing.normalized_result.form.location.bytes).toBe(
       formBytes.length,
     );
+    // The declared form parses identically, but the surplus bytes are disclosed
+    // rather than silently folded into complete coverage.
+    expect(control.normalized_result.coverage).toMatchObject({
+      status: "complete",
+      trailing_bytes: 0,
+    });
+    expect(trailing.normalized_result.coverage).toMatchObject({
+      status: "partial",
+      trailing_bytes: trailer.length,
+    });
+    expect(trailing.normalized_result.limitations).toContain(
+      `The declared FOR1 form ends at offset ${String(formBytes.length)}; ${String(trailer.length)} trailing bytes were not examined.`,
+    );
   },
 );
 
@@ -426,17 +474,27 @@ cliTest(
 );
 
 cliTest(
-  "resolves a relative BEAM path against the working directory",
+  "checks the BEAM chunk extent before reporting the chunk-count limit",
   async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-beam-cli-rel-");
-    await writeFile(join(root, "app.beam"), erlangBeamFixture());
-    const result = await cli.run({
-      arguments: ["inspect-erlang-beam", "app.beam", "--json"],
-      cwd: root,
-    });
-    expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = completeBeamEvidenceSchema.parse(result.json);
-    expect(evidence.subject?.local_path).toBe(join(root, "app.beam"));
+    const root = await createTestTempDirectory("rea-beam-chunk-extent-");
+    const path = join(root, "app.beam");
+    const bytes = erlangBeamFixture();
+    const firstSize = bytes.readUInt32BE(16);
+    const secondHeader = 20 + Math.ceil(firstSize / 4) * 4;
+    await writeFile(path, bytes);
+    const inspect = () =>
+      cli.run({
+        arguments: ["inspect-erlang-beam", path, "--max-chunks", "1", "--json"],
+      });
+    const admitted = await inspect();
+    expect(admitted.json).toMatchObject({ code: "resource_constraint" });
+
+    // Retain bytes beyond the declared form. They cannot supply the second
+    // chunk's payload even though the complete file contains it.
+    bytes.writeUInt32BE(secondHeader, 4);
+    await writeFile(path, bytes);
+    const refused = await inspect();
+    expect(refused.json).toMatchObject({ code: "invalid_request" });
   },
 );
 
@@ -448,18 +506,4 @@ cliTest("rejects an empty BEAM path before reading", async ({ cli }) => {
   });
   expect(result.exitCode, result.stderr).not.toBe(0);
   expect(result.stdout).not.toContain("sha256");
-});
-
-cliTest("reports a truncated BEAM as invalid input", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-beam-cli-bad-");
-  const path = join(root, "broken.beam");
-  await writeFile(path, Buffer.from("FOR1"));
-  const result = await cli.run({
-    arguments: ["inspect-erlang-beam", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_erlang_beam" },
-  });
 });

@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import {
@@ -22,8 +21,13 @@ import {
   isClientJavaScriptEvidence,
 } from "./verify/clients/result-discovery.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  hasGeminiFinalAnswer,
+  hasGeminiSkillBody,
+} from "./verify/clients/gemini-evidence.mjs";
 import { createGeminiModelFixture } from "./verify/clients/gemini-model-fixture.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const { geminiUnsupportedLiteral } = await importVerifierSource(
   new URL("./lib/gemini-schema-literals.mts", import.meta.url).href,
@@ -34,8 +38,6 @@ const repo = fileURLToPath(new URL("..", import.meta.url));
 const runtimeRoot = process.env.REA_VERIFY_RUNTIME_ROOT ?? repo;
 const command = process.env.REA_VERIFY_GEMINI_COMMAND ?? "gemini";
 const mode = process.argv[2] ?? "call";
-const schemaProfile = process.env.REA_VERIFY_GEMINI_SCHEMA_PROFILE ?? "full";
-assert(["full", "compact"].includes(schemaProfile));
 // npm installs of Gemini CLI provide a JavaScript entry point; on Windows only a gemini.cmd shim reaches
 // PATH, which Node does not spawn without a shell, so a selected .js entry runs under this Node. It is
 // resolved once, because the preflight runs from the caller's directory and the client from the workspace.
@@ -49,7 +51,9 @@ assert(
   "Usage: verify-gemini-client.mjs [chat|call]",
 );
 const verifier = createVerifierRun();
-const lab = await mkdtemp(join(tmpdir(), "rea-gemini-client-"));
+const { path: lab } = await VerifierFixture.keepArtifacts({
+  prefix: "rea-gemini-client-",
+});
 const account = join(lab, "account");
 const profile = join(lab, "selected profile");
 const workspace = join(lab, "workspace");
@@ -69,6 +73,7 @@ let skillLoaded = false;
 let expectedSkillBody;
 let skillRequested = false;
 let finalSeen = false;
+let clientFinalSeen = false;
 let catalogSize = null;
 let schemasChecked = 0;
 let examplesChecked = 0;
@@ -97,7 +102,6 @@ await withVerifierCleanup(async () => {
       GEMINI_CLI_NO_RELAUNCH: "1",
       GEMINI_CLI_TRUST_WORKSPACE: "true",
       REA_PROCESS_RUN_ID: verifier.run_id,
-      REA_MCP_INPUT_SCHEMA_PROFILE: schemaProfile,
     };
     try {
       clientVersion = (
@@ -282,32 +286,9 @@ await withVerifierCleanup(async () => {
           .flatMap((c) => c.parts ?? [])
           .filter((p) => p.functionResponse)
           .map((p) => p.functionResponse);
-        skillLoaded ||= responses.some((response) => {
-          const output = response.response?.output;
-          if (
-            response.name !== "activate_skill" ||
-            typeof output !== "string" ||
-            expectedSkillBody === undefined
-          )
-            return false;
-          const start = `<activated_skill name="reverse-engineer-anything">\n  <instructions>\n    ${expectedSkillBody}\n  </instructions>\n\n  <available_resources>\n    `;
-          const at = output.indexOf(start);
-          if (at < 0) return false;
-          const resourcesStart = at + start.length;
-          const resourcesEnd = output.indexOf(
-            "\n  </available_resources>\n</activated_skill>",
-            resourcesStart,
-          );
-          if (resourcesEnd < 0) return false;
-          const resources = output.slice(resourcesStart, resourcesEnd);
-          return (
-            !resources.includes("</activated_skill>") &&
-            !resources.includes("</available_resources>") &&
-            resources.includes(
-              join(profile, ".agents", "skills", "reverse-engineer-anything"),
-            )
-          );
-        });
+        skillLoaded ||=
+          expectedSkillBody !== undefined &&
+          hasGeminiSkillBody(responses, dirname(skillPath), expectedSkillBody);
         const observed = findClientResult(
           responses,
           isClientJavaScriptEvidence,
@@ -388,17 +369,14 @@ await withVerifierCleanup(async () => {
         stderr: join(lab, `${mode}.stderr`),
       },
     );
-    const events = response.stdout
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line));
-    assert.equal(
-      events.findLast((e) => e.type === "result")?.status,
-      "success",
+    clientFinalSeen = hasGeminiFinalAnswer(
+      response.stdout,
+      "REA_CLIENT_COMPATIBILITY_OK",
     );
     assert.equal(fixture.failure, undefined);
     assert(
-      finalSeen && response.stdout.includes("REA_CLIENT_COMPATIBILITY_OK"),
+      finalSeen && clientFinalSeen,
+      "Gemini did not deliver the expected terminal answer.",
     );
     if (mode === "call") assert(evidenceSeen && skillLoaded);
   }, [
@@ -415,7 +393,6 @@ await withVerifierCleanup(async () => {
       client: "Gemini CLI",
       clientVersion,
       mode,
-      schemaProfile,
       schemasChecked,
       examplesChecked,
       passed,
@@ -435,6 +412,7 @@ await withVerifierCleanup(async () => {
       skillLoaded,
       artifactDigest,
       finalSeen,
+      clientFinalSeen,
       requests: fixture?.requests,
       probes: fixture?.probes,
       fixtureFailure: fixture?.failure,

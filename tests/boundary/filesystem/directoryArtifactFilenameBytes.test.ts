@@ -6,6 +6,17 @@ import { expect, it } from "vitest";
 import { scanArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
+it("keeps a leading UTF-8 signature as part of a directory entry name", async () => {
+  const root = await createTestTempDirectory("rea-artifact-filename-bom-");
+  await writeFile(join(root, "\uFEFFname.txt"), "SIGNATURE_IN_NAME");
+  await writeFile(join(root, "name.txt"), "PLAIN_NAME");
+
+  const inventory = await scanArtifactInventory(root);
+  expect(
+    inventory.occurrences.map(({ logical_path }) => logical_path).sort(),
+  ).toEqual([".", "name.txt", "\uFEFFname.txt"]);
+});
+
 it.skipIf(process.platform !== "linux")(
   "keeps invalid UTF-8 filenames distinct from a valid U+FFFD sibling",
   async () => {

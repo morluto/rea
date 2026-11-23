@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { semanticMemberWriteSources } from "./javascriptSemanticEffectLog.js";
 
 import {
   semanticStaticPropertyKey,
@@ -242,11 +243,10 @@ export const createSemanticElectronAppPathChangeQuery = (
                     : [...source.projection, ...path],
               });
             }
-          for (const effect of binding.memberWrites)
-            for (const source of effect.assignedSources ?? []) {
-              if (semanticReferenceSourcesInactive(source, state)) continue;
-              enqueue({ ...current, node: source.node, path: undefined });
-            }
+          for (const source of semanticMemberWriteSources(binding)) {
+            if (semanticReferenceSourcesInactive(source, state)) continue;
+            enqueue({ ...current, node: source.node, path: undefined });
+          }
           continue;
         }
         for (const source of sources)
@@ -312,7 +312,7 @@ export const createSemanticElectronAppPathChangeQuery = (
         for (const choice of semanticAliasSelectionChoices(key!)) {
           const sources = t.isObjectExpression(node)
             ? semanticObjectPropertyReferences(node, [choice], state)
-            : semanticArrayPropertyReferences(node, [choice]);
+            : semanticArrayPropertyReferences(node, [choice], state);
           for (const source of sources)
             if (
               !source.inherited ||

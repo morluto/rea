@@ -1,3 +1,4 @@
+import { managedModuleRow } from "./managedModuleIdentity.js";
 import { z } from "zod";
 
 import type { Evidence } from "../evidence.js";
@@ -42,9 +43,9 @@ import { AnalysisInputError } from "../analysisErrorCore.js";
 import type { EvidenceIntegrityError } from "../evidenceErrors.js";
 import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { err, ok, type Result } from "../result.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
-const textSchema = z.string().min(1);
 
 const managedApplicationGraphReferenceShape = z.strictObject({
   managed_artifact: evidenceInputSchema.optional(),
@@ -113,29 +114,19 @@ export const managedApplicationGraphResultSchema = z
       fields: z.int().min(0),
       pinvoke_imports: z.int().min(0),
       native_implementations: z.int().min(0),
-      // Graphs projected before call and field-access edges existed omit these
-      // counters; null means those relations were not projected, not zero.
-      calls: z
-        .int()
-        .min(0)
-        .nullable()
-        .default(null)
-        .describe("calls edges; null for graphs projected before calls edges"),
-      field_accesses: z
-        .int()
-        .min(0)
-        .nullable()
-        .default(null)
-        .describe(
-          "accesses edges; null for graphs projected before accesses edges",
-        ),
+      calls: z.int().min(0).describe("calls edges"),
+      field_accesses: z.int().min(0).describe("accesses edges"),
     }),
     graph: javascriptApplicationGraphSchema,
     coverage: z.strictObject({
-      status: z.enum(["complete-within-inputs", "partial"]),
+      status: z
+        .enum(["complete-within-inputs", "partial", "unknown"])
+        .describe(
+          "complete-within-inputs when every supplied managed Evidence record is complete and nothing was omitted; unknown when a supplied record is unavailable.",
+        ),
     }),
     evidence_links: z.array(evidenceIdSchema).min(1).max(3),
-    limitations: z.array(textSchema),
+    limitations: z.array(nonEmptyTextSchema),
   })
   .superRefine((result, context) => {
     const [rootId] = result.graph.root_node_ids;
@@ -240,22 +231,7 @@ export const projectManagedGraph = (
       managed_native_boundaries_evidence_id:
         parsed.boundaries?.evidence.evidence_id ?? null,
     },
-    summary: {
-      graph_nodes: graph.nodes.length,
-      graph_edges: graph.edges.length,
-      assemblies: countNodes(graph.nodes, "managed-assembly"),
-      modules: countNodes(graph.nodes, "managed-module"),
-      types: countNodes(graph.nodes, "managed-type"),
-      methods: countNodes(graph.nodes, "managed-method"),
-      fields: countNodes(graph.nodes, "managed-field"),
-      pinvoke_imports: countNodes(graph.nodes, "managed-pinvoke-import"),
-      native_implementations: countNodes(
-        graph.nodes,
-        "managed-native-implementation",
-      ),
-      calls: countEdges(graph.edges, "calls"),
-      field_accesses: countEdges(graph.edges, "accesses"),
-    },
+    summary: summarizeManagedGraph(graph),
     graph,
     coverage: managedGraphResultCoverage(omissions),
     evidence_links: evidenceLinks,
@@ -270,15 +246,62 @@ export const projectManagedGraph = (
   });
 };
 
-const countNodes = (
-  nodes: readonly ApplicationNode[],
-  kind: ApplicationNode["kind"],
-): number => nodes.filter((node) => node.kind === kind).length;
-
-const countEdges = (
-  edges: readonly ApplicationEdge[],
-  relation: ApplicationEdge["relation"],
-): number => edges.filter((edge) => edge.relation === relation).length;
+const summarizeManagedGraph = (graph: {
+  readonly nodes: readonly ApplicationNode[];
+  readonly edges: readonly ApplicationEdge[];
+}) => {
+  let assemblies = 0;
+  let modules = 0;
+  let types = 0;
+  let methods = 0;
+  let fields = 0;
+  let pinvoke_imports = 0;
+  let native_implementations = 0;
+  for (const node of graph.nodes) {
+    switch (node.kind) {
+      case "managed-assembly":
+        assemblies += 1;
+        break;
+      case "managed-module":
+        modules += 1;
+        break;
+      case "managed-type":
+        types += 1;
+        break;
+      case "managed-method":
+        methods += 1;
+        break;
+      case "managed-field":
+        fields += 1;
+        break;
+      case "managed-pinvoke-import":
+        pinvoke_imports += 1;
+        break;
+      case "managed-native-implementation":
+        native_implementations += 1;
+        break;
+    }
+  }
+  let calls = 0;
+  let field_accesses = 0;
+  for (const edge of graph.edges) {
+    if (edge.relation === "calls") calls += 1;
+    else if (edge.relation === "accesses") field_accesses += 1;
+  }
+  return {
+    graph_nodes: graph.nodes.length,
+    graph_edges: graph.edges.length,
+    assemblies,
+    modules,
+    types,
+    methods,
+    fields,
+    pinvoke_imports,
+    native_implementations,
+    calls,
+    field_accesses,
+  };
+};
 
 /** Authenticate each source once, then establish the shared projection identity. */
 export const readManagedGraphProjection = (
@@ -332,6 +355,14 @@ export const readManagedGraphProjection = (
     boundaries: boundaries.value,
   };
   const identity = chooseArtifact(sources);
+  if (identity === undefined) {
+    const missing = "Provide at least one managed inspection result.";
+    return err(
+      new AnalysisInputError(OPERATION, { userMessage: missing }, [
+        { path: [], reason: "invalid_value", message: missing },
+      ]),
+    );
+  }
   const mismatch =
     artifactMismatch(sources, identity.sha256) ??
     moduleIdentityMismatch(sources);
@@ -346,26 +377,17 @@ export const readManagedGraphProjection = (
 
 const OPERATION = "project_managed_application_graph";
 
-/** Validated graph input still had no artifact source. */
-class ManagedGraphSourceError extends Error {
-  readonly _tag = "ManagedGraphSourceError";
-  readonly code = "missing_source" as const;
-
-  constructor() {
-    super("missing_source");
-    this.name = "ManagedGraphSourceError";
-  }
-}
-
+/** The first supplied source's artifact, or `undefined` when none was supplied. */
 const chooseArtifact = (
   parsed: ParsedManagedGraphInput,
-): { readonly sha256: string; readonly path: string } => {
+): { readonly sha256: string; readonly path: string } | undefined => {
   const result =
     parsed.artifact?.result ??
     parsed.members?.result ??
     parsed.boundaries?.result;
-  if (result === undefined) throw new ManagedGraphSourceError();
-  return { sha256: result.artifact.sha256, path: result.artifact.path };
+  return result === undefined
+    ? undefined
+    : { sha256: result.artifact.sha256, path: result.artifact.path };
 };
 
 const artifactMismatch = (
@@ -386,11 +408,15 @@ const artifactMismatch = (
 const moduleIdentityMismatch = (
   parsed: ParsedManagedGraphInput,
 ): string | null => {
+  const modules = [parsed.artifact, parsed.members, parsed.boundaries].flatMap(
+    (source) => {
+      const row = source === null ? null : managedModuleRow(source.result);
+      return row === null ? [] : [row];
+    },
+  );
   const mvidClaims = [
-    parsed.artifact?.result.module?.mvid,
-    parsed.members?.result.module?.mvid,
+    ...modules.map(({ mvid }) => mvid),
     parsed.members?.result.identity_scope.requires_mvid,
-    parsed.boundaries?.result.module?.mvid,
     parsed.boundaries?.result.identity_scope.requires_mvid,
   ]
     .filter((mvid): mvid is string => mvid !== undefined && mvid !== null)
@@ -398,16 +424,10 @@ const moduleIdentityMismatch = (
   if (new Set(mvidClaims).size > 1)
     return "Managed graph inputs report conflicting known module MVIDs or token scopes";
 
-  const modules = [
-    parsed.artifact?.result.module,
-    parsed.members?.result.module,
-    parsed.boundaries?.result.module,
-  ].filter(
-    (module): module is NonNullable<ManagedArtifactInspection["module"]> =>
-      module !== undefined && module !== null,
-  );
   for (const field of ["name", "generation", "token", "row_offset"] as const) {
-    const values = new Set(modules.map((module) => module[field]));
+    const values = new Set(
+      modules.map((module) => module[field]).filter((value) => value !== null),
+    );
     if (values.size > 1)
       return `Managed graph inputs report conflicting module ${field} values`;
   }
@@ -443,8 +463,13 @@ const projectionLimitations = (
         "Managed native-boundary Evidence was not supplied; P/Invoke and native-implementation nodes are absent.",
       ]
     : []),
-  ...(omissions.partialInput
+  ...(omissions.inputStates.includes("partial")
     ? ["At least one supplied managed Evidence record has partial coverage."]
+    : []),
+  ...(omissions.inputStates.includes("unavailable")
+    ? [
+        "At least one supplied managed Evidence record is unavailable; what the graph omits is unknown.",
+      ]
     : []),
   ...(omissions.selectedTypes === null
     ? []

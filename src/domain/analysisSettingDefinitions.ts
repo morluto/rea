@@ -1,6 +1,9 @@
 import { z } from "zod";
 import type {
+  AnalysisControlLimit,
+  AnalysisParameterLimit,
   AnalysisInvocationSettingLimit,
+  AnalysisLimit,
   AnalysisSettingId,
   AnalysisSettingLimit,
 } from "./analysisSettings.js";
@@ -19,22 +22,28 @@ import {
   MAX_NODE_TIMER_DELAY_MS,
   MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS,
   DEFAULT_REGEX_MATCHING_DEADLINE_MS,
-  MAXIMUM_REGEX_MATCHING_DEADLINE_MS,
   DEFAULT_REGEX_WORKER_HEAP_REQUEST_MIB,
   MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
   MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
   DEFAULT_CAPTURE_DECODER_OLD_GENERATION_MIB,
   CAPTURE_DECODER_SEMI_SPACE_MIB,
   MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB,
+  DEFAULT_CAPTURE_PACKET_JSON_EXPANSION_BYTES,
+  MINIMUM_CAPTURE_PACKET_JSON_EXPANSION_BYTES,
+  MAXIMUM_CAPTURE_PACKET_JSON_EXPANSION_BYTES,
   DEFAULT_JADX_OPERATION_TIMEOUT_MS,
   DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
   MAXIMUM_NATIVE_MATCHING_REPRESENTATION_BYTES,
+  DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES,
+  MAXIMUM_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES,
   DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
   MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
   MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
+  DEFAULT_BRIDGE_MAX_REPLY_BYTES,
+  MINIMUM_BRIDGE_MAX_REPLY_BYTES,
+  MAXIMUM_BRIDGE_MAX_REPLY_BYTES,
   DEFAULT_DEBUGGER_COMMAND_DEADLINE_MS,
   MINIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
-  MAXIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
   DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
   MINIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
   MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
@@ -51,16 +60,16 @@ import {
   MAXIMUM_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS,
   DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
   MAXIMUM_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
+  DEFAULT_ZSTD_MAX_FRAMES,
+  MINIMUM_ZSTD_MAX_FRAMES,
+  MAXIMUM_ZSTD_MAX_FRAMES,
 } from "./analysisResourceLimits.js";
 import {
   JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS,
   JAVASCRIPT_WORKER_HEAP_MIB_MINIMUM,
   JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM,
 } from "./javascript/javascriptAnalysisResourceControls.js";
-import {
-  DEFAULT_WASM_COMMAND_TIMEOUT_MS,
-  MAX_WASM_COMMAND_TIMEOUT_MS,
-} from "./wasm/wasmArtifact.js";
+import { DEFAULT_WASM_COMMAND_TIMEOUT_MS } from "./wasm/wasmArtifact.js";
 interface SettingDefinition {
   readonly environment?: string;
   readonly defaultValue: number | null;
@@ -111,6 +120,54 @@ const windowsChangeTimeOperations = [
   "extract_artifact",
   "inspect_binary_layout",
   "inspect_recorded_crash",
+] as const;
+
+/** Every Hopper and Ghidra bridge operation; their replies share one line reader. */
+const hopperAndGhidraBridgeOperations = [
+  "open_binary",
+  "address_name",
+  "comment",
+  "current_address",
+  "current_procedure",
+  "current_document",
+  "goto_address",
+  "inline_comment",
+  "list_bookmarks",
+  "list_documents",
+  "list_names",
+  "list_procedures",
+  "list_segments",
+  "list_strings",
+  "next_address",
+  "prev_address",
+  "procedure_address",
+  "procedure_assembly",
+  "procedure_callees",
+  "procedure_callers",
+  "procedure_info",
+  "read_function_instructions",
+  "read_bytes",
+  "address_to_file_offset",
+  "procedure_references",
+  "procedure_pseudo_code",
+  "resolve_containing_procedure",
+  "search_procedures",
+  "search_strings",
+  "set_address_name",
+  "set_addresses_names",
+  "set_bookmark",
+  "set_comment",
+  "set_inline_comment",
+  "unset_bookmark",
+  "xrefs",
+  "analyze_function",
+  "binary_overview",
+  "inspect_native_load_image",
+  "search_bytes",
+  "annotate_native_function",
+  "inspect_native_data_type",
+  "inspect_native_instruction",
+  "resolve_native_call_targets",
 ] as const;
 
 /** Metadata aggregates existing owner definitions; no environment mutation or engine discovery. */
@@ -293,7 +350,7 @@ export const ANALYSIS_SETTINGS = {
     ...timer,
     environment: "REA_REGEX_MATCHING_DEADLINE_MS",
     defaultValue: DEFAULT_REGEX_MATCHING_DEADLINE_MS,
-    maximum: MAXIMUM_REGEX_MATCHING_DEADLINE_MS,
+    maximum: MAX_NODE_TIMER_DELAY_MS,
     provider: "regex",
     relatedProviders: ["ida", "hopper", "kuna"],
     operations: ["search_strings", "search_procedures"],
@@ -321,6 +378,17 @@ export const ANALYSIS_SETTINGS = {
     provider: "capture",
     operations: ["inspect_web_network_capture"],
   },
+  "capture.packet_json_expansion_bytes": {
+    updateMode: "runtime",
+    environment: "REA_CAPTURE_PACKET_JSON_EXPANSION_BYTES",
+    defaultValue: DEFAULT_CAPTURE_PACKET_JSON_EXPANSION_BYTES,
+    minimum: MINIMUM_CAPTURE_PACKET_JSON_EXPANSION_BYTES,
+    maximum: MAXIMUM_CAPTURE_PACKET_JSON_EXPANSION_BYTES,
+    unit: "bytes",
+    appliesAt: "next_operation",
+    provider: "tshark-capture",
+    operations: ["inspect_packet_capture"],
+  },
   "javascript.analysis_timeout_ms": {
     updateMode: "runtime",
     ...timer,
@@ -340,11 +408,23 @@ export const ANALYSIS_SETTINGS = {
     operations: ["analyze_javascript_application"],
     parameter: "max_heap_mb",
   },
+  "javascript.member_mutation_alias_states": {
+    updateMode: "runtime",
+    environment: "REA_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES",
+    defaultValue: DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES,
+    minimum: 1,
+    maximum: MAXIMUM_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES,
+    unit: "count",
+    appliesAt: "next_operation",
+    provider: "rea-javascript-application",
+    relatedProviders: ["web-bundle-static-analysis"],
+    operations: ["analyze_javascript_application", "analyze_web_bundle"],
+  },
   "wasm.command_timeout_ms": {
     updateMode: "runtime",
     ...timer,
     defaultValue: DEFAULT_WASM_COMMAND_TIMEOUT_MS,
-    maximum: MAX_WASM_COMMAND_TIMEOUT_MS,
+    maximum: MAX_NODE_TIMER_DELAY_MS,
     provider: "wabt-artifact",
     operations: ["inspect_wasm_artifact"],
     parameter: "command_timeout_ms",
@@ -374,53 +454,22 @@ export const ANALYSIS_SETTINGS = {
     // Cutter bridge calls. bridgeMaxRequestBytes.test.ts fails when a registry
     // gains an operation that is missing here.
     operations: [
-      "open_binary",
-      "address_name",
-      "comment",
-      "current_address",
-      "current_procedure",
-      "current_document",
-      "goto_address",
-      "inline_comment",
-      "list_bookmarks",
-      "list_documents",
-      "list_names",
-      "list_procedures",
-      "list_segments",
-      "list_strings",
-      "next_address",
-      "prev_address",
-      "procedure_address",
-      "procedure_assembly",
-      "procedure_callees",
-      "procedure_callers",
-      "procedure_info",
-      "read_function_instructions",
-      "read_bytes",
-      "address_to_file_offset",
-      "procedure_references",
-      "procedure_pseudo_code",
-      "resolve_containing_procedure",
-      "search_procedures",
-      "search_strings",
-      "set_address_name",
-      "set_addresses_names",
-      "set_bookmark",
-      "set_comment",
-      "set_inline_comment",
-      "unset_bookmark",
-      "xrefs",
-      "analyze_function",
-      "binary_overview",
-      "inspect_native_load_image",
-      "search_bytes",
-      "annotate_native_function",
-      "inspect_native_data_type",
-      "inspect_native_instruction",
-      "resolve_native_call_targets",
+      ...hopperAndGhidraBridgeOperations,
       "list_cutter_sessions",
       "cutter_command",
     ],
+  },
+  "bridge.max_reply_bytes": {
+    updateMode: "runtime",
+    environment: "REA_BRIDGE_MAX_REPLY_BYTES",
+    defaultValue: DEFAULT_BRIDGE_MAX_REPLY_BYTES,
+    minimum: MINIMUM_BRIDGE_MAX_REPLY_BYTES,
+    maximum: MAXIMUM_BRIDGE_MAX_REPLY_BYTES,
+    unit: "bytes",
+    appliesAt: "next_operation",
+    provider: "hopper",
+    relatedProviders: ["ghidra"],
+    operations: hopperAndGhidraBridgeOperations,
   },
   "debugger.command_deadline_ms": {
     updateMode: "runtime",
@@ -428,7 +477,7 @@ export const ANALYSIS_SETTINGS = {
     environment: "REA_DEBUGGER_COMMAND_DEADLINE_MS",
     defaultValue: DEFAULT_DEBUGGER_COMMAND_DEADLINE_MS,
     minimum: MINIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
-    maximum: MAXIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
+    maximum: MAX_NODE_TIMER_DELAY_MS,
     provider: "gdb",
     relatedProviders: ["rizin"],
     operations: [
@@ -558,21 +607,109 @@ export const ANALYSIS_SETTINGS = {
     relatedProviders: ["jadx"],
     operations: windowsChangeTimeOperations,
   },
+  "zstd.max_frames": {
+    updateMode: "runtime",
+    environment: "REA_ZSTD_MAX_FRAMES",
+    defaultValue: DEFAULT_ZSTD_MAX_FRAMES,
+    minimum: MINIMUM_ZSTD_MAX_FRAMES,
+    maximum: MAXIMUM_ZSTD_MAX_FRAMES,
+    unit: "count",
+    appliesAt: "next_operation",
+    provider: "rea-artifact-graph",
+    relatedProviders: [
+      "gpu-code-objects",
+      "rea-dwarf-units",
+      "rea-elf-notes",
+      "rea-binary-hardening",
+      "rea-elf-unwind-ranges",
+      "rea-native-exports",
+      "rea-native-initializers",
+      "rea-kernel-module",
+      "rea-elf-debug-link",
+      "go-build-info",
+      "rust-auditable",
+      "il2cpp-metadata",
+      "jadx",
+    ],
+    operations: [
+      "inspect_artifact",
+      "extract_artifact",
+      "inspect_gpu_code_objects",
+      "inspect_dwarf_units",
+      "inspect_elf_notes",
+      "inspect_binary_hardening",
+      "inspect_elf_unwind_ranges",
+      "inspect_native_exports",
+      "inspect_native_initializers",
+      "inspect_kernel_module",
+      "inspect_elf_debug_link",
+      "inspect_go_binary",
+      "inspect_rust_binary",
+      "inspect_il2cpp_metadata",
+      "inspect_android_jni_bindings",
+    ],
+  },
 } as const satisfies Record<AnalysisSettingId, SettingDefinition>;
-/** Launch seeds `update_analysis_settings` can replace. Startup must not reject them. */
-export const runtimeAnalysisEnvironmentNames = (): ReadonlySet<string> =>
-  new Set(
-    Object.values(ANALYSIS_SETTINGS).flatMap((definition) =>
-      definition.updateMode === "runtime" && "environment" in definition
-        ? [definition.environment]
-        : [],
-    ),
-  );
-
 export const analysisSettingIds = Object.keys(
   ANALYSIS_SETTINGS,
 ) as AnalysisSettingId[];
 export const analysisSettingIdSchema = z.enum(analysisSettingIds);
+
+/** Limit facts a result carries when it records a refusal as a value. */
+export const analysisSettingLimitSchema = z.strictObject({
+  setting: analysisSettingIdSchema,
+  effective_value: z.number().nullable(),
+  unit: z.enum(["bytes", "ms", "seconds", "MiB", "count"]),
+  minimum: z.number(),
+  maximum: z.number(),
+  source: z.enum(["default", "setting", "runtime", "request"]).exactOptional(),
+  applies_at: z.enum(["next_operation", "next_worker", "next_startup"]),
+  agent_editable: z.literal(true),
+  scope: z.literal("rea-runtime"),
+  update_mode: z.enum(["runtime", "restart", "parameter"]),
+  pending_restart: z.literal(false),
+  required_value: z.number().exactOptional(),
+  parameter: z.string().exactOptional(),
+}) satisfies z.ZodType<AnalysisSettingLimit>;
+
+/**
+ * A per-call request parameter that bounded a result, named by its contract
+ * field. Adapters render their own spelling of it (a CLI flag) outside the
+ * record.
+ */
+export const analysisParameterLimitSchema = z.strictObject({
+  control_kind: z.literal("parameter"),
+  parameter: z.string(),
+  effective_value: z.number(),
+  unit: z.enum(["bytes", "ms", "seconds", "MiB", "count"]),
+  minimum: z.number(),
+  maximum: z.number(),
+  default_value: z.number(),
+  applies_at: z.literal("next_call"),
+}) satisfies z.ZodType<AnalysisParameterLimit>;
+
+/** The control a result records for a refusal: a setting or a request parameter. */
+export const analysisResultLimitSchema = z.union([
+  analysisSettingLimitSchema,
+  analysisParameterLimitSchema,
+]);
+
+/**
+ * The schemas whose values are controls a result records itself. A result
+ * schema that places one of these instances (directly, optional, in an array
+ * or in a union) declares that position as REA's own control reference, so
+ * an adapter can name its option. Values elsewhere, such as captured file
+ * content that happens to look like a limit, are never read as controls.
+ */
+export const recordedControlSchemas = z.registry<{
+  readonly recordedControl: true;
+}>();
+recordedControlSchemas.add(analysisSettingLimitSchema, {
+  recordedControl: true,
+});
+recordedControlSchemas.add(analysisParameterLimitSchema, {
+  recordedControl: true,
+});
 export const analysisSettingDefinition = (
   id: AnalysisSettingId,
 ): SettingDefinition => ANALYSIS_SETTINGS[id];
@@ -631,7 +768,17 @@ export const analysisSettingLimit = (
 };
 
 /** Re-scope an enforced limit for a caller whose runtime ended with this invocation. */
-export const invocationSettingLimit = ({
+export const invocationLimit = (
+  limit: AnalysisLimit,
+): AnalysisInvocationSettingLimit | AnalysisControlLimit => {
+  if (!("control_kind" in limit)) return invocationSettingLimit(limit);
+  // A new invocation reads its environment without restarting a running REA.
+  return limit.control_kind === "environment"
+    ? { ...limit, applies_at: "next_invocation" }
+    : { ...limit };
+};
+
+const invocationSettingLimit = ({
   applies_at: _appliesAt,
   scope: _scope,
   ...facts

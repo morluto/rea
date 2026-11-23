@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { availableParallelism } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
@@ -15,51 +16,37 @@ import {
 } from "../../../scripts/lib/development-tests.mjs";
 
 import {
-  execFileOutput,
-  execFileOutputFailure,
-} from "../../../src/process/ExecFileOutput.js";
+  processTest,
+  type TestProcesses,
+} from "../../support/process/processFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeRepositoryOxlintConfiguration } from "../../fixtures/oxlintConfiguration.js";
 
 const repository = process.cwd();
 const oxlint = join(repository, "node_modules/oxlint/bin/oxlint");
-const oxlintConfig = join(repository, ".oxlintrc.json");
 
 const runOxlint = async (
+  processes: TestProcesses,
   cwd: string,
   config: string,
   files: readonly string[],
 ) => {
-  let stdout: string;
-  let exitCode: string | number = 0;
-  try {
-    ({ stdout } = await execFileOutput(
-      process.execPath,
-      [oxlint, "--threads=1", "--config", config, "--format", "json", ...files],
-      {
-        cwd,
-        timeout: 60_000,
-        maxBuffer: 8 * 1024 * 1024,
-        stopSignal: "SIGTERM",
-      },
-    ));
-  } catch (cause) {
-    const failure = execFileOutputFailure(cause);
-    if (
-      failure === undefined ||
-      failure.code !== 1 ||
-      failure.signal !== null ||
-      failure.killed ||
-      failure.outputTruncated
-    )
-      throw cause;
-    stdout = failure.stdout;
-    exitCode = failure.code;
-  }
+  const result = await processes.run(
+    process.execPath,
+    [oxlint, "--threads=1", "--config", config, "--format", "json", ...files],
+    { cwd },
+  );
+  expect(result.signal, result.stderr).toBeNull();
+  expect([0, 1], result.stderr).toContain(result.exitCode);
   return {
-    exitCode,
-    report: JSON.parse(stdout) as {
-      diagnostics?: Array<{ code?: string; severity: string }>;
+    exitCode: result.exitCode,
+    report: JSON.parse(result.stdout) as {
+      diagnostics?: Array<{
+        code?: string;
+        severity: string;
+        filename: string;
+        labels?: Array<{ span: { line: number } }>;
+      }>;
     },
   };
 };
@@ -115,108 +102,90 @@ describe("canonical test-project ownership", () => {
 });
 
 describe("Vitest project configuration", () => {
-  it("uses canonical test-project selectors in Vitest", async () => {
-    const root = await createTestTempDirectory("rea-vitest-project-selectors-");
-    const script = join(root, "project-selectors.mjs");
-    await writeFile(
-      script,
-      `
-      const { default: config } = await import(process.argv[2]);
-      console.log(JSON.stringify(config.test.projects.map(({ test }) => ({
-        name: test.name,
-        include: test.include,
-        exclude: test.exclude ?? [],
-      }))));
-    `,
-    );
-    const result = await execFileOutput(
-      process.execPath,
-      [
-        "--import",
-        "tsx",
-        script,
-        pathToFileURL(join(repository, "vitest.config.ts")).href,
-      ],
+  processTest.for(
+    [
+      { flags: [], timeout: 30_000, lines: 68, alsoHosted: true },
+      { flags: ["--coverage"], timeout: 60_000, lines: 68 },
+      { flags: ["--coverage.enabled"], timeout: 60_000, lines: 68 },
+      { flags: ["--coverage=false"], timeout: 30_000, lines: 68 },
       {
-        cwd: repository,
-        timeout: 10_000,
-        maxBuffer: 64 * 1024,
-        stopSignal: "SIGTERM",
+        flags: ["--coverage.enabled=false"],
+        timeout: 30_000,
+        lines: 68,
       },
-    );
-    const selectors = JSON.parse(result.stdout) as Array<{
-      name: string;
-      include: string[];
-      exclude: string[];
-    }>;
-    const canonical = [...SOURCE_TEST_PROJECTS, ...BUILT_TEST_PROJECTS].map(
-      ({ name, include, exclude }) => ({
-        name,
-        include,
-        exclude: exclude ?? [],
-      }),
-    );
-    expect(selectors.sort((a, b) => a.name.localeCompare(b.name))).toEqual(
-      canonical.sort((a, b) => a.name.localeCompare(b.name)),
-    );
-  });
-
-  it.each([
-    { flags: [], timeout: 30_000, lines: 68 },
-    { flags: ["--coverage"], timeout: 60_000, lines: 68 },
-    { flags: ["--coverage.enabled"], timeout: 60_000, lines: 68 },
-    { flags: ["--coverage=false"], timeout: 30_000, lines: 68 },
-    {
-      flags: ["--coverage.enabled=false"],
-      timeout: 30_000,
-      lines: 68,
-    },
-    {
-      flags: ["--coverage.provider=v8"],
-      timeout: 30_000,
-      lines: 68,
-    },
-    {
-      flags: ["--coverage.enabled", "--shard", "1/6"],
-      timeout: 60_000,
-      lines: 0,
-    },
-    {
-      flags: ["--coverage.enabled=false", "--shard=1/6"],
-      timeout: 30_000,
-      lines: 0,
-    },
-  ])(
-    "resolves worker resources from actual CLI options: $flags",
-    async ({ flags, timeout, lines }) => {
+      {
+        flags: ["--coverage.provider=v8"],
+        timeout: 30_000,
+        lines: 68,
+      },
+      {
+        flags: ["--coverage.enabled", "--shard", "1/6"],
+        timeout: 60_000,
+        lines: 0,
+        alsoHosted: true,
+      },
+      {
+        flags: ["--coverage.enabled=false", "--shard=1/6"],
+        timeout: 30_000,
+        lines: 0,
+      },
+    ].flatMap(({ alsoHosted, ...policy }) => [
+      { ...policy, hosted: false, workers: 2, scale: 1 },
+      // Check hosted scaling with coverage both off and on.
+      ...(alsoHosted
+        ? [{ ...policy, hosted: true, workers: 4, scale: 2 }]
+        : []),
+    ]),
+  )(
+    "resolves worker resources from actual CLI options: $flags (hosted: $hosted)",
+    async (
+      { flags, timeout, lines, hosted, workers, scale },
+      { processes },
+    ) => {
       const root = await createTestTempDirectory("rea-vitest-worker-policy-");
       const script = join(root, "worker-policy.mjs");
       await writeFile(
         script,
         `
       import config from ${JSON.stringify(pathToFileURL(join(repository, "vitest.config.ts")).href)};
-      const project = config.test.projects.find(project => project.test.name === 'cli-boundary');
+      const project = (name) => config.test.projects.find(project => project.test.name === name).test;
+      const deadlines = (name) => [project(name).testTimeout, project(name).hookTimeout];
       console.log(JSON.stringify({
-        execArgv: project.test.execArgv,
-        timeout: config.test.testTimeout,
+        execArgv: project('cli-boundary').execArgv,
+        deadlines: {
+          default: [config.test.testTimeout, config.test.hookTimeout],
+          source: deadlines('domain'),
+          built: deadlines('cli-boundary'),
+          longRunning: config.test.tags.find(tag => tag.name === 'long-running').timeout,
+        },
         lines: config.test.coverage.thresholds.lines,
+        workers: config.test.maxWorkers,
       }));
     `,
       );
-      const result = await execFileOutput(
+      const result = await processes.run(
         process.execPath,
         ["--import", "tsx", script, ...flags],
         {
           cwd: repository,
-          timeout: 10_000,
-          maxBuffer: 64 * 1024,
-          stopSignal: "SIGTERM",
+          // Select the runner explicitly; CI itself sets GITHUB_ACTIONS.
+          env: { ...process.env, GITHUB_ACTIONS: hosted ? "true" : "" },
         },
       );
+      // Deadlines are hang detection owned by the project: the source
+      // deadline scales with coverage and hosted runners, built projects allow
+      // four times it, and the long-running tag ten times.
+      expect(result.exitCode, result.stderr).toBe(0);
       expect(JSON.parse(result.stdout)).toEqual({
         execArgv: ["--max-old-space-size=512"],
-        timeout,
+        deadlines: {
+          default: [timeout * scale, timeout * scale],
+          source: [timeout * scale, timeout * scale],
+          built: [4 * timeout * scale, 4 * timeout * scale],
+          longRunning: 10 * timeout * scale,
+        },
         lines,
+        workers: Math.min(workers, availableParallelism()),
       });
     },
   );
@@ -238,85 +207,107 @@ describe("test module isolation", () => {
     expect(projectForTest(path)).toMatchObject({ name, group });
   });
 
-  it("uses one isolation policy for Vitest and binding-aware mock lint", async () => {
-    const files = execFileSync("git", ["ls-files", "*.test.ts"], {
-      cwd: repository,
-      encoding: "utf8",
-    })
-      .trim()
-      .split("\n")
-      .filter(Boolean);
-    const root = await createTestTempDirectory("rea-vitest-project-policy-");
-    const script = join(root, "project-isolation.mjs");
-    await writeFile(
-      script,
-      `
+  processTest(
+    "uses canonical project selectors and module isolation in Vitest",
+    async ({ processes }) => {
+      const root = await createTestTempDirectory("rea-vitest-project-policy-");
+      const script = join(root, "project-policy.mjs");
+      await writeFile(
+        script,
+        `
       import config from ${JSON.stringify(pathToFileURL(join(repository, "vitest.config.ts")).href)};
-      console.log(JSON.stringify(Object.fromEntries(
-        config.test.projects.map(project => [project.test.name, project.test.isolate]),
-      )));
+      console.log(JSON.stringify(config.test.projects.map(({ test }) => ({
+        name: test.name,
+        include: test.include,
+        exclude: test.exclude ?? [],
+        isolate: test.isolate,
+      }))));
     `,
-    );
-    const result = await execFileOutput(
-      process.execPath,
-      ["--import", "tsx", script],
-      {
+      );
+      const result = await processes.run(
+        process.execPath,
+        ["--import", "tsx", script],
+        { cwd: repository },
+      );
+      expect(result.exitCode, result.stderr).toBe(0);
+      const canonical = [...SOURCE_TEST_PROJECTS, ...BUILT_TEST_PROJECTS].map(
+        ({ name, include, exclude, isolate }) => ({
+          name,
+          include,
+          exclude: exclude ?? [],
+          isolate: isolate !== false,
+        }),
+      );
+      const configured = JSON.parse(result.stdout) as typeof canonical;
+      expect(configured.sort((a, b) => a.name.localeCompare(b.name))).toEqual(
+        canonical.sort((a, b) => a.name.localeCompare(b.name)),
+      );
+    },
+  );
+
+  processTest(
+    "enforces configured module-mock isolation across every canonical project",
+    async ({ processes }) => {
+      const root = await createTestTempDirectory("rea-vitest-mock-probe-");
+      const config = await writeRepositoryOxlintConfiguration(root);
+      const files = execFileSync("git", ["ls-files", "*.test.ts"], {
         cwd: repository,
-        timeout: 10_000,
-        maxBuffer: 64 * 1024,
-        stopSignal: "SIGTERM",
-      },
-    );
-    const isolated = JSON.parse(result.stdout) as Record<string, boolean>;
-    expect(files.length).toBeGreaterThan(0);
-    expect(
-      files.filter((file) => {
-        const project = projectForTest(file);
-        return isolated[project.name] !== (project.isolate !== false);
-      }),
-    ).toEqual([]);
-
-    const { report } = await runOxlint(repository, oxlintConfig, files);
-    expect(
-      report.diagnostics?.filter(
-        ({ code, severity }) =>
-          code === "rea(no-shared-module-mock)" && severity === "error",
-      ),
-    ).toEqual([]);
-  });
-
-  it("rejects actual Vitest module-mock aliases only in shared projects", async () => {
-    const root = await createTestTempDirectory("rea-vitest-mock-probe-");
-    const sharedDirectory = join(root, "tests/evaluation");
-    const isolatedDirectory = join(root, "tests/process-global");
-    await mkdir(sharedDirectory, { recursive: true });
-    await mkdir(isolatedDirectory, { recursive: true });
-    const config = await writeRepositoryOxlintConfiguration(root);
-    const probe = async (directory: string, source: string) => {
-      const path = join(directory, "mock-probe.test.ts");
-      await writeFile(path, source);
-      return runOxlint(root, config, [path]);
-    };
-    const shared = await probe(
-      sharedDirectory,
-      'import { vi as testing } from "vitest"; testing.mock("./dependency.js");',
-    );
-    const isolated = await probe(
-      isolatedDirectory,
-      'import * as testing from "vitest"; testing.vi.doMock("./dependency.js");',
-    );
-    expect(shared.exitCode).toBe(1);
-    expect(
-      shared.report.diagnostics?.filter(
-        ({ code, severity }) =>
-          code === "rea(no-shared-module-mock)" && severity === "error",
-      ),
-    ).toHaveLength(1);
-    expect(isolated.exitCode).toBe(0);
-    expect(
-      isolated.report.diagnostics?.filter(
-        ({ code }) => code === "rea(no-shared-module-mock)",
-      ),
-    ).toEqual([]);
-  });
+        encoding: "utf8",
+      })
+        .trim()
+        .split("\n")
+        .filter(Boolean);
+      const probes = [...SOURCE_TEST_PROJECTS, ...BUILT_TEST_PROJECTS].map(
+        (project) => {
+          const path = files.find(
+            (file) => projectForTest(file).name === project.name,
+          );
+          if (path === undefined)
+            throw new Error(`No tracked test in ${project.name}`);
+          return { path, isolated: project.isolate !== false };
+        },
+      );
+      for (const probe of probes) {
+        const path = join(root, probe.path);
+        await mkdir(dirname(path), { recursive: true });
+        await writeFile(
+          path,
+          [
+            'import { vi, vi as testing } from "vitest";',
+            'import * as namespace from "vitest";',
+            'vi.mock("./dependency.js");',
+            'testing.doMock("./other.js");',
+            'namespace.vi.mock("./third.js");',
+            'namespace.vi.doMock("./fourth.js");',
+            'const local = { mock() {}, doMock() {} }; local.mock("unrelated"); local.doMock("unrelated");',
+          ].join("\n"),
+        );
+      }
+      const { exitCode, report } = await runOxlint(
+        processes,
+        root,
+        config,
+        probes.map(({ path }) => path),
+      );
+      expect(exitCode).toBe(1);
+      const errors =
+        report.diagnostics?.filter(
+          ({ code, severity }) =>
+            code === "rea(no-shared-module-mock)" && severity === "error",
+        ) ?? [];
+      expect(errors).toHaveLength(
+        4 * probes.filter(({ isolated }) => !isolated).length,
+      );
+      for (const probe of probes) {
+        const lines = errors
+          .filter(
+            ({ filename }) =>
+              resolve(root, filename) === resolve(root, probe.path),
+          )
+          .flatMap(({ labels }) => labels?.map(({ span }) => span.line) ?? [])
+          .sort((a, b) => a - b);
+        expect(lines, probe.path).toEqual(probe.isolated ? [] : [3, 4, 5, 6]);
+      }
+    },
+  );
 });

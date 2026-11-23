@@ -5,17 +5,26 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
-import { NativeCommandFailure, XcrunCommandRunner } from "./CommandRunner.js";
+import {
+  NativeCommandFailure,
+  XcrunCommandRunner,
+} from "../providers/NativeCommandRunner.js";
 import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import { err } from "../domain/result.js";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
-import { MachoCommandNamesLimitError } from "./MachoCommandNames.js";
+import { decodeLimit } from "../domain/parseFailure.js";
 import {
   NativeFixtureRunner,
   nativeMachoTargetForFile,
 } from "../../tests/fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { inspectionImage } from "./NativeMachoInspection.fixture.js";
+
+const commandBudgetFailure = () =>
+  decodeLimit("macho", "Controlled load-command record allowance", {
+    name: "macho_load_command_records",
+    maximum: 23,
+  });
 
 const control = vi.hoisted(() => ({
   read: undefined as undefined | (() => Promise<never>),
@@ -85,7 +94,7 @@ it.each(
     expect(result.error.partialObservation).toMatchObject({
       operation,
       parameters: { native_command_timeout_ms: 5000 },
-      subject: { local_path: path, digest: { sha256: target.sha256 } },
+      subject: { local_path: path, identity: { sha256: target.sha256 } },
       normalized_result: { provenance: expect.any(Array) },
       locations: expect.any(Array),
     });
@@ -191,16 +200,18 @@ it.each(
     } else {
       expect(result.error.partialObservation).toMatchObject({
         operation,
-        subject: { local_path: path, digest: { sha256: target.sha256 } },
+        subject: { local_path: path, identity: { sha256: target.sha256 } },
         normalized_result: { provenance: expect.any(Array) },
       });
     }
     expect((await client.close()).ok).toBe(true);
   },
 );
-vi.mock("./MachoCommandNames.js", async (importOriginal) => {
+vi.mock("../domain/apple/machoCommandNames.js", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("./MachoCommandNames.js")>();
+    await importOriginal<
+      typeof import("../domain/apple/machoCommandNames.js")
+    >();
   return {
     ...actual,
     readMachoCommandNames: (
@@ -210,6 +221,47 @@ vi.mock("./MachoCommandNames.js", async (importOriginal) => {
         ? actual.readMachoCommandNames(...args)
         : control.read(),
   };
+});
+
+it("reports the projected load-command allowance for a bounded Mach-O read", async () => {
+  const root = await createTestTempDirectory("rea-macho-projection-limit-");
+  const path = join(root, "fixture.macho");
+  const sections = 50_000;
+  const segment = new Uint8Array(72 + 80 * sections);
+  const header = new DataView(segment.buffer);
+  header.setUint32(0, 0x19, true); // LC_SEGMENT_64
+  header.setUint32(4, segment.length, true);
+  header.setUint32(64, sections, true);
+  await writeFile(path, inspectionImage({ commands: [segment] }));
+  const target = await nativeMachoTargetForFile(path);
+  const client = new NativeMacOSProvider(
+    {},
+    new NativeFixtureRunner({
+      lipo: `Non-fat file: ${path} is architecture: arm64\n`,
+    }),
+    "darwin",
+  ).createClient(target);
+  onTestFinished(async () => {
+    await client.close();
+  });
+
+  const result = await client.execute("inspect_macho", {});
+  if (result.ok) throw new Error("Expected a Mach-O capacity refusal");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      operation: "inspect_macho",
+      resource: "memory",
+      reason:
+        "Mach-O load-command projected bytes exceed the retained output budget",
+      reported_limits: {
+        boundary: "macho_load_command_projected_bytes",
+        maximum: 64 * 1024 * 1024,
+      },
+    },
+  });
+  expect(result.error.cleanupIncomplete).toBe(false);
 });
 
 it("reports target mutation after a throwing binary reader and retains the producer failure", async () => {
@@ -225,7 +277,7 @@ it("reports target mutation after a throwing binary reader and retains the produ
   ).createClient(await nativeMachoTargetForFile(path));
   control.read = async () => {
     await writeFile(path, "changed source bytes!");
-    throw new MachoCommandNamesLimitError(23, "records");
+    throw commandBudgetFailure();
   };
   try {
     const result = await client.execute("inspect_macho", {});
@@ -263,7 +315,7 @@ it("retains cancellation and a throwing reader's failure through final verificat
   const reason = new Error("cancel after reader failure");
   control.read = async () => {
     controller.abort(reason);
-    throw new MachoCommandNamesLimitError(23, "records");
+    throw commandBudgetFailure();
   };
   try {
     const result = await client.execute(
@@ -319,7 +371,7 @@ it("retains mutation and reader failure while descriptor cleanup is retried", as
     });
   control.read = async () => {
     await writeFile(path, "changed source bytes!");
-    throw new MachoCommandNamesLimitError(23, "records");
+    throw commandBudgetFailure();
   };
   onTestFinished(async () => {
     control.read = undefined;
@@ -463,7 +515,7 @@ it.each([
   ["truncated fixed fields", "Mach-O fixed command fields are truncated", 1],
   ["invalid string offset", "Mach-O command string offset is invalid", 2],
 ] as const)(
-  "reports malformed binary %s as output failure with its reason",
+  "reports malformed binary %s as invalid input with its reason",
   async (_case, reason, mode) => {
     const { machoImage, dylibCommand, LC } =
       await import("../artifacts/apple/MachoImage.fixture.js");
@@ -486,9 +538,16 @@ it.each([
     try {
       const result = await client.execute("inspect_macho", {});
       if (result.ok) throw new Error("Expected malformed input refusal");
-      expect(projectAnalysisError(result.error)).toMatchObject({
-        code: "unreadable_output",
-        details: { operation: "inspect_macho", reason },
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisInputError",
+        operation: "inspect_macho",
+        issues: [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+            message: `Selected artifact ${path}: ${reason}`,
+          },
+        ],
       });
     } finally {
       await client.close();

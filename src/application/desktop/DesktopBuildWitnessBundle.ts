@@ -6,8 +6,9 @@ import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import type { DesktopTask } from "../../domain/desktop/appTask.js";
 import type { TaskCheckOutcome } from "../../domain/desktop/appTaskChecks.js";
@@ -29,11 +30,12 @@ import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import {
   guestFileAnswerCeiling,
   guestFileAnswerWorkingBytes,
+  readComputerScreenshotBytes,
   type AgentEnvComputer,
 } from "../../desktop/AgentEnvComputer.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
-import { readHostFile } from "../../desktop/HostFileRead.js";
-import { errorText } from "./DesktopBuildCommands.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
+import type { HostFileReader } from "../../ports/HostFileReader.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const CHECK = "check_build_task";
 
@@ -67,6 +69,7 @@ export const bundleTaskDifference = async (
   bundle: string,
   task: DesktopTask,
   signal: AbortSignal,
+  readHostFile: HostFileReader,
 ): Promise<string | undefined> => {
   const stepsPath = `tasks/${task.name}.json`;
   const verifierPath = `artifacts/${taskVerifierArtifact(task)}/verify.py`;
@@ -77,7 +80,7 @@ export const bundleTaskDifference = async (
         bundleFileBytes(),
         signal,
         false,
-        (reason) => new AnalysisCancelledError(CHECK, { cause: reason }),
+        (reason) => cancelledBy(CHECK, carriedReason(reason)),
       ),
     ),
   );
@@ -134,10 +137,9 @@ export const judgeScreenTask = async (
       { format: "jpeg", quality: 70 },
       signal,
     );
-    const image = shot.content.find((block) => block.type === "image")?.data;
-    if (shot.isError || typeof image !== "string")
-      throw new Error("the computer took no screenshot");
-    const screen = Buffer.from(image, "base64");
+    const screen = readComputerScreenshotBytes(shot);
+    if (screen === undefined)
+      throw new Error("the computer did not return valid screenshot bytes");
     const verifier = join(
       bundle.path,
       "artifacts",
@@ -155,7 +157,7 @@ export const judgeScreenTask = async (
           ? cause
           : cause.retainDiagnostics({ completed_judge_checks: results })
         : new ProviderAdapterError(AGENTENV_PROVIDER, CHECK, {
-            userMessage: `The screen judge could not check the screen: ${errorText(cause)}`,
+            userMessage: `The screen judge could not check the screen: ${errorMessage(cause)}`,
             cause,
             ...(results.length === 0
               ? {}

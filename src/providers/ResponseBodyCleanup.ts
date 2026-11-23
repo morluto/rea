@@ -1,7 +1,7 @@
 import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "../artifacts/ArtifactResourceScope.js";
+} from "../resources/index.js";
 
 /** Retain a cancelled response branch until its underlying cancellation settles. */
 export class ResponseBodyCleanup {

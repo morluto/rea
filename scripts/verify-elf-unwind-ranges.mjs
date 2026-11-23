@@ -1,14 +1,15 @@
 /**
- * Build a stripped C++ ELF and compare .eh_frame FDE starts with readelf.
+ * Build a stripped C++ ELF and compare complete FDE ranges with readelf.
+ * Require its linker-produced .eh_frame_hdr to agree with those ranges.
  * Not part of the default check. Exits non-zero when the host has no ELF
  * C++ compiler or no readelf.
  */
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { VerifierFixture, onceConfirmed } from "./lib/verifier-fixture.mjs";
 
 /**
  * Every probe, compiler driver and inspection runs as an owned process tree,
@@ -78,6 +79,7 @@ const compileArguments = (compiler, source, output) => {
       "x86_64-linux-musl",
       "-O0",
       "-g",
+      "-Wl,--eh-frame-hdr",
       source,
       "-o",
       output,
@@ -88,11 +90,20 @@ const compileArguments = (compiler, source, output) => {
       "-O0",
       "-g",
       "-fexceptions",
+      "-Wl,--eh-frame-hdr",
       source,
       "-o",
       output,
     ];
-  return ["-O0", "-g", "-fexceptions", source, "-o", output];
+  return [
+    "-O0",
+    "-g",
+    "-fexceptions",
+    "-Wl,--eh-frame-hdr",
+    source,
+    "-o",
+    output,
+  ];
 };
 
 const compile = async (compiler, source, output) => {
@@ -111,7 +122,7 @@ const stripCopy = async (stripper, input, output) => {
 };
 
 // llvm-readelf has no --debug-dump=frames; llvm-dwarfdump --eh-frame prints
-// the same `pc=<start>..<end>` FDE ranges under an `.eh_frame contents:` head.
+// `pc=<start>...<end>` FDE ranges under an `.eh_frame contents:` head.
 const frameDump = async (readelf, path) =>
   (
     await run(
@@ -123,9 +134,9 @@ const frameDump = async (readelf, path) =>
     )
   ).stdout;
 
-const ehFrameStarts = async (readelf, path) => {
+const ehFrameRanges = async (readelf, path) => {
   const stdout = await frameDump(readelf, path);
-  const starts = new Set();
+  const ranges = [];
   let inEhFrame = false;
   for (const line of stdout.split("\n")) {
     if (/Contents of the \.eh_frame\b|^\.eh_frame contents:/u.test(line)) {
@@ -137,18 +148,22 @@ const ehFrameStarts = async (readelf, path) => {
       continue;
     }
     if (!inEhFrame) continue;
-    const match = /pc=(0x[0-9a-fA-F]+|[0-9a-fA-F]+)\.\./u.exec(line);
-    // readelf and llvm-dwarfdump print bare hex; BigInt needs the 0x prefix.
-    if (match?.[1] !== undefined)
-      starts.add(
-        BigInt(match[1].startsWith("0x") ? match[1] : `0x${match[1]}`),
+    const match =
+      /pc=(0x[0-9a-fA-F]+|[0-9a-fA-F]+)\.{2,3}(0x[0-9a-fA-F]+|[0-9a-fA-F]+)/u.exec(
+        line,
       );
+    // readelf and llvm-dwarfdump print bare hex; BigInt needs the 0x prefix.
+    if (match !== null) {
+      const hex = (value) =>
+        BigInt(value.startsWith("0x") ? value : `0x${value}`);
+      ranges.push(`${hex(match[1])}..${hex(match[2])}`);
+    }
   }
-  return starts;
+  return ranges.sort();
 };
 
-const inspectedStarts = async (path) => {
-  const starts = new Set();
+const inspectedRanges = async (path) => {
+  const ranges = [];
   let offset = 0;
   for (;;) {
     const { stdout: output } = await run(
@@ -168,20 +183,27 @@ const inspectedStarts = async (path) => {
       60000,
     );
     const report = JSON.parse(output).normalized_result;
-    for (const range of report.ranges) starts.add(BigInt(range.start));
+    for (const range of report.ranges)
+      ranges.push(`${BigInt(range.start)}..${BigInt(range.end)}`);
     if (report.page.next_offset === null) {
       assert.equal(report.eh_frame.status, "present");
-      assert.equal(starts.size, report.coverage.total_ranges);
-      return starts;
+      assert.equal(ranges.length, report.coverage.total_ranges);
+      assert.equal(
+        report.coverage.eh_frame_hdr_agreement,
+        "agree",
+        "The linker-produced search table must agree with the decoded FDEs, independently of record order",
+      );
+      return ranges.sort();
     }
     offset = report.page.next_offset;
   }
 };
 
-// The root holds every compiled image. Remove it only after the owned
-// commands have settled, and keep it when their cleanup failed.
+// The root holds every compiled image. The fixture removes it only after the
+// owned commands have settled, and keeps it when their cleanup failed.
+const closeCommands = onceConfirmed(() => commands.close());
+let rootFixture;
 let root;
-let commandsClosed = false;
 let unavailable = false;
 await withVerifierCleanup(async () => {
   const compiler = await firstAvailable(["zig", "clang++", "g++"]);
@@ -203,37 +225,40 @@ await withVerifierCleanup(async () => {
     unavailable = true;
     return;
   }
-  root = await mkdtemp(join(tmpdir(), "rea-elf-unwind-"));
+  rootFixture = await VerifierFixture.open({
+    prefix: "rea-elf-unwind-",
+    private: false,
+  });
+  rootFixture.releaseAfter(closeCommands);
+  root = rootFixture.path;
   const source = join(root, "ranges.cpp");
   const unstripped = join(root, "ranges.unstripped");
   const stripped = join(root, "ranges.stripped");
   await writeFile(source, sourceText);
   await compile(compiler, source, unstripped);
   await stripCopy(stripper, unstripped, stripped);
-  const expected = await ehFrameStarts(readelf, unstripped);
-  const observed = await inspectedStarts(stripped);
-  assert.ok(expected.size > 0, "readelf listed no .eh_frame FDEs");
-  const missing = [...expected].filter((start) => !observed.has(start));
-  const extra = [...observed].filter((start) => !expected.has(start));
+  const expected = await ehFrameRanges(readelf, unstripped);
+  const observed = await inspectedRanges(stripped);
+  assert.ok(expected.length > 0, `${readelf} listed no .eh_frame FDEs`);
+  // Compare multisets: producer record order need not match search-table order,
+  // and repeated starts must not hide different ends or duplicate records.
   assert.deepEqual(
-    { missing: missing.map(String), extra: extra.map(String) },
-    { missing: [], extra: [] },
+    observed,
+    expected,
+    "Complete FDE start/end ranges must match the independent frame dump",
   );
   console.log(
     JSON.stringify({
       compiler,
       readelf,
-      fde_starts: expected.size,
+      fde_ranges: expected.length,
+      eh_frame_hdr_agreement: "agree",
     }),
   );
 }, [
+  closeCommands,
   async () => {
-    await commands.close();
-    commandsClosed = true;
-  },
-  async () => {
-    if (commandsClosed && root !== undefined)
-      await rm(root, { recursive: true, force: true });
+    await rootFixture?.release();
   },
   async () => {
     process.off("SIGINT", interrupt);

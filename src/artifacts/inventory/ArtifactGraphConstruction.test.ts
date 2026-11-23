@@ -14,13 +14,20 @@ import {
   resolveOccurrenceParents,
 } from "./ArtifactGraphConstruction.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
-import { createAsarHeaderSignatureProbe } from "../AsarHeader.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import {
+  translateArtifactFailure,
+  createAsarHeaderSignatureProbe,
+} from "../../resources/index.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { artifactIdForContent } from "../../domain/artifactIdentity.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";
-import type { ArtifactEntry } from "../ArtifactReader.js";
+import { parseExecutableHeader } from "../../domain/binaryTarget.js";
+import {
+  minimalElfImage,
+  minimalMachoImage,
+} from "../../../tests/fixtures/nativeHeaders.js";
+import type { ArtifactEntry } from "../../resources/ArtifactReader.js";
 import { dfuseFile } from "../../domain/firmware/dfuse.fixture.js";
 import {
   RP2040_FAMILY,
@@ -36,7 +43,7 @@ import {
   esp8266Image,
   espImage,
 } from "../../../tests/fixtures/espImage.js";
-import { devicetreeFixture } from "../../firmware/devicetree/Devicetree.fixture.js";
+import { devicetreeFixture } from "../../domain/firmware/devicetree.fixture.js";
 import { fitFixture } from "../fit/FitImage.fixture.js";
 
 it("joins only observed PE signature bytes across stream chunks", () => {
@@ -63,6 +70,21 @@ it("joins only observed PE signature bytes across stream chunks", () => {
   ).toBe("pe");
 });
 
+it("retains a PE record whose optional header crosses the retained prefix", () => {
+  const bytes = pe(0x8664, 8_000);
+  const probe = createArtifactClassificationProbe();
+  probe.write(bytes.subarray(0, 8_192));
+  const partial = probe.finish(bytes.length);
+  expect(
+    classifyArtifactContent("native.exe", partial, bytes.length).format,
+  ).toBe("unknown");
+  probe.write(bytes.subarray(8_192));
+  const complete = probe.finish(bytes.length);
+  expect(
+    classifyArtifactContent("native.exe", complete, bytes.length).format,
+  ).toBe("pe");
+});
+
 it("classifies original DOS header padding as an executable", () => {
   const bytes = Buffer.alloc(128);
   bytes.write("MZ", 0, "ascii");
@@ -75,6 +97,47 @@ it("classifies original DOS header padding as an executable", () => {
   expect(classifyArtifactBytesAtPath("legacy.exe", bytes)).toEqual({
     kind: "executable",
     format: "dos-mz",
+  });
+});
+
+describe("native header admission", () => {
+  const corruptCommands = () => {
+    // #6154: a valid header whose first command is cmd=cmdsize=0xffffffff.
+    const bytes = minimalMachoImage(64);
+    bytes.writeUInt32LE(1, 16);
+    bytes.writeUInt32LE(32, 20);
+    bytes.writeUInt32LE(0xffffffff, 32);
+    bytes.writeUInt32LE(0xffffffff, 36);
+    return bytes;
+  };
+  it.each([
+    { name: "ELF magic alone", bytes: Buffer.from("7f454c46", "hex") },
+    {
+      name: "ELF magic in a header-sized stub",
+      bytes: Buffer.concat([Buffer.from("7f454c46", "hex"), Buffer.alloc(60)]),
+    },
+    { name: "Mach-O magic alone", bytes: Buffer.from("cffaedfe", "hex") },
+    { name: "Mach-O with corrupt load commands", bytes: corruptCommands() },
+  ])("refuses $name as target resolution does", ({ bytes }) => {
+    expect(parseExecutableHeader(bytes, "arm64").ok).toBe(false);
+    expect(classifyArtifactBytesAtPath("program", bytes)).toEqual({
+      kind: "unknown",
+      format: "unknown",
+    });
+  });
+
+  it.each([
+    { format: "elf", bytes: minimalElfImage() },
+    { format: "mach-o", bytes: minimalMachoImage() },
+  ])("admits a decodable $format header", ({ format, bytes }) => {
+    expect(parseExecutableHeader(bytes, "arm64")).toMatchObject({
+      ok: true,
+      value: { format },
+    });
+    expect(classifyArtifactBytesAtPath("program", bytes)).toEqual({
+      kind: "executable",
+      format,
+    });
   });
 });
 

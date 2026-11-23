@@ -1,7 +1,8 @@
+import { clientRegistrationSource } from "./ClientRegistrationSource.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { processArgumentSchema } from "../domain/process/processArgument.js";
-import { clientConfigurationRecordSchema } from "./ClientConfigurationDocument.js";
+import { clientConfigurationRecordSchema } from "./ClientConfigurationValues.js";
 import {
   clientRegistrationSourceFacts,
   parseClientRegistrationLauncher,
@@ -122,9 +123,9 @@ export const admitClientStdioConnection = (
       });
   }
   if (connection.kind === "cline") {
-    const nested = clientConfigurationRecordSchema.safeParse(source.transport);
-    const type = nested.success
-      ? nested.data.type
+    const selected = clientRegistrationSource(source, target.profile);
+    const type = selected.nested
+      ? selected.connection?.type
       : (source.type ?? source.transportType);
     if (type !== undefined && type !== "stdio")
       return err({

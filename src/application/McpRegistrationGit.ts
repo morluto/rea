@@ -1,30 +1,26 @@
-import { randomUUID } from "node:crypto";
 import { lstat, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, sep } from "node:path";
 
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  bindProcessInspectionCancellations,
-  processInspectionCancellationError,
-  retainOwnedCommandCleanup,
-} from "../providers/OwnedCommandCleanup.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
-  OwnedCommandFailure,
-  prepareOwnedCommand,
-  runOwnedCommand,
-} from "../process/OwnedCommand.js";
+  ExecFileOutputCancelledError,
+  execFileBytes,
+} from "../process/ExecFileOutput.js";
 import type { McpRegistrationLocationContext } from "./McpRegistrationLocations.js";
 
 /** Git's observed active and primary worktree roots; neither grants mutation authority. */
 export interface KiloRegistrationWorktree {
   readonly activeDirectory: string;
   readonly root: string;
-  readonly primaryRoot: string;
+  readonly primaryRoot: string | undefined;
 }
 
 export const pathWithin = (root: string, path: string): boolean => {
@@ -32,109 +28,52 @@ export const pathWithin = (root: string, path: string): boolean => {
   return part !== ".." && !part.startsWith(`..${sep}`) && !isAbsolute(part);
 };
 
-const retainGitCleanup = (
-  cause: unknown,
-  context: McpRegistrationLocationContext,
-): readonly AnalysisError[] =>
-  retainOwnedCommandCleanup(
-    cause,
-    {
-      retain: (owner, resource) =>
-        context.resources.retain({
-          kind: "lease",
-          resource,
-          lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
-        }),
-      run: (work) => work(),
-    },
-    "mcp-registration",
-    "Kilo project root discovery",
-  );
+/** Git metadata replies are paths and porcelain records, never bulk data. */
+const GIT_METADATA_BYTES = 1024 * 1024;
 
 const gitFailure = (
   cause: unknown,
-  context: McpRegistrationLocationContext,
-): ConfigurationError | AnalysisCancelledError => {
-  const cleanups = retainGitCleanup(cause, context);
-  const cleanup =
-    cleanups.length === 0
-      ? undefined
-      : {
-          reason: "Read-only Git discovery cleanup remains incomplete.",
-          resources: cleanups.flatMap((failure) => failure.cleanupResources),
-        };
-  const cancellation =
-    cause instanceof OwnedCommandFailure ? cause.cancellation : undefined;
-  const inspectionCancellation = processInspectionCancellationError(
-    cause,
-    "Kilo project root discovery",
-  );
-  const primaryCancellation =
-    inspectionCancellation !== undefined ||
-    (cause instanceof OwnedCommandFailure && cause.reason === "cancelled");
-  const cancelled =
-    inspectionCancellation === undefined && cancellation === undefined
-      ? undefined
-      : new AnalysisCancelledError("Kilo project root discovery", {
-          cause:
-            inspectionCancellation === undefined
-              ? cancellation?.reason
-              : inspectionCancellation.cause,
-          ...(inspectionCancellation?.capturedOutput === undefined
-            ? {}
-            : { capturedOutput: inspectionCancellation.capturedOutput }),
-          ...(!primaryCancellation || cleanup === undefined ? {} : { cleanup }),
-        });
-  const failure =
-    primaryCancellation && cancelled !== undefined
-      ? cancelled
-      : new ConfigurationError(
-          "Kilo project root could not be established by read-only Git metadata. Repair Git or repository access, or register globally; no client settings were written.",
-          { cause, ...(cleanup === undefined ? {} : { cleanup }) },
-        );
-  if (cancelled !== undefined && failure !== cancelled)
-    analysisErrorWithCancellation(failure, cancelled);
-  if (cleanups.length > 0) failure.bindCleanupDependencies(cleanups);
-  bindProcessInspectionCancellations(
-    cause,
-    failure,
-    "Kilo project root discovery",
-  );
-  return failure;
-};
+): ConfigurationError | AnalysisCancelledError =>
+  cause instanceof ExecFileOutputCancelledError
+    ? cancelledBy("Kilo project root discovery", carriedReason(cause.cause))
+    : new ConfigurationError(
+        "Kilo project root could not be established by read-only Git metadata. Repair Git or repository access, or register globally; no client settings were written.",
+        { cause },
+      );
 
+/**
+ * Run one short read-only Git query. The query leads its own process group,
+ * which the stop signal reaches on cancellation or timeout, so no
+ * process-table ownership sweep is needed for these probes.
+ */
 const gitOutput = async (
   context: McpRegistrationLocationContext,
   cwd: string,
   arguments_: readonly string[],
 ): Promise<string> => {
+  let observation: { readonly stdout: Buffer; readonly stderr: Buffer };
   try {
-    await prepareOwnedCommand(context.signal);
-    const result = await runOwnedCommand(
-      {
-        command: "git",
-        arguments: arguments_,
-        cwd,
-        runId: randomUUID(),
-        expectedCommand: null,
-        hostEnvironment: context.environment,
-        sweepTokenOwnedProcesses: true,
-      },
-      { timeoutMs: 10_000, diagnosticBytes: 1024 * 1024 },
-      { signal: context.signal },
-    );
-    if (
-      result.stdout.invalidUtf8 ||
-      result.diagnosticTruncated ||
-      result.outputIncomplete
-    )
-      throw new Error(
-        "Git did not provide a complete UTF-8 metadata observation.",
-        { cause: result },
-      );
-    return result.stdout.text;
+    observation = await execFileBytes("git", arguments_, {
+      cwd,
+      env: context.environment,
+      timeout: 10_000,
+      maxBuffer: GIT_METADATA_BYTES,
+      stopSignal: "SIGTERM",
+      windowsHide: true,
+      ...(context.signal === undefined ? {} : { signal: context.signal }),
+    });
   } catch (cause: unknown) {
-    throw gitFailure(cause, context);
+    throw gitFailure(cause);
+  }
+  try {
+    return decodeStrictUtf8(observation.stdout, "strip-signature");
+  } catch {
+    // The failure keeps the exact observation it could not decode.
+    throw gitFailure(
+      new Error("Git did not provide a complete UTF-8 metadata observation.", {
+        cause: observation,
+      }),
+    );
   }
 };
 
@@ -184,9 +123,9 @@ const primaryRoot = async (
   root: string,
   gitDirectory: string,
   commonDirectory: string,
-): Promise<string> => {
+): Promise<string | undefined> => {
   if (gitDirectory === commonDirectory) return root;
-  // Kilo's primaryPaths uses the first non-bare porcelain worktree record.
+  // Kilo reads the first record. A bare repository has no primary checkout.
   const listing = await gitOutput(context, root, [
     "worktree",
     "list",
@@ -195,7 +134,7 @@ const primaryRoot = async (
   ]);
   const record = listing.split("\0\0", 1)[0]?.split("\0");
   const field = record?.find((item) => item.startsWith("worktree "));
-  if (field === undefined || record?.includes("bare"))
+  if (field === undefined)
     throw new ConfigurationError(
       "Kilo primary worktree is unknown; no project settings were written.",
     );
@@ -204,6 +143,7 @@ const primaryRoot = async (
     throw new ConfigurationError(
       "Git returned incomplete worktree metadata; no project settings were written.",
     );
+  if (record?.includes("bare")) return undefined;
   return directoryPath(
     absoluteCallerPath(value, { cwd: root, platform: context.platform }),
   );
@@ -259,13 +199,11 @@ export const resolveKiloRegistrationWorktree = async (
       cause instanceof ConfigurationError ||
       cause instanceof AnalysisCancelledError
         ? cause
-        : gitFailure(cause, context);
+        : gitFailure(cause);
     if (context.signal?.aborted === true)
       analysisErrorWithCancellation(
         failure,
-        new AnalysisCancelledError("Kilo project root discovery", {
-          cause: context.signal.reason,
-        }),
+        cancelledBy("Kilo project root discovery", context.signal),
       );
     throw failure;
   }

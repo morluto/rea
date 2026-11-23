@@ -13,7 +13,10 @@ import {
 import { parseProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 import { compareProcessCaptures } from "../../../src/domain/process/processComparison.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { itWithCaptureCapability } from "./processCaptureCapability.js";
+import {
+  CAPTURE_SKIP_REASON,
+  itWithCaptureCapability,
+} from "./processCaptureCapability.js";
 
 const processFixture = fileURLToPath(
   new URL("../../fixtures/processIdentity.mjs", import.meta.url),
@@ -25,8 +28,8 @@ const identitySchema = z.object({
   session_id: z.number().int().positive(),
 });
 
-const itWithLinuxCaptureCapability =
-  process.platform === "linux" ? itWithCaptureCapability : it.skip;
+const linuxCaptureSkip =
+  process.platform !== "linux" || CAPTURE_SKIP_REASON !== false;
 
 itWithCaptureCapability(
   "captures a POSIX PATH executable with a literal backslash in its basename",
@@ -44,7 +47,11 @@ itWithCaptureCapability(
       arguments: ["-e", 'process.stdout.write("selected executable")'],
       settle_ms: 100,
     });
-    const result = await captureProcessScenario(scenario);
+    const result = await captureProcessScenario(
+      scenario,
+      undefined,
+      process.platform,
+    );
     if (!result.ok) throw result.error;
     expect(result.value.frames.map(({ data }) => data).join("")).toBe(
       "selected executable",
@@ -75,7 +82,11 @@ itWithCaptureCapability(
       arguments: ["-e", `process.stdout.write(${JSON.stringify(original)})`],
       settle_ms: 100,
     });
-    const result = await captureProcessScenario(scenario);
+    const result = await captureProcessScenario(
+      scenario,
+      undefined,
+      process.platform,
+    );
     if (!result.ok) throw result.error;
     const capture = parseProcessCapture(
       createProcessCaptureEvidence(scenario, result.value).normalized_result,
@@ -131,7 +142,11 @@ itWithCaptureCapability.each([
       },
       settle_ms: 100,
     });
-    const result = await captureProcessScenario(scenario);
+    const result = await captureProcessScenario(
+      scenario,
+      undefined,
+      process.platform,
+    );
     if (!result.ok) throw result.error;
     const capture = parseProcessCapture(
       createProcessCaptureEvidence(scenario, result.value).normalized_result,
@@ -168,8 +183,10 @@ itWithCaptureCapability.each([
   20_000,
 );
 
-itWithLinuxCaptureCapability.each([false, true])(
-  "honors pids=%s in owned Linux capture samples and committed Evidence",
+it.skipIf(linuxCaptureSkip).each([false, true])(
+  linuxCaptureSkip && CAPTURE_SKIP_REASON !== false
+    ? `honors pids=%s in owned Linux capture samples and committed Evidence — ${CAPTURE_SKIP_REASON}`
+    : "honors pids=%s in owned Linux capture samples and committed Evidence",
   async (pids) => {
     const root = await createTestTempDirectory("rea-process-identifiers-");
     const identityPath = join(root, "identity.json");
@@ -181,7 +198,11 @@ itWithLinuxCaptureCapability.each([false, true])(
       timeout_ms: 10_000,
       idle_timeout_ms: 10_000,
     });
-    const result = await captureProcessScenario(scenario);
+    const result = await captureProcessScenario(
+      scenario,
+      undefined,
+      process.platform,
+    );
     if (!result.ok) throw result.error;
     const capture = result.value;
     const identity = identitySchema.parse(
@@ -249,7 +270,11 @@ itWithCaptureCapability(
       normalization: { paths: true, pids: false, ports: false, patterns: [] },
       settle_ms: 100,
     });
-    const result = await captureProcessScenario(scenario);
+    const result = await captureProcessScenario(
+      scenario,
+      undefined,
+      process.platform,
+    );
     if (!result.ok) throw result.error;
     const capture = parseProcessCapture(
       createProcessCaptureEvidence(scenario, result.value).normalized_result,
@@ -324,7 +349,11 @@ itWithCaptureCapability(
       normalization: { paths: true, pids: false, ports: false, patterns: [] },
       settle_ms: 100,
     });
-    const result = await captureProcessScenario(scenario);
+    const result = await captureProcessScenario(
+      scenario,
+      undefined,
+      process.platform,
+    );
     if (!result.ok) throw result.error;
     const capture = parseProcessCapture(
       createProcessCaptureEvidence(scenario, result.value).normalized_result,
@@ -352,7 +381,11 @@ itWithCaptureCapability(
       normalization: { paths: true, pids: false, ports: false, patterns: [] },
       settle_ms: 100,
     });
-    const result = await captureProcessScenario(scenario);
+    const result = await captureProcessScenario(
+      scenario,
+      undefined,
+      process.platform,
+    );
     if (!result.ok) throw result.error;
     const capture = parseProcessCapture(
       createProcessCaptureEvidence(scenario, result.value).normalized_result,
@@ -384,7 +417,11 @@ itWithCaptureCapability.each([false, true])(
         patterns: [{ pattern: "<pid>", replacement: "<selected-pid>" }],
       },
     });
-    const result = await captureProcessScenario(scenario);
+    const result = await captureProcessScenario(
+      scenario,
+      undefined,
+      process.platform,
+    );
     if (!result.ok) throw result.error;
     const capture = result.value;
     const raw = capture.frames

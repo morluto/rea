@@ -1,7 +1,7 @@
-import { createCatalogIdentity } from "../../../src/catalogIdentity.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { createCatalogIdentity } from "../../../src/contracts/catalog/catalogIdentity.js";
 import { contractsForToolFamilies } from "../../../src/contracts/toolFamilies.js";
 import { promptsForToolFamilies } from "../../../src/contracts/promptToolFamilyScope.js";
-import { Cli } from "incur";
 import { expect, it, vi } from "vitest";
 import { runSessionStatus } from "../../../src/application/DirectAnalysisStatus.js";
 import { registerUtilityCommands } from "../../../src/cli/utilityCommands.js";
@@ -32,7 +32,7 @@ it.each(["capabilities", "providers"])(
     const close = vi
       .spyOn(session, "close")
       .mockResolvedValueOnce(err(cleanup));
-    const cli = Cli.create({ name: "rea" });
+    const cli = createCommandCli();
     registerUtilityCommands(
       cli,
       silentLogger,
@@ -116,7 +116,7 @@ it.each(["capabilities", "providers"])(
       promptContracts: promptsForToolFamilies(families),
       outputSchemaProfile: "compact",
     });
-    const cli = Cli.create({ name: "rea" });
+    const cli = createCommandCli();
     registerUtilityCommands(
       cli,
       silentLogger,
@@ -127,7 +127,6 @@ it.each(["capabilities", "providers"])(
             readConfiguration: () =>
               parseConfig({
                 REA_MCP_TOOL_FAMILIES: " session,session ",
-                REA_MCP_INPUT_SCHEMA_PROFILE: "full",
                 REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
               }),
             createBinarySession: () => session,
@@ -208,7 +207,7 @@ it.each(["capabilities", "providers"])(
         },
       ],
     });
-    const cli = Cli.create({ name: "rea" });
+    const cli = createCommandCli();
     registerUtilityCommands(
       cli,
       silentLogger,

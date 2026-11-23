@@ -4,7 +4,6 @@ import {
   mkdir,
   mkdtemp,
   readdir,
-  readFile,
   rename,
   rm,
   writeFile,
@@ -19,14 +18,14 @@ import { appendCallerPath } from "../filesystem/callerPath.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import { HOPPER_PUBLISHER } from "../domain/hopperPublisher.js";
 import { macDeveloperIdRequirement } from "../process/MacCodeSignature.js";
-import { macHopperUserApplicationPath } from "./MacHopperPaths.js";
+import { macHopperUserApplicationPath } from "../hopperPaths/MacHopperPaths.js";
 import {
   downloadHopperPackage,
-  isHopperRequestCancellation,
   HOPPER_METADATA_TIMEOUT_MS,
   type HopperDownload,
   type HopperRequestFailure,
 } from "./HopperDownload.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 import {
   HOPPER_RELEASES_URL,
   HOPPER_DOWNLOAD_PREFIX,
@@ -36,7 +35,9 @@ import {
   macHopperReleaseMinimumSystemVersion,
 } from "./HopperReleaseFeed.js";
 import type { HopperInstallFailureReason } from "./SetupInstallFailure.js";
-import { decodeInfoPlistValue } from "./AppBundleExecutable.js";
+import { regularFileCleanupLeases } from "../process/RegularFileRead.js";
+import { readBundleInfoPlist } from "./AppBundleExecutable.js";
+import { decodeInfoPlistValue } from "../domain/apple/infoPlist.js";
 import {
   macosMajorVersion,
   macosVersionMeetsMinimum,
@@ -311,9 +312,7 @@ export const installMacHopper = async (
   } catch (cause: unknown) {
     result = {
       status: "failed",
-      reason: isHopperRequestCancellation(cause, options.signal)
-        ? "cancelled"
-        : installStage,
+      reason: isAbortOf(cause, options.signal) ? "cancelled" : installStage,
       diagnostic: failureMessage(cause),
     };
   }
@@ -522,8 +521,19 @@ export const systemMacHopperInstallHost = (
     macosVersion,
     async minimumSystemVersion(appPath) {
       const plist = posix.join(appPath, "Contents", "Info.plist");
+      let bytes: Buffer;
+      try {
+        bytes = await readBundleInfoPlist(plist);
+      } catch (cause: unknown) {
+        for (const lease of regularFileCleanupLeases(cause) ?? [])
+          pendingCleanup.set(
+            () => lease.release(),
+            lease.cleanupResources ?? [plist],
+          );
+        throw cause;
+      }
       const declared = minimumSystemVersionSchema.safeParse(
-        decodeInfoPlistValue(await readFile(plist)),
+        decodeInfoPlistValue(bytes, ["LSMinimumSystemVersion"]),
       );
       if (!declared.success)
         throw new TypeError(

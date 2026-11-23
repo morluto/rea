@@ -6,17 +6,21 @@ import {
   writeFile,
   type FileHandle,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import type { Dirent } from "node:fs";
 
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { importReferenceSource } from "../../../src/application/ReferenceSourceImport.js";
-import { projectReferenceSourceImportError } from "../../../src/application/ReferenceSourceImportTypes.js";
+import { referenceSourceImportAnalysisError } from "../../../src/application/ReferenceSourceImportTypes.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { readReferenceSource } from "../../../src/reference/ReferenceSourceReader.js";
+import * as directoryValidation from "../../../src/reference/ReferenceSourceReaderValidate.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { err, ok } from "../../../src/domain/result.js";
+import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -451,7 +455,9 @@ it.each([
       surface === "import" &&
       result.error.tag === "reference-source-import"
     ) {
-      const projected = projectReferenceSourceImportError(result.error);
+      const projected = projectAnalysisError(
+        referenceSourceImportAnalysisError(result.error),
+      );
       expect(projected.details?.secondary_failures).toEqual([
         expect.objectContaining({ category: "cancelled" }),
       ]);
@@ -588,4 +594,208 @@ it("preserves null cancellation and retained directory cleanup across retry", as
   expect(resources.hasPending).toBe(true);
   expect(resources.cleanupResources).toEqual([root]);
   expect(closeCalls).toBe(1);
+});
+
+const observeDirectoryValidation = (
+  started: (path: string) => Promise<void> | undefined,
+  finished?: (path: string) => void,
+) => {
+  const validate = directoryValidation.validateDirectory;
+  const spy = vi
+    .spyOn(directoryValidation, "validateDirectory")
+    .mockImplementation(async (...args) => {
+      const path = args[2];
+      const validation = validate(...args);
+      const hold = started(path);
+      const result = await validation;
+      await hold;
+      finished?.(path);
+      return result;
+    });
+  onTestFinished(() => {
+    spy.mockRestore();
+  });
+};
+
+it("runs directory policy in traversal order when prefetched admissions finish out of order", async () => {
+  const root = await createTestTempDirectory("rea-reference-ordered-");
+  for (const name of ["a", "b"]) await mkdir(join(root, name));
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const listed: string[] = [];
+  const policy: string[] = [];
+  const firstAdmission = phaseGate();
+  const laterValidated = phaseArrival();
+  observeDirectoryValidation(
+    (path) =>
+      dirname(path) === root && basename(path) === listed[0]
+        ? firstAdmission.hold()
+        : undefined,
+    (path) => {
+      if (dirname(path) === root && basename(path) === listed[1])
+        laterValidated.arrive();
+    },
+  );
+  const read = readReferenceSource(root, resources, {
+    shouldExclude: (path, kind) => {
+      if (kind === "directory") listed.push(path);
+      return false;
+    },
+    beforeDirectory: async (path) => {
+      policy.push(path);
+      return path === "."
+        ? ok(undefined)
+        : err({
+            tag: "reference-source-reader",
+            code: "io",
+            message: `refused ${path}`,
+          });
+    },
+  });
+  try {
+    await firstAdmission.reached(read, "first directory admission blocked");
+    await laterValidated.reached(read, "later directory admission completed");
+  } finally {
+    firstAdmission.release();
+    await read;
+  }
+  expect(policy).toEqual([".", listed[0]]);
+  expect(await read).toMatchObject({
+    ok: false,
+    error: { code: "io", message: `refused ${listed[0]}` },
+  });
+});
+
+it("settles every lookup started ahead of its turn before a cancelled read returns", async () => {
+  const root = await createTestTempDirectory("rea-reference-settled-");
+  for (const name of ["a", "b"]) await mkdir(join(root, name));
+  await writeFile(join(root, "source.ts"), "observed");
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const listed: string[] = [];
+  const siblingAdmission = phaseGate();
+  const childPolicy = phaseGate();
+  const childClosed = phaseArrival();
+  const rootRevalidated = phaseArrival();
+  let rootValidations = 0;
+  observeDirectoryValidation(
+    (path) =>
+      dirname(path) === root && basename(path) === listed[1]
+        ? siblingAdmission.hold()
+        : undefined,
+    (path) => {
+      if (path === root && ++rootValidations === 2) rootRevalidated.arrive();
+    },
+  );
+  opendirMock.mockImplementation(async (...args) => {
+    const directory = await actual.opendir(...args);
+    if (dirname(String(args[0])) === root) {
+      const operations: DirectoryOperations = directory;
+      const close = operations.close.bind(directory);
+      vi.spyOn(operations, "close").mockImplementation(async () => {
+        await close();
+        childClosed.arrive();
+      });
+    }
+    return directory;
+  });
+  const controller = new AbortController();
+  const reason = { requested: "stop at the first child" };
+  let settled = false;
+  const read = readReferenceSource(root, resources, {
+    signal: controller.signal,
+    shouldExclude: (path, kind) => {
+      if (kind === "directory") listed.push(path);
+      return false;
+    },
+    beforeDirectory: async (path) => {
+      if (path !== ".") await childPolicy.hold();
+      return ok(undefined);
+    },
+  }).then((result) => {
+    settled = true;
+    return result;
+  });
+  try {
+    await siblingAdmission.reached(read, "prefetched sibling lookup blocked");
+    await childPolicy.reached(read, "first child opened");
+    await rootRevalidated.reached(read, "root closing admission completed");
+    controller.abort(reason);
+    childPolicy.release();
+    await childClosed.reached(read, "cancelled child handle closed");
+    await nextTurn();
+    expect(settled).toBe(false);
+  } finally {
+    siblingAdmission.release();
+    childPolicy.release();
+    await read;
+  }
+  const result = await read;
+  if (result.ok) throw new Error("Expected cancellation");
+  expect(result.error.code).toBe("cancelled");
+  expect(result.error.cause).toBe(reason);
+  expect(result.error.partial?.entries).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ path: "source.ts", status: "read" }),
+    ]),
+  );
+});
+
+// Descent buries older siblings whose admissions are still running.
+it("bounds running directory admissions while slow siblings are buried by deeper levels", async () => {
+  const root = await createTestTempDirectory("rea-reference-bounded-");
+  // Every top-level child can be listed first. Give each enough descendants to
+  // bury the held siblings without choosing or mocking native listing order.
+  const names = ["a", "b", "c", "d"];
+  await Promise.all(
+    names.flatMap((parent) =>
+      names.flatMap((child) =>
+        names.map((leaf) =>
+          mkdir(join(root, parent, child, leaf), { recursive: true }),
+        ),
+      ),
+    ),
+  );
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const siblings = phaseGate();
+  const descended = phaseArrival();
+  let started = 0;
+  const seenParents = new Set<string>();
+  const heldSiblings = new Set<string>();
+  observeDirectoryValidation((path) => {
+    if (!heldSiblings.has(path)) return;
+    started += 1;
+    return siblings.hold();
+  });
+  const read = readReferenceSource(root, resources, {
+    shouldExclude: (path, kind) => {
+      if (kind === "directory") {
+        const child = join(root, path);
+        const parent = dirname(child);
+        if (seenParents.has(parent)) heldSiblings.add(child);
+        seenParents.add(parent);
+      }
+      return false;
+    },
+    beforeDirectory: async (path) => {
+      if (path.split("/").length === 3) descended.arrive();
+      return ok(undefined);
+    },
+  });
+  try {
+    await descended.reached(read, "third level admitted with siblings held");
+    // All counted admissions remain held, so started is also their peak.
+    // Each held path is a pending sibling, outside the active descent.
+    expect(started).toBeGreaterThan(1);
+    expect(started).toBeLessThanOrEqual(4);
+  } finally {
+    siblings.release();
+    await read;
+  }
+  const result = await read;
+  if (!result.ok) throw result.error;
+  expect(result.value.entries).toHaveLength(
+    names.length + names.length ** 2 + names.length ** 3,
+  );
 });

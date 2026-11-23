@@ -1,0 +1,14 @@
+{
+  "schemas": {
+    "input compact": "3c8cc4cd79f2c6d0",
+    "output compact": "4bda7c3651bfc579"
+  },
+  "patterns": {
+    "input": [
+      "^[^\\x00]*$",
+      "^trace_event_[0-9a-f]{64}$",
+      "^trace_member_[0-9a-f]{64}$",
+      "^trace_stream_[0-9a-f]{64}$"
+    ]
+  }
+}

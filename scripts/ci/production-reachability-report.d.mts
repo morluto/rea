@@ -28,6 +28,3 @@ export interface ProductionReachabilityReport {
 export function parseProductionReachabilityReport(
   text: string,
 ): ProductionReachabilityReport;
-export function recordProductionReachabilityReport(
-  root?: string,
-): Promise<ProductionReachabilityReport>;

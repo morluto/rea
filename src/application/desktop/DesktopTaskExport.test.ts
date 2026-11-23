@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
-import { namesApp, shippedSeedCheckView } from "./DesktopTaskExport.js";
+import { shippedSeedCheckView } from "./DesktopTaskExport.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
   HOME,
@@ -601,6 +601,73 @@ describe("exportDesktopApplication with a task's readers", () => {
   });
 });
 
+describe("exportDesktopApplication taskReader port", () => {
+  it("calls the injected taskReader port with the command, timeout, and signal", async () => {
+    const scratch = await createTestTempDirectory("desktop-task-port-");
+    const taskPath = join(scratch, "task.json");
+    const directory = join(scratch, "bundle");
+    const controller = new AbortController();
+    const calls: Array<{
+      readonly argv: readonly string[];
+      readonly timeoutS: number;
+      readonly signal: AbortSignal | undefined;
+    }> = [];
+    await writeFile(
+      taskPath,
+      JSON.stringify(
+        readerTask(["version v2"], {
+          id: "version",
+          file: DATABASE,
+          argv: ["custom-reader", "{file}"],
+          output: "lines",
+          timeout_s: 7,
+        }),
+      ),
+    );
+
+    const result = await exportDesktopApplication(
+      {
+        capture: await writeCaptureFolder(capture()),
+        directory,
+        name: undefined,
+        tasks: [taskPath],
+      },
+      {
+        ...readers,
+        taskReader: async (argv, timeoutS, signal) => {
+          calls.push({ argv, timeoutS, signal });
+          return {
+            exit_code: 0,
+            stdout: `${JSON.stringify({
+              view: {
+                format: "text",
+                view: {
+                  lines: calls.length === 1 ? ["version v2"] : ["version v1"],
+                  line_count: 1,
+                  truncated: false,
+                },
+              },
+            })}\n`,
+            stderr: "",
+            timed_out: false,
+          };
+        },
+      },
+      controller.signal,
+    );
+
+    if (result instanceof Error) throw result;
+    expect(calls).toHaveLength(2);
+    expect(calls.every((call) => call.timeoutS === 37)).toBe(true);
+    expect(calls.every((call) => call.signal === controller.signal)).toBe(true);
+    expect(
+      calls.every((call) =>
+        call.argv.some((part) => part.includes("custom-reader")),
+      ),
+    ).toBe(true);
+  });
+});
+
 /** The notes capture with nothing changed between its checkpoints, as an app that keeps its state on screen leaves it. */
 const screenOnlyCapture = () => {
   const base = capture();
@@ -802,17 +869,20 @@ describe("exportDesktopApplication with a task's prompt", () => {
     expect(naming(named.result.limitations)).toEqual([]);
   });
 
-  it("does not treat a word that only contains the app's name as naming it", () => {
-    const dia = { title: "Dia", name: "dia", aptPackage: "dia" };
-    expect(namesApp("Update the diagram and save it.", dia)).toBe(false);
-    expect(namesApp("In Dia, add a box.", dia)).toBe(true);
-    expect(
-      namesApp("In Notes, write down milk.", {
-        title: "Notes",
-        name: "notes",
-        aptPackage: "notes",
-      }),
-    ).toBe(true);
+  it("does not treat a word that only contains the app's name as naming it", async () => {
+    const checks = [
+      { id: "milk", kind: "lines_present", file: NOTE, lines: ["milk"] },
+    ];
+    const exported = await exportWithTasks({
+      ...task(checks),
+      prompt: "Update the notesheet and save it.",
+    });
+    if (exported.result instanceof Error) throw exported.result;
+    expect(exported.result.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/prompt.*does not name the app/iu),
+      ]),
+    );
   });
 });
 

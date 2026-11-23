@@ -1,8 +1,10 @@
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceRetryFailure } from "../artifacts/ArtifactResourceScope.js";
 import {
-  hashStableFile,
+  AnalysisCleanupLease,
+  bindArtifactFileCleanup,
+  ArtifactResourceRetryFailure,
+} from "../resources/index.js";
+import {
+  observeStableFileIdentity,
   stableFileHashCause,
   type StableFileHashOptions,
 } from "../filesystem/StableFileHash.js";
@@ -13,26 +15,30 @@ import {
   withOwnedRegularFile,
 } from "../filesystem/OwnedRegularFile.js";
 
-import { assertRegularFileActive } from "../filesystem/RegularFile.js";
+import { stat } from "node:fs/promises";
+import {
+  assertRegularFileActive,
+  sameRegularFileState,
+  type RegularFileState,
+} from "../filesystem/RegularFile.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 
 import type {
   AnalysisProfileResolution,
   RetainedResourceScope,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { createFunctionCoordinateContext } from "../domain/native/functionCoordinateContext.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import {
   isMachOFormat,
-  isElfMetadataArchitecture,
   type BinaryArchitecture,
   type BinaryTarget,
-  type ElfMetadataArchitecture,
-  type HeaderArchitecture,
 } from "../domain/binaryTargetTypes.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -43,7 +49,8 @@ import {
   type MachoTargetSelection,
 } from "../domain/apple/machoTargetSelection.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { readFatMagicFormat } from "../domain/apple/machoContainer.js";
+import { machoContainerKindFromMagic } from "../domain/apple/machoContainer.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 import {
@@ -51,6 +58,8 @@ import {
   type HopperMachOImageResolutionFileSystem,
   type HopperMachOImage,
 } from "./HopperMachOImage.js";
+import { hopperProducerIdentity } from "./HopperBridgeSources.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 interface HopperProfileOptions {
   readonly launcherPath: string;
@@ -101,9 +110,18 @@ const resolveHopperAnalysisProfileInScope = async (
       options.signal,
     );
     if (!header.ok) return header;
-    const fatFormat = readFatMagicFormat(header.value);
-    machoContainer =
-      fatFormat === null ? "thin" : fatFormat.wide ? "fat64" : "fat32";
+    const observed = machoContainerKindFromMagic(header.value);
+    if (
+      observed === null ||
+      (observed === "thin") !== (target.format === "mach-o")
+    )
+      return err(
+        new BinaryTargetError(
+          target.path,
+          "The selected file's container signature disagrees with its admitted Mach-O format. Open the stable source again.",
+        ),
+      );
+    machoContainer = observed;
   }
   let preparedImage: HopperMachOImage | undefined;
   if (
@@ -177,7 +195,7 @@ const resolveHopperAnalysisProfileInScope = async (
         : {}),
       target_kind: target.kind,
       target_format: target.format,
-      function_dossier_coverage: "observed-facets-and-call-relationships-v1",
+      producer: hopperProducerIdentity(),
       architecture: target.architecture ?? null,
       available_architectures: [
         ...(target.availableArchitectures ?? []),
@@ -202,18 +220,34 @@ const resolveHopperAnalysisProfileInScope = async (
   });
 };
 
-/** Families with no verified Hopper lane, declined before any loader selection. */
-export type HopperDeclinedArchitecture =
-  | ElfMetadataArchitecture
-  | "hexagon"
-  | "arm64_32";
+// Raw-only families keep the existing format refusal before loader selection.
+const HOPPER_ARCHITECTURE_FLAGS = {
+  x86: "--intel-32",
+  x86_64: "--intel-64",
+  arm: "--armv7",
+  arm64: "--aarch64",
+  arm64_32: null,
+  mips: null,
+  "6502": "raw-only",
+  riscv: null,
+  powerpc: null,
+  m68k: "raw-only",
+  hexagon: null,
+  xtensa: null,
+} as const satisfies Record<BinaryArchitecture, string | null>;
+
+type HopperDeclinedArchitecture = {
+  [
+    Architecture in BinaryArchitecture
+  ]: (typeof HOPPER_ARCHITECTURE_FLAGS)[Architecture] extends null
+    ? Architecture
+    : never;
+}[BinaryArchitecture];
 
 export const isHopperDeclinedArchitecture = (
   architecture: BinaryArchitecture,
 ): architecture is HopperDeclinedArchitecture =>
-  isElfMetadataArchitecture(architecture) ||
-  architecture === "hexagon" ||
-  architecture === "arm64_32";
+  HOPPER_ARCHITECTURE_FLAGS[architecture] === null;
 
 /**
  * Hopper states only what it owns: it does not admit the family. It routes the
@@ -249,7 +283,7 @@ export const hopperLoaderArgsForTarget = (
         hopperDeclinedArchitectureReason(architecture),
       ),
     );
-  const flag = hopperArchitectureFlag(architecture);
+  const flag = HOPPER_ARCHITECTURE_FLAGS[architecture];
   if (isMachOFormat(target.format)) {
     if (machoContainer === undefined)
       return err(
@@ -279,19 +313,6 @@ export const hopperLoaderArgsForTarget = (
   }
 };
 
-const hopperArchitectureFlag = (architecture: HeaderArchitecture): string => {
-  switch (architecture) {
-    case "x86":
-      return "--intel-32";
-    case "x86_64":
-      return "--intel-64";
-    case "arm":
-      return "--armv7";
-    case "arm64":
-      return "--aarch64";
-  }
-};
-
 const readMachoMagic = (
   path: string,
   resources: RetainedResourceScope,
@@ -303,38 +324,55 @@ const readMachoMagic = (
     signal,
     (options) =>
       withOwnedRegularFile(path, options, async ({ handle }) => {
-        const bytes = Buffer.alloc(4);
-        let length = 0;
-        while (length < bytes.length) {
-          assertRegularFileActive(signal);
-          const { bytesRead } = await handle.read(
-            bytes,
-            length,
-            bytes.length - length,
-            length,
+        const magicBytes = 4;
+        const bytes = await readFileHandleRange(
+          handle,
+          0,
+          magicBytes,
+          (read) => {
+            if (read < magicBytes) assertRegularFileActive(signal);
+          },
+        );
+        if (bytes.length < magicBytes)
+          throw new BinaryTargetError(
+            path,
+            "Mach-O header became truncated before Hopper loader selection",
           );
-          if (bytesRead === 0)
-            throw new BinaryTargetError(
-              path,
-              "Mach-O header became truncated before Hopper loader selection",
-            );
-          length += bytesRead;
-        }
-        return bytes.readUInt32BE(0);
+        return new BinaryReader(bytes, false, "Mach-O").u32(0);
       }),
   );
 
-const sha256File = (
+const verifiedLauncherDigests = new Map<
+  string,
+  { readonly state: RegularFileState; readonly sha256: string }
+>();
+
+const sha256File = async (
   path: string,
   resources: RetainedResourceScope,
   signal: AbortSignal | undefined,
-): Promise<Result<string, AnalysisError>> =>
-  readHopperProfileFile(
+): Promise<Result<string, AnalysisError>> => {
+  const cached = verifiedLauncherDigests.get(path);
+  if (cached !== undefined) {
+    const current = await stat(path).catch(() => undefined);
+    if (
+      signal?.aborted !== true &&
+      current !== undefined &&
+      sameRegularFileState(cached.state, current)
+    )
+      return ok(cached.sha256);
+  }
+  const hashed = await readHopperProfileFile(
     { path, kind: "launcher" },
     resources,
     signal,
-    async (options) => (await hashStableFile(path, options)).sha256,
+    (options) => observeStableFileIdentity(path, options),
   );
+  if (!hashed.ok) return hashed;
+  const { state, sha256 } = hashed.value;
+  verifiedLauncherDigests.set(path, { state, sha256 });
+  return ok(sha256);
+};
 
 /** Both profile reads retain the exact descriptor through final close and retry. */
 const readHopperProfileFile = async <Value>(
@@ -374,10 +412,7 @@ const readHopperProfileFile = async <Value>(
     const cleanup =
       cause instanceof RegularFileCleanupFailure
         ? {
-            reason:
-              cause.cleanupCause instanceof Error
-                ? cause.cleanupCause.message
-                : String(cause.cleanupCause),
+            reason: errorMessage(cause.cleanupCause),
             resources: [path],
           }
         : undefined;
@@ -391,8 +426,7 @@ const readHopperProfileFile = async <Value>(
     const diagnostics = { profile_file: { kind, path }, ...completed };
     const failure =
       cancellation !== undefined
-        ? new AnalysisCancelledError("open_binary", {
-            cause: cancellation.reason,
+        ? cancelledBy("open_binary", carriedReason(cancellation.reason), {
             cleanup,
             diagnostics,
           })
@@ -401,13 +435,13 @@ const readHopperProfileFile = async <Value>(
           : kind === "header"
             ? new BinaryTargetError(
                 path,
-                `Cannot read the Mach-O container header: ${physical instanceof Error ? physical.message : String(physical)}`,
+                `Cannot read the Mach-O container header: ${errorMessage(physical)}`,
                 { cause: physical, cleanup },
               )
             : new ProviderAdapterError("hopper", "resolve_analysis_profile", {
                 cause: physical,
                 cleanup,
-                userMessage: `Cannot fingerprint the selected Hopper launcher ${path}: ${physical instanceof Error ? physical.message : String(physical)}`,
+                userMessage: `Cannot fingerprint the selected Hopper launcher ${path}: ${errorMessage(physical)}`,
                 remediationAction:
                   "Select a readable regular Hopper launcher, then retry provider selection.",
                 diagnostics: {

@@ -6,7 +6,7 @@ import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
-import { readPyzArchive, MAX_PYZ_TABLE_BYTES } from "./PyzArchive.js";
+import { readPyzArchive } from "./PyzArchive.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { PYTHON_39_MAGIC, pyzArchive } from "./CArchive.fixture.js";
 
@@ -70,9 +70,12 @@ it("reports an entry that extends outside the PYZ as an integrity error", async 
   expect(parsed.error.reason).toBe("integrity");
 });
 
-it.each(["PYZ\0", "BAD\0"])(
-  "rejects an oversized sparse table before deferred signature rejection (%s)",
-  async (signature) => {
+it.each([
+  ["PYZ\0", "limit", /table exceeds/iu],
+  ["BAD\0", "format", /magic does not match/iu],
+] as const)(
+  "charges the table budget only after PYZ signature admission (%j)",
+  async (signature, reason, message) => {
     const root = await createTestTempDirectory("rea-pyz-table-budget-");
     const path = join(root, "image.pyz");
     const header = Buffer.alloc(12);
@@ -82,11 +85,11 @@ it.each(["PYZ\0", "BAD\0"])(
     await writeFile(path, header);
     const handle = await open(path, "r+");
     try {
-      const size = 12 + MAX_PYZ_TABLE_BYTES + 1;
+      const size = 12 + 16 * 1024 * 1024 + 1;
       await handle.truncate(size);
       expect(await readPyzArchive(handle, 0, size)).toMatchObject({
         ok: false,
-        error: { reason: "limit" },
+        error: { reason, message: expect.stringMatching(message) },
       });
     } finally {
       await handle.close();
@@ -208,31 +211,22 @@ it.each([0, 0xffffffff])(
   },
 );
 
-it("reports a truncated table before deferred signature rejection", async () => {
-  const header = Buffer.alloc(12);
-  header.write("BAD\0");
-  PYTHON_39_MAGIC.copy(header, 4);
-  header.writeUInt32BE(12, 8);
-  expect(await readImage(header, 16)).toMatchObject({
-    ok: false,
-    error: {
-      reason: "format",
-      message: expect.stringMatching(/table.*truncated/iu),
-    },
-  });
-});
-
-it("reports the signature after completing a readable table and image hash", async () => {
-  const image = pyzArchive({ magic: PYTHON_39_MAGIC, modules: [] });
-  image.write("BAD\0");
-  expect(await readImage(image)).toMatchObject({
-    ok: false,
-    error: {
-      reason: "format",
-      message: expect.stringMatching(/magic.*match/iu),
-    },
-  });
-});
+it.each([
+  ["PYZ\0", /table.*truncated/iu],
+  ["BAD\0", /magic does not match/iu],
+] as const)(
+  "reads a table only after PYZ signature admission (%j)",
+  async (signature, message) => {
+    const header = Buffer.alloc(12);
+    header.write(signature);
+    PYTHON_39_MAGIC.copy(header, 4);
+    header.writeUInt32BE(12, 8);
+    expect(await readImage(header, 16)).toMatchObject({
+      ok: false,
+      error: { reason: "format", message: expect.stringMatching(message) },
+    });
+  },
+);
 
 it.each([
   { magic: 3412, layout: "py38", version: "3.8", reconstructable: false },

@@ -13,8 +13,8 @@ import { existsSync, statSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
-import { ArtifactFileCleanupFailure } from "../../../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
+import { ArtifactFileCleanupFailure } from "../../../../src/resources/ArtifactFileOperation.js";
 import {
   GhidraLaunchSupportError,
   ghidraJavaLaunch,
@@ -48,7 +48,7 @@ import { GhidraProvider } from "../../../../src/ghidra/GhidraProvider.js";
 import { GhidraClient } from "../../../../src/ghidra/GhidraClient.js";
 import { parseConfig } from "../../../../src/config/parseConfig.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { analysisErrorProjectionSchema } from "../../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../../src/domain/analysisErrorProjectionSchema.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import { elf } from "../../../../src/domain/binaryTarget.fixture.js";
 import { silentLogger } from "../../../../src/logger.js";
@@ -781,7 +781,7 @@ describe.skipIf(process.platform === "win32")(
       expect(result.ok).toBe(false);
       expect(analysisArguments).toEqual([]);
       expect(resources.hasPending).toBe(false);
-    }, 5000);
+    });
   },
 );
 
@@ -940,7 +940,7 @@ describe.skipIf(process.platform === "win32")(
             platform: process.platform,
             architecture: process.arch,
             readText: () =>
-              "application.version=12.1.4\napplication.java.min=21\n",
+              "application.version=12.2\napplication.java.min=25\n",
             executable: () => true,
             probeJava: () =>
               javaProbeOk<GhidraJavaObservation>({
@@ -951,8 +951,8 @@ describe.skipIf(process.platform === "win32")(
                     : process.platform === "win32"
                       ? "Windows 11"
                       : "Linux",
-                version: "21.0.12",
-                major: 21,
+                version: "25.0.1",
+                major: 25,
                 home: "/fixture/jdk",
                 bits: 64,
                 runtime: "jdk",

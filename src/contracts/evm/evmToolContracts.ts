@@ -3,12 +3,12 @@ import {
   evmInterfaceSchema,
 } from "../../domain/evm/evmInterface.js";
 import type { ToolContract } from "../toolContractTypes.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import { toolContractMetadata, toolEffects } from "../toolEffects.js";
 import {
   analysisDetailSchema,
   analysisDetailOutputSchemaOf,
 } from "../analysisDetail.js";
-import { evmInterfaceSummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
+import { evmInterfaceSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/evmInterfaceSummarySchema.js";
 
 /** Delivery selection leaves the existing provider input and original Evidence unchanged. */
 const evmInterfaceInspectionInputSchema = inspectEvmInterfaceInputSchema.extend(
@@ -20,7 +20,16 @@ const evmInterfaceInspectionInputSchema = inspectEvmInterfaceInputSchema.extend(
 /** Target-free EVM capabilities are independent of archive/Apple artifact providers. */
 export const INSPECT_EVM_INTERFACE_CONTRACT = {
   name: "inspect_evm_interface",
-  ...toolContractMetadata("inspect_evm_interface"),
+  availability: { host: "evmInterface" },
+  cli: true,
+  ...toolContractMetadata(
+    "inspect_evm_interface",
+    toolEffects({
+      mutatesSession: true,
+      writesFilesystem: true,
+      launchesProcess: true,
+    }),
+  ),
   kind: "artifact-provider",
   requiresActiveTarget: true,
   description:

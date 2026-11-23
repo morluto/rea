@@ -2,8 +2,8 @@
 
 `inspect_elf_notes` / `inspect-elf-notes` answers whether one selected local
 ELF32/ELF64 image declares `PT_NOTE` program headers or `SHT_NOTE` sections,
-which note owners and types those tables store, and which GNU build-id or
-ABI-tag fields those notes carry. It reads the file without executing it and
+which note owners and types those tables store, and which supported fields
+those notes carry. It reads the file without executing it and
 does not require a disassembler, debug package, or package catalog.
 
 ```bash
@@ -42,7 +42,16 @@ For Linux `CORE` notes, `core.prpsinfo`, `core.file`, `core.siginfo`, or
 `core.auxv` are decoded for process arguments and status (`NT_PRPSINFO`), mapped
 file memory regions and paths (`NT_FILE`), fault signal and code (`NT_SIGINFO`), and
 auxiliary vectors (`NT_AUXV`) across 32-bit and 64-bit images. Other owners or unparsed
-notes keep `core` null.
+notes keep `core` null. `NT_FILE` and `NT_AUXV` words follow the ELF class and
+byte order. Addresses and word values retain their unsigned hexadecimal form.
+
+For ELF32 `NT_PRPSINFO`, REA uses the declared Linux machine ABI to select the
+UID/GID width and requires the corresponding descriptor length. If either fact
+is insufficient to establish a layout, the note keeps its raw range and hash
+and leaves `core` null.
+
+An `NT_FILE` descriptor with nonzero bytes after its declared filenames
+retains its raw note evidence and leaves `core` null.
 
 Linux `CORE` decoding requires System V/unspecified (0) or GNU/Linux (3)
 OSABI with ABI version zero. An unspecified OSABI alone does not establish
@@ -60,6 +69,22 @@ printable ASCII. Truncated or non-ASCII Android descriptors degrade `android`
 to null while preserving the raw descriptor digest and preview, and other
 owners keep `android` null.
 
+Freedesktop `FDO` notes can declare
+[package metadata](https://uapi-group.org/specifications/specs/package_metadata_for_executable_files/)
+(`.note.package`, type `0xcafe1a7e`) and
+[dlopen metadata](https://uapi-group.org/specifications/specs/elf_dlopen_metadata/)
+(`.note.dlopen`, type `0x407c0c0a`). Package metadata is a JSON object and
+dlopen metadata is an array of JSON objects. `fdo.metadata` holds the producer’s
+declaration with unknown fields preserved. The tool does not verify installed
+packages, libraries, or loader behavior.
+
+The decoder requires a NUL-terminated UTF-8 payload with only NUL padding,
+unique object keys, and JSON numbers it can represent exactly. An invalid
+or over-budget descriptor keeps its raw range and digest, leaves
+`fdo.metadata` null, and reports the reason in `fdo.issue`. Other note types
+keep `fdo` null. Table coverage describes the notes examined and includes
+entries whose FDO metadata could not be decoded.
+
 `PT_NOTE` and `SHT_NOTE` are examined independently. The same file range may
 appear twice when both tables declare it.
 
@@ -69,7 +94,8 @@ the image never carried notes in another container or overlay.
 ## Limits and failures
 
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most
-32 note entries are examined by default across every table. Retained note
+128 note entries are examined by default across every table (256 maximum), which
+admits distribution glibc builds and their SystemTap probe notes. Retained note
 names, section names, GNU descriptor text, core dump string representations, and Android ident strings share a scan budget based on
 the source bytes plus any decoded section-name table, capped at
 `max_file_bytes`. The raw source and decoded table must also fit together
@@ -83,9 +109,17 @@ tables, declared note tables that extend past the file, and truncated
 note entries fail without partial success. ELF extended
 numbering (`PN_XNUM`, including a section count stored when `e_shnum` is 0) is
 unsupported and returns an unsupported-target outcome rather than invalid-input
-recovery.
+recovery. A direct section count of `0xff00` or greater in `e_shnum` is
+malformed. Compressed section-name tables require zero or a power of two for
+the decoded alignment. A zlib stream must consume its full declared payload.
 
-Zstandard section-name tables also use a 128 MiB decoder window limit.
+FDO decoding separately admits up to 64 KiB of distinct recognized descriptor
+bytes and up to 64 KiB of projected metadata JSON per report. A repeated
+descriptor consumes projected bytes for each entry that includes it. Metadata
+that would exceed the Evidence JSON nesting allowance is also left undecoded.
+
+Zstandard section-name tables also use a 128 MiB decoder window limit and the
+shared [`zstd.max_frames` work limit](reference/limits-and-recovery.md#runtime-settings-through-mcp).
 
 `SHF_COMPRESSED` note sections return `unsupported_target` before their payload
 is interpreted or decompressed. Their compression header is storage metadata,

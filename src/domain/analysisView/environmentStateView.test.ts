@@ -14,12 +14,12 @@ import {
 import type { Evidence } from "../evidence.js";
 import { ownedJsonObjectSchema, type JsonValue } from "../jsonValue.js";
 import { webNetworkCaptureSchema } from "../webNetworkCapture.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   analysisViewResultSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
   type AnalysisViewResult,
-} from "./analysisView.js";
+} from "./analysisViewResult.js";
 import { EnvironmentStateAccumulator } from "./EnvironmentStateAccumulator.js";
 import type { ObservedEntity } from "./environmentStateMerge.js";
 import {
@@ -1780,6 +1780,9 @@ it("reads only item totals and next-page markers as signs of a partial list", ()
   expect(membership({ total: "50", items: [{ id: 1 }] })).toEqual([
     ["recorded", []],
   ]);
+  expect(membership({ total: "9007199254740992", items: [{ id: 1 }] })).toEqual(
+    [["recorded", []]],
+  );
 });
 
 it("reads a sparse list once per candidate field when inferring identity", () => {
@@ -2100,11 +2103,12 @@ it("commits neither a manifest line nor state facts when inherited state admissi
 });
 
 it.each([
-  { method: "GET", status: 200 },
-  { method: "PUT", status: 500 },
+  { name: "redacted read", method: "GET", status: 200, url: null },
+  { name: "failed write", method: "PUT", status: 500, url: "not a URL" },
+  { name: "missing method", method: "", status: 200 },
 ])(
-  "does not infer a successful state write from an excluded $method/$status record",
-  ({ method, status }) => {
+  "ignores timing for an excluded record ($name)",
+  ({ method, status, url }) => {
     const source = captureOf([
       ["GET", "/api/items/1", { id: 1, title: "initial" }],
       [method, "/api/items/1", {}, status],
@@ -2112,16 +2116,26 @@ it.each([
     ]);
     const capture = webNetworkCaptureSchema.parse(source.normalizedResult);
     const reported = ownedJsonObjectSchema.parse(capture.records[1]!.reported);
-    ownedJsonObjectSchema.parse(reported.request).url = "not a URL";
-    const state = stateOf(parentOf(analysisViewCaptureEvidence(capture)));
+    const request = ownedJsonObjectSchema.parse(reported.request);
+    if (url !== undefined) request.url = url;
+    reported.startedDateTime = `2026-10-20T09:00:01.${"1230".repeat(2000)}Z`;
+    // The budget admits the original capture, but not a separate timing expansion.
+    const result = projectAnalysisView(
+      parentOf(analysisViewCaptureEvidence(capture)),
+      { kind: "environment-state", template_rules: [...ALL_RULES] },
+      { state: new EnvironmentStateAccumulator(256 * 1024, [...ALL_RULES]) },
+    );
+    if (!result.ok) throw result.error;
+    const state = result.value;
+    expect(state).toMatchObject({ timeline: "recorded-start-time" });
+    if (state.kind !== "environment-state")
+      throw new Error("Expected environment state");
     expect(state.types).toMatchObject([
       { init_before_ordinal: null, volatile_fields: ["title"] },
     ]);
     expect(state.entities).toMatchObject([{ fields: { title: "after" } }]);
     expect(
-      state.limitations.some((text) =>
-        text.includes("writes had an unusable URL"),
-      ),
+      state.limitations.some((text) => text.includes("target is unknown")),
     ).toBe(false);
   },
 );

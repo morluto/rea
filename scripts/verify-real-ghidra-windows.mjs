@@ -57,7 +57,7 @@ const installDir = process.env.GHIDRA_INSTALL_DIR;
 const { clientOptions } = resolveGhidraVerifierTimeouts(process.env);
 if (installDir === undefined || !isAbsolute(installDir))
   throw new Error(
-    "Set GHIDRA_INSTALL_DIR to the absolute root of Ghidra 12.1.4.",
+    `Set GHIDRA_INSTALL_DIR to the absolute root of Ghidra ${SUPPORTED_GHIDRA_VERSION}.`,
   );
 const installation = await inspectVerifierGhidraInstallation({
   environment: process.env,
@@ -327,7 +327,7 @@ try {
     supported_target_architectures: [...WINDOWS_P0_NATIVE_PE_ARCHITECTURES],
     limitations: [
       "approved-non-sensitive-fixtures-only",
-      "windows-x64-local-ntfs-only",
+      "windows-x64-local-ntfs-refs-only",
       "native-pe-applications-and-dlls-only",
       "no-gui-or-mutation-authority",
     ],

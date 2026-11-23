@@ -1,13 +1,15 @@
+import { canonicalOutputSchema } from "../../lib/canonical-output-schema.mjs";
+import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
 import {
-  closeVerifierResources,
-  withVerifierCleanup,
-} from "../../lib/verifier-cleanup.mjs";
+  VerifierFixture,
+  onceConfirmed,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 import { requireMcpToolError } from "../../lib/mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { access, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
@@ -26,19 +28,38 @@ export async function verifyElectronToolContracts({
   executable,
   repositoryRoot,
 }) {
-  const root = await realpath(
-    await mkdtemp(join(tmpdir(), "rea-electron-e2e-")),
-  );
-  const main = join(root, "main.cjs");
-  const preload = join(root, "preload.cjs");
+  // A plain directory: Electron creates its profile directory beneath it.
+  const rootFixture = await VerifierFixture.open({
+    prefix: "rea-electron-e2e-",
+    private: false,
+  });
+  const root = rootFixture.path;
+  const applicationRoot = join(root, "app");
+  const profileOption = "--rea-verifier-profile=";
+  const profiles = {
+    inspection: join(root, "inspection-profile"),
+    capture: join(root, "capture-profile"),
+    cancellation: join(root, "cancellation-profile"),
+  };
+  const main = join(applicationRoot, "main.cjs");
+  const preload = join(applicationRoot, "preload.cjs");
   const ready = join(root, "ready");
   const entrypoint = join(repositoryRoot, "scripts", "rea.mjs");
   const runId = randomUUID();
-  await writeFile(
-    main,
-    `const electron = require("electron");
+  const prepare = async () => {
+    await Promise.all(
+      [applicationRoot, ...Object.values(profiles)].map((path) => mkdir(path)),
+    );
+    await writeFile(
+      main,
+      `const electron = require("electron");
 const path = require("node:path");
 const { app, BrowserWindow, ipcMain } = electron;
+const fs = require("node:fs");
+const profileOption = ${JSON.stringify(profileOption)};
+const profile = process.argv.find((argument) => argument.startsWith(profileOption));
+if (profile === undefined) throw new Error("Missing Electron verifier profile");
+app.setPath("userData", profile.slice(profileOption.length));
 const Window = BrowserWindow;
 const mainIpc = ipcMain;
 app.whenReady().then(() => {
@@ -46,37 +67,39 @@ app.whenReady().then(() => {
     webPreferences: { preload: path.join(__dirname, "preload.cjs") },
   });
   window.loadFile("renderer.html");
-  require("node:fs").writeFileSync(${JSON.stringify(ready)}, "ready");
+  fs.writeFileSync(${JSON.stringify(ready)}, app.getPath("userData"));
 });
 mainIpc.handle("fixture:echo", (_event, value) => ({ value }));`,
-  );
-  await writeFile(
-    join(root, "renderer.html"),
-    `<!doctype html>
+    );
+    await writeFile(
+      join(applicationRoot, "renderer.html"),
+      `<!doctype html>
 <button id="run">Run</button>
 <output id="result"></output>
 <script src="renderer.js"></script>`,
-  );
-  await writeFile(
-    preload,
-    `const electron = require("electron");
+    );
+    await writeFile(
+      preload,
+      `const electron = require("electron");
 const { contextBridge, ipcRenderer } = electron;
 const bridge = contextBridge;
 const rendererIpc = ipcRenderer;
 bridge.exposeInMainWorld("fixture", {
   echo: (value) => rendererIpc.invoke("fixture:echo", value),
 });`,
-  );
-  await writeFile(
-    join(root, "renderer.js"),
-    `document.querySelector("#run").addEventListener("click", async () => {
+    );
+    await writeFile(
+      join(applicationRoot, "renderer.js"),
+      `document.querySelector("#run").addEventListener("click", async () => {
   const result = await window.fixture.echo("renderer");
   document.querySelector("#result").textContent = result.value;
 });`,
-  );
+    );
+  };
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
+    // Results are validated against the listed complete output contracts.
     env: {
       ...Object.fromEntries(
         ["DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY"].flatMap((name) =>
@@ -96,16 +119,33 @@ bridge.exposeInMainWorld("fixture", {
   });
   let application;
   let stderr = "";
-  await withVerifierCleanup(async () => {
+  // The MCP server and the owned application may still use files under the
+  // root: each confirms cleanup before the root is removed.
+  rootFixture.releaseAfter(() => client.close());
+  rootFixture.releaseAfter(() => transport.close());
+  rootFixture.releaseAfter(async () => {
+    if (!application?.pid) return;
+    const cleanup = await cleanupOwnedProcessGroup({
+      runId,
+      leaderPid: application.pid,
+      processGroupId: application.pid,
+      expectedParentPid: process.pid,
+      expectedCommand: executable,
+    });
+    assert.equal(cleanup.cleaned, true, JSON.stringify(cleanup));
+  });
+  await withVerifierFixture(rootFixture, async () => {
     try {
+      await prepare();
       await readProcessRunId(process.pid);
       application = spawn(
         executable,
         [
           "--remote-debugging-address=127.0.0.1",
           "--remote-debugging-port=0",
-          `--user-data-dir=${join(root, "profile")}`,
+          `--user-data-dir=${profiles.inspection}`,
           main,
+          profileOption + profiles.inspection,
         ],
         {
           cwd: root,
@@ -125,10 +165,10 @@ bridge.exposeInMainWorld("fixture", {
           ajv.compile(tool.inputSchema);
           return [
             tool.name,
-            tool.outputSchema
-              ? (tool.outputSchema.$id &&
-                  ajv.getSchema(tool.outputSchema.$id)) ||
-                ajv.compile(tool.outputSchema)
+            canonicalOutputSchema(tool.name)
+              ? (canonicalOutputSchema(tool.name).$id &&
+                  ajv.getSchema(canonicalOutputSchema(tool.name).$id)) ||
+                ajv.compile(canonicalOutputSchema(tool.name))
               : undefined,
           ];
         }),
@@ -156,7 +196,7 @@ bridge.exposeInMainWorld("fixture", {
         await pause(100);
       }
       const target = targets.normalized_result.targets.find(
-        (item) => item.file_path === join(root, "renderer.html"),
+        (item) => item.file_path === join(applicationRoot, "renderer.html"),
       );
       assert.ok(target, JSON.stringify(targets));
       const page = await call("inspect_electron_page", {
@@ -168,12 +208,12 @@ bridge.exposeInMainWorld("fixture", {
       assert.ok(
         page.normalized_result.scripts.items.some(
           (script) =>
-            script.file_path === join(root, "renderer.js") &&
+            script.file_path === join(applicationRoot, "renderer.js") &&
             script.source.included,
         ),
       );
       const staticAnalysis = await call("analyze_javascript_application", {
-        input_path: root,
+        input_path: applicationRoot,
       });
       assert.equal(staticAnalysis.normalized_result.summary.browser_windows, 1);
       assert.equal(
@@ -200,13 +240,24 @@ bridge.exposeInMainWorld("fixture", {
       const reconciled = await call("reconcile_javascript_runtime", {
         static_layers: [
           {
-            analysis: staticAnalysis,
-            runtime_mappings: [{ kind: "file-root", root }],
+            analysis: {
+              kind: "retained-evidence",
+              evidence_id: staticAnalysis.evidence_id,
+            },
+            runtime_mappings: [{ kind: "file-root", root: applicationRoot }],
           },
         ],
-        runtime_observations: [page],
+        runtime_observations: [
+          { kind: "retained-evidence", evidence_id: page.evidence_id },
+        ],
       });
-      assert.ok(reconciled.normalized_result.runtime_captures.length > 0);
+      assert.deepEqual(
+        [
+          ...reconciled.normalized_result.static_layers,
+          ...reconciled.normalized_result.runtime_captures,
+        ].map(({ evidence_id }) => evidence_id),
+        [staticAnalysis.evidence_id, page.evidence_id],
+      );
       const cli = await execute(
         process.execPath,
         [
@@ -227,10 +278,12 @@ bridge.exposeInMainWorld("fixture", {
         JSON.parse(cli.stdout).normalized_result.target.file_path,
         target.file_path,
       );
+      assert.equal(await readFile(ready, "utf8"), profiles.inspection);
       const input = {
         executable_path: executable,
         application_path: main,
-        application_root: root,
+        application_root: applicationRoot,
+        args: [profileOption + profiles.capture],
         actions: [{ step_id: "ipc", kind: "click", selector: "#run" }],
       };
       const active = await client.callTool(
@@ -260,6 +313,7 @@ bridge.exposeInMainWorld("fixture", {
         assert.equal(capture.application.cleanup, "terminated-owned-process");
       }
       assert.equal(capture.actions[0].status, "completed");
+      assert.equal(await readFile(ready, "utf8"), profiles.capture);
       assert.ok(
         capture.ipc.events.some(
           ({ kind, channel }) =>
@@ -283,34 +337,21 @@ bridge.exposeInMainWorld("fixture", {
         `PASS live Electron CLI/MCP discovery, inspection, reconciliation, and active observations; active cleanup=${capture.application.cleanup}`,
       );
       if (process.platform !== "win32")
-        await verifyCancellation({ input, ready, entrypoint, root });
+        await verifyCancellation({
+          input: { ...input, args: [profileOption + profiles.cancellation] },
+          profilePath: profiles.cancellation,
+          ready,
+          entrypoint,
+          root,
+          fixture: rootFixture,
+        });
     } catch (cause) {
       throw new Error(
         `Electron public-tool verification failed: ${cause.message}\nMCP stderr:\n${serverStderr}`,
         { cause },
       );
     }
-  }, [
-    async () => {
-      await closeVerifierResources([
-        () => client.close(),
-        () => transport.close(),
-        async () => {
-          if (application?.pid) {
-            const cleanup = await cleanupOwnedProcessGroup({
-              runId,
-              leaderPid: application.pid,
-              processGroupId: application.pid,
-              expectedParentPid: process.pid,
-              expectedCommand: executable,
-            });
-            assert.equal(cleanup.cleaned, true, JSON.stringify(cleanup));
-          }
-        },
-      ]);
-      await rm(root, { recursive: true, force: true });
-    },
-  ]);
+  });
 }
 
 const pause = (milliseconds) =>
@@ -331,7 +372,14 @@ async function waitForEndpoint(application, diagnostics) {
   );
 }
 
-async function verifyCancellation({ input, ready, entrypoint, root }) {
+async function verifyCancellation({
+  input,
+  profilePath,
+  ready,
+  entrypoint,
+  root,
+  fixture,
+}) {
   await rm(ready, { force: true });
   const child = spawn(
     process.execPath,
@@ -363,6 +411,41 @@ async function verifyCancellation({ input, ready, entrypoint, root }) {
     child.once("exit", (code, signal) => resolve({ code, signal }));
   });
   let ownership;
+  // The CLI and its Electron application run in the fixture root: the fixture
+  // removes the root only after both confirm, and they still stop early here.
+  const stopCli = fixture.releaseAfter(
+    onceConfirmed(async () => {
+      for (const signal of ["SIGTERM", "SIGKILL"]) {
+        if (child.exitCode !== null || child.signalCode !== null) return;
+        child.kill(signal);
+        let timer;
+        try {
+          if (
+            await Promise.race([
+              exited.then(() => true),
+              new Promise((resolve) => {
+                timer = setTimeout(() => resolve(false), 2000);
+              }),
+            ])
+          )
+            return;
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+      throw new Error(
+        "Electron verifier CLI did not exit after SIGKILL; application cleanup remains independently owned",
+      );
+    }),
+  );
+  const stopApplication = fixture.releaseAfter(
+    onceConfirmed(async () => {
+      if (ownership) {
+        const cleanup = await cleanupOwnedProcessGroup(ownership);
+        assert.equal(cleanup.cleaned, true, JSON.stringify(cleanup));
+      }
+    }),
+  );
   await withVerifierCleanup(async () => {
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
@@ -400,7 +483,7 @@ async function verifyCancellation({ input, ready, entrypoint, root }) {
       await pause(100);
     }
     assert.ok(ownership, "CLI did not acquire an owned Electron application");
-    await access(ready);
+    assert.equal(await readFile(ready, "utf8"), profilePath);
     // The fixture's readiness precedes Playwright's Inspector acquisition;
     // interrupt the long action rather than its separate startup boundary.
     await pause(1_000);
@@ -437,35 +520,5 @@ async function verifyCancellation({ input, ready, entrypoint, root }) {
     console.log(
       `PASS real Electron CLI SIGTERM, retained cancelled actions, and owned group termination; reported code=${error.code}`,
     );
-  }, [
-    async () => {
-      for (const signal of ["SIGTERM", "SIGKILL"]) {
-        if (child.exitCode !== null || child.signalCode !== null) return;
-        child.kill(signal);
-        let timer;
-        try {
-          if (
-            await Promise.race([
-              exited.then(() => true),
-              new Promise((resolve) => {
-                timer = setTimeout(() => resolve(false), 2000);
-              }),
-            ])
-          )
-            return;
-        } finally {
-          clearTimeout(timer);
-        }
-      }
-      throw new Error(
-        "Electron verifier CLI did not exit after SIGKILL; application cleanup remains independently owned",
-      );
-    },
-    async () => {
-      if (ownership) {
-        const cleanup = await cleanupOwnedProcessGroup(ownership);
-        assert.equal(cleanup.cleaned, true, JSON.stringify(cleanup));
-      }
-    },
-  ]);
+  }, [stopCli, stopApplication]);
 }

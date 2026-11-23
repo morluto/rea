@@ -1,3 +1,11 @@
+import type { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
+import {
+  failedJavaScriptStaticAnalysis,
+  detectVendors,
+  registrationKey,
+  stringValue,
+} from "./javascriptStaticAnalysisHelpers.js";
+import type { JavaScriptMemberMutationAllowance } from "./javascriptSemanticWorkAllowance.js";
 import {
   JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS,
   type JavaScriptSemanticPrecisionInput,
@@ -11,14 +19,10 @@ import { RETURNED_REFERENCE_WIDENING_LIMITATION } from "./javascriptSemanticCove
 import { collectElectronWrappedCallPathsSteps } from "./electronWrappedCallPaths.js";
 import {
   ELECTRON_IDENTITY_LIMITATION,
-  ELECTRON_MODULE,
-  ELECTRON_REFERENCE_KINDS,
+  referencesElectronModule,
 } from "./javascriptElectronMemberWrites.js";
 
-import {
-  completeSemanticSteps,
-  traverseJavaScriptAstSteps,
-} from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
 
 import {
   electronRendererLoadAuthority,
@@ -26,21 +30,19 @@ import {
 } from "./electronStaticRenderer.js";
 import { finishElectronNativeBindingsSteps } from "./electronStaticAnalysisNative.js";
 import { finishElectronDynamicCodeSteps } from "./electronStaticAnalysisDynamicCode.js";
+import { finishElectronIpcChannels } from "./electronStaticAnalysisIpc.js";
 import { inspectElectronStaticNode } from "./electronStaticAnalysis.js";
 import {
   hasPossibleCommonJsDelegateWrite,
   semanticFactoryLoaderMemberAt,
 } from "./javascriptSemanticRequireOrigin.js";
-import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
+import {
+  semanticPrecisionControls,
+  semanticResourceLimitReason,
+} from "./javascriptSemanticResourceLimits.js";
 import { createStaticPathIntrinsicQuery } from "./javascriptStaticPathIntrinsics.js";
 import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 import { finishElectronBrowserWindowsSteps } from "./electronStaticAnalysisBrowser.js";
-import {
-  detectVendors,
-  failedJavaScriptStaticAnalysis,
-  registrationKey,
-  stringValue,
-} from "./javascriptStaticAnalysisHelpers.js";
 import {
   addReference,
   addEndpoint,
@@ -72,13 +74,16 @@ import {
   indexJavaScriptBindingsWithReceiversSteps,
 } from "./javascriptSemanticAnalysis.js";
 import {
-  parseJavaScriptSource,
+  commonJsWrapperRedeclarationCount,
+  javaScriptSourceLoaderCondition,
+  recoveredJavaScriptSyntaxErrorCount,
   type ParsedJavaScriptSource,
 } from "./javascriptSourceParser.js";
 
 import { createJavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
+  TYPE_ONLY_MODULE_SIDE_EFFECT_LIMITATION,
   semanticStaticModuleSource,
   semanticImportEqualsSpecifier,
 } from "./javascriptModuleDeclaration.js";
@@ -87,32 +92,75 @@ import {
   type JavaScriptStaticCoverage,
 } from "./javascriptStaticCoverage.js";
 
-/** Parse one JavaScript artifact and recover static structure only. */
-export const analyzeJavaScriptStaticSource = (
-  source: string,
-  precision?: JavaScriptSemanticPrecisionInput,
-): JavaScriptStaticAnalysis => {
-  const file = parseJavaScriptSource(source);
-  return file === null
-    ? failedJavaScriptStaticAnalysis()
-    : analyzeParsedJavaScriptStaticSource(source, file, precision);
-};
-
-/** Recover static structure from an already parsed JavaScript artifact. */
-export const analyzeParsedJavaScriptStaticSource = (
+/**
+ * Syntax-level facts for a parsed source whose member-mutation phase was
+ * refused. Every finding that reads mutation facts is unexamined, so its
+ * absence here is not evidence of absence; parser, comment and text facts
+ * remain, marked with the refused phase.
+ */
+export const memberMutationRefusedJavaScriptStaticAnalysis = (
   source: string,
   file: ParsedJavaScriptSource,
-  precision?: JavaScriptSemanticPrecisionInput,
-): JavaScriptStaticAnalysis =>
-  completeSemanticSteps(
-    analyzeParsedJavaScriptStaticSourceSteps(source, file, precision),
-  );
+  refusal: AnalysisResourceConstraintError,
+): JavaScriptStaticAnalysis => {
+  const parserErrors = recoveredJavaScriptSyntaxErrorCount(file.errors);
+  const wrapperRedeclarations = commonJsWrapperRedeclarationCount(file.errors);
+  const loaderCondition = javaScriptSourceLoaderCondition(file.program);
+  const accumulator = createJavaScriptAnalysisAccumulator(source.length);
+  addSourceMapDirectives(source, file.comments ?? [], accumulator);
+  const reason = `The member-mutation phase was refused (${refusal.reason}); findings that depend on member-mutation facts were not examined.`;
+  const coverage: JavaScriptStaticCoverage = {
+    syntax:
+      parserErrors === 0
+        ? { status: "complete", error_count: 0 }
+        : { status: "recovered", error_count: parserErrors },
+    semantics: {
+      unknown_findings: null,
+      uncertainty: [
+        ...(loaderCondition === undefined
+          ? []
+          : ["conditional-loader" as const]),
+        ...(wrapperRedeclarations === 0
+          ? []
+          : ["commonjs-wrapper-redeclaration" as const]),
+      ],
+    },
+    examination: {
+      status: "not-examined",
+      semantic_resource_limits: [],
+      electron_call_paths_limited: false,
+      refused_phase: "member-mutations",
+    },
+    applicability: { electron: "unknown" },
+    unexamined_reason: reason,
+  };
+  return {
+    ...failedJavaScriptStaticAnalysis(),
+    parse_status: javaScriptStaticParseStatus(coverage),
+    analysis_coverage: coverage,
+    parse_error_count: parserErrors,
+    source_map_urls: accumulator.sourceMaps,
+    vendors: detectVendors(source),
+    ...(loaderCondition === undefined ? {} : { loaderCondition }),
+    limitations: [
+      ...(loaderCondition === undefined ? [] : [loaderCondition]),
+      `${reason} Absence of findings is not evidence of absence.`,
+      ...(parserErrors > 0
+        ? [
+            "The parser recovered from syntax errors; affected bindings are partial.",
+          ]
+        : []),
+      "JavaScript syntax was parsed as data and was never evaluated.",
+    ],
+  };
+};
 
 /** Static analysis that yields during its source traversal; results are unchanged. */
 export function* analyzeParsedJavaScriptStaticSourceSteps(
   source: string,
   file: ParsedJavaScriptSource,
   precision?: JavaScriptSemanticPrecisionInput,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): Generator<void, JavaScriptStaticAnalysis> {
   const accumulator = createJavaScriptAnalysisAccumulator(source.length);
   // One definitions pass serves receiver classification and binding lookup.
@@ -120,6 +168,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     file.program,
     undefined,
     precision,
+    memberMutationAllowance,
   );
   const { bindings, receivers } = index;
   yield* index.indexAmbientWritesSteps();
@@ -184,7 +233,12 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     source,
     accumulator,
     electronIdentity,
+    () => index.indexMemberMutationFactsSteps(),
   );
+  if (accumulator.pendingIpcChannels.size > 0) {
+    yield* index.indexMemberMutationFactsSteps();
+    finishElectronIpcChannels(accumulator, bindings);
+  }
   addSourceMapDirectives(source, file.comments ?? [], accumulator);
   return finalizeStaticAnalysis(source, file, accumulator, bindings, routes);
 }
@@ -216,27 +270,16 @@ const finalizeStaticAnalysis = (
   bindings: JavaScriptSemanticAnalysisState,
   routes: JavaScriptRouteSourceFacts,
 ): JavaScriptStaticAnalysis => {
-  const parserErrors = file.errors.length;
+  const parserErrors = recoveredJavaScriptSyntaxErrorCount(file.errors);
+  const wrapperRedeclarations = commonJsWrapperRedeclarationCount(file.errors);
   const typeOnlySideEffect = hasUncertainTypeOnlyModuleSideEffect(file.program);
-  // A `worker` or `service-worker` reference records a URL relative to the
-  // importing source, so `new Worker(new URL("electron", import.meta.url))` is
-  // not an Electron module. Read the same kinds the Electron boundary owner uses.
-  // Only a loaded module establishes Electron applicability: `require.resolve`
-  // locates the module without loading it, so no boundary fact is expected.
-  const electronObserved = accumulator.references.some(
-    ({ value }) =>
-      value.specifier !== null &&
-      value.operation === "load" &&
-      ELECTRON_REFERENCE_KINDS.has(value.kind) &&
-      ELECTRON_MODULE.test(value.specifier) &&
-      value.loader_authority !== "candidate" &&
-      // A `factory-loader` reference names a recovered bundle module, so its
-      // specifier is a module key inside the artifact rather than a package. A
-      // real external load in the same file keeps its `commonjs-loader`
-      // identity, so it is still counted.
-      value.loader !== "factory-loader",
-  );
+  const electronObserved = referencesElectronModule(accumulator.references);
   const resourceLimits = [...bindings.valueResourceLimits].sort();
+  const controls = semanticPrecisionControls(
+    resourceLimits,
+    accumulator.electronCallPathLimits ?? [],
+    bindings.precision,
+  );
   const candidateElectron = [
     ...accumulator.browserWindows,
     ...accumulator.contextBridgeApis,
@@ -245,6 +288,7 @@ const finalizeStaticAnalysis = (
     ...accumulator.protocols,
     ...accumulator.appPathChanges,
   ].some(({ value }) => value.loader_authority === "candidate");
+  const loaderCondition = javaScriptSourceLoaderCondition(file.program);
   const coverage: JavaScriptStaticCoverage = {
     syntax:
       parserErrors === 0
@@ -253,6 +297,9 @@ const finalizeStaticAnalysis = (
     semantics: {
       unknown_findings: accumulator.unknownFindings,
       uncertainty: [
+        ...(loaderCondition === undefined
+          ? []
+          : ["conditional-loader" as const]),
         ...(accumulator.unknownFindings > 0
           ? ["dynamic-findings" as const]
           : []),
@@ -262,6 +309,9 @@ const finalizeStaticAnalysis = (
         ...(typeOnlySideEffect
           ? ["type-only-module-side-effect" as const]
           : []),
+        ...(wrapperRedeclarations === 0
+          ? []
+          : ["commonjs-wrapper-redeclaration" as const]),
       ],
     },
     examination: {
@@ -276,10 +326,12 @@ const finalizeStaticAnalysis = (
         : { semantic_precision: bindings.precision }),
       electron_call_paths_limited:
         (accumulator.electronCallPathLimits?.size ?? 0) > 0,
+      ...(controls.length === 0 ? {} : { controls }),
     },
     applicability: { electron: electronObserved ? "observed" : "unknown" },
   };
   const limitations = [
+    ...(loaderCondition === undefined ? [] : [loaderCondition]),
     ...(bindings.valueResourceLimits.has("alias-selections")
       ? [semanticResourceLimitReason("alias-selections", bindings.precision)]
       : []),
@@ -295,23 +347,24 @@ const finalizeStaticAnalysis = (
       .sort()
       .map(
         (control) =>
-          `Electron wrapper expansion reached semantic_precision.${control}=${String(bindings.precision[control])}. Increase semantic_precision.${control} on the next analyze_javascript_application call (--semantic-precision JSON); no REA restart is required. Worker memory and transfer admission remain independent; cyclic or unsupported paths remain unknown.`,
+          `Electron wrapper expansion reached semantic_precision.${control}=${String(bindings.precision[control])}. Increase semantic_precision.${control} on the next analyze_javascript_application call; coverage records the control. No REA restart is required. Worker memory and transfer admission remain independent; cyclic or unsupported paths remain unknown.`,
       ),
     ...(parserErrors === 0
       ? []
       : [
           "The parser recovered from syntax errors; affected facts are partial.",
         ]),
+    ...(wrapperRedeclarations === 0
+      ? []
+      : [
+          "A top-level lexical declaration redeclares a CommonJS wrapper parameter, so this module cannot evaluate. Recovered syntax was examined completely.",
+        ]),
     ...(accumulator.unknownFindings === 0
       ? []
       : [
           "One or more static keys, expressions, or Electron boundary values were dynamic and remain unknown.",
         ]),
-    ...(typeOnlySideEffect
-      ? [
-          "Compiler options are unavailable; inline type-only imports or re-exports may preserve a module side-effect dependency.",
-        ]
-      : []),
+    ...(typeOnlySideEffect ? [TYPE_ONLY_MODULE_SIDE_EFFECT_LIMITATION] : []),
     ...(electronObserved ? [ELECTRON_IDENTITY_LIMITATION] : []),
     ...(candidateElectron
       ? [
@@ -397,6 +450,7 @@ const finalizeStaticAnalysis = (
         accumulator.moduleRangeIndex,
       ),
     },
+    ...(loaderCondition === undefined ? {} : { loaderCondition }),
     limitations,
   };
 };
