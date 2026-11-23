@@ -115,7 +115,7 @@ it("returns static and application facts without semantic analysis in structure-
   expect(
     result.semantic_graph.nodes.every(({ kind }) => kind === "module"),
   ).toBe(true);
-  expect(result.semantic_graph.edges ?? []).toEqual([]);
+  expect(result.semantic_graph.relations).toEqual([]);
   expect(
     result.limitations.some((text) => text.includes("structure-only")),
   ).toBe(true);
