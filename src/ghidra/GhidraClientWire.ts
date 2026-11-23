@@ -93,7 +93,9 @@ export class GhidraWire {
   }
 
   #refused(cause: ConfigurationError): GhidraSessionError {
-    return this.#options.failure("admission", cause.message, cause);
+    return this.#options.failure("admission", cause.message, cause, {
+      configurationFailure: cause,
+    });
   }
 
   /** Write one authenticated request and return its correlated reply. */
@@ -140,14 +142,17 @@ export class GhidraWire {
       options.limits === undefined ? this.admitLimits() : ok(options.limits);
     if (!limits.ok) return limits;
     const { requestLimit, replyLimit } = limits.value;
-    const payloadBytes = jsonValueByteLength(payloadValue);
+    const payloadBytes = jsonValueByteLength(
+      payloadValue,
+      requestLimit.maximumBytes,
+    );
     // Refuse before registering the operation and before any socket write, so
     // an oversized request never reaches the bridge or occupies a pending key.
     if (payloadBytes > requestLimit.maximumBytes) {
       const oversize = bridgeRequestOversizeError(
         method,
         requestLimit,
-        payloadBytes,
+        { bytesAtLeast: payloadBytes },
         "Ghidra",
       );
       return err(

@@ -242,3 +242,24 @@ it("rejects every malformed discovery without changing visibility", async () => 
     expect(f.changed).not.toHaveBeenCalled();
   }
 });
+
+it("ranks name matches ahead of description-only matches and caches projected input schemas", async () => {
+  const f = await connect({ bulk: true });
+  const first = await f.discover({ query: "sqlite", limit: 3 });
+  const firstPage = DISCOVER_TOOLS.outputSchema.parse(first.structuredContent);
+  expect(firstPage.tools.map(({ name }) => name)).toEqual([
+    "alpha_sqlite",
+    "beta_sqlite",
+    "binary_session",
+  ]);
+  const repeat = await f.discover({
+    names: ["alpha_sqlite", "bulk_00"],
+  });
+  const repeatPage = DISCOVER_TOOLS.outputSchema.parse(
+    repeat.structuredContent,
+  );
+  expect(repeatPage.tools[0]?.input_schema).toEqual(
+    firstPage.tools[0]?.input_schema,
+  );
+  expect(repeatPage.loaded_count).toBe(5);
+});

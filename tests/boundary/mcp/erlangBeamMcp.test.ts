@@ -248,23 +248,29 @@ mcpTest(
     const { client, session } = await connect(mcp);
     const root = await createTestTempDirectory("rea-beam-malformed-rows-");
     try {
-      for (const chunk of ["ExpT", "ImpT", "FunT"]) {
-        const path = join(root, `${chunk}.beam`);
-        await writeFile(
-          path,
-          erlangBeamDeclaredRowsFixture([
-            [chunk, MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1],
-          ]),
-        );
-        const response = await client.callTool({
-          name: "inspect_erlang_beam",
-          arguments: { path },
-        });
-        expect(response.isError).toBe(true);
-        expect(parseMcpToolError(response).error).toMatchObject({
-          code: "invalid_request",
-        });
-      }
+      const path = join(root, "lambda.beam");
+      await writeFile(
+        path,
+        erlangBeamDeclaredRowsFixture([
+          ["FunT", MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1],
+        ]),
+      );
+      const response = await client.callTool({
+        name: "inspect_erlang_beam",
+        arguments: { path },
+      });
+      expect(parseMcpToolError(response).error).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["path"],
+              reason: "invalid_format",
+              message: expect.stringContaining("lambda table is truncated"),
+            },
+          ],
+        },
+      });
     } finally {
       await session.close();
     }

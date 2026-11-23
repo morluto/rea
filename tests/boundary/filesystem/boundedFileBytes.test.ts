@@ -120,3 +120,79 @@ describe("bounded file byte reads", () => {
     }
   });
 });
+
+describe("bounded file byte reads with expectedSize", () => {
+  it.each([0, 65_536])(
+    "accepts a file matching expectedSize %i at the byte limit",
+    async (limit) => {
+      const root = await createTestTempDirectory("rea-bounded-expected-");
+      const path = join(root, "input");
+      const content = Buffer.alloc(limit, 0x62);
+      await writeFile(path, content);
+      const handle = await open(path, "r");
+      try {
+        const actual = await readBoundedFileBytes(handle, limit, {
+          expectedSize: limit,
+        });
+        if (actual === undefined)
+          throw new Error("Expected complete file bytes");
+        expect(actual.equals(content)).toBe(true);
+      } finally {
+        await handle.close();
+      }
+    },
+  );
+
+  it.each([0, 10])(
+    "detects growth past maxBytes when expectedSize equals maxBytes (%i)",
+    async (expectedSize) => {
+      const root = await createTestTempDirectory("rea-growing-expected-");
+      const path = join(root, "input");
+      await writeFile(path, "0".repeat(expectedSize));
+      const handle = await open(path, "r");
+      try {
+        await appendFile(path, "abcdef");
+        expect(
+          await readBoundedFileBytes(handle, expectedSize, { expectedSize }),
+        ).toBeUndefined();
+        const next = Buffer.alloc(1);
+        expect((await handle.read(next, 0, 1, null)).bytesRead).toBe(1);
+        expect(next.toString()).toBe("b");
+      } finally {
+        await handle.close();
+      }
+    },
+  );
+
+  it("reads through EOF when a file grows beyond expectedSize but stays within maxBytes", async () => {
+    const root = await createTestTempDirectory("rea-growing-within-max-");
+    const path = join(root, "input");
+    await writeFile(path, "hello");
+    const handle = await open(path, "r");
+    try {
+      await appendFile(path, " world!");
+      const actual = await readBoundedFileBytes(handle, 32, {
+        expectedSize: 5,
+      });
+      if (actual === undefined) throw new Error("Expected complete file bytes");
+      expect(actual.toString("utf8")).toBe("hello world!");
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it("returns undefined when a file grows beyond expectedSize and exceeds maxBytes", async () => {
+    const root = await createTestTempDirectory("rea-growing-past-max-");
+    const path = join(root, "input");
+    await writeFile(path, "hello");
+    const handle = await open(path, "r");
+    try {
+      await appendFile(path, "0123456789");
+      expect(
+        await readBoundedFileBytes(handle, 10, { expectedSize: 5 }),
+      ).toBeUndefined();
+    } finally {
+      await handle.close();
+    }
+  });
+});

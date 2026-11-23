@@ -275,17 +275,21 @@ const NON_ZIP_FORMATS = {
   }),
   pkg: container("pkg", { absentInventory: "platform" }),
   asar: container("asar", {
+    retainClassifiedSource: true,
     extractable: true,
     absentInventory: "unavailable",
-    createReader: (path, options) =>
-      new AsarArtifactReader(path, {
+    createReader: (path, options) => {
+      const admitted = sourceOf(options);
+      return new AsarArtifactReader(path, {
         ...(options.asarHeaderAdmission === undefined
           ? {}
           : { headerAdmission: options.asarHeaderAdmission }),
         ...(options.selectedPath === undefined
           ? {}
           : { selectedPath: options.selectedPath }),
-      }),
+        ...(admitted === undefined ? {} : { admitted }),
+      });
+    },
   }),
   ines: container("ines", {
     roleContainer: true,

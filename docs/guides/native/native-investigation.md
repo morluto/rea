@@ -1238,7 +1238,8 @@ complete observation.
 
 `get_objc_classes` keeps names from the provider inventory. It coalesces rows
 only when their exact selected-image pointer slots decode to the same class
-import, including its binding stream, raw library ordinal, resolved library, weak status, and addend. A literal filter is
+import, including its binding stream, library ordinal, resolved library, weak status, and addend. Weak streams use
+the implicit weak-lookup ordinal `-3` until an opcode supplies another ordinal. A literal filter is
 applied to the original names before that join; if the filter selects only an
 alias, the output keeps that exact row. `identity_coverage` distinguishes a
 complete selected-inventory scan from partial, unsupported, and unknown cases.
@@ -1732,6 +1733,16 @@ semantics. This query never executes or modifies target bytes.
 Exact-name xref lookup reports distinct candidate addresses as an input ambiguity;
 inventory order cannot select one silently. Duplicate rows at one address remain
 a singular match, and a missing name remains an unresolved observation.
+
+On `find_xrefs_to_name`, `limit` and the zero-based `offset` slice the
+addresses in provider order after reference lookup. Omitting both returns
+the available provider list. A page reports `observed_xrefs` before slicing
+and `total_xrefs` only when the provider confirms it did not cap the read.
+`provider_truncated` is null when the provider did not report a cap status.
+`truncated` is true when the page or provider omitted rows, false when the
+provider confirms an uncapped read and the page includes every row, and null
+when completeness remains unknown. Advancing the offset can retrieve other
+observed rows, within the available provider list.
 
 Hopper procedure names must identify a procedure entry. A non-entry symbol returns
 an input diagnostic with its coordinate and containing procedure; an explicit

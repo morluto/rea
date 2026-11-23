@@ -67,8 +67,10 @@ export class CaptureRedaction {
       }
     }
     if (
-      explicitValuesOccurIn(value, this.sensitiveValues) ||
-      explicitValuesOccurIn(result, this.sensitiveValues)
+      this.sensitiveValues.length > 0 &&
+      (explicitValuesOccurIn(value, this.sensitiveValues) ||
+        (result !== value &&
+          explicitValuesOccurIn(result, this.sensitiveValues)))
     ) {
       this.redactions.push({ pointer, reason: "explicit-sensitive-value" });
       return null;
@@ -86,13 +88,11 @@ export class CaptureRedaction {
   number(
     value: LosslessNumber,
     pointer: string,
-    redact = true,
   ): { reported: number | null; literal: string } | null {
     const reported = isSafeNumber(value.value) ? Number(value.value) : null;
     if (
-      redact &&
-      (this.text(value.value, pointer) === null ||
-        (reported !== null && this.text(String(reported), pointer) === null))
+      this.text(value.value, pointer) === null ||
+      (reported !== null && this.text(String(reported), pointer) === null)
     )
       return null;
     return { reported, literal: value.value };

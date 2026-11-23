@@ -7,7 +7,7 @@ import {
   MAXIMUM_ZSTD_MAX_FRAMES,
   MINIMUM_ZSTD_MAX_FRAMES,
 } from "../../../src/domain/analysisResourceLimits.js";
-import { createBinaryHardeningService } from "../../../src/composition/binaryDiagnostics.js";
+import { createBinaryHardeningService } from "../../../src/composition/binaryDiagnostics/binaryHardening.js";
 import { elfHardeningFixture } from "../../../src/native/hardening/BinaryHardening.fixture.js";
 import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";

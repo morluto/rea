@@ -1,4 +1,3 @@
-import { lstat } from "node:fs/promises";
 import { Readable } from "node:stream";
 
 import { Budget } from "../domain/budget.js";
@@ -8,7 +7,6 @@ import {
   NonRegularFileReadError,
   RegularFileAdmissionFailure,
   openRegularFile,
-  sameRegularFileState,
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
@@ -26,6 +24,7 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
+  assertArtifactFileSelectedSource,
   assertArtifactReadActive,
   readArtifactFileChunks,
   streamChunkToBuffer,
@@ -83,6 +82,9 @@ export class UefiArtifactReader implements ArtifactReader {
       );
     this.#entries.clear();
     const image = await this.#readImage(source, signal);
+    assertArtifactReadActive(signal);
+    await this.#verifySource(source);
+    assertArtifactReadActive(signal);
     const limitations = new Set<string>();
     const omit = (path: string, limitation: string): void => {
       options?.onOmission?.({ path, kind: "unsupported" });
@@ -456,20 +458,12 @@ export class UefiArtifactReader implements ArtifactReader {
     return source;
   }
 
-  async #verifySource(source: StableRegularFileDescriptor): Promise<void> {
-    const [opened, currentPath] = await Promise.all([
-      source.handle.stat(),
-      lstat(this.path),
-    ]);
-    if (
-      !sameRegularFileState(source.initial, opened) ||
-      !sameRegularFileState(source.initial, currentPath)
-    )
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `UEFI flash image source changed during inventory: ${this.path}`,
-        { integrityCheck: "container-identity" },
-      );
+  #verifySource(source: StableRegularFileDescriptor): Promise<void> {
+    return assertArtifactFileSelectedSource(
+      this.path,
+      source,
+      "UEFI flash image",
+    );
   }
 
   /** Whole-image read bounded by the admission limit; the parsers need bytes. */

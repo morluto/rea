@@ -340,21 +340,33 @@ export const cudaFixture = (
 export const hipFixture = (
   payload = amdFixture(),
   targetId = "hipv4-amdgcn-amd-amdhsa--gfx900",
+  siblings: readonly { readonly id: string; readonly bytes: Buffer }[] = [],
 ): Buffer => {
-  const ids = ["host-x86_64-unknown-linux", targetId];
-  const headers = ids.map((id) => Buffer.alloc(24 + Buffer.byteLength(id)));
-  const start = 32 + headers.reduce((total, row) => total + row.length, 0);
-  for (let index = 0; index < headers.length; index++) {
+  const entries = [
+    { id: "host-x86_64-unknown-linux", bytes: Buffer.alloc(0) },
+    { id: targetId, bytes: payload },
+    ...siblings,
+  ];
+  const headers = entries.map(({ id }) =>
+    Buffer.alloc(24 + Buffer.byteLength(id)),
+  );
+  let offset = 32 + headers.reduce((total, row) => total + row.length, 0);
+  for (const [index, { id, bytes }] of entries.entries()) {
     const row = headers[index]!;
-    row.writeBigUInt64LE(BigInt(start));
-    row.writeBigUInt64LE(index === 0 ? 0n : BigInt(payload.length), 8);
-    row.writeBigUInt64LE(BigInt(Buffer.byteLength(ids[index]!)), 16);
-    row.write(ids[index]!, 24);
+    row.writeBigUInt64LE(BigInt(offset));
+    row.writeBigUInt64LE(BigInt(bytes.length), 8);
+    row.writeBigUInt64LE(BigInt(Buffer.byteLength(id)), 16);
+    row.write(id, 24);
+    offset += bytes.length;
   }
   const head = Buffer.alloc(32);
   head.write("__CLANG_OFFLOAD_BUNDLE__");
-  head.writeBigUInt64LE(2n, 24);
-  return Buffer.concat([head, ...headers, payload]);
+  head.writeBigUInt64LE(BigInt(entries.length), 24);
+  return Buffer.concat([
+    head,
+    ...headers,
+    ...entries.map(({ bytes }) => bytes),
+  ]);
 };
 /** Representation recognition only; these bytes do not establish valid LLVM IR. */
 export const llvmBitcodeFixture = (wrapped = false): Buffer => {

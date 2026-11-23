@@ -1,7 +1,11 @@
 import { chmod, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { systemDoctorHost } from "../../../src/application/Doctor.js";
+import {
+  runDoctor,
+  systemDoctorHost,
+} from "../../../src/application/Doctor.js";
+import { createDoctorHostFixture } from "../../../src/application/Doctor.fixture.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { pe } from "../../../src/domain/binaryTarget.fixture.js";
@@ -62,13 +66,81 @@ describe("executable format refusal diagnostics", () => {
         },
       });
 
-      expect(await systemDoctorHost().inspectTarget?.(path)).toMatchObject({
+      expect(await systemDoctorHost().inspectTarget(path)).toMatchObject({
         classification: "unsupported_target",
         details: { constraint: "file_format_rejected" },
         remediation: projected.remediation.action,
       });
     },
   );
+});
+
+it("identifies the directory opening constraint and gives the direct analysis route", async () => {
+  const directory = await createTestTempDirectory("rea-js-target-");
+  await writeFile(join(directory, "index.js"), "export const answer = 42;\n");
+  const result = await parseBinaryTarget(directory);
+  if (result.ok) throw new Error("directory was admitted as a file");
+  const projected = projectAnalysisError(result.error);
+  expect(projected).toMatchObject({
+    code: "target_unavailable",
+    details: {
+      path: await realpath(directory),
+      constraint: "directory_requires_file",
+      related_operations: ["analyze_javascript_application"],
+    },
+  });
+  expect(projected.message).toContain("analyze_javascript_application");
+  expect(projected.message).not.toContain("rea analyze");
+  expect(projected.remediation.action).toContain("input_path");
+  expect(projected.remediation.action).not.toContain("rea analyze");
+  const doctor = systemDoctorHost();
+  const host = createDoctorHostFixture({
+    inspectTarget: doctor.inspectTarget,
+  });
+  expect(await runDoctor(directory, host, {})).toMatchObject({
+    healthy: false,
+    scope_checks: expect.arrayContaining([
+      expect.objectContaining({
+        name: "target",
+        ok: false,
+        classification: "unsupported_target",
+        detail: directory,
+        details: expect.objectContaining({
+          constraint: "directory_requires_file",
+        }),
+        remediation: projected.remediation.action,
+      }),
+    ]),
+  });
+  const missing = await parseBinaryTarget(join(directory, "missing"));
+  if (missing.ok) throw new Error("missing target was admitted");
+  const missingProjection = projectAnalysisError(missing.error);
+  expect(missingProjection).toMatchObject({
+    details: { reason: expect.stringContaining("does not exist") },
+    message: expect.stringContaining("does not exist"),
+  });
+  expect(missingProjection.message).toContain(
+    "Check that the path exists, is readable, and points to a supported file.",
+  );
+  expect(await doctor.inspectTarget(join(directory, "missing"))).toMatchObject({
+    ok: false,
+    classification: "config_drift",
+    details: { reason: expect.stringContaining("does not exist") },
+  });
+
+  const executable = join(directory, "supported.exe");
+  await writeFile(executable, pe(0x8664));
+  expect(await runDoctor(executable, host, {})).toMatchObject({
+    healthy: true,
+    scope_checks: expect.arrayContaining([
+      {
+        name: "target",
+        ok: true,
+        classification: "healthy",
+        detail: executable,
+      },
+    ]),
+  });
 });
 
 describe("target route diagnostics", () => {
@@ -99,7 +171,7 @@ describe("target route diagnostics", () => {
       );
       expect(projected.remediation.action).toContain("REA_WABT_BIN_DIRECTORY");
       expect(projected.remediation.action).toContain("WABT 1.0.42");
-      expect(await systemDoctorHost().inspectTarget?.(path)).toMatchObject({
+      expect(await systemDoctorHost().inspectTarget(path)).toMatchObject({
         ok: false,
         classification: "unsupported_target",
         details: { constraint: "wasm_requires_static_inspection" },
@@ -153,50 +225,6 @@ describe("target route diagnostics", () => {
       },
     });
   });
-  it("identifies the directory opening constraint and gives the direct analysis route", async () => {
-    const directory = await createTestTempDirectory("rea-js-target-");
-    await writeFile(join(directory, "index.js"), "export const answer = 42;\n");
-    const result = await parseBinaryTarget(directory);
-    if (result.ok) throw new Error("directory was admitted as a file");
-    const projected = projectAnalysisError(result.error);
-    expect(projected).toMatchObject({
-      code: "target_unavailable",
-      details: {
-        path: await realpath(directory),
-        constraint: "directory_requires_file",
-        related_operations: ["analyze_javascript_application"],
-      },
-    });
-    expect(projected.message).toContain("analyze_javascript_application");
-    expect(projected.message).not.toContain("rea analyze");
-    expect(projected.remediation.action).toContain("input_path");
-    expect(projected.remediation.action).not.toContain("rea analyze");
-    const doctor = systemDoctorHost();
-    expect(await doctor.inspectTarget?.(directory)).toMatchObject({
-      name: "target",
-      ok: false,
-      classification: "unsupported_target",
-      details: { constraint: "directory_requires_file" },
-      remediation: projected.remediation.action,
-    });
-    const missing = await parseBinaryTarget(join(directory, "missing"));
-    if (missing.ok) throw new Error("missing target was admitted");
-    const missingProjection = projectAnalysisError(missing.error);
-    expect(missingProjection).toMatchObject({
-      details: { reason: expect.stringContaining("does not exist") },
-      message: expect.stringContaining("does not exist"),
-    });
-    expect(missingProjection.message).toContain(
-      "Check that the path exists, is readable, and points to a supported file.",
-    );
-    expect(
-      await doctor.inspectTarget?.(join(directory, "missing")),
-    ).toMatchObject({
-      ok: false,
-      classification: "config_drift",
-      details: { reason: expect.stringContaining("does not exist") },
-    });
-  });
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     "preserves a real filesystem permission denial",
     async () => {
@@ -212,7 +240,7 @@ describe("target route diagnostics", () => {
           details: { reason: expect.stringContaining("permission denied") },
           message: expect.stringContaining("permission denied"),
         });
-        expect(await systemDoctorHost().inspectTarget?.(path)).toMatchObject({
+        expect(await systemDoctorHost().inspectTarget(path)).toMatchObject({
           ok: false,
           classification: "config_drift",
           details: { reason: expect.stringContaining("permission denied") },

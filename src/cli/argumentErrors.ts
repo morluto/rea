@@ -3,7 +3,7 @@ import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import {
   CLI_DOCUMENT_OUTPUT_FORMATS,
   type ParsedCliOutputArguments,
-} from "../cliOutput.js";
+} from "./cliOutput.js";
 import { estimateTokenCount } from "tokenx";
 import { formatCliOutput } from "./cliOutputFormatter.js";
 import type { CliArgvFailure, CliFieldError } from "./argvParser.js";

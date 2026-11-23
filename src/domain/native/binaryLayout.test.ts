@@ -1,6 +1,8 @@
 import { expect, it } from "vitest";
 import {
+  binaryLayoutPayloadSchema,
   binaryLayoutSchema,
+  safeParseProjectedBinaryLayout,
   safeParseOwnedBinaryLayout,
   type BinaryLayout,
 } from "./binaryLayout.js";
@@ -64,6 +66,53 @@ const report = () => ({
   diagnostics: { stdout: "", stderr: "", truncated: false },
   limitations: [],
 });
+
+it("projects an admitted layout without copying its parsed arrays", () => {
+  const { artifact, diagnostics, ...source } = report();
+  const payload = binaryLayoutPayloadSchema.parse(source);
+  const projected = safeParseProjectedBinaryLayout(payload, {
+    artifact,
+    diagnostics,
+  });
+  if (!projected.success) throw projected.error;
+  expect(projected.data).toEqual(
+    binaryLayoutSchema.parse({ ...payload, artifact, diagnostics }),
+  );
+  expect(projected.data.sections).toBe(payload.sections);
+  expect(projected.data.segments).toBe(payload.segments);
+  expect(projected.data.symbols).toBe(payload.symbols);
+  expect(projected.data.relocations).toBe(payload.relocations);
+});
+
+it.each(["envelope", "invariants"] as const)(
+  "preserves full layout validation issue paths, messages and order for %s",
+  (failure) => {
+    const { artifact, diagnostics, ...source } = report();
+    const envelope =
+      failure === "envelope"
+        ? {
+            artifact: { ...artifact, bytes: -1 },
+            diagnostics: { ...diagnostics, truncated: "invalid" },
+          }
+        : { artifact, diagnostics };
+    if (failure === "invariants") {
+      source.entry_point.meaning = "absent";
+      source.sections[0]!.index = 2;
+      source.sections[0]!.header_location.offset = "0x80";
+    }
+    const payload = binaryLayoutPayloadSchema.parse(source);
+    const projected = safeParseProjectedBinaryLayout(payload, envelope);
+    const full = binaryLayoutSchema.safeParse({ ...payload, ...envelope });
+    if (projected.success || full.success)
+      throw new Error("Expected both paths to reject the same layout");
+    const compareIssues = (issues: typeof full.error.issues) =>
+      issues.map(({ code, path, message }) => ({ code, path, message }));
+    expect(compareIssues(projected.error.issues)).toEqual(
+      compareIssues(full.error.issues),
+    );
+    expect(full.error.issues.length).toBeGreaterThan(1);
+  },
+);
 
 it("reuses an exact validated immutable layout without a second retained copy", () => {
   const value = freezeJsonSnapshot(report());

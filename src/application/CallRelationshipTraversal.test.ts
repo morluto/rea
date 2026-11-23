@@ -33,17 +33,19 @@ const cleanupFailure = () =>
     { cleanup: { reason: "worker cleanup failed", resources: ["worker"] } },
   );
 
-/** 0x1 calls 0x2 and 0x3; 0x2's read is supplied by the test. */
+/** 0x1 calls 0x2 and 0x3. Each of those calls 0x4. */
 const port = (
   reads: string[],
-  second: (signal?: AbortSignal) => AnalysisError,
+  fail?: (signal?: AbortSignal) => AnalysisError,
+  failedAt = "0x2",
 ): AnalysisOperationPort => ({
   execute: async (operation, parameters, options) => {
     const procedure = String(parameters.procedure);
     if (operation === "procedure_address")
       return ok(createAnalysisExecution(procedure, provider));
     reads.push(procedure);
-    if (procedure === "0x2") return err(second(options?.signal));
+    if (procedure === failedAt && fail !== undefined)
+      return err(fail(options?.signal));
     return ok(
       createAnalysisExecution(
         procedure === "0x1" ? ["0x2", "0x3"] : ["0x4"],
@@ -124,5 +126,41 @@ describe.each(tools)("%s cleanup ownership", (tool) => {
     expect(result.error).toBe(cancellation);
     expect(projectAnalysisError(result.error).code).toBe("cleanup_incomplete");
     expect(reads).toEqual(["0x1", "0x2"]);
+  });
+});
+
+it("reads exactly the allowed call graph nodes", async () => {
+  const reads: string[] = [];
+  const result = await new EnhancedTools(port(reads)).executeValidated({
+    name: "get_call_graph",
+    input: { address: "0x1", direction: "forward", max_nodes: 2 },
+  });
+  if (!result.ok) throw result.error;
+  expect(reads).toEqual(["0x1", "0x2"]);
+  expect(result.value).toMatchObject({
+    limitations: [expect.stringContaining("max_nodes 2")],
+  });
+});
+
+it("keeps the depth stop in a call graph interrupted by cleanup", async () => {
+  const reads: string[] = [];
+  const failure = cleanupFailure();
+  const result = await new EnhancedTools(
+    port(reads, () => failure, "0x3"),
+  ).executeValidated({
+    name: "get_call_graph",
+    input: { address: "0x1", direction: "forward", max_depth: 1 },
+  });
+  expect(reads).toEqual(["0x1", "0x2", "0x3"]);
+  if (result.ok) throw new Error("expected incomplete cleanup");
+  expect(result.error).toBe(failure);
+  expect(result).toMatchObject({
+    partialResult: {
+      graph: { "1": [{ address: "0x2", calls: ["0x4"] }] },
+      limitations: expect.arrayContaining([
+        expect.stringContaining("max_depth 1"),
+        expect.stringContaining("cleanup"),
+      ]),
+    },
   });
 });

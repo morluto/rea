@@ -17,6 +17,9 @@ render returns only the selected workflow's text. Unknown argument names and
 non-string values are rejected with field paths. `action: "list"` accepts no
 workflow identifier or arguments. The MCP adapter respects the same
 `REA_MCP_TOOL_FAMILIES` scope as native prompts, including render requests.
+If a well-formed render request selects an unavailable workflow or needs
+workflow-specific argument corrections, the error directs you to list the
+available workflows and their argument requirements.
 
 To find a section in the installed guidance bundle by analyst question, use
 `search_guidance` and pass a returned locator to `read_guidance_section`. The

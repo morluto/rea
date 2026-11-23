@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { _electron as electron } from "playwright-core";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { waitForPosixObservation } from "../../support/process/observePosixProcess.js";
 import { z } from "zod";
 import { writeFakeXcrun } from "../../fixtures/darwinHelperToolchain.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
@@ -1574,14 +1575,15 @@ it.skipIf(!onDarwin)(
         ["-e", 'process.title = "npm run check"; setInterval(() => {}, 1_000)'],
       );
       children.push(titleMutated);
-      await expect
-        .poll(async () => {
-          const process = (await host.listProcesses()).find(
-            ({ pid }) => pid === titleMutated.pid,
-          );
-          return process?.command ?? "";
-        })
-        .toMatch(/^npm run check/u);
+      const observedTitle = await waitForPosixObservation(async () => {
+        const entry = (await host.listProcesses()).find(
+          ({ pid }) => pid === titleMutated.pid,
+        );
+        return entry !== undefined && /^npm run check/u.test(entry.command)
+          ? entry.command
+          : undefined;
+      });
+      expect(observedTitle).toMatch(/^npm run check/u);
 
       const processes = await host.listProcesses();
       const entries = [decoy, owned, titleMutated].map(({ pid }) => {

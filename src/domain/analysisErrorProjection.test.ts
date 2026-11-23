@@ -8,6 +8,7 @@ import {
   AnalysisTimeoutError,
   AnalysisResourceConstraintError,
   AnalysisArtifactChangedError,
+  type AnalysisInputIssue,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import {
@@ -94,24 +95,6 @@ it("projects nested workflow-publication recovery for the actual caller lifetime
 });
 
 describe("agent recovery metadata", () => {
-  it("does not mark deterministic input validation as retryable", () => {
-    const projected = projectAnalysisError(
-      new AnalysisInputError("extract_firmware", undefined, [
-        { path: ["range", "length"], reason: "missing_argument" },
-      ]),
-    );
-
-    expect(projected).toMatchObject({
-      code: "invalid_request",
-      retryable: false,
-      recovery: {
-        kind: "inspect_input_contract",
-        operation: "extract_firmware",
-      },
-    });
-    expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
-  });
-
   it("distinguishes deterministic duplicate identities from stale update revisions", () => {
     const duplicate = projectAnalysisError(
       new UnknownRegistryError("already-exists"),
@@ -150,33 +133,25 @@ describe("agent recovery metadata", () => {
     },
   );
 
-  it("keeps retryability for provider timeouts", () => {
-    expect(
-      projectAnalysisError(
-        new AnalysisTimeoutError("inspect_binary_layout", 2500),
-      ),
-    ).toMatchObject({ code: "provider_timeout", retryable: true });
-  });
-
-  it("names the input contract for malformed analysis arguments", () => {
+  it("names the input contract and preserves the rejected argument", () => {
+    const issue = {
+      path: ["view", "kind"],
+      reason: "invalid_value",
+      expected: ["summary", "module"],
+    } satisfies AnalysisInputIssue;
     const projected = projectAnalysisError(
-      new AnalysisInputError("inspect_analysis_view", undefined, [
-        {
-          path: ["view", "kind"],
-          reason: "invalid_value",
-          expected: ["summary", "module"],
-        },
-      ]),
+      new AnalysisInputError("inspect_analysis_view", undefined, [issue]),
     );
 
     expect(projected).toMatchObject({
+      code: "invalid_request",
+      retryable: false,
+      details: { operation: "inspect_analysis_view", issues: [issue] },
       recovery: {
         kind: "inspect_input_contract",
         operation: "inspect_analysis_view",
       },
-      remediation: {
-        action: expect.stringContaining("inspect_analysis_view"),
-      },
+      remediation: { action: expect.stringContaining("inspect_analysis_view") },
     });
     expect(projected.remediation.action).toContain("tools/list");
     expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
@@ -221,6 +196,7 @@ describe("agent recovery metadata", () => {
 
     expect(projected).toMatchObject({
       code: "provider_timeout",
+      retryable: true,
       recovery: {
         kind: "inspect_timeout_state",
         operation: "inspect_binary_layout",
@@ -233,90 +209,67 @@ describe("agent recovery metadata", () => {
 
 describe("capability failure retry disposition", () => {
   it.each([
-    { options: {}, retryable: false, category: "unsupported_provider" },
     {
-      options: { retryable: false },
-      retryable: false,
+      name: "a capability without a retry disposition uses the fallback",
+      options: {},
       category: "unsupported_provider",
+      retryable: false,
+      action: "Choose a supported target.",
+      message: undefined,
     },
-    { options: { retryable: true }, retryable: true, category: "unavailable" },
-  ] as const)(
-    "preserves the producer's $retryable disposition",
-    ({ options, retryable, category }) => {
-      const reason = "Native self-test failed with a sharing violation";
-      const error = new AnalysisCapabilityUnavailableError(
-        "fixture-provider",
-        "inspect",
-        reason,
-        options,
-      );
-      const projected = projectAnalysisError(error);
-      expect(projected).toMatchObject({
-        code: "capability_unavailable",
-        category,
-        retryable,
-        details: { reason },
-      });
-      if (retryable) {
-        expect(projected.message).toBe(
-          "Required runtime controls are unavailable for this attempt.",
-        );
-        expect(projected.remediation.action).toBe(
-          analysisErrorRemediationAction(error),
-        );
-      }
-      expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
-        true,
-      );
+    {
+      name: "an explicit refusal keeps its producer guidance",
+      options: {
+        retryable: false,
+        remediationAction: "Use the documented host workflow.",
+        userMessage: "Host capability unavailable.",
+      },
+      category: "unsupported_provider",
+      retryable: false,
+      action: "Use the documented host workflow.",
+      message: "Host capability unavailable.",
     },
-  );
-
-  it("preserves a caller-selected message for a retryable failure", () => {
-    expect(
-      projectAnalysisError(
-        new AnalysisCapabilityUnavailableError(
-          "fixture-provider",
-          "inspect",
-          "temporary failure",
-          {
-            retryable: true,
-            userMessage: "Selected runtime diagnostic",
-          },
-        ),
-      ).message,
-    ).toBe("Selected runtime diagnostic");
-  });
-
-  it("uses generic recovery only when no more specific recovery exists", () => {
-    const project = (options: {
-      fallbackRemediationAction?: string;
-      remediationAction?: string;
-      retryable?: boolean;
-    }) =>
-      projectAnalysisError(
-        new AnalysisCapabilityUnavailableError(
-          "fixture",
-          "inspect",
-          "unavailable",
-          options,
-        ),
-      );
-    expect(
-      project({ fallbackRemediationAction: "Generic" }).remediation.action,
-    ).toBe("Generic");
-    expect(
-      project({
-        fallbackRemediationAction: "Generic",
-        remediationAction: "Specific",
-      }).remediation.action,
-    ).toBe("Specific");
-    const retry = project({ retryable: true });
-    const retryWithFallback = project({
-      fallbackRemediationAction: "Generic",
+    {
+      name: "a transient failure can retry without switching targets",
+      options: { retryable: true },
+      category: "unavailable",
       retryable: true,
+      action: expect.stringContaining("retry the same analysis"),
+      message: "Required runtime controls are unavailable for this attempt.",
+    },
+    {
+      name: "a transient refusal keeps its producer's recovery steps",
+      options: {
+        retryable: true,
+        remediationAction:
+          "Choose an explicit disposition, then retry closing.",
+        userMessage: "Close requires an explicit disposition.",
+      },
+      category: "unavailable",
+      retryable: true,
+      action: "Choose an explicit disposition, then retry closing.",
+      message: "Close requires an explicit disposition.",
+    },
+  ] as const)("$name", ({ options, retryable, category, action, message }) => {
+    const reason = "The owned runtime did not meet its requirements.";
+    const projected = projectAnalysisError(
+      new AnalysisCapabilityUnavailableError("fixture", "close", reason, {
+        fallbackRemediationAction: "Choose a supported target.",
+        ...options,
+        cause: new Error("private internal cause"),
+      }),
+    );
+
+    expect(projected).toMatchObject({
+      code: "capability_unavailable",
+      category,
+      retryable,
+      remediation: { action },
+      details: { provider_id: "fixture", operation: "close", reason },
     });
-    expect(retryWithFallback.retryable).toBe(true);
-    expect(retryWithFallback.remediation.action).toBe(retry.remediation.action);
+    if (message !== undefined) expect(projected.message).toBe(message);
+    expect(JSON.stringify(projected)).not.toContain("private internal cause");
+    expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
   });
 
   it("retains cleanup ownership before allowing a transient operation to retry", () => {
@@ -815,34 +768,38 @@ describe("analysis error projection: detached provider diagnostics", () => {
 });
 
 describe("analysis error projection: unclassified failures", () => {
-  it.each(["hopper", "ghidra", "ida", "jadx", "kuna"])(
-    "names doctor only with the provider it can check (%s)",
-    (providerId) => {
+  it.each([
+    ["hopper", true],
+    ["ghidra", true],
+    ["ida", true],
+    ["jadx", true],
+    ["kuna", true],
+    ["firmware", false],
+    ["native-macos", false],
+    ["rizin", false],
+    ["rea-cdp-browser", false],
+    ["rea", false],
+  ] as const)(
+    "projects a %s failure (doctor support: %s)",
+    (providerId, doctor) => {
       const projected = projectAnalysisError(
         new ProviderAdapterError(providerId, "open_binary"),
       );
 
-      expect(projected.code).toBe("execution_failure");
+      expect(projected).toMatchObject({
+        code: "execution_failure",
+        details: { provider_id: providerId, operation: "open_binary" },
+      });
       expect(projected.message).toContain(
-        `${providerId} provider could not complete open_binary, and REA did not classify the failure`,
+        `${providerId} provider could not complete open_binary`,
       );
-      expect(projected.message).not.toContain("doctor");
-      expect(projected.remediation.action).toContain(
-        `\`rea doctor --provider ${providerId}\``,
-      );
-    },
-  );
-
-  it.each(["firmware", "native-macos", "rizin", "rea-cdp-browser", "rea"])(
-    "does not send %s failures to a doctor that cannot check them",
-    (providerId) => {
-      const projected = projectAnalysisError(
-        new ProviderAdapterError(providerId, "inspect"),
-      );
-
       expect(projected.message).toContain("did not classify the failure");
-      for (const text of [projected.message, projected.remediation.action])
-        expect(text).not.toContain("doctor");
+      expect(projected.message).not.toContain("doctor");
+      if (doctor)
+        expect(projected.remediation.action).toContain(
+          `\`rea doctor --provider ${providerId}\``,
+        );
+      else expect(projected.remediation.action).not.toContain("doctor");
     },
   );
 
@@ -856,16 +813,6 @@ describe("analysis error projection: unclassified failures", () => {
     expect(projected.remediation.action).toBe(
       "Select a smaller firmware image.",
     );
-  });
-
-  it("does not attribute an unreadable result to provider readiness", () => {
-    const projected = projectAnalysisError(
-      new AnalysisOutputError("decompile", "failed"),
-    );
-
-    expect(projected.code).toBe("unreadable_output");
-    for (const text of [projected.message, projected.remediation.action])
-      expect(text).not.toContain("doctor");
   });
 });
 
@@ -886,6 +833,8 @@ describe("analysis error projection: caller contract", () => {
       },
     });
     expect(JSON.stringify(projected)).not.toContain("private internal cause");
+    expect(projected.message).not.toContain("doctor");
+    expect(projected.remediation.action).not.toContain("doctor");
   });
   it("maps representative failures without exposing causes", () => {
     const secretCause = new Error("secret-token");
@@ -959,31 +908,6 @@ describe("analysis error projection: caller contract", () => {
       ).toMatchObject({ code: "target_unavailable" });
     },
   );
-
-  it("uses explicit capability recovery while retaining the constraint", () => {
-    const projected = projectAnalysisError(
-      new AnalysisCapabilityUnavailableError(
-        "fixture",
-        "capture",
-        "host constraint",
-        {
-          userMessage: "Use the supported host workflow.",
-          cause: new Error("private internal cause"),
-        },
-      ),
-    );
-    expect(projected).toMatchObject({
-      code: "capability_unavailable",
-      category: "unsupported_provider",
-      message: "Use the supported host workflow.",
-      details: {
-        provider_id: "fixture",
-        operation: "capture",
-        reason: "host constraint",
-      },
-    });
-    expect(JSON.stringify(projected)).not.toContain("private internal cause");
-  });
 
   it("preserves exact artifact-integrity coordinates", () => {
     expect(
@@ -1081,8 +1005,36 @@ it("retains the primary failure and both cleanup reports after a secondary failu
       cleanup_reason: "writer remains",
       captured_output: { stdout: "partial", stderr: "diagnostic" },
       diagnostics: { rebind_error: { code: "cleanup_incomplete" } },
+      secondary_failures: [
+        {
+          code: "cleanup_incomplete",
+          details: {
+            operation: "open_binary",
+            reason: "cannot rebind",
+            resources: ["provider", "writer"],
+            cleanup_reason: "provider remains",
+            execution_failure: "unreadable_output",
+          },
+        },
+      ],
     },
   });
+
+  releaseOwnedCleanup(secondary);
+  const later = projectAnalysisError(enriched);
+  expect(later).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      resources: ["writer"],
+      diagnostics: { rebind_error: { code: "cleanup_incomplete" } },
+    },
+  });
+  expect(later.details?.secondary_failures).toEqual([
+    expect.objectContaining({
+      code: "unreadable_output",
+      details: { operation: "open_binary", reason: "cannot rebind" },
+    }),
+  ]);
 });
 
 it("retains secondary failures when the primary error has no cause", () => {
@@ -1094,33 +1046,6 @@ it("retains secondary failures when the primary error has no cause", () => {
   expect(primary.cause).toBeUndefined();
   expect(primary.secondaryFailures).toEqual([secondary]);
 });
-
-it.each([false, true])(
-  "preserves producer capability recovery with retryable=%s",
-  (retryable) => {
-    const recovery =
-      "Choose an explicit disposition, then retry the same session.";
-    const projected = projectAnalysisError(
-      new AnalysisCapabilityUnavailableError("fixture", "close", "live state", {
-        retryable,
-        remediationAction: recovery,
-      }),
-    );
-    expect(projected).toMatchObject({
-      code: "capability_unavailable",
-      retryable,
-      remediation: { action: recovery },
-      details: {
-        provider_id: "fixture",
-        operation: "close",
-        reason: "live state",
-      },
-    });
-    expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
-      true,
-    );
-  },
-);
 
 it("does not offer entry-policy retries for integrity refusals without a declared-versus-observed entry contradiction", () => {
   const native = projectAnalysisError(

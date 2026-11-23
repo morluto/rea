@@ -884,6 +884,23 @@ caller can change the resource actually exhausted. Finite inline literal object
 spreads use iterative syntax traversal and no longer inherit a duplicate
 semantic-depth cut.
 
+`semantic_analysis` selects how much of each source is examined. The default,
+`complete`, parses, static-analyzes and semantic-analyzes every selected
+source. `structure-only` returns the static and application-graph facts —
+package and Electron roles, preload and renderer structure, IPC and route
+structure — without building semantic IR, semantic graph content, semantic
+traces, or the application-graph source-module and export-binding nodes those
+facts feed. Each file's semantic coverage is recorded as not examined with
+that reason. The application graph's `coverage` is `partial`, with
+`truncated: false`, `omitted_count: null` and no extra limits: the number of
+omitted module and export nodes is not known, so a comparison reports those
+nodes as unknown rather than removed or added. The result states the omission
+once in `limitations`.
+Use it for a first pass over a large application when the structural surface
+is the question; request `complete` analysis afterwards, narrowed with
+`source_paths`, for semantic detail. The selection stays in Evidence
+parameters. The CLI accepts `--semantic-analysis structure-only`.
+
 Member-mutation analysis also has a work allowance of 524,288 alias states
 per source, selected by the `javascript.member_mutation_alias_states` setting
 (1 to 8,388,608). Change it with `update_analysis_settings` on MCP, or with

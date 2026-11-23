@@ -310,13 +310,13 @@ export const decodeObjcDispatchFacets = (input: {
       }
     }
   }
-  const visited = new Set<string>();
+  const visited = new Set<bigint>();
   const readClass = (address: bigint, meta = false) => {
-    if (address === 0n || visited.has(hex(address)) || !budget.admit()) return;
+    if (address === 0n || visited.has(address) || !budget.admit()) return;
     // Coverage counts admitted class objects, including recursively visited
     // metaclasses, in the same units as the decoded objc_classes rows.
     classObjectsExamined++;
-    visited.add(hex(address));
+    visited.add(address);
     const { ro, name } = readLocalClass(read, address);
     const root = (read.u32(ro) & 2) !== 0;
     const superclass = resolveSuperclass(read, address, name, failures);

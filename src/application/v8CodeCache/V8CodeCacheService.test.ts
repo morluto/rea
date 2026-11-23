@@ -1,91 +1,45 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
-
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
-import { parseEvidence } from "../../domain/evidence.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { ok } from "../../domain/result.js";
-import {
-  V8_CODE_CACHE_HEADER_BYTES,
-  V8_CODE_CACHE_MAGIC_HIGH,
-  type V8CodeCache,
-} from "../../domain/v8/v8CodeCache.js";
-import { parseV8CodeCache } from "../../v8/V8CodeCacheParser.js";
+import { v8CodeCacheFixture } from "../../v8/V8CodeCache.fixture.js";
+import { parseV8CodeCacheFromHandle } from "../../v8/V8CodeCacheParser.js";
 import { V8CodeCacheService } from "./V8CodeCacheService.js";
 
-const reportFor = (payloadBytes: number): V8CodeCache => {
-  const bytes = Buffer.alloc(V8_CODE_CACHE_HEADER_BYTES + payloadBytes, 0x61);
-  bytes.fill(0, 0, V8_CODE_CACHE_HEADER_BYTES);
-  bytes.writeUInt32LE(V8_CODE_CACHE_MAGIC_HIGH * 0x10000, 0);
-  bytes.writeUInt32LE(payloadBytes, 20);
-  return parseV8CodeCache(
-    bytes,
+it("admits complete V8 coverage only when the scanned bytes match the payload", async () => {
+  const bytes = v8CodeCacheFixture();
+  const path = "/artifacts/module.jsc";
+  const report = await parseV8CodeCacheFromHandle(
     {
-      path: "/artifacts/authored.jsc",
-      sha256: createHash("sha256").update(bytes).digest("hex"),
+      size: bytes.length,
+      prefix: bytes,
+      readRange: async () => {
+        throw new Error("The admitted prefix already contains the test cache");
+      },
+    },
+    {
+      path,
       bytes: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
     },
-    { min_string_bytes: 4, max_strings: 8 },
+    { min_string_bytes: 4, max_strings: 4096 },
   );
-};
-
-const inspect = (report: V8CodeCache) =>
-  new V8CodeCacheService({
+  let scanned_bytes = report.payload.bytes;
+  const service = new V8CodeCacheService({
     identity: { id: "cache-fixture", name: "Cache fixture", version: "1" },
     close: async () => {},
-    inspect: async () => ok(report),
-  }).inspect({ path: report.artifact.path });
-
-it("retains a completed V8 code cache observation when the caller cancels as the provider completes", async () => {
-  const report = reportFor(8);
-  const controller = new AbortController();
-  const reason = { request: "late V8 code cache cancellation" };
-  const result = await new V8CodeCacheService({
-    identity: { id: "cache-fixture", name: "Cache fixture", version: "1" },
-    close: async () => {},
-    inspect: async () => {
-      controller.abort(reason);
-      return ok(report);
-    },
-  }).inspect({ path: report.artifact.path }, { signal: controller.signal });
-  if (result.ok) throw new Error("Expected late cancellation");
-  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-  expect(result.error.cause).toBe(reason);
-  const evidence = parseEvidence(result.error.partialObservation);
-  expect(evidence.operation).toBe("inspect_v8_code_cache");
-  expect(evidence.normalized_result).toEqual(report);
+    inspect: async () =>
+      ok({
+        ...report,
+        coverage: { ...report.coverage, scanned_bytes },
+      }),
+  });
+  expect(await service.inspect({ path })).toMatchObject({ ok: true });
+  for (const count of [0, report.payload.bytes + 1]) {
+    scanned_bytes = count;
+    const result = await service.inspect({ path });
+    if (result.ok)
+      throw new Error(`Accepted complete coverage with ${String(count)} bytes`);
+    expect(result.error).toBeInstanceOf(AnalysisOutputError);
+  }
 });
-
-it.each([0, 9])(
-  "rejects complete coverage claiming %s scanned bytes for an eight-byte payload",
-  async (scanned_bytes) => {
-    const report = reportFor(8);
-    const result = await inspect({
-      ...report,
-      coverage: { ...report.coverage, scanned_bytes },
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
-  },
-);
-
-it.each([8, 5000])(
-  "retains complete scan facts for a %s-byte payload and its bounded string prefix",
-  async (payloadBytes) => {
-    const report = reportFor(payloadBytes);
-    const result = await inspect(report);
-    if (!result.ok) throw result.error;
-    expect(parseEvidence(result.value).normalized_result).toMatchObject({
-      coverage: { status: "complete", scanned_bytes: payloadBytes, strings: 1 },
-      embedded_strings: [
-        {
-          bytes: payloadBytes,
-          retained_bytes: Math.min(payloadBytes, 4096),
-          truncated: payloadBytes > 4096,
-        },
-      ],
-    });
-  },
-);

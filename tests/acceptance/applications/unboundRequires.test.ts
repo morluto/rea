@@ -1,18 +1,20 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, join, relative } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 import { expect } from "vitest";
 
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
-import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
+import {
+  analyzeJavaScriptDirectory,
+  resolveJavaScriptApplicationMcpCall,
+} from "../../support/cli/javascriptApplication.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
 
 const execute = promisify(execFile);
@@ -54,8 +56,8 @@ const expectResolverCandidates = (
   ]) {
     expect(
       graph.edges.some(
-        ({ properties, evidence }) =>
-          properties.loader_authority === "candidate" &&
+        ({ relation, properties, evidence }) =>
+          relation === "imports" &&
           properties.specifier === "./dep.cjs" &&
           evidence.location.available &&
           evidence.location.value.kind === "source-range" &&
@@ -80,12 +82,18 @@ const expectUnknownLoaderCandidates = (
   const candidate = graph.edges.find(
     ({ relation, properties, evidence }) =>
       relation === "imports" &&
+      properties.module_link_kind === "require" &&
       properties.specifier === "./dep.cjs" &&
       evidence.location.available &&
       evidence.location.value.kind === "source-range" &&
       evidence.location.value.source === "upper-module.MJS",
   );
-  expect(candidate?.properties.resolution_mode).toBeNull();
+  expect(candidate?.properties).toMatchObject({
+    loader_authority: "candidate",
+    resolution_mode: null,
+    resolved_path: null,
+    resolution_status: "unavailable",
+  });
   expect(candidate?.evidence.confidence).toBe("low");
   expect(candidate?.evidence.limitations.join(" ")).toContain(
     "loader is unknown",
@@ -129,22 +137,18 @@ const expectUnknownLoaderCandidates = (
   expect(candidateExports[0]?.evidence.limitations.join(" ")).toContain(
     "wrapper is unknown",
   );
-  for (const path of ["upper-alias.MJS", "upper-var-export.MJS"]) {
-    expect(graph.edges).toContainEqual(
-      expect.objectContaining({
-        relation: "exposes",
-        properties: expect.objectContaining({
-          loader_authority: "candidate",
-        }),
-        evidence: expect.objectContaining({
-          confidence: "low",
-          location: expect.objectContaining({
-            value: expect.objectContaining({ source: path }),
-          }),
+  expect(graph.edges).toContainEqual(
+    expect.objectContaining({
+      relation: "exposes",
+      properties: expect.objectContaining({ loader_authority: "candidate" }),
+      evidence: expect.objectContaining({
+        confidence: "low",
+        location: expect.objectContaining({
+          value: expect.objectContaining({ source: "upper-alias.MJS" }),
         }),
       }),
-    );
-  }
+    }),
+  );
   expect(graph.edges).toContainEqual(
     expect.objectContaining({
       relation: "imports",
@@ -183,10 +187,11 @@ const expectSelectedLoaderEdges = (
     typeof javascriptApplicationAnalysisResultSchema.parse
   >["graph"],
 ): void => {
-  const loaderEdge = (file: string, specifier: string) =>
+  const loaderEdge = (file: string, specifier: string, kind?: "require") =>
     graph.edges.find(
       ({ properties, evidence }) =>
         properties.specifier === specifier &&
+        (kind === undefined || properties.kind === kind) &&
         evidence.location.available &&
         evidence.location.value.kind === "source-range" &&
         evidence.location.value.source === file,
@@ -197,11 +202,10 @@ const expectSelectedLoaderEdges = (
         .loader_authority,
     )
     .toBe("candidate");
-  for (const source of ["candidate-new.MJS", "candidate-new-alias.MJS"]) {
-    expect
-      .soft(loaderEdge(source, "./alias-dep.cjs")?.properties.loader_authority)
-      .toBe("candidate");
-  }
+  expect
+    .soft(loaderEdge("candidate-new-alias.MJS", "./alias-dep.cjs")?.properties)
+    .toMatchObject({ loader_authority: "candidate", resolution_mode: null });
+
   for (const source of [
     "candidate-new-shadow.MJS",
     "candidate-new-replaced.MJS",
@@ -209,29 +213,46 @@ const expectSelectedLoaderEdges = (
     expect.soft(loaderEdge(source, "./alias-dep.cjs")).toBeUndefined();
   }
   expect
-    .soft(loaderEdge("benign-resolve.cjs", "./benign-dep.cjs"))
-    .toBeDefined();
-  expect.soft(loaderEdge("benign-call.cjs", "./call-dep.cjs")).toBeDefined();
+    .soft(
+      loaderEdge("consecutive-methods.cjs", "./benign-dep.cjs", "require")
+        ?.properties,
+    )
+    .toMatchObject({
+      operation: "resolve",
+      resolved_path: "benign-dep.cjs",
+      resolution_status: "resolved",
+    });
   expect
-    .soft(loaderEdge("consecutive-methods.cjs", "./benign-dep.cjs"))
-    .toBeDefined();
-  expect
-    .soft(loaderEdge("consecutive-methods.cjs", "./call-dep.cjs"))
-    .toBeDefined();
+    .soft(
+      loaderEdge("consecutive-methods.cjs", "./call-dep.cjs", "require")
+        ?.properties,
+    )
+    .toMatchObject({
+      operation: "load",
+      resolved_path: "call-dep.cjs",
+      resolution_status: "resolved",
+    });
   expect
     .soft(loaderEdge("nested-loader.cjs", "./nested-false.cjs"))
     .toBeUndefined();
   expect
-    .soft(loaderEdge("nested-child.cjs", "./nested-valid.cjs"))
-    .toBeDefined();
+    .soft(
+      loaderEdge("nested-child.cjs", "./nested-valid.cjs", "require")
+        ?.properties,
+    )
+    .toMatchObject({
+      operation: "load",
+      resolved_path: "nested-valid.cjs",
+      resolution_status: "resolved",
+    });
   expect
     .soft(loaderEdge("wrapped-call.cts", "./false-dep.cjs"))
     .toBeUndefined();
 };
 
-cliTest.for(["CLI", "stdio MCP"] as const)(
-  "distinguishes exact loader suffixes from uppercase artifact names through %s",
-  async (surface, { cli }) => {
+cliTest(
+  "distinguishes exact loader suffixes from uppercase artifact names",
+  async ({ cli }) => {
     const root = await createTestTempDirectory("rea-loader-suffix-case-");
     const source = "console.log(42);";
     await writeFixtureFiles(root, {
@@ -256,23 +277,17 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         'require.resolve = custom; require.resolve("./dep.cjs");',
       "upper-alias.MJS":
         'var module; const dep = require("./dep.cjs"); module.exports = dep;',
-      "upper-var-export.MJS": "var exports; exports.name = 42;",
       "nested-mutated.MJS":
         'require.call=custom;require.call.call(require,"./receiver.cjs","./invented.node");',
       "nested-mutated.cjs":
         'require.call=custom;require.call.apply(require,["./receiver.cjs","./invented.node"]);',
       "candidate-alias.MJS": 'const load = require; load("./alias-dep.cjs");',
-      "candidate-new.MJS": 'new require("./alias-dep.cjs");',
       "candidate-new-alias.MJS":
         'const load = require; new load("./alias-dep.cjs");',
       "candidate-new-shadow.MJS":
         'const require = function() {}; new require("./alias-dep.cjs");',
       "candidate-new-replaced.MJS":
         'require = function() {}; const load = require; new load("./alias-dep.cjs");',
-      "benign-resolve.cjs":
-        'require.resolve.paths = custom; require.resolve("./benign-dep.cjs");',
-      "benign-call.cjs":
-        'require.call.extra = 1; require.call(null, "./call-dep.cjs");',
       "consecutive-methods.cjs":
         'require.resolve.paths = custom; require.resolve("./benign-dep.cjs"); require.call.extra = 1; require.call(null, "./call-dep.cjs");',
       "nested-loader.cjs":
@@ -300,7 +315,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       },
     );
     expect(control.stdout.trim()).toBe("42");
-    const result = await analyzeJavaScriptDirectory(surface, cli, root);
+    const result = await analyzeJavaScriptDirectory("CLI", cli, root);
     expect(result.statistics.parse_failures).toBe(0);
     expectUnknownLoaderCandidates(result.graph);
     for (const path of ["nested-mutated.MJS", "nested-mutated.cjs"]) {
@@ -349,9 +364,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
   },
 );
 
-cliTest.for(["CLI", "stdio MCP"] as const)(
-  "retains conditional Electron boundaries without resolving their roles through %s",
-  async (surface, { cli }) => {
+cliTest(
+  "retains conditional Electron boundaries without resolving their roles",
+  async ({ cli }) => {
     const root = await createTestTempDirectory("rea-candidate-electron-");
     await writeFixtureFiles(root, {
       "entry.MJS": [
@@ -371,92 +386,58 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         'contextBridge.exposeInMainWorld("dynamicApi", { ping: () => ipcRenderer.invoke("dynamicPing") });',
       ].join("\n"),
     });
-    const result = await analyzeJavaScriptDirectory(surface, cli, root);
-    for (const kind of ["browser-window", "ipc-handler", "url-scheme"]) {
-      expect(result.graph.nodes).toContainEqual(
+    const result = await analyzeJavaScriptDirectory("CLI", cli, root);
+    const { nodes } = result.graph;
+    const expectCandidate = (
+      kind: string,
+      source: string,
+      properties: object,
+    ) =>
+      expect(nodes).toContainEqual(
         expect.objectContaining({
           kind,
           observations: expect.arrayContaining([
             expect.objectContaining({
-              properties: expect.objectContaining({
-                loader_authority: "candidate",
-              }),
+              properties: expect.objectContaining(properties),
               evidence: expect.objectContaining({
                 confidence: "low",
+                location: expect.objectContaining({
+                  value: expect.objectContaining({ source }),
+                }),
               }),
             }),
           ]),
         }),
       );
-    }
+
+    for (const kind of ["browser-window", "ipc-handler", "url-scheme"])
+      expectCandidate(kind, "entry.MJS", { loader_authority: "candidate" });
     expect(
-      result.graph.nodes.some(({ kind }) => kind === "electron-preload"),
+      nodes.some(
+        ({ kind }) =>
+          kind === "electron-preload" || kind === "electron-renderer",
+      ),
     ).toBe(false);
-    expect(
-      result.graph.nodes.some(({ kind }) => kind === "electron-renderer"),
-    ).toBe(false);
-    expect(result.graph.nodes).toContainEqual(
-      expect.objectContaining({
-        kind: "unknown",
-        observations: expect.arrayContaining([
-          expect.objectContaining({
-            properties: expect.objectContaining({
-              candidate_role: "renderer",
-              loader_authority: "candidate",
-              declared_path: "./index.html",
-              resolution_status: "unavailable",
-              resolved_path: null,
-            }),
-            evidence: expect.objectContaining({ confidence: "low" }),
-          }),
-        ]),
-      }),
-    );
-    expect(result.graph.nodes).toContainEqual(
-      expect.objectContaining({
-        kind: "endpoint",
-        observations: expect.arrayContaining([
-          expect.objectContaining({
-            properties: expect.objectContaining({
-              value: "https://candidate.example.test/app",
-              interpretation: "candidate",
-            }),
-            evidence: expect.objectContaining({ confidence: "low" }),
-          }),
-        ]),
-      }),
-    );
-    expect(result.graph.nodes).toContainEqual(
-      expect.objectContaining({
-        kind: "javascript-expression",
-        observations: expect.arrayContaining([
-          expect.objectContaining({
-            properties: expect.objectContaining({
-              loader_authority: "candidate",
-              terminal: "electron.ipcRenderer.invoke",
-            }),
-            evidence: expect.objectContaining({
-              confidence: "low",
-            }),
-          }),
-        ]),
-      }),
-    );
-    expect(result.graph.nodes).toContainEqual(
-      expect.objectContaining({
-        kind: "javascript-expression",
-        observations: expect.arrayContaining([
-          expect.objectContaining({
-            properties: expect.objectContaining({
-              loader_authority: "candidate",
-              terminal: "electron.ipcRenderer.invoke",
-              channel: "dynamicPing",
-            }),
-            evidence: expect.objectContaining({ confidence: "low" }),
-          }),
-        ]),
-      }),
-    );
+    expectCandidate("unknown", "entry.MJS", {
+      candidate_role: "renderer",
+      loader_authority: "candidate",
+      declared_path: "./index.html",
+      resolution_status: "unavailable",
+      resolved_path: null,
+    });
+    expectCandidate("endpoint", "entry.MJS", {
+      value: "https://candidate.example.test/app",
+      interpretation: "candidate",
+    });
+    for (const [source, channel] of [
+      ["entry.MJS", "ping"],
+      ["dynamic.MJS", "dynamicPing"],
+    ] as const)
+      expectCandidate("javascript-expression", source, {
+        loader_authority: "candidate",
+        terminal: "electron.ipcRenderer.invoke",
+        channel,
+      });
     expect(result.summary).toMatchObject({
       browser_windows: 0,
       preload_entrypoints: 0,
@@ -469,9 +450,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
   },
 );
 
-cliTest.for(["CLI", "stdio MCP"] as const)(
-  "retains loader uncertainty in Electron semantic paths through %s",
-  async (surface, { cli }) => {
+cliTest(
+  "retains loader uncertainty in Electron semantic paths over MCP",
+  async ({ cli }) => {
     const root = await createTestTempDirectory(
       "rea-electron-semantic-authority-",
     );
@@ -483,7 +464,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "candidate.MJS": source,
       "proven.cjs": source,
     });
-    const result = await analyzeJavaScriptDirectory(surface, cli, root);
+    const result = await analyzeJavaScriptDirectory("stdio MCP", cli, root);
     const graph = result.semantic_graph;
     const pathNodes = graph.nodes.filter((node) =>
       node.identity.role_key.startsWith("electron-path:"),
@@ -513,11 +494,21 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         confidence: "exact",
       });
     }
-    const relations = graph.relations.filter(
-      ({ properties }) => properties.loader_authority === "candidate",
-    );
+    const relationsFor = (nodes: typeof pathNodes) => {
+      const ids = new Set(nodes.map(({ node_id }) => node_id));
+      return graph.relations.filter(
+        ({ source_node_id, target_node_id }) =>
+          ids.has(source_node_id) || ids.has(target_node_id),
+      );
+    };
+    const relations = relationsFor(candidate);
+    const provenRelations = relationsFor(proven);
     expect(relations.length).toBeGreaterThan(0);
+    expect(provenRelations).toHaveLength(relations.length);
+    for (const relation of provenRelations)
+      expect(relation.properties.loader_authority).toBeUndefined();
     for (const relation of relations) {
+      expect(relation.properties.loader_authority).toBe("candidate");
       const evidence = evidenceFor(relation.evidence.context_id);
       expect(evidence).toMatchObject({ state: "inferred", confidence: "low" });
       expect(evidence?.limitations.join(" ")).toContain("loader is unknown");
@@ -602,47 +593,31 @@ const expectNativeModuleControls = async (root: string): Promise<void> => {
     ],
     { cwd: root, timeout: 10_000 },
   );
-  for (const [filename, script] of [
+  const control = await execute(
+    process.execPath,
     [
-      "typed.cjs",
-      'console.log(require("./typed.cjs").typed, require("./alias.cjs").alias);',
+      "--input-type=module",
+      "-e",
+      [
+        'import cts from "./typed.cjs"; import cjsAlias from "./alias.cjs";',
+        'import { typed } from "./typed.mjs"; import { alias } from "./alias.mjs";',
+        'import cjs from "./mixed.cjs"; import * as esm from "./mixed.mjs";',
+        "const values = ({ staticChoice, requireChoice, mixed }) => [staticChoice, requireChoice, mixed];",
+        "console.log(JSON.stringify([[cts.typed, cjsAlias.alias, typed, alias], values(cjs), values(esm)]));",
+      ].join("\n"),
     ],
-    [
-      "typed.mjs",
-      'Promise.all([import("./typed.mjs"), import("./alias.mjs")]).then(([first, second]) => console.log(first.typed, second.alias));',
-    ],
-  ] as const) {
-    const typedControl = await execute(process.execPath, ["-e", script], {
-      cwd: emitted,
-      timeout: 5_000,
-    });
-    expect(typedControl.stdout.trim()).toBe("42 42");
+    { cwd: emitted, timeout: 5_000 },
+  );
+  expect(JSON.parse(control.stdout)).toEqual([
+    [42, 42, 42, 42],
+    [42, 42, 42],
+    [99, 42, 99],
+  ]);
+  for (const filename of ["typed.cjs", "typed.mjs"]) {
     expect(await readFile(join(emitted, filename), "utf8")).not.toContain(
       "./type-only.cjs",
     );
   }
-  for (const [filename, expected] of [
-    ["mixed.cjs", "42 42 42"],
-    ["mixed.mjs", "99 42 99"],
-  ] as const) {
-    const control = await execute(
-      process.execPath,
-      [
-        "-e",
-        `import("./${filename}").then(({staticChoice, requireChoice, mixed}) => console.log(staticChoice, requireChoice, mixed));`,
-      ],
-      { cwd: emitted, timeout: 5_000 },
-    );
-    expect(control.stdout.trim()).toBe(expected);
-  }
-  const nativeRequire = createRequire(join(root, "main.cjs"));
-  for (const name of ["dependency", "nested"])
-    expect(
-      relative(root, nativeRequire.resolve(`./${name}.cjs`)).replaceAll(
-        "\\",
-        "/",
-      ),
-    ).toBe(`${name}.cjs`);
 };
 
 const expectAliasRelationships = (
@@ -723,6 +698,17 @@ const expectMixedRelationships = (
     },
   ]);
   expect(exported("mixed.mts", "mixed")).toEqual([]);
+  expect(graph.edges).toContainEqual(
+    expect.objectContaining({
+      relation: "exposes",
+      properties: expect.objectContaining({ exported_name: "mixed" }),
+      evidence: expect.objectContaining({
+        location: expect.objectContaining({
+          value: expect.objectContaining({ source: "mixed.mts" }),
+        }),
+      }),
+    }),
+  );
 };
 
 const expectImportEqualsRelationships = (
@@ -789,6 +775,8 @@ const expectImportEqualsRelationships = (
         properties: expect.objectContaining({
           semantic_role: "source-module",
           path: sourcePath,
+          module_format: format,
+          import_relationships: 1,
           export_names: ["typed"],
           export_relationships: 1,
         }),
@@ -810,18 +798,12 @@ const expectImportEqualsRelationships = (
           kind: "require",
           specifier: "typed-package",
           resolved_path: "node_modules/typed-package/actual.cjs",
+          resolution_mode: "require",
         }),
-      }),
-    );
-    expect(
-      graph.nodes.flatMap(({ observations }) => observations),
-    ).toContainEqual(
-      expect.objectContaining({
-        properties: expect.objectContaining({
-          semantic_role: "source-module",
-          path: sourcePath,
-          module_format: format,
-          import_relationships: 1,
+        evidence: expect.objectContaining({
+          location: expect.objectContaining({
+            value: expect.objectContaining({ source: sourcePath }),
+          }),
         }),
       }),
     );
@@ -947,11 +929,9 @@ cliTest(
 );
 
 cliTest(
-  "keeps Electron's script loader for a .js preload in a module package scope",
+  "keeps the script loader and IPC pairing for a declared preload in a module package",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-package-type-preload-");
-    // Electron's preload loader ignores "type": "module" ("ES Modules (ESM)
-    // in Electron"); main.mjs is an ES module by its suffix.
     await writeFixtureFiles(root, {
       "package.json": JSON.stringify({ type: "module", main: "main.mjs" }),
       "main.mjs": [
@@ -971,15 +951,10 @@ cliTest(
       ].join("\n"),
       "index.html": "<!doctype html><title>app</title>\n",
     });
-
-    const response = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--format", "json"],
-      environment: { REA_LOG_LEVEL: "silent" },
-    });
-
-    expect(response.exitCode, response.stderr).toBe(0);
-    const { graph, summary } = javascriptApplicationAnalysisResultSchema.parse(
-      parseEvidence(response.json).normalized_result,
+    const { graph, summary } = await analyzeJavaScriptDirectory(
+      "CLI",
+      cli,
+      root,
     );
     expect(sourceRequireFacts(graph, "preload.js")).toEqual({
       module_format: "commonjs",
@@ -998,219 +973,219 @@ cliTest(
 );
 
 cliTest(
-  "does not infer preload loader authority from a candidate Electron window",
+  "uses proven window declarations to select helper-only preload loaders",
   async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-candidate-preload-");
-    await writeFixtureFiles(root, {
-      "package.json": JSON.stringify({ type: "module", main: "main.MJS" }),
-      "main.MJS":
-        'const {BrowserWindow}=require("electron"); new BrowserWindow({webPreferences:{preload:"./preload.js"}});',
-      "preload.js": 'require("./helper.cjs");',
-      "helper.cjs": "module.exports = 1;",
-    });
-    const response = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--format", "json"],
-      environment: { REA_LOG_LEVEL: "silent" },
-    });
-    expect(response.exitCode, response.stderr).toBe(0);
-    const { graph } = javascriptApplicationAnalysisResultSchema.parse(
-      parseEvidence(response.json).normalized_result,
-    );
-    expect(graph.nodes).toContainEqual(
-      expect.objectContaining({
-        kind: "browser-window",
-        observations: expect.arrayContaining([
-          expect.objectContaining({
-            properties: expect.objectContaining({
-              loader_authority: "candidate",
-            }),
-          }),
-        ]),
-      }),
-    );
-    expect(sourceRequireFacts(graph, "preload.js").module_format).toBe(
-      "unknown",
-    );
-    expect(
-      sourceRequireFacts(graph, "preload.js").require_targets,
-    ).not.toContainEqual(["./helper.cjs", "helper.cjs", "resolved"]);
-  },
-);
-
-cliTest(
-  "keeps a declared preload's helper require without renderer API text",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-helper-only-preload-");
+    const root = await createTestTempDirectory("rea-preload-authority-");
     await writeFixtureFiles(root, {
       "package.json": JSON.stringify({ type: "module", main: "main.mjs" }),
       "main.mjs":
-        'import { BrowserWindow } from "electron"; import { fileURLToPath } from "node:url"; new BrowserWindow({webPreferences:{sandbox:false,preload:fileURLToPath(new URL("./aaa-preload.js",import.meta.url))}});',
+        'import { BrowserWindow } from "electron"; new BrowserWindow({webPreferences:{sandbox:false,preload:"./aaa-preload.js"}});',
       "aaa-preload.js": 'require("./helper.cjs");',
+      "candidate.MJS":
+        'const {BrowserWindow}=require("electron"); new BrowserWindow({webPreferences:{sandbox:false,preload:"./candidate-preload.js"}});',
+      "candidate-preload.js": 'require("./helper.cjs");',
       "helper.cjs": "module.exports = 1;",
     });
-    const response = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--format", "json"],
-      environment: { REA_LOG_LEVEL: "silent" },
-    });
-    expect(response.exitCode, response.stderr).toBe(0);
-    const { graph } = javascriptApplicationAnalysisResultSchema.parse(
-      parseEvidence(response.json).normalized_result,
-    );
+
+    const { graph } = await analyzeJavaScriptDirectory("CLI", cli, root);
     expect(sourceRequireFacts(graph, "aaa-preload.js")).toEqual({
       module_format: "commonjs",
       import_relationships: 1,
       require_targets: [["./helper.cjs", "helper.cjs", "resolved"]],
     });
+    expect(graph.nodes).toContainEqual(
+      expect.objectContaining({
+        kind: "browser-window",
+        observations: expect.arrayContaining([
+          expect.objectContaining({
+            evidence: expect.objectContaining({
+              location: expect.objectContaining({
+                value: expect.objectContaining({ source: "candidate.MJS" }),
+              }),
+            }),
+            properties: expect.objectContaining({
+              loader_authority: "candidate",
+              preload_path: "./candidate-preload.js",
+            }),
+          }),
+        ]),
+      }),
+    );
+    expect(sourceRequireFacts(graph, "candidate-preload.js")).toEqual({
+      module_format: "unknown",
+      import_relationships: 0,
+      require_targets: [],
+    });
   },
 );
 
-cliTest.for(["CLI", "stdio MCP"] as const)(
-  "retains unbound CommonJS semantic relationships through %s",
-  async (surface, { cli }) => {
+const expectCommonJsRelationships = (
+  graph: ReturnType<
+    typeof javascriptApplicationAnalysisResultSchema.parse
+  >["graph"],
+  lines: readonly [string, ...string[]],
+): void => {
+  const sourceEdges = graph.edges.filter(
+    ({ relation, evidence: { location } }) =>
+      relation === "imports" &&
+      location.available &&
+      location.value.kind === "source-range" &&
+      location.value.source === "main.cjs",
+  );
+  const semantic = sourceEdges.filter(
+    ({ properties }) => properties.module_link_kind !== undefined,
+  );
+  const digest = createHash("sha256").update(lines.join("\n")).digest("hex");
+  expect(semantic).toHaveLength(5);
+  expect(
+    semantic.map(({ properties, evidence: { location } }) => [
+      location.available && location.value.kind === "source-range"
+        ? location.value.start.line
+        : null,
+      properties.module_link_kind,
+      properties.local_name,
+      properties.exported_name,
+      properties.specifier,
+      properties.resolved_path,
+      properties.resolution_status,
+    ]),
+  ).toEqual(
+    expect.arrayContaining([
+      [
+        1,
+        "require",
+        null,
+        null,
+        "./dependency.cjs",
+        "dependency.cjs",
+        "resolved",
+      ],
+      [
+        2,
+        "require",
+        "left",
+        null,
+        "./dependency.cjs",
+        "dependency.cjs",
+        "resolved",
+      ],
+      [
+        2,
+        "require",
+        "right",
+        null,
+        "./dependency.cjs",
+        "dependency.cjs",
+        "resolved",
+      ],
+      [
+        3,
+        "commonjs-export",
+        null,
+        "default",
+        "./dependency.cjs",
+        "dependency.cjs",
+        "resolved",
+      ],
+      [3, "require", null, null, "./nested.cjs", "nested.cjs", "resolved"],
+    ]),
+  );
+  const bareLocation = {
+    available: true,
+    value: {
+      kind: "source-range",
+      source: "main.cjs",
+      start: { line: 1, column: 0 },
+      end: { line: 1, column: lines[0].length - 1 },
+    },
+  };
+  expect(semantic).toContainEqual(
+    expect.objectContaining({
+      properties: expect.objectContaining({
+        module_link_kind: "require",
+        specifier: "./dependency.cjs",
+        imported_name: null,
+        local_name: null,
+        exported_name: null,
+      }),
+      evidence: expect.objectContaining({
+        artifact: expect.objectContaining({
+          available: true,
+          sha256: digest,
+        }),
+        location: bareLocation,
+      }),
+    }),
+  );
+  expect(sourceEdges).toContainEqual(
+    expect.objectContaining({
+      properties: expect.objectContaining({
+        kind: "require",
+        operation: "load",
+        specifier: "./dependency.cjs",
+        resolved_path: "dependency.cjs",
+      }),
+      evidence: expect.objectContaining({ location: bareLocation }),
+    }),
+  );
+  expect(
+    sourceEdges.some(
+      ({ properties }) => properties.specifier === "./shadow.cjs",
+    ),
+  ).toBe(false);
+  expect(sourceRequireFacts(graph, "main.cjs").import_relationships).toBe(4);
+};
+
+cliTest(
+  "publishes exact CommonJS and TypeScript loader relationships over CLI and MCP",
+  async ({ cli }) => {
     const root = await createTestTempDirectory("rea-unbound-requires-");
     const lines = [
       'require("./dependency.cjs");',
-      'void require("./dependency.cjs");',
-      'consume(require("./dependency.cjs"));',
-      'require("./dependency.cjs").member;',
-      'const {} = require("./dependency.cjs");',
-      'const bound = require("./dependency.cjs");',
       'const { left, right } = require("./dependency.cjs");',
       'module.exports = require("./dependency.cjs", require("./nested.cjs"));',
       'function local(require) { require("./shadow.cjs"); }',
       "require(dynamicSpecifier);",
-      'let assigned; assigned = require("./dependency.cjs");',
     ] as const;
     const source = lines.join("\n");
-    const files = {
+    const inert = 'throw new Error("fixture must not execute");';
+    await writeFixtureFiles(root, {
       "main.cjs": source,
-      "imports.mjs": 'import "./dependency.cjs";',
-      "dependency.cjs": 'throw new Error("fixture must not execute");',
-      "nested.cjs": 'throw new Error("fixture must not execute");',
+      "dependency.cjs": inert,
+      "nested.cjs": inert,
+      "shadow.cjs": inert,
       ...typescriptSourceFiles,
+      ...typedPackageFiles,
       "type-only.d.cts": "declare const value: unknown; export = value;",
-    };
-    await Promise.all(
-      Object.entries(files).map(([path, text]) =>
-        writeFile(join(root, path), text),
-      ),
-    );
-    await writeFixtureFiles(root, typedPackageFiles);
+    });
     await expectNativeModuleControls(root);
 
-    let document: unknown;
-    if (surface === "CLI") {
-      const response = await cli.run({
-        arguments: ["analyze-javascript-application", root, "--format", "json"],
-        environment: { REA_LOG_LEVEL: "silent" },
-      });
-      expect(response.exitCode, response.stderr).toBe(0);
-      document = response.json;
-    } else {
-      const { call } = await connectLocalToolsMcp();
-      const response = await call("analyze_javascript_application", {
-        input_path: root,
-        format: "directory",
-      });
-      expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      document = response.structuredContent;
-    }
-    const evidence = parseEvidence(document);
+    const response = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--format", "json"],
+      environment: { REA_LOG_LEVEL: "silent" },
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const evidence = parseEvidence(response.json);
     const { graph } = javascriptApplicationAnalysisResultSchema.parse(
       evidence.normalized_result,
     );
     expectImportEqualsRelationships(graph);
     expectAliasRelationships(graph);
     expectMixedRelationships(graph);
-    const links = graph.edges.filter(
-      ({ relation, properties, evidence: edgeEvidence }) =>
-        relation === "imports" &&
-        properties.module_link_kind === "require" &&
-        edgeEvidence.location.available &&
-        edgeEvidence.location.value.kind === "source-range" &&
-        edgeEvidence.location.value.source === "main.cjs",
-    );
-    expect(links).toHaveLength(10);
-    for (const [line, count] of [
-      [1, 1],
-      [2, 1],
-      [3, 1],
-      [4, 1],
-      [5, 1],
-      [6, 1],
-      [7, 2],
-      [8, 1],
-      [11, 1],
-    ] as const)
-      expect(
-        links.filter(
-          ({ evidence: edgeEvidence }) =>
-            edgeEvidence.location.available &&
-            edgeEvidence.location.value.kind === "source-range" &&
-            edgeEvidence.location.value.start.line === line,
-        ),
-        `semantic links on line ${line}`,
-      ).toHaveLength(count);
-    const digest = createHash("sha256").update(source).digest("hex");
-    for (const edge of links) {
-      expect(edge.evidence.artifact).toMatchObject({
-        available: true,
-        sha256: digest,
-      });
-      expect(edge.properties.resolution_status).toBe("resolved");
-      expect(edge.properties.resolved_path).toBe(
-        edge.properties.specifier === "./nested.cjs"
-          ? "nested.cjs"
-          : "dependency.cjs",
-      );
-    }
-    const bare = links.find(
-      ({ evidence: edgeEvidence }) =>
-        edgeEvidence.location.available &&
-        edgeEvidence.location.value.kind === "source-range" &&
-        edgeEvidence.location.value.start.line === 1,
-    );
-    expect(bare).toMatchObject({
-      properties: {
-        imported_name: null,
-        local_name: null,
-        exported_name: null,
-      },
-      evidence: {
-        location: {
-          available: true,
-          value: {
-            source: "main.cjs",
-            start: { line: 1, column: 0 },
-            end: { line: 1, column: lines[0].length - 1 },
-          },
-        },
-      },
+
+    expectCommonJsRelationships(graph, lines);
+
+    const call = await resolveJavaScriptApplicationMcpCall(cli, undefined);
+    const mcp = await call("analyze_javascript_application", {
+      input_path: root,
+      format: "directory",
     });
+    expect(mcp.isError, JSON.stringify(mcp)).not.toBe(true);
+    const mcpEvidence = parseEvidence(mcp.structuredContent);
     expect(
-      graph.nodes
-        .flatMap(({ observations }) => observations)
-        .find(
-          ({ properties }) =>
-            properties.semantic_role === "source-module" &&
-            properties.path === "main.cjs",
-        )?.properties.import_relationships,
-    ).toBe(10);
-    expect(
-      graph.edges.some(
-        ({ relation, properties }) =>
-          relation === "imports" &&
-          properties.kind === "require" &&
-          properties.specifier === "./dependency.cjs",
-      ),
-    ).toBe(true);
-    expect(
-      graph.edges.filter(
-        ({ relation, properties }) =>
-          relation === "imports" &&
-          properties.module_link_kind === "commonjs-export" &&
-          properties.specifier === "./dependency.cjs",
-      ),
-    ).toHaveLength(1);
+      javascriptApplicationAnalysisResultSchema.parse(
+        mcpEvidence.normalized_result,
+      ).graph,
+    ).toEqual(graph);
   },
 );

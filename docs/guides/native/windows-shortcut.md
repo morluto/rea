@@ -94,8 +94,9 @@ extension. Raw fields and artifact identity are preserved. The code page in a
 ConsoleFE block describes the console and does not establish the original
 system ANSI encoding for these paths.
 
-An unreadable LinkInfo target or rejected environment target leaves the target
-extension unknown. An independently established full-path match still gives
+The target extension stays unknown when a LinkInfo or environment target is
+unreadable, or when parsing stops before a declared environment block is found.
+An independently established full-path match still gives
 `false` for `icon_location_differs_from_target`. Without such a match, the
 comparison remains unknown.
 

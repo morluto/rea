@@ -7,7 +7,11 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { withVerifierArtifactScope } from "./lib/verifier-artifact-scope.mjs";
-import { readGhidraLanguageCatalog } from "../dist/ghidra/GhidraLanguageCatalog.js";
+import { AnalysisResourceConstraintError } from "../dist/domain/analysisErrorCore.js";
+import {
+  admitGhidraLanguageOverride,
+  readGhidraLanguageCatalog,
+} from "../dist/ghidra/GhidraLanguageCatalog.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
@@ -100,7 +104,13 @@ async function languageInstalled(languageId) {
       installation.installDir,
       scope,
     );
-    return catalog.some((definition) => definition.id === languageId);
+    const refusal = admitGhidraLanguageOverride(
+      { languageId },
+      catalog,
+      installation.providerVersion,
+    );
+    if (refusal instanceof AnalysisResourceConstraintError) throw refusal;
+    return refusal === null;
   });
 }
 

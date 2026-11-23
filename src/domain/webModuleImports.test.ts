@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   collectWebModuleImports,
+  createCapturedModuleMatcher,
   matchCapturedModules,
 } from "./webModuleImports.js";
 import { exportedWebScriptSchema } from "./webScriptExport.js";
@@ -235,3 +236,135 @@ it.each(["main.mjs", "main.js", "view.jsx"])(
     }
   },
 );
+
+describe("keyword-indexed traversal and indexed candidate matching", () => {
+  it("handles sources without module keywords and out-of-order nested dynamic imports", () => {
+    expect(collectWebModuleImports("const x = 1 + 2;", "main.mjs")).toEqual({
+      imports: [],
+      state: "parsed",
+      diagnostics: [],
+    });
+    expect(
+      collectWebModuleImports('const s = "import export";', "main.mjs").imports,
+    ).toEqual([]);
+    const nested = collectWebModuleImports(
+      'import(wrap(import("./inner.js")));',
+      "main.mjs",
+    );
+    expect(
+      nested.imports.map((item) => [item.expression, item.specifier]),
+    ).toEqual([
+      ['wrap(import("./inner.js"))', null],
+      ['"./inner.js"', "./inner.js"],
+    ]);
+
+    const decorated = collectWebModuleImports(
+      'class C { m(@dec(import("./inner.js")) x) {} }',
+      "main.mjs",
+    );
+    expect(decorated.state).toBe("parsed");
+    expect(
+      decorated.imports.map((item) => [item.kind, item.specifier]),
+    ).toEqual([["dynamic-import", "./inner.js"]]);
+  });
+
+  it.each([
+    [
+      "TS typed parameter with default",
+      'class C { m(@dec(import("./id.js")) x: any = 1) {} }',
+      "main.ts",
+      ["./id.js"],
+    ],
+    [
+      "TS destructured object parameter",
+      'class C { m(@dec(import("./obj.js")) { a }: any) {} }',
+      "main.ts",
+      ["./obj.js"],
+    ],
+    [
+      "TS destructured object parameter with default",
+      'class C { m(@dec(import("./objd.js")) { a }: any = {}) {} }',
+      "main.ts",
+      ["./objd.js"],
+    ],
+    [
+      "TS setter parameter with default",
+      'class C { set x(@dec(import("./setp.js")) v: any = 1) {} }',
+      "main.ts",
+      ["./setp.js"],
+    ],
+    [
+      "object-literal method",
+      'const o = { @dec(import("./om.js")) m() {} };',
+      "main.mjs",
+      ["./om.js"],
+    ],
+    [
+      "object-literal property",
+      'const o = { @dec(import("./op.js")) p: 1 };',
+      "main.mjs",
+      ["./op.js"],
+    ],
+  ])(
+    "retains dynamic imports inside decorators on %s",
+    (_label, source, path, expectedSpecifiers) => {
+      const result = collectWebModuleImports(source, path);
+      expect(result.state).toBe("parsed");
+      expect(result.diagnostics).toEqual([]);
+      expect(result.imports.map((item) => item.specifier)).toEqual(
+        expectedSpecifiers,
+      );
+      for (const item of result.imports)
+        expect(source.slice(item.start.offset, item.end.offset)).toBe(
+          item.expression,
+        );
+    },
+  );
+
+  it("preserves ascending script_index order across exact and fragment-stripped matches", () => {
+    const scripts = [
+      script("https://app.test/a.js", "scenario-response"),
+      script("https://app.test/a.js#one", "page-script"),
+      script("https://app.test/a.js", "scenario-response", "b".repeat(64)),
+    ];
+    const expected = [
+      {
+        script_index: 0,
+        match: "response-url-without-fragment",
+        script: scripts[0],
+      },
+      { script_index: 1, match: "exact-reported-url", script: scripts[1] },
+      {
+        script_index: 2,
+        match: "response-url-without-fragment",
+        script: scripts[2],
+      },
+    ];
+    expect(matchCapturedModules("https://app.test/a.js#one", scripts)).toEqual(
+      expected,
+    );
+    expect(
+      matchCapturedModules(
+        "https://app.test/a.js#one",
+        Object.freeze([...scripts]),
+      ),
+    ).toEqual(expected);
+
+    const matcher = createCapturedModuleMatcher(scripts);
+    // 1st call (linear) and 2nd+ calls (indexed) must return identical order.
+    expect(matcher("https://app.test/a.js#one")).toEqual(expected);
+    expect(matcher("https://app.test/a.js#one")).toEqual(expected);
+    expect(matcher("https://APP.test/a.js")).toEqual([
+      {
+        script_index: 0,
+        match: "response-url-without-fragment",
+        script: scripts[0],
+      },
+      {
+        script_index: 2,
+        match: "response-url-without-fragment",
+        script: scripts[2],
+      },
+    ]);
+  });
+});

@@ -1,3 +1,4 @@
+import { finalizedResult, runOwned } from "../../providers/runOwned.js";
 import { bindSessionEvidenceExecution } from "./SessionEvidenceReuse.js";
 import { admitCompletedAnalysis } from "../investigation/admitCompletedAnalysis.js";
 import { randomUUID } from "node:crypto";
@@ -80,6 +81,7 @@ import {
   prepareSessionExecution,
 } from "./BinarySessionExecution.js";
 import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
+import { bundleExecutableProvenance } from "../../domain/apple/bundleExecutableProvenance.js";
 import {
   analysisErrorWithCleanupDependencies,
   analysisErrorWithCloseRejection,
@@ -382,9 +384,8 @@ export class BinarySession
       const imported = this.importAnalysisSnapshot(options.snapshot);
       if (!imported.ok) return imported;
     }
-    // The same bytes can be selected through a different spelling without retiring the engine.
-    if (retained.target.callerInputPath !== target.callerInputPath)
-      this.#active = { ...retained, target };
+    // Refresh selection facts from this open while keeping the live engine.
+    this.#active = { ...retained, target };
     return ok(target);
   }
 
@@ -437,23 +438,30 @@ export class BinarySession
   }
 
   /** Resolve a target and provider profile without creating a provider client. */
-  previewTarget(
+  async previewTarget(
     target: BinaryTarget,
     options: BinarySessionOpenOptions = {},
   ): Promise<Result<ResolvedSessionOpen, AnalysisError>> {
     if (isAborted(options.signal))
-      return Promise.resolve(err(cancelledBy("open_binary", options.signal)));
-    return resolveSessionTarget({
-      router: this.#providerRouter,
-      current: this.#active,
-      target,
-      options,
-      stagedSnapshotMismatch: (target, profile) =>
-        this.snapshotMismatch(target, profile),
-    }).then((resolved) =>
-      resolved.ok && isAborted(options.signal)
-        ? err(cancelledBy("open_binary", options.signal))
-        : resolved,
+      return err(cancelledBy("open_binary", options.signal));
+    return finalizedResult(
+      await runOwned(
+        () =>
+          resolveSessionTarget({
+            router: this.#providerRouter,
+            current: this.#active,
+            target,
+            options,
+            stagedSnapshotMismatch: (target, profile) =>
+              this.snapshotMismatch(target, profile),
+          }),
+        {
+          providerId: "rea",
+          operation: "open_binary",
+          signal: options.signal,
+          diagnostics: () => undefined,
+        },
+      ),
     );
   }
 
@@ -1500,7 +1508,19 @@ export class BinarySession
     // Stop replay before dispatch, including reads overlapping the write.
     if (capability.effects.mutatesArtifact) this.invalidateSnapshot();
     const dispatch = this.#runtimeAvailability.dispatch();
-    const dispatched = await active.client.execute(name, arguments_, options);
+    const executionOptions =
+      name === "inspect_macho" || name === "inspect_signature"
+        ? {
+            ...options,
+            bundleExecutableProvenance:
+              bundleExecutableProvenance(active.target) ?? null,
+          }
+        : options;
+    const dispatched = await active.client.execute(
+      name,
+      arguments_,
+      executionOptions,
+    );
     const result = unrecordedExecution(dispatched);
     const profiled = bindExecutionTarget(
       commitExecutionProfile(name, result, profile),
@@ -1596,7 +1616,7 @@ export class BinarySession
         arguments_,
         evidenceExecution,
         "observed",
-        { callerTarget: active.target },
+        { callerTarget: active.target, immutable: true },
       );
       const recorded = this.recordEvidence(evidence);
       if (!recorded.ok) {
@@ -1620,7 +1640,7 @@ export class BinarySession
           operation: name,
           parameters: arguments_,
           execution: retained,
-          evidence: this.evidenceForAnalysis(evidence.evidence_id) ?? evidence,
+          evidence: authenticated ?? evidence,
         });
       return ok(retained);
     }

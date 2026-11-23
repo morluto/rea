@@ -7,7 +7,7 @@ import {
   evidenceEffects,
   toolEffects,
 } from "../toolEffects.js";
-import { electronFuseOutputSchemas } from "../toolOutputSchemaGroups.js";
+import { electronFuseOutputSchemas } from "./electronFuseOutputSchema.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import { inspectElectronFusesInputSchema } from "../../domain/electron/electronFuses.js";
 import {
@@ -24,10 +24,8 @@ import {
   javaScriptRoutesCompleteDeliveryShape,
   javaScriptRoutesSummaryDeliveryShape,
 } from "../../domain/analysisView/javascriptRoutesView.js";
-import {
-  javaScriptRoutesViewResultSchema,
-  javascriptApplicationSummaryViewResultSchema,
-} from "../../domain/analysisView/analysisViewResult.js";
+import { javascriptApplicationSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/javascriptApplicationSummarySchema.js";
+import { javaScriptRoutesViewResultSchema } from "../../domain/analysisView/summarySchemas/javascriptRoutesSummarySchema.js";
 import { analysisDetailOutputSchemaOf } from "../analysisDetail.js";
 import {
   analyzeJavaScriptApplicationInputSchema,
@@ -130,7 +128,7 @@ export const ELECTRON_TOOL_CONTRACTS = [
       }),
     ),
     description:
-      'Build a static application graph from a local ASAR or extracted JavaScript app without executing it. Supply input_path, e.g. {input_path:"/apps/client",source_paths:["main.js"],detail:"summary"}. Copy source_paths exactly from the inventory, not host-absolute paths inferred from input_path. Returns nodes, edges, semantic relations, integrity contradictions, coverage and unknowns. source_paths limits source analysis to exact inventoried paths without narrowing inventory or artifact identity; dependencies are not implicitly analyzed and unselected sources remain unknown. detail summary reduces delivery, retaining complete Evidence for inspect_analysis_view; it does not reduce analysis. With summary detail, view {kind:"javascript-routes",collection:"routes",offset:0,limit:64} selects static route patterns; static routes do not prove reachability or the complete route set. Integrity mismatches fail by default; record-and-continue retains untrusted observed bytes and partial coverage. analysis_timeout_ms is a per-source provider budget. A host-only timeout needs a longer client deadline, not that budget; do not repeat unchanged work or assume it stopped. If configuration cannot be edited, report the host setting (Codex: mcp_servers.<server>.tool_timeout_sec, seconds).',
+      'Build a static application graph from a local ASAR or extracted JavaScript app without executing it. Supply input_path, e.g. {input_path:"/apps/client",source_paths:["main.js"],detail:"summary"}. Copy source_paths exactly from the inventory, not host-absolute paths inferred from input_path. Returns nodes, edges, semantic relations, integrity contradictions, coverage and unknowns. source_paths limits source analysis to exact inventoried paths without narrowing inventory or artifact identity; dependencies are not implicitly analyzed and unselected sources remain unknown. detail summary reduces delivery, retaining complete Evidence for inspect_analysis_view; it does not reduce analysis. With summary detail, view {kind:"javascript-routes",collection:"routes",offset:0,limit:64} selects static route patterns; static routes do not prove reachability or the complete route set; {kind:"javascript-fact-groups",where:{kinds:["ipc-channel"]},group_by:["operation","channel"]} counts distinct IPC channels, and javascript-facts with the same where reads their observations. Integrity mismatches fail by default; record-and-continue retains untrusted observed bytes and partial coverage. analysis_timeout_ms is a per-source provider budget. A host-only timeout needs a longer client deadline, not that budget; do not repeat unchanged work or assume it stopped. If configuration cannot be edited, report the host setting (Codex: mcp_servers.<server>.tool_timeout_sec, seconds).',
     kind: "electron-provider",
     inputSchema: analyzeJavaScriptApplicationRequestSchema,
     outputSchema: applicationOutputSchema,
