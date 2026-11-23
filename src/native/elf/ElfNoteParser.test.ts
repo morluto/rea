@@ -5,6 +5,7 @@ import { expect, it } from "vitest";
 import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
+  decodeElfSectionNameRequest,
   decodeElfSectionNameTable,
   elfSectionNameBudget,
 } from "../../domain/native/elfSectionNameTable.js";
@@ -28,7 +29,12 @@ import {
   gnuPropertyNote,
   withElf64DirectSectionCount,
 } from "./ElfNotes.fixture.js";
-import { parseElfNotes } from "./ElfNoteParser.js";
+import {
+  parseElfNotes,
+  parseElfNotesFromHandle,
+  readElfBuildIds,
+  readElfBuildIdsFromHandle,
+} from "./ElfNoteParser.js";
 
 const defaults = inspectElfNotesInputSchema.parse({
   path: "/artifacts/app",
@@ -780,6 +786,71 @@ const repeatedNotes = (count: number, notes: Buffer): Buffer => {
   }
   return Buffer.concat([elf64({ phoff: 64, phnum: count }), headers, notes]);
 };
+
+it("checks extended ELF header size using the whole file for note and build-ID readers", async () => {
+  const bytes = repeatedNotes(1, gnuBuildIdNote());
+  const extended = Buffer.concat([
+    bytes.subarray(0, 64),
+    Buffer.alloc(64),
+    bytes.subarray(64),
+  ]);
+  extended.writeUInt16LE(128, 52);
+  extended.writeBigUInt64LE(128n, 32);
+  extended.writeBigUInt64LE(bytes.readBigUInt64LE(72) + 64n, 136);
+  const artifact = {
+    path: defaults.path,
+    bytes: extended.length,
+    sha256: createHash("sha256").update(extended).digest("hex"),
+  };
+  const source = {
+    size: extended.length,
+    prefix: extended.subarray(0, 64),
+    readRange: async (offset: number, length: number) =>
+      extended.subarray(offset, offset + length),
+  };
+  const report = parse(extended);
+  expect(report.entries[0]?.gnu?.build_id_hex).toBeDefined();
+  expect(
+    await parseElfNotesFromHandle(source, artifact, defaults, async () => {}),
+  ).toEqual(report);
+  const ids = readElfBuildIds(extended, defaults, 64);
+  expect(ids.sources[0]?.hex).toEqual(report.entries[0]?.gnu?.build_id_hex);
+  expect(
+    await readElfBuildIdsFromHandle(source, defaults, 64, async (request) =>
+      decodeElfSectionNameRequest(request),
+    ),
+  ).toEqual(ids);
+});
+
+it("reads aliased note tables once and retains each program header's evidence", async () => {
+  const count = 32;
+  const table = elfNote("", 0xffff, Buffer.alloc(1024 * 1024));
+  const bytes = repeatedNotes(count, table);
+  const reads: Array<{ offset: number; length: number }> = [];
+  const artifact = {
+    path: defaults.path,
+    bytes: bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+  const report = await parseElfNotesFromHandle(
+    {
+      size: bytes.length,
+      prefix: bytes.subarray(0, 64),
+      readRange: async (offset, length) => {
+        reads.push({ offset, length });
+        return bytes.subarray(offset, offset + length);
+      },
+    },
+    artifact,
+    defaults,
+    async () => {},
+  );
+  expect(report).toEqual(parse(bytes));
+  expect(report.entries).toHaveLength(count);
+  expect(reads.filter(({ length }) => length === table.length)).toEqual([
+    { offset: 64 + 56 * count, length: table.length },
+  ]);
+});
 
 it("reuses one descriptor hash and GNU NUL scan across note headers", () => {
   const payload = Buffer.alloc(400);

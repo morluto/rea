@@ -646,7 +646,11 @@ type ElfNoteScanInput = Pick<
   "max_entries" | "max_file_bytes"
 >;
 type ElfNoteStep =
-  | { readonly kind: "read"; readonly offset: number; readonly length: number }
+  | {
+      readonly kind: "read" | "note-table";
+      readonly offset: number;
+      readonly length: number;
+    }
   | {
       readonly kind: "decode-section-names";
       readonly request: ElfSectionNameDecodeRequest;
@@ -658,9 +662,10 @@ const readElfStep = function* (
   fileSize: number,
   offset: number,
   length: number,
+  kind: "read" | "note-table" = "read",
 ): ElfNoteSteps<Buffer> {
   requireElfRange(fileSize, offset, length);
-  return (yield { kind: "read", offset, length }) as Buffer;
+  return (yield { kind, offset, length }) as Buffer;
 };
 
 const decodeSectionNamesStep = function* (
@@ -775,7 +780,7 @@ const parseElfNoteSteps = function* (
   visitNote: VisitElfNote,
 ): ElfNoteSteps<ElfNoteTableScan> {
   const headerBytes = yield* readElfStep(fileSize, 0, Math.min(fileSize, 64));
-  const fixed = readElfFixedHeader(headerBytes);
+  const fixed = readElfFixedHeader(headerBytes, fileSize);
   if (!fixed.ok) return fail(fixed.error);
   const header = fixed.value;
   const little = header.byteOrder === "little";
@@ -980,6 +985,7 @@ const parseElfNoteSteps = function* (
         fileSize,
         fileOffset,
         tableSize,
+        "note-table",
       );
       for (const note of parseNoteStreamFromTable(
         noteTableBytes,
@@ -1039,7 +1045,12 @@ const parseElfNoteSteps = function* (
       alignment,
     };
     tables.push(table);
-    const noteTableBytes = yield* readElfStep(fileSize, fileOffset, tableSize);
+    const noteTableBytes = yield* readElfStep(
+      fileSize,
+      fileOffset,
+      tableSize,
+      "note-table",
+    );
     for (const note of parseNoteStreamFromTable(
       noteTableBytes,
       fileOffset,
@@ -1123,7 +1134,7 @@ const decodeElfNoteSteps = <T>(bytes: Buffer, steps: ElfNoteSteps<T>): T => {
   while (!next.done) {
     const step = next.value;
     next = steps.next(
-      step.kind === "read"
+      step.kind !== "decode-section-names"
         ? bytes.subarray(step.offset, step.offset + step.length)
         : decodeElfSectionNameRequest(step.request),
     );
@@ -1140,7 +1151,7 @@ const decodeElfNoteStepsCooperative = async <T>(
   while (!next.done) {
     const step = next.value;
     next = steps.next(
-      step.kind === "read"
+      step.kind !== "decode-section-names"
         ? bytes.subarray(step.offset, step.offset + step.length)
         : await decode(step.request),
     );
@@ -1153,20 +1164,41 @@ const decodeElfNoteStepsFromSource = async <T>(
   steps: ElfNoteSteps<T>,
   decode: CooperativeElfSectionNameDecoder,
 ): Promise<T> => {
+  // Adjacent note declarations commonly alias one table, including a
+  // PT_NOTE followed by its SHT_NOTE. Retain at most one table and project
+  // each declaration independently.
+  let recentTable:
+    | { readonly offset: number; readonly bytes: Buffer }
+    | undefined;
   let next = steps.next();
   while (!next.done) {
     const step = next.value;
-    if (step.kind === "read") {
-      const slice =
-        step.length === 0
-          ? Buffer.alloc(0)
-          : step.offset + step.length <= source.prefix.length
-            ? source.prefix.subarray(step.offset, step.offset + step.length)
-            : await source.readRange(step.offset, step.length);
-      next = steps.next(slice);
-    } else {
+    if (step.kind === "decode-section-names") {
       next = steps.next(await decode(step.request));
+      continue;
     }
+    if (
+      step.length === 0 ||
+      step.offset + step.length <= source.prefix.length
+    ) {
+      next = steps.next(
+        source.prefix.subarray(step.offset, step.offset + step.length),
+      );
+      continue;
+    }
+    if (
+      step.kind === "note-table" &&
+      recentTable?.offset === step.offset &&
+      recentTable.bytes.length === step.length
+    ) {
+      next = steps.next(recentTable.bytes);
+      continue;
+    }
+    if (step.kind === "note-table") recentTable = undefined;
+    const bytes = await source.readRange(step.offset, step.length);
+    if (step.kind === "note-table")
+      recentTable = { offset: step.offset, bytes };
+    next = steps.next(bytes);
   }
   return next.value;
 };
