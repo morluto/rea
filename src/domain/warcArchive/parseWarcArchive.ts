@@ -754,6 +754,24 @@ const skipRecordSeparator = (data: Buffer, from: number): number => {
   return cursor;
 };
 
+/**
+ * The next `WARC/` that starts a line. A search that begins just past a
+ * separator's line feed already sits at a line start; everywhere else the
+ * match must follow a line feed. A `WARC/` inside a header value or URL must
+ * not be mistaken for a record: trusting one invented a record from that
+ * mid-line suffix and swallowed the genuine record that followed.
+ */
+const findRecordStart = (data: Buffer, from: number): number => {
+  let at = from;
+  while (at !== -1) {
+    const next = data.indexOf("WARC/", at, "latin1");
+    if (next === -1) return -1;
+    if (next === from || data[next - 1] === 0x0a) return next;
+    at = next + 5;
+  }
+  return -1;
+};
+
 interface ParsedStream {
   readonly records: WarcRecord[];
   readonly diagnostics: WarcArchive["diagnostics"];
@@ -891,7 +909,7 @@ const parseDecodedStream = (data: Buffer, maxRecords: number): ParsedStream => {
     // this record's own `WARC-Type` line, which invented a second record at the
     // wrong offset and reported the record's own separator as stray bytes.
     const searchFrom = skipRecordSeparator(data, cursor);
-    const nextVersion = data.indexOf("WARC/", searchFrom, "latin1");
+    const nextVersion = findRecordStart(data, searchFrom);
     if (nextVersion === -1) {
       if (searchFrom < data.length)
         diagnostic(

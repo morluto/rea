@@ -12,15 +12,18 @@ import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisInputError,
+  AnalysisResourceConstraintError,
   carriedReason,
   cancelledBy,
   fixedCeilingConstraint,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import {
+  WARC_ARCHIVE_MAX_FILE_BYTES,
   WARC_ARCHIVE_OPERATION as operation,
   WARC_ARCHIVE_PROVIDER,
   type WarcArchive,
@@ -31,7 +34,10 @@ import {
   type InspectWarcArchiveInput,
 } from "../../domain/warcArchive/warcArchiveQuery.js";
 import { parseWarcArchive } from "../../domain/warcArchive/parseWarcArchive.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import {
+  callerAnalysisParameters,
+  parseAnalysisInput,
+} from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 const inputFailure = (message: string, cause?: unknown) =>
@@ -74,23 +80,30 @@ const readFailure = (
       );
     if (cause.reason === "limit") {
       const boundary = cause.boundary ?? "file-size";
+      // `max_file_bytes` is the caller's budget, not a release ceiling: a
+      // value below WARC_ARCHIVE_MAX_FILE_BYTES can be raised on the next
+      // call, so the refusal advises that raise instead of claiming the
+      // release has no override.
+      if (boundary === "file-size")
+        return new AnalysisResourceConstraintError(
+          operation,
+          boundary,
+          cause.message,
+          { max_file_bytes: input.max_file_bytes },
+          {
+            cause,
+            retryable: false,
+            remediationAction: fileByteBudgetRemediation(input.max_file_bytes),
+          },
+        );
       return fixedCeilingConstraint(
         operation,
         boundary,
         cause.message,
-        boundary === "file-size"
-          ? {
-              name: `max_file_bytes (${String(input.max_file_bytes)} bytes)`,
-              kind: "input",
-              limit: input.max_file_bytes,
-              unit: "bytes",
-              narrowing:
-                "Select an archive within max_file_bytes; reply paging does not change this file admission.",
-            }
-          : (cause.fixedAllowance ?? {
-              name: `The WARC ${boundary} allowance`,
-              kind: "parser",
-            }),
+        cause.fixedAllowance ?? {
+          name: `The WARC ${boundary} allowance`,
+          kind: "parser",
+        },
         { cause },
       );
     }
@@ -116,6 +129,26 @@ const readFailure = (
     { cause: failure },
   );
 };
+
+/** Evidence parameters carry only the fields the caller actually selected. */
+const withoutOmitted = (
+  selected: Partial<InspectWarcArchiveInput>,
+): Readonly<Record<string, JsonValue>> => {
+  const parameters: Record<string, JsonValue> = {};
+  for (const [name, value] of Object.entries(selected))
+    if (value !== undefined) parameters[name] = value as JsonValue;
+  return parameters;
+};
+
+/**
+ * Remediation for the caller-selected `max_file_bytes` budget. At the schema
+ * maximum there is no value left to raise, so the advice names that ceiling
+ * rather than an impossible raise.
+ */
+const fileByteBudgetRemediation = (selected: number): string =>
+  selected >= WARC_ARCHIVE_MAX_FILE_BYTES
+    ? `max_file_bytes is at this operation's maximum of ${String(WARC_ARCHIVE_MAX_FILE_BYTES)} bytes; select an archive within that bound.`
+    : `Raise max_file_bytes above ${String(selected)}, up to ${String(WARC_ARCHIVE_MAX_FILE_BYTES)}, or select a smaller archive. The budget applies on the next call; repeating the unchanged request does not raise it.`;
 
 const readArchive = async (
   input: InspectWarcArchiveInput,
@@ -166,6 +199,9 @@ export const inspectWarcArchiveEvidence = async (
   );
   if (!admitted.ok) return admitted;
   const input = admitted.value;
+  // Evidence keeps what the caller selected; a default resolved for execution
+  // is not a caller choice and must not read as one in a saved record.
+  const selected = callerAnalysisParameters(rawInput)(input);
   if (!isAbsolute(input.path))
     return err(
       inputFailure("Expected an absolute filesystem path on this host."),
@@ -190,13 +226,7 @@ export const inspectWarcArchiveEvidence = async (
     {
       operation,
       predicateType: "rea.warc-archive-inventory",
-      parameters: {
-        path: input.path,
-        format: input.format,
-        max_file_bytes: input.max_file_bytes,
-        max_decoded_bytes: input.max_decoded_bytes,
-        max_records: input.max_records,
-      },
+      parameters: withoutOmitted(selected),
       result: archive,
       confidence: "observed",
       limitations: archive.limitations,

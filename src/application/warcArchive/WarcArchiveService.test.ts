@@ -146,3 +146,48 @@ it("reports the selected path and cause when the archive cannot be resolved", as
     await resources.close();
   }
 });
+
+it("advises raising a caller-selected max_file_bytes instead of a fixed ceiling", async () => {
+  // A budget below the schema maximum can be raised on the next call, so the
+  // refusal must not claim this release has no override.
+  const path = await inputFile("crawl.warc", RECORD);
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await inspectWarcArchiveEvidence(
+      { path, max_file_bytes: 8 },
+      resources,
+    );
+    if (result.ok) throw new Error("expected a file-size refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.remediation.action).toContain(
+      "Raise max_file_bytes above 8",
+    );
+    expect(projected.remediation.action).not.toContain("no runtime override");
+    expect(projected.details?.reported_limits).toEqual({ max_file_bytes: 8 });
+  } finally {
+    await resources.close();
+  }
+});
+
+it("keeps omitted limits omitted in Evidence parameters", async () => {
+  // Defaults resolved for execution are not caller choices; a saved record
+  // that lists them cannot tell the two apart.
+  const path = await inputFile("crawl.warc", RECORD);
+  const resources = new ArtifactResourceScope();
+  try {
+    const selected = await inspectWarcArchiveEvidence(
+      { path, max_records: 5 },
+      resources,
+    );
+    if (!selected.ok) throw new Error(`expected inspection: ${selected.error}`);
+    expect(selected.value.evidence.parameters).toEqual({
+      path,
+      max_records: 5,
+    });
+    const bare = await inspectWarcArchiveEvidence({ path }, resources);
+    if (!bare.ok) throw new Error(`expected inspection: ${bare.error}`);
+    expect(bare.value.evidence.parameters).toEqual({ path });
+  } finally {
+    await resources.close();
+  }
+});
