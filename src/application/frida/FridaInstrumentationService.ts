@@ -21,11 +21,11 @@ import {
 import { err, ok, type Result } from "../../domain/result.js";
 import { fridaSessionStatusInputSchema } from "../../domain/fridaSessionStatus.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
+import { summarizeRetainedAnalysis } from "../analysisView/AnalysisViewService.js";
 import {
   requireAnalysisViewRetention,
-  summarizeRetainedAnalysis,
   type AnalysisViewRetention,
-} from "../analysisView/AnalysisViewService.js";
+} from "../analysisView/AnalysisViewRetention.js";
 import { fridaCaptureLimitations } from "../../domain/fridaCaptureLimits.js";
 import { unknownFridaSession } from "../../domain/fridaInputErrors.js";
 import { FridaScriptLoadCancelledError } from "../../ports/frida/FridaInstrumentationPort.js";

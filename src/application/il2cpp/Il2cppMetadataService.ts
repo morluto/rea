@@ -9,9 +9,8 @@ import type {
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   requireAnalysisViewRetention,
-  summarizeRetainedAnalysis,
   type AnalysisViewRetention,
-} from "../analysisView/AnalysisViewService.js";
+} from "../analysisView/AnalysisViewRetention.js";
 import type { Il2cppMetadataPort } from "../../ports/il2cpp/Il2cppMetadataPort.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
@@ -170,7 +169,9 @@ export class Il2cppMetadataService {
     }
     if (isAborted(options?.signal)) return cancelled(options.signal);
     return detail === "summary"
-      ? summarizeRetainedAnalysis(evidence, retention)
+      ? (
+          await import("../analysisView/AnalysisViewService.js")
+        ).summarizeRetainedAnalysis(evidence, retention)
       : ok(evidence);
   }
   #evidence(

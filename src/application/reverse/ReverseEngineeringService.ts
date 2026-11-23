@@ -23,9 +23,8 @@ import type { Stats } from "node:fs";
 
 import {
   requireAnalysisViewRetention,
-  summarizeRetainedAnalysis,
   type AnalysisViewRetention,
-} from "../analysisView/AnalysisViewService.js";
+} from "../analysisView/AnalysisViewRetention.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisCancelledError,
@@ -457,7 +456,9 @@ export class ReverseEngineeringService {
       outputBudgetBytes: maxOutputBytes ?? DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES,
     });
     return observed.ok && detail === "summary"
-      ? summarizeRetainedAnalysis(observed.value, retention)
+      ? (
+          await import("../analysisView/AnalysisViewService.js")
+        ).summarizeRetainedAnalysis(observed.value, retention)
       : observed;
   }
 

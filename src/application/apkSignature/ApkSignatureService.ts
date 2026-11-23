@@ -1,9 +1,8 @@
 import { inspectApkSignatureInputSchema } from "../../domain/apkSignature/apkSignatureQuery.js";
 import {
   requireAnalysisViewRetention,
-  projectRetainedAnalysis,
   type AnalysisViewRetention,
-} from "../analysisView/AnalysisViewService.js";
+} from "../analysisView/AnalysisViewRetention.js";
 
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { ApkSignaturePort } from "../../ports/apkSignature/ApkSignaturePort.js";
@@ -77,7 +76,9 @@ export class ApkSignatureService {
     );
     if (!completed.ok) return completed;
     return detail === "summary"
-      ? projectRetainedAnalysis(
+      ? (
+          await import("../analysisView/AnalysisViewService.js")
+        ).projectRetainedAnalysis(
           completed.value,
           retention,
           view === undefined
