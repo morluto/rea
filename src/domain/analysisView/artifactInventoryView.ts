@@ -65,6 +65,12 @@ export const artifactInventoryViewRequestSchema = z.discriminatedUnion(
       entry_kinds: z
         .array(artifactOccurrenceSchema.shape.entry_kind)
         .optional(),
+      artifact_kinds: z
+        .array(artifactOccurrenceSchema.shape.artifact_kind)
+        .optional()
+        .describe(
+          'Exact recognized artifact kinds, e.g. ["native-addon"]; [] matches none. Unrecognized bytes keep kind unknown.',
+        ),
       fields: z.array(artifactOccurrenceSchema.keyof()).optional(),
     }),
     z.strictObject({
@@ -492,15 +498,32 @@ const occurrenceIndices = (
   if (
     view.occurrence_ids === undefined &&
     view.logical_paths === undefined &&
-    view.entry_kinds === undefined
+    view.entry_kinds === undefined &&
+    view.artifact_kinds === undefined
   )
     return undefined;
   if (
     view.occurrence_ids?.length === 0 ||
     view.logical_paths?.length === 0 ||
-    view.entry_kinds?.length === 0
+    view.entry_kinds?.length === 0 ||
+    view.artifact_kinds?.length === 0
   )
     return [];
+  const artifactKinds =
+    view.artifact_kinds === undefined
+      ? undefined
+      : new Set(view.artifact_kinds);
+  const matchesArtifactKind = (index: number) =>
+    artifactKinds === undefined ||
+    artifactKinds.has(source.inventory.occurrences[index]!.artifact_kind);
+  if (
+    view.occurrence_ids === undefined &&
+    view.logical_paths === undefined &&
+    view.entry_kinds === undefined
+  )
+    return source.inventory.occurrences.flatMap((_, index) =>
+      matchesArtifactKind(index) ? [index] : [],
+    );
   if (source.index === undefined) {
     const byId = new Map<string, number>();
     const byPath = new Map<string, number[]>();
@@ -539,8 +562,9 @@ const occurrenceIndices = (
   return selected
     .filter(
       (index) =>
-        kinds === undefined ||
-        kinds.has(source.inventory.occurrences[index]!.entry_kind),
+        (kinds === undefined ||
+          kinds.has(source.inventory.occurrences[index]!.entry_kind)) &&
+        matchesArtifactKind(index),
     )
     .sort((left, right) => left - right);
 };
