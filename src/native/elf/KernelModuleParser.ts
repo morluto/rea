@@ -22,10 +22,7 @@ import {
   type ImageSection,
   type BinaryContainer,
 } from "../../domain/binaryContainer.js";
-import {
-  readElfImage,
-  readElfImageFromReader,
-} from "../../domain/native/elfImage.js";
+import { readElfImageFromReader } from "../../domain/native/elfImage.js";
 import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
@@ -485,32 +482,6 @@ const parseSignatureTrailer = (
   };
 };
 
-const parseSignatureFromBuffer = (bytes: Buffer): Report["signature"] => {
-  const tailLen = Math.min(
-    bytes.length,
-    MAGIC.length + MODULE_SIGNATURE_INFO_BYTES,
-  );
-  const trailer = parseSignatureTrailer(
-    bytes.length,
-    bytes.subarray(bytes.length - tailLen),
-  );
-  if (trailer.done) return trailer.signature;
-  const pkcs7 = bytes.subarray(
-    trailer.pkcs7Offset,
-    trailer.pkcs7Offset + trailer.pkcs7Bytes,
-  );
-  return {
-    status: "present",
-    magic: trailer.magic,
-    info: trailer.info,
-    pkcs7: {
-      location: { offset: trailer.pkcs7Offset, bytes: trailer.pkcs7Bytes },
-      sha256: sha256Hex(pkcs7),
-    },
-    reason: null,
-  };
-};
-
 const parseSignatureFromSource = async (
   source: NativeByteSource,
 ): Promise<Report["signature"]> => {
@@ -663,7 +634,7 @@ interface KernelModulePrepared {
 }
 
 const prepareKernelModule = (
-  image: ReturnType<typeof readElfImage>,
+  image: Extract<BinaryContainer, { format: "elf" }>,
 ): KernelModulePrepared => {
   const facts = headerFacts(image);
   const sections = image.sections.filter(
@@ -827,78 +798,6 @@ const finalizeKernelModule = (
     limitations,
   };
 };
-
-/** Decode kernel-module metadata from an admitted in-memory ELF image. */
-const parseKernelModuleImage = (
-  bytes: Buffer,
-  artifact: Report["artifact"],
-  input: InspectKernelModuleInput,
-  image: ReturnType<typeof readElfImage>,
-): Report => {
-  const facts = headerFacts(image);
-  if (facts.type !== 1) return notApplicable(artifact, facts);
-  const prepared = prepareKernelModule(image);
-  const modinfoLoc = modinfoSectionLocation(
-    prepared.modinfoSection,
-    bytes.length,
-    prepared.use,
-  );
-  const modinfo = modinfoLoc.ready
-    ? parseModinfoStored(
-        bytes.subarray(
-          modinfoLoc.location.offset,
-          modinfoLoc.location.offset + modinfoLoc.location.bytes,
-        ),
-        modinfoLoc.location,
-        modinfoLoc.compressed,
-        prepared.use,
-        prepared.examined,
-        input,
-      )
-    : modinfoLoc.result;
-  const versionsLoc = versionsSectionLocation(
-    prepared.versionsSection,
-    bytes.length,
-    image.bits,
-    prepared.use,
-  );
-  const versions = versionsLoc.ready
-    ? parseVersionsStored(
-        bytes.subarray(
-          versionsLoc.location.offset,
-          versionsLoc.location.offset + versionsLoc.location.bytes,
-        ),
-        versionsLoc.location,
-        versionsLoc.compressed,
-        image.bits,
-        image.byte_order === "little",
-        prepared.examined,
-        input.max_entries,
-      )
-    : versionsLoc.result;
-  return finalizeKernelModule(
-    bytes.length,
-    artifact,
-    input,
-    prepared,
-    modinfo,
-    versions,
-    parseSignatureFromBuffer(bytes),
-  );
-};
-
-export const parseKernelModule = (
-  bytes: Buffer,
-  artifact: Report["artifact"],
-  input: InspectKernelModuleInput,
-): Report =>
-  moduleCompressionReport(bytes, artifact) ??
-  parseKernelModuleImage(
-    bytes,
-    artifact,
-    input,
-    readElfImage(bytes, "inspect_kernel_module"),
-  );
 
 /** Decode kernel-module metadata positionally over a bounded file handle. */
 export const parseKernelModuleFromHandle = async (

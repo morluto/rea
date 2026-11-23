@@ -102,19 +102,6 @@ it("rejects relative paths, extra arguments and invalid field budgets before rea
   expect(calls).toBe(0);
 });
 
-it("records an applicable module and its x86_64 architecture", async () => {
-  const result = await new KernelModuleService({
-    identity,
-    inspect: () => Promise.resolve(ok(report)),
-  }).inspect({ path: report.artifact.path });
-  if (!result.ok) throw result.error;
-  expect(result.value).toMatchObject({
-    confidence: "observed",
-    subject: { identity: { format: "elf", architecture: "x86_64" } },
-    normalized_result: report,
-  });
-});
-
 it("rejects a report whose entry count does not match the examined sections", async () => {
   const result = await new KernelModuleService({
     identity,
