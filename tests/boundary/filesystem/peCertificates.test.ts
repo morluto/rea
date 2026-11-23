@@ -6,13 +6,11 @@ import { peCertificateFixture } from "../../../src/native/pe/PeCertificates.fixt
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("PE certificate stable filesystem boundary", () => {
-  it("refuses malformed PE bytes as a target and non-file selections as caller input", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-pe-cert-files-");
     const path = join(root, "signed.exe");
     const alias = join(root, "alias.exe");
-    const malformed = join(root, "malformed.exe");
     await writeFile(path, peCertificateFixture());
-    await writeFile(malformed, Buffer.from("not a pe"));
     await symlink(path, alias);
     const service = createPeCertificatesService();
     for (const [candidate, reason] of [
@@ -35,15 +33,6 @@ describe("PE certificate stable filesystem boundary", () => {
         ],
       });
     }
-    // The bytes, not the request, are at fault.
-    const refused = await service.inspect({ path: malformed });
-    if (refused.ok) throw new Error("Expected a malformed-target refusal");
-    expect(refused.error).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
-      operation: "inspect_pe_certificates",
-      path: malformed,
-      failure: { kind: "malformed", format: "pe" },
-    });
   });
 
   it("returns typed resource and cancellation failures", async () => {

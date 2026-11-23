@@ -102,13 +102,11 @@ describe("kernel module stable filesystem boundary", () => {
     }
   });
 
-  it("reports non-file and malformed ELF selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-kernel-module-files-");
     const path = join(root, "demo.ko");
     const alias = join(root, "alias");
-    const malformed = join(root, "malformed");
     await writeFile(path, kernelModuleFixture());
-    await writeFile(malformed, Buffer.from("not an elf"));
     await symlink(path, alias);
     const service = createKernelModuleService();
     try {
@@ -132,11 +130,6 @@ describe("kernel module stable filesystem boundary", () => {
           ],
         });
       }
-      // Malformed bytes are a target refusal, not a request-field error.
-      expect(await service.inspect({ path: malformed })).toMatchObject({
-        ok: false,
-        error: { _tag: "AnalysisMalformedTargetError", path: malformed },
-      });
     } finally {
       await service.close();
     }

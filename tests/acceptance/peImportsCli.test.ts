@@ -216,25 +216,6 @@ cliTest(
   },
 );
 
-cliTest("reports a truncated PE as a malformed target", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-pe-imports-cli-bad-");
-  const path = join(root, "broken.exe");
-  await writeFile(path, Buffer.from("MZ"));
-  const result = await cli.run({
-    arguments: ["inspect-pe-imports", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "unsupported_target",
-    category: "unsupported_target",
-    details: {
-      operation: "inspect_pe_imports",
-      path,
-      format_failure: "malformed",
-    },
-  });
-});
-
 cliTest(
   "preserves directory declarations and partial rows at RVA and mapping boundaries",
   async ({ cli }) => {

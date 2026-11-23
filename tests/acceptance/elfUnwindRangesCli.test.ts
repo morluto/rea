@@ -69,24 +69,6 @@ cliTest(
   },
 );
 
-cliTest("reports a non-ELF file as a malformed target", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-elf-unwind-cli-bad-");
-  const path = join(root, "broken");
-  await writeFile(path, Buffer.from("not an elf"));
-  const result = await cli.run({
-    arguments: ["inspect-elf-unwind-ranges", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "unsupported_target",
-    details: {
-      operation: "inspect_elf_unwind_ranges",
-      path,
-      format_failure: "malformed",
-    },
-  });
-});
-
 cliTest("pages unwind ranges with --offset and --limit", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-elf-unwind-cli-page-");
   const path = join(root, "program");

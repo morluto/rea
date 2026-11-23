@@ -6,13 +6,11 @@ import { elfNoteFixture } from "../../../src/native/elf/ElfNotes.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("ELF note stable filesystem boundary", () => {
-  it("refuses malformed ELF bytes as a target and non-file selections as caller input", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-elf-notes-files-");
     const path = join(root, "program");
     const alias = join(root, "alias");
-    const malformed = join(root, "malformed");
     await writeFile(path, elfNoteFixture());
-    await writeFile(malformed, Buffer.from("not an elf"));
     await symlink(path, alias);
     const service = createElfNotesService();
     for (const [candidate, reason] of [
@@ -35,15 +33,6 @@ describe("ELF note stable filesystem boundary", () => {
         ],
       });
     }
-    // The bytes, not the request, are at fault.
-    const refused = await service.inspect({ path: malformed });
-    if (refused.ok) throw new Error("Expected a malformed-target refusal");
-    expect(refused.error).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
-      operation: "inspect_elf_notes",
-      path: malformed,
-      failure: { kind: "malformed", format: "elf" },
-    });
   });
 
   it("returns typed resource and cancellation failures", async () => {

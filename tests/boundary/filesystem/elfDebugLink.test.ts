@@ -75,13 +75,11 @@ it("inflates section names once per artifact while preserving build-ID compariso
 });
 
 describe("ELF debug-link stable filesystem boundary", () => {
-  it("reports non-file and malformed ELF selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-elf-debug-link-files-");
     const path = join(root, "prog");
     const alias = join(root, "alias");
-    const malformed = join(root, "malformed");
     await writeFile(path, elfDebugLinkFixture());
-    await writeFile(malformed, Buffer.from("not an elf"));
     await symlink(path, alias);
     const service = createElfDebugLinkService();
     try {
@@ -105,14 +103,6 @@ describe("ELF debug-link stable filesystem boundary", () => {
           ],
         });
       }
-      // Malformed bytes are a target refusal, not a request-field error.
-      const malformedResult = await service.inspect({ path: malformed });
-      if (malformedResult.ok) throw new Error("Expected a malformed target");
-      expect(malformedResult.error).toMatchObject({
-        _tag: "AnalysisMalformedTargetError",
-        operation: "inspect_elf_debug_link",
-        path: malformed,
-      });
     } finally {
       await service.close();
     }

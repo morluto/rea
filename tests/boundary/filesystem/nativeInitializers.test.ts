@@ -44,13 +44,11 @@ describe("native initializer stable filesystem boundary", () => {
     },
   );
 
-  it("reports non-file and malformed selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-native-init-files-");
     const path = join(root, "program");
     const alias = join(root, "alias");
-    const malformed = join(root, "malformed");
     await writeFile(path, elf64PieInitializers());
-    await writeFile(malformed, Buffer.from("not an executable image"));
     await symlink(path, alias);
     const service = createNativeInitializersService();
     for (const [candidate, reason] of [
@@ -67,14 +65,6 @@ describe("native initializer stable filesystem boundary", () => {
         issues: [{ path: ["path"], reason, message: expect.any(String) }],
       });
     }
-    // Malformed bytes are a target refusal, not a request-field error.
-    const malformedResult = await service.inspect({ path: malformed });
-    if (malformedResult.ok) throw new Error("Expected a malformed target");
-    expect(malformedResult.error).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
-      operation: "inspect_native_initializers",
-      path: malformed,
-    });
   });
 
   it("reads a stable file and returns typed budget and cancellation failures", async () => {

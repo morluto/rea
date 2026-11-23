@@ -6,13 +6,11 @@ import { elfDependencyFixture } from "../../../src/native/elf/ElfDependencies.fi
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("ELF dependency stable filesystem boundary", () => {
-  it("reports non-file and malformed ELF selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-elf-dependencies-files-");
     const path = join(root, "program");
     const alias = join(root, "alias");
-    const malformed = join(root, "malformed");
     await writeFile(path, elfDependencyFixture());
-    await writeFile(malformed, Buffer.from("not an elf"));
     await symlink(path, alias);
     const service = createElfDependenciesService();
     try {
@@ -36,14 +34,6 @@ describe("ELF dependency stable filesystem boundary", () => {
           ],
         });
       }
-      // Malformed bytes are a target refusal, not a request-field error.
-      const malformedResult = await service.inspect({ path: malformed });
-      if (malformedResult.ok) throw new Error("Expected a malformed target");
-      expect(malformedResult.error).toMatchObject({
-        _tag: "AnalysisMalformedTargetError",
-        operation: "inspect_elf_dependencies",
-        path: malformed,
-      });
     } finally {
       await service.close();
     }

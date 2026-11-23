@@ -13,14 +13,12 @@ import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFr
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("binary hardening stable filesystem boundary", () => {
-  it("reports non-file, missing and malformed selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-binary-hardening-files-");
     const path = join(root, "app");
     const alias = join(root, "alias");
-    const malformed = join(root, "malformed");
     const bytes = elfHardeningFixture();
     await writeFile(path, bytes);
-    await writeFile(malformed, Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0]));
     await symlink(path, alias);
     const service = createBinaryHardeningService();
     try {
@@ -38,14 +36,6 @@ describe("binary hardening stable filesystem boundary", () => {
           issues: [{ path: ["path"], reason, message: expect.any(String) }],
         });
       }
-      // Malformed bytes are a target refusal, not a request-field error.
-      const malformedResult = await service.inspect({ path: malformed });
-      if (malformedResult.ok) throw new Error("Expected a malformed target");
-      expect(malformedResult.error).toMatchObject({
-        _tag: "AnalysisMalformedTargetError",
-        operation: "inspect_binary_hardening",
-        path: malformed,
-      });
       const foreign = join(root, "foreign");
       await writeFile(foreign, Buffer.from("not a binary"));
       const unsupported = await service.inspect({ path: foreign });

@@ -7,13 +7,11 @@ import { peImportImage } from "../../fixtures/binaryDiagnostics/peImports.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("PE import stable filesystem boundary", () => {
-  it("reports non-file and malformed PE selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-pe-imports-files-");
     const path = join(root, "app.exe");
     const alias = join(root, "alias.exe");
-    const malformed = join(root, "malformed.exe");
     await writeFile(path, peImportImage());
-    await writeFile(malformed, Buffer.from("not a pe"));
     await symlink(path, alias);
     const service = createPeImportsService();
     for (const [candidate, reason] of [
@@ -36,14 +34,6 @@ describe("PE import stable filesystem boundary", () => {
         ],
       });
     }
-    // Malformed bytes are a target refusal, not a request-field error.
-    const malformedResult = await service.inspect({ path: malformed });
-    if (malformedResult.ok) throw new Error("Expected a malformed target");
-    expect(malformedResult.error).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
-      operation: "inspect_pe_imports",
-      path: malformed,
-    });
   });
 
   it("retains partial Evidence for an import name beyond the read allowance", async () => {

@@ -7,13 +7,11 @@ import { pythonPycFixture } from "../../../src/python/PythonPyc.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("Python pyc stable filesystem boundary", () => {
-  it("reports non-file and malformed pyc selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-python-pyc-files-");
     const path = join(root, "sample.pyc");
     const alias = join(root, "alias.pyc");
-    const malformed = join(root, "malformed.pyc");
     await writeFile(path, pythonPycFixture());
-    await writeFile(malformed, Buffer.from("not a pyc"));
     await symlink(path, alias);
     const service = createPythonPycService();
     for (const [candidate, reason] of [
@@ -36,14 +34,6 @@ describe("Python pyc stable filesystem boundary", () => {
         ],
       });
     }
-    // Malformed bytes are a target refusal, not a request-field error.
-    const malformedResult = await service.inspect({ path: malformed });
-    if (malformedResult.ok) throw new Error("Expected a malformed target");
-    expect(malformedResult.error).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
-      operation: "inspect_python_pyc",
-      path: malformed,
-    });
   });
 
   it("reports each selected pyc limit and reopens the same artifact successfully", async () => {

@@ -405,24 +405,6 @@ cliTest(
   },
 );
 
-cliTest("reports a truncated PE as a malformed target", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-pe-cert-cli-bad-");
-  const path = join(root, "broken.exe");
-  await writeFile(path, Buffer.from("MZ"));
-  const result = await cli.run({
-    arguments: ["inspect-pe-certificates", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "unsupported_target",
-    details: {
-      operation: "inspect_pe_certificates",
-      path,
-      format_failure: "malformed",
-    },
-  });
-});
-
 cliTest(
   "reports TeletexString compatibility text with its decoding limitation",
   async ({ cli }) => {

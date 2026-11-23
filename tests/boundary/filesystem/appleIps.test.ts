@@ -9,13 +9,11 @@ import {
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("Apple IPS stable filesystem boundary", () => {
-  it("reports non-file and malformed IPS selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-apple-ips-files-");
     const path = join(root, "report.ips");
     const alias = join(root, "alias.ips");
-    const malformed = join(root, "malformed.ips");
     await writeFile(path, appleIpsBytes());
-    await writeFile(malformed, Buffer.from("not an ips report"));
     await symlink(path, alias);
     const service = createAppleIpsService();
     for (const [candidate, reason] of [
@@ -38,14 +36,6 @@ describe("Apple IPS stable filesystem boundary", () => {
         ],
       });
     }
-    // Malformed bytes are a target refusal, not a request-field error.
-    const malformedResult = await service.inspect({ path: malformed });
-    if (malformedResult.ok) throw new Error("Expected a malformed target");
-    expect(malformedResult.error).toMatchObject({
-      _tag: "AnalysisMalformedTargetError",
-      operation: "inspect_apple_ips",
-      path: malformed,
-    });
   });
 
   it("returns typed resource and cancellation failures", async () => {

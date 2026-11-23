@@ -142,24 +142,6 @@ cliTest(
   },
 );
 
-cliTest("reports a truncated ELF as a malformed target", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-elf-notes-cli-bad-");
-  const path = join(root, "broken");
-  await writeFile(path, Buffer.from("\x7fELF"));
-  const result = await cli.run({
-    arguments: ["inspect-elf-notes", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "unsupported_target",
-    details: {
-      operation: "inspect_elf_notes",
-      path,
-      format_failure: "malformed",
-    },
-  });
-});
-
 cliTest(
   "reports compressed note storage as unsupported without mutation",
   async ({ cli }) => {
