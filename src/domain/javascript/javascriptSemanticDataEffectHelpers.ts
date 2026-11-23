@@ -43,6 +43,7 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import { semanticConsumerMemo } from "./javascriptSemanticConsumer.js";
 
 export interface SemanticProjectedBinding extends JavaScriptSemanticProjectedResultBinding {
   readonly identifier: t.Identifier;
@@ -790,10 +791,7 @@ interface BuiltinEffectIndex {
 
 // Derived passes run after mutation collection. These indexes share that state's
 // lifetime and never cache facts while its mutation owner is still producing them.
-const builtinEffectIndexes = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  BuiltinEffectIndex
->();
+const builtinEffectIndexes = semanticConsumerMemo<BuiltinEffectIndex>();
 
 const builtinEffectIndex = (
   state: JavaScriptSemanticAnalysisState,
