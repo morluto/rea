@@ -878,6 +878,7 @@
 * **kuna:** exercise contradictory rows and coordinate shared cancellation ([#12802](https://github.com/morluto/rea/issues/12802)) ([766fb9e](https://github.com/morluto/rea/commit/766fb9e78e4b1f169f210239aef1c5fdbe535988))
 * **lldb:** consolidate bridge journal and FIFO checks ([#12808](https://github.com/morluto/rea/issues/12808)) ([7f5a39c](https://github.com/morluto/rea/commit/7f5a39c0c10c49e637cdf13b9dd8fabd7fe296b7))
 * **macho:** consolidate classic and modern dylib encoding proofs ([#13952](https://github.com/morluto/rea/issues/13952)) ([d9ba8db](https://github.com/morluto/rea/commit/d9ba8db6e1ea4f96c9a7d400d3d9f8c1d6d9874e))
+* **macho:** consolidate command framing and admission proofs ([#13964](https://github.com/morluto/rea/issues/13964)) ([590414c](https://github.com/morluto/rea/commit/590414cc112a79599d3fe4571ba22371ee001f12))
 * **macho:** consolidate fixed header and extent proofs ([#13919](https://github.com/morluto/rea/issues/13919)) ([2f79fa8](https://github.com/morluto/rea/commit/2f79fa8ef0565b7d2c18dff42ae075890c019c83))
 * **macho:** consolidate lazy payload reuse and capacity proofs ([#13958](https://github.com/morluto/rea/issues/13958)) ([dab60db](https://github.com/morluto/rea/commit/dab60dbe511b2a07dd2ca05c2a653b08fe42fabe))
 * **macho:** consolidate lipo field and native slice proofs ([#13937](https://github.com/morluto/rea/issues/13937)) ([806c547](https://github.com/morluto/rea/commit/806c547ed812a2e8380c88f47f3f22c1ddc09352))
