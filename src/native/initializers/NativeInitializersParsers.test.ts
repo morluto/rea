@@ -1807,6 +1807,7 @@ describe("Mach-O fixup sources", () => {
   it("keeps both initializer slots unresolved when a legacy bind crosses their boundary", async () => {
     const bytes = machoArm64LegacyRebaseInitializers();
     const bind = Buffer.from([
+      0x30, // SET_DYLIB_SPECIAL_IMM self
       0x40,
       ...Buffer.from("_foo\0"),
       0x51,
