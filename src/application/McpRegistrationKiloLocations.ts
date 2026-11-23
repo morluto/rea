@@ -72,7 +72,9 @@ export const kiloProjectLocation = async (
     throw new ConfigurationError(
       "KILO_DISABLE_PROJECT_CONFIG disables project configuration. Remove that selected override or register globally; no project settings were written.",
     );
-  const worktree = await resolveKiloRegistrationWorktree(context);
+  const worktreeResult = await resolveKiloRegistrationWorktree(context);
+  if (!worktreeResult.ok) throw worktreeResult.error;
+  const worktree = worktreeResult.value;
   const active = ancestorsThrough(worktree.activeDirectory, worktree.root);
   const kilo = kiloContext(context);
   const root = kiloRoot(kilo);
@@ -152,9 +154,12 @@ export const kiloProjectLocation = async (
     layers.push(...ordered);
   } else layers.push(...directoryLayers);
   const inlineConfiguration = kiloInlineConfiguration(kilo.root);
+  if (!inlineConfiguration.ok) throw inlineConfiguration.error;
   return {
     configPath,
     configPaths: layers.map((layer) => layer.path),
-    ...(inlineConfiguration === undefined ? {} : { inlineConfiguration }),
+    ...(inlineConfiguration.value === undefined
+      ? {}
+      : { inlineConfiguration: inlineConfiguration.value }),
   };
 };

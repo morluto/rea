@@ -25,6 +25,7 @@ import {
 } from "../../../src/application/Uninstall.js";
 import { existingMaintenanceScope } from "../../../src/application/UpdateMaintenance.js";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
+import { ConfigurationError } from "../../../src/domain/configurationErrors.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -435,6 +436,28 @@ it("refuses Kilo's location while KILO_CONFIG_CONTENT cannot be parsed", async (
   expect(row?.configPathError).toContain(
     "KILO_CONFIG_CONTENT cannot be admitted",
   );
+});
+
+it("reports an unreadable Kilo config root without stopping other clients", async () => {
+  const home = await createTestTempDirectory("rea-kilo-probe-failure-");
+  // A regular file where Kilo's config folder belongs makes each layer probe
+  // fail with ENOTDIR rather than ENOENT.
+  await mkdir(join(home, ".config"), { recursive: true });
+  const root = join(home, ".config", "kilo");
+  await writeFile(root, "{}");
+  const rows = await resolveSupportedClients(home, platform, {});
+  expect(rows.find(({ name }) => name === "kilo")).toMatchObject({
+    configPath: root,
+    configPathError: expect.stringContaining(
+      "Cannot determine the registration location",
+    ),
+    configPathFailure: expect.any(ConfigurationError),
+  });
+  // One unreadable Kilo folder stays a Kilo row failure; the rest of the
+  // table still resolves for setup, doctor and uninstall.
+  expect(
+    rows.find(({ name }) => name === "opencode")?.configPathError,
+  ).toBeUndefined();
 });
 
 it("registers Kilo through its table row in rea mcp add", async () => {

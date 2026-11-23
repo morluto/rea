@@ -2424,3 +2424,51 @@ it("reads a Git blob whose path contains a line break alongside an ordinary blob
     ]),
   );
 });
+
+it("outputs only changed, tracked JS and TS paths for fast PR typed lint", async () => {
+  const { directory, base } = await fixture();
+  await git(directory, ["rm", "src/provider.ts"]);
+  const selected = ["scripts/ci/helper.mjs", "src/has spaces.ts"];
+  const head = await change(directory, [...selected, "docs/guide.md"]);
+  expect(await runPlanScript(directory, base, head)).toMatchObject({
+    typedLintFiles: selected,
+  });
+  expect(await readFile(join(directory, "scope-output"), "utf8")).toContain(
+    `typed_lint_files=${JSON.stringify(selected)}\n`,
+  );
+  expect(
+    await classify(directory, base, head, "pull_request", true),
+  ).toMatchObject({ typedLintFiles: [] });
+  expect(await classify(directory, base, head, "push")).toMatchObject({
+    typedLintFiles: [],
+  });
+});
+
+it("requests full typed lint when changed paths exceed the CI output budget", () => {
+  const files = Array.from(
+    { length: 200 },
+    (_, index) => `src/${"長".repeat(40)}-${index}.ts`,
+  );
+  const plan = planChanges(
+    {
+      event: "pull_request",
+      full: false,
+      skipFull: false,
+      base: PATH_BASE,
+      head: PATH_HEAD,
+    },
+    {
+      mergeBase: () => PATH_BASE,
+      isAncestor: () => true,
+      changedFiles: () => files,
+      readFile: () => "{}",
+      listFiles: () => files,
+      readFiles: () => new Map(),
+    },
+  );
+  expect(plan).toMatchObject({
+    tier: "fast",
+    code: true,
+    typedLintFiles: null,
+  });
+});
