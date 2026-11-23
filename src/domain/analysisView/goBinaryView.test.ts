@@ -250,29 +250,54 @@ it.each([
   { collection: "dependencies", paths: selectedNames },
   { collection: "settings", keys: selectedNames },
   { collection: "string_literals", contains: "keep-" },
-] as const)("pages filtered $collection indices in source order", (filter) => {
-  const result = projectAnalysisView(
-    { ...parent(), normalizedResult: indexedReport },
-    {
+  { collection: "string_literals", values: selectedNames },
+] as const)(
+  "pages filtered and unfiltered $collection rows in source order",
+  (filter) => {
+    const input = {
+      ...parent(),
+      normalizedResult: freezeOwnedJsonTreeSnapshot(
+        structuredClone(indexedReport),
+      ),
+      sealedResult: true,
+    };
+    const result = projectAnalysisView(input, {
       kind: "go",
       indices: [3, 90, 0, 2, 1, 3],
       offset: 1,
       limit: 1,
       ...filter,
-    },
-  );
-  if (!result.ok) throw result.error;
-  expect(result.value).toMatchObject({
-    page: {
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({
+      page: {
+        collection: filter.collection,
+        rows: [{ index: 2 }],
+      },
+      coverage: {
+        status: "page",
+        examined: 1,
+        total: 3,
+        next_offset: 2,
+        exhausted: false,
+      },
+    });
+
+    const unfiltered = projectAnalysisView(input, {
+      kind: "go",
       collection: filter.collection,
-      rows: [{ index: 2 }],
-    },
-    coverage: {
-      status: "page",
-      examined: 1,
-      total: 3,
-      next_offset: 2,
+      fields: [],
+      offset: 3,
+      limit: 1,
+    });
+    if (!unfiltered.ok || unfiltered.value.kind !== "go")
+      throw new Error("Expected an unfiltered Go page");
+    expect(unfiltered.value.page.collection).toBe(filter.collection);
+    expect(unfiltered.value.page.rows).toEqual([{ index: 3 }]);
+    expect(unfiltered.value.coverage).toMatchObject({
+      total: 5,
+      next_offset: 4,
       exhausted: false,
-    },
-  });
-});
+    });
+  },
+);
