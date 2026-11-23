@@ -1,7 +1,9 @@
 {
   "schemas": {
-    "input compact": "53e35e56039bbec8",
+    "input compact": "2ba578dd8a760c46",
     "output compact": "4bda7c3651bfc579"
   },
-  "patterns": {}
+  "patterns": {
+    "input": ["^[0-9a-f]{64}$", "^[^\\x00]*$", "^stbc_item_[0-9a-f]{64}$"]
+  }
 }
