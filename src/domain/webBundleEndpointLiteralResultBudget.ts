@@ -74,16 +74,26 @@ export const fitWebBundleEndpointLiteralCandidates = (
   const kept: number[] = [];
   let used = baseBytes;
   let index = 0;
+  // `assemble([])` keeps every non-literal inference, so the array already has
+  // elements before the first literal arrives and that literal pays a comma
+  // too. Charging it only for later literals lets a literal whose own size
+  // exactly fills the remaining space be kept, push the result one byte over,
+  // and then be dropped by the exact pass without a smaller literal behind it
+  // ever being tried.
+  let elements = result.inferences.filter(
+    (inference) => !isLiteralEndpointCandidate(inference),
+  ).length;
   for (const inference of result.inferences) {
     if (!isLiteralEndpointCandidate(inference)) continue;
     const cost =
       jsonValueByteLength(inference as unknown as JsonValue) +
-      (used > baseBytes ? 1 : 0);
+      (elements > 0 ? 1 : 0);
     // The base measurement already carries the widest omission record, so the
     // pass never has to reserve it again for each literal.
     if (used + cost <= resultBudgetBytes) {
       kept.push(index);
       used += cost;
+      elements += 1;
     }
     index += 1;
   }

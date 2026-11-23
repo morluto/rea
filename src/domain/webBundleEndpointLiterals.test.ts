@@ -540,6 +540,64 @@ function vendor() { return "some-vendor-marker"; }`;
   ).toBeLessThanOrEqual(budget);
 });
 
+it("charges the comma a literal needs after retained non-literal facts", () => {
+  // `assemble([])` keeps the non-literal candidate, so the first literal is
+  // never the first array element: it needs a comma. Charging only later
+  // literals let one whose own size exactly filled the remaining space survive
+  // the incremental pass, go one byte over, and be dropped by the exact pass
+  // while a smaller literal behind it was never retried.
+  const captured = createWebPageInspection([
+    {
+      source: `api.get("/api/nonliteral");
+const routes = ["/api/${"a".repeat(296)}", "/api/${"b".repeat(2_996)}", "/api/${"c".repeat(96)}"];`,
+      scriptKey: `scr_${"8".repeat(64)}`,
+      url: "https://app.example.test/app.js",
+      origin: "https://app.example.test",
+      cdpHash: "hash",
+    },
+  ]);
+  const script = captured.scripts.items.find(isIncludedScript);
+  if (script === undefined) throw new Error("Missing included script");
+  const admission = { maximumCount: 16, source: "runtime" as const };
+  const full = analyzeCapturedWebScript(
+    script,
+    undefined,
+    undefined,
+    admission,
+  );
+  if (full.status !== "analyzed") throw new Error("Expected analyzed script");
+  const literals = full.inferences.filter(isLiteralEndpointCandidate);
+  expect(literals.length).toBe(3);
+  expect(
+    full.inferences.filter(
+      (inference) => !isLiteralEndpointCandidate(inference),
+    ),
+  ).toHaveLength(1);
+  const [first, , third] = literals;
+  if (first === undefined || third === undefined)
+    throw new Error("Expected three literals");
+  const base = jsonValueByteLength(
+    fitWebBundleEndpointLiteralCandidates(
+      full,
+      1,
+      admission,
+    ) as unknown as JsonValue,
+  );
+  // The first literal's own size exactly fills what is left, and the third
+  // literal still fits on its own once the comma is charged.
+  const budget = base + jsonValueByteLength(first as unknown as JsonValue);
+  expect(
+    base + jsonValueByteLength(third as unknown as JsonValue) + 1,
+  ).toBeLessThanOrEqual(budget);
+  const fitted = fitWebBundleEndpointLiteralCandidates(full, budget, admission);
+  const retained = fitted.inferences.filter(isLiteralEndpointCandidate);
+  expect(retained).toHaveLength(1);
+  expect(retained[0]?.value).toBe(third.value);
+  expect(
+    jsonValueByteLength(fitted as unknown as JsonValue, budget),
+  ).toBeLessThanOrEqual(budget);
+});
+
 it("does not call an inexact omission count unique", () => {
   const record = webBundleEndpointLiteralRecord(
     { maximumCount: 1, source: "runtime" },
