@@ -2,11 +2,13 @@ import type { EvidenceLookup } from "../../src/application/EvidenceInputResolver
 import { silentLogger } from "../../src/logger.js";
 import { EvidenceMcpServer } from "../../src/server/EvidenceMcpServer.js";
 import type { ExternalMutationAdmission } from "../../src/server/externalMutationAdmission.js";
+import type {
+  CutterToolOptions,
+  GdbToolOptions,
+  RizinDebugToolOptions,
+} from "../../src/server/debuggerToolBindings.js";
 import {
   registerServiceTools,
-  type CutterToolOptions,
-  type GdbToolOptions,
-  type RizinDebugToolOptions,
   type ToolServices,
 } from "../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../src/server/toolResult.js";

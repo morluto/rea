@@ -239,7 +239,11 @@ rea trace-android-references /path/Example.apk example.MainActivity --method-nam
 
 Equivalent MCP methods are `inspect_android_package`, `search_android_classes`,
 `inspect_android_class`, `inspect_android_method` and `trace_android_references`.
-Every request includes `path`. Class/method operations use `class_name`,
+Every request includes `path`. `search_android_classes` also accepts optional
+`limit` (`1..10000`) and `offset` (`>= 0`) pagination (CLI `--limit` and
+`--offset`) so large APKs stop JADX pagination early once the requested page
+is filled; omitting both returns all matches with `coverage: "complete"`, while
+a paged slice reports `coverage: "partial"`. Class/method operations use `class_name`,
 `method_name` and optional `overload_index` as applicable. For example:
 
 ```json
@@ -253,6 +257,16 @@ Every request includes `path`. Class/method operations use `class_name`,
   }
 }
 ```
+
+For class searches, `offset` is the zero-based index among matches, and
+`limit` is the maximum number of matches to return. Pass `--offset` and
+`--limit` on the CLI or `offset` and `limit` in an MCP request. Omitting
+both returns every match. Omitting `limit` with an offset returns the matching
+suffix. Keep the same APK and query when advancing the offset by each page's
+length. A page reports `partial` when it omits matching rows, including earlier
+pages. A short or empty page ends forward paging. If the last page was full,
+request the next offset to check for more. `duplicate_names` counts occurrences
+within the returned page.
 
 Use `inspect_android_class` to choose an overload. REA rejects an ambiguous
 method request rather than silently selecting the first match. Method reference

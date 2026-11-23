@@ -12,8 +12,7 @@ import {
   projectStableArtifactFailure,
   stableArtifactInputFailure,
   ArtifactReaderFailure,
-  readStableArtifact,
-  type StableArtifactSnapshot,
+  withStableArtifactHandle,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   ArtifactResourceScope,
@@ -35,9 +34,10 @@ import {
   BinaryResourceFailure,
   binaryResourceCeiling,
 } from "../../domain/binaryContainer.js";
-import { readElfDependenciesSteps } from "./ElfDependencyParser.js";
+import { parseElfDependenciesFromHandle } from "./ElfDependencyParser.js";
 
 const OPERATION = "inspect_elf_dependencies";
+const HEADER_PREFIX_BYTES = 4096;
 
 /** Portable parser over one bounded, identity-checked regular file. */
 /**
@@ -64,41 +64,49 @@ export class ElfDependenciesProvider {
     input: InspectElfDependenciesInput,
     options?: { readonly signal?: AbortSignal },
   ) {
-    let completed: StableArtifactSnapshot | undefined;
+    let observed:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        const result = await withStableArtifactHandle(
           input.path,
           input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        // Only a parser failure inherits this read's identity; finalization
-        // failures keep their own completion record.
-        completed = snapshot;
-        const steps = readElfDependenciesSteps(
-          snapshot.bytes,
           {
-            path: input.path,
-            sha256: snapshot.sha256,
-            bytes: snapshot.bytes.length,
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
+            onIdentity: (identity) => {
+              observed = identity;
+            },
           },
-          input,
+          async (handle) => {
+            assertArtifactReadActive(options?.signal);
+            const parsed = await parseElfDependenciesFromHandle(
+              {
+                size: handle.size,
+                prefix: handle.prefix,
+                readRange: (offset, length) => handle.readRange(offset, length),
+              },
+              {
+                path: input.path,
+                sha256: handle.sha256,
+                bytes: handle.size,
+              },
+              input,
+              async () => {
+                await immediate();
+                assertArtifactReadActive(options?.signal);
+              },
+            );
+            assertArtifactReadActive(options?.signal);
+            return parsed;
+          },
         );
-        assertArtifactReadActive(options?.signal);
-        let next = steps.next();
-        while (!next.done) {
-          await immediate();
-          assertArtifactReadActive(options?.signal);
-          next = steps.next();
-        }
-        assertArtifactReadActive(options?.signal);
-        completed = undefined;
-        return ok(next.value);
+        return ok(result);
       });
     } catch (cause) {
-      return err(elfDependenciesFailure(cause, input, completed));
+      return err(elfDependenciesFailure(cause, input, observed));
     }
   }
 }
@@ -214,7 +222,7 @@ const elfDependenciesFailurePrimary = (
 const elfDependenciesFailure = (
   cause: unknown,
   input: InspectElfDependenciesInput,
-  completed: StableArtifactSnapshot | undefined,
+  observed: { readonly sha256: string; readonly bytes: number } | undefined,
 ) => {
   const primary = elfDependenciesFailurePrimary(
     artifactFilePrimaryFacts(cause),
@@ -226,6 +234,6 @@ const elfDependenciesFailure = (
     input.path,
     ELF_DEPENDENCIES_PROVIDER.id,
     OPERATION,
-    completed,
+    observed,
   );
 };

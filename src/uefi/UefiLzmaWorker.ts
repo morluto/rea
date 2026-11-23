@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
-import type { Readable, Writable } from "node:stream";
+import type { Writable } from "node:stream";
 import { z } from "zod";
 import { BinaryReader } from "../domain/binaryContainer.js";
 import {
@@ -15,10 +15,10 @@ import {
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
-import { UefiLzmaByteQueue } from "./UefiLzmaByteQueue.js";
 import {
   encodeLzmaFrameHeader,
   LZMA_FRAME_HEADER_BYTES,
+  LzmaFrameReader,
   lzmaRequestSchema,
   lzmaStreamRequestSchema,
   type UefiLzmaReply,
@@ -217,52 +217,6 @@ const serializeReply = (
   return { text: JSON.stringify(bounded), ok: false };
 };
 
-class FramedByteReader {
-  readonly #queue = new UefiLzmaByteQueue();
-  #ended = false;
-  #error: unknown;
-  #waiter: (() => void) | undefined;
-
-  constructor(stream: Readable) {
-    stream.on("data", (chunk: Buffer) => {
-      if (!this.#queue.append(chunk)) return;
-      const wake = this.#waiter;
-      this.#waiter = undefined;
-      wake?.();
-    });
-    stream.once("end", () => {
-      this.#ended = true;
-      const wake = this.#waiter;
-      this.#waiter = undefined;
-      wake?.();
-    });
-    stream.once("error", (cause: unknown) => {
-      this.#error = cause;
-      const wake = this.#waiter;
-      this.#waiter = undefined;
-      wake?.();
-    });
-  }
-
-  async readExact(
-    length: number,
-    allowCleanEof = false,
-  ): Promise<Buffer | null> {
-    if (length === 0) return Buffer.alloc(0);
-    while (this.#queue.available < length) {
-      if (this.#error !== undefined) throw this.#error;
-      if (this.#ended) {
-        if (allowCleanEof && this.#queue.available === 0) return null;
-        throw new Error("Truncated LZMA worker frame.");
-      }
-      await new Promise<void>((resolve) => {
-        this.#waiter = resolve;
-      });
-    }
-    return this.#queue.read(length);
-  }
-}
-
 const writeFramed = async (stream: Writable, frame: Buffer): Promise<void> => {
   if (!stream.write(frame)) {
     await once(stream, "drain");
@@ -271,9 +225,11 @@ const writeFramed = async (stream: Writable, frame: Buffer): Promise<void> => {
 
 const runStdioWorker = async (): Promise<void> => {
   const codec = await loadLzmaCodec();
-  const reader = new FramedByteReader(process.stdin);
+  const reader = new LzmaFrameReader(process.stdin);
   for (;;) {
-    const header = await reader.readExact(LZMA_FRAME_HEADER_BYTES, true);
+    const header = await reader.readExact(LZMA_FRAME_HEADER_BYTES, {
+      allowCleanEof: true,
+    });
     if (header === null) break;
     const headerReader = new BinaryReader(header, false, "LZMA-Frame");
     const jsonBytes = headerReader.u32(0);

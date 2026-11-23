@@ -5,7 +5,6 @@ import {
 } from "../../domain/parseFailureAnalysisError.js";
 import {
   projectStableArtifactFailure,
-  type StableArtifactSnapshot,
   artifactFilePrimaryFacts,
 } from "../../resources/index.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -44,7 +43,7 @@ export const projectPeBinaryFailure = <Limit extends string>(
   cause: unknown,
   input: PeBinaryInput,
   options: PeBinaryFailureOptions<Limit>,
-  snapshot?: StableArtifactSnapshot,
+  snapshot?: Parameters<typeof projectStableArtifactFailure>[5],
 ): AnalysisError => {
   const { operation, providerId } = options;
   const { cause: primaryCause } = artifactFilePrimaryFacts(cause);
