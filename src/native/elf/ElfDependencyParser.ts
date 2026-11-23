@@ -18,6 +18,11 @@ import {
 import { validateElfSectionTableFields } from "../../domain/elfDeclaredRanges.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
 import {
+  readElfGnuHashSymbolCountSteps,
+  readElfHashSymbolCountSteps,
+  type ElfHashCountSteps,
+} from "../../domain/elfHashSymbolCount.js";
+import {
   admitElfLoadSegment,
   elfLoadSpans,
   readElfProgramHeader,
@@ -27,7 +32,7 @@ import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclaration
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import {
   elfStringTableText,
-  observeElfStringTableEntry,
+  observeElfStringTableWindow,
 } from "../../domain/elfStringTable.js";
 import {
   ELF_SYMBOL_TRUNCATED_MESSAGE,
@@ -313,8 +318,9 @@ class DynamicStrings {
   readonly #retained: Budget;
 
   constructor(
-    readonly table: { readonly bytes: Buffer; readonly offset: number } | null,
+    readonly table: LocatedTable | null,
     readonly limit: number,
+    readonly window: ElfWindowReader,
   ) {
     this.#scanned = new Budget(limit);
     this.#retained = new Budget(limit);
@@ -336,7 +342,7 @@ class DynamicStrings {
       if (value !== null) this.#charge("retained", value.length);
   }
 
-  read(offset: number): CString {
+  *read(offset: number): ElfDependencySteps<CString> {
     if (this.table === null)
       return { state: "table-unavailable", name: null, location: null };
     const cached = this.#cache.get(offset);
@@ -344,18 +350,32 @@ class DynamicStrings {
       this.retain(cached.name);
       return cached;
     }
-    const observed = observeElfStringTableEntry(
-      this.table.bytes,
-      offset,
-      ELF_STRING_SCAN_BYTES,
+    const remaining = this.table.size - offset;
+    if (offset < 0 || remaining <= 0)
+      return { state: "outside", name: null, location: null };
+    const at = this.table.offset + offset;
+    const first = yield* this.window.readSlice(
+      at,
+      Math.min(remaining, WINDOW_READ_BYTES),
+      "DT_STRTAB",
     );
+    let observed = observeElfStringTableWindow(first, remaining);
+    if (observed.state === "truncated" && observed.scanLimited) {
+      const bytes = yield* this.window.readSlice(
+        at,
+        Math.min(remaining, ELF_STRING_SCAN_BYTES),
+        "DT_STRTAB",
+      );
+      observed = observeElfStringTableWindow(bytes, remaining);
+    }
     this.#charge("scanned", observed.examinedBytes);
     let entry: CString;
-    if (observed.state === "outside")
-      entry = { state: "outside", name: null, location: null };
-    else if (observed.state === "truncated")
+    if (observed.state !== "terminated")
       entry = {
-        state: observed.scanLimited ? "scan-limit" : "unterminated",
+        state:
+          observed.state === "truncated" && observed.scanLimited
+            ? "scan-limit"
+            : "unterminated",
         name: null,
         location: this.table.offset + offset,
       };
@@ -372,17 +392,17 @@ class DynamicStrings {
   }
 }
 
-const searchPath = (
+const searchPath = function* (
   strings: DynamicStrings,
   offset: number,
   issues: ElfDependencyIssue[],
   location: string,
-): {
+): ElfDependencySteps<{
   raw: string;
   entries: string[];
   tokens: ReturnType<typeof elfSearchPathTokens>;
-} | null => {
-  const observed = strings.read(offset);
+} | null> {
+  const observed = yield* strings.read(offset);
   if (observed.name === null) {
     issues.push({
       code: "name_unreadable",
@@ -567,7 +587,6 @@ const tableFromMappedVersym = (
 };
 
 const WINDOW_READ_BYTES = 4096;
-const GNU_HASH_CHECKPOINT_STEPS = 4096;
 
 /** Random-access source for streaming ELF dependency inspection without buffering the whole image. */
 export interface ElfDependencyByteSource {
@@ -734,64 +753,41 @@ const mappedHashWordsStep = (
   };
 };
 
-const readSysvHashSymbolCountStep = function* (
+const readHashCount = function* (
+  steps: ElfHashCountSteps<number | null>,
   read: HashWordStepReader,
 ): ElfDependencySteps<number | null> {
-  const buckets = yield* read(0);
-  if (!buckets.ok) return null;
-  const count = yield* read(4);
-  if (!count.ok) return null;
-  const end = yield* read(8 + 4 * (buckets.value + count.value) - 4);
-  return end.ok ? count.value : null;
-};
-
-const gnuSymbolCountStep = function* (
-  read: HashWordStepReader,
-  bits: 32 | 64,
-): ElfDependencySteps<number | null> {
-  const wordBytes = bits === 64 ? 8 : 4;
-  const maximum = MAX_INSPECT_ELF_DEPENDENCY_IMPORTS;
-  const overBudget = (label: string, count: number): never => {
+  const checkpoint = ok(0);
+  let next = steps.next();
+  while (!next.done) {
+    if (next.value === undefined) {
+      yield { kind: "yield" };
+      next = steps.next(checkpoint);
+    } else next = steps.next(yield* read(next.value));
+  }
+  const count = next.value;
+  if (count.ok) return count.value;
+  if (count.error.kind === "budget")
     throw decodeLimit(
       "elf-dependencies",
-      `${label} exceeds the fixed ELF dependency decoding allowance.`,
-      { name: "gnu_hash_entries", maximum, required: count },
+      `${count.error.label} exceeds the fixed ELF dependency decoding allowance.`,
+      {
+        name: "gnu_hash_entries",
+        maximum: MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
+        required: count.error.count,
+      },
     );
-  };
-  const header: number[] = [];
-  for (const offset of [0, 4, 8, 12]) {
-    const word = yield* read(offset);
-    if (!word.ok) return null;
-    header.push(word.value);
-  }
-  const [buckets = 0, firstSymbol = 0, bloomWords = 0] = header;
-  if (buckets > maximum) overBudget("DT_GNU_HASH bucket table", buckets);
-  if (bloomWords > maximum) overBudget("DT_GNU_HASH bloom filter", bloomWords);
-  if (firstSymbol > maximum)
-    overBudget("DT_GNU_HASH symbol index", firstSymbol);
-  if (buckets === 0 || bloomWords === 0) return null;
-  const bucketsAt = 16 + bloomWords * wordBytes;
-  const prefixBytes = bucketsAt + buckets * 4;
-  const lastBucket = yield* read(prefixBytes - 4);
-  if (!lastBucket.ok) return null;
-  let last = 0;
-  for (let index = 0; index < buckets; index += 1) {
-    if (index % GNU_HASH_CHECKPOINT_STEPS === 0) yield { kind: "yield" };
-    const value = yield* read(bucketsAt + index * 4);
-    if (!value.ok) return null;
-    if (value.value !== 0 && value.value < firstSymbol) return null;
-    last = Math.max(last, value.value);
-  }
-  if (last === 0) return null;
-  for (let index = last; ; index += 1) {
-    if (index + 1 > maximum) overBudget("DT_GNU_HASH symbol table", index + 1);
-    if ((index - last) % GNU_HASH_CHECKPOINT_STEPS === 0)
-      yield { kind: "yield" };
-    const chain = yield* read(prefixBytes + (index - firstSymbol) * 4);
-    if (!chain.ok) return null;
-    if ((chain.value & 1) !== 0) return index + 1;
-  }
+  return null;
 };
+
+const readGnuHashCount = (read: HashWordStepReader, bits: 32 | 64) =>
+  readHashCount(
+    readElfGnuHashSymbolCountSteps(
+      bits === 64 ? 8 : 4,
+      MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
+    ),
+    read,
+  );
 
 const locateVersionTable = (
   mappings: IndexedElfLoadMappings,
@@ -865,7 +861,7 @@ const parseElfDependenciesCore = function* (
     Math.min(fileSize, 64),
     "ELF header",
   );
-  const fixed = readElfFixedHeader(headerBytes);
+  const fixed = readElfFixedHeader(headerBytes, fileSize);
   if (!fixed.ok) return fail(fixed.error);
   const header = fixed.value;
   const type = header.type;
@@ -1122,42 +1118,34 @@ const parseElfDependenciesCore = function* (
         ? "ELF dynamic string table has ambiguous file mappings"
         : "Dynamic string table could not be located from section headers or DT_STRTAB",
     });
+  if (dynstrTable !== null)
+    checkElfRange(fileSize, dynstrTable.offset, dynstrTable.size, "DT_STRTAB");
   const dynstr = new DynamicStrings(
-    dynstrTable === null
-      ? null
-      : {
-          bytes: yield* readElfRange(
-            fileSize,
-            dynstrTable.offset,
-            dynstrTable.size,
-            "DT_STRTAB",
-          ),
-          offset: dynstrTable.offset,
-        },
+    dynstrTable,
     fileSize,
+    createElfWindowReader(fileSize, little),
   );
-  const needed: ElfDependencyNeeded[] = neededEntries.map(
-    ({ nameOffset, sourceOffset }, index) => {
-      const observed = dynstr.read(nameOffset);
-      const name =
-        observed.name === null || observed.name.length === 0
-          ? null
-          : observed.name;
-      if (name === null)
-        issues.push({
-          code: "name_unreadable",
-          location: hex(observed.location ?? sourceOffset),
-          message: unreadDynamicString("DT_NEEDED", observed, nameOffset),
-        });
-      return { index, name, name_offset: nameOffset };
-    },
-  );
+  const needed: ElfDependencyNeeded[] = [];
+  for (const [index, { nameOffset, sourceOffset }] of neededEntries.entries()) {
+    const observed = yield* dynstr.read(nameOffset);
+    const name =
+      observed.name === null || observed.name.length === 0
+        ? null
+        : observed.name;
+    if (name === null)
+      issues.push({
+        code: "name_unreadable",
+        location: hex(observed.location ?? sourceOffset),
+        message: unreadDynamicString("DT_NEEDED", observed, nameOffset),
+      });
+    needed.push({ index, name, name_offset: nameOffset });
+  }
   const sonameOffset = unique.get(DT_SONAME);
   const soname =
     sonameOffset === undefined
       ? null
       : {
-          name: namedString(dynstr, sonameOffset, issues, "DT_SONAME"),
+          name: yield* namedString(dynstr, sonameOffset, issues, "DT_SONAME"),
           name_offset: sonameOffset,
         };
   const rpathOffset = unique.get(DT_RPATH);
@@ -1165,11 +1153,11 @@ const parseElfDependenciesCore = function* (
   const rpath =
     rpathOffset === undefined
       ? null
-      : searchPath(dynstr, rpathOffset, issues, "DT_RPATH");
+      : yield* searchPath(dynstr, rpathOffset, issues, "DT_RPATH");
   const runpath =
     runpathOffset === undefined
       ? null
-      : searchPath(dynstr, runpathOffset, issues, "DT_RUNPATH");
+      : yield* searchPath(dynstr, runpathOffset, issues, "DT_RUNPATH");
   const flagsRaw = unique.get(DT_FLAGS);
   const flags1Raw = unique.get(DT_FLAGS_1);
   const versionNames = new Map<
@@ -1395,13 +1383,13 @@ export const parseElfDependenciesFromHandle = async (
   return next.value;
 };
 
-const namedString = (
+const namedString = function* (
   strings: DynamicStrings,
   offset: number,
   issues: ElfDependencyIssue[],
   label: string,
-): string | null => {
-  const observed = strings.read(offset);
+): ElfDependencySteps<string | null> {
+  const observed = yield* strings.read(offset);
   if (observed.name === null || observed.name.length === 0) {
     issues.push({
       code: "name_unreadable",
@@ -1428,13 +1416,14 @@ const parseInterpreter = function* (
     return { status: "unreadable", path: null, location: interp };
   }
   try {
+    checkElfRange(fileSize, interp.offset, interp.bytes, "PT_INTERP");
     const body = yield* readElfRange(
       fileSize,
       interp.offset,
-      interp.bytes,
+      Math.min(interp.bytes, ELF_STRING_SCAN_BYTES),
       "PT_INTERP",
     );
-    const observed = observeElfStringTableEntry(body, 0, ELF_STRING_SCAN_BYTES);
+    const observed = observeElfStringTableWindow(body, interp.bytes);
     if (observed.state !== "terminated") {
       issues.push({
         code: "name_unreadable",
@@ -1528,7 +1517,8 @@ const locateSymbolCount = function* (
     coverage: "word" | "prefix" = "word",
   ): ElfDependencySteps<number | null> {
     if (hashAddress === undefined) return null;
-    return yield* readSysvHashSymbolCountStep(
+    return yield* readHashCount(
+      readElfHashSymbolCountSteps(),
       mappedHashWordsStep(window, mappings, hashAddress, coverage),
     );
   };
@@ -1552,7 +1542,8 @@ const locateSymbolCount = function* (
   }
   const sectionHash =
     hashSectionInFile(hash, window.fileSize, ".hash", issues) && hash.size >= 8
-      ? yield* readSysvHashSymbolCountStep(
+      ? yield* readHashCount(
+          readElfHashSymbolCountSteps(),
           hashWordsStep(window, hash.offset, hash.offset + hash.size),
         )
       : null;
@@ -1561,7 +1552,7 @@ const locateSymbolCount = function* (
   const sectionGnu =
     hashSectionInFile(gnuHash, window.fileSize, ".gnu.hash", issues) &&
     gnuHash.size >= 16
-      ? yield* gnuSymbolCountStep(
+      ? yield* readGnuHashCount(
           hashWordsStep(window, gnuHash.offset, gnuHash.offset + gnuHash.size),
           bits,
         )
@@ -1571,7 +1562,7 @@ const locateSymbolCount = function* (
     sectionGnu ??
     (gnuAddress === undefined
       ? null
-      : yield* gnuSymbolCountStep(
+      : yield* readGnuHashCount(
           mappedHashWordsStep(window, mappings, gnuAddress),
           bits,
         ));
@@ -1688,7 +1679,7 @@ const parseVerneed = function* (
       const fileOffset = yield* window.u32(at + 4);
       const auxiliaryOffset = yield* window.u32(at + 8);
       const next = yield* window.u32(at + 12);
-      const file = namedString(dynstr, fileOffset, issues, "vn_file");
+      const file = yield* namedString(dynstr, fileOffset, issues, "vn_file");
       if (auxiliaryCount > 0 && auxiliaryOffset < 16)
         fail(
           "GNU version requirement auxiliary chain starts inside its header",
@@ -1707,7 +1698,7 @@ const parseVerneed = function* (
         const index = (yield* window.u16(auxAt + 6)) & 0x7fff;
         const nameOffset = yield* window.u32(auxAt + 8);
         const auxiliaryNext = yield* window.u32(auxAt + 12);
-        const name = namedString(dynstr, nameOffset, issues, "vna_name");
+        const name = yield* namedString(dynstr, nameOffset, issues, "vna_name");
         versions.push({
           name,
           hash,
@@ -1840,7 +1831,7 @@ const parseVerdef = function* (
         );
       }
       names.push({
-        name: namedString(dynstr, nameOffset, issues, "vda_name"),
+        name: yield* namedString(dynstr, nameOffset, issues, "vda_name"),
         index,
         base: (flags & VER_FLG_BASE) !== 0,
       });
@@ -1971,7 +1962,7 @@ const parseImports = function* (
       "Undefined dynamic symbols",
       "max_imports",
     );
-    const name = namedString(
+    const name = yield* namedString(
       dynstr,
       parsed.name_offset,
       issues,

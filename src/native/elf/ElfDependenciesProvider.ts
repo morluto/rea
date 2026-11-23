@@ -64,7 +64,7 @@ export class ElfDependenciesProvider {
     input: InspectElfDependenciesInput,
     options?: { readonly signal?: AbortSignal },
   ) {
-    let completed:
+    let observed:
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
     try {
@@ -77,9 +77,7 @@ export class ElfDependenciesProvider {
             resourceScope: this.#resources,
             retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
             onIdentity: (identity) => {
-              // Only a parser failure inherits this read's identity; finalization
-              // failures keep their own completion record.
-              completed = identity;
+              observed = identity;
             },
           },
           async (handle) => {
@@ -102,14 +100,13 @@ export class ElfDependenciesProvider {
               },
             );
             assertArtifactReadActive(options?.signal);
-            completed = undefined;
             return parsed;
           },
         );
         return ok(result);
       });
     } catch (cause) {
-      return err(elfDependenciesFailure(cause, input, completed));
+      return err(elfDependenciesFailure(cause, input, observed));
     }
   }
 }
@@ -225,7 +222,7 @@ const elfDependenciesFailurePrimary = (
 const elfDependenciesFailure = (
   cause: unknown,
   input: InspectElfDependenciesInput,
-  completed: { readonly sha256: string; readonly bytes: number } | undefined,
+  observed: { readonly sha256: string; readonly bytes: number } | undefined,
 ) => {
   const primary = elfDependenciesFailurePrimary(
     artifactFilePrimaryFacts(cause),
@@ -237,6 +234,6 @@ const elfDependenciesFailure = (
     input.path,
     ELF_DEPENDENCIES_PROVIDER.id,
     OPERATION,
-    completed,
+    observed,
   );
 };

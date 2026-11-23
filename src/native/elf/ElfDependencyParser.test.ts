@@ -9,7 +9,10 @@ import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { readElfDependencies } from "../../domain/desktop/elfDependencies.js";
 import { readElfHardening } from "../hardening/ElfHardening.js";
 import { elfDependencyFixture, elfHash } from "./ElfDependencies.fixture.js";
-import { readElfDependenciesSteps } from "./ElfDependencyParser.js";
+import {
+  parseElfDependenciesFromHandle,
+  readElfDependenciesSteps,
+} from "./ElfDependencyParser.js";
 
 const parseElfDependencies = (
   ...arguments_: Parameters<typeof readElfDependenciesSteps>
@@ -1247,6 +1250,64 @@ const elf64ProgramHeader = (bytes: Buffer, type: number): number => {
   }
   throw new Error(`Fixture has no program header of type ${type}`);
 };
+
+const readFromSource = (
+  bytes: Buffer,
+  readRange: (offset: number, length: number) => Promise<Buffer> = async (
+    offset,
+    length,
+  ) => bytes.subarray(offset, offset + length),
+) =>
+  parseElfDependenciesFromHandle(
+    { size: bytes.length, prefix: bytes.subarray(0, 64), readRange },
+    { path: artifactPath, sha256: "ab".repeat(32), bytes: bytes.length },
+    inspectElfDependenciesInputSchema.parse({ path: artifactPath }),
+    async () => {},
+  );
+
+it("validates a declared ELF header larger than the fixed prefix against the file", async () => {
+  const original = elfDependencyFixture({
+    bits: 64,
+    little: true,
+    stripped: true,
+  });
+  const tableOffset = Number(original.readBigUInt64LE(32));
+  const tableBytes = original.readUInt16LE(54) * original.readUInt16LE(56);
+  const bytes = Buffer.concat([
+    original,
+    original.subarray(tableOffset, tableOffset + tableBytes),
+  ]);
+  bytes.fill(0, 64, 128);
+  bytes.writeUInt16LE(128, 52);
+  bytes.writeBigUInt64LE(BigInt(original.length), 32);
+  const report = await readFromSource(bytes);
+  expect(report.needed.map(({ name }) => name)).toEqual(defaultNeeded);
+  expect(report).toEqual(parse(bytes));
+});
+
+it("bounds reads of large dynamic string and interpreter extents", async () => {
+  const longName = "x".repeat(2 * 65536);
+  const bytes = elfDependencyFixture({
+    bits: 64,
+    little: true,
+    stripped: true,
+    needed: ["libshort.so", longName],
+    interpreter: longName,
+  });
+  const reads: number[] = [];
+  const report = await readFromSource(bytes, async (offset, length) => {
+    expect(length).toBeLessThanOrEqual(65536);
+    reads.push(length);
+    return bytes.subarray(offset, offset + length);
+  });
+  expect(report).toEqual(parse(bytes));
+  expect(reads).toContain(65536);
+  expect(report.needed.map(({ name }) => name)).toEqual(["libshort.so", null]);
+  expect(report.interpreter).toMatchObject({
+    status: "unreadable",
+    location: { bytes: longName.length + 1 },
+  });
+});
 
 it.each([0x1_0000_0000n, 0x1_0000_0001n])(
   "does not match ELF64 tag %s against a known 32-bit tag",
