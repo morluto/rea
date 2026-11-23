@@ -460,6 +460,7 @@
 * **javascript:** reuse completed CommonJS module-source queries ([2e0a791](https://github.com/morluto/rea/commit/2e0a79115a9f8a7c4999c47fa724cc7a58792fdf))
 * **javascript:** reuse lexical returned-reference facts across ambient writes ([#13004](https://github.com/morluto/rea/issues/13004)) ([d43fc10](https://github.com/morluto/rea/commit/d43fc1051134823b1f52a7a3ed564051948e0aa1))
 * **javascript:** reuse preload-discovery static checkpoints in the normal pass ([5b280e1](https://github.com/morluto/rea/commit/5b280e1f9faac0df1ec5310c7037e88ca6c4c94e))
+* **javascript:** share one lexical index between static and semantic analysis ([#14148](https://github.com/morluto/rea/issues/14148)) ([24d2c4f](https://github.com/morluto/rea/commit/24d2c4f16b6422f81a56c9e5f8029b35eef49e5b))
 * **javascript:** share settled ambient call continuations ([#13010](https://github.com/morluto/rea/issues/13010)) ([2e45687](https://github.com/morluto/rea/commit/2e45687dfde28274a5451223695a14f0ae6e5afd))
 * **javascript:** skip captured-selection normalization without captures ([42a4bb5](https://github.com/morluto/rea/commit/42a4bb51703b1b2598fc7ce02c53d03c3b4102af))
 * **javascript:** skip checkpoint encoding without reuse capacity ([d78eee1](https://github.com/morluto/rea/commit/d78eee196aa045445fbb0fe31e09036b3c70ac9b))
