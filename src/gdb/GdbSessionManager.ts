@@ -12,7 +12,8 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { ArtifactResourceScope } from "../resources/index.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { commandMayChangeInferiorOutput } from "../domain/gdbCommandClassification.js";
+import { commandMayChangeInferiorOutput } from "./GdbCommandClassification.js";
+export { gdbOneShotCommandMayInvalidateDetachProof } from "./GdbCommandClassification.js";
 import {
   gdbThreadGroupPids,
   miQuote,

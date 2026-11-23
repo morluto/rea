@@ -15,7 +15,7 @@ import {
 import {
   commandMayChangeInferiorOutput,
   gdbOneShotCommandMayInvalidateDetachProof,
-} from "../../../src/domain/gdbCommandClassification.js";
+} from "../../../src/gdb/GdbCommandClassification.js";
 import {
   gdbThreadGroupPids,
   miStringField,
