@@ -48,7 +48,10 @@ it.each(["compact"] as const)(
         mainCodeFormat: 1,
         main: "export const marker = 1;",
         fuse: "set",
-        assets: [{ name: "data.txt", body: "data" }],
+        assets: [
+          { name: "data.txt", body: "data" },
+          { name: "second.txt", body: "second" },
+        ],
       }),
     );
     const { call } = await connectLocalToolsMcp({
@@ -64,7 +67,28 @@ it.each(["compact"] as const)(
         artifact_limits: lowerPolicy,
       });
       expectBlobAdmissionFailure(refused);
-      const selectedPolicy = { node_sea: { blob_bytes: 4096 } };
+      const assetRefusal = await call("inspect_artifact", {
+        detail: "summary",
+        artifact_limits: { node_sea: { asset_count: 1 } },
+      });
+      expect(parseMcpToolError(assetRefusal).error).toMatchObject({
+        code: "truncated",
+        retryable: true,
+        details: {
+          operation: "inspect_artifact",
+          reason: "limit",
+          boundary: "capacity",
+          truncated: true,
+          reader_limit: {
+            parameter: "artifact_limits.node_sea.asset_count",
+            effective_value: 1,
+            required_value: 2,
+            unit: "count",
+            can_increase: true,
+          },
+        },
+      });
+      const selectedPolicy = { node_sea: { blob_bytes: 4096, asset_count: 2 } };
       const reply = await call("inspect_artifact", {
         detail: "summary",
         artifact_limits: selectedPolicy,
@@ -73,7 +97,9 @@ it.each(["compact"] as const)(
       const summary = artifactInventorySummaryViewResultSchema.parse(
         parseEvidence(reply.structuredContent).normalized_result,
       );
-      expect(summary.summary.effective_limits?.node_sea.blob_bytes).toBe(4096);
+      expect(summary.summary.effective_limits?.node_sea).toMatchObject(
+        selectedPolicy.node_sea,
+      );
       expect(summary.summary.root_format_metadata).toMatchObject({
         kind: "node-sea",
         carrier: "pe",
@@ -148,28 +174,6 @@ it.each(["compact"] as const)(
         },
       });
       expect((await call("close_binary", {})).isError).not.toBe(true);
-      await writeFile(
-        path,
-        nodeSeaPe({
-          blob: buildNodeSeaBlob({
-            assets: Array.from({ length: 100_001 }, (_, index) => ({
-              name: `a${String(index)}`,
-              body: "",
-            })),
-          }),
-        }),
-      );
-      expect((await call("open_binary", { path })).isError).not.toBe(true);
-      const overLimit = await call("inspect_artifact", {});
-      expect(parseMcpToolError(overLimit).error).toMatchObject({
-        code: "truncated",
-        details: {
-          operation: "inspect_artifact",
-          reason: "limit",
-          boundary: "capacity",
-          truncated: true,
-        },
-      });
     } finally {
       if (outputRoot !== undefined)
         await rm(outputRoot, { recursive: true, force: true });

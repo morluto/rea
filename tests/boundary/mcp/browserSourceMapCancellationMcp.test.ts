@@ -4,6 +4,7 @@ import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { webBundleAcquisitionPartialObservationSchema } from "../../../src/domain/webBundleAnalysis.js";
 import { startSourceMapCancellationBrowser } from "../../fixtures/browserSourceMapCancellation.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   createApplicationMcpHarness,
   type ApplicationMcpHarness,
@@ -48,17 +49,7 @@ it("retains completed source maps through MCP cancellation for later Evidence re
     },
     { signal: controller.signal },
   );
-  await Promise.race([
-    secondRequest,
-    call.then(
-      () => {
-        throw new Error("MCP completed before the second map request");
-      },
-      (cause: unknown) => {
-        throw cause;
-      },
-    ),
-  ]);
+  await awaitAcknowledgement(secondRequest, call, "second source-map request");
   const retainedMapPath = await completedMapPath;
   controller.abort(new Error("Caller cancelled after the first map"));
   await expect(call).rejects.toThrow();

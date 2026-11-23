@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics.js";
+import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics/nativeExports.js";
 import * as elfSymbols from "../../../src/domain/elfSymbol.js";
 import * as nativeExports from "../../../src/domain/native/nativeExports.js";
 import { parseNativeExports } from "../../../src/domain/native/nativeExportParser.js";
@@ -149,12 +149,9 @@ describe("ELF export parsing cancellation", () => {
         if (cancelled.ok)
           throw new Error("Expected cancellation during version traversal");
         expect(cancelled.error.cause).toBe(reason);
-        // Main validates STN_UNDEF before version traversal; exported symbols
-        // must still remain unread when the queued cancellation is observed.
-        expect(symbols).toHaveBeenCalledTimes(1);
-        expect(symbols.mock.calls[0]?.[0].every((byte) => byte === 0)).toBe(
-          true,
-        );
+        // Positional version traversal precedes symbol decoding. No exported
+        // symbol is read before the queued cancellation is observed.
+        expect(symbols).not.toHaveBeenCalled();
       } finally {
         clearImmediate(interrupt);
         decoded.mockRestore();

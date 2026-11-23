@@ -15,6 +15,8 @@ export function literalToolCountIssues(
   root: string,
 ): Promise<readonly string[]>;
 
+export function readmeFactIssues(root: string): Promise<readonly string[]>;
+
 export function documentationFactIssues(
   root: string,
   catalog: ProductCatalog,

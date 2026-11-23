@@ -16,8 +16,14 @@ export const MAX_INSPECT_V8_CODE_CACHE_FILE_BYTES = 67108864;
 export const V8_CODE_CACHE_HEADER_BYTES = 32;
 /** The same word area with four-byte pointer alignment. */
 export const V8_CODE_CACHE_NARROW_HEADER_BYTES = 28;
-/** Every container header size admitted by the pinned layout. */
+/**
+ * The six-word area V8 8.8 through 11.7 write. It has no read-only snapshot
+ * checksum word, and 24 bytes need no pointer-alignment padding.
+ */
+export const V8_CODE_CACHE_LEGACY_HEADER_BYTES = 24;
+/** Every container header size admitted by the pinned layouts. */
 export const V8_CODE_CACHE_HEADER_SIZES: readonly number[] = [
+  V8_CODE_CACHE_LEGACY_HEADER_BYTES,
   V8_CODE_CACHE_NARROW_HEADER_BYTES,
   V8_CODE_CACHE_HEADER_BYTES,
 ];
@@ -126,7 +132,7 @@ const headerSchema = z.strictObject({
   /** High half of the magic, the only part stable across V8 builds. */
   magic_build_stable: uint,
   /** Every header word this container carries, in container order. */
-  fields: z.array(headerFieldSchema).min(7).max(8),
+  fields: z.array(headerFieldSchema).min(6).max(8),
   /** Bytes this reader treats as header before the payload begins. */
   header_bytes: uint,
   /** Source length in UTF-16 code units, as recorded by the producer, if determinable. */

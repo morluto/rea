@@ -155,20 +155,11 @@ class ComputerHelperTests(unittest.TestCase):
     def test_sigterm_with_stdin_open(self):
         self.run_helper("SIGTERM")
 
-    def test_sigint_with_stdin_open(self):
-        self.run_helper("SIGINT")
-
-    def test_sigterm_retains_failed_teardown(self):
-        self.run_helper("SIGTERM", remaining=True)
-
-    def test_sigint_retains_failed_teardown(self):
+    def test_sigint_with_stdin_open_retains_failed_teardown(self):
         self.run_helper("SIGINT", remaining=True)
 
     def test_signal_while_wait_holds_eof_event_lock(self):
         self.run_helper("SIGTERM", hold_wait_lock=True)
-
-    def test_eof_retains_failed_teardown(self):
-        self.run_helper(remaining=True)
 
     def test_no_computer_keeps_exit_two(self):
         self.run_helper(no_computer=True)

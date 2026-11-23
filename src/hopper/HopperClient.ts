@@ -1302,7 +1302,7 @@ export class HopperClient<
         bridgeRequestOversizeError(
           method,
           requestLimit.value,
-          measured,
+          { bytesAtLeast: measured },
           "Hopper",
         ),
       );

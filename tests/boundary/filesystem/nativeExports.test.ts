@@ -3,7 +3,7 @@ import { symlink, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
-import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics.js";
+import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics/nativeExports.js";
 import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";

@@ -119,7 +119,7 @@ descriptor consumes projected bytes for each entry that includes it. Metadata
 that would exceed the Evidence JSON nesting allowance is also left undecoded.
 
 Zstandard section-name tables also use a 128 MiB decoder window limit and the
-shared [`zstd.max_frames` work limit](design/limits-and-recovery.md#runtime-settings-through-mcp).
+shared [`zstd.max_frames` work limit](reference/limits-and-recovery.md#runtime-settings-through-mcp).
 
 `SHF_COMPRESSED` note sections return `unsupported_target` before their payload
 is interpreted or decompressed. Their compression header is storage metadata,

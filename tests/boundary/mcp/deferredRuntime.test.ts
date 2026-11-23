@@ -10,8 +10,8 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { resolve, join, dirname } from "node:path";
-import { afterAll, beforeAll, expect, it, onTestFinished } from "vitest";
+import { resolve, join } from "node:path";
+import { afterAll, beforeAll, expect, it, onTestFinished, vi } from "vitest";
 import { artifactMcpCall } from "../../../scripts/lib/artifact-e2e.mjs";
 import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -24,7 +24,10 @@ import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
-import { SERVER_START_FAILED } from "../../../src/main/messages.js";
+import { SERVER_START_FAILED } from "../../../src/server/serverStartFailure.js";
+import { parseConfig } from "../../../src/config/parseConfig.js";
+import type { McpServerHandle, McpServe } from "../../../src/main/types.js";
+import { phaseGate, settledCause } from "../../support/lifecycleHarness.js";
 import { HOT_TOOL_NAMES } from "../../../src/contracts/catalog/catalogDiscovery.js";
 import { DatabaseSync } from "node:sqlite";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -154,7 +157,7 @@ it.each([
         minItems: 1,
         maxItems: 20,
       },
-      offset: { type: "integer", minimum: 0, maximum: 9007199254740991 },
+      offset: { type: "integer", minimum: 0 },
       limit: { type: "integer", minimum: 1, maximum: 20 },
     });
     expect(JSON.stringify(discovery.inputSchema)).not.toContain('"default"');
@@ -179,12 +182,15 @@ it.each([
     expect(invalid.isError).toBe(true);
     expect(await client.listTools()).toEqual(initial);
     const loaded = await call("discover_tools", {
-      names: ["list_unknowns", "list_unknowns"],
+      names: ["list_unknowns", "discover_tools", "list_unknowns"],
     });
     expect(loaded.structuredContent).toMatchObject({
       loaded_count: initial.tools.length + 1,
-      total_matches: 1,
-      tools: [{ name: "list_unknowns" }],
+      total_matches: 2,
+      tools: [
+        { name: "list_unknowns" },
+        { name: "discover_tools", input_schema: discovery.inputSchema },
+      ],
     });
     expect((await call("list_unknowns", {})).isError).not.toBe(true);
     const materialized = await client.listTools();
@@ -376,6 +382,32 @@ it.each(["get", "complete"] as const)(
     expect(stderr()).toBe("");
   },
 );
+
+it("records only the output schema material needed by the deferred catalog", async () => {
+  const { tools } = z
+    .object({
+      tools: z.array(
+        z.object({
+          name: z.string(),
+          outputSchema: z.record(z.string(), z.unknown()),
+        }),
+      ),
+    })
+    .parse(JSON.parse(await readFile("dist/mcp-catalog.json", "utf8")));
+  const objectRoots = tools.filter(
+    ({ name, outputSchema }) =>
+      name !== "binary_session" && outputSchema.type === "object",
+  );
+  expect(objectRoots.length).toBeGreaterThan(0);
+  expect(
+    objectRoots
+      .filter(({ outputSchema }) => Object.keys(outputSchema).length !== 1)
+      .map(({ name }) => name),
+  ).toEqual([]);
+  expect(
+    tools.find(({ name }) => name === "binary_session")?.outputSchema,
+  ).toHaveProperty("properties");
+});
 
 it.each([
   { mode: "legacy", environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" } },
@@ -603,262 +635,175 @@ console.log(JSON.stringify({ result, output, closeCalls, unregistrations }));
   },
 );
 
-it("retains process cleanup ownership after partial startup and failed cleanup", () => {
-  const child = spawnSync(
-    process.execPath,
-    [
-      "--input-type=module",
-      "--eval",
-      `
-import assert from "node:assert/strict";
-import { runDeferred } from "./dist/main/deferredRuntime.js";
-import { parseConfig } from "./dist/config/parseConfig.js";
-const config = parseConfig({ HOME: process.env.HOME, REA_LOG_LEVEL: "silent" });
-assert.equal(config.ok, true);
-const handlers = [];
-const calls = [0, 0];
-let unregistrations = 0;
-let captured;
-let registeredBeforeServe;
-const result = await runDeferred({
-  env: {},
-  writeStderr: () => {},
-  setExitCode: () => {},
-  registerShutdown: (handler) => {
-    handlers.push(handler);
-    return () => { unregistrations++; };
-  },
-  captureShutdown: (close) => { captured = close; },
-  serve: (factory) => {
-    registeredBeforeServe = handlers.length;
-    for (let index = 0; index < calls.length; index++) {
-      const server = factory({});
-      const close = server.server.close.bind(server.server);
-      server.server.close = async () => {
-        calls[index]++;
-        if (index === 0 && calls[index] === 1) throw new Error("close denied");
-        await close();
-      };
-    }
-    throw new Error("serve failed after creating servers");
-  },
-}, config.value).then(() => "unexpected success", (cause) => cause);
-assert.ok(result instanceof AggregateError);
-assert.equal(result.errors[0].message, "serve failed after creating servers");
-assert.ok(result.errors[1] instanceof AggregateError);
-assert.match(String(result.errors[1].errors[0].errors[0]), /close denied/);
-assert.equal(registeredBeforeServe, 1);
-assert.deepEqual(calls, [1, 1]);
-assert.equal(unregistrations, 0);
-assert.equal(typeof captured, "function");
-const retry = captured();
-handlers[0]();
-await retry;
-await new Promise((resolve) => setImmediate(resolve));
-assert.deepEqual(calls, [2, 1]);
-assert.equal(unregistrations, 1);
-await captured();
-assert.deepEqual(calls, [2, 1]);
-assert.equal(unregistrations, 1);
-console.log("STARTUP_CLEANUP_RETRIED");
-`,
-    ],
-    {
-      cwd: process.cwd(),
-      env: withCompileCache(process.env),
-      encoding: "utf8",
-      timeout: 10000,
-    },
-  );
-  expect(child.error).toBeUndefined();
-  expect(child.status, child.stderr).toBe(0);
-  expect(child.stdout).toBe("STARTUP_CLEANUP_RETRIED\n");
-  expect(child.stderr).toBe("");
-});
+type DeferredPublisher = Parameters<McpServe>[0];
+const legacyContext = { era: "legacy" } as const;
 
-it.each(["handle", "server"])(
-  "retries only the failed %s cleanup owner",
-  (failedOwner) => {
-    const child = spawnSync(
-      process.execPath,
-      [
-        "--input-type=module",
-        "--eval",
-        `
-import assert from "node:assert/strict";
-import { runDeferred } from "./dist/main/deferredRuntime.js";
-import { parseConfig } from "./dist/config/parseConfig.js";
-const config = parseConfig({ HOME: process.env.HOME });
-assert.equal(config.ok, true);
-const failedOwner = ${JSON.stringify(failedOwner)};
-const calls = { handle: 0, server: 0 };
-let captured;
-let unregistrations = 0;
-const result = await runDeferred({
-  env: {}, writeStderr: () => {}, setExitCode: () => {},
-  registerShutdown: () => () => { unregistrations++; },
-  captureShutdown: (close) => { captured = close; },
-  serve: (factory) => {
-    const server = factory({});
-    const close = server.server.close.bind(server.server);
-    server.server.close = async () => {
-      calls.server++;
-      if (failedOwner === "server" && calls.server === 1) throw new Error("server denied");
-      await close();
-    };
-    return { close: () => {
-      calls.handle++;
-      if (failedOwner === "handle" && calls.handle === 1) throw new Error("handle denied");
-      // Deliberately not idempotent: a successful handle must never be retried.
-      assert.ok(calls.handle <= (failedOwner === "handle" ? 2 : 1));
-      return Promise.resolve();
-    } };
-  },
-}, config.value);
-assert.equal(result, 0);
-await assert.rejects(captured(), AggregateError);
-assert.deepEqual(calls, { handle: 1, server: 1 });
-assert.equal(unregistrations, 0);
-await captured();
-assert.deepEqual(calls, { handle: failedOwner === "handle" ? 2 : 1, server: failedOwner === "server" ? 2 : 1 });
-assert.equal(unregistrations, 1);
-await captured();
-assert.equal(unregistrations, 1);
-console.log("MIXED_CLEANUP_RETRIED");
-`,
-      ],
-      {
-        cwd: process.cwd(),
-        env: withCompileCache(process.env),
-        encoding: "utf8",
-        timeout: 10000,
+/** Drive the compiled runtime and recorded catalog with a controlled transport. */
+const deferredLifecycle = async (
+  serve: (
+    publish: DeferredPublisher,
+    isShutdownRegistered: boolean,
+  ) => ReturnType<McpServe>,
+) => {
+  const runtime = new URL(
+    "../../../dist/main/deferredRuntime.js",
+    import.meta.url,
+  );
+  const { runDeferred } = (await import(
+    runtime.href
+  )) as typeof import("../../../src/main/deferredRuntime.js");
+  const config = parseConfig({ REA_LOG_LEVEL: "silent" });
+  if (!config.ok) throw config.error;
+  let pendingClose: (() => Promise<void>) | undefined;
+  let requestClose: (() => void) | undefined;
+  const unregister = vi.fn();
+  const running = runDeferred(
+    {
+      env: {},
+      serve: (publish) => serve(publish, requestClose !== undefined),
+      writeStderr: () => undefined,
+      setExitCode: () => undefined,
+      registerShutdown: (request) => {
+        requestClose = request;
+        return unregister;
       },
-    );
-    expect(child.error).toBeUndefined();
-    expect(child.status, child.stderr).toBe(0);
-    expect(child.stdout).toBe("MIXED_CLEANUP_RETRIED\n");
-    expect(child.stderr).toBe("");
-  },
-);
-
-it("joins shutdown with a transport and server published after shutdown starts", () => {
-  const child = spawnSync(
-    process.execPath,
-    [
-      "--input-type=module",
-      "--eval",
-      `
-import assert from "node:assert/strict";
-import { runDeferred } from "./dist/main/deferredRuntime.js";
-import { parseConfig } from "./dist/config/parseConfig.js";
-const config = parseConfig({ HOME: process.env.HOME });
-assert.equal(config.ok, true);
-const transport = Promise.withResolvers();
-let factory;
-let captured;
-let signal;
-let unregistrations = 0;
-let handleCalls = 0;
-let serverCalls = 0;
-const running = runDeferred({
-  env: {}, writeStderr: () => {}, setExitCode: () => {},
-  registerShutdown: (handler) => {
-    signal = handler;
-    return () => { unregistrations++; };
-  },
-  captureShutdown: (close) => { captured = close; },
-  serve: (create) => { factory = create; return transport.promise; },
-}, config.value);
-signal();
-const closing = captured();
-let closed = false;
-void closing.then(() => { closed = true; });
-await new Promise((resolve) => setImmediate(resolve));
-assert.equal(closed, false);
-assert.equal(unregistrations, 0);
-const server = factory({});
-const close = server.server.close.bind(server.server);
-server.server.close = async () => { serverCalls++; await close(); };
-transport.resolve({ close: async () => { handleCalls++; } });
-assert.equal(await running, 0);
-await closing;
-assert.deepEqual([handleCalls, serverCalls, unregistrations], [1, 1, 1]);
-await captured();
-assert.deepEqual([handleCalls, serverCalls, unregistrations], [1, 1, 1]);
-console.log("LATE_TRANSPORT_CLOSED");
-`,
-    ],
-    {
-      cwd: process.cwd(),
-      env: withCompileCache(process.env),
-      encoding: "utf8",
-      timeout: 10000,
+      captureShutdown: (close) => {
+        pendingClose = close;
+      },
     },
+    config.value,
   );
-  expect(child.error).toBeUndefined();
-  expect(child.status, child.stderr).toBe(0);
-  expect(child.stdout).toBe("LATE_TRANSPORT_CLOSED\n");
-  expect(child.stderr).toBe("");
+  return {
+    running,
+    close: () => {
+      if (pendingClose === undefined)
+        throw new Error("Missing runtime cleanup owner");
+      return pendingClose();
+    },
+    signal: () => {
+      if (requestClose === undefined)
+        throw new Error("Missing registered shutdown request");
+      requestClose();
+    },
+    unregister,
+  };
+};
+
+const trackDeferredServer = async (
+  publish: DeferredPublisher,
+  beforeClose: () => void,
+) => {
+  const instance = await publish(legacyContext);
+  const server = "server" in instance ? instance.server : instance;
+  const close = server.close.bind(server);
+  server.close = async () => {
+    beforeClose();
+    await close();
+  };
+};
+
+it("retains an SDK server whose cleanup failed after startup rejected", async () => {
+  const startupFailure = new Error("serve failed after creating a server");
+  const cleanupFailure = new Error("close denied");
+  const closeServer = vi.fn(() => {
+    if (closeServer.mock.calls.length === 1) throw cleanupFailure;
+  });
+  const closePeer = vi.fn();
+  const fixture = await deferredLifecycle(async (publish, registered) => {
+    expect(registered).toBe(true);
+    await trackDeferredServer(publish, closeServer);
+    await trackDeferredServer(publish, closePeer);
+    throw startupFailure;
+  });
+
+  try {
+    const result = await settledCause(fixture.running);
+    expect(result).toBeInstanceOf(AggregateError);
+    expect(result).toMatchObject({
+      errors: [startupFailure, { errors: [{ errors: [cleanupFailure] }] }],
+    });
+    expect(closeServer).toHaveBeenCalledTimes(1);
+    expect(closePeer).toHaveBeenCalledTimes(1);
+    expect(fixture.unregister).not.toHaveBeenCalled();
+
+    fixture.signal();
+    await fixture.close();
+    await fixture.close();
+    expect(closeServer).toHaveBeenCalledTimes(2);
+    expect(closePeer).toHaveBeenCalledTimes(1);
+    expect(fixture.unregister).toHaveBeenCalledTimes(1);
+  } finally {
+    await settledCause(fixture.close());
+  }
 });
 
-it("refuses server publication after the shutdown snapshot and completed close", () => {
-  const child = spawnSync(
-    process.execPath,
-    [
-      "--input-type=module",
-      "--eval",
-      `
-import assert from "node:assert/strict";
-import { runDeferred } from "./dist/main/deferredRuntime.js";
-import { parseConfig } from "./dist/config/parseConfig.js";
-const config = parseConfig({ HOME: process.env.HOME });
-assert.equal(config.ok, true);
-const closingHandle = Promise.withResolvers();
-const releaseHandle = Promise.withResolvers();
-let factory;
-let captured;
-let handleCalls = 0;
-let serverCalls = 0;
-let unregistrations = 0;
-const result = await runDeferred({
-  env: {}, writeStderr: () => {}, setExitCode: () => {},
-  registerShutdown: () => () => { unregistrations++; },
-  captureShutdown: (close) => { captured = close; },
-  serve: (create) => {
-    factory = create;
-    const server = factory({});
-    const close = server.server.close.bind(server.server);
-    server.server.close = async () => { serverCalls++; await close(); };
-    return { close: async () => {
-      handleCalls++;
-      closingHandle.resolve();
-      await releaseHandle.promise;
-    } };
-  },
-}, config.value);
-assert.equal(result, 0);
-const closing = captured();
-await closingHandle.promise;
-assert.throws(() => factory({}), /MCP connection is closed/);
-releaseHandle.resolve();
-await closing;
-assert.throws(() => factory({}), /MCP connection is closed/);
-await captured();
-assert.deepEqual([handleCalls, serverCalls, unregistrations], [1, 1, 1]);
-console.log("LATE_PUBLICATION_REFUSED");
-`,
-    ],
-    {
-      cwd: process.cwd(),
-      env: withCompileCache(process.env),
-      encoding: "utf8",
-      timeout: 10000,
-    },
-  );
-  expect(child.error).toBeUndefined();
-  expect(child.status, child.stderr).toBe(0);
-  expect(child.stdout).toBe("LATE_PUBLICATION_REFUSED\n");
-  expect(child.stderr).toBe("");
+it("retries each failed deferred cleanup owner until its own close confirms", async () => {
+  const handleFailure = new Error("transport close denied");
+  const serverFailure = new Error("SDK server close denied");
+  const closeHandle = vi.fn(async () => {
+    if (closeHandle.mock.calls.length === 1) throw handleFailure;
+  });
+  const closePrimary = vi.fn(() => {
+    if (closePrimary.mock.calls.length < 3) throw serverFailure;
+  });
+  const closePeer = vi.fn();
+  const fixture = await deferredLifecycle(async (publish) => {
+    await trackDeferredServer(publish, closePrimary);
+    await trackDeferredServer(publish, closePeer);
+    return { close: closeHandle };
+  });
+
+  try {
+    await expect(fixture.running).resolves.toBe(0);
+    await expect(fixture.close()).rejects.toMatchObject({
+      errors: [handleFailure, { errors: [serverFailure] }],
+    });
+    expect(fixture.unregister).not.toHaveBeenCalled();
+    await expect(fixture.close()).rejects.toMatchObject({
+      errors: [{ errors: [serverFailure] }],
+    });
+    expect(fixture.unregister).not.toHaveBeenCalled();
+
+    await fixture.close();
+    await fixture.close();
+    expect(closeHandle).toHaveBeenCalledTimes(2);
+    expect(closePrimary).toHaveBeenCalledTimes(3);
+    expect(closePeer).toHaveBeenCalledTimes(1);
+    expect(fixture.unregister).toHaveBeenCalledTimes(1);
+  } finally {
+    await settledCause(fixture.close());
+  }
+});
+
+it("joins late transport publication and seals the deferred server registry before close", async () => {
+  const serve = phaseGate<DeferredPublisher, McpServerHandle>();
+  const transport = phaseGate();
+  const closeServer = vi.fn();
+  const closeHandle = vi.fn(() => transport.hold());
+  const fixture = await deferredLifecycle((publish) => serve.hold(publish));
+  try {
+    const publish = await serve.reached(fixture.running, "transport startup");
+    fixture.signal();
+    const closing = fixture.close();
+    await trackDeferredServer(publish, closeServer);
+    serve.release({ close: closeHandle });
+    await transport.reached(closing, "late transport close");
+    const publishAgain = async () => publish(legacyContext);
+    await expect(publishAgain()).rejects.toThrow("MCP connection is closed");
+    expect(fixture.unregister).not.toHaveBeenCalled();
+    transport.release();
+    await expect(fixture.running).resolves.toBe(0);
+    await closing;
+    await expect(publishAgain()).rejects.toThrow("MCP connection is closed");
+    await fixture.close();
+    expect(closeHandle).toHaveBeenCalledTimes(1);
+    expect(closeServer).toHaveBeenCalledTimes(1);
+    expect(fixture.unregister).toHaveBeenCalledTimes(1);
+  } finally {
+    serve.release({ close: closeHandle });
+    transport.release();
+    await settledCause(fixture.close());
+  }
 });
 
 it("runs the real static artifact workflow after deferred initialization", async () => {
@@ -915,54 +860,6 @@ const copyCompiledPackage = async (prefix: string): Promise<string> => {
   return directory;
 };
 
-/**
- * Modules `record-mcp-catalog.mjs` loads before it owns cleanup. The fixture
- * replaces every one of these; an import outside the list fails closed.
- */
-const RECORDER_RUNTIME_MODULES = [
-  "server/createServer.js",
-  "composition/binary.js",
-  "config/parseConfig.js",
-  "logger.js",
-  "contracts/promptContracts.js",
-  "contracts/toolContracts.js",
-  "domain/evidenceInputContract.js",
-  "contracts/toolSchemaMetadata.js",
-  "contracts/toolFamilies.js",
-  "contracts/promptToolFamilyScope.js",
-] as const;
-
-// Recorder cleanup tests replace every runtime import through their loader
-// hook. Keep only resolvable sentinels so an unmodeled import fails closed.
-const createRecorderCleanupFixture = async (): Promise<string> => {
-  const directory = await createTestTempDirectory("rea-catalog-cleanup-");
-  await mkdir(join(directory, "scripts"), { recursive: true });
-  const scriptPath = resolve("scripts/record-mcp-catalog.mjs");
-  const imported = [
-    ...((await readFile(scriptPath, "utf8")).matchAll(/read\("([^"]+)"\)/g) ??
-      []),
-  ].map((match) => match[1]);
-  if (
-    imported.length !== RECORDER_RUNTIME_MODULES.length ||
-    imported.some((name, index) => name !== RECORDER_RUNTIME_MODULES[index])
-  ) {
-    throw new Error(
-      `record-mcp-catalog.mjs runtime imports ${JSON.stringify(imported)} do not match the cleanup fixture ${JSON.stringify(RECORDER_RUNTIME_MODULES)}`,
-    );
-  }
-  await cp(scriptPath, join(directory, "scripts/record-mcp-catalog.mjs"));
-  await cp(resolve("package.json"), join(directory, "package.json"));
-  for (const path of RECORDER_RUNTIME_MODULES) {
-    const file = join(directory, "dist", path);
-    await mkdir(dirname(file), { recursive: true });
-    await writeFile(
-      file,
-      `throw new Error(${JSON.stringify(`Fixture import not replaced: ${path}`)});\n`,
-    );
-  }
-  return directory;
-};
-
 it("records the canonical catalog without a host account or ambient configuration", async () => {
   const directory = await copyCompiledPackage("rea-catalog-without-account-");
   await cp(
@@ -1011,16 +908,19 @@ syncBuiltinESMExports();
 
 it.each([
   { failures: ["client"], producerFails: false },
-  { failures: ["client", "server", "session"], producerFails: false },
-  { failures: ["client"], producerFails: true },
+  { failures: ["client", "server", "session"], producerFails: true },
   { failures: [], producerFails: true },
 ])(
   "preserves producer failure=$producerFails and settles every recorder owner with cleanup failures=$failures",
   async ({ failures, producerFails }) => {
-    const directory = await createRecorderCleanupFixture();
+    const directory = await createTestTempDirectory("rea-catalog-cleanup-");
     const log = join(directory, "cleanup.jsonl");
     const temporary = join(directory, "temporary");
+    const script = join(directory, "scripts", "record-mcp-catalog.mjs");
     await mkdir(temporary);
+    await mkdir(join(directory, "dist"));
+    await mkdir(join(directory, "scripts"));
+    await cp(resolve("scripts/record-mcp-catalog.mjs"), script);
     // Fault injection tests recorder ownership, not provider or SDK behavior.
     const close = (owner: string) => `async () => {
       const { appendFileSync } = await import("node:fs");
@@ -1069,45 +969,34 @@ import { registerHooks } from "node:module";
 const replacements = ${JSON.stringify(replacements)};
 registerHooks({
   resolve(specifier, context, next) {
-    return specifier === "@modelcontextprotocol/client"
-      ? { url: ${JSON.stringify(clientModule)}, shortCircuit: true }
-      : next(specifier, context);
-  },
-  load(url, context, next) {
-    const replacement = Object.entries(replacements).find(([path]) => url.endsWith(path));
-    return replacement === undefined ? next(url, context)
-      : { source: replacement[1], format: "module", shortCircuit: true };
+    if (specifier === "@modelcontextprotocol/client")
+      return { url: ${JSON.stringify(clientModule)}, shortCircuit: true };
+    const replacement = Object.entries(replacements).find(([path]) => specifier.endsWith(path));
+    return replacement === undefined ? next(specifier, context)
+      : { url: "data:text/javascript," + encodeURIComponent(replacement[1]), shortCircuit: true };
   },
 });
 `)}`;
-    expect(
-      Object.keys(replacements).map((path) => path.slice("/dist/".length)),
-    ).toEqual([...RECORDER_RUNTIME_MODULES]);
-    const child = spawnSync(
-      process.execPath,
-      [`--import=${hook}`, join(directory, "scripts/record-mcp-catalog.mjs")],
-      {
-        cwd: directory,
-        env: withCompileCache({
-          ...process.env,
-          TMPDIR: temporary,
-          TMP: temporary,
-          TEMP: temporary,
-        }),
-        encoding: "utf8",
-        timeout: 10000,
-      },
-    );
+    const child = spawnSync(process.execPath, [`--import=${hook}`, script], {
+      cwd: directory,
+      env: withCompileCache({
+        ...process.env,
+        TMPDIR: temporary,
+        TMP: temporary,
+        TEMP: temporary,
+      }),
+      encoding: "utf8",
+      timeout: 10000,
+    });
     expect(child.error).toBeUndefined();
     expect(child.status).toBe(1);
     expect(
-      new Set(
-        (await readFile(log, "utf8"))
-          .trim()
-          .split("\n")
-          .map((line): unknown => JSON.parse(line)),
-      ),
-    ).toEqual(new Set(["client", "server", "session"]));
+      (await readFile(log, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line): unknown => JSON.parse(line))
+        .sort(),
+    ).toEqual(["client", "server", "session"]);
     for (const owner of failures)
       expect(child.stderr).toContain(`${owner} cleanup failed`);
     if (producerFails) {
@@ -1121,6 +1010,9 @@ registerHooks({
       expect(child.stderr).toContain("AggregateError: Catalog cleanup failed");
     else expect(child.stderr).not.toContain("AggregateError");
     expect(await readdir(temporary)).toHaveLength(failures.length > 0 ? 1 : 0);
+    expect(await readdir(join(directory, "dist"))).toEqual(
+      producerFails ? [] : ["mcp-catalog.json"],
+    );
   },
 );
 
@@ -1185,9 +1077,14 @@ let entered = false;
 let release;
 const held = new Promise(resolve => { release = resolve; });
 let close;
+let hookCloses = 0;
 const result = await runDeferred({
   env: { REA_LOG_LEVEL: "silent" }, stdin: input,
-  serve: (factory, options) => serveStdio(factory, { ...options, transport: new StdioServerTransport(input, output) }),
+  serve: (factory, options) => serveStdio(context => {
+    const server = factory(context);
+    server.registerCloseHook(async () => { hookCloses++; });
+    return server;
+  }, { ...options, transport: new StdioServerTransport(input, output) }),
   loadOptionalProviders: async () => { entered = true; await held; return {}; },
   captureShutdown: owned => { close = owned; },
   registerShutdown: () => () => {}, writeStderr: text => { throw new Error(text); }, setExitCode: () => {},
@@ -1204,6 +1101,8 @@ try {
   release();
   await until(() => responses.some(value => value.id === 2) && responses.some(value => value.id === 3));
   await close();
+  await close();
+  assert.equal(hookCloses, 1);
   assert.deepEqual(Buffer.concat(received), Buffer.concat(writes));
   assert.equal(responses.filter(value => value.id === 2).length, 1);
   assert.equal(responses.filter(value => value.id === 3).length, 1);

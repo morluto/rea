@@ -11,9 +11,9 @@ import { asarHeaderBytes } from "../../fixtures/asarHeader.js";
 import { resolveJavaScriptApplicationMcpCall } from "../../support/cli/javascriptApplication.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-cliTest.for(["CLI", "stdio MCP"] as const)(
-  "links a block source-map URL containing an asterisk through %s",
-  async (surface, { cli }) => {
+cliTest(
+  "links a block source-map URL containing an asterisk through CLI and stdio MCP",
+  async ({ cli }) => {
     const root = await createTestTempDirectory("rea-block-map-");
     const url = "app*part.js.map";
     const directive = "/*# sourceMappingURL=" + url;
@@ -32,29 +32,23 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       }),
     );
     await writeFile(archive, Buffer.concat([header, script, mapText]));
-    let document: unknown;
-    if (surface === "CLI") {
-      const result = await cli.run({
-        arguments: ["analyze-javascript-application", archive, "--json"],
-      });
-      expect(result.exitCode, result.stderr).toBe(0);
-      document = result.json;
-    } else {
-      const call = await resolveJavaScriptApplicationMcpCall(cli, undefined);
-      const result = await call("analyze_javascript_application", {
-        input_path: archive,
-        format: "asar",
-      });
-      expect(result.isError).not.toBe(true);
-      document = result.structuredContent;
-    }
-    const {
-      normalized_result: { graph },
-    } = z
-      .object({
-        normalized_result: javascriptApplicationAnalysisResultSchema,
-      })
-      .parse(document);
+    const cliResult = await cli.run({
+      arguments: ["analyze-javascript-application", archive, "--json"],
+    });
+    expect(cliResult.exitCode, cliResult.stderr).toBe(0);
+    const call = await resolveJavaScriptApplicationMcpCall(cli, undefined);
+    const mcpResult = await call("analyze_javascript_application", {
+      input_path: archive,
+      format: "asar",
+    });
+    expect(mcpResult.isError).not.toBe(true);
+    const document = z.object({
+      normalized_result: javascriptApplicationAnalysisResultSchema,
+    });
+    const { graph } = document.parse(cliResult.json).normalized_result;
+    expect(
+      document.parse(mcpResult.structuredContent).normalized_result.graph,
+    ).toEqual(graph);
     const digest = createHash("sha256").update(url).digest("hex");
     const map = graph.nodes.find(({ observations }) =>
       observations.some(({ properties }) => properties.declared_url === url),

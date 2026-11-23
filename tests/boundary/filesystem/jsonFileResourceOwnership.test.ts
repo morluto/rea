@@ -131,20 +131,14 @@ it("returns parsed JSON when a failed file close is recovered by the resource sc
   await writeFile(path, '{"value":"retained"}');
   const resources = new ArtifactResourceScope();
   const closeFailure = new Error("injected transient close failure");
-  const originalClose = OwnedFileHandle.prototype.close;
-  let attempts = 0;
   const close = vi
     .spyOn(OwnedFileHandle.prototype, "close")
-    .mockImplementation(async function (this: OwnedFileHandle) {
-      attempts += 1;
-      if (attempts === 1) throw closeFailure;
-      await originalClose.call(this);
-    });
+    .mockRejectedValueOnce(closeFailure);
   try {
     const parsed = await readJsonFile(path, undefined, resources);
     if (!parsed.ok) throw parsed.error;
     expect(parsed.value).toEqual({ value: "retained" });
-    expect(attempts).toBe(2);
+    expect(close).toHaveBeenCalledTimes(2);
   } finally {
     close.mockRestore();
     await resources.close();

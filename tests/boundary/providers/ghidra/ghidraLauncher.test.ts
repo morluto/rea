@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createTestArtifactResourceScope } from "../../../fixtures/artifactResourceScope.js";
 import {
   access,
@@ -14,6 +15,7 @@ import { join, posix, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { fingerprintGhidraProject } from "../../../../src/ghidra/GhidraProjectSnapshot.js";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
@@ -657,36 +659,32 @@ describe("Ghidra disabled analyzers", () => {
     const seeds = arguments_.indexOf(
       posix.join("/package/bridge", "ReaGhidraApplySeeds.java"),
     );
+    expect(prepare).toBeGreaterThanOrEqual(0);
     expect(prepare).toBeLessThan(seeds);
     expect(seeds).toBeLessThan(options);
     expect(options).toBeLessThan(arguments_.indexOf("-postScript"));
   });
 
-  it.each(["darwin", "win32"] as const)(
-    "uses the target platform's script path for the options script on %s",
-    (platform) => {
-      const path = platform === "win32" ? win32 : posix;
-      const arguments_ = ghidraHeadlessArguments({
-        ...base,
-        platform,
-        bridgeScriptPath: path.join(
-          "/package",
-          "bridge",
-          "ReaGhidraBridge.java",
-        ),
-        disabledAnalyzers: ["Objective-C Message Analyzer"],
-      });
-      const options = arguments_.indexOf(
-        path.join("/package", "bridge", "ReaGhidraAnalysisOptions.java"),
-      );
-      expect(arguments_[options - 1]).toBe("-preScript");
-      expect(arguments_[options + 1]).toBe("Objective-C Message Analyzer");
-      expect(options).toBeLessThan(arguments_.indexOf("-postScript"));
-    },
-  );
+  it("passes the Windows script path and one literal analyzer argument", () => {
+    const arguments_ = ghidraHeadlessArguments({
+      ...base,
+      platform: "win32",
+      bridgeScriptPath: "C:\\package\\bridge\\ReaGhidraBridge.java",
+      disabledAnalyzers: ["Objective-C Message Analyzer"],
+    });
+    const script = "C:\\package\\bridge\\ReaGhidraAnalysisOptions.java";
+    const options = arguments_.indexOf(script);
+    expect(arguments_.slice(options - 1, options + 2)).toEqual([
+      "-preScript",
+      script,
+      "Objective-C Message Analyzer",
+    ]);
+    expect(options).toBeLessThan(arguments_.indexOf("-postScript"));
+  });
 
-  it("keeps the invocation byte-identical without an override", () => {
-    expect(ghidraHeadlessArguments(base)).toEqual([
+  it("keeps the invocation byte-identical with no configured analyzer names", () => {
+    const arguments_ = ghidraHeadlessArguments(base);
+    expect(arguments_).toEqual([
       "/tmp/project",
       "rea-project",
       "-import",
@@ -705,13 +703,8 @@ describe("Ghidra disabled analyzers", () => {
       "/package/bridge/ReaGhidraBridge.java",
       "/tmp/session.json",
     ]);
-  });
-
-  it("adds no analyzer script for an empty override", () => {
-    expect(
-      ghidraHeadlessArguments({ ...base, disabledAnalyzers: [] }),
-    ).not.toContain(
-      posix.join("/package/bridge", "ReaGhidraAnalysisOptions.java"),
+    expect(ghidraHeadlessArguments({ ...base, disabledAnalyzers: [] })).toEqual(
+      arguments_,
     );
   });
 });
@@ -725,17 +718,13 @@ describe("Ghidra existing project", () => {
     descriptorPath: "/tmp/session.json",
     ghidraLogPath: "/tmp/ghidra.log",
     scriptLogPath: "/tmp/script.log",
+    existingProject: { projectName: "rea-project", programName: "game.exe" },
   };
 
   it("opens a pre-imported program without importing or deleting the project", () => {
     const arguments_ = ghidraHeadlessArguments({
       ...base,
-      existingProject: { programName: "game.exe" },
     });
-    // The project location and name stay explicit; nothing is imported.
-    expect(arguments_.slice(0, 2)).toEqual(["/tmp/project", "rea-project"]);
-    expect(arguments_).not.toContain("-import");
-    expect(arguments_).not.toContain("-deleteProject");
     expect(arguments_).toEqual([
       "/tmp/project",
       "rea-project",
@@ -790,7 +779,6 @@ describe("Ghidra existing project", () => {
       expect(() =>
         ghidraHeadlessArguments({
           ...base,
-          existingProject: { programName: "game.exe" },
           ...conflict,
         }),
       ).toThrow(
@@ -809,7 +797,6 @@ describe("Ghidra existing project", () => {
           "bridge",
           "ReaGhidraBridge.java",
         ),
-        existingProject: { programName: "game.exe" },
       }),
     ).toThrow(
       expect.objectContaining({
@@ -823,7 +810,7 @@ describe("Ghidra existing project", () => {
     expect(() =>
       ghidraHeadlessArguments({
         ...base,
-        existingProject: { programName: "   " },
+        existingProject: { projectName: "rea-project", programName: "   " },
       }),
     ).toThrow(
       expect.objectContaining({
@@ -864,7 +851,15 @@ const launchExistingProject = async (
   runtimeRoot: string,
   parent: string,
   projectPath: string,
-  spawned: OwnedProviderProcessSpawnOptions[],
+  {
+    spawned,
+    commitment = "a".repeat(64),
+    observeSpawn,
+  }: {
+    spawned: OwnedProviderProcessSpawnOptions[];
+    commitment?: string;
+    observeSpawn?: () => Promise<void>;
+  },
 ) => {
   const javaHome = await createFakeJavaHome(parent);
   const launcher = new GhidraHeadlessLauncher({
@@ -874,9 +869,15 @@ const launchExistingProject = async (
     configurationDirectoryName: "ghidra_12.1.4_PUBLIC",
     javaHome,
     bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
-    existingProject: { projectPath, programName: "game.exe" },
+    existingProject: {
+      projectPath,
+      projectName: "rea-project",
+      programName: "game.exe",
+      sha256: commitment,
+    },
     spawnProcess: async (options) => {
       spawned.push(options);
+      await observeSpawn?.();
       return fakeSpawnedProcess(options.runId);
     },
   });
@@ -913,12 +914,32 @@ describe("Ghidra existing project launcher", () => {
         join(sourceProject, "rea-project.rep", "marker"),
         "recursive",
       );
+      const commitment = await fingerprintGhidraProject(
+        sourceProject,
+        "rea-project",
+        createTestArtifactResourceScope(),
+      );
       const spawned: OwnedProviderProcessSpawnOptions[] = [];
       const launched = await launchExistingProject(
         runtime.path,
         parent,
         sourceProject,
-        spawned,
+        {
+          spawned,
+          commitment,
+          observeSpawn: async () => {
+            const copiedProject = join(runtime.path, "project");
+            expect(
+              await readFile(join(copiedProject, "rea-project.gpr"), "utf8"),
+            ).toBe("pre-imported");
+            expect(
+              await readFile(
+                join(copiedProject, "rea-project.rep", "marker"),
+                "utf8",
+              ),
+            ).toBe("recursive");
+          },
+        },
       );
       if (!launched.ok) throw launched.error;
       try {
@@ -928,19 +949,6 @@ describe("Ghidra existing project launcher", () => {
         expectOptions(spawned[0]?.arguments ?? [], [["-process", "game.exe"]]);
         expect(spawned[0]?.arguments).toContain("-noanalysis");
         expect(spawned[0]?.arguments).toContain("-readOnly");
-        // Copy-first: the owned runtime holds the copy before Ghidra starts.
-        expect(
-          await readFile(join(runtime.path, "project", "rea-project.gpr"), {
-            encoding: "utf8",
-          }),
-        ).toBe("pre-imported");
-        expect(
-          await readFile(
-            join(runtime.path, "project", "rea-project.rep", "marker"),
-            { encoding: "utf8" },
-          ),
-        ).toBe("recursive");
-        // The caller's original project files stay untouched.
         expect(await readFile(projectMarker, { encoding: "utf8" })).toBe(
           "pre-imported",
         );
@@ -962,7 +970,7 @@ describe("Ghidra existing project launcher", () => {
         runtime.path,
         parent,
         join(parent, "absent-project"),
-        spawned,
+        { spawned },
       );
       if (launched.ok) throw new Error("launch unexpectedly succeeded");
       // The launcher wraps the copy failure; the reason stays on the cause.
@@ -971,74 +979,18 @@ describe("Ghidra existing project launcher", () => {
     },
   );
 
-  it.skipIf(process.platform === "win32")(
-    "rejects a project without the fixed rea-project name before copying",
-    async () => {
+  it.skipIf(process.platform === "win32").each([".", "project"])(
+    "rejects a source at %s relative to the runtime root before copying",
+    async (relativeSource) => {
       const parent = await createTestTempDirectory("rea-launcher-test-");
       const runtime = await createGhidraTestRuntime(parent);
       runtimes.push(runtime);
-      // The headless open selects the project by the fixed name; a caller
-      // directory holding any other project file must fail with its reason
-      // instead of spawning into an opaque Ghidra error.
-      const sourceProject = join(parent, "user-project");
-      await mkdir(sourceProject, { recursive: true });
-      await writeFile(join(sourceProject, "other-project.grez"), "mislabeled");
       const spawned: OwnedProviderProcessSpawnOptions[] = [];
       const launched = await launchExistingProject(
         runtime.path,
         parent,
-        sourceProject,
-        spawned,
-      );
-      if (launched.ok) throw new Error("launch unexpectedly succeeded");
-      expect(String(launched.error.cause)).toMatch(/rea-project\.gpr/u);
-      expect(spawned).toHaveLength(0);
-      // Nothing from the rejected project was copied into the owned runtime.
-      await expect(
-        access(join(runtime.path, "project")),
-      ).resolves.toBeUndefined();
-      expect(await readdir(join(runtime.path, "project"))).toEqual([]);
-    },
-  );
-
-  it.skipIf(process.platform === "win32")(
-    "rejects a project path that overlaps the runtime before copying",
-    async () => {
-      const parent = await createTestTempDirectory("rea-launcher-test-");
-      const runtime = await createGhidraTestRuntime(parent);
-      runtimes.push(runtime);
-      // Copying the runtime into itself would recurse without bound, so the
-      // launcher must refuse the overlap before touching the file system.
-      const spawned: OwnedProviderProcessSpawnOptions[] = [];
-      const launched = await launchExistingProject(
-        runtime.path,
-        parent,
-        runtime.path,
-        spawned,
-      );
-      if (launched.ok) throw new Error("launch unexpectedly succeeded");
-      expect(String(launched.error.cause)).toMatch(
-        /overlaps the REA runtime directory/u,
-      );
-      expect(spawned).toHaveLength(0);
-      expect(await readdir(join(runtime.path, "project"))).toEqual([]);
-    },
-  );
-
-  it.skipIf(process.platform === "win32")(
-    "rejects a project path inside the runtime before copying",
-    async () => {
-      const parent = await createTestTempDirectory("rea-launcher-test-");
-      const runtime = await createGhidraTestRuntime(parent);
-      runtimes.push(runtime);
-      // A caller-supplied path inside the owned runtime (here the project
-      // root itself) is equally an overlap and must fail before Ghidra runs.
-      const spawned: OwnedProviderProcessSpawnOptions[] = [];
-      const launched = await launchExistingProject(
-        runtime.path,
-        parent,
-        join(runtime.path, "project"),
-        spawned,
+        join(runtime.path, relativeSource),
+        { spawned },
       );
       if (launched.ok) throw new Error("launch unexpectedly succeeded");
       expect(String(launched.error.cause)).toMatch(
@@ -1073,7 +1025,7 @@ describe("Ghidra existing project symlink overlap", () => {
         runtime.path,
         parent,
         alias,
-        spawned,
+        { spawned },
       );
       if (launched.ok) throw new Error("launch unexpectedly succeeded");
       expect(String(launched.error.cause)).toMatch(
@@ -1087,7 +1039,7 @@ describe("Ghidra existing project symlink overlap", () => {
 
 describe("Ghidra expanded project admission", () => {
   it.each([
-    { label: "archive only", marker: false, data: false },
+    { label: "archive plus unrelated project", marker: false, data: false },
     { label: "marker without data", marker: true, data: false },
     { label: "data without marker", marker: false, data: true },
   ])("rejects $label before starting Ghidra", async ({ marker, data }) => {
@@ -1097,6 +1049,8 @@ describe("Ghidra expanded project admission", () => {
     const sourceProject = join(parent, "user-project");
     await mkdir(sourceProject);
     await writeFile(join(sourceProject, "rea-project.grez"), "saved archive");
+    await writeFile(join(sourceProject, "other-project.gpr"), "other marker");
+    await mkdir(join(sourceProject, "other-project.rep"));
     if (marker)
       await writeFile(join(sourceProject, "rea-project.gpr"), "marker");
     if (data) await mkdir(join(sourceProject, "rea-project.rep"));
@@ -1105,7 +1059,7 @@ describe("Ghidra expanded project admission", () => {
       runtime.path,
       parent,
       sourceProject,
-      spawned,
+      { spawned },
     );
     if (launched.ok) throw new Error("launch unexpectedly succeeded");
     expect(String(launched.error.cause)).toMatch(
@@ -1365,6 +1319,105 @@ describe("Ghidra GameCube DOL section file", () => {
       expect(spawnProcess).toHaveBeenCalledOnce();
       const sectionPath = join(runtime.path, "gamecube-dol-sections.txt");
       expect(await readFile(sectionPath, "utf8")).toBe(sectionFile);
+    },
+  );
+});
+
+describe("Ghidra checkpoint restore", () => {
+  it("skips auto-analysis and the no-return repair when restoring a packed checkpoint", () => {
+    const arguments_ = ghidraHeadlessArguments({
+      platform: "linux",
+      projectRoot: "/tmp/project",
+      targetPath: "/tmp/target",
+      packedProgramPath: "/tmp/runtime/restored-program.gzf",
+      bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+      descriptorPath: "/tmp/session.json",
+      ghidraLogPath: "/tmp/ghidra.log",
+      scriptLogPath: "/tmp/script.log",
+    });
+    expect(arguments_).toContain("-noanalysis");
+    expect(arguments_).toContain("-import");
+    expect(arguments_).toContain("/tmp/runtime/restored-program.gzf");
+    expect(arguments_).not.toContain(
+      "/package/bridge/ReaGhidraNoReturnFix.java",
+    );
+    expect(arguments_).toContain("/package/bridge/ReaGhidraBridge.java");
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "copies and verifies packed checkpoints in one pass and rejects tampered bytes before spawn",
+    async () => {
+      const parent = await createTestTempDirectory("rea-packed-restore-");
+      const runtime = await createGhidraTestRuntime(parent);
+      runtimes.push(runtime);
+      const javaHome = await createFakeJavaHome(parent);
+      const packedSource = join(parent, "program.gzf");
+      const packedBytes = Buffer.alloc(300 * 1024, 0x47);
+      packedBytes[packedBytes.length - 1] = 0x5a;
+      await writeFile(packedSource, packedBytes);
+      const sha256 = createHash("sha256").update(packedBytes).digest("hex");
+      const spawned: OwnedProviderProcessSpawnOptions[] = [];
+      const launcher = new GhidraHeadlessLauncher({
+        environment: process.env,
+        analyzeHeadlessPath: fixturePath,
+        platform: "linux",
+        configurationDirectoryName: "ghidra_12.1.4_PUBLIC",
+        javaHome,
+        bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+        spawnProcess: async (options) => {
+          spawned.push(options);
+          return fakeSpawnedProcess(options.runId);
+        },
+      });
+      const launched = await launcher.launch(
+        {
+          runtimeRoot: runtime.path,
+          transport: "unix-socket",
+          endpointPath: join(runtime.path, "bridge.sock"),
+          token: "secret-token",
+          runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
+          targetPath: "/tmp/target",
+          targetSha256: "b".repeat(64),
+          providerVersion: "12.1.4",
+          profileDigest: "a".repeat(64),
+          packedProgram: { path: packedSource, sha256 },
+        },
+        { resourceScope: createTestArtifactResourceScope() },
+      );
+      if (!launched.ok) throw launched.error;
+      try {
+        const restored = join(runtime.path, "restored-program.gzf");
+        expect((await readFile(restored)).equals(packedBytes)).toBe(true);
+        expect((await stat(restored)).mode & 0o777).toBe(0o600);
+        expect(spawned[0]?.arguments).toContain("-noanalysis");
+        expect(spawned[0]?.arguments).not.toContain(
+          "/package/bridge/ReaGhidraNoReturnFix.java",
+        );
+      } finally {
+        await launched.value.cleanup?.();
+      }
+
+      const tamperedRuntime = await createGhidraTestRuntime(parent);
+      runtimes.push(tamperedRuntime);
+      packedBytes[0] = (packedBytes[0] ?? 0) ^ 0xff;
+      await writeFile(packedSource, packedBytes);
+      const tampered = await launcher.launch(
+        {
+          runtimeRoot: tamperedRuntime.path,
+          transport: "unix-socket",
+          endpointPath: join(tamperedRuntime.path, "bridge.sock"),
+          token: "secret-token",
+          runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
+          targetPath: "/tmp/target",
+          targetSha256: "b".repeat(64),
+          providerVersion: "12.1.4",
+          profileDigest: "a".repeat(64),
+          packedProgram: { path: packedSource, sha256 },
+        },
+        { resourceScope: createTestArtifactResourceScope() },
+      );
+      expect(tampered.ok).toBe(false);
+      expect(spawned).toHaveLength(1);
     },
   );
 });

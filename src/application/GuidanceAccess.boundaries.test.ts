@@ -1,6 +1,5 @@
 import { expect, it } from "vitest";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { readGuidanceSectionInputSchema } from "../contracts/guidanceContracts.js";
 import { MANAGED_SKILL_FILES } from "./SetupSkill.js";
 import {
   readGuidanceSectionWithReader,
@@ -22,16 +21,22 @@ it("does not substitute a common domain word for an unknown query subject", asyn
   await resources.close();
 });
 
-it.each([
-  ["## C#", "C#"],
-  ["## C# ###", "C#"],
-  ["## C\\#", "C\\#"],
-  ["   ## C#", "C#"],
-  ["## C# \t ### \t", "C#"],
-  ["## ###", ""],
-])("preserves the source title in %s", async (line, heading) => {
+it("preserves ATX titles and retrieves colliding and long headings by locator", async () => {
   const resources = new ArtifactResourceScope();
-  const source = reader(`${line}\nneedle instructions\n`);
+  const long = `needle ${"x".repeat(3000)}`;
+  const titles = [
+    ["## C#", "C#"],
+    ["## C# ###", "C#"],
+    ["## C\\#", "C\\#"],
+    ["   ## C#", "C#"],
+    ["## C# \t ### \t", "C#"],
+    ["## ###", ""],
+    [`## ${long}`, long],
+  ] as const;
+  const sections = titles.map(
+    ([line], index) => `${line}\nneedle recipe ${index}\n`,
+  );
+  const source = reader(sections.join("\n"));
   const result = await searchGuidanceWithReader(
     { query: "needle" },
     source,
@@ -39,40 +44,36 @@ it.each([
   );
   if (!result.ok || result.value.status !== "matches")
     throw new Error("Expected matching documentation");
-  expect(result.value.matches[0]?.heading).toBe(heading);
-  const value = await readGuidanceSectionWithReader(
-    { locator: result.value.matches[0]?.locator },
-    source,
-    resources,
+  const matches = result.value.matches;
+  expect(matches.map(({ heading }) => heading).sort()).toEqual(
+    titles.map(([, heading]) => heading).sort(),
   );
-  expect(value).toMatchObject({
-    ok: true,
-    value: { status: "section", heading },
-  });
-  await resources.close();
-});
+  expect(new Set(matches.map(({ locator }) => locator)).size).toBe(
+    titles.length,
+  );
 
-it("issues readable locators independently of heading length", async () => {
-  const resources = new ArtifactResourceScope();
-  const heading = `needle ${"x".repeat(3000)}`;
-  const source = reader(`## ${heading}\nInstructions\n`);
-  const result = await searchGuidanceWithReader(
-    { query: "needle" },
-    source,
-    resources,
-  );
-  if (!result.ok || result.value.status !== "matches")
-    throw new Error("Expected match");
-  const locator = result.value.matches[0]?.locator;
-  expect(readGuidanceSectionInputSchema.safeParse({ locator }).success).toBe(
-    true,
-  );
-  expect(
-    await readGuidanceSectionWithReader({ locator }, source, resources),
-  ).toMatchObject({
-    ok: true,
-    value: { status: "section", heading },
-  });
+  for (const index of [0, 1, titles.length - 1]) {
+    const match = matches.find(({ context, heading }) =>
+      index === titles.length - 1
+        ? heading === long
+        : context.includes(`needle recipe ${index}`),
+    );
+    if (match === undefined) throw new Error("Expected the selected section");
+    expect(
+      await readGuidanceSectionWithReader(
+        { locator: match.locator },
+        source,
+        resources,
+      ),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        status: "section",
+        heading: titles[index]?.[1],
+        content: sections[index]?.trim(),
+      },
+    });
+  }
   await resources.close();
 });
 

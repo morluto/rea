@@ -4,7 +4,7 @@ import type { Writable } from "node:stream";
 import { estimateTokenCount } from "tokenx";
 
 import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
-import type { ParsedCliOutputArguments } from "../cliOutput.js";
+import type { ParsedCliOutputArguments } from "./cliOutput.js";
 import {
   cliOperationFailureIdentity,
   cliOperationFailurePayload,
@@ -576,20 +576,13 @@ export const createCliResultOutput = (
       // require a complete formatted string.
       const tokenValue = document;
       let characters = 0;
-      if (
-        tokenValue !== undefined &&
-        tokenValue !== null &&
-        typeof tokenValue !== "function" &&
-        typeof tokenValue !== "symbol"
-      ) {
-        if (format === "json") {
-          for (const part of jsonOutputParts(
-            tokenValue,
-            format,
-            isTerminalOutput(destination),
-          ))
-            characters += part.length;
-        }
+      if (format === "json") {
+        for (const part of jsonOutputParts(
+          tokenValue,
+          format,
+          isTerminalOutput(destination),
+        ))
+          characters += part.length;
       }
       if (characters <= constants.MAX_STRING_LENGTH) {
         let formatted: string;

@@ -96,14 +96,15 @@ export const kiloProjectLocation = async (
         )),
       );
   const primary: KiloConfigDirectory[] = [];
-  if (worktree.primaryRoot !== worktree.root) {
+  const { primaryRoot } = worktree;
+  if (primaryRoot !== undefined && primaryRoot !== worktree.root) {
     const mirrored = join(
-      worktree.primaryRoot,
+      primaryRoot,
       relative(worktree.root, worktree.activeDirectory),
     );
     primary.push(
       ...(await projectDirectories(
-        ancestorsThrough(mirrored, worktree.primaryRoot),
+        ancestorsThrough(mirrored, primaryRoot),
         "readonly",
       )),
     );

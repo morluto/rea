@@ -46,6 +46,9 @@ The audit composes existing readers. It does not reread Electron fuse bytes itse
 `observation.pdb_path_bytes` with the containing image path and an explicit
 unknown encoding. The check can observe the reference even when its text is
 unavailable. CodeView path reads stop at the first 4 KiB of each record.
+When a CodeView record has no file pointer, its RVA must resolve to
+file-backed content in the declared PE image. Raw section alignment
+padding does not supply an RVA mapping.
 
 `go.build_paths` reads a flag's arguments by the rules of the tool that takes them. A linker `-X` value is an application string, so a relative one is not a path. A rooted one cannot be told from a file path, so it is reported: `-X main.route=/api/v1` is sampled like `-X main.root=/srv/build`, because dropping both would miss the second.
 

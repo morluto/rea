@@ -97,7 +97,6 @@ const doctorHost = (
         packageFamily: "deb",
         hopperSetupSupported: true,
       }),
-    validTarget: () => Promise.resolve(true),
     executable: (path) =>
       Promise.resolve(hopperAvailable && path.includes("Hopper")),
     linuxDemoRuntimeCheck: () =>

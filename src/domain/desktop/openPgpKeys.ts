@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { BinaryReader } from "../binaryContainer.js";
 import { err, ok, type Result } from "../result.js";
 import { dearmorPublicKeys, isArmoredKey } from "./aptRepositories.js";
 
@@ -22,10 +23,16 @@ const packetHeader = (
   if ((first & 0x40) === 0) {
     const width = [1, 2, 4][first & 0x03];
     if (width === undefined || at + 1 + width > bytes.length) return undefined;
+    const reader = new BinaryReader(bytes, false, "openpgp");
     return {
       tag: (first >> 2) & 0x0f,
       header: 1 + width,
-      body: bytes.readUIntBE(at + 1, width),
+      body:
+        width === 1
+          ? reader.u8(at + 1)
+          : width === 2
+            ? reader.u16(at + 1)
+            : reader.u32(at + 1),
     };
   }
   const tag = first & 0x3f;
@@ -39,7 +46,11 @@ const packetHeader = (
       : { tag, header: 3, body: ((length - 192) << 8) + next + 192 };
   }
   if (length !== 255 || at + 6 > bytes.length) return undefined;
-  return { tag, header: 6, body: bytes.readUInt32BE(at + 2) };
+  return {
+    tag,
+    header: 6,
+    body: new BinaryReader(bytes, false, "openpgp").u32(at + 2),
+  };
 };
 
 /** A primary key's fingerprint from its packet body: SHA-1 for version 4, SHA-256 for versions 5 and 6. */

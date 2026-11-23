@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { availableParallelism } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { z } from "zod";
 
@@ -79,11 +80,30 @@ try {
       typed ? "typed-oxlint.json" : "oxlint.json",
     );
     await rm(reportPath, { force: true });
+    const hasExplicitThreads = extraArguments.some(
+      (argument) =>
+        argument === "--threads" || argument.startsWith("--threads="),
+    );
+    const configuredThreads = Number(process.env.REA_OXLINT_THREADS);
+    // Match vitest.config.ts runner concurrency so untyped oxlint does not
+    // saturate every host core on shared developer or agent machines.
+    const defaultUntypedThreads = Math.min(
+      process.env.GITHUB_ACTIONS === "true" ? 4 : 2,
+      availableParallelism(),
+    );
+    const untypedThreads =
+      Number.isSafeInteger(configuredThreads) && configuredThreads > 0
+        ? configuredThreads
+        : defaultUntypedThreads;
     const result = run(
       "oxlint",
       "bin/oxlint",
       [
-        ...(typed ? ["--type-aware", "--threads", "1"] : []),
+        ...(typed
+          ? ["--type-aware", "--threads", "1"]
+          : hasExplicitThreads
+            ? []
+            : ["--threads", String(untypedThreads)]),
         ...extraArguments,
         "--format",
         "json",

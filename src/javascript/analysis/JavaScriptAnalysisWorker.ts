@@ -79,10 +79,7 @@ import {
   processWorkerCleanup,
 } from "../../process/OwnedWorkerRuntime.js";
 import { prepareProcessOwnershipInspection } from "../../process/ProcessOwnershipObservation.js";
-import {
-  ProviderStartupDeadline,
-  waitForAbortableDelay,
-} from "../../process/ProviderDeadline.js";
+import { ProviderStartupDeadline } from "../../process/ProviderDeadline.js";
 import {
   readJavaScriptAnalysisTransfer,
   javaScriptForwardedTransferRemediation,
@@ -237,6 +234,7 @@ export class JavaScriptAnalysisWorker {
         // budget or a stack trace that overflowed it cannot hide it.
         runtime: "v8",
         onDiagnostic: (event) => this.#observeProcessDiagnostic(event),
+        onMemoryLimit: () => this.#observeMemoryLimit(),
       },
       onInputFailure: (cause) => this.#latchInputFailure(cause),
     });
@@ -841,7 +839,7 @@ export class JavaScriptAnalysisWorker {
         if (outcome === "frame") continue;
         throw this.#selectedWorkerFailure(path);
       }
-      await waitForAbortableDelay(10, deadline.signal);
+      await this.#frameSignal.wait(deadline.signal);
     }
   }
 
@@ -1100,28 +1098,30 @@ export class JavaScriptAnalysisWorker {
       };
       this.#frameSignal.wake("failure");
     }
-    if (event.type === "exit" && (event.code !== 0 || event.signal !== null)) {
-      if (this.#primaryFailure === undefined)
-        this.#primaryFailure = {
-          kind: "exit",
-          code: event.code,
-          signal: event.signal,
-          heapExhaustion: event.snapshot.runtimeExhaustion !== undefined,
-          ...(event.snapshot.runtimeExhaustion === undefined
-            ? {}
-            : { exhaustion: event.snapshot.runtimeExhaustion }),
-        };
-      else if (
-        this.#primaryFailure.kind === "exit" &&
-        event.snapshot.runtimeExhaustion !== undefined
-      ) {
-        this.#primaryFailure = {
-          ...this.#primaryFailure,
-          heapExhaustion: true,
-          exhaustion: event.snapshot.runtimeExhaustion,
-        };
-        this.#frameSignal.wake("failure");
+    if (event.type === "exit") {
+      if (event.code !== 0 || event.signal !== null) {
+        if (this.#primaryFailure === undefined)
+          this.#primaryFailure = {
+            kind: "exit",
+            code: event.code,
+            signal: event.signal,
+            heapExhaustion: event.snapshot.runtimeExhaustion !== undefined,
+            ...(event.snapshot.runtimeExhaustion === undefined
+              ? {}
+              : { exhaustion: event.snapshot.runtimeExhaustion }),
+          };
+        else if (
+          this.#primaryFailure.kind === "exit" &&
+          event.snapshot.runtimeExhaustion !== undefined
+        ) {
+          this.#primaryFailure = {
+            ...this.#primaryFailure,
+            heapExhaustion: true,
+            exhaustion: event.snapshot.runtimeExhaustion,
+          };
+        }
       }
+      this.#frameSignal.wake("failure");
     }
   }
   #observeMemoryLimit(): void {

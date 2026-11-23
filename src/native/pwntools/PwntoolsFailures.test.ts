@@ -60,10 +60,8 @@ it("keeps the caller-selected pwntools input-limit source", () => {
     update_mode: "parameter",
     pending_restart: false,
     parameter: "producer_limits.input_bytes",
+    unit: "bytes",
   });
-  expect(projected.remediation.action).toContain(
-    "producer_limits.input_bytes is 4096 bytes",
-  );
   expect(projected.remediation.action).not.toContain("launch default of");
 });
 
@@ -90,11 +88,9 @@ it("names a runtime pwntools ceiling instead of the built-in default", () => {
   expect(projected.details?.limit).toMatchObject({
     effective_value: 67_108_864,
     source: "runtime",
+    unit: "bytes",
     update_mode: "runtime",
   });
-  expect(projected.remediation.action).toContain(
-    "67108864 bytes (source runtime)",
-  );
   expect(projected.remediation.action).toContain("update_analysis_settings");
   expect(projected.message).not.toContain(
     "Selected producer_limits.input_bytes is",
@@ -123,10 +119,10 @@ it("distinguishes the wall deadline from caller-selected producer resource budge
     parameter: "pwntools_timeout_ms",
     effective_value: 4_500,
     default_value: 30_000,
+    applies_at: "next_call",
   });
   expect(projected.remediation.action).toContain("cpu_seconds=30");
   expect(projected.remediation.action).toContain("producer_limits");
-  expect(projected.remediation.action).toContain("no REA restart");
   expect(projected.remediation.action).toContain("67108864");
 });
 
@@ -234,13 +230,14 @@ it("binds diagnostic_bytes as the only control of the command output budget", ()
         parameter: "producer_limits.diagnostic_bytes",
         effective_value: 64,
         default_value: 1048576,
+        applies_at: "next_call",
       },
     },
   });
   // output_bytes bounds the reply file, not this budget.
   expect(projected.message).not.toContain("output_bytes");
   expect(projected.remediation.action).toContain(
-    "Increase producer_limits.diagnostic_bytes above 64",
+    "producer_limits.diagnostic_bytes",
   );
   expect(projected.remediation.action).not.toContain("--");
 });

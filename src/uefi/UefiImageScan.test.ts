@@ -9,7 +9,8 @@ import {
   buildLzmaGuidedSection,
 } from "../../tests/fixtures/uefiImage.js";
 import { AMD_ZLIB_HEADER_LENGTH } from "./FfsSections.js";
-import { scanUefiImage, type UefiLzmaDecoder } from "./UefiImageScan.js";
+import { scanUefiImage } from "./UefiImageScan.js";
+import type { UefiLzmaDecoder } from "./UefiScanContext.js";
 
 const noDecoder: UefiLzmaDecoder = async () => ({
   ok: false,

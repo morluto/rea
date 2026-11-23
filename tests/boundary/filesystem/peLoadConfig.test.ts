@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { createPeLoadConfigService } from "../../../src/composition/binaryDiagnostics.js";
+import { createPeLoadConfigService } from "../../../src/composition/binaryDiagnostics/peLoadConfig.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { peLoadConfigImage } from "../../../src/native/pe/PeLoadConfig.fixture.js";

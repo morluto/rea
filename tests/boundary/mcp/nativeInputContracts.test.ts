@@ -56,6 +56,21 @@ afterEach(async () => {
 });
 
 describe("native MCP input contracts", () => {
+  it("advertises the temporary plist snapshot write to MCP clients", async () => {
+    const client = await connect(() =>
+      Promise.resolve(ok(createAnalysisExecution(plistResult, provider))),
+    );
+    const { tools } = await client.listTools();
+    expect(tools.find(({ name }) => name === "inspect_plist")).toMatchObject({
+      description: expect.stringContaining("private temporary copy"),
+      annotations: { readOnlyHint: false, destructiveHint: false },
+    });
+    expect(
+      NATIVE_TOOL_CONTRACTS.find(({ name }) => name === "inspect_plist")
+        ?.effects,
+    ).toMatchObject({ writesFilesystem: true, mutatesTarget: false });
+  });
+
   it("rejects a misspelled plist path before dispatch and preserves omission", async () => {
     const calls: Array<{
       readonly operation: string;

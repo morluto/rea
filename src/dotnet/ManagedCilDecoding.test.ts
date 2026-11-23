@@ -511,14 +511,18 @@ describe("managed complete operand decoding", () => {
     });
   });
 
-  it("retains named references and loaded literals before a truncated operand", () => {
-    const { heap, tokens } = fixtureUserStringHeap(["observed"]);
-    const literalToken = tokens[0]!;
+  it("retains named references and literals only before the invalid opcode", () => {
+    const { heap, tokens } = fixtureUserStringHeap([
+      "observed",
+      "after failure",
+    ]);
+    const [literalToken, decoyToken] = tokens as [string, string];
     const il = Buffer.from([
       0x28, 1, 0, 0, 0x0a, 0x7e, 1, 0, 0, 0x04, 0x26, 0x72, 0, 0, 0, 0, 0x26,
-      0x20,
+      0xfe, 0xff, 0x72, 0, 0, 0, 0, 0x26, 0x2a,
     ]);
     il.writeUInt32LE(Number.parseInt(literalToken, 16), 12);
+    il.writeUInt32LE(Number.parseInt(decoyToken, 16), 20);
     const bytes = buildManagedPeFixture({
       memberRefParentRaw: 8,
       memberRefName: "ObservedCall",
@@ -544,7 +548,7 @@ describe("managed complete operand decoding", () => {
         { opcode: "ldstr", operand: literalToken },
         { opcode: "pop", operand: null },
       ],
-      issue: "Instruction ldc.i4 at IL offset 17 leaves method body",
+      issue: "Unsupported CIL opcode 0xfeff at IL offset 17",
     });
     expect(result.call_edges).toMatchObject([
       {

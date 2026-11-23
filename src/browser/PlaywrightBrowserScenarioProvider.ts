@@ -28,8 +28,6 @@ import {
 } from "../domain/browserScenarioCapture.js";
 import {
   classifyBrowserScenarioCompleteness,
-  browserScenarioStepSchema,
-  browserStepArtifactsSchema,
   type BrowserScenarioCompleteness,
   type BrowserScenarioCompletenessSection,
   type BrowserScenarioStep,
@@ -94,14 +92,14 @@ const unavailableArtifacts = (
     requested.has(kind)
       ? { state: "missing" as const, reason }
       : { state: "not_requested" as const };
-  return browserStepArtifactsSchema.parse({
+  return {
     screenshot: state("screenshot"),
     dom: state("dom"),
     accessibility: state("accessibility"),
     url: state("url"),
     history: state("history"),
     storage: state("storage"),
-  });
+  };
 };
 
 const stepCompleteness = (
@@ -130,21 +128,23 @@ const createStep = (
     readonly eventEnd: number;
     readonly artifacts: BrowserStepArtifacts;
   } & BrowserScenarioStepOutcome,
-): BrowserScenarioStep =>
-  browserScenarioStepSchema.parse({
+): BrowserScenarioStep => {
+  const base = {
     step_index: input.stepIndex,
     step_id: input.stepId,
     action: input.action,
-    status: input.status,
     elapsed_ms: input.elapsedMs,
     before_url: input.beforeUrl,
     after_url: input.afterUrl,
-    error: input.error,
     event_sequence_start: input.eventStart,
     event_sequence_end: input.eventEnd,
     artifacts: input.artifacts,
     completeness: stepCompleteness(input.artifacts, input.status),
-  });
+  };
+  return input.status === "completed"
+    ? { ...base, status: "completed", error: null }
+    : { ...base, status: input.status, error: input.error };
+};
 
 const initialStep = async (input: {
   readonly session: BrowserScenarioSessionPort;

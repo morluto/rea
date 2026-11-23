@@ -171,16 +171,17 @@ export const preserveYamlAliasValues = (
     });
   if (removed.size === 0) return new Set();
   const targets = new Map<Alias, Node | undefined>();
-  const names = new Set<string>();
+  const anchors = new Map<string, Node>();
   const reusedNames = new Set<string>();
   visit(document, {
     Alias: (_key, node) => {
-      targets.set(node, node.resolve(document));
+      // YAML binds an alias to the last preceding definition of its name.
+      targets.set(node, anchors.get(node.source));
     },
     Value: (_key, node) => {
       if (node.anchor === undefined) return;
-      if (names.has(node.anchor)) reusedNames.add(node.anchor);
-      names.add(node.anchor);
+      if (anchors.has(node.anchor)) reusedNames.add(node.anchor);
+      anchors.set(node.anchor, node);
     },
   });
   const context: AliasCopies = {
@@ -191,7 +192,7 @@ export const preserveYamlAliasValues = (
     survivingNames: new Map(),
     visiting: new Set(),
     validated: new Set(),
-    names,
+    names: new Set(anchors.keys()),
     reusedNames,
   };
   const replacements = new Map<Node, Node>();

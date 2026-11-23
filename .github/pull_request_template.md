@@ -37,6 +37,8 @@ Use "none" or "not applicable" only when established. -->
 
 - Semantic owner and earliest changed stage:
   <!-- Name the producer of parsed facts or resources and its affected consumers.
+  If ownership was duplicated, name the shared fact or responsibility and
+  show a case that distinguishes the old behavior from the corrected one.
   Summarize superseded paths removed and any distinct policy, lifecycle,
   lazy-loading, or compatibility responsibility retained. -->
 - Contribution scope fit and linked maintainer decision:

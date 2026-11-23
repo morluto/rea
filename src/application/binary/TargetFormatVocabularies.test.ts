@@ -111,6 +111,7 @@ const TARGETS: TargetFixtures = {
     ...identity,
     kind: "database",
     format: "analysis-database",
+    databaseEngine: "hopper",
   },
   zip: { ...archive, format: "zip" },
   ipa: { ...archive, format: "ipa" },

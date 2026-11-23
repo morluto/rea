@@ -10,6 +10,7 @@ import {
 } from "./machoDylibCommand.js";
 import { readMachoSegmentHeader } from "./machoSegmentHeader.js";
 import {
+  MACHO_COMMON_HEADER_BYTES,
   MachoLoadCommandCursor,
   machoCommandTableIssue,
   machoWordReader,
@@ -47,7 +48,7 @@ import {
   type FatSliceDeclaration,
   type FatSliceRangeIssue,
 } from "./machoContainer.js";
-import { strictUtf8Decoder } from "../strictUtf8.js";
+import { decodeStrictUtf8 } from "../strictUtf8.js";
 
 /** Read `length` bytes at `offset`; shorter results mean end of file. */
 export type ReadAt = (offset: number, length: number) => Promise<Uint8Array>;
@@ -407,7 +408,9 @@ export const readSliceCommandTable = async (
   base: number,
   length: number,
 ): Promise<MachoSliceCommandTable> => {
-  const headerBytes = await readAt(base, 28);
+  if (length < MACHO_COMMON_HEADER_BYTES)
+    return failed("malformed", "Mach-O header is truncated", null);
+  const headerBytes = await readAt(base, MACHO_COMMON_HEADER_BYTES);
   const parsed = readMachoHeaderDeclarations(headerBytes, length);
   if (!parsed.ok)
     return failed("malformed", "Mach-O header is truncated", null);
@@ -540,42 +543,40 @@ const readSlice = async (
     | { readonly kind: "parsed"; readonly value: MachoDependency }
     | LazyLoadDylibInfoCommand
   > = [];
-  const segments: SegmentSpan[] = [];
-  let unreadableSegment: number | undefined;
+  const segments: SegmentCommandRange[] = [];
   let lazyInfoCount = 0;
   // Each command decodes as it is framed, so a defect in an earlier command
-  // keeps precedence over a later framing defect.
-  const framed = frameLoadCommands(table, ({ command, body, index }) => {
-    if (command === LC.SEGMENT || command === LC.SEGMENT_64) {
-      const span = readSegmentSpan(body, command === LC.SEGMENT_64);
-      if (span === undefined) unreadableSegment ??= index;
-      else segments.push(span);
-    }
-    if (command === LC.LAZY_LOAD_DYLIB_INFO) {
-      lazyInfoCount += 1;
-      if (lazyInfoCount > MAX_LAZY_INFO_DEPENDENCIES)
-        throw machoIssue(
-          "unsupported",
-          `LC_LAZY_LOAD_DYLIB_INFO commands exceed the ${MAX_LAZY_INFO_DEPENDENCIES}-dependency limit`,
-        );
-    }
-    const decoded = decodeCommand(command, body, index, slice);
-    if (decoded !== undefined) dependencies.push(decoded);
-  });
+  // keeps precedence over a later framing defect. Only lazy info needs VM facts.
+  const framed = frameLoadCommands(
+    table,
+    ({ command, body, index, offset }) => {
+      if (command === LC.SEGMENT || command === LC.SEGMENT_64)
+        segments.push({ index, command, offset, size: body.byteLength });
+      if (command === LC.LAZY_LOAD_DYLIB_INFO) {
+        lazyInfoCount += 1;
+        if (lazyInfoCount > MAX_LAZY_INFO_DEPENDENCIES)
+          throw machoIssue(
+            "unsupported",
+            `LC_LAZY_LOAD_DYLIB_INFO commands exceed the ${MAX_LAZY_INFO_DEPENDENCIES}-dependency limit`,
+          );
+      }
+      const decoded = decodeCommand(command, body, index, slice);
+      if (decoded !== undefined) dependencies.push(decoded);
+    },
+  );
   if (framed.status !== "framed")
     throw machoIssue(framed.status, framed.reason);
-  if (lazyInfoCount > 0 && unreadableSegment !== undefined)
-    throw machoIssue(
-      "malformed",
-      `load command ${unreadableSegment} is too short to establish the slice VM range for LC_LAZY_LOAD_DYLIB_INFO`,
-    );
+  const maxVmOffset =
+    lazyInfoCount === 0
+      ? LAZY_INFO_MIN_VM_OFFSET
+      : maximumVmOffset(table.bytes, segments);
   await appendDependencies(
     slice,
     dependencies,
     readAt,
     base,
     length,
-    maximumVmOffset(segments),
+    maxVmOffset,
   );
   const distinctPlatforms = [...new Set(slice.platforms)];
   slice.platform =
@@ -596,23 +597,40 @@ interface SegmentSpan {
   readonly vmsize: bigint;
 }
 
-/** Runtime end of the mapped image, excluding `__LINKEDIT`, floored at one page. */
-const maximumVmOffset = (segments: readonly SegmentSpan[]): bigint => {
-  let textVmAddr = 0n;
-  for (const segment of segments) {
-    if (segment.name === "__TEXT") {
-      textVmAddr = segment.vmaddr;
-      break;
-    }
-  }
-  let max = LAZY_INFO_MIN_VM_OFFSET;
-  for (const segment of segments) {
-    if (segment.name === "__LINKEDIT") continue;
-    const end = segment.vmaddr - textVmAddr + segment.vmsize;
-    if (end > max) max = end;
-  }
-  return max;
+type SegmentCommandRange = Omit<MachoLoadCommand, "body"> & {
+  readonly size: number;
 };
+
+/** Runtime end of the mapped image, excluding `__LINKEDIT`, floored at one page. */
+const maximumVmOffset = (
+  commands: Uint8Array,
+  segments: readonly SegmentCommandRange[],
+): bigint => {
+  let textVmAddr: bigint | undefined;
+  let lastEnd = 0n;
+  for (const { command, offset, size, index } of segments) {
+    const segment = readSegmentSpan(
+      commands.subarray(offset, offset + size),
+      command === LC.SEGMENT_64,
+    );
+    if (segment === undefined)
+      throw machoIssue(
+        "malformed",
+        `load command ${index} is too short to establish the slice VM range for LC_LAZY_LOAD_DYLIB_INFO`,
+      );
+    if (segment.name === "__TEXT") textVmAddr ??= segment.vmaddr;
+    if (segment.name === "__LINKEDIT") continue;
+    const end = segment.vmaddr + segment.vmsize;
+    if (end > lastEnd) lastEnd = end;
+  }
+  const max = lastEnd - (textVmAddr ?? 0n);
+  return max > LAZY_INFO_MIN_VM_OFFSET ? max : LAZY_INFO_MIN_VM_OFFSET;
+};
+
+const SEGMENT_NAME_DECODER = new TextDecoder("utf-8", {
+  fatal: false,
+  ignoreBOM: true,
+});
 
 const readSegmentSpan = (
   body: Uint8Array,
@@ -624,7 +642,7 @@ const readSegmentSpan = (
   const end = nameBytes.indexOf(0);
   return {
     // Segment names are fixed-width Mach-O data; a leading BOM is literal name bytes.
-    name: new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(
+    name: SEGMENT_NAME_DECODER.decode(
       end < 0 ? nameBytes : nameBytes.subarray(0, end),
     ),
     vmaddr,
@@ -647,22 +665,15 @@ interface LazyPayloadWork {
   stringBytes: number;
   /** Symbol-string references. Repeats each count. */
   symbolReferences: number;
-  rangeChecks: number;
 }
 
 const containedPayload = (
   reads: readonly { fileOffset: number; bytes: Uint8Array }[],
   fileOffset: number,
   size: number,
-  work: LazyPayloadWork,
 ): Uint8Array | undefined => {
+  // The per-slice dependency limit bounds both stored ranges and lookups.
   for (const read of reads) {
-    work.rangeChecks += 1;
-    if (work.rangeChecks > MAX_LOAD_COMMAND_BYTES)
-      throw machoIssue(
-        "unsupported",
-        `LC_LAZY_LOAD_DYLIB_INFO payload range lookup exceeds the ${MAX_LOAD_COMMAND_BYTES}-check limit`,
-      );
     const start = fileOffset - read.fileOffset;
     if (
       start >= 0 &&
@@ -692,7 +703,6 @@ const appendDependencies = async (
     payloadBytes: 0,
     stringBytes: 0,
     symbolReferences: 0,
-    rangeChecks: 0,
   };
   for (const dependency of dependencies) {
     if (dependency.kind === "parsed") {
@@ -754,14 +764,14 @@ const decodeCommand = (
         "malformed",
         `load command ${index} is too short for LC_BUILD_VERSION`,
       );
-    const view = viewOf(body);
-    const toolCount = view.getUint32(20, true);
+    const reader = machoWordReader(body, true);
+    const toolCount = reader.u32(20);
     if (toolCount > Math.floor((body.byteLength - 24) / 8))
       throw machoIssue(
         "malformed",
         `load command ${index} LC_BUILD_VERSION tool records exceed cmdsize`,
       );
-    const platform = view.getUint32(8, true);
+    const platform = reader.u32(8);
     slice.platforms.push(platform);
     return;
   }
@@ -829,7 +839,7 @@ const readLazyPayloadBytes = async (
   index: number,
   work: LazyPayloadWork,
 ): Promise<Uint8Array> => {
-  const covered = containedPayload(work.reads, fileOffset, size, work);
+  const covered = containedPayload(work.reads, fileOffset, size);
   if (covered !== undefined) return covered;
   work.payloadBytes += size;
   if (work.payloadBytes > MAX_LOAD_COMMAND_BYTES)
@@ -1037,7 +1047,7 @@ const payloadString = (
   chargeLazyString(work, end - offset + 1);
   let text: string;
   try {
-    text = strictUtf8Decoder("preserve").decode(payload.subarray(offset, end));
+    text = decodeStrictUtf8(payload.subarray(offset, end), "preserve");
   } catch {
     throw machoIssue(
       "malformed",
@@ -1109,7 +1119,7 @@ const throwCommandStringIssue = (
 const decodeCommandString = (bytes: Uint8Array, index: number): string => {
   try {
     // lc_str contains name/path data, so a leading U+FEFF is part of its identity.
-    return strictUtf8Decoder("preserve").decode(bytes);
+    return decodeStrictUtf8(bytes, "preserve");
   } catch {
     throw machoIssue(
       "malformed",
@@ -1141,6 +1151,3 @@ const fileTypeName = (fileType: number): MachoSlice["file_type"] =>
 
 const version = (value: number): string =>
   `${value >>> 16}.${(value >>> 8) & 0xff}.${value & 0xff}`;
-
-const viewOf = (bytes: Uint8Array): DataView =>
-  new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

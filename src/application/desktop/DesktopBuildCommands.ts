@@ -7,8 +7,8 @@ import {
 } from "../../domain/desktop/buildCapture.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import {
-  jsonObjectSchema,
   jsonValueSchema,
+  ownedJsonObjectSchema,
   type JsonValue,
 } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -160,9 +160,8 @@ export const readOutput = async (
   const value = parseBuildComputerJson(content, "REA output");
   const redact = (text: string) => computer.redacted(text);
   if (cliFailureSchema.safeParse(value).success) {
-    const reported = jsonObjectSchema.parse(
-      redactedJson(jsonObjectSchema.parse(value), redact),
-    );
+    const parsed = ownedJsonObjectSchema.parse(value);
+    const reported = redactedJson(parsed, redact) as Record<string, JsonValue>;
     return {
       kind: "failure",
       failure: cliFailureSchema.parse(reported),

@@ -9,7 +9,7 @@ import {
   analysisDetailSchema,
   analysisDetailOutputSchemaOf,
 } from "../analysisDetail.js";
-import { pcapCaptureSummaryViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
+import { pcapCaptureSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/pcapCaptureSummarySchema.js";
 
 /** Packet-capture analysis served by caller-supplied tshark and capinfos. */
 export const PCAP_TOOL_CONTRACTS = [

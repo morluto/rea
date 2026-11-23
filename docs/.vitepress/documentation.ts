@@ -9,6 +9,11 @@ export const documentationSections = [
         route: "/installation",
       },
       {
+        text: "Supported targets and requirements",
+        source: "reference/supported-targets.md",
+        route: "/supported-targets",
+      },
+      {
         text: "Client configuration and troubleshooting",
         source: "getting-started/client-configuration.md",
         route: "/client-configuration",
@@ -670,12 +675,12 @@ export const documentationSections = [
       },
       {
         text: "Settings and recovery",
-        source: "design/limits-and-recovery.md",
+        source: "reference/limits-and-recovery.md",
         route: "/design/limits-and-recovery",
       },
       {
         text: "REA limit inventory",
-        source: "design/rea-limit-inventory.md",
+        source: "reference/rea-limit-inventory.md",
         route: "/design/rea-limit-inventory",
       },
       {
@@ -702,16 +707,6 @@ export const documentationSections = [
         text: "Releasing REA",
         source: "development/releasing.md",
         route: "/releasing",
-      },
-      {
-        text: "REA roadmap",
-        source: "development/roadmap.md",
-        route: "/roadmap",
-      },
-      {
-        text: "Capability composition and ownership",
-        source: "capability-composition.md",
-        route: "/capability-composition",
       },
       {
         text: "Testing lanes and provider verification",

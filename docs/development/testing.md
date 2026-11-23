@@ -131,6 +131,9 @@ canonical SDK registrations and binds it to the runtime with its SHA-256
 digest. Target-free stdio MCP startup with the default catalog and output
 profiles serves its schemas without constructing analysis validators, including
 when `REA_MCP_TOOL_FAMILIES` limits which tools and prompts are advertised.
+The internal catalog stores object roots for the SDK's result codec, preserves
+non-object output schemas for legacy wrapping, and retains the complete
+`binary_session` output schema for `rea mcp doctor`.
 The first tool or guided-workflow request materializes the canonical runtime
 on that same SDK server. It preserves the advertised schemas throughout
 materialization. Initial-target, HTTP, compact output, and family-scoped hot/cold
@@ -785,11 +788,26 @@ ownership or finalization changes; a single malformed fixture cannot establish
 the whole contract.
 
 When consolidating interpretation across consumers, use the same authored
-input and an independently specified expected fact at the boundary where
-each consumer previously made its own decision. Allow differences in
-recovery or display when those belong to the consumer. For generated
-installers and verifiers, exercise the emitted artifact in its supported
-runtime so the test covers the code that actually receives the input.
+input at the boundary where each consumer previously made its own decision.
+Choose a case that makes competing interpretations disagree and a control
+that should succeed. Assert the expected fact and its provenance independently
+of the implementation. Allow differences in recovery or display when those
+belong to the consumer. For generated installers and verifiers, exercise the
+emitted artifact in its supported runtime.
+
+When the operation changes state, verify the published or retained result as
+well as preflight. When ownership includes cleanup, check who retains
+responsibility after a failed attempt and what happens on retry.
+
+When detection and detailed inspection share a reader, compare a valid
+input, a recognizable malformed input, and a valid input whose examined
+prefix ends at the budget when those cases apply. Assert the recognized
+format, which fields are established, and the coverage and diagnostics in
+each consumer. If the source feeds both a digest and a converter, exercise a
+change to the original between the snapshot read and conversion. Assert that
+the digest and converted value describe the same bytes, or that the operation
+returns a typed failure. Check advertised effects and the lifecycle of any
+temporary copy.
 
 | Failure class                         | Regression that catches it                                                                                                                                                                                                                                                                                                                         |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -959,9 +977,9 @@ cancels from inside final cleanup, and `controlledCleanup` gives children
 refused or confirmed outcomes with counted retries.
 `tests/support/providerLifecycleCoverage.ts` maps every registered provider id
 to its launch, handshake, operation, cancellation, cleanup and retry
-regressions, a not-applicable reason, or an explicit gap. Name the test file
-and literal title when a change adds or moves a provider lifecycle regression;
-the shrink-only gap list closes as stages gain coverage. Check server
+regressions or a reason a stage does not apply. Name the test file and the
+title at its registration site when a change adds or moves a lifecycle
+regression. The check rejects uncovered applicable stages. Check server
 settlement and retained resources even if the MCP SDK rejects the client promise
 before the handler finishes. A cancellation during active execution does not
 cover cancellation during final cleanup.

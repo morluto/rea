@@ -38,6 +38,22 @@ export const enhancedInputSchemas = {
         "A procedure symbol or address to resolve to its canonical entry",
       ),
     direction: callRelationshipDirectionSchema,
+    max_depth: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "Optional maximum traversal depth from the starting procedure (0 inspects only the start node). Omit to traverse the full observed graph.",
+      ),
+    max_nodes: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe(
+        "Optional maximum number of procedures to expand during traversal. Omit to traverse the full observed graph.",
+      ),
   }),
   analyze_swift_types: z.strictObject({
     category: z
@@ -53,7 +69,23 @@ export const enhancedInputSchemas = {
         "Case-sensitive literal filter applied to provider procedure names and their supporting Swift manglings.",
       ),
   }),
-  find_xrefs_to_name: z.strictObject({ name: z.string() }),
+  find_xrefs_to_name: z.strictObject({
+    name: z.string(),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe(
+        "Maximum number of xref addresses to return; omit to return the observed suffix",
+      ),
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Zero-based starting xref index; defaults to 0"),
+  }),
   binary_overview: z.strictObject({}),
   // Provider input excludes delivery detail, which belongs to the MCP tool contract.
   analyze_function: nativeProcedureInputSchema,
@@ -66,6 +98,22 @@ export const enhancedInputSchemas = {
       .describe("An optional destination procedure symbol or address")
       .optional(),
     direction: callRelationshipDirectionSchema,
+    max_depth: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "Optional maximum hop depth from start to expand (0 inspects no outgoing edges; 1 checks direct neighbors). Omit to traverse the full observed graph.",
+      ),
+    max_nodes: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe(
+        "Optional maximum number of procedures to expand during traversal. Omit to traverse the full observed graph.",
+      ),
   }),
   trace_native_ui_action: nativeInvestigationTraceLimitsSchema.extend({
     action: z

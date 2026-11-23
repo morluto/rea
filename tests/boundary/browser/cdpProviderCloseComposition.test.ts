@@ -16,15 +16,6 @@ const cleanupFailure = (resource: string) =>
     { operation: "fixture_close" },
   );
 
-const closeFailure = async (close: () => Promise<void>): Promise<unknown> => {
-  try {
-    await close();
-  } catch (cause: unknown) {
-    return cause;
-  }
-  throw new Error("Expected close to fail");
-};
-
 const providers = [
   {
     name: "CdpBrowserProvider",
@@ -48,21 +39,31 @@ const providers = [
   },
 ] as const;
 
-it.each(providers)(
-  "$name keeps both close failures and completes only after both release",
-  async ({ providerId, operation, create, failSecondClose }) => {
+it.each(
+  providers.flatMap((provider) =>
+    (["owned", "untyped"] as const).map((secondary) => ({
+      ...provider,
+      secondary,
+    })),
+  ),
+)(
+  "$name reports both close failures with an $secondary secondary cause",
+  async ({ providerId, operation, create, failSecondClose, secondary }) => {
     onTestFinished(() => {
       vi.restoreAllMocks();
     });
     const transport = cleanupFailure("transport-handle");
-    const second = cleanupFailure("second-handle");
+    const second =
+      secondary === "owned"
+        ? cleanupFailure("second-handle")
+        : new Error("untyped close failure");
     vi.spyOn(CdpTargetSessionOwner.prototype, "close").mockRejectedValueOnce(
       transport,
     );
     failSecondClose(second);
     const provider = create();
 
-    const composite = await closeFailure(() => provider.close());
+    const composite = await provider.close().catch((cause: unknown) => cause);
 
     if (!(composite instanceof ProviderCleanupError))
       throw new Error("Expected a provider cleanup failure");
@@ -70,7 +71,10 @@ it.each(providers)(
       providerId,
       operation,
       cleanupIncomplete: true,
-      cleanupResources: ["transport-handle", "second-handle"],
+      cleanupResources:
+        secondary === "owned"
+          ? ["transport-handle", "second-handle"]
+          : ["transport-handle"],
     });
     expect(composite.cause).toBeInstanceOf(AggregateError);
     expect((composite.cause as AggregateError).errors).toEqual([
@@ -79,37 +83,10 @@ it.each(providers)(
     ]);
 
     releaseOwnedCleanup(transport);
-    expect(composite.cleanupIncomplete).toBe(true);
-    releaseOwnedCleanup(second);
-    expect(composite.cleanupIncomplete).toBe(false);
-  },
-);
-
-it.each(providers)(
-  "$name keeps an untyped close failure in the cause without owning its completion",
-  async ({ create, failSecondClose }) => {
-    onTestFinished(() => {
-      vi.restoreAllMocks();
-    });
-    const transport = cleanupFailure("transport-handle");
-    const untyped = new Error("untyped close failure");
-    vi.spyOn(CdpTargetSessionOwner.prototype, "close").mockRejectedValueOnce(
-      transport,
-    );
-    failSecondClose(untyped);
-    const provider = create();
-
-    const composite = await closeFailure(() => provider.close());
-
-    if (!(composite instanceof ProviderCleanupError))
-      throw new Error("Expected a provider cleanup failure");
-    expect(composite.cleanupResources).toEqual(["transport-handle"]);
-    expect((composite.cause as AggregateError).errors).toEqual([
-      transport,
-      untyped,
-    ]);
-    expect(composite.cleanupIncomplete).toBe(true);
-    releaseOwnedCleanup(transport);
+    if (second instanceof ProviderCleanupError) {
+      expect(composite.cleanupIncomplete).toBe(true);
+      releaseOwnedCleanup(second);
+    }
     expect(composite.cleanupIncomplete).toBe(false);
   },
 );

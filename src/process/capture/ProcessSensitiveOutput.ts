@@ -80,7 +80,7 @@ const visibleUnits = function* (parts: readonly string[]) {
             ? "csi"
             : code === 0x5d
               ? "osc"
-              : [0x50, 0x58, 0x5e, 0x5f].includes(code)
+              : code === 0x50 || code === 0x58 || code === 0x5e || code === 0x5f
                 ? "string"
                 : code >= 0x20 && code <= 0x2f
                   ? "intermediate"
@@ -103,7 +103,7 @@ const visibleUnits = function* (parts: readonly string[]) {
         state = "osc";
         continue;
       }
-      if ([0x90, 0x98, 0x9e, 0x9f].includes(code)) {
+      if (code === 0x90 || code === 0x98 || code === 0x9e || code === 0x9f) {
         state = "string";
         continue;
       }

@@ -32,7 +32,14 @@ export interface DesktopEntry {
   readonly malformed_line?: number;
 }
 
-const GROUP = new RegExp(`^${DESKTOP_GROUP}$`, "u");
+// Capture tolerant padding separately so it stays available for validation.
+const GROUP = new RegExp(String.raw`^(\s*)${DESKTOP_GROUP}(\s*)$`, "u");
+const GLIB_GROUP_LEADING_SPACE = /^[ \t\f\r]*$/u;
+const GLIB_GROUP_TRAILING_SPACE = /^[ \t]*$/u;
+// GLib skips only its ASCII whitespace before a key or a comment. A record that
+// starts with any other Unicode space keeps that space in the key, so the line
+// is malformed rather than parsed with the space removed.
+const GLIB_LINE_LEADING_SPACE = /^[ \t\f\r]*/u;
 const INVALID_GROUP_NAME_CHARACTER = /[[\]\u0000-\u001f\u007f]/u;
 const LINE_WITH_SEPARATOR = new RegExp(`(${DESKTOP_LINE_BREAK})`, "u");
 // Only LF separates records; Unicode line/paragraph separators are value data.
@@ -121,13 +128,15 @@ const readDesktopEntryFields = (text: string) => {
   let malformedLine: number | undefined;
   for (let index = 0; index < parts.length; index += 2) {
     const raw = parts[index]!;
-    const line = raw.trim();
+    const line = raw.replace(GLIB_LINE_LEADING_SPACE, "");
     if (line.length === 0 || line.startsWith("#")) continue;
-    const header = GROUP.exec(line)?.[1];
+    const [, leading = "", header, trailing = ""] = GROUP.exec(raw) ?? [];
     if (header !== undefined) {
       if (
         (group === undefined && header !== DESKTOP_ENTRY_GROUP) ||
-        INVALID_GROUP_NAME_CHARACTER.test(header)
+        INVALID_GROUP_NAME_CHARACTER.test(header) ||
+        !GLIB_GROUP_LEADING_SPACE.test(leading) ||
+        !GLIB_GROUP_TRAILING_SPACE.test(trailing)
       )
         malformedLine ??= index / 2 + 1;
       // Preserve the group boundary for tolerant field and rewrite consumers.
@@ -136,7 +145,7 @@ const readDesktopEntryFields = (text: string) => {
       continue;
     }
     // Full-line trimming is syntax-only: string-value suffixes are data.
-    const entry = ENTRY.exec(raw.trimStart());
+    const entry = ENTRY.exec(line);
     if (group === undefined || entry?.groups === undefined) {
       malformedLine ??= index / 2 + 1;
       continue;

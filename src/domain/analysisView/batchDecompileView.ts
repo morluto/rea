@@ -34,7 +34,7 @@ import {
   analysisTextPage,
   analysisTextPageItemSchema,
 } from "./analysisViewText.js";
-import { selectViewRows } from "./selectViewRows.js";
+import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
 
 const OPERATION = "batch_decompile" as const;
 
@@ -371,18 +371,24 @@ export const projectBatchDecompileView = (
     const addresses = selected(view.where.addresses);
     const entries = selected(view.where.procedure_addresses);
     const statuses = selected<string>(view.where.statuses);
-    const { rows, total } = selectViewRows(
-      batch.items,
-      view,
-      (item, index) =>
-        (indices === undefined || indices.has(index)) &&
-        (addresses === undefined || addresses.has(item.address)) &&
-        (statuses === undefined || statuses.has(item.status)) &&
-        (entries === undefined ||
-          (item.procedure.status === "resolved" &&
-            entries.has(item.procedure.address))),
-      (item, index) => itemRow(item, index, view.include_pseudocode),
-    );
+    const matches = (item: (typeof batch.items)[number]) =>
+      (addresses === undefined || addresses.has(item.address)) &&
+      (statuses === undefined || statuses.has(item.status)) &&
+      (entries === undefined ||
+        (item.procedure.status === "resolved" &&
+          entries.has(item.procedure.address)));
+    const projectItem = (item: (typeof batch.items)[number], index: number) =>
+      itemRow(item, index, view.include_pseudocode);
+    const { rows, total } =
+      indices !== undefined
+        ? selectIndexedViewRows(
+            batch.items,
+            indices,
+            view,
+            matches,
+            projectItem,
+          )
+        : selectViewRows(batch.items, view, matches, projectItem);
     return ok({
       kind: "batch-decompile" as const,
       view,

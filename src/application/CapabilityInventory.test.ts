@@ -1273,3 +1273,19 @@ describe("declared contract availability", () => {
       });
   });
 });
+
+it("isolates mutable client requirements between tools and inventory calls", () => {
+  const status = { open: false, capabilities: [] };
+  const entries = buildCapabilityInventory(status, {
+    processCaptureEnabled: false,
+  });
+  const [first, second] = entries;
+  if (first === undefined || second === undefined)
+    throw new Error("Expected multiple capabilities");
+  first.client_requirements.required.push("elicitation_form");
+  expect(second.client_requirements.required).toEqual([]);
+  expect(
+    buildCapabilityInventory(status, { processCaptureEnabled: false })[0]
+      ?.client_requirements.required,
+  ).toEqual([]);
+});

@@ -1452,20 +1452,29 @@ const mergeValues = (
   return merged;
 };
 
+// Fixed object shapes avoid copying fields for each nested expression.
 const nestedContext = (
   context: EvaluationContext,
   depth = 1,
-): EvaluationContext => ({
-  state: context.state,
-  primitiveBindingValues: context.primitiveBindingValues,
-  ...(context.capturePoint === undefined
-    ? {}
-    : { capturePoint: context.capturePoint }),
-  expressionDepth: context.expressionDepth + depth,
-  bindings: context.bindings,
-  dependence: context.dependence,
-  memo: context.memo,
-});
+): EvaluationContext =>
+  context.capturePoint === undefined
+    ? {
+        state: context.state,
+        primitiveBindingValues: context.primitiveBindingValues,
+        expressionDepth: context.expressionDepth + depth,
+        bindings: context.bindings,
+        dependence: context.dependence,
+        memo: context.memo,
+      }
+    : {
+        state: context.state,
+        primitiveBindingValues: context.primitiveBindingValues,
+        capturePoint: context.capturePoint,
+        expressionDepth: context.expressionDepth + depth,
+        bindings: context.bindings,
+        dependence: context.dependence,
+        memo: context.memo,
+      };
 
 const isPrimitive = (value: JavaScriptSemanticValue): boolean =>
   value.status === "literal" || value.status === "union";

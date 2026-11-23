@@ -30,9 +30,6 @@ const removeRea = (
   );
 };
 
-const parseStrictJson = (text: string): Record<string, unknown> =>
-  JSON.parse(text.replace(/^\uFEFF/u, "")) as Record<string, unknown>;
-
 describe("JSON client configuration repeated-member edits", () => {
   it("keeps the default refusal for repeated deletions", () => {
     const text =
@@ -61,7 +58,7 @@ describe("JSON client configuration repeated-member edits", () => {
     });
 
     if (!result.ok) throw new Error("authorized repeats were refused");
-    expect(parseStrictJson(result.value)).toEqual({
+    expect(JSON.parse(result.value)).toEqual({
       mcpServers: {
         peer: { command: "peer" },
         other: { args: [1, 2] },
@@ -91,30 +88,24 @@ describe("JSON client configuration repeated-member edits", () => {
     });
   });
 
-  it.each([
-    ["no registration", `{"mcpServers":{"peer":1}}`, { peer: 1 }, undefined],
-    [
-      "one registration",
-      `{"mcpServers":{"rea":1,"peer":2}}`,
-      { peer: 2 },
-      undefined,
-    ],
-    [
-      "multiple registrations",
-      `{"mcpServers":{"rea":1,"peer":2,"rea":3,"other":4,"rea":5}}`,
-      { peer: 2, other: 4 },
-      { removeShadowedMembersAt: [["mcpServers", "rea"]] },
-    ],
-  ] as const)(
-    "handles %s without losing peers",
-    (_label, text, expectedServers, authority) => {
-      const result = removeRea(text, "json", authority);
-      if (!result.ok) throw new Error("non-shadowed removal was refused");
-      expect(parseStrictJson(result.value)).toEqual({
-        mcpServers: expectedServers,
-      });
-    },
-  );
+  it("removes a single registration without authority and leaves a repeat byte-identical", () => {
+    const text = `{"mcpServers":{/* keep peer formatting */"rea":1, "peer":2,}}`;
+    const result = removeRea(text, "json");
+    if (!result.ok) throw new Error("single registration removal was refused");
+    const afterRemoval = `${result.value}\n`;
+    expect(removeRea(afterRemoval, "json")).toEqual({
+      ok: true,
+      value: afterRemoval,
+    });
+    const errors: ParseError[] = [];
+    expect(
+      parseJsonc(result.value, errors, { allowTrailingComma: true }),
+    ).toEqual({
+      mcpServers: { peer: 2 },
+    });
+    expect(errors).toEqual([]);
+    expect(result.value).toContain("/* keep peer formatting */");
+  });
 
   it("matches escaped keys and retains a repeated inactive parent byte for byte", () => {
     const inactive = `{"rea":${JSON.stringify(foreign)}}`;
@@ -128,7 +119,7 @@ describe("JSON client configuration repeated-member edits", () => {
 
     if (!result.ok) throw new Error("authorized escaped repeat was refused");
     expect(result.value).toContain(`"mcpServers":${inactive}`);
-    expect(parseStrictJson(result.value)).toEqual({
+    expect(JSON.parse(result.value)).toEqual({
       mcpServers: { peer: 2 },
     });
   });

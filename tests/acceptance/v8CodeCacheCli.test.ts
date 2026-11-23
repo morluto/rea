@@ -5,6 +5,7 @@ import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   v8CodeCacheFixture,
+  withSyntheticLegacyHeader,
   withSyntheticNarrowHeader,
 } from "../../src/v8/V8CodeCache.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -13,17 +14,19 @@ import { cliTest } from "../support/cli/cliFixture.js";
 const outputSchema = toolContract("inspect_v8_code_cache").outputSchema;
 
 cliTest(
-  "reports wide and synthetic narrow header extents through the public CLI",
+  "reports wide, synthetic narrow and synthetic six-word header extents through the public CLI",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-v8-cli-");
     const wide = v8CodeCacheFixture();
     const narrow = withSyntheticNarrowHeader(wide);
+    const legacy = withSyntheticLegacyHeader(wide);
     const payloadDigest = createHash("sha256")
       .update(wide.subarray(32))
       .digest("hex");
     for (const [bytes, headerBytes] of [
       [wide, 32],
       [narrow, 28],
+      [legacy, 24],
     ] as const) {
       const path = join(root, `header-${String(headerBytes)}.jsc`);
       await writeFile(path, bytes);
@@ -45,23 +48,7 @@ cliTest(
 );
 
 cliTest(
-  "resolves a relative code cache path against the working directory",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-v8-cli-rel-");
-    await writeFile(join(root, "module.jsc"), v8CodeCacheFixture());
-    const result = await cli.run({
-      arguments: ["inspect-v8-code-cache", "module.jsc", "--json"],
-      cwd: root,
-    });
-    expect(result.exitCode, result.stderr).toBe(0);
-    expect(
-      outputSchema.parse(result.json).normalized_result.artifact.path,
-    ).toBe(join(root, "module.jsc"));
-  },
-);
-
-cliTest(
-  "locates retained printable sequences with byte ranges",
+  "locates retained printable bytes from a working-directory-relative cache",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-v8-cli-strings-");
     const path = join(root, "module.jsc");
@@ -73,22 +60,32 @@ cliTest(
     const result = await cli.run({
       arguments: [
         "inspect-v8-code-cache",
-        path,
+        "module.jsc",
         "--minStringBytes",
         "8",
         "--json",
       ],
+      cwd: root,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const report = outputSchema.parse(result.json).normalized_result;
     const observation = report.embedded_strings.find((entry) =>
       entry.text.includes(marker),
     );
-    expect(observation).toBeDefined();
-    expect(observation!.offset).toBeGreaterThanOrEqual(report.payload.offset);
-    expect(observation!.offset + observation!.bytes).toBeLessThanOrEqual(
+    if (observation === undefined) throw new Error("Missing printable marker");
+    expect(report.artifact.path).toBe(path);
+    expect(observation.offset).toBeGreaterThanOrEqual(report.payload.offset);
+    expect(observation.offset + observation.bytes).toBeLessThanOrEqual(
       report.artifact.bytes,
     );
+    expect(
+      bytes
+        .subarray(
+          observation.offset,
+          observation.offset + observation.retained_bytes,
+        )
+        .toString("latin1"),
+    ).toBe(observation.text);
   },
 );
 
