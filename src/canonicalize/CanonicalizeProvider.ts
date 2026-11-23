@@ -13,7 +13,8 @@ import {
 import type { CanonicalizePort } from "../ports/canonicalize/CanonicalizePort.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
-import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
+import { decodeLimit } from "../domain/parseFailure.js";
 import {
   CANONICALIZE_SAMPLE_UNITS,
   MAX_CANONICALIZE_FILE_BYTES,
@@ -144,12 +145,18 @@ const canonicalizeFailureDialect = (
   file: {
     path: input.path,
     description: "artifact",
-    fileSize: (cause, details) =>
-      new AnalysisResourceConstraintError(
+    fileSize: (failure, { cause: _cause, ...details }) =>
+      // Build the refusal through the shared parse-limit path so the limit key
+      // and reason are spelled once, as the offline-artifact providers do.
+      parseLimitConstraint(
         OPERATION,
-        cause.boundary ?? "file-size",
-        cause.message,
-        { max_file_bytes: input.max_file_bytes },
+        "file-size",
+        decodeLimit(
+          "canonicalize",
+          failure.message,
+          { name: "max_file_bytes", maximum: input.max_file_bytes },
+          { cause: failure },
+        ),
         {
           ...details,
           retryable: false,
