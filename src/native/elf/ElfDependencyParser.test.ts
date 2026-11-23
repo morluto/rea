@@ -1,6 +1,7 @@
 import { setImmediate } from "node:timers/promises";
 import { expect, it } from "vitest";
 import { createDeferred } from "../../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
 import {
@@ -1657,19 +1658,23 @@ it("waits for the scheduling owner at GNU hash checkpoints", async () => {
     },
   );
   try {
-    await expect(
-      Promise.race([checkpoint.promise, result]),
-    ).resolves.toBeUndefined();
+    await awaitAcknowledgement(
+      checkpoint.promise,
+      result,
+      "GNU hash checkpoint",
+    );
     const pausedReads = reads;
     await expect(Promise.race([result, setImmediate("waiting")])).resolves.toBe(
       "waiting",
     );
     expect(reads).toBe(pausedReads);
     expect(checkpoints).toBe(1);
+    release.resolve();
+    expect((await result).imports).toHaveLength(5);
   } finally {
     release.resolve();
+    await result.catch(() => undefined);
   }
-  expect((await result).imports).toHaveLength(5);
 });
 
 it("reports the fixed GNU hash allowance before traversing an over-limit table", async () => {
