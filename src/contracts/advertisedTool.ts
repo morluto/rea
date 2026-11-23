@@ -22,8 +22,8 @@ export interface AdvertisedToolPresentation {
    * catalog that bounds its own size.
    */
   readonly input: CompactInputSchemaPresentation | "annotated";
-  /** Output schemas are bounded by this presentation, or omitted without one. */
-  readonly output: CompactOutputSchemaPresentation | undefined;
+  /** Output schemas are bounded by this presentation, recorded at build time, or omitted without one. */
+  readonly output: CompactOutputSchemaPresentation | "recorded" | undefined;
 }
 
 /** The client-facing fields of one tool, canonical or advertised. */
@@ -97,6 +97,8 @@ export const advertiseToolOutput = (
   presentation: AdvertisedToolPresentation["output"],
 ): Record<string, unknown> | undefined => {
   if (presentation === undefined) return undefined;
+  // Build-recorded projections are already the bounded advertisement.
+  if (presentation === "recorded") return outputSchema;
   let byBudget = compactedOutput.get(outputSchema);
   if (byBudget === undefined)
     compactedOutput.set(outputSchema, (byBudget = new Map()));

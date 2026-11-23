@@ -53,12 +53,14 @@ export const COMPACT_OUTPUT_SCHEMA_PRESENTATION: {
 
 /** How REA's MCP catalog advertises its tools for a selected output profile. */
 export const advertisedToolPresentation = (
-  outputSchemaProfile: McpOutputSchemaProfile,
+  outputSchemaProfile: McpOutputSchemaProfile | "recorded",
   input: CompactInputSchemaPresentation = COMPACT_INPUT_SCHEMA_PRESENTATION,
 ): AdvertisedToolPresentation => ({
   input: { budgetBytes: input.budgetBytes },
   output:
     outputSchemaProfile === "compact"
       ? COMPACT_OUTPUT_SCHEMA_PRESENTATION
-      : undefined,
+      : outputSchemaProfile === "recorded"
+        ? "recorded"
+        : undefined,
 });

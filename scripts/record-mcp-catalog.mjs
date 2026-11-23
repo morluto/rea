@@ -20,6 +20,8 @@ const [
   { toolOutputSchemaWithMetadata },
   { toolFamilyId },
   { requiredPromptTools },
+  { presentAdvertisedOutputSchema },
+  { COMPACT_OUTPUT_SCHEMA_PRESENTATION },
 ] = await Promise.all([
   read("server/createServer.js"),
   read("composition/binary.js"),
@@ -31,6 +33,8 @@ const [
   read("contracts/toolSchemaMetadata.js"),
   read("contracts/toolFamilies.js"),
   read("contracts/promptToolFamilyScope.js"),
+  read("contracts/compactOutputSchema.js"),
+  read("contracts/mcpSchemaPresentation.js"),
 ]);
 const recordCatalog = async () => {
   // Catalog generation is independent of the host account and user configuration.
@@ -81,6 +85,29 @@ const recordCatalog = async () => {
             : { type: "object" },
       };
     });
+    // Record the bounded compact output advertisements at build time so a
+    // compact-profile deferred server never recomputes them per listing.
+    const compactOutputSchemas = Object.fromEntries(
+      tools.flatMap((tool) => {
+        const contract = TOOL_CONTRACTS.find(({ name }) => name === tool.name);
+        if (contract === undefined)
+          throw new Error(`Missing tool ${tool.name}`);
+        const outputSchema = toolOutputSchemaWithMetadata(contract)[
+          "~standard"
+        ].jsonSchema.output({ target: "draft-2020-12" });
+        return outputSchema !== null && typeof outputSchema === "object"
+          ? [
+              [
+                tool.name,
+                presentAdvertisedOutputSchema(
+                  outputSchema,
+                  COMPACT_OUTPUT_SCHEMA_PRESENTATION,
+                ),
+              ],
+            ]
+          : [];
+      }),
+    );
     const prompts = (await client.listPrompts()).prompts.map((prompt) => {
       const contract = PROMPT_CONTRACTS.find(
         (candidate) => candidate.name === prompt.name,
@@ -96,6 +123,7 @@ const recordCatalog = async () => {
       instructions: client.getInstructions(),
       identity: server.catalogIdentity,
       tools,
+      compactOutputSchemas,
       toolFamilies: Object.fromEntries(
         tools.map(({ name }) => {
           const family = toolFamilyId(name);

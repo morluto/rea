@@ -126,9 +126,17 @@ export const runDeferred = async (
   const serverLogger = createLogger("mcp", config.logLevel).child({
     layer: "server",
   });
-  // `main.ts` defers only the default output profile, which omits output
-  // schemas from listings. Canonical result validation loads on first use.
+  // Deferred listings serve build-recorded output advertisements (omitted,
+  // or compact when recorded); canonical result validation loads on first use.
+  // A catalog recorded before compact outputs existed falls back to eager.
   let firstCatalog: RecordedMcpCatalog | undefined = readCatalog();
+  if (
+    config.mcpOutputSchemaProfile === "compact" &&
+    firstCatalog.compactOutputSchemas === undefined
+  ) {
+    const { runEager } = await import("./eagerRuntime.js");
+    return runEager(dependencies, config);
+  }
   const toolFamilies =
     config.mcpToolFamilies === undefined
       ? undefined
@@ -214,6 +222,7 @@ export const runDeferred = async (
               {
                 maximumInputElements: config.mcpMaxInputElements,
                 compactPresentation: COMPACT_INPUT_SCHEMA_PRESENTATION,
+                outputProfile: config.mcpOutputSchemaProfile,
                 toolFamilies,
                 identity: {
                   ...catalog.identity,

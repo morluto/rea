@@ -303,9 +303,9 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     private recordEvidence: EvidenceWriter["recordEvidence"] | undefined,
     public delivery: ToolResultDelivery,
     compactPresentation: CompactInputSchemaPresentation = COMPACT_INPUT_SCHEMA_PRESENTATION,
-    outputSchemaProfile: McpOutputSchemaProfile = resolveMcpOutputSchemaProfile(
-      undefined,
-    ),
+    outputSchemaProfile:
+      | McpOutputSchemaProfile
+      | "recorded" = resolveMcpOutputSchemaProfile(undefined),
     identity?: ReturnType<typeof createCatalogIdentity>,
     readonly advertisedToolFamilies:
       | ReadonlySet<string>
