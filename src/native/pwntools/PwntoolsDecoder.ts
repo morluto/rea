@@ -292,6 +292,9 @@ export class PwntoolsDecoder<
       | "runtime"
       | "request"
       | undefined;
+    // The ceiling that applies when the caller omits producer_limits.input_bytes;
+    // a per-call failure reports it as the parameter's default.
+    let omittedInputBytes: number | undefined;
     const context = {
       operation: OPERATION,
       providerId: this.identity.id,
@@ -301,6 +304,9 @@ export class PwntoolsDecoder<
       },
       get inputBytesSource() {
         return inputBytesSource;
+      },
+      get omittedInputBytes() {
+        return omittedInputBytes;
       },
     };
     const replySchema = z.discriminatedUnion("ok", [
@@ -395,6 +401,12 @@ export class PwntoolsDecoder<
           },
         );
       inputBytesSource = inputLimit.source;
+      if (inputLimit.source === "request") {
+        const omitted = pwntoolsInputBytes(environment);
+        omittedInputBytes = omitted.configured
+          ? omitted.bytes
+          : PWNTOOLS_LIMITS.input_bytes;
+      } else omittedInputBytes = inputLimit.bytes;
       phase = "artifact-read";
       producerLimits = {
         ...resolvePwntoolsLimits(selectedLimits.data, inputLimit.bytes),

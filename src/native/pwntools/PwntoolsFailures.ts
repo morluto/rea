@@ -44,6 +44,8 @@ export interface PwntoolsFailureContext {
     | "runtime"
     | "request"
     | undefined;
+  /** Input ceiling that applies when producer_limits.input_bytes is omitted. */
+  readonly omittedInputBytes?: number | undefined;
 }
 
 const pwntoolsInputLimitFact = (
@@ -178,11 +180,21 @@ export const pwntoolsFailureDialect = (
                     limits.input_bytes,
                     context.inputBytesSource,
                   ),
-                  limit: analysisSettingLimit(
-                    "pwntools.max_input_bytes",
-                    limits.input_bytes,
-                    context.inputBytesSource,
-                  ),
+                  // Report the control that stopped the read: a per-call
+                  // producer_limits.input_bytes, or the registered setting.
+                  limit:
+                    context.inputBytesSource === "request"
+                      ? producerLimitControl(
+                          "input_bytes",
+                          limits.input_bytes,
+                          context.omittedInputBytes ??
+                            PWNTOOLS_LIMITS.input_bytes,
+                        )
+                      : analysisSettingLimit(
+                          "pwntools.max_input_bytes",
+                          limits.input_bytes,
+                          context.inputBytesSource,
+                        ),
                 },
                 [
                   {

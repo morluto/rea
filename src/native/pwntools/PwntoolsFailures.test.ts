@@ -50,18 +50,23 @@ it("keeps the caller-selected pwntools input-limit source", () => {
         providerId: "pwntools",
         producerLimits: resolvePwntoolsLimits(undefined, 4096),
         inputBytesSource: "request",
+        omittedInputBytes: 67_108_864,
       },
     ),
   );
-  expect(projected.details?.limit).toMatchObject({
-    setting: "pwntools.max_input_bytes",
-    effective_value: 4096,
-    source: "request",
-    update_mode: "parameter",
-    pending_restart: false,
+  // The per-call parameter stopped the read, so the limit names it and the
+  // ceiling that applies when it is omitted, not the registered setting.
+  expect(projected.details?.limit).toStrictEqual({
+    control_kind: "parameter",
     parameter: "producer_limits.input_bytes",
+    effective_value: 4096,
     unit: "bytes",
+    minimum: 1,
+    maximum: Number.MAX_SAFE_INTEGER,
+    default_value: 67_108_864,
+    applies_at: "next_call",
   });
+  expect(projected.remediation.action).toContain("producer_limits.input_bytes");
   expect(projected.remediation.action).not.toContain("launch default of");
 });
 
