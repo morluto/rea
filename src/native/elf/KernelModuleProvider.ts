@@ -1,24 +1,17 @@
+import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import {
-  parseFailureAnalysisError,
-  parseLimitConstraint,
-} from "../../domain/parseFailureAnalysisError.js";
-import {
-  projectOwnedArtifactIdentityFailure,
-  projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
-  stableArtifactInputFailure,
   projectArtifactCloseFailure,
   ArtifactReaderFailure,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
   ArtifactResourceScope,
 } from "../../resources/index.js";
 import type { KernelModulePort } from "../../ports/binaryDiagnostics/KernelModulePort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
-import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
-import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_KERNEL_MODULE_ENTRIES,
@@ -106,98 +99,72 @@ const inputBudgetRemediation = (
       ? `The image exceeds the ${String(MAX_INSPECT_KERNEL_MODULE_ENTRIES)}-entry kernel-module ceiling this operation accepts; select a smaller artifact.`
       : `Raise max_entries above ${String(input.max_entries)} or select a smaller artifact; the limit is the caller-selected .modinfo and __versions entry budget.`;
 
-const kernelModuleFailurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
-  input: InspectKernelModuleInput,
-) => {
-  const { cause, origin } = facts;
-  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
-    return cause;
-  if (cause instanceof BinaryResourceFailure)
-    return parseLimitConstraint(
-      OPERATION,
-      "memory",
-      cause,
-      fixedAllowanceOptions(
-        "The ELF structural decoding allowance",
-        "parser",
-        binaryResourceCeiling(cause),
-      ),
-    );
-  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
-  if (formatFailure !== undefined) return formatFailure;
-  const identityFailure = projectOwnedArtifactIdentityFailure(
-    facts,
-    OPERATION,
-    input.path,
-  );
-  if (identityFailure !== undefined) return identityFailure;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit") {
-      // Caller-selected read and entry budgets name the bound to raise; a
-      // memory limit keeps only a ceiling its reader named.
-      const textBudget = cause.boundary === "memory";
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        cause.boundary ?? "memory",
-        cause.message,
-        {
-          max_file_bytes: input.max_file_bytes,
-          max_entries: input.max_entries,
-        },
-        {
-          cause,
-          ...(cause.boundary === undefined
-            ? {}
-            : textBudget
-              ? cause.fixedAllowance === undefined
-                ? {}
-                : {
-                    retryable: false as const,
-                    fixedAllowance: cause.fixedAllowance,
-                  }
-              : {
-                  retryable: false as const,
-                  remediationAction: inputBudgetRemediation(
-                    cause.boundary,
-                    input,
-                  ),
-                }),
-        },
-      );
-    }
-    if (cause.reason === "path" || cause.reason === "format")
-      return stableArtifactInputFailure(cause, OPERATION);
-  }
-  const fileFailure = projectSelectedArtifactFileFailure(
-    cause,
-    OPERATION,
-    input.path,
-    "kernel module",
-  );
-  if (fileFailure !== undefined) return fileFailure;
-  return new ArtifactOperationError(
-    OPERATION,
-    origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure
-      ? cause.reason
-      : "io",
-    undefined,
-    cause instanceof Error ? cause.message : "Kernel module inspection failed.",
-    { cause },
-  );
-};
-
 const kernelModuleFailure = (
   cause: unknown,
   input: InspectKernelModuleInput,
   observed?: { readonly sha256: string; readonly bytes: number },
 ) => {
-  const primary = kernelModuleFailurePrimary(
-    artifactFilePrimaryFacts(cause),
-    input,
+  const facts = artifactFilePrimaryFacts(cause);
+  const primary = classifyProviderFailure(
+    facts.cause,
+    offlineArtifactFailureDialect(facts, {
+      providerId: KERNEL_MODULE_PROVIDER.id,
+      operation: OPERATION,
+      path: input.path,
+      description: "kernel module",
+      fallbackMessage: "Kernel module inspection failed.",
+      recognise: (failure, origin) => {
+        if (failure instanceof BinaryResourceFailure)
+          return parseLimitConstraint(
+            OPERATION,
+            "memory",
+            failure,
+            fixedAllowanceOptions(
+              "The ELF structural decoding allowance",
+              "parser",
+              binaryResourceCeiling(failure),
+            ),
+          );
+        if (
+          origin === "owned-or-classified" &&
+          failure instanceof ArtifactReaderFailure &&
+          failure.reason === "limit"
+        ) {
+          // Caller-selected read and entry budgets name the bound to raise; a
+          // memory limit keeps only a ceiling its reader named.
+          const textBudget = failure.boundary === "memory";
+          return new AnalysisResourceConstraintError(
+            OPERATION,
+            failure.boundary ?? "memory",
+            failure.message,
+            {
+              max_file_bytes: input.max_file_bytes,
+              max_entries: input.max_entries,
+            },
+            {
+              cause: failure,
+              ...(failure.boundary === undefined
+                ? {}
+                : textBudget
+                  ? failure.fixedAllowance === undefined
+                    ? {}
+                    : {
+                        retryable: false as const,
+                        fixedAllowance: failure.fixedAllowance,
+                      }
+                  : {
+                      retryable: false as const,
+                      remediationAction: inputBudgetRemediation(
+                        failure.boundary,
+                        input,
+                      ),
+                    }),
+            },
+          );
+        }
+        return undefined;
+      },
+    }),
   );
   return projectStableArtifactFailure(
     cause,
