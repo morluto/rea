@@ -45,6 +45,8 @@ export default {
         name: "snapshot",
         withinBlockWithBinding: "output",
       },
+    ]),
+    ...mutationRanges("src/rizin/RizinDebugEvidence.ts", [
       {
         kind: "declaration",
         name: "createRizinCommandTimeoutEvidence",
