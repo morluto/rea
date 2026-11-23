@@ -137,9 +137,14 @@ export function assertXtensaFixtureInstructions(instructions, addresses) {
 
 const RETURN = /^return\b(.*)$/su;
 const ASSIGNMENT = /^(\w+)\s*=(?!=)(.*)$/su;
-/** A cast Ghidra prints before an operand, such as `(int)` or `(uint *)`. */
+/**
+ * A cast Ghidra prints before an operand that keeps its 32-bit value: a
+ * 32-bit integer type of Xtensa's ILP32 ABI, such as `(int)` or
+ * `(undefined4)`. Any other cast, such as a narrowing `(char)` or a pointer
+ * type, stays part of the operand's text, so no check can match through it.
+ */
 const CAST =
-  /^\(\s*[A-Za-z_]\w*(?:\s+[A-Za-z_]\w*)*(?:\s*\*)*\s*\)\s*(?=[\w(])/u;
+  /^\(\s*(?:(?:un)?signed\s+)?(?:int|uint|long|ulong|undefined4|dword|u?int32_t)\s*\)\s*(?=[\w(])/u;
 const INTEGER = /^(0x[\da-f]+|\d+)[lu]*$/iu;
 
 const closingParenthesis = (text, open) => {
