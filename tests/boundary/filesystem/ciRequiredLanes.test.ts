@@ -561,6 +561,7 @@ it("binds provider build reuse to the current run while keeping standalone dispa
     "packet_capture",
     "signal_recording",
     "go_binary",
+    "rizin_provider",
     "ghidra_bridge",
   ];
   const buildTerms = z
@@ -1050,6 +1051,7 @@ it("binds each canonical lane to its explicit fast and full workflow jobs", asyn
         "web_source_map",
         "agentenv",
         "go_binary",
+        "rizin_provider",
         "nativeaot",
         "ghidra_bridge",
         "android_metadata",

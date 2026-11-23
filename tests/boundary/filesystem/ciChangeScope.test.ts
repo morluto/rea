@@ -261,6 +261,16 @@ it.each([
   ["src/ports/WebRuntimePort.ts", "web_runtime"],
   ["src/go/GoBinaryProvider.ts", "go_binary"],
   ["scripts/verify-go-binary.mjs", "go_binary"],
+  // The real Rizin gates import these shared process owners directly, so
+  // they select the Rizin lane even on the fast tier's shared boundary.
+  ["src/process/ownedDebuggerSession.ts", "rizin_provider"],
+  ["src/process/ownedDebuggerSession.ts", "reverse_tools"],
+  ["src/process/ProviderProcess.ts", "rizin_provider"],
+  ["src/rizin/RizinCommand.ts", "rizin_provider"],
+  ["src/contracts/rizinDebugToolContracts.ts", "rizin_provider"],
+  ["tests/boundary/providers/RizinDecoderInputs.test.ts", "rizin_provider"],
+  ["tests/boundary/providers/RizinInferiorTty.test.ts", "rizin_provider"],
+  ["tests/fixtures/temporaryDirectory.ts", "rizin_provider"],
   ["bridge/android/ReaJadxBridge.java", "android_metadata"],
   ["src/android/JadxRelease.ts", "android_metadata"],
   [
@@ -1744,6 +1754,7 @@ it.each([
   ["web_runtime", "real-web-runtime"],
   ["web_source_map", "real-web-source-map"],
   ["agentenv", "real-agentenv"],
+  ["rizin_provider", "real-rizin"],
   ["nativeaot", "nativeaot-fixtures"],
   ["ghidra_bridge", "ghidra-bridge-sources"],
   ["website", "website-check"],

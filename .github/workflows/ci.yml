@@ -84,6 +84,7 @@ jobs:
       nativeaot: ${{ steps.plan.outputs.nativeaot }}
       ghidra_bridge: ${{ steps.plan.outputs.ghidra_bridge }}
       go_binary: ${{ steps.plan.outputs.go_binary }}
+      rizin_provider: ${{ steps.plan.outputs.rizin_provider }}
       android_metadata: ${{ steps.plan.outputs.android_metadata }}
       website: ${{ steps.plan.outputs.website }}
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -440,6 +441,7 @@ jobs:
       needs.changes.outputs.packet_capture == 'true' ||
       needs.changes.outputs.signal_recording == 'true' ||
       needs.changes.outputs.go_binary == 'true' ||
+      needs.changes.outputs.rizin_provider == 'true' ||
       needs.changes.outputs.ghidra_bridge == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -1299,6 +1301,16 @@ jobs:
       build_cache_artifact: rea-build-cache
       remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
 
+  rizin_provider:
+    needs: [changes, static, build]
+    if: needs.changes.outputs.rizin_provider == 'true'
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+    uses: ./.github/workflows/real-rizin.yml
+    with:
+      build_cache_artifact: rea-build-cache
+      remote_cache_write: ${{ inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')) }}
+
   nativeaot:
     needs: [changes, static]
     if: needs.changes.outputs.nativeaot == 'true'
@@ -1360,6 +1372,7 @@ jobs:
         web_source_map,
         agentenv,
         go_binary,
+        rizin_provider,
         nativeaot,
         ghidra_bridge,
         android_metadata,

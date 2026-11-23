@@ -37,9 +37,11 @@ skipping it. It has passed with Rizin 0.9.1 (Homebrew, macOS arm64) and Rizin
 0.7.4 (official static build, Linux x86_64).
 
 `.github/workflows/real-rizin.yml` runs both gates on `ubuntu-24.04`
-(x86_64). It runs on manual dispatch and on pull requests that change
-`src/rizin/**`, the Rizin input contract or CLI command, these tests, their
-helpers, the workflow or `.nvmrc`. Its matrix installs the official static
+(x86_64). It runs on manual dispatch, and CI calls it when the change plan
+selects the `rizin_provider` scope in `scripts/ci/scopes.mjs`: `src/rizin/**`,
+the Rizin contracts and CLI command, the process owners the gates import
+(`ownedDebuggerSession.ts` and `ProviderProcess.ts`), these tests, their
+helpers or the workflow. Its matrix installs the official static
 Linux x86_64 release of each version the docs make claims about, and sets
 `REA_REQUIRE_RIZIN` to that version. The decoder and map input gate runs on
 both legs; the inferior TTY gate runs on the 0.7.4 leg only. The job summary

@@ -20,6 +20,13 @@ const CAPTURE_SHARED_INPUTS = [
   "src/process/LinuxResourceLimits*",
   "scripts/ci/require-provider-tests.mjs",
 ];
+// Process owners that the real Rizin gates import directly. They sit on the
+// shared process boundary, which several lanes name, so they select the Rizin
+// lane early rather than through single-owner path evidence.
+const RIZIN_SHARED_INPUTS = [
+  "src/process/ownedDebuggerSession.ts",
+  "src/process/ProviderProcess.ts",
+];
 const UBUNTU_ARCHIVE_ACTION =
   ".github/actions/ubuntu-archive/action.{yml,yaml}";
 
@@ -717,6 +724,25 @@ const PATH_SCOPES = {
     "scripts/verify-go-binary.mjs",
     "scripts/lib/mcp-verifier-results.mjs",
   ],
+  rizin_provider: [
+    ".github/workflows/real-rizin.yml",
+    "src/rizin/**",
+    "src/domain/reverseEngineering.ts",
+    "src/cli/reverseEngineeringCommands.ts",
+    "src/contracts/reverseEngineeringToolContracts.ts",
+    "src/contracts/rizinDebugToolContracts.ts",
+    ...RIZIN_SHARED_INPUTS,
+    "tests/boundary/providers/RizinDecoderInputs.test.ts",
+    "tests/boundary/providers/RizinInferiorTty.test.ts",
+    "tests/boundary/providers/RizinTestInferiorTty.ts",
+    "tests/boundary/providers/RizinDebugSessionCoverage.fixtures.ts",
+    "tests/support/requiredRizin.ts",
+    // Helpers the two gates import directly.
+    "tests/support/reverseDebuggerMcpTestHelpers.ts",
+    "tests/support/process/pidFile.ts",
+    "tests/fixtures/mcpToolError.ts",
+    "tests/fixtures/temporaryDirectory.ts",
+  ],
   android_metadata: [
     ".github/workflows/real-android-metadata.yml",
     "bridge/android/**",
@@ -801,6 +827,10 @@ export const CI_LANES = {
   nativeaot: sameJobs(PATH_SCOPES.nativeaot, ["nativeaot"]),
   ghidra_bridge: sameJobs(PATH_SCOPES.ghidra_bridge, ["ghidra_bridge"]),
   go_binary: sameJobs(PATH_SCOPES.go_binary, ["go_binary"]),
+  rizin_provider: sameJobs(PATH_SCOPES.rizin_provider, ["rizin_provider"], {
+    testInputs: true,
+    earlyInputs: RIZIN_SHARED_INPUTS,
+  }),
   android_metadata: sameJobs(
     PATH_SCOPES.android_metadata,
     ["android_metadata"],
