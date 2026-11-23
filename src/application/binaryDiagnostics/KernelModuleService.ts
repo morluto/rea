@@ -194,6 +194,7 @@ const versionsConsistent = (
 
 const signatureConsistent = (
   signature: NonNullable<KernelModule["signature"]>,
+  fileBytes: number,
 ): boolean => {
   if (signature.status === "absent")
     return (
@@ -202,18 +203,16 @@ const signatureConsistent = (
       signature.info === null &&
       signature.pkcs7 === null
     );
-  if (signature.magic === null || signature.reason === null) {
-    if (signature.status !== "present") return false;
-  }
+  if (
+    signature.magic === null ||
+    signature.magic.bytes !== MODULE_SIGNATURE_MAGIC.length ||
+    signature.magic.offset !== fileBytes - MODULE_SIGNATURE_MAGIC.length
+  )
+    return false;
   if (signature.status === "present") {
     const info = signature.info;
     const pkcs7 = signature.pkcs7;
-    if (
-      signature.reason !== null ||
-      signature.magic === null ||
-      info === null ||
-      pkcs7 === null
-    )
+    if (signature.reason !== null || info === null || pkcs7 === null)
       return false;
     return (
       info.id_type === MODULE_SIGNATURE_PKCS7_ID_TYPE &&
@@ -222,10 +221,10 @@ const signatureConsistent = (
       info.signer_len === 0 &&
       info.key_id_len === 0 &&
       info.pad.every((value) => value === 0) &&
+      info.sig_len > 0 &&
       info.sig_len === pkcs7.location.bytes &&
       pkcs7.location.offset + pkcs7.location.bytes === info.location.offset &&
       signature.magic.offset === info.location.offset + info.location.bytes &&
-      signature.magic.bytes === MODULE_SIGNATURE_MAGIC.length &&
       info.location.bytes === MODULE_SIGNATURE_INFO_BYTES &&
       info.sig_len < info.location.offset
     );
@@ -234,12 +233,11 @@ const signatureConsistent = (
   if (signature.status === "unsupported")
     return (
       signature.reason === "signature_id_type_not_pkcs7" &&
-      signature.info !== null &&
-      signature.magic !== null
+      signature.info !== null
     );
-  if (signature.reason === "signature_trailer_truncated")
-    return signature.info === null && signature.magic !== null;
-  return signature.info !== null && signature.magic !== null;
+  return signature.reason === "signature_trailer_truncated"
+    ? signature.info === null
+    : signature.info !== null;
 };
 
 const sizedConsistent = (
@@ -337,7 +335,7 @@ const validReport = (
   return (
     modinfoConsistent(report.modinfo, input) &&
     versionsConsistent(report.versions) &&
-    signatureConsistent(report.signature) &&
+    signatureConsistent(report.signature, report.artifact.bytes) &&
     sizedConsistent(report.init_text) &&
     sizedConsistent(report.exit_text)
   );
