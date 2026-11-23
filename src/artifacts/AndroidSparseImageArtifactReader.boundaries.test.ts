@@ -6,6 +6,7 @@ import { buffer } from "node:stream/consumers";
 import { setImmediate } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
@@ -509,7 +510,6 @@ it.each([
   },
 ])(
   "retires an undrained expansion above the high-water mark on $name",
-  { timeout: 5_000 },
   async ({ retire, failure }) => {
     // 1 MiB of DONT_CARE output stalls Readable.from under backpressure.
     const reader = new AndroidSparseImageArtifactReader(
@@ -562,7 +562,6 @@ it.each([
   },
 ])(
   "waits for a held RAW read and keeps its failure on $name",
-  { timeout: 5_000 },
   async ({ retire, closeWaits }) => {
     const blockSize = 64 * 1024;
     const path = await fixture(
@@ -582,6 +581,7 @@ it.each([
     const started = new Promise<void>((resolve) => {
       heldStarted = resolve;
     });
+    let retiring: Promise<void> | undefined;
     const reads = vi.spyOn(admitted.handle, "read");
     try {
       const [entry] = await entries(reader);
@@ -595,12 +595,12 @@ it.each([
         });
       }) as typeof admitted.handle.read);
       stream = await reader.open(entry!, controller.signal);
-      await started;
       const closed = new Promise<unknown>((resolve) => {
         stream!.once("close", () => resolve(stream!.errored));
       });
+      await awaitAcknowledgement(started, closed, "held RAW read");
       let retired = false;
-      const retiring = retire(reader, controller).then(() => {
+      retiring = retire(reader, controller).then(() => {
         retired = true;
       });
       await setImmediate();
@@ -614,10 +614,16 @@ it.each([
       await retiring;
       await reader.close();
     } finally {
-      reads.mockRestore();
+      holding = false;
+      release?.(new Error("held RAW read released by cleanup"));
       stream?.destroy();
-      await reader.close();
-      await admitted.handle.close();
+      try {
+        await retiring?.catch(() => undefined);
+        await reader.close();
+      } finally {
+        reads.mockRestore();
+        await admitted.handle.close();
+      }
     }
   },
 );
@@ -639,7 +645,6 @@ it.each([
   },
 ])(
   "leaves no RAW read running after an undrained stream retires on $name",
-  { timeout: 5_000 },
   async ({ retire }) => {
     const blockSize = 64 * 1024;
     const path = await fixture(
@@ -655,6 +660,7 @@ it.each([
     const held: (() => void)[] = [];
     let inFlight = 0;
     let stream: Readable | undefined;
+    let retiring: Promise<void> | undefined;
     const reads = vi.spyOn(admitted.handle, "read");
     try {
       const [entry] = await entries(reader);
@@ -676,17 +682,21 @@ it.each([
       const runningAtClose = new Promise<number>((resolve) => {
         stream!.once("close", () => resolve(inFlight));
       });
-      const retiring = retire(reader, controller);
+      retiring = retire(reader, controller);
       for (let tick = 0; tick < 8; tick += 1) await setImmediate();
       for (const resolve of held.splice(0)) resolve();
       expect(await runningAtClose).toBe(0);
       await retiring;
     } finally {
       for (const resolve of held.splice(0)) resolve();
-      reads.mockRestore();
       stream?.destroy();
-      await reader.close();
-      await admitted.handle.close();
+      try {
+        await retiring?.catch(() => undefined);
+        await reader.close();
+      } finally {
+        reads.mockRestore();
+        await admitted.handle.close();
+      }
     }
   },
 );
