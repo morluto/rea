@@ -103,7 +103,10 @@ export const executeArtifactInspection = async <TInput, TParameters, TReport>(
   }
   const completed = completeProviderEvidence(evidence, options?.signal);
   if (!completed.ok || retainedView === undefined) return completed;
-  return (
-    await import("./analysisView/AnalysisViewService.js")
-  ).projectRetainedAnalysis(completed.value, retention, retainedView);
+  const service = await import("./analysisView/AnalysisViewService.js");
+  // The awaited import is the last finalization step; a late abort must not
+  // record or project the summary as success.
+  const ready = completeProviderEvidence(completed.value, options?.signal);
+  if (!ready.ok) return ready;
+  return service.projectRetainedAnalysis(ready.value, retention, retainedView);
 };

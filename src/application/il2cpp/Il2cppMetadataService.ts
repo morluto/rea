@@ -168,11 +168,10 @@ export class Il2cppMetadataService {
       seedReceipt = written.value;
     }
     if (isAborted(options?.signal)) return cancelled(options.signal);
-    return detail === "summary"
-      ? (
-          await import("../analysisView/AnalysisViewService.js")
-        ).summarizeRetainedAnalysis(evidence, retention)
-      : ok(evidence);
+    if (detail !== "summary") return ok(evidence);
+    const service = await import("../analysisView/AnalysisViewService.js");
+    if (options?.signal?.aborted) return cancelled(options.signal);
+    return service.summarizeRetainedAnalysis(evidence, retention);
   }
   #evidence(
     value: Il2cppMetadata,

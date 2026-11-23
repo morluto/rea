@@ -75,16 +75,16 @@ export class ApkSignatureService {
       options?.signal,
     );
     if (!completed.ok) return completed;
-    return detail === "summary"
-      ? (
-          await import("../analysisView/AnalysisViewService.js")
-        ).projectRetainedAnalysis(
-          completed.value,
-          retention,
-          view === undefined
-            ? { kind: "summary" }
-            : { kind: "apk-signature", ...view },
-        )
-      : completed;
+    if (detail !== "summary") return completed;
+    const service = await import("../analysisView/AnalysisViewService.js");
+    const ready = completeProviderEvidence(completed.value, options?.signal);
+    if (!ready.ok) return ready;
+    return service.projectRetainedAnalysis(
+      ready.value,
+      retention,
+      view === undefined
+        ? { kind: "summary" }
+        : { kind: "apk-signature", ...view },
+    );
   }
 }
