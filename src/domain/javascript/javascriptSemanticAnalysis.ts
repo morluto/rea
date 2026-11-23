@@ -328,7 +328,8 @@ export const analyzeParsedJavaScriptSemantics = (
  * same program instead of collecting its definitions, ambient writes and
  * member-mutation facts a second time. It must come from
  * {@link indexJavaScriptBindingsWithReceiversSteps} with the same program,
- * resolution mode, precision and allowance; any other index is rejected.
+ * resolution mode, precision and allowance; any other index is rejected. An
+ * index continues one semantic phase and is rejected by a second.
  */
 export function* analyzeParsedJavaScriptSemanticsSteps(
   file: ParsedJavaScriptSource,
@@ -495,8 +496,11 @@ const sharedLexicalState = (
     inputs.memberMutationAllowance !== memberMutationAllowance
   )
     throw new TypeError(
-      "A shared JavaScript lexical index must be built from the same program, resolution mode, precision and allowance",
+      "A shared JavaScript lexical index must be built from the same program, resolution mode, precision and allowance, and can continue only one semantic phase",
     );
+  // The semantic phase appends its own module links and callable facts to
+  // this state, so a second phase would report them twice.
+  shareableLexicalStates.delete(state);
   beginSemanticConsumer(state);
   return state;
 };

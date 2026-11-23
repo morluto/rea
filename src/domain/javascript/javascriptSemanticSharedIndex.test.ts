@@ -136,6 +136,29 @@ describe("a lexical index shared by the static and semantic phases", () => {
     expect(semantic.limitations.join(" ")).toMatch(/alias selection/iu);
   });
 
+  it("continues one semantic phase and rejects a second", () => {
+    // The phase appends its module links to the shared state; a second run
+    // from the same index reported each link twice.
+    const source = `import { x } from "pkg"; export const y = x;`;
+    const parsed = parse(source);
+    const index = indexFor(parsed);
+    const continueFrom = () =>
+      completeSemanticSteps(
+        analyzeParsedJavaScriptSemanticsSteps(
+          parsed,
+          "import",
+          undefined,
+          undefined,
+          undefined,
+          index,
+        ),
+      );
+    expect(continueFrom().moduleLinks).toEqual(
+      analyzeWithPrivateIndexes(source).semantic.moduleLinks,
+    );
+    expect(continueFrom).toThrow(TypeError);
+  });
+
   it("rejects an index built from different inputs", () => {
     const parsed = parse(sources.commonJs);
     const semanticFrom = (
