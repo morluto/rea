@@ -3,10 +3,8 @@ import type { Logger } from "pino";
 import { createSqliteDatabaseService } from "../composition/sqlite.js";
 import { SQLITE_TOOL_CONTRACTS } from "../contracts/sqlite/sqliteToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  inspectWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { inspectWithService } from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 /** Resolve an operator-selected SQLite snapshot through the shared inspection workflow. */

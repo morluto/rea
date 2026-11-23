@@ -53,9 +53,7 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
   private protocolClosed = false;
   private runtimeClosed = false;
   private runtimeCleanup: (() => Promise<void>) | undefined;
-  private partialClose: (() => Promise<void>) | undefined;
   private materializing = false;
-  private readonly protocolClose = () => super.close();
   private readonly canAdvertise: (tool: string) => boolean;
 
   constructor(
@@ -227,24 +225,20 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
     this.runtimeCleanup = close;
   }
 
-  /** Canonical composition may wrap close; retain that exact cleanup capability. */
+  /** Materialize canonical registrations and close hooks into this server. */
   materialize(build: () => void): void {
-    const ownedClose = this.close.bind(this);
     this.materializing = true;
-    this.close = this.protocolClose;
     try {
       build();
       if (this.tools.size !== 0 || this.prompts.size !== 0)
         throw new Error("MCP catalog does not match runtime registrations");
     } finally {
-      this.partialClose = this.close.bind(this);
-      this.close = ownedClose;
       this.materializing = false;
     }
   }
 
-  closePartialRuntime(): Promise<void> {
-    return this.partialClose?.() ?? Promise.resolve();
+  closeRuntimeHooks(): Promise<void> {
+    return this.closeRegisteredHooks();
   }
 
   /**
@@ -357,7 +351,7 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
     const errors: unknown[] = [];
     if (!this.protocolClosed) {
       try {
-        await this.protocolClose();
+        await this.closeProtocol();
         this.protocolClosed = true;
       } catch (cause) {
         errors.push(cause);

@@ -3,7 +3,7 @@ import { readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
-import { createNativeInitializersService } from "../../../src/composition/binaryDiagnostics.js";
+import { createNativeInitializersService } from "../../../src/composition/binaryDiagnostics/nativeInitializers.js";
 import {
   elf64PieInitializers,
   machoInitializerSymbolKinds,

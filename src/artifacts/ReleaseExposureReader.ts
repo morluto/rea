@@ -31,6 +31,8 @@ import {
   type ArtifactResourceOwner,
   artifactFilePrimaryFacts,
   readStableArtifact,
+  withStableArtifactHandle,
+  type StableArtifactHandle,
   projectArtifactCloseFailure,
   readerIntegrityFailure,
   hashStableRootArtifactHandle,
@@ -78,7 +80,10 @@ import type {
   ArtifactInventoryResult,
   ArtifactOccurrence,
 } from "../domain/artifactGraph.js";
-import { inspectPeCodeViewFromBuffer } from "../domain/binaryTarget.js";
+import {
+  inspectPeCodeViewFromBuffer,
+  inspectPeCodeViewFromReader,
+} from "../domain/binaryTarget.js";
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
 import type { ArtifactIntegrityCheck } from "../domain/artifactOperationError.js";
 import { observeMzWindowsHeader } from "../domain/dosMz.js";
@@ -2357,6 +2362,33 @@ const noteUnresolvedPe = (
   return true;
 };
 
+const recordPdbResult = (
+  state: ScanState,
+  parsed: ReturnType<typeof inspectPeCodeViewFromBuffer>,
+  imagePath: string,
+): void => {
+  if (!parsed.ok) {
+    state.pdbFailed += 1;
+    pushLimitation(state, `${imagePath}: ${parsed.error.message}`);
+  } else if (parsed.value !== undefined) {
+    const record = parsed.value;
+    if (record.pdbPath !== null) pushSample(state.pdbPaths, record.pdbPath);
+    else if (
+      state.pdbPathBytes.length < MAX_RELEASE_EXPOSURE_SAMPLES &&
+      !state.pdbPathBytes.some(
+        ({ image_path, bytes_hex }) =>
+          image_path === imagePath && bytes_hex === record.pdbPathBytesHex,
+      )
+    )
+      state.pdbPathBytes.push({
+        image_path: imagePath,
+        bytes_hex: record.pdbPathBytesHex,
+        encoding: "unknown",
+      });
+    pushSample(state.pdbImagePaths, imagePath);
+  }
+};
+
 const readPdb = (state: ScanState, bytes: Buffer, imagePath: string): void => {
   const header = observeMzWindowsHeader(bytes);
   if (header.state !== "declared" || header.signature !== "PE") {
@@ -2365,27 +2397,51 @@ const readPdb = (state: ScanState, bytes: Buffer, imagePath: string): void => {
   }
   state.pdbExamined += 1;
   try {
-    const parsed = inspectPeCodeViewFromBuffer(bytes, header.offset);
-    if (!parsed.ok) {
-      state.pdbFailed += 1;
-      pushLimitation(state, `${imagePath}: ${parsed.error.message}`);
-    } else if (parsed.value !== undefined) {
-      const record = parsed.value;
-      if (record.pdbPath !== null) pushSample(state.pdbPaths, record.pdbPath);
-      else if (
-        state.pdbPathBytes.length < MAX_RELEASE_EXPOSURE_SAMPLES &&
-        !state.pdbPathBytes.some(
-          ({ image_path, bytes_hex }) =>
-            image_path === imagePath && bytes_hex === record.pdbPathBytesHex,
-        )
-      )
-        state.pdbPathBytes.push({
-          image_path: imagePath,
-          bytes_hex: record.pdbPathBytesHex,
-          encoding: "unknown",
-        });
-      pushSample(state.pdbImagePaths, imagePath);
-    }
+    recordPdbResult(
+      state,
+      inspectPeCodeViewFromBuffer(bytes, header.offset),
+      imagePath,
+    );
+  } catch {
+    state.pdbFailed += 1;
+  }
+};
+
+const readPdbFromHandle = async (
+  state: ScanState,
+  handle: StableArtifactHandle,
+  imagePath: string,
+): Promise<void> => {
+  const readRange: StableArtifactHandle["readRange"] = (offset, length) =>
+    offset >= 0 && length >= 0 && offset + length <= handle.prefix.length
+      ? Promise.resolve(handle.prefix.subarray(offset, offset + length))
+      : handle.readRange(offset, length);
+  let header = observeMzWindowsHeader(handle.prefix, handle.size);
+  if (header.state === "signature-needed") {
+    const sigLength = Math.min(4, handle.size - header.offset);
+    const sigBytes =
+      sigLength > 0
+        ? await readRange(header.offset, sigLength)
+        : Buffer.alloc(0);
+    header = observeMzWindowsHeader(handle.prefix, handle.size, {
+      offset: header.offset,
+      bytes: sigBytes,
+    });
+  }
+  if (header.state !== "declared" || header.signature !== "PE") {
+    state.pdbFailed += 1;
+    return;
+  }
+  state.pdbExamined += 1;
+  try {
+    recordPdbResult(
+      state,
+      await inspectPeCodeViewFromReader(
+        { size: handle.size, readRange },
+        header.offset,
+      ),
+      imagePath,
+    );
   } catch {
     state.pdbFailed += 1;
   }
@@ -2403,20 +2459,24 @@ const examinePdb = async (
   }
   state.pdbAttempts += 1;
   try {
-    const snapshot = await readStableArtifact(
+    await withStableArtifactHandle(
       filePath,
       maxFileBytes,
-      signal,
-      undefined,
-      resources,
+      {
+        retainBytes: (size) => Math.min(size, 4096),
+        signal,
+        resourceScope: resources,
+      },
+      async (handle) => {
+        if (expectedSha256 !== undefined && handle.sha256 !== expectedSha256)
+          throw new ArtifactReaderFailure(
+            "integrity",
+            `Member changed during acquisition: ${filePath}`,
+            { integrityCheck: "member-identity" },
+          );
+        await readPdbFromHandle(state, handle, filePath);
+      },
     );
-    if (expectedSha256 !== undefined && snapshot.sha256 !== expectedSha256)
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `Member changed during acquisition: ${filePath}`,
-        { integrityCheck: "member-identity" },
-      );
-    readPdb(state, snapshot.bytes, filePath);
   } catch (cause) {
     rethrowReadFailure(cause);
     state.pdbFailed += 1;
