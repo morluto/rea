@@ -14,6 +14,7 @@ import {
   dylibCommand,
   dylibUseCommand,
   fatImage,
+  fatSliceRange,
   lazyLoadDylibInfoCommand,
   lazyLoadDylibInfoPayload,
   machoImage,
@@ -2109,20 +2110,56 @@ it.each([true, false])(
   },
 );
 
-it("observes only the common 28-byte header of a 64-bit slice", async () => {
-  const bytes = machoImage({ fileType: FILE_TYPE.dylib }).subarray(0, 28);
-  const readAt = vi.fn(readerOf(bytes));
-  expect(await readMachoImage(readAt, 32)).toMatchObject({
-    status: "parsed",
-    slices: [{ file_type: "dylib", file_type_code: FILE_TYPE.dylib }],
-  });
-  expect(readAt.mock.calls).toEqual([
-    [0, 8],
-    [0, 28],
-    [32, 0],
-  ]);
-  expect(await readMachoImage(readerOf(bytes), 28)).toEqual({
+it("reads the common header at exactly its supported physical boundaries", async () => {
+  const common = (wide: boolean) =>
+    machoImage({
+      wide,
+      cpu: wide ? CPU.arm64 : CPU.i386,
+      fileType: FILE_TYPE.dylib,
+    }).subarray(0, 28);
+  for (const [wide, fileLength] of [
+    [true, 32],
+    [false, 28],
+  ] as const) {
+    const bytes = common(wide);
+    const readAt = vi.fn(readerOf(bytes));
+    expect(await readMachoImage(readAt, fileLength)).toMatchObject({
+      status: "parsed",
+      slices: [{ file_type: "dylib", file_type_code: FILE_TYPE.dylib }],
+    });
+    expect(
+      readAt.mock.calls.every(
+        ([offset, length]) => length === 0 || offset + length <= bytes.length,
+      ),
+    ).toBe(true);
+  }
+  expect(await readMachoImage(readerOf(common(true)), 28)).toEqual({
     status: "malformed",
     reason: "load commands extend beyond the Mach-O slice",
+  });
+});
+
+it("does not borrow Mach-O header bytes beyond a short FAT declaration", async () => {
+  const short = machoImage({ cpu: CPU.arm64 });
+  const bytes = fatImage([
+    { cpu: CPU.x86_64, bytes: machoImage({ cpu: CPU.x86_64 }) },
+    { cpu: CPU.arm64, bytes: short.subarray(0, 12) },
+  ]);
+  const { offset, size } = fatSliceRange(bytes, 1);
+  // Keep a complete header physically readable after the declared slice ends.
+  bytes.set(short, offset);
+  const readAt = vi.fn(readerOf(bytes));
+  const result = await readMachoImage(readAt, bytes.length);
+  expect(
+    readAt.mock.calls.filter(
+      ([start, length]) =>
+        start >= offset &&
+        start < offset + short.length &&
+        start + length > offset + size,
+    ),
+  ).toEqual([]);
+  expect(result).toEqual({
+    status: "malformed",
+    reason: "Mach-O header is truncated",
   });
 });
