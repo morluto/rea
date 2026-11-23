@@ -1,7 +1,10 @@
 import {
   readUniversalMachoImage,
+  readUniversalMachoImageFromReader,
   readUniversalMachoSlice,
+  validateUniversalMachoSliceFromReader,
 } from "./machoImageSelection.js";
+import type { NativeByteSource } from "../native/nativeSectionDirectory.js";
 import {
   readMachoHeaderPrefixFacts,
   type FatSliceDeclaration,
@@ -353,6 +356,185 @@ const selectArchitectureSlice = (
           `Only the selected ${spelled(architecture)} slice (${cpuName(slice.cpuType, slice.cpuSubtype)} at file offset ${String(slice.offset)}) was read; this universal Mach-O also holds ${unread.join(", ")}.`,
         ],
   );
+};
+
+/** The one thin image an inspector reads over a random-access handle, and where it lies in the selected file. */
+export interface SelectedNativeImageSource {
+  readonly source: NativeByteSource;
+  /** File offset of `source`; add it to image-relative offsets to locate them in the file. */
+  readonly fileOffset: number;
+  /** Selected universal slice identity; null when the file is not a universal Mach-O. */
+  readonly selection: MachoTargetSelection | null;
+  /** Other slices of the selected CPU family that this inspection does not read, and how to select each. */
+  readonly limitations: readonly string[];
+}
+
+const sliceByteSource = (
+  source: NativeByteSource,
+  sliceOffset: number,
+  sliceSize: number,
+): NativeByteSource => ({
+  size: sliceSize,
+  ...(source.prefix !== undefined && sliceOffset < source.prefix.length
+    ? {
+        prefix: source.prefix.subarray(
+          sliceOffset,
+          Math.min(source.prefix.length, sliceOffset + sliceSize),
+        ),
+      }
+    : {}),
+  readRange: (offset, length) => {
+    if (offset < 0 || length <= 0 || offset >= sliceSize)
+      return Promise.resolve(Buffer.alloc(0));
+    const clamped = Math.min(length, sliceSize - offset);
+    return source.readRange(sliceOffset + offset, clamped);
+  },
+});
+
+/**
+ * Same architecture selection as {@link requireSelectedNativeImage}, reading only
+ * the universal header and 16-byte slice prefixes without buffering the full image.
+ */
+export const requireSelectedNativeImageFromReader = async (
+  operation: string,
+  path: string,
+  source: NativeByteSource,
+  architecture: MachoSliceArchitecture | undefined,
+  input: SliceSelectionInput = SHARED_SLICE_SELECTION_INPUT,
+): Promise<SelectedNativeImageSource> => {
+  const container = await readUniversalMachoImageFromReader(source);
+  if (!container.ok) {
+    throw new AnalysisInputError(operation, undefined, [
+      {
+        path: [input.pathField],
+        reason: "invalid_format",
+        message: `Selected artifact ${path}: ${container.error.message}`,
+      },
+    ]);
+  }
+  const failSelection = (failure: MachoSliceSelectionFailure): never => {
+    throw new AnalysisInputError(operation, undefined, [
+      failure.kind !== "malformed"
+        ? {
+            path: [input.architectureField],
+            reason: "invalid_value",
+            message: failure.message,
+          }
+        : {
+            path: [input.pathField],
+            reason: "invalid_format",
+            message: `Selected artifact ${path}: ${failure.message}`,
+          },
+    ]);
+  };
+  const field = input.architectureField;
+  const spelled = (value: MachoSliceArchitecture): string =>
+    input.spelling[value] ?? value;
+  const parsed = container.value;
+  if (parsed === null) {
+    if (architecture === undefined)
+      return { source, fileOffset: 0, selection: null, limitations: [] };
+    return failSelection({
+      kind: "architecture_not_present",
+      message: `${field} ${spelled(architecture)} was selected, but the file is not a universal Mach-O; omit ${field}.`,
+    });
+  }
+  const { header: fat, tableBytes } = parsed;
+  const available = () =>
+    fat.slices
+      .map(({ cpuType, cpuSubtype }) => cpuName(cpuType, cpuSubtype))
+      .join(", ");
+  if (architecture === undefined)
+    return failSelection({
+      kind: "ambiguous_architecture",
+      message: `Universal Mach-O holds ${available()}; select one architecture.`,
+    });
+  const sameFamily = fat.slices.filter(
+    ({ cpuType }) =>
+      cpuType === MACHO_CPU_TYPES[machoSliceFamily(architecture)],
+  );
+  const matches = addressedSlices(sameFamily, architecture);
+  const [slice] = matches;
+  const alternatives = familyValues(architecture).flatMap((value) => {
+    if (value === architecture || input.spelling[value] === undefined)
+      return [];
+    const [declared, competing] = addressedSlices(sameFamily, value);
+    return declared === undefined || competing !== undefined
+      ? []
+      : [{ value, declared }];
+  });
+  if (slice === undefined || matches.length > 1) {
+    const choices: MachoSliceArchitecture[] = [];
+    for (const { value, declared } of alternatives) {
+      if (
+        (await validateUniversalMachoSliceFromReader(source, fat, declared)).ok
+      )
+        choices.push(value);
+    }
+    const select =
+      choices.length === 0
+        ? ""
+        : ` Select ${field} ${choices.map(spelled).join(" or ")}.`;
+    return failSelection({
+      kind:
+        matches.length > 1
+          ? "ambiguous_architecture"
+          : "architecture_not_present",
+      message:
+        sameFamily.length === 0
+          ? `Universal Mach-O holds ${available()}, not ${spelled(architecture)}.${select}`
+          : matches.length === 0 && namesSubtype(architecture)
+            ? `Universal Mach-O holds ${available()}; no slice has the ${spelled(architecture)} subtype.${select}`
+            : `Universal Mach-O holds several ${spelled(architecture)} slices (${available()}); no slice was selected.${select}`,
+    });
+  }
+  const unread: string[] = [];
+  for (const other of sameFamily) {
+    if (other === slice) continue;
+    const place = `${cpuName(other.cpuType, other.cpuSubtype)} at file offset ${String(other.offset)}`;
+    const validated = await validateUniversalMachoSliceFromReader(
+      source,
+      fat,
+      other,
+    );
+    if (!validated.ok) {
+      unread.push(
+        `${place} (unverified: ${validated.error.message}; no ${field} value reads it)`,
+      );
+      continue;
+    }
+    const selector = alternatives.find(
+      ({ declared }) => declared === other,
+    )?.value;
+    unread.push(
+      `${place} (${selector === undefined ? `no ${field} value selects it` : `${field} ${spelled(selector)} selects it`})`,
+    );
+  }
+  const validated = await validateUniversalMachoSliceFromReader(
+    source,
+    fat,
+    slice,
+  );
+  if (!validated.ok) return failSelection(validated.error);
+  return {
+    source: sliceByteSource(source, slice.offset, slice.size),
+    fileOffset: slice.offset,
+    selection: {
+      kind: "macho-selected-image-v1",
+      container: "fat",
+      offset: slice.offset,
+      byte_length: slice.size,
+      cpu_type: slice.cpuType,
+      cpu_subtype: slice.cpuSubtype,
+      container_table_sha256: sha256Hex(tableBytes),
+    },
+    limitations:
+      unread.length === 0
+        ? []
+        : [
+            `Only the selected ${spelled(architecture)} slice (${cpuName(slice.cpuType, slice.cpuSubtype)} at file offset ${String(slice.offset)}) was read; this universal Mach-O also holds ${unread.join(", ")}.`,
+          ],
+  };
 };
 
 /**
