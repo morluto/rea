@@ -12,7 +12,12 @@ import {
   ubiImage,
   ubiLayoutPebs,
 } from "../domain/firmware/ubiImage.fixture.js";
-import { UBI_MAX_PEB_BYTES } from "../domain/firmware/ubiImage.js";
+import {
+  UBI_MAX_PEB_BYTES,
+  UBI_MAX_PEBS,
+  UBI_PEB_COUNT_LIMIT,
+  UBI_PEB_SIZE_LIMIT,
+} from "../domain/firmware/ubiImage.js";
 
 const fixture = async (bytes: Buffer): Promise<string> => {
   const path = join(
@@ -221,6 +226,13 @@ it("stops the eraseblock search at the fixed ceiling", async () => {
     await expect(entries(reader)).rejects.toMatchObject({
       reason: "limit",
       boundary: "capacity",
+      parserLimit: { name: UBI_PEB_SIZE_LIMIT, maximum: UBI_MAX_PEB_BYTES },
+      fixedAllowance: {
+        kind: "parser",
+        name: `The ${UBI_PEB_SIZE_LIMIT} allowance`,
+        limit: UBI_MAX_PEB_BYTES,
+        unit: "bytes",
+      },
     });
     for (const [, , length, offset] of reads.mock
       .calls as readonly (readonly unknown[])[])
@@ -231,6 +243,31 @@ it("stops the eraseblock search at the fixed ceiling", async () => {
     reads.mockRestore();
     await reader.close();
     await admitted.handle.close();
+  }
+});
+
+it("names the eraseblock count ceiling it stops at", async () => {
+  const path = await fixture(ubiImage([{ kind: "free" }, { kind: "free" }]));
+  await truncate(path, 2048 * (UBI_MAX_PEBS + 1));
+  const reader = new UbiImageArtifactReader(path);
+  try {
+    await expect(entries(reader)).rejects.toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+      parserLimit: {
+        name: UBI_PEB_COUNT_LIMIT,
+        maximum: UBI_MAX_PEBS,
+        required: UBI_MAX_PEBS + 1,
+      },
+      fixedAllowance: {
+        kind: "parser",
+        name: `The ${UBI_PEB_COUNT_LIMIT} allowance`,
+        limit: UBI_MAX_PEBS,
+        unit: "eraseblocks",
+      },
+    });
+  } finally {
+    await reader.close();
   }
 });
 

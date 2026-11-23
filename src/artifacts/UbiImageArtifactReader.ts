@@ -52,6 +52,7 @@ import {
   ubiVolumeTableBytes,
   UBI_HEADER_BYTES,
   UBI_MAX_PEB_BYTES,
+  UBI_PEB_SIZE_LIMIT,
   type UbiImage,
   type UbiImageParseError,
   type UbiLebRange,
@@ -427,11 +428,21 @@ const formatFailure = (
 
 const parseFailure = (failure: UbiImageParseError): ArtifactReaderFailure => {
   switch (failure.kind) {
-    case "limit":
+    case "limit": {
+      const parserLimit = failure.failure.limit;
       return new ArtifactReaderFailure("limit", failure.message, {
         boundary: "capacity",
         cause: failure,
+        parserLimit,
+        fixedAllowance: {
+          kind: "parser",
+          name: `The ${parserLimit.name} allowance`,
+          limit: parserLimit.maximum,
+          unit:
+            parserLimit.name === UBI_PEB_SIZE_LIMIT ? "bytes" : "eraseblocks",
+        },
       });
+    }
     case "unsupported":
       return new ArtifactReaderFailure("unavailable", failure.message, {
         cause: failure,

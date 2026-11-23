@@ -36,6 +36,9 @@ export const UBI_PEB_ALIGNMENT = 512;
 /** The largest eraseblock searched for; larger NAND eraseblocks are refused. */
 export const UBI_MAX_PEB_BYTES = 16 * 1024 * 1024;
 export const UBI_MAX_PEBS = 262_144;
+/** Names of the parser limits that carry these ceilings into refusals. */
+export const UBI_PEB_SIZE_LIMIT = "UBI eraseblock size";
+export const UBI_PEB_COUNT_LIMIT = "UBI eraseblock count";
 /**
  * Eraseblocks, counted from the second one, searched for an erase-counter
  * header off the eraseblock grid, which would mean the size was mismeasured.
@@ -341,7 +344,7 @@ export const ubiGeometry = (
         ? decodeLimit(
             UBI_FORMAT,
             `UBI image has no second erase-counter header within the fixed ${String(UBI_MAX_PEB_BYTES)}-byte eraseblock ceiling`,
-            { name: "UBI eraseblock size", maximum: UBI_MAX_PEB_BYTES },
+            { name: UBI_PEB_SIZE_LIMIT, maximum: UBI_MAX_PEB_BYTES },
           )
         : malformed(
             "UBI image has no second erase-counter header, so its eraseblock size cannot be determined",
@@ -363,7 +366,7 @@ export const ubiGeometry = (
         UBI_FORMAT,
         `UBI image eraseblock count ${String(pebCount)} exceeds the fixed ${String(UBI_MAX_PEBS)}-eraseblock ceiling`,
         {
-          name: "UBI eraseblock count",
+          name: UBI_PEB_COUNT_LIMIT,
           maximum: UBI_MAX_PEBS,
           required: pebCount,
         },
