@@ -7404,3 +7404,103 @@ it("reconciles declared manifest payload rows and records missing payloads as om
     await provider.close();
   }
 });
+
+it("preserves fallback manifest metadata when a single manifest row with backslashes is lowercase", async () => {
+  if (HOST_PLATFORM.platform === "win32") return; // POSIX-specific test
+
+  const directory = await createTestTempDirectory(
+    "rea-uefi-lowercase-backslash-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(join(inDir, "modules"), { recursive: true });
+
+  const peBuffer = createMinimalPeBuffer();
+  await writeFile(join(inDir, "modules", "driver.efi"), peBuffer);
+
+  // Manifest with Windows backslash in payload_file, entirely lowercase
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_found: 1,
+      total_modules_decompiled: 1,
+      coverage: "complete",
+      source_coverage: "complete",
+      modules: [
+        {
+          guid: "12345678-1234-1234-1234-123456789abc",
+          name: "MyDriver",
+          phase: "DXE",
+          type: "driver",
+          payload_file: "modules\\driver.efi",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          include_disassembly: false,
+          filter_phase: "dxe",
+        }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.modules).toHaveLength(1);
+    expect(result.modules[0]?.name).toBe("MyDriver");
+    expect(result.modules[0]?.guid).toBe(
+      "12345678-1234-1234-1234-123456789abc",
+    );
+    expect(result.modules[0]?.phase).toBe("DXE");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("preserves partial coverage when manifest has coverage: 'partial' and source_coverage: 'unknown'", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-unknown-coverage-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const peBuffer = createMinimalPeBuffer();
+  await writeFile(join(inDir, "Sample.efi"), peBuffer);
+
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      coverage: "partial",
+      source_coverage: "unknown",
+      total_modules_found: 1,
+      total_modules_decompiled: 1,
+      modules: [
+        {
+          name: "Sample",
+          phase: "DXE",
+          payload_file: "Sample.efi",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((l) =>
+        l.includes("declares unknown source coverage"),
+      ),
+    ).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});

@@ -2987,13 +2987,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 reason: `declared_omissions:${omittedCount}`,
               });
             }
-            const manifestSourceCoverage =
-              typeof parsed?.source_coverage === "string"
-                ? parsed.source_coverage
-                : typeof parsed?.coverage === "string"
-                  ? parsed.coverage
-                  : undefined;
-            if (manifestSourceCoverage === "partial") {
+            const rawSourceCov = parsed?.source_coverage;
+            const rawCov = parsed?.coverage;
+
+            if (rawSourceCov === "complete") {
+              // Validated source completeness clears legacy tool export limits
+            } else if (rawSourceCov === "partial") {
               isCoveragePartial = true;
               if (limitations.length < 50) {
                 limitations.push(
@@ -3003,6 +3002,53 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               omittedCandidates.push({
                 identityRelPath: "firmware_manifest.json#source_coverage",
                 reason: "partial_source_coverage",
+              });
+            } else if (rawSourceCov === "unknown") {
+              isCoveragePartial = true;
+              hasUnknownCoverage = true;
+              if (limitations.length < 50) {
+                limitations.push(
+                  "Manifest firmware_manifest.json declares unknown source coverage.",
+                );
+              }
+              omittedCandidates.push({
+                identityRelPath: "firmware_manifest.json#source_coverage",
+                reason: "unknown_source_coverage",
+              });
+            } else if (typeof rawSourceCov === "string") {
+              isCoveragePartial = true;
+              hasUnknownCoverage = true;
+              if (limitations.length < 50) {
+                limitations.push(
+                  `Manifest firmware_manifest.json declares unrecognized source coverage "${formatMarkdownCodeSpan(ellipsisExcerpt(rawSourceCov, 32))}".`,
+                );
+              }
+              omittedCandidates.push({
+                identityRelPath: "firmware_manifest.json#source_coverage",
+                reason: "unrecognized_source_coverage",
+              });
+            } else if (rawCov === "partial") {
+              isCoveragePartial = true;
+              if (limitations.length < 50) {
+                limitations.push(
+                  "Manifest firmware_manifest.json declares partial coverage.",
+                );
+              }
+              omittedCandidates.push({
+                identityRelPath: "firmware_manifest.json#coverage",
+                reason: "partial_coverage",
+              });
+            } else if (rawCov === "unknown") {
+              isCoveragePartial = true;
+              hasUnknownCoverage = true;
+              if (limitations.length < 50) {
+                limitations.push(
+                  "Manifest firmware_manifest.json declares unknown coverage.",
+                );
+              }
+              omittedCandidates.push({
+                identityRelPath: "firmware_manifest.json#coverage",
+                reason: "unknown_coverage",
               });
             }
             if (Array.isArray(parsed?.modules)) {
@@ -3200,24 +3246,22 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   );
                 }
                 if (!isWindows) {
-                  if (manifestModulesByFallbackRelPath.has(crossPlatformNorm)) {
-                    ambiguousCrossPlatformKeys.add(crossPlatformNorm);
-                  } else {
-                    manifestModulesByFallbackRelPath.set(
-                      crossPlatformNorm,
-                      manifestEntryRecord,
-                    );
-                  }
-                  if (
-                    manifestModulesByFallbackRelPath.has(crossPlatformFolded)
-                  ) {
-                    ambiguousCrossPlatformKeys.add(crossPlatformFolded);
-                  } else {
-                    manifestModulesByFallbackRelPath.set(
-                      crossPlatformFolded,
-                      manifestEntryRecord,
-                    );
-                  }
+                  const registerFallbackKey = (key: string) => {
+                    const existing = manifestModulesByFallbackRelPath.get(key);
+                    if (
+                      existing !== undefined &&
+                      existing !== manifestEntryRecord
+                    ) {
+                      ambiguousCrossPlatformKeys.add(key);
+                    } else {
+                      manifestModulesByFallbackRelPath.set(
+                        key,
+                        manifestEntryRecord,
+                      );
+                    }
+                  };
+                  registerFallbackKey(crossPlatformNorm);
+                  registerFallbackKey(crossPlatformFolded);
                 }
               }
             }
