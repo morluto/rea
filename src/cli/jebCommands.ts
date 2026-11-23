@@ -6,11 +6,11 @@ import type { JebOperation } from "../domain/jeb/jebAnalysis.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
 import {
   analyzeWithService,
-  registerContractCommand,
   type EvidenceInspectionService,
-} from "./contractCommand.js";
+} from "./contractCommandRunners.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 

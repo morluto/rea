@@ -19,11 +19,11 @@ import type {
   CliContractProjection,
   ContractField,
 } from "./contractCliDescriptionTypes.js";
+import { registerContractCommand } from "./contractCommand.js";
 import {
   analyzeWithService,
-  registerContractCommand,
   type EvidenceInspectionService,
-} from "./contractCommand.js";
+} from "./contractCommandRunners.js";
 
 type AdbContract<Name extends AdbOperation> = Extract<
   (typeof ADB_TOOL_CONTRACTS)[number],

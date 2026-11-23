@@ -9,10 +9,8 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { UefiOperation } from "../domain/uefi/uefiFirmwareAnalysis.js";
 import { UEFI_PROVIDER_IDENTITY } from "../uefi/UefiProviderIdentity.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  inspectWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { inspectWithService } from "./contractCommandRunners.js";
 import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
 
