@@ -18,6 +18,7 @@ import {
 import { peResourceFixture } from "../../src/domain/pe/peResources.fixture.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { expectCarrierProbes } from "../fixtures/nativeCarrierProbes.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 const contents = "throw new Error('must not execute');\n";
@@ -52,20 +53,8 @@ cliTest.for(carriers)(
       )?.evidence.normalized_result,
     );
     expect(graph.manifest.root_format).toBe("deno-standalone");
-    expect(inspection.next_probes[0]).toEqual({
-      operation: "extract_artifact",
-      authority: "artifact-bytes",
-      rationale: expect.any(String),
-    });
     // The carrier's own readers follow the package reader.
-    expect(inspection.next_probes.at(-1)?.operation).toBe("open_binary");
-    expect(inspection.next_probes.map(({ operation }) => operation)).toContain(
-      carrier === "pe"
-        ? "inspect_pe_imports"
-        : carrier === "elf"
-          ? "inspect_elf_dependencies"
-          : "inspect_macho",
-    );
+    expectCarrierProbes(inspection.next_probes, carrier, ["extract_artifact"]);
     expect(
       graph.occurrences.find((row) => row.logical_path === ".")
         ?.format_metadata,

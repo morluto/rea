@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { expectCarrierProbes } from "../fixtures/nativeCarrierProbes.js";
 import {
   bunModuleGraphPayload,
   bunPrefixedPayload,
@@ -173,21 +174,8 @@ cliTest(
       )?.evidence.normalized_result,
     );
     expect(graph.manifest.root_format).toBe("bun-standalone");
-    expect(inspection.next_probes[0]).toEqual({
-      operation: "extract_artifact",
-      authority: "artifact-bytes",
-      rationale: expect.any(String),
-    });
     // The ELF carrier's readers follow the package reader.
-    expect(
-      inspection.next_probes.map(({ operation }) => operation).slice(1),
-    ).toEqual([
-      "inspect_elf_dependencies",
-      "inspect_native_exports",
-      "inspect_binary_hardening",
-      "audit_release_exposure",
-      "open_binary",
-    ]);
+    expectCarrierProbes(inspection.next_probes, "elf", ["extract_artifact"]);
     expect(
       graph.occurrences.find((row) => row.logical_path === ".")
         ?.format_metadata,

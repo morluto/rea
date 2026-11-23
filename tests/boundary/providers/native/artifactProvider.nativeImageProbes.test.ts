@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 
 import { peWithoutImportTableFixture } from "../../../fixtures/binaryDiagnostics/peImports.js";
 import { buildGodotPck, pckU64 } from "../../../fixtures/godotPck.js";
@@ -17,34 +17,56 @@ import {
   CPU_X86_64,
   universalMacho,
 } from "../../../fixtures/universalMacho.js";
-import {
-  buildDenoSection,
-  denoElf,
-  denoMachO,
-  denoPe,
-} from "../../../../src/artifacts/deno/DenoStandalone.fixture.js";
 import { createDirectAnalysis } from "../../../../src/composition/directAnalysis.js";
 import { buildManagedPeFixture } from "../../../../src/dotnet/ManagedPe.fixture.js";
 import { artifactInspectionResultSchema } from "../../../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
 
+// Universal Mach-O slice inventory reads the host platform at call time, so a
+// test can select the macOS or another host's reader availability.
+const host = vi.hoisted(() => ({ platform: process.platform }));
+vi.mock("../../../../src/platform/HostPlatform.js", () => ({
+  HOST_PLATFORM: Object.freeze({
+    get platform() {
+      return host.platform;
+    },
+    architecture: process.arch,
+  }),
+}));
+
 const { runProviderAnalysis } = createDirectAnalysis({});
 
-const ELF_STATIC_READERS = [
-  "inspect_elf_dependencies",
-  "inspect_native_exports",
-  "inspect_binary_hardening",
-  "audit_release_exposure",
-];
+// The complete execution-free reader list each native format proposes before
+// a deep provider. Consumer tests assert carrier ordering through
+// tests/fixtures/nativeCarrierProbes.ts instead of repeating these lists.
+const STATIC_READERS = {
+  elf: [
+    "inspect_elf_dependencies",
+    "inspect_native_exports",
+    "inspect_binary_hardening",
+    "audit_release_exposure",
+  ],
+  "mach-o": [
+    "inspect_macho",
+    "inspect_signature",
+    "inspect_binary_hardening",
+    "audit_release_exposure",
+  ],
+  pe: [
+    "inspect_pe_imports",
+    "inspect_native_exports",
+    "inspect_pe_load_config",
+    "inspect_pe_resources",
+    "inspect_binary_hardening",
+    "audit_release_exposure",
+  ],
+} as const;
 
-const PE_STATIC_READERS = [
-  "inspect_pe_imports",
-  "inspect_native_exports",
-  "inspect_pe_load_config",
-  "inspect_pe_resources",
-  "inspect_binary_hardening",
-  "audit_release_exposure",
-];
+const arm64Pe = () => {
+  const bytes = peWithoutImportTableFixture(64);
+  bytes.writeUInt16LE(0xaa64, bytes.readUInt32LE(0x3c) + 4);
+  return bytes;
+};
 
 const inspect = async (name: string, bytes: Buffer) => {
   const directory = await createTestTempDirectory("rea-native-probes-");
@@ -81,29 +103,35 @@ const inspect = async (name: string, bytes: Buffer) => {
 const operations = (probes: readonly { readonly operation: string }[]) =>
   probes.map(({ operation }) => operation);
 
-it("names an ARM64 PE's architecture and its static readers before a deep provider", async () => {
-  const bytes = peWithoutImportTableFixture(64);
-  bytes.writeUInt16LE(0xaa64, bytes.readUInt32LE(0x3c) + 4);
+it.each([
+  ["pe", "arm64", "native.dll", arm64Pe],
+  ["elf", "x86_64", "tool", () => minimalElfImage()],
+  ["mach-o", "arm64", "tool", () => minimalMachoImage()],
+] as const)(
+  "names a %s image's %s header architecture and proposes its static readers before a deep provider",
+  async (format, architecture, name, bytes) => {
+    const inspected = await inspect(name, bytes());
 
-  const inspected = await inspect("native.dll", bytes);
-
-  expect(inspected).toMatchObject({
-    format: "pe",
-    subject: { kind: "file", format: "pe", architecture: "arm64" },
-    rootNode: ["pe", "arm64"],
-    hypotheses: [],
-  });
-  // No CLI header is declared, so managed inspection is not proposed.
-  expect(operations(inspected.probes)).toEqual([
-    ...PE_STATIC_READERS,
-    "open_binary",
-  ]);
-  expect(
-    inspected.probes.filter(({ authority }) => authority !== "artifact-bytes"),
-  ).toEqual([
-    { operation: "open_binary", authority: "native-analysis-provider" },
-  ]);
-});
+    expect(inspected).toMatchObject({
+      format,
+      subject: { kind: "file", format, architecture },
+      rootNode: [format, architecture],
+      hypotheses: [],
+    });
+    // No package or CLI header is declared, so only native readers apply.
+    expect(operations(inspected.probes)).toEqual([
+      ...STATIC_READERS[format],
+      "open_binary",
+    ]);
+    expect(
+      inspected.probes.filter(
+        ({ authority }) => authority !== "artifact-bytes",
+      ),
+    ).toEqual([
+      { operation: "open_binary", authority: "native-analysis-provider" },
+    ]);
+  },
+);
 
 it("leads with managed inspection only when the PE declares a CLI header", async () => {
   const inspected = await inspect("Fixture.dll", buildManagedPeFixture());
@@ -111,7 +139,7 @@ it("leads with managed inspection only when the PE declares a CLI header", async
   expect(inspected.subject).toMatchObject({ architecture: "x86" });
   expect(operations(inspected.probes)).toEqual([
     "inspect_managed_artifact",
-    ...PE_STATIC_READERS,
+    ...STATIC_READERS.pe,
     "open_binary",
   ]);
   // A pure managed assembly needs no deep native provider.
@@ -124,8 +152,7 @@ it("leads with managed inspection only when the PE declares a CLI header", async
 });
 
 it("names each archived image's header architecture and keeps an undecoded machine unknown", async () => {
-  const arm64 = peWithoutImportTableFixture(64);
-  arm64.writeUInt16LE(0xaa64, arm64.readUInt32LE(0x3c) + 4);
+  const arm64 = arm64Pe();
   // IMAGE_FILE_MACHINE_LOONGARCH64 frames as PE, but REA does not decode it.
   const loong = peWithoutImportTableFixture(64);
   loong.writeUInt16LE(0x6264, loong.readUInt32LE(0x3c) + 4);
@@ -167,41 +194,11 @@ it("names each archived image's header architecture and keeps an undecoded machi
   });
 });
 
-it("proposes ELF static readers with the header architecture", async () => {
-  const inspected = await inspect("tool", minimalElfImage());
-
-  expect(inspected).toMatchObject({
-    format: "elf",
-    subject: { architecture: "x86_64" },
-    rootNode: ["elf", "x86_64"],
+const universalInspection = async (platform: NodeJS.Platform) => {
+  host.platform = platform;
+  onTestFinished(() => {
+    host.platform = process.platform;
   });
-  expect(operations(inspected.probes)).toEqual([
-    "inspect_elf_dependencies",
-    "inspect_native_exports",
-    "inspect_binary_hardening",
-    "audit_release_exposure",
-    "open_binary",
-  ]);
-});
-
-it("proposes Mach-O static readers with the header architecture", async () => {
-  const inspected = await inspect("tool", minimalMachoImage());
-
-  expect(inspected).toMatchObject({
-    format: "mach-o",
-    subject: { architecture: "arm64" },
-    rootNode: ["mach-o", "arm64"],
-  });
-  expect(operations(inspected.probes)).toEqual([
-    "inspect_macho",
-    "inspect_signature",
-    "inspect_binary_hardening",
-    "audit_release_exposure",
-    "open_binary",
-  ]);
-});
-
-it("names each universal slice's architecture and the selected slice in the subject", async () => {
   const universal = universalMacho([
     { bytes: minimalMachoImage(), cpuType: CPU_X86_64, cpuSubtype: 3 },
     { bytes: minimalMachoImage(), cpuType: CPU_ARM64, cpuSubtype: 0 },
@@ -221,32 +218,45 @@ it("names each universal slice's architecture and the selected slice in the subj
   const inventory = inspection.substeps[0]!.evidence.normalized_result;
   const nodeOf = (artifactId: string | null) =>
     inventory.nodes.find(({ artifact_id }) => artifact_id === artifactId);
-  // The container holds several CPU families, so its own node names none;
-  // each slice node names its header's.
-  expect(
-    inventory.occurrences
+  // The header selects the host's slice without a slice reader, and the
+  // static readers apply either way.
+  expect(evidence.subject?.identity).toMatchObject({
+    format: "mach-o-universal",
+    architecture: process.arch === "arm64" ? "arm64" : "x86_64",
+  });
+  expect(operations(inspection.next_probes)).toEqual([
+    ...STATIC_READERS["mach-o"],
+    "open_binary",
+  ]);
+  return {
+    coverage: inventory.coverage,
+    // The container holds several CPU families, so its own node names none.
+    occurrences: inventory.occurrences
       .map(({ entry_kind, artifact_id }) => [
         entry_kind,
         nodeOf(artifact_id)?.architecture,
       ])
       .sort(),
-  ).toEqual([
-    ["file", null],
-    ["slice", "arm64"],
-    ["slice", "x86_64"],
-  ]);
-  const selected = process.arch === "arm64" ? "arm64" : "x86_64";
-  expect(evidence.subject?.identity).toMatchObject({
-    format: "mach-o-universal",
-    architecture: selected,
-  });
-  expect(operations(inspection.next_probes)).toEqual([
-    "inspect_macho",
-    "inspect_signature",
-    "inspect_binary_hardening",
-    "audit_release_exposure",
-    "open_binary",
-  ]);
+  };
+};
+
+// Slice inventory runs native lipo, so it is observable only on a macOS host.
+it.runIf(process.platform === "darwin")(
+  "names each universal slice's architecture on macOS",
+  async () => {
+    const { occurrences } = await universalInspection("darwin");
+    expect(occurrences).toEqual([
+      ["file", null],
+      ["slice", "arm64"],
+      ["slice", "x86_64"],
+    ]);
+  },
+);
+
+it("keeps universal slice inventory unknown without the macOS slice reader", async () => {
+  const { coverage, occurrences } = await universalInspection("linux");
+  expect(coverage).toEqual({ scope: "container-entries", status: "unknown" });
+  expect(occurrences).toEqual([["file", null]]);
 });
 
 it("keeps the carrier's architecture on its bytes, not on the embedded package subject", async () => {
@@ -270,44 +280,7 @@ it("keeps the carrier's architecture on its bytes, not on the embedded package s
   });
   // The file is both a package and an ELF, so the carrier's readers remain.
   expect(operations(inspected.probes)).toEqual([
-    ...ELF_STATIC_READERS,
+    ...STATIC_READERS.elf,
     "open_binary",
   ]);
 });
-
-it.each([
-  ["elf", denoElf, ["inspect_elf_dependencies", "inspect_native_exports"]],
-  ["mach-o", denoMachO, ["inspect_macho", "inspect_signature"]],
-  [
-    "pe",
-    (section: Buffer) => denoPe([section]),
-    [
-      "inspect_pe_imports",
-      "inspect_native_exports",
-      "inspect_pe_load_config",
-      "inspect_pe_resources",
-    ],
-  ],
-] as const)(
-  "ranks a %s carrier's native readers after its package reader",
-  async (_format, carrier, formatReaders) => {
-    const contents = "throw new Error('must not execute');\n";
-    const section = buildDenoSection({
-      vfsFileData: Buffer.from(contents),
-      vfs: [{ File: { n: "main.ts", o: [0, contents.length], u: true } }],
-    });
-
-    const inspected = await inspect("app", carrier(section));
-
-    expect(inspected.format).toBe("deno-standalone");
-    expect(inspected.probes).toEqual([
-      { operation: "extract_artifact", authority: "artifact-bytes" },
-      ...[
-        ...formatReaders,
-        "inspect_binary_hardening",
-        "audit_release_exposure",
-      ].map((operation) => ({ operation, authority: "artifact-bytes" })),
-      { operation: "open_binary", authority: "native-analysis-provider" },
-    ]);
-  },
-);

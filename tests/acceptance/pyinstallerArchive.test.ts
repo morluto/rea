@@ -14,6 +14,7 @@ import { artifactInspectionResultSchema } from "../../src/domain/artifactInspect
 import { artifactExtractionResultSchema } from "../../src/domain/artifactGraph.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { expectCarrierProbes } from "../fixtures/nativeCarrierProbes.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 const onefile = async (
@@ -174,13 +175,7 @@ cliTest(
     );
     expect(inspection.subject.root_format).toBe("pyinstaller");
     // The archive has no package reader; its ELF carrier keeps its readers.
-    expect(inspection.next_probes.map(({ operation }) => operation)).toEqual([
-      "inspect_elf_dependencies",
-      "inspect_native_exports",
-      "inspect_binary_hardening",
-      "audit_release_exposure",
-      "open_binary",
-    ]);
+    expectCarrierProbes(inspection.next_probes, "elf");
     const inventory = inspection.substeps[0]?.evidence.normalized_result;
     expect(inventory?.manifest.root_format).toBe("pyinstaller");
     const root = inventory?.occurrences.find(
