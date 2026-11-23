@@ -1227,3 +1227,39 @@ it.skipIf(process.platform === "win32").each([
     if (status !== "0") expect(result.stdout).toContain(`(exit ${status})`);
   },
 );
+
+it("wires changed-file typed lint into fast Static checks", async () => {
+  const ci = await workflow();
+  const changesOutputs = z
+    .object({ outputs: z.record(z.string(), z.string()) })
+    .parse(ci.jobs.changes).outputs;
+  expect(changesOutputs.typed_lint_files).toBe(
+    "${{ steps.plan.outputs.typed_lint_files }}",
+  );
+  const staticSteps = z
+    .array(
+      z
+        .object({
+          name: z.string().optional(),
+          if: z.string().optional(),
+          env: z.record(z.string(), z.string()).optional(),
+          run: z.string().optional(),
+        })
+        .passthrough(),
+    )
+    .parse(z.object({ steps: z.unknown() }).parse(ci.jobs.static).steps);
+  const typedLintStep = staticSteps.find(
+    (step) => step.name === "Run typed lint on changed files",
+  );
+  expect(typedLintStep).toMatchObject({
+    env: {
+      CI_TYPED_LINT_FILES: "${{ needs.changes.outputs.typed_lint_files }}",
+    },
+    run: "node scripts/ci/static-check-report.mjs typed-lint-changed",
+  });
+  expect(typedLintStep?.if).toContain("needs.changes.outputs.tier == 'fast'");
+  expect(typedLintStep?.if).toContain("needs.changes.outputs.code == 'true'");
+  expect(typedLintStep?.if).toContain(
+    "needs.changes.outputs.typed_lint_files != '[]'",
+  );
+});
