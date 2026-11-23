@@ -12,7 +12,10 @@ import {
   createGlobalPathReader,
   type GlobalReferenceRead,
 } from "./javascriptSemanticAmbientWrites.js";
-import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
+import {
+  traverseJavaScriptAst,
+  traverseJavaScriptValueAst,
+} from "./javascriptSemanticTraversal.js";
 import {
   clearSemanticModuleSourceQueries,
   semanticModuleSourceQueries,
@@ -404,6 +407,15 @@ const selectedRequireSourcesAt = (
       "loader" | "sourceRelative" | "sourceRelativePath" | "loaderAuthority"
     >
   | undefined => {
+  // A selected loader is a bundler factory binding or comes from a loader
+  // this program names. Without either, no value can select one, and a walk
+  // that exhausted its budget would report an unknown loader that cannot
+  // exist.
+  if (
+    factoryBindingIds.size === 0 &&
+    !programMayNameCommonJsLoader(state.program)
+  )
+    return undefined;
   const pending: ModuleObjectSource[] = [{ node: root, path: [] }];
   const seen = new WeakMap<t.Node, Set<string>>();
   let count = 0;
@@ -1191,6 +1203,115 @@ export const isCommonJsRequireDelegate = (
   hasCommonJsModuleSource(node, state, includeUnknown, "delegate", readAt) ===
   "possible";
 
+/** Names whose presence anywhere can denote or select a CommonJS loader. */
+const COMMONJS_LOADER_NAMES: ReadonlySet<string> = new Set([
+  "require",
+  "module",
+  "mainModule",
+  "createRequire",
+  "getBuiltinModule",
+  // Global code can name a loader this program's syntax does not.
+  "eval",
+  "Function",
+]);
+
+/** String keys that select a loader; `"module"` is also an ordinary value. */
+const COMMONJS_LOADER_KEYS: ReadonlySet<string> = new Set([
+  "require",
+  "mainModule",
+  "createRequire",
+  "getBuiltinModule",
+]);
+
+const COMMONJS_LOADER_MODULES: ReadonlySet<string> = new Set([
+  "module",
+  "node:module",
+]);
+
+const programLoaderCapability = new WeakMap<t.Program, boolean>();
+
+/**
+ * Whether this program names anything a CommonJS module object or loader
+ * delegate can come from: `require`, `module`, a `mainModule` member, the
+ * `module` builtin, `process` used as a value, or global code. Every
+ * identity the loader walk recognizes is rooted in one of these, so a
+ * program with none cannot contain one, and a walk that only exhausted its
+ * budget there would report a loader that cannot exist. The answer depends
+ * on syntax alone and is computed once per program.
+ *
+ * `typeof process` and a static member of `process` do not make it a value
+ * that can be aliased or indexed dynamically; a `mainModule` member is named.
+ */
+const programMayNameCommonJsLoader = (program: t.Program): boolean => {
+  const known = programLoaderCapability.get(program);
+  if (known !== undefined) return known;
+  let capable = false;
+  traverseJavaScriptAst(program, {
+    skip: () => capable,
+    enter: (node, parent) => {
+      if (nodeMayNameCommonJsLoader(node, parent)) capable = true;
+    },
+  });
+  programLoaderCapability.set(program, capable);
+  return capable;
+};
+
+const nodeMayNameCommonJsLoader = (
+  node: t.Node,
+  parent: t.Node | null,
+): boolean => {
+  if (t.isJSXIdentifier(node)) return COMMONJS_LOADER_NAMES.has(node.name);
+  if (t.isIdentifier(node))
+    return (
+      COMMONJS_LOADER_NAMES.has(node.name) ||
+      (node.name === "process" && !isInertProcessMention(node, parent))
+    );
+  if (t.isStringLiteral(node))
+    return (
+      COMMONJS_LOADER_KEYS.has(node.value) ||
+      (COMMONJS_LOADER_MODULES.has(node.value) &&
+        isModuleSpecifierPosition(node, parent))
+    );
+  if (t.isTemplateElement(node))
+    return COMMONJS_LOADER_KEYS.has(node.value.cooked ?? node.value.raw);
+  return (
+    t.isTSImportEqualsDeclaration(node) || t.isTSExternalModuleReference(node)
+  );
+};
+
+/**
+ * `typeof process`, a static member of `process`, or `process` as a property
+ * name: none lets the process object be aliased or indexed dynamically.
+ */
+const isInertProcessMention = (
+  node: t.Identifier,
+  parent: t.Node | null,
+): boolean =>
+  (t.isUnaryExpression(parent, { operator: "typeof" }) &&
+    parent.argument === node) ||
+  ((t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) &&
+    !parent.computed) ||
+  ((t.isObjectProperty(parent) ||
+    t.isObjectMethod(parent) ||
+    t.isClassMethod(parent) ||
+    t.isClassProperty(parent)) &&
+    parent.key === node &&
+    !parent.computed);
+
+/** A string that names the module an import, re-export or `import()` loads. */
+const isModuleSpecifierPosition = (
+  node: t.StringLiteral,
+  parent: t.Node | null,
+): boolean =>
+  ((t.isImportDeclaration(parent) ||
+    t.isExportNamedDeclaration(parent) ||
+    t.isExportAllDeclaration(parent) ||
+    t.isImportExpression(parent)) &&
+    parent.source === node) ||
+  ((t.isCallExpression(parent) || t.isOptionalCallExpression(parent)) &&
+    t.isImport(parent.callee) &&
+    parent.arguments[0] === node);
+
 /**
  * Complete member-mutation facts fix every input of this query until the next
  * value-cache or require-delegate invalidation, so an identical query reuses
@@ -1203,6 +1324,7 @@ const hasCommonJsModuleSource = (
   target: "module" | "delegate",
   readAt?: t.Node,
 ): ModuleSourceMatch => {
+  if (!programMayNameCommonJsLoader(state.program)) return "no-match";
   if (!state.memberMutationFactsComplete)
     return walkCommonJsModuleSource(
       node,

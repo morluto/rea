@@ -917,10 +917,6 @@ export class GdbSessionManager {
                 ...startupEvidencePayload,
                 records: [...startupEvidencePayload.records],
               },
-              rawResult: {
-                ...startupEvidencePayload,
-                records: [...startupEvidencePayload.records],
-              },
               limitations: [
                 "No usable debugger session became ready during GDB startup.",
                 "GDB startup failed before a usable session could be established; captured startup records are incomplete.",
@@ -1130,22 +1126,6 @@ export class GdbSessionManager {
                   : {}),
                 completion_status: result.completion_status,
               },
-              rawResult: {
-                command,
-                mi: result.mi,
-                records: [...result.records],
-                console: result.console,
-                target: result.target,
-                log: result.log,
-                output_truncated: result.output_truncated,
-                ...(result.output_limits === undefined
-                  ? {}
-                  : { output_limits: result.output_limits }),
-                ...(result.output_invalid_utf8
-                  ? { output_invalid_utf8: true as const }
-                  : {}),
-                completion_status: result.completion_status,
-              },
               limitations: [
                 "The active GDB inferior identity is not established by the debugger session identifier.",
                 ...(result.mi.length === 0
@@ -1185,7 +1165,6 @@ export class GdbSessionManager {
                 operation: "gdb_console",
                 parameters: { session_id: sessionId, command },
                 result: { ...result, records: [...result.records] },
-                rawResult: { ...result, records: [...result.records] },
                 limitations: [
                   "The active GDB inferior identity is not established by the debugger session identifier.",
                   "GDB exited before returning a correlated MI result record; only records retained for the active command are returned raw.",
@@ -1823,7 +1802,6 @@ export class GdbSessionManager {
               command: partial.command,
             },
             result: { ...partial, records: [...partial.records] },
-            rawResult: { ...partial, records: [...partial.records] },
             limitations: [
               "The active GDB inferior identity is not established by the debugger session identifier.",
               "The GDB MI protocol failed; retained records are partial and command completion is unknown.",
@@ -2073,7 +2051,6 @@ export class GdbSessionManager {
             command: pending.evidenceCommand,
           },
           result: { ...partial, records: [...partial.records] },
-          rawResult: { ...partial, records: [...partial.records] },
           limitations: [
             "The active GDB inferior identity is not established by the debugger session identifier.",
             `The GDB command exceeded its ${String(acceptedDeadline.value)} ms deadline (deadlineExpired). ${debuggerAdmissionRecovery(acceptedDeadline)} Retained MI and stream records are partial and command completion is unknown.`,
@@ -2165,7 +2142,6 @@ export class GdbSessionManager {
             command: pending.evidenceCommand,
           },
           result: { ...partial, records: [...partial.records] },
-          rawResult: { ...partial, records: [...partial.records] },
           limitations: [
             "The active GDB inferior identity is not established by the debugger session identifier.",
             "The GDB command was cancelled; retained MI records are partial and command completion is unknown.",
