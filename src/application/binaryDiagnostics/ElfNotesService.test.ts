@@ -131,3 +131,21 @@ it("retains a completed observation when the caller cancels as the provider comp
     normalized_result: report,
   });
 });
+
+it("keeps a failed report for a different artifact outside admitted Evidence", async () => {
+  const foreignReport = {
+    ...report,
+    artifact: { ...report.artifact, path: "/artifacts/other" },
+  };
+  const failure = new AnalysisCancelledError("inspect_elf_notes", {
+    partialObservation: foreignReport,
+  });
+  const service = new ElfNotesService({
+    identity,
+    inspect: async () => ({ ok: false, error: failure }),
+  });
+  const result = await service.inspect({ path });
+  if (result.ok) throw new Error("Expected the original provider failure");
+  expect(result.error).toBe(failure);
+  expect(result.error.partialObservation).toBe(foreignReport);
+});
