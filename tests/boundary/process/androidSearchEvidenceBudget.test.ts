@@ -90,12 +90,15 @@ test("delivers bounded search_android_classes Evidence while retaining the compl
   await server.connect(serverTransport);
   await client.connect(clientTransport);
 
-  const search = async (query: string) =>
+  const search = async (
+    query: string,
+    paging: { readonly limit?: number; readonly offset?: number } = {},
+  ) =>
     parseEvidence(
       (
         await client.callTool({
           name: "search_android_classes",
-          arguments: { path: apk, query },
+          arguments: { path: apk, query, ...paging },
         })
       ).structuredContent,
     );
@@ -211,6 +214,25 @@ test("delivers bounded search_android_classes Evidence while retaining the compl
       },
     },
   ]);
+
+  const page = await search("", { offset: 1, limit: 2 });
+  expect(page.normalized_result).toMatchObject({
+    matches: ["fixture.Class0", "fixture.Class1"],
+    coverage: "partial",
+  });
+  expect(listClassCalls(page.raw_result)).toHaveLength(1);
+
+  const largePage = await search("Class7094", { limit: 20_000 });
+  expect(largePage.normalized_result).toMatchObject({
+    matches: ["fixture.Class7094"],
+    coverage: "complete",
+  });
+
+  const emptyPage = await search("fixture.Missing", { offset: 1 });
+  expect(emptyPage.normalized_result).toMatchObject({
+    matches: [],
+    coverage: "complete",
+  });
 
   await client.close();
   await server.close();

@@ -46,7 +46,6 @@ export const androidInputSchemas = {
     limit: z
       .int()
       .positive()
-      .max(10_000)
       .optional()
       .describe(
         "Maximum number of matching class names to return; omit to return all matches",

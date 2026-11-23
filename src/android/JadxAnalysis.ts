@@ -346,9 +346,7 @@ const searchClasses = async (
         : matches.slice(matchOffset)
       : matches.slice(matchOffset, matchOffset + matchLimit);
   const truncated =
-    matchOffset > 0 ||
-    pagedMatches.length < matches.length ||
-    offset < loaded.class_count;
+    pagedMatches.length < matches.length || offset < loaded.class_count;
   const occurrences = new Map<string, number>();
   for (const name of pagedMatches)
     occurrences.set(name, (occurrences.get(name) ?? 0) + 1);
