@@ -17,12 +17,25 @@ import {
   CPU_X86_64,
   universalMacho,
 } from "../../../fixtures/universalMacho.js";
+import {
+  buildDenoSection,
+  denoElf,
+  denoMachO,
+  denoPe,
+} from "../../../../src/artifacts/deno/DenoStandalone.fixture.js";
 import { createDirectAnalysis } from "../../../../src/composition/directAnalysis.js";
 import { buildManagedPeFixture } from "../../../../src/dotnet/ManagedPe.fixture.js";
 import { artifactInspectionResultSchema } from "../../../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
 
 const { runProviderAnalysis } = createDirectAnalysis({});
+
+const ELF_STATIC_READERS = [
+  "inspect_elf_dependencies",
+  "inspect_native_exports",
+  "inspect_binary_hardening",
+  "audit_release_exposure",
+];
 
 const PE_STATIC_READERS = [
   "inspect_pe_imports",
@@ -241,9 +254,52 @@ it("keeps the carrier's architecture on its bytes, not on the embedded package s
 
   // The subject names the package inventory read; the root node names the
   // stored bytes, which are the x86-64 ELF carrier.
-  expect(await inspect("engine", bytes)).toMatchObject({
+  const inspected = await inspect("engine", bytes);
+  expect(inspected).toMatchObject({
     format: "godot-pck",
     subject: { format: "godot-pck", architecture: null },
     rootNode: ["elf", "x86_64"],
   });
+  // The file is both a package and an ELF, so the carrier's readers remain.
+  expect(operations(inspected.probes)).toEqual([
+    ...ELF_STATIC_READERS,
+    "open_binary",
+  ]);
 });
+
+it.each([
+  ["elf", denoElf, ["inspect_elf_dependencies", "inspect_native_exports"]],
+  ["mach-o", denoMachO, ["inspect_macho", "inspect_signature"]],
+  [
+    "pe",
+    (section: Buffer) => denoPe([section]),
+    [
+      "inspect_pe_imports",
+      "inspect_native_exports",
+      "inspect_pe_load_config",
+      "inspect_pe_resources",
+    ],
+  ],
+] as const)(
+  "ranks a %s carrier's native readers after its package reader",
+  async (_format, carrier, formatReaders) => {
+    const contents = "throw new Error('must not execute');\n";
+    const section = buildDenoSection({
+      vfsFileData: Buffer.from(contents),
+      vfs: [{ File: { n: "main.ts", o: [0, contents.length], u: true } }],
+    });
+
+    const inspected = await inspect("app", carrier(section));
+
+    expect(inspected.format).toBe("deno-standalone");
+    expect(inspected.probes).toEqual([
+      { operation: "extract_artifact", authority: "artifact-bytes" },
+      ...[
+        ...formatReaders,
+        "inspect_binary_hardening",
+        "audit_release_exposure",
+      ].map((operation) => ({ operation, authority: "artifact-bytes" })),
+      { operation: "open_binary", authority: "native-analysis-provider" },
+    ]);
+  },
+);

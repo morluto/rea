@@ -60,6 +60,7 @@ import { freezeJsonSnapshot } from "../domain/immutableJson.js";
 import {
   artifactInspectionSources,
   createArtifactInspection,
+  type ArtifactInspectionRootImage,
 } from "../domain/artifactInspection.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type {
@@ -538,7 +539,7 @@ class ArtifactClient implements AnalysisClient {
     const result = freezeJsonSnapshot(
       createArtifactInspection(
         inventoryEvidence,
-        rootPeManaged(this.target, inventory.manifest),
+        rootImage(this.target, inventory.manifest),
       ),
     );
     await options?.progress?.report({
@@ -607,14 +608,19 @@ const isArtifactOperation = (
     operation as (typeof ARTIFACT_ANALYSIS_OPERATIONS)[number],
   );
 
-/** The CLI header declaration target admission parsed for a PE root. */
-const rootPeManaged = (
+/** The native image target admission parsed from the inventory root's bytes. */
+const rootImage = (
   target: BinaryTarget,
   manifest: { readonly root_sha256: string },
-): boolean | undefined =>
-  target.format === "pe" && manifest.root_sha256 === target.sha256
-    ? target.managed
+): ArtifactInspectionRootImage | undefined => {
+  if (manifest.root_sha256 !== target.sha256) return undefined;
+  if (target.format === "pe") return { format: "pe", managed: target.managed };
+  return target.format === "elf" ||
+    target.format === "mach-o" ||
+    target.format === "mach-o-universal"
+    ? { format: target.format }
     : undefined;
+};
 
 /**
  * The inventory root as an Evidence subject. When the root is the open
