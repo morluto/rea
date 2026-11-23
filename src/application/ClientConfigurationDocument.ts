@@ -19,6 +19,7 @@ import {
 } from "./DshCordisPatch.js";
 import {
   editHermesConfigurationYaml,
+  HermesConfigurationEditError,
   parseHermesConfigurationYaml,
   stringifyHermesConfigurationYaml,
 } from "./HermesConfigurationYaml.js";
@@ -435,7 +436,10 @@ const readClientDocument = (
   };
 };
 
-type NativeDocumentError = CordisDocumentError | GooseConfigurationYamlError;
+type NativeDocumentError =
+  | CordisDocumentError
+  | GooseConfigurationYamlError
+  | HermesConfigurationEditError;
 
 interface NativeDocumentFailure {
   readonly kind: "document";
@@ -445,7 +449,8 @@ interface NativeDocumentFailure {
 
 const isNativeDocumentError = (cause: unknown): cause is NativeDocumentError =>
   cause instanceof CordisDocumentError ||
-  cause instanceof GooseConfigurationYamlError;
+  cause instanceof GooseConfigurationYamlError ||
+  cause instanceof HermesConfigurationEditError;
 
 export type ClientConfigurationParseFailure =
   | NativeDocumentFailure
