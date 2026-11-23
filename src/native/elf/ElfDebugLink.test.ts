@@ -7,6 +7,8 @@ import {
   ELF_DEBUG_LINK_NAME_SEGMENT_LIMITATION,
   elfDebugLinkSchema,
   inspectElfDebugLinkInputSchema,
+  MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES,
+  MAX_ELF_DEBUG_LINK_NAME_BYTES,
 } from "../../domain/native/elfDebugLink.js";
 import { elfNote, gnuBuildIdNote } from "./ElfNotes.fixture.js";
 import { readElfImage } from "../../domain/native/elfImage.js";
@@ -34,10 +36,11 @@ const inputFor = (extra: { readonly max_entries?: number } = {}) =>
 const parse = async (
   bytes: Buffer,
   extra: { readonly max_entries?: number } = {},
+  readRange?: Parameters<typeof elfDebugLinkByteSource>[1],
 ) =>
   elfDebugLinkSchema.parse(
     await parseElfDebugLinkFromHandle(
-      elfDebugLinkByteSource(bytes),
+      elfDebugLinkByteSource(bytes, readRange),
       { path: artifactPath, sha256: digest, bytes: bytes.length },
       inputFor(extra),
     ),
@@ -79,39 +82,105 @@ it("reads a little-endian debuglink CRC, build-id, and lookup paths", async () =
   expect(report.verification).toBeNull();
 });
 
-it("keeps the CRC across padding, trailing bytes, and malformed names", async () => {
-  const padded = Buffer.from([0x61, 0x62, 0, 0, 0xef, 0xcd, 0xab, 0x89]);
-  const aligned = Buffer.from([0x61, 0x62, 0x63, 0, 4, 3, 2, 1]);
-  expect(
-    (await parse(elfDebugLinkFixture({ debuglink: padded }))).debuglink,
-  ).toMatchObject({
+it("keeps the CRC across alignment, trailing bytes, and malformed names", async () => {
+  for (const [debuglink, filename, crc32_hex, reason] of [
+    [
+      Buffer.of(0x61, 0x62, 0, 0, 0xef, 0xcd, 0xab, 0x89),
+      "ab",
+      "89abcdef",
+      null,
+    ],
+    [
+      Buffer.of(0x61, 0x62, 0x63, 0, 4, 3, 2, 1, 0xff, 1),
+      "abc",
+      "01020304",
+      null,
+    ],
+    [
+      debuglinkSection("", 0x11223344, true),
+      null,
+      "11223344",
+      "debuglink_empty_name",
+    ],
+    [
+      debuglinkSection(
+        "a".repeat(1024 * 1024 + MAX_ELF_DEBUG_LINK_NAME_BYTES + 513),
+        0x0a0b0c0d,
+        true,
+      ),
+      null,
+      "0a0b0c0d",
+      "debuglink_name_exceeds_limit",
+    ],
+    [Buffer.from("broken"), null, null, "debuglink_unterminated_name"],
+    [Buffer.of(0, 1, 2, 3), null, null, "debuglink_truncated"],
+  ] as const) {
+    const report = await parse(elfDebugLinkFixture({ debuglink }));
+    expect(report.debuglink).toMatchObject({
+      status: reason === null ? "present" : "malformed",
+      filename: filename === null ? null : { text: filename },
+      crc32_hex,
+      reason,
+    });
+  }
+});
+
+it("reads bounded linkage facts from sections with large unused tails", async () => {
+  const name = "d".repeat(MAX_ELF_DEBUG_LINK_NAME_BYTES);
+  const debuglink = Buffer.concat([
+    debuglinkSection(name, 0xaabbccdd, true),
+    Buffer.alloc(64 * 1024),
+  ]);
+  const debugaltlink = debugaltlinkSection(name, Buffer.alloc(64 * 1024, 0xad));
+  const image = elfDebugLinkFixture({ debuglink, debugaltlink });
+  let bytesRead = 0;
+  const report = await parse(image, {}, async (offset, length) => {
+    bytesRead += length;
+    return image.subarray(offset, offset + length);
+  });
+  expect(report.debuglink).toMatchObject({
     status: "present",
-    crc32_hex: "89abcdef",
-    filename: { text: "ab" },
+    filename: { text: name },
+    crc32_hex: "aabbccdd",
+    location: { bytes: debuglink.length },
   });
-  const trailing = Buffer.concat([aligned, Buffer.from([0xff, 0x01])]);
-  expect(
-    (await parse(elfDebugLinkFixture({ debuglink: trailing }))).debuglink
-      .crc32_hex,
-  ).toBe("01020304");
-  const overlong = debuglinkSection("a".repeat(4097), 0x0a0b0c0d, true);
-  expect(
-    (await parse(elfDebugLinkFixture({ debuglink: overlong }))).debuglink,
-  ).toMatchObject({
+  expect(report.debugaltlink).toMatchObject({
     status: "malformed",
-    filename: null,
-    crc32_hex: "0a0b0c0d",
-    reason: "debuglink_name_exceeds_limit",
+    reason: "debugaltlink_build_id_exceeds_limit",
+    filename: { text: name },
+    build_id_hex: null,
+    location: { bytes: debugaltlink.length },
   });
-  const empty = await parse(
-    elfDebugLinkFixture({ debuglink: debuglinkSection("", 0x11223344, true) }),
-  );
-  expect(empty.debuglink).toMatchObject({
-    status: "malformed",
-    filename: null,
-    crc32_hex: "11223344",
-    reason: "debuglink_empty_name",
-  });
+  expect(bytesRead).toBeLessThan(10 * 1024);
+});
+
+it("retains bounded alternate build IDs even after unusable names", async () => {
+  const build = Buffer.alloc(MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES, 0xad);
+  const overlong = "a".repeat(MAX_ELF_DEBUG_LINK_NAME_BYTES + 513);
+  for (const [name, id, visibleName, reason] of [
+    ["alt.dwz", build, "alt.dwz", null],
+    ["", build, null, "debugaltlink_empty_name"],
+    [overlong, build, null, "debugaltlink_name_exceeds_limit"],
+    ["", Buffer.alloc(0), null, "debugaltlink_missing_build_id"],
+    ["alt.dwz", Buffer.alloc(0), "alt.dwz", "debugaltlink_missing_build_id"],
+  ] as const) {
+    const report = await parse(
+      elfDebugLinkFixture({ debugaltlink: debugaltlinkSection(name, id) }),
+    );
+    expect(report.debugaltlink).toMatchObject({
+      status: reason === null ? "present" : "malformed",
+      filename:
+        visibleName === null
+          ? null
+          : { text: visibleName, trust: "observed-untrusted" },
+      build_id_hex:
+        id.length === 0 ? null : "ad".repeat(MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES),
+      reason,
+    });
+    expect(
+      report.lookup_paths.some((entry) => entry.kind === "alt_build_id"),
+    ).toBe(id.length > 0);
+  }
 });
 
 it("keeps a Latin1 debuglink byte as untrusted text", async () => {
@@ -152,47 +221,20 @@ it("does not decode a duplicate, compressed, or nobits debuglink", async () => {
   });
 });
 
-it("reads debugaltlink and reports xz debugdata without decoding it", async () => {
-  const build = Buffer.from("abcd", "hex");
-  const report = await parse(
-    elfDebugLinkFixture({
-      debugaltlink: debugaltlinkSection("alt.dwz", build),
-      debugdata: XZ_DEBUGDATA_STUB,
-    }),
-  );
-  expect(report.debugaltlink).toMatchObject({
-    status: "present",
-    filename: { text: "alt.dwz", trust: "observed-untrusted" },
-    build_id_hex: "abcd",
-  });
-  expect(report.debugdata).toMatchObject({
-    status: "present",
-    xz_magic: true,
-    reason: null,
-  });
-  expect(report.debugdata.location?.bytes).toBe(XZ_DEBUGDATA_STUB.length);
-  expect(
-    report.lookup_paths.some((entry) => entry.kind === "alt_build_id"),
-  ).toBe(true);
-  expect(
-    (
-      await parse(
-        elfDebugLinkFixture({ debugdata: Buffer.from("notxz!", "latin1") }),
-      )
-    ).debugdata,
-  ).toMatchObject({
-    status: "malformed",
-    xz_magic: false,
-    reason: "debugdata_not_xz",
-  });
-  expect(
-    (await parse(elfDebugLinkFixture({ debugdata: Buffer.from([0xfd]) })))
-      .debugdata,
-  ).toMatchObject({
-    status: "malformed",
-    xz_magic: false,
-    reason: "debugdata_truncated",
-  });
+it("reports XZ debugdata from its magic and declared location", async () => {
+  for (const [debugdata, reason] of [
+    [XZ_DEBUGDATA_STUB, null],
+    [Buffer.from("notxz!", "latin1"), "debugdata_not_xz"],
+    [Buffer.of(0xfd), "debugdata_truncated"],
+  ] as const) {
+    const report = await parse(elfDebugLinkFixture({ debugdata }));
+    expect(report.debugdata).toMatchObject({
+      status: reason === null ? "present" : "malformed",
+      xz_magic: reason === null,
+      reason,
+      location: { bytes: debugdata.length },
+    });
+  }
 });
 
 it("reports conflicting build-ids without selecting a lookup path", async () => {

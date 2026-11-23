@@ -71,6 +71,8 @@ const DEBUG_SECTION_NAMES = [
   ".gnu_debugaltlink",
   ".gnu_debugdata",
 ] as const;
+const DEBUGLINK_CRC_BYTES = 4;
+const LINK_NAME_SCAN_CHUNK_BYTES = 1024 * 1024;
 const XZ_MAGIC = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
 
 const fits = (offset: bigint, size: bigint, fileLength: number): boolean =>
@@ -124,15 +126,14 @@ const isRethrownBudget = (cause: unknown): boolean =>
 interface LocatedSection {
   readonly status: SectionStatus;
   readonly location: { offset: number; bytes: number } | null;
-  readonly body: Buffer | null;
   readonly reason: "not_file_backed" | "compressed" | "duplicate" | null;
 }
 
-const locateMetadata = (
+const locateSection = (
   fileLength: number,
   found: readonly ElfSection[],
   namesComplete: boolean,
-): Omit<LocatedSection, "body"> => {
+): LocatedSection => {
   const section = found[0];
   if (section === undefined)
     return {
@@ -177,24 +178,49 @@ const readSourceSlice = async (
       ? source.prefix.subarray(offset, offset + length)
       : source.readRange(offset, length);
 
-const locateFromSource = async (
+const readLinkName = async (
   source: NativeByteSource,
-  found: readonly ElfSection[],
-  namesComplete: boolean,
-  maxBytes?: number,
-): Promise<LocatedSection> => {
-  const meta = locateMetadata(source.size, found, namesComplete);
-  if (meta.status !== "present" || meta.location === null)
-    return { ...meta, body: null };
-  const readLength =
-    maxBytes === undefined
-      ? meta.location.bytes
-      : Math.min(meta.location.bytes, maxBytes);
-  return {
-    ...meta,
-    body: await readSourceSlice(source, meta.location.offset, readLength),
-  };
+  location: NonNullable<LocatedSection["location"]>,
+  tailBytes: number,
+): Promise<{ readonly prefix: Buffer; readonly nul: number }> => {
+  const prefixLength = Math.min(
+    location.bytes,
+    MAX_ELF_DEBUG_LINK_NAME_BYTES + 1 + tailBytes,
+  );
+  const prefix = await readSourceSlice(source, location.offset, prefixLength);
+  const found = prefix.indexOf(0);
+  if (found >= 0 || prefix.length < prefixLength) return { prefix, nul: found };
+
+  // An overlong name can still have a usable CRC or build ID. Find its
+  // actual terminator without retaining the unreportable name.
+  for (let offset = prefix.length; offset < location.bytes;) {
+    const length = Math.min(
+      LINK_NAME_SCAN_CHUNK_BYTES,
+      location.bytes - offset,
+    );
+    const chunk = await readSourceSlice(
+      source,
+      location.offset + offset,
+      length,
+    );
+    const nul = chunk.indexOf(0);
+    if (nul >= 0) return { prefix, nul: offset + nul };
+    if (chunk.length < length) break;
+    offset += length;
+  }
+  return { prefix, nul: -1 };
 };
+
+const readLinkTail = (
+  source: NativeByteSource,
+  prefix: Buffer,
+  sectionOffset: number,
+  offset: number,
+  length: number,
+): Promise<Buffer> =>
+  offset + length <= prefix.length
+    ? Promise.resolve(prefix.subarray(offset, offset + length))
+    : readSourceSlice(source, sectionOffset + offset, length);
 
 const closedDebuglink = (
   status: SectionStatus,
@@ -208,10 +234,11 @@ const closedDebuglink = (
   reason,
 });
 
-const parseDebuglinkFromLocated = (
+const parseDebuglink = async (
+  source: NativeByteSource,
   located: LocatedSection,
   little: boolean,
-): Report["debuglink"] => {
+): Promise<Report["debuglink"]> => {
   if (located.reason === "duplicate")
     return closedDebuglink("malformed", "debuglink_duplicate_section");
   if (located.reason === "not_file_backed")
@@ -222,47 +249,44 @@ const parseDebuglinkFromLocated = (
       "debuglink_section_compressed",
       located.location,
     );
-  if (located.status !== "present" || located.body === null)
+  const { location } = located;
+  if (located.status !== "present" || location === null)
     return closedDebuglink(located.status, null);
-  const body = located.body;
-  const nul = body.indexOf(0);
+  const { prefix, nul } = await readLinkName(
+    source,
+    location,
+    3 + DEBUGLINK_CRC_BYTES, // At most three bytes of alignment before the CRC.
+  );
   if (nul < 0)
     return closedDebuglink(
       "malformed",
       "debuglink_unterminated_name",
-      located.location,
+      location,
     );
-  const crcOffset = (nul + 1 + 3) & ~3;
-  if (crcOffset + 4 > body.length)
-    return closedDebuglink(
-      "malformed",
-      "debuglink_truncated",
-      located.location,
-    );
-  const crc = new BinaryReader(body, little, "elf").u32(crcOffset);
-  const crcHex = crc32Hex(crc);
-  if (nul === 0)
-    return {
-      status: "malformed",
-      location: located.location,
-      filename: null,
-      crc32_hex: crcHex,
-      reason: "debuglink_empty_name",
-    };
-  if (nul > MAX_ELF_DEBUG_LINK_NAME_BYTES)
-    return {
-      status: "malformed",
-      location: located.location,
-      filename: null,
-      crc32_hex: crcHex,
-      reason: "debuglink_name_exceeds_limit",
-    };
+  const crcOffset = Math.ceil((nul + 1) / 4) * 4;
+  if (crcOffset + DEBUGLINK_CRC_BYTES > location.bytes)
+    return closedDebuglink("malformed", "debuglink_truncated", location);
+  const crcBytes = await readLinkTail(
+    source,
+    prefix,
+    location.offset,
+    crcOffset,
+    DEBUGLINK_CRC_BYTES,
+  );
+  if (crcBytes.length !== DEBUGLINK_CRC_BYTES)
+    return closedDebuglink("malformed", "debuglink_truncated", location);
+  const crc = new BinaryReader(crcBytes, little, "elf").u32(0);
+  let reason: Report["debuglink"]["reason"] = null;
+  if (nul === 0) reason = "debuglink_empty_name";
+  else if (nul > MAX_ELF_DEBUG_LINK_NAME_BYTES)
+    reason = "debuglink_name_exceeds_limit";
   return {
-    status: "present",
-    location: located.location,
-    filename: untrustedName(body.toString("latin1", 0, nul)),
-    crc32_hex: crcHex,
-    reason: null,
+    status: reason === null ? "present" : "malformed",
+    location,
+    filename:
+      reason === null ? untrustedName(prefix.toString("latin1", 0, nul)) : null,
+    crc32_hex: crc32Hex(crc),
+    reason,
   };
 };
 
@@ -278,9 +302,10 @@ const closedAlt = (
   reason,
 });
 
-const parseDebugaltlinkFromLocated = (
+const parseDebugaltlink = async (
+  source: NativeByteSource,
   located: LocatedSection,
-): Report["debugaltlink"] => {
+): Promise<Report["debugaltlink"]> => {
   if (located.reason === "duplicate")
     return closedAlt("malformed", "debugaltlink_duplicate_section");
   if (located.reason === "not_file_backed")
@@ -291,70 +316,53 @@ const parseDebugaltlinkFromLocated = (
       "debugaltlink_section_compressed",
       located.location,
     );
-  if (located.status !== "present" || located.body === null)
+  const { location } = located;
+  if (located.status !== "present" || location === null)
     return closedAlt(located.status, null);
-  const body = located.body;
-  const nul = body.indexOf(0);
+  const { prefix, nul } = await readLinkName(
+    source,
+    location,
+    MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES,
+  );
   if (nul < 0)
-    return closedAlt(
-      "malformed",
-      "debugaltlink_unterminated_name",
-      located.location,
-    );
-  const build = body.subarray(nul + 1);
-  const nameOk = nul > 0 && nul <= MAX_ELF_DEBUG_LINK_NAME_BYTES;
+    return closedAlt("malformed", "debugaltlink_unterminated_name", location);
+  const buildBytes = location.bytes - (nul + 1);
   const nameTooLong = nul > MAX_ELF_DEBUG_LINK_NAME_BYTES;
-  const buildOk =
-    build.length > 0 && build.length <= MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES;
-  const buildTooLong = build.length > MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES;
-  const filename = nameOk
-    ? untrustedName(body.toString("latin1", 0, nul))
-    : null;
-  const buildHex = buildOk ? build.toString("hex") : null;
-  if (build.length === 0)
-    return {
-      status: "malformed",
-      location: located.location,
-      filename,
-      build_id_hex: null,
-      reason: "debugaltlink_missing_build_id",
-    };
-  if (nul === 0)
-    return {
-      status: "malformed",
-      location: located.location,
-      filename: null,
-      build_id_hex: buildHex,
-      reason: "debugaltlink_empty_name",
-    };
-  if (nameTooLong)
-    return {
-      status: "malformed",
-      location: located.location,
-      filename: null,
-      build_id_hex: buildTooLong ? null : buildHex,
-      reason: "debugaltlink_name_exceeds_limit",
-    };
-  if (buildTooLong)
-    return {
-      status: "malformed",
-      location: located.location,
-      filename,
-      build_id_hex: null,
-      reason: "debugaltlink_build_id_exceeds_limit",
-    };
+  const buildTooLong = buildBytes > MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES;
+  const filename =
+    nul > 0 && !nameTooLong
+      ? untrustedName(prefix.toString("latin1", 0, nul))
+      : null;
+  const buildHex =
+    buildBytes === 0 || buildTooLong
+      ? null
+      : (
+          await readLinkTail(
+            source,
+            prefix,
+            location.offset,
+            nul + 1,
+            buildBytes,
+          )
+        ).toString("hex");
+  let reason: Report["debugaltlink"]["reason"] = null;
+  if (buildBytes === 0) reason = "debugaltlink_missing_build_id";
+  else if (nul === 0) reason = "debugaltlink_empty_name";
+  else if (nameTooLong) reason = "debugaltlink_name_exceeds_limit";
+  else if (buildTooLong) reason = "debugaltlink_build_id_exceeds_limit";
   return {
-    status: "present",
-    location: located.location,
+    status: reason === null ? "present" : "malformed",
+    location,
     filename,
     build_id_hex: buildHex,
-    reason: null,
+    reason,
   };
 };
 
-const parseDebugdataFromLocated = (
+const parseDebugdata = async (
+  source: NativeByteSource,
   located: LocatedSection,
-): Report["debugdata"] => {
+): Promise<Report["debugdata"]> => {
   if (located.reason === "duplicate")
     return {
       status: "malformed",
@@ -376,25 +384,30 @@ const parseDebugdataFromLocated = (
       xz_magic: null,
       reason: "debugdata_section_compressed",
     };
-  if (located.status !== "present" || located.body === null)
+  const { location } = located;
+  if (located.status !== "present" || location === null)
     return {
       status: located.status,
       location: null,
       xz_magic: null,
       reason: null,
     };
-  const body = located.body;
-  if (body.length < XZ_MAGIC.length)
+  const magicBytes = await readSourceSlice(
+    source,
+    location.offset,
+    Math.min(location.bytes, XZ_MAGIC.length),
+  );
+  if (magicBytes.length < XZ_MAGIC.length)
     return {
       status: "malformed",
-      location: located.location,
+      location,
       xz_magic: false,
       reason: "debugdata_truncated",
     };
-  const magic = body.subarray(0, XZ_MAGIC.length).equals(XZ_MAGIC);
+  const magic = magicBytes.equals(XZ_MAGIC);
   return {
     status: magic ? "present" : "malformed",
-    location: located.location,
+    location,
     xz_magic: magic,
     reason: magic ? null : "debugdata_not_xz",
   };
@@ -975,27 +988,29 @@ export const parseElfDebugLinkFromHandle = async (
     image.section_names_limitation === undefined &&
     sections.every((section) => section.name !== null);
   const little = image.byte_order === "little";
-  const debuglink = parseDebuglinkFromLocated(
-    await locateFromSource(
-      source,
+  const debuglink = await parseDebuglink(
+    source,
+    locateSection(
+      source.size,
       sectionsNamed(sections, ".gnu_debuglink"),
       namesComplete,
     ),
     little,
   );
-  const debugaltlink = parseDebugaltlinkFromLocated(
-    await locateFromSource(
-      source,
+  const debugaltlink = await parseDebugaltlink(
+    source,
+    locateSection(
+      source.size,
       sectionsNamed(sections, ".gnu_debugaltlink"),
       namesComplete,
     ),
   );
-  const debugdata = parseDebugdataFromLocated(
-    await locateFromSource(
-      source,
+  const debugdata = await parseDebugdata(
+    source,
+    locateSection(
+      source.size,
       sectionsNamed(sections, ".gnu_debugdata"),
       namesComplete,
-      XZ_MAGIC.length,
     ),
   );
   const observed = observeBuildId(Buffer.alloc(0), input, notes);
