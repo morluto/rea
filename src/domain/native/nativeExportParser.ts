@@ -810,11 +810,11 @@ function* parsePeExportSteps(
     if (exportNames !== undefined)
       for (const name of exportNames) {
         retain.row(target.forwarder);
-        exports.push({ name, ordinal, ...target });
+        exports.push({ name, ordinal, rva, ...target });
       }
     else if (!namedFunctions.has(index)) {
       retain.row(target.forwarder);
-      exports.push({ name: null, ordinal, ...target });
+      exports.push({ name: null, ordinal, rva, ...target });
     }
   }
   return {
