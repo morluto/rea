@@ -1401,93 +1401,156 @@ export interface ElfNoteTableWalk {
   readonly alignment: number | bigint;
 }
 
-export interface ElfWalkedNote {
-  readonly owner: string;
-  readonly type: number;
-  readonly descriptor: Buffer;
-  readonly descriptorOffset: number;
-}
-
 export interface GnuPropertyWord {
   readonly value: number;
   readonly offset: number;
   readonly conflict: boolean;
 }
 
-/** Walk note tables with the owner's alignment, entry budget, and cancellation. */
-export const walkElfNoteTables = (
-  bytes: Buffer,
+type NoteRangeRead = {
+  readonly kind: "read";
+  readonly offset: number;
+  readonly length: number;
+};
+const NOTE_READ_BYTES = 65536;
+
+const readNoteWindow = function* (
+  offset: number,
+  length: number,
+): Generator<NoteRangeRead, Buffer, Buffer> {
+  const bytes = yield { kind: "read", offset, length };
+  if (bytes.length !== length) fail("ELF note range is truncated.");
+  return bytes;
+};
+
+/** Frame all admitted notes, then decode GNU properties without retaining payloads. */
+export function* readGnuPropertyWordsSteps(
+  fileSize: number,
   little: boolean,
   tables: readonly ElfNoteTableWalk[],
   maxEntries: number,
+  propertyAlign: number,
   signal?: AbortSignal,
-): ElfWalkedNote[] => {
+): Generator<NoteRangeRead, Map<number, GnuPropertyWord>, Buffer> {
   const text: TextBudget = {
-    limit: Math.max(bytes.length, 1),
+    limit: Math.max(fileSize, 1),
     used: 0,
     hashed: 0,
     scanned: 0,
     hashes: new Map(),
     scans: new Map(),
   };
-  const examined = { count: 0 };
-  const notes: ElfWalkedNote[] = [];
+  const propertyRanges: ElfNoteSpan[] = [];
+  let examined = 0;
   for (const table of tables) {
-    assertArtifactReadActive(signal);
-    requireElfRange(bytes.length, table.offset, table.size);
-    for (const note of parseNoteStreamFromTable(
-      bytes.subarray(table.offset, table.offset + table.size),
-      table.offset,
-      little,
-      noteAlignment(table.alignment),
-      maxEntries,
-      examined,
-      text,
-      signal,
-    ))
-      notes.push({
-        owner: note.owner,
-        type: note.type,
-        descriptor: note.descriptor,
-        descriptorOffset: note.descriptor_offset,
-      });
+    requireElfRange(fileSize, table.offset, table.size);
+    const end = table.offset + table.size;
+    const alignment = noteAlignment(table.alignment);
+    let cursor = table.offset;
+    let window = Buffer.alloc(0) as Buffer;
+    let base = cursor;
+    while (end - cursor >= ELF_NOTE_HEADER_BYTES) {
+      assertArtifactReadActive(signal);
+      if (
+        cursor < base ||
+        cursor + ELF_NOTE_HEADER_BYTES > base + window.length
+      ) {
+        base = cursor;
+        window = yield* readNoteWindow(
+          cursor,
+          Math.min(NOTE_READ_BYTES, end - cursor),
+        );
+      }
+      const frame = readElfNoteFrame(
+        window,
+        little,
+        alignment,
+        end - cursor,
+        cursor - base,
+      );
+      if (!frame.ok) return fail(frame.error.message);
+      if (frame.value.framing !== "complete")
+        fail("ELF note entry exceeds its table.");
+      if (++examined > maxEntries)
+        throw decodeLimit(
+          "elf-notes",
+          `ELF note tables exceed the ${String(maxEntries)}-entry budget.`,
+          { name: "max_entries", maximum: maxEntries, required: examined },
+        );
+      const { namesz, descsz, type, descriptor, next } = frame.value;
+      chargeText(text, namesz * 2);
+      const nameAt = cursor + ELF_NOTE_HEADER_BYTES;
+      let ownerBytes = 0;
+      let gnu = false;
+      while (ownerBytes < namesz) {
+        assertArtifactReadActive(signal);
+        const at = nameAt + ownerBytes;
+        const available = base + window.length - at;
+        const cached = available >= Math.min(4, namesz - ownerBytes);
+        const bytes = cached
+          ? window.subarray(
+              at - base,
+              at - base + Math.min(namesz - ownerBytes, available),
+            )
+          : yield* readNoteWindow(
+              at,
+              Math.min(NOTE_READ_BYTES, namesz - ownerBytes),
+            );
+        const nul = bytes.indexOf(0);
+        const length = nul < 0 ? bytes.length : nul;
+        if (ownerBytes === 0 && length === 3 && (nul >= 0 || namesz === 3))
+          gnu = bytes[0] === 0x47 && bytes[1] === 0x4e && bytes[2] === 0x55;
+        chargeText(text, length);
+        ownerBytes += length;
+        if (nul >= 0) break;
+      }
+      if (gnu && type === NT_GNU_PROPERTY_TYPE_0)
+        propertyRanges.push({ offset: cursor + descriptor, size: descsz });
+      cursor += next;
+    }
+    if (
+      cursor < end &&
+      !isElfNotePadding(yield* readNoteWindow(cursor, end - cursor))
+    )
+      fail("ELF note table has trailing non-zero bytes.");
   }
-  return notes;
-};
-
-/** GNU property feature words from notes the owner already walked. */
-export const readGnuPropertyWords = (
-  notes: readonly ElfWalkedNote[],
-  little: boolean,
-  propertyAlign: number,
-): Map<number, GnuPropertyWord> => {
   const found = new Map<number, GnuPropertyWord>();
-  for (const note of notes) {
-    if (note.owner !== "GNU" || note.type !== NT_GNU_PROPERTY_TYPE_0) continue;
-    const descriptor = note.descriptor;
-    const reader = new BinaryReader(descriptor, little, "elf-notes");
+  for (const { offset, size } of propertyRanges) {
     let cursor = 0;
-    while (cursor < descriptor.length) {
-      if (descriptor.length - cursor < 8)
-        fail("ELF GNU property record is truncated.");
-      const type = reader.u32(cursor);
-      const dataSize = reader.u32(cursor + 4);
-      if (dataSize > descriptor.length - cursor - 8)
+    let base = 0;
+    let window = new BinaryReader(Buffer.alloc(0), little, "elf-notes");
+    while (cursor < size) {
+      assertArtifactReadActive(signal);
+      if (size - cursor < 8) fail("ELF GNU property record is truncated.");
+      if (cursor + Math.min(12, size - cursor) > base + window.bytes.length) {
+        base = cursor;
+        window = new BinaryReader(
+          yield* readNoteWindow(
+            offset + cursor,
+            Math.min(NOTE_READ_BYTES, size - cursor),
+          ),
+          little,
+          "elf-notes",
+        );
+      }
+      const local = cursor - base;
+      const type = window.u32(local);
+      const dataSize = window.u32(local + 4);
+      if (dataSize > size - cursor - 8)
         fail("ELF GNU property data extends outside the note descriptor.");
       const step = Math.ceil((8 + dataSize) / propertyAlign) * propertyAlign;
-      if (!Number.isSafeInteger(step) || cursor + step > descriptor.length)
-        fail("ELF GNU property record is truncated.");
+      if (cursor + step > size) fail("ELF GNU property record is truncated.");
       if (
         type === GNU_PROPERTY_X86_FEATURE_1_AND ||
         type === GNU_PROPERTY_AARCH64_FEATURE_1_AND
       ) {
         if (dataSize !== 4)
           fail("ELF GNU feature property is not a 4-byte word.");
-        const value = reader.u32(cursor + 8);
+        const value = window.u32(local + 8);
         const previous = found.get(type);
         found.set(type, {
-          value: previous === undefined ? value : previous.value,
-          offset: previous?.offset ?? note.descriptorOffset + cursor + 8,
+          value: previous?.value ?? value,
+          offset: previous?.offset ?? offset + cursor + 8,
           conflict:
             previous !== undefined &&
             (previous.conflict || previous.value !== value),
@@ -1497,4 +1560,4 @@ export const readGnuPropertyWords = (
     }
   }
   return found;
-};
+}

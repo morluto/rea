@@ -156,6 +156,16 @@ export const parsePeLoadConfigFromImage = async (
     signal,
   );
 
+/** Read PE TLS directory and load configuration from a random-access range reader and pre-parsed PeImage. */
+export const parsePeLoadConfigFromReader = async (
+  readBytes: PeRangeReader,
+  image: PeImage,
+  artifact: PeLoadConfig["artifact"],
+  input: InspectPeLoadConfigInput,
+  signal?: AbortSignal,
+): Promise<PeLoadConfig> =>
+  parsePeLoadConfigCore(readBytes, image, artifact, input, signal);
+
 const parsePeLoadConfigCore = async (
   readBytes: PeRangeReader,
   image: PeImage,
