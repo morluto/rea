@@ -105,7 +105,23 @@ export const FRIDA_TOOL_CONTRACTS = [
     kind: "native-provider",
     description:
       "List processes observed on a selected Frida device or caller-supplied remote endpoint. A remote connection is closed after discovery; authentication values are never returned or recorded.",
-    inputSchema: exclusiveDeviceSelector(deviceSelector)
+    inputSchema: exclusiveDeviceSelector(
+      deviceSelector.extend({
+        limit: z
+          .int()
+          .positive()
+          .max(10_000)
+          .optional()
+          .describe(
+            "Maximum number of processes to return; omit to return all",
+          ),
+        offset: z
+          .int()
+          .nonnegative()
+          .optional()
+          .describe("Zero-based starting process index; defaults to 0"),
+      }),
+    )
       .refine(
         (value) => value.device_id !== undefined || value.remote !== undefined,
         "Select a device_id or a remote endpoint",

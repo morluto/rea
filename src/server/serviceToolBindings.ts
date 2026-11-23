@@ -1755,7 +1755,10 @@ const SERVICE_TOOL_BINDINGS = {
       admission: "sdk",
       value: async (input) =>
         jsonValueResult(
-          await service.listProcesses(fridaDeviceSelection(input)),
+          await service.listProcesses(fridaDeviceSelection(input), {
+            limit: input.limit,
+            offset: input.offset,
+          }),
         ),
     },
     start_frida_session: {
