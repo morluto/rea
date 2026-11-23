@@ -43,6 +43,9 @@ it("recovers webpack 4 webpackJsonp chunks with array and object tables", () => 
       modules: [{ module_key: "123" }],
     },
   ]);
+  // Minified factories never spell `__webpack_require__`, so the vendor marker
+  // must come from the same `webpackJsonp` runtime name as the registration.
+  expect(analysis.vendors).toEqual(["webpack"]);
 });
 
 it("offsets an Array(n).concat module table by its leading hole count", () => {

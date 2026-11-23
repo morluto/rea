@@ -970,7 +970,12 @@ export const STATIC_ROUTE_CALL_NAMES = [
 ] as const;
 
 const vendorPatterns = [
-  { name: "webpack", patterns: ["__webpack_require__", "webpackChunk"] },
+  // Keep in step with CHUNK_RUNTIME_NAME: a minified chunk may spell webpack
+  // only through its runtime global.
+  {
+    name: "webpack",
+    patterns: ["__webpack_require__", "webpackChunk", "webpackJsonp"],
+  },
   { name: "Rspack", patterns: ["__webpack_require__.f", "rspackChunk"] },
   { name: "Vite", patterns: ["__vite__", "import.meta.hot"] },
   { name: "Rollup", patterns: ["ROLLUP_FILE_URL", "import.meta.ROLLUP"] },
