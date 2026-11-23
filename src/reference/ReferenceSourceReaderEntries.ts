@@ -11,6 +11,7 @@ import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
+import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import { err, ok } from "../domain/result.js";
 
 import {
@@ -62,6 +63,19 @@ const recordDirectoryFailure = (
         localDiagnostic,
       ),
     );
+};
+
+/** Keep every unresolved owner when a later failure becomes primary. */
+const mergeCleanupObservation = (
+  first: AnalysisCleanupObservation | undefined,
+  second: AnalysisCleanupObservation | undefined,
+): AnalysisCleanupObservation | undefined => {
+  if (first === undefined) return second;
+  if (second === undefined) return first;
+  return {
+    reason: `${first.reason}; ${second.reason}`,
+    resources: [...new Set([...first.resources, ...second.resources])],
+  };
 };
 
 /**
@@ -138,6 +152,9 @@ export const traverseDirectory = async (
   const directories: PendingDirectory[] = [];
   let readFailure: FilesystemFailureDetail | undefined;
   let readFailureCause: { readonly value: unknown } | undefined;
+  // A cancelled entry can still own a failed close. Resetting the traversal
+  // result must not drop that remaining resource.
+  let retainedCleanup: AnalysisCleanupObservation | undefined;
   const recordReadFailure = (
     detail: FilesystemFailureDetail,
   ): FilesystemFailureDetail => {
@@ -244,6 +261,7 @@ export const traverseDirectory = async (
         (result.ok || result.error.code === "cancelled")
       ) {
         // A later cancellation cannot replace a completed directory read failure.
+        retainedCleanup = result.ok ? undefined : result.error.cleanup;
         result = ok(undefined);
         readFailureCause = listingFailure.cause;
         if (current.path === state.root && readFailureCause !== undefined)
@@ -263,7 +281,10 @@ export const traverseDirectory = async (
         cleanup.cause,
         current.path,
       );
-      const previous = result.ok ? undefined : result.error.cleanup;
+      const previous = mergeCleanupObservation(
+        result.ok ? undefined : result.error.cleanup,
+        retainedCleanup,
+      );
       const primary = result.ok
         ? readFailure !== undefined
           ? {
@@ -284,15 +305,7 @@ export const traverseDirectory = async (
         : result.error;
       return err({
         ...primary,
-        cleanup:
-          previous === undefined
-            ? observation
-            : {
-                reason: `${previous.reason}; ${observation.reason}`,
-                resources: [
-                  ...new Set([...previous.resources, ...observation.resources]),
-                ],
-              },
+        cleanup: mergeCleanupObservation(previous, observation) ?? observation,
         cause: Object.hasOwn(primary, "cause") ? primary.cause : cleanup.cause,
       });
     }
@@ -300,13 +313,17 @@ export const traverseDirectory = async (
   }
   if (readFailure !== undefined) {
     scheduleObservedDirectories(state, directories);
-    return isAborted(state.signal)
-      ? err({
-          ...failure("io", readFailure.localDiagnostic ?? readFailure.message),
-          ...(readFailureCause === undefined
-            ? {}
-            : { cause: readFailureCause.value }),
-        })
+    // An unresolved file close keeps the directory read failure primary even
+    // when cancellation was the only entry result.
+    const directoryFailure = {
+      ...failure("io", readFailure.localDiagnostic ?? readFailure.message),
+      ...(readFailureCause === undefined
+        ? {}
+        : { cause: readFailureCause.value }),
+      ...(retainedCleanup === undefined ? {} : { cleanup: retainedCleanup }),
+    };
+    return isAborted(state.signal) || retainedCleanup !== undefined
+      ? err(directoryFailure)
       : ok(undefined);
   }
   if (isAborted(state.signal)) return err(cancelled(state.signal));
