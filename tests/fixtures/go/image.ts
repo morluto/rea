@@ -6,20 +6,17 @@ import {
   readGoBinaryImageFromHandle,
   type ReadGoBinaryImageOptions,
 } from "../../../src/go/GoBinaryImage.js";
-import type { NativeByteSource } from "../../../src/domain/native/nativeSectionDirectory.js";
-
-export const goByteSource = (bytes: Buffer) =>
-  ({
-    size: bytes.length,
-    prefix: bytes.subarray(0, 4096),
-    readRange: async (offset, length) =>
-      bytes.subarray(offset, offset + length),
-  }) satisfies NativeByteSource;
+import { bufferByteSource } from "../../../src/domain/byteSource.js";
 
 export const readGoFixture = (
   bytes: Buffer,
   options?: ReadGoBinaryImageOptions,
-) => readGoBinaryImageFromHandle(goByteSource(bytes), options, async () => {});
+) =>
+  readGoBinaryImageFromHandle(
+    bufferByteSource(bytes, 4096),
+    options,
+    async () => {},
+  );
 
 /** Actual filesystem paths that fail before Go artifact acquisition begins. */
 export const createGoBinaryPathFailureFixture = async (

@@ -21,6 +21,7 @@ import {
   malformedInput,
   unsupportedInput,
 } from "../domain/parseFailure.js";
+import type { ByteSource, PrefixedByteSource } from "../domain/byteSource.js";
 
 const unsupported = (message: string): never => {
   throw unsupportedInput(V8_CODE_CACHE_FORMAT, message);
@@ -81,13 +82,6 @@ const isPrintable = (byte: number): boolean =>
   (byte >= 0x20 && byte <= 0x7e) || byte === 0x09;
 
 const STREAM_CHUNK_BYTES = 1024 * 1024;
-
-/** Random-access source for streaming V8 code cache inspection without buffering the whole file. */
-export interface V8CodeCacheByteSource {
-  readonly size: number;
-  readonly prefix: Buffer;
-  readRange(offset: number, length: number): Promise<Buffer>;
-}
 
 interface ParsedV8Header {
   readonly header: V8CodeCache["header"];
@@ -304,7 +298,7 @@ const buildV8CodeCacheReport = (
 });
 
 const readAdmittedRange = async (
-  source: V8CodeCacheByteSource,
+  source: ByteSource,
   offset: number,
   length: number,
 ): Promise<Buffer> => {
@@ -320,7 +314,7 @@ const readAdmittedRange = async (
 
 /** Stream one V8 code cache container over a bounded file handle in fixed chunks. */
 export const parseV8CodeCacheFromHandle = async (
-  source: V8CodeCacheByteSource,
+  source: PrefixedByteSource,
   artifact: { path: string; sha256: string; bytes: number },
   input: V8CodeCacheInputBudget,
 ): Promise<V8CodeCache> => {

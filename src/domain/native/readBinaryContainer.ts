@@ -15,13 +15,13 @@ import {
   readElfImageCooperative,
   readElfImageFromReader,
 } from "./elfImage.js";
-import type { NativeByteSource } from "./nativeSectionDirectory.js";
 import type { ZstandardFramePause } from "../compression/zstandardExactFrame.js";
 import { readPeImage, readPeImageFromReader } from "./peImage.js";
 import {
   readMachoImage,
   readMachoImageFromReader,
 } from "../apple/machoImage.js";
+import type { ByteSource } from "../byteSource.js";
 
 /** Identify an ELF, PE, or thin Mach-O image and its file sections. */
 export const readBinaryContainer = (
@@ -44,7 +44,7 @@ export const readBinaryContainerCooperative = async (
 
 /** Stream ELF, PE, or thin Mach-O headers and sections over a range reader. */
 export const readBinaryContainerFromReader = async (
-  source: NativeByteSource,
+  source: ByteSource,
   operation: string,
   pause: ZstandardFramePause,
 ): Promise<BinaryContainer> => {
