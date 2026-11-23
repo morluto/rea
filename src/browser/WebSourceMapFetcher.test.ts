@@ -5,6 +5,11 @@ import { expect, it, vi } from "vitest";
 
 import { fetchWebSourceMaps } from "./WebSourceMapFetcher.js";
 import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
+import {
+  AnalysisError,
+  primaryAnalysisError,
+} from "../domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { fetchWebSourceMapsOk } from "../../tests/fixtures/fetchWebSourceMapsOk.js";
 import {
   phaseArrival,
@@ -98,6 +103,86 @@ it("pipelines the next fetch against decode but admits in request order", async 
     ["https://app.example.test/map4.js"],
     ["https://app.example.test/map5.js"],
   ]);
+});
+
+const nestedCauses = (error: unknown): unknown[] => {
+  if (error instanceof AggregateError)
+    return [error, ...error.errors.flatMap(nestedCauses)];
+  if (!(error instanceof AnalysisError)) return [error];
+  return [
+    error.cause,
+    ...nestedCauses(error.cause),
+    ...error.secondaryFailures.flatMap((failure) => nestedCauses(failure)),
+  ];
+};
+
+it("merges sibling cleanup when cancellation ends admission at the first map", async () => {
+  const controller = new AbortController();
+  const reason = new Error("caller cancelled during first map");
+  const physical = new Error("sibling response cancellation failed");
+  const requests = [0, 1].map((index) => ({
+    ...request,
+    scriptKey: `scr_${String(index + 1).repeat(64)}`,
+    declaredUrl: `https://app.example.test/map${index}.js.map`,
+    fetchUrl: `https://app.example.test/map${index}.js.map`,
+  }));
+  const siblingUrl = requests[1]!.fetchUrl;
+  const mapText = JSON.stringify({
+    version: 3,
+    sources: ["map0.js"],
+    names: [],
+    mappings: "AAAA",
+  });
+  const result = await fetchWebSourceMaps(
+    requests,
+    approvedInput,
+    controller.signal,
+    {
+      fetch: async (url) => {
+        const index = Number(/map(\d)/.exec(String(url))?.[1] ?? 0);
+        if (index === 0) return new Response(mapText, { status: 200 });
+        controller.abort(reason);
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            cancel() {
+              throw physical;
+            },
+          }),
+          { status: 200 },
+        );
+      },
+    },
+  );
+  if (result.ok) throw new Error("Expected cancellation");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupResources).toEqual([siblingUrl]);
+  expect(primaryAnalysisError(result.error).cause).toBe(reason);
+  expect(nestedCauses(result.error)).toContain(physical);
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "cleanup_incomplete",
+    category: "cancelled",
+    details: {
+      cleanup: "incomplete",
+      resources: [siblingUrl],
+      partial_observation: {
+        kind: "web-source-map-fetch",
+        source_maps: { requested: 2, processed: 0 },
+      },
+      diagnostics: {
+        primary_error: {
+          code: "cancelled",
+          details: { operation: "analyze_web_bundle", cleanup: "complete" },
+        },
+        cleanup_error: {
+          code: "cleanup_incomplete",
+          details: {
+            resources: [siblingUrl],
+            cleanup: "incomplete",
+          },
+        },
+      },
+    },
+  });
 });
 
 it("checks cancellation before returning an empty source-map selection", async () => {

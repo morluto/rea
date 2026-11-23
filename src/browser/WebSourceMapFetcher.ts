@@ -59,6 +59,10 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import {
+  analysisErrorWithCleanupDependencies,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
+import {
   selectedSourceMapLimits,
   sourceMapLimitRecovery,
   type SourceMapLimits,
@@ -327,53 +331,164 @@ export const fetchWebSourceMaps = async (
               ...(limitation === undefined ? {} : { limitation }),
             }),
           );
-  // Bind sibling cleanup: fetches started by lookahead but never admitted
-  // still own pending responses or cleanup, which the returned result tracks.
-  const siblingFailures: AnalysisError[] = [];
+  // Lookahead can start maps that admission never consumes. Await each one
+  // and fold its cleanup into the result; a secondary note does not keep
+  // that map's remaining resources on the error the caller sees.
+  const siblingCleanups: AnalysisError[] = [];
   for (const pending of prefetches.values()) {
-    const prefetched = await pending.catch(() => undefined);
-    if (prefetched === undefined || prefetched.consumed) continue;
-    if (prefetched.failure instanceof SourceMapPendingFetch) {
-      // A pending fetch created by the teardown abort itself is not a
-      // cleanup failure once its late response has been released.
-      await Promise.race([
-        prefetched.failure.settled,
-        new Promise<void>((resolve) => setImmediate(resolve)),
-      ]);
-      if (
-        prefetched.failure.failure.cleanupIncomplete ||
-        prefetched.failure.failure.secondaryFailures.length > 0
-      )
-        siblingFailures.push(prefetched.failure.failure);
-    } else if (prefetched.fetched !== undefined) {
-      try {
-        await cancelUnreadResponse(
-          prefetched.fetched.response,
-          prefetched.fetched.fetchedUrl,
-          new Error("Source-map fetch was not admitted."),
-          operationSignal,
-        );
-      } catch (cause: unknown) {
-        if (
-          cause instanceof SourceMapResponseCleanup &&
-          cause.failure.cleanupIncomplete
-        )
-          siblingFailures.push(cause.failure);
-      }
+    try {
+      const cleanup = await settleUnadmittedPrefetch(
+        await pending,
+        operationSignal,
+      );
+      if (cleanup !== undefined) siblingCleanups.push(cleanup);
+    } catch (cause: unknown) {
+      const cleanup = await cleanupFromRejectedPrefetch(cause);
+      if (cleanup === undefined) throw cause;
+      siblingCleanups.push(cleanup);
     }
   }
-  if (siblingFailures.length > 0) {
-    if (outcome.ok) {
-      const [primary, ...rest] = siblingFailures;
-      const failure = retainCompleted(primary!);
-      for (const extra of rest) failure.retainSecondaryFailure(extra);
-      outcome = err(failure);
-    } else {
-      for (const failure of siblingFailures)
-        outcome.error.retainSecondaryFailure(failure);
-    }
+  return mergeSiblingCleanup(outcome, siblingCleanups, retainCompleted);
+};
+
+const SOURCE_MAP_OPERATION = "analyze_web_bundle";
+
+/** One event-loop turn, so a cooperative cancel is visible without blocking on a host that ignores abort. */
+const nextEventTurn = (): Promise<void> =>
+  new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+
+const observeCleanupSettlement = (settled: Promise<void>): Promise<void> =>
+  Promise.race([
+    settled.then(
+      () => undefined,
+      () => undefined,
+    ),
+    nextEventTurn(),
+  ]);
+
+const ownedCleanup = (failure: AnalysisError): AnalysisError | undefined =>
+  failure.cleanupIncomplete ? failure : undefined;
+
+const siblingCleanupFailure = (
+  cleanups: readonly AnalysisError[],
+): AnalysisError =>
+  cleanups.length === 1
+    ? cleanups[0]!
+    : providerCleanupErrorFromFailures(
+        "rea-cdp-browser",
+        cleanups,
+        {
+          reason:
+            "Source-map lookahead left cleanup owned by maps that were not admitted.",
+        },
+        { operation: SOURCE_MAP_OPERATION },
+      );
+
+/**
+ * Keep every unadmitted map's live cleanup on the caller's result.
+ * `analysisErrorWithCleanupDependencies` unions remaining resources and
+ * stays incomplete until each owner releases; a successful admission keeps
+ * its maps and reports only the cleanup that is still owned.
+ */
+const mergeSiblingCleanup = (
+  current: Result<WebSourceMaps, AnalysisError>,
+  cleanups: readonly AnalysisError[],
+  retain: (error: AnalysisError) => AnalysisError,
+): Result<WebSourceMaps, AnalysisError> => {
+  if (cleanups.length === 0) return current;
+  if (current.ok)
+    return err(
+      retain(
+        providerCleanupErrorFromFailures(
+          "rea-cdp-browser",
+          cleanups,
+          {
+            reason:
+              "Source-map lookahead left cleanup owned by maps that were not admitted.",
+          },
+          { operation: SOURCE_MAP_OPERATION },
+        ),
+      ),
+    );
+  return err(
+    analysisErrorWithCleanupDependencies(
+      current.error,
+      siblingCleanupFailure(cleanups),
+      SOURCE_MAP_OPERATION,
+    ),
+  );
+};
+
+const releaseUnreadPrefetch = async (
+  response: Response,
+  resource: string,
+  signal: AbortSignal,
+): Promise<AnalysisError | undefined> => {
+  if (response.body === null) return undefined;
+  let reader: ReadableStreamDefaultReader<Uint8Array>;
+  try {
+    reader = response.body.getReader();
+  } catch (cause: unknown) {
+    return new ProviderCleanupError(
+      "rea-cdp-browser",
+      [resource],
+      {
+        reason: "Unread source-map response could not be admitted for cleanup.",
+      },
+      { operation: SOURCE_MAP_OPERATION, cause },
+    );
   }
-  return outcome;
+  const cleanup = new SourceMapResponseCleanup(
+    reader,
+    response.body,
+    new Error("Source-map fetch was not admitted."),
+    resource,
+    signal,
+    new Error("Source-map fetch was not admitted."),
+  );
+  await observeCleanupSettlement(cleanup.completion);
+  return ownedCleanup(cleanup.failure);
+};
+
+/** Await one started map that admission did not consume, and return cleanup that is still owned. */
+const settleUnadmittedPrefetch = async (
+  prefetched: PrefetchedSourceMap,
+  signal: AbortSignal,
+): Promise<AnalysisError | undefined> => {
+  if (prefetched.consumed) return undefined;
+  if (prefetched.failure instanceof SourceMapPendingFetch) {
+    await observeCleanupSettlement(prefetched.failure.settled);
+    return ownedCleanup(prefetched.failure.failure);
+  }
+  if (prefetched.failure instanceof SourceMapResponseCleanup) {
+    await observeCleanupSettlement(prefetched.failure.completion);
+    return ownedCleanup(prefetched.failure.failure);
+  }
+  if (prefetched.failure instanceof AnalysisError)
+    return ownedCleanup(prefetched.failure);
+  if (prefetched.fetched === undefined) return undefined;
+  return releaseUnreadPrefetch(
+    prefetched.fetched.response,
+    prefetched.fetched.fetchedUrl,
+    signal,
+  );
+};
+
+const cleanupFromRejectedPrefetch = async (
+  cause: unknown,
+): Promise<AnalysisError | undefined> => {
+  if (cause instanceof SourceMapPendingFetch) {
+    await observeCleanupSettlement(cause.settled);
+    return ownedCleanup(cause.failure);
+  }
+  if (cause instanceof SourceMapResponseCleanup) {
+    await observeCleanupSettlement(cause.completion);
+    return ownedCleanup(cause.failure);
+  }
+  if (cause instanceof AnalysisError) return ownedCleanup(cause);
+  return undefined;
 };
 
 const sourceMapOutputLimitation = (
