@@ -171,6 +171,23 @@ function* buildJavaScriptArtifactGraphInputSteps(
   const unavailableFilesByPath = new Map(
     fileSet.unavailable_relevant_files.map((file) => [file.path, file]),
   );
+  const packagesByPath = new Map<
+    string,
+    JavaScriptArtifactAnalysis["packages"][number]
+  >();
+  for (const pkg of analysis.packages)
+    if (!packagesByPath.has(pkg.path)) packagesByPath.set(pkg.path, pkg);
+  const indexAnalyzedFiles = (
+    files: JavaScriptArtifactAnalysis["files"],
+  ): ReadonlyMap<string, JavaScriptArtifactAnalysis["files"][number]> => {
+    const byPath = new Map<
+      string,
+      JavaScriptArtifactAnalysis["files"][number]
+    >();
+    for (const entry of files)
+      if (!byPath.has(entry.file.path)) byPath.set(entry.file.path, entry);
+    return byPath;
+  };
   const context: JavaScriptArtifactGraphContext = {
     accumulator,
     snapshot,
@@ -183,6 +200,8 @@ function* buildJavaScriptArtifactGraphInputSteps(
     ),
     root,
     filesByPath: new Map(fileSet.files.map((file) => [file.path, file])),
+    analyzedFilesByPath: indexAnalyzedFiles(analysis.files),
+    packagesByPath,
     unanalyzedFiles: {
       coverage: snapshot.coverage,
       get: (path) =>
@@ -210,15 +229,17 @@ function* buildJavaScriptArtifactGraphInputSteps(
   yield;
   // Raw observations remain on the file nodes. Only admitted expansions feed
   // the relationship builders, including their Electron and bundler callers.
-  const projectionContext = {
+  const projectedFiles = analysis.files.map((file) =>
+    file.application_projection_failure === undefined
+      ? file
+      : { ...file, javascript: null, semantic: null },
+  );
+  const projectionContext: JavaScriptArtifactGraphContext = {
     ...context,
+    analyzedFilesByPath: indexAnalyzedFiles(projectedFiles),
     analysis: {
       ...analysis,
-      files: analysis.files.map((file) =>
-        file.application_projection_failure === undefined
-          ? file
-          : { ...file, javascript: null, semantic: null },
-      ),
+      files: projectedFiles,
     },
   };
   const packageRoots = addJavaScriptPackageNodes(projectionContext);
@@ -350,6 +371,12 @@ const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
       );
     return partialApplicationCoverage([], nestedArchiveWasOpaque ? null : 0);
   }
+  // Structure-only keeps static and Electron facts and does not build
+  // source-module or export-binding nodes. The omitted node count is unknown
+  // without semantic analysis. Complete coverage would let a comparison treat
+  // those unchanged bindings as removed.
+  if (context.analysis.semantic_analysis === "structure-only")
+    return partialApplicationCoverage([], null);
   return completeApplicationCoverage();
 };
 

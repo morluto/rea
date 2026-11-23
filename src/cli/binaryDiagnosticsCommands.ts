@@ -7,10 +7,12 @@ import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../contracts/native/binaryDia
 import { contractNamed } from "./contractCliDescription.js";
 import {
   callerTargetPath,
-  deliverWithService,
-  inspectWithService,
   registerContractCommand,
 } from "./contractCommand.js";
+import {
+  deliverWithService,
+  inspectWithService,
+} from "./contractCommandRunners.js";
 import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
 
 type BinaryDiagnosticsOperation =

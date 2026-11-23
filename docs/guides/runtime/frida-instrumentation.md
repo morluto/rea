@@ -6,6 +6,14 @@ For remote devices, pass a host with an optional port (`host[:port]`; bracket IP
 
 MCP exposes `list_frida_devices`, `list_frida_processes`, `start_frida_session`, `load_frida_script`, `resume_frida_session`, `unload_frida_script`, `frida_session_status`, and `close_frida_session`. A spawned process starts paused so scripts can load first. Closing unloads session scripts and detaches. If cleanup fails, the session remains available for cleanup retry but refuses new script loads and resume requests. If a spawn remains paused, REA resumes it only after script cleanup or session detach confirms the instrumentation is released; if both cleanup paths fail, the target stays paused and the cleanup error is retained. REA never kills the target. MCP sessions end with the server process. A script file `path` over MCP must be absolute, because the server's working directory is not the caller's. The one-shot CLI command `instrument-with-frida` accepts one inline script or script file (`--script-file` resolves a relative path against the CLI's working directory), observes messages for a bounded duration, and returns Evidence with the source hash and captured messages.
 
+Use `list_frida_processes` with an optional positive integer `limit` and a
+zero-based `offset`. The CLI accepts `--limit` and `--offset`. REA enumerates
+the device, then sorts paged results by numeric PID and returns the requested
+slice. `total_processes` counts observed processes and `truncated` indicates
+whether the page omitted rows. Omitting both arguments returns every observed
+process in provider order. Each call enumerates again, so process starts and
+exits can shift rows between pages.
+
 `instrument-with-frida --json` returns the Evidence record directly, matching MCP. Consumers of the earlier `{evidence, cleanup_error}` CLI wrapper should read the record at the JSON root and the session cleanup observation at `normalized_result.cleanup_error`. If final provider cleanup fails or cancellation arrives during it, the typed error retains completed Evidence in `details.partial_observation`. Discovery commands retain their device or process report in the same field.
 
 For state and capture-coverage checks, pass `{"session_id":"SESSION_ID","detail":"summary"}` to `frida_session_status`. Each call reads the observed session state and retains the complete observation. The reply is an `inspect_analysis_view` Evidence summary with the session identity, state, scripts, `messages_retained`, and `messages_truncated`; message payloads remain in its `parent_evidence_id`. The count covers retained queued messages, not every target event. Omitted `detail` or `detail=complete` preserves the existing complete reply.

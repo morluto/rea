@@ -477,38 +477,41 @@ export const projectAndroidJniBindings = (input: {
     else previous.push(library);
   }
   const abis = [...new Set(input.selection.abis ?? librariesByAbi.keys())];
+  const abiMeta = new Map(
+    abis.map((abi) => {
+      const abiLibraries = librariesByAbi.get(abi) ?? [];
+      const consistent: AndroidJniReport["libraries"][number][] = [];
+      let incomplete = libraryInventory.status !== "complete";
+      for (const library of abiLibraries) {
+        if (library.abi_compatibility === "consistent")
+          consistent.push(library);
+        else incomplete = true;
+        if (library.failure !== null || library.coverage?.status !== "complete")
+          incomplete = true;
+      }
+      return [abi, { consistent, incomplete }] as const;
+    }),
+  );
   const bindings: AndroidJniReport["bindings"] = [];
   for (const method of selectedMethods)
     for (const abi of abis) {
-      const abiLibraries = librariesByAbi.get(abi) ?? [];
-      const selected = abiLibraries
-        .filter((library) => library.abi_compatibility === "consistent")
-        .flatMap(
-          (library) =>
-            matches.get(
-              JSON.stringify([method.declaration_id, library.library_id]),
-            ) ?? [],
-        );
-      const physical = new Set(
-        selected.map((candidate) =>
-          JSON.stringify([candidate.library_id, candidate.address]),
-        ),
+      const { consistent, incomplete } = abiMeta.get(abi)!;
+      const selected = consistent.flatMap(
+        (library) =>
+          matches.get(
+            JSON.stringify([method.declaration_id, library.library_id]),
+          ) ?? [],
       );
-      const ambiguous = selected.some(
-        (candidate) => candidate.class_attribution === "ambiguous-native-pair",
-      );
-      const incomplete =
-        libraryInventory.status !== "complete" ||
-        abiLibraries.some(
-          (library) =>
-            library.failure !== null ||
-            library.coverage?.status !== "complete" ||
-            library.abi_compatibility !== "consistent",
-        );
-      const unknown = selected.some(
-        (candidate) =>
-          candidate.class_attribution === "unknown-native-inventory",
-      );
+      const physical = new Set<string>();
+      let ambiguous = false;
+      let unknown = false;
+      for (const candidate of selected) {
+        physical.add(JSON.stringify([candidate.library_id, candidate.address]));
+        if (candidate.class_attribution === "ambiguous-native-pair")
+          ambiguous = true;
+        else if (candidate.class_attribution === "unknown-native-inventory")
+          unknown = true;
+      }
       const binding: AndroidJniReport["bindings"][number] = {
         declaration_id: method.declaration_id,
         abi,

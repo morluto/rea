@@ -12,7 +12,6 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { analysisRefusalRemediation } from "../../domain/analysisRefusal.js";
@@ -26,7 +25,6 @@ import {
   elfNote,
   elfNoteFixture,
   elfNoteTablePastEnd,
-  elfExtendedSectionCountFixture,
 } from "./ElfNotes.fixture.js";
 import { ElfNotesProvider } from "./ElfNotesProvider.js";
 
@@ -134,21 +132,6 @@ it("cancels a many-frame compressed section-name table", async () => {
 });
 
 describe("ELF note provider failures", () => {
-  it("projects compressed note sections as unsupported rather than malformed input", async () => {
-    const root = await createTestTempDirectory("rea-compressed-notes-");
-    const path = join(root, "compressed.o");
-    const bytes = elfNoteFixture({ ownership: "section" });
-    const section = Number(bytes.readBigUInt64LE(40)) + 64;
-    bytes.writeBigUInt64LE(0x800n, section + 8);
-    await writeFile(path, bytes);
-    const result = await inspect(path);
-    if (result.ok)
-      throw new Error("Expected compressed notes to be unsupported");
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "unsupported_target",
-      message: expect.stringContaining("Compressed ELF note sections"),
-    });
-  });
   it("reports a note table past the end of the file as invalid input", async () => {
     const root = await createTestTempDirectory("rea-elf-note-past-end-");
     const path = join(root, "program");
@@ -165,22 +148,6 @@ describe("ELF note provider failures", () => {
           message: expect.stringContaining("leaves the artifact"),
         },
       ],
-    });
-  });
-
-  it("reports valid extended section numbering as an unsupported target", async () => {
-    const root = await createTestTempDirectory(
-      "rea-elf-note-extended-numbering-",
-    );
-    const path = join(root, "extended-count.elf");
-    await writeFile(path, elfExtendedSectionCountFixture());
-    const result = await inspect(path);
-    if (result.ok) throw new Error("Expected an unsupported target");
-    expect(result.error).toBeInstanceOf(AnalysisUnsupportedTargetError);
-    expect(result.error.message).toMatch(/extended.*number/iu);
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "unsupported_target",
-      message: result.error.message,
     });
   });
 

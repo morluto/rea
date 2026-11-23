@@ -307,6 +307,7 @@ it("preserves PE ordinal-only, forwarder, alias and same-address distinctions", 
         source_index: 1,
         name: "AliasB",
         ordinal: 65536,
+        rva: 0x2000,
         address: "0x180002000",
         forwarder: null,
       },
@@ -409,4 +410,128 @@ it("revalidates mutable imports and refuses inconsistent coverage and format-inc
     ).ok,
   ).toBe(false);
   expect(projectAnalysisView(parent({}), { kind: "summary" }).ok).toBe(false);
+});
+
+it("counts ELF exports by UTF-8 name prefix without matching undecodable names", () => {
+  const report = parseNativeExports(
+    elfExportImage({
+      symbols: [
+        { name: "cafÃ©" },
+        { name: "café" },
+        { name: "same" },
+        { name: "sample" },
+        { name: "other" },
+      ],
+    }),
+    artifact,
+  );
+  const page = (view: Record<string, unknown>) =>
+    project(report, {
+      kind: "native-exports",
+      collection: "exports",
+      fields: ["name"],
+      ...view,
+    });
+  // Index 1 displays as Latin-1 "café" but its bytes are not UTF-8 text.
+  expect(page({ name_prefixes: ["caf"] })).toMatchObject({
+    items: [{ source_index: 0, name: "café", name_utf8_decodable: true }],
+    coverage: { total: 1 },
+  });
+  expect(page({ name_prefixes: ["café"] })).toMatchObject({
+    items: [{ source_index: 0 }],
+    coverage: { total: 1 },
+  });
+  expect(page({ name_prefixes: ["sam", "oth"], limit: 1 })).toMatchObject({
+    items: [{ source_index: 2, name: "same" }],
+    coverage: { examined: 1, total: 3, next_offset: 1 },
+  });
+  expect(
+    page({ names: ["sample", "other"], name_prefixes: ["sam"] }),
+  ).toMatchObject({
+    items: [{ source_index: 3, name: "sample" }],
+    coverage: { total: 1 },
+  });
+  expect(page({ name_prefixes: [] })).toMatchObject({
+    items: [],
+    coverage: { total: 0 },
+  });
+});
+
+it("counts PE exports by name prefix and skips ordinal-only exports", () => {
+  const report = parseNativeExports(
+    peExportImage({
+      functions: [{ rva: 0x2000 }, { rva: 0x2010 }, { rva: 0x2020 }],
+      names: [
+        { name: "PyUnicode_New", index: 0 },
+        { name: "PyUnicode_Concat", index: 1 },
+      ],
+    }),
+    artifact,
+  );
+  expect(
+    project(report, {
+      kind: "native-exports",
+      collection: "exports",
+      name_prefixes: ["PyUnicode_"],
+      fields: ["name", "ordinal", "rva"],
+      limit: 1,
+    }),
+  ).toMatchObject({
+    items: [{ name: "PyUnicode_New", rva: 0x2000 }],
+    exports: { export_count: 3 },
+    coverage: { total: 2, next_offset: 1 },
+  });
+});
+
+it("reads PE export Evidence saved before rows recorded their RVA", () => {
+  const report = parseNativeExports(
+    peExportImage({
+      functions: [{ rva: 0x2000 }],
+      names: [{ name: "PyUnicode_New", index: 0 }],
+    }),
+    artifact,
+  );
+  if (report.format !== "pe") throw new Error("Expected PE fixture");
+  const saved = {
+    ...report,
+    exports: report.exports.map(({ rva: _rva, ...row }) => row),
+  };
+  expect(project(saved, { kind: "summary" })).toMatchObject({
+    summary: { export_count: 1 },
+  });
+  const page = project(saved, {
+    kind: "native-exports",
+    collection: "exports",
+    name_prefixes: ["PyUnicode_"],
+  });
+  expect(page).toMatchObject({
+    items: [{ name: "PyUnicode_New", source_index: 0 }],
+    coverage: { total: 1 },
+  });
+  if (!("items" in page)) throw new Error("Expected an export page");
+  expect((page.items as readonly object[])[0]).not.toHaveProperty("rva");
+});
+
+it("matches no ELF export for a prefix that is not well-formed UTF-16 and accepts long prefix lists", () => {
+  const report = parseNativeExports(
+    elfExportImage({ symbols: [{ name: "cafÃ©" }, { name: "same" }] }),
+    artifact,
+  );
+  const page = (name_prefixes: string[]) =>
+    project(report, {
+      kind: "native-exports",
+      collection: "exports",
+      name_prefixes,
+      fields: ["name"],
+    });
+  // Buffer.from would encode the lone surrogate as U+FFFD instead.
+  expect(page(["\ud800"])).toMatchObject({ items: [], coverage: { total: 0 } });
+  const many = Array.from(
+    { length: 100 },
+    (_, index) => `none${String(index)}`,
+  );
+  expect(page([...many, "sa"])).toMatchObject({
+    items: [{ source_index: 1, name: "same" }],
+    coverage: { total: 1 },
+  });
 });

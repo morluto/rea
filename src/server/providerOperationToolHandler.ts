@@ -19,7 +19,7 @@ import type { ToolContract } from "../contracts/toolContractTypes.js";
 import { ok } from "../domain/result.js";
 import type { RecoveryAdmission } from "../application/investigation/InvestigationRetention.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import { logToolExecution } from "./toolLogging.js";
@@ -84,7 +84,7 @@ export const createProviderOperationToolHandler =
       input: unknown,
       context: ServerContext,
     ): Promise<CallToolResult> => {
-      const resolved = jsonObjectSchema.parse(input);
+      const resolved = ownedJsonObjectSchema.parse(input);
       const parameters =
         currentMcpToolRequest()?.callerParameters(
           contract.name,

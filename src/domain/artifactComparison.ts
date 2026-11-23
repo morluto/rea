@@ -819,10 +819,10 @@ const relationsForOccurrence = (
   inventory: InventorySet,
 ): ((
   occurrence: ArtifactOccurrence | undefined,
-) => readonly RelationProjection[] | undefined) => {
+) => readonly string[] | undefined) => {
   if (inventory.edges.length !== inventory.manifest.edge_count)
     return () => undefined;
-  const output = new Map<string, RelationProjection[]>();
+  const output = new Map<string, string[]>();
   const unresolvedPaths = new Set<string>();
   const occurrences = new Map(
     inventory.occurrences.map((item) => [item.occurrence_id, item]),
@@ -841,7 +841,7 @@ const relationsForOccurrence = (
       continue;
     }
     const values = output.get(path);
-    const projection: RelationProjection = {
+    const projection = canonicalJson({
       parent_logical_path: parent?.logical_path ?? null,
       // Containment roots are path-normalized to avoid graph-wide deltas, but
       // a source map's target is a semantic content identity, not its parent
@@ -852,14 +852,11 @@ const relationsForOccurrence = (
       relation: edge.relation,
       logical_path: occurrence.logical_path,
       producer: edge.producer,
-    };
+    });
     if (values === undefined) output.set(path, [projection]);
     else values.push(projection);
   }
-  for (const values of output.values())
-    values.sort((left, right) =>
-      compareUnicodeCodePoints(canonicalJson(left), canonicalJson(right)),
-    );
+  for (const values of output.values()) values.sort(compareUnicodeCodePoints);
   return (occurrence) => {
     if (occurrence?.artifact_id == null) return undefined;
     if (artifactOccurrenceRelationshipCoverage(occurrence) === "unknown")
@@ -870,26 +867,15 @@ const relationsForOccurrence = (
 };
 
 const compareRelations = (
-  left: readonly RelationProjection[] | undefined,
-  right: readonly RelationProjection[] | undefined,
+  left: readonly string[] | undefined,
+  right: readonly string[] | undefined,
 ): FactComparison => {
   if (left === undefined || right === undefined) return "unknown";
-  return JSON.stringify(left) === JSON.stringify(right)
-    ? "unchanged"
-    : "changed";
+  if (left.length !== right.length) return "changed";
+  for (let index = 0; index < left.length; index += 1)
+    if (left[index] !== right[index]) return "changed";
+  return "unchanged";
 };
-
-interface RelationProjection {
-  /** Logical parent is stable across graph-root ID changes. */
-  readonly parent_logical_path: string | null;
-  /** Content identity is material for a maps-source edge. */
-  readonly mapped_artifact_id: string | null;
-  readonly child_artifact_id: string;
-  readonly relation: ArtifactInventoryResult["edges"][number]["relation"];
-  readonly logical_path: string | null;
-  /** Producer is semantic provenance; edge ordinal is presentation order. */
-  readonly producer: ArtifactInventoryResult["edges"][number]["producer"];
-}
 
 const summarize = (
   left: InventorySet,
@@ -904,21 +890,22 @@ const summarize = (
     unknown: 0,
     contradiction: 0,
   };
-  for (const change of changes) counts[change.classification] += 1;
+  const changedPaths = new Set<string>();
+  for (const change of changes) {
+    counts[change.classification] += 1;
+    if (change.classification !== "added")
+      changedPaths.add(change.logical_path);
+  }
   // Change rows are keyed by logical path, and one row for a duplicate path
   // stands for every left occurrence on it. Only occurrences on paths
   // without a left-side change are affirmatively unchanged.
-  const changedPaths = new Set(
-    changes
-      .filter(({ classification }) => classification !== "added")
-      .map(({ logical_path: path }) => path),
-  );
+  let unchanged = 0;
+  if (covered) {
+    for (const { logical_path: path } of left.occurrences)
+      if (!changedPaths.has(path)) unchanged += 1;
+  }
   return {
-    unchanged: covered
-      ? left.occurrences.filter(
-          ({ logical_path: path }) => !changedPaths.has(path),
-        ).length
-      : 0,
+    unchanged,
     ...counts,
     unknown: covered
       ? counts.unknown

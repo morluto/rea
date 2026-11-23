@@ -11,7 +11,7 @@ import {
   CLI_REGISTRATION_ORDER,
 } from "../../../src/cli/cliCommandRegistrations.js";
 import { createCliShell } from "../../../src/cli/cliShell.js";
-import type { ContractCliDescription } from "../../../src/cli/contractCliDescription.js";
+import type { ContractCliDescription } from "../../../src/cli/contractCliDescriptionTypes.js";
 import { registeredContractDescriptions } from "../../support/cli/commandCli.js";
 import { createArtifactBinarySession } from "../../../src/composition/binary.js";
 import { bindDirectAnalysis } from "../../../src/composition/directAnalysis.js";

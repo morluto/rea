@@ -4,7 +4,7 @@ import { z } from "zod";
 import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
-import type { IdaMcpConnection } from "./IdaMcpConnection.js";
+import { IdaToolRejection, type IdaMcpConnection } from "./IdaMcpConnection.js";
 import type { IdaRawObservation } from "./IdaOperationRunner.js";
 
 /** The official Hex-Rays IDA MCP catalog this profile requires. */
@@ -21,6 +21,7 @@ const hexRaysQueries: ReadonlySet<string> = new Set([
   "list_funcs",
   "lookup_funcs",
   "find_regex",
+  "string_at",
   "decompile",
   "disasm",
   "callees",
@@ -98,6 +99,18 @@ const queryBridge = () => {
   return querySource;
 };
 
+/** Leases on a connection whose Python globals already have `queryBridge()` loaded. */
+const bootstrappedLeases = new WeakMap<IdaMcpConnection, Set<string>>();
+
+const isMissingBridgeError = (error: unknown): boolean => {
+  if (!(error instanceof IdaToolRejection)) return false;
+  const reason = error.diagnostics?.reason;
+  const detail = typeof reason === "string" ? reason : error.message;
+  return /(?:^|\n)NameError: name '_rea_query' is not defined$/u.test(
+    detail.trimEnd(),
+  );
+};
+
 /**
  * Answer one database-supervisor read through `execute_python` with REA's
  * fixed, read-only query bridge. Only the query name and its JSON arguments
@@ -120,18 +133,38 @@ export const runHexRaysQuery = async (
   const { database: _database, ...queryArguments } = args;
   const bridge = queryBridge();
   const timeoutSeconds = timeoutMs / 1000;
-  const raw = await connection.call(
-    "execute_python",
-    {
-      instance_id: instanceId,
-      // A JSON string literal is also a valid Python string literal.
-      code: `${bridge.code}\n_rea_query(${JSON.stringify(query)}, ${JSON.stringify(JSON.stringify(queryArguments))})`,
-      // Reserve up to five seconds for the reply, including on short budgets.
-      // Upstream times the initial auto-analysis separately.
-      timeout: timeoutSeconds - Math.min(5, timeoutSeconds / 2),
-    },
-    { timeoutMs, ...(signal === undefined ? {} : { signal }) },
-  );
+  // A JSON string literal is also a valid Python string literal.
+  const callLine = `_rea_query(${JSON.stringify(query)}, ${JSON.stringify(JSON.stringify(queryArguments))})`;
+  const callOptions = {
+    timeoutMs,
+    ...(signal === undefined ? {} : { signal }),
+  };
+  const engineTimeout = timeoutSeconds - Math.min(5, timeoutSeconds / 2);
+  let leases = bootstrappedLeases.get(connection);
+  const invoke = (code: string) =>
+    connection.call(
+      "execute_python",
+      { instance_id: instanceId, code, timeout: engineTimeout },
+      callOptions,
+    );
+  let raw: JsonValue;
+  if (leases?.has(instanceId)) {
+    try {
+      raw = await invoke(`# rea-bridge\n${callLine}`);
+    } catch (error) {
+      if (!isMissingBridgeError(error)) throw error;
+      leases.delete(instanceId);
+      raw = await invoke(`${bridge.code}\n${callLine}`);
+      leases.add(instanceId);
+    }
+  } else {
+    raw = await invoke(`${bridge.code}\n${callLine}`);
+    if (leases === undefined) {
+      leases = new Set();
+      bootstrappedLeases.set(connection, leases);
+    }
+    leases.add(instanceId);
+  }
   const execution = executionSchema.parse(raw);
   return {
     tool: "execute_python",

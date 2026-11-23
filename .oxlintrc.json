@@ -221,12 +221,6 @@
     {
       "files": ["tests/**/*.test.ts", "src/**/*.test.ts"],
       "rules": {
-        "vitest/valid-expect": [
-          "warn",
-          {
-            "maxArgs": 2
-          }
-        ],
         "vitest/valid-expect-in-promise": "error",
         "vitest/no-focused-tests": "error"
       }

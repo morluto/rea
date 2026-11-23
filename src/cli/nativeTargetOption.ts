@@ -1,5 +1,5 @@
 import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/openBinaryToolContract.js";
-import type { CliSessionTarget } from "./contractCliDescription.js";
+import type { CliSessionTarget } from "./contractCliDescriptionTypes.js";
 
 /** Help of the flags that bind a native target interpretation. */
 const NATIVE_OPEN_HELP = {

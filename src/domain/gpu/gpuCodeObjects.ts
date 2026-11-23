@@ -307,9 +307,16 @@ export const gpuCodeObjectsSchema = gpuCodeObjectsObjectSchema.superRefine(
           "GPU kernels require an inventoried object and its coordinate space",
         );
       range(row.location, ["kernels", index, "location"]);
-      for (const [field, source] of Object.entries(row.sources))
-        if (source !== null)
-          range(source, ["kernels", index, "sources", field]);
+      for (const [field, source] of Object.entries(row.sources)) {
+        if (source === null) continue;
+        const path = ["kernels", index, "sources", field];
+        if (source.container_id !== row.object_id)
+          issue(
+            path,
+            "GPU kernel resource ranges must use their payload coordinate space",
+          );
+        else range(source, path);
+      }
     }
     const artifactIds = new Set<string>();
     for (let index = 0; index < report.ptx_artifacts.length; index++) {

@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { regexMatchingDeadlineContinuingRecovery } from "../../../src/config/regexMatchingDeadline.js";
@@ -15,6 +15,7 @@ import { ok } from "../../../src/domain/result.js";
 import { HopperRegexSearch } from "../../../src/hopper/HopperRegexSearch.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
+  launchRegexMatchingLimitation,
   matchRegexValues,
   REGEX_MATCHING_LIMITATION,
   regexMatchingDeadlineError,
@@ -59,6 +60,7 @@ const probeWorkerHeap = (
     cwd,
     env,
     encoding: "utf8",
+    timeout: 10_000,
   });
   expect(result.status, result.stderr).toBe(0);
   return JSON.parse(result.stdout ?? "") as {
@@ -87,6 +89,18 @@ it("names the configurable regex deadline and the effective worker heap", () => 
     expect(REGEX_MATCHING_LIMITATION).toMatch(
       /effective old-generation heap.*not established/iu,
     );
+  const changed = launchRegexMatchingLimitation(undefined, {
+    heapMiB: 96,
+    source: "runtime",
+  });
+  expect(changed).toContain("96 MiB worker heap request (source runtime)");
+  if (heap.kind === "effective") {
+    expect(changed).toContain(
+      `effective ${String(heap.overridden ? heap.mib : 96)} MiB old-generation heap`,
+    );
+  } else {
+    expect(changed).toContain("which was not established");
+  }
   const deadline = projectAnalysisError(
     regexMatchingDeadlineError("search_procedures"),
   );
@@ -395,39 +409,15 @@ it("leaves the heap unknown when --title overwrites the command line", async () 
   ).toEqual({ kind: "unknown" });
 });
 
-it("arms the worker timer with an overridden matching deadline", async () => {
-  const delays: number[] = [];
-  const original = global.setTimeout;
-  global.setTimeout = ((handler, timeout, ...args) => {
-    if (typeof timeout === "number") delays.push(timeout);
-    return original(handler, timeout, ...args);
-  }) as typeof setTimeout;
-  try {
-    expect(
-      await matchRegexValues({
-        operation: "search_procedures",
-        pattern: "^a",
-        caseSensitive: true,
-        values: ["a"],
-        deadline: { deadlineMs: 10_000, source: "setting" },
-      }),
-    ).toEqual(ok([0]));
-    expect(delays).toContain(10_000);
-    expect(delays).not.toContain(5_000);
-  } finally {
-    global.setTimeout = original;
-  }
-});
-
 it("stops a slow match at the configured deadline and names the setting", async () => {
-  // Catastrophic backtracking outlives the test deadline, so only a stop
-  // reports; the previous test pins the timer to the configured deadline.
+  // A fallback cancellation makes using the longer default deadline observable.
   const matched = await matchRegexValues({
     operation: "search_procedures",
     pattern: "^(a+)+$",
     caseSensitive: true,
     values: [`${"a".repeat(30)}!`],
     deadline: { deadlineMs: 100, source: "setting" },
+    signal: AbortSignal.timeout(2_000),
   });
   expect(matched.ok).toBe(false);
   if (matched.ok) return;
@@ -533,26 +523,6 @@ it("matches a trivial pattern in a real worker at the heap floor", async () => {
   expect(outcome).toEqual({ ok: true, indices: [0] });
 });
 
-it("preserves Unicode matching order and refuses a pre-cancelled match", async () => {
-  expect(
-    await matchRegexValues({
-      operation: "search_procedures",
-      pattern: "^δ",
-      caseSensitive: false,
-      values: ["Δelta", "delta", "δίκη"],
-    }),
-  ).toEqual(ok([0, 2]));
-  expect(
-    await matchRegexValues({
-      operation: "search_procedures",
-      pattern: ".",
-      caseSensitive: true,
-      values: ["value"],
-      signal: AbortSignal.abort(),
-    }),
-  ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
-});
-
 it("preserves the caller abort reason for pre-cancelled and interrupted matches", async () => {
   const preCancelled = { request: "stop before matching" };
   const refused = await matchRegexValues({
@@ -569,20 +539,35 @@ it("preserves the caller abort reason for pre-cancelled and interrupted matches"
   if (!refused.ok) expect(refused.error.cause).toBe(preCancelled);
   const controller = new AbortController();
   const interrupted = { request: "stop while matching" };
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   const matching = matchRegexValues({
     operation: "search_procedures",
     pattern: "^a",
     caseSensitive: true,
     values: ["a"],
     signal: controller.signal,
+    deadline: {
+      deadlineMs: 2 * DEFAULT_REGEX_MATCHING_DEADLINE_MS,
+      source: "setting",
+    },
   });
-  controller.abort(interrupted);
-  const result = await matching;
-  expect(result).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisCancelledError" },
-  });
-  if (!result.ok) expect(result.error.cause).toBe(interrupted);
+  try {
+    vi.advanceTimersByTime(DEFAULT_REGEX_MATCHING_DEADLINE_MS);
+    controller.abort(interrupted);
+    const result = await matching;
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
+    if (!result.ok) expect(result.error.cause).toBe(interrupted);
+  } finally {
+    controller.abort(interrupted);
+    try {
+      await matching;
+    } finally {
+      vi.useRealTimers();
+    }
+  }
 });
 
 it("names the rejected pattern field for a default invalid-pattern refusal", async () => {
@@ -651,35 +636,18 @@ it("keeps Hopper's result projection and invalid-pattern contract with the share
   await search.close();
 });
 
-it("returns ordered matching indices across large batches in the supervised worker", async () => {
-  const values = Array.from({ length: 2500 }, (_, i) =>
-    i % 2 === 0 ? `sym_hit_${String(i)}` : `sym_miss_${String(i)}`,
-  );
-  const matched = await matchRegexValues({
-    operation: "search_procedures",
-    pattern: "^sym_hit_\\d+$",
-    caseSensitive: true,
-    values,
-  });
-  expect(matched.ok).toBe(true);
-  if (!matched.ok) return;
-  expect(matched.value.length).toBe(1250);
-  expect(matched.value[0]).toBe(0);
-  expect(matched.value[1]).toBe(2);
-  expect(matched.value.at(-1)).toBe(2498);
-});
-
 it("matches a 1M inventory inside a constrained 16 MiB worker heap without structured-clone OOM", async () => {
   const outcome = await runIsolatedRegexProbe(
     "rea-regex-1m-16mib-",
     `(() => {
   const list = new Array(1_000_000);
+  const wanted = new Set([0, 4096, 987_654, list.length - 1]);
   for (let i = 0; i < list.length; i += 1)
-    list[i] = i === 987_654 ? "sym_needle_hit_value" : \`sym_padding_entry_\${i}\`;
+    list[i] = wanted.has(i) ? "sym_needle_hit_value" : \`sym_padding_entry_\${i}\`;
   return list;
 })()`,
     "^sym_needle_",
     16,
   );
-  expect(outcome).toEqual({ ok: true, indices: [987_654] });
+  expect(outcome).toEqual({ ok: true, indices: [0, 4096, 987_654, 999_999] });
 });

@@ -58,6 +58,7 @@ const fileCloseFailure = vi.hoisted(() => ({
   selectedPath: "",
   attempts: 0,
   failFirst: false,
+  toolCloseFailures: new Set<string>(),
   failRead: undefined as (() => Error) | undefined,
   abortSnapshotWrite: undefined as AbortController | undefined,
 }));
@@ -82,6 +83,18 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     },
     open: async (...args: Parameters<typeof fs.open>) => {
       const handle = await fs.open(...args);
+      const toolPath = [...fileCloseFailure.toolCloseFailures].find((path) =>
+        samePath(String(args[0]), path),
+      );
+      if (toolPath !== undefined) {
+        const close = handle.close.bind(handle);
+        handle.close = async () => {
+          if (fileCloseFailure.toolCloseFailures.delete(toolPath))
+            throw new Error("injected WABT tool close failure");
+          return close();
+        };
+        return handle;
+      }
       if (!samePath(String(args[0]), fileCloseFailure.selectedPath))
         return handle;
       const close = handle.close.bind(handle);
@@ -1238,6 +1251,41 @@ it("retries a retained input descriptor before admitting the next WABT operation
   } finally {
     fileCloseFailure.selectedPath = "";
     fileCloseFailure.failFirst = false;
+    await provider.close();
+  }
+});
+
+it("reports the first tool admission failure and tracks every sibling descriptor until release", async () => {
+  const root = await realpath(
+    await createTestTempDirectory("rea-wabt-tool-cleanup-"),
+  );
+  const suffix = process.platform === "win32" ? ".exe" : "";
+  const siblingTools = ["wasm-objdump", "wasm2wat"].map((tool) =>
+    join(root, tool + suffix),
+  );
+  for (const path of siblingTools) {
+    await writeFile(path, "fixture tool", { mode: 0o755 });
+    fileCloseFailure.toolCloseFailures.add(path);
+  }
+  const provider = new WabtArtifactProvider({ REA_WABT_BIN_DIRECTORY: root });
+  try {
+    const result = await provider.inspect({
+      path: join(root, "selected.wasm"),
+      candidate_paths: [],
+      glue_paths: [],
+    });
+    if (result.ok) throw new Error("Expected rejected tool admission");
+    const primary = projectAnalysisError(primaryAnalysisError(result.error));
+    expect(primary.code).toBe("capability_unavailable");
+    expect(primary.message).toContain("wasm-validate");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toEqual(siblingTools);
+
+    await provider.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupResources).toEqual([]);
+  } finally {
+    fileCloseFailure.toolCloseFailures.clear();
     await provider.close();
   }
 });

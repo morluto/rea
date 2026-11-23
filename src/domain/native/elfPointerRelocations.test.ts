@@ -752,6 +752,12 @@ it("admits fitting pointer workspace and preserves its complete values", () => {
   ).toEqual([0x1234n, 0x1334n, 0x1434n]);
 });
 
+it("exposes clipped, coalesced loader-write intervals from the value-only overlay", () => {
+  const facts = pointerValues(relativeValues(), 6144);
+  expect(facts.writeIntervalsIn(0x304n, 16)).toEqual([{ start: 0, end: 16 }]);
+  expect(facts.writeIntervalsIn(0x318n, 8)).toEqual([]);
+});
+
 it("charges repeated virtual destinations once within the pointer workspace", () => {
   const facts = pointerValues(relativeValues(true), 2048);
   expect(facts.unsignedAt(0x300n, 8)).toBe(0x1234n);
