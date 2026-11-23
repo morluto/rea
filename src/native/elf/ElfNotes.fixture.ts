@@ -226,6 +226,19 @@ export const elfNoteWithUnreadableSectionNameFixture = (
   return bytes;
 };
 
+export const elfCompressedNoteStorage = (
+  notes: Buffer,
+  bits: 32 | 64,
+  little: boolean,
+  alignment: number,
+): Buffer => {
+  const header = Buffer.alloc(bits === 64 ? 24 : 12);
+  write32(header, 0, 1, little); // ELFCOMPRESS_ZLIB
+  writeWord(header, bits === 64 ? 8 : 4, notes.length, bits, little);
+  writeWord(header, bits === 64 ? 16 : 8, alignment, bits, little);
+  return concat(header, deflateSync(notes));
+};
+
 /** A non-allocated SHT_NOTE whose stored bytes include an ELF compression header. */
 export const compressedElfNoteSectionFixture = (
   bits: 32 | 64 = 64,
@@ -236,10 +249,6 @@ export const compressedElfNoteSectionFixture = (
     gnuBuildIdNote(undefined, little),
     gnuAbiTagNote(little),
   );
-  const header = Buffer.alloc(bits === 64 ? 24 : 12);
-  write32(header, 0, 1, little); // ELFCOMPRESS_ZLIB
-  writeWord(header, bits === 64 ? 8 : 4, notes.length, bits, little);
-  writeWord(header, bits === 64 ? 16 : 8, 4, bits, little);
   const bytes = elfNoteFixture({
     bits,
     little,
@@ -247,7 +256,7 @@ export const compressedElfNoteSectionFixture = (
     ownership,
     sectionName: ".debug.notes",
     alignment: bits === 64 ? 8 : 4,
-    notes: concat(header, deflateSync(notes)),
+    notes: elfCompressedNoteStorage(notes, bits, little, 4),
   });
   const headerSize = bits === 64 ? 64 : 52;
   const programSize = bits === 64 ? 56 : 32;
