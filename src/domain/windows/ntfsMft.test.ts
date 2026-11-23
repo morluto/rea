@@ -596,6 +596,28 @@ describe("parseMftIndex refusals and limits", () => {
     expect(image.value.metadata.record_count).toBe(2);
     expect(image.value.metadata.directory_record_count).toBe(1);
   });
+
+  it("matches parseMftIndex across tiny unaligned chunks beyond the inline header window", () => {
+    const stream = streamOf(
+      ...Array.from({ length: 40 }, (_, slot) =>
+        slot === 35
+          ? new Uint8Array(1024)
+          : recordOf({ flags: slot % 2 === 0 ? 0x0003 : 0x0001 }),
+      ),
+      new Uint8Array(123),
+    );
+    const parsed = parseMftIndex(stream);
+    const decoder = createMftDecoder(stream.length);
+    if (!parsed.ok || !decoder.ok) throw new Error("invalid fixture");
+    for (let offset = 0; offset < stream.length; offset += 17)
+      expect(decoder.value.write(stream.subarray(offset, offset + 17)).ok).toBe(
+        true,
+      );
+    const streamed = decoder.value.finish();
+    if (!streamed.ok) throw new Error(streamed.error.message);
+    expect(streamed.value.metadata).toEqual(parsed.value.metadata);
+    expect(streamed.value.limitations).toEqual(parsed.value.limitations);
+  });
 });
 
 it("selects bounded details by source slot from the existing index, including sparse slots", () => {

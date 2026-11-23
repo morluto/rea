@@ -496,9 +496,32 @@ const resolveMftAttributeLists = (
   bytes: Uint8Array,
   recordBytes: number,
 ): readonly MftRecord[] => {
+  const totalSlots = Math.floor(bytes.length / recordBytes);
+  let scratch: Buffer | undefined;
+  return resolveMftAttributeListsWithLookup(records, totalSlots, (index) => {
+    const offset = index * recordBytes;
+    if (
+      !hasMftFileRecordSignature(
+        bytes.subarray(offset, offset + MFT_FILE_RECORD_MAGIC_BYTES),
+      )
+    )
+      return null;
+    scratch ??= Buffer.allocUnsafe(recordBytes);
+    return readRecordSlice(
+      bytes.subarray(offset, offset + recordBytes),
+      offset,
+      scratch,
+    );
+  });
+};
+
+const resolveMftAttributeListsWithLookup = (
+  records: readonly MftRecord[],
+  totalSlots: number,
+  lookupRecord: (index: number) => MftRecord | null,
+): readonly MftRecord[] => {
   const decoded = new Map(records.map((record) => [record.index, record]));
   let additionalRecords = 0;
-  let scratch: Buffer | undefined;
   type ReferenceResult =
     MftAttributeListResolution["references"][number]["result"];
   type UnresolvedReference = Extract<ReferenceResult, { kind: "unresolved" }>;
@@ -510,20 +533,12 @@ const resolveMftAttributeLists = (
   ): Result<MftRecord, UnresolvedReference> => {
     const retained = decoded.get(index);
     if (retained !== undefined) return ok(retained);
-    if (index >= Math.floor(bytes.length / recordBytes))
-      return err(unresolved("record-unavailable"));
-    const offset = index * recordBytes;
-    if (
-      !hasMftFileRecordSignature(
-        bytes.subarray(offset, offset + MFT_FILE_RECORD_MAGIC_BYTES),
-      )
-    )
-      return err(unresolved("record-unavailable"));
+    if (index >= totalSlots) return err(unresolved("record-unavailable"));
+    const record = lookupRecord(index);
+    if (record === null) return err(unresolved("record-unavailable"));
     // At most another 32 records (2 MiB at the largest format record size), shared by this page.
     if (additionalRecords >= MFT_INLINE_HEADER_LIMIT)
       return err(unresolved("capacity"));
-    scratch ??= Buffer.allocUnsafe(recordBytes);
-    const record = readRecord(bytes, offset, scratch);
     additionalRecords += 1;
     decoded.set(index, record);
     return ok(record);
@@ -650,10 +665,20 @@ const readRecord = (
   bytes: Uint8Array,
   fileOffset: number,
   restored: Buffer,
+): MftRecord =>
+  readRecordSlice(
+    bytes.subarray(fileOffset, fileOffset + restored.length),
+    fileOffset,
+    restored,
+  );
+
+const readRecordSlice = (
+  record: Uint8Array,
+  fileOffset: number,
+  restored: Buffer,
 ): MftRecord => {
   const recordBytes = restored.length;
   const index = fileOffset / recordBytes;
-  const record = bytes.subarray(fileOffset, fileOffset + recordBytes);
   const reader = mftReader(record);
   const { totalBytes, updateSequence } = readRecordDeclarations(reader);
   const { offset: usaOffset, entries: usaEntries } = updateSequence;
@@ -766,10 +791,22 @@ const readRecordSummary = (
   fileOffset: number,
   restored: Buffer,
   includeHeader: boolean,
+): MftRecordScanSummary =>
+  readRecordSummarySlice(
+    bytes.subarray(fileOffset, fileOffset + restored.length),
+    fileOffset,
+    restored,
+    includeHeader,
+  );
+
+const readRecordSummarySlice = (
+  record: Uint8Array,
+  fileOffset: number,
+  restored: Buffer,
+  includeHeader: boolean,
 ): MftRecordScanSummary => {
   const recordBytes = restored.length;
   const index = fileOffset / recordBytes;
-  const record = bytes.subarray(fileOffset, fileOffset + recordBytes);
   const reader = mftReader(record);
   const { totalBytes, updateSequence } = readRecordDeclarations(reader);
   const { offset: usaOffset, entries: usaEntries } = updateSequence;
@@ -924,27 +961,266 @@ const verifyFixups = (
   };
 };
 
-/** Buffer the admitted input once while accepting arbitrary chunk boundaries. */
+const MAX_PREFETCHED_EXTENSION_TARGETS =
+  MFT_INLINE_HEADER_LIMIT * MFT_INLINE_ATTRIBUTE_REFERENCE_LIMIT;
+
+const collectWantedAttributeTargets = (
+  record: MftRecord,
+  wanted: Set<number>,
+): void => {
+  for (const attribute of record.attributes) {
+    if (
+      attribute.type !== 0x20 ||
+      attribute.storage.kind !== "resident" ||
+      attribute.storage.listEntries === null
+    )
+      continue;
+    for (const entry of attribute.storage.listEntries) {
+      if (wanted.size >= MAX_PREFETCHED_EXTENSION_TARGETS) return;
+      wanted.add(entry.reference.recordNumber);
+    }
+  }
+};
+
+/**
+ * Stream one MFT acquisition record-by-record with O(recordBytes) working
+ * memory instead of buffering the entire up-to-512 MiB file.
+ */
 class StreamingMftDecoder implements RegionDecoder<MftInventory> {
-  readonly #bytes: Uint8Array;
+  readonly #fileBytes: number;
+  readonly #headerPrefix = Buffer.allocUnsafe(NTFS_MFT_MIN_RECORD_BYTES);
+  #headerFill = 0;
   #written = 0;
+  #earlyFailure: RegionDecodeFailure | undefined;
+  #initialized = false;
+  #hasDeclaredRecordSize = false;
+  #recordBytes = MFT_DEFAULT_RECORD_BYTES;
+  #recordBuf: Buffer | undefined;
+  #restored: Buffer | undefined;
+  #recordFill = 0;
+  #nextOffset = 0;
+  #stopped = false;
+
+  readonly #limitations: string[] = [];
+  readonly #recordHeaders: MftRecord[] = [];
+  readonly #wantedTargets = new Set<number>();
+  readonly #prefetchedTargets = new Map<number, MftRecord>();
+  #nextRecordHeaderIndex: number | null = null;
+  #recordCount = 0;
+  #inUseCount = 0;
+  #directoryCount = 0;
+  #extensionCount = 0;
+  #mismatchCount = 0;
+  #unverifiedCount = 0;
+  #incompleteNames = 0;
+  #incompleteAttributes = 0;
+  #fileNameCount = 0;
+  #invalidSlots = 0;
+  #invalidExtents = 0;
+  #inconsistentRecordNumbers = 0;
+  #firstInvalidExtentOffset: number | undefined;
+  #firstInvalidOffset: number | undefined;
 
   constructor(fileBytes: number) {
-    this.#bytes = new Uint8Array(fileBytes);
+    this.#fileBytes = fileBytes;
   }
 
   write(chunk: Uint8Array): Result<void, RegionDecodeFailure> {
-    if (chunk.length > this.#bytes.length - this.#written)
+    if (chunk.length > this.#fileBytes - this.#written)
       return err(failure("received more bytes than the admitted file length"));
-    this.#bytes.set(chunk, this.#written);
     this.#written += chunk.length;
+    if (this.#earlyFailure !== undefined || this.#stopped) return ok(undefined);
+
+    let pos = 0;
+    if (!this.#initialized) {
+      const need = NTFS_MFT_MIN_RECORD_BYTES - this.#headerFill;
+      const take = Math.min(need, chunk.length);
+      this.#headerPrefix.set(chunk.subarray(0, take), this.#headerFill);
+      this.#headerFill += take;
+      pos = take;
+      if (this.#headerFill < NTFS_MFT_MIN_RECORD_BYTES) return ok(undefined);
+
+      this.#initialized = true;
+      if (!hasMftFileRecordSignature(this.#headerPrefix)) {
+        this.#earlyFailure = failure(
+          "record 0 does not begin with the FILE signature",
+        );
+        return ok(undefined);
+      }
+      const { totalBytes: declaredRecordBytes } = readRecordDeclarations(
+        mftReader(this.#headerPrefix),
+      );
+      this.#hasDeclaredRecordSize = isRecordSize(declaredRecordBytes);
+      this.#recordBytes = this.#hasDeclaredRecordSize
+        ? declaredRecordBytes
+        : MFT_DEFAULT_RECORD_BYTES;
+      if (!this.#hasDeclaredRecordSize)
+        this.#limitations.push(
+          `record 0 declares a record size of ${String(declaredRecordBytes)} bytes, which is not a supported power of two from ${String(MFT_MIN_RECORD_BYTES)} to ${String(MFT_MAX_RECORD_BYTES)}; records were read at the ${String(MFT_DEFAULT_RECORD_BYTES)}-byte default`,
+        );
+      this.#recordBuf = Buffer.allocUnsafe(this.#recordBytes);
+      this.#restored = Buffer.allocUnsafe(this.#recordBytes);
+      this.#recordBuf.set(this.#headerPrefix, 0);
+      this.#recordFill = NTFS_MFT_MIN_RECORD_BYTES;
+    }
+
+    const recordBytes = this.#recordBytes;
+    const recordBuf = this.#recordBuf!;
+    while (pos < chunk.length && !this.#stopped) {
+      if (this.#recordFill === 0 && chunk.length - pos >= recordBytes) {
+        this.#processRecord(chunk.subarray(pos, pos + recordBytes));
+        pos += recordBytes;
+      } else {
+        const take = Math.min(
+          recordBytes - this.#recordFill,
+          chunk.length - pos,
+        );
+        recordBuf.set(chunk.subarray(pos, pos + take), this.#recordFill);
+        this.#recordFill += take;
+        pos += take;
+        if (this.#recordFill === recordBytes) {
+          this.#recordFill = 0;
+          this.#processRecord(recordBuf);
+        }
+      }
+    }
     return ok(undefined);
   }
 
+  #processRecord(slice: Uint8Array): void {
+    const offset = this.#nextOffset;
+    this.#nextOffset += this.#recordBytes;
+    if (!hasMftFileRecordSignature(slice)) {
+      this.#invalidSlots += 1;
+      this.#firstInvalidOffset ??= offset;
+      if (!this.#hasDeclaredRecordSize) this.#stopped = true;
+      return;
+    }
+    const slotIndex = offset / this.#recordBytes;
+    const restored = this.#restored!;
+    const inDetailWindow = this.#recordHeaders.length < MFT_INLINE_HEADER_LIMIT;
+    const wantedExtension =
+      !inDetailWindow && this.#wantedTargets.has(slotIndex);
+    if (inDetailWindow || wantedExtension) {
+      const record = readRecordSlice(slice, offset, restored);
+      if (inDetailWindow) {
+        this.#recordHeaders.push(record);
+        if (record.baseRecordReference === null)
+          collectWantedAttributeTargets(record, this.#wantedTargets);
+      } else {
+        this.#prefetchedTargets.set(slotIndex, record);
+        collectWantedAttributeTargets(record, this.#wantedTargets);
+        this.#nextRecordHeaderIndex ??= slotIndex;
+      }
+      this.#fileNameCount += record.fileNames.length;
+      if (record.attributeCoverage === "incomplete")
+        this.#incompleteAttributes += 1;
+      this.#recordCount += 1;
+      if (record.inUse) this.#inUseCount += 1;
+      if (record.directory) this.#directoryCount += 1;
+      if (record.baseRecordReference !== null) this.#extensionCount += 1;
+      if (record.fixups.mismatchSector !== null) this.#mismatchCount += 1;
+      if (
+        record.fixups.malformed ||
+        record.fixups.coveredSectors < this.#recordBytes / FIXUP_SECTOR_BYTES
+      )
+        this.#unverifiedCount += 1;
+      if (record.recordNumberMatchesSlot === false)
+        this.#inconsistentRecordNumbers += 1;
+      if (record.fileNameCoverage === "incomplete") this.#incompleteNames += 1;
+      if (!record.extentValid) {
+        this.#invalidExtents += 1;
+        this.#firstInvalidExtentOffset ??= offset;
+      }
+    } else {
+      const summary = readRecordSummarySlice(slice, offset, restored, false);
+      this.#fileNameCount += summary.fileNameCount;
+      if (summary.attributeCoverage === "incomplete")
+        this.#incompleteAttributes += 1;
+      this.#nextRecordHeaderIndex ??= slotIndex;
+      this.#recordCount += 1;
+      if (summary.inUse) this.#inUseCount += 1;
+      if (summary.directory) this.#directoryCount += 1;
+      if (summary.isExtension) this.#extensionCount += 1;
+      if (summary.mismatchSector) this.#mismatchCount += 1;
+      if (summary.unverified) this.#unverifiedCount += 1;
+      if (summary.inconsistentRecordNumber)
+        this.#inconsistentRecordNumbers += 1;
+      if (summary.fileNameCoverage === "incomplete") this.#incompleteNames += 1;
+      if (!summary.extentValid) {
+        this.#invalidExtents += 1;
+        this.#firstInvalidExtentOffset ??= offset;
+      }
+    }
+  }
+
   finish(): Result<MftInventory, RegionDecodeFailure> {
-    if (this.#written !== this.#bytes.length)
+    if (this.#written !== this.#fileBytes)
       return err(failure("stream ended before the admitted file length"));
-    return scanMft(this.#bytes);
+    if (this.#fileBytes < NTFS_MFT_MIN_RECORD_BYTES)
+      return err(
+        failure(
+          `file is ${String(this.#fileBytes)} bytes, shorter than one ${String(NTFS_MFT_MIN_RECORD_BYTES)}-byte record header`,
+        ),
+      );
+    if (this.#earlyFailure !== undefined) return err(this.#earlyFailure);
+
+    const limitations = [...this.#limitations];
+    if (this.#firstInvalidOffset !== undefined)
+      limitations.push(
+        `record at ${String(this.#firstInvalidOffset)} does not begin with the FILE signature; ${String(this.#invalidSlots)} slot(s) without a FILE signature were found`,
+      );
+    if (this.#firstInvalidExtentOffset !== undefined)
+      limitations.push(
+        `${String(this.#invalidExtents)} FILE record(s) declare inconsistent record extents, beginning at offset ${String(this.#firstInvalidExtentOffset)}`,
+      );
+    if (this.#inconsistentRecordNumbers !== 0)
+      limitations.push(
+        `${String(this.#inconsistentRecordNumbers)} FILE record(s) declare a record number that disagrees with their stream slot`,
+      );
+    const truncatedTailBytes = this.#fileBytes % this.#recordBytes;
+    if (truncatedTailBytes !== 0)
+      limitations.push(
+        `${String(truncatedTailBytes)} trailing byte(s) do not fill a ${String(this.#recordBytes)}-byte record and were not parsed`,
+      );
+    if (this.#mismatchCount !== 0)
+      limitations.push(
+        `${String(this.#mismatchCount)} record(s) hold a sector trailer that is not the update sequence number; their attributes were not read and no later step should trust them`,
+      );
+    if (this.#unverifiedCount !== 0)
+      limitations.push(
+        `${String(this.#unverifiedCount)} record(s) carry an invalid or incomplete update sequence array; their sector trailers were not fully verified`,
+      );
+    if (this.#incompleteNames > 0)
+      limitations.push(
+        `Local FILE_NAME coverage is incomplete for ${String(this.#incompleteNames)} record(s)`,
+      );
+
+    const totalSlots = Math.floor(this.#fileBytes / this.#recordBytes);
+    const metadata: MftMetadata = {
+      kind: "ntfs-mft",
+      record_bytes: this.#recordBytes,
+      record_count: this.#recordCount,
+      in_use_record_count: this.#inUseCount,
+      directory_record_count: this.#directoryCount,
+      extension_record_count: this.#extensionCount,
+      fixup_mismatch_count: this.#mismatchCount,
+      fixup_unverified_record_count: this.#unverifiedCount,
+      truncated_tail_bytes: truncatedTailBytes,
+      record_headers: resolveMftAttributeListsWithLookup(
+        this.#recordHeaders,
+        totalSlots,
+        (index) => this.#prefetchedTargets.get(index) ?? null,
+      ),
+      omitted_record_headers: this.#recordCount - this.#recordHeaders.length,
+      record_header_start_index: 0,
+      next_record_header_index: this.#nextRecordHeaderIndex,
+      file_name_count: this.#fileNameCount,
+      file_name_incomplete_record_count: this.#incompleteNames,
+      attribute_incomplete_record_count: this.#incompleteAttributes,
+    };
+
+    return ok({ metadata, recordBytes: this.#recordBytes, limitations });
   }
 }
 
