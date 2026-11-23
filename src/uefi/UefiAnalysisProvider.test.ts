@@ -8540,3 +8540,141 @@ it("rejects empty Ghidra C output and falls back to entry point scaffolding with
     await provider.close();
   }
 });
+
+it("disambiguates duplicate module names and GUIDs in manifest with numeric occurrence suffixes without collision", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dup-modules-");
+  const inDir = join(directory, "extracted");
+  const outDir = join(directory, "decompiled");
+  await mkdir(join(inDir, "dxe"), { recursive: true });
+
+  const payload1 = createMinimalPeBuffer(0x8664, 1, 256);
+  const payload2 = createMinimalPeBuffer(0x8664, 1, 512);
+  const path1 = join(inDir, "dxe", "DupMod_1.efi");
+  const path2 = join(inDir, "dxe", "DupMod_2.efi");
+  await writeFile(path1, payload1);
+  await writeFile(path2, payload2);
+
+  const manifest = {
+    parser: { name: "rea-uefi", version: "1.0.0" },
+    source_coverage: "complete",
+    total_modules_found: 2,
+    total_modules_decompiled: 2,
+    phases: { sec: 0, pei: 0, dxe: 2, smm: 0, app: 0, misc: 0 },
+    modules: [
+      {
+        occurrence: 0,
+        guid: "11111111-2222-3333-4444-555555555555",
+        name: "DupMod",
+        phase: "dxe",
+        type: "driver",
+        payload_file: "dxe/DupMod_1.efi",
+        payload_sha256: sha256(payload1),
+        size: payload1.length,
+      },
+      {
+        occurrence: 1,
+        guid: "11111111-2222-3333-4444-555555555555",
+        name: "DupMod",
+        phase: "dxe",
+        type: "driver",
+        payload_file: "dxe/DupMod_2.efi",
+        payload_sha256: sha256(payload2),
+        size: payload2.length,
+      },
+    ],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(2);
+    expect(result.modules).toHaveLength(2);
+
+    const rel1 = result.modules[0]!.relative_c_file;
+    const rel2 = result.modules[1]!.relative_c_file;
+    expect(rel1).toBeDefined();
+    expect(rel2).toBeDefined();
+    expect(rel1).not.toBe(rel2);
+    expect(rel1).toContain(
+      "DXE/11111111-2222-3333-4444-555555555555_DupMod/DupMod.c",
+    );
+    expect(rel2).toContain(
+      "DXE/11111111-2222-3333-4444-555555555555_DupMod_1/DupMod.c",
+    );
+
+    expect(existsSync(join(outDir, rel1!))).toBe(true);
+    expect(existsSync(join(outDir, rel2!))).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("sanitizes non-ASCII Unicode module names into valid C identifier scaffolding and macros", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-unicode-mod-");
+  const inDir = join(directory, "extracted");
+  const outDir = join(directory, "decompiled");
+  await mkdir(join(inDir, "pei"), { recursive: true });
+
+  const payload = createMinimalPeBuffer(0x8664, 1, 256);
+  const payloadPath = join(inDir, "pei", "unicode_mod.efi");
+  await writeFile(payloadPath, payload);
+
+  const manifest = {
+    parser: { name: "rea-uefi", version: "1.0.0" },
+    source_coverage: "complete",
+    total_modules_found: 1,
+    total_modules_decompiled: 1,
+    phases: { sec: 0, pei: 1, dxe: 0, smm: 0, app: 0, misc: 0 },
+    modules: [
+      {
+        occurrence: 0,
+        guid: "22222222-3333-4444-5555-666666666666",
+        name: "日本語_Драйвер_🚀",
+        phase: "pei",
+        type: "peim",
+        payload_file: "pei/unicode_mod.efi",
+        payload_sha256: sha256(payload),
+        size: payload.length,
+      },
+    ],
+  };
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify(manifest),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+    const mod = result.modules[0]!;
+    expect(mod.relative_c_file).toBeDefined();
+    expect(mod.relative_header_file).toBeDefined();
+
+    const header = await readFile(
+      join(outDir, mod.relative_header_file!),
+      "utf8",
+    );
+    const c = await readFile(join(outDir, mod.relative_c_file!), "utf8");
+
+    expect(header).toMatch(/#ifndef _UEFI_[A-Z0-9_]+_H_/);
+    expect(header).toMatch(/EFI_STATUS EFIAPI [a-zA-Z0-9_]+EntryPoint/);
+    expect(c).toContain("Reconstructed Entry Scaffolding");
+  } finally {
+    await provider.close();
+  }
+});
