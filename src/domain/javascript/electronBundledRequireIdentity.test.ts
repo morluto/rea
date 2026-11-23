@@ -383,6 +383,40 @@ describe("Webpack loader alias bounds", () => {
   });
 });
 
+describe("Webpack loader alias uncertainty through indirect aliases", () => {
+  it.each([
+    {
+      label: "conditional",
+      setup: "const a=flag?n:{};const b=a;b.n=()=>0;",
+    },
+    {
+      label: "conditional alias",
+      setup: "const maybe=flag?n:{};const alias=maybe;alias.n=()=>0;",
+    },
+    {
+      label: "call-valued",
+      setup: "const maybe=getLoader();const alias=maybe;alias.n=()=>0;",
+    },
+  ])("keeps a write through an indirect $label alias unknown", ({ setup }) => {
+    // Greptile P1 / Codex P2 on PR #13802: the write root aliases a
+    // binding whose own initializer is uncertain (a conditional that may
+    // be the loader, or an opaque call). The uncertainty must carry
+    // through the identifier edge; accepting the root merely because its
+    // first resolvable name resolves would keep the original getter even
+    // when the write replaces it.
+    const analysis = analyzeJavaScriptStaticSource(
+      bootstrap(
+        EXTERNAL,
+        'const s=n.n(n(45840));new(s().BrowserWindow)({});s().ipcMain.handle("ready",()=>{});',
+        `${setup}n(100);`,
+      ),
+    );
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.electron.browser_windows).toEqual([]);
+    expect(analysis.electron.ipc).toEqual([]);
+  });
+});
+
 it("reports the alias budget when a destructured external alias chain exceeds it", () => {
   // 520 const hops exceed the default 512 alias selections; the origin is not
   // claimed, and the walk reports its limit instead of a silent absence.

@@ -19,6 +19,7 @@ import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import {
   argumentValue,
@@ -235,24 +236,45 @@ const canonicalWebpackInteropBindings = (
     if (closure.exhausted) return true;
     const binding = resolveSemanticBindingState(state, first, first.name);
     if (binding === undefined) return true;
-    if (closure.aliases.has(binding.bindingId)) return true;
-    // The closure already covers every identifier alias of the loader, so
-    // only the root's own opaque initializers can still make it the loader:
-    // a call, conditional, member, or unresolvable name may return the
-    // loader, and a projected initializer is unknown.
-    const selected = semanticBindingAtRead(binding, first, state).binding;
-    for (const initializers of [
-      selected.initializers,
-      selected.referenceInitializers,
-    ])
-      for (const source of initializers) {
-        if (source.projection.length !== 0) return true;
-        const next = unwrapJavaScriptExpression(source.node).node;
-        if (t.isIdentifier(next)) {
-          if (resolveSemanticBindingState(state, next, next.name) === undefined)
-            return true;
-        } else if (!excludesLoader(next)) return true;
-      }
+    // Follow identifier-initializer edges transitively: a write root may
+    // hold the loader not only when it aliases the loader directly, but
+    // also when any binding on its alias chain holds an uncertain value.
+    // Checking only the root's own initializers accepted a root whose first
+    // resolvable name merely resolved — `const a = flag ? n : {}; const b =
+    // a; b.n = ...` — even though `a` may be the loader. A call,
+    // conditional, member, or unresolvable name may return the loader, and
+    // a projected initializer is unknown. Each binding is visited once, so
+    // the walk is bounded by the binding count and spends no alias budget.
+    const visited = new Set<string>();
+    const pending: {
+      readonly binding: JavaScriptSemanticBindingState;
+      readonly read: t.Node;
+    }[] = [{ binding, read: first }];
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (current === undefined || visited.has(current.binding.bindingId))
+        continue;
+      visited.add(current.binding.bindingId);
+      if (closure.aliases.has(current.binding.bindingId)) return true;
+      const selected = semanticBindingAtRead(
+        current.binding,
+        current.read,
+        state,
+      ).binding;
+      for (const initializers of [
+        selected.initializers,
+        selected.referenceInitializers,
+      ])
+        for (const source of initializers) {
+          if (source.projection.length !== 0) return true;
+          const next = unwrapJavaScriptExpression(source.node).node;
+          if (t.isIdentifier(next)) {
+            const target = resolveSemanticBindingState(state, next, next.name);
+            if (target === undefined) return true;
+            pending.push({ binding: target, read: next });
+          } else if (!excludesLoader(next)) return true;
+        }
+    }
     return false;
   };
   completeSemanticSteps(
