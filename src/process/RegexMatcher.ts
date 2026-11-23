@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 
 import { isRecord } from "../kernel/isRecord.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 import type {
   AnalysisError,
@@ -747,6 +748,16 @@ export const matchRegexValues = async (input: {
     input.heapRequest,
   );
   if (!admitted.ok) return admitted;
+  if (input.values.length === 0) {
+    try {
+      new RegExp(input.pattern, input.caseSensitive ? "u" : "iu");
+    } catch (cause: unknown) {
+      return err(
+        invalidRegexPatternError(input.operation, errorMessage(cause)),
+      );
+    }
+    return ok([]);
+  }
   const { deadline, heapRequest } = admitted.value;
   const transfer = packRegexValues(input.values);
   let worker: Worker;

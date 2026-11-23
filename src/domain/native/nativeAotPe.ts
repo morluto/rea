@@ -252,15 +252,20 @@ const methodTablePointerAddress = (
   table: MethodTable,
   offset: number,
 ): bigint => table.address + BigInt(offset);
+const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+const TYPE_ROW_FIXED_BYTES = Buffer.byteLength(
+  JSON.stringify({ address: "", type: null }),
+);
+const STRING_ROW_FIXED_BYTES =
+  Buffer.byteLength(JSON.stringify({ address: "", value: "" })) - 2;
+
 const readMappedPointer = (
   image: PeImage,
   address: bigint,
   budget: NativeAotParserBudget,
 ): bigint | null => {
-  const bytes = image.read(address, NATIVE_AOT_POINTER_BYTES, budget);
-  return bytes === null
-    ? null
-    : new BinaryReader(bytes, true, NATIVE_AOT_FORMAT).word(0, 64);
+  const loc = image.readAt(address, NATIVE_AOT_POINTER_BYTES, budget);
+  return loc === null ? null : loc.reader.word(loc.offset, 64);
 };
 
 const METHOD_TABLE_RECORD_BYTES = 32;
@@ -689,12 +694,18 @@ class PeImage {
   readonly sizeOfImage: number;
   readonly sections: readonly Section[];
   readonly #bytes: Buffer;
+  readonly #reader: BinaryReader;
+  readonly #sizeOfImageBig: bigint;
   readonly #sizeOfHeaders: number;
   readonly #machine: number;
-  readonly #overlays: ImageOverlay[] = [];
+  readonly #overlays: {
+    readonly overlay: ImageOverlay;
+    readonly reader: BinaryReader;
+  }[] = [];
 
   constructor(bytes: Buffer) {
     this.#bytes = bytes;
+    this.#reader = new BinaryReader(bytes, true, NATIVE_AOT_FORMAT);
     if (bytes.length < 0x40 || bytes.toString("latin1", 0, 2) !== "MZ")
       throw new NativeAotAdmissionError({ code: "not_pe_image" });
     const observed = observeMzWindowsHeader(bytes);
@@ -737,6 +748,7 @@ class PeImage {
       throw new NativeAotAdmissionError({ code: "unsupported_pe32_plus" });
     this.imageBase = fixed.value.imageBase;
     this.sizeOfImage = fixed.value.sizeOfImage;
+    this.#sizeOfImageBig = BigInt(this.sizeOfImage);
     this.#sizeOfHeaders = fixed.value.sizeOfHeaders;
     if (count < 1 || this.sizeOfImage === 0)
       throw new NativeAotAdmissionError({ code: "unsupported_image_extent" });
@@ -797,25 +809,27 @@ class PeImage {
     return (
       end >= start &&
       start >= this.imageBase &&
-      end - this.imageBase <= BigInt(this.sizeOfImage)
+      end - this.imageBase <= this.#sizeOfImageBig
     );
   }
-  read(
+  readAt(
     address: bigint,
     size: number,
     budget: NativeAotParserBudget,
-  ): Buffer | null {
+  ): { readonly reader: BinaryReader; readonly offset: number } | null {
     if (address < this.imageBase || !Number.isSafeInteger(size) || size < 0)
       return null;
-    for (const overlay of this.#overlays) {
+    for (let i = 0; i < this.#overlays.length; i += 1) {
+      const entry = this.#overlays[i]!;
+      const overlay = entry.overlay;
+      if (size > overlay.sizeBytes) continue;
       const offset = address - overlay.base;
       if (offset >= 0n && offset <= BigInt(overlay.sizeBytes - size)) {
-        const start = Number(offset);
-        return overlay.bytes.subarray(start, start + size);
+        return { reader: entry.reader, offset: Number(offset) };
       }
     }
     const rva = address - this.imageBase;
-    if (rva > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+    if (rva > MAX_SAFE_INTEGER_BIGINT) return null;
     const relative = Number(rva);
     if (relative < this.#sizeOfHeaders) {
       if (
@@ -823,37 +837,53 @@ class PeImage {
         relative > this.#bytes.length - size
       )
         return null;
-      return this.#bytes.subarray(relative, relative + size);
+      return { reader: this.#reader, offset: relative };
     }
-    for (const section of this.sections) {
+    for (let i = 0; i < this.sections.length; i += 1) {
       if (!budget.consumeWork(1)) return null;
+      const section = this.sections[i]!;
       const extent = virtualExtent(section);
       if (relative < section.rva || relative - section.rva > extent - size)
         continue;
       const delta = relative - section.rva;
       if (delta > section.rawSize - size) return null;
-      const offset = section.rawOffset + delta;
-      return this.#bytes.subarray(offset, offset + size);
+      return { reader: this.#reader, offset: section.rawOffset + delta };
     }
     return null;
+  }
+  read(
+    address: bigint,
+    size: number,
+    budget: NativeAotParserBudget,
+  ): Buffer | null {
+    const loc = this.readAt(address, size, budget);
+    return loc === null
+      ? null
+      : loc.reader.bytes.subarray(loc.offset, loc.offset + size);
   }
   // This checks executable section membership, not file-backed instruction bytes.
   isExecutable(address: bigint, budget: NativeAotParserBudget): boolean {
     if (address < this.imageBase) return false;
     const rva = address - this.imageBase;
-    for (const section of this.sections) {
+    const relative = rva <= MAX_SAFE_INTEGER_BIGINT ? Number(rva) : -1;
+    for (let i = 0; i < this.sections.length; i += 1) {
       if (!budget.consumeWork(1)) return false;
+      if (relative < 0) continue;
+      const section = this.sections[i]!;
       if (
         (section.characteristics & 0x20000000) !== 0 &&
-        rva >= BigInt(section.rva) &&
-        rva < BigInt(section.rva + virtualExtent(section))
+        relative >= section.rva &&
+        relative < section.rva + virtualExtent(section)
       )
         return true;
     }
     return false;
   }
   addOverlay(overlay: ImageOverlay): void {
-    this.#overlays.push(overlay);
+    this.#overlays.push({
+      overlay,
+      reader: new BinaryReader(overlay.bytes, true, NATIVE_AOT_FORMAT),
+    });
   }
   virtualBytesRemaining(
     address: bigint,
@@ -861,20 +891,15 @@ class PeImage {
   ): number {
     if (address < this.imageBase) return 0;
     const rva = address - this.imageBase;
-    let section: Section | undefined;
-    for (const candidate of this.sections) {
+    const relative = rva <= MAX_SAFE_INTEGER_BIGINT ? Number(rva) : -1;
+    for (let i = 0; i < this.sections.length; i += 1) {
       if (!budget.consumeWork(1)) return 0;
-      if (
-        rva >= BigInt(candidate.rva) &&
-        rva < BigInt(candidate.rva + virtualExtent(candidate))
-      ) {
-        section = candidate;
-        break;
-      }
+      if (relative < 0) continue;
+      const candidate = this.sections[i]!;
+      const end = candidate.rva + virtualExtent(candidate);
+      if (relative >= candidate.rva && relative < end) return end - relative;
     }
-    return section === undefined
-      ? 0
-      : section.rva + virtualExtent(section) - Number(rva);
+    return 0;
   }
   #range(offset: number, size: number): void {
     if (
@@ -1065,44 +1090,44 @@ const parseMethodTable = (
   budget: NativeAotParserBudget,
   validation: { itemsExamined: number },
 ): MethodTable | null => {
-  const header = image.read(address, METHOD_TABLE_HEADER_BYTES, budget);
+  const header = image.readAt(address, METHOD_TABLE_HEADER_BYTES, budget);
   if (header === null) return null;
-  const fields = new BinaryReader(header, true, METHOD_TABLE_FORMAT);
-  const flags = fields.u32(0),
-    baseSize = fields.u32(4),
-    related = fields.word(8, 64);
+  const { reader: fields, offset: hOff } = header;
+  const flags = fields.u32(hOff),
+    baseSize = fields.u32(hOff + 4),
+    related = fields.word(hOff + 8, 64);
   const elementType = (flags & 0x7c000000) >>> 26;
   if (
     (elementType !== 0x14 && elementType !== 0x15) ||
     baseSize < 16 ||
     baseSize > 0x10000000 ||
     (related !== 0n &&
-      image.read(related, METHOD_TABLE_HEADER_BYTES, budget) === null)
+      image.readAt(related, METHOD_TABLE_HEADER_BYTES, budget) === null)
   )
     return null;
-  const slotsCount = fields.u16(16);
-  const interfacesCount = fields.u16(18);
-  const bytes = image.read(
+  const slotsCount = fields.u16(hOff + 16);
+  const interfacesCount = fields.u16(hOff + 18);
+  const body = image.readAt(
     address,
     methodTableByteLength(slotsCount, interfacesCount),
     budget,
   );
-  if (bytes === null) return null;
-  const pointers = new BinaryReader(bytes, true, METHOD_TABLE_FORMAT);
+  if (body === null) return null;
+  const { reader: pointers, offset: bOff } = body;
   for (let slot = 0; slot < slotsCount; slot++) {
     if (!budget.consumeWork(NATIVE_AOT_POINTER_BYTES)) return null;
     validation.itemsExamined++;
-    const target = pointers.word(methodTableSlotOffset(slot), 64);
+    const target = pointers.word(bOff + methodTableSlotOffset(slot), 64);
     if (target !== 0n && !image.isExecutable(target, budget)) return null;
   }
   for (let index = 0; index < interfacesCount; index++) {
     if (!budget.consumeWork(NATIVE_AOT_POINTER_BYTES)) return null;
     validation.itemsExamined++;
     const iface = pointers.word(
-      methodTableInterfaceOffset(slotsCount, index),
+      bOff + methodTableInterfaceOffset(slotsCount, index),
       64,
     );
-    if (iface !== 0n && image.read(iface, 20, budget) === null) return null;
+    if (iface !== 0n && image.readAt(iface, 20, budget) === null) return null;
   }
   return { address, flags, baseSize, related, slotsCount, interfacesCount };
 };
@@ -1112,20 +1137,19 @@ const readRelativePointer = (
   address: bigint,
   budget: NativeAotParserBudget,
 ): bigint | null => {
-  const raw = image.read(address, 4, budget);
-  return raw === null
-    ? null
-    : address + BigInt(new BinaryReader(raw, true, NATIVE_AOT_FORMAT).i32(0));
+  const raw = image.readAt(address, 4, budget);
+  return raw === null ? null : address + BigInt(raw.reader.i32(raw.offset));
 };
 
 /** Exact UTF-8 length of JSON.stringify for a UTF-16 string without allocating it. */
 const jsonUtf16StringBytes = (
   fields: BinaryReader,
   codeUnits: number,
+  baseOffset = 0,
 ): number => {
   let total = 2;
   for (let index = 0; index < codeUnits; index++) {
-    const value = fields.u16(index * 2);
+    const value = fields.u16(baseOffset + index * 2);
     if (value === 0x22 || value === 0x5c) total += 2;
     else if (value < 0x20)
       total +=
@@ -1137,7 +1161,8 @@ const jsonUtf16StringBytes = (
           ? 2
           : 6;
     else if (value >= 0xd800 && value <= 0xdbff) {
-      const next = index + 1 < codeUnits ? fields.u16((index + 1) * 2) : 0;
+      const next =
+        index + 1 < codeUnits ? fields.u16(baseOffset + (index + 1) * 2) : 0;
       if (next >= 0xdc00 && next <= 0xdfff) {
         total += 4;
         index++;
@@ -1853,14 +1878,14 @@ export const parseNativeAotPe = (
     throw reportBudgetRefusal("summary_exceeds_budget", maximumSummaryBytes);
   let typesOmitted = 0;
   discovered.tables.forEachIncluded((table) => {
-    const row: NativeAotType = { address: hex(table.address), type: null };
+    const addr = hex(table.address);
     const rowBytes =
-      Buffer.byteLength(JSON.stringify(row)) + (types.length > 0 ? 1 : 0);
+      TYPE_ROW_FIXED_BYTES + addr.length + (types.length > 0 ? 1 : 0);
     if (rowBytes > remainingSummaryBytes) {
       typesOmitted++;
       return;
     }
-    types.push(row);
+    types.push({ address: addr, type: null });
     remainingSummaryBytes -= rowBytes;
   });
   if (frozen !== undefined) {
@@ -1886,15 +1911,13 @@ export const parseNativeAotPe = (
         continue;
       }
       frozenCandidates++;
-      const rawLength = image.read(address + 8n, 4, budget);
+      const rawLength = image.readAt(address + 8n, 4, budget);
       if (budget.truncationReason !== undefined) {
         frozenScanTruncated = true;
         break;
       }
       const length =
-        rawLength === null
-          ? null
-          : new BinaryReader(rawLength, true, NATIVE_AOT_FORMAT).u32(0);
+        rawLength === null ? null : rawLength.reader.u32(rawLength.offset);
       if (length === null || address + 14n + BigInt(length) * 2n > frozen.end) {
         address += 8n;
         continue;
@@ -1908,15 +1931,16 @@ export const parseNativeAotPe = (
       // UTF-16 payload, then the terminating code unit. The payload starts at
       // +12, not +16 (the latter silently shifts every decoded string by two
       // characters and includes adjacent object padding).
-      const raw = image.read(address + 12n, stringBytes, budget);
+      const rawLoc = image.readAt(address + 12n, stringBytes, budget);
       if (budget.truncationReason !== undefined) {
         frozenScanTruncated = true;
         break;
       }
       frozenStringDataBytesExamined += stringBytes;
-      const fields =
-        raw === null ? null : new BinaryReader(raw, true, NATIVE_AOT_FORMAT);
-      if (fields === null || fields.u16(length * 2) !== 0) {
+      if (
+        rawLoc === null ||
+        rawLoc.reader.u16(rawLoc.offset + length * 2) !== 0
+      ) {
         address += 8n;
         continue;
       }
@@ -1924,22 +1948,24 @@ export const parseNativeAotPe = (
         frozenScanTruncated = true;
         break;
       }
-      const rowPrefixBytes = Buffer.byteLength(
-        JSON.stringify({ address: hex(address), value: "" }),
-      );
+      const addrHex = hex(address);
       const rowBytes =
-        rowPrefixBytes -
-        2 +
-        jsonUtf16StringBytes(fields, length) +
+        STRING_ROW_FIXED_BYTES +
+        addrHex.length +
+        jsonUtf16StringBytes(rawLoc.reader, length, rawLoc.offset) +
         (frozenStrings.length > 0 ? 1 : 0);
       if (rowBytes > remainingSummaryBytes) {
         frozenStringsOmitted++;
         address += 8n;
         continue;
       }
+      const raw = rawLoc.reader.bytes.subarray(
+        rawLoc.offset,
+        rawLoc.offset + stringBytes,
+      );
       const row: NativeAotString = {
-        address: hex(address),
-        value: fields.bytes.toString("utf16le", 0, length * 2),
+        address: addrHex,
+        value: raw.toString("utf16le", 0, length * 2),
       };
       frozenStrings.push(row);
       remainingSummaryBytes -= rowBytes;

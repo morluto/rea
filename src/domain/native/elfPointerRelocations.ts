@@ -978,30 +978,43 @@ export function* readElfRelocationWritesSteps(
     const start = relrSize === 0n ? 0 : fileOffset(relr, Number(relrSize));
     if (start === null) return malformed("RELR table is not file-backed");
     let next: bigint | undefined;
-    for (let at = start; at < start + Number(relrSize); at += word) {
+    const wordBig = BigInt(word);
+    const addrSpace = 1n << BigInt(input.bits);
+    const maxAddr = addrSpace - wordBig;
+    const strideBig = BigInt((input.bits - 1) * word);
+    const end = start + Number(relrSize);
+    const add = (address: bigint, recordOffset: number) => {
+      if (address > maxAddr)
+        malformed("RELR destination overflows the ELF address space");
+      const slot = target(address, word);
+      return write(address, word, slot === null ? 0n : rawWord(slot), {
+        source: {
+          encoding: "relr",
+          record_file_offset: recordOffset,
+          kind: null,
+        },
+        symbol_index: null,
+        addend: null,
+      });
+    };
+    for (let at = start; at < end; at += word) {
       if ((at - start) % (word * 4096) === 0) yield;
       const entry = rawWord(at);
-      const add = (address: bigint) => {
-        if (address > (1n << BigInt(input.bits)) - BigInt(word))
-          malformed("RELR destination overflows the ELF address space");
-        const slot = target(address, word);
-        return write(address, word, slot === null ? 0n : rawWord(slot), {
-          source: { encoding: "relr", record_file_offset: at, kind: null },
-          symbol_index: null,
-          addend: null,
-        });
-      };
       if ((entry & 1n) === 0n) {
-        yield add(entry);
-        next = entry + BigInt(word);
+        yield add(entry, at);
+        next = entry + wordBig;
       } else {
         if (next === undefined)
           return malformed("RELR bitmap has no preceding address");
-        for (let bit = 1; bit < input.bits; bit++)
-          if ((entry & (1n << BigInt(bit))) !== 0n)
-            yield add(next + BigInt((bit - 1) * word));
-        next += BigInt((input.bits - 1) * word);
-        if (next > 1n << BigInt(input.bits))
+        let bits = entry >> 1n;
+        let addr = next;
+        while (bits !== 0n) {
+          if ((bits & 1n) !== 0n) yield add(addr, at);
+          bits >>= 1n;
+          addr += wordBig;
+        }
+        next += strideBig;
+        if (next > addrSpace)
           malformed("RELR bitmap overflows the ELF address space");
       }
     }
