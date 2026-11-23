@@ -82,15 +82,9 @@ report the resolved policy separately where needed. See the owning guides for
 [Android class search](../guides/android/android-analysis.md), and
 [Frida capture](../guides/runtime/frida-instrumentation.md).
 
-Graph tools accept per-call traversal bounds (`max_depth` and `max_nodes` on
-`get_call_graph` and `trace_call_path`). Android class search can stop provider
-reads once it finds enough matching rows for the requested page. See the owning
-guides for coverage and recovery.
-
-ADB package, process, and directory listings and Frida process listings apply
-`limit` and `offset` after discovery. ADB reports page omissions through
-`coverage` and a limitation. Frida reports `total_processes` and `truncated`.
-Moving to another page runs a fresh discovery on the selected device.
+Frida process discovery applies `limit` and `offset` after enumerating the
+selected device. It reports `total_processes` and `truncated`. Moving to another
+page runs a fresh discovery on that device.
 
 The same accepted policy must reach acquisition, parsing, worker requests,
 serialization, cached-result admission and generated consumers where those
