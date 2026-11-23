@@ -95,8 +95,18 @@ export const machoSliceSchema = z.strictObject({
   fat_alignment_exponent: z.int().nonnegative().nullable(),
   file_type: z.enum(["execute", "dylib", "bundle", "other"]),
   file_type_code: z.int().nonnegative(),
-  /** Raw LC_BUILD_VERSION platform number; null means no such command was observed. */
+  /**
+   * Raw LC_BUILD_VERSION platform number. Null means no such command was
+   * observed, or that several distinct platforms were declared; read
+   * `platform_conflict` to tell those apart.
+   */
   platform: z.int().nonnegative().nullable(),
+  /**
+   * True when the image declared more than one distinct build platform, so
+   * `platform` is null because the declarations disagree rather than because
+   * none was seen.
+   */
+  platform_conflict: z.boolean().optional(),
   /** Every distinct build platform declared by LC_BUILD_VERSION/version-min commands. */
   platforms: z.array(z.int().nonnegative()),
   install_name: z.string().nullable(),
@@ -882,6 +892,9 @@ const withoutDependencies = (
   file_type_code: slice.file_type_code,
   platform: slice.platform,
   platforms: slice.platforms,
+  ...(slice.platform_conflict === undefined
+    ? {}
+    : { platform_conflict: slice.platform_conflict }),
   install_name: slice.install_name,
   rpaths: slice.rpaths,
   dyld_environment: slice.dyld_environment,

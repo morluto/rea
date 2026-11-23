@@ -581,6 +581,9 @@ const readSlice = async (
   const distinctPlatforms = [...new Set(slice.platforms)];
   slice.platform =
     distinctPlatforms.length === 1 ? (distinctPlatforms[0] ?? null) : null;
+  // Distinguish "several platforms declared" from "none declared": both leave
+  // `platform` null, but only the first is a conflict the caller must see.
+  if (distinctPlatforms.length > 1) slice.platform_conflict = true;
   return slice;
 };
 
