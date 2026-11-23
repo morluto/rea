@@ -535,6 +535,7 @@
 * **domain:** split artifactFormatMetadata.ts into domain-grouped schema modules ([8497f8c](https://github.com/morluto/rea/commit/8497f8c05a0a8184089f958419735329287bb9a0))
 * **elf:** consolidate fixed record decoding proofs ([#13753](https://github.com/morluto/rea/issues/13753)) ([d0b562c](https://github.com/morluto/rea/commit/d0b562c682ace93cc22068b374c4a3bf427a248a))
 * **elf:** read GNU property words through BinaryReader ([add4faf](https://github.com/morluto/rea/commit/add4faf2ad7aeb38d6d8c0e8619e238f01e6a5c1)), closes [#11865](https://github.com/morluto/rea/issues/11865)
+* **elf:** remove obsolete debug-link buffer parsers ([#13971](https://github.com/morluto/rea/issues/13971)) ([2352fab](https://github.com/morluto/rea/commit/2352fab0f6011bd91d46f8426939cf7619168ca4))
 * **environment:** retain the latest replay interference event ([#13408](https://github.com/morluto/rea/issues/13408)) ([b96e2e1](https://github.com/morluto/rea/commit/b96e2e10e751f1026a6a828503b3709e6795897f))
 * **environment:** scan replay observations without copying the timeline ([#13409](https://github.com/morluto/rea/issues/13409)) ([54121e2](https://github.com/morluto/rea/commit/54121e2f2a3d461fdf30ba1b5ee31fd3a35656b0))
 * **errors:** list distinct resources in providerCleanupErrorFromFailures ([13725d2](https://github.com/morluto/rea/commit/13725d2986dda6bb8b9a3ae449408da67da5c360)), closes [#11859](https://github.com/morluto/rea/issues/11859)
