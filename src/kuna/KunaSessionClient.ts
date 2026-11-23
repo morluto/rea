@@ -9,7 +9,6 @@ import {
   kunaVerificationLimitations,
   waitForKunaWork as waitFor,
   type KunaAnswer as Answer,
-  type KunaAnswerSource as AnswerSource,
 } from "./KunaSessionEvidence.js";
 import {
   KUNA_EXPORT_READY,
@@ -60,16 +59,11 @@ import {
 } from "../domain/analysisSearch.js";
 import { extractRequiredRegexLiteral } from "../domain/regexLiteralCandidate.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import {
-  createEvidence,
-  type Evidence,
-  type EvidenceLocation,
-} from "../domain/evidence.js";
+import { createEvidence } from "../domain/evidence.js";
 import { combineFunctionRelationshipCoverage } from "../domain/functionCallCoverage.js";
 import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { providerCleanupErrorFromFailures } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -138,14 +132,10 @@ import type { RegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
 import type { RegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "./KunaLimits.js";
 import type { KunaRunRelease, KunaRunSlots } from "./KunaRunSlots.js";
-import {
-  KunaProjectReader,
-  type KunaProjectFileSpan,
-} from "./KunaProjectReader.js";
+import { KunaProjectReader } from "./KunaProjectReader.js";
 import { kunaUnavailable } from "./KunaUnavailable.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { kunaQueryFailureForCaller } from "./KunaQueryErrors.js";
-import type { PseudocodeAbsence } from "../domain/native/pseudocodeAbsence.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 /** How often a request waiting on the project export reports that it still waits. */
