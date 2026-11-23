@@ -374,6 +374,13 @@ const toArtifactEntry = (
       ];
     return [];
   };
+  // An entry whose declared name cannot name a path still reports that name:
+  // the reader is the last place that knows it, and without it an unsafe or
+  // unreachable member becomes indistinguishable from an unnamed slot.
+  const sourceName =
+    entry.name !== null && (path === null || entry.name !== path)
+      ? { sourcePath: entry.name }
+      : {};
   if (entry.type === "storage") {
     return {
       path: path ?? "",
@@ -386,6 +393,7 @@ const toArtifactEntry = (
       declaredIntegrity: null,
       unpacked: false,
       limitations: limitation(),
+      ...sourceName,
       adapterKey: `compound-file/${String(entry.index)}`,
     };
   }
@@ -442,6 +450,7 @@ const toArtifactEntry = (
     declaredIntegrity: null,
     unpacked: false,
     limitations,
+    ...sourceName,
     adapterKey: `compound-file/${String(entry.index)}`,
   };
 };

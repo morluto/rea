@@ -54,6 +54,13 @@ const MAX_TREE_DEPTH = 64;
  */
 const MAX_DIRECTORY_ENTRIES = 1_048_576;
 
+/**
+ * Total characters of directory paths one parse retains. Deep nesting plus many
+ * children multiplies its ancestors into each descendant's path, so this bounds
+ * the representation even though every individual path is short.
+ */
+const MAX_PATH_BYTES = 32 * 1024 * 1024;
+
 /** Header field offsets; all are relative to the start of the file. */
 const HEADER = {
   majorVersion: 0x1a,
@@ -98,7 +105,9 @@ export interface CompoundFileDirectoryEntry {
   readonly index: number;
   /**
    * Names from the root storage down, joined by `/`; `null` when the entry is
-   * not reachable from the root storage through the directory tree.
+   * not reachable from the root storage through the directory tree, or when a
+   * name on that chain is not a safe path component. In the latter case the
+   * tree walk stops naming descendants rather than fabricating a hierarchy.
    */
   readonly path: string | null;
   /** The declared name, or `null` when its length or encoding is invalid. */
@@ -194,34 +203,92 @@ const isMarker = (sector: number): boolean => SECTOR_MARKERS.has(sector);
 const sectorOf = (sector: number, sectorBytes: number): number =>
   (sector + 1) * sectorBytes;
 
+interface ChainWalk {
+  readonly sectors: readonly number[];
+  readonly broken: boolean;
+  /** True when the aggregate visit budget, not the table, ended the walk. */
+  readonly budgetHit: boolean;
+}
+
 /**
  * Walk one allocation chain, bounded by the sector count and rejecting a
  * revisisted sector, so a corrupt table cannot loop or read past the file.
+ *
+ * Shared across every entry of one parse: many entries can name the same start
+ * sector or merge into a chain an earlier entry already walked, so the result
+ * is memoized per start sector. Without that, a file with N entries aliasing one
+ * long chain costs O(N × chain) sector visits; with it, each chain is walked
+ * once and shared.
  */
-const chainOf = (
-  fat: Uint32Array,
-  start: number,
-  sectorBytes: number,
-  fileBytes: number,
-): { readonly sectors: readonly number[]; readonly broken: boolean } => {
-  const sectors: number[] = [];
-  const seen = new Set<number>();
-  const sectorCount = fat.length;
-  let sector = start;
-  while (sector !== CFB_END_OF_CHAIN) {
-    if (
-      sector >= sectorCount ||
-      isMarker(sector) ||
-      seen.has(sector) ||
-      sectorOf(sector, sectorBytes) + sectorBytes > fileBytes
-    )
-      return { sectors, broken: true };
-    seen.add(sector);
-    sectors.push(sector);
-    sector = fat[sector] as number;
+class ChainTable {
+  readonly #walks = new Map<number, ChainWalk>();
+  /** Sectors visited across every walk of one parse. */
+  #visited = 0;
+
+  constructor(
+    readonly fat: Uint32Array,
+    readonly sectorBytes: number,
+    readonly fileBytes: number,
+    readonly visitBudget: number,
+  ) {}
+
+  get visited(): number {
+    return this.#visited;
   }
-  return { sectors, broken: false };
-};
+
+  walk(start: number): ChainWalk {
+    const cached = this.#walks.get(start);
+    if (cached !== undefined) return cached;
+    const sectors: number[] = [];
+    const seen = new Set<number>();
+    const sectorCount = this.fat.length;
+    const local = new Map<number, ChainWalk>();
+    let sector = start;
+    let broken = true;
+    let budgetHit = false;
+    for (;;) {
+      if (sector === CFB_END_OF_CHAIN) {
+        broken = false;
+        break;
+      }
+      if (
+        sector >= sectorCount ||
+        isMarker(sector) ||
+        seen.has(sector) ||
+        sectorOf(sector, this.sectorBytes) + this.sectorBytes > this.fileBytes
+      )
+        break;
+      // An aggregate budget keeps a file with many entries that each name a
+      // fresh long chain from multiplying out into unbounded work; the cap is
+      // a multiple of the file's own sector count so a legitimate file never
+      // reaches it.
+      if (this.#visited >= this.visitBudget) {
+        budgetHit = true;
+        break;
+      }
+      this.#visited += 1;
+      seen.add(sector);
+      sectors.push(sector);
+      local.set(sector, {
+        sectors: Object.freeze([...sectors]),
+        broken: true,
+        budgetHit: false,
+      });
+      sector = this.fat[sector] as number;
+    }
+    const result: ChainWalk = {
+      sectors: Object.freeze(sectors),
+      broken: broken || budgetHit,
+      budgetHit,
+    };
+    this.#walks.set(start, result);
+    // Every sector on the walk has this same suffix, so a later entry that
+    // starts partway along it reuses the tail instead of re-walking it.
+    for (const [walked, prefix] of local)
+      if (!this.#walks.has(walked)) this.#walks.set(walked, prefix);
+    return result;
+  }
+}
 
 const entryTypeOf = (raw: number): CompoundFileEntryType | null => {
   switch (raw) {
@@ -259,6 +326,14 @@ const nameOf = (
   const decoded = Buffer.from(bytes.subarray(0, nameLength - 2)).toString(
     "utf16le",
   );
+  // A lone UTF-16 surrogate has no valid UTF-8 encoding, so a filesystem
+  // handed this name would refuse or silently replace it. Report it as a
+  // name that cannot be a path component while keeping the declared text.
+  if (/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:[^\uD800-\uDBFF]|^)[\uDC00-\uDFFF]/.test(decoded))
+    return {
+      name: decoded,
+      problem: "declares a name with an unpaired UTF-16 surrogate",
+    };
   // The name is a single path component. A name that would read as two
   // components, as a parent step, or that carries a NUL is kept as the raw
   // declared text but cannot name a path, so callers project it instead of
@@ -525,13 +600,21 @@ export const parseCompoundFile = (
   if (table.length === 0)
     return err(failure("the header lists no FAT sector within the file"));
 
-  // The directory stream is a FAT chain; its sectors hold the entries.
-  const directoryChain = chainOf(
+  // One chain cache for the whole parse: the directory, the mini FAT, the root
+  // storage's mini stream and every member stream share it, so a sector walked
+  // once is never walked again. The visit budget is a multiple of the sectors
+  // the file actually holds, which no legitimate container can exhaust: a
+  // chain may revisit a sector only when it is malformed, and each such walk
+  // stops at its first revisit.
+  const chains = new ChainTable(
     table,
-    firstDirectorySector,
     sectorBytes,
     bytes.length,
+    Math.max(1024, sectorCount * 4),
   );
+
+  // The directory stream is a FAT chain; its sectors hold the entries.
+  const directoryChain = chains.walk(firstDirectorySector);
   if (directoryChain.broken)
     return err(
       failure(
@@ -555,12 +638,20 @@ export const parseCompoundFile = (
     );
   // A mini-FAT chain is container structure too: a stream that reaches one of
   // its sectors would publish allocation cells as member bytes.
-  const miniFatChain = chainOf(
-    table,
-    firstMiniFatSector,
-    sectorBytes,
-    bytes.length,
-  );
+  const miniFatChain = chains.walk(firstMiniFatSector);
+  // A mini-FAT chain and the directory chain that start at or reach the same
+  // sector would each read that sector as a different structure: the directory
+  // walk would decode mini-FAT cells as entry names, or the reverse. Reject
+  // the interpretation as a conflict rather than publish one of the two.
+  if (
+    miniFatChain.sectors.length !== 0 &&
+    miniFatChain.sectors.some((sector) =>
+      directoryChain.sectors.includes(sector),
+    )
+  )
+    limitations.push(
+      "the mini FAT chain shares sectors with the directory chain; both claim the same bytes as different structures, so mini stream contents are not resolved",
+    );
   // The FAT, the DIFAT, the directory and the mini FAT are container
   // structure, not content, so a stream whose chain reaches one of those
   // sectors is published as an unresolved range instead of as that structure's
@@ -580,6 +671,23 @@ export const parseCompoundFile = (
       `header declares ${String(directorySectorCount)} directory sector(s) but its chain holds ${String(directoryChain.sectors.length)}`,
     );
 
+  // The chain's sectors, the image copy and one RawEntry per 128 bytes are all
+  // retained, so a structurally valid directory that fills most of the 512 MiB
+  // ceiling would cost several GiB. Refuse it as a modeled limit before the
+  // copy is allocated, not after.
+  const plannedEntryCount = Math.floor(
+    (directoryChain.sectors.length * sectorBytes) / DIRECTORY_ENTRY_BYTES,
+  );
+  // The directory stream is copied out of the image only after the ceiling is
+  // checked, so a file near the 512 MiB admission ceiling is refused without
+  // first allocating an equally large directory buffer beside the image.
+  if (plannedEntryCount > MAX_DIRECTORY_ENTRIES)
+    return err(
+      limit(
+        `the directory stream holds ${String(plannedEntryCount)} entries, more than the ${String(MAX_DIRECTORY_ENTRIES)}-entry allowance`,
+        "capacity",
+      ),
+    );
   const directoryBytes = new Uint8Array(
     directoryChain.sectors.length * sectorBytes,
   );
@@ -601,10 +709,6 @@ export const parseCompoundFile = (
     "compound-file",
   );
   const entryCount = Math.floor(directoryBytes.length / DIRECTORY_ENTRY_BYTES);
-  // The chain's sectors, the image copy and one RawEntry per 128 bytes are
-  // all retained, so a structurally valid directory that fills most of the
-  // 512 MiB ceiling would cost several GiB. Refuse it as a modeled limit
-  // instead of expanding it.
   if (entryCount > MAX_DIRECTORY_ENTRIES)
     return err(
       limit(
@@ -666,20 +770,24 @@ export const parseCompoundFile = (
   const visited = new Set<number>();
   let cycleCount = 0;
   let depthLimited = 0;
-  const visit = (index: number, parent: number, prefix: string): void => {
+  const visit = (
+    index: number,
+    parent: number,
+    prefix: string | null,
+  ): void => {
     // An explicit stack keeps a long sibling chain from nesting one call per
     // entry; a malformed tree can hold far more than the call stack allows.
     const pending: {
       index: number;
       parent: number;
-      prefix: string;
+      prefix: string | null;
       depth: number;
     }[] = [{ index, parent, prefix, depth: 0 }];
     while (pending.length > 0) {
       const next = pending.pop() as {
         index: number;
         parent: number;
-        prefix: string;
+        prefix: string | null;
         depth: number;
       };
       const entryIndex = next.index;
@@ -696,12 +804,21 @@ export const parseCompoundFile = (
       visited.add(entryIndex);
       parents.set(entryIndex, next.parent);
       const entry = raw[entryIndex] as RawEntry;
+      // A name that is not one safe component (a `/`, `.`, `..`, a NUL, an
+      // unpaired surrogate) cannot name a path. Its own facts stay, but it and
+      // everything below it are left unnamed instead of projecting
+      // `foo/bar` as two components or handing descendants their grandparent's
+      // prefix. `unnamedBelow` marks that carry so descendants inherit it.
+      const component =
+        entry.name === null || entry.nameProblem !== null ? null : entry.name;
       const path =
-        entry.name === null
+        component === null
           ? null
-          : next.prefix === ""
-            ? entry.name
-            : `${next.prefix}/${entry.name}`;
+          : next.prefix === null
+            ? component
+            : next.prefix === ""
+              ? component
+              : `${next.prefix}/${component}`;
       if (path !== null) paths.set(entryIndex, path);
       // An unallocated or undefined-type slot belongs to no tree. Its links are
       // stale fields of a free record: following them would name a live entry
@@ -723,9 +840,13 @@ export const parseCompoundFile = (
           prefix: next.prefix,
           depth: next.depth,
         });
-      // Only a storage owns a child tree.
+      // Only a canonical storage owns a child tree. An extra root record is a
+      // directory entry outside entry 0 that claims to be a root: the format
+      // fixes the root at entry 0, so following its child link would present
+      // an arbitrary subtree under a name the hierarchy does not grant.
       if (
-        (entry.type === "storage" || entry.type === "root-storage") &&
+        (entry.type === "storage" ||
+          (entry.type === "root-storage" && entryIndex === rootIndex)) &&
         entry.child !== null
       ) {
         if (next.depth >= MAX_TREE_DEPTH) {
@@ -735,7 +856,7 @@ export const parseCompoundFile = (
         pending.push({
           index: entry.child,
           parent: entryIndex,
-          prefix: path ?? next.prefix,
+          prefix: path,
           depth: next.depth + 1,
         });
       }
@@ -744,7 +865,7 @@ export const parseCompoundFile = (
   const visitTree = (
     index: number | null,
     parent: number,
-    prefix: string,
+    prefix: string | null,
   ): void => {
     if (index === null) return;
     visit(index, parent, prefix);
@@ -771,13 +892,18 @@ export const parseCompoundFile = (
       `${String(orphanCount)} directory entr(ies) are not reachable from the root storage and have no path`,
     );
 
-  // Only streams and the root storage's mini stream have stream allocation
-  // semantics; an ordinary storage's size and start fields are stale.
-  const allocationBearing = (entry: RawEntry): boolean =>
-    entry.type === "stream" || entry.type === "root-storage";
+  // Only the canonical root and ordinary streams have stream allocation
+  // semantics; an ordinary storage's size and start fields are stale, and an
+  // extra type-5 record is not the root the format fixes at entry 0.
+  const allocationBearing = (entry: RawEntry, index: number): boolean =>
+    entry.type === "stream" ||
+    (entry.type === "root-storage" && index === rootIndex);
   let brokenChains = 0;
   let overlappingChains = 0;
   let sharedChains = 0;
+  let pathBytes = 0;
+  let pathBudgetHit = 0;
+  let chainBudgetHits = 0;
   // Two entries can name the same starting sector or merge chains, which would
   // publish the same bytes under two identities. The first entry in directory
   // order owns the sectors; a later chain that reaches one of them is left
@@ -785,18 +911,32 @@ export const parseCompoundFile = (
   const ownedSectors = new Map<number, number>();
   const entries: CompoundFileDirectoryEntry[] = raw.map((entry, index) => {
     const parent = parents.get(index) ?? null;
-    const path = paths.get(index) ?? null;
+    // Deep nesting multiplies into every descendant path: 64 levels of
+    // maximum-length names describe about 2 KiB per leaf, so a million
+    // children would retain gigabytes of strings the metadata is not worth.
+    // Past the byte allowance a path is dropped and counted, not retained.
+    const candidate = paths.get(index) ?? null;
+    let path: string | null = candidate;
+    if (candidate !== null) {
+      pathBytes += candidate.length;
+      if (pathBytes > MAX_PATH_BYTES) {
+        path = null;
+        pathBudgetHit += 1;
+      }
+    }
     const startingSector = isMarker(entry.startingSector)
       ? null
       : entry.startingSector;
     // A stream is empty only when it declares no bytes. A stream that declares
     // bytes but starts at a marker reaches none of them, which is a broken
-    // chain rather than an empty stream.
-    const markerStartWithBytes =
-      isMarker(entry.startingSector) && entry.streamSize > 0;
+    // chain rather than an empty stream. Only an allocation-bearing record can
+    // be broken this way: an ordinary storage's size and start fields are
+    // stale, so counting it would inflate the broken-chain total.
+    const bearing = allocationBearing(entry, index);
+    const markerStartWithBytes = bearing && entry.streamSize > 0 && isMarker(entry.startingSector);
     const empty = entry.streamSize === 0;
     const storage: CompoundFileDirectoryEntry["storage"] =
-      !allocationBearing(entry) || !cutoffValid
+      !bearing || !cutoffValid
         ? "empty"
         : empty
           ? "empty"
@@ -823,7 +963,7 @@ export const parseCompoundFile = (
         sharedOverlap: false,
         byteOffset: null,
       };
-    const chain = chainOf(table, startingSector, sectorBytes, bytes.length);
+    const chain = chains.walk(startingSector);
     const needed = Math.ceil(entry.streamSize / sectorBytes);
     // A chain is complete when it did not break and reaches the declared size.
     // Contiguity is a separate fact: a short chain whose reached sectors happen
@@ -834,7 +974,10 @@ export const parseCompoundFile = (
       chain.sectors.every(
         (sector, position) => sector === startingSector + position,
       );
-    if (!complete && !markerStartWithBytes) brokenChains += 1;
+    if (!complete && !markerStartWithBytes) {
+      brokenChains += 1;
+      if (chain.budgetHit) chainBudgetHits += 1;
+    }
     const structuralOverlap = chain.sectors.some((sector) =>
       structuralSectors.has(sector),
     );
@@ -888,6 +1031,14 @@ export const parseCompoundFile = (
   if (firstMiniFatSector !== CFB_END_OF_CHAIN && declaredMiniFatSectors === 0)
     limitations.push(
       "header names a mini FAT sector but declares no mini FAT sectors; mini stream contents are not resolved",
+    );
+  if (pathBudgetHit !== 0)
+    limitations.push(
+      `directory paths exceeded the ${String(MAX_PATH_BYTES)}-character allowance; ${String(pathBudgetHit)} entr(ies) that would have been named past it keep their declared name and facts but no logical path`,
+    );
+  if (chainBudgetHits !== 0)
+    limitations.push(
+      `${String(chainBudgetHits)} stream(s) were left unresolved when the allocation-chain walk budget (${String(chains.visitBudget)} sector visits) was exhausted; a file whose acceptable chains stay within it is unaffected`,
     );
 
   const metadata: CompoundFileMetadata = {
