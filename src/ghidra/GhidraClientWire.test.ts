@@ -40,6 +40,7 @@ type WireHarness = {
 const harness = (
   ceiling: BridgeMaxRequestBytes,
   replyCeiling: BridgeMaxReplyBytes = DEFAULT_BRIDGE_MAX_REPLY,
+  launchSeed?: BridgeMaxRequestBytes,
 ): WireHarness => {
   const writes: string[] = [];
   let nextId = 0;
@@ -66,6 +67,9 @@ const harness = (
       logger: pino({ level: "silent" }),
       failure,
       bridgeMaxRequestBytes: ceiling,
+      ...(launchSeed === undefined
+        ? {}
+        : { bridgeLaunchSeedMaxRequestBytes: launchSeed }),
       bridgeMaxReplyBytes: replyCeiling,
     }),
   };
@@ -266,4 +270,37 @@ it("preserves distinct decompile and value-flow options on the wire", async () =
     pending.failAll(() => ok(null));
     await first;
   }
+});
+
+it("refuses a runtime ceiling above the ceiling the launched bridge resolved", async () => {
+  // The bridge reads REA_BRIDGE_MAX_REQUEST_BYTES once, from the environment it
+  // inherited. A runtime raise moves the client above what the bridge retains, so
+  // the request would be written and then dropped without a correlated reply.
+  const launched = limit(8_192);
+  const raised = limit(16_384);
+  const { wire, writes } = harness(raised, DEFAULT_BRIDGE_MAX_REPLY, launched);
+  const result = await wire.request("ping", {}, {});
+  if (result.ok) throw new Error("Expected a bridge ceiling mismatch refusal");
+  const cause = result.error.cause;
+  if (!(cause instanceof AnalysisResourceConstraintError))
+    throw new Error("Expected a transport resource constraint");
+  expect(cause.reportedLimits).toMatchObject({
+    bridge_max_request_bytes: 8_192,
+    client_max_request_bytes: 16_384,
+  });
+  expect(cause.remediationAction).toContain("bridge.max_request_bytes");
+  // Refused before the socket write, so the bridge never sees the request.
+  expect(writes).toHaveLength(0);
+});
+
+it("admits a runtime ceiling at or below the launched bridge ceiling", async () => {
+  const { wire, pending, writes } = harness(
+    limit(8_192),
+    DEFAULT_BRIDGE_MAX_REPLY,
+    limit(16_384),
+  );
+  const request = wire.request("ping", {}, {});
+  expect(writes).toHaveLength(1);
+  expect(pending.settle(1, ok({ pong: true }))).toBe(true);
+  await expect(request).resolves.toEqual(ok({ pong: true }));
 });

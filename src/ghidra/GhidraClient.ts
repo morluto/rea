@@ -270,6 +270,12 @@ export class GhidraClient {
       failure: this.#failure,
       bridgeMaxRequestBytes:
         options.bridgeMaxRequestBytes ?? DEFAULT_BRIDGE_MAX_REQUEST,
+      ...(options.bridgeLaunchSeedMaxRequestBytes === undefined
+        ? {}
+        : {
+            bridgeLaunchSeedMaxRequestBytes:
+              options.bridgeLaunchSeedMaxRequestBytes,
+          }),
       bridgeMaxReplyBytes:
         options.bridgeMaxReplyBytes ?? DEFAULT_BRIDGE_MAX_REPLY,
     });

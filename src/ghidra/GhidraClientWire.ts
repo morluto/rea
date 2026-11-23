@@ -2,6 +2,7 @@ import type { Socket } from "node:net";
 
 import {
   admitBridgeRequestLimit,
+  bridgeRequestLimitMismatchError,
   bridgeRequestOversizeError,
   type BridgeMaxRequestBytes,
 } from "../config/bridgeMaxRequestBytes.js";
@@ -13,7 +14,7 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { ConfigurationError } from "../domain/configurationErrors.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Logger } from "pino";
 import type { PendingOperations } from "../process/PendingOperations.js";
 import type {
@@ -36,8 +37,18 @@ export interface GhidraWireOptions {
   >;
   readonly logger: Logger;
   readonly failure: GhidraSessionFailureFactory;
-  /** Effective Ghidra request ceiling; the bridge itself enforces none. */
+  /**
+   * Effective Ghidra request ceiling the client admits in encoded UTF-8 bytes.
+   * The Java bridge keeps its own decoded-character ceiling, so it is not the
+   * only enforcer; see `bridgeLaunchSeedMaxRequestBytes`.
+   */
   readonly bridgeMaxRequestBytes: BridgeMaxRequestBytes;
+  /**
+   * Ceiling the running bridge process resolved when REA launched it. The bridge
+   * reads the setting once, from the environment it inherited, so a later
+   * runtime raise moves the client ceiling above what the bridge will retain.
+   */
+  readonly bridgeLaunchSeedMaxRequestBytes?: BridgeMaxRequestBytes;
   /** Effective reply line ceiling, admitted with each request. */
   readonly bridgeMaxReplyBytes: BridgeMaxReplyBytes;
 }
@@ -67,6 +78,25 @@ export class GhidraWire {
       this.#options.bridgeMaxRequestBytes,
     );
     if (!requestLimit.ok) return err(this.#refused(requestLimit.error));
+    // The bridge bounds each request line to the ceiling it resolved from the
+    // environment it inherited at launch. A runtime raise above that value would
+    // be written and then dropped mid-read, so refuse here with the mismatch
+    // facts instead of letting the caller read a transport failure.
+    const launchSeed = this.#options.bridgeLaunchSeedMaxRequestBytes;
+    if (
+      launchSeed !== undefined &&
+      requestLimit.value.maximumBytes > launchSeed.maximumBytes
+    )
+      return err(
+        this.#refused(
+          bridgeRequestLimitMismatchError(
+            "ghidra_bridge",
+            requestLimit.value,
+            launchSeed.maximumBytes,
+            "Ghidra",
+          ),
+        ),
+      );
     const replyLimit = admitBridgeReplyLimit(this.#options.bridgeMaxReplyBytes);
     if (!replyLimit.ok) return err(this.#refused(replyLimit.error));
     return ok({
@@ -92,7 +122,7 @@ export class GhidraWire {
     return this.#sessionLimits;
   }
 
-  #refused(cause: ConfigurationError): GhidraSessionError {
+  #refused(cause: AnalysisError): GhidraSessionError {
     return this.#options.failure("admission", cause.message, cause, {
       configurationFailure: cause,
     });

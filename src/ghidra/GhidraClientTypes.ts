@@ -82,6 +82,12 @@ export interface GhidraClientOptions {
   }) => Promise<LinuxCgroupMemoryState | undefined>;
   /** Effective request ceiling; defaults to the configured bridge ceiling. */
   readonly bridgeMaxRequestBytes?: BridgeMaxRequestBytes;
+  /**
+   * Ceiling the launched bridge process resolved from the environment it
+   * inherited. Defaults to the configured launch seed, which is the same value
+   * REA puts in that environment.
+   */
+  readonly bridgeLaunchSeedMaxRequestBytes?: BridgeMaxRequestBytes;
   /** Effective reply line ceiling; defaults to the configured bridge ceiling. */
   readonly bridgeMaxReplyBytes?: BridgeMaxReplyBytes;
 }
