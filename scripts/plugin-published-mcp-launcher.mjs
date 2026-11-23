@@ -1197,6 +1197,9 @@ if (process.exitCode === 1) {
 
         let invocation;
         try {
+          // --prefix alone does not override ambient global=true /
+          // npm_config_global; Unix then writes {prefix}/lib/node_modules while
+          // cacheEntry() requires {prefix}/node_modules.
           invocation = npmInvocation(
             [
               "install",
@@ -1204,6 +1207,7 @@ if (process.exitCode === 1) {
               "--no-fund",
               "--no-audit",
               "--no-update-notifier",
+              "--global=false",
               "--prefix",
               staging,
               `${PACKAGE}@${version}`,

@@ -457,6 +457,61 @@ writeFileSync(
   }
 });
 
+it("forces a local npm layout when ambient npm_config_global is true", async () => {
+  const version = "6.8.0-published-global-env";
+  const temp = await createLauncherTemp();
+  const prefix = installPrefix(version, temp.temporaryRoot);
+  await rm(prefix, { recursive: true, force: true });
+  const bin = await createTestTempDirectory("rea-published-npm-global-");
+  const npmEntry = join(bin, "npm-cli.cjs");
+  const entry = join(
+    prefix,
+    "node_modules",
+    "rea-agents",
+    "scripts",
+    "rea.mjs",
+  );
+  // Mimic POSIX npm: global mode writes {prefix}/lib/node_modules unless
+  // --global=false wins over npm_config_global.
+  await writeFile(
+    npmEntry,
+    `#!/usr/bin/env node
+const { mkdirSync, writeFileSync } = require("node:fs");
+const { dirname, join } = require("node:path");
+const args = process.argv.slice(2);
+process.stderr.write(JSON.stringify({ argv: args }) + "\\n");
+const prefix = args[args.indexOf("--prefix") + 1];
+const globalFlag = args.find((arg) => arg === "--global" || arg.startsWith("--global="));
+const global =
+  globalFlag === undefined
+    ? process.env.npm_config_global === "true"
+    : globalFlag === "--global" || globalFlag === "--global=true";
+const modulesRoot = global
+  ? join(prefix, "lib", "node_modules")
+  : join(prefix, "node_modules");
+const entry = join(modulesRoot, "rea-agents", "scripts", "rea.mjs");
+mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
+writeFileSync(entry, "process.exit(0);", { mode: 0o600 });
+`,
+  );
+  const { child, closed } = start([version], {
+    ...process.env,
+    ...temp.env,
+    PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+    npm_execpath: npmEntry,
+    npm_config_global: "true",
+  });
+  const result = await closed;
+  expect(result.code, result.stderr).toBe(0);
+  const reported = JSON.parse(
+    result.stderr.slice(result.stderr.indexOf("{")),
+  ) as { argv: string[] };
+  expect(reported.argv).toContain("--global=false");
+  await access(entry);
+  await access(join(prefix, READY_MARKER));
+  expect(await readFile(join(prefix, READY_MARKER), "utf8")).toBe(version);
+});
+
 it("does not reuse a ready cache keyed for a different CPU architecture", async () => {
   const version = "6.8.0-published-arch-mismatch";
   const temp = await createLauncherTemp();
