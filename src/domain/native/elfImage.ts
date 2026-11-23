@@ -44,7 +44,7 @@ const requireElfFileRange = (
     });
 };
 
-const readElfImageFromDirectorySize = (
+export const readElfImageFromDirectorySize = (
   fileSize: number,
   directory: ElfSectionDirectory,
 ): Extract<BinaryContainer, { format: "elf" }> => {

@@ -10,8 +10,7 @@ import {
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
   ArtifactReaderFailure,
-  type StableArtifactSnapshot,
-  readStableArtifact,
+  withStableArtifactHandle,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
@@ -39,12 +38,12 @@ import {
 import {
   NATIVE_EXPORT_LIMITS,
   type NativeExportLimit,
-  parseNativeExports,
-  parseNativeExportsCooperative,
+  parseNativeExportsFromHandle,
 } from "../../domain/native/nativeExportParser.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_native_exports";
+const HEADER_PREFIX_BYTES = 4096;
 
 /** Portable export-table reader over one bounded, identity-checked regular file. */
 export class NativeExportsProvider implements NativeExportsPort {
@@ -65,30 +64,33 @@ export class NativeExportsProvider implements NativeExportsPort {
 
   async inspect(input: InspectNativeExportsInput, options?: ExecutionOptions) {
     const signal = options?.signal;
-    let snapshot: StableArtifactSnapshot | undefined;
+    let snapshot:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
       return await this.#resources.run(async () => {
-        snapshot = await readStableArtifact(
+        const report = await withStableArtifactHandle(
           input.path,
           input.max_file_bytes,
-          signal,
-          undefined,
-          this.#resources,
+          {
+            signal,
+            resourceScope: this.#resources,
+            retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
+            onIdentity: (identity) => {
+              snapshot = identity;
+            },
+          },
+          (handle) =>
+            parseNativeExportsFromHandle(
+              {
+                size: handle.size,
+                prefix: handle.prefix,
+                readRange: (offset, length) => handle.readRange(offset, length),
+              },
+              { path: input.path, sha256: handle.sha256, bytes: handle.size },
+              () => yieldArtifactRead(signal),
+            ),
         );
-        assertArtifactReadActive(signal);
-        const artifact = {
-          path: input.path,
-          sha256: snapshot.sha256,
-          bytes: snapshot.bytes.length,
-        };
-        const report =
-          signal === undefined
-            ? parseNativeExports(snapshot.bytes, artifact)
-            : await parseNativeExportsCooperative(
-                snapshot.bytes,
-                artifact,
-                () => yieldArtifactRead(signal),
-              );
         assertArtifactReadActive(signal);
         return ok(report);
       });
@@ -190,7 +192,7 @@ const nativeExportsFailurePrimary = (
 const nativeExportsFailure = (
   cause: unknown,
   input: InspectNativeExportsInput,
-  snapshot?: StableArtifactSnapshot,
+  snapshot?: { readonly sha256: string; readonly bytes: number },
 ): AnalysisError => {
   const primary = nativeExportsFailurePrimary(
     artifactFilePrimaryFacts(cause),
