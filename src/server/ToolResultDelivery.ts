@@ -281,24 +281,32 @@ export class ToolResultDelivery {
     evidence: Evidence,
     contract: ToolContract,
     recorded: Result<unknown, AnalysisError> | undefined,
-    viewSource?: JsonValue,
+    viewSource?: JsonValue | (() => JsonValue | undefined),
   ): CallToolResult {
     return recorded !== undefined && !recorded.ok
       ? this.toErrorToolResult(recorded.error, contract.returnsTargetContent)
-      : this.successResult(evidence, contract, {
-          evidence_id: evidence.evidence_id,
-          ...(recorded === undefined
-            ? {}
-            : {
-                evidence_reference: {
-                  kind: "retained-evidence",
-                  evidence_id: evidence.evidence_id,
-                },
-              }),
-          // A view names its caller's source, which needs no session to read again.
-          ...(recorded === undefined && viewSource === undefined
-            ? {}
-            : this.nativeContinuation(evidence, undefined, viewSource)),
+      : this.successResult(evidence, contract, () => {
+          const resolvedViewSource =
+            typeof viewSource === "function" ? viewSource() : viewSource;
+          return {
+            evidence_id: evidence.evidence_id,
+            ...(recorded === undefined
+              ? {}
+              : {
+                  evidence_reference: {
+                    kind: "retained-evidence",
+                    evidence_id: evidence.evidence_id,
+                  },
+                }),
+            // A view names its caller's source, which needs no session to read again.
+            ...(recorded === undefined && resolvedViewSource === undefined
+              ? {}
+              : this.nativeContinuation(
+                  evidence,
+                  undefined,
+                  resolvedViewSource,
+                )),
+          };
         });
   }
 
@@ -497,7 +505,9 @@ export class ToolResultDelivery {
   private successResult(
     value: JsonValue,
     contract: ToolContract,
-    recovery: Readonly<Record<string, JsonValue>> = {},
+    recovery:
+      | Readonly<Record<string, JsonValue>>
+      | (() => Readonly<Record<string, JsonValue>>) = {},
     alternatives?: (
       failure: Extract<ToolResultEncoding, { readonly ok: false }>,
       budgetBytes: number,
@@ -531,7 +541,9 @@ export class ToolResultDelivery {
           ? { _meta: TARGET_CONTENT_RESULT_META }
           : {}),
       };
-    const nextStep = overflowNextStep(value, contract, recovery);
+    const resolvedRecovery =
+      typeof recovery === "function" ? recovery() : recovery;
+    const nextStep = overflowNextStep(value, contract, resolvedRecovery);
     const projected = mcpResponseOverflowProjection({
       completed: true,
       constraint: encoded.constraint,
@@ -551,7 +563,7 @@ export class ToolResultDelivery {
           response_bytes_at_least: encoded.bytesAtLeast,
           response_code_units_at_least: encoded.codeUnitsAtLeast,
           constraint: encoded.constraint,
-          ...recovery,
+          ...resolvedRecovery,
           ...(nextStep.operation === undefined
             ? {}
             : { next_operation: nextStep.operation }),
