@@ -480,8 +480,9 @@ export const uefiResultSchemas = {
         parent_logical_path: z.string().nullable(),
         ffs_file: uefiExtractedFileOwnerSchema
           .nullable()
+          .optional()
           .describe(
-            "FFS file whose body or section produced these bytes; null for a stream outside any mapped file",
+            "FFS file whose body or section produced these bytes; null for a stream outside any mapped file. The extractor always records it; Evidence saved before this field existed omits it.",
           ),
       }),
     ),
