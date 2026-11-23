@@ -5,7 +5,7 @@ import {
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
   ArtifactReaderFailure,
-  readStableArtifact,
+  withStableArtifactHandle,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   ArtifactResourceScope,
@@ -13,10 +13,7 @@ import {
 import type { KernelBuildConfigPort } from "../../ports/binaryDiagnostics/KernelBuildConfigPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
-import {
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import {
   MAX_INSPECT_KERNEL_BUILD_CONFIG_CONFIG_BYTES,
   MAX_INSPECT_KERNEL_BUILD_CONFIG_ENTRIES,
@@ -29,10 +26,11 @@ import { err, ok } from "../../domain/result.js";
 import { KERNEL_BUILD_CONFIG_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   KernelBuildConfigBudgetFailure,
-  parseKernelBuildConfig,
+  parseKernelBuildConfigFromHandle,
 } from "./KernelBuildConfig.js";
 
 const OPERATION = "inspect_kernel_build_config";
+const HEADER_PREFIX_BYTES = 4096;
 
 /** Portable parser over one bounded, identity-checked regular file. */
 export class KernelBuildConfigProvider implements KernelBuildConfigPort {
@@ -55,30 +53,42 @@ export class KernelBuildConfigProvider implements KernelBuildConfigPort {
     input: InspectKernelBuildConfigInput,
     options?: ExecutionOptions,
   ) {
+    let identity:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        const report = await withStableArtifactHandle(
           input.path,
           input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        return ok(
-          await parseKernelBuildConfig(
-            snapshot.bytes,
-            {
-              path: input.path,
-              sha256: snapshot.sha256,
-              bytes: snapshot.bytes.length,
+          {
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
+            onIdentity: (observed) => {
+              identity = observed;
             },
-            input,
-            options?.signal,
-          ),
+          },
+          (handle) =>
+            parseKernelBuildConfigFromHandle(
+              {
+                size: handle.size,
+                prefix: handle.prefix,
+                readRange: (offset, length) => handle.readRange(offset, length),
+              },
+              {
+                path: input.path,
+                sha256: handle.sha256,
+                bytes: handle.size,
+              },
+              input,
+              options?.signal,
+            ),
         );
+        return ok(report);
       });
     } catch (cause) {
-      return err(kernelBuildConfigFailure(cause, input));
+      return err(kernelBuildConfigFailure(cause, input, identity));
     }
   }
 }
@@ -117,6 +127,8 @@ const parserBudgetRemediation = ({
         maximum,
         "inflated IKCFG gzip budget",
       );
+    case "compressed_candidate_bytes":
+      return "Select an image with a smaller compressed IKCFG member. Increasing max_config_bytes can raise the compressed candidate allowance when the inflated-config budget is below its maximum.";
     case "max_payload_bytes":
       return ceiling(
         name,
@@ -150,14 +162,19 @@ const kernelBuildConfigFailurePrimary = (
     cause instanceof KernelBuildConfigBudgetFailure
   ) {
     const { limit } = cause.failure;
-    return parseLimitConstraint(OPERATION, "capacity", cause, {
-      reportedLimitContext: {
-        ...reportedBudgetContext(input),
-        [limit.name]: limit.maximum,
+    return parseLimitConstraint(
+      OPERATION,
+      limit.name === "compressed_candidate_bytes" ? "memory" : "capacity",
+      cause,
+      {
+        reportedLimitContext: {
+          ...reportedBudgetContext(input),
+          [limit.name]: limit.maximum,
+        },
+        retryable: false,
+        remediationAction: parserBudgetRemediation(limit),
       },
-      retryable: false,
-      remediationAction: parserBudgetRemediation(limit),
-    });
+    );
   }
   if (
     origin === "owned-or-classified" &&
@@ -209,6 +226,7 @@ const kernelBuildConfigFailurePrimary = (
 const kernelBuildConfigFailure = (
   cause: unknown,
   input: InspectKernelBuildConfigInput,
+  identity: { readonly sha256: string; readonly bytes: number } | undefined,
 ) => {
   const primary = kernelBuildConfigFailurePrimary(
     artifactFilePrimaryFacts(cause),
@@ -220,5 +238,6 @@ const kernelBuildConfigFailure = (
     input.path,
     KERNEL_BUILD_CONFIG_PROVIDER.id,
     OPERATION,
+    identity,
   );
 };
