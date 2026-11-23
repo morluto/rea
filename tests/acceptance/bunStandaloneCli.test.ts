@@ -173,12 +173,20 @@ cliTest(
       )?.evidence.normalized_result,
     );
     expect(graph.manifest.root_format).toBe("bun-standalone");
-    expect(inspection.next_probes).toEqual([
-      {
-        operation: "extract_artifact",
-        authority: "artifact-bytes",
-        rationale: expect.any(String),
-      },
+    expect(inspection.next_probes[0]).toEqual({
+      operation: "extract_artifact",
+      authority: "artifact-bytes",
+      rationale: expect.any(String),
+    });
+    // The ELF carrier's readers follow the package reader.
+    expect(
+      inspection.next_probes.map(({ operation }) => operation).slice(1),
+    ).toEqual([
+      "inspect_elf_dependencies",
+      "inspect_native_exports",
+      "inspect_binary_hardening",
+      "audit_release_exposure",
+      "open_binary",
     ]);
     expect(
       graph.occurrences.find((row) => row.logical_path === ".")
