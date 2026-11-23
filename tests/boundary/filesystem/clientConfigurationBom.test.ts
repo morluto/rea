@@ -1,3 +1,4 @@
+import { expectResultValue } from "../../support/expectResultValue.js";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -70,7 +71,8 @@ describe.each(["vscode", "copilot_cli", "opencode", "commandcode"])(
           ).toBe(true);
         }
         expect(
-          parseClientConfiguration(updated, client.format).document,
+          expectResultValue(parseClientConfiguration(updated, client.format))
+            .document,
         ).toEqual({
           label: "left\uFEFFright",
           [serversKey]: {
@@ -137,9 +139,13 @@ it.each(['\uFEFF{"servers": {"rea": @}}', '\uFEFF{"setting":\uFEFFtrue}'])(
     } as const;
     await writeFile(configPath, original);
     const invalidOffset = original.includes("@") ? original.indexOf("@") : 12;
-    expect(() => parseClientConfiguration(original, client.format)).toThrow(
-      `Invalid JSON/JSONC at offset ${invalidOffset}: InvalidSymbol`,
-    );
+    expect(parseClientConfiguration(original, client.format)).toMatchObject({
+      ok: false,
+      error: {
+        kind: "syntax",
+        detail: `Invalid JSON/JSONC at offset ${invalidOffset}: InvalidSymbol`,
+      },
+    });
 
     expect(
       await inspectClientConfiguration(client, {}, ["rea", "mcp"]),
@@ -178,7 +184,9 @@ it("preserves BOM-prefixed JSONC values and comments through update and removal"
     await configureClientConfiguration(client, {}, updatedCommand),
   ).toMatchObject({ status: "configured" });
   const updated = await readFile(client.configPath, "utf8");
-  expect(parseClientConfiguration(updated, client.format).servers).toEqual({
+  expect(
+    expectResultValue(parseClientConfiguration(updated, client.format)).servers,
+  ).toEqual({
     other: { command: "other\uFEFFtool" },
     rea: clientRegistrationEntry(client.format, updatedCommand, {}),
   });
@@ -192,8 +200,12 @@ it("preserves BOM-prefixed JSONC values and comments through update and removal"
   expect(removed).toContain("\r\n  // Keep prefix \uFEFF comment.\r\n");
   expect(removed).toContain("\r\n  // Keep suffix comment.\r\n");
   expect(removed).toContain("// Keep this unrelated registration.");
-  expect(parseClientConfiguration(removed, client.format).document).toEqual(
-    parseClientConfiguration(original, client.format).document,
+  expect(
+    expectResultValue(parseClientConfiguration(removed, client.format))
+      .document,
+  ).toEqual(
+    expectResultValue(parseClientConfiguration(original, client.format))
+      .document,
   );
   expect(
     Buffer.compare(

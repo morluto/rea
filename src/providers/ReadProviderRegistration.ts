@@ -1,3 +1,4 @@
+import { WindowsChangeTimeConfigurationError } from "../config/windowsChangeTimeSettle.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import {
   AnalysisCancelledError,
@@ -116,6 +117,8 @@ export const readProviderRegistration = <Value>(
       );
       return input.ok ? format.parse(input.value) : input;
     } catch (cause: unknown) {
+      if (cause instanceof WindowsChangeTimeConfigurationError)
+        return err(cause);
       if (cause instanceof NonRegularFileReadError)
         return err(
           configurationError(
@@ -130,10 +133,13 @@ export const readProviderRegistration = <Value>(
           ? completedRegistrationRejection(cause.outcome)
           : undefined;
       if (cause instanceof RegularFileCancelled && rejection !== undefined)
-        return err(rejection);
-      const cancellation =
-        rejection === undefined ? regularFileCancellation(cause) : undefined;
-      if (cancellation !== undefined) {
+        return err(
+          rejection.retainSecondaryFailure(
+            cancelledBy(format.operation, carriedReason(cause.reason)),
+          ),
+        );
+      const cancellation = regularFileCancellation(cause);
+      if (cancellation !== undefined && rejection === undefined) {
         if (cause instanceof RegularFileCleanupFailure) {
           const error = cancelledBy(
             format.operation,
@@ -177,6 +183,10 @@ export const readProviderRegistration = <Value>(
             },
           ],
         });
+        if (cancellation !== undefined)
+          error.retainSecondaryFailure(
+            cancelledBy(format.operation, carriedReason(cancellation.reason)),
+          );
         closeLease?.bindCleanupError(error);
         return err(error);
       }
