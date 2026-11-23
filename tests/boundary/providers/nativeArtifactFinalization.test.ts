@@ -21,6 +21,7 @@ import { elfNoteFixture } from "../../../src/native/elf/ElfNotes.fixture.js";
 import { ElfNotesProvider } from "../../../src/native/elf/ElfNotesProvider.js";
 import { kernelModuleFixture } from "../../../src/native/elf/KernelModule.fixture.js";
 import { KernelModuleProvider } from "../../../src/native/elf/KernelModuleProvider.js";
+import { elfDependencyFixture } from "../../../src/native/elf/ElfDependencies.fixture.js";
 import { ElfDependenciesProvider } from "../../../src/native/elf/ElfDependenciesProvider.js";
 import { NativeExportsProvider } from "../../../src/native/exports/NativeExportsProvider.js";
 import { AppleIpsProvider } from "../../../src/native/apple/AppleIpsProvider.js";
@@ -99,6 +100,7 @@ const cases = [
   },
   {
     name: "ELF dependencies",
+    fixture: elfDependencyFixture,
     make: () => {
       const provider = new ElfDependenciesProvider();
       return {
