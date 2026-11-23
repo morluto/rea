@@ -5,7 +5,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it } from "vitest";
 import { appleIpsSchema } from "../../../src/domain/native/appleIps.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { createAppleIpsService } from "../../../src/composition/binaryDiagnostics.js";
+import { createAppleIpsService } from "../../../src/composition/binaryDiagnostics/appleIps.js";
 import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";

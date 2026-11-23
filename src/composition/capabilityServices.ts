@@ -73,27 +73,25 @@ import {
 } from "./debuggerSessions.js";
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { pcapCaptureHostSupported } from "../domain/pcap/pcapAnalysis.js";
-import {
-  createPeLoadConfigService,
-  createBinaryHardeningService,
-  createPeCertificatesService,
-  createPeImportsService,
-  createNativeExportsService,
-  createPeResourcesService,
-  createWindowsShortcutService,
-  createRecordedCrashService,
-  createBinaryLayoutService,
-  createDevicetreeService,
-  createElfNotesService,
-  createDwarfUnitsService,
-  createElfDebugLinkService,
-  createNativeInitializersService,
-  createElfUnwindRangesService,
-  createAppleIpsService,
-  createKernelModuleService,
-  createElfDependenciesService,
-  createKernelBuildConfigService,
-} from "./binaryDiagnostics.js";
+import { createPeLoadConfigService } from "./binaryDiagnostics/peLoadConfig.js";
+import { createBinaryHardeningService } from "./binaryDiagnostics/binaryHardening.js";
+import { createPeCertificatesService } from "./binaryDiagnostics/peCertificates.js";
+import { createPeImportsService } from "./binaryDiagnostics/peImports.js";
+import { createNativeExportsService } from "./binaryDiagnostics/nativeExports.js";
+import { createPeResourcesService } from "./binaryDiagnostics/peResources.js";
+import { createWindowsShortcutService } from "./binaryDiagnostics/windowsShortcut.js";
+import { createRecordedCrashService } from "./binaryDiagnostics/recordedCrash.js";
+import { createBinaryLayoutService } from "./binaryDiagnostics/binaryLayout.js";
+import { createDevicetreeService } from "./binaryDiagnostics/devicetree.js";
+import { createElfNotesService } from "./binaryDiagnostics/elfNotes.js";
+import { createDwarfUnitsService } from "./binaryDiagnostics/dwarfUnits.js";
+import { createElfDebugLinkService } from "./binaryDiagnostics/elfDebugLink.js";
+import { createNativeInitializersService } from "./binaryDiagnostics/nativeInitializers.js";
+import { createElfUnwindRangesService } from "./binaryDiagnostics/elfUnwindRanges.js";
+import { createAppleIpsService } from "./binaryDiagnostics/appleIps.js";
+import { createKernelModuleService } from "./binaryDiagnostics/kernelModule.js";
+import { createElfDependenciesService } from "./binaryDiagnostics/elfDependencies.js";
+import { createKernelBuildConfigService } from "./binaryDiagnostics/kernelBuildConfig.js";
 import { pwntoolsHostSupported } from "../native/pwntools/PwntoolsDecoder.js";
 
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
