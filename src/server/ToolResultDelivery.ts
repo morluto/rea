@@ -160,11 +160,20 @@ const overflowNextStep = (
 
 /** Immutable encoding and recovery policy shared by one MCP server. */
 /** The encoding already computed by `ToolResultDelivery` for a structured error result. */
-export interface ProjectedErrorEncoding {
-  readonly budgetBytes: number;
-  readonly targetContent: boolean;
-  readonly text: string;
-}
+export type ProjectedErrorEncoding =
+  | {
+      readonly ok: true;
+      readonly budgetBytes: number;
+      readonly targetContent: boolean;
+      readonly text: string;
+    }
+  | {
+      readonly ok: false;
+      readonly budgetBytes: number;
+      readonly targetContent: boolean;
+      readonly encoding: Extract<ToolResultEncoding, { readonly ok: false }>;
+      readonly structuredContent: Readonly<Record<string, JsonValue>>;
+    };
 
 const projectedErrorEncodings = new WeakMap<object, ProjectedErrorEncoding>();
 
@@ -493,12 +502,23 @@ export class ToolResultDelivery {
       isError: true,
       ...(targetContent ? { _meta: TARGET_CONTENT_RESULT_META } : {}),
     };
-    if (encoded.ok)
-      projectedErrorEncodings.set(result, {
-        budgetBytes: this.resultBudgetBytes,
-        targetContent,
-        text: encoded.text,
-      });
+    projectedErrorEncodings.set(
+      result,
+      encoded.ok
+        ? {
+            ok: true,
+            budgetBytes: this.resultBudgetBytes,
+            targetContent,
+            text: encoded.text,
+          }
+        : {
+            ok: false,
+            budgetBytes: this.resultBudgetBytes,
+            targetContent,
+            encoding: encoded,
+            structuredContent,
+          },
+    );
     return result;
   }
 

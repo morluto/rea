@@ -497,6 +497,7 @@ export class ErrorEvidenceTransport implements Transport {
     const [content] = message.result.content;
     if (
       preencoded !== undefined &&
+      preencoded.ok &&
       preencoded.budgetBytes === budget &&
       preencoded.targetContent === targetContent &&
       message.result.content.length === 1 &&
@@ -504,10 +505,23 @@ export class ErrorEvidenceTransport implements Transport {
       content.text === preencoded.text
     )
       return message;
-    const isStructured = message.result.structuredContent !== undefined;
-    const structured = isStructured
-      ? ownedJsonObjectSchema.parse(message.result.structuredContent)
-      : undefined;
+    const preencodedOverflow =
+      preencoded !== undefined &&
+      !preencoded.ok &&
+      preencoded.budgetBytes === budget &&
+      preencoded.targetContent === targetContent &&
+      message.result.content.length === 0
+        ? preencoded
+        : undefined;
+    const isStructured =
+      preencodedOverflow !== undefined ||
+      message.result.structuredContent !== undefined;
+    const structured =
+      preencodedOverflow !== undefined
+        ? preencodedOverflow.structuredContent
+        : isStructured
+          ? ownedJsonObjectSchema.parse(message.result.structuredContent)
+          : undefined;
     const sdkResultWithMarker =
       !isStructured &&
       targetContent &&
@@ -524,9 +538,11 @@ export class ErrorEvidenceTransport implements Transport {
       ? message.result.content.find((item) => item.type === "text")?.text
       : undefined;
     let encoded =
-      structured !== undefined
-        ? encodeToolResult(structured, budget, "error-text", targetContent)
-        : measureMcpResultWithinBudget(sdkResultWithMarker, budget);
+      preencodedOverflow !== undefined
+        ? preencodedOverflow.encoding
+        : structured !== undefined
+          ? encodeToolResult(structured, budget, "error-text", targetContent)
+          : measureMcpResultWithinBudget(sdkResultWithMarker, budget);
     const normalized = encoded.ok
       ? this.normalizeSdkInputError(
           message,
