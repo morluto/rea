@@ -1967,12 +1967,10 @@ const decodeFde = (args: {
 };
 
 /** The source range of a validated NUL-terminated symbol name. */
-type SymbolName = Omit<
-  Extract<ElfStringTableObservation, { state: "terminated" }>,
-  "bytes"
-> & {
+interface SymbolName {
   readonly offset: number;
-};
+  readonly contentBytes: number;
+}
 
 interface MatchedSymbol {
   readonly name: SymbolName;
@@ -2054,6 +2052,7 @@ function* scanSymbols(
     const symtabBonus = table.type === SHT_SYMTAB ? 1 : 0;
     // Observation per string-table offset; null when the name is unreadable.
     const names = new Map<number, SymbolName | null>();
+    let recentName: SymbolName | undefined;
     const entriesPerChunk = Math.max(
       1,
       Math.floor(STREAM_WINDOW_BYTES / width),
@@ -2110,40 +2109,49 @@ function* scanSymbols(
       if (!wanted.has(address)) continue;
       let name = names.get(nameOffset);
       if (name === undefined) {
-        let observed: ElfStringTableObservation;
-        if (nameOffset < 0 || nameOffset >= strSize) {
-          observed = observeElfStringTableEntry(
-            Buffer.alloc(0),
-            nameOffset,
-            STREAM_WINDOW_BYTES,
-          );
-        } else {
-          const absPos = strStart + nameOffset;
-          const inWindow =
-            absPos >= strWinStart &&
-            absPos < strWinStart + strWinBuf.length &&
-            (strWinStart + strWinBuf.length >= strEnd ||
-              strWinBuf.indexOf(0, absPos - strWinStart) >= 0);
-          if (!inWindow) {
-            const readLen = Math.min(STREAM_WINDOW_BYTES, strEnd - absPos);
-            strWinBuf = yield* readSlice(absPos, readLen);
-            strWinStart = absPos;
+        name = null;
+        if (nameOffset >= 0 && nameOffset < strSize) {
+          const offset = strStart + nameOffset;
+          if (
+            recentName !== undefined &&
+            offset >= recentName.offset &&
+            offset <= recentName.offset + recentName.contentBytes
+          ) {
+            // A suffix through the admitted terminator has no earlier NUL.
+            const contentBytes =
+              recentName.offset + recentName.contentBytes - offset;
+            name = { contentBytes, offset };
+          } else {
+            const relative = offset - strWinStart;
+            let observed: ElfStringTableObservation | undefined;
+            if (relative >= 0 && relative < strWinBuf.length)
+              observed = observeElfStringTableEntry(
+                strWinBuf,
+                relative,
+                STREAM_WINDOW_BYTES,
+              );
+            if (
+              observed === undefined ||
+              (observed.state === "truncated" &&
+                strWinStart + strWinBuf.length < strEnd)
+            ) {
+              strWinBuf = yield* readSlice(
+                offset,
+                Math.min(STREAM_WINDOW_BYTES, strEnd - offset),
+              );
+              strWinStart = offset;
+              observed = observeElfStringTableEntry(
+                strWinBuf,
+                0,
+                STREAM_WINDOW_BYTES,
+              );
+            }
+            if (observed.state === "terminated") {
+              name = { contentBytes: observed.contentBytes, offset };
+              recentName = name;
+            }
           }
-          observed = observeElfStringTableEntry(
-            strWinBuf,
-            absPos - strWinStart,
-            STREAM_WINDOW_BYTES,
-          );
         }
-        name =
-          observed.state === "terminated"
-            ? {
-                state: observed.state,
-                contentBytes: observed.contentBytes,
-                examinedBytes: observed.examinedBytes,
-                offset: strStart + nameOffset,
-              }
-            : null;
         names.set(nameOffset, name);
       }
       if (name === null) {
@@ -2197,7 +2205,12 @@ const symbolNameDecoder = (): ((
         },
       );
     const bytes = yield* readSlice(name.offset, name.contentBytes);
-    const text = elfStringTableText({ ...name, bytes });
+    const text = elfStringTableText({
+      state: "terminated",
+      contentBytes: name.contentBytes,
+      examinedBytes: name.contentBytes + 1,
+      bytes,
+    });
     decoded.set(name, text);
     return text;
   };

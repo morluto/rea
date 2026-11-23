@@ -6,13 +6,13 @@ import {
   parseCliGlobalArguments,
 } from "./cliBuiltinArguments.js";
 import {
-  cliConfigurationError,
   parseCliOutputArguments,
   readCliOutputArguments,
   renderCliOutputArgumentError,
   renderEmptyFilteredCliOutput,
   renderVersionReport,
 } from "./cli/cliOutput.js";
+import { cliConfigurationError } from "./cliConfiguration.js";
 import { HOST_PLATFORM } from "./platform/HostPlatform.js";
 import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
 import { CLI_COMMANDS } from "./contracts/cliCommandNames.js";

@@ -2,7 +2,5 @@
   "upward": {},
   "cycles": [],
   "crossProvider": {},
-  "entry": {
-    "application -> desktop": 11
-  }
+  "entry": {}
 }

@@ -1,6 +1,6 @@
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { clientConfigurationRecordSchema } from "./ClientConfigurationDocument.js";
+import { clientConfigurationRecordSchema } from "./ClientConfigurationValues.js";
 import type { ClientRegistrationProfile } from "./ClientRegistrationProfile.js";
 
 /** Native source placement is selected by the registration's connection profile. */

@@ -271,8 +271,16 @@ export const ENTRY_FILES = Object.freeze(
         "BuildComputerEnvironment.ts",
         "DconfDatabaseReader.ts",
         "DesktopBuildDoctorFacts.ts",
+        "DesktopBuildSetupHost.ts",
         "DesktopCaptureProvider.ts",
         "DesktopSessionRequests.ts",
+        // Build-computer workflows in src/application/desktop drive these owners.
+        "AgentEnvComputerHelper.ts",
+        "AgentEnvSolveHelper.ts",
+        "BuildComputerController.ts",
+        "BuildComputerLongRuns.ts",
+        "BuildSecretFiles.ts",
+        "ScreenJudgeProcess.ts",
         // Build-computer composition (`capabilityServices`) wires `readHostFile` into `DesktopBuildComputers`.
         "HostFileRead.ts",
       ],
@@ -293,7 +301,11 @@ export const ENTRY_FILES = Object.freeze(
       ],
       flutter: ["FlutterBuildProvider.ts", "FlutterProviderIdentity.ts"],
       frida: ["FridaInstrumentationManager.ts", "FridaProviderIdentity.ts"],
-      gdb: ["GdbProviderIdentity.ts", "GdbSessionManager.ts"],
+      gdb: [
+        "GdbCommandClassification.ts",
+        "GdbProviderIdentity.ts",
+        "GdbSessionManager.ts",
+      ],
       ghidra: [
         "GhidraDoctor.ts",
         "GhidraProvider.ts",

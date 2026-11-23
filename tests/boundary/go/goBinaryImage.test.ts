@@ -5,7 +5,10 @@ import {
   fatImage,
   machoImage,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
-import { readGoBinaryImage } from "../../../src/go/GoBinaryImage.js";
+import {
+  readGoBinaryImage,
+  readGoBinaryImageFromHandle,
+} from "../../../src/go/GoBinaryImage.js";
 import { BinaryResourceFailure } from "../../../src/domain/binaryContainer.js";
 import { readMachoImage } from "../../../src/domain/apple/machoImage.js";
 import {
@@ -106,7 +109,7 @@ it.each([
   [64, "big", "pointer"],
 ] as const)(
   "retains later-load ELF metadata without sections (%d %s %s)",
-  (bits, byteOrder, encoding) => {
+  async (bits, byteOrder, encoding) => {
     const original = createGoSplitElfFixture({ bits, byteOrder, encoding });
     const sectionless = createGoSplitElfFixture({
       bits,
@@ -117,6 +120,24 @@ it.each([
     const expected = readGoBinaryImage(original.bytes).build_info;
     expect(expected).not.toBeNull();
     expect(readGoBinaryImage(sectionless.bytes).build_info).toEqual(expected);
+    const { bytes } = sectionless;
+    const positional = await readGoBinaryImageFromHandle(
+      {
+        size: bytes.length,
+        readRange: async (offset, length) =>
+          bytes.subarray(offset, offset + length),
+      },
+      undefined,
+      async () => {},
+    );
+    expect(positional.build_info).toMatchObject({
+      encoding,
+      header_offset: sectionless.headerOffset,
+      go_version: "go1.26.0",
+      version_location: { offset: sectionless.versionOffset },
+      module_location: { offset: sectionless.moduleOffset },
+    });
+    expect(positional.build_info).toEqual(expected);
   },
 );
 

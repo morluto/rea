@@ -1,4 +1,4 @@
-import type { EspImageMetadata } from "../domain/artifactFormatMetadata.js";
+import type { EspImageMetadata } from "../domain/formatMetadata/firmwareMetadata.js";
 import { espChipForId } from "../domain/firmware/espChips.js";
 import {
   espFlashDumpOrigin,

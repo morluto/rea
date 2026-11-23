@@ -1,5 +1,5 @@
 import type { FileMapping } from "../domain/virtualFileMapping.js";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { GO_ANALYSIS_BUDGET_DEFAULTS } from "../domain/go/goBinary.js";
 import type {
   BinaryContainer,
@@ -8,7 +8,11 @@ import type {
 } from "../domain/binaryContainer.js";
 import { createGoRodataStringFixture } from "../../tests/fixtures/go/rodataStringImage.js";
 import { readGoBinaryImage } from "./GoBinaryImage.js";
-import { recoverGoStringLiterals } from "./GoStringLiterals.js";
+import { readBinaryContainer } from "../domain/native/readBinaryContainer.js";
+import {
+  recoverGoStringLiterals,
+  recoverGoStringLiteralsFromReader,
+} from "./GoStringLiterals.js";
 
 const DEFAULT_AGGREGATE_BYTES = 512 * 1024;
 const DEFAULT_LITERAL_BYTES = 4096;
@@ -780,4 +784,54 @@ it("recovers longer literals with a selected budget without conflating offset/le
     [9000, 1],
     [808, 1],
   ]);
+});
+
+it("charges and reads only the admitted bytes of distant short string candidates", async () => {
+  const rodata = Buffer.alloc(256 * 1024);
+  const firstHeader = 64 * 1024 - 8;
+  const placements = [127, 128 * 1024 + 127, 128, 128 * 1024 + 128];
+  for (const [index, offset] of placements.entries())
+    rodata[offset] = 0x41 + index;
+  const fixture = createGoRodataStringFixture({
+    format: "elf",
+    rodata,
+    dataSize: firstHeader + placements.length * 16,
+    headers: placements.map((offset, index) => ({
+      section: "data",
+      offsetInSection: firstHeader + index * 16,
+      ptr: 0x102000n + BigInt(offset),
+      len: 1n,
+    })),
+  });
+  const { bytes, rodataOffset, dataOffset } = fixture;
+  const readRange = vi.fn(async (offset: number, length: number) =>
+    Buffer.from(bytes.subarray(offset, offset + length)),
+  );
+  const container = readBinaryContainer(bytes, "inspect_go_binary");
+  const result = await recoverGoStringLiteralsFromReader(
+    { size: bytes.length, readRange },
+    container,
+  );
+  expect(result).toMatchObject({
+    discovered_count: 4,
+    aggregate_bytes: 4,
+    truncated: false,
+  });
+  expect(result.items).toEqual(
+    [0, 2, 1, 3].map((index) => ({
+      value: String.fromCharCode(0x41 + index),
+      location: { offset: rodataOffset + placements[index]!, bytes: 1 },
+      first_header_offset: dataOffset + firstHeader + index * 16,
+      reference_count: 1,
+    })),
+  );
+  const candidateOffsets = new Set(
+    placements.map((offset) => rodataOffset + offset),
+  );
+  const payloadReads = readRange.mock.calls.filter(([offset]) =>
+    candidateOffsets.has(offset),
+  );
+  expect(
+    payloadReads.reduce((total, [, length]) => total + length, 0),
+  ).toBeLessThanOrEqual(placements.length * 2);
 });
