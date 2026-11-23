@@ -32,7 +32,7 @@ import {
 import {
   ELF_SYMBOL_TRUNCATED_MESSAGE,
   elfSymbolSize,
-  readElfSymbolAt,
+  readElfSymbolFieldsAt,
 } from "../../domain/elfSymbol.js";
 import {
   readElfGnuHashSymbolCount,
@@ -1736,7 +1736,7 @@ const parseImports = (
       : new BinaryReader(versymBytes, reader.little, "elf");
   for (let index = 1; index < symbolCount; index += 1) {
     const at = dynsym.offset + index * entrySize;
-    const parsed = readElfSymbolAt(bytes, at, bits, reader.little);
+    const parsed = readElfSymbolFieldsAt(bytes, at, bits, reader.little);
     if (parsed === null) {
       issues.push({
         code: "malformed_entry",

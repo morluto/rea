@@ -1641,16 +1641,21 @@ const recheckOwnershipFailures = async (
   try {
     let processes = await host.listProcesses();
     const isDarwin = (host.platform ?? HOST_PLATFORM.platform) === "darwin";
+    const retryableFailurePids = isDarwin
+      ? new Set(
+          failures
+            .filter((failure) => failure.reason !== "run-token-mismatch")
+            .map((failure) => failure.pid),
+        )
+      : undefined;
     for (
       let attempt = 0;
-      isDarwin &&
+      retryableFailurePids !== undefined &&
+      retryableFailurePids.size > 0 &&
       attempt < TOKEN_READ_RETRY_ATTEMPTS &&
       processes.some(
         ({ pid, state }) =>
-          failures.some(
-            (failure) =>
-              failure.pid === pid && failure.reason !== "run-token-mismatch",
-          ) && state.slice(1).includes("E"),
+          retryableFailurePids.has(pid) && state.slice(1).includes("E"),
       );
       attempt += 1
     ) {
