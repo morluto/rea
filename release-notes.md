@@ -48,6 +48,7 @@
 
 ### Bug Fixes
 
+* **adb:** report macOS ownership preparation failures as typed host prerequisites ([#14140](https://github.com/morluto/rea/issues/14140)) ([604e087](https://github.com/morluto/rea/commit/604e087c3173e0a98c12409ac824017e20559094)), closes [#13943](https://github.com/morluto/rea/issues/13943)
 * **analysis-view:** match inventory path globs without backtracking ([17877d9](https://github.com/morluto/rea/commit/17877d9df51ac258b447a97656f6b4e91b4c3b75))
 * **analysis-view:** read older UEFI extraction Evidence and drop filter-count ceilings ([ca26f2a](https://github.com/morluto/rea/commit/ca26f2ac8499fa06af59f2590ec071af8a020094))
 * **android:** advertise the external-reference inputs the bridge accepts ([85154de](https://github.com/morluto/rea/commit/85154de8ab9107c0f403079a9bec81ab63077ea1))
