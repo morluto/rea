@@ -208,7 +208,7 @@ export class EnhancedTools {
       case "analyze_swift_types":
         return this.#analyzeSwiftTypes(call.input, signal);
       case "find_xrefs_to_name":
-        return this.#findXrefs(call.input.name, signal);
+        return this.#findXrefs(call.input, signal);
       case "binary_overview":
         return this.#binaryOverview(signal);
       case "analyze_function":
@@ -678,7 +678,15 @@ export class EnhancedTools {
     );
   }
 
-  async #findXrefs(name: string, signal?: AbortSignal): EnhancedResult {
+  async #findXrefs(
+    input: {
+      readonly name: string;
+      readonly limit?: number | undefined;
+      readonly offset?: number | undefined;
+    },
+    signal?: AbortSignal,
+  ): EnhancedResult {
+    const { name, limit, offset } = input;
     const resolved = await resolveXrefsName(
       this.analysis,
       name,
@@ -705,11 +713,24 @@ export class EnhancedTools {
           "provider returned an invalid address list",
         ),
       );
+    const hasPaging = limit !== undefined || offset !== undefined;
+    const start = offset ?? 0;
+    const page = !hasPaging
+      ? xrefs.value
+      : limit === undefined
+        ? xrefs.value.slice(start)
+        : xrefs.value.slice(start, start + limit);
     return ok({
       status: "resolved",
       name,
       address: resolved.value,
-      xrefs: xrefs.value,
+      xrefs: page,
+      ...(hasPaging
+        ? {
+            total_xrefs: xrefs.value.length,
+            truncated: start > 0 || page.length < xrefs.value.length,
+          }
+        : {}),
     });
   }
 

@@ -69,7 +69,24 @@ export const enhancedInputSchemas = {
         "Case-sensitive literal filter applied to provider procedure names and their supporting Swift manglings.",
       ),
   }),
-  find_xrefs_to_name: z.strictObject({ name: z.string() }),
+  find_xrefs_to_name: z.strictObject({
+    name: z.string(),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(10_000)
+      .optional()
+      .describe(
+        "Maximum number of xref addresses to return; omit to return all",
+      ),
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Zero-based starting xref index; defaults to 0"),
+  }),
   binary_overview: z.strictObject({}),
   // Provider input excludes delivery detail, which belongs to the MCP tool contract.
   analyze_function: nativeProcedureInputSchema,
