@@ -19,6 +19,7 @@ import {
 } from "./optional-fact-default-guard.mjs";
 import { unmarkedMatchCount } from "./reason-marker.mjs";
 import { blankComments } from "./source-tokens.mjs";
+import { moduleReExportCount } from "./module-re-export-guard.mjs";
 import {
   cliTextGuardSelects,
   cliTextOutsideCliCount,
@@ -702,7 +703,10 @@ checkCounted(
   "re-export from another module (import the symbol from its owning module)",
   "module-re-export",
   files.filter(({ path }) => path.startsWith("src/")),
-  /^export\s+(?:type\s+)?(?:\*|\{[^}]*\})\s+from\s+["']/gmu,
+  (content, { source }) =>
+    /\bexport\s*(?:type\s*)?[*{]/u.test(content)
+      ? moduleReExportCount(source)
+      : 0,
   [
     "src/resources/index.ts",
     // Loaded by src/cli/cliLoader.ts through a dynamic import.
