@@ -1135,21 +1135,45 @@ it("skips an empty SHT_NOTE section instead of rejecting the image", () => {
   expect(findRow(image.rows, "cet_ibt_shstk").state).toBe("enabled");
 });
 
-it("leaves GNU property rows unknown behind a compressed note section", () => {
-  const image = readElfHardening(
-    elfHardeningFixture({
+it.each(["pt-note", "pt-gnu-property", "section"] as const)(
+  "keeps GNU properties unknown when %s overlaps compressed note bytes",
+  (carrier) => {
+    const bytes = elfHardeningFixture({
       compressedPropertyNote: true,
       property: { arch: "x86", value: 0b11 },
-      propertyCarrier: "pt-note",
-    }),
-  );
-  expect(image.status).toBe("parsed");
-  expect(findRow(image.rows, "nx").state).toBe("enabled");
-  expect(findRow(image.rows, "cet_ibt_shstk")).toMatchObject({
-    state: "unknown",
-    note: expect.stringContaining("compressed SHT_NOTE"),
-  });
-});
+      propertyCarrier: carrier === "pt-gnu-property" ? carrier : "pt-note",
+      disjointNoteSections: carrier === "section" ? 1 : 0,
+    });
+    const section = elfSectionAt(bytes, 7);
+    const alias = bytes.readBigUInt64LE(section + 24) + 4n;
+    const program = elfProgramAt(
+      bytes,
+      carrier === "pt-gnu-property" ? 0x6474e553 : 4,
+    );
+    // This 12-byte alias exposes the compression header as invalid note framing.
+    const offsetField = carrier === "section" ? section + 64 + 24 : program + 8;
+    bytes.writeBigUInt64LE(alias, offsetField);
+    if (carrier === "section") {
+      bytes.writeUInt32LE(0, program);
+    } else {
+      bytes.writeBigUInt64LE(12n, program + 32);
+      bytes.writeBigUInt64LE(12n, program + 40);
+    }
+    const image = readElfHardening(bytes);
+    expect(image.status).toBe("parsed");
+    expect(findRow(image.rows, "nx").state).toBe("enabled");
+    expect(findRow(image.rows, "cet_ibt_shstk")).toMatchObject({
+      state: "unknown",
+      note: expect.stringContaining("compressed SHT_NOTE"),
+    });
+    const header = bytes.subarray(Number(alias), Number(alias) + 12);
+    const disjoint = Buffer.concat([bytes, header]);
+    disjoint.writeBigUInt64LE(BigInt(bytes.length), offsetField);
+    expect(() => readElfHardening(disjoint)).toThrow(
+      /note entry exceeds its table/u,
+    );
+  },
+);
 
 /**
  * Count the array elements an operation walks, through iteration and the

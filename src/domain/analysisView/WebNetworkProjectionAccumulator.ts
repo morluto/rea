@@ -177,6 +177,28 @@ export abstract class WebNetworkProjectionAccumulator {
 }
 
 /** Authenticate and gate a retained HAR parent before a grouping view reads any record. */
+const parseHarCapture = (
+  parent: AnalysisViewParent,
+  operation: string,
+  sourceField: string,
+): Result<WebNetworkCapture, AnalysisError> => {
+  const source = parent.normalizedResult;
+  const parsed = safeParseOwnedWebNetworkCapture(source);
+  if (!parsed.success)
+    return err(
+      analysisInputErrorFromIssues(
+        operation,
+        parsed.error.issues.map((issue) => ({
+          ...issue,
+          path: [sourceField, "normalized_result", ...issue.path],
+        })),
+        { [sourceField]: { normalized_result: source } },
+        { cause: parsed.error },
+      ),
+    );
+  return ok(parsed.data);
+};
+
 export const admitHarCaptureParent = (
   parent: AnalysisViewParent,
   viewKind: "api-surface" | "environment-manifest" | "environment-state",
@@ -200,26 +222,15 @@ export const admitHarCaptureParent = (
     );
   const admitted = accumulator.admitCaptureClone(parent.normalizedResult);
   if (!admitted.ok) return admitted;
-  const parsed = safeParseOwnedWebNetworkCapture(parent.normalizedResult);
-  if (!parsed.success)
-    return err(
-      analysisInputErrorFromIssues(
-        operation,
-        parsed.error.issues.map((issue) => ({
-          ...issue,
-          path: [sourceField, "normalized_result", ...issue.path],
-        })),
-        { [sourceField]: { normalized_result: parent.normalizedResult } },
-        { cause: parsed.error },
-      ),
-    );
-  if (parsed.data.format !== "har")
+  const parsed = parseHarCapture(parent, operation, sourceField);
+  if (!parsed.ok) return parsed;
+  if (parsed.value.format !== "har")
     return unsupported(
-      `${viewKind} does not support capture format ${parsed.data.format}.`,
+      `${viewKind} does not support capture format ${parsed.value.format}.`,
     );
   // Environment views preserve the recorded report path and authenticate its digest;
   // the api-surface view keeps the admission its existing callers rely on.
-  const { artifact } = parsed.data;
+  const { artifact } = parsed.value;
   const subject = evidenceFileTarget(parent);
   if (
     viewKind !== "api-surface" &&
@@ -245,5 +256,5 @@ export const admitHarCaptureParent = (
       "sensitive_values_unretained",
       "This view cannot safely project this capture because sensitivity declarations are not retained. Use a compatible capture or summary view to inspect retained observations. Do not remove sensitivity declarations to bypass this restriction.",
     );
-  return ok(parsed.data);
+  return ok(parsed.value);
 };

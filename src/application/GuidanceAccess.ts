@@ -43,6 +43,11 @@ interface GuidanceBundle {
     string,
     ReadonlyMap<number, GuideSection>
   >;
+  readonly ownWordsBySection: ReadonlyMap<GuideSection, ReadonlySet<string>>;
+  readonly headingWordsBySection: ReadonlyMap<
+    GuideSection,
+    ReadonlySet<string>
+  >;
 }
 
 interface GuideFileStatStamp {
@@ -212,10 +217,18 @@ const readBundle = async (
       message:
         "Installed REA guidance exceeds the 4,096-section or 25,165,824 expanded UTF-16-code-unit index allowance; no partial index was used.",
     };
+  const ownWordsBySection = new Map<GuideSection, ReadonlySet<string>>();
+  const headingWordsBySection = new Map<GuideSection, ReadonlySet<string>>();
+  for (const section of sections) {
+    ownWordsBySection.set(section, new Set(words(section.ownContent)));
+    headingWordsBySection.set(section, new Set(words(section.heading)));
+  }
   const bundle: GuidanceBundle = {
     digest,
     sections,
     sectionsByGuide: indexSectionsByGuide(sections),
+    ownWordsBySection,
+    headingWordsBySection,
   };
   if (preReadStamps !== undefined) {
     const postReadStamps = await statPackagedGuides();
@@ -446,7 +459,7 @@ const searchGuidanceInScope = async (
 
   const queryWords = words(parsed.data.query);
   const { coverage, ranked } = rankSections(
-    bundle.sections,
+    bundle,
     queryWords,
     queryWords.filter((word) => !GENERIC_QUERY_WORDS.has(word)),
   );
@@ -536,14 +549,16 @@ interface SectionRanking {
  * document order, so every subsection is complete before its parent reads it.
  */
 const rankSections = (
-  sections: readonly GuideSection[],
+  bundle: GuidanceBundle,
   queryWords: readonly string[],
   specificWords: readonly string[],
 ): SectionRanking => {
   if (specificWords.length === 0) return { coverage: [], ranked: [] };
   const bySection = new Map<GuideSection, TermCoverage>();
-  const coverage = sections.map((section) => {
-    const own = new Set(words(section.ownContent));
+  const coverage = bundle.sections.map((section) => {
+    const own =
+      bundle.ownWordsBySection.get(section) ??
+      new Set(words(section.ownContent));
     const present = queryWords.filter((word) => own.has(word));
     const fact = {
       section,
@@ -556,7 +571,8 @@ const rankSections = (
   });
   const covers = (terms: ReadonlySet<string>): boolean =>
     specificWords.every((word) => terms.has(word));
-  for (const fact of coverage.toReversed()) {
+  for (let index = coverage.length - 1; index >= 0; index -= 1) {
+    const fact = coverage[index]!;
     const parent =
       fact.section.parent === undefined
         ? undefined
@@ -565,42 +581,43 @@ const rankSections = (
     for (const word of fact.subtree) parent.subtree.add(word);
     if (covers(fact.subtree)) parent.childCovers = true;
   }
-  const ranked = coverage
-    .flatMap((fact, index): RankedSection[] => {
-      if (!covers(fact.subtree)) return [];
-      const own = new Set(fact.own);
-      const focused = covers(own);
-      // A subsection holding every term is already a match of its own.
-      if (!focused && fact.childCovers) return [];
-      const matched = focused
-        ? fact.own
-        : queryWords.filter((word) => fact.subtree.has(word));
-      const headingWords = new Set(words(fact.section.heading));
-      return [
-        {
-          section: fact.section,
-          scope: focused ? "section" : "subsections",
-          matched,
-          score:
-            matched.length +
-            matched.filter((word) => headingWords.has(word)).length * 2,
-          own: fact.own,
-          scattered: specificWords.filter((word) => !own.has(word)),
-          index,
-        },
-      ];
-    })
-    .sort(
-      (left, right) =>
-        // Co-located terms rank before terms gathered across subsections.
-        Number(left.scope === "subsections") -
-          Number(right.scope === "subsections") ||
-        right.score - left.score ||
-        // Prefer a focused recipe over a long overview when term scores tie.
-        left.section.content.length - right.section.content.length ||
-        compareText(left.section.guide, right.section.guide) ||
-        left.section.ordinal - right.section.ordinal,
-    );
+  const ranked: RankedSection[] = [];
+  for (let index = 0; index < coverage.length; index += 1) {
+    const fact = coverage[index]!;
+    if (!covers(fact.subtree)) continue;
+    const own = new Set(fact.own);
+    const focused = covers(own);
+    // A subsection holding every term is already a match of its own.
+    if (!focused && fact.childCovers) continue;
+    const matched = focused
+      ? fact.own
+      : queryWords.filter((word) => fact.subtree.has(word));
+    const headingWords =
+      bundle.headingWordsBySection.get(fact.section) ??
+      new Set(words(fact.section.heading));
+    let headingHits = 0;
+    for (const word of matched) if (headingWords.has(word)) headingHits += 1;
+    ranked.push({
+      section: fact.section,
+      scope: focused ? "section" : "subsections",
+      matched,
+      score: matched.length + headingHits * 2,
+      own: fact.own,
+      scattered: specificWords.filter((word) => !own.has(word)),
+      index,
+    });
+  }
+  ranked.sort(
+    (left, right) =>
+      // Co-located terms rank before terms gathered across subsections.
+      Number(left.scope === "subsections") -
+        Number(right.scope === "subsections") ||
+      right.score - left.score ||
+      // Prefer a focused recipe over a long overview when term scores tie.
+      left.section.content.length - right.section.content.length ||
+      compareText(left.section.guide, right.section.guide) ||
+      left.section.ordinal - right.section.ordinal,
+  );
   return { coverage, ranked };
 };
 

@@ -11,9 +11,9 @@ import type { CompactInputSchemaPresentation } from "../contracts/compactInputSc
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import {
   EvidenceMcpServerCore,
-  currentMcpRequestSignal,
   type StandardToolRegistration,
 } from "./EvidenceMcpServerCore.js";
+import { currentMcpRequestSignal } from "./ErrorEvidenceTransport.js";
 import { promptArgumentsSchema } from "./promptArguments.js";
 import { SERVER_START_FAILED } from "../main/messages.js";
 import { isToolFamilyAdvertised } from "../contracts/toolFamilyIds.js";

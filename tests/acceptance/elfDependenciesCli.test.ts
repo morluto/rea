@@ -328,3 +328,76 @@ cliTest(
     );
   },
 );
+
+cliTest(
+  "recovers ELF imports via DT_GNU_HASH when SHT_GNU_HASH is truncated or extends past EOF",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-elf-dependencies-gnuhash-");
+    const truncatedPath = join(root, "gnuhash-truncated.so");
+    await writeFile(
+      truncatedPath,
+      elfDependencyFixture({
+        omitHash: true,
+        gnuHash: true,
+        gnuHashSection: true,
+        oversizedSection: ".dynsym",
+        sectionSizes: { ".gnu.hash": 16 },
+      }),
+    );
+    const truncatedResult = await cli.run({
+      arguments: ["inspect-elf-dependencies", truncatedPath, "--json"],
+    });
+    expect(truncatedResult.exitCode, JSON.stringify(truncatedResult.json)).toBe(
+      0,
+    );
+    const truncated = dependenciesContract.outputSchema.parse(
+      truncatedResult.json,
+    ).normalized_result;
+    if (!("imports" in truncated))
+      throw new Error("Expected an inline ELF dependency inventory");
+    expect(truncated.coverage.status).toBe("partial");
+    expect(truncated.imports.map(({ name }) => name)).toEqual([
+      "printf",
+      "memcpy",
+      "_ZSt4cout",
+      "abort",
+      "_exit",
+    ]);
+
+    const pastEofPath = join(root, "gnuhash-past-eof.so");
+    await writeFile(
+      pastEofPath,
+      elfDependencyFixture({
+        omitHash: true,
+        gnuHash: true,
+        gnuHashSection: true,
+        oversizedSection: ".dynsym",
+        sectionSizes: { ".gnu.hash": 100_000 },
+      }),
+    );
+    const pastEofResult = await cli.run({
+      arguments: ["inspect-elf-dependencies", pastEofPath, "--json"],
+    });
+    expect(pastEofResult.exitCode, JSON.stringify(pastEofResult.json)).toBe(0);
+    const pastEof = dependenciesContract.outputSchema.parse(
+      pastEofResult.json,
+    ).normalized_result;
+    if (!("imports" in pastEof))
+      throw new Error("Expected an inline ELF dependency inventory");
+    expect(pastEof.coverage.status).toBe("partial");
+    expect(pastEof.imports.map(({ name }) => name)).toEqual([
+      "printf",
+      "memcpy",
+      "_ZSt4cout",
+      "abort",
+      "_exit",
+    ]);
+    expect(pastEof.issues).toContainEqual(
+      expect.objectContaining({
+        code: "malformed_entry",
+        message:
+          ".gnu.hash section header declares bytes past the end of the file",
+      }),
+    );
+  },
+);

@@ -3,6 +3,7 @@ import {
   BinaryReader,
   BinaryResourceFailure,
   createFileMappingIndex,
+  hasElfMagic,
   isBinaryFormatOrStringLimitFailure,
   type BinaryStringReadLimit,
 } from "../binaryContainer.js";
@@ -42,9 +43,6 @@ import {
 
 type Artifact = NativeExports["artifact"];
 
-const ELF_MAGIC = Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
-const hasElfMagic = (bytes: Buffer): boolean =>
-  bytes.subarray(0, ELF_MAGIC.length).equals(ELF_MAGIC);
 const OPERATION = "inspect_native_exports";
 const SHT_STRTAB = 3;
 const SHT_DYNSYM = 11;
@@ -198,6 +196,11 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
         ...PE_LIMITATIONS,
       ],
     };
+  if (directory.size < PE_EXPORT_DIRECTORY_BYTES)
+    throw new BinaryFormatFailure(
+      "malformed",
+      `PE export directory declares ${String(directory.size)} bytes, below the ${String(PE_EXPORT_DIRECTORY_BYTES)}-byte table`,
+    );
   const reader = new BinaryReader(bytes, true, "pe");
   const mappingIndex = createFileMappingIndex(
     peDeclaredFileMappings(image),
@@ -499,6 +502,32 @@ function* readVersionNames(
     namesByIndex.set(index, decoded);
     textBytes = nextTextBytes;
   };
+  const clearNames = (): void => {
+    namesByIndex.clear();
+    textBytes = 0;
+  };
+  const installName = (
+    index: number,
+    strings: Buffer,
+    offset: number,
+    location: bigint,
+    label: string,
+  ): void => {
+    let decoded: DecodedElfString | null;
+    try {
+      decoded = readName(strings, offset);
+    } catch (cause) {
+      if (!isBinaryFormatOrStringLimitFailure(cause)) throw cause;
+      issues.push({
+        code: "version_unresolved",
+        location: hex(location),
+        message: `${label}: ${cause.message}`,
+      });
+      decoded = null;
+    }
+    // This record owns the index even when its selected text is unreadable.
+    addName(index, decoded);
+  };
   const byType = keyedBy(sections, ({ type }) => type);
   const verneed = versionSection(
     byType,
@@ -545,16 +574,13 @@ function* readVersionNames(
           const auxAt = table.offset + auxiliary;
           const versionIndex = reader.u16(auxAt + 6) & 0x7fff;
           const auxiliaryNext = reader.u32(auxAt + 12);
-          try {
-            addName(versionIndex, readName(names, reader.u32(auxAt + 8)));
-          } catch (cause) {
-            if (cause instanceof ElfVersionWorkFailure) throw cause;
-            issues.push({
-              code: "version_unresolved",
-              location: hex(verneed.offset + BigInt(auxiliary)),
-              message: `Version requirement name: ${failureMessage(cause)}`,
-            });
-          }
+          installName(
+            versionIndex,
+            names,
+            reader.u32(auxAt + 8),
+            verneed.offset + BigInt(auxiliary),
+            "Version requirement name",
+          );
           if (item + 1 < auxiliaryCount) {
             if (auxiliaryNext < 16)
               throw new BinaryFormatFailure(
@@ -576,7 +602,7 @@ function* readVersionNames(
     } catch (cause) {
       // Unvisited records may redefine an index seen in the prefix. Do not
       // promote an interrupted name lookup to a complete version identity.
-      if (cause instanceof ElfVersionWorkFailure) namesByIndex.clear();
+      clearNames();
       issues.push({
         code: "version_unresolved",
         location: hex(verneed.offset),
@@ -592,7 +618,7 @@ function* readVersionNames(
     issues,
   );
   // Either repeated definition table may replace any requirement index.
-  if (verdef === null) namesByIndex.clear();
+  if (verdef === null) clearNames();
   // sh_info is the definition count. Zero definitions cannot replace a
   // requirement index, so compressed storage of that empty table is unread.
   if (verdef !== undefined && verdef !== null && verdef.info !== 0) {
@@ -617,33 +643,51 @@ function* readVersionNames(
         const aux = reader.u32(at + 12);
         const next = reader.u32(at + 16);
         const auxiliaryCount = reader.u16(at + 6);
-        if (auxiliaryCount === 0 || aux < 20 || offset + aux + 8 > table.size)
-          throw new BinaryFormatFailure(
-            "malformed",
-            "Version definition name entry leaves its section",
-          );
-        let auxiliary = offset + aux;
-        const versionName = readName(
-          names,
-          reader.u32(table.offset + auxiliary),
-        );
-        addName(versionIndex, versionName);
-        for (let item = 0; item < auxiliaryCount; item++) {
-          if (auxiliary + 8 > table.size)
+        try {
+          if (
+            auxiliaryCount === 0 ||
+            aux < 20 ||
+            offset + aux + 8 > table.size
+          ) {
+            addName(versionIndex, null);
             throw new BinaryFormatFailure(
               "malformed",
-              "Version definition auxiliary chain leaves its section",
+              "Version definition name entry leaves its section",
             );
-          if (visit()) yield;
-          if (item + 1 < auxiliaryCount) {
-            const auxiliaryNext = reader.u32(table.offset + auxiliary + 4);
-            if (auxiliaryNext < 8)
+          }
+          let auxiliary = offset + aux;
+          installName(
+            versionIndex,
+            names,
+            reader.u32(table.offset + auxiliary),
+            verdef.offset + BigInt(auxiliary),
+            "Version definition name",
+          );
+          for (let item = 0; item < auxiliaryCount; item++) {
+            if (auxiliary + 8 > table.size)
               throw new BinaryFormatFailure(
                 "malformed",
-                "Version definition auxiliary chain ends before its declared count",
+                "Version definition auxiliary chain leaves its section",
               );
-            auxiliary += auxiliaryNext;
+            if (visit()) yield;
+            if (item + 1 < auxiliaryCount) {
+              const auxiliaryNext = reader.u32(table.offset + auxiliary + 4);
+              if (auxiliaryNext < 8)
+                throw new BinaryFormatFailure(
+                  "malformed",
+                  "Version definition auxiliary chain ends before its declared count",
+                );
+              auxiliary += auxiliaryNext;
+            }
           }
+        } catch (cause) {
+          if (!(cause instanceof BinaryFormatFailure)) throw cause;
+          // Auxiliary records do not choose the next definition or its index.
+          issues.push({
+            code: "version_unresolved",
+            location: hex(verdef.offset + BigInt(offset)),
+            message: `Version definitions: ${cause.message}`,
+          });
         }
         if (index + 1 < verdef.info) {
           if (next < 20)
@@ -655,13 +699,8 @@ function* readVersionNames(
         }
       }
     } catch (cause) {
-      // An unread compressed definition table may replace any requirement
-      // index. Its absence cannot justify falling back to requirement names.
-      if (
-        cause instanceof ElfVersionWorkFailure ||
-        (cause instanceof BinaryFormatFailure && cause.kind === "unsupported")
-      )
-        namesByIndex.clear();
+      // Incomplete definitions may replace any earlier name.
+      clearNames();
       issues.push({
         code: "version_unresolved",
         location: hex(verdef.offset),

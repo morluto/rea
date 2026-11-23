@@ -326,6 +326,15 @@ export const inspectManagedMembersBytes = (
       declarationTypeName,
     });
     appendManagedParseIssues(issues, memberRefs.issues);
+    const memberRefKinds = new Map<string, "field" | "method">();
+    for (let index = 0; index < memberRefs.refs.length; index += 1) {
+      const memberRef = memberRefs.refs[index]!;
+      if (
+        memberRef.signature.kind === "field" ||
+        memberRef.signature.kind === "method"
+      )
+        memberRefKinds.set(memberRef.token, memberRef.signature.kind);
+    }
     const methods = parseMethods({
       bytes,
       layout,
@@ -334,14 +343,7 @@ export const inspectManagedMembersBytes = (
       signatureTypeName,
       displayTypeName,
       declarationTypeName,
-      memberRefKinds: new Map(
-        memberRefs.refs.flatMap((memberRef) =>
-          memberRef.signature.kind === "field" ||
-          memberRef.signature.kind === "method"
-            ? [[memberRef.token, memberRef.signature.kind] as const]
-            : [],
-        ),
-      ),
+      memberRefKinds,
       memberLists,
       selected,
       methodOffset,

@@ -161,7 +161,7 @@ export const readOutput = async (
   const redact = (text: string) => computer.redacted(text);
   if (cliFailureSchema.safeParse(value).success) {
     const parsed = ownedJsonObjectSchema.parse(value);
-    const reported = ownedJsonObjectSchema.parse(redactedJson(parsed, redact));
+    const reported = redactedJson(parsed, redact) as Record<string, JsonValue>;
     return {
       kind: "failure",
       failure: cliFailureSchema.parse(reported),
