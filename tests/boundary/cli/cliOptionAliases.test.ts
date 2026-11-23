@@ -93,28 +93,22 @@ describe("CLI option aliases", () => {
     expect(result.stdout).toContain("/nonexistent/REA.app");
   });
 
-  it.each([
-    ["--relativePath", "Contents/Info.plist", "--relative-path"],
-    ["--relativePath=Contents/Info.plist", undefined, "--relative-path"],
-    ["--no-relativePath", undefined, "--no-relative-path"],
-  ])(
-    "refuses the undocumented camelCase spelling %s and names the documented flag",
-    async (token, value, documented) => {
-      const cli = createCli({});
-      const flag = token.split("=")[0]!;
-      const result = await serve(cli, [
-        "inspect-plist",
-        "/nonexistent/REA.app",
-        token,
-        ...(value === undefined ? [] : [value]),
-        "--json",
-      ]);
-      expect(result.exitCode).toBe(1);
-      expect(JSON.parse(result.stdout)).toEqual({
-        code: "PARSE_ERROR",
-        message: `Unknown flag: ${flag}. Did you mean ${documented}?`,
-        retryable: false,
-      });
-    },
-  );
+  it("refuses the schema key spelling with the documented flag", async () => {
+    // argvParser.test.ts covers each token shape (bare, inline value,
+    // negation) against the structured flag_spelling failure; this case
+    // checks the public CLI projection documented in getting-started/cli.md.
+    const result = await serve(createCli({}), [
+      "inspect-plist",
+      "/nonexistent/REA.app",
+      "--relativePath",
+      "Contents/Info.plist",
+      "--json",
+    ]);
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual({
+      code: "PARSE_ERROR",
+      message: "Unknown flag: --relativePath. Did you mean --relative-path?",
+      retryable: false,
+    });
+  });
 });

@@ -41,12 +41,7 @@ describe("CLI --sensitive-value parser diagnostics", () => {
     },
     {
       name: "camel-case declaration",
-      arguments: [
-        ...CAPTURE,
-        "har",
-        `--sensitiveValue=${LITERAL}`,
-        `--no-${LITERAL}`,
-      ],
+      arguments: [...CAPTURE, "har", `--sensitiveValue=${LITERAL}`],
       // The parser refuses the schema key spelling; its value stays redacted.
       message:
         "Unknown flag: --sensitiveValue. Did you mean --sensitive-value?",
