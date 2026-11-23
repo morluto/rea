@@ -16,8 +16,14 @@ import {
   machoHardeningFixture,
   peHardeningImage,
 } from "./BinaryHardening.fixture.js";
-import { readElfHardening } from "./ElfHardening.js";
-import { readMachoHardening } from "./MachoHardening.js";
+import {
+  readElfHardening,
+  readElfHardeningFromHandle,
+} from "./ElfHardening.js";
+import {
+  readMachoHardening,
+  readMachoHardeningFromHandle,
+} from "./MachoHardening.js";
 import { readPeHardening } from "./PeHardening.js";
 
 const states = (rows: readonly BinaryHardeningRow[]) =>
@@ -521,6 +527,49 @@ it("keeps repeated DT_NEEDED and still rejects a duplicated singular tag", () =>
   expect(() =>
     readElfHardening(elfHardeningFixture({ duplicateFlags: true })),
   ).toThrow(expect.objectContaining({ kind: "malformed" }));
+});
+
+it("walks note framing without reading a whole opaque descriptor", async () => {
+  const bytes = elfNoteFixture({
+    ownership: "section",
+    notes: elfNote("GNU", 3, Buffer.alloc(96 * 1024)),
+  });
+  const report = await readElfHardeningFromHandle({
+    size: bytes.length,
+    readRange: async (offset, length) => {
+      expect(length).toBeLessThanOrEqual(65536);
+      return bytes.subarray(offset, offset + length);
+    },
+  });
+  expect(report).toEqual(readElfHardening(bytes));
+});
+
+it("reuses a Mach-O window for nearby short import names", async () => {
+  const names = "alpha\0beta\0__stack_chk_fail\0";
+  const bytes = machoHardeningFixture({
+    stackChk: true,
+    symbolName: names + "x".repeat(65536),
+    nsyms: 3,
+  });
+  const symtab = 32 + 72;
+  const symoff = bytes.readUInt32LE(symtab + 8);
+  const stroff = bytes.readUInt32LE(symtab + 16);
+  for (const [index, at] of [1, 7, 12].entries()) {
+    bytes.writeUInt32LE(at, symoff + 16 * index);
+    bytes[symoff + 16 * index + 4] = 1;
+  }
+  let stringReads = 0;
+  const report = await readMachoHardeningFromHandle({
+    size: bytes.length,
+    readRange: async (offset, length) => {
+      if (offset >= stroff) stringReads++;
+      return bytes.subarray(offset, offset + length);
+    },
+  });
+  expect(findRow(report[0]?.rows ?? [], "stack_protector").state).toBe(
+    "enabled",
+  );
+  expect(stringReads).toBe(1);
 });
 
 it("reads a 4-aligned build-id note and bounds aliased note walks", () => {

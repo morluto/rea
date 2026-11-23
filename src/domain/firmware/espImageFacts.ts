@@ -2,7 +2,7 @@ import type {
   EspImageMetadata,
   EspImageSegmentMetadata,
   EspImageSignatureBlockMetadata,
-} from "../artifactFormatMetadata.js";
+} from "../formatMetadata/firmwareMetadata.js";
 import {
   ESP_CHIP_TABLE_SOURCE,
   classifyEspSegment,

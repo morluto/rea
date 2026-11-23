@@ -1,23 +1,23 @@
-import { withCommandCancellation } from "./cli/commandCancellation.js";
-import { parseCliJsonInput } from "./cli/cliJsonInput.js";
-import { analysisInputErrorFromIssues } from "./domain/inputIssueProjection.js";
-import { bundleComparisonInputSchema } from "./domain/bundleComparison.js";
-import { registerCliCommand } from "./cli/commandRegistry.js";
-import type { CliInstance } from "./cli/types.js";
+import { withCommandCancellation } from "./commandCancellation.js";
+import { parseCliJsonInput } from "./cliJsonInput.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import { bundleComparisonInputSchema } from "../domain/bundleComparison.js";
+import { registerCliCommand } from "./commandRegistry.js";
+import type { CliInstance } from "./types.js";
 import { z } from "zod";
 
 import {
   compareEvidenceBundlesCommand,
   exportEvidenceBundleCommand,
   importEvidenceBundleCommand,
-} from "./application/EvidenceBundleCommands.js";
-import { logCliCommand } from "./cliLogging.js";
+} from "../application/EvidenceBundleCommands.js";
+import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
-import { CLI_COMMANDS } from "./contracts/cliCommandNames.js";
-import type { JsonValue } from "./domain/jsonValue.js";
-import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
-import type { AnalysisError } from "./domain/analysisErrorBase.js";
-import { localPathStringSchema } from "./domain/localPath.js";
+import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 
 /** Register caller-path Evidence commands. */
 export const registerEvidenceCommands = (

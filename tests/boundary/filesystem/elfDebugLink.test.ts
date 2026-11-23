@@ -9,11 +9,13 @@ import {
   primaryAnalysisError,
   resolvedAnalysisError,
 } from "../../../src/domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createElfDebugLinkService } from "../../../src/composition/binaryDiagnostics/elfDebugLink.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
   ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
+  ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
   ELF_DEBUG_LINK_CANDIDATE_PREFIX_LIMITATION,
   ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION,
   ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION,
@@ -31,11 +33,18 @@ import {
   FIXTURE_BUILD_ID_HEX,
   FIXTURE_DEBUG_NAME,
 } from "../../../src/native/elf/ElfDebugLink.fixture.js";
+import {
+  expectRetainedDescriptor,
+  withDescriptorCloseFailure,
+} from "../../fixtures/descriptorCloseFailure.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 
 vi.mock(import("node:zlib"), { spy: true });
 vi.mock(import("node:fs/promises"), { spy: true });
+
+const sha256Of = (bytes: Buffer): string =>
+  createHash("sha256").update(bytes).digest("hex");
 
 it("inflates section names once per artifact while preserving build-ID comparison", async () => {
   const root = await createTestTempDirectory("rea-elf-debug-link-name-reuse-");
@@ -119,7 +128,7 @@ describe("ELF debug-link stable filesystem boundary", () => {
       const report = elfDebugLinkSchema.parse(missing.value.normalized_result);
       expect(report.artifact).toEqual({
         path,
-        sha256: createHash("sha256").update(image).digest("hex"),
+        sha256: sha256Of(image),
         bytes: image.length,
       });
       expect(report.debuglink).toMatchObject({
@@ -303,7 +312,7 @@ it.each(["comparison", "descriptor close", "failed descriptor close"] as const)(
         identity: {
           kind: "file",
           format: "elf",
-          sha256: createHash("sha256").update(image).digest("hex"),
+          sha256: sha256Of(image),
         },
         local_path: path,
       });
@@ -318,7 +327,7 @@ it.each(["comparison", "descriptor close", "failed descriptor close"] as const)(
       });
       expect(report.candidate).toEqual({
         path: candidatePath,
-        sha256: createHash("sha256").update(candidate).digest("hex"),
+        sha256: sha256Of(candidate),
         bytes: candidate.length,
         format: null,
         byte_order: null,
@@ -343,6 +352,165 @@ it.each(["comparison", "descriptor close", "failed descriptor close"] as const)(
     }
   },
 );
+it.each([
+  "image close failure",
+  "cancellation during image close",
+  "candidate close failure",
+] as const)("retains completed ELF Evidence after %s", async (stage) => {
+  const root = await createTestTempDirectory(
+    "rea-elf-debug-link-finalization-",
+  );
+  const path = join(root, "prog");
+  const candidatePath = join(root, "prog.debug");
+  const candidate = elfDebugCandidateFixture();
+  const crc = zlib.crc32(candidate);
+  const image = elfDebugLinkFixture({
+    debuglink: debuglinkSection(FIXTURE_DEBUG_NAME, crc, true),
+  });
+  await writeFile(path, image);
+  await writeFile(candidatePath, candidate);
+
+  const service = createElfDebugLinkService();
+  const controller = new AbortController();
+  const cancelAtClose = stage === "cancellation during image close";
+  const candidateCompleted = stage === "candidate close failure";
+  const reason = new Error(stage);
+  const cleanup: Parameters<typeof withDescriptorCloseFailure>[1] = {
+    path: candidateCompleted ? candidatePath : path,
+    denied: !cancelAtClose,
+    handles: [],
+  };
+  const openFile = vi.mocked(open);
+  const real =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  const injected = withDescriptorCloseFailure(real, cleanup);
+  openFile.mockImplementation(async (...args) => {
+    const handle = await injected.open(...args);
+    if (cancelAtClose && args[0] === path) {
+      const close = handle.close.bind(handle);
+      vi.spyOn(handle, "close").mockImplementationOnce(async () => {
+        await close();
+        controller.abort(reason);
+      });
+    }
+    return handle;
+  });
+  const parameters = cancelAtClose
+    ? { path }
+    : { path, candidate_path: candidatePath };
+  try {
+    const result = await service.inspect(parameters, {
+      signal: controller.signal,
+    });
+    if (result.ok)
+      throw new Error("Expected ELF descriptor finalization failure");
+    const primary = primaryAnalysisError(result.error);
+    if (cancelAtClose) {
+      expect(primary._tag).toBe("AnalysisCancelledError");
+      expect(primary.cause).toBe(reason);
+      expect(result.error.cleanupResources).toEqual([]);
+    } else {
+      expectRetainedDescriptor(result, cleanup, "inspect_elf_debug_link");
+    }
+    expect(
+      openFile.mock.calls.some(([selected]) => selected === candidatePath),
+    ).toBe(candidateCompleted);
+
+    const evidence = parseEvidence(result.error.partialObservation);
+    expect(evidence.parameters).toEqual(parameters);
+    const report = elfDebugLinkSchema.parse(evidence.normalized_result);
+    expect(report).toMatchObject({
+      artifact: { path, bytes: image.length, sha256: sha256Of(image) },
+      debuglink: {
+        status: "present",
+        crc32_hex: crc.toString(16).padStart(8, "0"),
+      },
+      build_id: { status: "observed", hex: FIXTURE_BUILD_ID_HEX },
+      candidate: candidateCompleted
+        ? {
+            path: candidatePath,
+            bytes: candidate.length,
+            format: "elf64",
+            sha256: sha256Of(candidate),
+          }
+        : null,
+      verification: candidateCompleted
+        ? {
+            status: "matches",
+            crc32: { status: "match" },
+            build_id: { status: "match" },
+          }
+        : null,
+    });
+    expect(
+      report.limitations.includes(
+        ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
+      ),
+    ).toBe(!cancelAtClose && !candidateCompleted);
+    cleanup.denied = false;
+    await service.close();
+    expect(cleanup.handles[0]?.fd).toBe(-1);
+    expect(result.error.cleanupResources).toEqual([]);
+    expect(resolvedAnalysisError(result.error)).toBe(primary);
+    expect(parseEvidence(primary.partialObservation)).toEqual(evidence);
+  } finally {
+    cleanup.denied = false;
+    openFile.mockReset();
+    await service.close();
+  }
+});
+
+it("does not promote parsed linkage when the image changes before final verification", async () => {
+  const root = await createTestTempDirectory(
+    "rea-elf-debug-link-final-identity-",
+  );
+  const path = join(root, "prog");
+  const image = elfDebugLinkFixture({ debugdata: Buffer.alloc(8192) });
+  const namesOffset = image.indexOf(Buffer.from("\0.note.gnu.build-id\0"));
+  expect(namesOffset).toBeGreaterThan(4096);
+  await writeFile(path, image);
+
+  const service = createElfDebugLinkService();
+  const openFile = vi.mocked(open);
+  const real =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  let changed = false;
+  openFile.mockImplementation(async (...args) => {
+    const handle = await real.open(...args);
+    if (args[0] === path) {
+      const read = handle.read.bind(handle);
+      vi.spyOn(handle, "read").mockImplementation(async (...range) => {
+        const result = await read(...range);
+        if (!changed && range.at(3) === namesOffset && result.bytesRead > 0) {
+          await real.appendFile(path, Buffer.of(0));
+          changed = true;
+        }
+        return result;
+      });
+    }
+    return handle;
+  });
+  try {
+    const result = await service.inspect({ path });
+    expect(changed).toBe(true);
+    if (result.ok)
+      throw new Error("Expected the final identity check to refuse the image");
+    expect(projectAnalysisError(result.error).code).toBe("artifact_changed");
+    expect(result.error.partialObservation).toMatchObject({
+      path,
+      bytes: image.length,
+      sha256: sha256Of(image),
+    });
+  } finally {
+    openFile.mockReset();
+    await service.close();
+  }
+});
+
 describe("ELF debug-link streamed candidate boundary", () => {
   it("matches the known CRC32 of a non-ELF candidate", async () => {
     const root = await createTestTempDirectory("rea-elf-debug-link-crc32-");

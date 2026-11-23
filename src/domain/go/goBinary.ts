@@ -247,6 +247,17 @@ export const goBinarySchema = z
   })
   .superRefine((report, context) => {
     const info = report.build_info;
+    if (
+      info?.module.complete === true &&
+      (info.module.unparsed_lines.length !== 0 ||
+        info.module.unparsed_line_bytes_base64.length !== 0)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["build_info", "module", "complete"],
+        message:
+          "Go module parsing is incomplete when unparsed records remain.",
+      });
     const slice = report.selected_slice;
     const stringLiterals = report.string_literals;
     const headerBytes = (report.bits / 8) * 2;

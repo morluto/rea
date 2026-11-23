@@ -32,8 +32,8 @@ import type { ReverseEngineeringService } from "../application/reverse/ReverseEn
 import {
   createGdbSessionManager,
   createRizinDebugSessionManager,
-  gdbOneShotCommandMayInvalidateDetachProof,
 } from "../composition/debuggerSessions.js";
+import { gdbOneShotCommandMayInvalidateDetachProof } from "../gdb/GdbCommandClassification.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   retainedDebuggerDiagnostics,
