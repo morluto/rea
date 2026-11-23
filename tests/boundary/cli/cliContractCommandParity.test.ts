@@ -7,8 +7,8 @@ import {
   contractNamed,
   describeContractCommand,
   describeOperationChoices,
-  describeContractDocumentCommand,
 } from "../../../src/cli/contractCliDescription.js";
+import { describeContractDocumentCommand } from "../../../src/cli/contractCliDocumentDescription.js";
 import type {
   ContractCliDescription,
   ContractCliParameter,
