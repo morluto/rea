@@ -60,9 +60,10 @@ const inspect = async (path: string) => {
   expect(
     inspection.unexplored_branches.map(({ next_probe }) => next_probe),
   ).toEqual(inspection.next_probes);
+  const identity = evidence.subject?.identity;
   return {
     format: inspection.subject.root_format,
-    subject: evidence.subject?.identity.format,
+    subject: identity?.kind === "file" ? identity.format : identity?.kind,
     probes: inspection.next_probes.map(({ operation, authority }) => ({
       operation,
       authority,
