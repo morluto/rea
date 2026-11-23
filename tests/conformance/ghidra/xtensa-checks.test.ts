@@ -254,6 +254,32 @@ describe("Xtensa lane decompiled dataflow", () => {
       leaf: leafWith(`${write}\n  return param_1 + 7;`),
       error: /rea_xtensa_leaf must hold only its return statement/u,
     })),
+    {
+      name: "a jump past the returned call",
+      entry: entryWith(
+        "goto done;\n  return rea_xtensa_leaf(0x12345678);\n  done: return 0;",
+      ),
+      leaf: LEAF,
+      error: /rea_xtensa_entry is not one straight-line function/u,
+    },
+    {
+      name: "a branch before the call",
+      entry: ENTRY.replace("uVar1 = ", "if (in_a2 != 0) return 0;\n  uVar1 = "),
+      leaf: LEAF,
+      error: /rea_xtensa_entry is not one straight-line function/u,
+    },
+    {
+      name: "a second return after the call's",
+      entry: ENTRY.replace("return uVar1;", "return uVar1;\n  return 0;"),
+      leaf: LEAF,
+      error: /rea_xtensa_entry must end in its only return statement/u,
+    },
+    {
+      name: "a labelled leaf",
+      entry: ENTRY,
+      leaf: leafWith("top: return param_1 + 7;"),
+      error: /rea_xtensa_leaf is not one straight-line function/u,
+    },
     ...["(uVar1) = 0;", "rea_xtensa_other();"].map((statement) => ({
       name: `a statement between the call and its return (${statement})`,
       entry: ENTRY.replace("return uVar1", `${statement}\n  return uVar1`),

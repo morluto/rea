@@ -202,22 +202,40 @@ const computes = (text, expected) => {
   );
 };
 
-/** Parameter names and statements of a straight-line decompiled function. */
+/** A statement that labels a jump target or transfers control. */
+const CONTROL_FLOW =
+  /^(?:[A-Za-z_]\w*\s*:(?!:)|(?:goto|if|else|while|for|do|switch|case|default|break|continue)\b)/u;
+
+/**
+ * Parameter names and statements of a straight-line decompiled function: no
+ * label, jump, branch or loop, and its only return is its last statement, so
+ * every statement runs, in order, on the one path to that return.
+ */
 const decompiledFunction = (code, name) => {
   const match = new RegExp(
     `\\b${name}\\s*\\(([^)]*)\\)\\s*\\{([^{}]*)\\}`,
     "u",
   ).exec(code.replaceAll(/\/\*[^]*?\*\//gu, " "));
   assert.ok(match, `${name} is not one straight-line function: ${code}`);
+  const statements = match[2]
+    .split(";")
+    .map((statement) => statement.trim())
+    .filter((statement) => statement !== "");
+  assert.ok(
+    statements.every((statement) => !CONTROL_FLOW.test(statement)),
+    `${name} is not one straight-line function: ${code}`,
+  );
+  assert.ok(
+    statements.filter((statement) => RETURN.test(statement)).length === 1 &&
+      RETURN.test(statements.at(-1) ?? ""),
+    `${name} must end in its only return statement: ${code}`,
+  );
   return {
     parameters: match[1]
       .split(",")
       .map((parameter) => /(\w+)\s*$/u.exec(parameter)?.[1])
       .filter((parameter) => parameter !== undefined && parameter !== "void"),
-    statements: match[2]
-      .split(";")
-      .map((statement) => statement.trim())
-      .filter((statement) => statement !== ""),
+    statements,
   };
 };
 
