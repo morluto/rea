@@ -132,9 +132,14 @@ export type ArtifactInspectionResult = z.infer<
   typeof artifactInspectionResultSchema
 >;
 
-/** Project one successful inventory Evidence record into an inspection report. */
+/**
+ * Project one successful inventory Evidence record into an inspection report.
+ * `rootPeManaged` is whether a PE root declares a CLI header, as target
+ * admission parsed it; undefined leaves that declaration unknown.
+ */
 export const createArtifactInspection = (
   inventoryInput: unknown,
+  rootPeManaged?: boolean,
 ): ArtifactInspectionResult => {
   const inventoryEvidence = parseInventoryEvidence(inventoryInput);
   const inventory = artifactInventoryResultSchema.parse(
@@ -144,8 +149,12 @@ export const createArtifactInspection = (
     inventory,
     inventoryEvidence.evidence_id,
   );
-  const hypotheses = allHypotheses(inventory, inventoryEvidence.evidence_id);
-  const nextProbes = probesFor(inventory);
+  const hypotheses = allHypotheses(
+    inventory,
+    inventoryEvidence.evidence_id,
+    rootPeManaged,
+  );
+  const nextProbes = probesFor(inventory, rootPeManaged);
   const branches = allUnexploredBranches(
     inventory,
     inventoryEvidence.evidence_id,
@@ -277,9 +286,11 @@ const observation = (
 const allHypotheses = (
   inventory: ArtifactInventoryResult,
   evidenceId: string,
+  rootPeManaged: boolean | undefined,
 ): ArtifactInspectionResult["hypotheses"] => {
+  // A parsed CLI header declaration settles this hypothesis.
   const statements =
-    inventory.manifest.root_format === "pe"
+    inventory.manifest.root_format === "pe" && rootPeManaged === undefined
       ? [
           "The PE artifact may contain managed CLI metadata or native code; inventory bytes alone do not distinguish them.",
         ]
@@ -323,8 +334,25 @@ const contradictions = (
     };
   });
 
+// Execution-free readers come first; a deep provider binds last.
 const probesFor = (
   inventory: ArtifactInventoryResult,
+  rootPeManaged: boolean | undefined,
+): ArtifactInspectionResult["next_probes"] => {
+  const probes = formatProbes(inventory, rootPeManaged);
+  return [
+    ...probes.filter(
+      ({ authority }) => authority !== "native-analysis-provider",
+    ),
+    ...probes.filter(
+      ({ authority }) => authority === "native-analysis-provider",
+    ),
+  ];
+};
+
+const formatProbes = (
+  inventory: ArtifactInventoryResult,
+  rootPeManaged: boolean | undefined,
 ): ArtifactInspectionResult["next_probes"] => {
   const format = inventory.manifest.root_format;
   // The JavaScript analyzer selects extracted files by source suffix, so a
@@ -368,9 +396,10 @@ const probesFor = (
       : [];
   if (format === "esp-image") return espFlashDumpProbes(inventory);
   if (format === "fit") return fitProbes(inventory);
-  return format === "directory"
-    ? directoryProbes(inventory)
-    : probesForFormat(format);
+  if (format === "directory") return directoryProbes(inventory);
+  if (format === "pe")
+    return nativeImageProbes({ format, managed: rootPeManaged });
+  return probesForFormat(format);
 };
 
 // An ESP image that its reader found at the start of a flash dump read from
@@ -516,30 +545,13 @@ const probesForFormat = (
         authority: "ast-static-analysis",
       },
     ];
-  if (format === "pe")
-    return [
-      {
-        operation: "inspect_managed_artifact",
-        rationale:
-          "Check execution-free CLI metadata before choosing a deep native provider.",
-        authority: "managed-static-analysis",
-      },
-      {
-        operation: "open_binary",
-        rationale:
-          "Open as native code only when managed inspection reports a native or mixed boundary.",
-        authority: "native-analysis-provider",
-      },
-    ];
-  if (["mach-o", "mach-o-universal", "elf"].includes(format))
-    return [
-      {
-        operation: "open_binary",
-        rationale:
-          "Bind one deep native provider before function-level analysis.",
-        authority: "native-analysis-provider",
-      },
-    ];
+  if (
+    format === "pe" ||
+    format === "elf" ||
+    format === "mach-o" ||
+    format === "mach-o-universal"
+  )
+    return nativeImageProbes({ format });
   if (format === "plist")
     return [
       {
@@ -549,6 +561,112 @@ const probesForFormat = (
       },
     ];
   return [];
+};
+
+const staticProbe = (
+  operation: string,
+  rationale: string,
+): ArtifactInspectionResult["next_probes"][number] => ({
+  operation,
+  rationale,
+  authority: "artifact-bytes",
+});
+
+const NATIVE_HARDENING_PROBE = staticProbe(
+  "inspect_binary_hardening",
+  "Read static ASLR, NX, RELRO, stack-protector and control-flow declarations from the image headers.",
+);
+const RELEASE_EXPOSURE_PROBE = staticProbe(
+  "audit_release_exposure",
+  "Report what static analysis recovers from the shipped image, including sibling debug companions.",
+);
+const NATIVE_EXPORTS_PROBE = staticProbe(
+  "inspect_native_exports",
+  "List declared exports without an analysis engine.",
+);
+
+/**
+ * Execution-free readers for one native image format, then one deep provider
+ * for function-level work. An unknown PE CLI declaration (a directory member)
+ * keeps managed inspection as a conditional probe.
+ */
+const nativeImageProbes = ({
+  format,
+  managed,
+}: {
+  readonly format: "pe" | "elf" | "mach-o" | "mach-o-universal";
+  readonly managed?: boolean | undefined;
+}): ArtifactInspectionResult["next_probes"] => {
+  const readers =
+    format === "pe"
+      ? [
+          ...(managed === true
+            ? [
+                {
+                  operation: "inspect_managed_artifact",
+                  rationale:
+                    "The PE header declares a CLI header; read its managed metadata without execution.",
+                  authority: "managed-static-analysis" as const,
+                },
+              ]
+            : []),
+          staticProbe(
+            "inspect_pe_imports",
+            "List standard and delay-load DLL imports without execution.",
+          ),
+          NATIVE_EXPORTS_PROBE,
+          staticProbe(
+            "inspect_pe_load_config",
+            "Read TLS callbacks, load configuration, CFG and security-cookie declarations.",
+          ),
+          staticProbe(
+            "inspect_pe_resources",
+            "List the resource tree, version and icon payload ranges.",
+          ),
+          NATIVE_HARDENING_PROBE,
+          RELEASE_EXPOSURE_PROBE,
+          ...(managed === undefined
+            ? [
+                {
+                  operation: "inspect_managed_artifact",
+                  rationale:
+                    "Only when the PE declares a CLI header (data directory 14): read its managed metadata without execution.",
+                  authority: "managed-static-analysis" as const,
+                },
+              ]
+            : []),
+        ]
+      : format === "elf"
+        ? [
+            staticProbe(
+              "inspect_elf_dependencies",
+              "List DT_NEEDED libraries, runpaths, the interpreter and versioned imports without the dynamic loader.",
+            ),
+            NATIVE_EXPORTS_PROBE,
+            NATIVE_HARDENING_PROBE,
+            RELEASE_EXPOSURE_PROBE,
+          ]
+        : [
+            staticProbe(
+              "inspect_macho",
+              "Read slices, load commands, linkage and segments with macOS command-line tools, without a disassembler.",
+            ),
+            staticProbe(
+              "inspect_signature",
+              "Read the code-signing identity, entitlements and hardened-runtime state with macOS command-line tools.",
+            ),
+            NATIVE_HARDENING_PROBE,
+            RELEASE_EXPOSURE_PROBE,
+          ];
+  return [
+    ...readers,
+    {
+      operation: "open_binary",
+      rationale:
+        "Bind one deep native provider for function-level analysis after the static readers.",
+      authority: "native-analysis-provider",
+    },
+  ];
 };
 
 const allUnexploredBranches = (
