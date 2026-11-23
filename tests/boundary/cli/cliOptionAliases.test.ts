@@ -92,4 +92,29 @@ describe("CLI option aliases", () => {
     expect(result.stdout).not.toContain("Unknown flag");
     expect(result.stdout).toContain("/nonexistent/REA.app");
   });
+
+  it.each([
+    ["--relativePath", "Contents/Info.plist", "--relative-path"],
+    ["--relativePath=Contents/Info.plist", undefined, "--relative-path"],
+    ["--no-relativePath", undefined, "--no-relative-path"],
+  ])(
+    "refuses the undocumented camelCase spelling %s and names the documented flag",
+    async (token, value, documented) => {
+      const cli = createCli({});
+      const flag = token.split("=")[0]!;
+      const result = await serve(cli, [
+        "inspect-plist",
+        "/nonexistent/REA.app",
+        token,
+        ...(value === undefined ? [] : [value]),
+        "--json",
+      ]);
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.stdout)).toEqual({
+        code: "PARSE_ERROR",
+        message: `Unknown flag: ${flag}. Did you mean ${documented}?`,
+        retryable: false,
+      });
+    },
+  );
 });

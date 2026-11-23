@@ -55,6 +55,11 @@ relative inputs, auxiliary files or output destinations. An empty string never
 selects the working directory; use an explicit `.` when selecting that directory
 is supported by the command.
 
+Command options use the kebab-case spelling that `rea <command> --help`
+lists, such as `--max-rows`. The camelCase spelling of an option, such as
+`--maxRows`, fails with `PARSE_ERROR` and names the documented flag:
+`Unknown flag: --maxRows. Did you mean --max-rows?`
+
 For a numeric option whose `--schema` also accepts decimal strings, the string
 branch carries the same numeric range as the integer branch, so a client that
 validates raw argv text rejects out-of-range tokens. Leading zeros remain

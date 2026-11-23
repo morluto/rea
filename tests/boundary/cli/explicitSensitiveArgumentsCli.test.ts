@@ -47,7 +47,10 @@ describe("CLI --sensitive-value parser diagnostics", () => {
         `--sensitiveValue=${LITERAL}`,
         `--no-${LITERAL}`,
       ],
-      message: "Unknown flag: --no-[REDACTED]",
+      // The parser refuses the schema key spelling; its value stays redacted.
+      message:
+        "Unknown flag: --sensitiveValue. Did you mean --sensitive-value?",
+      failure: { code: "PARSE_ERROR", retryable: false },
     },
     {
       // Incur removes builtin output flags before reading the declared value.
@@ -64,11 +67,14 @@ describe("CLI --sensitive-value parser diagnostics", () => {
     },
   ])(
     "excludes declarations from a JSON $name rejection",
-    async ({ arguments: arguments_, message }, { cli }) => {
+    async (
+      { arguments: arguments_, message, failure = { code: "UNKNOWN" } },
+      { cli },
+    ) => {
       const result = await cli.run({ arguments: [...arguments_, "--json"] });
 
       expectExcluded(result);
-      expect(JSON.parse(result.stdout)).toEqual({ code: "UNKNOWN", message });
+      expect(JSON.parse(result.stdout)).toEqual({ ...failure, message });
     },
   );
 
