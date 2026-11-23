@@ -339,6 +339,7 @@
 * **environment:** reuse measured state reply sizes ([#13824](https://github.com/morluto/rea/issues/13824)) ([1157ff5](https://github.com/morluto/rea/commit/1157ff5d69b223d0718ef9db7e17f04209e6ac08))
 * **environment:** streamline recorded list query processing ([#13840](https://github.com/morluto/rea/issues/13840)) ([e31ccfd](https://github.com/morluto/rea/commit/e31ccfd858aa801f3ba0ec693f167703e807abc0))
 * **env:** update EnvironmentStateStore indexes incrementally on mutations ([#13791](https://github.com/morluto/rea/issues/13791)) ([1dadbdd](https://github.com/morluto/rea/commit/1dadbdd1d19c75c65eb8db0704091c27e353ac8b))
+* **erlang:** stream BEAM IFF inspection over FileHandle ([#13886](https://github.com/morluto/rea/issues/13886)) ([bf1a971](https://github.com/morluto/rea/commit/bf1a9719ed3ea335aef1b68d6f317dd3a796704f))
 * **evidence:** eliminate redundant bundle re-validation, cloning, and nested generator yields ([#13257](https://github.com/morluto/rea/issues/13257)) ([9e379c9](https://github.com/morluto/rea/commit/9e379c958951ed245ba6bdadd9ed56bd1f2b5857))
 * **evidence:** reuse parsed source inventories across correlation mappings ([a486423](https://github.com/morluto/rea/commit/a486423e0e9e933c78875eadf33d85e15e1efb77))
 * **firmware/desktop:** fuse range-snapshot SHA-256 in FirmwareFiles and eliminate owned JSON deep-clones ([#13504](https://github.com/morluto/rea/issues/13504)) ([18a197f](https://github.com/morluto/rea/commit/18a197fb3c4ed85ba752d714f26356f75171c8e8))
