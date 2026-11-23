@@ -7939,8 +7939,190 @@ it("suppresses cross-platform fallback when normalized key is ambiguous in direc
     const slashMod = result.modules.find((m) =>
       m.source_path?.includes("sub/mod.efi"),
     );
+    expect(literalMod).toBeDefined();
+    expect(slashMod).toBeDefined();
     expect(literalMod?.name).toBe("WindowsLiteralMod");
     expect(slashMod?.name).not.toBe("WindowsLiteralMod");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("does not suppress cross-platform fallback for unrelated lowercase file when normalized key is ambiguous in directory inventory", async () => {
+  if (process.platform === "win32") return;
+  const directory = await createTestTempDirectory("rea-uefi-case-disambig-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(join(inDir, "Sub"), { recursive: true });
+  await mkdir(join(inDir, "sub"), { recursive: true });
+  // Sub/mod.efi and Sub\mod.efi collide on normalized slash
+  await writeFile(join(inDir, "Sub", "mod.efi"), createMinimalPeBuffer());
+  await writeFile(join(inDir, "Sub\\mod.efi"), createMinimalPeBuffer());
+  // Unrelated lowercase file sub/mod.efi
+  await writeFile(join(inDir, "sub", "mod.efi"), createMinimalPeBuffer());
+
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_decompiled: 3,
+      modules: [
+        {
+          payload_file: "sub\\mod.efi",
+          name: "SubMod",
+          phase: "DXE",
+          type: "driver",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    const lowerMod = result.modules.find((m) =>
+      m.source_path?.includes("sub/mod.efi"),
+    );
+    expect(lowerMod).toBeDefined();
+    expect(lowerMod?.name).toBe("SubMod");
+    expect(lowerMod?.phase).toBe("DXE");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("keeps cross-platform fallback keys case-sensitive on POSIX", async () => {
+  if (process.platform === "win32") return;
+  const directory = await createTestTempDirectory("rea-uefi-posix-case-sens-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(join(inDir, "modules"), { recursive: true });
+  await writeFile(join(inDir, "modules", "Foo.efi"), createMinimalPeBuffer());
+  await writeFile(join(inDir, "modules", "foo.efi"), createMinimalPeBuffer());
+
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_decompiled: 2,
+      modules: [
+        {
+          payload_file: "modules\\Foo.efi",
+          name: "FooUpper",
+          guid: "11111111-2222-3333-4444-555555555555",
+          phase: "DXE",
+          type: "driver",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    const upperMod = result.modules.find((m) =>
+      m.source_path?.includes("Foo.efi"),
+    );
+    const lowerMod = result.modules.find((m) =>
+      m.source_path?.includes("foo.efi"),
+    );
+    expect(upperMod).toBeDefined();
+    expect(lowerMod).toBeDefined();
+    expect(upperMod?.name).toBe("FooUpper");
+    expect(upperMod?.guid).toBe("11111111-2222-3333-4444-555555555555");
+    // foo.efi must NOT receive FooUpper's metadata
+    expect(lowerMod?.name).not.toBe("FooUpper");
+    expect(lowerMod?.guid).toBeNull();
+  } finally {
+    await provider.close();
+  }
+});
+
+it("marks declared manifests with non-array modules or missing modules array as partial coverage with unknown source coverage", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-nonarray-manifest-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "ModA.efi"), createMinimalPeBuffer());
+  await writeFile(join(inDir, "ModB.efi"), createMinimalPeBuffer());
+
+  // Manifest has total_modules_decompiled > 0 but modules is an object instead of array
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_decompiled: 2,
+      modules: { invalid: true },
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((l) =>
+        l.includes("malformed (non-array) modules inventory"),
+      ),
+    ).toBe(true);
+    const outManifest = JSON.parse(
+      await readFile(join(outDir, "firmware_manifest.json"), "utf8"),
+    );
+    expect(outManifest.source_coverage).toBe("unknown");
+    expect(outManifest.coverage).toBe("partial");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("marks declared manifest with missing modules property and declared count as partial coverage with unknown source coverage", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-missing-modules-array-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "ModA.efi"), createMinimalPeBuffer());
+
+  // Manifest has total_modules_decompiled: 1 but modules property is missing
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_decompiled: 1,
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((l) => l.includes("contains no module array")),
+    ).toBe(true);
+    const outManifest = JSON.parse(
+      await readFile(join(outDir, "firmware_manifest.json"), "utf8"),
+    );
+    expect(outManifest.source_coverage).toBe("unknown");
+    expect(outManifest.coverage).toBe("partial");
   } finally {
     await provider.close();
   }

@@ -1951,31 +1951,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           `#endif // ${headerGuard}`,
           "",
         ].join("\n");
-        let finalHeaderContent = headerContent;
-        let headerBytes = Buffer.from(finalHeaderContent, "utf8");
-        if (
-          totalStagedCBytes + headerBytes.length >
-          MAX_DECOMPILE_TOTAL_BYTES
-        ) {
-          isCoveragePartial = true;
-          if (
-            !effectiveLimitations.includes(
-              "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
-            )
-          ) {
-            effectiveLimitations.push(
-              "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
-            );
-          }
-          finalHeaderContent = `/* UEFI Module Header omitted: reached 64 MiB aggregate staging budget */\n`;
-          headerBytes = Buffer.from(finalHeaderContent, "utf8");
-        }
-        const headerSha256 = sha256Hex(headerBytes);
-        totalStagedCBytes += headerBytes.length;
-        publicationEntries.push({
-          relativePath: headerRelPath,
-          bytes: headerBytes,
-        });
+        const headerBytes = Buffer.from(headerContent, "utf8");
+        let headerSha256: string = "";
 
         let asmRelPath: string | null = null;
         let asmSha256: string | null = null;
@@ -2222,14 +2199,16 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 const candidateCBytes = Buffer.byteLength(candidateC, "utf8");
                 const remainingModulesCount =
                   modulesToProcess.length - moduleSeq;
-                const reservedScaffoldBytes = remainingModulesCount * 2048;
+                const reservedScaffoldBytes = remainingModulesCount * 4096;
                 if (
                   candidateCBytes > 0 &&
-                  totalStagedCBytes + candidateCBytes + reservedScaffoldBytes <=
+                  totalStagedCBytes +
+                    headerBytes.length +
+                    candidateCBytes +
+                    reservedScaffoldBytes <=
                     MAX_DECOMPILE_TOTAL_BYTES
                 ) {
                   cContent = candidateC;
-                  totalStagedCBytes += candidateCBytes;
                   cGenerator = "ghidra";
                   ghidraEngineUsed = true;
                 }
@@ -2277,10 +2256,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             ) {
               const cStat = await stat(ghidraOutC);
               const remainingModulesCount = modulesToProcess.length - moduleSeq;
-              const reservedScaffoldBytes = remainingModulesCount * 2048;
+              const reservedScaffoldBytes = remainingModulesCount * 4096;
               const remainingCBytes =
                 MAX_DECOMPILE_TOTAL_BYTES -
                 totalStagedCBytes -
+                headerBytes.length -
                 reservedScaffoldBytes;
               if (cStat.size > remainingCBytes) {
                 isCoveragePartial = true;
@@ -2306,11 +2286,13 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 const candidateC = await readFile(ghidraOutC, "utf8");
                 const candidateCBytes = Buffer.byteLength(candidateC, "utf8");
                 if (
-                  totalStagedCBytes + candidateCBytes + reservedScaffoldBytes <=
+                  totalStagedCBytes +
+                    headerBytes.length +
+                    candidateCBytes +
+                    reservedScaffoldBytes <=
                   MAX_DECOMPILE_TOTAL_BYTES
                 ) {
                   cContent = candidateC;
-                  totalStagedCBytes += candidateCBytes;
                   cGenerator = "ghidra";
                   ghidraEngineUsed = true;
                   const failedCount = exporterOutcome?.failed_functions ?? 0;
@@ -2361,8 +2343,52 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             }
           }
 
-          if (cContent === null) {
-            let candidateScaffold = [
+          let finalHeaderBytes: Buffer;
+          let finalCBytes: Buffer;
+          const OMIT_HEADER_COMMENT =
+            "/* UEFI Module Header omitted: reached 64 MiB aggregate staging budget */\n";
+          const OMIT_C_COMMENT =
+            "/* Decompiled C output omitted: reached 64 MiB aggregate staging budget */\n";
+          const omitHeaderBytesLen = Buffer.byteLength(
+            OMIT_HEADER_COMMENT,
+            "utf8",
+          );
+          const omitCBytesLen = Buffer.byteLength(OMIT_C_COMMENT, "utf8");
+
+          if (cContent !== null) {
+            const candidateBytes = Buffer.from(cContent, "utf8");
+            if (
+              totalStagedCBytes + headerBytes.length + candidateBytes.length <=
+              MAX_DECOMPILE_TOTAL_BYTES
+            ) {
+              finalHeaderBytes = headerBytes;
+              finalCBytes = candidateBytes;
+              totalStagedCBytes += headerBytes.length + candidateBytes.length;
+            } else {
+              isCoveragePartial = true;
+              if (
+                !effectiveLimitations.includes(
+                  "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                )
+              ) {
+                effectiveLimitations.push(
+                  "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                );
+              }
+              if (
+                totalStagedCBytes + omitHeaderBytesLen + omitCBytesLen <=
+                MAX_DECOMPILE_TOTAL_BYTES
+              ) {
+                finalHeaderBytes = Buffer.from(OMIT_HEADER_COMMENT, "utf8");
+                finalCBytes = Buffer.from(OMIT_C_COMMENT, "utf8");
+                totalStagedCBytes += omitHeaderBytesLen + omitCBytesLen;
+              } else {
+                finalHeaderBytes = Buffer.alloc(0);
+                finalCBytes = Buffer.alloc(0);
+              }
+            }
+          } else {
+            const candidateScaffold = [
               "/**",
               ` * Reconstructed Entry Scaffolding: ${safeRawName}`,
               ` * Phase: ${mod.phase}${safeTypeName ? ` | Type: ${safeTypeName}` : ""}`,
@@ -2377,8 +2403,18 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               scaffold.functionDefinition,
               "",
             ].join("\n");
-            let scaffoldBytes = Buffer.byteLength(candidateScaffold, "utf8");
-            if (totalStagedCBytes + scaffoldBytes > MAX_DECOMPILE_TOTAL_BYTES) {
+            const scaffoldBytes = Buffer.from(candidateScaffold, "utf8");
+            const combinedFallbackBytes =
+              headerBytes.length + scaffoldBytes.length;
+
+            if (
+              totalStagedCBytes + combinedFallbackBytes <=
+              MAX_DECOMPILE_TOTAL_BYTES
+            ) {
+              finalHeaderBytes = headerBytes;
+              finalCBytes = scaffoldBytes;
+              totalStagedCBytes += combinedFallbackBytes;
+            } else {
               isCoveragePartial = true;
               if (
                 !effectiveLimitations.includes(
@@ -2389,18 +2425,30 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
                 );
               }
-              candidateScaffold = `/* Decompiled C output omitted: reached 64 MiB aggregate staging budget */\n`;
-              scaffoldBytes = Buffer.byteLength(candidateScaffold, "utf8");
+              if (
+                totalStagedCBytes + omitHeaderBytesLen + omitCBytesLen <=
+                MAX_DECOMPILE_TOTAL_BYTES
+              ) {
+                finalHeaderBytes = Buffer.from(OMIT_HEADER_COMMENT, "utf8");
+                finalCBytes = Buffer.from(OMIT_C_COMMENT, "utf8");
+                totalStagedCBytes += omitHeaderBytesLen + omitCBytesLen;
+              } else {
+                finalHeaderBytes = Buffer.alloc(0);
+                finalCBytes = Buffer.alloc(0);
+              }
             }
-            cContent = candidateScaffold;
-            totalStagedCBytes += scaffoldBytes;
           }
 
-          const cBytes = Buffer.from(cContent, "utf8");
-          const cSha256 = sha256Hex(cBytes);
+          headerSha256 = sha256Hex(finalHeaderBytes);
+          publicationEntries.push({
+            relativePath: headerRelPath,
+            bytes: finalHeaderBytes,
+          });
+
+          const cSha256 = sha256Hex(finalCBytes);
           publicationEntries.push({
             relativePath: cRelPath,
-            bytes: cBytes,
+            bytes: finalCBytes,
           });
 
           stagedModules.push({
@@ -3405,7 +3453,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     }
                   };
                   registerFallbackKey(crossPlatformNorm);
-                  registerFallbackKey(crossPlatformFolded);
                 }
               }
               if (
@@ -3423,6 +3470,33 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 omittedCandidates.push({
                   identityRelPath: "firmware_manifest.json#missing_module_rows",
                   reason: `missing_module_rows:${missingRowCount}`,
+                });
+              }
+            } else {
+              isCoveragePartial = true;
+              hasUnknownCoverage = true;
+              if (parsed?.modules !== undefined) {
+                if (limitations.length < 50) {
+                  limitations.push(
+                    "Manifest firmware_manifest.json contains a malformed (non-array) modules inventory.",
+                  );
+                }
+                omittedCandidates.push({
+                  identityRelPath: "firmware_manifest.json#modules",
+                  reason: "malformed_modules_inventory",
+                });
+              } else if (
+                declaredDecompiledCount !== undefined &&
+                declaredDecompiledCount > 0
+              ) {
+                if (limitations.length < 50) {
+                  limitations.push(
+                    `Manifest firmware_manifest.json declares ${declaredDecompiledCount} decompiled module(s) but contains no module array.`,
+                  );
+                }
+                omittedCandidates.push({
+                  identityRelPath: "firmware_manifest.json#missing_module_rows",
+                  reason: `missing_module_rows:${declaredDecompiledCount}`,
                 });
               }
             }
@@ -3472,7 +3546,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           const existing = candidateCrossPlatformKeys.get(normK);
           if (existing !== undefined && existing !== cEntry.path) {
             ambiguousDirectoryInventoryKeys.add(normK);
-            ambiguousDirectoryInventoryKeys.add(normK.toLowerCase());
           } else {
             candidateCrossPlatformKeys.set(normK, cEntry.path);
           }
