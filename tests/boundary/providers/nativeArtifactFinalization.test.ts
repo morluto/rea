@@ -95,6 +95,7 @@ const cases = [
   {
     name: "kernel build config",
     fixture: kernelBuildConfigFixture,
+    report: { config: { status: "present", option_count: 9 } },
     make: () => {
       const provider = new KernelBuildConfigProvider();
       return {
@@ -110,6 +111,7 @@ const cases = [
   {
     name: "kernel modules",
     fixture: kernelModuleFixture,
+    report: { applicability: "applicable", signature: { status: "present" } },
     make: () => {
       const provider = new KernelModuleProvider();
       return {
