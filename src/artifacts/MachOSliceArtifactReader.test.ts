@@ -344,117 +344,133 @@ describe("MachOSliceArtifactReader", () => {
       cause: { failure: { kind: "malformed", format: "lipo-output" } },
     });
   });
+});
 
-  it("keeps a borrowed source usable after idle and active cancelled slice reads", async () => {
-    const { path, runner, bytes } = await sliceOwnershipFixture(true);
-    const source = await openRegularFile(path, { symlinks: "reject" });
-    const { handle } = source;
-    const reader = new MachOSliceArtifactReader(path, {}, runner, source);
-    onTestFinished(async () => {
-      try {
-        await reader.close();
-      } finally {
-        await handle.close();
-      }
-    });
-
-    const [entry] = await sliceEntries(reader);
-    if (entry === undefined) throw new Error("Expected an x86_64 slice");
-    const idleController = new AbortController();
-    const idle = await reader.open(entry, idleController.signal);
-    const idleFailure = once(idle, "error");
-    idleController.abort(null);
-    await expect(idleFailure).resolves.toMatchObject([
-      { reason: "cancelled", cancellation: { reason: null } },
-    ]);
-    expect((await handle.stat()).isFile()).toBe(true);
-
-    const read = handle.read.bind(handle);
-    const activeRead = phaseGate();
-    let reads = 0;
-    const activeSpy = vi.spyOn(handle, "read").mockImplementation((async (
-      ...args: unknown[]
-    ) => {
-      const result = await Reflect.apply(read, handle, args);
-      if (reads++ > 0) await activeRead.hold();
-      return result;
-    }) as typeof handle.read);
+it("keeps a borrowed source usable after idle and active cancelled slice reads", async () => {
+  const { path, runner, bytes } = await sliceOwnershipFixture(true);
+  const source = await openRegularFile(path, { symlinks: "reject" });
+  const { handle } = source;
+  const reader = new MachOSliceArtifactReader(path, {}, runner, source);
+  onTestFinished(async () => {
     try {
-      const controller = new AbortController();
-      const cancelled = await reader.open(entry, controller.signal);
-      const iterator = cancelled[Symbol.asyncIterator]();
-      const first = await iterator.next();
-      expect(first.done).toBe(false);
-      expect(first.value.byteLength).toBeGreaterThan(0);
-      const pending = iterator.next();
-      void pending.catch(() => undefined);
-      await activeRead.reached(
-        pending,
-        "slice descriptor read after the first chunk",
-      );
-      const reason = { stage: "descriptor read" };
-      controller.abort(reason);
-      activeRead.release();
-      const failure = await pending.catch((cause: unknown) => cause);
-      expect(failure).toMatchObject({ reason: "cancelled" });
-      expect((failure as Error).cause).toBe(reason);
+      await reader.close();
     } finally {
-      activeRead.release();
-      activeSpy.mockRestore();
-    }
-
-    const [verified] = await sliceEntries(reader);
-    if (verified === undefined)
-      throw new Error("Expected the same slice after cancellation");
-    expect(await buffer(await reader.open(verified))).toEqual(bytes);
-
-    const controller = new AbortController();
-    const truncated = await reader.open(verified, controller.signal);
-    const bufferedCaller = new AbortController();
-    const buffered = await reader.open(verified, bufferedCaller.signal);
-    await truncate(path, 4097);
-    const incomplete = { reason: "integrity", integrityCheck: "declared-size" };
-    const eof = phaseGate();
-    const returnedEof = phaseArrival();
-    let eofCount = 0;
-    const eofSpy = vi.spyOn(handle, "read").mockImplementation((async (
-      ...args: unknown[]
-    ) => {
-      const result = (await Reflect.apply(read, handle, args)) as {
-        bytesRead: number;
-        buffer: Buffer;
-      };
-      if (result.bytesRead === 0) {
-        if (eofCount++ === 0) await eof.hold();
-        // After the real read returns, let the stream publish its coverage.
-        else setImmediate(() => returnedEof.arrive());
-      }
-      return result;
-    }) as typeof handle.read);
-    try {
-      const consumed = buffer(truncated);
-      void consumed.catch(() => undefined);
-      await eof.reached(consumed, "physical EOF within the declared slice");
-      controller.abort(null);
-      eof.release();
-      await expect(consumed).rejects.toMatchObject(incomplete);
-
-      const failure = once(buffered, "error");
-      buffered.read(0);
-      await returnedEof.reached(
-        failure,
-        "returned EOF with unconsumed slice data",
-      );
-      expect(buffered.readableLength).toBeGreaterThan(0);
-      expect(buffered.destroyed).toBe(false);
-      bufferedCaller.abort(null);
-      expect(buffered.destroyed).toBe(true);
-      await expect(failure).resolves.toMatchObject([incomplete]);
-    } finally {
-      eof.release();
-      eofSpy.mockRestore();
+      await handle.close();
     }
   });
+
+  const [entry] = await sliceEntries(reader);
+  if (entry === undefined) throw new Error("Expected an x86_64 slice");
+  const idleController = new AbortController();
+  const idle = await reader.open(entry, idleController.signal);
+  const idleFailure = once(idle, "error");
+  idleController.abort(null);
+  await expect(idleFailure).resolves.toMatchObject([
+    { reason: "cancelled", cancellation: { reason: null } },
+  ]);
+  expect((await handle.stat()).isFile()).toBe(true);
+
+  const read = handle.read.bind(handle);
+  const activeRead = phaseGate();
+  let reads = 0;
+  const activeSpy = vi.spyOn(handle, "read").mockImplementation((async (
+    ...args: unknown[]
+  ) => {
+    const result = await Reflect.apply(read, handle, args);
+    if (reads++ > 0) await activeRead.hold();
+    return result;
+  }) as typeof handle.read);
+  let activeReadVerified = false;
+  try {
+    const controller = new AbortController();
+    const cancelled = await reader.open(entry, controller.signal);
+    const closed = new Promise<void>((resolve) =>
+      cancelled.once("close", resolve),
+    );
+    const iterator = cancelled[Symbol.asyncIterator]();
+    const first = await iterator.next();
+    expect(first.done).toBe(false);
+    expect(first.value.byteLength).toBeGreaterThan(0);
+    const pending = iterator.next();
+    void pending.catch(() => undefined);
+    await activeRead.reached(
+      pending,
+      "slice descriptor read after the first chunk",
+    );
+    const reason = { stage: "descriptor read" };
+    controller.abort(reason);
+    activeRead.release();
+    const failure = await pending.catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({ reason: "cancelled" });
+    expect((failure as Error).cause).toBe(reason);
+    await closed;
+    activeReadVerified = true;
+  } finally {
+    activeRead.release();
+    try {
+      if (!activeReadVerified) await reader.close();
+    } finally {
+      activeSpy.mockRestore();
+    }
+  }
+
+  const [verified] = await sliceEntries(reader);
+  if (verified === undefined)
+    throw new Error("Expected the same slice after cancellation");
+  const reopened = await buffer(await reader.open(verified));
+  expect(reopened.byteLength).toBe(bytes.byteLength);
+  expect(reopened.equals(bytes), "reopened slice bytes changed").toBe(true);
+
+  const controller = new AbortController();
+  const truncated = await reader.open(verified, controller.signal);
+  const bufferedCaller = new AbortController();
+  const buffered = await reader.open(verified, bufferedCaller.signal);
+  await truncate(path, 4097);
+  const incomplete = { reason: "integrity", integrityCheck: "declared-size" };
+  const eof = phaseGate();
+  const returnedEof = phaseArrival();
+  let eofCount = 0;
+  const eofSpy = vi.spyOn(handle, "read").mockImplementation((async (
+    ...args: unknown[]
+  ) => {
+    const result = (await Reflect.apply(read, handle, args)) as {
+      bytesRead: number;
+      buffer: Buffer;
+    };
+    if (result.bytesRead === 0) {
+      if (eofCount++ === 0) await eof.hold();
+      // After the real read returns, let the stream publish its coverage.
+      else setImmediate(() => returnedEof.arrive());
+    }
+    return result;
+  }) as typeof handle.read);
+  try {
+    const consumed = buffer(truncated);
+    void consumed.catch(() => undefined);
+    await eof.reached(consumed, "physical EOF within the declared slice");
+    controller.abort(null);
+    eof.release();
+    await expect(consumed).rejects.toMatchObject(incomplete);
+
+    const failure = once(buffered, "error");
+    buffered.read(0);
+    await returnedEof.reached(
+      failure,
+      "returned EOF with unconsumed slice data",
+    );
+    expect(buffered.readableLength).toBeGreaterThan(0);
+    expect(buffered.destroyed).toBe(false);
+    bufferedCaller.abort(null);
+    expect(buffered.destroyed).toBe(true);
+    await expect(failure).resolves.toMatchObject([incomplete]);
+  } finally {
+    eof.release();
+    try {
+      await reader.close();
+    } finally {
+      eofSpy.mockRestore();
+    }
+  }
 });
 
 describe("universal slices outside the structural index", () => {
