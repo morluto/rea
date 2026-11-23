@@ -14,6 +14,7 @@ const REVERSE_TOOL_MODULES = [
   "src/server/externalMutationAdmission.ts",
   "src/server/createServer.ts",
   "src/rizin/RizinCommand.ts",
+  "src/rizin/RizinDebugEvidence.ts",
   "src/rizin/RizinDebugSessionManager.ts",
 ];
 
