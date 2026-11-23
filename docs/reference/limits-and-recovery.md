@@ -161,14 +161,11 @@ or `next_invocation` for a one-shot invocation. Both carry `effective_value`,
 `unit`, `minimum`, `maximum` and `default_value`. `update_analysis_settings`
 changes neither. A limit without `control_kind` is a registered setting.
 
-This output is breaking. Results and errors no longer carry the previous
-restart boolean or a single effect field, and there is no compatibility alias.
 Read `update_mode` to see whether the setter can change the active value, and
 `pending_restart` to see whether a configured value is waiting. A configuration
 error for a Windows ChangeTime setting carries `update_mode` on
 `details.settings`. Its rejected value does not establish an accepted pending
-configuration, so `pending_restart` is omitted. The removed field names
-are listed in the changelog.
+configuration, so `pending_restart` is omitted.
 
 An inspected setting whose launch value is invalid and which has no runtime
 override likewise omits `pending_restart`: it has no accepted configured value
