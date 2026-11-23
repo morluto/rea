@@ -166,23 +166,6 @@ const locateMetadata = (
   };
 };
 
-const locate = (
-  bytes: Buffer,
-  found: readonly ElfSection[],
-  namesComplete: boolean,
-): LocatedSection => {
-  const meta = locateMetadata(bytes.length, found, namesComplete);
-  if (meta.status !== "present" || meta.location === null)
-    return { ...meta, body: null };
-  return {
-    ...meta,
-    body: bytes.subarray(
-      meta.location.offset,
-      meta.location.offset + meta.location.bytes,
-    ),
-  };
-};
-
 const readSourceSlice = async (
   source: NativeByteSource,
   offset: number,
@@ -283,14 +266,6 @@ const parseDebuglinkFromLocated = (
   };
 };
 
-const parseDebuglink = (
-  bytes: Buffer,
-  found: readonly ElfSection[],
-  namesComplete: boolean,
-  little: boolean,
-): Report["debuglink"] =>
-  parseDebuglinkFromLocated(locate(bytes, found, namesComplete), little);
-
 const closedAlt = (
   status: SectionStatus,
   reason: Report["debugaltlink"]["reason"],
@@ -377,13 +352,6 @@ const parseDebugaltlinkFromLocated = (
   };
 };
 
-const parseDebugaltlink = (
-  bytes: Buffer,
-  found: readonly ElfSection[],
-  namesComplete: boolean,
-): Report["debugaltlink"] =>
-  parseDebugaltlinkFromLocated(locate(bytes, found, namesComplete));
-
 const parseDebugdataFromLocated = (
   located: LocatedSection,
 ): Report["debugdata"] => {
@@ -431,13 +399,6 @@ const parseDebugdataFromLocated = (
     reason: magic ? null : "debugdata_not_xz",
   };
 };
-
-const parseDebugdata = (
-  bytes: Buffer,
-  found: readonly ElfSection[],
-  namesComplete: boolean,
-): Report["debugdata"] =>
-  parseDebugdataFromLocated(locate(bytes, found, namesComplete));
 
 interface ObservedBuildId {
   readonly buildId: BuildId;
@@ -537,7 +498,6 @@ const sectionsNamed = (
   name: string,
 ): readonly ElfSection[] => sections.filter((section) => section.name === name);
 
-/** Decode separate-debug linkage from one in-memory ELF image. */
 const ELF_DEBUG_LINK_OPERATION = "inspect_elf_debug_link";
 
 const finalizeElfDebugLinkReport = (
@@ -591,53 +551,6 @@ const finalizeElfDebugLinkReport = (
     },
     limitations,
   };
-};
-
-export const parseElfDebugLink = (
-  bytes: Buffer,
-  artifact: Report["artifact"],
-  input: InspectElfDebugLinkInput,
-  image?: ReturnType<typeof readElfImage>,
-  preparedNotes?: PreparedNotes,
-): Report => {
-  // The directory admits section names before either decoder inflates them.
-  image =
-    image ??
-    readElfImage(bytes, ELF_DEBUG_LINK_OPERATION, input.max_file_bytes);
-  const sections = image.sections.filter(
-    (section): section is ElfSection => section.format === "elf",
-  );
-  const namesComplete =
-    image.section_names_limitation === undefined &&
-    sections.every((section) => section.name !== null);
-  const little = image.byte_order === "little";
-  const debuglink = parseDebuglink(
-    bytes,
-    sectionsNamed(sections, ".gnu_debuglink"),
-    namesComplete,
-    little,
-  );
-  const debugaltlink = parseDebugaltlink(
-    bytes,
-    sectionsNamed(sections, ".gnu_debugaltlink"),
-    namesComplete,
-  );
-  const debugdata = parseDebugdata(
-    bytes,
-    sectionsNamed(sections, ".gnu_debugdata"),
-    namesComplete,
-  );
-  const observed = observeBuildId(bytes, input, preparedNotes);
-  return finalizeElfDebugLinkReport(
-    image,
-    sections,
-    namesComplete,
-    artifact,
-    debuglink,
-    debugaltlink,
-    debugdata,
-    observed,
-  );
 };
 
 interface CandidateIdentity {
@@ -1007,27 +920,6 @@ const prepareBuildIdNotes = async (
     assertArtifactReadActive(signal);
     return err(cause);
   }
-};
-
-/** Same linkage as {@link parseElfDebugLink}. Section names yield for `signal`. */
-export const parseElfDebugLinkCooperative = async (
-  bytes: Buffer,
-  artifact: Report["artifact"],
-  input: InspectElfDebugLinkInput,
-  signal?: AbortSignal,
-): Promise<Report> => {
-  const pause = debugLinkPause(signal);
-  const decode = sharedElfSectionNameDecoder(pause);
-  const image = await readElfImageCooperative(
-    bytes,
-    ELF_DEBUG_LINK_OPERATION,
-    pause,
-    input.max_file_bytes,
-    decode,
-  );
-  const notes = await prepareBuildIdNotes(bytes, input, decode, signal);
-  assertArtifactReadActive(signal);
-  return parseElfDebugLink(bytes, artifact, input, image, notes);
 };
 
 /** Decode separate-debug linkage positionally over a bounded file handle. */
