@@ -1057,3 +1057,26 @@ it("preserves an unsupported resolver host alongside unavailable value flow", as
   expect(item?.remediation).toContain("No value flow.");
   expect(item?.remediation).toContain("Use a supported resolver host.");
 });
+
+it("carries the recovery instruction the refusing owner published", async () => {
+  // A runtime refusal states its observed reason; the repair instruction is a
+  // separate field the owner publishes, so it must not be folded into reason.
+  const remediation = "Restart Ghidra from a host that provides Java 21.";
+  const status = await project(
+    selectedCapabilities,
+    [candidate(providerA, selectedCapabilities)],
+    new Map([
+      ["procedure_info", { reason: "Runtime operation failure", remediation }],
+    ]),
+  );
+  const observed = expandCanonicalCapabilities(status.capabilities).find(
+    ({ operation }) => operation === "procedure_info",
+  );
+  expect(observed).toMatchObject({
+    available: false,
+    reason: "Runtime operation failure",
+    remediation,
+    runtime_unavailable: true,
+  });
+  expect(observed?.reason).not.toContain(remediation);
+});

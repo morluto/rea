@@ -79,7 +79,7 @@ export const currentRouteCapability = (
   const unavailable = runtimeUnavailability.get(descriptor.operation);
   return unavailable === undefined
     ? descriptor
-    : runtimeUnavailable(descriptor, unavailable.reason);
+    : runtimeUnavailable(descriptor, unavailable);
 };
 
 /** Project internal provider routing state into the caller-visible session status. */
@@ -221,14 +221,27 @@ export const binarySessionStatus = async ({
 /** A runtime observation replaces the declared state and its repair instruction. */
 const runtimeUnavailable = (
   descriptor: CapabilityDescriptor,
-  reason: string,
+  observation: { readonly reason: string; readonly remediation?: string },
 ): CapabilityDescriptor & { readonly runtimeUnavailable?: true } => {
+  const { reason, remediation } = observation;
   if (descriptor.available) {
     const { availabilityCode: _available, ...declared } = descriptor;
-    return { ...declared, available: false, reason, runtimeUnavailable: true };
+    return {
+      ...declared,
+      available: false,
+      reason,
+      ...(remediation === undefined ? {} : { remediation }),
+      runtimeUnavailable: true,
+    };
   }
+  // The declared repair instruction is superseded by the observed refusal, which
+  // now carries the recovery its own owner published.
   const { remediation: _superseded, ...declared } = descriptor;
-  return { ...declared, reason };
+  return {
+    ...declared,
+    reason,
+    ...(remediation === undefined ? {} : { remediation }),
+  };
 };
 
 /** Capability surfaces a registration may narrow without hiding provider facts. */
