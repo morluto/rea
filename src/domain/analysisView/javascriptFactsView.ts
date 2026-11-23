@@ -9,20 +9,41 @@ import {
 const propertyKeySchema =
   applicationNodeObservationSchema.shape.properties.keyType;
 
+const propertyScalarSchema = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.null(),
+]);
+
+/** Exact selection over retained locations, node kinds and property values. */
+const javascriptFactsWhereSchema = z
+  .strictObject({
+    paths: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "Exact Evidence artifact-path or source-range source strings. Omitted includes unknown locations; [] matches none. No filesystem lookup or path normalization.",
+      ),
+    kinds: z.array(applicationNodeSchema.shape.kind).optional(),
+    properties: z
+      .array(
+        z.strictObject({
+          key: propertyKeySchema,
+          values: z.array(propertyScalarSchema),
+        }),
+      )
+      .optional()
+      .describe(
+        'Exact retained property values, e.g. [{key: "operation", values: ["send"]}]. An observation matches when every listed key is retained with one of its JSON scalar values; a missing key or non-scalar value never matches, and values [] matches none.',
+      ),
+  })
+  .default({});
+
 /** A homogeneous batch over exact retained observation locations and node kinds. */
 export const javascriptFactsViewRequestSchema = z.strictObject({
   kind: z.literal("javascript-facts"),
-  where: z
-    .strictObject({
-      paths: z
-        .array(z.string())
-        .optional()
-        .describe(
-          "Exact Evidence artifact-path or source-range source strings. Omitted includes unknown locations; [] matches none. No filesystem lookup or path normalization.",
-        ),
-      kinds: z.array(applicationNodeSchema.shape.kind).optional(),
-    })
-    .default({}),
+  where: javascriptFactsWhereSchema,
   property_keys: z
     .array(propertyKeySchema)
     .describe(
@@ -55,6 +76,7 @@ export const javascriptFactRowSchema = applicationNodeSchema
 
 type FactRequest = z.infer<typeof javascriptFactsViewRequestSchema>;
 type FactRow = z.infer<typeof javascriptFactRowSchema>;
+type FactWhere = FactRequest["where"];
 
 const observationPath = (
   observation: ApplicationNode["observations"][number],
@@ -396,18 +418,107 @@ const projectIndexedFacts = (
   return { rows, total };
 };
 
+type PropertyFilter = readonly (readonly [string, ReadonlySet<unknown>])[];
+
+/** Values are JSON scalars, so set membership is exact JSON equality. */
+const propertyFilter = (where: FactWhere): PropertyFilter | null => {
+  if (where.properties === undefined) return null;
+  const byKey = new Map<string, ReadonlySet<unknown>>();
+  for (const { key, values } of where.properties) {
+    const listed = new Set<unknown>(values);
+    const existing = byKey.get(key);
+    // Repeated keys must all hold; intersect their allowed values.
+    byKey.set(
+      key,
+      existing === undefined
+        ? listed
+        : new Set([...existing].filter((value) => listed.has(value))),
+    );
+  }
+  return [...byKey];
+};
+
+const matchesProperties = (
+  observation: ApplicationNode["observations"][number],
+  filter: PropertyFilter,
+): boolean =>
+  filter.every(
+    ([key, values]) =>
+      Object.hasOwn(observation.properties, key) &&
+      values.has(observation.properties[key]),
+  );
+
+/** Every observation matching the exact selection, in retained graph order. */
+const forEachMatchingFact = (
+  nodes: readonly ApplicationNode[],
+  where: FactWhere,
+  cacheOwner: object | undefined,
+  visit: (entry: FactEntry) => void,
+): void => {
+  const paths = where.paths === undefined ? null : new Set(where.paths);
+  const kinds = where.kinds === undefined ? null : new Set(where.kinds);
+  const properties = propertyFilter(where);
+  if (paths?.size === 0 || kinds?.size === 0) return;
+  if (properties?.some(([, values]) => values.size === 0)) return;
+  const accept = (entry: FactEntry) => {
+    if (properties === null || matchesProperties(entry.observation, properties))
+      visit(entry);
+  };
+  const index = getFactsIndex(nodes, cacheOwner);
+  if (index !== undefined) {
+    const buckets = collectMatchingBuckets(index, kinds, paths);
+    if (buckets === undefined) {
+      for (const entry of index.all) accept(entry);
+      return;
+    }
+    const ordinals =
+      buckets.length === 1
+        ? buckets[0]!
+        : buckets.flat().sort((left, right) => left - right);
+    for (const ordinal of ordinals) accept(index.all[ordinal]!);
+    return;
+  }
+  for (const node of nodes) {
+    if (kinds !== null && !kinds.has(node.kind)) continue;
+    for (const observation of node.observations) {
+      if (paths !== null) {
+        const path = observationPath(observation);
+        if (path === null || !paths.has(path)) continue;
+      }
+      accept({ node, observation });
+    }
+  }
+};
+
 /** One scan, O(page) retained rows; never materialize a whole node or graph. */
 export const projectJavaScriptFacts = (
   nodes: readonly ApplicationNode[],
   view: FactRequest,
   cacheOwner?: object,
 ): { readonly rows: FactRow[]; readonly total: number } => {
+  const keys = [...new Set(view.property_keys)];
+  if (view.where.properties !== undefined) {
+    const rows: FactRow[] = [];
+    let total = 0;
+    forEachMatchingFact(nodes, view.where, cacheOwner, (entry) => {
+      total += 1;
+      if (total <= view.offset || rows.length >= view.limit) return;
+      rows.push(
+        buildFactRow(
+          entry.node,
+          entry.observation,
+          keys,
+          view.include_available_property_keys,
+        ),
+      );
+    });
+    return { rows, total };
+  }
   const paths =
     view.where.paths === undefined ? null : new Set(view.where.paths);
   const kinds =
     view.where.kinds === undefined ? null : new Set(view.where.kinds);
   if (paths?.size === 0 || kinds?.size === 0) return { rows: [], total: 0 };
-  const keys = [...new Set(view.property_keys)];
   const index = getFactsIndex(nodes, cacheOwner);
   if (index !== undefined)
     return projectIndexedFacts(index, view, kinds, paths, keys);
