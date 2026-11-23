@@ -1347,26 +1347,6 @@ const parseElfDependenciesCore = function* (
   };
 };
 
-/** Decode PT_DYNAMIC, GNU versions, and undefined .dynsym imports from one ELF image. */
-export const readElfDependenciesSteps = function* (
-  bytes: Buffer,
-  artifact: Artifact,
-  input: InspectElfDependenciesInput,
-): Generator<void, ElfDependencies, void> {
-  const steps = parseElfDependenciesCore(bytes.length, artifact, input);
-  let next = steps.next();
-  while (!next.done) {
-    const step = next.value;
-    if (step.kind === "yield") {
-      yield;
-      next = steps.next(undefined);
-    } else {
-      next = steps.next(bytes.subarray(step.offset, step.offset + step.length));
-    }
-  }
-  return next.value;
-};
-
 /** Decode PT_DYNAMIC, GNU versions, and undefined .dynsym imports positionally over a handle. */
 export const parseElfDependenciesFromHandle = async (
   source: ElfDependencyByteSource,
