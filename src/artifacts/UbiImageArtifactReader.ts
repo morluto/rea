@@ -30,7 +30,7 @@ import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {
   parseUbiImage,
   ubiVolumeExtractRefusalLimitation,
-  UBI_PEB_SIZE_LIMIT,
+  UBI_PEB_COUNT_LIMIT,
   type UbiImage,
   type UbiImageParseError,
   type UbiLebRange,
@@ -229,7 +229,7 @@ const parseFailure = (failure: UbiImageParseError): ArtifactReaderFailure => {
           name: `The ${parserLimit.name} allowance`,
           limit: parserLimit.maximum,
           unit:
-            parserLimit.name === UBI_PEB_SIZE_LIMIT ? "bytes" : "eraseblocks",
+            parserLimit.name === UBI_PEB_COUNT_LIMIT ? "eraseblocks" : "bytes",
         },
       });
     }

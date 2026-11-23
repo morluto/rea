@@ -39,6 +39,7 @@ export const UBI_MAX_PEBS = 262_144;
 /** Names of the parser limits that carry these ceilings into refusals. */
 export const UBI_PEB_SIZE_LIMIT = "UBI eraseblock size";
 export const UBI_PEB_COUNT_LIMIT = "UBI eraseblock count";
+export const UBI_STATIC_PAYLOAD_CRC_LIMIT = "UBI static payload CRC bytes";
 /**
  * Eraseblocks, counted from the second one, searched for an erase-counter
  * header off the eraseblock grid, which would mean the size was mismeasured.
@@ -1077,7 +1078,7 @@ interface WinningLeb {
 /**
  * Mapped PEBs whose copy_flag marks a wear-leveling copy of a LEB that has
  * another copy. Their data CRC decides which copy wins, so the caller reads
- * `vid.dataSize` bytes at their data offset and checks `ubiLebDataMatches`.
+ * `vid.dataSize` bytes at their data offset and checks the payload CRC.
  */
 const ubiCopiesToVerify = (pebs: readonly UbiPeb[]): number[] => {
   const copies = new Map<string, number>();
@@ -1097,10 +1098,6 @@ const ubiCopiesToVerify = (pebs: readonly UbiPeb[]): number[] => {
   });
   return indices;
 };
-
-/** Whether a LEB's full declared payload matches its data CRC. */
-const ubiLebDataMatches = (data: Uint8Array, vid: UbiVidHeader): boolean =>
-  data.length === vid.dataSize && ubiCrc(data) === vid.dataCrc;
 
 /**
  * Per volume and LEB number, the winning copy, and stale copies. As in Linux
@@ -1401,7 +1398,8 @@ type UbiPebCandidateVerdict =
        */
       readonly fallback?: UbiImage;
     }
-  | { readonly state: "reject"; readonly error: UbiImageParseError };
+  | { readonly state: "reject"; readonly error: UbiImageParseError }
+  | { readonly state: "limit"; readonly error: ParseFailureError<"limit"> };
 
 /** Inputs collected while provisionally evaluating one dividing PEB size. */
 interface UbiPebCandidateCheck {
@@ -1478,9 +1476,9 @@ const judgeUbiPebCandidate = async (
         offset + vid.dataSize > ctx.fileSize
       )
         continue;
-      await ctx.checkpoint?.(true);
-      if (ubiLebDataMatches(await ctx.read(offset, vid.dataSize), vid))
-        return { state: "retry", error: pebError };
+      const matches = await verifyUbiPayload(ctx, offset, vid);
+      if (!matches.ok) return { state: "limit", error: matches.error };
+      if (matches.value) return { state: "retry", error: pebError };
     }
     return { state: "reject", error: pebError };
   }
@@ -1521,12 +1519,46 @@ export interface ParseUbiImageOptions {
 
 interface UbiParseContext {
   readonly fileSize: number;
+  staticPayloadCrcBytes: number;
+  readonly staticPayloadCrcs: Map<string, number | null>;
   readonly first: UbiEcHeader;
   readonly read: UbiImageRead;
   readonly checkpoint:
     | ((yieldControl: boolean) => Promise<void> | void)
     | undefined;
 }
+
+const verifyUbiPayload = async (
+  ctx: UbiParseContext,
+  offset: number,
+  vid: UbiVidHeader,
+): Promise<Result<boolean, ParseFailureError<"limit">>> => {
+  // Cache the computed CRC, since the expected value belongs to the VID.
+  const key =
+    vid.volType === VOLUME_TYPE_STATIC
+      ? `${String(offset)}/${String(vid.dataSize)}`
+      : null;
+  if (key !== null) {
+    const cached = ctx.staticPayloadCrcs.get(key);
+    if (cached !== undefined) return ok(cached === vid.dataCrc);
+    const maximum = 2 * ctx.fileSize;
+    if (vid.dataSize > maximum - ctx.staticPayloadCrcBytes)
+      return err(
+        decodeLimit(
+          UBI_FORMAT,
+          `UBI static payload CRC verification exceeds the ${String(maximum)}-byte per-image budget`,
+          { name: UBI_STATIC_PAYLOAD_CRC_LIMIT, maximum },
+          { offset },
+        ),
+      );
+    ctx.staticPayloadCrcBytes += vid.dataSize;
+  }
+  await ctx.checkpoint?.(true);
+  const data = await ctx.read(offset, vid.dataSize);
+  const crc = data.length === vid.dataSize ? ubiCrc(data) : null;
+  if (key !== null) ctx.staticPayloadCrcs.set(key, crc);
+  return ok(crc === vid.dataCrc);
+};
 
 type PendingCandidateFailure =
   | { readonly kind: "error"; readonly error: UbiImageParseError }
@@ -1641,20 +1673,26 @@ const readVerifiedUbiTableCopies = async (
   ctx: UbiParseContext,
   geometry: UbiGeometry,
   pebs: readonly UbiPeb[],
-): Promise<{
-  readonly verifiedCopies: ReadonlySet<number>;
-  readonly tableCopies: readonly [Uint8Array | null, Uint8Array | null];
-}> => {
+): Promise<
+  Result<
+    {
+      readonly verifiedCopies: ReadonlySet<number>;
+      readonly tableCopies: readonly [Uint8Array | null, Uint8Array | null];
+    },
+    ParseFailureError<"limit">
+  >
+> => {
   const verifiedCopies = new Set<number>();
   for (const index of ubiCopiesToVerify(pebs)) {
-    await ctx.checkpoint?.(true);
     const peb = pebs[index];
     if (peb?.state !== "mapped") continue;
-    const data = await ctx.read(
+    const matches = await verifyUbiPayload(
+      ctx,
       index * geometry.pebSize + geometry.dataOffset,
-      peb.vid.dataSize,
+      peb.vid,
     );
-    if (ubiLebDataMatches(data, peb.vid)) verifiedCopies.add(index);
+    if (!matches.ok) return matches;
+    if (matches.value) verifiedCopies.add(index);
   }
   const tableBytes = ubiVolumeTableBytes(geometry);
   const copies: (Uint8Array | null)[] = [];
@@ -1667,10 +1705,10 @@ const readVerifiedUbiTableCopies = async (
             tableBytes,
           ),
     );
-  return {
+  return ok({
     verifiedCopies,
     tableCopies: [copies[0] ?? null, copies[1] ?? null],
-  };
+  });
 };
 
 const evaluateUbiPebCandidate = async (
@@ -1705,11 +1743,9 @@ const evaluateUbiPebCandidate = async (
     if (checked.ok) geometry = checked.value;
     else pebError = checked.error;
   }
-  const { verifiedCopies, tableCopies } = await readVerifiedUbiTableCopies(
-    ctx,
-    geometry,
-    pebs,
-  );
+  const copies = await readVerifiedUbiTableCopies(ctx, geometry, pebs);
+  if (!copies.ok) return { state: "limit", error: copies.error };
+  const { verifiedCopies, tableCopies } = copies.value;
   const smallerGridError = await findSmallerGridError(
     ctx,
     measured.value,
@@ -1797,6 +1833,8 @@ export const parseUbiImage = async (
   if (!first.ok) return first;
   const ctx: UbiParseContext = {
     fileSize,
+    staticPayloadCrcBytes: 0,
+    staticPayloadCrcs: new Map(),
     first: first.value,
     read,
     checkpoint: options?.checkpoint,
@@ -1831,6 +1869,7 @@ export const parseUbiImage = async (
           candidate,
           passedOver,
         );
+        if (verdict.state === "limit") return err(verdict.error);
         if (verdict.state === "accept") return ok(verdict.image);
         if (verdict.state === "reject")
           return fallback !== null

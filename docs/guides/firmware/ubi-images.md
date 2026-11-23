@@ -55,6 +55,11 @@ counted in `corrupt_peb_count`, skipped and named in the limitations. When
 only the VID header is corrupt, the valid EC header still counts toward the
 erase counter range and the `image_seq` agreement check.
 
+Static payload CRC checks for competing copies and candidate geometry share
+the `UBI static payload CRC bytes` budget of twice the image size. Each
+distinct payload range counts once across all candidates. The parser refuses
+the image if another check would exceed the budget.
+
 ## Volume table
 
 The layout volume (`vol_id` 0x7FFFEFFF) stores two copies of the volume

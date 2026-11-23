@@ -11,6 +11,7 @@ import {
   UBI_LAYOUT_VOLUME_ID,
   UBI_MAX_PEB_BYTES,
   UBI_MAX_PEBS,
+  UBI_STATIC_PAYLOAD_CRC_LIMIT,
   type UbiImage,
   type UbiImageParseError,
 } from "./ubiImage.js";
@@ -1874,6 +1875,100 @@ it("rejects an image sequence conflict outside the undersized LEB span", async (
       ),
     },
   });
+});
+
+it("bounds reads of overlapping static payloads during geometry checks", async () => {
+  const geometry = { pebSize: 512, imageSeq: 5 };
+  const records: UbiFixtureVolumeRecord[] = [
+    { id: 0, name: "kernel", type: "static", reservedPebs: 1 },
+  ];
+  const [layout0, layout1] = ubiLayoutPebs(records, geometry);
+  const dataSize = 16 * 1024;
+  const bytes = Buffer.concat([
+    ubiImage([layout0!], geometry),
+    ubiImage([{ kind: "free" }], { ...geometry, imageSeq: 6 }),
+    ubiImage(
+      [
+        layout1!,
+        ...Array.from({ length: 61 }, (_, index): UbiFixturePeb => ({
+          kind: "leb",
+          volId: 0,
+          lnum: 0,
+          volType: "static",
+          usedEbs: 1,
+          data: Buffer.alloc(0),
+          dataSize,
+          dataCrc: 0,
+          sqnum: BigInt(index),
+        })),
+      ],
+      geometry,
+    ),
+  ]);
+  let bytesRead = 0;
+  let payloadBytesRead = 0;
+  const parsed = await parseUbiImage(bytes.length, (offset, length) => {
+    bytesRead += length;
+    if (length === dataSize) payloadBytesRead += length;
+    return bytes.subarray(offset, offset + length);
+  });
+  expect(parsed).toMatchObject({
+    ok: false,
+    error: {
+      failure: {
+        kind: "limit",
+        limit: {
+          name: UBI_STATIC_PAYLOAD_CRC_LIMIT,
+          maximum: 2 * bytes.length,
+        },
+      },
+    },
+  });
+  expect(payloadBytesRead).toBe(2 * bytes.length);
+  expect(bytesRead).toBeLessThan(4 * bytes.length);
+});
+
+it("reuses static payload CRCs across PEB size candidates", async () => {
+  const geometry = { pebSize: 1536, dataOffset: 512, imageSeq: 5 };
+  const bytes = Buffer.alloc(18_432, 0xff);
+  const free: UbiFixturePeb = { kind: "free" };
+  // Both candidate grids see the conflict and the same table and payloads.
+  for (const offset of [0, 1024, 1536])
+    ubiImage([free], geometry).subarray(0, 64).copy(bytes, offset);
+  ubiImage([free], { ...geometry, imageSeq: 6 }).copy(bytes, 3072);
+  const [layout] = ubiLayoutPebs(
+    [{ id: 0, name: "kernel", type: "static", reservedPebs: 1 }],
+    geometry,
+  );
+  ubiImage([layout!], geometry).copy(bytes, 6144);
+  const data = Buffer.alloc(2048, 0x53);
+  const staticPeb: UbiFixturePeb = {
+    kind: "leb",
+    volId: 0,
+    lnum: 0,
+    volType: "static",
+    usedEbs: 1,
+    data,
+    sqnum: 1n,
+  };
+  ubiImage([{ ...staticPeb, dataCrc: 0 }], geometry).copy(bytes, 9216);
+  // A matching CRC lets each candidate retry after checking the bad range.
+  ubiImage([staticPeb], geometry).copy(bytes, 12_288);
+  data.copy(bytes, 12_288 + geometry.dataOffset);
+
+  const payloadReads: number[] = [];
+  const tableReads: number[] = [];
+  const parsed = await parseUbiImage(bytes.length, (offset, length) => {
+    if (length === data.length) payloadReads.push(offset);
+    if (offset === 6144 + geometry.dataOffset) tableReads.push(length);
+    return bytes.subarray(offset, offset + length);
+  });
+  expect(parsed).toMatchObject({ ok: false, error: { kind: "malformed" } });
+  expect(tableReads.slice(0, 2)).toEqual([344, 860]);
+  expect(payloadReads).toEqual([
+    9216 + geometry.dataOffset,
+    12_288 + geometry.dataOffset,
+  ]);
 });
 
 describe("passed-over candidate boundaries", () => {

@@ -18,6 +18,9 @@ it("retains UBI image facts and extracts volumes through compiled MCP", async ()
   await writeFile(path, twoVolumeUbiImage());
   const { call } = await connectLocalToolsMcp(
     {
+      TMPDIR: root,
+      TMP: root,
+      TEMP: root,
       REA_MCP_TOOL_FAMILIES: "session,artifact",
       REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
       REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
