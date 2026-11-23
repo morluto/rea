@@ -1,5 +1,8 @@
 import { artifactFormatDescriptor } from "../artifactFormats.js";
-import { recognizeArtifactFormat } from "../../domain/artifactFormatRecognition.js";
+import {
+  isStandaloneArtifactFormat,
+  recognizeArtifactFormat,
+} from "../../domain/artifactFormatRecognition.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
 import {
   hasDestinationPath,
@@ -597,7 +600,8 @@ const artifactRoleForFormat = (
       kind: "container",
       format: zipPackageFormatForPath(path) ?? format,
     };
-  if (format === "uefi") return { kind: "resource", format };
+  if (format === "uefi" || isStandaloneArtifactFormat(format))
+    return { kind: "resource", format };
   if (format === "plist") return { kind: "plist", format };
   if (artifactFormatDescriptor(format)?.roleContainer === true)
     return { kind: "container", format };
