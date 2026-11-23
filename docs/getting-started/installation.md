@@ -396,8 +396,9 @@ Select the part you want to check:
 
 A scoped report has `scope.mode: "explicit"`. Its `scope_checks` determine
 `healthy` and the exit status. Other checks appear in `informational_checks`;
-`environment_healthy` summarizes the full audit. `--target` adds a target check,
-but the report remains audit-wide unless a scope option is also supplied.
+`environment_healthy` summarizes the full audit. An audit-wide report omits
+`scope_checks` because `checks` is already that list. `--target` adds a target
+check, but the report remains audit-wide unless a scope option is also supplied.
 
 With one selected client, the Hopper, ilspycmd, Ghidra, IDA, JADX and Kuna
 checks use its recorded environment over the terminal it inherits. If Doctor cannot read the registration or resolve

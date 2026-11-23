@@ -46,13 +46,21 @@ const buildHost = (
 const diagnose = (host: DoctorHost) =>
   runDoctor(undefined, host, { providers: ["desktop_build"] });
 
+const scopeChecks = (
+  report: Awaited<ReturnType<typeof diagnose>>,
+): readonly DoctorCheck[] => {
+  if (report.scope_checks === undefined)
+    throw new Error("expected explicit scope_checks");
+  return report.scope_checks;
+};
+
 const failed = async (
   host: DoctorHost,
   name: string,
 ): Promise<DoctorCheck & { readonly remediation: string }> => {
   const report = await diagnose(host);
   expect(report.healthy).toBe(false);
-  const check = report.scope_checks.find(
+  const check = scopeChecks(report).find(
     (candidate) => candidate.name === name,
   );
   expect(check).toMatchObject({ ok: false });
@@ -65,7 +73,7 @@ describe("rea doctor --provider desktop_build", () => {
 
     expect(report.healthy).toBe(true);
     expect(
-      report.scope_checks
+      scopeChecks(report)
         .map(({ name }) => name)
         .filter((name) => name.startsWith("desktop_build-")),
     ).toEqual([
@@ -258,7 +266,7 @@ describe("desktop build registration checks", () => {
         ],
       }),
     );
-    const check = report.scope_checks.find(
+    const check = scopeChecks(report).find(
       ({ name }) => name === "desktop_build-agent-env",
     );
     expect(check).toMatchObject({
@@ -280,7 +288,7 @@ describe("desktop build registration checks", () => {
       }),
     );
     expect(
-      report.scope_checks.find(
+      scopeChecks(report).find(
         ({ name }) => name === "desktop_build-agent-env",
       ),
     ).toMatchObject({
@@ -305,7 +313,7 @@ describe("desktop build registration checks", () => {
       }),
     );
     expect(
-      report.scope_checks.find(
+      scopeChecks(report).find(
         ({ name }) => name === "desktop_build-registration",
       ),
     ).toMatchObject({

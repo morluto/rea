@@ -16,7 +16,7 @@ cliTest(
     expect(doctor.stderr).toBe("");
     expect(doctor.json).toMatchObject({
       healthy: false,
-      scope_checks: expect.arrayContaining([
+      checks: expect.arrayContaining([
         expect.objectContaining({
           name: "runtime-configuration:REA_CAPTURE_DECODER_OLD_GENERATION_MIB",
           ok: false,

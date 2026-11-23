@@ -1604,7 +1604,9 @@ available for CSV/TSV because slicing would corrupt records or metadata.
 
 `--filter-output` selects fields from successful command data. Classified failures
 retain their complete typed diagnostic projection even when the selector matches
-a field such as `code` or `message`, or names a missing field. `--full-output`
+a field such as `code` or `message`, or names a missing field. An unhealthy
+`rea doctor` report is still that command's result: `--filter-output` and token
+windows apply, and the process exits nonzero. `--full-output`
 controls whether the outer `{ok, error, meta}` envelope is included.
 Selected own JSON members, including `__proto__`, remain ordinary output data.
 

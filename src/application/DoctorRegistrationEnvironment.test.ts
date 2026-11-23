@@ -78,6 +78,8 @@ it.each([
     recordingHost(selectedProviders).host,
     scope,
   );
+  if (report.scope_checks === undefined)
+    throw new Error("expected explicit scope_checks");
   const inScope = report.scope_checks.some(({ name }) => name === CHECK);
   expect(inScope).toBe(selected);
   expect(report.informational_checks.some(({ name }) => name === CHECK)).toBe(

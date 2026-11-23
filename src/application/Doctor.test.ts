@@ -12,6 +12,14 @@ import { HopperReleaseError } from "./HopperReleaseFeed.js";
 import { MAC_HOPPER_SYSTEM_LAUNCHER } from "../hopperPaths/MacHopperPaths.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
+const requiredScopeChecks = (
+  report: Awaited<ReturnType<typeof runDoctor>>,
+): NonNullable<Awaited<ReturnType<typeof runDoctor>>["scope_checks"]> => {
+  if (report.scope_checks === undefined)
+    throw new Error("expected explicit scope_checks");
+  return report.scope_checks;
+};
+
 const configurationHost = (
   environment: Readonly<NodeJS.ProcessEnv>,
 ): DoctorHost => ({
@@ -142,7 +150,7 @@ describe("doctor Hopper startup timeout", () => {
       }),
     );
     expect(
-      blocked.scope_checks.filter(
+      requiredScopeChecks(blocked).filter(
         ({ name }) => name === "hopper-startup-timeout",
       ),
     ).toHaveLength(1);
@@ -259,7 +267,7 @@ describe("doctor native analysis configuration", () => {
       }),
     );
     expect(
-      result.scope_checks.filter(
+      requiredScopeChecks(result).filter(
         ({ name }) => name === "hopper-startup-timeout",
       ),
     ).toHaveLength(1);
@@ -290,7 +298,7 @@ describe("doctor native analysis configuration", () => {
 
     expect(result.healthy).toBe(true);
     expect(result.environment_healthy).toBe(false);
-    expect(result.scope_checks.map(({ name }) => name)).not.toContain(
+    expect(requiredScopeChecks(result).map(({ name }) => name)).not.toContain(
       "runtime-configuration:REA_GHIDRA_STARTUP_TIMEOUT_MS",
     );
     expect(result.informational_checks).toContainEqual(
@@ -391,7 +399,7 @@ describe("doctor MCP startup readiness", () => {
           .map(({ name }) => name);
 
       expect(result.healthy).toBe(required.length === 0);
-      expect(startupFailures(result.scope_checks)).toEqual(required);
+      expect(startupFailures(requiredScopeChecks(result))).toEqual(required);
       expect(startupFailures(result.informational_checks)).toEqual(advisory);
       if (scope.clients !== undefined)
         expect(result.scope_checks).toContainEqual(
@@ -819,7 +827,7 @@ describe("doctor scoped readiness", () => {
       skill: true,
     });
     expect(result.healthy).toBe(false);
-    expect(result.scope_checks.map(({ name }) => name)).toEqual([
+    expect(requiredScopeChecks(result).map(({ name }) => name)).toEqual([
       "node",
       "skill:identity",
     ]);
@@ -1031,7 +1039,7 @@ describe("doctor scoped readiness", () => {
       environment_healthy: false,
       scope: { mode: "explicit", clients: ["codex"], providers: [] },
     });
-    expect(result.scope_checks.map(({ name }) => name)).toEqual([
+    expect(requiredScopeChecks(result).map(({ name }) => name)).toEqual([
       "node",
       "registration:codex",
     ]);
@@ -1381,6 +1389,60 @@ describe("doctor standard Linux Hopper paths", () => {
       expect(result.hopperPath).toBe(path);
     },
   );
+});
+
+describe("doctor report projection", () => {
+  const repeated = "Set REA_JADX_MCP_JAR to the audited bridge JAR.";
+  const inspection = {
+    id: "jadx" as const,
+    configured: false,
+    available: false,
+    providerVersion: null,
+    registrationEnvironment: {},
+    checks: [
+      {
+        name: "configuration" as const,
+        ok: false as const,
+        code: "not_configured",
+        detail: repeated,
+        remediation: repeated,
+        classification: "missing_analysis_engine" as const,
+      },
+    ],
+  };
+  const projectingHost = () =>
+    host({
+      providerInspections: () => Promise.resolve([inspection]),
+    });
+
+  it("emits the audit-wide check list once", async () => {
+    const result = await runDoctor(undefined, projectingHost());
+    expect(result.scope.mode).toBe("audit-wide");
+    expect(result).not.toHaveProperty("scope_checks");
+    expect(result.checks.map(({ name }) => name)).toContain("jadx");
+    expect(result.checks.find(({ name }) => name === "jadx")).toEqual({
+      name: "jadx",
+      ok: false,
+      classification: "missing_analysis_engine",
+      detail: repeated,
+    });
+    expect(result.providerInspections?.[0]?.checks[0]).toMatchObject({
+      detail: repeated,
+      remediation: null,
+    });
+  });
+
+  it("keeps a narrower explicit scope beside the full check list", async () => {
+    const result = await runDoctor(undefined, projectingHost(), {
+      providers: ["hopper"],
+    });
+    expect(result.scope.mode).toBe("explicit");
+    expect(result.scope_checks?.map(({ name }) => name)).not.toContain("jadx");
+    expect(result.checks.map(({ name }) => name)).toContain("jadx");
+    expect(result.informational_checks.map(({ name }) => name)).toContain(
+      "jadx",
+    );
+  });
 });
 
 describe("doctor installation count", () => {

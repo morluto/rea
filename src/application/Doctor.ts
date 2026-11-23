@@ -191,7 +191,11 @@ export interface DoctorReport {
   readonly healthy: boolean;
   readonly environment_healthy: boolean;
   readonly scope: DoctorScopeReport;
-  readonly scope_checks: readonly DoctorCheck[];
+  /**
+   * Checks that decide `healthy` for an explicit scope. Omitted in audit-wide
+   * mode, where `checks` is already that list.
+   */
+  readonly scope_checks?: readonly DoctorCheck[];
   readonly informational_checks: readonly DoctorCheck[];
   readonly hopperPath?: string;
   readonly staticProviderSettings?: StaticDoctorProviderSettings;
@@ -295,6 +299,29 @@ export const runDoctorOwned = async (
     : doctorReportWithCleanup(report, cleanup);
 };
 
+/** Drop a remediation that only repeats the observation on the same row. */
+const repeatedRemediation = (
+  detail: string | undefined,
+  remediation: string | null | undefined,
+): boolean => typeof remediation === "string" && remediation === detail;
+
+const publishDoctorCheck = (check: DoctorCheck): DoctorCheck => {
+  if (!repeatedRemediation(check.detail, check.remediation)) return check;
+  const { remediation: _repeated, ...observation } = check;
+  return observation;
+};
+
+const publishInspection = (
+  inspection: DoctorProviderInspection,
+): DoctorProviderInspection => ({
+  ...inspection,
+  checks: inspection.checks.map((check) =>
+    repeatedRemediation(check.detail, check.remediation)
+      ? { ...check, remediation: null }
+      : check,
+  ),
+});
+
 const inspectDoctor = async (
   target: string | undefined,
   host: DoctorHost,
@@ -343,17 +370,24 @@ const inspectDoctor = async (
     providers,
     scope,
   });
+  const explicit = scope.mode === "explicit";
+  const publishedInspections = providerInspections?.map(publishInspection);
   return {
-    healthy: scope.mode === "audit-wide" ? environmentHealthy : scoped.healthy,
+    healthy: explicit ? scoped.healthy : environmentHealthy,
     environment_healthy: environmentHealthy,
     scope,
-    scope_checks: scope.mode === "audit-wide" ? checks : scoped.scopeChecks,
-    informational_checks:
-      scope.mode === "audit-wide" ? [] : scoped.informationalChecks,
+    ...(explicit
+      ? { scope_checks: scoped.scopeChecks.map(publishDoctorCheck) }
+      : {}),
+    informational_checks: explicit
+      ? scoped.informationalChecks.map(publishDoctorCheck)
+      : [],
     ...(hopperPath === undefined ? {} : { hopperPath }),
     ...(staticProviderSettings === undefined ? {} : { staticProviderSettings }),
-    ...(providerInspections === undefined ? {} : { providerInspections }),
-    checks,
+    ...(publishedInspections === undefined
+      ? {}
+      : { providerInspections: publishedInspections }),
+    checks: checks.map(publishDoctorCheck),
     identity: identity.value,
   };
 };
@@ -485,11 +519,19 @@ const doctorReportWithCleanup = (
       : { details: { cleanup_failure: projectAnalysisError(cleanup) } }),
     remediation: "Resolve the reported cleanup failure, then rerun rea doctor.",
   };
+  const checks = [...report.checks, check];
+  if (report.scope_checks === undefined)
+    return {
+      ...report,
+      healthy: false,
+      environment_healthy: false,
+      checks,
+    };
   return {
     ...report,
     healthy: false,
     environment_healthy: false,
-    checks: [...report.checks, check],
+    checks,
     scope_checks: [...report.scope_checks, check],
   };
 };

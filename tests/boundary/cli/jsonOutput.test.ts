@@ -377,6 +377,56 @@ describe("CLI result output surface", () => {
   });
 });
 
+const serveDoctorReport = async (
+  argv: readonly string[],
+  report: unknown,
+): Promise<string> => {
+  const chunks: Buffer[] = [];
+  const destination = new Writable({
+    write(chunk: Buffer, _encoding, callback) {
+      chunks.push(chunk);
+      callback();
+    },
+  });
+  const output = createCliResultOutput(
+    parseCliOutputArguments(argv),
+    destination,
+  );
+  if (output === undefined) throw new Error("Missing output surface");
+  const cli = createCommandCli(output);
+  registerCliCommand(cli, "fixture", {
+    run: () => logCliCommand(silentLogger, "fixture", async () => report),
+  });
+  const previousExitCode = process.exitCode;
+  try {
+    await cli.serve(argv, { stdout: () => undefined });
+    expect(process.exitCode).toBe(1);
+  } finally {
+    process.exitCode = previousExitCode;
+  }
+  return Buffer.concat(chunks).toString("utf8");
+};
+
+describe("unhealthy doctor output controls", () => {
+  it("filters an unhealthy doctor report and still exits nonzero", async () => {
+    const text = await serveDoctorReport(
+      ["fixture", "--json", "--filter-output", "healthy"],
+      { healthy: false, checks: [{ name: "provider", ok: false }] },
+    );
+    expect(text.trim()).toBe("false");
+  });
+
+  it("applies a token window to an unhealthy doctor report", async () => {
+    const detail = "missing bridge ".repeat(40);
+    const text = await serveDoctorReport(
+      ["fixture", "--format", "toon", "--token-limit", "3"],
+      { healthy: false, checks: [{ name: "provider", ok: false, detail }] },
+    );
+    expect(text).toContain("[truncated: showing tokens 0–3 of");
+    expect(text).not.toContain(detail);
+  });
+});
+
 describe("full-output token windows", () => {
   it("preserves token-window metadata when truncating a TOON failure", async () => {
     const chunks: Buffer[] = [];

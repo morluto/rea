@@ -507,6 +507,8 @@ it.skipIf(process.platform === "win32")(
         providers: ["desktop_build"],
         clients: ["claude_code"],
       });
+      if (report.scope_checks === undefined)
+        throw new Error("expected explicit scope_checks");
       expect(
         report.scope_checks.find(
           ({ name }) => name === "desktop_build-agent-env",

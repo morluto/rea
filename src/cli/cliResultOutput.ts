@@ -15,6 +15,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { hostRangeErrorKind } from "../domain/parseFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { isRecord } from "../kernel/isRecord.js";
 import { sliceTextByTokenWindow } from "./tokenWindow.js";
 import {
   projectAnalysisError,
@@ -231,11 +232,22 @@ export const createCliResultOutput = (
     const filterPaths = options.filterPaths?.ok
       ? options.filterPaths.value
       : undefined;
-    const operationFailure = metadata.failure
+    const classifiedFailure = metadata.failure
       ? value
       : format === "jsonl" || options.fullOutput || filterPaths !== undefined
         ? cliOperationFailurePayload(value)
         : undefined;
+    // `healthy: false` marks the command unsuccessful, but the report is still
+    // the result. Filters and token windows apply; a typed diagnostic stays whole.
+    const narrowsResult =
+      (filterPaths !== undefined && filterPaths.length > 0) ||
+      (options.tokenWindow && !options.tokenCount);
+    const operationFailure =
+      narrowsResult &&
+      isRecord(classifiedFailure) &&
+      classifiedFailure.healthy === false
+        ? undefined
+        : classifiedFailure;
     // These presentations own complete documents. A terminal notice must not
     // become part of their selected view, retained envelope or token count.
     const ownsDocument =

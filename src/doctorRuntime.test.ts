@@ -1181,6 +1181,8 @@ test.each([
     expect(report.hopperPath).toBe(
       classification === "healthy" ? found : undefined,
     );
+    if (report.scope_checks === undefined)
+      throw new Error("expected explicit scope_checks");
     expect(
       report.scope_checks.filter(
         ({ name }) => name === "hopper-startup-timeout",

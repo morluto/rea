@@ -10,6 +10,8 @@ import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import { jsonLinesErrorRecord } from "../../../src/cli/jsonLines.js";
 import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
+import { ConfigurationError } from "../../../src/domain/configurationErrors.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { silentLogger } from "../../../src/logger.js";
 
 const capture = (args: readonly string[]) => {
@@ -379,11 +381,9 @@ describe("JSON Lines counting and transport", () => {
         "missing",
         ...(full ? ["--full-output"] : []),
       ]);
-      const failure = {
-        healthy: false,
-        checks: [{ ok: false, name: "source" }],
-        diagnostics: { path: "/caller/path" },
-      };
+      const failure = projectAnalysisError(
+        new ConfigurationError("source setting"),
+      );
       await stream.output.write(failure, metadata);
       expect(lines(stream.text())).toEqual([
         jsonLinesErrorRecord(
@@ -398,6 +398,18 @@ describe("JSON Lines counting and transport", () => {
       ]);
     },
   );
+
+  it("filters an unhealthy doctor report the same way as a healthy one", async () => {
+    const args = ["--format", "jsonl", "--filter-output", "checks"] as const;
+    const checks = [{ name: "jadx", ok: false }];
+    const unhealthy = capture(args);
+    await unhealthy.output.write({ healthy: false, checks }, metadata);
+    const healthy = capture(args);
+    await healthy.output.write({ healthy: true, checks }, metadata);
+    expect(unhealthy.text()).toBe(healthy.text());
+    expect(unhealthy.text()).toContain("filter-output selection checks");
+    expect(unhealthy.text()).not.toContain('"healthy":false');
+  });
 
   it.each([false, true])(
     "counts array-valued rows as single records (object collection: %s)",
