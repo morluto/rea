@@ -16,6 +16,7 @@ const REVERSE_TOOL_MODULES = [
   "src/server/createServer.ts",
   "src/rizin/RizinCommand.ts",
   "src/rizin/RizinDebugEvidence.ts",
+  "src/rizin/RizinDebugFrames.ts",
   "src/rizin/RizinDebugSessionManager.ts",
 ];
 
