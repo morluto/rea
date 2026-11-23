@@ -173,7 +173,14 @@ cliTest(
       parseEvidence(JSON.parse(result.stdout)).normalized_result,
     );
     expect(inspection.subject.root_format).toBe("pyinstaller");
-    expect(inspection.next_probes).toEqual([]);
+    // The archive has no package reader; its ELF carrier keeps its readers.
+    expect(inspection.next_probes.map(({ operation }) => operation)).toEqual([
+      "inspect_elf_dependencies",
+      "inspect_native_exports",
+      "inspect_binary_hardening",
+      "audit_release_exposure",
+      "open_binary",
+    ]);
     const inventory = inspection.substeps[0]?.evidence.normalized_result;
     expect(inventory?.manifest.root_format).toBe("pyinstaller");
     const root = inventory?.occurrences.find(

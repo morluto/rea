@@ -224,7 +224,15 @@ mcpTest.for([false, true])(
       parseEvidence(inspected.structuredContent).normalized_result,
     );
     expect(inspection.subject.root_format).toBe("pyinstaller");
-    if (!opaque) expect(inspection.next_probes).toEqual([]);
+    // The archive has no package reader; its ELF carrier keeps its readers.
+    if (!opaque)
+      expect(inspection.next_probes.map(({ operation }) => operation)).toEqual([
+        "inspect_elf_dependencies",
+        "inspect_native_exports",
+        "inspect_binary_hardening",
+        "audit_release_exposure",
+        "open_binary",
+      ]);
     expect(
       inspection.substeps[0]?.evidence.normalized_result.coverage.status,
     ).toBe(opaque ? "unknown" : "complete");

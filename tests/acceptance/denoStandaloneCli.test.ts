@@ -52,13 +52,20 @@ cliTest.for(carriers)(
       )?.evidence.normalized_result,
     );
     expect(graph.manifest.root_format).toBe("deno-standalone");
-    expect(inspection.next_probes).toEqual([
-      {
-        operation: "extract_artifact",
-        authority: "artifact-bytes",
-        rationale: expect.any(String),
-      },
-    ]);
+    expect(inspection.next_probes[0]).toEqual({
+      operation: "extract_artifact",
+      authority: "artifact-bytes",
+      rationale: expect.any(String),
+    });
+    // The carrier's own readers follow the package reader.
+    expect(inspection.next_probes.at(-1)?.operation).toBe("open_binary");
+    expect(inspection.next_probes.map(({ operation }) => operation)).toContain(
+      carrier === "pe"
+        ? "inspect_pe_imports"
+        : carrier === "elf"
+          ? "inspect_elf_dependencies"
+          : "inspect_macho",
+    );
     expect(
       graph.occurrences.find((row) => row.logical_path === ".")
         ?.format_metadata,
