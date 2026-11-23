@@ -318,7 +318,11 @@ describe("Webpack loader alias bounds", () => {
     },
   );
 
-  it("keeps a limited loader-alias walk unknown", () => {
+  it("resolves a long non-loader alias chain without spending the alias budget", () => {
+    // A chain that never touches the loader is answered from the forward
+    // loader-alias closure, so its length no longer fails the getter proof.
+    // Other analysis walks may still record the alias-selection limit for
+    // the chain; the getter proof no longer depends on it.
     const aliases = Array.from(
       { length: 520 },
       (_, index) => `const box${index + 1}=box${index};`,
@@ -330,12 +334,52 @@ describe("Webpack loader alias bounds", () => {
         `const box0={};${aliases}box520.n=()=>0;n(100);`,
       ),
     );
+    expect(analysis.electron.browser_windows).toHaveLength(1);
+  });
+
+  it("keeps a long loader-alias chain unknown", () => {
+    // The forward closure still fails closed when the loader-alias chain
+    // itself grows past the alias-selection budget.
+    const aliases = Array.from(
+      { length: 520 },
+      (_, index) => `const box${index + 1}=box${index};`,
+    ).join("");
+    const analysis = analyzeJavaScriptStaticSource(
+      bootstrap(
+        EXTERNAL,
+        "const s=n.n(n(45840));new(s().BrowserWindow)({});",
+        `const box0=n;${aliases}box520.n=()=>0;n(100);`,
+      ),
+    );
     expect(analysis.electron.browser_windows).toEqual([]);
     expect(analysis.analysis_coverage).toMatchObject({
       examination: {
         semantic_resource_limits: expect.arrayContaining(["alias-selections"]),
       },
     });
+  });
+
+  it("counts Electron facts when hundreds of unrelated factories exhaust the alias budget", () => {
+    // Each trivial factory assigns one fresh local to a shared variable, so a
+    // per-write alias walk from that variable visits more than the 512
+    // alias-selection budget even though no factory touches the loader.
+    // The getter proof must not depend on that unrelated walk.
+    const factories = Array.from(
+      { length: 600 },
+      (_, index) =>
+        `${1000 + index}:(e,t,n)=>{const v${index}={};shared=v${index};}`,
+    ).join(",");
+    const source =
+      `(()=>{let shared={};var m={45840:${EXTERNAL},100:(e,t,n)=>{"use strict";` +
+      `const s=n.n(n(45840));new(s().BrowserWindow)({});s().ipcMain.handle("ready",()=>{});` +
+      `},${factories}},c={};` +
+      `function n(t){var r=c[t];if(void 0!==r)return r.exports;var o=c[t]={exports:{}};` +
+      `return m[t](o,o.exports,n),o.exports}` +
+      `n.n=e=>e&&e.__esModule?()=>e.default:()=>e;shared.n=()=>0;n(100);})();`;
+    const analysis = analyzeJavaScriptStaticSource(source);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.electron.browser_windows).toHaveLength(1);
+    expect(analysis.electron.ipc).toHaveLength(1);
   });
 });
 
