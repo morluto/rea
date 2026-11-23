@@ -13,13 +13,14 @@ const helperUrl = pathToFileURL(
 const preparedEnvironment = async (
   environment: Record<string, string>,
   platform = "android",
+  preparation = "prepareCliProcessEnvironment",
 ): Promise<Record<string, string>> => {
   const { stdout } = await execute(process.execPath, [
     "--input-type=module",
     "--eval",
-    `import { prepareCliProcessEnvironment } from ${JSON.stringify(helperUrl)};
+    `import { ${preparation} } from ${JSON.stringify(helperUrl)};
 const environment = ${JSON.stringify(environment)};
-prepareCliProcessEnvironment(environment, ${JSON.stringify(platform)}, "test-version");
+${preparation}(environment, ${JSON.stringify(platform)}, "test-version");
 console.log(JSON.stringify(environment));`,
   ]);
   return JSON.parse(stdout) as Record<string, string>;
@@ -84,5 +85,37 @@ describe("CLI process environment preparation", () => {
     const environment = await preparedEnvironment({ USERPROFILE: "" }, "win32");
     expect(environment.USERPROFILE).toBeUndefined();
     expect(environment.PLAYWRIGHT_BROWSERS_PATH).toBeUndefined();
+  });
+});
+
+describe("Android Playwright environment preparation", () => {
+  it("initializes the shared cache without CLI-only environment changes", async () => {
+    const home = resolve("termux-home");
+    const environment = await preparedEnvironment(
+      {
+        HOME: home,
+        XDG_CACHE_HOME: "",
+        REA_PACKAGE_VERSION: "selected-version",
+        USERPROFILE: "",
+      },
+      "android",
+      "prepareAndroidPlaywrightEnvironment",
+    );
+    expect(environment).toEqual({
+      HOME: home,
+      XDG_CACHE_HOME: "",
+      REA_PACKAGE_VERSION: "selected-version",
+      USERPROFILE: "",
+      PLAYWRIGHT_BROWSERS_PATH: join(home, ".cache", "ms-playwright"),
+    });
+  });
+
+  it("leaves Windows environment preparation to the CLI owner", async () => {
+    const environment = await preparedEnvironment(
+      { USERPROFILE: "" },
+      "win32",
+      "prepareAndroidPlaywrightEnvironment",
+    );
+    expect(environment).toEqual({ USERPROFILE: "" });
   });
 });
