@@ -227,6 +227,7 @@ const parse = (bytes: Buffer): Result<UbiImage, UbiImageParseError> => {
   };
   let anyNext: number | null = null;
   let firstFailure: PendingFailure | null = null;
+  let fallback: UbiImage | null = null;
   const passedOver: UbiPassedOverCandidate[] = [];
   for (const { offset: candidate, header } of ubiPebSizeCandidates(
     bytes.subarray(start, UBI_MAX_PEB_BYTES + 64),
@@ -244,13 +245,16 @@ const parse = (bytes: Buffer): Result<UbiImage, UbiImageParseError> => {
       );
       if (verdict.state === "accept") return { ok: true, value: verdict.image };
       if (verdict.state === "reject")
-        return {
-          ok: false,
-          error:
-            firstFailure === null
-              ? verdict.error
-              : resolveFailure(firstFailure),
-        };
+        return fallback !== null
+          ? { ok: true, value: fallback }
+          : {
+              ok: false,
+              error:
+                firstFailure === null
+                  ? verdict.error
+                  : resolveFailure(firstFailure),
+            };
+      fallback ??= verdict.fallback ?? null;
       firstFailure ??= { kind: "error", error: verdict.error };
       passedOver.push({ offset: candidate, dividing: true });
       continue;
@@ -268,6 +272,7 @@ const parse = (bytes: Buffer): Result<UbiImage, UbiImageParseError> => {
       passedOver.push({ offset: candidate, dividing: false });
     }
   }
+  if (fallback !== null) return { ok: true, value: fallback };
   if (firstFailure !== null)
     return { ok: false, error: resolveFailure(firstFailure) };
   const conflict =
@@ -1023,6 +1028,7 @@ it("classifies a wear-leveling copy with data_size beyond leb_size - data_pad as
         "data_size 1500 and data_pad 920, which do not fit a 1920-byte logical eraseblock",
       ),
       ec: { eraseCounter: 1n, imageSeq: parsed.geometry.imageSeq },
+      vidMinPebSize: 128 + 920 + 1500,
     },
   });
   expect(parsed).toMatchObject({
@@ -2035,6 +2041,51 @@ describe("passed-over candidate boundaries", () => {
     expect(
       reassemble(bytes, "rootfs").equals(Buffer.concat([first, second])),
     ).toBe(true);
+  });
+
+  it("retries past a dividing 64 KiB EC header when a CRC-valid static VID needs a larger eraseblock", () => {
+    const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
+    const lebBytes = wide.pebSize - wide.dataOffset;
+    const rootfsData = Buffer.alloc(lebBytes, 0x52);
+    ubiImage([{ kind: "free" }], wide)
+      .subarray(0, 64)
+      .copy(rootfsData, 64 * 1024 - wide.dataOffset);
+    const staticData = Buffer.alloc(lebBytes, 0x53);
+    const bytes = ubiImage(
+      [
+        { kind: "leb", volId: 0, lnum: 0, data: rootfsData, sqnum: 2n },
+        {
+          kind: "leb",
+          volId: 1,
+          lnum: 0,
+          data: staticData,
+          sqnum: 3n,
+          volType: "static",
+          usedEbs: 1,
+        },
+        ...ubiLayoutPebs(
+          [
+            { id: 0, name: "rootfs", type: "dynamic", reservedPebs: 1 },
+            { id: 1, name: "kernel", type: "static", reservedPebs: 1 },
+          ],
+          wide,
+        ),
+      ],
+      wide,
+    );
+    expect(bytes.length).toBe(4 * wide.pebSize);
+    const parsed = image(bytes);
+    expect(parsed.geometry).toMatchObject({
+      pebSize: wide.pebSize,
+      pebCount: 4,
+    });
+    expect(parsed.corruptPebCount).toBe(0);
+    expect(parsed.volumes).toMatchObject([
+      { name: "rootfs", dataBytes: lebBytes, extractRefusal: null },
+      { name: "kernel", dataBytes: lebBytes, extractRefusal: null },
+    ]);
+    expect(reassemble(bytes, "rootfs").equals(rootfsData)).toBe(true);
+    expect(reassemble(bytes, "kernel").equals(staticData)).toBe(true);
   });
 
   it("keeps refusing a truncated dump when the later dividing candidate puts the mapped boundary inside a layout PEB", () => {

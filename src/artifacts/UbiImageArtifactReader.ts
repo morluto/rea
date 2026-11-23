@@ -459,8 +459,10 @@ export class UbiImageArtifactReader implements ArtifactReader {
     // mapped second PEBs also stay provisional as passed-over boundaries: a
     // later dividing candidate may accept only if it places every passed-over
     // header inside mapped non-layout LEB data; otherwise the first failure
-    // stands.
+    // stands. A candidate too small only for a CRC-valid VID header is kept
+    // as the fallback when no later candidate is accepted.
     let accepted: UbiImage | null = null;
+    let fallback: UbiImage | null = null;
     let anyNext: number | null = null;
     let firstFailure: PendingFailure | null = null;
     const passedOver: UbiPassedOverCandidate[] = [];
@@ -493,12 +495,18 @@ export class UbiImageArtifactReader implements ArtifactReader {
             accepted = verdict.image;
             break;
           }
-          if (verdict.state === "reject")
+          if (verdict.state === "reject") {
+            if (fallback !== null) {
+              accepted = fallback;
+              break;
+            }
             throw parseFailure(
               firstFailure === null
                 ? verdict.error
                 : await resolveFailure(firstFailure),
             );
+          }
+          fallback ??= verdict.fallback ?? null;
           firstFailure ??= { kind: "error", error: verdict.error };
           passedOver.push({ offset: candidate, dividing: true });
           continue;
@@ -524,6 +532,7 @@ export class UbiImageArtifactReader implements ArtifactReader {
         }
       }
     }
+    accepted ??= fallback;
     if (accepted === null) {
       if (firstFailure !== null)
         throw parseFailure(await resolveFailure(firstFailure));

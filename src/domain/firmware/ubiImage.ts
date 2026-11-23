@@ -676,6 +676,11 @@ export type UbiPeb =
       readonly reason: string;
       /** The erase-counter facts, when only the VID header is corrupt. */
       readonly ec: UbiPebEcFacts | null;
+      /**
+       * The smallest eraseblock size a CRC-valid VID header's data_pad and
+       * data_size fit, when they do not fit this geometry's LEB.
+       */
+      readonly vidMinPebSize?: number;
     }
   | {
       readonly state: "mapped";
@@ -814,6 +819,12 @@ export const classifyUbiPeb = (
       state: "corrupt",
       reason: `VID header declares vol_type ${String(vid.volType)}, data_size ${String(vid.dataSize)} and data_pad ${String(vid.dataPad)}, which do not fit a ${String(geometry.lebSize)}-byte logical eraseblock`,
       ec: facts,
+      ...(isVolumeType(vid.volType)
+        ? {
+            vidMinPebSize:
+              geometry.dataOffset + vid.dataPad + Math.max(vid.dataSize, 1),
+          }
+        : {}),
     });
   return ok({ state: "mapped", eraseCounter, imageSeq, vid });
 };
@@ -1399,7 +1410,15 @@ export const assembleUbiImage = (
  */
 export type UbiPebCandidateVerdict =
   | { readonly state: "accept"; readonly image: UbiImage }
-  | { readonly state: "retry"; readonly error: UbiImageParseError }
+  | {
+      readonly state: "retry";
+      readonly error: UbiImageParseError;
+      /**
+       * The image this candidate yields when no later candidate is accepted,
+       * set when only a CRC-valid VID header too large for it is in doubt.
+       */
+      readonly fallback?: UbiImage;
+    }
   | { readonly state: "reject"; readonly error: UbiImageParseError };
 
 /** Inputs collected while provisionally evaluating one dividing PEB size. */
@@ -1429,7 +1448,10 @@ export interface UbiPebCandidateCheck {
  * whose table validates still cannot be accepted when a valid EC header on a
  * passed-over candidate grid lies outside every mapped non-layout LEB's data
  * area; it stays retryable so the caller keeps the first failure unless a
- * later geometry explains every passed-over header.
+ * later geometry explains every passed-over header. A candidate whose LEB is
+ * too small for a CRC-valid VID header's data_pad and data_size also stays
+ * retryable, so a larger eraseblock that holds every LEB in full wins; its
+ * image is kept as the fallback when no later candidate is accepted.
  */
 export const judgeUbiPebCandidate = ({
   geometry,
@@ -1450,8 +1472,24 @@ export const judgeUbiPebCandidate = ({
       state: "retry",
       error: ubiSpacingConflict(geometry.pebSize, passedOverHeaderOffset),
     };
-  return {
-    state: "accept",
-    image: assembleUbiImage(geometry, pebs, table.value, verifiedCopies),
-  };
+  const image = assembleUbiImage(geometry, pebs, table.value, verifiedCopies);
+  const undersized = pebs.findIndex(
+    (peb) =>
+      peb.state === "corrupt" &&
+      peb.vidMinPebSize !== undefined &&
+      peb.vidMinPebSize > geometry.pebSize,
+  );
+  if (undersized !== -1) {
+    const peb = pebs[undersized];
+    const needed = peb?.state === "corrupt" ? (peb.vidMinPebSize ?? 0) : 0;
+    return {
+      state: "retry",
+      error: malformed(
+        `UBI eraseblock ${String(undersized)} has a valid VID header that needs a ${String(needed)}-byte eraseblock, larger than ${String(geometry.pebSize)} bytes`,
+        undersized * geometry.pebSize,
+      ),
+      fallback: image,
+    };
+  }
+  return { state: "accept", image };
 };
