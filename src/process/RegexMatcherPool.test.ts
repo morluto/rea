@@ -71,6 +71,34 @@ const constructions = (): number => workers.value.length;
 const lastWorker = (): { terminated: boolean } =>
   workers.value.at(-1) as { terminated: boolean };
 
+it("never exceeds four workers when a fifth search queues behind stuck ones", async () => {
+  const before = constructions();
+  const stuckInputs = [0, 1, 2, 3].map(() => ({
+    operation: "search_strings",
+    pattern: "^(a+)+$",
+    caseSensitive: true,
+    values: ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa b"],
+    deadline: { deadlineMs: 60, source: "runtime" as const },
+  }));
+  const stuck = stuckInputs.map((input) => matchRegexValues(input));
+  const fifth = await matchRegexValues({
+    operation: "search_strings",
+    pattern: "storage",
+    caseSensitive: true,
+    values: ["storage/read"],
+    deadline: { deadlineMs: 25, source: "runtime" },
+    heapRequest: { heapMiB: 64, source: "runtime" },
+  });
+  expect(fifth).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisResourceConstraintError" },
+  });
+  expect(constructions() - before).toBe(4);
+  const settled = await Promise.all(stuck);
+  expect(settled.every((result) => !result.ok)).toBe(true);
+  expect(constructions() - before).toBe(4);
+});
+
 it("shares one worker across clean calls and replaces a deadline-stuck one", async () => {
   const before = constructions();
   const first = await matchRegexValues({

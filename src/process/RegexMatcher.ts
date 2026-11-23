@@ -833,19 +833,8 @@ const acquireRegexWorker = async (
     idle.worker.ref();
     return idle;
   }
-  if (
-    regexWorkerPool.filter((entry) => !entry.dead).length <
-    MAX_POOLED_REGEX_WORKERS
-  )
-    return spawnRegexWorker(heapMiB);
-  // Pool is busy: retire an idle worker of another heap class if one exists.
-  const reclaimable = regexWorkerPool.find(
-    (entry) => !entry.dead && !entry.busy,
-  );
-  if (reclaimable !== undefined) {
-    retireRegexWorker(reclaimable);
-    return spawnRegexWorker(heapMiB);
-  }
+  // Every allocation goes through serveRegexWaiters so capacity and idle
+  // reclaim are decided in one place, in waiter order.
   return new Promise<PooledRegexWorker | undefined>((resolve, reject) => {
     const waiter = {
       heapMiB,
@@ -868,6 +857,7 @@ const acquireRegexWorker = async (
     regexWorkerWaiters.push(waiter);
     if (signal?.aborted) onAbort();
     else signal?.addEventListener("abort", onAbort, { once: true });
+    serveRegexWaiters();
   });
 };
 
