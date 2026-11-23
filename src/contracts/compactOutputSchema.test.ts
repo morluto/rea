@@ -75,6 +75,26 @@ describe("compact advertised output schema", () => {
     expect(serializedBytes(schema)).toBeLessThanOrEqual(100_000);
   });
 
+  it("keeps untyped deep schemas accepting every value after pruning", () => {
+    const nest = (
+      leaf: Record<string, unknown>,
+      levels: number,
+    ): Record<string, unknown> =>
+      levels === 0 ? leaf : { properties: { child: nest(leaf, levels - 1) } };
+    const { schema, presentation } = compactAdvertisedOutputSchema(
+      {
+        type: "object",
+        properties: { deep: nest({ type: "string" }, 9) },
+        required: ["deep"],
+      },
+      100_000,
+    );
+    expect(presentation).toBe("inline");
+    const validate = new Ajv2020({ strict: false }).compile(schema);
+    expect(validate({ deep: null })).toBe(true);
+    expect(validate({ deep: { child: {} } })).toBe(true);
+  });
+
   it("drops nested annotation prose while keeping the root guidance and validation", () => {
     const { schema, presentation } = compactAdvertisedOutputSchema(
       structuredClone(annotatedSchema),

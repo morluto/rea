@@ -423,9 +423,9 @@ const depthPlaceholder = (
       anyOf: types.map((type) => (type === "array" ? arrayBranch : { type })),
     };
   else if (types.length === 0) {
-    if (isSchemaObject(node.properties)) placeholder = { type: "object" };
-    else if (node.items !== undefined) placeholder = arrayBranch;
-    else placeholder = {};
+    // Untyped schemas accept every JSON value (properties/items alone do not
+    // imply object/array), so the only sound placeholder is unconstrained.
+    placeholder = {};
   }
   return placeholder !== undefined &&
     depth + schemaDepth(placeholder) <= COMPACT_SCHEMA_MAX_DEPTH
