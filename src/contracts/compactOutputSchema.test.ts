@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 
 import { schemaDepth } from "./compactJsonSchema.js";
 import { compactAdvertisedOutputSchema } from "./compactOutputSchema.js";
+import { COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES } from "./mcpSchemaPresentation.js";
+import { advertisedOutputJsonSchema } from "./toolSchemaMetadata.js";
+import { toolContract } from "./toolContracts.js";
 
 const serializedBytes = (value: unknown): number =>
   Buffer.byteLength(JSON.stringify(value), "utf8");
@@ -169,5 +172,107 @@ describe("compact advertised output schema", () => {
     const validate = new Ajv2020({ strict: false }).compile(schema);
     expect(validate(["anything"])).toBe(true);
     expect(validate({ also: "anything" })).toBe(true);
+  });
+});
+
+describe("compact object-union output schemas", () => {
+  it("keeps an object-stamped union's alternatives when the canonical schema cannot inline", () => {
+    // SDK 2.4.0 stamps type:object on a root that is only a $ref union of
+    // objects. search_guidance is that shape and does not fit the compact
+    // budget once its definitions are expanded.
+    const canonical = advertisedOutputJsonSchema(
+      toolContract("search_guidance"),
+    );
+    expect(canonical.type).toBeUndefined();
+    expect(Array.isArray(canonical.oneOf)).toBe(true);
+    const { schema, presentation } = compactAdvertisedOutputSchema(
+      { type: "object", ...canonical },
+      COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES,
+    );
+    expect(presentation).toBe("reduced");
+    expect(schema.properties).toBeUndefined();
+    expect(schema.type).toBe("object");
+    const alternatives = schema.anyOf as Record<string, unknown>[];
+    expect(alternatives.length).toBeGreaterThan(1);
+    expect(
+      alternatives.every(
+        (branch) =>
+          branch.type === "object" &&
+          typeof (branch.properties as Record<string, unknown> | undefined)
+            ?.status === "object",
+      ),
+    ).toBe(true);
+    const validate = new Ajv2020({ strict: false }).compile(schema);
+    const unavailable = {
+      status: "bundle_unavailable",
+      source: "installed_rea_guidance",
+      content_kind: "documentation",
+      message: "The guidance bundle is not installed.",
+    };
+    const stale = {
+      status: "stale_continuation",
+      source: "installed_rea_guidance",
+      content_kind: "documentation",
+      message: "The continuation no longer matches this bundle.",
+    };
+    expect(validate(unavailable)).toBe(true);
+    expect(validate(stale)).toBe(true);
+    expect(validate([])).toBe(false);
+    expect(serializedBytes(schema)).toBeLessThanOrEqual(
+      COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES,
+    );
+  });
+
+  it("keeps an already object-typed workflow union's alternatives", () => {
+    // guided_workflows declares an object root so older codecs do not wrap
+    // the result. That declaration has no root properties; the compact form
+    // still has to describe each action.
+    const { schema, presentation } = compactAdvertisedOutputSchema(
+      advertisedOutputJsonSchema(toolContract("guided_workflows")),
+      COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES,
+    );
+    expect(presentation).toBe("reduced");
+    expect(schema.type).toBe("object");
+    expect(schema.properties).toBeUndefined();
+    const alternatives = schema.anyOf as Record<string, unknown>[];
+    expect(alternatives).toHaveLength(2);
+    const validate = new Ajv2020({ strict: false }).compile(schema);
+    expect(
+      validate({
+        action: "list",
+        workflows: [
+          {
+            workflow_id: "inspect",
+            description: "Inspect one artifact.",
+            arguments: [],
+          },
+        ],
+      }),
+    ).toBe(true);
+    expect(
+      validate({
+        action: "render",
+        workflow_id: "inspect",
+        rendered_prompt: "Inspect the artifact.",
+      }),
+    ).toBe(true);
+    expect(validate([])).toBe(false);
+    expect(serializedBytes(schema)).toBeLessThanOrEqual(
+      COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES,
+    );
+  });
+
+  it("keeps a fitting object-stamped union inline, including the object type", () => {
+    const canonical = advertisedOutputJsonSchema(
+      toolContract("read_guidance_section"),
+    );
+    const { schema, presentation } = compactAdvertisedOutputSchema(
+      { type: "object", ...canonical },
+      COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES,
+    );
+    expect(presentation).toBe("inline");
+    expect(schema.type).toBe("object");
+    expect(Array.isArray(schema.oneOf)).toBe(true);
+    expect(schema.$id).toBeUndefined();
   });
 });
