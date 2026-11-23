@@ -27,15 +27,27 @@ export const observeElfStringTableEntry = (
   offset: number,
   maximumBytes: number,
 ): ElfStringTableObservation => {
-  if (offset < 0 || offset >= table.length)
+  if (offset < 0)
     return { state: "outside", bytes: null, examinedBytes: 0, contentBytes: 0 };
-  const window = table.subarray(offset, offset + maximumBytes);
+  return observeElfStringTableWindow(
+    table.subarray(offset, offset + maximumBytes),
+    table.length - offset,
+  );
+};
+
+/** Observe a prefix of the bytes remaining at one admitted string offset. */
+export const observeElfStringTableWindow = (
+  window: Buffer,
+  remaining: number,
+): ElfStringTableObservation => {
+  if (remaining <= 0)
+    return { state: "outside", bytes: null, examinedBytes: 0, contentBytes: 0 };
   const end = window.indexOf(0);
   if (end < 0)
     return {
       state: "truncated",
       bytes: null,
-      scanLimited: window.length < table.length - offset,
+      scanLimited: window.length < remaining,
       examinedBytes: window.length,
       contentBytes: window.length,
     };

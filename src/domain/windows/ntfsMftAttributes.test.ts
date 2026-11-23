@@ -1,5 +1,8 @@
 import { expect, it } from "vitest";
-import { readMftAttributes } from "./ntfsMftAttributes.js";
+import {
+  readMftAttributes,
+  summarizeMftAttributes,
+} from "./ntfsMftAttributes.js";
 
 const resident = (type: number, value: Buffer, name = ""): Buffer => {
   const nameBytes = Buffer.from(name, "utf16le");
@@ -256,5 +259,29 @@ it.each([0x10, 0x30])(
         message: "Standard information and FILE_NAME must be resident",
       },
     });
+  },
+);
+
+it.each([48, 49, 60, 71, 72])(
+  "keeps detail and accounting consistent for %i-byte standard information",
+  (length) => {
+    const marker = Buffer.alloc(8);
+    marker.writeUInt32LE(0xffffffff);
+    const bytes = Buffer.concat([
+      resident(0x10, Buffer.alloc(length)),
+      resident(0x30, Buffer.alloc(66)),
+      marker,
+    ]);
+    const detail = readMftAttributes(bytes, 0, bytes.length, 4096);
+    const summary = summarizeMftAttributes(bytes, 0, bytes.length, 4096);
+    const valid = length === 48 || length === 72;
+    expect(summary).toEqual({
+      fileNameCount: valid ? 1 : 0,
+      fileNameCoverage: valid ? "complete" : "incomplete",
+      attributeCoverage: valid ? "complete" : "incomplete",
+    });
+    expect(detail.fileNames).toHaveLength(summary.fileNameCount);
+    expect(detail.fileNameCoverage).toBe(summary.fileNameCoverage);
+    expect(detail.attributeCoverage).toBe(summary.attributeCoverage);
   },
 );

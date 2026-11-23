@@ -12,7 +12,7 @@
     "src/process/ExecFileOutput.ts",
     "src/server/externalMutationToolHandler.ts",
     "src/server/serviceToolBindings.ts",
-    "src/server/providerEnvironment.ts",
+    "src/server/createServer.ts",
     "src/rizin/RizinCommand.ts",
     "src/rizin/RizinDebugSessionManager.ts",
     "tests/boundary/providers/GdbSessionManagerCoverage.test.ts",

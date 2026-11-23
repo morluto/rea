@@ -15,6 +15,7 @@ import canonicalize from "canonicalize";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
 import {
+  authenticateParsedEvidence,
   detachedEvidenceSchema,
   evidenceFileTarget,
   evidenceSchema,
@@ -432,12 +433,7 @@ const authenticateBundle = (
   const canonical = createEvidenceBundle(
     parsed.records.map((record, index) => {
       try {
-        if (!seal) return parseEvidence(record);
-        // Schema parsing gave this boundary exclusive ownership. Register only
-        // validated payloads before authenticating the complete record envelope.
-        record.normalized_result = freezeJsonSnapshot(record.normalized_result);
-        record.raw_result = freezeJsonSnapshot(record.raw_result);
-        return immutableEvidence(record);
+        return authenticateParsedEvidence(record, seal);
       } catch (cause: unknown) {
         if (cause instanceof z.ZodError)
           throw new z.ZodError(
@@ -451,14 +447,28 @@ const authenticateBundle = (
     }),
     parsed.unknowns,
   );
-  if (!equalJsonText(parsed, canonical))
+  const differingSections: (keyof EvidenceBundle)[] = [];
+  for (const section of Object.keys(canonical) as (keyof EvidenceBundle)[]) {
+    if (section === "records") {
+      let sameOrder = parsed.records.length === canonical.records.length;
+      if (sameOrder) {
+        for (let index = 0; index < parsed.records.length; index += 1) {
+          if (parsed.records[index] !== canonical.records[index]) {
+            sameOrder = false;
+            break;
+          }
+        }
+      }
+      if (!sameOrder && !equalJsonText(parsed.records, canonical.records))
+        differingSections.push("records");
+    } else if (!equalJsonText(parsed[section], canonical[section])) {
+      differingSections.push(section);
+    }
+  }
+  if (differingSections.length > 0)
     // Name only the sections that differ, so an unchanged section is not
     // blamed for another section's ordering or content.
-    throw new NonCanonicalEvidenceBundleError(
-      (Object.keys(canonical) as (keyof EvidenceBundle)[]).filter(
-        (section) => !equalJsonText(parsed[section], canonical[section]),
-      ),
-    );
+    throw new NonCanonicalEvidenceBundleError(differingSections);
   if (seal) {
     freezeJsonSnapshot(canonical);
     immutableBundles.set(canonical, canonical);

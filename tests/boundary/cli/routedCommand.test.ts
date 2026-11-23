@@ -7,7 +7,7 @@ import { expect, it } from "vitest";
 import {
   registerRoutedCommand,
   commandRoute,
-} from "../../../src/cli/contractCommand.js";
+} from "../../../src/cli/routedContractCommand.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import { absoluteLocalPathStringSchema } from "../../../src/domain/localPath.js";
 

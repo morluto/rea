@@ -13,7 +13,7 @@ import {
   renderCliCommandFailure,
 } from "../../../src/cli/argumentErrors.js";
 
-import { readCliOutputArguments } from "../../../src/cliOutput.js";
+import { readCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { parseCliGlobalArguments } from "../../../src/cliBuiltinArguments.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 

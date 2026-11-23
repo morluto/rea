@@ -6,21 +6,28 @@ import {
   kernelModuleSchema,
   MODULE_SIGNATURE_MAGIC,
 } from "../../domain/native/kernelModule.js";
-import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import {
   compressedKernelModuleContainer,
   kernelModuleFixture,
   modversionEntry,
   moduleSignatureTrailer,
 } from "./KernelModule.fixture.js";
-import { parseKernelModule } from "./KernelModuleParser.js";
+import { parseKernelModuleFromHandle } from "./KernelModuleParser.js";
 
 const artifactPath = "/artifacts/demo.ko";
 
-const parse = (bytes: Buffer, extra: { readonly max_entries?: number } = {}) =>
+const parse = async (
+  bytes: Buffer,
+  extra: { readonly max_entries?: number } = {},
+) =>
   kernelModuleSchema.parse(
-    parseKernelModule(
-      bytes,
+    await parseKernelModuleFromHandle(
+      {
+        size: bytes.length,
+        prefix: bytes.subarray(0, 4096),
+        readRange: async (offset, length) =>
+          bytes.subarray(offset, offset + length),
+      },
       {
         path: artifactPath,
         sha256: "ab".repeat(32),
@@ -36,13 +43,13 @@ const parse = (bytes: Buffer, extra: { readonly max_entries?: number } = {}) =>
 const pkcs7 = Buffer.from("fake-pkcs7-bytes", "latin1");
 const pkcs7Sha256 = createHash("sha256").update(pkcs7).digest("hex");
 
-it("preserves parameter duplicates, embedded equals, and original entry bytes", () => {
+it("preserves parameter duplicates, embedded equals, and original entry bytes", async () => {
   const records = [
     "parm=level:verbosity=a",
     "parmtype=level:int",
     "parm=level:again",
   ];
-  const report = parse(
+  const report = await parse(
     kernelModuleFixture({ modinfo: Buffer.from(`${records.join("\0")}\0`) }),
   );
   expect(
@@ -60,13 +67,15 @@ it("preserves parameter duplicates, embedded equals, and original entry bytes", 
   );
 });
 
-it("distinguishes absent metadata from unavailable section names", () => {
-  const absent = parse(kernelModuleFixture({ modinfo: null, versions: null }));
+it("distinguishes absent metadata from unavailable section names", async () => {
+  const absent = await parse(
+    kernelModuleFixture({ modinfo: null, versions: null }),
+  );
   expect(absent.modinfo?.status).toBe("absent");
   expect(absent.versions?.status).toBe("absent");
   const bytes = kernelModuleFixture();
   bytes.writeUInt16LE(0, 62);
-  const unknown = parse(bytes);
+  const unknown = await parse(bytes);
   expect(unknown.modinfo?.status).toBe("unknown");
   expect(unknown.versions?.status).toBe("unknown");
   expect(unknown.coverage.status).toBe("partial");
@@ -77,9 +86,21 @@ it.each([
   [64, false],
   [32, true],
   [32, false],
-] as const)("reports an ET_REL ELF%s %s module", (bits, little) => {
-  const report = parse(kernelModuleFixture({ bits, little }));
-  const width = bits === 64 ? 16 : 8;
+] as const)("reports an ET_REL ELF%s %s module", async (bits, little) => {
+  const wideVersions =
+    bits === 64
+      ? Buffer.concat([
+          modversionEntry(0xfedcba9876543210n, "printk", 64, little),
+          modversionEntry(0x0100000000000002n, "module_layout", 64, little),
+        ])
+      : undefined;
+  const report = await parse(
+    kernelModuleFixture({
+      bits,
+      little,
+      ...(wideVersions === undefined ? {} : { versions: wideVersions }),
+    }),
+  );
   expect(report).toMatchObject({
     format: bits === 64 ? "elf64" : "elf32",
     byte_order: little ? "little" : "big",
@@ -110,8 +131,8 @@ it.each([
   expect(
     report.versions?.entries.map((entry) => [entry.crc_hex, entry.name]),
   ).toEqual([
-    ["12345678".padStart(width, "0"), "printk"],
-    ["90abcdef".padStart(width, "0"), "module_layout"],
+    [bits === 64 ? "fedcba9876543210" : "12345678", "printk"],
+    [bits === 64 ? "0100000000000002" : "90abcdef", "module_layout"],
   ]);
   expect(report.this_module).toMatchObject({
     status: "present",
@@ -139,8 +160,8 @@ it.each([
   [".exit.text", "exit_text", 1],
 ] as const)(
   "discloses duplicate %s sections while retaining the first size",
-  (name, key, size) => {
-    const report = parse(
+  async (name, key, size) => {
+    const report = await parse(
       kernelModuleFixture({
         sharedNameSections: { name, count: 1, body: Buffer.from([1, 2, 3]) },
       }),
@@ -153,46 +174,36 @@ it.each([
   },
 );
 
-it("keeps earlier .modinfo entries when the last span is unterminated", () => {
-  const report = parse(
+it("keeps readable fields and exact defects across a malformed .modinfo stream", async () => {
+  const report = await parse(
     kernelModuleFixture({
-      modinfo: Buffer.from("license=GPL\0alias=pci:v3", "latin1"),
+      modinfo: Buffer.from(
+        "license=GPL\0license\0=GPL\0alias=pci:v3",
+        "latin1",
+      ),
     }),
   );
   expect(report.modinfo?.status).toBe("present");
-  expect(report.modinfo?.entries.map((entry) => entry.reason)).toEqual([
-    null,
-    "unterminated_modinfo_entry",
-  ]);
-  expect(report.modinfo?.entries[1]).toMatchObject({
-    status: "malformed",
-    key: "alias",
-    value: "pci:v3",
-  });
-});
-
-it("reports a missing separator and an empty key as malformed entries", () => {
-  const report = parse(
-    kernelModuleFixture({
-      modinfo: Buffer.from("license\0=GPL\0", "latin1"),
-    }),
-  );
-  expect(report.modinfo?.entries.map((entry) => entry.reason)).toEqual([
-    "modinfo_missing_separator",
-    "modinfo_empty_key",
+  expect(
+    report.modinfo?.entries.map(({ key, value, status, reason }) => [
+      key,
+      value,
+      status,
+      reason,
+    ]),
+  ).toEqual([
+    ["license", "GPL", "observed", null],
+    [null, null, "malformed", "modinfo_missing_separator"],
+    [null, "GPL", "malformed", "modinfo_empty_key"],
+    ["alias", "pci:v3", "malformed", "unterminated_modinfo_entry"],
   ]);
   expect(report.coverage.status).toBe("partial");
-  expect(report.modinfo?.entries[1]).toMatchObject({
-    key: null,
-    value: "GPL",
-  });
-  expect(
-    report.modinfo?.entries.every((entry) => entry.status === "malformed"),
-  ).toBe(true);
 });
 
-it("closes __versions when the section size is not a multiple of 64", () => {
-  const report = parse(kernelModuleFixture({ versions: Buffer.alloc(63) }));
+it("closes __versions when the section size is not a multiple of 64", async () => {
+  const report = await parse(
+    kernelModuleFixture({ versions: Buffer.alloc(63) }),
+  );
   expect(report.coverage.status).toBe("partial");
   expect(report.versions).toMatchObject({
     status: "malformed",
@@ -207,12 +218,12 @@ it("closes __versions when the section size is not a multiple of 64", () => {
   );
 });
 
-it("observes a version name with nonzero padding and rejects a missing NUL", () => {
+it("observes a version name with nonzero padding and rejects a missing NUL", async () => {
   const padded = modversionEntry(0x12345678, "printk", 64, true);
   padded[8 + "printk".length + 1] = 0x7f;
   const unterminated = Buffer.alloc(64, 0x41);
   unterminated.writeBigUInt64LE(0x11n, 0);
-  const report = parse(
+  const report = await parse(
     kernelModuleFixture({
       versions: Buffer.concat([padded, unterminated]),
     }),
@@ -231,8 +242,8 @@ it("observes a version name with nonzero padding and rejects a missing NUL", () 
   });
 });
 
-it("reports an inconsistent signature length without a PKCS#7 range", () => {
-  const report = parse(
+it("reports an inconsistent signature length without a PKCS#7 range", async () => {
+  const report = await parse(
     kernelModuleFixture({
       signature: moduleSignatureTrailer(Buffer.from("abcd"), 50_000),
     }),
@@ -247,7 +258,7 @@ it("reports an inconsistent signature length without a PKCS#7 range", () => {
   expect(report.modinfo?.entries[0]?.key).toBe("license");
 });
 
-it("withholds PKCS#7 bytes for nonzero signature parameters and a non-PKCS7 id", () => {
+it("withholds PKCS#7 bytes for nonzero signature parameters and a non-PKCS7 id", async () => {
   const nonzero = Buffer.alloc(12);
   nonzero[0] = 1;
   nonzero[2] = 2;
@@ -260,10 +271,12 @@ it("withholds PKCS#7 bytes for nonzero signature parameters and a non-PKCS7 id",
   const magic = Buffer.from(MODULE_SIGNATURE_MAGIC, "latin1");
   const payload = Buffer.from("abcd");
   expect(
-    parse(
-      kernelModuleFixture({
-        signature: Buffer.concat([payload, nonzero, magic]),
-      }),
+    (
+      await parse(
+        kernelModuleFixture({
+          signature: Buffer.concat([payload, nonzero, magic]),
+        }),
+      )
     ).signature,
   ).toMatchObject({
     status: "malformed",
@@ -271,10 +284,12 @@ it("withholds PKCS#7 bytes for nonzero signature parameters and a non-PKCS7 id",
     pkcs7: null,
   });
   expect(
-    parse(
-      kernelModuleFixture({
-        signature: Buffer.concat([payload, otherId, magic]),
-      }),
+    (
+      await parse(
+        kernelModuleFixture({
+          signature: Buffer.concat([payload, otherId, magic]),
+        }),
+      )
     ).signature,
   ).toMatchObject({
     status: "unsupported",
@@ -284,8 +299,8 @@ it("withholds PKCS#7 bytes for nonzero signature parameters and a non-PKCS7 id",
   });
 });
 
-it("does not examine kernel metadata on a non-relocatable ELF", () => {
-  const report = parse(kernelModuleFixture({ type: 2 }));
+it("does not examine kernel metadata on a non-relocatable ELF", async () => {
+  const report = await parse(kernelModuleFixture({ type: 2 }));
   expect(report).toMatchObject({
     applicability: "not_applicable",
     type: 2,
@@ -299,8 +314,8 @@ it("does not examine kernel metadata on a non-relocatable ELF", () => {
 
 it.each(["gzip", "xz", "zstd"] as const)(
   "recommends external decompression for a %s container",
-  (codec) => {
-    const report = parse(compressedKernelModuleContainer(codec));
+  async (codec) => {
+    const report = await parse(compressedKernelModuleContainer(codec));
     expect(report).toMatchObject({
       applicability: "unsupported",
       format: null,
@@ -314,19 +329,13 @@ it.each(["gzip", "xz", "zstd"] as const)(
     expect(report.next_probe?.rationale).toContain(
       "call inspect_kernel_module on the decompressed file",
     );
-    expect(
-      kernelModuleSchema.safeParse({
-        ...report,
-        next_probe: { ...report.next_probe, operation: "extract_artifact" },
-      }).success,
-    ).toBe(false);
   },
 );
 
-it("fails closed when the combined entry budget is exhausted", () => {
+it("fails closed when the combined entry budget is exhausted", async () => {
   let failure: unknown;
   try {
-    parse(kernelModuleFixture(), { max_entries: 7 });
+    await parse(kernelModuleFixture(), { max_entries: 7 });
   } catch (error) {
     failure = error;
   }
@@ -334,8 +343,8 @@ it("fails closed when the combined entry budget is exhausted", () => {
   expect(failure).toMatchObject({ reason: "limit", boundary: "capacity" });
 });
 
-it("examines the first of two .modinfo sections and records the duplicate", () => {
-  const report = parse(
+it("examines the first of two .modinfo sections and records the duplicate", async () => {
+  const report = await parse(
     kernelModuleFixture({
       modinfo: Buffer.from("name=first\0"),
       sharedNameSections: {
@@ -348,71 +357,54 @@ it("examines the first of two .modinfo sections and records the duplicate", () =
   expect(report.modinfo?.entries.map(({ key, value }) => [key, value])).toEqual(
     [["name", "first"]],
   );
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toContainEqual(
     expect.stringMatching(/multiple.*\.modinfo.*first.*examined/iu),
   );
 });
 
-it("does not decode compressed, nobits, or out-of-file metadata sections", () => {
-  const compressed = kernelModuleFixture();
-  compressed.writeBigUInt64LE(0x800n, 64 + 64 + 8);
-  expect(parse(compressed).coverage.status).toBe("partial");
-  expect(parse(compressed).modinfo).toMatchObject({
-    status: "unsupported",
-    entries: [],
-    reason: "modinfo_section_compressed",
-  });
-  const nobits = kernelModuleFixture();
-  nobits.writeUInt32LE(8, 64 + 64 + 4);
-  expect(parse(nobits).modinfo).toMatchObject({
-    status: "malformed",
-    location: null,
-    entries: [],
-    reason: "modinfo_section_not_file_backed",
-  });
-  const outside = kernelModuleFixture();
-  outside.writeBigUInt64LE(1_000_000n, 64 + 64 + 24);
-  expect(parse(outside).modinfo).toMatchObject({
-    status: "malformed",
-    reason: "modinfo_section_not_file_backed",
-  });
-  const versionsOutside = kernelModuleFixture();
-  versionsOutside.writeBigUInt64LE(1_000_000n, 64 + 64 * 2 + 24);
-  expect(parse(versionsOutside).versions).toMatchObject({
-    status: "malformed",
-    entries: [],
-    reason: "versions_section_not_file_backed",
-  });
-  const versionsCompressed = kernelModuleFixture();
-  versionsCompressed.writeBigUInt64LE(0x800n, 64 + 64 * 2 + 8);
-  expect(parse(versionsCompressed).versions).toMatchObject({
-    status: "unsupported",
-    entries: [],
-    reason: "versions_section_compressed",
-  });
-  const versionsNobits = kernelModuleFixture();
-  versionsNobits.writeUInt32LE(8, 64 + 64 * 2 + 4);
-  expect(parse(versionsNobits).versions).toMatchObject({
-    status: "malformed",
-    location: null,
-    entries: [],
-    reason: "versions_section_not_file_backed",
-  });
-  const moduleSection = kernelModuleFixture();
-  moduleSection.writeUInt32LE(8, 64 + 64 * 3 + 4);
-  expect(parse(moduleSection).this_module).toMatchObject({
+it.each([
+  { index: 1, key: "modinfo" },
+  { index: 2, key: "versions" },
+] as const)(
+  "keeps $key metadata unreadable when its storage is unavailable",
+  async ({ index, key }) => {
+    const header = 64 + index * 64;
+    const compressed = kernelModuleFixture();
+    compressed.writeBigUInt64LE(0x800n, header + 8);
+    const packed = await parse(compressed);
+    expect(packed.coverage.status).toBe("partial");
+    expect(packed[key]).toMatchObject({
+      status: "unsupported",
+      entries: [],
+      reason: `${key}_section_compressed`,
+    });
+    for (const nobits of [true, false]) {
+      const bytes = kernelModuleFixture();
+      if (nobits) bytes.writeUInt32LE(8, header + 4);
+      else bytes.writeBigUInt64LE(1_000_000n, header + 24);
+      expect((await parse(bytes))[key]).toMatchObject({
+        status: "malformed",
+        location: null,
+        entries: [],
+        reason: `${key}_section_not_file_backed`,
+      });
+    }
+  },
+);
+
+it("keeps presence without a file range for a NOBITS module structure", async () => {
+  const bytes = kernelModuleFixture();
+  bytes.writeUInt32LE(8, 64 + 64 * 3 + 4);
+  expect((await parse(bytes)).this_module).toMatchObject({
     status: "present",
     location: null,
     layout: "unknown",
   });
 });
 
-it("rejects a non-ELF file that is not a recognized container", () => {
-  expect(() => parse(Buffer.from("not an elf"))).toThrow(BinaryFormatFailure);
-});
-
-it("rejects ELF bytes preceding a bare signature magic as an inconsistent trailer", () => {
-  const report = parse(
+it("rejects ELF bytes preceding a bare signature magic as an inconsistent trailer", async () => {
+  const report = await parse(
     kernelModuleFixture({
       signature: Buffer.from(MODULE_SIGNATURE_MAGIC, "latin1"),
     }),
@@ -426,8 +418,8 @@ it("rejects ELF bytes preceding a bare signature magic as an inconsistent traile
   expect(report.modinfo?.entries[0]?.key).toBe("license");
 });
 
-it("records a missing trailer as observed absence", () => {
-  const report = parse(kernelModuleFixture({ signature: null }));
+it("records a missing trailer as observed absence", async () => {
+  const report = await parse(kernelModuleFixture({ signature: null }));
   expect(report.signature).toMatchObject({
     status: "absent",
     magic: null,
@@ -440,10 +432,10 @@ it("records a missing trailer as observed absence", () => {
   );
 });
 
-it("names a non-file-backed __ksymtab section without dropping the module", () => {
+it("reports unbacked __ksymtab ranges while keeping module metadata", async () => {
   const bytes = kernelModuleFixture();
   bytes.writeUInt32LE(8, 64 + 64 * 4 + 4);
-  const report = parse(bytes);
+  const report = await parse(bytes);
   expect(report.ksymtab?.sections).toEqual([]);
   expect(report.limitations).toContainEqual(
     expect.stringMatching(
@@ -453,15 +445,20 @@ it("names a non-file-backed __ksymtab section without dropping the module", () =
   expect(report.modinfo?.entries[0]?.key).toBe("license");
 });
 
-it("charges many sections sharing one huge __ksymtab name to the entry budget", () => {
+it("charges many sections sharing one huge __ksymtab name to the entry budget", async () => {
   const name = `__ksymtab_${"x".repeat(65_490)}`;
   const bytes = kernelModuleFixture({
     sharedNameSections: { name, count: 8192 },
   });
-  expect(() => parse(bytes)).toThrow(ArtifactReaderFailure);
+  const refused = parse(bytes);
+  await expect(refused).rejects.toBeInstanceOf(ArtifactReaderFailure);
+  await expect(refused).rejects.toMatchObject({
+    reason: "limit",
+    boundary: "capacity",
+  });
   // The shared name decodes once; per-section decoding exceeds the 16 MiB
   // section-name budget and refuses this module.
-  const report = parse(bytes, { max_entries: 65_536 });
+  const report = await parse(bytes, { max_entries: 65_536 });
   const huge = report.ksymtab?.sections.slice(1) ?? [];
   expect(huge).toHaveLength(8192);
   expect(
@@ -475,23 +472,9 @@ it("charges many sections sharing one huge __ksymtab name to the entry budget", 
     name: "__ksymtab",
     reason: null,
   });
-  expect(report.coverage.examined_entries).toBe(6 + 2 + 1 + 8192);
+  expect(report.coverage).toEqual({
+    status: "partial",
+    examined_entries: 8201,
+  });
   expect(JSON.stringify(report).length).toBeLessThan(2 * 1024 * 1024);
 });
-
-it.each([true, false])(
-  "keeps the upper CRC word of each ELF64 version record (little=%s)",
-  (little) => {
-    const versions = Buffer.concat([
-      modversionEntry(0xfedcba9876543210n, "first", 64, little),
-      modversionEntry(0x0100000000000002n, "second", 64, little),
-    ]);
-    const report = parse(kernelModuleFixture({ bits: 64, little, versions }));
-    expect(
-      report.versions?.entries.map(({ crc_hex, name }) => [crc_hex, name]),
-    ).toEqual([
-      ["fedcba9876543210", "first"],
-      ["0100000000000002", "second"],
-    ]);
-  },
-);

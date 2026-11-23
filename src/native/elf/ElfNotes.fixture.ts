@@ -1,5 +1,13 @@
 import { deflateSync, zstdCompressSync } from "node:zlib";
 
+import type { ElfNoteByteSource } from "./ElfNoteParser.js";
+
+export const elfNoteByteSource = (bytes: Buffer): ElfNoteByteSource => ({
+  size: bytes.length,
+  prefix: bytes.subarray(0, 4096),
+  readRange: async (offset, length) => bytes.subarray(offset, offset + length),
+});
+
 const concat = (...parts: Buffer[]): Buffer => Buffer.concat(parts);
 
 const alignTo = (value: number, alignment: number): number =>
@@ -226,6 +234,19 @@ export const elfNoteWithUnreadableSectionNameFixture = (
   return bytes;
 };
 
+export const elfCompressedNoteStorage = (
+  notes: Buffer,
+  bits: 32 | 64,
+  little: boolean,
+  alignment: number,
+): Buffer => {
+  const header = Buffer.alloc(bits === 64 ? 24 : 12);
+  write32(header, 0, 1, little); // ELFCOMPRESS_ZLIB
+  writeWord(header, bits === 64 ? 8 : 4, notes.length, bits, little);
+  writeWord(header, bits === 64 ? 16 : 8, alignment, bits, little);
+  return concat(header, deflateSync(notes));
+};
+
 /** A non-allocated SHT_NOTE whose stored bytes include an ELF compression header. */
 export const compressedElfNoteSectionFixture = (
   bits: 32 | 64 = 64,
@@ -236,10 +257,6 @@ export const compressedElfNoteSectionFixture = (
     gnuBuildIdNote(undefined, little),
     gnuAbiTagNote(little),
   );
-  const header = Buffer.alloc(bits === 64 ? 24 : 12);
-  write32(header, 0, 1, little); // ELFCOMPRESS_ZLIB
-  writeWord(header, bits === 64 ? 8 : 4, notes.length, bits, little);
-  writeWord(header, bits === 64 ? 16 : 8, 4, bits, little);
   const bytes = elfNoteFixture({
     bits,
     little,
@@ -247,7 +264,7 @@ export const compressedElfNoteSectionFixture = (
     ownership,
     sectionName: ".debug.notes",
     alignment: bits === 64 ? 8 : 4,
-    notes: concat(header, deflateSync(notes)),
+    notes: elfCompressedNoteStorage(notes, bits, little, 4),
   });
   const headerSize = bits === 64 ? 64 : 52;
   const programSize = bits === 64 ? 56 : 32;
@@ -446,6 +463,47 @@ export interface CorePrpsinfoOptions {
   /** UID/GID byte width in the ELF32 descriptor. ELF64 always uses four bytes. */
   readonly idWidth?: 2 | 4;
 }
+
+/** Encode a full ELF32 Linux process record and a shortened record under the same ABI. */
+export const elf32ProcessIdentityFixture = (
+  machine: number,
+  little: boolean,
+  idWidth: 2 | 4,
+  flags = 0,
+) => {
+  const expected = {
+    state: 1,
+    uid: idWidth === 4 ? 70001 : 500,
+    gid: idWidth === 4 ? 90002 : 600,
+    pid: 1234,
+    ppid: 12,
+    pgrp: 4321,
+    sid: 5678,
+    filename: "core-probe",
+    psargs: "core-probe --flag",
+  };
+  const descriptor = corePrpsinfoDescriptor({
+    ...expected,
+    bits: 32,
+    idWidth,
+    little,
+    fname: expected.filename,
+  });
+  const shortened = descriptor.subarray(0, descriptor.length - 4);
+  const bytes = elfNoteFixture({
+    bits: 32,
+    little,
+    machine,
+    type: 4,
+    ownership: "program",
+    notes: concat(
+      elfNote("CORE", 3, descriptor, little),
+      elfNote("CORE", 3, shortened, little),
+    ),
+  });
+  write32(bytes, 36, flags, little);
+  return { bytes, shortened, expected };
+};
 
 /** Descriptor bytes for a Linux NT_PRPSINFO note. */
 export const corePrpsinfoDescriptor = (

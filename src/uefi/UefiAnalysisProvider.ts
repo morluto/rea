@@ -39,7 +39,7 @@ import type {
   UefiImageScanSummary,
   UefiDecodeResult,
   UefiPayload,
-} from "./UefiImageScan.js";
+} from "./UefiScanContext.js";
 import { scanUefiImage } from "./UefiImageScan.js";
 import { scanAmiNvramStores } from "./UefiNvram.js";
 import { uefiFailureDialect } from "./UefiFailures.js";

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { isAbsolute } from "node:path";
-import { isPathWithinRoot } from "../../../dist/domain/localPath.js";
+import { isPathWithinRoot } from "#dist/domain/localPath.js";
 
 /**
  * @param {readonly {role?: string, tool_call_id?: string, content?: unknown}[]} messages

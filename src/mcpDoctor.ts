@@ -11,7 +11,7 @@ import {
   CLI_DOCUMENT_OUTPUT_FORMATS,
   missingCliOutputValueMessage,
   renderCliDocument,
-} from "./cliOutput.js";
+} from "./cli/cliOutput.js";
 import { parseMcpOutputSchemaProfile } from "./config/mcpOutputSchemaProfile.js";
 import { parseMcpToolFamilies } from "./config/mcpToolFamilies.js";
 import { parseMcpToolCatalogProfile } from "./config/mcpToolCatalogProfile.js";
@@ -40,7 +40,10 @@ import {
   MCP_STARTUP_POLICY,
   mcpDoctorDeadlineRecovery,
 } from "./config/mcpStartupPolicy.js";
-import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "./mcpDoctorOptions.js";
+import {
+  MCP_DOCTOR_ALIAS,
+  MCP_DOCTOR_OPTIONS,
+} from "./cli/mcpDoctorOptions.js";
 import { MCP_TARGET_FREE_ENVIRONMENT_OVERRIDES } from "./config/mcpTargetEnvironment.js";
 import { OwnedMcpStdioTransport } from "./process/OwnedMcpStdioTransport.js";
 import { isRecord } from "./kernel/isRecord.js";

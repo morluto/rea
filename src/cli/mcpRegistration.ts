@@ -33,7 +33,7 @@ import {
   renderCliDocument,
   renderCliOutputArgumentError,
   type CliOutputArgumentValidation,
-} from "../cliOutput.js";
+} from "./cliOutput.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import {
   mcpRegistrationOptionsSchema,

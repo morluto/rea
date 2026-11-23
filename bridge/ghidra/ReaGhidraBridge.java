@@ -73,6 +73,7 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressFactory;
 import ghidra.program.model.address.AddressIterator;
 import ghidra.program.model.address.AddressSet;
+import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.address.AddressSpace;
 import ghidra.program.model.address.AddressRange;
 import ghidra.program.model.address.AddressRangeIterator;
@@ -206,6 +207,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private List<ProcedureEntry> procedureInventory;
     private Map<String, Object> procedureNameIndex;
     private List<StringEntry> stringInventory;
+    private Boolean swiftProgramCached;
     private DecompInterface decompiler;
     private boolean existingProject;
     // A refused Program may only report its admission failure to the client.
@@ -2686,6 +2688,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private StreamingResult search(JsonObject params, boolean procedureSearch) throws Exception {
         Set<String> keys = new HashSet<>(Set.of("pattern", "mode", "case_sensitive", "document"));
         if (params.has("literal_ascii_candidate")) keys.add("literal_ascii_candidate");
+        if (params.has("literal_ascii_substring")) keys.add("literal_ascii_substring");
         requireKeys(params, keys);
         requireDocument(params);
         String expression = requireString(params, "pattern");
@@ -2698,9 +2701,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (mode.equals("literal") && !caseSensitive) {
             if (!params.has("literal_ascii_candidate"))
                 throw new RequestFailure("invalid_request", "Insensitive literal search requires an ASCII candidate");
-            matcher = literalCandidateMatcher(optionalString(params, "literal_ascii_candidate"));
+            matcher = literalCandidateMatcher(
+                optionalString(params, "literal_ascii_candidate"),
+                optionalString(params, "literal_ascii_substring")
+            );
         } else {
-            if (params.has("literal_ascii_candidate"))
+            if (params.has("literal_ascii_candidate") || params.has("literal_ascii_substring"))
                 throw new RequestFailure("invalid_request", "ASCII candidate applies only to insensitive literals");
             matcher = mode.equals("literal")
                 ? literalMatcher(expression)
@@ -3207,33 +3213,38 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
         JumpTable[] recoveredJumpTables = highFunction.getJumpTables();
         if (recoveredJumpTables.length > 0) {
-            List<ClangNode> caseTokens = new ArrayList<>();
-            ClangNode markup = decompilation.getCCodeMarkup();
-            if (markup != null) {
-                collectCaseTokens(markup, caseTokens);
-            }
+            Map<Address, List<ClangCaseToken>> caseTokensByTarget =
+                indexCaseTokens(decompilation.getCCodeMarkup());
             for (int index = 0; index < recoveredJumpTables.length; index += 1) {
-                jumpTables.add(inferredJumpTable(recoveredJumpTables[index], caseTokens));
+                jumpTables.add(inferredJumpTable(recoveredJumpTables[index], caseTokensByTarget));
             }
         }
         return result;
     }
 
-    private static void collectCaseTokens(ClangNode root, List<ClangNode> caseTokens) {
+    private Map<Address, List<ClangCaseToken>> indexCaseTokens(ClangNode root)
+        throws Exception {
+        Map<Address, List<ClangCaseToken>> casesByTarget = new HashMap<>();
+        if (root == null) return casesByTarget;
         ArrayDeque<ClangNode> stack = new ArrayDeque<>();
         stack.push(root);
         while (!stack.isEmpty()) {
+            monitor.checkCancelled();
             ClangNode node = stack.pop();
-            if (node instanceof ClangCaseToken) {
-                caseTokens.add(node);
+            if (node instanceof ClangCaseToken token) {
+                PcodeOp operation = token.getPcodeOp();
+                if (operation != null && operation.getParent() != null) {
+                    casesByTarget
+                        .computeIfAbsent(operation.getParent().getStart(), ignored -> new ArrayList<>())
+                        .add(token);
+                }
             }
             for (int index = node.numChildren() - 1; index >= 0; index -= 1) {
                 ClangNode child = node.Child(index);
-                if (child != null) {
-                    stack.push(child);
-                }
+                if (child != null) stack.push(child);
             }
         }
+        return casesByTarget;
     }
 
     private JsonArray prototypeConflicts(
@@ -3563,7 +3574,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private JsonObject inferredJumpTable(
         JumpTable jumpTable,
-        List<ClangNode> caseTokens
+        Map<Address, List<ClangCaseToken>> caseTokensByTarget
     ) throws Exception {
         JsonObject result = new JsonObject();
         result.addProperty(
@@ -3681,7 +3692,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         result.add("data_sources", dataSources);
         Address[] targets = jumpTable.getCases();
-        TypedJumpTableCases typedCases = typedJumpTableCases(jumpTable, caseTokens);
+        TypedJumpTableCases typedCases = typedJumpTableCases(jumpTable, caseTokensByTarget);
         // Table indices identify the register bounded by CMP. Typed labels may
         // instead identify a selector before normalization (for example, SUB
         // index, selector, #10). Do not merge those distinct value identities.
@@ -3854,72 +3865,73 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private TypedJumpTableCases typedJumpTableCases(
         JumpTable jumpTable,
-        List<ClangNode> tokens
+        Map<Address, List<ClangCaseToken>> tokensByTarget
     ) throws Exception {
         TypedJumpTableCases result = new TypedJumpTableCases();
-        Set<Address> targets = new HashSet<>();
-        for (Address target : jumpTable.getCases()) targets.add(target);
-        for (ClangNode node : tokens) {
-            monitor.checkCancelled();
-            if (!(node instanceof ClangCaseToken token)) continue;
-            PcodeOp operation = token.getPcodeOp();
-            if (operation == null || operation.getParent() == null) continue;
-            PcodeBlockBasic block = operation.getParent();
-            Address target = block.getStart();
-            if (!targets.contains(target)) continue;
-            PcodeOp dispatch = null;
-            boolean ambiguousDispatch = false;
-            boolean includesDispatch = false;
-            for (int index = 0; index < block.getInSize(); index += 1) {
-                PcodeBlock predecessor = block.getIn(index);
-                if (!(predecessor instanceof PcodeBlockBasic basic)) continue;
-                PcodeOp last = basic.getLastOp();
-                if (last == null || last.getOpcode() != PcodeOp.BRANCHIND) continue;
-                if (last.getSeqnum().getTarget().equals(jumpTable.getSwitchAddress())) {
-                    includesDispatch = true;
+        Set<Address> seenTargets = new HashSet<>();
+        for (Address target : jumpTable.getCases()) {
+            if (!seenTargets.add(target)) continue;
+            List<ClangCaseToken> bucket = tokensByTarget.get(target);
+            if (bucket == null) continue;
+            for (ClangCaseToken token : bucket) {
+                monitor.checkCancelled();
+                PcodeOp operation = token.getPcodeOp();
+                if (operation == null || operation.getParent() == null) continue;
+                PcodeBlockBasic block = operation.getParent();
+                PcodeOp dispatch = null;
+                boolean ambiguousDispatch = false;
+                boolean includesDispatch = false;
+                for (int index = 0; index < block.getInSize(); index += 1) {
+                    PcodeBlock predecessor = block.getIn(index);
+                    if (!(predecessor instanceof PcodeBlockBasic basic)) continue;
+                    PcodeOp last = basic.getLastOp();
+                    if (last == null || last.getOpcode() != PcodeOp.BRANCHIND) continue;
+                    if (last.getSeqnum().getTarget().equals(jumpTable.getSwitchAddress())) {
+                        includesDispatch = true;
+                    }
+                    if (dispatch != null && dispatch != last) ambiguousDispatch = true;
+                    dispatch = last;
                 }
-                if (dispatch != null && dispatch != last) ambiguousDispatch = true;
-                dispatch = last;
-            }
-            if (!includesDispatch) continue;
-            if (ambiguousDispatch) {
-                result.unknownTargets.add(target);
-                result.limitations.add(
-                    "A typed case/default block has multiple indirect dispatch predecessors; REA cannot attribute its label to one switch."
-                );
-                continue;
-            }
-            // Default is a typed label role, not an OFF sentinel: Ghidra can
-            // encode a default token with an ordinary in-range case value.
-            if ("default".equals(token.getText())) {
-                result.defaults.add(target);
-                continue;
-            }
-            Long value = exactTypedCaseValue(token);
-            if (value == null) {
-                result.unknownTargets.add(target);
-                result.limitations.add(
-                    "Typed case label " + token.getText() +
-                    " has encoded unsigned magnitude " + Long.toUnsignedString(token.getValue()) +
-                    " at recovered target " + canonicalAddress(target) +
-                    " for dispatch " + canonicalAddress(jumpTable.getSwitchAddress()) +
-                    "; the label is nonliteral, inconsistent with its encoded magnitude, or outside the exact JSON integer range, so its numeric case value remains unknown."
-                );
-                continue;
-            }
-            if (result.ambiguousValues.contains(value)) {
-                result.unknownTargets.add(target);
-                continue;
-            }
-            Address previous = result.cases.putIfAbsent(value, target);
-            if (previous != null && !previous.equals(target)) {
-                result.cases.remove(value);
-                result.ambiguousValues.add(value);
-                result.unknownTargets.add(previous);
-                result.unknownTargets.add(target);
-                result.limitations.add(
-                    "Typed tokens assign one case value to different recovered destinations; that case remains unknown."
-                );
+                if (!includesDispatch) continue;
+                if (ambiguousDispatch) {
+                    result.unknownTargets.add(target);
+                    result.limitations.add(
+                        "A typed case/default block has multiple indirect dispatch predecessors; REA cannot attribute its label to one switch."
+                    );
+                    continue;
+                }
+                // Default is a typed label role, not an OFF sentinel: Ghidra can
+                // encode a default token with an ordinary in-range case value.
+                if ("default".equals(token.getText())) {
+                    result.defaults.add(target);
+                    continue;
+                }
+                Long value = exactTypedCaseValue(token);
+                if (value == null) {
+                    result.unknownTargets.add(target);
+                    result.limitations.add(
+                        "Typed case label " + token.getText() +
+                        " has encoded unsigned magnitude " + Long.toUnsignedString(token.getValue()) +
+                        " at recovered target " + canonicalAddress(target) +
+                        " for dispatch " + canonicalAddress(jumpTable.getSwitchAddress()) +
+                        "; the label is nonliteral, inconsistent with its encoded magnitude, or outside the exact JSON integer range, so its numeric case value remains unknown."
+                    );
+                    continue;
+                }
+                if (result.ambiguousValues.contains(value)) {
+                    result.unknownTargets.add(target);
+                    continue;
+                }
+                Address previous = result.cases.putIfAbsent(value, target);
+                if (previous != null && !previous.equals(target)) {
+                    result.cases.remove(value);
+                    result.ambiguousValues.add(value);
+                    result.unknownTargets.add(previous);
+                    result.unknownTargets.add(target);
+                    result.limitations.add(
+                        "Typed tokens assign one case value to different recovered destinations; that case remains unknown."
+                    );
+                }
             }
         }
         return result;
@@ -4693,9 +4705,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
             List.copyOf(computedCallSites));
     }
 
+    private boolean isX86_32Program() {
+        return currentProgram.getDefaultPointerSize() == 4 &&
+            "x86".equalsIgnoreCase(currentProgram.getLanguage().getProcessor().toString());
+    }
+
     private final class FunctionBoundaryLimitations {
         private final Function function;
         private final boolean checkLoaderRelocations = !loaderInitializedRelocations.isEmpty();
+        private final boolean checkBorlandSeh = isX86_32Program();
         private final List<String> limitations = new ArrayList<>();
         private boolean inferredNoReturnCall;
         private final Set<Address> observedLoaderRelocations = new HashSet<>();
@@ -4728,13 +4746,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     limitations.add(loaderInitializedRelocationLimitation(relocation));
                 }
             }
-            if (beforePrevious != null && previous != null) {
-                String seh = borlandSehHandlerLimitation(
-                    function, beforePrevious, previous, instruction);
-                if (seh != null) limitations.add(seh);
+            if (checkBorlandSeh) {
+                if (beforePrevious != null && previous != null) {
+                    String seh = borlandSehHandlerLimitation(
+                        function, beforePrevious, previous, instruction);
+                    if (seh != null) limitations.add(seh);
+                }
+                beforePrevious = previous;
+                previous = instruction;
             }
-            beforePrevious = previous;
-            previous = instruction;
         }
 
         private List<String> values() {
@@ -5232,26 +5252,33 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private JsonArray referencedStrings(List<Reference> references) throws Exception {
         TreeMap<String, JsonObject> observed = new TreeMap<>();
+        Map<Address, String[]> resolved = new HashMap<>();
+        Listing listing = currentProgram.getListing();
         for (Reference reference : references) {
             monitor.checkCancelled();
-            Data data = currentProgram.getListing().getDefinedDataContaining(
-                reference.getToAddress()
-            );
-            if (data == null || !data.hasStringValue()) {
+            Address target = reference.getToAddress();
+            String[] entry;
+            if (resolved.containsKey(target)) {
+                entry = resolved.get(target);
+            } else {
+                Data data = listing.getDefinedDataContaining(target);
+                String value = data != null && data.hasStringValue()
+                    ? StringDataInstance.getStringDataInstance(data).getStringValue()
+                    : null;
+                entry = value == null ? null : new String[] { canonicalAddress(data.getAddress()), value };
+                resolved.put(target, entry);
+            }
+            if (entry == null) {
                 continue;
             }
-            String value = StringDataInstance.getStringDataInstance(data).getStringValue();
-            if (value == null) {
-                continue;
-            }
+            String sourceAddress = canonicalAddress(reference.getFromAddress());
             JsonObject item = new JsonObject();
-            item.addProperty("address", canonicalAddress(data.getAddress()));
-            item.addProperty("value", value);
-            item.addProperty("source_address", canonicalAddress(reference.getFromAddress()));
-            String key = canonicalAddress(data.getAddress()) + "\u0000" + value + "\u0000" +
-                canonicalAddress(reference.getFromAddress());
+            item.addProperty("address", entry[0]);
+            item.addProperty("value", entry[1]);
+            item.addProperty("source_address", sourceAddress);
+            String key = entry[0] + "\u0000" + entry[1] + "\u0000" + sourceAddress;
             observed.put(key, item);
-            }
+        }
         JsonArray result = new JsonArray();
         observed.values().forEach(result::add);
         return result;
@@ -5259,32 +5286,46 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private JsonArray referencedNames(List<Reference> references) throws Exception {
         TreeMap<String, JsonObject> observed = new TreeMap<>();
+        Map<Address, String> resolved = new HashMap<>();
+        SymbolTable symbolTable = currentProgram.getSymbolTable();
         for (Reference reference : references) {
             monitor.checkCancelled();
-            Symbol symbol = currentProgram.getSymbolTable().getPrimarySymbol(
-                reference.getToAddress()
-            );
-            if (symbol == null) {
+            Address target = reference.getToAddress();
+            String name;
+            if (resolved.containsKey(target)) {
+                name = resolved.get(target);
+            } else {
+                Symbol symbol = symbolTable.getPrimarySymbol(target);
+                name = symbol == null ? null : symbol.getName(true);
+                resolved.put(target, name);
+            }
+            if (name == null) {
                 continue;
             }
+            String targetAddress = canonicalAddress(target);
+            String sourceAddress = canonicalAddress(reference.getFromAddress());
             JsonObject item = new JsonObject();
-            item.addProperty("address", canonicalAddress(reference.getToAddress()));
-            item.addProperty("value", symbol.getName(true));
-            item.addProperty("source_address", canonicalAddress(reference.getFromAddress()));
-            String key = canonicalAddress(reference.getToAddress()) + "\u0000" +
-                symbol.getName(true) + "\u0000" + canonicalAddress(reference.getFromAddress());
+            item.addProperty("address", targetAddress);
+            item.addProperty("value", name);
+            item.addProperty("source_address", sourceAddress);
+            String key = targetAddress + "\u0000" + name + "\u0000" + sourceAddress;
             observed.put(key, item);
-            }
+        }
         JsonArray result = new JsonArray();
         observed.values().forEach(result::add);
         return result;
     }
 
     private boolean swiftProgram() {
+        if (swiftProgramCached != null) return swiftProgramCached;
         for (MemoryBlock block : currentProgram.getMemory().getBlocks()) {
             String name = block.getName();
-            if (name.startsWith("__swift5_") || name.startsWith("swift5_")) return true;
+            if (name.startsWith("__swift5_") || name.startsWith("swift5_")) {
+                swiftProgramCached = Boolean.TRUE;
+                return true;
+            }
         }
+        swiftProgramCached = Boolean.FALSE;
         return false;
     }
 
@@ -5318,9 +5359,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 // Returning true ends only the current flow, so every queued flow checks the shared stop.
                 if ((monitor != null && monitor.isCancelled()) || budget.stopped()) return true;
                 FlowType flow = instruction.getFlowType();
-                Address[] flowTargets = instruction.getFlows();
-                boolean unresolvedJump = flow.isJump() && !flow.isConditional() && flowTargets.length == 0;
-                for (Register[] pair : swiftStringPairs(function, instruction, registers)) {
+                boolean unconditionalJump = flow.isJump() && !flow.isConditional();
+                Address[] flowTargets = unconditionalJump ? instruction.getFlows() : null;
+                boolean unresolvedJump = unconditionalJump && flowTargets.length == 0;
+                for (Register[] pair : swiftStringPairs(function, instruction, registers, flow, unconditionalJump, flowTargets)) {
                     Long word = registerConstant(context, pair[0]);
                     Long object = registerConstant(context, pair[1]);
                     if (word == null || object == null) continue;
@@ -5397,31 +5439,46 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static List<Register[]> swiftStringPairs(
         Function function,
         Instruction instruction,
-        Register[] registers
+        Register[] registers,
+        FlowType flow,
+        boolean unconditionalJump,
+        Address[] flowTargets
     ) {
-        List<Register[]> pairs = new ArrayList<>();
         if (instruction.getMnemonicString().equals("stp")) {
             Register first = instruction.getRegister(0);
             Register second = instruction.getRegister(1);
             if (first != null && second != null && first.getBitLength() == 64 && second.getBitLength() == 64) {
-                pairs.add(new Register[] {first, second});
+                return List.<Register[]>of(new Register[] {first, second});
             }
-            return pairs;
+            return List.of();
         }
-        FlowType flow = instruction.getFlowType();
         boolean returns = false;
-        for (PcodeOp operation : instruction.getPcode()) {
-            if (operation.getOpcode() == PcodeOp.RETURN) returns = true;
+        if (flow.isTerminal()) {
+            for (PcodeOp operation : instruction.getPcode()) {
+                if (operation.getOpcode() == PcodeOp.RETURN) {
+                    returns = true;
+                    break;
+                }
+            }
         }
         // A jump is a proven tail call only when it has resolved targets and all leave the
         // body. For unresolved targetless jumps, candidate literals remain unknown omissions.
-        Address[] targets = instruction.getFlows();
-        boolean tailCall = flow.isJump() && !flow.isConditional() && targets.length > 0 &&
-            Arrays.stream(targets).allMatch(target -> !function.getBody().contains(target));
-        boolean unresolvedJump = flow.isJump() && !flow.isConditional() && targets.length == 0;
-        if (!flow.isCall() && !returns && !tailCall && !unresolvedJump) return pairs;
+        boolean tailCall = false;
+        if (unconditionalJump && flowTargets.length > 0) {
+            tailCall = true;
+            AddressSetView body = function.getBody();
+            for (Address target : flowTargets) {
+                if (body.contains(target)) {
+                    tailCall = false;
+                    break;
+                }
+            }
+        }
+        boolean unresolvedJump = unconditionalJump && flowTargets.length == 0;
+        if (!flow.isCall() && !returns && !tailCall && !unresolvedJump) return List.of();
         // A String occupies two consecutive registers among x0-x7, or x0 and x1 when returned.
         int lastFirstRegister = returns ? 0 : 6;
+        List<Register[]> pairs = new ArrayList<>(lastFirstRegister + 1);
         for (int index = 0; index <= lastFirstRegister; index++) {
             pairs.add(new Register[] {registers[index], registers[index + 1]});
         }
@@ -6059,50 +6116,68 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return nonLeafMatcher(value -> value.contains(pattern));
     }
 
-    // REA's host owns ECMAScript /iu simple case folding. Across all 1,114,112
-    // Unicode code points, only U+017F (ſ -> s) and U+212A (K -> k) fold to
-    // ASCII. When asciiPattern is null, the pattern has a non-ASCII char without
-    // an ASCII fold, so only source strings containing non-ASCII stay eligible.
-    private static ValueMatcher literalCandidateMatcher(String asciiPattern) {
-        if (asciiPattern == null) {
-            return nonLeafMatcher(value -> {
-                for (int index = 0; index < value.length(); index++) {
-                    if (value.charAt(index) > 127) return true;
-                }
-                return false;
-            });
+    private static boolean containsNonAscii(String value) {
+        for (int index = 0; index < value.length(); index++) {
+            if (value.charAt(index) > 127) return true;
         }
-        int patternLength = asciiPattern.length();
-        for (int index = 0; index < patternLength; index++) {
+        return false;
+    }
+
+    private static void requireAsciiCandidate(String asciiPattern) {
+        for (int index = 0; index < asciiPattern.length(); index++) {
             if (asciiPattern.charAt(index) > 127) {
                 throw new RequestFailure("invalid_request", "ASCII candidate contains a non-ASCII character");
             }
         }
+    }
+
+    private static boolean containsFoldedAscii(String value, String asciiPattern) {
+        int patternLength = asciiPattern.length();
         if (patternLength == 0) {
-            return nonLeafMatcher(value -> true);
+            return true;
+        }
+        int valueLength = value.length();
+        if (valueLength < patternLength) {
+            return false;
         }
         char firstTarget = asciiPattern.charAt(0);
-        return nonLeafMatcher(value -> {
-            int valueLength = value.length();
-            if (valueLength < patternLength) {
-                return false;
+        int limit = valueLength - patternLength;
+        for (int index = 0; index <= limit; index++) {
+            if (foldAsciiCandidateChar(value.charAt(index)) != firstTarget) {
+                continue;
             }
-            int limit = valueLength - patternLength;
-            for (int index = 0; index <= limit; index++) {
-                if (foldAsciiCandidateChar(value.charAt(index)) != firstTarget) {
-                    continue;
-                }
-                int matched = 1;
-                while (matched < patternLength &&
-                       foldAsciiCandidateChar(value.charAt(index + matched)) == asciiPattern.charAt(matched)) {
-                    matched++;
-                }
-                if (matched == patternLength) {
-                    return true;
-                }
+            int matched = 1;
+            while (matched < patternLength &&
+                   foldAsciiCandidateChar(value.charAt(index + matched)) == asciiPattern.charAt(matched)) {
+                matched++;
             }
-            return false;
-        });
+            if (matched == patternLength) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // REA's host owns ECMAScript /iu simple case folding. Across all 1,114,112
+    // Unicode code points, only U+017F (ſ -> s) and U+212A (K -> k) fold to
+    // ASCII. When asciiPattern is null, the pattern has a non-ASCII char without
+    // an ASCII fold, so only source strings containing non-ASCII (and any
+    // required ASCII-foldable substring) stay eligible.
+    private static ValueMatcher literalCandidateMatcher(String asciiPattern, String asciiSubstring) {
+        if (asciiPattern == null) {
+            if (asciiSubstring == null || asciiSubstring.isEmpty()) {
+                return nonLeafMatcher(value -> containsNonAscii(value));
+            }
+            requireAsciiCandidate(asciiSubstring);
+            return nonLeafMatcher(value ->
+                containsFoldedAscii(value, asciiSubstring) && containsNonAscii(value)
+            );
+        }
+        requireAsciiCandidate(asciiPattern);
+        if (asciiPattern.isEmpty()) {
+            return nonLeafMatcher(value -> true);
+        }
+        return nonLeafMatcher(value -> containsFoldedAscii(value, asciiPattern));
     }
 
     private interface StringCheck {

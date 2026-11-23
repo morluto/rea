@@ -8,9 +8,11 @@ import {
 import {
   hasPeResourceName,
   locatePeResourcePayloads,
+  readPeResourceLayout,
 } from "./peResourceLayout.js";
 import {
   parsePeResources,
+  parsePeResourcesFromSource,
   peResourceLimitBoundary,
 } from "./peResourceInventory.js";
 import { peResourceFixture } from "./peResources.fixture.js";
@@ -258,6 +260,44 @@ it.each([false, true])(
     });
   },
 );
+
+it("validates a streamed icon group's length before reading its entries", async () => {
+  const maxRead = 1024 * 1024;
+  const payload = Buffer.alloc(maxRead + 16);
+  payload.writeUInt16LE(1, 2);
+  payload.writeUInt16LE(1, 4);
+  const { bytes, dataOffsets } = peResourceFixture(
+    false,
+    [{ type: 14, name: 42, language: 1033, payload }],
+    payload.length + 4096,
+  );
+  const payloadOffset = bytes.readUInt32LE(dataOffsets[0]) - 0x1c00;
+  const reads: Array<{ offset: number; length: number }> = [];
+  const path = "/fixtures/example.exe";
+  await expect(
+    parsePeResourcesFromSource(
+      {
+        size: bytes.length,
+        prefix: bytes.subarray(0, 64),
+        readRange: async (offset, length) => {
+          expect(length).toBeLessThanOrEqual(maxRead);
+          reads.push({ offset, length });
+          return bytes.subarray(offset, offset + length);
+        },
+      },
+      {
+        path,
+        bytes: bytes.length,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      },
+      inspectPeResourcesInputSchema.parse({ path }),
+    ),
+  ).rejects.toMatchObject({
+    kind: "malformed",
+    message: "RT_GROUP_ICON length does not match its image count.",
+  });
+  expect(reads.at(-1)).toEqual({ offset: payloadOffset, length: 6 });
+});
 
 describe("PE header admission and bounded traversal", () => {
   it.each([
@@ -552,6 +592,21 @@ describe("PE resource ownership boundaries", () => {
     expect(result.coverage).toMatchObject({ status: "complete" });
     expect(result.resources[0]?.payload).toEqual(
       baseline.resources[0]?.payload,
+    );
+  });
+
+  it("maps a payload after an expired section nested in its owner", () => {
+    const fixture = singleResource();
+    const [entry] = fixture.dataOffsets;
+    if (entry === undefined) throw new Error("Expected a resource data entry");
+    const rva = fixture.bytes.readUInt32LE(entry);
+    const size = fixture.bytes.readUInt32LE(entry + 4);
+    const expected = readPeResourceLayout(fixture.bytes).map(rva, size);
+    const bytes = secondSection(fixture, 1, rva - 2, 0);
+
+    expect(readPeResourceLayout(bytes).map(rva, size)).toBe(expected);
+    expect(() => readPeResourceLayout(bytes).map(rva - 2, 1)).toThrow(
+      /overlapping section mappings/iu,
     );
   });
 

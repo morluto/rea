@@ -10,11 +10,11 @@ import {
   EVTX_ARCHIVE_PROVIDER,
 } from "../domain/evtxArchive/evtxArchive.js";
 import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
 import {
   deliverWithService,
-  registerContractCommand,
   type EvidenceInspectionService,
-} from "./contractCommand.js";
+} from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 /** One-shot publication keeps the complete inventory for later offline pages. */

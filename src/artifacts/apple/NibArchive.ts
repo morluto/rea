@@ -11,8 +11,12 @@ import {
   InterfaceBuilderDecodeBudget,
   interfaceBuilderDecodeBudgetExceeded,
 } from "./InterfaceBuilderDecodeBudget.js";
-import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import { isRecord } from "../../kernel/isRecord.js";
+import { trimTrailing } from "../../kernel/trimEdges.js";
+
+export const trimTrailingNul = (value: string): string =>
+  trimTrailing(value, (character) => character === "\0");
 
 const DEFAULT_DECODE_BUDGET_BYTES = 128 * 1024 * 1024;
 const MINIMUM_OBJECT_ROW_BYTES = 3; // Class index, value start, field count.
@@ -54,9 +58,7 @@ export const nibCollectionMembers = (
 ): readonly JsonValue[] | undefined => {
   if (
     object === undefined ||
-    !/^(?:NS|NSMutable)(?:Array|Set)$/u.test(
-      object.class_name.replace(/\0+$/u, ""),
-    )
+    !/^(?:NS|NSMutable)(?:Array|Set)$/u.test(trimTrailingNul(object.class_name))
   )
     return undefined;
   const keys = ["UINibEncoderEmptyKey", "NS.objects"];
@@ -386,12 +388,9 @@ const parseClasses = (
       32 + length * 2,
       "NIBArchive class names exceed the aggregate Interface Builder decode budget",
     );
-    const name = decodeUtf8(
-      bytes,
-      cursor.offset,
-      next,
-      `class ${index}`,
-    ).replace(/\0+$/u, "");
+    const name = trimTrailingNul(
+      decodeUtf8(bytes, cursor.offset, next, `class ${index}`),
+    );
     cursor.offset = next;
     output.push(name);
   }
@@ -566,7 +565,7 @@ const decodeUtf8 = (
 ): string => {
   try {
     // These are length-prefixed names, not standalone text documents.
-    return strictUtf8Decoder("preserve").decode(bytes.subarray(start, end));
+    return decodeStrictUtf8(bytes.subarray(start, end), "preserve");
   } catch (cause: unknown) {
     throw malformedInput(
       "nib-archive",

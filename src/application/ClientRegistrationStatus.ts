@@ -1,3 +1,4 @@
+import { clientProjectConfigurationPaths } from "./SupportedClientLocations.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import {
@@ -36,7 +37,6 @@ import {
 import {
   clientEvidencePaths,
   clientOwnershipEvidencePaths,
-  clientProjectConfigurationPaths,
   manualRegistrationRemediation,
   resolveSupportedClients,
 } from "./SupportedClients.js";

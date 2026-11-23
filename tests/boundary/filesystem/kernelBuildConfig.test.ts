@@ -3,7 +3,7 @@ import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { createKernelBuildConfigService } from "../../../src/composition/binaryDiagnostics.js";
+import { createKernelBuildConfigService } from "../../../src/composition/binaryDiagnostics/kernelBuildConfig.js";
 import {
   bzImageGzipFixture,
   kernelBuildConfigFixture,

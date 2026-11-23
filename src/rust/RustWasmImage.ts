@@ -1,5 +1,7 @@
-import { isUtf8 } from "node:buffer";
+import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
 import { readLeb128, ULEB32 } from "../domain/leb128.js";
+import { isStrictUtf8, strictUtf8Decoder } from "../domain/strictUtf8.js";
+import type { NativeByteSource } from "../domain/native/nativeSectionDirectory.js";
 import {
   decodeLimit,
   malformedInput,
@@ -115,6 +117,163 @@ export const readRustWasmSections = (bytes: Buffer): RustWasmSections => {
   return { dependency_sections: dependencies, data_section: data };
 };
 
+const WASM_SECTION_HEADER_PROBE_BYTES = 16;
+const WASM_YIELD_INTERVAL = 256;
+
+/** Stream WebAssembly core-module section framing over a range reader. */
+export const readRustWasmSectionsFromReader = async (
+  source: NativeByteSource,
+  pause?: ZstandardFramePause,
+): Promise<RustWasmSections> => {
+  const readSlice = (offset: number, length: number): Promise<Buffer> => {
+    if (length <= 0 || offset >= source.size)
+      return Promise.resolve(Buffer.alloc(0));
+    const clamped = Math.min(length, source.size - offset);
+    if (source.prefix !== undefined && offset + clamped <= source.prefix.length)
+      return Promise.resolve(source.prefix.subarray(offset, offset + clamped));
+    return source.readRange(offset, clamped);
+  };
+  if (source.size < 8)
+    throw truncatedInput(WASM_FORMAT, "WebAssembly header is truncated", {
+      offset: 0,
+    });
+  const header = await readSlice(0, 8);
+  if (header.subarray(6, 8).equals(COMPONENT_LAYER))
+    throw unsupportedInput(
+      WASM_FORMAT,
+      "WebAssembly components are unsupported; their embedded core modules are not inspected",
+      { offset: 6, field: "layer" },
+    );
+  if (!header.subarray(4, 8).equals(CORE_MODULE_VERSION))
+    throw unsupportedInput(
+      WASM_FORMAT,
+      "Only version 1 WebAssembly core modules are supported",
+      { offset: 4, field: "version" },
+    );
+  const dependencies: WasmSectionRange[] = [];
+  let data: WasmSectionRange | null = null;
+  let cursor = 8;
+  for (let sections = 0; cursor < source.size; sections += 1) {
+    if (
+      pause !== undefined &&
+      sections > 0 &&
+      sections % WASM_YIELD_INTERVAL === 0
+    )
+      await pause();
+    const probe = await readSlice(cursor, WASM_SECTION_HEADER_PROBE_BYTES);
+    const id = probe[0]!;
+    const size = readU32(probe, 1, probe.length, {
+      label: "section size",
+      boundary: "file",
+      baseOffset: cursor,
+    });
+    const payloadStart = cursor + size.end;
+    const end = payloadStart + size.value;
+    if (end > source.size)
+      throw truncatedInput(
+        WASM_FORMAT,
+        "WebAssembly section extends past the end of the file",
+        { offset: cursor, field: "section" },
+      );
+    // Admit one complete frame before charging any section payload work.
+    if (sections === MAX_WASM_SECTIONS)
+      throw decodeLimit(
+        WASM_FORMAT,
+        `WebAssembly module declares more than ${MAX_WASM_SECTIONS} sections`,
+        { name: "max_wasm_sections", maximum: MAX_WASM_SECTIONS },
+        { offset: cursor },
+      );
+    if (id === CUSTOM_SECTION) {
+      const nameHeaderLen = Math.min(5, end - payloadStart);
+      const nameHeader = await readSlice(payloadStart, nameHeaderLen);
+      const nameLen = readU32(nameHeader, 0, nameHeader.length, {
+        label: "custom section name length",
+        boundary: "section",
+        baseOffset: payloadStart,
+      });
+      const nameStart = payloadStart + nameLen.end;
+      if (nameLen.value > end - nameStart)
+        throw malformedInput(
+          WASM_FORMAT,
+          "WebAssembly custom section name extends past its section",
+          { offset: payloadStart, field: "custom section name" },
+        );
+      const matches = await isDependencyName(
+        readSlice,
+        nameStart,
+        nameLen.value,
+        pause,
+      );
+      const payload = nameStart + nameLen.value;
+      if (matches) {
+        dependencies.push({ offset: payload, size: end - payload });
+        if (dependencies.length === 2) break;
+      }
+    } else if (id === DATA_SECTION) {
+      if (data !== null)
+        throw malformedInput(
+          WASM_FORMAT,
+          "WebAssembly module declares more than one data section",
+          { offset: cursor, field: "data section" },
+        );
+      data = { offset: payloadStart, size: size.value };
+    }
+    cursor = end;
+  }
+  return { dependency_sections: dependencies, data_section: data };
+};
+
+const WASM_NAME_CHUNK_BYTES = 64 * 1024;
+
+const invalidNameUtf8 = (offset: number) =>
+  malformedInput(
+    WASM_FORMAT,
+    "WebAssembly custom section name is not valid UTF-8",
+    {
+      offset,
+      field: "custom section name",
+    },
+  );
+
+/** Validate opaque names without retaining their text or losing a split code point. */
+const isDependencyName = async (
+  readRange: (offset: number, length: number) => Promise<Buffer>,
+  offset: number,
+  size: number,
+  pause: ZstandardFramePause | undefined,
+): Promise<boolean> => {
+  if (size <= WASM_NAME_CHUNK_BYTES) {
+    const bytes = await readRange(offset, size);
+    if (bytes.length !== size)
+      throw truncatedInput(
+        WASM_FORMAT,
+        "WebAssembly custom section name read ended early",
+        { offset, field: "custom section name" },
+      );
+    if (!isStrictUtf8(bytes)) throw invalidNameUtf8(offset);
+    return bytes.equals(DEPENDENCY_SECTION);
+  }
+  const decoder = strictUtf8Decoder("preserve");
+  for (let at = 0; at < size; at += WASM_NAME_CHUNK_BYTES) {
+    if (at > 0) await pause?.();
+    const length = Math.min(WASM_NAME_CHUNK_BYTES, size - at);
+    const bytes = await readRange(offset + at, length);
+    if (bytes.length !== length)
+      throw truncatedInput(
+        WASM_FORMAT,
+        "WebAssembly custom section name read ended early",
+        { offset: offset + at, field: "custom section name" },
+      );
+    try {
+      decoder.decode(bytes, { stream: at + length < size });
+    } catch (cause) {
+      if (!(cause instanceof TypeError)) throw cause;
+      throw invalidNameUtf8(offset);
+    }
+  }
+  return false;
+};
+
 /** Decode a custom section's UTF-8 name and locate the payload that follows it. */
 const customSection = (
   bytes: Buffer,
@@ -133,12 +292,7 @@ const customSection = (
     );
   const payload = length.end + length.value;
   const name = bytes.subarray(length.end, payload);
-  if (!isUtf8(name))
-    throw malformedInput(
-      WASM_FORMAT,
-      "WebAssembly custom section name is not valid UTF-8",
-      { offset: length.end, field: "custom section name" },
-    );
+  if (!isStrictUtf8(name)) throw invalidNameUtf8(length.end);
   return { name, payload };
 };
 
@@ -154,11 +308,16 @@ const readU32 = (
   {
     label,
     boundary,
-  }: { readonly label: string; readonly boundary: "file" | "section" },
+    baseOffset = 0,
+  }: {
+    readonly label: string;
+    readonly boundary: "file" | "section";
+    readonly baseOffset?: number;
+  },
 ): { readonly value: number; readonly end: number } => {
   const read = readLeb128(bytes, offset, end, ULEB32);
   if ("value" in read) return { value: Number(read.value), end: read.next };
-  const site = { offset, field: label };
+  const site = { offset: baseOffset + offset, field: label };
   if (read.failure === "truncated" && boundary === "file")
     throw truncatedInput(
       WASM_FORMAT,

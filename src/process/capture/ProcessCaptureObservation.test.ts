@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { sep } from "node:path";
 
 import { failedInspectionDescriptor } from "../../../tests/fixtures/processInspectionCleanup.js";
 import {
@@ -17,6 +18,8 @@ import {
 import { SamplingReadBatchFailure } from "./ProcessSamplingObservation.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
+import { classifyFilesystemEffects } from "./ProcessFilesystemEffects.js";
+import type { ProcessFilesystemSnapshot } from "../../domain/process/processCapture.js";
 import type { ProcessCapture } from "../../domain/process/processCaptureParsing.js";
 import type {
   FilesystemCoverage,
@@ -336,6 +339,63 @@ it.each(["symlink_not_followed", "observer_owned"] as const)(
       expect(result.limitations).toContain(unknown.reason);
     }
     expect(result.truncated).toBe(false);
+  },
+);
+
+it.each(["before", "after"] as const)(
+  "classifies absence against exact subtree coverage on the %s side",
+  (phase) => {
+    const paths = [
+      `root_0:link${sep}child${sep}file`,
+      "root_0:observer",
+      `root_0:link-sibling${sep}file`,
+    ] as const;
+    const partial: ProcessFilesystemSnapshot = {
+      files: [],
+      completeRoots: ["root_0"],
+      truncated: true,
+      coverage: {
+        ...emptyFilesystemCoverage(),
+        unobserved_subtrees: [
+          { path: "root_0:link", reason: "symlink_not_followed" },
+          { path: "root_0:observer", reason: "observer_owned" },
+        ],
+      },
+    };
+    const observed: ProcessFilesystemSnapshot = {
+      ...partial,
+      truncated: false,
+      coverage: { ...emptyFilesystemCoverage(), unobserved_subtrees: [] },
+      files: paths.map((path) => ({
+        path,
+        type: "file",
+        mode: 0o100644,
+        size: 1,
+        sha256: "a".repeat(64),
+        symlink_target: null,
+      })),
+    };
+    const effects =
+      phase === "before"
+        ? classifyFilesystemEffects(partial, observed)
+        : classifyFilesystemEffects(observed, partial);
+    expect(effects).toHaveLength(paths.length);
+    const byPath = new Map(effects.map((effect) => [effect.path, effect]));
+    expect(byPath.get(paths[0])).toMatchObject({
+      status: "unknown",
+      reason: expect.stringContaining(
+        `The ${phase} snapshot did not observe the subtree at root_0:link (symlink_not_followed)`,
+      ),
+    });
+    expect(byPath.get(paths[1])).toMatchObject({
+      status: "unknown",
+      reason: expect.stringContaining(
+        `The ${phase} snapshot did not observe the subtree at root_0:observer (observer_owned)`,
+      ),
+    });
+    expect(byPath.get(paths[2])?.status).toBe(
+      phase === "before" ? "created" : "deleted",
+    );
   },
 );
 
