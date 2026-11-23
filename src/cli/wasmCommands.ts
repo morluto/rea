@@ -1,14 +1,12 @@
+import { registerContractDocumentCommand } from "./contractDocumentCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
 import { wasmArtifactModule } from "../composition/wasm.js";
 import { COMPARE_WASM_INTERFACES_CONTRACT } from "../contracts/wasm/wasmComparisonContracts.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import {
-  inspectWithService,
-  registerContractCommand,
-  registerContractDocumentCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { inspectWithService } from "./contractCommandRunners.js";
 import {
   evidenceBundleOption,
   runEvidenceInputCommand,

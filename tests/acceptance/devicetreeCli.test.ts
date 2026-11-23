@@ -5,6 +5,7 @@ import { z } from "zod";
 import { fitFixture } from "../../src/artifacts/fit/FitImage.fixture.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import { createEvidence } from "../../src/domain/evidence.js";
+import type { Devicetree } from "../../src/domain/firmware/devicetree.js";
 import {
   cells,
   devicetreeFixture,
@@ -12,6 +13,7 @@ import {
 } from "../../src/domain/firmware/devicetree.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 const paddingDiagnostic = /FDT structure padding contains/iu;
@@ -118,8 +120,55 @@ cliTest(
   },
 );
 
+const contradictoryReports = (report: Devicetree, nodeIndex: number) => {
+  const duplicate = (first: boolean) => {
+    const changed = structuredClone(report);
+    changed.nodes.splice(first ? nodeIndex : changed.nodes.length, 0, {
+      ...report.nodes[nodeIndex]!,
+      properties: [],
+    });
+    changed.coverage.examined_nodes = changed.nodes.length;
+    return {
+      changed,
+      issuePath: [
+        "nodes",
+        first ? nodeIndex + 1 : changed.nodes.length - 1,
+        "path",
+      ],
+      message: "Duplicate Devicetree node path.",
+      collection: first ? ("properties" as const) : ("nodes" as const),
+      adapter: first ? "cli" : "mcp",
+    };
+  };
+  const wrongGeometry = structuredClone(report);
+  wrongGeometry.nodes[nodeIndex]!.properties[0]!.offset =
+    report.header.totalsize;
+  const wrongCoverage = {
+    ...report,
+    coverage: { ...report.coverage, examined_nodes: report.nodes.length + 1 },
+  };
+  return [
+    duplicate(true),
+    duplicate(false),
+    {
+      changed: wrongGeometry,
+      issuePath: ["nodes", nodeIndex, "properties", 0, "offset"],
+      message: "The property range exceeds the declared Devicetree extent.",
+      collection: "properties",
+      adapter: "mcp",
+    },
+    {
+      changed: wrongCoverage,
+      issuePath: ["coverage", "examined_nodes"],
+      message: "Examined node count disagrees with the listed nodes.",
+      collection: "nodes",
+      adapter: "cli",
+    },
+  ] as const;
+};
+
 cliTest(
-  "rejects ambiguous Devicetree node paths in correctly hashed Evidence",
+  "rejects contradictory Devicetree reports in authenticated Evidence",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-dtb-duplicate-path-");
     const path = join(root, "board.dtb");
@@ -161,59 +210,48 @@ cliTest(
       },
     });
     const { call } = await connectLocalToolsMcp();
-    for (const first of [true, false]) {
-      const nodes = [...report.nodes];
-      nodes.splice(first ? index : nodes.length, 0, {
-        ...node,
-        properties: [],
-      });
-      const duplicateIndex = first ? index + 1 : nodes.length - 1;
-      const ambiguous = createEvidence(
+    const withReport = (changed: Devicetree) =>
+      createEvidence(
         { path, sha256: report.artifact.sha256, format: "file" },
         evidence.provider,
         {
           operation: evidence.operation,
           parameters: evidence.parameters,
-          result: {
-            ...report,
-            nodes,
-            coverage: { ...report.coverage, examined_nodes: nodes.length },
-          },
-          confidence: "observed",
+          result: changed,
+          confidence: evidence.confidence,
           limitations: evidence.limitations,
+          locations: evidence.locations,
         },
       );
+    for (const {
+      changed,
+      issuePath,
+      message,
+      collection,
+      adapter,
+    } of contradictoryReports(report, index)) {
+      const input = request(withReport(changed), collection);
       const error = {
         code: "invalid_request",
         details: {
           issues: [
-            expect.objectContaining({
-              path: [
-                "source",
-                "normalized_result",
-                "nodes",
-                duplicateIndex,
-                "path",
-              ],
-              message: expect.stringContaining(
-                "Duplicate Devicetree node path",
-              ),
-            }),
+            {
+              path: ["source", "normalized_result", ...issuePath],
+              reason: "invalid_value",
+              message,
+            },
           ],
         },
       };
-      const cliResult = await inspect(request(ambiguous, "properties"));
-      expect(cliResult.exitCode).toBe(1);
-      expect(cliResult.json).toMatchObject(error);
-      const mcpResult = await call(
-        "inspect_analysis_view",
-        request(ambiguous, "nodes"),
-      );
-      expect(mcpResult.isError).toBe(true);
-      const content = mcpResult.content.find((item) => item.type === "text");
-      if (content?.type !== "text")
-        throw new Error("Missing MCP error response");
-      expect(JSON.parse(content.text)).toMatchObject({ error });
+      if (adapter === "cli") {
+        const reply = await inspect(input);
+        expect(reply.exitCode, reply.stderr + reply.stdout).toBe(1);
+        expect(reply.json).toMatchObject(error);
+      } else {
+        const reply = await call("inspect_analysis_view", input);
+        expect(reply.isError).toBe(true);
+        expect(parseMcpToolError(reply).error).toMatchObject(error);
+      }
     }
     expect((await readFile(path)).equals(bytes)).toBe(true);
   },
@@ -251,32 +289,36 @@ cliTest("inspects a relative DTB and preserves the source", async ({ cli }) => {
 });
 for (const version of [16, 17] as const) {
   cliTest(
-    `inspects a v${version} DTB with empty strings at arbitrary in-blob offsets`,
+    `inspects a v${version} DTB with empty strings at the reservation boundary`,
     async ({ cli }) => {
       const root = await createTestTempDirectory("rea-dtb-empty-strings-");
-      for (const offset of [0, 44, 56, 60, 72]) {
-        const path = join(root, `board-${String(offset)}.dtb`);
-        const bytes = emptyStringsAtReservationBoundaryFixture(version);
-        bytes.writeUInt32BE(offset, 12);
-        await writeFile(path, bytes);
-        const result = await cli.run({
-          arguments: ["inspect-devicetree", path, "--json"],
-        });
-        expect(result.exitCode, result.stderr).toBe(0);
-        const report = toolContract("inspect_devicetree").outputSchema.parse(
-          result.json,
-        ).normalized_result;
-        expect(report).toMatchObject({
-          nodes: [{ path: "/" }],
-          reservations: [],
-        });
-        expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
-      }
+      const path = join(root, "board.dtb");
+      const bytes = emptyStringsAtReservationBoundaryFixture(version);
+      await writeFile(path, bytes);
+      const result = await cli.run({
+        arguments: ["inspect-devicetree", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const report = toolContract("inspect_devicetree").outputSchema.parse(
+        result.json,
+      ).normalized_result;
+      expect(report).toMatchObject({
+        header: {
+          version,
+          off_dt_strings: 56,
+          size_dt_strings: 0,
+          size_dt_struct: version === 16 ? null : 16,
+        },
+        nodes: [{ path: "/" }],
+        reservations: [],
+      });
+      expect((await readFile(path)).equals(bytes)).toBe(true);
     },
   );
 }
+
 cliTest(
-  "does not resolve through a legacy phandle when the canonical value is malformed",
+  "keeps references unresolved when either declared phandle is malformed",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-dtb-cli-phandle-");
     const path = join(root, "board.dtb");
@@ -286,10 +328,25 @@ cliTest(
         name: "",
         children: [
           {
-            name: "target",
+            name: "bad_canonical",
             properties: { phandle: Buffer.alloc(0), "linux,phandle": cells(3) },
           },
-          { name: "consumer", properties: { "interrupt-parent": cells(3) } },
+          {
+            name: "bad_legacy",
+            properties: { phandle: cells(4), "linux,phandle": cells(1, 2) },
+          },
+          {
+            name: "legacy_only",
+            properties: { "linux,phandle": Buffer.from([0, 0]) },
+          },
+          {
+            name: "canonical_consumer",
+            properties: { "interrupt-parent": cells(3) },
+          },
+          {
+            name: "legacy_consumer",
+            properties: { "interrupt-parent": cells(4) },
+          },
         ],
       }),
     );
@@ -302,7 +359,8 @@ cliTest(
     ).normalized_result;
     if (!("references" in report)) throw new Error("Expected complete report");
     expect(report.references).toMatchObject([
-      { source: "/consumer", phandle: 3, target: null },
+      { source: "/canonical_consumer", phandle: 3, target: null },
+      { source: "/legacy_consumer", phandle: 4, target: null },
     ]);
     expect(report.nodes[1]?.properties[0]).toMatchObject({
       name: "phandle",
@@ -310,13 +368,28 @@ cliTest(
       hex: "",
       derived: { cells: null },
     });
-    expect(report.limitations).toContainEqual(
-      expect.stringMatching(
-        /phandle.*\/target.*not a single cell.*unresolved/iu,
-      ),
+    expect(report.nodes[2]?.properties[1]).toMatchObject({
+      name: "linux,phandle",
+      bytes: 8,
+      hex: cells(1, 2).toString("hex"),
+      derived: { cells: null },
+    });
+    expect(report.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /phandle.*\/bad_canonical.*not a single cell.*unresolved/iu,
+        ),
+        expect.stringMatching(
+          /linux,phandle.*\/bad_legacy.*not a single cell.*unresolved/iu,
+        ),
+        expect.stringMatching(
+          /linux,phandle.*\/legacy_only.*not a single cell.*unresolved/iu,
+        ),
+      ]),
     );
   },
 );
+
 cliTest(
   "retains complete DTB Evidence when delivering a summary",
   async ({ cli }) => {

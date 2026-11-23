@@ -1,4 +1,8 @@
-import type { Devicetree, InspectDevicetreeInput } from "./devicetree.js";
+import {
+  DEVICETREE_PROPERTY_PREVIEW_BYTES,
+  type Devicetree,
+  type InspectDevicetreeInput,
+} from "./devicetree.js";
 import { BinaryFormatFailure, BinaryReader } from "../binaryContainer.js";
 import { readDevicetreeHeader } from "./devicetreeHeader.js";
 import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
@@ -29,6 +33,32 @@ const malformed = (message: string): never => {
 };
 const align = (n: number) => Math.ceil(n / 4) * 4;
 const hex = (n: bigint) => `0x${n.toString(16)}`;
+
+const FDT_STRING_PROPERTIES: ReadonlySet<string> = new Set([
+  "compatible",
+  "model",
+  "status",
+  "bootargs",
+  "stdout-path",
+]);
+const FDT_CHOSEN_SUMMARY_PROPERTIES: ReadonlySet<string> = new Set([
+  "bootargs",
+  "stdout-path",
+]);
+const FDT_SINGLE_CELL_PROPERTIES: ReadonlySet<string> = new Set([
+  "phandle",
+  "linux,phandle",
+  "#address-cells",
+  "#size-cells",
+  "interrupt-parent",
+  "remote-endpoint",
+  "msi-parent",
+]);
+const FDT_PHANDLE_REFERENCE_PROPERTIES: ReadonlySet<string> = new Set([
+  "interrupt-parent",
+  "remote-endpoint",
+  "msi-parent",
+]);
 
 /** Decode one DTB snapshot. Flat nodes retain explicit parent identity without recursive output. */
 export const parseDevicetree = (
@@ -176,13 +206,15 @@ export const parseDevicetree = (
       const propertyMap = propertiesByPath.get(owner.node.path);
       if (!name || propertyMap?.has(name))
         malformed("Empty or duplicate FDT property name");
-      admit(name.length * 2 + Math.min(length, 256) * 2 + 256);
+      admit(
+        name.length * 2 +
+          Math.min(length, DEVICETREE_PROPERTY_PREVIEW_BYTES) * 2 +
+          256,
+      );
       const raw = bytes.subarray(cursor, cursor + length);
       // Only binding-independent standard strings and single-cell declarations are decoded.
       const stringProperty =
-        ["compatible", "model", "status", "bootargs", "stdout-path"].includes(
-          name,
-        ) || owner.node.path === "/aliases";
+        FDT_STRING_PROPERTIES.has(name) || owner.node.path === "/aliases";
       if (stringProperty) admit(raw.length * 4);
       let strings: string[] | null = null;
       if (
@@ -200,30 +232,22 @@ export const parseDevicetree = (
           (entries === 1 &&
             ((owner.node.path === "/" && name === "model") ||
               (owner.node.path === "/chosen" &&
-                ["bootargs", "stdout-path"].includes(name)) ||
+                FDT_CHOSEN_SUMMARY_PROPERTIES.has(name)) ||
               owner.node.path === "/aliases"));
         // Summary values serialize again, including quotes, commas and escapes.
         if (repeatedInSummary) admit(raw.length * 2 + entries * 3 + 2);
         strings = raw.subarray(0, -1).toString("ascii").split("\0");
       }
       const cells =
-        [
-          "phandle",
-          "linux,phandle",
-          "#address-cells",
-          "#size-cells",
-          "interrupt-parent",
-          "remote-endpoint",
-          "msi-parent",
-        ].includes(name) && length === 4
+        FDT_SINGLE_CELL_PROPERTIES.has(name) && length === 4
           ? [u32(cursor)]
           : null;
       const property = {
         name,
         offset: cursor,
         bytes: length,
-        hex: raw.subarray(0, 256).toString("hex"),
-        truncated: length > 256,
+        hex: raw.subarray(0, DEVICETREE_PROPERTY_PREVIEW_BYTES).toString("hex"),
+        truncated: length > DEVICETREE_PROPERTY_PREVIEW_BYTES,
         derived: { confidence: "derived" as const, strings, cells, reg: null },
       };
       owner.node.properties.push(property);
@@ -255,22 +279,26 @@ export const parseDevicetree = (
         ];
   const limitations = [
     ...structureLimitations,
-    "Raw property previews are limited to 256 bytes; offsets and lengths identify complete values in the hashed artifact.",
+    `Raw property previews are limited to ${String(DEVICETREE_PROPERTY_PREVIEW_BYTES)} bytes; offsets and lengths identify complete values in the hashed artifact.`,
     "Phandle references cover only single-cell interrupt-parent, remote-endpoint and msi-parent; binding-specific arrays and overlays are not resolved.",
   ];
   for (const node of nodes) {
-    const canonical = prop(node.path, "phandle");
-    const legacy = prop(node.path, "linux,phandle");
-    const malformedCanonical =
-      canonical !== undefined && canonical.derived.cells === null;
-    const declared = [canonical, legacy].flatMap((property) => {
+    const phandleProperties = [
+      prop(node.path, "phandle"),
+      prop(node.path, "linux,phandle"),
+    ];
+    const malformedPhandles = phandleProperties.filter(
+      (property): property is NonNullable<typeof property> =>
+        property !== undefined && property.derived.cells === null,
+    );
+    const declared = phandleProperties.flatMap((property) => {
       const handle = property?.derived.cells?.[0];
       return handle === undefined ? [] : [handle];
     });
-    if (malformedCanonical) {
+    for (const property of malformedPhandles) {
       admit(node.path.length * 2 + 256);
       limitations.push(
-        `phandle at ${node.path} is not a single cell; this node's reference identity remains unresolved.`,
+        `${property.name} at ${node.path} is not a single cell; this node's reference identity remains unresolved.`,
       );
     }
     // Disagreeing declarations leave both values ambiguous rather than choosing one.
@@ -281,7 +309,7 @@ export const parseDevicetree = (
         `phandle at ${node.path} conflicts with linux,phandle (0x${declared[0]?.toString(16)} vs 0x${declared[1]?.toString(16)}); references to either value are unresolved.`,
       );
     }
-    const unambiguous = !malformedCanonical && !conflict;
+    const unambiguous = malformedPhandles.length === 0 && !conflict;
     for (const handle of declared)
       if (handle !== 0 && handle !== 0xffffffff) {
         const existing = handles.get(handle);
@@ -338,9 +366,7 @@ export const parseDevicetree = (
     for (const property of node.properties) {
       const phandle = property.derived.cells?.[0];
       if (
-        ["interrupt-parent", "remote-endpoint", "msi-parent"].includes(
-          property.name,
-        ) &&
+        FDT_PHANDLE_REFERENCE_PROPERTIES.has(property.name) &&
         phandle !== undefined
       ) {
         const target = handles.get(phandle) ?? null;

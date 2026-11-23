@@ -133,7 +133,9 @@ other format characters), and fit within
 a default 64 MiB header-scan budget and 512 KiB aggregate string budget
 (`truncated: true` when capped). Select `max_string_literal_bytes`,
 `max_string_bytes`, `max_string_header_scan_bytes`, or `max_string_candidates`
-to change these independent budgets. Their CLI flags use hyphens, for example
+to change these independent budgets. Length limits apply to structurally admitted
+ranges before their contents are read. Only printable candidates fill the
+retained-candidate budget. Their CLI flags use hyphens, for example
 `--max-string-literal-bytes 16384`. `limits_reached` names exhausted controls;
 increase those controls for a new inspection of the same complete artifact. Compiler-inlined or
 stack-constructed strings without static headers, unapplied relocation addends

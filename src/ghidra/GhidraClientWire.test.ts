@@ -71,6 +71,36 @@ const harness = (
   };
 };
 
+it("reports a lower bound for a request whose size scan stopped early", async () => {
+  const method = "search_strings";
+  const params = { pattern: "x".repeat(32_768) };
+  const maximum = 8_192;
+  const { wire, writes, pending } = harness(limit(maximum));
+  const result = await wire.request(method, params, {});
+  if (result.ok) throw new Error("Expected a request ceiling refusal");
+  const cause = result.error.cause;
+  if (!(cause instanceof AnalysisResourceConstraintError))
+    throw new Error("Expected a transport resource constraint");
+  const facts = cause.reportedLimits;
+  const measured = facts?.payload_bytes_at_least;
+  if (typeof measured !== "number")
+    throw new Error("Missing request size lower bound");
+  expect(measured).toBeGreaterThan(maximum);
+  expect(measured).toBeLessThan(
+    Buffer.byteLength(
+      JSON.stringify({
+        id: 1,
+        token: "b".repeat(64),
+        method,
+        params,
+      }),
+    ),
+  );
+  expect(facts).not.toHaveProperty("payload_bytes");
+  expect(writes).toEqual([]);
+  expect(pending.size).toBe(0);
+});
+
 it("admits the exact UTF-8 request boundary without changing reply ownership on refusal", async () => {
   const method = "search_strings";
   const params = { pattern: '前缀"\\\u0000😀\ud800'.repeat(1024) };
@@ -118,7 +148,10 @@ it("admits the exact UTF-8 request boundary without changing reply ownership on 
         AnalysisResourceConstraintError,
       );
       expect(result.error.cause).toMatchObject({
-        reportedLimits: { max_request_bytes: size - 1, payload_bytes: size },
+        reportedLimits: {
+          max_request_bytes: size - 1,
+          payload_bytes_at_least: size,
+        },
         retryable: false,
       });
       expect(

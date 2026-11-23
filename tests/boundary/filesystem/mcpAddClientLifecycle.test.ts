@@ -17,10 +17,8 @@ import {
 import { constants as fsConstants } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import {
-  clientConfigurationRecordSchema,
-  parseClientConfiguration,
-} from "../../../src/application/ClientConfigurationDocument.js";
+import { parseClientConfiguration } from "../../../src/application/ClientConfigurationDocument.js";
+import { clientConfigurationRecordSchema } from "../../../src/application/ClientConfigurationValues.js";
 import { parseGooseConfigurationYaml } from "../../../src/application/GooseConfigurationYaml.js";
 
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
@@ -39,8 +37,8 @@ import { detectClients } from "../../../src/application/SetupHost.js";
 import {
   runUninstall,
   systemUninstallHost,
-  type UninstallFileSystem,
 } from "../../../src/application/Uninstall.js";
+import type { UninstallFileSystem } from "../../../src/application/UninstallShared.js";
 import { ClientConfigurationPublication } from "../../../src/application/ClientConfigurationPublication.js";
 import { existingMaintenanceScope } from "../../../src/application/UpdateMaintenance.js";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";

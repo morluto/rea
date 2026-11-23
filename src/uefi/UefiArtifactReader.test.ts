@@ -1,10 +1,11 @@
-import { writeFile } from "node:fs/promises";
+import { appendFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { openRegularFile } from "../filesystem/RegularFile.js";
 
 import {
   buildFfsFile,
@@ -14,6 +15,7 @@ import {
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import type {
   ArtifactEntry,
+  ArtifactReaderTraversal,
   ArtifactTraversalOptions,
 } from "../resources/ArtifactReader.js";
 import { FFS2_FILE_SYSTEM_GUID, FFS3_FILE_SYSTEM_GUID } from "./UefiGuid.js";
@@ -35,12 +37,15 @@ const buildReaderImage = (): Buffer => {
   ]);
 };
 
-const openReader = async (image: Buffer): Promise<UefiArtifactReader> => {
+const writeImage = async (image: Buffer): Promise<string> => {
   const root = await createTestTempDirectory("rea-uefi-reader-");
   const path = join(root, "image.FIb");
   await writeFile(path, image);
-  return new UefiArtifactReader(path);
+  return path;
 };
+
+const openReader = async (image: Buffer): Promise<UefiArtifactReader> =>
+  new UefiArtifactReader(await writeImage(image));
 
 const collectEntries = async (
   reader: UefiArtifactReader,
@@ -53,6 +58,24 @@ const collectEntries = async (
   return entries;
 };
 
+const inventory = async (image: Buffer) => {
+  const reader = await openReader(image);
+  onTestFinished(() => reader.close());
+  const omissions: string[] = [];
+  let coverage: ArtifactReaderTraversal | undefined;
+  const entries = await collectEntries(reader, {
+    onOmission({ kind, path }) {
+      expect(kind).toBe("unsupported");
+      omissions.push(path);
+    },
+    onCoverage(observation) {
+      expect(coverage).toBeUndefined();
+      coverage = observation;
+    },
+  });
+  return { reader, entries, omissions, coverage };
+};
+
 const readAll = async (stream: Readable): Promise<Buffer> => {
   const chunks: Buffer[] = [];
   for await (const chunk of stream) chunks.push(chunk as Buffer);
@@ -60,20 +83,19 @@ const readAll = async (stream: Readable): Promise<Buffer> => {
 };
 
 describe("UefiArtifactReader", () => {
-  it("maps an erased lead-in, one volume directory, and its FFS file entries", async () => {
-    const reader = await openReader(buildReaderImage());
-    const omissions: string[] = [];
-    const entries = await collectEntries(reader, {
-      onOmission: ({ path }) => omissions.push(path),
-    });
+  it("maps an erased lead-in, one volume, and its exact owned FFS bytes", async () => {
+    const image = buildReaderImage();
+    const { reader, entries, omissions, coverage } = await inventory(image);
     expect(omissions).toEqual([]);
+    expect(coverage).toEqual({ status: "complete", limitations: [] });
     expect(entries.map((entry) => [entry.path, entry.kind])).toEqual([
       ["firmware-volume-0x1000", "directory"],
       [`firmware-volume-0x1000/ffs-file-${DRIVER_GUID}.bin`, "file"],
     ]);
     const volume = entries[0];
     if (volume === undefined) throw new Error("reader produced no volume");
-    const file = entries.at(1);
+    const file = entries[1];
+    if (file === undefined) throw new Error("reader produced no FFS entry");
     expect(volume).toMatchObject({
       declaredSize: 0x1000,
       byteOffset: 0x1000,
@@ -85,19 +107,15 @@ describe("UefiArtifactReader", () => {
       executable: false,
       encrypted: false,
     });
-    await reader.close();
-  });
-
-  it("opens an FFS entry and yields exactly its mapped bytes", async () => {
-    const image = buildReaderImage();
-    const reader = await openReader(image);
-    const file = (await collectEntries(reader)).find(
-      (entry) => entry.kind === "file",
+    await expect(
+      reader.open({ ...file, declaredSize: 4096 }),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "foreign-entry",
+    });
+    expect(await readAll(await reader.open(file))).toEqual(
+      image.subarray(0x1048, 0x1048 + 24 + 12),
     );
-    if (file === undefined) throw new Error("reader produced no FFS entry");
-    const bytes = await readAll(await reader.open(file));
-    expect(bytes).toEqual(image.subarray(0x1048, 0x1048 + 24 + 12));
-    await reader.close();
   });
 
   it("retries an unconfirmed descriptor close while keeping reader admission closed", async () => {
@@ -125,62 +143,99 @@ describe("UefiArtifactReader", () => {
       await reader.close();
     }
   });
+});
 
-  it("refuses entries that were not produced by this reader", async () => {
-    const reader = await openReader(buildReaderImage());
-    const entries = await collectEntries(reader);
-    const file = entries.find((entry) => entry.kind === "file");
-    if (file === undefined) throw new Error("reader produced no FFS entry");
-    await expect(reader.open({ ...file, declaredSize: 4096 })).rejects.toThrow(
-      /does not match this reader's inventory/u,
-    );
-    await reader.close();
+it.each([
+  "cancelled after reading",
+  "cancelled during final validation",
+  "changed",
+] as const)("withholds inventory when the image is %s", async (outcome) => {
+  const image =
+    outcome === "changed" ? buildReaderImage() : Buffer.alloc(4096, 0xff);
+  const path = await writeImage(image);
+  const source = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new UefiArtifactReader(path, source);
+  const controller = new AbortController();
+  const reason = { requested: "stop inventory" };
+  const read = source.handle.read.bind(source.handle);
+  const stat = source.handle.stat.bind(source.handle);
+  let examinedBytes = 0;
+  const finishRead = async (
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number,
+  ) => {
+    const result = await read(buffer, offset, length, position);
+    examinedBytes += result.bytesRead;
+    if (examinedBytes === image.length) {
+      if (outcome === "cancelled after reading") controller.abort(reason);
+      if (outcome === "changed") await appendFile(path, Buffer.from([0xff]));
+    }
+    return result;
+  };
+  const reads = vi
+    .spyOn(source.handle, "read")
+    .mockImplementation(finishRead as typeof source.handle.read);
+  const stats = vi.spyOn(source.handle, "stat").mockImplementation(async () => {
+    const observed = await stat();
+    if (
+      outcome === "cancelled during final validation" &&
+      examinedBytes === image.length
+    )
+      controller.abort(reason);
+    return observed;
   });
+  const onCoverage = vi.fn();
+  const emitted: ArtifactEntry[] = [];
+  const collect = async () => {
+    for await (const entry of reader.entries(controller.signal, {
+      onCoverage,
+    }))
+      emitted.push(entry);
+  };
+  try {
+    await expect(collect()).rejects.toMatchObject(
+      outcome === "changed"
+        ? { reason: "integrity", integrityCheck: "container-identity" }
+        : { reason: "cancelled", cancellation: { reason } },
+    );
+    expect(examinedBytes).toBe(image.length);
+    expect(emitted).toEqual([]);
+    expect(onCoverage).not.toHaveBeenCalled();
+  } finally {
+    reads.mockRestore();
+    stats.mockRestore();
+    await reader.close();
+    await source.handle.close();
+  }
 });
 
 it("bounds aggregate block-map retention and reports the unvisited volume", async () => {
   const volume = buildFv({ files: [], blockMapEntries: 8_000 }).buffer;
-  const reader = await openReader(
+  const { entries, omissions, coverage } = await inventory(
     Buffer.concat(Array.from({ length: 13 }, () => volume)),
   );
-  const onOmission = vi.fn();
-  const onCoverage = vi.fn();
-  try {
-    const entries = await collectEntries(reader, { onOmission, onCoverage });
-    expect(entries).toHaveLength(12);
-    expect(onOmission).toHaveBeenCalledWith({
-      path: "volume-scan-limit",
-      kind: "unsupported",
-    });
-    expect(onCoverage).toHaveBeenCalledWith({
-      status: "unknown",
-      limitations: [expect.stringMatching(/structural record limit/i)],
-    });
-  } finally {
-    await reader.close();
-  }
+  expect(entries).toHaveLength(12);
+  expect(omissions).toEqual(["volume-scan-limit"]);
+  expect(coverage).toEqual({
+    status: "unknown",
+    limitations: [expect.stringMatching(/structural record limit/i)],
+  });
 });
 
 it("retains a complete volume when a later declared volume extends past EOF", async () => {
   const first = buildFv({ files: [] }).buffer;
-  const truncated = buildFv({ files: [] }).buffer.subarray(0, 1024);
-  const reader = await openReader(Buffer.concat([first, truncated]));
-  const onOmission = vi.fn();
-  const onCoverage = vi.fn();
-  try {
-    const entries = await collectEntries(reader, { onOmission, onCoverage });
-    expect(entries.map(({ path }) => path)).toEqual(["firmware-volume-0x0"]);
-    expect(onOmission).toHaveBeenCalledWith({
-      path: "firmware-volume-0x1000",
-      kind: "unsupported",
-    });
-    expect(onCoverage).toHaveBeenCalledWith({
-      status: "unknown",
-      limitations: [expect.stringMatching(/0x1000.*4096.*1024/u)],
-    });
-  } finally {
-    await reader.close();
-  }
+  const truncated = first.subarray(0, 1024);
+  const { entries, omissions, coverage } = await inventory(
+    Buffer.concat([first, truncated]),
+  );
+  expect(entries.map(({ path }) => path)).toEqual(["firmware-volume-0x0"]);
+  expect(omissions).toEqual(["firmware-volume-0x1000"]);
+  expect(coverage).toEqual({
+    status: "unknown",
+    limitations: [expect.stringMatching(/0x1000.*4096.*1024/u)],
+  });
 });
 
 it("reports an unreadable extended FFS header after a valid file", async () => {
@@ -194,26 +249,18 @@ it("reports an unreadable extended FFS header after a valid file", async () => {
   const tail = Buffer.alloc(24, 0);
   tail[19] = 0x01;
   const image = buildFv({ files: [file, tail] }).buffer;
-  const reader = await openReader(image.subarray(0, 0x1000));
-  const onOmission = vi.fn();
-  const onCoverage = vi.fn();
-  try {
-    const entries = await collectEntries(reader, { onOmission, onCoverage });
-    expect(entries.map(({ path }) => path)).toEqual([
-      "firmware-volume-0x0",
-      `firmware-volume-0x0/ffs-file-${DRIVER_GUID}.bin`,
-    ]);
-    expect(onOmission).toHaveBeenCalledWith({
-      path: "firmware-volume-0x0/ffs-suffix-0xfe8",
-      kind: "unsupported",
-    });
-    expect(onCoverage).toHaveBeenCalledWith({
-      status: "unknown",
-      limitations: [expect.stringMatching(/0xfe8.*24/u)],
-    });
-  } finally {
-    await reader.close();
-  }
+  const { entries, omissions, coverage } = await inventory(
+    image.subarray(0, 0x1000),
+  );
+  expect(entries.map(({ path }) => path)).toEqual([
+    "firmware-volume-0x0",
+    `firmware-volume-0x0/ffs-file-${DRIVER_GUID}.bin`,
+  ]);
+  expect(omissions).toEqual(["firmware-volume-0x0/ffs-suffix-0xfe8"]);
+  expect(coverage).toEqual({
+    status: "unknown",
+    limitations: [expect.stringMatching(/0xfe8.*24/u)],
+  });
 });
 
 it("retains the readable prefix of a truncated FFS body and reports unknown coverage", async () => {
@@ -223,27 +270,19 @@ it("retains the readable prefix of a truncated FFS body and reports unknown cove
     payload: Buffer.from("payload"),
   });
   file.writeUIntLE(8192, 20, 3);
-  const reader = await openReader(buildFv({ files: [file] }).buffer);
-  const onOmission = vi.fn();
-  const onCoverage = vi.fn();
-  try {
-    const entries = await collectEntries(reader, { onOmission, onCoverage });
-    const retained = entries.find(({ kind }) => kind === "file");
-    expect(retained).toMatchObject({ byteOffset: 72, declaredSize: 4024 });
-    if (retained === undefined) throw new Error("readable FFS bytes were lost");
-    const bytes = await readAll(await reader.open(retained));
-    expect(bytes.length).toBe(4024);
-    expect(onOmission).toHaveBeenCalledWith({
-      path: retained.path,
-      kind: "unsupported",
-    });
-    expect(onCoverage).toHaveBeenCalledWith({
-      status: "unknown",
-      limitations: [expect.stringMatching(/0x48.*8192.*4024/u)],
-    });
-  } finally {
-    await reader.close();
-  }
+  const { reader, entries, omissions, coverage } = await inventory(
+    buildFv({ files: [file] }).buffer,
+  );
+  const retained = entries.find(({ kind }) => kind === "file");
+  expect(retained).toMatchObject({ byteOffset: 72, declaredSize: 4024 });
+  if (retained === undefined) throw new Error("readable FFS bytes were lost");
+  const bytes = await readAll(await reader.open(retained));
+  expect(bytes.length).toBe(4024);
+  expect(omissions).toEqual([retained.path]);
+  expect(coverage).toEqual({
+    status: "unknown",
+    limitations: [expect.stringMatching(/0x48.*8192.*4024/u)],
+  });
 });
 
 it("marks inventory coverage unknown for unexpected bytes between two retained files", async () => {
@@ -259,27 +298,17 @@ it("marks inventory coverage unknown for unexpected bytes between two retained f
   });
   const image = buildFv({ files: [file, sibling] }).buffer;
   image[99] = 0x42;
-  const reader = await openReader(image);
-  const onOmission = vi.fn();
-  const onCoverage = vi.fn();
-  try {
-    const entries = await collectEntries(reader, { onOmission, onCoverage });
-    expect(
-      entries
-        .filter(({ kind }) => kind === "file")
-        .map(({ byteOffset }) => byteOffset),
-    ).toEqual([72, 104]);
-    expect(onOmission).toHaveBeenCalledExactlyOnceWith({
-      kind: "unsupported",
-      path: "firmware-volume-0x0/ffs-padding-0x61",
-    });
-    expect(onCoverage).toHaveBeenCalledWith({
-      status: "unknown",
-      limitations: [expect.stringMatching(/0x61.*7 bytes/u)],
-    });
-  } finally {
-    await reader.close();
-  }
+  const { entries, omissions, coverage } = await inventory(image);
+  expect(
+    entries
+      .filter(({ kind }) => kind === "file")
+      .map(({ byteOffset }) => byteOffset),
+  ).toEqual([72, 104]);
+  expect(omissions).toEqual(["firmware-volume-0x0/ffs-padding-0x61"]);
+  expect(coverage).toEqual({
+    status: "unknown",
+    limitations: [expect.stringMatching(/0x61.*7 bytes/u)],
+  });
 });
 
 it("retains a file in the erased tail claimed by the FV extension and reports unknown inventory", async () => {
@@ -290,29 +319,19 @@ it("retains a file in the erased tail claimed by the FV extension and reports un
   });
   const { buffer } = buildFv({ files: [file], extendedHeader: "standalone" });
   buffer.writeUInt32LE(104, 96);
-  const reader = await openReader(buffer);
-  const onOmission = vi.fn();
-  const onCoverage = vi.fn();
-  try {
-    const entries = await collectEntries(reader, { onOmission, onCoverage });
-    expect(
-      entries
-        .filter(({ kind }) => kind === "file")
-        .map(({ byteOffset }) => byteOffset),
-    ).toEqual([104]);
-    expect(onOmission).toHaveBeenCalledExactlyOnceWith({
-      kind: "unsupported",
-      path: "firmware-volume-0x0/fv-extension-0x60",
-    });
-    expect(onCoverage).toHaveBeenCalledWith({
-      status: "unknown",
-      limitations: [
-        expect.stringMatching(/UsedSize.*observed FFS file end at 0x81/u),
-      ],
-    });
-  } finally {
-    await reader.close();
-  }
+  const { entries, omissions, coverage } = await inventory(buffer);
+  expect(
+    entries
+      .filter(({ kind }) => kind === "file")
+      .map(({ byteOffset }) => byteOffset),
+  ).toEqual([104]);
+  expect(omissions).toEqual(["firmware-volume-0x0/fv-extension-0x60"]);
+  expect(coverage).toEqual({
+    status: "unknown",
+    limitations: [
+      expect.stringMatching(/UsedSize.*observed FFS file end at 0x81/u),
+    ],
+  });
 });
 
 it.each([
@@ -353,32 +372,22 @@ it.each([
       typeCode: 1,
       payload: Buffer.from([0x31]),
     });
-    const reader = await openReader(
+    const { entries, omissions, coverage } = await inventory(
       buildFv({
         files: [invalid, sibling],
         fileSystemGuid,
       }).buffer,
     );
-    const onOmission = vi.fn();
-    const onCoverage = vi.fn();
-    try {
-      const entries = await collectEntries(reader, { onOmission, onCoverage });
-      expect(
-        entries
-          .filter(({ kind }) => kind === "file")
-          .map(({ byteOffset }) => byteOffset),
-      ).toEqual([104]);
-      expect(onOmission).toHaveBeenCalledExactlyOnceWith({
-        kind: "unsupported",
-        path: "firmware-volume-0x0/ffs-header-0x48",
-      });
-      expect(onCoverage).toHaveBeenCalledWith({
-        status: "unknown",
-        limitations: [expect.stringContaining("fixed header extent")],
-      });
-    } finally {
-      await reader.close();
-    }
+    expect(
+      entries
+        .filter(({ kind }) => kind === "file")
+        .map(({ byteOffset }) => byteOffset),
+    ).toEqual([104]);
+    expect(omissions).toEqual(["firmware-volume-0x0/ffs-header-0x48"]);
+    expect(coverage).toEqual({
+      status: "unknown",
+      limitations: [expect.stringContaining("fixed header extent")],
+    });
   },
 );
 
@@ -398,32 +407,20 @@ it.each([
       typeCode: 1,
       payload: Buffer.from([0x31]),
     });
-    const reader = await openReader(
+    const { entries, omissions, coverage } = await inventory(
       buildFv({ fileSystemGuid, files: [large, compact] }).buffer,
     );
-    const onOmission = vi.fn();
-    const onCoverage = vi.fn();
-    try {
-      const entries = await collectEntries(reader, { onOmission, onCoverage });
-      expect(
-        entries
-          .filter(({ kind }) => kind === "file")
-          .map(({ byteOffset }) => byteOffset),
-      ).toEqual(
-        status === "complete" ? [72, 72 + large.length] : [72 + large.length],
-      );
-      expect(onCoverage).toHaveBeenCalledWith(
-        expect.objectContaining({ status }),
-      );
-      if (status === "unknown")
-        expect(onOmission).toHaveBeenCalledExactlyOnceWith({
-          kind: "unsupported",
-          path: "firmware-volume-0x0/ffs-header-0x48",
-        });
-      else expect(onOmission).not.toHaveBeenCalled();
-    } finally {
-      await reader.close();
-    }
+    expect(
+      entries
+        .filter(({ kind }) => kind === "file")
+        .map(({ byteOffset }) => byteOffset),
+    ).toEqual(
+      status === "complete" ? [72, 72 + large.length] : [72 + large.length],
+    );
+    expect(coverage).toMatchObject({ status });
+    if (status === "unknown")
+      expect(omissions).toEqual(["firmware-volume-0x0/ffs-header-0x48"]);
+    else expect(omissions).toEqual([]);
   },
 );
 
@@ -449,29 +446,19 @@ it("charges unusable FFS headers against the same inventory budget as FV block m
     fileSystemGuid: FFS3_FILE_SYSTEM_GUID,
     files: [file, ...Array.from({ length: 8 }, () => invalid), file],
   });
-  const reader = await openReader(
+  const { entries, omissions, coverage } = await inventory(
     Buffer.concat([
       ...Array.from({ length: repeatedMaps }, () => prefix),
       lastVolume.buffer,
     ]),
   );
-  const omissions: string[] = [];
-  const onCoverage = vi.fn();
-  try {
-    const entries = await collectEntries(reader, {
-      onCoverage,
-      onOmission: ({ path }) => omissions.push(path),
-    });
-    expect(entries.filter(({ kind }) => kind === "file")).toHaveLength(1);
-    expect(omissions).toHaveLength(5);
-    expect(omissions.at(-1)).toMatch(/\/ffs-scan-limit-0x[0-9a-f]+$/u);
-    expect(onCoverage).toHaveBeenCalledWith({
-      status: "unknown",
-      limitations: expect.arrayContaining([
-        expect.stringMatching(/structural record limit.*FFS/u),
-      ]),
-    });
-  } finally {
-    await reader.close();
-  }
+  expect(entries.filter(({ kind }) => kind === "file")).toHaveLength(1);
+  expect(omissions).toHaveLength(5);
+  expect(omissions.at(-1)).toMatch(/\/ffs-scan-limit-0x[0-9a-f]+$/u);
+  expect(coverage).toEqual({
+    status: "unknown",
+    limitations: expect.arrayContaining([
+      expect.stringMatching(/structural record limit.*FFS/u),
+    ]),
+  });
 });

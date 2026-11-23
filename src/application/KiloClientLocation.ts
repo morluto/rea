@@ -175,14 +175,16 @@ export const kiloDefaultLocation = (
   const explicit = kiloExplicitFile(context);
   const custom = kiloExplicitDirectory(context);
   const homes = kiloHomePaths(context);
+  // The row is planned for its platform, which tests choose apart from the host.
+  const pathApi = context.root.platform === "win32" ? win32 : posix;
   return {
-    configPath: join(root, "kilo.json"),
+    configPath: pathApi.join(root, "kilo.json"),
     configPaths: [
-      ...KILO_GLOBAL_FILES.map((name) => join(root, name)),
+      ...KILO_GLOBAL_FILES.map((name) => pathApi.join(root, name)),
       ...(explicit === undefined ? [] : [explicit]),
       ...[...homes, ...(custom === undefined ? [] : [custom])].flatMap(
         (directory) =>
-          KILO_DIRECTORY_FILES.map((name) => join(directory, name)),
+          KILO_DIRECTORY_FILES.map((name) => pathApi.join(directory, name)),
       ),
     ],
     markerPath: root,

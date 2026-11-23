@@ -1,6 +1,6 @@
 import { ArtifactPreparation } from "./ArtifactPreparation.js";
 import type { FileHandle } from "node:fs/promises";
-import type { Readable } from "node:stream";
+import { Transform, type Readable } from "node:stream";
 import { setImmediate } from "node:timers/promises";
 
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
@@ -22,12 +22,11 @@ import {
 } from "../resources/index.js";
 import {
   ArtifactStreamLifecycle,
-  checkedArtifactMemberStream,
   ownArtifactStream,
 } from "./OwnedArtifactStream.js";
 import { cancellableArtifactChunks } from "./OwnedAsyncArtifactStream.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import type { AndroidSparseImageMetadata } from "../domain/artifactFormatMetadata.js";
+import type { AndroidSparseImageMetadata } from "../domain/formatMetadata/androidAndSystemMetadata.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import {
   DEFAULT_ANDROID_SPARSE_IMAGE_READER_LIMITS,
@@ -47,6 +46,37 @@ import {
 } from "../domain/firmware/androidSparseImage.js";
 
 const LABEL = "Android sparse image";
+
+/** Verify the member's byte count and source before stream completion. */
+const checkedArtifactMemberStream = (
+  entry: ArtifactEntry,
+  label: string,
+  incomplete: (detail: string) => Error,
+  verify: () => Promise<void>,
+): Transform => {
+  let bytes = 0;
+  return new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      bytes += chunk.length;
+      callback(null, chunk);
+    },
+    flush(callback) {
+      if (bytes !== entry.declaredSize) {
+        callback(incomplete(`member ended early: ${entry.path}`));
+        return;
+      }
+      void verify().then(
+        () => callback(),
+        (cause: unknown) =>
+          callback(
+            cause instanceof Error
+              ? cause
+              : new Error(`${label} read failed`, { cause }),
+          ),
+      );
+    },
+  });
+};
 /** The expanded partition's one child path. */
 export const ANDROID_SPARSE_IMAGE_CHILD_PATH = "image.raw";
 /** Chunk headers and small RAW payloads are read through one bounded window. */

@@ -60,6 +60,11 @@ import {
 import { errorMessage } from "../kernel/errorMessage.js";
 
 const operation = "inspect_sqlite_database";
+const sqliteDatabaseEnvelopeSchema = sqliteDatabaseSchema.pick({
+  artifact: true,
+  wal: true,
+  worker_timeout_ms: true,
+});
 type SqliteOutcome = Result<AnalysisExecution, AnalysisError>;
 type SqliteRuntimeRoot = Pick<PrivateRuntimeRoot, "path" | "close">;
 interface PendingSnapshotCleanup {
@@ -300,10 +305,9 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
           processCleanup = result;
         },
       });
-      const validated = sqliteDatabaseSchema.safeParse({
+      const validated = sqliteDatabaseEnvelopeSchema.safeParse({
         artifact: snapshot.artifact,
         wal: snapshot.wal,
-        ...completed.inspection,
         worker_timeout_ms: workerTimeoutMs,
       });
       if (!validated.success)
@@ -317,7 +321,10 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
           ),
           completed.finalization,
         );
-      const execution = createSqliteObservation(validated.data, input.path);
+      const execution = createSqliteObservation(
+        { ...validated.data, ...completed.inspection },
+        input.path,
+      );
       result =
         completed.finalization === undefined
           ? ok(execution)

@@ -19,7 +19,7 @@ import {
 } from "../resources/index.js";
 import type { FileHandle } from "node:fs/promises";
 
-import type { PyInstallerMetadata } from "../domain/artifactFormatMetadata.js";
+import type { PyInstallerMetadata } from "../domain/formatMetadata/packageAndGameMetadata.js";
 import {
   cookieMetadata,
   scriptPythonMagic,

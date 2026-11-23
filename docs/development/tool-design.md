@@ -208,6 +208,23 @@ does not establish another instance.
   An assumed agent budget is insufficient justification for a limit. Name the
   ceiling and its recovery as described in
   [admission limits and recovery](../reference/limits-and-recovery.md).
+- Give high-cardinality discovery (`list_*`, `search_*`, `find_xrefs_*`) and
+  graph-traversal (`get_call_graph`, `trace_call_path`) tools optional per-call
+  bounds (`limit`/`offset` or `max_depth`/`max_nodes`). Omitting them preserves
+  unpaged behavior; supplying them should stop producer work early where
+  possible, mark truncated coverage/discovery `partial`, and report explicit
+  continuation facts (`total_*`, `truncated`, `limitations`, or
+  `residual_unknowns`).
+- Keep input schemas flat for compact advertisement: avoid redundant root
+  unions (`z.discriminatedUnion` whose branches share identical properties
+  differing only by a boolean), which double schema size and introduce root
+  `anyOf` violations that force compact-profile reduction.
+- Keep application ownership flat: reuse shared runners
+  (`executeArtifactInspection`, `executeProviderOperation`,
+  `executeRetainedSummaryOperation`) instead of
+  duplicating per-operation wrappers. When moving or extracting symbols, migrate
+  all callers directly rather than leaving re-export shims or pure barrel files
+  outside enforced module-boundary entrypoints (`src/resources/index.ts`).
 
 ### Compose declared Evidence inputs
 
@@ -662,6 +679,71 @@ retained reference only after recording succeeds. An absent writer or a writer
 returning a failure `Result` leaves the partial inline, as does a partial that
 is not valid Evidence. Unexpected recorder exceptions propagate. An `evidence_id`
 member alone does not establish Evidence validity or retention.
+
+### Design hot paths for single-pass work and zero redundant copies
+
+Apply these general patterns when implementing providers, bridges, adapters,
+and shared application workflows so performance is built into the owning
+boundary rather than patched downstream:
+
+- **Validate once at the trust boundary; avoid full-tree deep-clones on owned
+  payloads.** Use `ownedJsonValueSchema` / `ownedJsonObjectSchema` (in-place
+  validation without cloning) for freshly constructed, exclusively owned
+  objects instead of `jsonValueSchema.parse` / `jsonObjectSchema.parse`. Keep
+  cloning only when a downstream consumer mutates or freezes shared input
+  (such as `freezeJsonSnapshot`). When an upstream decoder has already
+  validated a large payload schema (for example `binaryLayoutPayloadSchema` or
+  `recordedCrashPayloadSchema`), validate only the added envelope fields and
+  cross-field invariants rather than re-parsing the full payload tree. Hoist
+  Zod schemas, regular expressions, and constant lookup `Set`s to module scope;
+  never construct `z.object(...)` inside per-record or per-field loops.
+- **Derive classifications, counts, and pruning summaries in a single pass.**
+  Fuse independent `.filter()`, `.some()`, and `.flatMap()` passes over the
+  same inventory or stream into one loop, and count matches with a loop rather
+  than allocating `.filter(...).length` intermediate arrays. Compute tiny
+  derived existence summaries during pass 1 (such as whether any packet uses a
+  protocol or whether any managed directory exists) to short-circuit expensive
+  secondary subprocesses or scans when no matching records exist.
+- **Use hash joins and reuse existing indexes instead of nested-loop scans.**
+  Before calling `.find()`, `.includes()`, or `.indexOf()` inside a loop over
+  another collection, reuse an existing `Map`/`Set` index on the context or
+  build one once outside the loop. In bridges (Java/Python), index tables,
+  procedures, and tokens by address or type path during analysis/loading (using
+  `putIfAbsent` when first-match precedence matters) and gate expensive engine
+  queries (such as SLEIGH p-code or flow resolution) behind cheap control-flow
+  checks.
+- **Bound I/O and cache freshness without breaking cancellation or cleanup
+  contracts.** Prefer single-pass streaming reads/hashes (such as
+  `ArtifactAnalysisResources.hash()` via `streamStableArtifact` with
+  `retainBytes: () => 0` when only identity and byte length are needed) and pass
+  `expectedSize` to `readBoundedFileBytes` for regular files so reads avoid
+  double-allocation copies. Bound concurrent filesystem and process fan-out
+  rather than issuing unbounded `Promise.all` over variable-length path or PID
+  lists, and prefer event-driven wakeups (`AbortSignal` or `WorkerFrameSignal`)
+  over fixed polling intervals. When caching external tool digests or PATH
+  probes with `(dev, ino, size, mtimeNs, ctimeNs)` stat verification, bypass the
+  fast path when a caller or test injects a custom `artifactReader`, and never
+  skip a read whose contract requires observing mid-read cancellation or access
+  errors on every call.
+- **Reuse binary/stream primitives and avoid full-chunk or per-record copies.**
+  Hold or `WeakMap`-cache `BinaryReader` per `Buffer` instead of allocating one
+  per symbol, note, GUID, or header field; reuse `strictUtf8Decoder`
+  (`src/domain/strictUtf8.ts`) for stateless UTF-8 decoding (never cache
+  `{ stream: true }` decoders); use `FifoQueue` (`src/kernel/FifoQueue.ts`)
+  rather than `Array.shift()` for message/frame queues; scan streaming binary
+  payloads with `Buffer.prototype.indexOf` and tiny fixed seam buffers instead
+  of copying full chunks or concatenating strings per byte; and write framed IPC
+  headers separately from large body buffers rather than copying multi-megabyte
+  payloads into one combined frame.
+- **Keep analysis views and MCP wire delivery O(limit) and lazy.** Reuse
+  validated immutable parent snapshots through `createAnalysisViewResultReader`
+  and `WeakMap` lookup indexes; route explicit `indices` queries through
+  `selectIndexedViewRows`, fast-path unfiltered pages through `selectViewRows`
+  with an omitted predicate, and pick projected columns with `pickFields` rather
+  than `Object.entries(...).filter(...)`. On the MCP delivery path, skip
+  duplicate Zod validation when the SDK already admitted `inputSchema`, evaluate
+  overflow recovery metadata lazily only when a response exceeds its budget, and
+  measure wire sizes without joining discarded JSON strings.
 
 Measure the resource before choosing a budget and enforce it before the costly
 step. Account for value alternatives, trace-frame products, retained records,

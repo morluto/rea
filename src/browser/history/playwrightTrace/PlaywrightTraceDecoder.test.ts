@@ -479,3 +479,69 @@ it("names the ZIP decoder window for a large-window recorder stream", async () =
     await resources.close();
   }
 });
+
+it("validates malformed syntax, duplicate keys, and nesting limits inside skipped trace events", async () => {
+  const skippedMalformed = await playwrightTraceFixture({
+    trace: header + '{"type":"frame-snapshot","snapshot":{"a":01}}\n' + before,
+    network: "",
+  });
+  const skippedDuplicate = await playwrightTraceFixture({
+    trace:
+      header + '{"type":"frame-snapshot","snapshot":{"k":1,"k":2}}\n' + before,
+    network: "",
+  });
+  const deepSnapshot = '{"type":"frame-snapshot","snapshot":'.concat(
+    "[".repeat(64),
+    "0",
+    "]".repeat(64),
+    "}\n",
+  );
+  const skippedOverDepth = await playwrightTraceFixture({
+    trace: header + deepSnapshot,
+    network: "",
+  });
+  const skippedFirstLine = await playwrightTraceFixture({
+    trace: '{"type":"frame-snapshot","snapshot":{"ok":true}}\n' + before,
+    network: "",
+  });
+  const resources = new ArtifactResourceScope();
+  try {
+    const malformedResult = await new PlaywrightTraceDecoder(resources).inspect(
+      skippedMalformed.path,
+    );
+    if (!malformedResult.ok) throw malformedResult.error;
+    expect(malformedResult.value.events).toHaveLength(1);
+    expect(malformedResult.value.diagnostics).toContainEqual(
+      expect.objectContaining({ line: 2, code: "malformed-record" }),
+    );
+
+    const dupResult = await new PlaywrightTraceDecoder(resources).inspect(
+      skippedDuplicate.path,
+    );
+    if (!dupResult.ok) throw dupResult.error;
+    expect(dupResult.value.events).toHaveLength(1);
+    expect(dupResult.value.diagnostics).toContainEqual(
+      expect.objectContaining({ line: 2, code: "malformed-record" }),
+    );
+
+    const depthResult = await new PlaywrightTraceDecoder(resources).inspect(
+      skippedOverDepth.path,
+    );
+    if (depthResult.ok) throw new Error("Expected nesting-depth refusal");
+    expect(depthResult.error._tag).toBe("AnalysisResourceConstraintError");
+
+    const firstLineResult = await new PlaywrightTraceDecoder(resources).inspect(
+      skippedFirstLine.path,
+    );
+    if (!firstLineResult.ok) throw firstLineResult.error;
+    expect(firstLineResult.value.events).toEqual([]);
+    expect(firstLineResult.value.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ line: 1, code: "missing-context-header" }),
+        expect.objectContaining({ code: "unknown-stream-version" }),
+      ]),
+    );
+  } finally {
+    await resources.close();
+  }
+});

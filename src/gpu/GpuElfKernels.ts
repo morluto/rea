@@ -192,18 +192,16 @@ const indexCudaMetadata = async (
       map.set(row.info, values);
     }
     if (global) {
-      for (const record of readCudaInfo(
-        await sectionBytes(source, row, budget),
-        directory.little,
-        budget,
-      )) {
+      const infoBytes = await sectionBytes(source, row, budget);
+      const infoReader = new BinaryReader(infoBytes, directory.little, "elf");
+      for (const record of readCudaInfo(infoBytes, directory.little, budget)) {
         if (record.format !== 4 || record.attribute !== 0x2f) continue;
         if (record.data.length !== 8)
           rejectGpu("CUDA register count record has an unsupported extent");
-        const r = new BinaryReader(record.data, directory.little, "elf"),
-          key = `${row.link}:${r.u32(0)}`;
+        const base = record.offset + 4,
+          key = `${row.link}:${infoReader.u32(base)}`;
         const values = registerFacts.get(key) ?? new Map<number, GpuLocation>();
-        const value = r.u32(4);
+        const value = infoReader.u32(base + 4);
         if (!values.has(value)) {
           const location = site(source, row, record.offset, record.length);
           budget.retain({ symbol: key, value, location });
@@ -237,15 +235,22 @@ const attachCudaResources = (
   const registerRows = index.registerFacts.get(symbolKey);
   const registerValues = new Set(registerRows?.keys());
   const sectionRegisters = text.info >>> 24;
-  kernel.registers.physical =
-    registerValues.size === 1
-      ? [...registerValues][0]!
-      : registerValues.size === 0 && sectionRegisters !== 0
-        ? sectionRegisters
-        : null;
-  if (registerValues.size === 1)
+  const singleInfoRegister =
+    registerValues.size === 1 ? [...registerValues][0]! : null;
+  const registerConflict =
+    registerValues.size > 1 ||
+    (singleInfoRegister !== null &&
+      sectionRegisters !== 0 &&
+      singleInfoRegister !== sectionRegisters);
+  if (registerConflict) {
+    kernel.limitations.push(
+      "Conflicting CUDA register declarations; physical count remains unknown",
+    );
+  } else if (singleInfoRegister !== null) {
+    kernel.registers.physical = singleInfoRegister;
     kernel.sources.registers = registerRows!.values().next().value!;
-  else if (sectionRegisters !== 0)
+  } else if (sectionRegisters !== 0) {
+    kernel.registers.physical = sectionRegisters;
     kernel.sources.registers = {
       container_id: source.containerId,
       offset: text.header_offset,
@@ -253,18 +258,9 @@ const attachCudaResources = (
       section_index: text.index,
       section_name: text.name,
     };
-  const registerConflict =
-    registerValues.size > 1 ||
-    (kernel.registers.physical !== null &&
-      sectionRegisters !== 0 &&
-      kernel.registers.physical !== sectionRegisters);
-  if (registerConflict) {
-    kernel.registers.physical = null;
-    kernel.limitations.push(
-      "Conflicting CUDA register declarations; physical count remains unknown",
-    );
   }
   const shared = index.sharedByText.get(text.index) ?? [];
+  const sharedConflict = shared.length > 1;
   kernel.shared_bytes =
     shared.length === 1
       ? gpuCount(shared[0]!.size)
@@ -279,7 +275,12 @@ const attachCudaResources = (
       section_index: shared[0]!.index,
       section_name: shared[0]!.name,
     };
-  return registerConflict ? "partial" : "complete";
+  if (sharedConflict) {
+    kernel.limitations.push(
+      "Conflicting CUDA shared memory declarations; shared byte count remains unknown",
+    );
+  }
+  return registerConflict || sharedConflict ? "partial" : "complete";
 };
 
 const cudaKernels = async (

@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   AnalysisArtifactChangedError,
+  AnalysisCancelledError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { pe } from "../domain/binaryTarget.fixture.js";
@@ -33,7 +34,10 @@ import { binaryPlistObjectTable } from "../../tests/fixtures/binaryPlistObjectTa
 import { javaClassFile } from "../../tests/fixtures/javaClassFile.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { universalMacho } from "../../tests/fixtures/universalMacho.js";
-import { phaseGate } from "../../tests/support/lifecycleHarness.js";
+import {
+  controlledCleanup,
+  phaseGate,
+} from "../../tests/support/lifecycleHarness.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
@@ -44,6 +48,7 @@ import {
   MAX_RELEASE_EXPOSURE_INVENTORY_BYTES,
   MAX_RELEASE_EXPOSURE_INVENTORY_ENTRIES,
   MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES,
+  MAX_RELEASE_EXPOSURE_NATIVE_IMAGES,
   MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES,
   MAX_RELEASE_EXPOSURE_MAP_TARGET_BYTES,
   MAX_RELEASE_EXPOSURE_SCRIPT_TARGET_BYTES,
@@ -164,6 +169,7 @@ vi.mock("../filesystem/RegularFile.js", async () => {
 
 const directoryReads = vi.hoisted(() => ({
   count: 0,
+  afterRead: undefined as (() => void) | undefined,
   failClose: false,
   failedHandle: undefined as undefined | object,
   closeHandles: [] as object[],
@@ -192,9 +198,11 @@ vi.mock("node:fs/promises", async () => {
           }
           await close();
         },
-        read: () => {
+        read: async () => {
           directoryReads.count += 1;
-          return read();
+          const entry = await read();
+          directoryReads.afterRead?.();
+          return entry;
         },
       });
       return directory;
@@ -473,57 +481,57 @@ describe("ReleaseExposureReader", () => {
     expect(JSON.stringify(directory)).not.toContain(PLANTED_KEY);
   });
 
-  it("carries the inventoried digest of each native image", async () => {
-    const root = await createTestTempDirectory("rea-release-exposure-digest-");
-    const elf = Buffer.alloc(64);
-    writeMinimalElfHeader(elf);
-    await writeFile(join(root, "app"), elf);
-    const sha256 = createHash("sha256").update(elf).digest("hex");
-    expect((await inspect(root)).native_images).toEqual([
-      { path: join(root, "app"), format: "elf", sha256 },
-    ]);
-    expect((await inspect(join(root, "app"))).native_images).toEqual([
-      { path: join(root, "app"), format: "elf", sha256 },
-    ]);
-  });
-
-  it("registers native images larger than the text budget and parses PE debug records", async () => {
+  it("keeps exact native digests for sampling and attributes the PE debug record", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-native-");
-    const elf = Buffer.alloc(300 * 1024);
-    writeMinimalElfHeader(elf);
-    await writeFile(join(root, "app.elf"), elf);
-    const peImage = Buffer.concat([
-      pe(0x8664, 64, 0x0002, false, { pdbPath: "app.pdb" }),
-      Buffer.alloc(300 * 1024),
-    ]);
-    await writeFile(join(root, "app.exe"), peImage);
-    const calls: string[] = [];
-    const real = stableRead.impl;
-    stableRead.impl = async (...args) => {
-      calls.push(args[0]);
-      if (real === undefined) throw new Error("missing stable read");
-      return real(...args);
-    };
-    try {
-      const scanned = await inspect(root);
-      expect(
-        scanned.native_images.some(
-          (image) => image.format === "elf" && image.path.endsWith("app.elf"),
-        ),
-      ).toBe(true);
-      expect(scanned.native_images).toContainEqual(
-        expect.objectContaining({ path: join(root, "app.exe"), format: "pe" }),
+    const makeElf = (index: number) => {
+      const bytes = Buffer.alloc(
+        index === 0 ? MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES + 1 : 64,
+        index,
       );
-      expect(scanned.pdb).toMatchObject({
-        examined: 1,
-        failed: 0,
-        paths: ["app.pdb"],
+      writeMinimalElfHeader(bytes);
+      return { name: `native-${String(index)}.so`, format: "elf", bytes };
+    };
+    const pdbPath = "C:\\build\\app.pdb";
+    const images = [
+      {
+        name: "app.exe",
+        format: "pe",
+        bytes: Buffer.concat([
+          pe(0x8664, 64, 0x0002, false, { pdbPath }),
+          Buffer.alloc(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES + 1),
+        ]),
+      },
+      ...Array.from(
+        { length: MAX_RELEASE_EXPOSURE_NATIVE_IMAGES },
+        (_, index) => makeElf(index),
+      ),
+    ];
+    const expected = [];
+    for (const { name, format, bytes } of images) {
+      const path = join(root, name);
+      await writeFile(path, bytes);
+      expected.push({
+        path,
+        format,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
       });
-      expect(calls.some((path) => path.endsWith("app.elf"))).toBe(false);
-      expect(calls.some((path) => path.endsWith("app.exe"))).toBe(true);
-    } finally {
-      stableRead.impl = real;
     }
+    const scanned = await inspect(root);
+    expect(scanned.native_images).toEqual(expected);
+    expect(scanned.text_members).toEqual({ scanned: 0, skipped: 0 });
+    expect(
+      scanned.omitted.some(({ subject }) => subject === "native images"),
+    ).toBe(false);
+    expect(scanned.pdb).toMatchObject({
+      examined: 1,
+      failed: 0,
+      paths: [pdbPath],
+      image_paths: [join(root, "app.exe")],
+    });
+    const selected = join(root, "native-0.so");
+    expect((await inspect(selected)).native_images).toEqual([
+      expected.find(({ path }) => path === selected),
+    ]);
   });
 });
 
@@ -817,33 +825,6 @@ describe("ReleaseExposureReader limits", () => {
       );
     },
   );
-
-  it("does not drop native images before the service samples them", async () => {
-    const root = await createTestTempDirectory("rea-release-exposure-natives-");
-    for (let index = 0; index < 5; index += 1) {
-      const elf = Buffer.alloc(64);
-      writeMinimalElfHeader(elf);
-      await writeFile(join(root, `lib${String(index)}.so`), elf);
-    }
-    const scanned = await inspect(root);
-    expect(scanned.native_images).toHaveLength(5);
-    expect(
-      scanned.omitted.some((item) => item.subject === "native images"),
-    ).toBe(false);
-  });
-
-  it("locates a CodeView path on the PE image that contains it", async () => {
-    const root = await createTestTempDirectory("rea-release-exposure-pdb-");
-    await writeFile(
-      join(root, "app.exe"),
-      pe(0x8664, 64, 0x0002, false, { pdbPath: "C:\\build\\app.pdb" }),
-    );
-    const scanned = await inspect(root);
-    expect(scanned.pdb.paths).toContain("C:\\build\\app.pdb");
-    expect(
-      scanned.pdb.image_paths?.some((path) => path.endsWith("app.exe")),
-    ).toBe(true);
-  });
 });
 
 describe("ReleaseExposureReader unpacked ASAR members", () => {
@@ -1076,83 +1057,175 @@ describe("ReleaseExposureReader package carrier identity", () => {
   );
 });
 
+it("names audit_release_exposure in recovery for a missing artifact", async () => {
+  const root = await createTestTempDirectory("rea-release-exposure-missing-");
+  const reader = new ReleaseExposureReader();
+  try {
+    const result = await reader.inspect(
+      { path: join(root, "missing.asar") },
+      undefined,
+      ignoreText,
+    );
+    if (result.ok) throw new Error("Expected a missing artifact refusal.");
+    expect(projectAnalysisError(result.error).recovery).toEqual({
+      kind: "inspect_input_contract",
+      operation: "audit_release_exposure",
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
 describe("ReleaseExposureReader package cleanup", () => {
-  it.each([false, true])(
-    "reports package cleanup failure and retains the scan or primary error (scan fails: %s)",
-    async (scanFails) => {
+  it.each(["completed scan", "changed artifact", "late cancellation"] as const)(
+    "retains failed package cleanup after %s",
+    async (scenario) => {
       const root = await createTestTempDirectory("rea-release-exposure-close-");
       const archive = join(root, "app.asar");
       await writeFile(archive, sourceMapArchive());
-      let created = 0;
-      let closes = 0;
-      createdReaders.wrap = (reader, path) => {
-        if (!path.endsWith("app.asar")) return reader;
-        created += 1;
-        if (created === 1) return reader;
-        const original = reader.close.bind(reader);
-        let attempts = 0;
-        reader.close = async () => {
-          attempts += 1;
-          closes += 1;
-          if (attempts < 3) throw new Error(`close failed: ${path}`);
-          await original();
-        };
-        return reader;
-      };
       const reader = new ReleaseExposureReader();
+      const gate = phaseGate();
+      const cleanup = controlledCleanup({ refused: true });
+      const controller = new AbortController();
+      const reason = { phase: "release of inventoried package" };
       const primary = new AnalysisArtifactChangedError(
         "audit_release_exposure",
         archive,
         "scan target changed",
       );
-      try {
-        const result = await reader.inspect(
-          { path: archive },
-          undefined,
-          scanFails
-            ? () => {
-                throw primary;
-              }
-            : ignoreText,
-        );
-        if (result.ok) throw new Error("Expected a failed audit.");
-        expect(result.error.cleanupIncomplete).toBe(true);
-        expect(result.error.cleanupResources).toContain(archive);
-        if (scanFails)
-          expect(result.error.diagnostics?.primary_error).toMatchObject({
-            code: "artifact_changed",
-            details: { reason: "scan target changed" },
-          });
-        else
-          expect(result.error.diagnostics?.primary_error).toMatchObject({
-            details: {
-              diagnostics: { scan: { source_maps: { embedded: 1 } } },
-            },
-          });
-        await expect(reader.close()).rejects.toSatisfy((error: unknown) => {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          const resources =
-            typeof error === "object" &&
-            error !== null &&
-            "cleanupResources" in error
-              ? (error as { cleanupResources: readonly string[] })
-                  .cleanupResources
-              : [];
-          return (
-            message.includes("app.asar") ||
-            resources.some((resource) => resource.includes("app.asar"))
+      const interrupted: ReleaseExposureScan[] = [];
+      await withPostInventoryArchive(
+        archive,
+        (source) => {
+          const close = source.close.bind(source);
+          source.close = async () => {
+            await gate.hold();
+            await cleanup.close(close);
+          };
+          return source;
+        },
+        async () => {
+          const audit = reader.inspect(
+            { path: archive },
+            { signal: controller.signal },
+            scenario === "changed artifact"
+              ? () => {
+                  throw primary;
+                }
+              : ignoreText,
+            (scan) => interrupted.push(scan),
           );
-        });
-        expect(closes).toBeGreaterThan(1);
-        await reader.close();
-        expect(result.error.cleanupIncomplete).toBe(false);
-      } finally {
-        createdReaders.wrap = undefined;
-        await reader.close().catch(() => undefined);
-      }
+          try {
+            await gate.reached(audit, "first package close");
+            if (scenario !== "completed scan") controller.abort(reason);
+            gate.release();
+            const result = await audit;
+            if (result.ok) throw new Error("Expected a failed audit.");
+            expect(result.error.cleanupIncomplete).toBe(true);
+            expect(result.error.cleanupResources).toEqual([archive]);
+            expect(cleanup.attempts).toBe(1);
+            if (scenario === "changed artifact") {
+              expect(result.error.cleanupPrimary).toBe(primary);
+            } else {
+              expect(interrupted).toMatchObject([
+                { coverage: "unknown", source_maps: { embedded: 1 } },
+              ]);
+              if (scenario === "late cancellation") {
+                const cancellation = result.error.cleanupPrimary;
+                expect(cancellation).toBeInstanceOf(AnalysisCancelledError);
+                expect(cancellation?.cause).toBe(reason);
+              } else {
+                expect(result.error.diagnostics?.primary_error).toMatchObject({
+                  details: {
+                    diagnostics: { scan: { source_maps: { embedded: 1 } } },
+                  },
+                });
+              }
+            }
+            await expect(reader.close()).rejects.toMatchObject({
+              cleanupResources: [archive],
+            });
+            expect(cleanup.attempts).toBe(2);
+            cleanup.allow();
+            await reader.close();
+            expect(cleanup.attempts).toBe(3);
+            expect(result.error.cleanupIncomplete).toBe(false);
+          } finally {
+            gate.release();
+            cleanup.allow();
+            await audit;
+            await reader.close();
+          }
+        },
+      );
     },
   );
+
+  it("keeps the cancelled sibling listing owned after its package closes on retry", async () => {
+    const root = await createTestTempDirectory(
+      "rea-release-exposure-sibling-and-package-",
+    );
+    const archive = join(root, "app.asar");
+    const directory = `directory beside the selected file: ${root}`;
+    await writeFile(archive, sourceMapArchive());
+    const reader = new ReleaseExposureReader();
+    const controller = new AbortController();
+    const reason = { phase: "sibling directory read" };
+    const packageCleanup = controlledCleanup({ refused: true });
+    directoryReads.closeHandles = [];
+    directoryReads.afterRead = () => controller.abort(reason);
+    directoryReads.failClose = true;
+    try {
+      const result = await withPostInventoryArchive(
+        archive,
+        (source) => {
+          const close = source.close.bind(source);
+          source.close = () => packageCleanup.close(close);
+          return source;
+        },
+        () =>
+          reader.inspect(
+            { path: archive },
+            { signal: controller.signal },
+            ignoreText,
+          ),
+      );
+      if (result.ok) throw new Error("Expected retained cleanup");
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.cleanupResources).toEqual(
+        expect.arrayContaining([archive, directory]),
+      );
+      expect(packageCleanup.attempts).toBe(1);
+      packageCleanup.allow();
+      await expect(reader.close()).rejects.toMatchObject({
+        cleanupResources: [directory],
+      });
+      expect(packageCleanup.attempts).toBe(2);
+      expect(result.error.cleanupResources).toEqual([directory]);
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.cleanupPrimary).toBeInstanceOf(
+        AnalysisCancelledError,
+      );
+      expect(result.error.cleanupPrimary?.cause).toBe(reason);
+      // Dir.close has no validity signal after a rejection. The confirmed
+      // package release and its retry count must stay settled independently.
+      directoryReads.failClose = false;
+      await expect(reader.close()).rejects.toMatchObject({
+        cleanupResources: [directory],
+      });
+      expect(directoryReads.closeHandles).toEqual([
+        directoryReads.failedHandle,
+      ]);
+      expect(packageCleanup.attempts).toBe(2);
+    } finally {
+      directoryReads.afterRead = undefined;
+      directoryReads.failClose = false;
+      directoryReads.failedHandle = undefined;
+      directoryReads.closeHandles = [];
+      packageCleanup.allow();
+      await reader.close().catch(() => undefined);
+    }
+  });
 });
 
 describe("ReleaseExposureReader replaced native images", () => {
@@ -3477,25 +3550,40 @@ describe("ReleaseExposureReader unexpanded packages", () => {
     );
   });
 
-  it("names the host file on every member location", async () => {
+  it("attributes unexpanded package text, source maps and debug records to their host", async () => {
+    const binaries = [
+      { name: "Small.dll", pdbPath: "C:\\build\\small.pdb" },
+      { name: "payload.json", pdbPath: "C:\\build\\payload.pdb" },
+    ];
     const root = await bundled([
       { path: "notes.txt", bytes: Buffer.from("plain\n") },
+      { path: "plain.json", bytes: Buffer.from('{"plain":true}') },
       { path: "app.js.map", bytes: embeddedSourceMap() },
+      { path: "App.pdb", bytes: Buffer.from("x") },
+      ...binaries.map(({ name, pdbPath }) => ({
+        path: name,
+        bytes: pe(0x8664, 64, 0x0002, false, { pdbPath }),
+      })),
     ]);
     const scanned = await inspect(root);
     const host = join(root, "app.dll");
-    expect(scanned.textLocations).toContain(`${host}/notes.txt`);
+    expect(scanned.native_images.map(({ path }) => path)).toEqual([host]);
+    expect(scanned.textLocations).toEqual([
+      `${host}/notes.txt`,
+      `${host}/plain.json`,
+      `${host}/app.js.map`,
+      `${host}/App.pdb`,
+    ]);
+    expect(scanned.text_members).toMatchObject({ skipped: 0 });
     expect(scanned.source_maps.embedded_paths).toEqual([`${host}/app.js.map`]);
     expect(scanned.extractable.samples).toContain(`${host}/notes.txt`);
-    expect(scanned.native_images.map((image) => image.path)).toEqual([host]);
-  });
-
-  it("reports a debug companion stored in the package under its host", async () => {
-    const root = await bundled([{ path: "App.pdb", bytes: Buffer.from("x") }]);
-    const scanned = await inspect(root);
-    expect(scanned.debug_companions.paths).toEqual([
-      `${join(root, "app.dll")}/App.pdb`,
-    ]);
+    expect(scanned.debug_companions.paths).toEqual([`${host}/App.pdb`]);
+    expect(scanned.pdb).toMatchObject({
+      examined: 3,
+      failed: 0,
+      paths: binaries.map(({ pdbPath }) => pdbPath),
+      image_paths: binaries.map(({ name }) => `${host}/${name}`),
+    });
   });
 
   it("leaves a PE too large to read undecided instead of absent", async () => {
@@ -3511,21 +3599,46 @@ describe("ReleaseExposureReader unexpanded packages", () => {
     expect(scanned.extractable.unreadable_members).toBe(0);
   });
 
-  it("reads CodeView paths from a small packaged PE without charging text", async () => {
-    const root = await bundled([
-      {
-        path: "Small.dll",
-        bytes: pe(0x8664, 64, 0x0002, false, {
-          pdbPath: "C:\\build\\small.pdb",
+  it("reads CodeView when a compressed PE exceeds only the embedded-probe allowance", async () => {
+    const root = await createTestTempDirectory(
+      "rea-release-exposure-pe-dual-allowance-",
+    );
+    const host = join(root, "app.dll");
+    const pdbPath = "C:\\build\\bounded.pdb";
+    const raw = Buffer.concat([
+      pe(0x8664, 64, 0x0002, false, { pdbPath }),
+      Buffer.alloc(8192),
+    ]);
+    const maxFileBytes = 4096;
+    const bundle = dotnetBundleFixture([
+      { path: "bounded.dll", bytes: raw, compressed: true },
+    ]).bytes;
+    expect(bundle.length).toBeLessThan(maxFileBytes);
+    await writeFile(host, bundle);
+    const reader = new ReleaseExposureReader();
+    try {
+      const result = await reader.inspect(
+        { path: root, max_file_bytes: maxFileBytes },
+        undefined,
+        ignoreText,
+      );
+      if (!result.ok) throw result.error;
+      expect(result.value.coverage).toBe("unknown");
+      expect(result.value.omitted).toContainEqual(
+        expect.objectContaining({
+          subject: "embedded package probes",
+          count: 1,
         }),
-      },
-    ]);
-    const scanned = await inspect(root);
-    expect(scanned.pdb.paths).toContain("C:\\build\\small.pdb");
-    expect(scanned.pdb.image_paths).toEqual([
-      `${join(root, "app.dll")}/Small.dll`,
-    ]);
-    expect(scanned.text_members.skipped).toBe(0);
+      );
+      expect(result.value.pdb).toMatchObject({
+        examined: 2,
+        failed: 0,
+        paths: [pdbPath],
+        image_paths: [`${host}/bounded.dll`],
+      });
+    } finally {
+      await reader.close();
+    }
   });
 
   it("keeps a packaged PE header beyond the probe unresolved", async () => {
@@ -3721,26 +3834,6 @@ it("retains distinct decoded and opaque paths from same-name compressed PE membe
 });
 
 describe("ReleaseExposureReader unexpanded package PE reads", () => {
-  it("reads a native member by its bytes when its name says text", async () => {
-    const root = await bundled([
-      {
-        path: "payload.json",
-        bytes: pe(0x8664, 64, 0x0002, false, {
-          pdbPath: "C:\\build\\payload.pdb",
-        }),
-      },
-      { path: "plain.json", bytes: Buffer.from('{"plain":true}') },
-    ]);
-    const scanned = await inspect(root);
-    expect(scanned.pdb.paths).toContain("C:\\build\\payload.pdb");
-    expect(scanned.pdb.image_paths).toEqual([
-      `${join(root, "app.dll")}/payload.json`,
-    ]);
-    expect(scanned.textLocations).toEqual([
-      `${join(root, "app.dll")}/plain.json`,
-    ]);
-  });
-
   it.each(["payload.json", "payload.js.map"])(
     "keeps a nested ASAR named %s unknown",
     async (name) => {
@@ -5009,9 +5102,18 @@ describe("ReleaseExposureReader Node shebang .map scripts", () => {
 });
 
 describe("ReleaseExposureReader resource admission", () => {
-  it.each(["file", "directory"] as const)(
-    "joins the final package reader close for a %s audit",
-    async (selection) => {
+  it.each([
+    { selection: "file", action: "close" },
+    { selection: "directory", action: "close" },
+    { selection: "file", action: "cancel", reason: null },
+    {
+      selection: "directory",
+      action: "cancel",
+      reason: { phase: "package close" },
+    },
+  ] as const)(
+    "joins final package cleanup for $action during a $selection audit",
+    async (scenario) => {
       const root = await createTestTempDirectory("rea-release-exposure-scope-");
       const archive = join(root, "app.asar");
       await writeFile(
@@ -5020,6 +5122,9 @@ describe("ReleaseExposureReader resource admission", () => {
       );
       const reader = new ReleaseExposureReader();
       const cleanup = phaseGate();
+      let released = false;
+      const controller = new AbortController();
+      const interrupted: ReleaseExposureScan[] = [];
       await withPostInventoryArchive(
         archive,
         (source) => {
@@ -5027,25 +5132,48 @@ describe("ReleaseExposureReader resource admission", () => {
           source.close = async () => {
             await cleanup.hold();
             await close();
+            released = true;
           };
           return source;
         },
         async () => {
-          const path = selection === "file" ? archive : root;
-          const audit = reader.inspect({ path }, undefined, ignoreText);
+          const path = scenario.selection === "file" ? archive : root;
+          const audit = reader.inspect(
+            { path },
+            { signal: controller.signal },
+            ignoreText,
+            (scan) => interrupted.push(scan),
+          );
           try {
             await cleanup.reached(audit, "package reader close");
-            const closed = reader.close();
+            if (scenario.action === "cancel") controller.abort(scenario.reason);
+            const pending =
+              scenario.action === "close" ? reader.close() : audit;
             expect(
               await Promise.race([
-                closed.then(() => true),
+                pending.then(() => true),
                 setImmediate(false),
               ]),
             ).toBe(false);
             cleanup.release();
-            const [result] = await Promise.all([audit, closed]);
-            if (!result.ok) throw result.error;
-            expect(result.value.text_members.scanned).toBe(1);
+            await pending;
+            const result = await audit;
+            expect(released).toBe(true);
+            if (scenario.action === "cancel") {
+              if (result.ok)
+                throw new Error(
+                  "Audit succeeded after caller cancellation during close",
+                );
+              expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+              expect(result.error.cause).toBe(scenario.reason);
+              expect(interrupted).toMatchObject([
+                { coverage: "complete", text_members: { scanned: 1 } },
+              ]);
+            } else {
+              if (!result.ok) throw result.error;
+              expect(result.value.text_members.scanned).toBe(1);
+              expect(interrupted).toEqual([]);
+            }
           } finally {
             cleanup.release();
             await audit;

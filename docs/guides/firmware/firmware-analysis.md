@@ -53,7 +53,40 @@ rea extract-uefi-firmware /path/to/flash.bin /path/to/new-output \
 ```
 
 Use `inspect_uefi_firmware` and `inspect_uefi_nvram` from MCP with
-`{"path":"/path/to/flash.bin"}`. To extract a mapped flash-backed volume:
+`{"path":"/path/to/flash.bin"}`. A complete UEFI map of a 4 MiB OVMF image is
+about 500 KB, so MCP `inspect_uefi_firmware` defaults to `detail: "summary"`.
+It retains the complete map in the session and returns volume, file and
+section counts with type tallies. Select rows with a `uefi-firmware` view, in
+the same call or later through `inspect_analysis_view` with
+`normalized_result.parent_evidence_id`:
+
+```json
+{
+  "name": "inspect_uefi_firmware",
+  "arguments": {
+    "path": "/path/to/flash.bin",
+    "view": {
+      "kind": "uefi-firmware",
+      "collection": "files",
+      "ui_names": ["PlatformDxe"]
+    }
+  }
+}
+```
+
+Collections are `volumes`, `files`, `sections`, `unknown-regions`,
+`integrity`, `psp-tables` and `psp-candidates`, paged with `offset` and
+`limit`. Files match exact `guids`, `ui_names`, `type_names` and
+`volume_path`. Each file row lists up to 32 sections with type, offset,
+length, SHA-256, `source_stream` and the `truncated` and `malformed` flags,
+plus the file's `section_count`. `extract_uefi_firmware` targets those
+offsets. The `sections` collection returns complete section records, matches
+an exact `file_path` and `type_names`, and pages any longer section list. An empty page reports only the retained
+rows; parser limits and coverage remain in the summary. Pass
+`detail: "complete"` to receive every record inline. The CLI command always
+returns complete Evidence.
+
+To extract a mapped flash-backed volume:
 
 ```json
 {
@@ -73,6 +106,38 @@ extraction. The equivalent CLI options are `--max-volumes`, `--max-files`, and
 `--max-depth`. Unparsed ranges
 within the selection appear in `extraction_gaps` and make extraction partial.
 The gap names the owning volume, file, or section and its source stream.
+
+Each published file records its owning FFS file in `ffs_file` (GUID, UI name,
+type and logical path), or null for bytes outside any mapped file. A whole
+OVMF image publishes 560 files, so MCP `extract_uefi_firmware` also defaults
+to `detail: "summary"`. The summary returns file, byte, derivation and gap
+counts, source, media-type and gap-kind tallies, and the first 8 published
+files; a targeted extraction usually fits in that preview. Page the rest with
+a `uefi-extraction` view through `inspect_analysis_view` and
+`normalized_result.parent_evidence_id`. Calling `extract_uefi_firmware` again
+needs another absent output directory and repeats the extraction. For
+example, the three largest PE32 files:
+
+```json
+{
+  "name": "inspect_analysis_view",
+  "arguments": {
+    "source": { "kind": "retained-evidence", "evidence_id": "ev_..." },
+    "view": {
+      "kind": "uefi-extraction",
+      "collection": "files",
+      "media_types": ["application/vnd.microsoft.portable-executable"],
+      "order": "size-desc",
+      "limit": 3
+    }
+  }
+}
+```
+
+Collections are `files`, `derivations` and `gaps`. Files match exact
+`media_types`, `sources`, `ffs_guids`, `ffs_ui_names` and `ffs_type_names`
+and are ordered by publication (`source`) or by `size-desc`. Gaps match exact
+`gap_kinds`. Pass `detail: "complete"` to list every file inline.
 Bytes outside the file and volume headers that occupy an FFS alignment span
 and differ from the volume's erase polarity are reported under the volume.
 A gap in one volume leaves a fully extracted sibling's coverage complete.

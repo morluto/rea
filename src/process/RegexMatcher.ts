@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 
 import { isRecord } from "../kernel/isRecord.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 import type {
   AnalysisError,
@@ -408,13 +409,19 @@ export const resolveLaunchRegexWorkerHeap = (
         request,
       );
 
-const launchExecArgv = readLaunchExecArgv(HOST_PLATFORM.platform);
-const launchNodeOptions = readLaunchNodeOptions(HOST_PLATFORM.platform);
-
 const launchRegexWorkerHeap = resolveLaunchRegexWorkerHeap(
-  launchExecArgv,
-  launchNodeOptions,
+  readLaunchExecArgv(HOST_PLATFORM.platform),
+  readLaunchNodeOptions(HOST_PLATFORM.platform),
 );
+
+/** Runtime requests can change the worker's heap only when launch left it configurable. */
+const heapForWorkerRequest = (
+  request: RegexWorkerHeapRequest,
+): RegexWorkerHeapLimit =>
+  launchRegexWorkerHeap.kind === "effective" &&
+  !launchRegexWorkerHeap.overridden
+    ? { ...launchRegexWorkerHeap, mib: request.heapMiB }
+    : launchRegexWorkerHeap;
 
 const heapBound = (
   heap: RegexWorkerHeapLimit,
@@ -456,11 +463,7 @@ export const launchRegexMatchingLimitation = (
   request: RegexWorkerHeapRequest = DEFAULT_REGEX_WORKER_HEAP_REQUEST,
 ): string => {
   const limitation = readRuntimeSetting(() =>
-    regexMatchingLimitation(
-      resolveLaunchRegexWorkerHeap(launchExecArgv, launchNodeOptions, request),
-      deadline,
-      request,
-    ),
+    regexMatchingLimitation(heapForWorkerRequest(request), deadline, request),
   );
   return limitation.ok
     ? limitation.value
@@ -601,7 +604,74 @@ const parseWorkerReply = (
   return { kind: "matched", indices: indices as number[] };
 };
 
-// Code is constant; caller patterns and target strings cross only workerData.
+const REGEX_PACK_CHUNK_ITEMS = 4096;
+const REGEX_PACK_CHUNK_CHARS = 262_144;
+
+interface PackedRegexChunk {
+  readonly buffer: ArrayBuffer;
+  readonly encoding: "latin1" | "utf16le";
+  readonly startIndex: number;
+  readonly count: number;
+}
+
+interface PackedRegexValues {
+  readonly lengthsBuffer: ArrayBuffer;
+  readonly chunks: readonly PackedRegexChunk[];
+}
+
+interface PackedRegexTransfer {
+  readonly packed: PackedRegexValues;
+  readonly transferList: ArrayBuffer[];
+}
+
+const packRegexValues = (values: readonly string[]): PackedRegexTransfer => {
+  const count = values.length;
+  const lengths = new Uint32Array(count);
+  const chunks: PackedRegexChunk[] = [];
+  const transferList: ArrayBuffer[] = [lengths.buffer];
+  let index = 0;
+  while (index < count) {
+    const startIndex = index;
+    const parts: string[] = [];
+    let chars = 0;
+    const itemLimit = Math.min(count, startIndex + REGEX_PACK_CHUNK_ITEMS);
+    while (index < itemLimit) {
+      const value = values[index]!;
+      const len = value.length;
+      if (parts.length > 0 && chars + len > REGEX_PACK_CHUNK_CHARS) break;
+      lengths[index] = len;
+      parts.push(value);
+      chars += len;
+      index += 1;
+    }
+    const joined = parts.join("");
+    const isAscii = Buffer.byteLength(joined, "utf8") === joined.length;
+    const encoding: "latin1" | "utf16le" = isAscii ? "latin1" : "utf16le";
+    const byteLength = isAscii ? joined.length : joined.length * 2;
+    const buffer = new ArrayBuffer(byteLength);
+    if (byteLength > 0) {
+      Buffer.from(buffer).write(joined, encoding);
+    }
+    chunks.push({
+      buffer,
+      encoding,
+      startIndex,
+      count: index - startIndex,
+    });
+    transferList.push(buffer);
+  }
+  return {
+    packed: {
+      lengthsBuffer: lengths.buffer,
+      chunks,
+    },
+    transferList,
+  };
+};
+
+// Code is constant; patterns cross workerData and candidate strings are
+// transferred in chunked off-heap ArrayBuffers so structured cloning neither
+// allocates millions of V8 heap strings upfront nor stalls on per-item bridges.
 // process.getBuiltinModule loads synchronously in both CJS and ESM workers
 // without async import overhead or ESM customization hook startup.
 const WORKER_SOURCE = String.raw`
@@ -613,10 +683,20 @@ try {
   parentPort.postMessage({ status: "invalid_pattern", reason: cause instanceof Error ? cause.message : String(cause) });
 }
 if (expression !== undefined) {
-  const { values } = workerData;
   const indices = [];
-  for (let index = 0, length = values.length; index < length; index += 1)
-    if (expression.test(values[index])) indices.push(index);
+  const { lengthsBuffer, chunks } = workerData.packed;
+  const lengths = new Uint32Array(lengthsBuffer);
+  for (let c = 0; c < chunks.length; c += 1) {
+    const chunk = chunks[c];
+    const block = Buffer.from(chunk.buffer).toString(chunk.encoding);
+    let offset = 0;
+    for (let index = chunk.startIndex, end = index + chunk.count; index < end; index += 1) {
+      const len = lengths[index];
+      if (expression.test(block.slice(offset, offset + len)))
+        indices.push(index);
+      offset += len;
+    }
+  }
   parentPort.postMessage({ status: "matched", indices });
 }
 `;
@@ -661,7 +741,18 @@ export const matchRegexValues = async (input: {
     input.heapRequest,
   );
   if (!admitted.ok) return admitted;
+  if (input.values.length === 0) {
+    try {
+      new RegExp(input.pattern, input.caseSensitive ? "u" : "iu");
+    } catch (cause: unknown) {
+      return err(
+        invalidRegexPatternError(input.operation, errorMessage(cause)),
+      );
+    }
+    return ok([]);
+  }
   const { deadline, heapRequest } = admitted.value;
+  const transfer = packRegexValues(input.values);
   let worker: Worker;
   try {
     worker = new Worker(WORKER_SOURCE, {
@@ -669,8 +760,9 @@ export const matchRegexValues = async (input: {
       workerData: {
         pattern: input.pattern,
         caseSensitive: input.caseSensitive,
-        values: input.values,
+        packed: transfer.packed,
       },
+      transferList: transfer.transferList,
       resourceLimits: { maxOldGenerationSizeMb: heapRequest.heapMiB },
     });
   } catch (cause: unknown) {
@@ -739,11 +831,7 @@ export const matchRegexValues = async (input: {
               ? regexWorkerHeapError(
                   input.operation,
                   cause,
-                  resolveLaunchRegexWorkerHeap(
-                    launchExecArgv,
-                    launchNodeOptions,
-                    heapRequest,
-                  ),
+                  heapForWorkerRequest(heapRequest),
                   heapRequest,
                 )
               : new AnalysisOutputError(

@@ -1,6 +1,17 @@
+import type { ElfNoteByteSource } from "./ElfNoteParser.js";
 import { gnuBuildIdNote } from "./ElfNotes.fixture.js";
 
 const concat = (...parts: readonly Buffer[]): Buffer => Buffer.concat(parts);
+
+export const elfDebugLinkByteSource = (
+  bytes: Buffer,
+  readRange: ElfNoteByteSource["readRange"] = async (offset, length) =>
+    bytes.subarray(offset, offset + length),
+): ElfNoteByteSource => ({
+  size: bytes.length,
+  prefix: bytes.subarray(0, 4096),
+  readRange,
+});
 
 const write16 = (
   bytes: Buffer,

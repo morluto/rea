@@ -9,7 +9,9 @@ import {
   deriveDebugFileLookupPaths,
   elfDebugLinkSchema,
   ELF_DEBUG_LINK_CANDIDATE_PREFIX_LIMITATION,
+  ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
   ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
+  ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
   ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION,
   ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION,
   ELF_DEBUG_LINK_LIMITATIONS,
@@ -26,7 +28,10 @@ import {
   type ElfDebugLinkRange,
 } from "../../domain/native/elfDebugLinkEvidence.js";
 import { err, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import {
+  completeProviderEvidence,
+  retainCompletedArtifactEvidence,
+} from "../ProviderOperationExecution.js";
 import {
   callerAnalysisParameters,
   parseAnalysisInput,
@@ -58,32 +63,17 @@ export class ElfDebugLinkService {
     if (!result.ok) {
       const source = result.error.partialObservation;
       const partial = elfDebugLinkSchema.safeParse(source);
-      if (partial.success) {
-        const partialInput =
-          partial.data.verification === null &&
-          partial.data.limitations.includes(
-            ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
-          )
-            ? { ...input.value, candidate_path: undefined }
-            : input.value;
-        if (
-          partial.data.artifact.path === input.value.path &&
-          validReport(partial.data, partialInput)
-        ) {
-          const evidence = createElfDebugLinkEvidence(
-            partial.data,
-            this.provider.identity,
-            parameters,
-          );
-          // Cleanup completion can reveal any primary that shares this exact report.
-          for (
-            let owner: AnalysisError | undefined = result.error;
-            owner !== undefined;
-            owner = owner.cleanupPrimary
-          )
-            if (owner.partialObservation === source)
-              owner.partialObservation = evidence;
-        }
+      if (
+        partial.success &&
+        partial.data.artifact.path === input.value.path &&
+        validReport(partial.data, input.value, "partial")
+      ) {
+        const evidence = createElfDebugLinkEvidence(
+          partial.data,
+          this.provider.identity,
+          parameters,
+        );
+        retainCompletedArtifactEvidence(result.error, evidence);
       }
       return result;
     }
@@ -91,7 +81,7 @@ export class ElfDebugLinkService {
     if (
       !report.success ||
       report.data.artifact.path !== input.value.path ||
-      !validReport(report.data, input.value)
+      !validReport(report.data, input.value, "complete")
     )
       return err(
         new AnalysisOutputError(
@@ -310,9 +300,10 @@ const unreadableAgrees = (
     (report.build_id.status === "observed" ? report.build_id.hex : null) &&
   verification.build_id.candidate_hex === null;
 
-const verificationAgrees = (report: ElfDebugLink): boolean => {
-  const verification = report.verification;
-  if (verification === null) return report.candidate === null;
+const verificationAgrees = (
+  report: ElfDebugLink,
+  verification: NonNullable<ElfDebugLink["verification"]>,
+): boolean => {
   const crc = verification.crc32;
   const build = verification.build_id;
   if (report.candidate === null) return unreadableAgrees(report, verification);
@@ -481,7 +472,14 @@ const limitationAgrees = (report: ElfDebugLink): boolean => {
   )
     return false;
   const verification = report.verification;
-  if (verification === null) return true;
+  if (verification === null)
+    return ![
+      ELF_DEBUG_LINK_CANDIDATE_PREFIX_LIMITATION,
+      ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
+      ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION,
+      ELF_DEBUG_LINK_UNAVAILABLE_CHECK_LIMITATION,
+      ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION,
+    ].some((line) => report.limitations.includes(line));
   if (
     (verification.reason === "candidate_unreadable") !==
     report.limitations.includes(ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION)
@@ -520,6 +518,7 @@ const lookupAgrees = (report: ElfDebugLink): boolean => {
 const validReport = (
   report: ElfDebugLink,
   input: InspectElfDebugLinkInput,
+  outcome: "complete" | "partial",
 ): boolean => {
   if (
     report.artifact.bytes > input.max_file_bytes ||
@@ -536,14 +535,43 @@ const validReport = (
     !examinedAgrees(report) ||
     !coverageAgrees(report) ||
     !lookupAgrees(report) ||
-    !limitationAgrees(report) ||
-    !verificationAgrees(report)
+    !limitationAgrees(report)
   )
     return false;
+  const { candidate, verification } = report;
+  const readIncomplete = report.limitations.includes(
+    ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
+  );
+  const comparisonIncomplete = report.limitations.includes(
+    ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
+  );
   if (input.candidate_path === undefined)
-    return report.candidate === null && report.verification === null;
-  if (report.verification === null) return false;
-  const candidate = report.candidate;
+    return (
+      candidate === null &&
+      verification === null &&
+      !readIncomplete &&
+      !comparisonIncomplete
+    );
+  if (candidate !== null && candidate.path !== input.candidate_path)
+    return false;
+  if (verification === null) {
+    if (outcome === "complete") return false;
+    if (candidate === null) return readIncomplete && !comparisonIncomplete;
+    return (
+      comparisonIncomplete &&
+      !readIncomplete &&
+      candidate.format === null &&
+      candidate.byte_order === null &&
+      candidate.debug_info === "unknown" &&
+      candidate.symtab === "unknown"
+    );
+  }
+  if (
+    readIncomplete ||
+    comparisonIncomplete ||
+    !verificationAgrees(report, verification)
+  )
+    return false;
   if (candidate === null)
     return !report.limitations.includes(
       ELF_DEBUG_LINK_CANDIDATE_PREFIX_LIMITATION,
@@ -552,7 +580,6 @@ const validReport = (
   // but only its ELF header was decoded.
   const streamed = candidate.bytes > input.max_file_bytes;
   if (
-    candidate.path !== input.candidate_path ||
     streamed !==
       report.limitations.includes(ELF_DEBUG_LINK_CANDIDATE_PREFIX_LIMITATION) ||
     (streamed &&
@@ -560,5 +587,5 @@ const validReport = (
       (candidate.debug_info !== "unknown" || candidate.symtab !== "unknown"))
   )
     return false;
-  return candidateAgrees(candidate, report.verification?.build_id.reason);
+  return candidateAgrees(candidate, verification.build_id.reason);
 };

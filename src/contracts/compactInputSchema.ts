@@ -1,4 +1,7 @@
-import { advertisedInputDialectViolations } from "./advertisedDialect.js";
+import {
+  ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+  hasAdvertisedInputDialectViolation,
+} from "./advertisedDialect.js";
 import { projectToAdvertisedDialect } from "./advertisedDialectProjection.js";
 import {
   COMPACT_SCHEMA_MAX_DEPTH,
@@ -62,12 +65,6 @@ const retainRootPropertyGuidance = (
   return properties === undefined ? stripped : { ...stripped, properties };
 };
 
-const withinDialect = (schema: Record<string, unknown>): boolean =>
-  advertisedInputDialectViolations({
-    name: "input",
-    inputSchema: schema,
-  }).length === 0;
-
 /**
  * Render an advertised input schema within a per-schema byte budget for
  * providers that validate the literal serialized schema size. The complete
@@ -93,7 +90,9 @@ export const compactAdvertisedInputSchema = (
     inline !== undefined &&
     serializedBytes(inline.schema) <= budgetBytes &&
     schemaDepth(inline.schema) <= COMPACT_SCHEMA_MAX_DEPTH &&
-    withinDialect(inline.schema)
+    !hasAdvertisedInputDialectViolation(inline.schema, {
+      skipRootBounds: budgetBytes <= ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+    })
   )
     return { ...inline, presentation: "inline" };
   const reduced = projectToAdvertisedDialect(

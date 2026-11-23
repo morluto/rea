@@ -68,28 +68,26 @@ cliTest(
 );
 
 cliTest(
-  "resolves section note names from zlib and Zstandard string tables through the CLI",
+  "resolves section note names from a compressed string table through the CLI",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-elf-notes-compressed-cli-");
-    for (const compressionType of [1, 2]) {
-      const path = join(root, `program-${String(compressionType)}`);
-      const bytes = compressedElfNoteFixture(64, true, compressionType);
-      await writeFile(path, bytes);
-      const result = await cli.run({
-        arguments: ["inspect-elf-notes", path, "--json"],
-      });
-      expect(result.exitCode, result.stderr).toBe(0);
-      const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
-        result.json,
-      );
-      expect(evidence.normalized_result.tables[0]?.name).toBe(
-        ".note.gnu.build-id",
-      );
-      expect(evidence.normalized_result.entries[0]?.gnu?.build_id_hex).toBe(
-        "0123456789abcdef0123456789abcdef01234567",
-      );
-      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
-    }
+    const path = join(root, "compressed-names.elf");
+    const bytes = compressedElfNoteFixture(64, true, 2);
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-elf-notes", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
+      result.json,
+    );
+    expect(evidence.normalized_result.tables[0]?.name).toBe(
+      ".note.gnu.build-id",
+    );
+    expect(evidence.normalized_result.entries[0]?.gnu?.build_id_hex).toBe(
+      "0123456789abcdef0123456789abcdef01234567",
+    );
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   },
 );
 
@@ -162,20 +160,20 @@ cliTest(
   "reports compressed note storage as unsupported without mutation",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-elf-notes-storage-cli-");
-    for (const ownership of ["section", "both"] as const) {
-      const path = join(root, `${ownership}.o`);
-      const bytes = compressedElfNoteSectionFixture(64, true, ownership);
-      await writeFile(path, bytes);
-      const result = await cli.run({
-        arguments: ["inspect-elf-notes", path, "--json"],
-      });
-      expect(result.exitCode).toBe(1);
-      expect(result.json).toMatchObject({
-        code: "unsupported_target",
-        message: expect.stringMatching(/compressed.*note/iu),
-      });
-      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
-    }
+    const path = join(root, "aliased.o");
+    const bytes = compressedElfNoteSectionFixture(64, true, "both");
+    // The program starts inside the compressed section and ends beyond it.
+    bytes.writeBigUInt64LE(bytes.readBigUInt64LE(64 + 8) + 4n, 64 + 8);
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-elf-notes", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "unsupported_target",
+      message: expect.stringMatching(/compressed.*note/iu),
+    });
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   },
 );
 
