@@ -150,6 +150,7 @@ export const MANAGED_MEMBER_COMPARISON_LIMITATION_CODES = [
   "body-unavailable",
   "call-target-unavailable",
   "field-target-unavailable",
+  "field-constant-unavailable",
   "catch-type-unavailable",
 ] as const;
 

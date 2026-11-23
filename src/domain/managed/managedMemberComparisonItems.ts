@@ -1004,6 +1004,36 @@ export const buildMethodItems = (
   return items;
 };
 
+const compareFieldConstants = (
+  left: Field,
+  right: Field,
+): { readonly changed: boolean; readonly limitations: Limitation[] } => {
+  const limitations: Limitation[] = [];
+  for (const side of ["left", "right"] as const) {
+    const constant = (side === "left" ? left : right).constant;
+    if (
+      constant !== null &&
+      (constant.state !== "decoded" ||
+        constant.element_type === null ||
+        constant.raw_hex === null)
+    )
+      limitations.push(
+        limitation(
+          "field-constant-unavailable",
+          `The ${side} field's Constant-table default cannot be compared: ${constant.limitation ?? "its decoded element type or exact bytes are unavailable"}.`,
+          side,
+        ),
+      );
+  }
+  return {
+    changed:
+      limitations.length === 0 &&
+      (left.constant?.element_type !== right.constant?.element_type ||
+        left.constant?.raw_hex !== right.constant?.raw_hex),
+    limitations,
+  };
+};
+
 export const buildFieldItems = (
   matches: ManagedFieldMatches,
   context: ComparisonItemContext,
@@ -1014,10 +1044,19 @@ export const buildFieldItems = (
       pair.left.item,
       pair.right.item,
     );
+    const constantComparison = compareFieldConstants(
+      pair.left.item,
+      pair.right.item,
+    );
+    const limitations = [
+      ...signatureLimitations,
+      ...constantComparison.limitations,
+    ];
     const changed =
       signatureIdentity(pair.left.item.signature) !==
         signatureIdentity(pair.right.item.signature) ||
-      pair.left.item.flags !== pair.right.item.flags;
+      pair.left.item.flags !== pair.right.item.flags ||
+      constantComparison.changed;
     items.push({
       item_id: `mmc_field_${digestCanonicalValue(
         {
@@ -1028,7 +1067,7 @@ export const buildFieldItems = (
       )}`,
       status: changed
         ? "changed"
-        : signatureLimitations.length > 0
+        : limitations.length > 0
           ? "unknown"
           : "unchanged",
       left: fieldIdentity(pair.left.item),
@@ -1041,7 +1080,7 @@ export const buildFieldItems = (
         candidate_right_tokens: [],
       },
       evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
-      limitations: signatureLimitations,
+      limitations,
     });
   }
   for (const ambiguous of matches.ambiguous)
