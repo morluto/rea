@@ -6,6 +6,7 @@ import {
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
+import { ParseFailureError } from "../domain/parseFailure.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import type { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import {
@@ -102,6 +103,28 @@ const afterValidation = async <T>(
       );
     throw cause;
   }
+};
+
+const verifyStableArtifactRead = async (
+  path: string,
+  fileSystem: StableArtifactFileSystem,
+  file: FileHandle,
+  initial: BigIntStats,
+  count: number,
+): Promise<void> => {
+  const after = await file.stat({ bigint: true });
+  const current = await afterValidation(path, "during read", () =>
+    fileSystem.lstat(path),
+  );
+  if (
+    [after, current].some((stat) => !sameRegularFileState(initial, stat)) ||
+    BigInt(count) !== initial.size
+  )
+    throw new ArtifactReaderFailure(
+      "integrity",
+      `Artifact changed during read: ${path}`,
+      { integrityCheck: "container-identity" },
+    );
 };
 
 const DEFAULT_STREAM_CHUNK_BYTES = 65536;
@@ -243,6 +266,8 @@ export const withStableArtifactHandle = async <Value>(
     onChunk: undefined,
     complete: async (prefix, sha256, size, initial, file) => {
       options.onIdentity?.({ sha256, bytes: size });
+      const verifyState = () =>
+        verifyStableArtifactRead(path, fileSystem, file, initial, size);
       const value = await useFile({
         sha256,
         size,
@@ -251,20 +276,17 @@ export const withStableArtifactHandle = async <Value>(
           readFileHandleRange(file, offset, length, () =>
             assertArtifactReadActive(options.signal),
           ),
+      }).catch(async (cause: unknown) => {
+        // Format findings can reflect bytes rewritten during parsing. Keep
+        // independent physical I/O, cancellation, and decoder failures primary.
+        if (
+          (cause instanceof ParseFailureError && cause.kind !== "limit") ||
+          (cause instanceof ArtifactReaderFailure && cause.reason === "format")
+        )
+          await verifyState();
+        throw cause;
       });
-      const after = await file.stat({ bigint: true });
-      const current = await afterValidation(path, "during read", () =>
-        fileSystem.lstat(path),
-      );
-      if (
-        [after, current].some((stat) => !sameRegularFileState(initial, stat)) ||
-        BigInt(size) !== initial.size
-      )
-        throw new ArtifactReaderFailure(
-          "integrity",
-          `Artifact changed during read: ${path}`,
-          { integrityCheck: "container-identity" },
-        );
+      await verifyState();
       assertArtifactReadActive(options.signal);
       return value;
     },
@@ -406,19 +428,7 @@ const readStableArtifactChunks = async <Value>(options: {
         hash.update(chunk);
         if (onChunk !== undefined) await onChunk(chunk);
       }
-      const after = await file.stat({ bigint: true });
-      const current = await afterValidation(path, "during read", () =>
-        fileSystem.lstat(path),
-      );
-      if (
-        [after, current].some((stat) => !sameRegularFileState(initial, stat)) ||
-        BigInt(count) !== initial.size
-      )
-        throw new ArtifactReaderFailure(
-          "integrity",
-          `Artifact changed during read: ${path}`,
-          { integrityCheck: "container-identity" },
-        );
+      await verifyStableArtifactRead(path, fileSystem, file, initial, count);
       assertArtifactReadActive(signal);
       return complete(bytes, hash.digest("hex"), count, initial, file);
     },
