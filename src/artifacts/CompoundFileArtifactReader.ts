@@ -1,7 +1,7 @@
 import { once } from "node:events";
 import { PassThrough, Readable } from "node:stream";
 
-import type { CompoundFileMetadata } from "../domain/artifactFormatMetadata.js";
+import type { CompoundFileMetadata } from "../domain/formatMetadata/androidAndSystemMetadata.js";
 import type { RegionDecodeFailure } from "../domain/firmware/regionDecoder.js";
 import {
   createCompoundFileDecoder,
