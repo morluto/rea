@@ -15,7 +15,11 @@ import {
   createFileMappingIndex,
   imageFileMappings,
 } from "../../domain/binaryContainer.js";
-import { readPeImage } from "../../domain/native/peImage.js";
+import {
+  readPeImage,
+  readPeImageFromReader,
+  type PeImage,
+} from "../../domain/native/peImage.js";
 import {
   MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES,
   type InspectPeImportsInput,
@@ -127,27 +131,103 @@ const coverage = (
         delay_imports: delayImports,
       };
 
-/**
- * Read PE import and delay-load directories without executing the image.
- * Yields to the event loop and honors cancellation every
- * `ENTRIES_PER_YIELD` descriptors or thunks.
- */
-export const parsePeImports = async (
-  bytes: Buffer,
+const WINDOW_READ_BYTES = 4096;
+
+/** Random-access source for streaming PE import inspection without buffering the whole image. */
+export interface PeImportByteSource {
+  readonly size: number;
+  readonly prefix: Buffer;
+  readRange(offset: number, length: number): Promise<Buffer>;
+}
+
+interface PeImportReader {
+  readonly fileSize: number;
+  readRange(offset: number, length: number): Promise<Buffer>;
+  u16(offset: number): Promise<number>;
+  u32(offset: number): Promise<number>;
+  word(offset: number, bits: 32 | 64): Promise<bigint>;
+}
+
+const createBufferPeImportReader = (bytes: Buffer): PeImportReader => {
+  const reader = new BinaryReader(bytes, true, "pe");
+  return {
+    fileSize: bytes.length,
+    readRange: async (offset, length) =>
+      bytes.subarray(offset, offset + length),
+    u16: async (offset) => reader.u16(offset),
+    u32: async (offset) => reader.u32(offset),
+    word: async (offset, bits) => reader.word(offset, bits),
+  };
+};
+
+const createHandlePeImportReader = (
+  source: PeImportByteSource,
+): PeImportReader => {
+  let windowStart = 0;
+  let windowBytes: Buffer = source.prefix;
+  let windowReader = new BinaryReader(windowBytes, true, "pe");
+
+  const ensureWindow = async (
+    offset: number,
+    length: number,
+  ): Promise<number> => {
+    if (
+      offset >= windowStart &&
+      offset + length <= windowStart + windowBytes.length
+    )
+      return offset - windowStart;
+    if (offset + length <= source.prefix.length) {
+      windowStart = 0;
+      windowBytes = source.prefix;
+      windowReader = new BinaryReader(windowBytes, true, "pe");
+      return offset;
+    }
+    const fetchLength = Math.min(
+      Math.max(length, WINDOW_READ_BYTES),
+      source.size - offset,
+    );
+    windowStart = offset;
+    windowBytes = await source.readRange(offset, fetchLength);
+    windowReader = new BinaryReader(windowBytes, true, "pe");
+    return 0;
+  };
+
+  return {
+    fileSize: source.size,
+    async readRange(offset, length) {
+      if (length === 0) return Buffer.alloc(0);
+      const rel = await ensureWindow(offset, length);
+      return windowBytes.subarray(rel, rel + length);
+    },
+    async u16(offset) {
+      const rel = await ensureWindow(offset, 2);
+      return windowReader.u16(rel);
+    },
+    async u32(offset) {
+      const rel = await ensureWindow(offset, 4);
+      return windowReader.u32(rel);
+    },
+    async word(offset, bits) {
+      const rel = await ensureWindow(offset, bits === 64 ? 8 : 4);
+      return windowReader.word(rel, bits);
+    },
+  };
+};
+
+const parsePeImportsCore = async (
+  image: PeImage,
+  reader: PeImportReader,
   artifact: Artifact,
   input: InspectPeImportsInput,
   signal?: AbortSignal,
 ): Promise<PeImports> => {
-  assertArtifactReadActive(signal);
-  const image = readPeImage(bytes);
   const bits = image.bits;
   const base = image.image_base;
-  const reader = new BinaryReader(bytes, true, "pe");
   const lookup = createFileMappingIndex(
     imageFileMappings(image),
     image.zero_fills,
   );
-  const compatibleRead = createPefileReadCompatibility(image, bytes.length);
+  const compatibleRead = createPefileReadCompatibility(image, reader.fileSize);
   let mappingCompatibility = true;
   const map = (rva: number, size: number): number => {
     requireRva(rva, size);
@@ -200,10 +280,10 @@ export const parsePeImports = async (
     assertArtifactReadActive(signal);
   };
 
-  const cString = (rva: number): string => {
+  const cString = async (rva: number): Promise<string> => {
     requireRva(rva, 1);
-    const raw = lookup.readCString(
-      bytes,
+    const raw = await lookup.readCStringFromReader(
+      (offset, length) => reader.readRange(offset, length),
       base + BigInt(rva),
       Math.min(MAXIMUM_NAME_BYTES, PE_RVA_END - rva - 1),
     );
@@ -227,9 +307,12 @@ export const parsePeImports = async (
     return raw.toString("latin1");
   };
 
-  const readName = (rva: number, label: string): string | null => {
+  const readName = async (
+    rva: number,
+    label: string,
+  ): Promise<string | null> => {
     try {
-      const name = cString(rva);
+      const name = await cString(rva);
       retain(name);
       return name;
     } catch (cause) {
@@ -256,7 +339,7 @@ export const parsePeImports = async (
       if (!admitRva(nameRva, thunkWidth, "Import lookup table")) break;
       let thunk: bigint;
       try {
-        thunk = reader.word(map(nameRva, thunkWidth), bits);
+        thunk = await reader.word(map(nameRva, thunkWidth), bits);
       } catch (cause) {
         issues.push({
           code: "thunk_unreadable",
@@ -295,8 +378,8 @@ export const parsePeImports = async (
         // The two-byte hint and the separately mapped name may occupy adjacent
         // RVA sections with different file translations.
         const hintAt = map(hintNameRva, 2);
-        const hint = reader.u16(hintAt);
-        const name = cString(hintNameRva + 2);
+        const hint = await reader.u16(hintAt);
+        const name = await cString(hintNameRva + 2);
         retain(name);
         functions.push({
           hint,
@@ -322,7 +405,10 @@ export const parsePeImports = async (
   // entries only until the cap) to know when its import hash covers a prefix.
   let pefileThunkReads = 0;
   let pefileTruncatedDescriptor: number | null = null;
-  const pefileTableWalk = (rva: number, entries: number | null): number => {
+  const pefileTableWalk = async (
+    rva: number,
+    entries: number | null,
+  ): Promise<number> => {
     if (entries !== null) {
       const remaining = PEFILE_MAX_IMPORT_SYMBOLS + 1 - pefileThunkReads;
       if (remaining <= 0) return 0;
@@ -344,24 +430,25 @@ export const parsePeImports = async (
       }
       const zero =
         width === 4
-          ? reader.u32(offset) === 0
-          : reader.u32(offset) === 0 && reader.u32(offset + 4) === 0;
+          ? (await reader.u32(offset)) === 0
+          : (await reader.u32(offset)) === 0 &&
+            (await reader.u32(offset + 4)) === 0;
       if (zero) break;
       processed += 1;
     }
     return processed;
   };
-  const replayPefileSymbolCap = (
+  const replayPefileSymbolCap = async (
     index: number,
     originalFirstThunk: number,
     firstThunk: number,
     entries: number,
-  ): void => {
+  ): Promise<void> => {
     const table =
       originalFirstThunk === 0
-        ? pefileTableWalk(firstThunk, entries)
-        : pefileTableWalk(originalFirstThunk, entries);
-    if (originalFirstThunk !== 0) pefileTableWalk(firstThunk, null);
+        ? await pefileTableWalk(firstThunk, entries)
+        : await pefileTableWalk(originalFirstThunk, entries);
+    if (originalFirstThunk !== 0) await pefileTableWalk(firstThunk, null);
     if (table < entries) pefileTruncatedDescriptor ??= index;
   };
 
@@ -403,11 +490,11 @@ export const parsePeImports = async (
       );
       if (descriptor === null) break;
       consume(spans, descriptor, IMPORT_DESCRIPTOR_BYTES);
-      const originalFirstThunk = reader.u32(descriptor);
-      const timeDateStamp = reader.u32(descriptor + 4);
-      const forwarderChain = reader.u32(descriptor + 8);
-      const nameRva = reader.u32(descriptor + 12);
-      const firstThunk = reader.u32(descriptor + 16);
+      const originalFirstThunk = await reader.u32(descriptor);
+      const timeDateStamp = await reader.u32(descriptor + 4);
+      const forwarderChain = await reader.u32(descriptor + 8);
+      const nameRva = await reader.u32(descriptor + 12);
+      const firstThunk = await reader.u32(descriptor + 16);
       if (
         originalFirstThunk === 0 &&
         timeDateStamp === 0 &&
@@ -418,7 +505,7 @@ export const parsePeImports = async (
         break;
       examinedDlls += 1;
       dllBudget(examinedDlls, input.max_dlls);
-      const name = readName(nameRva, "Import descriptor DLL name");
+      const name = await readName(nameRva, "Import descriptor DLL name");
       const functions =
         firstThunk === 0
           ? missingTable(
@@ -432,7 +519,7 @@ export const parsePeImports = async (
               firstThunk,
             );
       if (firstThunk !== 0)
-        replayPefileSymbolCap(
+        await replayPefileSymbolCap(
           index,
           originalFirstThunk,
           firstThunk,
@@ -489,14 +576,14 @@ export const parsePeImports = async (
       );
       if (descriptor === null) break;
       consume(spans, descriptor, DELAY_DESCRIPTOR_BYTES);
-      const attributes = reader.u32(descriptor);
-      const nameRva = reader.u32(descriptor + 4);
-      const moduleHandleRva = reader.u32(descriptor + 8);
-      const importAddressTableRva = reader.u32(descriptor + 12);
-      const importNameTableRva = reader.u32(descriptor + 16);
-      const boundImportRva = reader.u32(descriptor + 20);
-      const unloadInformationTableRva = reader.u32(descriptor + 24);
-      const timeDateStamp = reader.u32(descriptor + 28);
+      const attributes = await reader.u32(descriptor);
+      const nameRva = await reader.u32(descriptor + 4);
+      const moduleHandleRva = await reader.u32(descriptor + 8);
+      const importAddressTableRva = await reader.u32(descriptor + 12);
+      const importNameTableRva = await reader.u32(descriptor + 16);
+      const boundImportRva = await reader.u32(descriptor + 20);
+      const unloadInformationTableRva = await reader.u32(descriptor + 24);
+      const timeDateStamp = await reader.u32(descriptor + 28);
       if (
         attributes === 0 &&
         nameRva === 0 &&
@@ -519,7 +606,7 @@ export const parsePeImports = async (
         });
         continue;
       }
-      const name = readName(nameRva, "Delay-load DLL name");
+      const name = await readName(nameRva, "Delay-load DLL name");
       delayImports.push({
         index,
         name,
@@ -573,7 +660,7 @@ export const parsePeImports = async (
       truncatedDescriptor: pefileTruncatedDescriptor,
       bits,
       directoryRva: importDirectory?.address ?? 0,
-      fileBytes: bytes.length,
+      fileBytes: reader.fileSize,
     }),
     coverage: coverage(
       issues,
@@ -584,4 +671,42 @@ export const parsePeImports = async (
     issues,
     limitations,
   };
+};
+
+/**
+ * Read PE import and delay-load directories without executing the image.
+ * Yields to the event loop and honors cancellation every
+ * `ENTRIES_PER_YIELD` descriptors or thunks.
+ */
+export const parsePeImports = async (
+  bytes: Buffer,
+  artifact: Artifact,
+  input: InspectPeImportsInput,
+  signal?: AbortSignal,
+): Promise<PeImports> => {
+  assertArtifactReadActive(signal);
+  return parsePeImportsCore(
+    readPeImage(bytes),
+    createBufferPeImportReader(bytes),
+    artifact,
+    input,
+    signal,
+  );
+};
+
+/** Read PE import and delay-load directories positionally over a bounded file handle. */
+export const parsePeImportsFromHandle = async (
+  source: PeImportByteSource,
+  artifact: Artifact,
+  input: InspectPeImportsInput,
+  signal?: AbortSignal,
+): Promise<PeImports> => {
+  assertArtifactReadActive(signal);
+  const reader = createHandlePeImportReader(source);
+  const image = await readPeImageFromReader({
+    size: source.size,
+    prefix: source.prefix,
+    readRange: (offset, length) => reader.readRange(offset, length),
+  });
+  return parsePeImportsCore(image, reader, artifact, input, signal);
 };

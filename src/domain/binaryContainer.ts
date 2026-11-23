@@ -719,6 +719,8 @@ export const createFileMappingIndex = (
     prefix,
     readCString: (bytes, address, maximumBytes) =>
       readMappedString(bytes, access, address, maximumBytes),
+    readCStringFromReader: (readRange, address, maximumBytes) =>
+      readMappedStringFromReader(readRange, access, address, maximumBytes),
   };
 };
 
@@ -737,6 +739,11 @@ export interface FileMappingIndex {
     address: bigint,
     maximumBytes: number,
   ) => Buffer;
+  readonly readCStringFromReader: (
+    readRange: (offset: number, length: number) => Promise<Buffer>,
+    address: bigint,
+    maximumBytes: number,
+  ) => Promise<Buffer>;
 }
 
 interface MappedStringAccess {
@@ -793,6 +800,45 @@ const readMappedString = (
     );
     const offset = mapping.offset + Number(cursor - mapping.address);
     const chunk = bytes.subarray(offset, offset + size);
+    const terminator = chunk.indexOf(0);
+    const consumed = terminator < 0 ? size : terminator + 1;
+    access.offset(cursor, consumed);
+    if (terminator >= 0) {
+      const tail = chunk.subarray(0, terminator);
+      if (chunks.length === 0) return tail;
+      chunks.push(tail);
+      return Buffer.concat(chunks, length + terminator);
+    }
+    chunks.push(chunk);
+    length += size;
+  }
+  throw binaryStringReadLimit(maximumBytes);
+};
+
+const readMappedStringFromReader = async (
+  readRange: (offset: number, length: number) => Promise<Buffer>,
+  access: MappedStringAccess,
+  address: bigint,
+  maximumBytes: number,
+): Promise<Buffer> => {
+  const chunks: Buffer[] = [];
+  let length = 0;
+  while (length <= maximumBytes) {
+    const cursor = address + BigInt(length);
+    const mapping = access.mappingAt(cursor);
+    if (mapping === undefined) {
+      access.offset(cursor, 1);
+      throw new BinaryMappingFailure(
+        "unmapped",
+        "String range is not file mapped",
+      );
+    }
+    const size = Math.min(
+      maximumBytes + 1 - length,
+      Number(mapping.address + BigInt(mapping.size) - cursor),
+    );
+    const offset = mapping.offset + Number(cursor - mapping.address);
+    const chunk = await readRange(offset, size);
     const terminator = chunk.indexOf(0);
     const consumed = terminator < 0 ? size : terminator + 1;
     access.offset(cursor, consumed);
