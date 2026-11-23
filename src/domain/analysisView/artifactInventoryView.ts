@@ -81,6 +81,15 @@ export const artifactInventoryViewRequestSchema = z.discriminatedUnion(
         .describe(
           'Whole-path globs over recorded logical paths, any of which may match: * and ? stay within one segment, a ** segment spans segments, e.g. ["lib/*/*.so"], ["META-INF/*"], ["*"] for root entries, ["assets/**"] for everything below; [] matches none. "." names the container itself and never matches.',
         ),
+      order_by: z
+        .strictObject({
+          field: z.enum(["declared_size", "compressed_size"]),
+          direction: z.enum(["ascending", "descending"]),
+        })
+        .optional()
+        .describe(
+          'Order selected rows by size before paging; unknown sizes come last and ties keep inventory order. Omit for inventory order. The container itself (".") is a sized row; add path_globs ["**"] to rank only its entries.',
+        ),
       fields: z.array(artifactOccurrenceSchema.keyof()).optional(),
     }),
     z.strictObject({
@@ -436,7 +445,11 @@ export const projectArtifactInventoryView = (
 
 const occurrencePage = (source: InventorySource, view: OccurrenceView) => {
   const rows = source.inventory.occurrences;
-  const indices = occurrenceIndices(source, view);
+  const selected = occurrenceIndices(source, view);
+  const indices =
+    view.order_by === undefined
+      ? selected
+      : sizeOrder(rows, selected, view.order_by);
   const total = indices?.length ?? rows.length;
   const items = [];
   for (
@@ -446,6 +459,23 @@ const occurrencePage = (source: InventorySource, view: OccurrenceView) => {
   )
     items.push(selectOccurrenceFields(rows[indices?.[at] ?? at]!, view.fields));
   return { items, total };
+};
+
+/** Stable size order; unknown sizes follow known ones in either direction. */
+const sizeOrder = (
+  rows: readonly ArtifactOccurrence[],
+  selected: number[] | undefined,
+  order: NonNullable<OccurrenceView["order_by"]>,
+): number[] => {
+  const sign = order.direction === "ascending" ? 1 : -1;
+  return (selected ?? rows.map((_, index) => index)).sort((left, right) => {
+    const a = rows[left]![order.field];
+    const b = rows[right]![order.field];
+    if (a === b) return left - right;
+    if (a === null) return 1;
+    if (b === null) return -1;
+    return (a - b) * sign;
+  });
 };
 
 const nodePage = (

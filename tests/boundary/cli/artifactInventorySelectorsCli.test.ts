@@ -171,3 +171,47 @@ cliTest("selects inventory occurrences by path glob", async ({ cli }) => {
   expect(refused.exitCode).not.toBe(0);
   expect(JSON.stringify(refused.json)).toContain('"path_globs",0');
 });
+
+cliTest(
+  "orders inventory occurrences by size before paging",
+  async ({ cli }) => {
+    const { view } = await layeredInventory(cli, "rea-inventory-order-cli-");
+    const ordered = (
+      direction: "ascending" | "descending",
+      page: Record<string, unknown> = {},
+    ) =>
+      view({
+        fields: sizeFields,
+        path_globs: ["**"],
+        order_by: { field: "declared_size", direction },
+        ...page,
+      });
+
+    // Ties keep inventory order and the directory's unknown size comes last in
+    // either direction.
+    const largest = await ordered("descending", { offset: 0, limit: 3 });
+    expect(largest.items).toEqual([
+      expect.objectContaining({
+        logical_path: "lib/x86_64/libbig.so",
+        declared_size: 500,
+      }),
+      expect.objectContaining({
+        logical_path: "lib/x86_64/deep/libdeep.so",
+        declared_size: 400,
+      }),
+      expect.objectContaining({
+        logical_path: "assets/a/b.txt",
+        declared_size: 200,
+      }),
+    ]);
+    expect(largest.coverage).toMatchObject({ total: 8, next_offset: 3 });
+    expect(paths(await ordered("descending", { offset: 3, limit: 1 }))).toEqual(
+      ["assets/c.txt"],
+    );
+    const descending = paths(await ordered("descending"));
+    const ascending = paths(await ordered("ascending"));
+    expect(descending.at(-1)).toBe("lib");
+    expect(ascending[0]).toBe("assets.txt");
+    expect(ascending.at(-1)).toBe("lib");
+  },
+);
