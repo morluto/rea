@@ -973,14 +973,19 @@ function* readRebaseStreamSteps(
     )
       throw malformedInput("macho", "Rebase location exceeds the source file");
     const fact = type === 1 ? REBASE_POINTER : REBASE_NON_POINTER;
-    const admitted =
-      count < BigInt(index.workRemaining) ? count : BigInt(index.workRemaining);
-    for (let indexOffset = 0n; indexOffset < admitted; indexOffset++) {
-      const fileOffset = Number(firstFileOffset + indexOffset * stride);
+    const budget = BigInt(index.workRemaining);
+    const admitted = count < budget ? count : budget;
+    // Every emitted offset fits the Buffer. A stride between two admitted
+    // offsets fits too. Keep the post-run cursor in uint64 arithmetic.
+    const fileStride = admitted > 1n ? Number(stride) : 0;
+    const visitsToMark = Number(admitted);
+    let fileOffset = Number(firstFileOffset);
+    for (let visit = 0; visit < visitsToMark; visit++) {
       markRebaseLocation(index, fileOffset, fact, bytes.length);
+      fileOffset += fileStride;
       if (++visits % 4096 === 0) yield;
     }
-    index.workRemaining -= Number(admitted);
+    index.workRemaining -= visitsToMark;
     if (admitted < count)
       throw malformedInput(
         "macho",
