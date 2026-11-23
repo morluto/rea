@@ -93,6 +93,7 @@
 * **capture:** retain credential checks across MIME conflicts ([#13209](https://github.com/morluto/rea/issues/13209)) ([6152c02](https://github.com/morluto/rea/commit/6152c02f3f384723f6fac2470b380b682e1c6387))
 * **capture:** surface unsupported decoder requirements ([#13203](https://github.com/morluto/rea/issues/13203)) ([088bc68](https://github.com/morluto/rea/commit/088bc68b1cbddb11b7432e7541ba66f47409abf2))
 * **ci/tests:** bound untyped oxlint threads and fail fast on terminal POSIX poll errors ([#13447](https://github.com/morluto/rea/issues/13447)) ([07df0f1](https://github.com/morluto/rea/commit/07df0f1c04779a54f0a2b84233a3e3b9638fca4d))
+* **ci:** bind timing evidence to its workflow attempt ([#14080](https://github.com/morluto/rea/issues/14080)) ([bc19c8d](https://github.com/morluto/rea/commit/bc19c8d21fbe26be280db55faae92bac2c12c20e))
 * **ci:** check the MCP SDK validator option in its constructor slot ([#13266](https://github.com/morluto/rea/issues/13266)) ([411e78e](https://github.com/morluto/rea/commit/411e78ea64355320c034f40ea0fda6c089255b28))
 * **ci:** close static-check cache gaps and prune stale settings ([#14017](https://github.com/morluto/rea/issues/14017)) ([5817ebb](https://github.com/morluto/rea/commit/5817ebb288612f5aa364398ec1d5e70006888203))
 * **ci:** fall back to Ubuntu Azure archive in recorded-crash container ([#14061](https://github.com/morluto/rea/issues/14061)) ([d02be92](https://github.com/morluto/rea/commit/d02be9207e3060c882273b526a5d7acb2522c781))
