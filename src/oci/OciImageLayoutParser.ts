@@ -896,6 +896,7 @@ const unverifiedBlobPath = (digest: string): string | undefined => {
 /** What the directory listing establishes about one blob path. */
 type BlobLookup =
   | { readonly state: "listed"; readonly entry: DirectoryArtifactEntry }
+  | { readonly state: "omitted"; readonly omission: ArtifactTraversalOmission }
   | { readonly state: "unexamined"; readonly via: string }
   | { readonly state: "missing" };
 
@@ -1025,12 +1026,17 @@ const inventoryOciImageLayout = async (
 
   const byPath = new Map<string, DirectoryArtifactEntry>();
   for (const entry of entries) byPath.set(entry.path, entry);
-  // A blob under a symlinked blobs or blobs/<algorithm> directory was never
-  // listed, so its absence from the listing proves nothing. Every blob
-  // lookup goes through here so unexamined blobs never read as missing.
+  const omittedByPath = new Map<string, ArtifactTraversalOmission>();
+  for (const omission of omitted) omittedByPath.set(omission.path, omission);
+  // A blob omitted as a non-regular entry was observed by the reader and must
+  // not read as missing. A blob under a symlinked blobs or blobs/<algorithm>
+  // directory was never listed, so its absence from the listing proves nothing.
+  // Every blob lookup goes through here so neither reads as missing.
   const lookupBlob = (path: string): BlobLookup => {
     const entry = byPath.get(path);
     if (entry !== undefined) return { state: "listed", entry };
+    const omission = omittedByPath.get(path);
+    if (omission !== undefined) return { state: "omitted", omission };
     const parts = path.split("/");
     for (let depth = 1; depth < parts.length; depth += 1) {
       const ancestor = parts.slice(0, depth).join("/");
@@ -1348,6 +1354,16 @@ const inventoryOciImageLayout = async (
       );
       return undefined;
     }
+    if (lookup.state === "omitted") {
+      recordFinding(
+        findings,
+        "missing_blob",
+        `Referenced blob ${digest} is not a regular file.`,
+        digest,
+        path,
+      );
+      return undefined;
+    }
     if (lookup.state === "missing") {
       recordFinding(
         findings,
@@ -1492,8 +1508,11 @@ const inventoryOciImageLayout = async (
     const lookup = lookupBlob(path);
     // An unexamined subject may exist and name further blobs, so the walk
     // can no longer prove which blobs nothing references.
-    if (lookup.state === "unexamined") referenceGraphTruncated = true;
-    if (lookup.state !== "listed") return;
+    if (lookup.state === "unexamined") {
+      referenceGraphTruncated = true;
+      return;
+    }
+    if (lookup.state === "missing") return;
     remember(descriptor.digest, descriptor.media_type, descriptor.size);
     if (!isOciKnownMediaType(descriptor.media_type)) {
       // A present opaque subject is not walked, so whatever it references is
@@ -1782,12 +1801,12 @@ const inventoryOciImageLayout = async (
         parsed === undefined
           ? unverifiedBlobPath(descriptor.digest)
           : ociBlobPath(parsed);
-      const entry = path === undefined ? undefined : byPath.get(path);
+      const lookup = path === undefined ? undefined : lookupBlob(path);
       layers.push({
         media_type: descriptor.media_type,
         digest: descriptor.digest,
         size: descriptor.size,
-        present: entry?.kind === "file",
+        present: lookup?.state === "listed" && lookup.entry.kind === "file",
       });
     }
     let configFacts = EMPTY_CONFIG_FACTS;
@@ -1997,6 +2016,13 @@ const inventoryOciImageLayout = async (
             digest,
             path,
           );
+        else if (lookup?.state === "omitted")
+          recordFindingOnce(
+            "missing_blob",
+            `Referenced blob ${digest} is not a regular file.`,
+            digest,
+            path,
+          );
         else if (entry === undefined)
           recordFindingOnce(
             "missing_blob",
@@ -2029,13 +2055,15 @@ const inventoryOciImageLayout = async (
           true,
           lookup?.state === "unexamined"
             ? "symlink"
-            : entry === undefined
-              ? "missing"
-              : entry.kind === "file"
-                ? "file"
-                : entry.kind === "symlink"
-                  ? "symlink"
-                  : "other",
+            : lookup?.state === "omitted"
+              ? "other"
+              : entry === undefined
+                ? "missing"
+                : entry.kind === "file"
+                  ? "file"
+                  : entry.kind === "symlink"
+                    ? "symlink"
+                    : "other",
           {
             present: entry?.kind === "file",
             observed_size: entry?.kind === "file" ? entry.declaredSize : null,
@@ -2062,6 +2090,26 @@ const inventoryOciImageLayout = async (
           reference.declaredSize,
           true,
           "symlink",
+          { present: false },
+        ),
+      );
+      continue;
+    }
+    if (lookup.state === "omitted") {
+      recordFindingOnce(
+        "missing_blob",
+        `Referenced blob ${digest} is not a regular file.`,
+        digest,
+        path,
+      );
+      blobs.push(
+        blobRecord(
+          digest,
+          path,
+          reference.mediaType,
+          reference.declaredSize,
+          true,
+          "other",
           { present: false },
         ),
       );

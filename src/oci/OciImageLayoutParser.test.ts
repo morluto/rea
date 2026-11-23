@@ -2213,6 +2213,104 @@ it("keeps unknown coverage when the reader omits a non-file blob entry", async (
   }
 });
 
+it("classifies referenced blobs reported via onOmission as non-regular entries rather than missing", async () => {
+  const root = await createTestTempDirectory("rea-oci-omitted-referenced-");
+  const written = await writeOciImageLayoutFixture(root);
+  const parsedLayer = parseOciDigest(written.layerDigest);
+  const parsedConfig = parseOciDigest(written.configDigest);
+  if (parsedLayer === undefined || parsedConfig === undefined)
+    throw new Error("expected sha256 layer and config digests");
+  const layerPath = `blobs/${parsedLayer.algorithm}/${parsedLayer.hex}`;
+  const configPath = `blobs/${parsedConfig.algorithm}/${parsedConfig.hex}`;
+  const omittedPaths = new Set([layerPath, configPath]);
+  const openedPaths: string[] = [];
+
+  class OmittingReferencedBlobReader extends DirectoryArtifactReader {
+    override async *entries(
+      ...args: Parameters<DirectoryArtifactReader["entries"]>
+    ): ReturnType<DirectoryArtifactReader["entries"]> {
+      const [signal, selection] = args;
+      const options =
+        typeof selection === "function"
+          ? { descendInto: selection }
+          : selection;
+      for await (const entry of super.entries(signal, options)) {
+        if (omittedPaths.has(entry.path)) {
+          options?.onOmission?.({ path: entry.path, kind: "fifo" });
+          continue;
+        }
+        yield entry;
+      }
+    }
+
+    override open(
+      ...args: Parameters<DirectoryArtifactReader["open"]>
+    ): ReturnType<DirectoryArtifactReader["open"]> {
+      openedPaths.push(args[0].path);
+      return super.open(...args);
+    }
+
+    override inspectFile<Value>(
+      entry: Parameters<DirectoryArtifactReader["inspectFile"]>[0],
+      inspect: (file: FileHandle) => Promise<Value>,
+      signal?: AbortSignal,
+    ): Promise<Value> {
+      openedPaths.push(entry.path);
+      return super.inspectFile(entry, inspect, signal);
+    }
+  }
+
+  const reader = new OmittingReferencedBlobReader(root);
+  try {
+    const report = ociImageLayoutSchema.parse(
+      await parseOciImageLayout(
+        reader,
+        inspectOciImageLayoutInputSchema.parse({ path: root }),
+      ),
+    );
+    expect(report.images[0]?.layers[0]).toMatchObject({
+      digest: written.layerDigest,
+      present: false,
+    });
+    for (const [digest, path] of [
+      [written.layerDigest, layerPath],
+      [written.configDigest, configPath],
+    ] as const) {
+      expect(report.blobs.find((blob) => blob.digest === digest)).toMatchObject(
+        {
+          kind: "other",
+          present: false,
+          hashed: false,
+          referenced: true,
+        },
+      );
+      expect(
+        report.findings.filter((finding) => finding.digest === digest),
+      ).toEqual([
+        {
+          kind: "missing_blob",
+          digest,
+          path,
+          message: `Referenced blob ${digest} is not a regular file.`,
+        },
+      ]);
+    }
+    expect(
+      report.findings.some((finding) => finding.message.includes("is missing")),
+    ).toBe(false);
+    expect(openedPaths).not.toContain(layerPath);
+    expect(openedPaths).not.toContain(configPath);
+    expect(report.coverage.status).toBe("unknown");
+    expect(
+      report.limitations.some((limitation) =>
+        limitation.includes("Directory traversal omitted 2 entries"),
+      ),
+    ).toBe(true);
+  } finally {
+    await reader.close();
+  }
+});
+
 it("keeps a reader failure on a referenced blob instead of a JSON finding", async () => {
   const root = await createTestTempDirectory("rea-oci-blob-close-");
   const written = await writeOciImageLayoutFixture(root);
