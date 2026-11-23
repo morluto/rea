@@ -175,7 +175,7 @@ cliTest(
   },
 );
 
-cliTest("reports a truncated image as invalid input", async ({ cli }) => {
+cliTest("reports a truncated image as a malformed target", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-native-init-cli-bad-");
   const path = join(root, "broken");
   await writeFile(path, Buffer.from("\x7fELF"));
@@ -184,8 +184,12 @@ cliTest("reports a truncated image as invalid input", async ({ cli }) => {
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_native_initializers" },
+    code: "unsupported_target",
+    details: {
+      operation: "inspect_native_initializers",
+      path,
+      format_failure: "malformed",
+    },
   });
 });
 
@@ -196,7 +200,7 @@ cliTest.for([
     name: "short partial row",
     size: 33,
     backed: true,
-    code: "invalid_request",
+    code: "unsupported_target",
   },
   {
     name: "oversized unbacked declaration",

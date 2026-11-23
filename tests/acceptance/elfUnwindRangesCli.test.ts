@@ -69,7 +69,7 @@ cliTest(
   },
 );
 
-cliTest("reports a non-ELF file as invalid input", async ({ cli }) => {
+cliTest("reports a non-ELF file as a malformed target", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-elf-unwind-cli-bad-");
   const path = join(root, "broken");
   await writeFile(path, Buffer.from("not an elf"));
@@ -78,8 +78,12 @@ cliTest("reports a non-ELF file as invalid input", async ({ cli }) => {
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_elf_unwind_ranges" },
+    code: "unsupported_target",
+    details: {
+      operation: "inspect_elf_unwind_ranges",
+      path,
+      format_failure: "malformed",
+    },
   });
 });
 

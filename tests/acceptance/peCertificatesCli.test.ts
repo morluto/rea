@@ -405,7 +405,7 @@ cliTest(
   },
 );
 
-cliTest("reports a truncated PE as invalid input", async ({ cli }) => {
+cliTest("reports a truncated PE as a malformed target", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-pe-cert-cli-bad-");
   const path = join(root, "broken.exe");
   await writeFile(path, Buffer.from("MZ"));
@@ -414,8 +414,12 @@ cliTest("reports a truncated PE as invalid input", async ({ cli }) => {
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_pe_certificates" },
+    code: "unsupported_target",
+    details: {
+      operation: "inspect_pe_certificates",
+      path,
+      format_failure: "malformed",
+    },
   });
 });
 

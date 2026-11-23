@@ -128,7 +128,7 @@ cliTest(
   },
 );
 
-cliTest("reports a non-ELF file as invalid input", async ({ cli }) => {
+cliTest("reports a non-ELF file as a malformed target", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-elf-dependencies-cli-bad-");
   const path = join(root, "broken");
   await writeFile(path, Buffer.from("not an elf"));
@@ -137,8 +137,12 @@ cliTest("reports a non-ELF file as invalid input", async ({ cli }) => {
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_elf_dependencies" },
+    code: "unsupported_target",
+    details: {
+      operation: "inspect_elf_dependencies",
+      path,
+      format_failure: "malformed",
+    },
   });
 });
 
