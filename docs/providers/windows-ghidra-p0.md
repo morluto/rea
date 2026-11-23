@@ -62,6 +62,38 @@ fixtures have no entry routine or imports and expose two exported functions.
 The same native snapshot, path-admission and cleanup requirements apply to EXEs
 and DLLs.
 
+## ELF and Mach-O targets on Windows
+
+Windows Ghidra P0 admits native PE, DOS MZ, and explicitly selected raw
+NMOS 6502 targets only. An ELF or Mach-O target is refused at provider
+selection with `target_format_unsupported` and the reason
+"Windows Ghidra P0 accepts native PE, DOS MZ, and explicitly selected raw
+6502 targets only." Every candidate provider then rejects or reports
+unavailable: Hopper is unsupported on Windows, and IDA and Kuna are not
+configured. `rea doctor` reports the Ghidra installation healthy, so the
+rejection is the P0 admission boundary, not a broken setup.
+
+This is not a missing prerequisite that setup can repair. Ghidra itself
+analyzes ELF and Mach-O on a Windows host; only REA's Windows launch path
+does not admit those formats. Two host-local fallbacks analyze the target
+without changing the P0 boundary:
+
+- **Headless Ghidra on the same Windows host.** The caller-installed Ghidra
+  distribution runs `support/analyzeHeadless.bat` directly with a pre- or
+  post-script that exports decompiled C through `DecompInterface`. This keeps
+  the analysis on Windows and needs no second environment. Import selects the
+  ELF or Mach-O loader and language automatically.
+- **WSL2.** Install Ghidra and a supported 64-bit JDK inside WSL2, set
+  `GHIDRA_INSTALL_DIR` there, and run the analysis from the WSL2 shell, where
+  the Linux/macOS Ghidra provider covers these formats.
+
+Neither route is wired through a REA provider on Windows. Widening P0 to admit
+ELF or Mach-O natively requires extending the native process, filesystem, and
+DACL controls verified for PE to those formats, and is a separate design
+decision tracked in
+[#5243](https://github.com/morluto/rea/issues/5243). Until then, use one of the
+host-local fallbacks above.
+
 ## Configuration
 
 ```powershell
