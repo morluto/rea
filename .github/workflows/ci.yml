@@ -90,6 +90,7 @@ jobs:
       test_selection: ${{ steps.plan.outputs.test_selection }}
       test_mode: ${{ steps.plan.outputs.test_mode }}
       test_shards: ${{ steps.plan.outputs.test_shards }}
+      typed_lint_files: ${{ steps.plan.outputs.typed_lint_files }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -191,6 +192,14 @@ jobs:
         run: npm run ci:static-context
       - if: needs.changes.outputs.code == 'true'
         run: npm run check:ci:fast
+      - name: Run typed lint on changed files
+        if: >-
+          needs.changes.outputs.tier == 'fast' &&
+          needs.changes.outputs.code == 'true' &&
+          needs.changes.outputs.typed_lint_files != '[]'
+        env:
+          CI_TYPED_LINT_FILES: ${{ needs.changes.outputs.typed_lint_files }}
+        run: node scripts/ci/static-check-report.mjs typed-lint-changed
       - if: needs.changes.outputs.code != 'true'
         run: npm run format:check
       - name: Save validated static task cache

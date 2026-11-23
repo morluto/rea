@@ -5,7 +5,6 @@ import type {
 import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
 import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
-import type { NativeByteSource } from "../domain/native/nativeSectionDirectory.js";
 import { readBinaryContainerFromReader } from "../domain/native/readBinaryContainer.js";
 import type {
   RustAuditableMetadata,
@@ -26,6 +25,7 @@ import {
   hasWasmPreamble,
   readRustWasmSectionsFromReader,
 } from "./RustWasmImage.js";
+import type { ByteSource } from "../domain/byteSource.js";
 
 const RUSTC_PREFIX = Buffer.from("/rustc/");
 const HASH_BYTES = 40;
@@ -67,7 +67,7 @@ interface RustImageLayout extends Pick<
 }
 
 const readSlice = (
-  source: NativeByteSource,
+  source: ByteSource,
   offset: number,
   length: number,
 ): Promise<Buffer> => {
@@ -81,7 +81,7 @@ const readSlice = (
 
 /** Stream Rust dependency and compiler-path inspection over a range reader. */
 export const readRustBinaryImageFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   maxRustcHashes: number | undefined,
   maxOutputBytes: number | undefined,
   pause: ZstandardFramePause,
@@ -128,7 +128,7 @@ export const readRustBinaryImageFromHandle = async (
 };
 
 const wasmLayoutFromReader = async (
-  source: NativeByteSource,
+  source: ByteSource,
   pause: ZstandardFramePause,
 ): Promise<RustImageLayout> => {
   const { dependency_sections, data_section } =
@@ -146,7 +146,7 @@ const wasmLayoutFromReader = async (
 };
 
 const rustcCommitFromReader = async (
-  source: NativeByteSource,
+  source: ByteSource,
   spans: readonly FileSpan[],
   maxHashes: number,
   maxOutputBytes: number,

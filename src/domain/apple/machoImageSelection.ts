@@ -1,6 +1,5 @@
 import { err, ok, type Result } from "../result.js";
 import { BinaryReader } from "../binaryContainer.js";
-import type { NativeByteSource } from "../native/nativeSectionDirectory.js";
 import {
   classifyFatContainerEvidence,
   fatSliceOverlapReason,
@@ -12,6 +11,7 @@ import {
   type FatSliceDeclaration,
   type MachoHeaderPrefixFacts,
 } from "./machoContainer.js";
+import type { ByteSource } from "../byteSource.js";
 
 type UniversalMachoHeader = Extract<FatContainerHeader, { state: "parsed" }>;
 interface MachoImageSelectionFailure {
@@ -64,7 +64,7 @@ export const readUniversalMachoSlice = (
 };
 
 const readSourceSlice = (
-  source: NativeByteSource,
+  source: ByteSource,
   offset: number,
   length: number,
 ): Promise<Buffer> => {
@@ -81,7 +81,7 @@ const readSourceSlice = (
  * slice payloads; returns both the parsed header and the raw container table bytes.
  */
 export const readUniversalMachoImageFromReader = async (
-  source: NativeByteSource,
+  source: ByteSource,
 ): Promise<
   Result<
     {
@@ -152,7 +152,7 @@ export const readUniversalMachoImageFromReader = async (
 
 /** Validate one FAT slice by reading only its 16-byte Mach-O header prefix. */
 export const validateUniversalMachoSliceFromReader = async (
-  source: NativeByteSource,
+  source: ByteSource,
   header: UniversalMachoHeader,
   slice: FatSliceDeclaration,
 ): Promise<Result<void, MachoImageSelectionFailure>> => {

@@ -24,9 +24,9 @@ import {
   type BinaryContainer,
 } from "../../domain/binaryContainer.js";
 import { readElfImageFromReader } from "../../domain/native/elfImage.js";
-import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
+import type { ByteSource } from "../../domain/byteSource.js";
 
 type ElfSection = Extract<ImageSection, { format: "elf" }>;
 type Report = KernelModule;
@@ -485,7 +485,7 @@ const parseSignatureTrailer = (
 };
 
 const readSourceRange = async (
-  source: NativeByteSource,
+  source: ByteSource,
   offset: number,
   length: number,
 ): Promise<Buffer> => {
@@ -503,7 +503,7 @@ const readSourceRange = async (
 };
 
 const parseSignatureFromSource = async (
-  source: NativeByteSource,
+  source: ByteSource,
   signal: AbortSignal | undefined,
 ): Promise<Report["signature"]> => {
   const tailLen = Math.min(
@@ -805,7 +805,7 @@ const finalizeKernelModule = (
 
 /** Decode kernel-module metadata positionally over a bounded file handle. */
 export const parseKernelModuleFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   artifact: Report["artifact"],
   input: InspectKernelModuleInput,
   signal?: AbortSignal,

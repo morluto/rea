@@ -18,25 +18,19 @@ import {
   nonConfigGzipFixture,
   truncatedKernelConfigFixture,
 } from "../../native/elf/KernelBuildConfig.fixture.js";
-import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
 import { parseKernelBuildConfigFromHandle } from "../../native/elf/KernelBuildConfig.js";
+import type { ByteSource } from "../../domain/byteSource.js";
+import { bufferByteSource } from "../../domain/byteSource.js";
 
 const identity = KERNEL_BUILD_CONFIG_PROVIDER;
 const path = "/artifacts/vmlinux";
-
-const bufferSource = (bytes: Buffer): NativeByteSource => ({
-  size: bytes.length,
-  prefix: bytes,
-  readRange: (offset, length) =>
-    Promise.resolve(bytes.subarray(offset, offset + length)),
-});
 
 const reportOf = (
   bytes: Buffer,
   extra: object = {},
 ): Promise<KernelBuildConfig> =>
   parseKernelBuildConfigFromHandle(
-    bufferSource(bytes),
+    bufferByteSource(bytes),
     { path, sha256: "a".repeat(64), bytes: bytes.length },
     inspectKernelBuildConfigInputSchema.parse({ path, ...extra }),
   );

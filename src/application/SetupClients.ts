@@ -13,7 +13,7 @@ export const failedConfigurationMessage = (
 ): string => {
   switch (result.reason) {
     case "plugin":
-      return result.detail;
+    case "invalid_configuration":
     case "registration_ownership":
     case "read_only_override":
       return result.detail;
