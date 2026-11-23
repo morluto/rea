@@ -5,7 +5,7 @@ import {
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
   ArtifactReaderFailure,
-  readStableArtifact,
+  withStableArtifactHandle,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   ArtifactResourceScope,
@@ -13,10 +13,7 @@ import {
 import type { KernelBuildConfigPort } from "../../ports/binaryDiagnostics/KernelBuildConfigPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
-import {
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import {
   MAX_INSPECT_KERNEL_BUILD_CONFIG_CONFIG_BYTES,
   MAX_INSPECT_KERNEL_BUILD_CONFIG_ENTRIES,
@@ -29,10 +26,11 @@ import { err, ok } from "../../domain/result.js";
 import { KERNEL_BUILD_CONFIG_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   KernelBuildConfigBudgetFailure,
-  parseKernelBuildConfig,
+  parseKernelBuildConfigFromHandle,
 } from "./KernelBuildConfig.js";
 
 const OPERATION = "inspect_kernel_build_config";
+const HEADER_PREFIX_BYTES = 4096;
 
 /** Portable parser over one bounded, identity-checked regular file. */
 export class KernelBuildConfigProvider implements KernelBuildConfigPort {
@@ -57,25 +55,31 @@ export class KernelBuildConfigProvider implements KernelBuildConfigPort {
   ) {
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        const report = await withStableArtifactHandle(
           input.path,
           input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
+          {
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
+          },
+          (handle) =>
+            parseKernelBuildConfigFromHandle(
+              {
+                size: handle.size,
+                prefix: handle.prefix,
+                readRange: (offset, length) => handle.readRange(offset, length),
+              },
+              {
+                path: input.path,
+                sha256: handle.sha256,
+                bytes: handle.size,
+              },
+              input,
+              options?.signal,
+            ),
         );
-        return ok(
-          await parseKernelBuildConfig(
-            snapshot.bytes,
-            {
-              path: input.path,
-              sha256: snapshot.sha256,
-              bytes: snapshot.bytes.length,
-            },
-            input,
-            options?.signal,
-          ),
-        );
+        return ok(report);
       });
     } catch (cause) {
       return err(kernelBuildConfigFailure(cause, input));
