@@ -11609,7 +11609,7 @@ msgid ""
 "example."
 msgstr ""
 "Tải file mẫu và giải nén. File nén chứa toàn bộ thư mục {ph0}. Phân tích "
-"bằng {ph1} và npm; bạn không cần cài Electron để chạy ví dụ này."
+"bằng {ph1} và npm; bạn không cần cài Electron để phân tích ví dụ này."
 
 #. {ph0}: <span translate="no">Node.js</span>
 #. {ph1}: <a href="get-started/">
@@ -15117,7 +15117,7 @@ msgstr ""
 "Agent có thể luyện tập tìm lỗi, tạo thư mục hoặc chỉnh sửa bản ghi mà không "
 "cần chạy ứng dụng gốc. REA xây dựng các công cụ để agent gọi, dữ liệu cục bộ"
 " cho các công cụ đó và một bài kiểm tra cơ bản nhằm đảm bảo môi trường khởi "
-"động và phản hồi chính xác."
+"động và phản hồi."
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -15384,8 +15384,8 @@ msgid ""
 msgstr ""
 "Smoke task đi kèm là bài kiểm tra cơ bản. Nó kiểm tra số lượng công cụ và "
 "khi có công cụ đọc phù hợp, nó sẽ gọi và kiểm tra status code của response. "
-"Vượt qua bài test chứng minh môi trường khởi động và phản hồi chính xác "
-"trong cấu hình đó."
+"Vượt qua bài test chứng minh môi trường khởi động và phản hồi trong cấu hình"
+" đó."
 
 #: website/public/guides/rl-environments/index.html:406
 msgctxt "page:guides/rl-environments/index.html"
