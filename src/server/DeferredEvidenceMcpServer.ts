@@ -15,7 +15,7 @@ import {
 } from "./EvidenceMcpServerCore.js";
 import { currentMcpRequestSignal } from "./ErrorEvidenceTransport.js";
 import { promptArgumentsSchema } from "./promptArguments.js";
-import { SERVER_START_FAILED } from "../main/messages.js";
+import { SERVER_START_FAILED } from "./serverStartFailure.js";
 import { isToolFamilyAdvertised } from "../contracts/toolFamilyIds.js";
 import { serverInstructions } from "./serverInstructions.js";
 

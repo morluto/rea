@@ -1,22 +1,22 @@
 import type { Logger } from "pino";
 
-import { captureBrowserScenario } from "./application/BrowserScenarioCaptureService.js";
-import type { BrowserScenarioCapturePort } from "./ports/BrowserScenarioCapturePort.js";
-import { publishCliAnalysisEvidence } from "./cli/analysisEvidenceDelivery.js";
-import { contractNamed } from "./cli/contractCliDescription.js";
-import { registerContractDocumentCommand } from "./cli/contractDocumentCommand.js";
-import { finishAnalysisCommand } from "./cli/finishAnalysisCommand.js";
-import type { CliInstance } from "./cli/types.js";
-import { CLI_COMMANDS } from "./contracts/cliCommandNames.js";
-import { BROWSER_SCENARIO_TOOL_CONTRACTS } from "./contracts/browserScenarioToolContracts.js";
-import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
+import { captureBrowserScenario } from "../application/BrowserScenarioCaptureService.js";
+import type { BrowserScenarioCapturePort } from "../ports/BrowserScenarioCapturePort.js";
+import { publishCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
+import { contractNamed } from "./contractCliDescription.js";
+import { registerContractDocumentCommand } from "./contractDocumentCommand.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import type { CliInstance } from "./types.js";
+import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
+import { BROWSER_SCENARIO_TOOL_CONTRACTS } from "../contracts/browserScenarioToolContracts.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   browserScenarioSchema,
   type BrowserScenario,
-} from "./domain/browserScenario.js";
-import { analysisInputErrorFromIssues } from "./domain/inputIssueProjection.js";
-import type { JsonValue } from "./domain/jsonValue.js";
-import { err, ok, type Result } from "./domain/result.js";
+} from "../domain/browserScenario.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+import { err, ok, type Result } from "../domain/result.js";
 
 const contract = contractNamed(
   BROWSER_SCENARIO_TOOL_CONTRACTS,
@@ -61,7 +61,7 @@ export const registerBrowserScenarioCommands = (
       // Load Playwright only for this command, not during CLI startup.
       const provider =
         options.createProvider === undefined
-          ? await import("./composition/browserScenario.js").then(
+          ? await import("../composition/browserScenario.js").then(
               ({ createBrowserScenarioProvider }) =>
                 createBrowserScenarioProvider(environment),
             )

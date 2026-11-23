@@ -10,7 +10,7 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { modelArtifactSchema } from "../../../src/domain/model/modelArtifact.js";
-import { renderCliDocument } from "../../../src/cliOutput.js";
+import { renderCliDocument } from "../../../src/cli/cliOutput.js";
 import { safetensorsFixture } from "../../fixtures/model/model.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";

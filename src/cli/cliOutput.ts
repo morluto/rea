@@ -3,25 +3,25 @@ import {
   parseCliGlobalArguments,
   VALUED_OUTPUT_FLAGS,
   type CliGlobalArguments,
-} from "./cliBuiltinArguments.js";
-import { redactExplicitText } from "./domain/explicitSensitiveValues.js";
-import { formatCliOutput } from "./cli/cliOutputFormatter.js";
+} from "../cliBuiltinArguments.js";
+import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
+import { formatCliOutput } from "./cliOutputFormatter.js";
 import {
   parseOutputFilter,
   type OutputFilterPath,
   type OutputFilterError,
-} from "./cli/outputFilter.js";
-import type { Result } from "./domain/result.js";
+} from "./outputFilter.js";
+import type { Result } from "../domain/result.js";
 
-import { jsonOutputParts } from "./cli/jsonOutput.js";
-import { jsonLinesErrorRecord } from "./cli/jsonLines.js";
+import { jsonOutputParts } from "./jsonOutput.js";
+import { jsonLinesErrorRecord } from "./jsonLines.js";
 import {
   versionReport,
   type VersionReportHost,
-} from "./domain/versionReport.js";
+} from "../domain/versionReport.js";
 
 // The launcher and compiled CLI drivers share this lightweight entrypoint.
-export { cliConfigurationError } from "./cliConfiguration.js";
+export { cliConfigurationError } from "../cliConfiguration.js";
 
 const UNSUPPORTED_OUTPUT_COMBINATION_MESSAGE =
   "Token windows cannot preserve structured output. Remove --token-limit/--token-offset and use --filter-output or command pagination.";

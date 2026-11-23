@@ -1,11 +1,11 @@
-import type { CliGlobalArguments } from "../cliBuiltinArguments.js";
-import { RECORDED_CLI_COMMAND_REGISTRATIONS } from "../recordedCliCommandRegistrations.js";
+import type { CliGlobalArguments } from "./cliBuiltinArguments.js";
+import { RECORDED_CLI_COMMAND_REGISTRATIONS } from "./recordedCliCommandRegistrations.js";
 import {
   CLI_COMMAND_REGISTRATIONS,
   type CliCommandRegistrationId,
-} from "./cliCommandRegistrations.js";
-import type { CliResultOutput } from "./cliResultOutput.js";
-import type { CliInstance } from "./types.js";
+} from "./cli/cliCommandRegistrations.js";
+import type { CliResultOutput } from "./cli/cliResultOutput.js";
+import type { CliInstance } from "./cli/types.js";
 
 /** Global switches that change only how a command's result is written. */
 const COMMAND_OUTPUT_FLAGS: ReadonlySet<string> = new Set([
@@ -82,7 +82,7 @@ export const loadCliRuntime = async (
     RECORDED_CLI_COMMAND_REGISTRATIONS,
   );
   if (ids === undefined) {
-    const { createCli, closeCliResources } = await import("../cli.js");
+    const { createCli, closeCliResources } = await import("./cli.js");
     return {
       createCli: (resultOutput) =>
         createCli(environment, resultOutput, undefined, savedDefaults),
@@ -93,10 +93,10 @@ export const loadCliRuntime = async (
   const [modules, { createCliShell }, { closeCliResources }, analysis] =
     await Promise.all([
       Promise.all(selected.map((registration) => registration.load())),
-      import("./cliShell.js"),
-      import("./cliResources.js"),
+      import("./cli/cliShell.js"),
+      import("./cli/cliResources.js"),
       selected.some((registration) => registration.analysis)
-        ? import("../composition/directAnalysis.js")
+        ? import("./composition/directAnalysis.js")
         : undefined,
     ]);
   return {

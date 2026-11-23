@@ -443,7 +443,7 @@ const PATH_SCOPES = {
     "src/server/browserToolBindings.ts",
     "src/server/createServer.ts",
     "src/cli/webModuleCommands.ts",
-    "src/cliBrowserScenarioCommands.ts",
+    "src/cli/browserScenarioCommands.ts",
     "src/cli/environmentCommands.ts",
     "src/cli.ts",
     "src/contracts/cliCommandNames.ts",
