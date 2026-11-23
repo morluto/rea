@@ -1347,7 +1347,8 @@ describe("decompile_all identity and recovery", () => {
     const record = decompileJournalLineSchema.parse(
       JSON.parse(original.trimEnd().split("\n").at(-1)!),
     );
-    if (record.kind !== "function") throw new Error("Expected a function record");
+    if (record.kind !== "function")
+      throw new Error("Expected a function record");
     // Resume must decode a committed record even when it spans read windows.
     const longRecord = JSON.stringify({ ...record, name: "é".repeat(40_000) });
     await writeFile(

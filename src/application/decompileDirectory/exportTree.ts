@@ -782,7 +782,11 @@ const readOpenedJournal = async (
   // writer has no journal-wide size bound; the framer uses Node's buffer limit.
   const lines = new Utf8NdjsonLineBuffer(() => bufferConstants.MAX_LENGTH);
   let header: DecompileJournalHeader | undefined;
-  for (let start = 0; start < committedBytes; start += JOURNAL_READ_CHUNK_BYTES) {
+  for (
+    let start = 0;
+    start < committedBytes;
+    start += JOURNAL_READ_CHUNK_BYTES
+  ) {
     const bytes = await readJournalChunk(
       handle,
       start,
@@ -790,7 +794,9 @@ const readOpenedJournal = async (
     );
     for (const line of lines.pushRaw(bytes)) {
       if (!line.ok) return err(incompatibleJournal());
-      const parsed = decompileJournalLineSchema.safeParse(parseJson(line.value));
+      const parsed = decompileJournalLineSchema.safeParse(
+        parseJson(line.value),
+      );
       if (!parsed.success) return err(incompatibleJournal());
       if (header === undefined) {
         if (parsed.data.kind !== "header") return err(incompatibleJournal());
