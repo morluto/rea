@@ -1146,21 +1146,12 @@ const parseKernelBuildConfigCore = async (
 };
 
 /**
- * Read a kernel version banner and an embedded IKCFG build config.
- * The caller supplies the already bounded file bytes. Scans yield to the event
- * loop once per TURN_STRIDE bytes and inflation runs off it, so an abort raised
- * while parsing is honored at the next check. One inflate call runs to its
- * output bound once started.
+ * Read a kernel version banner and an embedded IKCFG build config over a
+ * bounded FileHandle without buffering the full kernel image. Scans yield to
+ * the event loop once per TURN_STRIDE bytes and inflation runs off it, so an
+ * abort raised while parsing is honored at the next check. One inflate call
+ * runs to its output bound once started.
  */
-export const parseKernelBuildConfig = async (
-  bytes: Buffer,
-  artifact: Report["artifact"],
-  input: InspectKernelBuildConfigInput,
-  signal?: AbortSignal,
-): Promise<Report> =>
-  parseKernelBuildConfigCore(bufferSpan(bytes), artifact, input, signal);
-
-/** Same inspection over a bounded FileHandle without buffering the full kernel image. */
 export const parseKernelBuildConfigFromHandle = async (
   source: NativeByteSource,
   artifact: Report["artifact"],
