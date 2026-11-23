@@ -7500,6 +7500,12 @@ it("preserves partial coverage when manifest has coverage: 'partial' and source_
         l.includes("declares unknown source coverage"),
       ),
     ).toBe(true);
+
+    const outManifest = JSON.parse(
+      await readFile(join(outDir, "firmware_manifest.json"), "utf8"),
+    );
+    expect(outManifest.source_coverage).toBe("unknown");
+    expect(outManifest.coverage).toBe("partial");
   } finally {
     await provider.close();
   }

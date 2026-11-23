@@ -1269,6 +1269,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     remainingTimeMs?: () => number,
     reader?: DirectoryArtifactReader | undefined,
     coverage: "complete" | "partial" = "complete",
+    sourceCoverage?: "complete" | "partial" | "unknown" | undefined,
   ): Promise<AnalysisExecution> {
     const input = request.input;
     const modulesToProcess = discoveredModules.slice(0, input.max_modules);
@@ -2375,7 +2376,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       const manifestData = {
         image_sha256: imageSha256,
         coverage: isCoveragePartial ? "partial" : "complete",
-        source_coverage: coverage,
+        source_coverage: sourceCoverage ?? coverage,
         total_modules_found: discoveredModules.length,
         total_modules_decompiled: stagedModules.length,
         phases: phaseCounts,
@@ -3721,6 +3722,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
 
       const dirCoverage: "complete" | "partial" =
         limitations.length > 0 || isCoveragePartial ? "partial" : "complete";
+      const dirSourceCoverage: "complete" | "partial" | "unknown" =
+        hasUnknownCoverage ? "unknown" : dirCoverage;
 
       const publishedExecution = await this.#stageAndPublishModules(
         request,
@@ -3733,6 +3736,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         remainingTimeMs,
         reader,
         dirCoverage,
+        dirSourceCoverage,
       );
       publishedResult = publishedExecution.result as UefiDecompileResult;
       return publishedExecution;
