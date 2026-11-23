@@ -1,5 +1,8 @@
 import { ADVERTISED_INPUT_SCHEMA_MAX_BYTES } from "./advertisedDialect.js";
-import type { AdvertisedToolPresentation } from "./advertisedTool.js";
+import type {
+  AdvertisedToolPresentation,
+  RecordedOutputAdvertisement,
+} from "./advertisedTool.js";
 import type { CompactInputSchemaPresentation } from "./compactInputSchema.js";
 
 // The presentations REA's MCP catalog advertises. Configuration parses the
@@ -55,12 +58,22 @@ export const COMPACT_OUTPUT_SCHEMA_PRESENTATION: {
 export const advertisedToolPresentation = (
   outputSchemaProfile: McpOutputSchemaProfile | "recorded",
   input: CompactInputSchemaPresentation = COMPACT_INPUT_SCHEMA_PRESENTATION,
+  recordedTools?: ReadonlySet<string>,
 ): AdvertisedToolPresentation => ({
   input: { budgetBytes: input.budgetBytes },
-  output:
-    outputSchemaProfile === "compact"
-      ? COMPACT_OUTPUT_SCHEMA_PRESENTATION
-      : outputSchemaProfile === "recorded"
-        ? "recorded"
-        : undefined,
+  output: advertisedOutputPresentation(outputSchemaProfile, recordedTools),
 });
+
+const advertisedOutputPresentation = (
+  outputSchemaProfile: McpOutputSchemaProfile | "recorded",
+  recordedTools: ReadonlySet<string> | undefined,
+): AdvertisedToolPresentation["output"] => {
+  if (outputSchemaProfile === "compact")
+    return COMPACT_OUTPUT_SCHEMA_PRESENTATION;
+  if (outputSchemaProfile !== "recorded") return undefined;
+  const recorded: RecordedOutputAdvertisement = {
+    recordedTools: recordedTools ?? new Set<string>(),
+    live: COMPACT_OUTPUT_SCHEMA_PRESENTATION,
+  };
+  return recorded;
+};

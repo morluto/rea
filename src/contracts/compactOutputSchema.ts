@@ -1,3 +1,4 @@
+import { isRecord } from "../kernel/isRecord.js";
 import {
   COMPACT_SCHEMA_MAX_DEPTH,
   inlineWithinBudget,
@@ -87,6 +88,47 @@ export const compactAdvertisedOutputSchema = (
     presentation: "reduced",
   };
 };
+
+const OBJECT_COMPOSITION_KEYS = ["oneOf", "anyOf", "allOf"] as const;
+
+/**
+ * Whether a typeless JSON Schema root is an object or a composition of
+ * objects. This matches `@modelcontextprotocol/server`'s `tools/list`
+ * conversion, which is not exported: a typeless object-shaped output root is
+ * stamped `type: "object"` before a client sees it.
+ */
+const isObjectShapedOutputRoot = (schema: Record<string, unknown>): boolean => {
+  if (
+    "properties" in schema ||
+    "patternProperties" in schema ||
+    "additionalProperties" in schema ||
+    "required" in schema
+  )
+    return true;
+  for (const key of OBJECT_COMPOSITION_KEYS) {
+    const members = schema[key];
+    if (Array.isArray(members) && members.length > 0)
+      return members.every(
+        (member) =>
+          isRecord(member) &&
+          (member.type === "object" || isObjectShapedOutputRoot(member)),
+      );
+  }
+  return false;
+};
+
+/**
+ * The output JSON Schema `tools/list` emits before REA compacts it.
+ * A schema that already has `type` is unchanged. A typeless root that is
+ * provably object-shaped gains `type: "object"`, which is what the SDK lists
+ * for a discriminated union of objects.
+ */
+export const listedOutputJsonSchema = (
+  schema: Record<string, unknown>,
+): Record<string, unknown> =>
+  schema.type !== undefined || !isObjectShapedOutputRoot(schema)
+    ? schema
+    : { type: "object", ...schema };
 
 /** Return the JSON schema clients receive for the selected output presentation. */
 export const presentAdvertisedOutputSchema = (

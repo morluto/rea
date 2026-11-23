@@ -20,8 +20,6 @@ const [
   { toolOutputSchemaWithMetadata },
   { toolFamilyId },
   { requiredPromptTools },
-  { presentAdvertisedOutputSchema },
-  { COMPACT_OUTPUT_SCHEMA_PRESENTATION },
 ] = await Promise.all([
   read("server/createServer.js"),
   read("composition/binary.js"),
@@ -33,8 +31,6 @@ const [
   read("contracts/toolSchemaMetadata.js"),
   read("contracts/toolFamilies.js"),
   read("contracts/promptToolFamilyScope.js"),
-  read("contracts/compactOutputSchema.js"),
-  read("contracts/mcpSchemaPresentation.js"),
 ]);
 const recordCatalog = async () => {
   // Catalog generation is independent of the host account and user configuration.
@@ -85,28 +81,31 @@ const recordCatalog = async () => {
             : { type: "object" },
       };
     });
-    // Record the bounded compact output advertisements at build time so a
-    // compact-profile deferred server never recomputes them per listing.
+    // Record the compact schemas a legacy client receives. The SDK stamps or
+    // wraps a non-object root before REA compacts that listing.
+    const compactServer = createServer(
+      { kind: "session", session },
+      {
+        environment: {
+          ...environment,
+          REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
+        },
+      },
+    );
+    cleanup.push(() => compactServer.close());
+    const compactClient = new Client({
+      name: "rea-catalog-recorder-compact",
+      version: "1",
+    });
+    cleanup.push(() => compactClient.close());
+    const [compactClientTransport, compactServerTransport] =
+      InMemoryTransport.createLinkedPair();
+    await compactServer.connect(compactServerTransport);
+    await compactClient.connect(compactClientTransport);
     const compactOutputSchemas = Object.fromEntries(
-      tools.flatMap((tool) => {
-        const contract = TOOL_CONTRACTS.find(({ name }) => name === tool.name);
-        if (contract === undefined)
-          throw new Error(`Missing tool ${tool.name}`);
-        const outputSchema = toolOutputSchemaWithMetadata(contract)[
-          "~standard"
-        ].jsonSchema.output({ target: "draft-2020-12" });
-        return outputSchema !== null && typeof outputSchema === "object"
-          ? [
-              [
-                tool.name,
-                presentAdvertisedOutputSchema(
-                  outputSchema,
-                  COMPACT_OUTPUT_SCHEMA_PRESENTATION,
-                ),
-              ],
-            ]
-          : [];
-      }),
+      (await compactClient.listTools()).tools.flatMap((tool) =>
+        tool.outputSchema === undefined ? [] : [[tool.name, tool.outputSchema]],
+      ),
     );
     const prompts = (await client.listPrompts()).prompts.map((prompt) => {
       const contract = PROMPT_CONTRACTS.find(

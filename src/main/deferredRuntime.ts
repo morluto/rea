@@ -17,9 +17,24 @@ import type { McpServerHandle, RuntimeDependencies } from "./types.js";
 import { SERVER_START_FAILED } from "../server/serverStartFailure.js";
 import { reportMcpTransportError } from "./reportMcpTransportError.js";
 import { OwnedMcpServers } from "./OwnedMcpServers.js";
-import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../contracts/mcpSchemaPresentation.js";
+import {
+  COMPACT_INPUT_SCHEMA_PRESENTATION,
+  type McpOutputSchemaProfile,
+} from "../contracts/mcpSchemaPresentation.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
+
+/**
+ * Digests of the selected output profile. The catalog file records the `off`
+ * identity; compact listings advertise different schemas and must start with
+ * the compact digest or the first runtime attach rejects them.
+ */
+const deferredCatalogDigests = (
+  catalog: RecordedMcpCatalog,
+  profile: McpOutputSchemaProfile | undefined,
+): RecordedMcpCatalog["identity"]["digests"] =>
+  RECORDED_CATALOG_DIGEST_PROFILES?.[profile ?? "off"] ??
+  catalog.identity.digests;
 
 /** Verify the build-owned artifact before trusting its exact typed projection. */
 const readCatalog = (): RecordedMcpCatalog => {
@@ -226,9 +241,10 @@ export const runDeferred = async (
                 toolFamilies,
                 identity: {
                   ...catalog.identity,
-                  digests:
-                    RECORDED_CATALOG_DIGEST_PROFILES?.off ??
-                    catalog.identity.digests,
+                  digests: deferredCatalogDigests(
+                    catalog,
+                    config.mcpOutputSchemaProfile,
+                  ),
                 },
               },
             );

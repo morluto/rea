@@ -74,6 +74,10 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
     } = {},
   ) {
     const families = options.toolFamilies;
+    const recordedCompactTools =
+      options.outputProfile === "compact"
+        ? new Set(Object.keys(catalog.compactOutputSchemas ?? {}))
+        : undefined;
     const advertisesTool = (tool: string) =>
       isToolFamilyAdvertised(families, catalog.toolFamilies[tool]);
     super(
@@ -103,6 +107,7 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
         ? (options.identity ?? catalog.identity)
         : undefined,
       families,
+      recordedCompactTools,
     );
     this.canAdvertise = advertisesTool;
     for (const name of catalog.evidenceReferenceAlternatives)

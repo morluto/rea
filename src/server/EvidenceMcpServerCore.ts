@@ -310,6 +310,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     readonly advertisedToolFamilies:
       | ReadonlySet<string>
       | undefined = undefined,
+    recordedTools?: ReadonlySet<string>,
   ) {
     const maximumInputElements =
       options.maxToolInputElements ?? DEFAULT_MCP_MAX_INPUT_ELEMENTS;
@@ -318,6 +319,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     this.presentation = advertisedToolPresentation(
       outputSchemaProfile,
       compactPresentation,
+      recordedTools,
     );
     this.identity = identity;
   }
