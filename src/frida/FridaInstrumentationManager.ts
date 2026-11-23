@@ -46,7 +46,6 @@ import {
   unknownFridaScript,
   unknownFridaSession,
 } from "../domain/fridaInputErrors.js";
-import { MAX_MESSAGE_METADATA_BYTES } from "../domain/fridaCaptureLimits.js";
 import {
   resolveFridaCapturePolicy,
   type FridaCapturePolicy,

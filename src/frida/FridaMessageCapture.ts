@@ -1,4 +1,3 @@
-import { isUtf8 } from "node:buffer";
 import type { FridaMessage } from "frida";
 
 import type { FridaRemoteConnection } from "../ports/frida/FridaInstrumentationPort.js";
@@ -13,7 +12,6 @@ import {
   type FridaOwnedCaptureLimit,
 } from "../domain/fridaCaptureLimits.js";
 import type { FridaCapturePolicy } from "../domain/fridaCapturePolicy.js";
-import { sha256Hex } from "../kernel/sha256Hex.js";
 
 export interface FridaCaptureContext {
   readonly captureLimits: FridaCapturePolicy;
