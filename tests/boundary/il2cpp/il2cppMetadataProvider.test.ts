@@ -1221,9 +1221,10 @@ it("names the wasm32 module parser allowance when a wasm module passes a count c
   const path = join(root, "global-metadata.dat");
   const binaryPath = join(root, "build.wasm");
   const count = WASM_MODULE_LIMITS.dataSegments + 1;
+  // Complete records: each passive data segment is flag 1 and size 0.
   const data = [
     ...wasmLeb128(count),
-    ...Array.from({ length: count }, () => 0),
+    ...Array.from({ length: count }, () => [1, 0]).flat(),
   ];
   await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
   await writeFile(

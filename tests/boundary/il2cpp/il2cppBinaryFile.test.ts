@@ -2280,9 +2280,10 @@ const wasmDataCountModule = (count: number, body: number) => {
 };
 
 it("reports a wasm module past a parser count cap as wasm module capacity", () => {
-  // One segment more than the reader keeps, with a body that could hold them.
+  // One segment more than the reader keeps, with two bytes per segment: room
+  // for the shortest (passive, empty) data segment encoding.
   const count = WASM_MODULE_LIMITS.dataSegments + 1;
-  expect(failure(wasmDataCountModule(count, count))).toEqual({
+  expect(failure(wasmDataCountModule(count, 2 * count))).toEqual({
     reason: "wasm-module-capacity",
     kind: "limit",
   });
@@ -2291,6 +2292,11 @@ it("reports a wasm module past a parser count cap as wasm module capacity", () =
 it("reports a wasm segment count its section cannot hold as malformed, not capacity", () => {
   const count = WASM_MODULE_LIMITS.dataSegments + 1;
   expect(failure(wasmDataCountModule(count, 0))).toEqual({
+    reason: "malformed-container",
+    kind: "malformed",
+  });
+  // One byte per segment cannot hold any data segment encoding either.
+  expect(failure(wasmDataCountModule(count, count))).toEqual({
     reason: "malformed-container",
     kind: "malformed",
   });

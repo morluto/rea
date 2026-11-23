@@ -326,9 +326,10 @@ export function* readWasmModuleImageSteps(
       for (let count = body.u32(); count > 0; count--) addMemory(body, false);
     } else if (id === 9) {
       const count = body.u32();
-      // Each segment takes at least one byte, so a count the body cannot hold is
-      // a damaged section, not one past the allowance.
-      if (count > body.end - body.at)
+      // The shortest element segment (flags, element kind and an empty vector)
+      // takes three bytes, so a count the body cannot hold is a damaged
+      // section, not one past the allowance.
+      if (count * 3 > body.end - body.at)
         throw malformed(
           `section declares ${count} element segments in ${body.end - body.at} bytes`,
         );
@@ -375,7 +376,9 @@ export function* readWasmModuleImageSteps(
       }
     } else if (id === 11) {
       const count = body.u32();
-      if (count > body.end - body.at)
+      // The shortest data segment (passive flag and an empty size) takes two
+      // bytes; check that framing before the segment allowance.
+      if (count * 2 > body.end - body.at)
         throw malformed(
           `section declares ${count} data segments in ${body.end - body.at} bytes`,
         );
