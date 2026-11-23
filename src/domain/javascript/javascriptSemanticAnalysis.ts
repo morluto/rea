@@ -18,6 +18,7 @@ import {
   semanticReadMayObserveEffect,
   semanticReferenceRoot,
   type SemanticAmbientRootPaths,
+  retainSemanticInactiveMemberWrites,
 } from "./javascriptSemanticEffectLog.js";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
 import * as t from "@babel/types";
@@ -88,6 +89,7 @@ import {
   semanticBundledRequireOriginCandidate,
 } from "./javascriptBundledRequireOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
+import { semanticInactiveFirstDefaultWritesSteps } from "./javascriptSemanticReadPresence.js";
 import {
   DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
   type JavaScriptMemberMutationAllowance,
@@ -113,6 +115,7 @@ import {
   resolveSemanticModuleCallables,
 } from "./javascriptSemanticReturns.js";
 import { collectJavaScriptDerivedSemanticsSteps } from "./javascriptSemanticDerivedAnalysis.js";
+import { collectJavaScriptSemanticObjects } from "./javascriptSemanticObjects.js";
 import {
   evaluateSemanticProvenance,
   clearSemanticValueCaches,
@@ -153,6 +156,7 @@ interface BindPatternInput {
   readonly state: JavaScriptSemanticAnalysisState;
   readonly mutable: boolean;
   readonly declarationKind?: "var" | "let" | "const" | "using" | "await using";
+  readonly letDeclarator?: t.VariableDeclarator;
   readonly kind?: JavaScriptSemanticDefinition["kind"];
   readonly projection?: readonly (string | number | null)[];
   readonly referenceOnly?: boolean;
@@ -185,10 +189,12 @@ interface AddBindingInput {
   readonly kind: JavaScriptSemanticDefinition["kind"];
   readonly mutable: boolean;
   readonly declarationKind?: "var" | "let" | "const" | "using" | "await using";
+  readonly letDeclarator?: t.VariableDeclarator;
   readonly definitionNode: t.Node;
   readonly initializer: t.Node | null;
   readonly directOrigin?: JavaScriptModuleOrigin;
   readonly runtimeImport?: boolean;
+  readonly selfNameAssignment?: JavaScriptSemanticBindingState["selfNameAssignment"];
   readonly projection?: readonly (string | number | null)[];
 }
 
@@ -222,10 +228,12 @@ export const analyzeParsedJavaScriptReferences = (
 const indexedAmbientWriteStates =
   new WeakSet<JavaScriptSemanticAnalysisState>();
 /** The ambient-write owner resolves the global roots a reference may alias. */
-const ambientRootPaths =
-  (state: JavaScriptSemanticAnalysisState): SemanticAmbientRootPaths =>
-  (root) =>
-    createAmbientPathResolver(state, false)(root).paths;
+const ambientRootPaths = (
+  state: JavaScriptSemanticAnalysisState,
+): SemanticAmbientRootPaths => {
+  const resolver = createAmbientPathResolver(state, false);
+  return (root) => resolver(root).paths;
+};
 
 function* indexSemanticAmbientWritesSteps(
   state: JavaScriptSemanticAnalysisState,
@@ -251,7 +259,7 @@ function* indexSemanticMemberMutationFactsSteps(
 ): Generator<void, void> {
   if (state.memberMutationFactsComplete) return;
   yield* indexSemanticAmbientWritesSteps(state);
-  yield* collectSemanticMemberMutationsSteps(
+  const candidateDefaults = yield* collectSemanticMemberMutationsSteps(
     state.program,
     state,
     (site, reference, path) =>
@@ -264,6 +272,15 @@ function* indexSemanticMemberMutationFactsSteps(
       ),
   );
   state.memberMutationFactsComplete = true;
+  const inactiveWrites = yield* semanticInactiveFirstDefaultWritesSteps(
+    state,
+    candidateDefaults,
+  );
+  // Every guard is proved before any inactive write is excluded.
+  if (inactiveWrites.length > 0) {
+    retainSemanticInactiveMemberWrites(state, inactiveWrites);
+    clearSemanticValueCaches(state);
+  }
   invalidateSemanticRequireDelegateWrites(state);
 }
 
@@ -313,6 +330,12 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
   yield;
   const references = yield* collectSemanticReferencesSteps(file.program, state);
   const parserPartial = recoveredJavaScriptSyntaxErrorCount(file.errors) > 0;
+  const objectOperations = collectJavaScriptSemanticObjects(
+    file.program,
+    state,
+    state.callables,
+  );
+  yield;
   const bindings = immutableSemanticBindings(state);
   yield;
   const callables = collectSemanticReturns(state, parserPartial);
@@ -346,6 +369,7 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
     callables,
     references,
     moduleLinks,
+    objectOperations,
     ...derived,
     coverage: derived.expressionFlowsTruncated
       ? { ...coverage, status: "partial", omittedCount: null }
@@ -1628,7 +1652,7 @@ function* indexPrototypeUncertaintySteps(
         return;
       if (
         (t.isCallExpression(parent) || t.isOptionalCallExpression(parent)) &&
-        parent.arguments.includes(node as t.Expression)
+        parent.callee !== node
       )
         return;
       if (
@@ -1756,6 +1780,9 @@ const bindInnerDeclaration = (
       ...(parent !== null && t.isVariableDeclaration(parent)
         ? { declarationKind: parent.kind }
         : {}),
+      ...(t.isVariableDeclaration(parent, { kind: "let" })
+        ? { letDeclarator: node }
+        : {}),
     });
   else if (t.isClass(node) && t.isIdentifier(node.id))
     addBinding({
@@ -1764,6 +1791,7 @@ const bindInnerDeclaration = (
       name: node.id.name,
       kind: "class",
       mutable: false,
+      selfNameAssignment: "always-throws",
       definitionNode: node.id,
       initializer: node,
     });
@@ -2079,6 +2107,7 @@ const functionNameScope = (
     name: node.id.name,
     kind: "function",
     mutable: false,
+    selfNameAssignment: "throws-in-strict-mode",
     definitionNode: node.id,
     initializer: node,
   });
@@ -2223,6 +2252,7 @@ const bindPattern = (input: BindPatternInput): void => {
         binding.referenceInitializers.push({
           node: initializer,
           projection,
+          patternTarget: pattern,
           ...(input.entryBody === undefined
             ? {}
             : { entryBody: input.entryBody }),
@@ -2246,6 +2276,9 @@ const bindPattern = (input: BindPatternInput): void => {
       kind,
       mutable,
       ...(declarationKind === undefined ? {} : { declarationKind }),
+      ...(input.letDeclarator === undefined
+        ? {}
+        : { letDeclarator: input.letDeclarator }),
       definitionNode: pattern,
       initializer,
       projection,
@@ -2396,11 +2429,20 @@ const addBinding = (input: AddBindingInput): void => {
   binding.mutable ||= mutable;
   if (declarationKind !== undefined)
     binding.declarationKinds.add(declarationKind);
+  if (input.letDeclarator !== undefined)
+    binding.letDeclarator =
+      binding.letDeclarator === undefined ||
+      binding.letDeclarator === input.letDeclarator
+        ? input.letDeclarator
+        : null;
   binding.definitions.push({ kind, location: range(definitionNode) });
   if (initializer !== null)
     binding.initializers.push({
       node: initializer,
       projection,
+      ...(projection.length > 0 && t.isIdentifier(definitionNode)
+        ? { patternTarget: definitionNode }
+        : {}),
       ...(iterationSources === undefined ? {} : { iterationSources }),
     });
   if (directOrigin !== undefined)
@@ -2414,6 +2456,8 @@ const addBinding = (input: AddBindingInput): void => {
         : directOrigin,
     );
   binding.runtimeImport ||= runtimeImport === true;
+  if (input.selfNameAssignment !== undefined)
+    binding.selfNameAssignment = input.selfNameAssignment;
 };
 
 const createBinding = (

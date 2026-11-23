@@ -7,6 +7,8 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
+import { readMachoImageFromReader } from "../../domain/apple/machoImage.js";
+import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
 import {
   MAX_DWARF_DECOMPRESSED_SECTION_BYTES,
   inspectDwarfUnitsInputSchema,
@@ -20,7 +22,7 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import { DwarfUnitsProvider } from "./DwarfUnitsProvider.js";
 import {
   DwarfSectionAllowanceFailure,
-  locateDwarfSections,
+  locateDwarfSectionsFromHandle,
 } from "./DwarfSections.js";
 import {
   abbrevTable,
@@ -35,6 +37,8 @@ import {
   peImage,
   strxBeforeBase,
 } from "./DwarfUnits.fixture.js";
+import type { ByteSource } from "../../domain/byteSource.js";
+import { bufferByteSource } from "../../domain/byteSource.js";
 
 const inspect = async (
   bytes: Buffer,
@@ -348,6 +352,83 @@ it("rejects an unterminated PE long name within the decoding allowance", async (
   }
 });
 
+it("rejects PE long section names when PointerToSymbolTable is zero", async () => {
+  const named = namedUnit({ name: "spoof.c" });
+  const base = peImage([
+    { name: "/32", body: named.info },
+    { name: ".debug_abbrev", body: named.abbrev },
+  ]);
+  // With PointerToSymbolTable == 0 and NumberOfSymbols == 0, offset 0 holds
+  // "MZ\0\0" (0x00005A4D = 23117). Padding the image past 23117 bytes and
+  // placing ".debug_info\0" at DOS header offset 32 must not resolve /32.
+  const zeroCount = Buffer.alloc(Math.max(base.length, 0x5a4d + 4));
+  base.copy(zeroCount);
+  zeroCount.write(".debug_info\0", 32, "latin1");
+  const pe = zeroCount.readUInt32LE(0x3c);
+  zeroCount.writeUInt32LE(0, pe + 12);
+  zeroCount.writeUInt32LE(0, pe + 16);
+  const readZeroCount = await inspect(zeroCount);
+
+  // With PointerToSymbolTable == 0 and NumberOfSymbols == 1, 0 + 18 lands in
+  // the DOS header at offset 18; it must still be rejected as unavailable.
+  const nonZeroCount = Buffer.from(
+    peImage([
+      { name: "/4", body: named.info },
+      { name: ".debug_abbrev", body: named.abbrev },
+    ]),
+  );
+  nonZeroCount.writeUInt32LE(16, 18);
+  nonZeroCount.write(".debug_info\0", 22, "latin1");
+  nonZeroCount.writeUInt32LE(0, pe + 12);
+  nonZeroCount.writeUInt32LE(1, pe + 16);
+  const readNonZeroCount = await inspect(nonZeroCount);
+  expect({
+    zeroCountOk: readZeroCount.ok,
+    nonZeroCountOk: readNonZeroCount.ok,
+  }).toEqual({ zeroCountOk: false, nonZeroCountOk: false });
+  for (const rejected of [readZeroCount, readNonZeroCount]) {
+    if (rejected.ok) continue;
+    expect(rejected.error).toBeInstanceOf(AnalysisInputError);
+    expect(rejected.error).toMatchObject({
+      issues: [
+        {
+          message: expect.stringContaining(
+            "PE long section name string table is unavailable",
+          ),
+        },
+      ],
+    });
+  }
+
+  // A normal PE with PointerToSymbolTable == 0 and only short section names
+  // remains valid and reports debug_info as absent.
+  const shortOnly = await inspect(
+    peImage([{ name: ".text", body: Buffer.alloc(4) }]),
+  );
+  if (!shortOnly.ok) throw shortOnly.error;
+  expect(shortOnly.value.debug_info).toBe("absent");
+
+  // A valid PE with PointerToSymbolTable > 0 and NumberOfSymbols > 0 still
+  // resolves the COFF string table immediately after the symbol table.
+  const withSymbol = peImage([
+    { name: ".debug_info", body: named.info },
+    { name: ".debug_abbrev", body: named.abbrev },
+  ]);
+  const symbolAt = withSymbol.readUInt32LE(pe + 12);
+  const shifted = Buffer.concat([
+    withSymbol.subarray(0, symbolAt),
+    Buffer.alloc(18),
+    withSymbol.subarray(symbolAt),
+  ]);
+  shifted.writeUInt32LE(1, pe + 16);
+  const readWithSymbol = await inspect(shifted);
+  if (!readWithSymbol.ok) throw readWithSymbol.error;
+  expect(readWithSymbol.value.units[0]?.name).toEqual({
+    state: "present",
+    value: "spoof.c",
+  });
+});
+
 it("selects one universal Mach-O slice", async () => {
   const named = namedUnit({ name: "arm.c" });
   const arm = macho64({
@@ -444,9 +525,9 @@ it("charges failed decompression attempts against the shared allowance", async (
         flags: gnu ? 0n : 0x800n,
       })),
     });
-    await expect(locateDwarfSections(image, allowance)).rejects.toThrow(
-      DwarfSectionAllowanceFailure,
-    );
+    await expect(
+      locateDwarfSectionsFromHandle(bufferByteSource(image), allowance),
+    ).rejects.toThrow(DwarfSectionAllowanceFailure);
   }
 });
 
@@ -468,9 +549,9 @@ it("charges valid empty streams against the shared allowance", async () => {
       flags: 0x800n,
     })),
   });
-  await expect(locateDwarfSections(image, payloadLength * 2)).rejects.toThrow(
-    DwarfSectionAllowanceFailure,
-  );
+  await expect(
+    locateDwarfSectionsFromHandle(bufferByteSource(image), payloadLength * 2),
+  ).rejects.toThrow(DwarfSectionAllowanceFailure);
 });
 
 it("charges zero-output streams with bad checksums against the shared allowance", async () => {
@@ -493,9 +574,9 @@ it("charges zero-output streams with bad checksums against the shared allowance"
       flags: 0x800n,
     })),
   });
-  await expect(locateDwarfSections(image, payloadLength * 2)).rejects.toThrow(
-    DwarfSectionAllowanceFailure,
-  );
+  await expect(
+    locateDwarfSectionsFromHandle(bufferByteSource(image), payloadLength * 2),
+  ).rejects.toThrow(DwarfSectionAllowanceFailure);
 });
 
 it("keeps the inflate allowance after a truncated optional section header", async () => {
@@ -1044,4 +1125,23 @@ it("names PE and Mach-O architectures from their shared owners", async () => {
   const amd64 = await inspect(macho64({ cpuType: 0x01000007 }));
   if (!amd64.ok) throw amd64.error;
   expect(amd64.value.architecture).toBe("x86_64");
+});
+
+it("admits the positional Mach-O load commands before reading their bytes", async () => {
+  const commandBytes = 16 * 1024 * 1024 + 8;
+  const header = Buffer.alloc(32);
+  header.writeUInt32LE(0xfeedfacf, 0);
+  header.writeUInt32LE(CPU_ARM64, 4);
+  header.writeUInt32LE(1, 12);
+  header.writeUInt32LE(1, 16);
+  header.writeUInt32LE(commandBytes, 20);
+  const readRange = vi.fn(async () => Buffer.alloc(0));
+  await expect(
+    readMachoImageFromReader({
+      size: header.length + commandBytes,
+      prefix: header,
+      readRange,
+    }),
+  ).rejects.toBeInstanceOf(BinaryResourceFailure);
+  expect(readRange).not.toHaveBeenCalled();
 });

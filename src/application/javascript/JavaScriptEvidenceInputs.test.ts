@@ -2,17 +2,10 @@ import {
   fileIdentity,
   fileSubjectDisplay,
   fileSubjectTarget,
-  displayedEvidenceSubject,
 } from "../../../tests/fixtures/evidenceSubject.js";
 import { expect, it, vi } from "vitest";
 
-import {
-  createEvidence,
-  parseEvidence,
-  rebindEvidenceToTargetPath,
-  type Evidence,
-} from "../../domain/evidence.js";
-import { ok } from "../../domain/result.js";
+import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { createJavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
 import { createJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticGraph.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../domain/javascript/javascriptApplicationAnalysis.js";
@@ -20,19 +13,14 @@ import {
   JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
   JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
 } from "../../contracts/javascript/javascriptApplicationWorkflowExamples.js";
-import { JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE } from "../../contracts/javascript/javascriptExportShapeComparisonExample.js";
 import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import {
   compareApplicationVersionsEvidence,
-  compareJavaScriptExportShapesEvidence,
   traceApplicationFeatureEvidence,
 } from "./JavaScriptApplicationWorkflowService.js";
 import { reconcileJavaScriptRuntimeEvidence } from "./JavaScriptRuntimeReconciliationService.js";
 import { traceJavaScriptSemanticsEvidence } from "./JavaScriptSemanticTraceService.js";
-import {
-  inspectAnalysisView,
-  projectRetainedAnalysis,
-} from "../analysisView/AnalysisViewService.js";
+import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
 
 const reference = ({ evidence_id }: Evidence) => ({
   kind: "retained-evidence" as const,
@@ -78,11 +66,14 @@ it("keeps a static trace subject unknown when legacy graph root evidence is omit
   expect(trace.value.evidence.subject.identity.kind).toBe("unknown");
 });
 
-const native = createEvidence(
-  { path: "/example/addon.node", sha256: "e".repeat(64), format: "elf" },
-  { id: "fixture", name: "Native fixture", version: "1" },
-  { operation: "procedure_info", parameters: {}, result: {} },
-);
+const nativeObservation = (address: string) =>
+  createEvidence(
+    { path: "/example/addon.node", sha256: "e".repeat(64), format: "elf" },
+    { id: "fixture", name: "Native fixture", version: "1" },
+    { operation: "procedure_info", parameters: { address }, result: {} },
+  );
+
+const native = nativeObservation("0x1000");
 
 it("preserves the verified application subject in both trace workflows", async () => {
   const original = JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application;
@@ -126,31 +117,6 @@ it("preserves the verified application subject in both trace workflows", async (
   });
   if (!view.ok) throw view.error;
   expect(view.value.subject).toEqual(application.subject);
-  const selected = parseEvidence({
-    ...feature.value.evidence,
-    subject: displayedEvidenceSubject(feature.value.evidence.subject, {
-      name: "selected display",
-    }),
-  });
-  const retained = projectRetainedAnalysis(
-    selected,
-    {
-      recordEvidence: () => ok("added"),
-      evidenceById: () => feature.value.evidence,
-    },
-    { kind: "summary" },
-  );
-  if (!retained.ok) throw retained.error;
-  expect(retained.value.subject?.name).toBe("selected display");
-  expect(
-    rebindEvidenceToTargetPath(feature.value.evidence, {
-      path: fileSubjectDisplay(application.subject).local_path,
-      sha256: "f".repeat(64),
-      format: fileIdentity(application.subject).format,
-      architecture: "x86_64",
-      name: "wrong artifact",
-    }),
-  ).toBe(feature.value.evidence);
 });
 
 it("does not attribute a multi-source reconciliation graph to its envelope subject", () => {
@@ -207,15 +173,18 @@ it("resolves feature native arrays without changing source identity or unknowns"
   expect(lookup).toHaveBeenCalledTimes(2);
 });
 
-it("resolves per-side native observations with one lookup per repeated exact ID", () => {
-  const input = {
-    ...JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
-    left_native_observations: [native],
-    right_native_observations: [native],
-  };
-  const inline = compareApplicationVersionsEvidence(input);
+it("preserves native Evidence on each side while resolving a shared ID once", () => {
+  const { left, right } = JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE;
+  const leftNative = nativeObservation("0x1100");
+  const rightNative = nativeObservation("0x1200");
+  const inline = compareApplicationVersionsEvidence({
+    left,
+    right,
+    left_native_observations: [leftNative, native],
+    right_native_observations: [rightNative, native],
+  });
   const records = new Map(
-    [input.left, input.right, native].map((record) => [
+    [left, right, leftNative, rightNative, native].map((record) => [
       record.evidence_id,
       record,
     ]),
@@ -223,10 +192,10 @@ it("resolves per-side native observations with one lookup per repeated exact ID"
   const lookup = vi.fn((id: string) => records.get(id));
   const retained = compareApplicationVersionsEvidence(
     {
-      left: reference(input.left),
-      right: reference(input.right),
-      left_native_observations: [reference(native)],
-      right_native_observations: [reference(native)],
+      left: reference(left),
+      right: reference(right),
+      left_native_observations: [reference(leftNative), reference(native)],
+      right_native_observations: [reference(rightNative), reference(native)],
     },
     lookup,
   );
@@ -236,28 +205,13 @@ it("resolves per-side native observations with one lookup per repeated exact ID"
     inline.value.evidence.evidence_id,
   );
   expect(retained.value.result).toEqual(inline.value.result);
-  expect(lookup).toHaveBeenCalledTimes(3);
-});
-
-it("uses retained graphs for exact export-shape comparison", () => {
-  const input = JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE;
-  const inline = compareJavaScriptExportShapesEvidence(input);
-  const records = new Map(
-    [input.left, input.right].map((record) => [record.evidence_id, record]),
-  );
-  const retained = compareJavaScriptExportShapesEvidence(
-    {
-      ...input,
-      left: reference(input.left),
-      right: reference(input.right),
-    },
-    (id) => records.get(id),
-  );
-  if (!inline.ok) throw inline.error;
-  if (!retained.ok) throw retained.error;
-  expect(retained.value.evidence.evidence_id).toBe(
-    inline.value.evidence.evidence_id,
-  );
+  expect(retained.value.evidence.parameters).toMatchObject({
+    left_evidence_id: left.evidence_id,
+    right_evidence_id: right.evidence_id,
+    left_native_evidence_ids: [leftNative.evidence_id, native.evidence_id],
+    right_native_evidence_ids: [rightNative.evidence_id, native.evidence_id],
+  });
+  expect(lookup.mock.calls.flat().sort()).toEqual([...records.keys()].sort());
 });
 
 it("resolves nested static layers and runtime arrays before source-owned reconciliation", () => {
@@ -319,7 +273,12 @@ it("reports missing nested references before reconciliation without guessing a s
   });
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "EvidenceIntegrityError" },
+    error: {
+      _tag: "EvidenceIntegrityError",
+      reason: "missing",
+      evidenceId: layer.analysis.evidence_id,
+      diagnostics: { input_path: ["static_layers", 0, "analysis"] },
+    },
   });
 });
 

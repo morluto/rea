@@ -115,20 +115,18 @@ it.each([0, 1, 2])(
   },
 );
 
-it.each(
-  (["browser", "electron", "inspector"] as const).flatMap((providerKind) => [
-    { providerKind, malformedRows: 0 },
-    { providerKind, malformedRows: 1 },
-    { providerKind, malformedRows: 2 },
-  ]),
-)(
-  "$providerKind rejects ambiguous HTTP target identity before authorizing its location or opening a socket (malformed duplicate rows: $malformedRows)",
-  async ({ providerKind, malformedRows }) => {
+it.each(["browser", "electron", "inspector"] as const)(
+  "%s rejects ambiguous HTTP target identity before authorizing its location or opening a socket",
+  async (providerKind) => {
     let upgrades = 0;
     const server = createServer((request, response) => {
       const address = server.address();
       if (address === null || typeof address === "string")
         throw new Error("Missing TCP address");
+      if (request.url !== "/json/version" && request.url !== "/json/list") {
+        response.writeHead(404).end();
+        return;
+      }
       response.setHeader("Content-Type", "application/json");
       response.end(
         JSON.stringify(
@@ -145,16 +143,11 @@ it.each(
                 {
                   id: "duplicate",
                   type: "page",
-                  ...(malformedRows === 2
-                    ? {}
-                    : { url: "https://allowed.test/" }),
+                  url: "https://allowed.test/",
                 },
                 {
                   id: "duplicate",
                   type: "node",
-                  ...(malformedRows > 0
-                    ? {}
-                    : { url: "file:///missing/foreign.js" }),
                 },
                 {
                   id: "sibling",
@@ -207,7 +200,10 @@ it.each(
               });
       if (result.ok) throw new Error("Expected ambiguous target rejection");
       expect(result.error).toBeInstanceOf(BrowserObservationError);
-      expect(result.error.userMessage).toContain("ambiguous");
+      expect(result.error).toMatchObject({
+        reason: "invalid_endpoint_response",
+        diagnostics: { target_id: "duplicate" },
+      });
       expect(upgrades).toBe(0);
     } finally {
       await provider.close();

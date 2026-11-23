@@ -57,12 +57,12 @@ export const SECTION_TYPE_NAME_BY_CODE: Readonly<Record<number, string>> =
 export const COMPRESSION_GUID_BY_DISPLAY: Readonly<
   Record<
     string,
-    "lzma-custom" | "lzmaf86" | "ami-zlib" | "tiano" | "crc32-guided"
+    "lzma-custom" | "lzmaf86" | "amd-zlib" | "tiano" | "crc32-guided"
   >
 > = {
   "ee4e5898-3914-4259-9d6e-dc7bd79403cf": "lzma-custom",
   "d42ae6bd-1352-4bfb-909a-ca72a6eae889": "lzmaf86",
-  "ce3233f5-2cd6-4d87-9152-4a238bb6d1c4": "ami-zlib",
+  "ce3233f5-2cd6-4d87-9152-4a238bb6d1c4": "amd-zlib",
   "a31280ad-481e-41b6-95e8-127f4c984779": "tiano",
   "fc1bcdb0-7d31-49aa-936a-a4600d9dd083": "crc32-guided",
 };

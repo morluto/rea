@@ -21,6 +21,15 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
   Clang/LLD/LLVM readelf/LLVM objdump; `REA_RISCV_CLANG`, `REA_RISCV_LLD`,
   `REA_RISCV_READELF` and `REA_RISCV_OBJDUMP` select existing tool commands.
 
+- `../c/ppc64.c` and `ppc64-probe.S` produce source-owned ELFv2 PPC64
+  executables in both byte orders, with TOC-using functions that have separate
+  global and local entries and a VSX instruction only Power ISA languages
+  decode. `npm run verify:ghidra:ppc64` exercises real CLI/MCP discovery,
+  decompilation, the bound language, instruction bytes in file byte order,
+  ELFv2 entry thunks, snapshot identity and shared-object refusal. It requires
+  BYO Ghidra 12.2/JDK 25+, PowerPC Clang/LLD and GNU readelf;
+  `REA_PPC_CLANG` and `REA_PPC_READELF` select existing tool commands.
+
 - `ReaInstructionContextProbe.java` inspects source-owned ARM, Thumb, MIPS32
   and MIPS16 instructions through the production bridge in an ephemeral,
   read-only Ghidra project. It checks exact decoder-context register names,

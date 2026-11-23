@@ -24,6 +24,8 @@ export const CLANG_BUNDLE_MAGIC = Buffer.from("__CLANG_OFFLOAD_BUNDLE__");
 export const CCOB_MAGIC = Buffer.from("CCOB");
 const CLANG_BUNDLE_HEADER_BYTES = 32;
 const CLANG_BUNDLE_ENTRY_BYTES = 24;
+const CLANG_BUNDLE_MAX_ENTRIES = 65_536;
+const CLANG_BUNDLE_MAX_ID_BYTES = 65_536;
 export const readClangBundleDirectory = async (
   source: GpuSource,
   base: number,
@@ -49,13 +51,15 @@ export const readClangBundleDirectory = async (
   )
     rejectGpu("Clang offload bundle directory is truncated");
   const count = gpuCount(declaredCount);
-  if (count > 65536)
+  if (count > CLANG_BUNDLE_MAX_ENTRIES)
     throw new BinaryResourceFailure(
       "structure",
-      65536,
+      CLANG_BUNDLE_MAX_ENTRIES,
       "HIP bundle entry count exceeds the inventory budget",
+      "hip-bundle-entries",
+      "entries",
     );
-  // One wrapper/identity per admitted entry (at most 65536). Processor text is
+  // One wrapper/identity per admitted entry. Processor text is
   // no longer than its admitted name; cumulative name bytes remain
   // within the 16 MiB directory bound before identities are allocated.
   const declarations: {
@@ -96,11 +100,21 @@ export const readClangBundleDirectory = async (
     if (minimumDirectoryEnd > firstPayload)
       rejectGpu("HIP entry overlaps its bundle directory");
     const nameSize = Number(rawNameSize);
-    if (nameSize > 65536 || nameOffset - base + nameSize > GPU_REPORT_BYTES)
+    if (nameSize > CLANG_BUNDLE_MAX_ID_BYTES)
+      throw new BinaryResourceFailure(
+        "structure",
+        CLANG_BUNDLE_MAX_ID_BYTES,
+        `HIP bundle ID exceeds ${String(CLANG_BUNDLE_MAX_ID_BYTES)} bytes`,
+        "hip-bundle-id-bytes",
+        "bytes",
+      );
+    if (nameOffset - base + nameSize > GPU_REPORT_BYTES)
       throw new BinaryResourceFailure(
         "structure",
         GPU_REPORT_BYTES,
-        "HIP directory exceeds 16 MiB or its bundle ID exceeds 65536 bytes",
+        "HIP bundle directory exceeds its retained byte budget",
+        "hip-bundle-directory-bytes",
+        "bytes",
       );
     let name: string;
     try {
@@ -174,16 +188,37 @@ export const findLegacyCcobRecoveryTotal = async (
 ): Promise<number> => {
   const searchEnd = Math.min(source.size, base + GPU_OBJECT_BYTES);
   let position = base + 20;
-  let tail: Buffer = Buffer.alloc(0);
+  const seam = Buffer.allocUnsafe(6);
+  let tailLen = 0;
   while (position < searchEnd) {
     const bytes = await source.read(
       position,
       Math.min(64 * 1024, searchEnd - position),
     );
-    const haystack = tail.length === 0 ? bytes : Buffer.concat([tail, bytes]);
-    const index = haystack.indexOf("CCOB");
-    if (index >= 0) return position - tail.length + index - base;
-    tail = haystack.subarray(Math.max(0, haystack.length - 3));
+    if (bytes.length === 0) break;
+    if (tailLen > 0) {
+      const headLen = Math.min(3, bytes.length);
+      bytes.copy(seam, tailLen, 0, headLen);
+      const seamIndex = seam.subarray(0, tailLen + headLen).indexOf("CCOB");
+      if (seamIndex >= 0) return position - tailLen + seamIndex - base;
+    }
+    const index = bytes.indexOf("CCOB");
+    if (index >= 0) return position + index - base;
+    if (bytes.length >= 3) {
+      bytes.copy(seam, 0, bytes.length - 3, bytes.length);
+      tailLen = 3;
+    } else {
+      const total = tailLen + bytes.length;
+      if (total <= 3) {
+        bytes.copy(seam, tailLen);
+        tailLen = total;
+      } else {
+        const drop = total - 3;
+        seam.copyWithin(0, drop, tailLen);
+        bytes.copy(seam, tailLen - drop);
+        tailLen = 3;
+      }
+    }
     position += bytes.length;
   }
   if (searchEnd < source.size)

@@ -29,6 +29,12 @@ export interface DoctorProviderCheck {
   readonly details?: Readonly<Record<string, JsonValue>>;
 }
 
+/** An observed provider setting and the input layer supplying it. */
+export interface DoctorProviderSetting {
+  readonly value: string;
+  readonly source: "env" | "config" | "auto";
+}
+
 /** Read-only provider inspection supplied by an outer composition adapter. */
 export interface DoctorProviderInspection {
   readonly id: string;
@@ -40,5 +46,7 @@ export interface DoctorProviderInspection {
   /** Validated discoveries used as registration defaults. Setup preserves
    * caller-selected configuration separately from these readiness facts. */
   readonly registrationEnvironment: Readonly<Record<string, string>>;
+  /** Effective literal or discovered values with the source that supplied them. */
+  readonly providerSettings?: Readonly<Record<string, DoctorProviderSetting>>;
   readonly checks: readonly DoctorProviderCheck[];
 }

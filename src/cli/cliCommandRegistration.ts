@@ -9,6 +9,7 @@ export interface CliRegistrationContext {
   readonly cli: CliInstance;
   readonly logger: Logger;
   readonly environment: Readonly<Record<string, string | undefined>>;
+  readonly savedDefaults: ReadonlySet<string> | undefined;
   readonly fridaInstrumentation: FridaInstrumentationPort | undefined;
 }
 

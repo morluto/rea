@@ -118,7 +118,7 @@ it("counts read tools by how they answer and lists writes as served or withheld 
           tool: "put_folders_by_uid",
           effect: "update",
           reason: "contradicted",
-          hint: expect.stringMatching(/later read.*contradicted_by/iu),
+          hint: WITHHELD_WRITE_HINTS.contradicted,
           exemplar_ordinal: 4,
           contradicted_by: 9,
         },
@@ -191,9 +191,7 @@ it("does not claim reads are missing when a literal delete has no modelled targe
     expect.arrayContaining([
       expect.objectContaining({
         reason: "no-state-target",
-        hint: expect.stringContaining(
-          "could not be linked to a modelled state target",
-        ),
+        hint: WITHHELD_WRITE_HINTS["no-state-target"],
       }),
     ]),
   );

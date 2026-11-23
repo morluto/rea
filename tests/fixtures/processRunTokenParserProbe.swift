@@ -23,6 +23,16 @@ func fixture(
   return bytes
 }
 
+func parseFixture(
+  _ bytes: [UInt8], pointerSize: Int = 8
+) throws -> Result<ParsedRunToken, RunTokenReadError> {
+  do {
+    return .success(try parseProcessEnvironment(in: bytes, pointerSize: pointerSize))
+  } catch let reason as RunTokenReadError {
+    return .failure(reason)
+  }
+}
+
 @main
 struct ProcessRunTokenParserProbe {
   static func main() throws {
@@ -137,53 +147,33 @@ struct ProcessRunTokenParserProbe {
       environment: ["REA_PROCESS_RUN_ID=zero-argc-token"],
       pointerSize: 4
     ), pointerSize: 4)
-    var truncatedArgv = withUnsafeBytes(of: Int32(2).littleEndian, Array.init)
-    let truncatedPath = Array("/fixture/executable".utf8)
-    truncatedArgv.append(contentsOf: truncatedPath + [0])
-    let truncatedPadding = (8 - ((Array("executable_path=".utf8).count + truncatedPath.count + 1) % 8)) % 8
-    truncatedArgv.append(contentsOf: repeatElement(UInt8(0), count: truncatedPadding))
-    truncatedArgv.append(contentsOf: Array("/fixture/executable".utf8) + [0])
-    truncatedArgv.append(contentsOf: Array("REA_PROCESS_RUN_ID=synthetic-decoy".utf8))
-    let truncatedArgvFailsClosed: Bool
-    do {
-      _ = try parseProcessEnvironment(in: truncatedArgv)
-      truncatedArgvFailsClosed = false
-    } catch RunTokenReadError.invalidBufferAt(.arguments) {
-      truncatedArgvFailsClosed = true
-    }
+    var truncatedArgv = fixture(
+      arguments: ["/fixture/executable", "REA_PROCESS_RUN_ID=synthetic-decoy"],
+      environment: [],
+      appleRecords: []
+    )
+    truncatedArgv.removeLast()
     var invalidPadding = fixture(arguments: ["x"], environment: [], executablePath: "x")
     invalidPadding[6] = 1 // argc (4 bytes), path and its NUL precede the padding.
     var unterminated = fixture(arguments: ["REA_PROCESS_RUN_ID=argv-decoy"], environment: [], executablePath: "x")
     unterminated.removeLast()
-    let malformedBuffers: [([UInt8], ProcargsMalformedStage)] = [
-      ([0, 0, 0], .header),
-      ([255, 255, 255, 255], .argumentCount),
-      ([0, 0, 0, 0, 120], .executablePath),
-      (invalidPadding, .pathPadding),
-      (unterminated, .terminator),
-      (truncatedArgv, .arguments),
+    let malformedBuffers: [([UInt8], Int)] = [
+      ([0, 0, 0], 8),
+      ([255, 255, 255, 255], 8),
+      ([0, 0, 0, 0, 120], 8),
+      (fixture(arguments: [], environment: []), 3),
+      (invalidPadding, 8),
+      (truncatedArgv, 8),
+      (unterminated, 8),
     ]
-    let malformedBuffersRejected = malformedBuffers.allSatisfy { bytes, expectedStage in
-      do {
-        _ = try parseProcessEnvironment(in: bytes)
-        return false
-      } catch RunTokenReadError.invalidBufferAt(let stage) {
-        return stage == expectedStage
-      } catch {
-        return false
-      }
+    let parsedMalformedBuffers = try malformedBuffers.map { bytes, pointerSize in
+      try parseFixture(bytes, pointerSize: pointerSize)
     }
-    let invalidPointerSizeFailsClosed: Bool
-    do {
-      _ = try parseProcessEnvironment(in: fixture(arguments: [], environment: []), pointerSize: 3)
-      invalidPointerSizeFailsClosed = false
-    } catch RunTokenReadError.invalidBufferAt(.pointerSize) {
-      invalidPointerSizeFailsClosed = true
-    }
-    let malformedStages = ProcargsMalformedStage.allCases.map { stage in
+    // An unterminated trailing record is already rejected by the terminator check.
+    let malformedStages = (parsedMalformedBuffers + [.failure(.invalidBufferAt(.trailingEntries))]).map { parse in
       let observation = processRunTokenObservation(
         pid: 1,
-        parse: .failure(.invalidBufferAt(stage)),
+        parse: parse,
         codeSigningFlags: { 0 }
       )
       return ["state": observation.state, "reason": observation.reason ?? ""]
@@ -217,37 +207,21 @@ struct ProcessRunTokenParserProbe {
       )
       return observation.state == "readable" && observation.run_id == "owned-token"
     }
-    let signedInvalidTokens = [RunTokenReadError.duplicateToken, .invalidTokenEncoding].map { failure in
-      [UInt32(0x0400_0000), UInt32(0x0000_0800)].map { flags in
-        let observation = processRunTokenObservation(
-          pid: 1,
-          parse: .failure(failure),
-          codeSigningFlags: { flags }
-        )
-        return ["state": observation.state, "reason": observation.reason ?? ""]
-      }
-    }
-    let duplicateTokenFailsClosed: Bool
-    do {
-      _ = try parseProcessEnvironment(in: fixture(
-        arguments: ["/fixture/executable", "REA_PROCESS_RUN_ID=argv-decoy"],
-        environment: ["REA_PROCESS_RUN_ID=first", "REA_PROCESS_RUN_ID=second"]
-      ))
-      duplicateTokenFailsClosed = false
-    } catch RunTokenReadError.duplicateToken {
-      duplicateTokenFailsClosed = true
-    }
+    let duplicateToken = fixture(
+      arguments: ["/fixture/executable", "REA_PROCESS_RUN_ID=argv-decoy"],
+      environment: ["REA_PROCESS_RUN_ID=first", "REA_PROCESS_RUN_ID=second"]
+    )
     var invalidTokenEncoding = fixture(
       arguments: ["/fixture/executable", "REA_PROCESS_RUN_ID=argv-decoy"],
       environment: ["REA_PROCESS_RUN_ID=é"]
     )
     invalidTokenEncoding[invalidTokenEncoding.firstIndex(of: 0xc3)!] = 0xff
-    let invalidTokenEncodingFailsClosed: Bool
-    do {
-      _ = try parseProcessEnvironment(in: invalidTokenEncoding)
-      invalidTokenEncodingFailsClosed = false
-    } catch RunTokenReadError.invalidTokenEncoding {
-      invalidTokenEncodingFailsClosed = true
+    let invalidTokens = try [duplicateToken, invalidTokenEncoding].map { bytes in
+      let parse = try parseFixture(bytes)
+      return [UInt32(0), UInt32(0x0400_0000), UInt32(0x0000_0800)].map { flags in
+        let observation = processRunTokenObservation(pid: 1, parse: parse, codeSigningFlags: { flags })
+        return ["state": observation.state, "reason": observation.reason ?? ""]
+      }
     }
     let missingAppleBoundaryFailsClosed: Bool
     do {
@@ -341,19 +315,14 @@ struct ProcessRunTokenParserProbe {
       ],
       "emptyLaterArgumentRead": emptyLaterArgument.runId == "empty-argument-token",
       "alternatePaddingRead": alternatePadding.runId == "alternate-padding-token",
-      "truncatedArgvFailsClosed": truncatedArgvFailsClosed,
-      "malformedBuffersRejected": malformedBuffersRejected,
-      "invalidPointerSizeFailsClosed": invalidPointerSizeFailsClosed,
       "malformedStages": malformedStages,
       "incompleteRestrictedArguments": incompleteRestrictedArguments,
       "signedReadableTokens": signedReadableTokens,
-      "signedInvalidTokens": signedInvalidTokens,
+      "invalidTokens": invalidTokens,
       "malformedObservation": [
         "state": malformedObservation.state,
         "reason": malformedObservation.reason as Any? ?? NSNull(),
       ],
-      "duplicateTokenFailsClosed": duplicateTokenFailsClosed,
-      "invalidTokenEncodingFailsClosed": invalidTokenEncodingFailsClosed,
       "missingAppleBoundaryFailsClosed": missingAppleBoundaryFailsClosed,
       "emptyArgv0Read": emptyArgv0Read.runId == "empty-argv0-token",
       "finalAssignmentArgumentRead": finalAssignmentArgumentRead.runId == "final-assignment-token",

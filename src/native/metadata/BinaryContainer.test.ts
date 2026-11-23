@@ -3,6 +3,11 @@ import type {
   ZeroFillMapping,
 } from "../../domain/virtualFileMapping.js";
 import { readBinaryContainer } from "../../domain/native/readBinaryContainer.js";
+import {
+  CPU,
+  fatImage,
+  machoImage,
+} from "../../artifacts/apple/MachoImage.fixture.js";
 import { expect, it } from "vitest";
 import {
   BinaryFormatFailure,
@@ -212,7 +217,17 @@ it("indexes exactly the spans mappedFileOffset accepts, rejects and translates",
     const lookup = createFileMappingIndex(mappings, zeroFills).offset;
     const indexed: (number | string)[] = [];
     const scanned: (number | string)[] = [];
-    for (let address = 0xff8n; address < 0x10a8n; address++) {
+    // Exercise the bytes immediately before and at each backing transition.
+    const starts = new Set([0xff8n, 0x10a7n]);
+    for (const { address, size } of [...mappings, ...zeroFills]) {
+      const end = address + BigInt(size);
+      starts
+        .add(address - 1n)
+        .add(address)
+        .add(end - 1n)
+        .add(end);
+    }
+    for (const address of starts) {
       for (const size of [1, 2, 4, 9, 20]) {
         indexed.push(outcome(() => lookup(address, size)));
         scanned.push(
@@ -228,21 +243,38 @@ it("indexes exactly the spans mappedFileOffset accepts, rejects and translates",
 });
 
 it("maps adjacent ranges sharing one file translation", () => {
-  const lookup = createFileMappingIndex([
+  const { offset: lookup, prefix } = createFileMappingIndex([
     { address: 0x1000n, offset: 0x400, size: 0x10 },
     { address: 0x1010n, offset: 0x410, size: 0x10 },
-  ]).offset;
+  ]);
   expect(lookup(0x1008n, 8)).toBe(0x408);
   expect(lookup(0x100cn, 8)).toBe(0x40c);
+  expect(prefix(0x100cn, 32)).toEqual({
+    address: 0x100cn,
+    offset: 0x40c,
+    size: 20,
+  });
+  expect(prefix(0x100cn, 5)).toEqual({
+    address: 0x100cn,
+    offset: 0x40c,
+    size: 5,
+  });
+  expect(prefix(0xfffn, 32)).toBeNull();
 });
 
 it("rejects partially overlapping mappings with different file translations", () => {
-  const lookup = createFileMappingIndex([
+  const { offset: lookup, prefix } = createFileMappingIndex([
     { address: 0x1000n, offset: 0x400, size: 0x20 },
     { address: 0x1018n, offset: 0x900, size: 0x10 },
-  ]).offset;
+  ]);
   expect(lookup(0x1000n, 0x10)).toBe(0x400);
   expect(() => lookup(0x1010n, 0x10)).toThrow(/ambiguous/u);
+  expect(prefix(0x1010n, 0x10)).toEqual({
+    address: 0x1010n,
+    offset: 0x410,
+    size: 8,
+  });
+  expect(prefix(0x1018n, 0x10)).toBeNull();
 });
 
 const mappings = [
@@ -268,10 +300,14 @@ it.each(
   },
 );
 it("refuses a zero-fill alias inside a span spanning multiple mappings", () => {
-  expect(() =>
-    mappedFileOffset(mappings, 102n, 4, [{ address: 104n, size: 1n }]),
-  ).toThrow(/zero-fill/);
+  const fills = [{ address: 104n, size: 1n }];
+  expect(() => mappedFileOffset(mappings, 102n, 4, fills)).toThrow(/zero-fill/);
+  const { prefix } = createFileMappingIndex(mappings, fills);
+  expect(prefix(102n, 4)).toEqual({ address: 102n, offset: 2, size: 2 });
+  expect(prefix(104n, 4)).toBeNull();
+  expect(prefix(105n, 4)).toEqual({ address: 105n, offset: 5, size: 3 });
 });
+
 it.each(["scan", "index"] as const)(
   "reads strings across discontiguous source ranges without examining bytes after NUL (%s)",
   (mode) => {
@@ -353,6 +389,29 @@ it("keeps a JVM-sized FAT count unconfirmed while rejecting malformed zero-count
   );
 });
 
+it("requires an observed thin slice before identifying a FAT image", () => {
+  const cpu = CPU.arm64;
+  const thin = machoImage({ cpu, wide: true });
+  const read = (bytes: Uint8Array) =>
+    readBinaryContainer(
+      Buffer.from(fatImage([{ cpu, bytes }])),
+      "elf-directory",
+    );
+
+  expect(() => read(thin)).toThrow(
+    new BinaryFormatFailure(
+      "unsupported",
+      "Universal/fat Mach-O containers require selecting a thin slice",
+    ),
+  );
+  expect(() => read(Buffer.alloc(thin.length))).toThrow(
+    new BinaryFormatFailure(
+      "unsupported",
+      "Only ELF, PE, and thin Mach-O native images are supported",
+    ),
+  );
+});
+
 /** An x86-64 ELF executable with one PT_LOAD declaring `fileSize` bytes. */
 const elfWithLoadSegment = (fileSize: bigint): Buffer => {
   const bytes = Buffer.alloc(64 + 56);
@@ -392,4 +451,44 @@ it("names a load segment that runs past the end of the file as truncated", () =>
       },
     }),
   );
+});
+
+it("maps across unsorted adjacent ranges with an overlapping agreeing alias", () => {
+  const ranges = [
+    mappings[1]!,
+    { address: 102n, offset: 2, size: 4 },
+    mappings[0]!,
+  ];
+  const zeroFills = [{ address: 107n, size: 1n }];
+  expect(mappedFileOffset(ranges, 102n, 5, zeroFills)).toBe(2);
+  expect(outcome(() => mappedFileOffset(ranges, 102n, 6, zeroFills))).toBe(
+    "ambiguous",
+  );
+});
+
+it.each([100n, 104n])(
+  "refuses a conflicting file or zero-fill alias overlapping either end at %s",
+  (address) => {
+    const backed = [{ address: 100n, offset: 0, size: 8 }];
+    const alias = { address, offset: 16, size: 3 };
+    expect(outcome(() => mappedFileOffset([...backed, alias], 102n, 4))).toBe(
+      "ambiguous",
+    );
+    expect(
+      outcome(() => mappedFileOffset(backed, 102n, 4, [{ address, size: 3n }])),
+    ).toBe("ambiguous");
+  },
+);
+
+it("keeps exact point mappings at shared endpoints", () => {
+  expect(mappedFileOffset(mappings, 104n, 0)).toBe(4);
+  expect(
+    outcome(() =>
+      mappedFileOffset(
+        [mappings[0]!, { address: 104n, offset: 9, size: 4 }],
+        104n,
+        0,
+      ),
+    ),
+  ).toBe("ambiguous");
 });

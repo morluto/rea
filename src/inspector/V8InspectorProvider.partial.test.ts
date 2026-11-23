@@ -1,10 +1,10 @@
 import { createServer } from "node:http";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { WebSocketServer } from "ws";
 import { z } from "zod";
 
@@ -126,7 +126,7 @@ const createPartialInspectorServer = (
 it.each(failureCases)(
   "preserves captured scripts and contexts after %s",
   async (failure, reason) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-inspector-partial-"));
+    const root = await createTestTempDirectory("rea-inspector-partial-");
     const scriptPath = join(root, "target.js");
     const scriptUrl = pathToFileURL(scriptPath).href;
     const reportedScriptUrl = failure === "cancellation" ? "" : scriptUrl;
@@ -199,7 +199,6 @@ it.each(failureCases)(
     } finally {
       await new Promise<void>((resolve) => sockets.close(() => resolve()));
       await new Promise<void>((resolve) => server.close(() => resolve()));
-      await rm(root, { recursive: true, force: true });
     }
   },
 );

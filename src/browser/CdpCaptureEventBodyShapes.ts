@@ -56,6 +56,7 @@ export const requestBodyShape = (
     return { status: "not_approved", request: null, response: null };
   const headers = recordValue(request.headers);
   const json = isJsonContentType(headers);
+  const bodyReported = Object.hasOwn(request, "postData");
   const body = cdpStringValue(request.postData);
   // CDP may omit a long body from postData while reporting hasPostData.
   const parsed =
@@ -66,10 +67,16 @@ export const requestBodyShape = (
         )
       : undefined;
   const shape = parsed?.ok ? parsed.value.shape : null;
-  const expected = json && (body !== undefined || request.hasPostData === true);
+  const expected = json && (bodyReported || request.hasPostData === true);
   if (expected && shape === null) {
     state.missingRequestBodyShapeIds.add(requestId);
-    if (parsed !== undefined && !parsed.ok && parsed.error.kind === "capacity")
+    if (bodyReported && body === undefined)
+      state.completeness.exclude("json_body_shapes", "invalid_protocol_value");
+    else if (
+      parsed !== undefined &&
+      !parsed.ok &&
+      parsed.error.kind === "capacity"
+    )
       state.completeness.exclude(
         "json_body_shapes",
         "resource_budget_exhausted",

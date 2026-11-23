@@ -149,4 +149,96 @@ describe("JSON text equality without whole-document strings", () => {
       JSON.stringify(left) === JSON.stringify(right),
     );
   });
+
+  it("matches native JSON equality and rejection semantics across identical references and invalid values", async () => {
+    const { freezeJsonSnapshot } = await import("./immutableJson.js");
+    const frozen = freezeJsonSnapshot({
+      nested: [1, { label: "ok", flags: [true, false, null] }],
+    });
+    const clone = structuredClone(frozen);
+    expect(equalJsonText(frozen, frozen)).toBe(true);
+    expect(equalJsonText(frozen, clone)).toBe(true);
+    expect(equalJsonText({ x: 1, y: {} }, { x: 1, y: [] })).toBe(false);
+    expect(equalJsonText([1], [1, 2])).toBe(false);
+    expect(() => equalJsonText([1, undefined], [1, 2])).toThrow(
+      "ordinary JSON values",
+    );
+    expect(() => equalJsonText({ v: Number.NaN }, { v: Number.NaN })).toThrow(
+      "ordinary JSON values",
+    );
+    expect(() => equalJsonText("x", new Date(0))).toThrow(
+      "ordinary JSON objects",
+    );
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(() => equalJsonText(circular, circular)).toThrow(
+      "circular reference",
+    );
+  });
+
+  it("rejects non-JSON values and cycles across unequal keys, extra elements, and type mismatches", async () => {
+    const { freezeJsonSnapshot } = await import("./immutableJson.js");
+    const frozen = freezeJsonSnapshot({ nested: [1, "ok"] });
+    expect(equalJsonText([1, frozen], [2, frozen])).toBe(false);
+    expect(equalJsonText({ a: 1, omitted: undefined }, { b: 1 })).toBe(false);
+
+    // Invalid values behind unequal object keys or value mismatches
+    expect(() => equalJsonText({ a: Number.NaN }, { b: 1 })).toThrow(
+      "ordinary JSON values",
+    );
+    expect(() => equalJsonText({ a: 1 }, { b: new Date(0) })).toThrow(
+      "ordinary JSON objects",
+    );
+    expect(() =>
+      equalJsonText({ a: 1, b: Number.POSITIVE_INFINITY }, { a: 2, b: 1 }),
+    ).toThrow("ordinary JSON values");
+    expect(() => equalJsonText({ a: 1n }, { b: 1 })).toThrow(
+      "ordinary JSON values",
+    );
+    expect(() =>
+      equalJsonText({ a: 1, b: { nested: [1, undefined] } }, { a: 2, b: 3 }),
+    ).toThrow("ordinary JSON values");
+
+    // Invalid extra elements in arrays or objects
+    expect(() => equalJsonText([], [new Date(0)])).toThrow(
+      "ordinary JSON objects",
+    );
+    expect(() => equalJsonText([], [1, undefined])).toThrow(
+      "ordinary JSON values",
+    );
+    expect(() => equalJsonText([1, Number.NaN], [1])).toThrow(
+      "ordinary JSON values",
+    );
+    expect(() => equalJsonText([1, () => 1], [1])).toThrow(
+      "ordinary JSON values",
+    );
+    expect(() => equalJsonText([1, Symbol("s")], [1])).toThrow(
+      "ordinary JSON values",
+    );
+    expect(() => equalJsonText({}, { a: new Date(0) })).toThrow(
+      "ordinary JSON objects",
+    );
+
+    // Mismatched scalar / container types and cycles behind mismatches
+    expect(() => equalJsonText("x", Number.NaN)).toThrow(
+      "ordinary JSON values",
+    );
+    expect(() => equalJsonText("x", { a: Number.NaN })).toThrow(
+      "ordinary JSON values",
+    );
+    expect(() => equalJsonText(1, [new Date(0)])).toThrow(
+      "ordinary JSON objects",
+    );
+    expect(() => equalJsonText([new Date(0)], {})).toThrow(
+      "ordinary JSON objects",
+    );
+    expect(() => equalJsonText([], { a: Number.NaN })).toThrow(
+      "ordinary JSON values",
+    );
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(() => equalJsonText({ a: circular }, { b: 1 })).toThrow(
+      "circular reference",
+    );
+  });
 });

@@ -6,7 +6,7 @@ import { isMachOFormat } from "../binaryTargetTypes.js";
 import { machoSliceEncryptionViewSchema } from "../apple/machoEncryption.js";
 import { inspectMachoSchema } from "../native/nativeInspection.js";
 import { err, ok, type Result } from "../result.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
@@ -73,6 +73,7 @@ const collectionCountSchema = z.strictObject({
 
 /** Slice identity and per-collection counts without the collections themselves. */
 export const machoSummarySchema = z.strictObject({
+  bundle_provenance: shape.bundle_provenance,
   format: shape.format,
   selected_architecture: shape.selected_architecture,
   endian: shape.endian,
@@ -91,11 +92,13 @@ export const machoSummarySchema = z.strictObject({
 
 type MachoReport = z.output<typeof inspectMachoSchema>;
 
+const readMachoReport = createAnalysisViewResultReader(inspectMachoSchema);
+
 /** Admit a well-formed report whose recorded subject, if any, is a Mach-O. */
 const parseMachoReport = (
   parent: AnalysisViewParent,
 ): Result<MachoReport, AnalysisError> => {
-  const parsed = parseAnalysisViewResult(inspectMachoSchema, parent);
+  const parsed = readMachoReport(parent);
   if (!parsed.ok) return parsed;
   const file = evidenceFileTarget(parent);
   if (file !== undefined && !isMachOFormat(file.format))
@@ -139,6 +142,9 @@ const summarizeMacho = (
       0,
     ),
     summary: {
+      ...(report.bundle_provenance === undefined
+        ? {}
+        : { bundle_provenance: report.bundle_provenance }),
       format: report.format,
       selected_architecture: report.selected_architecture,
       endian: report.endian,

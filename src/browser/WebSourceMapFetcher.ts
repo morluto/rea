@@ -636,19 +636,23 @@ const fetchOne = async (
       }
       throw cause;
     }
-    if (!response.ok) {
+    // This request asks for the whole map. Even valid JSON inside a byte
+    // range does not establish the complete source-map representation.
+    if (!response.ok || response.status === 206) {
+      const limitation =
+        response.status === 206
+          ? "Source-map server returned HTTP 206 (Partial Content). A complete map response is required."
+          : `Source-map server returned HTTP ${String(response.status)}.`;
       await cancelUnreadResponse(
         response,
         fetchedUrl,
-        new Error(
-          `Source-map server returned HTTP ${String(response.status)}.`,
-        ),
+        new Error(limitation),
         signal,
       );
       return emptySourceMapItem(
         request,
         "fetch_failed",
-        `Source-map server returned HTTP ${String(response.status)}.`,
+        limitation,
         fetchedUrl,
       );
     }

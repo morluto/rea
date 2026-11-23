@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { deflateSync, zstdCompressSync } from "node:zlib";
 import { createHash } from "node:crypto";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
 import {
   MAXIMUM_ZSTD_MAX_FRAMES,
@@ -10,7 +11,10 @@ import {
 } from "../../../src/domain/analysisResourceLimits.js";
 import { pe } from "../../../src/domain/binaryTarget.fixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { gpuCodeObjectsPartialSchema } from "../../../src/domain/gpu/gpuCodeObjects.js";
+import {
+  gpuCodeObjectsPartialSchema,
+  gpuCodeObjectsSchema,
+} from "../../../src/domain/gpu/gpuCodeObjects.js";
 import { GpuCodeObjectsProvider } from "../../../src/gpu/GpuCodeObjectsProvider.js";
 import { GpuInventory } from "../../../src/gpu/GpuInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -115,6 +119,52 @@ it.each(["none", "zstd", "lz4"] as const)(
     ]);
   },
 );
+
+it("keeps each kernel resource location in its own payload", async () => {
+  const inspected = await inspect(cudaFixture("none"));
+  if (!inspected.ok) throw inspected.error;
+  const report = inspected.value;
+  const kernelIndex = report.kernels.findIndex(
+    ({ representation }) => representation === "cuda-elf-metadata",
+  );
+  const kernel = report.kernels[kernelIndex];
+  const sibling = report.objects.find(({ kind }) => kind === "ptx");
+  if (
+    !kernel?.sources.parameters ||
+    sibling === undefined ||
+    sibling.decoded_size === null ||
+    sibling.decoded_size < 1
+  )
+    throw new Error(
+      "Fixture needs a CUBIN parameter site and a decoded PTX sibling",
+    );
+  expect(kernel.sources.parameters.container_id).toBe(kernel.object_id);
+  for (const container_id of [null, sibling.id]) {
+    const replacement = {
+      container_id,
+      offset: 0,
+      size: 1,
+      section_index: null,
+      section_name: null,
+    };
+    const kernels = report.kernels.with(kernelIndex, {
+      ...kernel,
+      sources: { ...kernel.sources, parameters: replacement },
+    });
+    expect(
+      gpuCodeObjectsSchema.safeParse({ ...report, kernels }),
+    ).toMatchObject({
+      success: false,
+      error: {
+        issues: [
+          expect.objectContaining({
+            path: ["kernels", kernelIndex, "sources", "parameters"],
+          }),
+        ],
+      },
+    });
+  }
+});
 
 it("observes cancellation during a cubin kernel directory read", async () => {
   const cubin = cubinFixture();
@@ -449,8 +499,47 @@ it("derives V3 AMDGPU processor identity from ELF flags when the note omits it",
   });
   const selected = await inspect(bytes, { targets: ["gfx900"] });
   if (!selected.ok) throw selected.error;
+  expect(selected.value.objects[0]).toMatchObject({
+    payload_target: "gfx900",
+    amd_target_metadata: {
+      note_coverage: "complete",
+      notes: [{ target: null, target_state: "absent" }],
+    },
+  });
   expect(selected.value.kernels).toHaveLength(1);
   expect(selected.value.kernels[0]).toMatchObject({ parameter_bytes: 12 });
+});
+it("distinguishes an invalid MessagePack target from legacy note coverage", async () => {
+  const legacy = Buffer.alloc(20);
+  legacy.writeUInt32LE(4, 0);
+  legacy.writeUInt32LE(4, 4);
+  legacy.writeUInt32LE(10, 8); // YAML rather than MessagePack
+  legacy.write("AMD\0", 12);
+  const declared = "amdgcn-amd-amdhsa--gfx900";
+  for (const [bytes, target, state, limitation] of [
+    [
+      amdFixture(false, undefined, 123),
+      null,
+      "invalid",
+      /target is not a string/u,
+    ],
+    [amdFixture(false, legacy), declared, "declared", /Legacy AMDGPU YAML/u],
+  ] as const) {
+    const result = await inspect(bytes);
+    if (!result.ok) throw result.error;
+    const row = result.value.objects[0]!;
+    expect(row).toMatchObject({
+      target,
+      payload_target: target,
+      amd_target_metadata: {
+        note_coverage: "partial",
+        notes: [{ target, target_state: state }],
+      },
+    });
+    expect(row.limitations.join(" ")).toMatch(limitation);
+    expect(result.value.coverage.payloads).toBe("partial");
+    expect(result.value.kernels.map(({ name }) => name)).toEqual(["add_one"]);
+  }
 });
 it("keeps AMDGPU processor identity unknown when ELF flags are unassigned", async () => {
   const bytes = amdFixture(false, undefined, null);
@@ -527,18 +616,22 @@ it.each([
 it.each(["amdgcn", "amdgpu9.00"])(
   "does not choose between conflicting AMDGPU %s note and ELF processor identities",
   async (triple) => {
-    const bytes = amdFixture(
-      false,
-      undefined,
-      `${triple}-amd-amdhsa--gfx900:xnack+`,
-    );
+    const declared = `${triple}-amd-amdhsa--gfx900:xnack+`;
+    const bytes = amdFixture(false, undefined, declared);
     bytes.writeUInt32LE(0x141, 48); // EF_AMDGPU_MACH gfx1100
     const result = await inspect(bytes);
     if (!result.ok) throw result.error;
     expect(result.value.objects[0]).toMatchObject({
       target: null,
+      payload_target: null,
       target_consistency: "unknown",
       inspection: "partial",
+      amd_target_metadata: {
+        flags: "0x00000141",
+        processor: "gfx1100",
+        note_coverage: "complete",
+        notes: [{ target: declared, target_state: "declared" }],
+      },
     });
     expect(result.value.objects[0]!.limitations.join(" ")).toContain(
       "processor flags conflict with target note metadata",
@@ -577,10 +670,10 @@ it.each([
   },
 );
 it("retains kernels from conflicting AMDGPU notes without choosing either note or ELF flags", async () => {
-  const bytes = amdFixture(
-    false,
-    amdNoteFixture(false, "amdgcn-amd-amdhsa--gfx1100"),
-  );
+  const first = amdNoteFixture();
+  const second = amdNoteFixture(false, "amdgcn-amd-amdhsa--gfx1100");
+  const bytes = amdFixture(false, second);
+  const firstDescriptor = bytes.indexOf(first) + 20;
   const result = await inspect(bytes);
   if (!result.ok) throw result.error;
   expect(result.value.objects).toMatchObject([
@@ -590,6 +683,24 @@ it("retains kernels from conflicting AMDGPU notes without choosing either note o
       payload_target: null,
       target_consistency: "unknown",
       inspection: "partial",
+      amd_target_metadata: {
+        note_coverage: "complete",
+        notes: [
+          {
+            target: "amdgcn-amd-amdhsa--gfx900",
+            target_state: "declared",
+            location: { offset: firstDescriptor, size: first.readUInt32LE(4) },
+          },
+          {
+            target: "amdgcn-amd-amdhsa--gfx1100",
+            target_state: "declared",
+            location: {
+              offset: firstDescriptor + first.length,
+              size: second.readUInt32LE(4),
+            },
+          },
+        ],
+      },
     },
   ]);
   expect(result.value.objects[0]?.limitations).toContainEqual(
@@ -1072,6 +1183,64 @@ it("uses a later module target when selecting standalone PTX", async () => {
   expect(inventory.value.objects[0]!.target).toBe("sm_90");
   expect(selected.value.kernels.map(({ name }) => name)).toEqual(["first"]);
 });
+it("reports invalid standalone PTX encoding in inventory and kernel inspection", async () => {
+  const header = Buffer.from(
+    ".version 8.0\n.target sm_80\n.address_size 64\n// ",
+  );
+  const entry = Buffer.from("\n.visible .entry hello() { ret; }\n");
+  const malformed = Buffer.concat([header, Buffer.from([0xff]), entry]);
+  const valid = Buffer.concat([header, Buffer.from("café"), entry]);
+  for (const analysis of ["inventory", "kernels"] as const) {
+    const result = await inspect(malformed, { analysis });
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({
+      format: "ptx",
+      artifact: {
+        sha256: createHash("sha256").update(malformed).digest("hex"),
+      },
+      coverage: {
+        discovery: "partial",
+        payloads: analysis === "kernels" ? "partial" : "not-requested",
+      },
+      objects: [{ kind: "ptx", target: null, inspection: "malformed" }],
+      kernels: [],
+      ptx_artifacts: [],
+    });
+    expect(result.value.objects[0]!.limitations).toContain(
+      "PTX is not valid UTF-8 text",
+    );
+
+    const control = await inspect(valid, { analysis });
+    if (!control.ok) throw control.error;
+    expect(control.value.coverage.discovery).toBe("complete");
+    expect(control.value.objects[0]!.target).toBe("sm_80");
+    if (analysis === "kernels") {
+      expect(control.value.kernels.map(({ name }) => name)).toEqual(["hello"]);
+      expect(
+        Buffer.from(control.value.ptx_artifacts[0]!.text).equals(valid),
+      ).toBe(true);
+    }
+  }
+});
+
+it("keeps a UTF-8 character split by the standalone PTX scan budget unexamined", async () => {
+  const budget = 16 * 1024 * 1024;
+  const header = Buffer.from(".version 8.0\n.target sm_80\n// ");
+  const bytes = Buffer.concat([
+    header,
+    Buffer.alloc(budget - header.length - 1, 0x20),
+    Buffer.from("é\n"),
+  ]);
+  const result = await inspect(bytes, { analysis: "inventory" });
+  if (!result.ok) throw result.error;
+  expect(result.value.coverage.discovery).toBe("partial");
+  expect(result.value.objects).toMatchObject([
+    { kind: "ptx", target: null, inspection: "partial" },
+  ]);
+  expect(result.value.objects[0]!.limitations).toEqual([
+    "PTX target scan reached the 16 MiB text budget before all module directives were examined.",
+  ]);
+});
 it.each(["truncated", "invalid", "extension"] as const)(
   "retains earlier AMD kernel declarations after a later %s note",
   async (kind) => {
@@ -1181,6 +1350,16 @@ it.each(["section-names", "symbols"] as const)(
     );
   },
 );
+it.each(["add_one", "kérnel_日本"])(
+  "decodes UTF-8 CUBIN symbol name %s without a name limitation",
+  async (name) => {
+    const result = await inspect(cubinFixture({ name }));
+    if (!result.ok) throw result.error;
+    const [kernel] = result.value.kernels;
+    expect(kernel).toMatchObject({ name, symbol: name });
+    expect(kernel!.limitations.join(" ")).not.toContain("not valid UTF-8");
+  },
+);
 it("preserves non-UTF-8 CUBIN symbol bytes in the kernel name", async () => {
   const bytes = cubinFixture();
   const symbolName = bytes.indexOf(Buffer.from("\0add_one\0"));
@@ -1188,7 +1367,11 @@ it("preserves non-UTF-8 CUBIN symbol bytes in the kernel name", async () => {
   bytes[symbolName + 1] = 0xff;
   const result = await inspect(bytes);
   if (!result.ok) throw result.error;
-  expect(result.value.kernels[0]?.name).toBe("ÿdd_one");
+  const [kernel] = result.value.kernels;
+  expect(kernel?.name).toBe("ÿdd_one");
+  expect(kernel!.limitations).toContain(
+    `CUDA kernel symbol name is not valid UTF-8; name shows its bytes as Latin-1 (base64 ${Buffer.from("\xffdd_one", "latin1").toString("base64")})`,
+  );
 });
 
 it.each([9, 10])(
@@ -1495,6 +1678,14 @@ it("refuses escaped PTX report expansion while preserving bounded interrupted fa
     error: { _tag: "AnalysisResourceConstraintError" },
   });
   if (result.ok) throw new Error("expected representation capacity refusal");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    details: {
+      reported_limits: {
+        boundary: "gpu-retained-report-bytes",
+        maximum: 16_777_216,
+      },
+    },
+  });
   const partial = gpuCodeObjectsPartialSchema.parse(
     parseEvidence(result.error.partialObservation).normalized_result,
   );
@@ -1531,7 +1722,14 @@ it("distinguishes impossible Clang bundle counts from a framed over-capacity dir
   }
   const result = await inspect(framed, { analysis: "inventory" });
   if (result.ok) throw new Error("Expected directory capacity failure");
-  expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      resource: "memory",
+      reported_limits: { boundary: "hip-bundle-entries", maximum: 65_536 },
+    },
+  });
 });
 
 it("checks Clang bundle ID bounds before the retained directory allowance", async () => {
@@ -1545,7 +1743,19 @@ it("checks Clang bundle ID bounds before the retained directory allowance", asyn
   const framed = Buffer.concat([header, Buffer.from(name), Buffer.alloc(1)]);
   const limited = await inspect(framed, { analysis: "inventory" });
   if (limited.ok) throw new Error("Expected a directory capacity failure");
-  expect(limited.error._tag).toBe("AnalysisResourceConstraintError");
+  expect(projectAnalysisError(limited.error)).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      resource: "memory",
+      reported_limits: {
+        boundary: "hip-bundle-id-bytes",
+        maximum: 65_536,
+        maximum_object_bytes: 134_217_728,
+        maximum_report_bytes: 16_777_216,
+      },
+    },
+  });
 
   const short = Buffer.from(header);
   short.writeBigUInt64LE(BigInt(short.length), 32);
@@ -1560,4 +1770,30 @@ it("checks Clang bundle ID bounds before the retained directory allowance", asyn
       issues: [{ path: ["path"], reason: "invalid_format" }],
     });
   }
+});
+
+it("reports aggregate Clang directory capacity when every ID fits", async () => {
+  const count = 256;
+  const idBytes = 65_536;
+  const entryBytes = 24 + idBytes;
+  const directoryEnd = 32 + count * entryBytes;
+  const framed = Buffer.alloc(directoryEnd + 1, 0x78);
+  framed.write("__CLANG_OFFLOAD_BUNDLE__");
+  framed.writeBigUInt64LE(BigInt(count), 24);
+  for (let index = 0; index < count; index++) {
+    const row = 32 + index * entryBytes;
+    framed.writeBigUInt64LE(BigInt(directoryEnd), row);
+    framed.writeBigUInt64LE(1n, row + 8);
+    framed.writeBigUInt64LE(BigInt(idBytes), row + 16);
+  }
+  const result = await inspect(framed, { analysis: "inventory" });
+  if (result.ok) throw new Error("Expected directory capacity failure");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    details: {
+      reported_limits: {
+        boundary: "hip-bundle-directory-bytes",
+        maximum: 16_777_216,
+      },
+    },
+  });
 });

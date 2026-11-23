@@ -1,7 +1,10 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { afterEach, expect, it, vi } from "vitest";
-import { phaseGate } from "../../tests/support/lifecycleHarness.js";
+import { expect, it, onTestFinished, vi } from "vitest";
+import {
+  phaseArrival,
+  phaseGate,
+} from "../../tests/support/lifecycleHarness.js";
 import {
   cleanupOwnedProcessGroup,
   type OwnedProcessGroup,
@@ -75,19 +78,19 @@ const hostFor = (
 ): ProcessOwnershipHost => {
   const host: ProcessOwnershipHost = {
     platform: "linux",
-    listProcesses: vi.fn(async () => (launcher.exited ? [] : [row])),
-    environment: vi.fn(async () => ({ REA_PROCESS_RUN_ID: "run-6134" })),
+    listProcesses: async () => (launcher.exited ? [] : [row]),
+    environment: async () => ({ REA_PROCESS_RUN_ID: "run-6134" }),
     signalGroup: vi.fn(),
   };
   if (lifecycle === undefined) return host;
   return {
     ...host,
-    processIdentities: vi.fn(async (rows: readonly ProcessTableEntry[]) => {
+    processIdentities: async (rows) => {
       const observation: ProcessIdentityObservation = launcher.exited
         ? { state: "absent", reason: "not-found-in-caller-pid-namespace" }
         : nativeIdentity(lifecycle);
       return new Map(rows.map(({ pid }) => [pid, observation] as const));
-    }),
+    },
   };
 };
 
@@ -109,53 +112,56 @@ const supervise = (
   return { supervisor, results };
 };
 
-afterEach(() => {
-  vi.restoreAllMocks();
-});
-
-it("re-verifies after the launcher's own exit settles an exiting procps row", async () => {
-  const launcher = launcherChild();
-  const host = hostFor(launcher, launcherRow("[java]"));
-  const { supervisor, results } = supervise(launcher, host);
-  // The JVM finishes tearing down only after the single table refresh.
-  vi.mocked(host.listProcesses).mockImplementation(async () => {
-    if (launcher.exited) return [];
-    setTimeout(() => launcher.exit(), 20);
-    return [launcherRow("[java]")];
+const stopWithExitDuringGrace = async (
+  supervisor: ProviderProcessSupervisor,
+  launcher: ReturnType<typeof launcherChild>,
+) => {
+  const grace = phaseArrival();
+  const waitForExit = supervisor.waitForExit.bind(supervisor);
+  const wait = vi.spyOn(supervisor, "waitForExit").mockImplementation((ms) => {
+    const pending = waitForExit(ms);
+    grace.arrive();
+    return pending;
   });
-
-  await expect(supervisor.stop()).resolves.toEqual({
-    status: "verified-cleanup",
-  });
-  expect(results).toEqual([
-    {
-      cleaned: false,
-      reason: `owned launcher command identity did not match (observed=[java]; expected=${JAVA})`,
-    },
-    { cleaned: true, signaled: false },
-  ]);
-  expect(host.signalGroup).not.toHaveBeenCalled();
-  expect(launcher.child.kill).not.toHaveBeenCalled();
-});
-
-it("re-verifies after native exit-in-progress outlasts the settlement deadline", async () => {
-  const launcher = launcherChild();
-  const host = hostFor(launcher, launcherRow("[java]"), "exiting");
-  const { supervisor, results } = supervise(launcher, host);
-  const exitTimer = setTimeout(() => launcher.exit(), 1_200);
+  const stopping = supervisor.stop();
   try {
-    await expect(supervisor.stop({ killGraceMs: 2_000 })).resolves.toEqual({
+    await grace.reached(stopping, "launcher exit grace");
+  } finally {
+    launcher.exit();
+    await stopping.finally(() => wait.mockRestore());
+  }
+  return stopping;
+};
+
+it.each([
+  [
+    "an exiting procps row",
+    undefined,
+    `owned launcher command identity did not match (observed=[java]; expected=${JAVA})`,
+  ],
+  [
+    "native exit-in-progress past the settlement deadline",
+    "exiting",
+    "owned launcher exit could not be confirmed",
+  ],
+] as const)(
+  "re-verifies after the launcher exits with %s",
+  async (_case, lifecycle, reason) => {
+    const launcher = launcherChild();
+    const host = hostFor(launcher, launcherRow("[java]"), lifecycle);
+    const { supervisor, results } = supervise(launcher, host);
+
+    expect(await stopWithExitDuringGrace(supervisor, launcher)).toEqual({
       status: "verified-cleanup",
     });
-  } finally {
-    clearTimeout(exitTimer);
-  }
-  expect(results).toEqual([
-    { cleaned: false, reason: "owned launcher exit could not be confirmed" },
-    { cleaned: true, signaled: false },
-  ]);
-  expect(host.signalGroup).not.toHaveBeenCalled();
-});
+    expect(results).toEqual([
+      { cleaned: false, reason },
+      { cleaned: true, signaled: false },
+    ]);
+    expect(host.signalGroup).not.toHaveBeenCalled();
+    expect(launcher.child.kill).not.toHaveBeenCalled();
+  },
+);
 
 it.each([
   ["identityless", undefined],
@@ -172,6 +178,7 @@ it.each([
     const waited = vi
       .spyOn(supervisor, "waitForExit")
       .mockImplementation(() => grace.hold());
+    onTestFinished(() => waited.mockRestore());
     let settled = false;
     const stopping = supervisor.stop({ killGraceMs: 50 }).finally(() => {
       settled = true;
@@ -236,7 +243,6 @@ it("retains the post-exit verification failure for a later owned retry", async (
   const cleanup = vi.fn(async (): Promise<ProcessCleanupResult> => {
     const next = outcomes.shift();
     if (next === undefined) throw new Error("unexpected cleanup attempt");
-    if (cleanup.mock.calls.length === 1) setTimeout(() => launcher.exit(), 10);
     return next;
   });
   const supervisor = new ProviderProcessSupervisor({
@@ -246,7 +252,7 @@ it("retains the post-exit verification failure for a later owned retry", async (
     cleanup,
   });
 
-  await expect(supervisor.stop()).resolves.toMatchObject({
+  expect(await stopWithExitDuringGrace(supervisor, launcher)).toMatchObject({
     status: "incomplete",
     reason: "process ownership could not be revalidated for PID 911: EACCES",
   });

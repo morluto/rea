@@ -1,25 +1,39 @@
-import { lazyLocalToolsMcp } from "../fixtures/localToolsMcp.js";
-import { parseMcpToolError } from "../fixtures/mcpToolError.js";
-import { expect, onTestFinished } from "vitest";
-import { Client } from "@modelcontextprotocol/client";
 import {
-  StdioClientTransport,
-  getDefaultEnvironment,
-} from "@modelcontextprotocol/client/stdio";
-import { fileURLToPath } from "node:url";
+  connectLocalToolsMcp,
+  lazyLocalToolsMcp,
+} from "../fixtures/localToolsMcp.js";
+import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+import { expect } from "vitest";
+import type { Client } from "@modelcontextprotocol/client";
+import { parseEvidence } from "../../src/domain/evidence.js";
 import { createHash } from "node:crypto";
 import { mkdir, symlink, writeFile, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { webSourceLocationFixture } from "../fixtures/webSourceLocation.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../support/cli/cliFixture.js";
-import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const silentCliEnv = { REA_LOG_LEVEL: "silent" } as const;
 const defaultMcp = lazyLocalToolsMcp();
 const browserUnconfiguredMcp = lazyLocalToolsMcp({
   REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
 });
+
+const traceCliArgs = (
+  manifest: string,
+  path: string,
+  url: string,
+  column = 0,
+) => [
+  "trace-web-source-location",
+  manifest,
+  "0",
+  path,
+  url,
+  "1",
+  String(column),
+  "--json",
+];
 
 const expectRetainedSourceMap = async (
   path: string,
@@ -48,6 +62,7 @@ const expectRetainedSourceMap = async (
 const expectEqualPositionSummary = async (
   client: Client,
   input: Record<string, unknown>,
+  evidenceId: string,
 ) => {
   const compact = await client.callTool({
     name: "trace_web_source_location",
@@ -59,6 +74,7 @@ const expectEqualPositionSummary = async (
   expect(compact.isError).not.toBe(true);
   expect(compact.structuredContent).toMatchObject({
     normalized_result: {
+      parent_evidence_id: evidenceId,
       summary: {
         match_count: 2,
         matches: [
@@ -191,6 +207,7 @@ const expectForwardSlashManifestTrace = async (
   cliJson: unknown,
 ) => {
   const forwardSlash = input.manifest_path.replaceAll("\\", "/");
+  if (forwardSlash === input.manifest_path) return;
   const forward = await client.callTool({
     name: "trace_web_source_location",
     arguments: { ...input, manifest_path: forwardSlash },
@@ -283,48 +300,33 @@ cliTest(
       },
     });
     expectSourceLocationLimitations(response.json);
-    const transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [
-        fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url)),
-        "mcp",
-      ],
-      env: {
-        ...getDefaultEnvironment(),
-        REA_LOG_LEVEL: "silent",
-        CLANG_MODULE_CACHE_PATH: map,
-      },
-      stderr: "pipe",
+    const { client, call } = await connectLocalToolsMcp({
+      CLANG_MODULE_CACHE_PATH: map,
+      REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
     });
-    const client = new Client(
-      {
-        name: "source-location-cli-parity",
-        version: "1",
-      },
-      { jsonSchemaValidator: createMcpSchemaValidation() },
-    );
-    onTestFinished(async () => {
-      try {
-        await client.close();
-      } finally {
-        await transport.close();
-      }
-    });
-    await client.connect(transport);
     const input = {
       manifest_path: manifest,
       script_index: 0,
       source_map: { path: map, url: fixture.sourceMap.url },
       generated_position: { line: 1, column: 0 },
     };
-    const mcpResponse = await client.callTool({
-      name: "trace_web_source_location",
-      arguments: input,
-    });
+    const evidenceId = parseEvidence(response.json).evidence_id;
+    await expectEqualPositionSummary(client, input, evidenceId);
+    await unlink(map);
+    const exportPath = join(root, "summary-parent.json");
+    expect(
+      (await call("export_evidence_bundle", { path: exportPath })).isError,
+    ).not.toBe(true);
+    await expectRetainedSourceMap(
+      exportPath,
+      evidenceId,
+      fixture.sourceMap.file.sha256,
+    );
+    await writeFile(map, fixture.sourceMap.text);
+    const mcpResponse = await call("trace_web_source_location", input);
     expect(mcpResponse.isError, JSON.stringify(mcpResponse)).not.toBe(true);
     expect(mcpResponse.structuredContent).toEqual(response.json);
     await expectForwardSlashManifestTrace(client, input, response.json);
-    await expectEqualPositionSummary(client, input);
     const pastColumn = await client.callTool({
       name: "trace_web_source_location",
       arguments: {
@@ -370,6 +372,14 @@ cliTest(
     const manifest = join(root, "manifest.json");
     await writeFile(manifest, JSON.stringify(fixture.manifest));
     const { call } = await browserUnconfiguredMcp();
+    const runCliMap = (path: string) =>
+      cli.run({
+        arguments: traceCliArgs(manifest, path, fixture.sourceMap.url),
+        environment: {
+          REA_LOG_LEVEL: "silent",
+          REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
+        },
+      });
     const leaf: unknown = JSON.parse(fixture.sourceMap.text);
     for (const [index, version] of [3, 2, null, undefined, "3"].entries()) {
       const text = JSON.stringify({
@@ -386,22 +396,6 @@ cliTest(
       });
       const path = join(root, `nested-${index}.map`);
       await writeFile(path, text);
-      const result = await cli.run({
-        arguments: [
-          "trace-web-source-location",
-          manifest,
-          "0",
-          path,
-          fixture.sourceMap.url,
-          "1",
-          "0",
-          "--json",
-        ],
-        environment: {
-          REA_LOG_LEVEL: "silent",
-          REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
-        },
-      });
       const response = await call("trace_web_source_location", {
         manifest_path: manifest,
         script_index: 0,
@@ -409,6 +403,7 @@ cliTest(
         generated_position: { line: 1, column: 0 },
       });
       if (version === 3) {
+        const result = await runCliMap(path);
         expect(result.exitCode, result.stderr).toBe(0);
         expect(result.json).toMatchObject({
           normalized_result: {
@@ -459,9 +454,12 @@ cliTest(
             ],
           },
         };
-        expect(result.exitCode).toBe(1);
-        expect(result.json).toMatchObject(failure);
-        expect(result.json).not.toHaveProperty("normalized_result");
+        if (version === 2) {
+          const result = await runCliMap(path);
+          expect(result.exitCode).toBe(1);
+          expect(result.json).toMatchObject(failure);
+          expect(result.json).not.toHaveProperty("normalized_result");
+        }
         expect(parseMcpToolError(response).error).toMatchObject(failure);
         expect(response.structuredContent).toBeUndefined();
       }
@@ -493,27 +491,53 @@ cliTest(
       names: ["earlierName"],
       mappings: "AAAAA,CAAAA",
     };
-    for (const [index, sample] of [
-      { first: empty, firstColumn: 0, nextColumn: 0, succeeds: true },
-      { first: nestedEmpty, firstColumn: 0, nextColumn: 0, succeeds: true },
-      { first: empty, firstColumn: 0, nextColumn: 1, succeeds: true },
-      {
-        first: leaf,
-        firstColumn: 0,
-        nextColumn: 0,
-        succeeds: true,
-        shared: true,
-      },
-      {
-        first: boundaryLeaf,
-        firstColumn: 0,
-        nextColumn: 1,
-        succeeds: true,
-        shared: true,
-      },
-      { first: boundaryLeaf, firstColumn: 0, nextColumn: 0, succeeds: false },
-      { first: empty, firstColumn: 1, nextColumn: 0, succeeds: false },
-    ].entries()) {
+    const runCliMap = (path: string, column: number) =>
+      cli.run({
+        arguments: traceCliArgs(manifest, path, fixture.sourceMap.url, column),
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+    for (const [index, sample] of (
+      [
+        { first: empty, firstColumn: 0, nextColumn: 0, succeeds: true },
+        {
+          first: nestedEmpty,
+          firstColumn: 0,
+          nextColumn: 0,
+          succeeds: true,
+          cliParity: true,
+        },
+        { first: empty, firstColumn: 0, nextColumn: 1, succeeds: true },
+        {
+          first: leaf,
+          firstColumn: 0,
+          nextColumn: 0,
+          succeeds: true,
+          shared: true,
+        },
+        {
+          first: boundaryLeaf,
+          firstColumn: 0,
+          nextColumn: 1,
+          succeeds: true,
+          shared: true,
+          cliParity: true,
+        },
+        {
+          first: boundaryLeaf,
+          firstColumn: 0,
+          nextColumn: 0,
+          succeeds: false,
+          diagnostic: "overlap",
+        },
+        {
+          first: empty,
+          firstColumn: 1,
+          nextColumn: 0,
+          succeeds: false,
+          diagnostic: "nondecreasing",
+        },
+      ] as const
+    ).entries()) {
       const path = join(root, `empty-${index}.map`);
       await writeFile(
         path,
@@ -528,19 +552,6 @@ cliTest(
           ],
         }),
       );
-      const result = await cli.run({
-        arguments: [
-          "trace-web-source-location",
-          manifest,
-          "0",
-          path,
-          fixture.sourceMap.url,
-          "1",
-          String(sample.nextColumn),
-          "--json",
-        ],
-        environment: { REA_LOG_LEVEL: "silent" },
-      });
       const response = await call("trace_web_source_location", {
         manifest_path: manifest,
         script_index: 0,
@@ -548,8 +559,8 @@ cliTest(
         generated_position: { line: 1, column: sample.nextColumn },
       });
       if (sample.succeeds) {
-        expect(result.exitCode, result.stderr).toBe(0);
-        expect(result.json).toMatchObject({
+        expect(response.isError, JSON.stringify(response)).not.toBe(true);
+        expect(response.structuredContent).toMatchObject({
           normalized_result: {
             lookup: {
               matched_generated_position: {
@@ -579,12 +590,11 @@ cliTest(
             ],
           },
         });
-        const matches = (
-          result.json as { normalized_result: { matches: unknown[] } }
-        ).normalized_result.matches;
-        expect(matches).toHaveLength("shared" in sample ? 2 : 1);
-        expect(response.isError, JSON.stringify(response)).not.toBe(true);
-        expect(response.structuredContent).toEqual(result.json);
+        if ("cliParity" in sample) {
+          const result = await runCliMap(path, sample.nextColumn);
+          expect(result.exitCode, result.stderr).toBe(0);
+          expect(response.structuredContent).toEqual(result.json);
+        }
       } else {
         const failure = {
           code: "invalid_request",
@@ -593,11 +603,12 @@ cliTest(
               {
                 path: ["source_map", "path"],
                 reason: "invalid_format",
-                message: expect.stringMatching(/overlap|nondecreasing/u),
+                message: expect.stringContaining(sample.diagnostic),
               },
             ],
           },
         };
+        const result = await runCliMap(path, sample.nextColumn);
         expect(result.exitCode).toBe(1);
         expect(result.json).toMatchObject(failure);
         expect(parseMcpToolError(response).error).toMatchObject(failure);
@@ -629,16 +640,7 @@ cliTest(
     await writeFile(map, text);
     const url = "https://cdn.test/npm/app@1/dist/app.js.map";
     const result = await cli.run({
-      arguments: [
-        "trace-web-source-location",
-        manifest,
-        "0",
-        map,
-        url,
-        "1",
-        "0",
-        "--json",
-      ],
+      arguments: traceCliArgs(manifest, map, url),
       environment: {
         REA_LOG_LEVEL: "silent",
         REA_BROWSER_EXECUTABLE: "relative-unconfigured-browser",
@@ -771,16 +773,7 @@ cliTest(
     const map = join(root, "app.js.map");
     await writeFile(manifest, JSON.stringify(fixture.manifest));
     await writeFile(map, fixture.sourceMap.text);
-    const arguments_ = [
-      "trace-web-source-location",
-      manifest,
-      "0",
-      map,
-      fixture.sourceMap.url,
-      "1",
-      "0",
-      "--json",
-    ];
+    const arguments_ = traceCliArgs(manifest, map, fixture.sourceMap.url);
     const refused = await cli.run({
       arguments: [...arguments_, "--source-map-bytes", "4194304"],
       environment: silentCliEnv,

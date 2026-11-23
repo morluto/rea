@@ -276,6 +276,48 @@ describe("CLI advertised input schemas", () => {
   });
 });
 
+describe("omittable defaults omission rules", () => {
+  it("preserves required status for strict and failing-default fields while marking valid omission wrappers optional", async () => {
+    const cli = createCommandCli();
+    registerCliCommand(cli, "fixture", {
+      args: z.object({
+        required: z.string(),
+        optional: z.string().optional(),
+        scope: z.enum(["all", "selected"]).default("all"),
+        prefaulted: z.string().prefault("fallback"),
+        caught: z.string().catch("safe"),
+        failingDefault: z
+          .string()
+          .default("bad")
+          .refine(() => false),
+        optionalTransform: z
+          .string()
+          .optional()
+          .transform((value) => value ?? "x"),
+      }),
+      run: () => ({ ok: true }),
+    });
+
+    presentOmittableDefaults(cli as unknown as CliInstance);
+
+    const advertised = await advertisedSchema(
+      cli as unknown as CliInstance,
+      "fixture",
+    );
+    expect(advertised.args?.required ?? []).toEqual(
+      expect.arrayContaining(["required", "failingDefault"]),
+    );
+    for (const key of [
+      "optional",
+      "scope",
+      "prefaulted",
+      "caught",
+      "optionalTransform",
+    ])
+      expect(advertised.args?.required ?? []).not.toContain(key);
+  });
+});
+
 describe("firmware CLI advertised input schema", () => {
   it("keeps limits and defaults from its shared input contract", async () => {
     const cli = createCli({});

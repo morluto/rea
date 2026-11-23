@@ -193,14 +193,27 @@ const requireBytes = (buffer: Buffer, length: number, what: string): void => {
     );
 };
 
+const LE_BOOT_READERS = new WeakMap<Buffer, BinaryReader>();
+const BE_BOOT_READERS = new WeakMap<Buffer, BinaryReader>();
+
+const cachedBootReader = (buffer: Buffer, little: boolean): BinaryReader => {
+  const cache = little ? LE_BOOT_READERS : BE_BOOT_READERS;
+  let reader = cache.get(buffer);
+  if (reader === undefined) {
+    reader = new BinaryReader(buffer, little, ANDROID_BOOT_FORMAT);
+    cache.set(buffer, reader);
+  }
+  return reader;
+};
+
 const u32 = (buffer: Buffer, offset: number): number => {
   requireBytes(buffer, offset + 4, "header");
-  return new BinaryReader(buffer, true, ANDROID_BOOT_FORMAT).u32(offset);
+  return cachedBootReader(buffer, true).u32(offset);
 };
 
 const u64 = (buffer: Buffer, offset: number, what: string): number => {
   requireBytes(buffer, offset + 8, what);
-  const reader = new BinaryReader(buffer, true, ANDROID_BOOT_FORMAT);
+  const reader = cachedBootReader(buffer, true);
   const low = reader.u32(offset);
   const high = reader.u32(offset + 4);
   if (high > 0x1f_ffff) formatError(`${what} exceeds a safe integer`);
@@ -209,7 +222,7 @@ const u64 = (buffer: Buffer, offset: number, what: string): number => {
 
 const u64be = (buffer: Buffer, offset: number, what: string): number => {
   requireBytes(buffer, offset + 8, what);
-  const reader = new BinaryReader(buffer, false, ANDROID_BOOT_FORMAT);
+  const reader = cachedBootReader(buffer, false);
   const high = reader.u32(offset);
   const low = reader.u32(offset + 4);
   if (high > 0x1f_ffff) formatError(`${what} exceeds a safe integer`);

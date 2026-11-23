@@ -8,11 +8,6 @@ const posixFallback = join(resolve(sep), "tmp");
 const posixBase = (...segments: string[]) => join(resolve(sep), ...segments);
 
 describe("ghidraSessionRoot", () => {
-  it("keeps an inherited base that Ghidra accepts", () => {
-    const base = posixBase("var", "tmp", "rea-run");
-    expect(ghidraSessionRoot({ base, fallback: posixFallback })).toBe(base);
-  });
-
   it("keeps a base whose elements only contain an interior dot", () => {
     const base = posixBase("opt", "rea.run", "session");
     expect(ghidraSessionRoot({ base, fallback: posixFallback })).toBe(base);

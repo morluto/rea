@@ -11,10 +11,7 @@ import {
   machoImage,
 } from "../../../../src/artifacts/apple/MachoImage.fixture.js";
 import { artifactExtractionExecutionSchema } from "../../../../src/contracts/artifactToolContracts.js";
-import {
-  artifactExtractionResultSchema,
-  artifactInventoryResultSchema,
-} from "../../../../src/domain/artifactGraph.js";
+import { artifactExtractionResultSchema } from "../../../../src/domain/artifactGraph.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import {
   createOwnedArtifactClient,
@@ -57,37 +54,13 @@ describe("artifact extraction", () => {
     },
   );
 
-  it("keeps committed files after the owning client closes", async () => {
-    const root = await createTestTempDirectory("rea-extract-client-close-");
-    const source = join(root, "source.app");
-    await mkdir(source);
-    await writeFile(join(source, "payload.txt"), "committed\n");
-    const output = join(root, "output");
-    const client = createOwnedArtifactClient(await target(source));
-
-    const result = await client.execute("extract_artifact", {
-      output_root: output,
-    });
-    if (!result.ok) throw result.error;
-    expect((await client.close()).ok).toBe(true);
-    expect(await readFile(join(output, "payload.txt"), "utf8")).toBe(
-      "committed\n",
-    );
-  });
-
-  it("extracts all regular occurrences through an exclusively owned output tree", async () => {
+  it("keeps all extracted bundle files after the client closes", async () => {
     const root = await createTestTempDirectory("rea-extract-");
     const source = join(root, "source.app");
     await mkdir(join(source, "assets"), { recursive: true });
     await writeFile(join(source, "assets", "selected.js"), "selected();\n");
     await writeFile(join(source, "assets", "ignored.js"), "ignored();\n");
     const targetValue = await target(source);
-    const graph = await inventory(targetValue);
-    expect(
-      graph.occurrences.some(
-        ({ logical_path }) => logical_path === "assets/selected.js",
-      ),
-    ).toBe(true);
     const cancelledOutput = join(root, "cancelled-output");
     const controller = new AbortController();
     controller.abort();
@@ -104,11 +77,13 @@ describe("artifact extraction", () => {
     });
     await expect(access(cancelledOutput)).rejects.toThrow();
     const output = join(root, "output");
-    const result = await createOwnedArtifactClient(targetValue).execute(
-      "extract_artifact",
-      artifactExtractionExecutionSchema.parse({
-        output_root: output,
-      }),
+    const result = await withArtifactClient(targetValue, (client) =>
+      client.execute(
+        "extract_artifact",
+        artifactExtractionExecutionSchema.parse({
+          output_root: output,
+        }),
+      ),
     );
     if (!result.ok) throw result.error;
     const firstExtraction = artifactExtractionResultSchema.parse(
@@ -161,14 +136,6 @@ describe("artifact extraction", () => {
     ]);
   });
 });
-const inventory = async (targetValue: BinaryTarget) => {
-  const result = await createOwnedArtifactClient(targetValue).execute(
-    "inventory_artifact",
-    {},
-  );
-  if (!result.ok) throw result.error;
-  return artifactInventoryResultSchema.parse(result.value.result);
-};
 
 /** A real bundle target has an executable identity distinct from its resource tree. */
 const target = async (path: string): Promise<BinaryTarget> => {

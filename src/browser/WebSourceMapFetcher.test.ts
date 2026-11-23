@@ -1,12 +1,16 @@
-import process from "node:process";
 import { createServer } from "node:http";
 import { once } from "node:events";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { fetchWebSourceMaps } from "./WebSourceMapFetcher.js";
 import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
 import { fetchWebSourceMapsOk } from "../../tests/fixtures/fetchWebSourceMapsOk.js";
+import {
+  phaseArrival,
+  phaseGate,
+} from "../../tests/support/lifecycleHarness.js";
+import { testWaitDeadline } from "../../tests/support/testWait.js";
 
 const input = analyzeWebBundleInputSchema.parse({
   cdp_endpoint: "http://127.0.0.1:9222",
@@ -20,169 +24,165 @@ const request = {
   fetchUrl: "https://app.example.test/app.js.map",
 };
 
-it("reports an empty selected request set without starting fetch work", async () => {
-  const result = await fetchWebSourceMapsOk([], input, undefined, {
+const approvedInput = {
+  ...input,
+  allowed_origins: [new URL(request.fetchUrl).origin],
+};
+
+it("checks cancellation before returning an empty source-map selection", async () => {
+  const controller = new AbortController();
+  const host = {
     fetch: async () => {
       throw new Error("No source-map request should be made");
     },
+  };
+  expect(await fetchWebSourceMaps([], input, controller.signal, host)).toEqual({
+    ok: true,
+    value: { status: "not_requested", requested: 0, processed: 0, items: [] },
   });
 
-  expect(result).toEqual({
-    status: "not_requested",
-    requested: 0,
-    processed: 0,
-    items: [],
-  });
-});
-
-it("honors cancellation before returning an empty request set", async () => {
-  const controller = new AbortController();
   const reason = new Error("cancelled before fetching");
   controller.abort(reason);
-
-  const result = await fetchWebSourceMaps([], input, controller.signal);
-  expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.error.cause).toBe(reason);
+  const result = await fetchWebSourceMaps([], input, controller.signal, host);
+  if (result.ok) throw new Error("Expected cancellation");
+  expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(result.error.cause).toBe(reason);
 });
 
 it("cancels a response body that arrives after its fetch host aborts synchronously", async () => {
   const controller = new AbortController();
   const reason = new Error("fetch host aborted during admission");
-  let resolveFetch!: (response: Response) => void;
-  const fetchPromise = new Promise<Response>((resolve) => {
-    resolveFetch = resolve;
-  });
-  let markCancelled!: () => void;
-  const cancelled = new Promise<void>((resolve) => {
-    markCancelled = resolve;
-  });
+  const fetching = phaseGate<void, Response>();
   let cancellationReason: unknown;
-  const body = new ReadableStream<Uint8Array>({
-    cancel: (cause) => {
-      cancellationReason = cause;
-      markCancelled();
-    },
-  });
-  const fetchInput = analyzeWebBundleInputSchema.parse({
-    cdp_endpoint: "http://127.0.0.1:9222",
-    allowed_origins: [new URL(request.fetchUrl).origin],
-    target_id: "page-1",
-    fetch_source_maps: true,
-  });
-  const pending = fetchWebSourceMaps([request], fetchInput, controller.signal, {
-    fetch: () => {
-      controller.abort(reason);
-      return fetchPromise;
-    },
-  });
-
-  const result = await pending;
-  expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.error.cause).toBe(reason);
-  resolveFetch(new Response(body));
-  await cancelled;
-  expect(cancellationReason).toBe(reason);
+  const response = new Response(
+    new ReadableStream<Uint8Array>({
+      cancel(cause) {
+        cancellationReason = cause;
+      },
+    }),
+  );
+  try {
+    const result = await fetchWebSourceMaps(
+      [request],
+      approvedInput,
+      controller.signal,
+      {
+        fetch: () => {
+          controller.abort(reason);
+          return fetching.hold();
+        },
+      },
+    );
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error.cause).toBe(reason);
+    fetching.release(response);
+    await expect.poll(() => cancellationReason).toBe(reason);
+    await expect.poll(() => result.error.cleanupIncomplete).toBe(false);
+  } finally {
+    fetching.release(response);
+  }
 });
 
 it("retains cleanup when a response arrives after fetch cancellation", async () => {
   const controller = new AbortController();
   const reason = new Error("caller cancelled during fetch");
-  let resolveFetch!: (response: Response) => void;
-  const fetching = new Promise<Response>((resolve) => {
-    resolveFetch = resolve;
-  });
+  const fetching = phaseGate<void, Response>();
   const [body, sibling] = new ReadableStream<Uint8Array>({
     start(stream) {
       stream.enqueue(new Uint8Array([1]));
     },
   }).tee();
-  const pending = fetchWebSourceMaps(
-    [request],
-    { ...input, allowed_origins: [new URL(request.fetchUrl).origin] },
-    controller.signal,
-    { fetch: async () => fetching },
-  );
-  controller.abort(reason);
-  const result = await pending;
-  if (result.ok) throw new Error("Expected cancellation");
-  expect(result.error.cause).toBe(reason);
+  const response = new Response(body);
   try {
-    resolveFetch(new Response(body));
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    const pending = fetchWebSourceMaps(
+      [request],
+      approvedInput,
+      controller.signal,
+      {
+        fetch: () => fetching.hold(),
+      },
+    );
+    await fetching.reached(pending, "source-map fetch");
+    controller.abort(reason);
+    const result = await pending;
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error.cause).toBe(reason);
+    fetching.release(response);
+    await expect
+      .poll(() => body.locked || !result.error.cleanupIncomplete)
+      .toBe(true);
+    expect(body.locked).toBe(true);
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.cleanupResources).toEqual([request.fetchUrl]);
     await sibling.cancel();
     await expect.poll(() => result.error.cleanupIncomplete).toBe(false);
+    expect(response.body?.locked).toBe(false);
   } finally {
-    await sibling.cancel();
+    controller.abort(reason);
+    fetching.release(response);
+    await Promise.all([
+      sibling.cancel(),
+      body.locked ? undefined : body.cancel(),
+    ]);
   }
 });
 
-it("releases a late response already errored with the caller reason", async () => {
-  const controller = new AbortController();
-  const reason = new Error("caller cancelled during fetch");
-  let resolveFetch!: (response: Response) => void;
-  const fetching = new Promise<Response>((resolve) => {
-    resolveFetch = resolve;
-  });
-  const pending = fetchWebSourceMaps(
-    [request],
-    { ...input, allowed_origins: [new URL(request.fetchUrl).origin] },
-    controller.signal,
-    { fetch: async () => fetching },
-  );
-  controller.abort(reason);
-  const result = await pending;
-  if (result.ok) throw new Error("Expected cancellation");
-  expect(result.error.cleanupIncomplete).toBe(true);
-  resolveFetch(
-    new Response(
-      new ReadableStream<Uint8Array>({
-        start(stream) {
-          stream.error(reason);
+it.each([false, true])(
+  "distinguishes a late response cleanup failure (failed=%s)",
+  async (failed) => {
+    const controller = new AbortController();
+    const reason = new Error("caller cancelled during fetch");
+    const physical = new Error("late response cancellation failed");
+    const fetching = phaseGate<void, Response>();
+    const response = new Response(
+      failed
+        ? new ReadableStream<Uint8Array>({
+            cancel() {
+              throw physical;
+            },
+          })
+        : new ReadableStream<Uint8Array>({
+            start(stream) {
+              stream.error(reason);
+            },
+          }),
+    );
+    try {
+      const pending = fetchWebSourceMaps(
+        [request],
+        approvedInput,
+        controller.signal,
+        {
+          fetch: () => fetching.hold(),
         },
-      }),
-    ),
-  );
-  await expect.poll(() => result.error.cleanupIncomplete).toBe(false);
-  expect(result.error.cleanupResources).toEqual([]);
-  expect(result.error.cause).toBe(reason);
-});
-
-it("retains the exact failure of a late response cancellation", async () => {
-  const controller = new AbortController();
-  const reason = new Error("caller cancelled during fetch");
-  const physical = new Error("late response cancellation failed");
-  let resolveFetch!: (response: Response) => void;
-  const fetching = new Promise<Response>((resolve) => {
-    resolveFetch = resolve;
-  });
-  const pending = fetchWebSourceMaps(
-    [request],
-    { ...input, allowed_origins: [new URL(request.fetchUrl).origin] },
-    controller.signal,
-    { fetch: async () => fetching },
-  );
-  controller.abort(reason);
-  const result = await pending;
-  if (result.ok) throw new Error("Expected cancellation");
-  resolveFetch(
-    new Response(
-      new ReadableStream<Uint8Array>({
-        cancel() {
-          throw physical;
-        },
-      }),
-    ),
-  );
-  await expect.poll(() => result.error.secondaryFailures.length).toBe(1);
-  expect(result.error.cause).toBe(reason);
-  expect(result.error.cleanupIncomplete).toBe(true);
-  expect(result.error.cleanupResources).toEqual([request.fetchUrl]);
-  expect(result.error.secondaryFailures[0]?.secondaryFailures[0]?.cause).toBe(
-    physical,
-  );
-});
+      );
+      await fetching.reached(pending, "source-map fetch");
+      controller.abort(reason);
+      const result = await pending;
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error.cause).toBe(reason);
+      expect(result.error.cleanupIncomplete).toBe(true);
+      fetching.release(response);
+      if (failed) {
+        await expect
+          .poll(
+            () =>
+              result.error.secondaryFailures[0]?.secondaryFailures[0]?.cause,
+          )
+          .toBe(physical);
+        expect(result.error.secondaryFailures).toHaveLength(1);
+        expect(result.error.cleanupIncomplete).toBe(true);
+        expect(result.error.cleanupResources).toEqual([request.fetchUrl]);
+      } else {
+        await expect.poll(() => result.error.cleanupIncomplete).toBe(false);
+        expect(result.error.cleanupResources).toEqual([]);
+      }
+    } finally {
+      controller.abort(reason);
+      fetching.release(response);
+    }
+  },
+);
 
 it("retains a fetch host that ignores an item deadline until it settles", async () => {
   let rejectFetch!: (cause: unknown) => void;
@@ -214,7 +214,7 @@ it("preserves a physical fetch failure when the caller cancels before delivery",
   const reason = { kind: "late caller cancellation" };
   const result = await fetchWebSourceMaps(
     [request],
-    { ...input, allowed_origins: [new URL(request.fetchUrl).origin] },
+    approvedInput,
     controller.signal,
     {
       fetch: () => {
@@ -236,41 +236,33 @@ it("preserves a physical fetch failure when the caller cancels before delivery",
   ).toBe(true);
 });
 
-it("observes a fetch rejection that arrives after its host aborts synchronously", async () => {
+it("retains a fetch rejection that arrives after its host aborts synchronously", async () => {
   const controller = new AbortController();
   const reason = new Error("fetch host aborted during admission");
   const lateFailure = new Error("late fetch failure");
-  let rejectFetch!: (cause: unknown) => void;
-  const fetchPromise = new Promise<Response>((_resolve, reject) => {
-    rejectFetch = reject;
-  });
-  const fetchInput = analyzeWebBundleInputSchema.parse({
-    cdp_endpoint: "http://127.0.0.1:9222",
-    allowed_origins: [new URL(request.fetchUrl).origin],
-    target_id: "page-1",
-    fetch_source_maps: true,
-  });
-  const pending = fetchWebSourceMaps([request], fetchInput, controller.signal, {
-    fetch: () => {
-      controller.abort(reason);
-      return fetchPromise;
-    },
-  });
-  let unhandled: unknown;
-  const onUnhandled = (cause: unknown): void => {
-    unhandled = cause;
-  };
-  process.on("unhandledRejection", onUnhandled);
-
+  const fetching = phaseGate<void, Response>();
   try {
-    const result = await pending;
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.cause).toBe(reason);
-    rejectFetch(lateFailure);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(unhandled).toBeUndefined();
+    const result = await fetchWebSourceMaps(
+      [request],
+      approvedInput,
+      controller.signal,
+      {
+        fetch: () => {
+          controller.abort(reason);
+          return fetching.hold();
+        },
+      },
+    );
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error.cause).toBe(reason);
+    expect(result.error.cleanupResources).toEqual([request.fetchUrl]);
+    fetching.reject(lateFailure);
+    await expect.poll(() => result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.secondaryFailures.map(({ cause }) => cause)).toEqual([
+      lateFailure,
+    ]);
   } finally {
-    process.off("unhandledRejection", onUnhandled);
+    fetching.release(new Response(null));
   }
 });
 
@@ -440,23 +432,17 @@ it.each([
 it("keeps same-URL response cleanup owners independent across mixed outcomes", async () => {
   const cleanupFailure = new Error("second response cancellation failed");
   const operations = [false, true].map((rejects) => {
-    let start!: () => void;
-    const reading = new Promise<void>((resolve) => {
-      start = resolve;
-    });
-    let finish!: () => void;
-    const held = new Promise<void>((resolve) => {
-      finish = resolve;
-    });
+    const reading = phaseArrival();
+    const cleanup = phaseGate();
     let calls = 0;
     const body = new ReadableStream<Uint8Array>(
       {
         pull() {
-          start();
+          reading.arrive();
         },
         async cancel() {
           calls += 1;
-          await held;
+          await cleanup.hold();
           if (rejects) throw cleanupFailure;
         },
       },
@@ -466,16 +452,13 @@ it("keeps same-URL response cleanup owners independent across mixed outcomes", a
     const reason = { rejects };
     const pending = fetchWebSourceMaps(
       [request],
-      {
-        ...input,
-        allowed_origins: [new URL(request.fetchUrl).origin],
-      },
+      approvedInput,
       controller.signal,
       { fetch: async () => new Response(body) },
     );
     return {
       reading,
-      finish,
+      cleanup,
       controller,
       reason,
       pending,
@@ -484,7 +467,11 @@ it("keeps same-URL response cleanup owners independent across mixed outcomes", a
     };
   });
   try {
-    await Promise.all(operations.map(({ reading }) => reading));
+    await Promise.all(
+      operations.map(({ reading, pending }) =>
+        reading.reached(pending, "same-URL source-map body read"),
+      ),
+    );
     for (const operation of operations)
       operation.controller.abort(operation.reason);
     const errors = await Promise.all(
@@ -498,11 +485,11 @@ it("keeps same-URL response cleanup owners independent across mixed outcomes", a
       [request.fetchUrl],
       [request.fetchUrl],
     ]);
-    operations[0]!.finish();
+    operations[0]!.cleanup.release();
     await expect.poll(() => errors[0]!.cleanupIncomplete).toBe(false);
     expect(errors[1]!.cleanupIncomplete).toBe(true);
     expect(errors[1]!.cleanupResources).toEqual([request.fetchUrl]);
-    operations[1]!.finish();
+    operations[1]!.cleanup.release();
     await expect.poll(() => errors[1]!.secondaryFailures.length).toBe(1);
     expect(errors[1]!.secondaryFailures[0]?.cause).toBe(cleanupFailure);
     expect(errors.map((error) => error.cleanupIncomplete)).toEqual([
@@ -516,7 +503,7 @@ it("keeps same-URL response cleanup owners independent across mixed outcomes", a
     expect(operations.map(({ body }) => body.locked)).toEqual([false, false]);
   } finally {
     for (const operation of operations) {
-      operation.finish();
+      operation.cleanup.release();
       operation.controller.abort(operation.reason);
     }
     await Promise.all(operations.map(({ pending }) => pending));
@@ -592,7 +579,7 @@ it("does not mistake an independent body AbortError for a falsy caller cancellat
   );
   const result = await fetchWebSourceMaps(
     [request],
-    { ...input, allowed_origins: [new URL(request.fetchUrl).origin] },
+    approvedInput,
     controller.signal,
     { fetch: async () => new Response(body) },
   );
@@ -606,135 +593,195 @@ it("does not mistake an independent body AbortError for a falsy caller cancellat
   ).toBe(true);
 });
 
-it.each(["headers", "body"] as const)(
-  "keeps an actual stalled HTTP %s deadline local to its map",
-  async (stage) => {
-    const server = createServer((_request, response) => {
-      if (stage === "body") {
-        response.writeHead(200, { "content-type": "application/json" });
-        response.write('{"version":3,');
-      }
-    });
-    server.listen(0, "127.0.0.1");
-    await once(server, "listening");
-    const address = server.address();
-    if (address === null || typeof address === "string")
-      throw new Error("Expected TCP address");
-    const url = `http://127.0.0.1:${address.port}/map`;
-    try {
-      const result = await fetchWebSourceMaps(
-        [{ ...request, declaredUrl: url, fetchUrl: url }],
-        {
-          ...input,
-          allowed_origins: [new URL(url).origin],
-          source_map_fetch_timeout_ms: 1000,
+it("keeps actual stalled HTTP headers and body deadlines local to their maps", async () => {
+  const headers = phaseArrival();
+  const body = phaseArrival();
+  const server = createServer((request, response) => {
+    if (request.url === "/headers") headers.arrive();
+    else if (request.url === "/body")
+      response
+        .writeHead(200, { "content-type": "application/json" })
+        .write('{"version":3,');
+  });
+  const listening = once(server, "listening");
+  server.listen(0, "127.0.0.1");
+  await listening;
+  const address = server.address();
+  if (address === null || typeof address === "string")
+    throw new Error("Expected TCP address");
+  const origin = `http://127.0.0.1:${address.port}`;
+  const deadline = 13_700;
+  const controller = new AbortController();
+  const signal = AbortSignal.any([
+    controller.signal,
+    AbortSignal.timeout(testWaitDeadline()),
+  ]);
+  const capture = (stage: "headers" | "body") => {
+    const url = `${origin}/${stage}`;
+    return fetchWebSourceMaps(
+      [{ ...request, declaredUrl: url, fetchUrl: url }],
+      {
+        ...input,
+        allowed_origins: [origin],
+        source_map_fetch_timeout_ms: deadline,
+      },
+      signal,
+      {
+        fetch: async (url, options) => {
+          const response = await fetch(url, options);
+          if (stage === "body") body.arrive();
+          return response;
         },
-        undefined,
-        { fetch },
-      );
-      expect(result).toMatchObject({
+      },
+    );
+  };
+
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  const waitingForHeaders = capture("headers");
+  const waitingForBody = capture("body");
+  try {
+    await headers.reached(waitingForHeaders, "request before response headers");
+    await body.reached(
+      waitingForBody,
+      "headers before remaining response body",
+    );
+    await vi.advanceTimersByTimeAsync(deadline);
+    const limitation = expect.stringContaining(
+      `${deadline} ms source_map_fetch_timeout_ms deadline`,
+    );
+    for (const [pending, effectiveUrl] of [
+      [waitingForHeaders, null],
+      [waitingForBody, `${origin}/body`],
+    ] as const)
+      expect(await pending).toMatchObject({
         ok: true,
         value: {
           items: [
-            {
-              status: "fetch_failed",
-              limitation: expect.stringContaining("deadline"),
-            },
+            { status: "fetch_failed", effective_url: effectiveUrl, limitation },
           ],
         },
       });
-    } finally {
-      server.closeAllConnections();
-      await new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      );
-    }
-  },
-);
-
-it.each([302, 503])(
-  "retains HTTP %s response cleanup without hanging on an independent tee branch",
-  async (status) => {
-    const [body, sibling] = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new Uint8Array([1]));
-      },
-    }).tee();
-    const pending = fetchWebSourceMaps(
-      [request],
-      {
-        ...input,
-        allowed_origins: [new URL(request.fetchUrl).origin],
-        source_map_fetch_timeout_ms: 100,
-      },
-      undefined,
-      {
-        fetch: async () =>
-          new Response(body, {
-            status,
-            ...(status === 302 ? { headers: { location: "/next" } } : {}),
-          }),
-      },
-    );
-    let timer: ReturnType<typeof setTimeout> | undefined;
+  } finally {
+    controller.abort();
     try {
-      const result = await Promise.race([
-        pending,
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error("response cleanup waited for sibling")),
-            1000,
-          );
-        }),
-      ]);
-      expect(result).toMatchObject({
-        ok: false,
-        error: {
-          cleanupIncomplete: true,
-          cleanupResources: [request.fetchUrl],
-        },
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+        server.closeAllConnections();
       });
     } finally {
-      if (timer !== undefined) clearTimeout(timer);
-      await sibling.cancel();
-      await pending;
+      await Promise.allSettled([waitingForHeaders, waitingForBody]);
+      vi.useRealTimers();
     }
-  },
-);
+  }
+});
 
-it("retains an admitted response when the deadline expires before body reading", async () => {
-  const [body, sibling] = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(new Uint8Array([1]));
+it("retains redirect and HTTP error response locks until their tee siblings release", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const deadline = 100;
+  const attempts = [302, 503].map((status) => {
+    const [body, sibling] = new ReadableStream<Uint8Array>().tee();
+    const pending = fetchWebSourceMaps(
+      [request],
+      { ...approvedInput, source_map_fetch_timeout_ms: deadline },
+      undefined,
+      {
+        fetch: async (url) => {
+          if (String(url) !== request.fetchUrl)
+            throw new Error("Redirect followed before releasing its body");
+          return new Response(body, {
+            status,
+            ...(status === 302 ? { headers: { location: "/next" } } : {}),
+          });
+        },
+      },
+    );
+    return { status, body, sibling, pending };
+  });
+  try {
+    await vi.advanceTimersByTimeAsync(deadline);
+    for (const { status, body, sibling, pending } of attempts) {
+      const result = await Promise.race([pending, null]);
+      if (result === null || result.ok)
+        throw new Error(
+          `Expected retained cleanup for HTTP ${status} at the deadline`,
+        );
+      expect(result.error).toMatchObject({
+        cleanupIncomplete: true,
+        cleanupResources: [request.fetchUrl],
+      });
+      expect(body.locked).toBe(true);
+      await sibling.cancel();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(body.locked).toBe(false);
+    }
+  } finally {
+    try {
+      await Promise.all(
+        attempts.map(async ({ body, sibling, pending }) => {
+          await Promise.allSettled([body.cancel(), sibling.cancel()]);
+          await pending;
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+});
+
+it("cancels an admitted response unread when the deadline expires before the timer fires", async () => {
+  const timeoutMs = 50;
+  let now = 0;
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+  const firstBodyAction = phaseArrival<"read" | "cancel">();
+  const cancellation = phaseGate();
+  let operationSignal: AbortSignal | null | undefined;
+  const body = new ReadableStream<Uint8Array>(
+    {
+      pull() {
+        firstBodyAction.arrive("read");
+      },
+      cancel() {
+        firstBodyAction.arrive("cancel");
+        return cancellation.hold();
+      },
     },
-  }).tee();
+    { highWaterMark: 0 },
+  );
   const pending = fetchWebSourceMaps(
     [request],
-    {
-      ...input,
-      allowed_origins: [new URL(request.fetchUrl).origin],
-      source_map_fetch_timeout_ms: 50,
-    },
+    { ...approvedInput, source_map_fetch_timeout_ms: timeoutMs },
     undefined,
     {
-      fetch: async () => {
-        // Keep the timer callback queued while synchronous delivery crosses the deadline.
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
+      fetch: async (_url, options) => {
+        operationSignal = options?.signal;
+        now = timeoutMs + 1;
         return new Response(body);
       },
     },
   );
   try {
+    expect(
+      await firstBodyAction.reached(pending, "first response body action"),
+    ).toBe("cancel");
+    expect(operationSignal?.aborted).toBe(false);
     const result = await pending;
     if (result.ok) throw new Error("Expected owned response cleanup");
     expect(result.error).toMatchObject({
       cleanupIncomplete: true,
       cleanupResources: [request.fetchUrl],
+      cause: {
+        message: expect.stringContaining("50 ms source_map_fetch_timeout_ms"),
+      },
     });
-    await sibling.cancel();
+    expect(body.locked).toBe(true);
+    cancellation.release();
     await expect.poll(() => result.error.cleanupIncomplete).toBe(false);
+    expect(body.locked).toBe(false);
   } finally {
-    await Promise.allSettled([body.cancel(), sibling.cancel()]);
+    clock.mockRestore();
+    cancellation.release();
+    await pending;
   }
 });
 
@@ -852,62 +899,56 @@ it("recovers a fetched map by raising its exact structural admission on the next
 });
 
 it.each([
-  { limits: { decoded_records: 4 }, directory: "maps" },
-  { limits: { fetch_bytes: 1500 }, directory: "m".repeat(1000) },
+  {
+    limits: { decoded_records: 4 },
+    directory: "maps",
+    limit: "decoded_records",
+  },
+  {
+    limits: { fetch_bytes: 1500 },
+    directory: "m".repeat(1000),
+    limit: "fetch_bytes",
+  },
 ])(
-  "releases discarded map interpretations before the next map: $limits",
-  async ({ limits, directory }) => {
-    const selected = {
+  "charges $limit for retained map interpretations and releases discarded ones",
+  async ({ limits, directory, limit }) => {
+    const requests = ["1", "2", "3"].map((key) => ({
       ...request,
+      scriptKey: `scr_${key.repeat(64)}`,
       fetchUrl: `https://app.example.test/${directory}/app.js.map`,
-    };
-    const responses = ["ACAA", "AAAA"].map((mappings) =>
+    }));
+    const responses = ["ACAA", "AAAA", "AAAA"].map((mappings) =>
       JSON.stringify({ version: 3, sources: ["a.js"], names: [], mappings }),
     );
     const result = await fetchWebSourceMapsOk(
-      [selected, { ...selected, scriptKey: `scr_${"2".repeat(64)}` }],
+      requests,
       {
         ...input,
-        allowed_origins: [new URL(selected.fetchUrl).origin],
+        allowed_origins: ["https://app.example.test"],
         source_map_limits: limits,
       },
       undefined,
       { fetch: async () => new Response(responses.shift()) },
     );
 
-    expect(result.items.map(({ status }) => status)).toEqual([
-      "invalid",
-      "included",
-    ]);
-    expect(result.items[0]).toMatchObject({
-      response_identity: { representation: "fetch-response-body-bytes" },
+    expect(result).toMatchObject({
+      status: "partial",
+      requested: 3,
+      processed: 3,
+      items: [
+        {
+          status: "invalid",
+          response_identity: { representation: "fetch-response-body-bytes" },
+        },
+        {
+          status: "included",
+          mappings: [{ source: `https://app.example.test/${directory}/a.js` }],
+        },
+        {
+          status: "fetch_failed",
+          limitation: expect.stringContaining(`source_map_limits.${limit} is`),
+        },
+      ],
     });
-    expect(result.items[1]?.mappings).toMatchObject([
-      { source: `https://app.example.test/${directory}/a.js` },
-    ]);
-    const retained = await fetchWebSourceMapsOk(
-      [selected, { ...selected, scriptKey: `scr_${"2".repeat(64)}` }],
-      {
-        ...input,
-        allowed_origins: [new URL(selected.fetchUrl).origin],
-        source_map_limits: limits,
-      },
-      undefined,
-      {
-        fetch: async () =>
-          new Response(
-            JSON.stringify({
-              version: 3,
-              sources: ["a.js"],
-              names: [],
-              mappings: "AAAA",
-            }),
-          ),
-      },
-    );
-    expect(retained.items.map(({ status }) => status)).toEqual([
-      "included",
-      "fetch_failed",
-    ]);
   },
 );

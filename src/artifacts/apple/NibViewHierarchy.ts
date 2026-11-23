@@ -1,4 +1,8 @@
-import { nibCollectionMembers, type NibArchiveDocument } from "./NibArchive.js";
+import {
+  nibCollectionMembers,
+  trimTrailingNul,
+  type NibArchiveDocument,
+} from "./NibArchive.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 
 export type NibHierarchyNode = {
@@ -50,7 +54,7 @@ const isNonViewCell = (
   object: NibArchiveDocument["objects"][number] | undefined,
 ) =>
   object !== undefined &&
-  nonViewCellClasses.has(object.class_name.replace(/\0+$/u, ""));
+  nonViewCellClasses.has(trimTrailingNul(object.class_name));
 
 /** Interpret serialized relationships once, before bounded forest materialization. */
 export const projectNibViewHierarchy = (
@@ -121,7 +125,7 @@ export const projectNibViewHierarchy = (
       } else if (
         childReferences.has(key) ||
         (key === "NSWindowView" &&
-          object.class_name.replace(/\0+$/u, "") === "NSWindowTemplate")
+          trimTrailingNul(object.class_name) === "NSWindowTemplate")
       ) {
         for (const value of fieldValues(object, key))
           addReference(value, object.id);
@@ -136,7 +140,7 @@ export const projectNibViewHierarchy = (
     }
   }
   for (const object of objects) {
-    if (object.class_name.replace(/\0+$/u, "") !== "NSIBObjectData") continue;
+    if (trimTrailingNul(object.class_name) !== "NSIBObjectData") continue;
     const registryFields = ["NSRoot", "NSObjectsKeys", "NSObjectsValues"];
     const ambiguous = registryFields.filter(
       (key) => fieldValues(object, key).length > 1,

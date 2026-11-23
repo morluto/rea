@@ -72,6 +72,15 @@ cliTest(
     const recovered = webBundleAnalysisSchema.parse(
       parseEvidence(raised.structuredContent).normalized_result,
     );
+    expect(recovered.capture.source_artifacts).toEqual(
+      report.capture.source_artifacts,
+    );
+    expect(recovered.completeness.parsed_scripts).toBe(
+      report.completeness.parsed_scripts,
+    );
+    expect(recovered.observations.endpoints).toEqual(
+      report.observations.endpoints,
+    );
     // The fake also advertises sources excluded by capture policy. Raising
     // evaluator precision must clear this budget, not unrelated capture gaps.
     expect(

@@ -25,6 +25,7 @@ runs:
             sudo sed -Ei.bak 's|https?://([[:alnum:]-]+\.)*archive\.ubuntu\.com/|https://archive.ubuntu.com/|g' "$source"
           fi
         done
+        # Fixture installation needs package indexes, not localized descriptions.
         # Three attempts, including kill grace and backoff, consume at most
         # 165 seconds. Fail even when APT could continue with stale indexes.
         for attempt in 1 2 3; do
@@ -38,7 +39,7 @@ runs:
             done
           fi
           if sudo timeout --kill-after=5s 45s \
-            apt-get -o Acquire::Retries=2 --error-on=any update; then
+            apt-get -o Acquire::Retries=2 -o Acquire::Languages=none --error-on=any update; then
             exit 0
           else
             status=$?

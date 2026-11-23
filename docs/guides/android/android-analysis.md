@@ -150,7 +150,7 @@ type tokens or establish runtime eligibility.
 ## Supply tools
 
 Use a **full JDK 17 or newer** (including its compiler module) and
-[**jadx-headless-mcp 0.7.1**](https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.7.1/jadx-headless-mcp-0.7.1-all.jar).
+[**jadx-headless-mcp 0.8.0**](https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.8.0/jadx-headless-mcp-0.8.0-all.jar).
 Verify the downloaded JAR's SHA-256 against
 [REA's pinned release metadata](https://github.com/morluto/rea/blob/main/src/android/JadxRelease.ts)
 before using it. The following download and verification commands work for npm
@@ -162,22 +162,22 @@ On macOS or Linux, choose a destination and verify the pinned digest:
 ```sh
 mkdir -p "$HOME/.local/share/rea/android" &&
 cd "$HOME/.local/share/rea/android" &&
-curl -fL -o jadx-headless-mcp-0.7.1-all.jar https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.7.1/jadx-headless-mcp-0.7.1-all.jar &&
+curl -fL -o jadx-headless-mcp-0.8.0-all.jar https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.8.0/jadx-headless-mcp-0.8.0-all.jar &&
 if command -v sha256sum >/dev/null; then
-  echo '6e5eacf500b64292bfb73c49797c1958f6ee44646e43e868039ae7feb573ff75  jadx-headless-mcp-0.7.1-all.jar' | sha256sum -c -
+  echo '4b9a01c23845c123c217840182d2b5f2c26a7ca20dec3d08810b310fc80a2372  jadx-headless-mcp-0.8.0-all.jar' | sha256sum -c -
 else
-  echo '6e5eacf500b64292bfb73c49797c1958f6ee44646e43e868039ae7feb573ff75  jadx-headless-mcp-0.7.1-all.jar' | shasum -a 256 -c -
+  echo '4b9a01c23845c123c217840182d2b5f2c26a7ca20dec3d08810b310fc80a2372  jadx-headless-mcp-0.8.0-all.jar' | shasum -a 256 -c -
 fi &&
-export REA_JADX_MCP_JAR="$PWD/jadx-headless-mcp-0.7.1-all.jar"
+export REA_JADX_MCP_JAR="$PWD/jadx-headless-mcp-0.8.0-all.jar"
 ```
 
 On Windows, run the equivalent in PowerShell:
 
 ```powershell
-$jar = Join-Path $HOME '.local\share\rea\android\jadx-headless-mcp-0.7.1-all.jar'
+$jar = Join-Path $HOME '.local\share\rea\android\jadx-headless-mcp-0.8.0-all.jar'
 New-Item -ItemType Directory -Force (Split-Path $jar) | Out-Null
-Invoke-WebRequest -Uri 'https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.7.1/jadx-headless-mcp-0.7.1-all.jar' -OutFile $jar
-if ((Get-FileHash -Algorithm SHA256 $jar).Hash.ToLowerInvariant() -ne '6e5eacf500b64292bfb73c49797c1958f6ee44646e43e868039ae7feb573ff75') { throw 'JADX JAR SHA-256 does not match REA pinned metadata' }
+Invoke-WebRequest -Uri 'https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.8.0/jadx-headless-mcp-0.8.0-all.jar' -OutFile $jar
+if ((Get-FileHash -Algorithm SHA256 $jar).Hash.ToLowerInvariant() -ne '4b9a01c23845c123c217840182d2b5f2c26a7ca20dec3d08810b310fc80a2372') { throw 'JADX JAR SHA-256 does not match REA pinned metadata' }
 $env:REA_JADX_MCP_JAR = $jar
 ```
 
@@ -186,7 +186,7 @@ unmodified engine JAR. REA does not install Java, an Android SDK, JADX, a device
 service or an emulator. Set the path in the shell or MCP server environment:
 
 ```sh
-export REA_JADX_MCP_JAR=/absolute/path/jadx-headless-mcp-0.7.1-all.jar
+export REA_JADX_MCP_JAR=/absolute/path/jadx-headless-mcp-0.8.0-all.jar
 # Optional: select an existing JDK rather than java on PATH.
 export JAVA_HOME=/absolute/path/existing-jdk
 ```
@@ -198,7 +198,7 @@ PowerShell accepts paths containing spaces without additional escaping
 inside these environment values:
 
 ```powershell
-$env:REA_JADX_MCP_JAR = 'D:\tools\jadx-headless-mcp-0.7.1-all.jar'
+$env:REA_JADX_MCP_JAR = 'D:\tools\jadx-headless-mcp-0.8.0-all.jar'
 $env:JAVA_HOME = 'D:\tools\jdk-21'
 rea inspect-android-package 'D:\targets\Example.apk'
 ```
@@ -222,7 +222,7 @@ metadata-bridge records covered macOS arm64/OpenJDK 21 and Windows x64/JDK 21;
 this protocol revision has not been rerun on those hosts or Linux/JDK 25.
 Windows x64 uses an owned Job Object with bidirectional stdio, atomic job
 assignment and kill-on-owner-close. Real Windows verification uses JDK 21 and
-the pinned JADX 0.7.1 JAR; see the real verification lane below.
+the pinned JADX 0.8.0 JAR; see the real verification lane below.
 
 ## Answer an analyst question
 
@@ -239,7 +239,11 @@ rea trace-android-references /path/Example.apk example.MainActivity --method-nam
 
 Equivalent MCP methods are `inspect_android_package`, `search_android_classes`,
 `inspect_android_class`, `inspect_android_method` and `trace_android_references`.
-Every request includes `path`. Class/method operations use `class_name`,
+Every request includes `path`. `search_android_classes` also accepts optional
+`limit` (`1..10000`) and `offset` (`>= 0`) pagination (CLI `--limit` and
+`--offset`) so large APKs stop JADX pagination early once the requested page
+is filled; omitting both returns all matches with `coverage: "complete"`, while
+a paged slice reports `coverage: "partial"`. Class/method operations use `class_name`,
 `method_name` and optional `overload_index` as applicable. For example:
 
 ```json
@@ -253,6 +257,16 @@ Every request includes `path`. Class/method operations use `class_name`,
   }
 }
 ```
+
+For class searches, `offset` is the zero-based index among matches, and
+`limit` is the maximum number of matches to return. Pass `--offset` and
+`--limit` on the CLI or `offset` and `limit` in an MCP request. Omitting
+both returns every match. Omitting `limit` with an offset returns the matching
+suffix. Keep the same APK and query when advancing the offset by each page's
+length. A page reports `partial` when it omits matching rows, including earlier
+pages. A short or empty page ends forward paging. If the last page was full,
+request the next offset to check for more. `duplicate_names` counts occurrences
+within the returned page.
 
 Use `inspect_android_class` to choose an overload. REA rejects an ambiguous
 method request rather than silently selecting the first match. Method reference
@@ -711,7 +725,7 @@ bounds each upstream call. Timeout recovery reports the effective milliseconds
 and range, with `details.limit` identifying the runtime setting. An invalid
 provider-local launch value can also be repaired by a runtime override; reset
 exposes that invalid launch value again. See the
-[settings design](../../design/limits-and-recovery.md#invalid-launch-configuration).
+[analysis settings and recovery](../../reference/limits-and-recovery.md#invalid-launch-configuration).
 A passing JADX configuration check in `rea doctor` reports its launch-derived
 `operation_timeout_ms`; it does not inspect another running server's overrides. Explicit
 cancellation still ends the operation immediately, and partial observations
@@ -755,7 +769,7 @@ Download the explicit public fixtures once; this installs no tools:
 
 ```sh
 npm run fixtures:android
-export REA_JADX_MCP_JAR="$PWD/_reference/apk-integration/jadx-headless-mcp-0.7.1-all.jar"
+export REA_JADX_MCP_JAR="$PWD/_reference/apk-integration/jadx-headless-mcp-0.8.0-all.jar"
 export REA_ANDROID_TEST_APK="$PWD/_reference/apk-integration/ApiDemos-debug.apk"
 npm run verify:android
 ```

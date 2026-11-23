@@ -171,6 +171,23 @@ function* buildJavaScriptArtifactGraphInputSteps(
   const unavailableFilesByPath = new Map(
     fileSet.unavailable_relevant_files.map((file) => [file.path, file]),
   );
+  const packagesByPath = new Map<
+    string,
+    JavaScriptArtifactAnalysis["packages"][number]
+  >();
+  for (const pkg of analysis.packages)
+    if (!packagesByPath.has(pkg.path)) packagesByPath.set(pkg.path, pkg);
+  const indexAnalyzedFiles = (
+    files: JavaScriptArtifactAnalysis["files"],
+  ): ReadonlyMap<string, JavaScriptArtifactAnalysis["files"][number]> => {
+    const byPath = new Map<
+      string,
+      JavaScriptArtifactAnalysis["files"][number]
+    >();
+    for (const entry of files)
+      if (!byPath.has(entry.file.path)) byPath.set(entry.file.path, entry);
+    return byPath;
+  };
   const context: JavaScriptArtifactGraphContext = {
     accumulator,
     snapshot,
@@ -183,12 +200,16 @@ function* buildJavaScriptArtifactGraphInputSteps(
     ),
     root,
     filesByPath: new Map(fileSet.files.map((file) => [file.path, file])),
+    analyzedFilesByPath: indexAnalyzedFiles(analysis.files),
+    packagesByPath,
     unanalyzedFiles: {
       coverage: snapshot.coverage,
       get: (path) =>
         unavailableFilesByPath.get(path) ?? fileSet.unanalyzed_files?.get(path),
       hasDirectory: (path, container) =>
         fileSet.unanalyzed_files?.hasDirectory(path, container) ?? false,
+      filePathsBelow: (path) =>
+        fileSet.unanalyzed_files?.filePathsBelow?.(path),
     },
     fileNodes: new Map(),
     assetNodes: new Map(),
@@ -208,15 +229,17 @@ function* buildJavaScriptArtifactGraphInputSteps(
   yield;
   // Raw observations remain on the file nodes. Only admitted expansions feed
   // the relationship builders, including their Electron and bundler callers.
-  const projectionContext = {
+  const projectedFiles = analysis.files.map((file) =>
+    file.application_projection_failure === undefined
+      ? file
+      : { ...file, javascript: null, semantic: null },
+  );
+  const projectionContext: JavaScriptArtifactGraphContext = {
     ...context,
+    analyzedFilesByPath: indexAnalyzedFiles(projectedFiles),
     analysis: {
       ...analysis,
-      files: analysis.files.map((file) =>
-        file.application_projection_failure === undefined
-          ? file
-          : { ...file, javascript: null, semantic: null },
-      ),
+      files: projectedFiles,
     },
   };
   const packageRoots = addJavaScriptPackageNodes(projectionContext);

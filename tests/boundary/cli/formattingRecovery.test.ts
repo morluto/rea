@@ -4,7 +4,7 @@ import { Writable } from "node:stream";
 
 import { describe, expect, it } from "vitest";
 
-import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import {
   cliOperationFailureIdentity,

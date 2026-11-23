@@ -1,3 +1,4 @@
+import { BinaryReader, hasElfMagic } from "./binaryContainer.js";
 import {
   resolveMappedFileOffset,
   type FileMapping,
@@ -26,6 +27,7 @@ import { readPeSectionHeader } from "./peSectionHeader.js";
 import { isStrictUtf8 } from "./strictUtf8.js";
 import { readElfFixedHeader } from "./elfFixedHeader.js";
 import {
+  hasDosMzMagic,
   mzWindowsHeaderLayoutLimitation,
   parseMzHeaderEvidence,
   type MzHeaderEvidence,
@@ -126,9 +128,9 @@ export const claimsExecutableHeader = (
   fileSize = bytes.length,
 ): boolean =>
   (bytes.length >= 4 &&
-    (bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])) ||
+    (hasElfMagic(bytes) ||
       readMachoHeaderPrefixFacts(bytes).format !== null)) ||
-  (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a) ||
+  hasDosMzMagic(bytes) ||
   readFatContainerHeader(bytes, fileSize).state !== "not-fat";
 
 /**
@@ -143,12 +145,8 @@ export const parseExecutableHeader = (
   mzWindowsHeaderSignature?: MzWindowsHeaderSignatureEvidence,
   fatEvidence?: FatSliceHeaderEvidence,
 ): Result<ExecutableMetadata, string> => {
-  if (
-    bytes.length >= 4 &&
-    bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
-  )
-    return parseElf(bytes, fileSize);
-  if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a)
+  if (hasElfMagic(bytes)) return parseElf(bytes, fileSize);
+  if (hasDosMzMagic(bytes))
     return parseMzExecutableMetadata(
       bytes,
       parseMzHeaderEvidence(bytes, fileSize, mzWindowsHeaderSignature),
@@ -175,10 +173,7 @@ export const readNativeHeaderFormat = (
   bytes: Buffer,
   fileSize = bytes.length,
 ): Result<"elf" | "mach-o" | null, string> => {
-  if (
-    bytes.length >= 4 &&
-    bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
-  ) {
+  if (hasElfMagic(bytes)) {
     const header = readElfFixedHeader(bytes, fileSize);
     return header.ok ? ok("elf") : header;
   }
@@ -719,18 +714,19 @@ export const parseCodeViewData = (
     .subarray(0, Math.min(sizeOfData, PE_CODEVIEW_PREFIX_BYTES))
     .indexOf(0, pathOffset);
   if (end <= pathOffset) return undefined;
+  const reader = new BinaryReader(buffer, true, "pe");
   const path = decodeCodeViewPath(buffer.subarray(pathOffset, end), magic);
   if (magic === "RSDS") {
-    const part1 = buffer.readUInt32LE(4).toString(16).padStart(8, "0");
-    const part2 = buffer.readUInt16LE(8).toString(16).padStart(4, "0");
-    const part3 = buffer.readUInt16LE(10).toString(16).padStart(4, "0");
+    const part1 = reader.u32(4).toString(16).padStart(8, "0");
+    const part2 = reader.u16(8).toString(16).padStart(4, "0");
+    const part3 = reader.u16(10).toString(16).padStart(4, "0");
     const part4 = buffer.subarray(12, 14).toString("hex");
     const part5 = buffer.subarray(14, 20).toString("hex");
     const guid = `${part1}-${part2}-${part3}-${part4}-${part5}`;
-    const age = buffer.readUInt32LE(20);
+    const age = reader.u32(20);
     return { ...path, guid, age };
   }
-  return { ...path, guid: null, age: buffer.readUInt32LE(12) };
+  return { ...path, guid: null, age: reader.u32(12) };
 };
 
 const decodeCodeViewPath = (bytes: Buffer, magic: string): PeCodeViewPath => {
@@ -771,7 +767,7 @@ export const peDebugDirectoryEntry = (
   return { debugRva, debugSize, sizeOfHeaders: fixed.value.sizeOfHeaders };
 };
 
-/** Translate an RVA to an absolute file offset using the PE section table. */
+/** Translate an RVA using declared section content, excluding raw alignment padding. */
 export const peRvaToFileOffset = (
   rva: number,
   sectionTable: Buffer,
@@ -791,11 +787,11 @@ export const peRvaToFileOffset = (
     if (!parsed.ok) return undefined;
     const section = parsed.value;
     const address = BigInt(section.virtual_address);
-    if (section.raw_size > 0)
+    if (section.size > 0)
       mappings.push({
         address,
         offset: section.offset,
-        size: section.raw_size,
+        size: section.size,
       });
     if (section.virtual_size > section.raw_size)
       zeroFills.push({
@@ -812,29 +808,42 @@ export const peRvaToFileOffset = (
   return mapped.ok ? mapped.value : undefined;
 };
 
-/** Interpret complete debug entries once; callers own directory reads. */
-export function* peCodeViewDataRanges(
+const PE_DEBUG_ENTRY_BYTES = 28;
+
+/** A CodeView declaration remains observable even when its payload has no usable file range. */
+export function* peCodeViewDirectoryEntries(
   directory: Buffer,
   sectionTable: Buffer,
   numberOfSections: number,
   sizeOfHeaders: number,
-): Generator<{ readonly fileOffset: number; readonly declaredSize: number }> {
-  for (let offset = 0; offset + 28 <= directory.length; offset += 28) {
-    if (directory.readUInt32LE(offset + 12) !== 2) continue;
-    const declaredSize = directory.readUInt32LE(offset + 16);
-    if (declaredSize < 16) continue;
-    const rawPointer = directory.readUInt32LE(offset + 24);
+): Generator<{
+  readonly fileOffset: number | undefined;
+  readonly declaredSize: number;
+}> {
+  const reader = new BinaryReader(directory, true, "pe");
+  for (
+    let offset = 0;
+    offset + PE_DEBUG_ENTRY_BYTES <= directory.length;
+    offset += PE_DEBUG_ENTRY_BYTES
+  ) {
+    if (reader.u32(offset + 12) !== 2) continue;
+    const declaredSize = reader.u32(offset + 16);
+    if (declaredSize < 16) {
+      yield { fileOffset: undefined, declaredSize };
+      continue;
+    }
+    const rawPointer = reader.u32(offset + 24);
     const fileOffset =
       rawPointer !== 0
         ? rawPointer
         : peRvaToFileOffset(
-            directory.readUInt32LE(offset + 20),
+            reader.u32(offset + 20),
             sectionTable,
             numberOfSections,
             sizeOfHeaders,
             Math.min(declaredSize, PE_CODEVIEW_PREFIX_BYTES),
           );
-    if (fileOffset !== undefined) yield { fileOffset, declaredSize };
+    yield { fileOffset, declaredSize };
   }
 }
 
@@ -847,34 +856,37 @@ export const parsePeCodeViewFromBuffer = (
   return result.ok ? result.value : undefined;
 };
 
-/** Distinguish absent CodeView records from incomplete bounded parsing. */
-export const inspectPeCodeViewFromBuffer = (
-  fileBytes: Buffer,
-  peOffset: number,
-): Result<
+type PeCodeViewInspection = Result<
   PeCodeViewRecord | undefined,
   { readonly kind: "incomplete"; readonly message: string }
-> => {
+>;
+
+const PE_DEBUG_READ_BYTES = PE_DEBUG_ENTRY_BYTES * 1024;
+
+/** Interpret one PE debug directory independently of the read adapter. */
+function* inspectPeCodeViewSteps(
+  size: number,
+  peOffset: number,
+): Generator<
+  { readonly offset: number; readonly length: number },
+  PeCodeViewInspection,
+  Buffer
+> {
   const incomplete = (message: string) =>
     err({ kind: "incomplete" as const, message });
-  if (fileBytes.length < peOffset + 24)
-    return incomplete("Truncated PE header.");
-  const coff = readPeCoffHeader(
-    fileBytes.subarray(peOffset + 4, peOffset + 24),
-  );
+  if (size < peOffset + 24) return incomplete("Truncated PE header.");
+  const coffHeader = yield { offset: peOffset + 4, length: 20 };
+  const coff = readPeCoffHeader(coffHeader);
   if (!coff.ok) return incomplete(coff.error.message);
   const { sectionCount: numberOfSections, optionalHeaderSize } = coff.value;
-  if (
-    optionalHeaderSize > 4096 ||
-    fileBytes.length < peOffset + 24 + optionalHeaderSize
-  )
+  if (optionalHeaderSize > 4096 || size < peOffset + 24 + optionalHeaderSize)
     return incomplete(
       "PE optional header is truncated or exceeds the parsing allowance.",
     );
-  const optionalHeader = fileBytes.subarray(
-    peOffset + 24,
-    peOffset + 24 + optionalHeaderSize,
-  );
+  const optionalHeader =
+    optionalHeaderSize === 0
+      ? Buffer.alloc(0)
+      : yield { offset: peOffset + 24, length: optionalHeaderSize };
   const fixed = readPeOptionalHeaderFixedFields(optionalHeader);
   if (!fixed.ok) return incomplete(fixed.error.message);
   const observed = readPeOptionalHeaderDirectory(
@@ -887,65 +899,101 @@ export const inspectPeCodeViewFromBuffer = (
     return incomplete("Truncated PE debug directory declaration.");
   const { address: debugRva, size: debugSize } = observed.directory;
   if (debugRva === 0 && debugSize === 0) return ok(undefined);
-  if (debugRva === 0 || debugSize < 28 || debugSize % 28 !== 0)
+  if (
+    debugRva === 0 ||
+    debugSize < PE_DEBUG_ENTRY_BYTES ||
+    debugSize % PE_DEBUG_ENTRY_BYTES !== 0
+  )
     return incomplete("Invalid PE debug directory declaration.");
-  const debugDir = {
-    debugRva,
-    debugSize,
-    sizeOfHeaders: fixed.value.sizeOfHeaders,
-  };
+  const { sizeOfHeaders } = fixed.value;
   const sectionTableOffset = peOffset + 24 + optionalHeaderSize;
   const sectionTableSize = numberOfSections * 40;
-  if (fileBytes.length < sectionTableOffset + sectionTableSize)
+  if (size < sectionTableOffset + sectionTableSize)
     return incomplete("Truncated PE section table.");
-  const sectionTable = fileBytes.subarray(
-    sectionTableOffset,
-    sectionTableOffset + sectionTableSize,
-  );
+  const sectionTable =
+    sectionTableSize === 0
+      ? Buffer.alloc(0)
+      : yield { offset: sectionTableOffset, length: sectionTableSize };
   const debugFileOffset = peRvaToFileOffset(
-    debugDir.debugRva,
+    debugRva,
     sectionTable,
     numberOfSections,
-    debugDir.sizeOfHeaders,
-    Math.min(debugDir.debugSize, 4096),
+    sizeOfHeaders,
+    Math.min(debugSize, 4096),
   );
-  if (
-    debugFileOffset === undefined ||
-    fileBytes.length < debugFileOffset + debugDir.debugSize
-  )
+  if (debugFileOffset === undefined || size < debugFileOffset + debugSize)
     return incomplete("PE debug directory is unmapped or truncated.");
-  const maxDebugBytes = Math.min(
-    debugDir.debugSize,
-    fileBytes.length - debugFileOffset,
-  );
-  const directory = fileBytes.subarray(
-    debugFileOffset,
-    debugFileOffset + maxDebugBytes,
-  );
-  let codeViewEntries = 0;
-  for (let offset = 0; offset < directory.length; offset += 28)
-    if (directory.readUInt32LE(offset + 12) === 2) codeViewEntries += 1;
-  for (const {
-    fileOffset: pointerToRawData,
-    declaredSize: sizeOfData,
-  } of peCodeViewDataRanges(
-    directory,
-    sectionTable,
-    numberOfSections,
-    debugDir.sizeOfHeaders,
-  )) {
-    if (fileBytes.length < pointerToRawData + Math.min(sizeOfData, 24))
-      continue;
-    const codeViewData = fileBytes.subarray(
-      pointerToRawData,
-      pointerToRawData + Math.min(sizeOfData, PE_CODEVIEW_PREFIX_BYTES),
-    );
-    const parsed = parseCodeViewData(codeViewData, sizeOfData);
-    if (parsed !== undefined) return ok(parsed);
+  let sawCodeView = false;
+  for (
+    let directoryOffset = 0;
+    directoryOffset < debugSize;
+    directoryOffset += PE_DEBUG_READ_BYTES
+  ) {
+    const length = Math.min(PE_DEBUG_READ_BYTES, debugSize - directoryOffset);
+    const directory = yield {
+      offset: debugFileOffset + directoryOffset,
+      length,
+    };
+    if (directory.length !== length)
+      return incomplete("PE debug directory is unmapped or truncated.");
+    for (const { fileOffset, declaredSize } of peCodeViewDirectoryEntries(
+      directory,
+      sectionTable,
+      numberOfSections,
+      sizeOfHeaders,
+    )) {
+      sawCodeView = true;
+      if (
+        fileOffset === undefined ||
+        size - fileOffset < Math.min(declaredSize, 24)
+      )
+        continue;
+      const data = yield {
+        offset: fileOffset,
+        length: Math.min(
+          declaredSize,
+          PE_CODEVIEW_PREFIX_BYTES,
+          size - fileOffset,
+        ),
+      };
+      const parsed = parseCodeViewData(data, declaredSize);
+      if (parsed !== undefined) return ok(parsed);
+    }
   }
-  return codeViewEntries > 0
+  return sawCodeView
     ? incomplete("PE CodeView records could not be decoded completely.")
     : ok(undefined);
+}
+
+/** Distinguish absent CodeView records from incomplete bounded parsing. */
+export const inspectPeCodeViewFromBuffer = (
+  fileBytes: Buffer,
+  peOffset: number,
+): PeCodeViewInspection => {
+  const steps = inspectPeCodeViewSteps(fileBytes.length, peOffset);
+  let next = steps.next();
+  while (!next.done) {
+    const { offset, length } = next.value;
+    next = steps.next(fileBytes.subarray(offset, offset + length));
+  }
+  return next.value;
+};
+
+/** Inspect CodeView with bounded positional reads. */
+export const inspectPeCodeViewFromReader = async (
+  source: {
+    readonly size: number;
+    readonly readRange: (offset: number, length: number) => Promise<Buffer>;
+  },
+  peOffset: number,
+): Promise<PeCodeViewInspection> => {
+  const steps = inspectPeCodeViewSteps(source.size, peOffset);
+  let next = steps.next();
+  while (!next.done) {
+    const { offset, length } = next.value;
+    next = steps.next(await source.readRange(offset, length));
+  }
+  return next.value;
 };
 
 /** CPU family a Mach-O cpu type names, or undefined when it names none here. */

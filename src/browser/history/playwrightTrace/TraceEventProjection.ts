@@ -2,6 +2,7 @@ import type { JsonValue } from "../../../domain/jsonValue.js";
 import type { TraceEvent } from "../../../domain/playwrightTrace/playwrightTrace.js";
 import { CaptureRedaction, captureObject } from "../CaptureRedaction.js";
 import { projectRecordedHarEntry } from "../HarCapture.js";
+import { readRecordedResponseDeclaration } from "../../../domain/analysisView/recordedResponseBody.js";
 
 const string = (value: unknown): string | null =>
   typeof value === "string" ? value : null;
@@ -159,7 +160,7 @@ export const projectTraceEvent = (
     ),
     method: string(kind === "network" ? request.method : facts.method),
     url: string(kind === "network" ? request.url : params.url),
-    status: number(response.status),
+    status: readRecordedResponseDeclaration(projected.reported)?.status ?? null,
     text: string(
       kind === "console"
         ? facts.text

@@ -1,6 +1,7 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
+  createKunaProjectSourceScanner,
   parseKunaExportSummary,
   parseKunaInventory,
   scanKunaAssembly,
@@ -77,6 +78,39 @@ it("splits Kuna's .c into function blocks at any chunk size", async () => {
   expect(block.startsWith("// Function: sub_1080 @ 0x1080  (error:")).toBe(
     true,
   );
+});
+
+it("retains split UTF-8 headers and byte spans when the input buffer is reused", () => {
+  const preamble = "// generated\n";
+  const first = "// Function: café @ 0x10\nvoid a() {}\n";
+  const second = "// Function: 雪 @ 0x20\nvoid b() {}\n";
+  const source = Buffer.from(preamble + first + second);
+  const scanner = createKunaProjectSourceScanner({ decompiled: 2, failed: 0 });
+  const scratch = Buffer.alloc(1);
+  for (const byte of source) {
+    scratch[0] = byte;
+    scanner.push(scratch);
+    scratch.fill(0xff);
+  }
+  expect(scanner.finish()).toEqual({
+    ok: true,
+    value: [
+      {
+        name: "café",
+        address: "0x10",
+        cOffset: Buffer.byteLength(preamble),
+        cLength: Buffer.byteLength(first),
+        error: null,
+      },
+      {
+        name: "雪",
+        address: "0x20",
+        cOffset: Buffer.byteLength(preamble + first),
+        cLength: Buffer.byteLength(second),
+        error: null,
+      },
+    ],
+  });
 });
 
 it.each([
@@ -246,3 +280,149 @@ it.each([
     ]);
   },
 );
+
+it("preserves parseKunaInventory fast-path acceptance and Zod error fallback", () => {
+  expect(
+    parseKunaInventory(
+      JSON.stringify({
+        functions: [
+          {
+            name: "zero_padded",
+            address_hex: "0x0010",
+            aliases: ["a0", "a1"],
+            size: 0,
+            extra: true,
+          },
+        ],
+      }),
+    ),
+  ).toEqual({
+    ok: true,
+    value: [
+      {
+        name: "zero_padded",
+        address: "0x0010",
+        aliases: ["a0", "a1"],
+        size: 0,
+      },
+    ],
+  });
+  for (const invalid of [
+    { functions: [{ name: "x", address_hex: "0xABC", aliases: [], size: 0 }] },
+    { functions: [{ name: "x", address_hex: "0x10", aliases: [7], size: 0 }] },
+    { functions: [{ name: "x", address_hex: "0x10", aliases: [], size: -1 }] },
+    { functions: "not-an-array" },
+  ]) {
+    expect(parseKunaInventory(JSON.stringify(invalid))).toMatchObject({
+      ok: false,
+      error: expect.stringContaining(
+        "the function inventory does not match Kuna's document:",
+      ),
+    });
+  }
+});
+
+describe("Kuna streaming line-scanner chunk boundary parity", () => {
+  it("handles empty lines, overlong skipped lines, cross-chunk kept lines, and unterminated EOF lines across chunk sizes", async () => {
+    const padding = "x".repeat(70_000);
+    const body = `  ${padding}`;
+    const header = "entry:  ; 0x1000";
+    // An overlong indented body line must be skipped without triggering MAX_KEPT_LINE_BYTES.
+    const asm = [
+      "",
+      header,
+      body,
+      "",
+      "; --- data ---",
+      "",
+      "g_val:  ; 0x2000 = dat_2000",
+    ].join("\n");
+    const expectedLen = Buffer.byteLength(`${header}\n${body}\n\n`);
+    for (const chunkSize of [1, 3, 17, 4096, 131_072]) {
+      const scanned = await scanKunaAssembly(chunked(asm, chunkSize));
+      if (!scanned.ok) throw new Error(scanned.error);
+      expect([...scanned.value.code.values()]).toEqual([
+        {
+          name: "entry",
+          address: "0x1000",
+          offset: 1,
+          length: expectedLen,
+        },
+      ]);
+      expect([...scanned.value.data]).toEqual([["0x2000", "g_val"]]);
+    }
+    // Cross-chunk overlong kept header still refuses with exact starting byte offset.
+    const overlongHeader = `${header}\n// kept_${padding}\n`;
+    expect(await scanKunaAssembly(chunked(overlongHeader, 16))).toEqual({
+      ok: false,
+      error: `the line at byte ${String(Buffer.byteLength(`${header}\n`))} is too long`,
+    });
+  });
+});
+
+describe("Kuna streaming line-scanner single-chunk fast-path refusals", () => {
+  const padding = "x".repeat(70_000);
+
+  it.each([
+    {
+      format: ".c",
+      scan: (chunks: AsyncIterable<Buffer>) =>
+        scanKunaProjectSource(chunks, { decompiled: 2, failed: 0 }),
+      skippedPrefix: Buffer.from('#include "sample.h"\n'),
+      validLine: Buffer.from("// Function: ok @ 0x1000\n"),
+      malformedLine: Buffer.concat([
+        Buffer.from("// Function: "),
+        Buffer.from([0xff]),
+        Buffer.from(" @ 0x1010\n"),
+      ]),
+      overlongLine: Buffer.from(`// Function: ${padding} @ 0x1010\n`),
+    },
+    {
+      format: ".asm",
+      scan: (chunks: AsyncIterable<Buffer>) => scanKunaAssembly(chunks),
+      skippedPrefix: Buffer.from("  00001000: c3                        RET\n"),
+      validLine: Buffer.from("entry:  ; 0x1000\n"),
+      malformedLine: Buffer.concat([
+        Buffer.from("bad_"),
+        Buffer.from([0xff]),
+        Buffer.from(":  ; 0x1010\n"),
+      ]),
+      overlongLine: Buffer.from(`fn_${padding}:  ; 0x1010\n`),
+    },
+  ])(
+    "refuses single-chunk malformed UTF-8 and overlong kept $format lines with exact byte offsets",
+    async ({ scan, skippedPrefix, validLine, malformedLine, overlongLine }) => {
+      const cases = [
+        {
+          failingLine: malformedLine,
+          errorAt: (byteOffset: number) =>
+            `the structural line at byte ${String(byteOffset)} is not valid UTF-8`,
+        },
+        {
+          failingLine: overlongLine,
+          errorAt: (byteOffset: number) =>
+            `the line at byte ${String(byteOffset)} is too long`,
+        },
+      ] as const;
+      for (const { failingLine, errorAt } of cases) {
+        const singleChunk = Buffer.concat([validLine, failingLine]);
+        const singleExpected = { ok: false, error: errorAt(validLine.length) };
+        expect(await scan(chunked(singleChunk, singleChunk.length))).toEqual(
+          singleExpected,
+        );
+        expect(await scan(chunked(singleChunk, 7))).toEqual(singleExpected);
+        expect(
+          await scan(
+            (async function* () {
+              yield skippedPrefix;
+              yield singleChunk;
+            })(),
+          ),
+        ).toEqual({
+          ok: false,
+          error: errorAt(skippedPrefix.length + validLine.length),
+        });
+      }
+    },
+  );
+});

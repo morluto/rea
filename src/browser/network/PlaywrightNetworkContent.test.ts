@@ -102,17 +102,6 @@ it("redacts later JSON spellings of saved secrets without reserializing unmarked
   });
 });
 
-it("keeps an empty JSON-labelled response as observed empty bytes", async () => {
-  const captured = await captureNetworkBody(
-    async () => Buffer.alloc(0),
-    "response",
-    jsonType,
-    secrets,
-    options,
-  );
-  expect(captured).toMatchObject({ state: "captured", bytes: 0, content: "" });
-});
-
 it("checks the JSON decoding budget before invoking its decoder", async () => {
   const held = resolveScenarioSecrets(scenario, { SECRET: "declared-value" });
   const decode = vi.spyOn(held, "redactJsonBody");

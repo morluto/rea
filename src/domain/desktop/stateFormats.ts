@@ -2,6 +2,7 @@ import type { Element, Node } from "@xmldom/xmldom";
 
 import { isExactJsonNumber } from "../exactJsonNumber.js";
 import { jsonValueExceedsDepth, type JsonValue } from "../jsonValue.js";
+import { hostRangeErrorKind } from "../parseFailure.js";
 import {
   DESKTOP_VIEW_DEFAULTS,
   desktopViewByteDisplay,
@@ -297,13 +298,15 @@ export const textSyntaxFormat = (
   return "text";
 };
 
+const LATIN1_DECODER = new TextDecoder("latin1");
+
 /** Pick the reader for one retained file from its leading bytes and name. */
 export const detectStateFormat = (
   path: string,
   bytes: Uint8Array,
   policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): DesktopStateFormat => {
-  const header = new TextDecoder("latin1").decode(bytes.subarray(0, 16));
+  const header = LATIN1_DECODER.decode(bytes.subarray(0, 16));
   if (header === SQLITE_HEADER) return "sqlite";
   if (header.startsWith(GVDB_HEADER)) return "dconf";
   if (
@@ -334,22 +337,33 @@ const jsonView = (
   text: string,
   policy: DesktopViewPolicy,
 ): Result<JsonValue, string> => {
+  const tooDeep = `nested deeper than the ${String(policy.json_depth)} levels a JSON view keeps`;
   let rounded = false;
   const parsed = safeParseJson(text, (_key, value, context) => {
     if (typeof value === "number" && !isExactJsonNumber(value, context?.source))
       rounded = true;
     return value;
   });
-  if (!parsed.ok) return parsed;
+  if (!parsed.ok) {
+    // The native reviver walks recursively and can exhaust the stack before
+    // the view checks depth. Parse without it only to verify the depth refusal.
+    if (hostRangeErrorKind(parsed.cause) === "stack-overflow") {
+      const structure = safeParseJson(text);
+      if (
+        structure.ok &&
+        jsonValueExceedsDepth(structure.value as JsonValue, policy.json_depth)
+      )
+        return err(tooDeep);
+    }
+    return parsed;
+  }
   if (rounded)
     return err(
       "a number in it cannot be read exactly, such as an integer above 2^53",
     );
   const value = parsed.value as JsonValue;
   return jsonValueExceedsDepth(value, policy.json_depth)
-    ? err(
-        `nested deeper than the ${String(policy.json_depth)} levels a JSON view keeps`,
-      )
+    ? err(tooDeep)
     : ok(value);
 };
 
@@ -358,12 +372,23 @@ export const textView = (
   text: string,
   policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): JsonValue => {
-  const lines = text.split(desktopLineBreak);
-  if (lines.at(-1) === "") lines.pop();
+  const lines: string[] = [];
+  let lineCount = 0;
+  let start = 0;
+  for (const delimiter of text.matchAll(desktopLineBreak)) {
+    if (lines.length < policy.text_lines)
+      lines.push(text.slice(start, delimiter.index));
+    lineCount += 1;
+    start = delimiter.index + delimiter[0].length;
+  }
+  if (start < text.length) {
+    if (lines.length < policy.text_lines) lines.push(text.slice(start));
+    lineCount += 1;
+  }
   return {
-    lines: lines.slice(0, policy.text_lines),
-    line_count: lines.length,
-    truncated: lines.length > policy.text_lines,
+    lines,
+    line_count: lineCount,
+    truncated: lineCount > policy.text_lines,
   };
 };
 

@@ -9,7 +9,10 @@ import {
   type ArtifactEntry,
   ZipArtifactReader,
 } from "../resources/index.js";
-import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { createHash } from "node:crypto";
@@ -575,7 +578,7 @@ export class FlutterBuildProvider {
       const primary = mapOwnedIoFailure(operation, cause, root);
       const released = await this.discardRoot(root);
       if (!released)
-        throw this.withCleanup(
+        throw analysisErrorWithCleanupDependencies(
           primary,
           this.cleanupError(root, operation),
           operation,
@@ -691,14 +694,6 @@ export class FlutterBuildProvider {
     return error;
   }
 
-  private withCleanup(
-    primary: AnalysisError,
-    cleanup: AnalysisError,
-    operation: string,
-  ): AnalysisError {
-    return analysisErrorWithCleanupDependencies(primary, cleanup, operation);
-  }
-
   /** Stop admission and drain active snapshots before attempting retained cleanup. */
   async close(): Promise<void> {
     await this.operations.close();
@@ -715,9 +710,9 @@ export class FlutterBuildProvider {
     }
     if (failures.length === 1) throw failures[0];
     if (failures.length > 1)
-      throw new ProviderCleanupError(
+      throw providerCleanupErrorFromFailures(
         FLUTTER_PROVIDER_IDENTITY.id,
-        failures.flatMap((failure) => failure.cleanupResources),
+        failures,
         {
           reason: failures
             .map((failure) => failure.diagnostics?.reason ?? failure.message)
@@ -727,11 +722,8 @@ export class FlutterBuildProvider {
             return Array.isArray(roots) ? roots : [];
           }),
         },
-        {
-          cause: new AggregateError(failures),
-          operation,
-        },
-      ).bindCleanupDependencies(failures);
+        { operation },
+      );
   }
 
   async execute(
@@ -849,7 +841,13 @@ export class FlutterBuildProvider {
       );
     if (cleanup !== undefined) {
       if (!result.ok)
-        return err(this.withCleanup(result.error, cleanup, request.operation));
+        return err(
+          analysisErrorWithCleanupDependencies(
+            result.error,
+            cleanup,
+            request.operation,
+          ),
+        );
       cleanup.retainPartialObservation(
         createAnalysisExecutionEvidence(
           request.operation,
@@ -1396,7 +1394,6 @@ const projectStringPool = async (
   const tokenBudget =
     Math.min(poolPolicy.token_limit, section?.length ?? 0) * COLLECTION_SLACK;
   if (section !== null) {
-    let run = "";
     const consider = (text: string): void => {
       if (text.length < 5) return;
       runCount += 1;
@@ -1422,29 +1419,43 @@ const projectStringPool = async (
       }
     };
     let overflowed = false;
+    let runStart = -1;
+    let runLength = 0;
+    const flushRun = (): void => {
+      if (runStart >= 0) {
+        if (!overflowed && runLength >= 5)
+          consider(section.toString("latin1", runStart, runStart + runLength));
+        runStart = -1;
+        runLength = 0;
+      }
+      overflowed = false;
+    };
     for (let start = 0; start < section.length; start += 64 * 1024) {
       await yieldToEventLoop();
       assertArtifactReadActive(signal);
-      for (const byte of section.subarray(start, start + 64 * 1024)) {
+      const end = Math.min(section.length, start + 64 * 1024);
+      for (let index = start; index < end; index += 1) {
+        const byte = section[index]!;
         if (byte >= 0x20 && byte < 0x7f) {
           // A single unbounded run (an adversarial NUL-free section) never
           // materializes: growth stops at the cap and the entire run is
           // discarded at its delimiter, since a truncated prefix would be
           // fabricated evidence rather than an observation.
-          if (run.length < poolPolicy.run_bytes)
-            run += String.fromCharCode(byte);
-          else {
+          if (runStart < 0) {
+            runStart = index;
+            runLength = 1;
+          } else if (runLength < poolPolicy.run_bytes) {
+            runLength += 1;
+          } else {
             overflowed = true;
             limitsReached.add("run_bytes");
           }
         } else {
-          if (!overflowed) consider(run);
-          overflowed = false;
-          run = "";
+          flushRun();
         }
       }
     }
-    if (!overflowed) consider(run);
+    flushRun();
   }
   assertArtifactReadActive(signal);
   return {

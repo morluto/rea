@@ -37,6 +37,7 @@ import {
 } from "./javascriptSemanticState.js";
 import { readSemanticRequireOriginCandidate } from "./javascriptSemanticRequireOriginSlot.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
+import { semanticArrayLiteralLayout } from "./javascriptSemanticArrayLayout.js";
 import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
@@ -963,13 +964,14 @@ const evaluateArray = (
   const items: JavaScriptSemanticProperty[] = [];
   let unknownItems = false;
   let omittedItems: number | null = 0;
-  for (const element of node.elements) {
-    if (t.isSpreadElement(element)) {
+  for (const part of semanticArrayLiteralLayout(node, context.state)) {
+    if (part.kind === "opaque-spread") {
       unknownItems = true;
       omittedItems = null;
       // Subsequent elements have no fixed index after an unknown-length spread.
       break;
     }
+    const { element, depth } = part;
     if (element === null) {
       items.push({
         name: String(items.length),
@@ -981,7 +983,7 @@ const evaluateArray = (
     items.push({
       name: String(items.length),
       presence: "present",
-      value: evaluateCapturedExpression(element, nestedContext(context)),
+      value: evaluateCapturedExpression(element, nestedContext(context, depth)),
     });
   }
   return unknownItems
@@ -1450,17 +1452,29 @@ const mergeValues = (
   return merged;
 };
 
-const nestedContext = (context: EvaluationContext): EvaluationContext => ({
-  state: context.state,
-  primitiveBindingValues: context.primitiveBindingValues,
-  ...(context.capturePoint === undefined
-    ? {}
-    : { capturePoint: context.capturePoint }),
-  expressionDepth: context.expressionDepth + 1,
-  bindings: context.bindings,
-  dependence: context.dependence,
-  memo: context.memo,
-});
+// Fixed object shapes avoid copying fields for each nested expression.
+const nestedContext = (
+  context: EvaluationContext,
+  depth = 1,
+): EvaluationContext =>
+  context.capturePoint === undefined
+    ? {
+        state: context.state,
+        primitiveBindingValues: context.primitiveBindingValues,
+        expressionDepth: context.expressionDepth + depth,
+        bindings: context.bindings,
+        dependence: context.dependence,
+        memo: context.memo,
+      }
+    : {
+        state: context.state,
+        primitiveBindingValues: context.primitiveBindingValues,
+        capturePoint: context.capturePoint,
+        expressionDepth: context.expressionDepth + depth,
+        bindings: context.bindings,
+        dependence: context.dependence,
+        memo: context.memo,
+      };
 
 const isPrimitive = (value: JavaScriptSemanticValue): boolean =>
   value.status === "literal" || value.status === "union";

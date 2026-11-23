@@ -696,7 +696,15 @@ export const endpointArgument = (
             receiverFact === "extension-state")))
     )
       return undefined;
-    return { kind: "candidate", value };
+    // Method-first clients such as superagent, needle, and Angular
+    // `HttpClient` call `request(method, url)`. When a standard method token
+    // precedes an exact string, that string is the candidate target. With a
+    // computed target, the token itself remains the candidate.
+    const target =
+      method === "request" && XHR_METHODS.has(value.toUpperCase())
+        ? stringValue(args[1])
+        : undefined;
+    return { kind: "candidate", value: target ?? value };
   }
   if (name === "sendBeacon" || name.endsWith(".sendBeacon"))
     return candidate(stringValue(args[0]));
@@ -792,15 +800,19 @@ export const range = (node: t.Node): JavaScriptSourceRange => ({
   },
 });
 
-/** Convert exact text offsets into a source range. */
+/** Convert exact text offsets into a source range without slicing/splitting prefixes. */
 export const rangeForOffsets = (
   source: string,
   start: number,
   end: number,
-): JavaScriptSourceRange => ({
-  start: pointForOffset(source, start),
-  end: pointForOffset(source, end),
-});
+): JavaScriptSourceRange => {
+  const startPoint = advancePoint(source, 0, start, 1, 0);
+  const endPoint =
+    end >= start
+      ? advancePoint(source, start, end, startPoint.line, startPoint.column)
+      : advancePoint(source, 0, end, 1, 0);
+  return { start: startPoint, end: endPoint };
+};
 
 /** Compare two exact source ranges. */
 export const sourceRangesEqual = (
@@ -813,11 +825,31 @@ export const sourceRangesEqual = (
   left.end.line === right.end.line &&
   left.end.column === right.end.column;
 
-const pointForOffset = (source: string, offset: number) => {
-  const before = source.slice(0, offset);
-  // Match JavaScript line terminators, treating CRLF as a single newline.
-  const lines = before.split(/\r\n|[\n\r\u2028\u2029]/u);
-  return { line: lines.length, column: lines.at(-1)?.length ?? 0 };
+// Match JavaScript line terminators, treating CRLF as a single newline.
+const advancePoint = (
+  source: string,
+  from: number,
+  to: number,
+  line: number,
+  column: number,
+): { line: number; column: number } => {
+  const limit = Math.max(0, Math.min(to, source.length));
+  let currentLine = line;
+  let currentColumn = column;
+  for (let i = Math.max(0, from); i < limit; i += 1) {
+    const code = source.charCodeAt(i);
+    if (code === 0x0d) {
+      if (i + 1 < limit && source.charCodeAt(i + 1) === 0x0a) i += 1;
+      currentLine += 1;
+      currentColumn = 0;
+    } else if (code === 0x0a || code === 0x2028 || code === 0x2029) {
+      currentLine += 1;
+      currentColumn = 0;
+    } else {
+      currentColumn += 1;
+    }
+  }
+  return { line: currentLine, column: currentColumn };
 };
 
 /** Observe known bundler/framework marker strings without claiming dependency use. */
