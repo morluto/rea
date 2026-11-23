@@ -18,6 +18,7 @@ import {
   corePrpsinfoDescriptor,
   corePrpsinfoNote,
   coreSiginfoNote,
+  elf32ProcessIdentityFixture,
   elfNote,
   elfNoteFixture,
   elfNoteTablePastEnd,
@@ -939,162 +940,6 @@ it.each([
   },
 );
 
-it("decodes Linux core dump notes (NT_PRPSINFO, NT_FILE, NT_SIGINFO, NT_AUXV) for 64-bit little-endian", () => {
-  const notes = Buffer.concat([
-    corePrpsinfoNote({
-      bits: 64,
-      little: true,
-      state: 0,
-      sname: "R",
-      pid: 4242,
-      ppid: 1,
-      pgrp: 4242,
-      sid: 4242,
-      uid: 1001,
-      gid: 1002,
-      fname: "test-proc",
-      psargs: "/usr/bin/test-proc --daemon -v",
-    }),
-    coreFileNote(
-      [
-        {
-          start: 0x400000n,
-          end: 0x405000n,
-          file_ofs: 0n,
-          path: "/usr/bin/test-proc",
-        },
-        {
-          start: 0x7fff0000n,
-          end: 0x7fff2000n,
-          file_ofs: 10n,
-          path: "/lib/x86_64-linux-gnu/libc.so.6",
-        },
-      ],
-      4096,
-      64,
-      true,
-    ),
-    coreSiginfoNote(11, 1, 0, true), // SIGSEGV, SEGV_MAPERR
-    coreAuxvNote(
-      [
-        [6, 4096n], // AT_PAGESZ
-        [3, 0x400040n], // AT_PHDR
-        [9, 0x401000n], // AT_ENTRY
-        [999, 0x1234n], // Unknown auxv tag
-      ],
-      64,
-      true,
-    ),
-  ]);
-
-  const bytes = elfNoteFixture({
-    bits: 64,
-    little: true,
-    type: 4, // ET_CORE
-    ownership: "program",
-    notes,
-  });
-
-  const report = parse(bytes);
-  expect(report.entries).toHaveLength(4);
-
-  // 1. NT_PRPSINFO
-  expect(report.entries[0]).toMatchObject({
-    owner: "CORE",
-    type: 3,
-    type_name: "core_prpsinfo",
-    gnu: null,
-    core: {
-      prpsinfo: {
-        state: 0,
-        pid: 4242,
-        ppid: 1,
-        pgrp: 4242,
-        sid: 4242,
-        uid: 1001,
-        gid: 1002,
-        filename: "test-proc",
-        psargs: "/usr/bin/test-proc --daemon -v",
-      },
-      file: null,
-      siginfo: null,
-      auxv: null,
-    },
-  });
-
-  // 2. NT_FILE
-  expect(report.entries[1]).toMatchObject({
-    owner: "CORE",
-    type: 0x46494c45,
-    type_name: "core_file",
-    gnu: null,
-    core: {
-      prpsinfo: null,
-      file: {
-        count: 2,
-        page_size: 4096,
-        mappings: [
-          {
-            start_address: "0x400000",
-            end_address: "0x405000",
-            file_offset_pages: "0x0",
-            path: "/usr/bin/test-proc",
-            path_hex: Buffer.from("/usr/bin/test-proc").toString("hex"),
-          },
-          {
-            start_address: "0x7fff0000",
-            end_address: "0x7fff2000",
-            file_offset_pages: "0xa",
-            path: "/lib/x86_64-linux-gnu/libc.so.6",
-            path_hex: Buffer.from("/lib/x86_64-linux-gnu/libc.so.6").toString(
-              "hex",
-            ),
-          },
-        ],
-      },
-      siginfo: null,
-      auxv: null,
-    },
-  });
-
-  // 3. NT_SIGINFO
-  expect(report.entries[2]).toMatchObject({
-    owner: "CORE",
-    type: 0x53494749,
-    type_name: "core_siginfo",
-    gnu: null,
-    core: {
-      prpsinfo: null,
-      file: null,
-      siginfo: {
-        signo: 11,
-        errno: 0,
-        code: 1,
-      },
-      auxv: null,
-    },
-  });
-
-  // 4. NT_AUXV
-  expect(report.entries[3]).toMatchObject({
-    owner: "CORE",
-    type: 6,
-    type_name: "core_auxv",
-    gnu: null,
-    core: {
-      prpsinfo: null,
-      file: null,
-      siginfo: null,
-      auxv: [
-        { type: 6, type_name: "AT_PAGESZ", value: "0x1000" },
-        { type: 3, type_name: "AT_PHDR", value: "0x400040" },
-        { type: 9, type_name: "AT_ENTRY", value: "0x401000" },
-        { type: 999, type_name: null, value: "0x1234" },
-      ],
-    },
-  });
-});
-
 it("decodes Linux core dump notes for 32-bit big-endian", () => {
   const notes = Buffer.concat([
     corePrpsinfoNote({
@@ -1170,6 +1015,69 @@ it("decodes Linux core dump notes for 32-bit big-endian", () => {
     { type: 11, type_name: "AT_UID", value: "0x1f4" },
   ]);
 });
+
+const elf32ProcessLayouts: readonly [
+  name: string,
+  machine: number,
+  little: boolean,
+  idWidth: 2 | 4,
+  flags?: number,
+][] = [
+  ["MIPS little", 8, true, 4],
+  ["MIPS big", 8, false, 4],
+  ["PowerPC big", 20, false, 4],
+  ["RISC-V little", 243, true, 4],
+  ["Hexagon V4 little", 164, true, 4, 3],
+  ["PA-RISC big", 15, false, 4],
+  ["OpenRISC big", 92, false, 4],
+  ["OpenRISC Linux big", 0x8472, false, 4],
+  ["ARC compact little", 93, true, 4],
+  ["ARCv2 big", 195, false, 4],
+  ["Xtensa little", 94, true, 4],
+  ["MicroBlaze big", 189, false, 4],
+  ["C-SKY little", 252, true, 4],
+  ["C-SKY big", 252, false, 4],
+  ["Blackfin little", 106, true, 4],
+  ["UniCore little", 110, true, 4],
+  ["Nios II little", 113, true, 4],
+  ["C6x little", 140, true, 4],
+  ["C6x big", 140, false, 4],
+  ["NDS32 little", 167, true, 4],
+  ["NDS32 big", 167, false, 4],
+  ["Meta little", 174, true, 4],
+  ["TILEPro little", 188, true, 4],
+  ["TILE-Gx m32 little", 191, true, 4],
+  ["SuperH little", 42, true, 2],
+  ["SuperH big", 42, false, 2],
+];
+
+it.each(elf32ProcessLayouts)(
+  "decodes the Linux ELF32 process record for %s",
+  (_name, machine, little, idWidth, flags) => {
+    const { bytes, shortened, expected } = elf32ProcessIdentityFixture(
+      machine,
+      little,
+      idWidth,
+      flags,
+    );
+    const report = parse(bytes);
+    expect(report).toMatchObject({
+      format: "elf32",
+      byte_order: little ? "little" : "big",
+      machine,
+      coverage: { status: "complete", examined_entries: 2 },
+    });
+    expect(report.entries[0]?.core?.prpsinfo).toEqual(expected);
+    expect(report.entries[1]).toMatchObject({
+      type_name: "core_prpsinfo",
+      descriptor: {
+        bytes: shortened.length,
+        sha256: createHash("sha256").update(shortened).digest("hex"),
+      },
+      core: null,
+    });
+  },
+);
 
 it.each([
   { name: "i386", machine: 3, little: true },
@@ -1489,19 +1397,16 @@ it.each([32, 64] as const)(
 
 it("does not spend text budget on malformed or discarded NT_FILE paths", () => {
   const header = Buffer.alloc(16);
-  header.writeBigUInt64LE(2n, 0); // count = 2
+  header.writeBigUInt64LE(32n, 0);
   header.writeBigUInt64LE(4096n, 8); // page_size = 4096
-  const mappings = Buffer.alloc(48); // 2 mappings * 24 bytes
+  const mappings = Buffer.alloc(32 * 24);
   const paths = Buffer.from(
     "/bin/app\0unterminated_path_without_null",
     "latin1",
   );
-  const badFileNote = elfNote(
-    "CORE",
-    0x46494c45,
-    Buffer.concat([header, mappings, paths]),
-  );
-  const path = "p".repeat(128);
+  const malformed = Buffer.concat([header, mappings, paths]);
+  const badFileNote = elfNote("CORE", 0x46494c45, malformed);
+  const path = "p".repeat(512);
   const valid = coreFileNote([
     { start: 0x1000, end: 0x2000, file_ofs: 0, path },
   ]);
@@ -1512,11 +1417,18 @@ it("does not spend text budget on malformed or discarded NT_FILE paths", () => {
   });
   // Two CORE owners use 14 bytes each; one ELF64 mapping uses 54, and
   // the retained Latin-1 path plus its hex spelling uses 3 bytes per byte.
-  const budget = 2 * 14 + 54 + 128 * 3;
+  const budget = 2 * 14 + 54 + path.length * 3;
   expect(image.length).toBeLessThanOrEqual(budget);
   const bytes = Buffer.concat([image, Buffer.alloc(budget - image.length)]);
   const report = parse(bytes);
-  expect(report.entries[0]?.core).toBeNull();
+  expect(report.entries[0]).toMatchObject({
+    type_name: "core_file",
+    core: null,
+    descriptor: {
+      bytes: malformed.length,
+      sha256: createHash("sha256").update(malformed).digest("hex"),
+    },
+  });
   expect(report.entries[1]?.core?.file?.mappings).toEqual([
     {
       start_address: "0x1000",
