@@ -84,6 +84,22 @@ it("handles anchors, lookarounds, ES2025 inline modifiers, NUL, and astral chara
   expect(extractRequiredRegexLiteral("İstorage", false)).toBe("storage");
 });
 
+it("extracts literals guaranteed by every top-level alternative", () => {
+  expect(extractRequiredRegexLiteral("(?:foo|foobar)", true)).toBe("foo");
+  expect(extractRequiredRegexLiteral("(?:abc|abd)", true)).toBe("ab");
+  expect(extractRequiredRegexLiteral("foo|foobar", true)).toBe("foo");
+  expect(extractRequiredRegexLiteral("pre(?:a|b)fix|prefix", true)).toBe("pre");
+  expect(extractRequiredRegexLiteral("storage|store", false)).toBe("stor");
+  expect(extractRequiredRegexLiteral("foo|", true)).toBeUndefined();
+  expect(extractRequiredRegexLiteral("foo|\\d+", true)).toBeUndefined();
+  expect(extractRequiredRegexLiteral("🧪ab|🧪ac", true)).toBe("🧪a");
+  // A branch-common segment floats inside each branch; it must not be
+  // joined to the literal that follows the group.
+  expect(extractRequiredRegexLiteral("(?:storage|store)/read", true)).toBe(
+    "/read",
+  );
+});
+
 it("returns undefined for alternations, wildcard-only, empty, or invalid regexes", () => {
   for (const pattern of [
     "",
@@ -117,6 +133,8 @@ it("has zero false negatives against ECMAScript /u and /iu plus downstream fold 
     "kelvin",
     "storage",
     "pre(a|b|c)mid(x)?post",
+    "(?:storage|store)/read",
+    "warfare|war\\.path",
   ];
   const corpus = [
     "Warfare/Storage/Read-Write",
@@ -135,6 +153,9 @@ it("has zero false negatives against ECMAScript /u and /iu plus downstream fold 
     "a\0bbbCDEF",
     "preamidxpost",
     "prexymidabend",
+    "storage/read",
+    "store/read",
+    "war.path",
   ];
   for (const pattern of patterns) {
     for (const caseSensitive of [false, true]) {
