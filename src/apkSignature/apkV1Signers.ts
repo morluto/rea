@@ -7,6 +7,7 @@
 import { createInflateRaw } from "node:zlib";
 import { pipeline } from "node:stream/promises";
 import { err, ok, type Result } from "../domain/result.js";
+import { isAbortWithReason } from "../process/SignalAbort.js";
 import { ArtifactReaderFailure } from "../resources/index.js";
 
 import type { ApkSignatureResult } from "../domain/apkSignature/apkSignatureReport.js";
@@ -130,7 +131,8 @@ const inflateSignerBlock = async (
     // the range. Retain the decoded stream only when zlib confirmed EOF and
     // left input unused. Physical failures above still take precedence.
     const reachedDeflateEnd =
-      code === "ERR_STREAM_PREMATURE_CLOSE" &&
+      (code === "ERR_STREAM_PREMATURE_CLOSE" ||
+        (cause instanceof Error && isAbortWithReason(cause, undefined))) &&
       inflater.readableEnded &&
       inflater.bytesWritten < suppliedBytes;
     if (!reachedDeflateEnd) {
