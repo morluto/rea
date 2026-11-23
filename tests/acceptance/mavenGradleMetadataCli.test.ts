@@ -513,6 +513,38 @@ cliTest(
   },
 );
 
+cliTest("reads a Maven 4.1.0 model POM", async ({ cli }) => {
+  const root = await createTestTempDirectory("rea-maven-cli-model-41-");
+  const path = join(root, "pom.xml");
+  await writeFile(
+    path,
+    `<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.1.0">
+  <modelVersion>4.1.0</modelVersion>
+  <groupId>g</groupId><artifactId>a</artifactId><version>1</version>
+  <dependencies><dependency><groupId>x</groupId><artifactId>y</artifactId><version>2</version></dependency></dependencies>
+</project>
+`,
+  );
+  const result = await cli.run({
+    arguments: ["inspect-maven-gradle-metadata", path, "--json"],
+  });
+  expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+  const report = outputSchema.parse(result.json).normalized_result;
+  expect(report.format).toBe("maven-pom");
+  expect(report.coordinates).toMatchObject({
+    group_id: "g",
+    artifact_id: "a",
+    version: "1",
+  });
+  expect(report.dependencies).toEqual([
+    expect.objectContaining({ group_id: "x", artifact_id: "y", version: "2" }),
+  ]);
+  expect(report.limitations).toContain(
+    "Maven 4 can infer omitted parent coordinates and, in model version 4.1.0, omitted dependency and managed dependency group IDs and versions from the local project tree; that inference was not applied.",
+  );
+});
+
 cliTest(
   "fails closed on a file that is not Maven POM or Gradle module metadata",
   async ({ cli }) => {
