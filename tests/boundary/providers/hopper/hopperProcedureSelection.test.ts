@@ -11,7 +11,11 @@ import {
 import { projectCliCommandOutput } from "../../../../src/cli/projectCliAnalysisResult.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import type { JsonValue } from "../../../../src/domain/jsonValue.js";
-import { responseResult } from "../../../../src/hopper/protocol.js";
+import {
+  hopperReplyEnvelope,
+  responseResult,
+} from "../../../../src/hopper/protocol.js";
+import { HopperProtocolError } from "../../../../src/hopper/HopperErrors.js";
 import { analysisClientFailureForOperation } from "../../../../src/providers/AnalysisClientFailure.js";
 
 interface ProbeOutput {
@@ -39,13 +43,21 @@ beforeAll(async () => {
   observed = JSON.parse(stdout) as ProbeOutput;
 });
 
-/** Carry one bridge diagnostic through the client and operation attribution. */
+/** Frame one bridge error reply as the NDJSON line the client reads. */
+const replyLine = (error: JsonValue | undefined) =>
+  JSON.stringify({ id: 7, error });
+
+/**
+ * Carry one bridge diagnostic through the wire parser, the client's response
+ * projection and operation attribution.
+ */
 const procedureReferencesFailure = (selector: string) => {
-  const diagnostic = observed.results[selector]?.diagnostic;
-  const parsed = responseResult({
-    id: 7,
-    error: diagnostic as never,
-  });
+  const message = hopperReplyEnvelope.parse(
+    replyLine(observed.results[selector]?.diagnostic),
+  );
+  if (!message.ok) throw message.error;
+  if ("event" in message.value) throw new Error("Expected a Hopper response");
+  const parsed = responseResult(message.value);
   if (parsed.ok) throw new Error("Expected a Hopper remote failure");
   return analysisClientFailureForOperation(
     parsed.error,
@@ -75,6 +87,59 @@ it("Hopper preserves named-entry selection and explicit address containment", ()
     "CloseHandle",
     "missing_fn",
   ]);
+});
+
+it("Hopper reports a cursor outside every procedure with its address", () => {
+  expect(observed.results["<cursor>"]?.diagnostic).toEqual({
+    code: -32000,
+    type: "selector_not_found",
+    message: "No procedure exists at 0x40b000",
+    selector: { value: null, source: "cursor", address: "0x40b000" },
+  });
+  expect(
+    projectAnalysisError(procedureReferencesFailure("<cursor>")),
+  ).toMatchObject({
+    remediation: {
+      action: expect.stringContaining("call xrefs with that address"),
+    },
+    details: {
+      diagnostic_type: "selector_not_found",
+      selector: { value: null, source: "cursor", address: "0x40b000" },
+      related_operations: ["search_procedures", "list_procedures", "xrefs"],
+    },
+  });
+});
+
+it.each([
+  [
+    "a resolved symbol without its address",
+    { value: "CloseHandle", source: "symbol" },
+  ],
+  [
+    "a cursor carrying a selector value",
+    { value: "entry", source: "cursor", address: "0x40b000" },
+  ],
+  [
+    "an address outside Hopper's hex spelling",
+    { value: "x", source: "address", address: "40b000" },
+  ],
+  ["an unknown resolution source", { value: "x", source: "segment" }],
+])("Hopper refuses %s as a bridge protocol error", (_case, selector) => {
+  const message = hopperReplyEnvelope.parse(
+    replyLine({
+      code: -32000,
+      type: "selector_not_found",
+      message: "No procedure exists at 0x40b000",
+      selector,
+    }),
+  );
+  if (message.ok) throw new Error("Expected a Hopper protocol error");
+  expect(message.error).toBeInstanceOf(HopperProtocolError);
+  if (!(message.error instanceof HopperProtocolError)) return;
+  expect(projectAnalysisError(message.error)).toMatchObject({
+    code: "unreadable_output",
+    category: "execution_failure",
+  });
 });
 
 it("Hopper reports a name outside every procedure as a resolved symbol and names xrefs", () => {

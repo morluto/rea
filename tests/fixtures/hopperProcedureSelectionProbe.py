@@ -21,8 +21,9 @@ class Segment:
 class Document:
     def __init__(self):
         self.names = []
+        self.cursor = 0x401004
     def getCurrentAddress(self):
-        return 0x401004
+        return self.cursor
     def getAddressForName(self, name):
         self.names.append(name)
         return {
@@ -37,6 +38,16 @@ segment = Segment()
 procedure = Procedure()
 document = Document()
 results = {}
+def select(key, selector):
+    try:
+        selected = bridge["_procedure"](document, selector)
+        results[key] = {"entry": bridge["_hex"](selected.getEntryPoint())}
+    except Exception as error:
+        results[key] = {
+            "diagnostic_type": bridge["_diagnostic_type"](error),
+            "message": str(error),
+            "diagnostic": bridge["_safe_diagnostic"](error),
+        }
 for selector in [
     "entry",
     "alias_entry",
@@ -48,13 +59,8 @@ for selector in [
     "0x40b000",
     "missing_fn",
 ]:
-    try:
-        selected = bridge["_procedure"](document, selector)
-        results[selector] = {"entry": bridge["_hex"](selected.getEntryPoint())}
-    except Exception as error:
-        results[selector] = {
-            "diagnostic_type": bridge["_diagnostic_type"](error),
-            "message": str(error),
-            "diagnostic": bridge["_safe_diagnostic"](error),
-        }
+    select(selector, selector)
+# An omitted selector reads the cursor, here parked outside every procedure.
+document.cursor = 0x40B000
+select("<cursor>", None)
 print(json.dumps({"results": results, "name_lookups": document.names}))
