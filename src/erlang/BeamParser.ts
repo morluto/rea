@@ -433,27 +433,26 @@ const streamChunkDigest = async (
   retainPrefixBytes: number,
 ): Promise<{ readonly sha256: string; readonly prefix: Buffer }> => {
   const hash = createHash("sha256");
-  const prefixParts: Buffer[] = [];
-  let retained = 0;
+  const prefix = Buffer.alloc(Math.min(size, retainPrefixBytes));
   for (let offset = 0; offset < size; offset += STREAM_CHUNK_BYTES) {
     const length = Math.min(STREAM_CHUNK_BYTES, size - offset);
     const part = await handle.readRange(payloadOffset + offset, length);
+    if (part.length !== length)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        "BEAM payload ended before its admitted extent.",
+        { integrityCheck: "read-coverage" },
+      );
     hash.update(part);
-    if (retained < retainPrefixBytes) {
-      const take = Math.min(part.length, retainPrefixBytes - retained);
-      prefixParts.push(part.subarray(0, take));
-      retained += take;
-    }
+    if (offset < prefix.length)
+      part.copy(
+        prefix,
+        offset,
+        0,
+        Math.min(part.length, prefix.length - offset),
+      );
   }
-  return {
-    sha256: hash.digest("hex"),
-    prefix:
-      prefixParts.length === 0
-        ? Buffer.alloc(0)
-        : prefixParts.length === 1
-          ? prefixParts[0]!
-          : Buffer.concat(prefixParts, retained),
-  };
+  return { sha256: hash.digest("hex"), prefix };
 };
 
 /**
