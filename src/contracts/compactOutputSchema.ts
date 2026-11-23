@@ -3,6 +3,7 @@ import {
   inlineWithinBudget,
   isSchemaObject,
   jsonValueSchema,
+  pruneSchemaBeyondDepth,
   reduceToShallowProperties,
   schemaDepth,
   serializedBytes,
@@ -63,6 +64,18 @@ export const compactAdvertisedOutputSchema = (
       schema: withoutContentBoundIdentity(inline),
       presentation: "inline",
     };
+  if (inline !== undefined) {
+    const pruned = pruneSchemaBeyondDepth(inline);
+    if (
+      pruned !== undefined &&
+      schemaDepth(pruned) <= COMPACT_SCHEMA_MAX_DEPTH &&
+      serializedBytes(pruned) <= budgetBytes
+    )
+      return {
+        schema: withoutContentBoundIdentity(pruned),
+        presentation: "inline",
+      };
+  }
   // Every REA output contract is an object at the root. A non-object root still
   // advertises an accepting shape rather than a projection that could reject
   // valid canonical output.
