@@ -727,6 +727,7 @@
 * **third-party:** warn against identically named jar source on npm ([402273d](https://github.com/morluto/rea/commit/402273dd571ec8cf72e1e9beac7470b1490cd7d2))
 * **tool-design:** document single-pass derivation, hash joins, and owned-payload validation for hot paths ([#13556](https://github.com/morluto/rea/issues/13556)) ([001eac0](https://github.com/morluto/rea/commit/001eac03aad199c4468bf9f544def6eeda65e4a0))
 * **v8:** describe the six-word code cache header ([56838a0](https://github.com/morluto/rea/commit/56838a036c2c43afee56b0336a35abbf959770f2))
+* **verification:** remove dated records that nothing cites ([#14196](https://github.com/morluto/rea/issues/14196)) ([bdefa90](https://github.com/morluto/rea/commit/bdefa90dfbcc16cb75c3cd4869a76715eccad018))
 
 
 ### Tests
