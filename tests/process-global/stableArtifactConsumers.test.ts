@@ -214,6 +214,36 @@ it("preserves opaque NuGet decoder failures and the completed file identity", as
   }
 });
 
+it("reports a NuGet package changed after hashing when its ZIP decode fails", async () => {
+  const path = await selectedImage();
+  const bytes = await nugetNupkgFixture();
+  await writeFile(path, bytes);
+  fault.blockNew = false;
+  const enumerate = ZipReader.prototype.getEntriesGenerator;
+  const enumeration = vi
+    .spyOn(ZipReader.prototype, "getEntriesGenerator")
+    .mockImplementation(async function* (this: ZipReader<unknown>, options) {
+      await writeFile(path, Buffer.alloc(bytes.length));
+      return yield* enumerate.call(this, options);
+    });
+  const provider = new NugetNupkgProvider();
+  try {
+    const result = await provider.inspect(
+      inspectNugetNupkgInputSchema.parse({ path }),
+    );
+    if (result.ok) throw new Error("Expected source change");
+    expect(result.error).toBeInstanceOf(AnalysisArtifactChangedError);
+    expect(result.error).toMatchObject({
+      integrityCheck: "container-identity",
+    });
+    expect(fault.handles).toHaveLength(1);
+    expect(fault.handles[0]?.fd).toBe(-1);
+  } finally {
+    enumeration.mockRestore();
+    await provider.close();
+  }
+});
+
 it.each(
   ["close failure", "close cancellation"].flatMap((outcome) =>
     ["NuGet", "Maven/Gradle"].map((kind) => ({ outcome, kind })),
