@@ -1052,11 +1052,14 @@ export class AdbProvider {
         const { features, unparsedLines } = parseFeatureListOutput(
           ran.value.stdout,
         );
+        const page = pageListingItems(features, "features", request.input);
         return ok(
           parsedListingExecution(
-            { client, serial: request.input.serial, features },
+            { client, serial: request.input.serial, features: page.items },
             unparsedLines,
             provider,
+            page.limitations,
+            page.truncated,
           ),
         );
       }
@@ -1069,11 +1072,14 @@ export class AdbProvider {
         const { services, unparsedLines } = parseServiceListOutput(
           ran.value.stdout,
         );
+        const page = pageListingItems(services, "services", request.input);
         return ok(
           parsedListingExecution(
-            { client, serial: request.input.serial, services },
+            { client, serial: request.input.serial, services: page.items },
             unparsedLines,
             provider,
+            page.limitations,
+            page.truncated,
           ),
         );
       }
