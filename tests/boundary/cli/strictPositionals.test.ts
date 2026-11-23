@@ -209,10 +209,14 @@ it("validates every dry-run literal before lossy coercion while retaining bare a
     const result = await serve(cli, [
       "setup",
       `--dry-run=${literal}`,
-      "--dryRun=false",
+      "--dry-run=false",
     ]);
     expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.stdout)).toMatchObject({ code: "PARSE_ERROR" });
+    expect(JSON.parse(result.stdout)).toEqual({
+      code: "PARSE_ERROR",
+      message: "Invalid --dry-run value; use true or false.",
+      retryable: false,
+    });
   }
   expect({ runs, defaults }).toEqual({ runs: 0, defaults: 0 });
   for (const [tokens, expected] of [
