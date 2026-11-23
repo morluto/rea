@@ -460,3 +460,39 @@ it("reads past nested EC headers no eraseblock could begin at", async () => {
     await reader.close();
   }
 });
+
+it("reads a first dynamic LEB holding a nested image", async () => {
+  // Four 128 KiB eraseblocks; the nested image's header 6144 bytes in does
+  // not divide the 524288-byte file, so it cannot be the eraseblock size.
+  const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
+  const lebBytes = wide.pebSize - wide.dataOffset;
+  const records = [
+    { id: 0, name: "rootfs", type: "dynamic" as const, reservedPebs: 2 },
+  ];
+  const first = Buffer.alloc(lebBytes, 0x52);
+  ubiImage([{ kind: "free" }, { kind: "free" }]).copy(first, 0);
+  const second = Buffer.alloc(lebBytes, 0x53);
+  const reader = new UbiImageArtifactReader(
+    await fixture(
+      ubiImage(
+        [
+          { kind: "leb", volId: 0, lnum: 0, data: first, sqnum: 2n },
+          ...ubiLayoutPebs(records, wide),
+          { kind: "leb", volId: 0, lnum: 1, data: second, sqnum: 3n },
+        ],
+        wide,
+      ),
+    ),
+  );
+  try {
+    const volumes = await entries(reader);
+    expect(volumes).toMatchObject([{ declaredSize: 2 * lebBytes }]);
+    expect(
+      (await buffer(await reader.open(volumes[0]!))).equals(
+        Buffer.concat([first, second]),
+      ),
+    ).toBe(true);
+  } finally {
+    await reader.close();
+  }
+});

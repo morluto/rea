@@ -264,19 +264,24 @@ const findEcHeaderWhere = (
  * multiple of the real size, so `classifyUbiPeb` and `checkUbiPebs` refuse it
  * instead. A header before `minPebSize` (from `ubiFirstPebMinSize`) lies
  * inside the data the first PEB's own VID header declares, so it is payload,
- * such as a nested UBI image, and cannot begin the second eraseblock.
+ * such as a nested UBI image, and cannot begin the second eraseblock. With
+ * `fileSize`, a header at an offset that does not divide it is skipped too:
+ * no eraseblock size could put it there, so it is payload as well.
  */
 export const findUbiEcHeader = (
   chunk: Uint8Array,
   chunkOffset: number,
   first: UbiEcHeader,
   minPebSize = 0,
+  fileSize?: number,
 ): number | null =>
   findEcHeaderWhere(
     chunk,
     chunkOffset,
     first,
-    (offset) => offset >= minPebSize,
+    (offset) =>
+      offset >= minPebSize &&
+      (fileSize === undefined || fileSize % offset === 0),
   );
 
 /**

@@ -63,12 +63,15 @@ const parse = (bytes: Buffer): Result<UbiImage, UbiImageParseError> => {
   const first = parseUbiFirstEcHeader(bytes.subarray(0, 64), bytes.length);
   if (!first.ok) return first;
   const start = ubiPebSearchStart(first.value);
-  const next = findUbiEcHeader(
-    bytes.subarray(start),
-    start,
-    first.value,
-    firstPebMinSize(bytes, first.value),
-  );
+  const minPebSize = firstPebMinSize(bytes, first.value);
+  const next =
+    findUbiEcHeader(
+      bytes.subarray(start),
+      start,
+      first.value,
+      minPebSize,
+      bytes.length,
+    ) ?? findUbiEcHeader(bytes.subarray(start), start, first.value, minPebSize);
   const spacing =
     next === null ? null : ubiSpacingCheckRange(next, bytes.length);
   const spacingConflict = (candidates: ReadonlySet<number>) =>
@@ -1690,6 +1693,32 @@ describe("erase-counter headers no eraseblock could begin at", () => {
       ),
     ).toBe(UBI_MAX_PEB_BYTES - 64);
     expect(ubiFirstVidHeaderOffset(first.value, 100)).toBeNull();
+  });
+
+  it("measures past a nested image in the first PEB's dynamic data", () => {
+    // A dynamic VID header declares no data size, so only the file size rules
+    // out the nested header 6144 bytes in: 524288 is not a multiple of it.
+    const nested = ubiImage([{ kind: "free" }, { kind: "free" }]);
+    const records: UbiFixtureVolumeRecord[] = [
+      { id: 0, name: "rootfs", type: "dynamic", reservedPebs: 2 },
+    ];
+    const lebs = Array.from({ length: 2 }, (_, lnum): UbiFixturePeb => {
+      const data = Buffer.alloc(lebBytes, 0x40 + lnum);
+      if (lnum === 0) nested.copy(data, 0);
+      return { kind: "leb", volId: 0, lnum, data, sqnum: BigInt(lnum + 2) };
+    });
+    const bytes = ubiImage(
+      [lebs[0]!, ...ubiLayoutPebs(records, wide), lebs[1]!],
+      wide,
+    );
+    expect(bytes.length).toBe(4 * wide.pebSize);
+    expect(parse(bytes)).toMatchObject({
+      ok: true,
+      value: {
+        geometry: { pebSize: wide.pebSize, pebCount: 4 },
+        volumes: [{ extractRefusal: null, mappedLebCount: 2 }],
+      },
+    });
   });
 
   it("sets no minimum size when the first PEB holds no valid VID header", () => {

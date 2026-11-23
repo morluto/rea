@@ -220,7 +220,11 @@ export class UbiImageArtifactReader implements ArtifactReader {
             first.value,
           );
     const scanEnd = Math.min(size, UBI_MAX_PEB_BYTES + UBI_HEADER_BYTES);
+    // A header at an offset that does not divide the file size is payload;
+    // the first header of any offset is kept only to name the refusal when
+    // no eraseblock size fits.
     let next: number | null = null;
+    let anyNext: number | null = null;
     for (
       let offset = ubiPebSearchStart(first.value);
       next === null && offset < scanEnd;
@@ -234,8 +238,10 @@ export class UbiImageArtifactReader implements ArtifactReader {
         size,
         signal,
       );
-      next = findUbiEcHeader(chunk, offset, first.value, minPebSize);
+      anyNext ??= findUbiEcHeader(chunk, offset, first.value, minPebSize);
+      next = findUbiEcHeader(chunk, offset, first.value, minPebSize, size);
     }
+    next ??= anyNext;
     // Skipped eraseblocks before the second header would multiply the size;
     // a header where a smaller eraseblock would begin exposes that. Once the
     // LEBs are read, only the smaller sizes they still admit count.
