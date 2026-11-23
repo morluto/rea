@@ -133,3 +133,7 @@ authority questions before requesting integration. -->
 - [ ] Run every test, build, or measurement needed to validate the change instead of skipping it and adding a caveat that it was not run. Only report a browser, GPU, or environment gap when the required runtime or hardware is genuinely unavailable. Report the checks actually run and their results, and do not present inferred correctness or speedups as measured.
 - [ ] Comments should explain constraints or non-obvious decisions. Keep task history and conversations out of code and user documentation.
 - [ ] Keep documentation concise and factual. Do not use punchy slogans or promotional language.
+- [ ] The change fixes the root cause and follows the engineering rules in [AGENTS.md](https://github.com/morluto/rea/blob/main/AGENTS.md#architecture-and-cleanup).
+- [ ] Formatted input is interpreted once at the owning boundary, and consumers use the owner's parsed facts. See [Interpret boundary facts once](https://github.com/morluto/rea/blob/main/docs/development/tool-design.md#interpret-boundary-facts-once).
+- [ ] Combined failures preserve partial observations, remaining resources, and cleanup facts. See [Own the lifecycle](https://github.com/morluto/rea/blob/main/docs/development/tool-design.md#own-the-lifecycle).
+- [ ] A new limit is an `REA_` runtime setting with a default, floor, and maximum, unless a fixed ceiling has a stated reason. See [Adding a runtime setting](https://github.com/morluto/rea/blob/main/docs/reference/limits-and-recovery.md#adding-a-runtime-setting).
