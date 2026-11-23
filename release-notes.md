@@ -21,6 +21,7 @@
 * **javascript:** inventory Expo Router require.context route keys ([#10624](https://github.com/morluto/rea/issues/10624)) ([7b6e816](https://github.com/morluto/rea/commit/7b6e816b0b61d24d1a3b79106481f29db676ea65))
 * **native:** retain Apple bundle executable provenance ([b8995f8](https://github.com/morluto/rea/commit/b8995f81489dda3e7f8be61317f366b7fabd97c7))
 * **setup:** discover project-scoped MCP registrations in doctor and … ([#7283](https://github.com/morluto/rea/issues/7283)) ([63c50ec](https://github.com/morluto/rea/commit/63c50ecfc0a849d3298c44b1ce06e2e759f1303c))
+* **tools:** add optional limit and offset paging to find_xrefs_to_name ([#13858](https://github.com/morluto/rea/issues/13858)) ([1d4fadc](https://github.com/morluto/rea/commit/1d4fadceb2720b2db9a2a0674e95385117238d81))
 * **tools:** add optional max_depth and max_nodes bounds to get_call_graph and trace_call_path ([#13828](https://github.com/morluto/rea/issues/13828)) ([d0560b1](https://github.com/morluto/rea/commit/d0560b1b88c3257b802b80ef4c36719c9734b996))
 * **web:** deduplicate bundle findings across scripts by value and mechanism ([#11354](https://github.com/morluto/rea/issues/11354)) ([23970fc](https://github.com/morluto/rea/commit/23970fc63f1c6f41ee03539216c236f85ae15593))
 * **web:** report value-free header names in the api-surface view ([#9504](https://github.com/morluto/rea/issues/9504)) ([fd9cbef](https://github.com/morluto/rea/commit/fd9cbeff743cc5a685917daafc937060ee45d7a5))
