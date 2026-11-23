@@ -216,9 +216,19 @@ class IssueSink implements IssueReporter {
   }
 }
 
+// BinaryReader keeps no position, so every Cursor over one buffer (each listing
+// reference into the encoded entries, say) can share its reader.
+const LITTLE_ENDIAN_READERS = new WeakMap<Buffer, BinaryReader>();
+
 /** Little-endian numeric reads; Cursor bounds every read before it is made. */
-const littleEndian = (bytes: Buffer) =>
-  new BinaryReader(bytes, true, UNREAL_PAK_FORMAT);
+const littleEndian = (bytes: Buffer): BinaryReader => {
+  let reader = LITTLE_ENDIAN_READERS.get(bytes);
+  if (reader === undefined) {
+    reader = new BinaryReader(bytes, true, UNREAL_PAK_FORMAT);
+    LITTLE_ENDIAN_READERS.set(bytes, reader);
+  }
+  return reader;
+};
 
 class Cursor {
   position = 0;

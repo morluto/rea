@@ -21,6 +21,11 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import {
+  pickFields,
+  selectIndexedViewRows,
+  selectViewRows,
+} from "./selectViewRows.js";
 
 /** Unknown added when the pak index is encrypted and its pages are unread. */
 export const UNREAD_ENCRYPTED_INDEX_UNKNOWN =
@@ -109,22 +114,25 @@ const parsePakReport = (
   // This schema has no coercions/transforms; the authenticated owner value is
   // equivalent to the validated clone and remains immutable across pages.
   const report = reusable ? (key as UnrealPakReport) : parsed.value;
-  const tally = (
-    keep: (entry: UnrealPakReport["entries"][number]) => boolean,
-  ) => report.entries.filter(keep).length;
-  const checked = {
-    report,
-    counts: {
-      entries: report.entries.length,
-      encoded_records: tally((entry) => entry.record === "encoded"),
-      full_records: tally((entry) => entry.record === "full"),
-      compressed: tally((entry) => entry.compression_method !== 0),
-      encrypted: tally((entry) => entry.encrypted),
-      deleted: tally((entry) => entry.deleted),
-      without_path: tally((entry) => entry.path === null),
-      issues: report.issues.length,
-    },
+  const counts = {
+    entries: report.entries.length,
+    encoded_records: 0,
+    full_records: 0,
+    compressed: 0,
+    encrypted: 0,
+    deleted: 0,
+    without_path: 0,
+    issues: report.issues.length,
   };
+  for (const entry of report.entries) {
+    if (entry.record === "encoded") counts.encoded_records++;
+    else if (entry.record === "full") counts.full_records++;
+    if (entry.compression_method !== 0) counts.compressed++;
+    if (entry.encrypted) counts.encrypted++;
+    if (entry.deleted) counts.deleted++;
+    if (entry.path === null) counts.without_path++;
+  }
+  const checked = { report, counts };
   if (reusable) checkedReports.set(key, checked);
   return ok(checked);
 };
@@ -196,37 +204,32 @@ export const projectUnrealPakView = (
     });
   const rows: readonly Readonly<Record<string, unknown>>[] =
     view.collection === "entries" ? entries : issues;
-  const keep: (row: Readonly<Record<string, unknown>>) => boolean = (() => {
+  // An omitted predicate lets an unfiltered page read only its own rows.
+  const keep:
+    | ((row: Readonly<Record<string, unknown>>) => boolean)
+    | undefined = (() => {
     if (view.collection === "entries") {
-      const paths = view.paths === undefined ? undefined : new Set(view.paths);
-      return (row) =>
-        paths === undefined ||
-        (typeof row.path === "string" && paths.has(row.path));
+      if (view.paths === undefined) return undefined;
+      const paths = new Set(view.paths);
+      return (row) => typeof row.path === "string" && paths.has(row.path);
     }
-    const kinds = view.kinds === undefined ? undefined : new Set(view.kinds);
-    return (row) => kinds === undefined || kinds.has(row.kind as never);
+    if (view.kinds === undefined) return undefined;
+    const kinds = new Set(view.kinds);
+    return (row) => kinds.has(row.kind as never);
   })();
   const fields =
     view.fields === undefined ? undefined : new Set<string>(view.fields);
-  const selected =
+  const project = (
+    row: Readonly<Record<string, unknown>>,
+    index: number,
+  ): Record<string, unknown> => ({
+    index,
+    ...(fields === undefined ? row : pickFields(row, fields)),
+  });
+  const { rows: items, total } =
     view.indices === undefined
-      ? rows.keys()
-      : [...new Set(view.indices)]
-          .sort((a, b) => a - b)
-          .filter((index) => index < rows.length);
-  const items: Record<string, unknown>[] = [];
-  let total = 0;
-  for (const index of selected) {
-    const row = rows[index]!;
-    if (!keep(row)) continue;
-    if (total >= view.offset && items.length < view.limit) {
-      const item: Record<string, unknown> = { index };
-      for (const [key, value] of Object.entries(row))
-        if (fields === undefined || fields.has(key)) item[key] = value;
-      items.push(item);
-    }
-    total++;
-  }
+      ? selectViewRows(rows, view, keep, project)
+      : selectIndexedViewRows(rows, new Set(view.indices), view, keep, project);
   return ok({
     kind: "unreal-pak" as const,
     view,

@@ -1,17 +1,21 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { resolve } from "node:path";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { absoluteCallerPath } from "../dist/filesystem/callerPath.js";
 import { toolContract } from "../dist/contracts/toolContracts.js";
-import { analysisViewResultSchema } from "../dist/domain/analysisView/analysisView.js";
-import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
+import { analysisViewResultSchema } from "../dist/domain/analysisView/analysisViewResult.js";
+import { ArtifactResourceScope } from "../dist/resources/ArtifactResourceScope.js";
 import { artifactMcpCall } from "./lib/artifact-e2e.mjs";
 import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { hashVerifierFile } from "./lib/verifier-file-resources.mjs";
+import {
+  assertVerifierCleanupComplete,
+  completeVerifierRun,
+  createVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 
 const args = process.argv.slice(2);
 if (args.includes("--help") || args.includes("-h")) {
@@ -26,7 +30,9 @@ const path = args[1] === undefined ? null : absoluteCallerPath(args[1]);
 const operation = "inspect_unreal_pak";
 const contract = toolContract(operation);
 const entrypoint = resolve("scripts/rea.mjs");
-const execute = promisify(execFile);
+// The run token must be in the environment before the MCP server inherits it.
+const run = createVerifierRun();
+const commands = await createVerifierCommands();
 const client = new Client({ name: "unreal-pak-verifier", version: "1" });
 const transport = new StdioClientTransport({
   command: process.execPath,
@@ -69,7 +75,7 @@ await withVerifierCleanup(async () => {
   else {
     const identity = await hashVerifierFile(path, resources);
     const started = performance.now();
-    const { stdout } = await execute(
+    const { stdout } = await commands.exec(
       process.execPath,
       [entrypoint, "inspect-unreal-pak", path, "--json"],
       { timeout: 300_000, maxBuffer: 256 * 1024 * 1024 },
@@ -141,5 +147,12 @@ await withVerifierCleanup(async () => {
       `[ok] summary and page parity; pak layout ${report.footer.layout}, ${report.entries.length} entries, ${report.issues.length} issues; complete Evidence ${Buffer.byteLength(stdout)} bytes, summary ${Buffer.byteLength(JSON.stringify(summary))} bytes; CLI ${cliMs} ms`,
     );
   }
-}, [() => client.close(), () => transport.close(), () => resources.close()]);
+}, [
+  () => client.close(),
+  () => transport.close(),
+  () => commands.close(),
+  () => resources.close(),
+]);
+// Claim success only once no process carrying this run's token survives.
+assertVerifierCleanupComplete((await completeVerifierRun(run)).process_lineage);
 console.log("All asserted Unreal pak CLI/MCP checks passed");
