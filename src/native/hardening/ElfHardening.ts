@@ -928,7 +928,7 @@ const readFeatureNotes = (
           ),
         ];
   const propertySections: ElfNoteTableWalk[] = [];
-  const otherSpans: NoteSpan[] = [];
+  const compressedSpans: NoteSpan[] = [];
   let incomplete: string | null = null;
   for (const section of sections) {
     const storage = elfNoteSectionStorage(section);
@@ -939,7 +939,7 @@ const readFeatureNotes = (
       incomplete ??=
         "A compressed SHT_NOTE section may hold GNU property notes, and its descriptors were not read.";
       if (!section.file_backed) continue;
-      otherSpans.push({
+      compressedSpans.push({
         offset: exact(section.offset, "SHT_NOTE offset"),
         size: exact(section.size, "SHT_NOTE size"),
       });
@@ -956,29 +956,20 @@ const readFeatureNotes = (
       ),
     );
   }
-  const overlapsProperty = overlapIndex([
-    ...propertyProgram,
-    ...propertySections,
-  ]);
-  const overlapsOther = overlapIndex(otherSpans);
+  const compressedOverlap = overlapIndex(compressedSpans);
+  // Aliased declarations cannot reinterpret compressed bytes as raw notes.
+  const independentlyFramed = (table: NoteSpan) =>
+    compressedOverlap(table) === "none";
   const programTables: ElfNoteTableWalk[] = [];
   for (const noteProgram of notePrograms) {
-    const span = {
-      offset: exact(noteProgram.file_offset, "PT_NOTE offset"),
-      size: exact(noteProgram.file_size, "PT_NOTE size"),
-    };
-    const property = overlapsProperty(span) !== "none";
-    // Do not reinterpret compressed section bytes through a program alias.
-    if (overlapsOther(span) !== "none" && !property) continue;
-    programTables.push(
-      noteTable(
-        bytes,
-        span.offset,
-        span.size,
-        noteProgram.alignment,
-        "PT_NOTE",
-      ),
+    const table = noteTable(
+      bytes,
+      exact(noteProgram.file_offset, "PT_NOTE offset"),
+      exact(noteProgram.file_size, "PT_NOTE size"),
+      noteProgram.alignment,
+      "PT_NOTE",
     );
+    if (independentlyFramed(table)) programTables.push(table);
   }
   const unresolvedOverlap = (overlap: NoteOverlap): void => {
     incomplete ??= {
@@ -991,8 +982,8 @@ const readFeatureNotes = (
   };
   const tables = admitDisjointTables(
     admitDisjointTables(
-      byOffset(propertyProgram),
-      propertySections,
+      byOffset(propertyProgram).filter(independentlyFramed),
+      propertySections.filter(independentlyFramed),
       unresolvedOverlap,
     ),
     programTables,

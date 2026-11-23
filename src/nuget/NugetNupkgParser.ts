@@ -74,18 +74,42 @@ const childrenNamed = (
   element: Element,
   local: string,
   namespace?: string,
-): Element[] =>
-  childElements(element).filter(
-    (child) =>
+): Element[] => {
+  const matches: Element[] = [];
+  for (
+    let child = element.firstChild;
+    child !== null;
+    child = child.nextSibling
+  ) {
+    if (
+      isElement(child) &&
       child.localName === local &&
-      (namespace === undefined || (child.namespaceURI ?? "") === namespace),
-  );
+      (namespace === undefined || (child.namespaceURI ?? "") === namespace)
+    )
+      matches.push(child);
+  }
+  return matches;
+};
 
 const firstNamed = (
   element: Element,
   local: string,
   namespace?: string,
-): Element | undefined => childrenNamed(element, local, namespace)[0];
+): Element | undefined => {
+  for (
+    let child = element.firstChild;
+    child !== null;
+    child = child.nextSibling
+  ) {
+    if (
+      isElement(child) &&
+      child.localName === local &&
+      (namespace === undefined || (child.namespaceURI ?? "") === namespace)
+    )
+      return child;
+  }
+  return undefined;
+};
 
 const nonempty = (value: string | null | undefined): string | null => {
   if (value === null || value === undefined) return null;

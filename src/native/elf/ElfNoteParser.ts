@@ -22,6 +22,7 @@ import {
   isElfNotePadding,
   readElfNoteFrame,
   type ElfNoteAlignment,
+  type ElfNoteSpan,
 } from "../../domain/native/elfNoteLayout.js";
 import type {
   ElfNotes,
@@ -869,7 +870,8 @@ const parseElfNoteSteps = function* (
   let unreadCompressedNotes = false;
   const examined = { count: 0 };
   const noteSections = [];
-  const compressedNoteRanges = new Set<string>();
+  const compressedNoteSpans: ElfNoteSpan[] = [];
+  const fileEnd = BigInt(bytes.length);
   const sectionTableOverlapsHeader = shnum !== 0 && shoff < header.headerSize;
   if (!sectionTableOverlapsHeader) {
     for (let index = 0; index < shnum; index += 1) {
@@ -892,22 +894,20 @@ const parseElfNoteSteps = function* (
         alignment,
         storage,
       });
-      if (storage === "compressed")
-        compressedNoteRanges.add(`${offset}:${size}`);
+      if (
+        storage === "compressed" &&
+        offset <= fileEnd &&
+        size <= fileEnd - offset
+      )
+        compressedNoteSpans.push({
+          offset: Number(offset),
+          size: Number(size),
+        });
     }
   }
-  const fileEnd = BigInt(bytes.length);
   const compressedOverlap =
-    options.retainReadableNotes === true && compressedNoteRanges.size > 0
-      ? elfNoteSpanOverlapIndex(
-          noteSections.flatMap(({ offset, size, storage }) =>
-            storage === "compressed" &&
-            offset <= fileEnd &&
-            size <= fileEnd - offset
-              ? [{ offset: Number(offset), size: Number(size) }]
-              : [],
-          ),
-        )
+    compressedNoteSpans.length > 0
+      ? elfNoteSpanOverlapIndex(compressedNoteSpans)
       : undefined;
   if (phnum !== 0) {
     if (phoff < header.headerSize)
@@ -930,13 +930,11 @@ const parseElfNoteSteps = function* (
         return fail("ELF offset or size exceeds a safe integer.");
       const fileOffset = Number(program.offset);
       const fileSize = Number(program.fileSize);
-      // Compressed storage owns the unsupported outcome. A partial scan
-      // keeps facts only from independently framed ranges.
+      // A program header cannot make compressed bytes a raw note stream.
+      // Validate its full extent and let the section own the unsupported outcome.
       if (
-        (compressedNoteRanges.size > 0 &&
-          compressedNoteRanges.has(`${program.offset}:${program.fileSize}`)) ||
-        (compressedOverlap !== undefined &&
-          compressedOverlap({ offset: fileOffset, size: fileSize }) !== "none")
+        compressedOverlap !== undefined &&
+        compressedOverlap({ offset: fileOffset, size: fileSize }) !== "none"
       ) {
         reader.require(fileOffset, fileSize);
         continue;

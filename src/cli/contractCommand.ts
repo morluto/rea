@@ -29,20 +29,23 @@ import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import { parseCliJsonInput } from "./cliJsonInput.js";
 import {
   describeContractCommand,
-  type CliContractProjection,
   describeOperationChoices,
-  type CliEvidenceDeliveryChoice,
-  type CliOptionShape,
-  type CliOptionValues,
-  type ContractCliDescription,
-  type ContractCliEvidenceTargets,
-  type ContractCliSessionTarget,
-  type ContractField,
-  type ProjectedContract,
-  type CliCheckedJsonInputs,
-  type CliJsonInputCheck,
   withoutDefault,
 } from "./contractCliDescription.js";
+import type {
+  DocumentContract,
+  CliContractProjection,
+  CliEvidenceDeliveryChoice,
+  CliOptionShape,
+  CliOptionValues,
+  ContractCliDescription,
+  ContractCliEvidenceTargets,
+  ContractCliSessionTarget,
+  ContractField,
+  ProjectedContract,
+  CliCheckedJsonInputs,
+  CliJsonInputCheck,
+} from "./contractCliDescriptionTypes.js";
 import {
   cliDeliveredEvidence,
   recordCliResultControls,

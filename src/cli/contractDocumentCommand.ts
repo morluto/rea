@@ -13,12 +13,14 @@ import { jsonInputArgument } from "./jsonInputArgument.js";
 import {
   describeContractDocumentCommand,
   type CliDocumentProjection,
-  type DocumentContract,
-  type CliEvidenceDeliveryChoice,
-  type CliOptionShape,
-  type CliOptionValues,
-  type ContractField,
 } from "./contractCliDescription.js";
+import type {
+  DocumentContract,
+  CliEvidenceDeliveryChoice,
+  CliOptionShape,
+  CliOptionValues,
+  ContractField,
+} from "./contractCliDescriptionTypes.js";
 import {
   contractDescriptionOperations,
   registerCliCommand,

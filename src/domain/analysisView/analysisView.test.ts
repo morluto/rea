@@ -5,7 +5,10 @@ import {
 } from "./analysisViewCoverage.js";
 import { expect, it, vi } from "vitest";
 
-import { freezeJsonSnapshot } from "../immutableJson.js";
+import {
+  freezeJsonSnapshot,
+  isImmutableJsonSnapshot,
+} from "../immutableJson.js";
 import { byteEntropySchema } from "../native/byteEntropy.js";
 import * as jsApplicationAnalysis from "../javascript/javascriptApplicationAnalysis.js";
 import {
@@ -710,6 +713,40 @@ it.each(["sections", "symbols"] as const)(
       }),
     ).toMatchObject({ ok: true, value: { item: opaque } });
     expect(parent.normalizedResult[collection]).toEqual([opaque, valid]);
+  },
+);
+
+it.each([
+  { collection: "sections", name: ".data", ambiguous: ".text" },
+  { collection: "symbols", name: "start", ambiguous: "main" },
+] as const)(
+  "reuses sealed $collection for exact-name selections",
+  ({ collection, name, ambiguous }) => {
+    const layout = freezeJsonSnapshot(analysisViewLayoutFixture());
+    const parent = {
+      ...layoutParent(),
+      normalizedResult: layout,
+      sealedResult: true,
+    };
+    expect(isImmutableJsonSnapshot(layout[collection])).toBe(false);
+    const select = (name: string) =>
+      projectAnalysisView(parent, {
+        kind: "item",
+        collection,
+        selector: { name },
+      });
+
+    const first = select(name);
+    expect(first).toMatchObject({
+      ok: true,
+      value: { item: layout[collection][2] },
+    });
+    expect(isImmutableJsonSnapshot(layout[collection])).toBe(true);
+    expect(select(ambiguous)).toMatchObject({
+      ok: false,
+      error: { issues: [{ expected: [{ index: 0 }, { index: 1 }] }] },
+    });
+    expect(select(name)).toEqual(first);
   },
 );
 

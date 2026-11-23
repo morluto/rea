@@ -372,7 +372,18 @@ const selectEventText = (
   report: PlaywrightTrace,
   view: Extract<View, { collection: "event-text" }>,
 ) => {
-  const event = report.events.find((row) => row.event_id === view.event_id);
+  const candidates = candidateIndices(
+    report,
+    report.events,
+    "event_id",
+    new Set([view.event_id]),
+  );
+  const event =
+    candidates !== undefined
+      ? candidates.length > 0
+        ? report.events[candidates[0]!]
+        : undefined
+      : report.events.find((row) => row.event_id === view.event_id);
   if (event === undefined || event.text === null)
     return err(
       analysisViewInputError([
