@@ -61,3 +61,44 @@ void rea_abort(void) { abort(); }
 void rea_unwind(void *p) { _Unwind_Resume(p); }
 void rea_local_stop(void) { __builtin_trap(); }
 int rea_local_return(void) { return 1658; }
+
+/* Computed calls to a local no-return function; never executed. Inline
+ * assembly fixes the target in the instruction stream, as a RISC-V auipc+jalr
+ * pair does, so only the probe's injected state tells these callers apart. */
+#define REA_TEXT(value) #value
+#define REA_STRING(value) REA_TEXT(value)
+#define REA_SYMBOL(name) REA_STRING(__USER_LABEL_PREFIX__) #name
+#if defined(__x86_64__)
+#define REA_CONSTANT_CALL(name) \
+    __asm__ volatile("leaq " REA_SYMBOL(name) "(%%rip), %%rax\n\tcall *%%rax" ::: "rax", "memory")
+#elif defined(__aarch64__) && defined(__APPLE__)
+#define REA_CONSTANT_CALL(name) \
+    __asm__ volatile("adrp x16, " REA_SYMBOL(name) "@PAGE\n\tadd x16, x16, " REA_SYMBOL(name) \
+                     "@PAGEOFF\n\tblr x16" ::: "x16", "x30", "memory")
+#elif defined(__aarch64__)
+#define REA_CONSTANT_CALL(name) \
+    __asm__ volatile("adrp x16, " REA_SYMBOL(name) "\n\tadd x16, x16, :lo12:" REA_SYMBOL(name) \
+                     "\n\tblr x16" ::: "x16", "x30", "memory")
+#else
+#error "no-return.c needs an x86-64 or AArch64 computed call"
+#endif
+__attribute__((visibility("hidden"), noreturn, noinline)) void rea_computed_stop(void) { __builtin_trap(); }
+void rea_constant_call(void) {
+    REA_CONSTANT_CALL(rea_computed_stop);
+    rea_after_call++;
+}
+void rea_constant_call_two_targets(void) {
+    REA_CONSTANT_CALL(rea_computed_stop);
+    rea_after_call++;
+}
+void rea_constant_call_overridden(void) {
+    REA_CONSTANT_CALL(rea_computed_stop);
+    rea_after_call++;
+}
+/* A writable slot: its initial value is only one of the targets it can hold. */
+static void (*rea_stop_hook)(void) = rea_computed_stop;
+void rea_set_stop_hook(void (*hook)(void)) { rea_stop_hook = hook; }
+void rea_hook_call(void) {
+    rea_stop_hook();
+    rea_after_call++;
+}

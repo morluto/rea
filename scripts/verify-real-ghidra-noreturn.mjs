@@ -169,6 +169,13 @@ await withVerifierFixture(workspaceFixture, async () => {
         probe.checks.includes("propagated_flag_repaired_rea_tls_outer"),
       );
       assert.ok(probe.checks.includes("recovered_pseudocode"));
+      for (const check of [
+        "computed_call_ended_rea_constant_call",
+        "computed_call_kept_rea_constant_call_two_targets",
+        "computed_call_kept_rea_constant_call_overridden",
+        "computed_call_kept_rea_hook_call",
+      ])
+        assert.ok(probe.checks.includes(check), check);
     } finally {
       const stopped = await supervisor.stop();
       cleaned = stopped.status === "verified-cleanup";

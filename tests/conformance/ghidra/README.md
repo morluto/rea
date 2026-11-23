@@ -70,7 +70,11 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
 - `no-return.c` and `ReaNoReturnProbe.java` inject incorrect import flags into a
   real ELF or Mach-O analysis database, verify caller recovery, propagated flag
   repair and signature preservation, and retain genuine/unknown no-return calls
-  and independently identified entries. Run `npm run build:cached`, then
+  and independently identified entries. Its computed calls to a local no-return
+  function check the computed-call repair: a target fixed by inline assembly
+  ends, while a second recorded target, an existing flow override, or a
+  writable function-pointer slot with one injected candidate keeps the
+  fallthrough, body and pseudocode. Run `npm run build:cached`, then
   `node scripts/verify-real-ghidra-noreturn.mjs` with the Ghidra/JDK environment
   below on Linux or macOS x64/arm64. On Linux, use a procps-compatible process
   table that exposes REA's current process for owned cleanup. It also checks
