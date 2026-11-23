@@ -8,6 +8,7 @@
 ### Features
 
 * **adb:** add optional limit and offset paging to list_adb_packages, list_adb_processes, and list_adb_directory ([#13843](https://github.com/morluto/rea/issues/13843)) ([dbd6057](https://github.com/morluto/rea/commit/dbd60574541fd57bdc4a9f6952dc740d77a65de5))
+* **android:** add optional limit and offset paging to search_android_classes ([#13846](https://github.com/morluto/rea/issues/13846)) ([f47dbd9](https://github.com/morluto/rea/commit/f47dbd9351ac8624c409d4e37ea630c1cc35edd9))
 * **android:** pin jadx-headless-mcp 0.8.0 ([3ca89d8](https://github.com/morluto/rea/commit/3ca89d8272b3d8e49580ed261753ad6780df2839))
 * **browser:** accept mitmproxy 12.3.1 for native capture decode ([#8088](https://github.com/morluto/rea/issues/8088)) ([4f43d74](https://github.com/morluto/rea/commit/4f43d7422f5b4666a12570105ff5e25a6df7ec6c))
 * **browser:** count credential-named members in HAR capture inspection ([#8708](https://github.com/morluto/rea/issues/8708)) ([3c7ea1c](https://github.com/morluto/rea/commit/3c7ea1ce850c20c067add363ffcddbc1d48f2aac))
@@ -352,6 +353,7 @@
 * **ghidra:** stream inventory and search replies directly via JsonWriter ([#13453](https://github.com/morluto/rea/issues/13453)) ([1df51e3](https://github.com/morluto/rea/commit/1df51e3247bf6ed40b7e52b08cb878192ff965d1))
 * **gpu/deno:** reuse CUDA info BinaryReader and seam-buffer Deno scan ([#13710](https://github.com/morluto/rea/issues/13710)) ([2e97220](https://github.com/morluto/rea/commit/2e972207761775e4bb0ce0c58827ee7cb126fac8))
 * **gpu:** single-pass embedded PTX parse and reuse sha256 ([#13639](https://github.com/morluto/rea/issues/13639)) ([c1c0509](https://github.com/morluto/rea/commit/c1c0509280603339fe1ead856fbd96ca074450d1))
+* **har:** reuse normalized Base64 for retained response bodies ([#13847](https://github.com/morluto/rea/issues/13847)) ([a6847ae](https://github.com/morluto/rea/commit/a6847ae3624b733e45eafb85363e1806cae6c0c1))
 * **hopper:** eliminate full name-inventory rebuilds in analyze_function, list_names, and caller reconciliation ([#13307](https://github.com/morluto/rea/issues/13307)) ([ed234b2](https://github.com/morluto/rea/commit/ed234b20163accc77577c1cf7b55c4645e62807a)), closes [#13277](https://github.com/morluto/rea/issues/13277)
 * **hopper:** materialize pre-casefolded search inventory in hopper_bridge.py ([#13458](https://github.com/morluto/rea/issues/13458)) ([747656b](https://github.com/morluto/rea/commit/747656b995ccef27d6a9f2e8b9c75e2e3d44b696))
 * **hopper:** memoize containing procedure/identity lookups and fuse instruction/block passes in hopper_bridge.py ([#13534](https://github.com/morluto/rea/issues/13534)) ([60a50f1](https://github.com/morluto/rea/commit/60a50f183aa3931c8ba737c6ec072165f1a3723f))
@@ -397,6 +399,7 @@
 * **native:** eliminate quadratic lookups, comparator Zod/stringify churn, and redundant clones across native workflows ([#13306](https://github.com/morluto/rea/issues/13306)) ([6cc7de3](https://github.com/morluto/rea/commit/6cc7de3005e42457fc05240d0e8b6d364f7843f7))
 * **native:** maintain owner index for ObjC dispatch implementations instead of O(C*M) filtering ([#13269](https://github.com/morluto/rea/issues/13269)) ([b38a496](https://github.com/morluto/rea/commit/b38a49656aa314cc3a84afaa1a11d6c4324a29d6))
 * **native:** pre-screen IL2CPP slots and reuse ObjC/PE indices ([#13314](https://github.com/morluto/rea/issues/13314)) ([ac4f655](https://github.com/morluto/rea/commit/ac4f65585846fc8542234ce1366b8a251336a790))
+* **nuget:** stream .nupkg ZIP over FileHandle instead of buffering full archive ([#13835](https://github.com/morluto/rea/issues/13835)) ([bddb023](https://github.com/morluto/rea/commit/bddb0233250ee29de3c3832aa785eb07383c8ead))
 * **parsers:** eliminate Flutter snapshot re-read/concat, PTX per-char regexes, HEX reduce loops, MFT magic copies, and per-entry TextDecoder allocs ([#13615](https://github.com/morluto/rea/issues/13615)) ([a9ebb65](https://github.com/morluto/rea/commit/a9ebb65d887654693ee951b7e5ffc7cc210b089e))
 * **parsers:** eliminate hot-loop allocs in UEFI, NTFS USN, PE, Go, Rust, and Maven ([841d41d](https://github.com/morluto/rea/commit/841d41df31549e1d8fc424bfb1f47c61818de048))
 * **parsers:** eliminate JNI exception-driven scans, IB JSON round-trips, Node SEA chunk copies, and O(N*F) Apple root scans ([#13608](https://github.com/morluto/rea/issues/13608)) ([5391e40](https://github.com/morluto/rea/commit/5391e40ddef966bf107265526925bc72b8f6caa7))
@@ -505,6 +508,7 @@
 * **inspector:** own the Node discovery path rule in one module ([#10680](https://github.com/morluto/rea/issues/10680)) ([559956c](https://github.com/morluto/rea/commit/559956cf6b5db2677aa4f8b4f34ee67b8038f4d8))
 * **kuna:** extract KunaCacheManifest from KunaProjectCache ([#13770](https://github.com/morluto/rea/issues/13770)) ([66d819f](https://github.com/morluto/rea/commit/66d819f36958850f8e443e0b4c8465252d81732f))
 * **kuna:** extract KunaInventoryIndex from KunaSessionClient ([#13821](https://github.com/morluto/rea/issues/13821)) ([a022067](https://github.com/morluto/rea/commit/a02206755e8733f0bda5918707c60100bd0beeaa))
+* **kuna:** extract KunaSingleFunctionCache from KunaSessionClient ([#13863](https://github.com/morluto/rea/issues/13863)) ([135c136](https://github.com/morluto/rea/commit/135c136701c54a830264ac1a24aa2e37185faa3d)), closes [#13862](https://github.com/morluto/rea/issues/13862)
 * **macho:** read LC_BUILD_VERSION fields through BinaryReader ([a0d2357](https://github.com/morluto/rea/commit/a0d2357230bdce24510436ee405d263fceb47870)), closes [#11865](https://github.com/morluto/rea/issues/11865)
 * **managed:** read custom-attribute prologs and resource lengths through BinaryReader ([2bd8963](https://github.com/morluto/rea/commit/2bd8963062fa664e7c6fab0410547480778a5ea5)), closes [#11865](https://github.com/morluto/rea/issues/11865)
 * **native:** compose LLDB resolver cleanup through the shared owner ([3af56cc](https://github.com/morluto/rea/commit/3af56cc7d50a5f41ea4753d2d0570082611ee0a4)), closes [#11859](https://github.com/morluto/rea/issues/11859)
