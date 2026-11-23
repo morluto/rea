@@ -192,7 +192,9 @@ export const fetchWebSourceMaps = async (
     });
   // Responses are fetched with bounded lookahead, but every budget is still
   // consumed in request order, so inclusion and limitations stay deterministic.
-  const FETCH_LOOKAHEAD = 4;
+  // One response ahead, started when the current body is read: the next
+  // fetch overlaps this map's decode, while redirect chains and
+  // host-observable request order stay sequential.
   const prefetches = new Map<number, Promise<PrefetchedSourceMap>>();
   const startPrefetch = (index: number): void => {
     if (index >= requests.length || prefetches.has(index)) return;
@@ -211,8 +213,6 @@ export const fetchWebSourceMaps = async (
       // through fetchOne surfaces that cleanup instead of dropping it.
       if (signal?.aborted === true && !prefetches.has(index))
         throw signal.reason;
-      for (let ahead = 0; ahead < FETCH_LOOKAHEAD; ahead += 1)
-        startPrefetch(index + ahead);
       const reservation = sourceMapFailureReservation(request) + 1;
       if (
         reservation >
@@ -235,6 +235,7 @@ export const fetchWebSourceMaps = async (
         );
         continue;
       }
+      startPrefetch(index);
       const prefetched = prefetches.has(index)
         ? await prefetches.get(index)
         : undefined;
@@ -245,6 +246,17 @@ export const fetchWebSourceMaps = async (
         host,
         budget,
         prefetched,
+        () => {
+          // Start the next fetch only while its failure reservation still
+          // fits; a fetch whose result could never be admitted is not started.
+          const next = requests[index + 1];
+          if (
+            next !== undefined &&
+            sourceMapFailureReservation(next) + 1 <=
+              limits.outputBytes - budget.decodedRecords.expandedBytes
+          )
+            startPrefetch(index + 1);
+        },
       );
       if (item.status !== "included" && item.status !== "partial") {
         const failureBytes = jsonByteLength(item) + 1;
@@ -321,9 +333,19 @@ export const fetchWebSourceMaps = async (
   for (const pending of prefetches.values()) {
     const prefetched = await pending.catch(() => undefined);
     if (prefetched === undefined || prefetched.consumed) continue;
-    if (prefetched.failure instanceof SourceMapPendingFetch)
-      siblingFailures.push(prefetched.failure.failure);
-    else if (prefetched.fetched !== undefined) {
+    if (prefetched.failure instanceof SourceMapPendingFetch) {
+      // A pending fetch created by the teardown abort itself is not a
+      // cleanup failure once its late response has been released.
+      await Promise.race([
+        prefetched.failure.settled,
+        new Promise<void>((resolve) => setImmediate(resolve)),
+      ]);
+      if (
+        prefetched.failure.failure.cleanupIncomplete ||
+        prefetched.failure.failure.secondaryFailures.length > 0
+      )
+        siblingFailures.push(prefetched.failure.failure);
+    } else if (prefetched.fetched !== undefined) {
       try {
         await cancelUnreadResponse(
           prefetched.fetched.response,
@@ -332,7 +354,10 @@ export const fetchWebSourceMaps = async (
           operationSignal,
         );
       } catch (cause: unknown) {
-        if (cause instanceof SourceMapResponseCleanup)
+        if (
+          cause instanceof SourceMapResponseCleanup &&
+          cause.failure.cleanupIncomplete
+        )
           siblingFailures.push(cause.failure);
       }
     }
@@ -678,6 +703,7 @@ const fetchOne = async (
     decodedRecords: SourceMapCollectionBudget;
   },
   prefetched?: PrefetchedSourceMap,
+  onBodyReady?: () => void,
 ): Promise<WebSourceMapItem> => {
   if (!approvedUrl(request.fetchUrl, input.allowed_origins))
     return emptySourceMapItem(
@@ -800,6 +826,9 @@ const fetchOne = async (
         effectiveUrl,
         body.responseIdentity,
       );
+    // The next chain may start now: this chain's requests are complete, so
+    // host-observable order stays sequential while decode overlaps fetch.
+    onBodyReady?.();
     return normalizeSourceMap(
       request,
       body.text.value,

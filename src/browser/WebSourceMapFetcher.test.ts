@@ -29,7 +29,7 @@ const approvedInput = {
   allowed_origins: [new URL(request.fetchUrl).origin],
 };
 
-it("fetches ahead with bounded concurrency but admits in request order", async () => {
+it("pipelines the next fetch against decode but admits in request order", async () => {
   const mapText = (name: string) =>
     JSON.stringify({
       version: 3,
@@ -66,14 +66,16 @@ it("fetches ahead with bounded concurrency but admits in request order", async (
       return new Response(mapText(`map${index}`), { status: 200 });
     },
   });
-  // The four-request lookahead cap holds while admission is gated on map0.
-  await expect.poll(() => started.length).toBe(4);
-  expect(started).not.toContain(4);
+  // No speculative fetch starts while map0 is still being fetched.
+  await expect.poll(() => started.length).toBe(1);
+  expect(started).toEqual([0]);
   releaseFirst();
   const result = await pending;
   if (!result.ok) throw result.error;
-  expect(maxActive).toBeGreaterThan(1);
-  expect(maxActive).toBeLessThanOrEqual(4);
+  // Host fetches stay sequential (one chain at a time, in request order);
+  // the overlap is the next fetch against the current decode.
+  expect(maxActive).toBe(1);
+  expect(started).toEqual([0, 1, 2, 3, 4, 5]);
   expect(result.value.items.map((item) => item.status)).toEqual([
     "included",
     "included",
