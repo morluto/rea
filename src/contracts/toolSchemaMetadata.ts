@@ -18,7 +18,7 @@ import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 import { shareOutputDefinitions } from "./outputSchemaDefinitions.js";
 import {
   getEvidenceInputContract,
-  isDeclaredEvidenceInput,
+  isDeclaredEvidenceRecord,
 } from "../domain/evidenceInputContract.js";
 import { isRecord } from "../kernel/isRecord.js";
 import { schemaAnnotations } from "../domain/schemaAnnotations.js";
@@ -107,7 +107,7 @@ const presentAnnotatedInput = ({
   readonly zodSchema: z.core.$ZodType;
   readonly jsonSchema: Record<string, unknown>;
 }): void => {
-  if (isDeclaredEvidenceInput(zodSchema as z.ZodType)) {
+  if (isDeclaredEvidenceRecord(zodSchema)) {
     const description =
       typeof jsonSchema.description === "string"
         ? jsonSchema.description
