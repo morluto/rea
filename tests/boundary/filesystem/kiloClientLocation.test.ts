@@ -1,7 +1,8 @@
 import { registerMcpClientsOnHost } from "../../fixtures/mcpRegistration.js";
 import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, posix, win32 } from "node:path";
+import { parse as parseJsonc } from "jsonc-parser";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { readEffectiveClientRegistrationConfiguration } from "../../../src/application/ClientConfigurationFiles.js";
@@ -64,6 +65,63 @@ it("writes Kilo's kilo.json in its config root until another layer exists", asyn
     configPath: join(root, "kilo.json"),
     configPaths: [join(root, "kilo.json")],
   });
+});
+
+it.each([
+  ["win32", "C:\\Users\\x", win32],
+  ["darwin", "/Users/x", posix],
+] as const)(
+  "defaults Kilo's file to .config/kilo/kilo.json on %s without XDG_CONFIG_HOME",
+  (hostPlatform, home, pathModule) => {
+    const row = supportedClients(home, hostPlatform, {}).find(
+      ({ name }) => name === "kilo",
+    );
+    expect(row?.configPath).toBe(
+      pathModule.join(home, ".config", "kilo", "kilo.json"),
+    );
+  },
+);
+
+it("keeps comments, settings and other servers through setup and uninstall of kilo.jsonc", async () => {
+  const home = await createTestTempDirectory("rea-kilo-jsonc-");
+  const root = join(home, ".config", "kilo");
+  await mkdir(root, { recursive: true });
+  const target = join(root, "kilo.jsonc");
+  await writeFile(
+    target,
+    `{
+  // line comment
+  "theme": "dark", /* block comment */
+  "mcp": { "other": { "type": "local", "command": ["x"] } }
+}
+`,
+  );
+  const row = await kiloRow(home);
+  if (row === undefined) throw new Error("Kilo row is missing");
+  expect(row.configPath).toBe(target);
+  expect(await configureClientConfiguration(row, {}, command)).toMatchObject({
+    status: "configured",
+  });
+  const preserved = async () => {
+    const text = await readFile(target, "utf8");
+    expect(text).toContain("// line comment");
+    expect(text).toContain("/* block comment */");
+    const parsed = parseJsonc(text) as {
+      theme?: string;
+      mcp: Record<string, unknown>;
+    };
+    expect(parsed.theme).toBe("dark");
+    expect(parsed.mcp.other).toEqual({ type: "local", command: ["x"] });
+    return parsed;
+  };
+  expect((await preserved()).mcp.rea).toMatchObject({
+    type: "local",
+    command,
+    enabled: true,
+  });
+  const { kilo } = await uninstallKilo(home, {});
+  expect(kilo?.status).toBe("removed");
+  expect((await preserved()).mcp).not.toHaveProperty("rea");
 });
 
 it("selects the last present Kilo layer, as rea mcp add does", async () => {
@@ -205,15 +263,29 @@ it("refuses a relative Kilo configuration path instead of guessing its folder", 
   }
 });
 
-it.each(["\\kilo.json", "/kilo.json"])(
-  "refuses a drive-less Windows KILO_CONFIG %s that follows Kilo's current drive",
-  (value) => {
-    const row = supportedClients("C:\\Users\\x", "win32", {
-      KILO_CONFIG: value,
-    }).find(({ name }) => name === "kilo");
-    expect(row?.configPathError).toContain("has no drive");
-  },
-);
+it("keeps incomplete Windows paths unresolved for Kilo's file and roots", () => {
+  const path = "\\\\kilo-config";
+  const home = "C:\\Users\\x";
+  for (const [label, selectedHome, env] of [
+    ["KILO_CONFIG", home, { KILO_CONFIG: path }],
+    ["XDG_CONFIG_HOME", home, { XDG_CONFIG_HOME: path }],
+    ["home", path, {}],
+    [
+      "home below an explicit XDG root",
+      path,
+      { XDG_CONFIG_HOME: "D:\\config" },
+    ],
+  ] as const) {
+    const row = supportedClients(selectedHome, "win32", env).find(
+      ({ name }) => name === "kilo",
+    );
+    expect(row, label).toMatchObject({
+      configPath: path,
+      configPathError: expect.stringContaining("has no drive"),
+    });
+    expect(row, label).not.toHaveProperty("markerPath");
+  }
+});
 
 it("lets doctor and uninstall act on the Kilo layer rea mcp add wrote", async () => {
   const home = await createTestTempDirectory("rea-kilo-lifecycle-");

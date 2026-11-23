@@ -201,3 +201,71 @@ it.each(
     }
   },
 );
+
+it("uses the latest reported context for listeners read after a context replacement", async () => {
+  const browser = await startRuntimeBrowser({
+    eventsBeforeReply: ["Debugger.getScriptSource"],
+    commandEvents: (command, origin) => {
+      if (
+        command.method !== "Debugger.getScriptSource" ||
+        command.params.scriptId !== "script-a"
+      )
+        return undefined;
+      return [
+        {
+          sessionId: "session-1",
+          method: "Runtime.executionContextCreated",
+          params: {
+            context: {
+              id: 1,
+              origin,
+              name: "replacement-context",
+              auxData: {
+                frameId: "runtime-main",
+                isDefault: true,
+                type: "default",
+              },
+            },
+          },
+        },
+      ];
+    },
+    commandResult: (command) =>
+      command.method === "DOMDebugger.getEventListeners"
+        ? {
+            listeners: ["script-a", "script-b"].map((scriptId) => ({
+              type: "click",
+              useCapture: false,
+              passive: true,
+              once: false,
+              scriptId,
+              lineNumber: 0,
+              columnNumber: 0,
+            })),
+          }
+        : undefined,
+  });
+  onTestFinished(() => browser.close());
+  const result = await new CdpWebRuntimeProvider().inspectEventListeners(
+    inspectWebEventListenersInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      target_id: "allowed-page",
+      selector: "#selected",
+    }),
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.sources).toMatchObject([
+    {
+      script_id: "script-a",
+      reported_execution_context: { id: 1, name: "" },
+      frame_id: null,
+      source: { state: "excluded" },
+    },
+    {
+      script_id: "script-b",
+      reported_execution_context: { id: 1, name: "replacement-context" },
+      frame_id: null,
+      source: { state: "excluded" },
+    },
+  ]);
+});

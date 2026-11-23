@@ -108,6 +108,18 @@ export const decodeObjcDispatchFacets = (input: {
   const failures: string[] = [];
   const categoryIssues: DecodeIssue[] = [];
   let classObjectsExamined = 0;
+  const instanceImplementationsByClass = new Map<
+    string,
+    ObjcSwiftMetadata["objc_dispatch_implementations"][number][]
+  >();
+  const classImplementationsByClass = new Map<
+    string,
+    ObjcSwiftMetadata["objc_dispatch_implementations"][number][]
+  >();
+  const ownerIndex = (methodType: "instance" | "class") =>
+    methodType === "class"
+      ? classImplementationsByClass
+      : instanceImplementationsByClass;
   const methods = (
     list: bigint,
     className: string,
@@ -197,7 +209,7 @@ export const decodeObjcDispatchFacets = (input: {
           "Objective-C method has an empty selector",
         );
       selectors.push(selector);
-      result.objc_dispatch_implementations.push({
+      const implementationRecord = {
         class_name: className,
         selector,
         method_type: methodType,
@@ -207,7 +219,7 @@ export const decodeObjcDispatchFacets = (input: {
         decode:
           implementationLocation === null
             ? {
-                status: "partial",
+                status: "partial" as const,
                 reason: "implementation_pointer_unmapped_or_encoded",
               }
             : decoded,
@@ -217,7 +229,15 @@ export const decodeObjcDispatchFacets = (input: {
             ? "Encoded relative Objective-C method entry"
             : "Encoded absolute Objective-C method entry",
         ),
-      });
+      };
+      result.objc_dispatch_implementations.push(implementationRecord);
+      const byClass = ownerIndex(methodType);
+      let bucket = byClass.get(className);
+      if (bucket === undefined) {
+        bucket = [];
+        byClass.set(className, bucket);
+      }
+      bucket.push(implementationRecord);
     }
     return selectors;
   };
@@ -290,13 +310,13 @@ export const decodeObjcDispatchFacets = (input: {
       }
     }
   }
-  const visited = new Set<string>();
+  const visited = new Set<bigint>();
   const readClass = (address: bigint, meta = false) => {
-    if (address === 0n || visited.has(hex(address)) || !budget.admit()) return;
+    if (address === 0n || visited.has(address) || !budget.admit()) return;
     // Coverage counts admitted class objects, including recursively visited
     // metaclasses, in the same units as the decoded objc_classes rows.
     classObjectsExamined++;
-    visited.add(hex(address));
+    visited.add(address);
     const { ro, name } = readLocalClass(read, address);
     const root = (read.u32(ro) & 2) !== 0;
     const superclass = resolveSuperclass(read, address, name, failures);
@@ -398,11 +418,7 @@ export const decodeObjcDispatchFacets = (input: {
       is_meta_class: meta,
       is_root_class: root,
       methods: projectObjcClassMethods(
-        result.objc_dispatch_implementations.filter(
-          (item) =>
-            item.class_name === name &&
-            item.method_type === (meta ? "class" : "instance"),
-        ),
+        ownerIndex(meta ? "class" : "instance").get(name) ?? [],
       ),
       properties,
       protocols,

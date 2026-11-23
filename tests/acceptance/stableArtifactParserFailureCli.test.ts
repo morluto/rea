@@ -31,11 +31,11 @@ for (const command of [
       await writeFile(path, bytes);
       const result = await cli.run({ arguments: [command, path, "--json"] });
       expect(result.exitCode, result.stderr).toBe(1);
-      if (isBeam) {
+      if (isBeam || command === "inspect-kernel-module") {
         expect(result.json).toMatchObject({
           code: "invalid_request",
           details: {
-            operation: "inspect_erlang_beam",
+            operation: command.replaceAll("-", "_"),
             issues: [{ path: ["path"], reason: "invalid_format" }],
           },
         });

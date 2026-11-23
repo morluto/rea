@@ -41,6 +41,7 @@ type ReadOwnData = (
 interface DestructuringSource {
   readonly path: readonly string[];
   readonly selection: "array-iterator" | "own-data";
+  readonly proveNestedCompletion?: boolean;
 }
 
 interface ReadPresence {
@@ -160,7 +161,8 @@ export const createSemanticReadPresenceQuery = (
       : { binding, value: initialValue };
     if (
       origin === undefined ||
-      !hasRecordedReferenceEffects(origin.binding, state) ||
+      (destructuring?.proveNestedCompletion !== true &&
+        !hasRecordedReferenceEffects(origin.binding, state)) ||
       (origin.binding !== binding &&
         !semanticBindingPrecedesCapture(
           origin.binding,

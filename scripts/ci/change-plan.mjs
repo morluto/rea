@@ -77,6 +77,8 @@ const STATIC_CODE_ONLY_INPUTS = [
 // and portable tests without changing packaged host behavior.
 const DOCS_AND_CODE_INPUTS = [
   "scripts/check-doc-facts.mjs",
+  "scripts/generate-completion-ledger.mjs",
+  "scripts/lib/completion-ledger-generation.mts",
   "scripts/generate-error-schema.mjs",
   "scripts/generate-third-party-inventory.mjs",
   "scripts/lib/product-catalog.*",
@@ -226,7 +228,11 @@ export function planChanges(request, repository) {
       if (matchesAny(file, earlyAll ? paths : earlyInputs))
         selected[owner] = true;
     // The documentation check validates living prose and the lockfile inventory.
-    if (isLivingProsePath(file) || file === "package-lock.json")
+    if (
+      isLivingProsePath(file) ||
+      file === "package-lock.json" ||
+      file === "website/locales/languages.json"
+    )
       selected.docs = true;
     if (file === ".git-blame-ignore-revs") return;
     if (

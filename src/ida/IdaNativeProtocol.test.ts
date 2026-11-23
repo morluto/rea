@@ -959,3 +959,61 @@ describe("native IDA attached operation admission", () => {
     await client.close();
   });
 });
+
+describe("native IDA literal candidate precision", () => {
+  it("excludes unrelated non-ASCII strings while preserving U+017F and U+212A simple folds", async () => {
+    const { client, producer } = await fixture();
+    const values = [
+      "中文菜单",
+      "Настройки",
+      "İstanbul",
+      "σ",
+      "🧪",
+      "Warfare/Storage/Read-Write",
+      "warfare/\u017ftoragE/read-write",
+      "\u212aelvin",
+    ];
+    producer.overrideCall = (name, args) => {
+      if (name !== "find_regex") return undefined;
+      const regex = new RegExp(
+        Buffer.from(String(args.pattern)).toString("latin1"),
+        "i",
+      );
+      return {
+        matches: values.flatMap((value, index) =>
+          regex.test(Buffer.from(value).toString("latin1"))
+            ? [{ addr: `0x${(0x4000 + index).toString(16)}`, string: value }]
+            : [],
+        ),
+        cursor: { done: true },
+      };
+    };
+    try {
+      const storage = await client.execute("search_strings", {
+        pattern: "warfare/storage/read-write",
+      });
+      if (!storage.ok) throw storage.error;
+      expect(storage.value.result).toEqual([
+        { address: "0x4005", value: "Warfare/Storage/Read-Write" },
+        { address: "0x4006", value: "warfare/\u017ftoragE/read-write" },
+      ]);
+      const storageCall = producer.calls.find(
+        ({ name }) => name === "find_regex",
+      );
+      expect(storageCall?.args.pattern).not.toContain("\\x80-\\xff");
+      const rawMatches = JSON.stringify(storage.value.rawResult);
+      expect(rawMatches).not.toContain("中文菜单");
+      expect(rawMatches).not.toContain("İstanbul");
+
+      const kelvin = await client.execute("search_strings", {
+        pattern: "kelvin",
+      });
+      if (!kelvin.ok) throw kelvin.error;
+      expect(kelvin.value.result).toEqual([
+        { address: "0x4007", value: "\u212aelvin" },
+      ]);
+    } finally {
+      await client.close();
+    }
+  });
+});

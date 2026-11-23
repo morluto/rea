@@ -1,3 +1,4 @@
+import { readGoFixture, goByteSource } from "../../tests/fixtures/go/image.js";
 import type { FileMapping } from "../domain/virtualFileMapping.js";
 import { expect, it } from "vitest";
 import { GO_ANALYSIS_BUDGET_DEFAULTS } from "../domain/go/goBinary.js";
@@ -7,8 +8,21 @@ import type {
   LoadRegion,
 } from "../domain/binaryContainer.js";
 import { createGoRodataStringFixture } from "../../tests/fixtures/go/rodataStringImage.js";
-import { readGoBinaryImage } from "./GoBinaryImage.js";
-import { recoverGoStringLiterals } from "./GoStringLiterals.js";
+import { readBinaryContainerFromReader } from "../domain/native/readBinaryContainer.js";
+import { recoverGoStringLiteralsFromReader } from "./GoStringLiterals.js";
+
+const recoverStringFixture = (
+  bytes: Buffer,
+  container: BinaryContainer,
+  budgets?: Parameters<typeof recoverGoStringLiteralsFromReader>[2],
+  checkActive?: () => void,
+) =>
+  recoverGoStringLiteralsFromReader(
+    goByteSource(bytes),
+    container,
+    budgets,
+    checkActive,
+  );
 
 const DEFAULT_AGGREGATE_BYTES = 512 * 1024;
 const DEFAULT_LITERAL_BYTES = 4096;
@@ -32,7 +46,7 @@ it.each([
   { format: "macho", bits: 32, byteOrder: "little" },
 ] as const)(
   "recovers exact non-NUL-terminated slices in $format ($bits-bit $byteOrder)",
-  ({ format, bits, byteOrder }) => {
+  async ({ format, bits, byteOrder }) => {
     const width = bits / 8;
     const firstLen = Buffer.byteLength(LITERALS[0]);
     const secondLen = Buffer.byteLength(LITERALS[1]);
@@ -72,11 +86,15 @@ it.each([
       ],
     });
 
-    expect(readGoBinaryImage(fixture.bytes).string_literals).toBeUndefined();
+    expect(
+      (await readGoFixture(fixture.bytes)).string_literals,
+    ).toBeUndefined();
 
-    const recovered = readGoBinaryImage(fixture.bytes, {
-      includeStringLiterals: true,
-    }).string_literals;
+    const recovered = (
+      await readGoFixture(fixture.bytes, {
+        includeStringLiterals: true,
+      })
+    ).string_literals;
     expect(recovered).toEqual({
       evidence_kind: "inferred",
       discovered_count: 3,
@@ -120,7 +138,7 @@ it.each([
     sectionless: false,
     corruptElfShstrtab: true,
   },
-])("recovers literals from $label via load regions", (mode) => {
+])("recovers literals from $label via load regions", async (mode) => {
   const baseRo = 0x102000n;
   const fixture = createGoRodataStringFixture({
     format: "elf",
@@ -142,134 +160,120 @@ it.each([
       },
     ],
   });
-  const recovered = readGoBinaryImage(fixture.bytes, {
-    includeStringLiterals: true,
-  }).string_literals;
+  const recovered = (
+    await readGoFixture(fixture.bytes, {
+      includeStringLiterals: true,
+    })
+  ).string_literals;
   expect(recovered?.items.map((item) => item.value)).toEqual([
     "ListResourceProviders",
     "genai",
   ]);
 });
 
-it("rejects invalid candidates and reports valid ranges omitted by the string-length budget", () => {
-  const validUnicode = Buffer.from("café\t日本語\n", "utf8");
-  const invalidUtf8 = Buffer.from([0xff, 0xfe, 0x41]);
-  const embeddedNul = Buffer.from("bad\0str", "utf8");
-  const c1Control = Buffer.from([0xc2, 0x85]);
-  const noncharacter = Buffer.from([0xef, 0xbf, 0xbf]);
-  const maxAllowed = Buffer.alloc(DEFAULT_LITERAL_BYTES, 0x61);
-  const overMax = Buffer.alloc(DEFAULT_LITERAL_BYTES + 1, 0x62);
-  const rodata = Buffer.concat([
-    validUnicode,
-    invalidUtf8,
-    embeddedNul,
-    c1Control,
-    noncharacter,
-    maxAllowed,
-    overMax,
-    Buffer.from("tail", "utf8"),
-  ]);
-  const secondRodata = Buffer.from("across-boundary", "utf8");
-  const baseRo = 0x102000n;
-  const tailOffset = rodata.length - 4;
-  const badPrefixLen =
-    validUnicode.length +
-    invalidUtf8.length +
-    embeddedNul.length +
-    c1Control.length +
-    noncharacter.length;
-
+it("recovers only admitted printable ranges at the default literal length", async () => {
+  const parts = [
+    Buffer.from("café\t日本語\n"),
+    Buffer.from([0xff, 0xfe, 0x41]), // Malformed UTF-8.
+    Buffer.from("bad\0str"),
+    Buffer.from([0xc2, 0x85]), // C1 control.
+    Buffer.from([0xef, 0xbf, 0xbf]), // Noncharacter.
+    Buffer.alloc(DEFAULT_LITERAL_BYTES, 0x61),
+    Buffer.alloc(DEFAULT_LITERAL_BYTES + 1, 0x62),
+  ];
+  const base = 0x102000n;
+  let next = base;
+  const headers = parts.map((part, index) => {
+    const len = BigInt(part.length);
+    const ptr = next;
+    next += len;
+    return { section: "data" as const, offsetInSection: index * 16, ptr, len };
+  });
   const fixture = createGoRodataStringFixture({
     format: "elf",
-    rodata,
-    secondRodata,
+    rodata: Buffer.concat([...parts, Buffer.from("tail")]),
+    secondRodata: Buffer.from("across-boundary"),
     headers: [
-      {
-        section: "data",
-        offsetInSection: 0,
-        ptr: baseRo,
-        len: BigInt(validUnicode.length),
-      },
-      {
-        section: "data",
-        offsetInSection: 16,
-        ptr: baseRo + BigInt(badPrefixLen),
-        len: BigInt(DEFAULT_LITERAL_BYTES),
-      },
-      {
-        section: "data",
-        offsetInSection: 32,
-        ptr: baseRo + BigInt(badPrefixLen + maxAllowed.length),
-        len: BigInt(DEFAULT_LITERAL_BYTES + 1),
-      },
-      { section: "data", offsetInSection: 48, ptr: baseRo, len: 0n },
-      {
-        section: "data",
-        offsetInSection: 64,
-        ptr: baseRo + BigInt(validUnicode.length),
-        len: BigInt(invalidUtf8.length),
-      },
-      {
-        section: "data",
-        offsetInSection: 80,
-        ptr: baseRo + BigInt(validUnicode.length + invalidUtf8.length),
-        len: BigInt(embeddedNul.length),
-      },
-      {
-        section: "data",
-        offsetInSection: 96,
-        ptr:
-          baseRo +
-          BigInt(validUnicode.length + invalidUtf8.length + embeddedNul.length),
-        len: BigInt(c1Control.length),
-      },
-      {
-        section: "data",
-        offsetInSection: 112,
-        ptr: baseRo + BigInt(badPrefixLen - noncharacter.length),
-        len: BigInt(noncharacter.length),
-      },
-      {
-        section: "data",
-        offsetInSection: 128,
-        ptr: baseRo + BigInt(tailOffset),
-        len: 10n,
-      },
-      {
-        section: "data",
-        offsetInSection: 144,
-        ptr: baseRo + BigInt(rodata.length),
-        len: BigInt(secondRodata.length + 8),
-      },
-      {
-        section: "data",
-        offsetInSection: 164,
-        ptr: baseRo + BigInt(tailOffset),
-        len: 4n,
-      },
-      {
-        section: "text",
-        offsetInSection: 0,
-        ptr: baseRo + BigInt(tailOffset),
-        len: 4n,
-      },
+      ...headers,
+      { section: "data", offsetInSection: 112, ptr: base, len: 0n },
+      { section: "data", offsetInSection: 128, ptr: next, len: 10n },
+      { section: "data", offsetInSection: 144, ptr: next + 4n, len: 23n },
+      { section: "data", offsetInSection: 164, ptr: next, len: 4n },
+      { section: "text", offsetInSection: 0, ptr: next, len: 4n },
       { section: "data", offsetInSection: 192, ptr: 0x101000n, len: 4n },
     ],
   });
-  fixture.bytes.write("CODE", 0x1000, "utf8");
+  fixture.bytes.write("CODE", 0x1000);
 
-  const recovered = readGoBinaryImage(fixture.bytes, {
-    includeStringLiterals: true,
-  }).string_literals;
+  const recovered = (
+    await readGoFixture(fixture.bytes, {
+      includeStringLiterals: true,
+    })
+  ).string_literals;
   expect(recovered?.items.map((item) => item.value)).toEqual([
     "café\t日本語\n",
     "a".repeat(DEFAULT_LITERAL_BYTES),
   ]);
-  expect(recovered?.truncated).toBe(true);
-  expect(recovered?.limits_reached).toEqual(["max_string_literal_bytes"]);
+  expect(recovered).toMatchObject({
+    discovered_count: 2,
+    truncated: true,
+    limits_reached: ["max_string_literal_bytes"],
+  });
 });
 
-it("enforces maxStringLiterals and the 512 KiB aggregate byte cap deterministically", () => {
+it.each(["length", "candidate count"] as const)(
+  "reports a %s limit only when it excludes a literal candidate",
+  async (limit) => {
+    const rodata = Buffer.alloc(64);
+    rodata.write("kept", 32);
+    rodata.write("sixteen letters!", 48);
+    const base = 0x102000n;
+    const fixture = createGoRodataStringFixture({
+      format: "elf",
+      rodata,
+      headers: [
+        { section: "data", offsetInSection: 0, ptr: base + 32n, len: 4n },
+        limit === "length"
+          ? { section: "rodata", offsetInSection: 0, ptr: base, len: 16n }
+          : { section: "data", offsetInSection: 16, ptr: base + 40n, len: 4n },
+      ],
+    });
+    const parameter =
+      limit === "length" ? "max_string_literal_bytes" : "max_string_candidates";
+    const inspect = async () =>
+      (
+        await readGoFixture(fixture.bytes, {
+          includeStringLiterals: true,
+          budgets: { [parameter]: limit === "length" ? 8 : 1 },
+        })
+      ).string_literals;
+    expect(await inspect()).toEqual({
+      evidence_kind: "inferred",
+      discovered_count: 1,
+      aggregate_bytes: 4,
+      max_items: 2000,
+      truncated: false,
+      items: [
+        {
+          value: "kept",
+          location: { offset: fixture.rodataOffset + 32, bytes: 4 },
+          first_header_offset: fixture.dataOffset,
+          reference_count: 1,
+        },
+      ],
+    });
+    if (limit === "length")
+      fixture.bytes.writeBigUInt64LE(base + 48n, fixture.rodataOffset);
+    else fixture.bytes.write("next", fixture.rodataOffset + 40);
+    expect(await inspect()).toMatchObject({
+      discovered_count: 1,
+      truncated: true,
+      limits_reached: [parameter],
+    });
+  },
+);
+
+it("reports a complete candidate count at the 512 KiB output cap", async () => {
   const chunks = Array.from({ length: 130 }, (_, index) =>
     Buffer.from(
       `${String(index).padStart(4, "0")}:${"x".repeat(DEFAULT_LITERAL_BYTES - 5)}`,
@@ -280,7 +284,6 @@ it("enforces maxStringLiterals and the 512 KiB aggregate byte cap deterministica
   const baseRo = 0x102000n;
   const fixture = createGoRodataStringFixture({
     format: "macho",
-    machoChainedFixups: true,
     rodata,
     headers: chunks.map((chunk, index) => ({
       section: "data" as const,
@@ -290,26 +293,7 @@ it("enforces maxStringLiterals and the 512 KiB aggregate byte cap deterministica
     })),
   });
 
-  const cappedByCount = readGoBinaryImage(fixture.bytes, {
-    includeStringLiterals: true,
-    budgets: { max_string_literals: 2 },
-  });
-  expect(cappedByCount.macho_chained_fixups).toBe(true);
-  expect(cappedByCount.string_literals).toMatchObject({
-    discovered_count: 130,
-    max_items: 2,
-    truncated: true,
-    aggregate_bytes: DEFAULT_LITERAL_BYTES * 2,
-  });
-  expect(cappedByCount.string_literals?.items).toHaveLength(2);
-  expect(
-    cappedByCount.string_literals?.items[0]?.value.startsWith("0000:"),
-  ).toBe(true);
-  expect(
-    cappedByCount.string_literals?.items[1]?.value.startsWith("0001:"),
-  ).toBe(true);
-
-  const cappedByBytes = readGoBinaryImage(fixture.bytes, {
+  const cappedByBytes = await readGoFixture(fixture.bytes, {
     includeStringLiterals: true,
     budgets: { max_string_literals: 500 },
   });
@@ -318,6 +302,7 @@ it("enforces maxStringLiterals and the 512 KiB aggregate byte cap deterministica
     max_items: 500,
     aggregate_bytes: DEFAULT_AGGREGATE_BYTES,
     truncated: true,
+    limits_reached: ["max_string_bytes"],
   });
   expect(cappedByBytes.string_literals?.items).toHaveLength(
     DEFAULT_AGGREGATE_BYTES / DEFAULT_LITERAL_BYTES,
@@ -326,7 +311,7 @@ it("enforces maxStringLiterals and the 512 KiB aggregate byte cap deterministica
 
 it.each([false, true])(
   "counts physical headers once in file order across reversed sections and overlapping PT_LOAD (corruptShstrtab=%s)",
-  (corruptElfShstrtab) => {
+  async (corruptElfShstrtab) => {
     const baseRo = 0x102000n;
     const firstLen = Buffer.byteLength(LITERALS[0]);
     const secondLen = Buffer.byteLength(LITERALS[1]);
@@ -357,9 +342,11 @@ it.each([false, true])(
       ],
     });
 
-    const recovered = readGoBinaryImage(fixture.bytes, {
-      includeStringLiterals: true,
-    }).string_literals;
+    const recovered = (
+      await readGoFixture(fixture.bytes, {
+        includeStringLiterals: true,
+      })
+    ).string_literals;
     expect(recovered?.items).toEqual([
       {
         value: "ListResourceProviders",
@@ -380,7 +367,7 @@ it.each([false, true])(
   },
 );
 
-it("rejects invisible/bidi Cf format controls while keeping U+200C ZWNJ, U+200D ZWJ and visible Unicode", () => {
+it("rejects invisible/bidi Cf format controls while keeping U+200C ZWNJ, U+200D ZWJ and visible Unicode", async () => {
   const zeroWidthSpace = Buffer.from("zero\u200Bwidth", "utf8");
   const rtlOverride = Buffer.from("rtl\u202Eoverride", "utf8");
   const byteOrderMark = Buffer.from("\uFEFFbom", "utf8");
@@ -414,9 +401,11 @@ it("rejects invisible/bidi Cf format controls while keeping U+200C ZWNJ, U+200D 
     headers,
   });
 
-  const recovered = readGoBinaryImage(fixture.bytes, {
-    includeStringLiterals: true,
-  }).string_literals;
+  const recovered = (
+    await readGoFixture(fixture.bytes, {
+      includeStringLiterals: true,
+    })
+  ).string_literals;
   expect(recovered?.items.map((item) => item.value)).toEqual([
     "می\u200cخواهم",
     "👩\u200d💻",
@@ -425,16 +414,17 @@ it("rejects invisible/bidi Cf format controls while keeping U+200C ZWNJ, U+200D 
   expect(recovered?.truncated).toBe(false);
 });
 
-it("bounds rejected-slice caching across thousands of distinct NUL slices without dropping later literals", () => {
+it("bounds rejected-slice caching across thousands of distinct NUL slices without dropping later literals", async () => {
   const rejectedCount = 6000;
-  const nulBlob = Buffer.alloc(rejectedCount, 0);
+  const pageBytes = 4096;
+  const nulBlob = Buffer.alloc(2 * pageBytes);
   const survivor = Buffer.from("recovered-after-nul-flood", "utf8");
   const rodata = Buffer.concat([nulBlob, survivor]);
   const baseRo = 0x102000n;
   const headers = Array.from({ length: rejectedCount }, (_, index) => ({
     section: "data" as const,
     offsetInSection: index * 8,
-    ptr: baseRo + BigInt(index),
+    ptr: baseRo + BigInt(Math.floor(index / 2) + (index % 2) * pageBytes),
     len: 1n,
   }));
   headers.push(
@@ -447,7 +437,7 @@ it("bounds rejected-slice caching across thousands of distinct NUL slices withou
     {
       section: "data",
       offsetInSection: (rejectedCount + 1) * 8,
-      ptr: baseRo + BigInt(rejectedCount),
+      ptr: baseRo + BigInt(nulBlob.length),
       len: BigInt(survivor.length),
     },
   );
@@ -459,9 +449,27 @@ it("bounds rejected-slice caching across thousands of distinct NUL slices withou
     headers,
   });
 
-  const recovered = readGoBinaryImage(fixture.bytes, {
-    includeStringLiterals: true,
-  }).string_literals;
+  const source = goByteSource(fixture.bytes);
+  const container = await readBinaryContainerFromReader(
+    source,
+    "inspect_go_binary",
+    async () => {},
+  );
+  let firstTargetReads = 0;
+  const recovered = await recoverGoStringLiteralsFromReader(
+    {
+      ...source,
+      readRange: (offset, length) => {
+        if (offset === fixture.rodataOffset && length === 1)
+          firstTargetReads += 1;
+        return source.readRange(offset, length);
+      },
+    },
+    container,
+  );
+  // Alternating pages bypass read-ahead. The oldest rejected candidate is
+  // read again after the bounded rejection cache forgets it.
+  expect(firstTargetReads).toBe(2);
   expect(recovered).toEqual({
     evidence_kind: "inferred",
     discovered_count: 1,
@@ -472,7 +480,7 @@ it("bounds rejected-slice caching across thousands of distinct NUL slices withou
       {
         value: "recovered-after-nul-flood",
         location: {
-          offset: fixture.rodataOffset + rejectedCount,
+          offset: fixture.rodataOffset + nulBlob.length,
           bytes: survivor.length,
         },
         first_header_offset: fixture.dataOffset + (rejectedCount + 1) * 8,
@@ -482,7 +490,7 @@ it("bounds rejected-slice caching across thousands of distinct NUL slices withou
   });
 });
 
-it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and honors region and section cancellation", () => {
+it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and honors region and section cancellation", async () => {
   const count = 25_000;
   const slotBytes = 16;
   const bytes = Buffer.alloc((count + 1) * slotBytes);
@@ -566,7 +574,7 @@ it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and
         return Reflect.get(target, property, receiver) as unknown;
       },
     });
-  const recovered = recoverGoStringLiterals(bytes, {
+  const recovered = await recoverStringFixture(bytes, {
     ...container,
     mappings: counted(mappings),
     load_regions: counted(loadRegions),
@@ -606,8 +614,8 @@ it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and
     },
   });
 
-  expect(() =>
-    recoverGoStringLiterals(
+  await expect(
+    recoverStringFixture(
       bytes,
       {
         ...container,
@@ -623,15 +631,15 @@ it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and
         }
       },
     ),
-  ).toThrow("cancelled during region indexing");
+  ).rejects.toThrow("cancelled during region indexing");
   expect(observedRegions).toBeGreaterThan(0);
   expect(observedRegions).toBeLessThan(count);
   expect(observedSections).toBe(0);
 
   inSectionLoop = false;
   observedSections = 0;
-  expect(() =>
-    recoverGoStringLiterals(
+  await expect(
+    recoverStringFixture(
       bytes,
       { ...container, sections: trackedSections },
       GO_ANALYSIS_BUDGET_DEFAULTS,
@@ -639,7 +647,7 @@ it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and
         if (inSectionLoop) throw new Error("cancelled during section indexing");
       },
     ),
-  ).toThrow("cancelled during section indexing");
+  ).rejects.toThrow("cancelled during section indexing");
   expect(observedSections).toBeLessThan(count);
 });
 
@@ -656,7 +664,7 @@ it.each([
   { target: "rodata", mode: "unreadable-tail", expected: [] },
 ] as const)(
   "requires contiguous readable Mach-O load_regions for $target ($mode)",
-  ({ target, mode, expected }) => {
+  async ({ target, mode, expected }) => {
     const literal = "macho-span-check";
     const bytes = Buffer.alloc(32);
     bytes.write(literal, 0, "utf8");
@@ -762,42 +770,100 @@ it.each([
       ],
     };
 
-    const recovered = recoverGoStringLiterals(bytes, container);
+    const recovered = await recoverStringFixture(bytes, container);
     expect(recovered.items.map((item) => item.value)).toEqual(expected);
   },
 );
 
-it("recovers longer literals with a selected budget without conflating offset/length identities", () => {
+it("recovers longer literals with a selected budget without conflating offset/length identities", async () => {
   const fixture = createGoRodataStringFixture({
     format: "elf",
     rodata: Buffer.alloc(9000, 0x61),
     headers: [
       { section: "data", offsetInSection: 0, ptr: 0x102000n, len: 9000n },
-      { section: "data", offsetInSection: 16, ptr: 0x102001n, len: 808n },
+      { section: "data", offsetInSection: 16, ptr: 0x102000n, len: 808n },
+      { section: "data", offsetInSection: 32, ptr: 0x102001n, len: 808n },
     ],
   });
-  const limited = readGoBinaryImage(fixture.bytes, {
+  const limited = await readGoFixture(fixture.bytes, {
     includeStringLiterals: true,
   });
   expect(limited.string_literals).toMatchObject({
     truncated: true,
     limits_reached: ["max_string_literal_bytes"],
   });
-  const recovered = readGoBinaryImage(fixture.bytes, {
+  const recovered = await readGoFixture(fixture.bytes, {
     includeStringLiterals: true,
     budgets: { max_string_literal_bytes: 9000 },
   });
   expect(recovered.string_literals).toMatchObject({
     truncated: false,
-    discovered_count: 2,
+    discovered_count: 3,
   });
   expect(
     recovered.string_literals?.items.map((item) => [
+      item.location.offset,
       item.location.bytes,
       item.reference_count,
     ]),
   ).toEqual([
-    [9000, 1],
-    [808, 1],
+    [fixture.rodataOffset, 808, 1],
+    [fixture.rodataOffset, 9000, 1],
+    [fixture.rodataOffset + 1, 808, 1],
   ]);
+});
+
+it("charges and reads only the admitted bytes of distant short string candidates", async () => {
+  const rodata = Buffer.alloc(256 * 1024);
+  const firstHeader = 64 * 1024 - 8;
+  const placements = [127, 128 * 1024 + 127, 128, 128 * 1024 + 128];
+  for (const [index, offset] of placements.entries())
+    rodata[offset] = 0x41 + index;
+  const fixture = createGoRodataStringFixture({
+    format: "elf",
+    rodata,
+    dataSize: firstHeader + placements.length * 16,
+    headers: placements.map((offset, index) => ({
+      section: "data",
+      offsetInSection: firstHeader + index * 16,
+      ptr: 0x102000n + BigInt(offset),
+      len: 1n,
+    })),
+  });
+  const { bytes, rodataOffset, dataOffset } = fixture;
+  let payloadBytes = 0;
+  const readRange = async (offset: number, length: number) => {
+    const start = Math.max(offset, rodataOffset);
+    const end = Math.min(offset + length, rodataOffset + rodata.length);
+    if (start < end) payloadBytes += end - start;
+    return bytes.subarray(offset, offset + length);
+  };
+  const container = await readBinaryContainerFromReader(
+    goByteSource(bytes),
+    "inspect_go_binary",
+    async () => {},
+  );
+  const result = await recoverGoStringLiteralsFromReader(
+    { size: bytes.length, readRange },
+    container,
+  );
+  expect(result).toMatchObject({
+    discovered_count: 4,
+    aggregate_bytes: 4,
+    truncated: false,
+  });
+  expect(result.items).toEqual(
+    [0, 2, 1, 3].map((index) => ({
+      value: String.fromCharCode(0x41 + index),
+      location: { offset: rodataOffset + placements[index]!, bytes: 1 },
+      first_header_offset: dataOffset + firstHeader + index * 16,
+      reference_count: 1,
+    })),
+  );
+  // Read-only data is also scanned for headers. Charge every intersecting read,
+  // including any page prefetch whose start precedes the actual target.
+  expect(payloadBytes).toBeGreaterThanOrEqual(rodata.length);
+  expect(payloadBytes).toBeLessThanOrEqual(
+    rodata.length + placements.length * 2,
+  );
 });

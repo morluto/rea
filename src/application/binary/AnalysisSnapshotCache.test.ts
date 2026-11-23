@@ -18,12 +18,15 @@ import {
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import {
   createEvidenceBundle,
+  createImmutableEvidenceBundle,
   evidenceBundleForTarget,
 } from "../../domain/evidenceBundle.js";
 import { ok } from "../../domain/result.js";
 import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import {
+  createAnalysisSnapshotEntry,
   createAnalysisSnapshotWorkflowEntry,
+  immutableAnalysisSnapshot,
   parseAnalysisSnapshot,
   serializeAnalysisSnapshot,
   snapshotEvidenceForQuery,
@@ -1653,4 +1656,63 @@ it("binds native value-trace absence semantics without changing other workflows"
   expect(workflowAnalysisProfile(profile, "xrefs")).toEqual(
     workflowAnalysisProfile(profile),
   );
+});
+
+it("detaches sealed bundle and staged entry payloads on export", () => {
+  const target = ANALYSIS_SNAPSHOT_TARGET;
+  const profile = ANALYSIS_SNAPSHOT_PROFILE;
+  const parameters = { address: "0x1000", document: "fixture" };
+  const result = { nested: [{ text: "ret" }], name: "main" };
+  const rawResult = { raw: ["source"] };
+  const evidence = createEvidence(target, ANALYSIS_SNAPSHOT_PROVIDER, {
+    operation: "procedure_info",
+    parameters,
+    result,
+    rawResult,
+    analysisProfile: profile,
+  });
+  const sealedBundle = createImmutableEvidenceBundle([evidence]);
+  const sealedSnapshot = immutableAnalysisSnapshot({
+    target: snapshotTarget(target),
+    binding: snapshotBinding(profile),
+    entries: [
+      createAnalysisSnapshotEntry({
+        target: snapshotTarget(target),
+        binding: snapshotBinding(profile),
+        operation: "procedure_info",
+        parameters,
+        execution: snapshotExecution(
+          createAnalysisExecution(result, ANALYSIS_SNAPSHOT_PROVIDER, {
+            subject: target,
+            analysisProfile: profile,
+            rawResult,
+          }),
+        ),
+      }),
+    ],
+    workflow_entries: [],
+    evidence_bundle: sealedBundle,
+  });
+  const cache = new AnalysisSnapshotCache();
+  cache.stage(sealedSnapshot);
+  const exported = cache.export(target, profile, sealedBundle);
+  if (!exported.ok) throw exported.error;
+  const entry = exported.value.entries[0]!;
+  const record = exported.value.evidence_bundle.records[0]!;
+  for (const payload of [
+    entry.parameters,
+    entry.execution.result,
+    entry.execution.raw_result,
+    record.parameters,
+    record.normalized_result,
+    record.raw_result,
+  ]) {
+    expect(Object.isFrozen(payload)).toBe(false);
+    Reflect.set(payload as Record<string, unknown>, "mutated", true);
+    expect((payload as Record<string, unknown>).mutated).toBe(true);
+  }
+  expect(Object.isFrozen(sealedBundle.records[0]?.normalized_result)).toBe(
+    true,
+  );
+  expect(sealedBundle.records[0]?.normalized_result).toEqual(result);
 });

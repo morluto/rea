@@ -52,12 +52,19 @@ out of the derived set. `version_definitions` summarizes the image's own
 
 `imports[]` lists undefined `.dynsym` symbols. When `.gnu.version` is present,
 each import keeps its version index, hidden bit, and a resolved
-`library@version` when a matching verneed record exists. Index 0 and 1 stay
-`unversioned`. A missing matching record is `unknown` and is an issue.
+`library@version` when one matching verneed record supplies both strings.
+Index 0 and 1 stay `unversioned`. An unreadable library or version name leaves
+the corresponding import `unknown` while preserving the readable string.
+Conflicting requirements for a single index also remain `unknown`.
 For `DT_VERSYM`, the reader keeps the contiguous prefix of complete slots
 that share one unambiguous file translation. It stops at the first slot that
 cannot be admitted, even if later slots map independently. Later import
 versions remain unexamined and coverage is `partial`.
+
+When a GNU version requirement or definition is located through its dynamic
+address alone, decoding stays inside the starting load's contiguous
+file-mapped prefix. A conflict later in that span leaves earlier complete
+records available and limits the reported range to the admitted bytes.
 
 A missing `PT_DYNAMIC` is an observed empty load-time dependency inventory. It
 is not proof another overlay or container carried dynamic linking metadata.

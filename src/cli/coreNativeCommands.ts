@@ -6,15 +6,13 @@ import {
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { cliCommandFor } from "../contracts/cliCommandNames.js";
 import type { Logger } from "pino";
-import { nativeTarget } from "./options.js";
+import { nativeTarget } from "./nativeTargetOption.js";
 import type { CliInstance } from "./types.js";
 import { contractNamed } from "./contractCliDescription.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
-import {
-  registerContractCommand,
-  runDirectOnTarget,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { runDirectOnTarget } from "./contractCommandRunners.js";
 
 const executable = nativeTarget("Local executable path");
 const nativeApplication = nativeTarget("Local native executable or app path");

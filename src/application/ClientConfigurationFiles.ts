@@ -1,20 +1,22 @@
+import { clientProjectConfigurationPaths } from "./SupportedClientLocations.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { readRegularFileText } from "../process/RegularFileRead.js";
 import {
+  clientServerRowsReplace,
   effectiveClientServer,
   parseClientConfiguration,
-  clientConfigurationValuesEqual,
   type ClientConfigurationDocument,
   type ClientConfigurationFormat,
   type ClientInlineConfiguration,
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
+import { clientConfigurationValuesEqual } from "./ClientConfigurationValues.js";
+import type { SetupClient } from "./SupportedClients.js";
 import {
-  clientProjectConfigurationPaths,
-  type SetupClient,
-} from "./SupportedClients.js";
-import { clientRegistrationEnvironment } from "./ClientRegistrationEnvironment.js";
+  ClientRegistrationEnvironmentShapeError,
+  clientRegistrationEnvironment,
+} from "./ClientRegistrationEnvironment.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
@@ -24,6 +26,7 @@ import { errorMessage } from "../kernel/errorMessage.js";
 import { lstat, realpath } from "node:fs/promises";
 import { posix, win32 } from "node:path";
 import { isQualifiedCallerPath } from "../filesystem/callerPath.js";
+import { canonicalCallerPath } from "../filesystem/canonicalCallerPath.js";
 import { isAbsentClientConfigPath } from "./ClientConfigPath.js";
 
 export type ClientRegistrationScope = "user" | "project";
@@ -194,27 +197,54 @@ export const readClientConfigurationFiles = async (
 ): Promise<
   Result<readonly ClientConfigurationSource[], ClientConfigurationFileError>
 > => {
+  const validateFragment = (
+    path: string,
+    document: ClientConfigurationDocument,
+  ) =>
+    configurationEnvironmentFailure(client, platform, {
+      path,
+      document,
+      validation: "fragment",
+      overrides: path === client.configPath ? writeOverrides : undefined,
+    });
+  const openCode = client.format === "opencode";
   const documents = await readUserConfigurationSources(
     client,
     resources,
     targetDocument,
-    (path, document) => {
-      const isTarget = path === client.configPath;
-      // Goose can replace the environment of a read-only lower layer as a whole map.
-      return isTarget || client.readOnlyLowerLayers !== true
-        ? configurationEnvironmentFailure(client, platform, {
-            path,
-            document,
-            validation: "fragment",
-            overrides: isTarget ? writeOverrides : undefined,
-          })
-        : undefined;
-    },
+    openCode
+      ? undefined
+      : (path, document) =>
+          // Goose can replace the environment of a read-only lower layer as a whole map.
+          path === client.configPath || client.readOnlyLowerLayers !== true
+            ? validateFragment(path, document)
+            : undefined,
   );
   if (!documents.ok) return documents;
+  const effective = mergeClientConfigurationDocuments(
+    documents.value,
+    platform,
+  );
+  if (openCode) {
+    // A native row replaces its peers. Only a write target needs separate
+    // fragment validation in that dialect.
+    const replacesRows = clientServerRowsReplace(effective?.dialect);
+    const writing =
+      targetDocument !== undefined || writeOverrides !== undefined;
+    for (const source of documents.value) {
+      const path = source.sourcePath;
+      if (
+        path === undefined ||
+        (replacesRows && !(writing && path === client.configPath))
+      )
+        continue;
+      const failure = validateFragment(path, source);
+      if (failure !== undefined) return err(failure);
+    }
+  }
   const failure = configurationEnvironmentFailure(client, platform, {
     path: client.configPath,
-    document: mergeClientConfigurationDocuments(documents.value, platform),
+    document: effective,
     validation: "effective",
     overrides: writeOverrides,
   });
@@ -296,7 +326,7 @@ export const admitClientConfigurationCandidate = (
   return failure === undefined ? ok(effective) : err(failure);
 };
 
-/** OpenCode merges server objects in file order, replacing arrays and scalar values. */
+/** Legacy layered configurations merge objects and replace arrays and scalars. */
 const mergeConfigurationValue = (previous: unknown, next: unknown): unknown => {
   if (!isRecord(previous) || !isRecord(next)) return next;
   return Object.fromEntries(
@@ -494,6 +524,9 @@ export const mergeClientConfigurationDocuments = (
   const last = documents.at(-1);
   if (last === undefined) return undefined;
   if (documents.length === 1) return last;
+  const dialect = clientWriteDialect(last.dialect, documents);
+  if (clientServerRowsReplace(dialect))
+    return replacedServerConfiguration(documents);
   const servers: Record<string, unknown> = Object.create(null);
   for (const document of documents) {
     const names = new Set([
@@ -530,7 +563,7 @@ export const mergeClientConfigurationDocuments = (
   }
   return {
     ...last,
-    dialect: clientWriteDialect(last.dialect, documents),
+    dialect,
     servers,
     legacyServers: {},
   };
@@ -550,8 +583,11 @@ export interface EffectiveClientRegistrationConfiguration {
   readonly projectSources?: readonly ProjectConfigurationSource[];
   /** Readiness can fail while parsed launcher identity remains available. */
   readonly environmentError?: ClientConfigurationFileError;
-  /** Project candidate spellings already owned by the same physical user files. */
-  readonly projectUserAliases?: readonly string[];
+  /** Project candidate spellings paired with their read-only user snapshots. */
+  readonly projectUserAliases?: readonly {
+    readonly path: string;
+    readonly source: ClientConfigurationSource;
+  }[];
   /** Whether proposed project edits leave the original selected row in effect. */
   readonly preservesOriginalRegistration?: true;
 }
@@ -562,8 +598,14 @@ export const hasProjectRegistrationContribution = ({
 }: EffectiveClientRegistrationConfiguration): boolean =>
   declarations.some(({ source }) => source.scope === "project");
 
-interface ProjectConfigurationReadOptions {
+export interface ProjectConfigurationReadOptions {
   readonly projectDirectory: string;
+  /** The registration transaction must still select a native project source. */
+  readonly writeTarget?: {
+    readonly path: string;
+    readonly transactionPath: string;
+    readonly allowMissing: boolean;
+  };
   readonly mode?: "ownership";
   /** Original and proposed layers from the transaction owner's snapshots. */
   readonly candidates?: readonly {
@@ -602,8 +644,28 @@ export const readEffectiveClientRegistrationConfiguration = async (
     client,
     project.projectDirectory,
     platform,
+    project.writeTarget,
   );
   if (!paths.ok) return paths;
+  const target = project.writeTarget;
+  if (target !== undefined) {
+    const selected = paths.value.find(({ path }) => path === target.path);
+    if (selected?.userPath !== undefined)
+      return err({
+        kind: "unreadable",
+        path: target.path,
+        scope: "project",
+        detail: `Project configuration ${target.path} aliases the user configuration at ${selected.userPath}. Select a project-only file.`,
+      });
+    if (selected?.aliasesWriteTarget !== true)
+      return err({
+        kind: "unreadable",
+        path: target.path,
+        scope: "project",
+        detail:
+          "The selected file could not be verified in the native project configuration load order.",
+      });
+  }
   const candidates = new Map<
     string,
     NonNullable<ProjectConfigurationReadOptions["candidates"]>[number]
@@ -612,13 +674,13 @@ export const readEffectiveClientRegistrationConfiguration = async (
   const layers = paths.value.filter(
     ({ userPath }) => userPath === undefined || userOverrides.has(userPath),
   );
-  const userAliases = [
-    ...new Set(
-      paths.value.flatMap(({ path, userPath }) =>
-        userPath === undefined ? [] : [path],
-      ),
-    ),
-  ];
+  const userAliasPaths = new Map(
+    project.mode === "ownership"
+      ? paths.value.flatMap(({ path, userPath }) =>
+          userPath === undefined ? [] : [[path, userPath] as const],
+        )
+      : [],
+  );
   const admitted = new Set(
     layers.flatMap(({ path, userPath }) =>
       userPath === undefined ? [path] : [],
@@ -643,23 +705,18 @@ export const readEffectiveClientRegistrationConfiguration = async (
       });
     candidates.set(path, candidate);
   }
-  if (layers.length === 0) {
-    const user = await readEffectiveUserConfiguration(
-      client,
-      resources,
-      platform,
-    );
-    return user.ok && userAliases.length > 0
-      ? ok(
-          projectViewOfUserRegistration(
-            { ...user.value, projectUserAliases: userAliases },
-            "evaluated",
-          ),
-        )
-      : user;
-  }
+  const publication =
+    target === undefined ? undefined : candidates.get(target.path);
+  if (publication !== undefined)
+    for (const { path, userPath, aliasesWriteTarget } of layers) {
+      // An atomic replacement updates what symlinks to the destination read.
+      if (aliasesWriteTarget && userPath === undefined)
+        candidates.set(path, publication);
+    }
+  if (layers.length === 0 && userAliasPaths.size === 0)
+    return readEffectiveUserConfiguration(client, resources, platform);
 
-  if (client.format === "pi") {
+  if (client.format === "pi" && layers.length > 0) {
     const trust = await isPiProjectTrusted(
       client.piSettings,
       project.projectDirectory,
@@ -693,6 +750,10 @@ export const readEffectiveClientRegistrationConfiguration = async (
   const userByPath = new Map(
     user.value.map((source) => [source.sourcePath, source]),
   );
+  const userAliases = [...userAliasPaths].flatMap(([path, userPath]) => {
+    const source = userByPath.get(userPath);
+    return source === undefined ? [] : [{ path, source }];
+  });
   const sources = [...user.value];
   const projectSources = new Map<
     string,
@@ -838,14 +899,7 @@ const projectRegistration = (
   },
   ClientConfigurationFileError
 > => {
-  const wholeRows =
-    format === "opencode" &&
-    sources.some(({ dialect }) => dialect === "opencode_v2");
-  const projected =
-    format === "opencode"
-      ? sources.map((source) => projectOpenCodeSource(source, wholeRows))
-      : sources;
-  const declarations = serverDeclarations(projected);
+  const declarations = serverDeclarations(sources);
   const winning = declarations.at(-1);
   if (
     format === "pi" &&
@@ -858,12 +912,16 @@ const projectRegistration = (
       ? ok({ document: withPiOverride(sources, active), active })
       : override;
   }
-  const replaces = wholeRows || format === "pi";
+  const document =
+    format === "pi"
+      ? replacedServerConfiguration(sources)
+      : mergeClientConfigurationDocuments(sources, platform);
   return ok({
-    active: activeDeclarations(declarations, replaces),
-    document: replaces
-      ? replacedServerConfiguration(projected)
-      : mergeClientConfigurationDocuments(projected, platform),
+    active: activeDeclarations(
+      declarations,
+      format === "pi" || clientServerRowsReplace(document?.dialect),
+    ),
+    document,
   });
 };
 
@@ -912,7 +970,7 @@ const readEffectiveUserConfiguration = async (
     configPath: client.configPath,
     declarations: activeDeclarations(
       serverDeclarations(nativeSources.value),
-      false,
+      clientServerRowsReplace(nativeDocument?.dialect),
     ),
   };
   const fallbackPath =
@@ -958,56 +1016,91 @@ const filesystemPathKey = (path: string, platform: NodeJS.Platform): string =>
     ? win32.normalize(path).toLowerCase()
     : posix.normalize(path);
 
-const physicalPathKey = async (
-  path: string,
-  platform: NodeJS.Platform,
-): Promise<string> =>
-  filesystemPathKey(await realpath(path).catch(() => path), platform);
+interface PresentProjectSource {
+  readonly path: string;
+  readonly userPath?: string;
+  readonly aliasesWriteTarget?: true;
+}
 
 /** Project discovery cannot reclassify the current user's physical settings file. */
 const presentProjectSources = async (
   client: SetupClient,
   projectDirectory: string,
   platform: NodeJS.Platform,
+  writeTarget?: ProjectConfigurationReadOptions["writeTarget"],
 ): Promise<
-  Result<
-    readonly { readonly path: string; readonly userPath?: string }[],
-    ClientConfigurationFileError
-  >
+  Result<readonly PresentProjectSource[], ClientConfigurationFileError>
 > => {
+  const physicalPath =
+    writeTarget === undefined ? realpath : canonicalCallerPath;
+  const keyOf = async (path: string) =>
+    filesystemPathKey(await physicalPath(path).catch(() => path), platform);
+  const targetKey =
+    writeTarget === undefined
+      ? undefined
+      : filesystemPathKey(writeTarget.transactionPath, platform);
   const userPaths = client.configPaths ?? [client.configPath];
-  const user = new Map(
-    await Promise.all(
-      userPaths.map(
-        async (path) => [await physicalPathKey(path, platform), path] as const,
-      ),
-    ),
+  const user = new Map<string, string>();
+  const userKeys = await Promise.all(
+    userPaths.map(async (path) => {
+      try {
+        return {
+          path,
+          key: filesystemPathKey(await physicalPath(path), platform),
+        };
+      } catch (cause: unknown) {
+        // A dangling user link might become active when the project file is
+        // created. A non-directory ancestor cannot lead to that destination.
+        if (
+          writeTarget?.allowMissing === true &&
+          !(
+            cause instanceof Error &&
+            "code" in cause &&
+            cause.code === "ENOTDIR"
+          )
+        )
+          return { path, cause };
+        return { path, key: filesystemPathKey(path, platform) };
+      }
+    }),
   );
+  for (const { path, key, cause } of userKeys) {
+    if (key === undefined)
+      return err({
+        kind: "unreadable",
+        path,
+        scope: "user",
+        detail: `User configuration path ${path} could not be verified before creating project settings: ${errorMessage(cause)}.`,
+      });
+    user.set(key, path);
+  }
   const nativePaths = clientProjectConfigurationPaths(
     client,
     projectDirectory,
     platform,
   );
-  const project = new Map<string, { path: string; userPath?: string }>();
+  const project = new Map<string, PresentProjectSource>();
   for (const candidate of new Set(nativePaths)) {
     try {
       await lstat(candidate);
     } catch (cause: unknown) {
-      if (isAbsentClientConfigPath(cause)) continue;
-      return err({
-        kind: "unreadable",
-        path: candidate,
-        scope: "project",
-        detail: `Project configuration ${candidate} could not be inspected: ${errorMessage(cause)}`,
-      });
+      if (!isAbsentClientConfigPath(cause))
+        return err({
+          kind: "unreadable",
+          path: candidate,
+          scope: "project",
+          detail: `Project configuration ${candidate} could not be inspected: ${errorMessage(cause)}`,
+        });
+      if (writeTarget?.allowMissing !== true || candidate !== writeTarget.path)
+        continue;
     }
-    const userPath = user.get(await physicalPathKey(candidate, platform));
-    project.set(
-      candidate,
-      userPath === undefined
-        ? { path: candidate }
-        : { path: candidate, userPath },
-    );
+    const key = await keyOf(candidate);
+    const userPath = user.get(key);
+    project.set(candidate, {
+      path: candidate,
+      ...(userPath === undefined ? {} : { userPath }),
+      ...(key === targetKey ? { aliasesWriteTarget: true } : {}),
+    });
   }
   return ok(
     nativePaths.flatMap((path) => {
@@ -1135,63 +1228,28 @@ const contributingEnvironmentSource = (
 ): ClientConfigurationSource | undefined => {
   const normalize = (name: string): string =>
     platform === "win32" ? name.toUpperCase() : name;
-  const rejected = new Set(
-    error.settings.flatMap(({ setting }) => {
-      const parts = setting.split(".");
-      return [normalize(setting), normalize(parts.at(-1) ?? setting)];
-    }),
-  );
+  const keys =
+    error instanceof ClientRegistrationEnvironmentShapeError
+      ? error.invalidKeys
+      : error.settings.map(({ setting }) => setting);
+  const rejected = new Set(keys.map(normalize));
+  const invalidMap =
+    error instanceof ClientRegistrationEnvironmentShapeError &&
+    keys.length === 0;
   return declarations.findLast(({ source, entry }) => {
     if (!isRecord(entry) || !Object.hasOwn(entry, source.environmentKey))
       return false;
+    if (invalidMap) return true;
     const environment = entry[source.environmentKey];
     return (
-      rejected.has(normalize(source.environmentKey)) ||
-      (isRecord(environment) &&
-        Object.keys(environment).some((key) => rejected.has(normalize(key))))
+      isRecord(environment) &&
+      Object.keys(environment).some((key) => rejected.has(normalize(key)))
     );
   })?.source;
 };
 
-/** OpenCode V2 migrates enabled from legacy rows and only reads disabled on native rows. */
-const projectOpenCodeSource = (
-  source: ClientConfigurationSource,
-  nativeProjection: boolean,
-): ClientConfigurationSource => {
-  const normalize = (
-    servers: Readonly<Record<string, unknown>>,
-    native: boolean,
-  ) =>
-    Object.fromEntries(
-      Object.entries(servers).map(([name, entry]) => {
-        if (!isRecord(entry)) return [name, entry];
-        const { enabled, disabled, ...server } = entry;
-        if (native)
-          return [
-            name,
-            disabled === undefined ? server : { ...server, disabled },
-          ];
-        if (enabled === undefined) return [name, server];
-        return [
-          name,
-          nativeProjection
-            ? {
-                ...server,
-                disabled: typeof enabled === "boolean" ? !enabled : enabled,
-              }
-            : { ...server, enabled },
-        ];
-      }),
-    );
-  return {
-    ...source,
-    servers: normalize(source.servers, source.dialect === "opencode_v2"),
-    legacyServers: normalize(source.legacyServers, false),
-  };
-};
-
 const replacedServerConfiguration = (
-  sources: readonly ClientConfigurationSource[],
+  sources: readonly ClientConfigurationDocument[],
 ): ClientConfigurationDocument | undefined => {
   const last = sources.at(-1);
   if (last === undefined) return undefined;

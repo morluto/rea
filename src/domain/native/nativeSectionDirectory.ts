@@ -221,6 +221,7 @@ export function* readElfSectionDirectory(
           header_offset,
           offset: program.offset,
           size: program.fileSize,
+          virtual_address: program.virtualAddress,
         });
       else if (type === ELF_PT_NOTE)
         programDeclarations.push({ type: ELF_PT_NOTE, ...span });
@@ -256,11 +257,12 @@ export function* readElfSectionDirectory(
       const namesSection = parsedNames.value;
       if (namesSection.type !== 3)
         reject("ELF section name table is not a string table");
-      const rawNames = yield request(
+      const namesRange = request(
         fileSize,
         namesSection.offset,
         namesSection.size,
       );
+      const rawNames = yield namesRange;
       const structuralRemaining = Math.max(
         0,
         STRUCTURE_BYTES - rawNames.length,
@@ -271,6 +273,7 @@ export function* readElfSectionDirectory(
           : Math.max(0, maximumSourceAndDecodedNamesBytes - fileSize);
       let decoded: ElfCompressedSectionResult | undefined;
       const sectionNames: ElfSectionNameDecodeRequest = {
+        fileOffset: namesRange.offset,
         raw: rawNames,
         flags: namesSection.flags,
         bits,
@@ -619,6 +622,68 @@ export const readElfDirectoryFromBufferCooperative = async (
   }
 };
 
+/** Random-access byte source for positional native directory inspection. */
+export interface NativeByteSource {
+  readonly size: number;
+  readonly prefix?: Buffer;
+  readRange(offset: number, length: number): Promise<Buffer>;
+}
+
+const driveElfDirectoryFromSource = async (
+  source: NativeByteSource,
+  decode: CooperativeElfSectionNameDecoder,
+  maximumSourceAndDecodedNamesBytes?: number,
+): Promise<ElfSectionDirectory> => {
+  const steps = readElfSectionDirectory(
+    source.size,
+    maximumSourceAndDecodedNamesBytes,
+  );
+  let next = steps.next();
+  while (!next.done) {
+    const step = next.value;
+    if (
+      step.sectionNames !== undefined &&
+      step.fulfillSectionNames !== undefined
+    ) {
+      step.fulfillSectionNames(await decode(step.sectionNames));
+      next = steps.next(Buffer.alloc(0));
+      continue;
+    }
+    const slice =
+      step.size === 0
+        ? Buffer.alloc(0)
+        : source.prefix !== undefined &&
+            step.offset + step.size <= source.prefix.length
+          ? source.prefix.subarray(step.offset, step.offset + step.size)
+          : await source.readRange(step.offset, step.size);
+    next = steps.next(slice);
+  }
+  return next.value;
+};
+
+/**
+ * Same directory as {@link readElfDirectoryFromBufferCooperative}, reading only
+ * the header, program/section tables, and section-name table from `source`.
+ */
+export const readElfDirectoryFromReader = async (
+  source: NativeByteSource,
+  pause: ZstandardFramePause,
+  operation: string,
+  maximumSourceAndDecodedNamesBytes?: number,
+  decode: CooperativeElfSectionNameDecoder = (request) =>
+    decodeElfSectionNameRequestCooperative(request, pause),
+): Promise<ElfSectionDirectory> => {
+  try {
+    return await driveElfDirectoryFromSource(
+      source,
+      decode,
+      maximumSourceAndDecodedNamesBytes,
+    );
+  } catch (cause) {
+    return projectDirectoryFrameAllowance(operation, cause);
+  }
+};
+
 /** Reject a program or section payload the declared tables place outside these bytes. */
 export const assertElfDeclaredRangesFromBuffer = (bytes: Buffer): void => {
   const checked = driveFromBuffer(
@@ -626,4 +691,24 @@ export const assertElfDeclaredRangesFromBuffer = (bytes: Buffer): void => {
     validateElfDeclaredRanges(bytes.subarray(0, 64), bytes.length),
   );
   if (!checked.ok) reject(checked.error);
+};
+
+/** Same declared-range check over a random-access source without buffering the full image. */
+export const assertElfDeclaredRangesFromReader = async (
+  source: NativeByteSource,
+): Promise<void> => {
+  const readSlice = async (offset: number, size: number): Promise<Buffer> => {
+    if (size <= 0) return Buffer.alloc(0);
+    if (source.prefix !== undefined && offset + size <= source.prefix.length)
+      return source.prefix.subarray(offset, offset + size);
+    return source.readRange(offset, size);
+  };
+  const header = await readSlice(0, Math.min(64, source.size));
+  const steps = validateElfDeclaredRanges(header, source.size);
+  let next = steps.next();
+  while (!next.done) {
+    const step = next.value;
+    next = steps.next(await readSlice(step.offset, step.size));
+  }
+  if (!next.value.ok) reject(next.value.error);
 };

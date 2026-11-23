@@ -5,7 +5,7 @@ import { setImmediate } from "node:timers/promises";
 import type {
   AndroidOtaPartitionMetadata,
   AndroidOtaPayloadMetadata,
-} from "../domain/artifactFormatMetadata.js";
+} from "../domain/formatMetadata/androidAndSystemMetadata.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import {
   assertArtifactReadActive,
@@ -162,7 +162,7 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
         new ArtifactReaderFailure("cancelled", `${LABEL} read cancelled`, {
           cause: reason,
         });
-      const image = Buffer.from(reconstructed.value);
+      const image = reconstructed.value;
       const source =
         image.length === 0 ? Readable.from([]) : Readable.from([image]);
       const output = this.#memberStream(stored, image.length, signal);

@@ -116,10 +116,18 @@ it("loads OpenCode V2 ancestors beyond Git and layers all direct files before .o
   const directOnly = await read();
   if (!directOnly.ok) throw Error(directOnly.error.detail);
   expect(directOnly.value.configPath).toBe(direct);
+  expect(readReaServer(directOnly.value.document)).toEqual({
+    ...localServer("direct"),
+    disabled: true,
+  });
   await unlink(direct);
   const aboveRepository = await read();
   if (!aboveRepository.ok) throw Error(aboveRepository.error.detail);
   expect(aboveRepository.value.configPath).toBe(outer);
+  expect(readReaServer(aboveRepository.value.document)).toEqual({
+    ...localServer("outer"),
+    environment: { OUTER: "retain only when selected" },
+  });
 });
 
 it.each(["legacy", "native"] as const)(
@@ -168,6 +176,31 @@ it.each(["legacy", "native"] as const)(
   },
 );
 
+it("attributes a dotted environment key to its effective OpenCode source", async () => {
+  const { client, projectDirectory, read } = await fixture();
+  const upper = join(projectDirectory, "opencode.json");
+  const key = "CALLER.VALUE";
+  await writeConfiguration(client.configPath, {
+    mcp: { rea: { ...localServer("user"), environment: { [key]: 17 } } },
+  });
+  await writeConfiguration(upper, {
+    mcp: {
+      rea: { ...localServer("project"), environment: { VALUE: "unrelated" } },
+    },
+  });
+  const result = await read();
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      kind: "malformed",
+      path: client.configPath,
+      detail: expect.stringContaining("environment.CALLER.VALUE"),
+    },
+  });
+  if (result.ok) throw new Error("Expected invalid environment");
+  expect(result.error.scope).toBeUndefined();
+});
+
 it("keeps OpenCode activation tied to the authored row dialect", async () => {
   const { client, projectDirectory, read } = await fixture();
   const project = join(projectDirectory, "opencode.json");
@@ -191,6 +224,36 @@ it("keeps OpenCode activation tied to the authored row dialect", async () => {
     ...user,
     disabled: true,
   });
+});
+
+it("uses the same native user row with or without an empty project file", async () => {
+  const { client, projectDirectory, read } = await fixture();
+  const [, lower, upper] = client.configPaths ?? [];
+  if (lower === undefined || upper === undefined)
+    throw Error("OpenCode user layers are missing");
+  const row = localServer("upper");
+  await writeConfiguration(lower, {
+    mcp: {
+      servers: {
+        rea: {
+          ...localServer("lower"),
+          disabled: true,
+          environment: { REA_GHIDRA_STARTUP_TIMEOUT_MS: "invalid" },
+        },
+      },
+    },
+  });
+  await writeConfiguration(upper, { mcp: { servers: { rea: row } } });
+  const user = await read();
+  await writeConfiguration(join(projectDirectory, "opencode.json"), {});
+  const project = await read();
+  for (const result of [user, project]) {
+    if (!result.ok) throw Error(result.error.detail);
+    expect(readReaServer(result.value.document)).toEqual(row);
+    expect(
+      result.value.declarations.map(({ source }) => source.sourcePath),
+    ).toEqual([upper]);
+  }
 });
 
 it.each([
@@ -228,7 +291,9 @@ it.each([
       configPath: client.configPath,
       launcherScope: "user",
       launcherConfigPath: client.configPath,
-      projectUserAliases: [client.configPath],
+      projectUserAliases: [
+        { path: client.configPath, source: { sourcePath: client.configPath } },
+      ],
       projectSources: [{ sourcePath: project }],
     });
     expect(result.value.activationConfigPath).toBe(

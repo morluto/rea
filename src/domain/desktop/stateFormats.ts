@@ -298,13 +298,15 @@ export const textSyntaxFormat = (
   return "text";
 };
 
+const LATIN1_DECODER = new TextDecoder("latin1");
+
 /** Pick the reader for one retained file from its leading bytes and name. */
 export const detectStateFormat = (
   path: string,
   bytes: Uint8Array,
   policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): DesktopStateFormat => {
-  const header = new TextDecoder("latin1").decode(bytes.subarray(0, 16));
+  const header = LATIN1_DECODER.decode(bytes.subarray(0, 16));
   if (header === SQLITE_HEADER) return "sqlite";
   if (header.startsWith(GVDB_HEADER)) return "dconf";
   if (
