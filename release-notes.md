@@ -491,6 +491,7 @@
 * **pwntools:** validate only envelope and invariants in PwntoolsLayoutProvider ([#13546](https://github.com/morluto/rea/issues/13546)) ([20446e3](https://github.com/morluto/rea/commit/20446e3746e8888443ed5b98daa6a1a7d2077c9f))
 * **release-exposure:** reuse verified packaged PE bytes ([#13385](https://github.com/morluto/rea/issues/13385)) ([55a320b](https://github.com/morluto/rea/commit/55a320be8706152baf844c22916cd81393eff23b))
 * **release-exposure:** stream PE CodeView/PDB inspection over FileHandle ([#13896](https://github.com/morluto/rea/issues/13896)) ([ca3b02f](https://github.com/morluto/rea/commit/ca3b02fb0289d7c5cc0a5d77b84050d826b075bd))
+* **rust:** reuse the Wasm section probe for custom name lengths ([#14035](https://github.com/morluto/rea/issues/14035)) ([e219c97](https://github.com/morluto/rea/commit/e219c9748e1bf15600993a6b6c4df3b8204ecfba))
 * **rust:** single-pass package validation in RustAuditableReader ([#13671](https://github.com/morluto/rea/issues/13671)) ([6024860](https://github.com/morluto/rea/commit/602486090348a765f1ac82a5219cb90a81d5b50f))
 * **rust:** stream Rust binary inspection over FileHandle for ELF, PE, Mach-O, and WebAssembly ([#13979](https://github.com/morluto/rea/issues/13979)) ([189785a](https://github.com/morluto/rea/commit/189785a2409121d32755d83a698d804a0efa7750))
 * **rust:** validate cargo-auditable packages in one pass without Zod re-clone ([6024860](https://github.com/morluto/rea/commit/602486090348a765f1ac82a5219cb90a81d5b50f))
