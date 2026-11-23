@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { deflateRawSync } from "node:zlib";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,6 +26,7 @@ import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { apkSignatureResultSchema } from "../domain/apkSignature/apkSignatureReport.js";
 import { ApkSignatureProvider } from "./ApkSignatureProvider.js";
 import { APK_SIGNATURE_LIMITS } from "./ApkSignatureRelease.js";
+import { decodeV1SignerFromReader } from "./apkV1Signers.js";
 import { apkSignatureFailure } from "./apkSignatureFailures.js";
 import { apkSchemeValue } from "../../tests/fixtures/apkSignature/signingScheme.js";
 
@@ -663,3 +665,66 @@ describe("ApkSignatureProvider output budget", () => {
     expect(over.error.message).toContain("output budget");
   });
 });
+
+it.each([8, 99])(
+  "limits V1 payload reads for compression method %s",
+  async (method) => {
+    const name = "META-INF/A.RSA";
+    const rawName = Buffer.from(name);
+    const uncompressedSize = 150_000;
+    const payload = deflateRawSync(Buffer.alloc(uncompressedSize), {
+      level: 0,
+    });
+    const bytes = Buffer.alloc(30 + rawName.length + payload.length);
+    const dataStart = 30 + rawName.length;
+    bytes.writeUInt32LE(0x04034b50, 0);
+    bytes.writeUInt16LE(method, 8);
+    bytes.writeUInt32LE(payload.length, 18);
+    bytes.writeUInt32LE(uncompressedSize, 22);
+    bytes.writeUInt16LE(rawName.length, 26);
+    rawName.copy(bytes, 30);
+    payload.copy(bytes, dataStart);
+    const reads: number[] = [];
+    const result = await decodeV1SignerFromReader(
+      {
+        size: bytes.length,
+        readRange: async (offset, length) => {
+          if (offset >= dataStart) reads.push(length);
+          return bytes.subarray(offset, offset + length);
+        },
+      },
+      {
+        signatureFile: "META-INF/A.SF",
+        duplicate: null,
+        block: {
+          name,
+          rawName,
+          flags: 0,
+          method,
+          crc32: 0,
+          compressedSize: payload.length,
+          uncompressedSize,
+          localHeaderOffset: 0,
+        },
+      },
+      bytes.length,
+    );
+    if (method === 8) {
+      expect(result.decoded).toMatchObject({
+        ok: false,
+        error: expect.stringContaining("malformed PKCS#7"),
+      });
+      expect(reads.length).toBeGreaterThan(1);
+      expect(Math.max(...reads)).toBeLessThanOrEqual(64 * 1024);
+      expect(reads.reduce((total, count) => total + count, 0)).toBe(
+        payload.length,
+      );
+    } else {
+      expect(result.decoded).toEqual({
+        ok: false,
+        error: "compression method 99 is not supported",
+      });
+      expect(reads).toEqual([]);
+    }
+  },
+);

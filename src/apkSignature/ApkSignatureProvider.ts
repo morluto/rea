@@ -394,6 +394,9 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     input: { readonly path: string },
     options?: ExecutionOptions,
   ): Promise<Result<ApkSignatureExecution, AnalysisError>> {
+    let identity:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
       return await this.#resources.run(async () => {
         const release = await apkSignatureAdmission.acquire(options?.signal);
@@ -405,6 +408,9 @@ export class ApkSignatureProvider implements ApkSignaturePort {
               retainBytes: (size) => Math.min(size, 4),
               signal: options?.signal,
               resourceScope: this.#resources,
+              onIdentity: (observed) => {
+                identity = observed;
+              },
             },
             async (handle) => {
               assertArtifactReadActive(options?.signal);
@@ -422,7 +428,7 @@ export class ApkSignatureProvider implements ApkSignaturePort {
         }
       });
     } catch (cause: unknown) {
-      return err(apkSignatureFailure(cause, input.path));
+      return err(apkSignatureFailure(cause, input.path, identity));
     }
   }
 

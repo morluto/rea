@@ -4,13 +4,14 @@
  * owns inflation (bounded by the inflater itself, not the declared size) and
  * hands every certificate to the shared certificate owner.
  */
-import { inflateRawSync } from "node:zlib";
-import { hostRangeErrorKind } from "../domain/parseFailure.js";
+import { createInflateRaw } from "node:zlib";
+import { pipeline } from "node:stream/promises";
+import { err, ok, type Result } from "../domain/result.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 
 import type { ApkSignatureResult } from "../domain/apkSignature/apkSignatureReport.js";
 import {
   centralDeclaresEncryption,
-  localEntryData,
   parseLocalEntryHeader,
   type ApkV1SignerEntry,
 } from "../domain/apkSignature/apkV1Signature.js";
@@ -68,79 +69,69 @@ export const projectedV1SignerBytes = ({
   return total + summaries + largest + SIGNER_INFO_BYTES * signerInfos.length;
 };
 
-const decodeV1SignerPayload = (
-  entry: ApkV1SignerEntry,
-  declaresEncryption: boolean,
-  storedData: Uint8Array,
-): DecodedV1Signer => {
-  const { block } = entry;
-  const fail = (error: string): DecodedV1Signer => ({
-    entry,
-    declaresEncryption,
-    decoded: { ok: false, error },
-  });
-  const limit = APK_SIGNATURE_LIMITS.v1BlockBytes;
-  let data: Uint8Array;
-  if (block.method === 0) data = storedData;
-  else if (block.method === 8) {
-    try {
-      data = inflateRawSync(storedData, { maxOutputLength: limit });
-    } catch (cause: unknown) {
-      return fail(
-        hostRangeErrorKind(cause) === "host-capacity"
-          ? `signature block inflates past the ${String(limit)}-byte bound`
-          : "signature block deflate stream is damaged",
+const inflateSignerBlock = async (
+  reader: {
+    readonly readRange: (offset: number, length: number) => Promise<Uint8Array>;
+  },
+  start: number,
+  end: number,
+  limit: number,
+): Promise<Result<Uint8Array, string>> => {
+  const chunkBytes = 64 * 1024;
+  const output: Buffer[] = [];
+  let outputBytes = 0;
+  const exceeded = new Error("APK signer inflation bound exceeded");
+  let readingFailed = false;
+  let readFailure: unknown;
+  try {
+    await pipeline(
+      (async function* () {
+        for (let offset = start; offset < end;) {
+          const expected = Math.min(chunkBytes, end - offset);
+          let chunk: Uint8Array;
+          try {
+            chunk = await reader.readRange(offset, expected);
+            if (chunk.length !== expected)
+              throw new ArtifactReaderFailure(
+                "integrity",
+                "APK signature block ended before its admitted extent",
+                { integrityCheck: "read-coverage" },
+              );
+          } catch (cause) {
+            readingFailed = true;
+            readFailure = cause;
+            throw cause;
+          }
+          yield chunk;
+          offset += expected;
+        }
+      })(),
+      createInflateRaw(),
+      async (chunks: AsyncIterable<Buffer>) => {
+        for await (const chunk of chunks) {
+          outputBytes += chunk.length;
+          if (outputBytes > limit) throw exceeded;
+          output.push(chunk);
+        }
+      },
+    );
+  } catch (cause) {
+    if (readingFailed) throw readFailure;
+    if (cause === exceeded)
+      return err(
+        `signature block inflates past the ${String(limit)}-byte bound`,
       );
-    }
-  } else
-    return fail(`compression method ${String(block.method)} is not supported`);
-  if (data.length !== block.uncompressedSize)
-    return fail(
-      `signature block holds ${String(data.length)} bytes, the central directory declares ${String(block.uncompressedSize)}`,
-    );
-  const signedData = decodeV1SignatureBlock(data);
-  if (signedData.ok) return { entry, declaresEncryption, decoded: signedData };
-  return fail(
-    signedData.error.kind === "malformed-pkcs7"
-      ? `malformed PKCS#7: ${signedData.error.detail}`
-      : `more ${signedData.error.resource} than ${String(signedData.error.limit)}`,
-  );
-};
-
-/**
- * Read one signature block's bytes (stored or deflated) within the per-block
- * bound and decode its SignedData. Every failure is the signer's own
- * `decode_error`, so one damaged block neither hides the others nor reads as
- * absent.
- */
-export const decodeV1Signer = (
-  bytes: Uint8Array,
-  entry: ApkV1SignerEntry,
-  entriesEnd: number,
-): DecodedV1Signer => {
-  const { block } = entry;
-  // The local header's flag is known only once it is located.
-  let declaresEncryption = centralDeclaresEncryption(block);
-  const fail = (error: string): DecodedV1Signer => ({
-    entry,
-    declaresEncryption,
-    decoded: { ok: false, error },
-  });
-  // apksig rejects the archive's v1 signature outright; which copy it would
-  // read is not defined, so the signer stays unknown.
-  if (entry.duplicate !== null)
-    return fail(`duplicate entry: ${entry.duplicate}`);
-  const limit = APK_SIGNATURE_LIMITS.v1BlockBytes;
-  // Locating reads no data, and names a Zip64 sentinel size as such rather
-  // than as a size over the bound.
-  const stored = localEntryData(bytes, block, entriesEnd);
-  if (!stored.ok) return fail(stored.error.detail);
-  ({ declaresEncryption } = stored.value);
-  if (block.uncompressedSize > limit)
-    return fail(
-      `signature block declares ${String(block.uncompressedSize)} bytes, over the ${String(limit)}-byte bound`,
-    );
-  return decodeV1SignerPayload(entry, declaresEncryption, stored.value.data);
+    if (
+      cause instanceof Error &&
+      "code" in cause &&
+      (cause.code === "Z_DATA_ERROR" ||
+        cause.code === "Z_BUF_ERROR" ||
+        cause.code === "Z_NEED_DICT")
+    )
+      return err("signature block deflate stream is damaged");
+    throw cause;
+  }
+  return ok(Buffer.concat(output, outputBytes));
 };
 
 /**
@@ -186,12 +177,43 @@ export const decodeV1SignerFromReader = async (
     return fail(
       `signature block declares ${String(block.uncompressedSize)} bytes, over the ${String(limit)}-byte bound`,
     );
-  const length = header.value.dataEnd - header.value.dataStart;
-  const data =
-    length === 0
-      ? new Uint8Array(0)
-      : await reader.readRange(header.value.dataStart, length);
-  return decodeV1SignerPayload(entry, declaresEncryption, data);
+  const { dataStart, dataEnd } = header.value;
+  let data: Uint8Array;
+  switch (block.method) {
+    case 0:
+      if (dataEnd - dataStart !== block.uncompressedSize)
+        return fail(
+          `signature block holds ${String(dataEnd - dataStart)} bytes, the central directory declares ${String(block.uncompressedSize)}`,
+        );
+      data = await reader.readRange(dataStart, dataEnd - dataStart);
+      break;
+    case 8: {
+      const inflated = await inflateSignerBlock(
+        reader,
+        dataStart,
+        dataEnd,
+        limit,
+      );
+      if (!inflated.ok) return fail(inflated.error);
+      data = inflated.value;
+      break;
+    }
+    default:
+      return fail(
+        `compression method ${String(block.method)} is not supported`,
+      );
+  }
+  if (data.length !== block.uncompressedSize)
+    return fail(
+      `signature block holds ${String(data.length)} bytes, the central directory declares ${String(block.uncompressedSize)}`,
+    );
+  const signedData = decodeV1SignatureBlock(data);
+  if (signedData.ok) return { entry, declaresEncryption, decoded: signedData };
+  return fail(
+    signedData.error.kind === "malformed-pkcs7"
+      ? `malformed PKCS#7: ${signedData.error.detail}`
+      : `more ${signedData.error.resource} than ${String(signedData.error.limit)}`,
+  );
 };
 
 /** Facts about v1 blocks that the report has no field for. */
