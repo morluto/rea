@@ -3,44 +3,19 @@ import { crc32 } from "node:zlib";
 import { describe, expect, it } from "vitest";
 
 import {
-  checkUbiPebs,
   classifyUbiPeb,
-  judgeUbiPebCandidate,
-  ubiCandidateGridOffsets,
-  ubiVidMinPebSize,
-  ubiHasMappedSecondPeb,
-  ubiHasValidEcHeader,
-  ubiPassedOverBoundaryProbes,
-  ubiPebSizeCandidates,
-  ubiFirstVidHeaderOffset,
-  findUbiSpacingConflict,
   parseUbiFirstEcHeader,
+  parseUbiImage,
   recognizeUbiImage,
-  ubiAmbiguousPebSize,
-  ubiGeometry,
-  ubiCopiesToVerify,
-  ubiCopyDataMatches,
-  ubiLayoutVolumePebs,
-  findUbiSmallerGridHeader,
-  ubiPebHeadersErased,
-  ubiSmallerGridFit,
+  ubiFirstVidHeaderOffset,
   ubiSmallerPebSizeHoldsLebs,
-  ubiSpacingConflict,
-  ubiPebSearchStart,
-  ubiSmallerPebSizes,
-  ubiSpacingCheckRange,
-  ubiVolumeTableBytes,
-  UBI_HEADER_BYTES,
+  ubiVidMinPebSize,
   UBI_IMAGE_LIMITATIONS,
   UBI_LAYOUT_VOLUME_ID,
   UBI_MAX_PEB_BYTES,
-  type UbiGeometry,
+  type UbiEcHeader,
   type UbiImage,
   type UbiImageParseError,
-  type UbiEcHeader,
-  type UbiPassedOverCandidate,
-  type UbiPeb,
-  type UbiPebCandidateVerdict,
 } from "./ubiImage.js";
 import {
   twoVolumeUbiImage,
@@ -62,239 +37,20 @@ const firstPebMinSize = (bytes: Buffer, first: UbiEcHeader): number => {
   return at === null ? 0 : ubiVidMinPebSize(bytes.subarray(at, at + 64), first);
 };
 
-/** Find the first passed-over boundary EC header outside mapped non-layout LEB data. */
-const findPassedOverBoundary = (
-  bytes: Buffer,
-  geometry: UbiGeometry,
-  pebs: readonly UbiPeb[],
-  passedOver: readonly UbiPassedOverCandidate[],
-): number | null => {
-  for (const candidate of passedOver) {
-    for (const probe of ubiPassedOverBoundaryProbes(
-      candidate,
-      geometry,
-      pebs,
-      bytes.length,
-    )) {
-      if (
-        probe.knownHeader ||
-        ubiHasValidEcHeader(
-          bytes.subarray(probe.offset, probe.offset + UBI_HEADER_BYTES),
-        )
-      )
-        return probe.offset;
-    }
-  }
-  return null;
-};
-
-/** Evaluate one dividing PEB size candidate over an in-memory image. */
-const evaluateCandidate = (
-  bytes: Buffer,
-  first: UbiEcHeader,
-  candidate: number,
-  passedOver: readonly UbiPassedOverCandidate[],
-): UbiPebCandidateVerdict => {
-  const measured = ubiGeometry(first, candidate, bytes.length, null);
-  if (!measured.ok) return { state: "retry", error: measured.error };
-  const { pebSize, pebCount, headerReadBytes, dataOffset } = measured.value;
-  const pebs: UbiPeb[] = [];
-  let pebError: UbiImageParseError | null = null;
-  for (let index = 0; index < pebCount; index += 1) {
-    const at = index * pebSize;
-    const peb = classifyUbiPeb(
-      bytes.subarray(at, at + headerReadBytes),
-      index,
-      measured.value,
-    );
-    if (peb.ok) {
-      pebs.push(peb.value);
-    } else {
-      pebError ??= peb.error;
-      pebs.push({ state: "corrupt", reason: peb.error.message, ec: null });
-    }
-  }
-  let geometry = measured.value;
-  if (pebError === null) {
-    const checked = checkUbiPebs(measured.value, pebs);
-    if (checked.ok) geometry = checked.value;
-    else pebError = checked.error;
-  }
-  const verifiedCopies = new Set(
-    ubiCopiesToVerify(pebs).filter((index) => {
-      const peb = pebs[index]!;
-      if (peb.state !== "mapped") return false;
-      const at = index * pebSize + dataOffset;
-      return ubiCopyDataMatches(
-        bytes.subarray(at, at + peb.vid.dataSize),
-        peb.vid,
-      );
-    }),
+/** Parse an in-memory image through the shared domain parser. */
+const parse = (bytes: Buffer): Promise<Result<UbiImage, UbiImageParseError>> =>
+  parseUbiImage(bytes.length, (offset, length) =>
+    bytes.subarray(offset, offset + length),
   );
-  const tableBytes = ubiVolumeTableBytes(geometry);
-  const copy = (peb: number | null) =>
-    peb === null
-      ? null
-      : bytes.subarray(
-          peb * pebSize + dataOffset,
-          peb * pebSize + dataOffset + tableBytes,
-        );
-  const [left, right] = ubiLayoutVolumePebs(pebs, verifiedCopies);
-  const tableCopies = [copy(left), copy(right)] as const;
-  const fit = ubiSmallerGridFit(measured.value, pebs, tableCopies);
-  let smallerGridError: UbiImageParseError | null = null;
-  const header = findUbiSmallerGridHeader(
-    bytes,
-    0,
-    first,
-    measured.value,
-    fit.plausible,
-  );
-  if (header !== null) smallerGridError = ubiSpacingConflict(pebSize, header);
-  if (smallerGridError === null)
-    for (const smaller of ubiSmallerPebSizes(measured.value)) {
-      let fits = ubiSmallerPebSizeHoldsLebs(
-        measured.value,
-        pebs,
-        smaller,
-        tableCopies,
-      );
-      for (let at = smaller; fits && at < bytes.length; at += smaller)
-        if (at % pebSize !== 0)
-          fits = ubiPebHeadersErased(
-            bytes.subarray(at, at + headerReadBytes),
-            measured.value,
-          );
-      if (fits) {
-        smallerGridError = ubiAmbiguousPebSize(measured.value, smaller);
-        break;
-      }
-    }
-  const passedOverHeaderOffset =
-    smallerGridError === null &&
-    pebError === null &&
-    (tableCopies[0] !== null || tableCopies[1] !== null) &&
-    passedOver.length > 0
-      ? findPassedOverBoundary(bytes, geometry, pebs, passedOver)
-      : null;
-  return judgeUbiPebCandidate({
-    geometry,
-    pebs,
-    tableCopies,
-    verifiedCopies,
-    pebError,
-    smallerGridError,
-    passedOverHeaderOffset,
-  });
-};
 
-/** The reader's pipeline over an in-memory image. */
-const parse = (bytes: Buffer): Result<UbiImage, UbiImageParseError> => {
-  const first = parseUbiFirstEcHeader(bytes.subarray(0, 64), bytes.length);
-  if (!first.ok) return first;
-  const start = ubiPebSearchStart(first.value);
-  const minPebSize = firstPebMinSize(bytes, first.value);
-  const spacingConflict = (
-    pebSize: number,
-    candidates: ReadonlySet<number>,
-  ) => {
-    const spacing = ubiSpacingCheckRange(pebSize, bytes.length);
-    return findUbiSpacingConflict(
-      bytes.subarray(spacing.start, spacing.end),
-      spacing.start,
-      first.value,
-      pebSize,
-      candidates,
-    );
-  };
-  type PendingFailure =
-    | { readonly kind: "error"; readonly error: UbiImageParseError }
-    | { readonly kind: "non-dividing"; readonly candidate: number };
-  const resolveFailure = (failure: PendingFailure): UbiImageParseError => {
-    if (failure.kind === "error") return failure.error;
-    const conflict = spacingConflict(
-      failure.candidate,
-      ubiCandidateGridOffsets(failure.candidate, first.value.dataOffset),
-    );
-    const measured = ubiGeometry(
-      first.value,
-      failure.candidate,
-      bytes.length,
-      conflict,
-    );
-    if (!measured.ok) return measured.error;
-    throw new Error("unreachable");
-  };
-  let anyNext: number | null = null;
-  let firstFailure: PendingFailure | null = null;
-  let fallback: UbiImage | null = null;
-  const passedOver: UbiPassedOverCandidate[] = [];
-  for (const { offset: candidate, header } of ubiPebSizeCandidates(
-    bytes.subarray(start, UBI_MAX_PEB_BYTES + 64),
-    start,
-    first.value,
-    minPebSize,
-  )) {
-    anyNext ??= candidate;
-    if (bytes.length % candidate === 0) {
-      const verdict = evaluateCandidate(
-        bytes,
-        first.value,
-        candidate,
-        passedOver,
-      );
-      if (verdict.state === "accept") return { ok: true, value: verdict.image };
-      if (verdict.state === "reject")
-        return fallback !== null
-          ? { ok: true, value: fallback }
-          : {
-              ok: false,
-              error:
-                firstFailure === null
-                  ? verdict.error
-                  : resolveFailure(firstFailure),
-            };
-      fallback ??= verdict.fallback ?? null;
-      firstFailure ??= { kind: "error", error: verdict.error };
-      passedOver.push({ offset: candidate, dividing: true });
-      continue;
-    }
-    const candidateVid = candidate + first.value.vidHeaderOffset;
-    if (
-      ubiHasMappedSecondPeb(
-        bytes.subarray(candidateVid, candidateVid + 64),
-        first.value,
-        header,
-        candidate,
-      )
-    ) {
-      firstFailure ??= { kind: "non-dividing", candidate };
-      passedOver.push({ offset: candidate, dividing: false });
-    }
-  }
-  if (fallback !== null) return { ok: true, value: fallback };
-  if (firstFailure !== null)
-    return { ok: false, error: resolveFailure(firstFailure) };
-  const conflict =
-    anyNext === null
-      ? null
-      : spacingConflict(
-          anyNext,
-          ubiCandidateGridOffsets(anyNext, first.value.dataOffset),
-        );
-  const measured = ubiGeometry(first.value, anyNext, bytes.length, conflict);
-  if (!measured.ok) return measured;
-  throw new Error("unreachable");
-};
-
-const image = (bytes: Buffer): UbiImage => {
-  const parsed = parse(bytes);
+const image = async (bytes: Buffer): Promise<UbiImage> => {
+  const parsed = await parse(bytes);
   if (!parsed.ok) throw parsed.error;
   return parsed.value;
 };
 
-const reassemble = (bytes: Buffer, name: string): Buffer => {
-  const volume = image(bytes).volumes.find((row) => row.name === name)!;
+const reassemble = async (bytes: Buffer, name: string): Promise<Buffer> => {
+  const volume = (await image(bytes)).volumes.find((row) => row.name === name)!;
   return Buffer.concat(
     volume.ranges.map((range) =>
       bytes.subarray(range.offset, range.offset + range.length),
@@ -306,8 +62,8 @@ const RECORDS: readonly UbiFixtureVolumeRecord[] = [
   { id: 0, name: "rootfs", type: "dynamic", reservedPebs: 4 },
 ];
 
-it("decodes the volume table and per-volume facts of a two-volume image", () => {
-  const parsed = image(twoVolumeUbiImage());
+it("decodes the volume table and per-volume facts of a two-volume image", async () => {
+  const parsed = await image(twoVolumeUbiImage());
   expect(parsed.geometry).toMatchObject({
     pebSize: 2048,
     lebSize: 1920,
@@ -379,10 +135,12 @@ it("decodes the volume table and per-volume facts of a two-volume image", () => 
   ]);
 });
 
-it("keeps the highest sqnum copy of a LEB and truncates a static volume at data_size", () => {
+it("keeps the highest sqnum copy of a LEB and truncates a static volume at data_size", async () => {
   const bytes = twoVolumeUbiImage();
-  expect(reassemble(bytes, "kernel").equals(UBI_FIXTURE_KERNEL)).toBe(true);
-  const rootfs = reassemble(bytes, "rootfs");
+  expect((await reassemble(bytes, "kernel")).equals(UBI_FIXTURE_KERNEL)).toBe(
+    true,
+  );
+  const rootfs = await reassemble(bytes, "rootfs");
   expect(rootfs.subarray(0, 8).toString("latin1")).toBe("ROOTFS-0");
   expect(rootfs.subarray(1920, 1928).toString("latin1")).toBe("ROOTFS-1");
   expect(rootfs.includes("STALE")).toBe(false);
@@ -427,7 +185,7 @@ it("refuses a UBI# file too short to hold the erase-counter header", () => {
   });
 });
 
-it("skips PEBs with a bad EC or VID header CRC and names the limitation", () => {
+it("skips PEBs with a bad EC or VID header CRC and names the limitation", async () => {
   const records = RECORDS;
   const bytes = ubiImage([
     ...ubiLayoutPebs(records),
@@ -455,7 +213,7 @@ it("skips PEBs with a bad EC or VID header CRC and names the limitation", () => 
       ecCrc: 0,
     },
   ]);
-  const parsed = image(bytes);
+  const parsed = await image(bytes);
   expect(parsed.corruptPebCount).toBe(2);
   expect(parsed.limitations).toContain(UBI_IMAGE_LIMITATIONS.corruptPebs);
   expect(parsed.volumes[0]).toMatchObject({
@@ -489,8 +247,8 @@ describe("a volume whose only LEB sits in a corrupt PEB", () => {
     ["dynamic", "EC", { ecCrc: 0 }],
   ] as const)(
     "refuses a %s volume behind a bad %s header CRC instead of serving it empty",
-    (type, _header, bad) => {
-      const parsed = image(lostImage(type, bad));
+    async (type, _header, bad) => {
+      const parsed = await image(lostImage(type, bad));
       expect(parsed.corruptPebCount).toBe(1);
       expect(parsed.volumes[0]).toMatchObject({
         name: "kernel",
@@ -505,8 +263,8 @@ describe("a volume whose only LEB sits in a corrupt PEB", () => {
     },
   );
 
-  it("still reads an unmapped volume as empty without corrupt PEBs", () => {
-    const parsed = image(
+  it("still reads an unmapped volume as empty without corrupt PEBs", async () => {
+    const parsed = await image(
       ubiImage(
         ubiLayoutPebs([
           { id: 0, name: "kernel", type: "static", reservedPebs: 2 },
@@ -521,7 +279,7 @@ describe("a volume whose only LEB sits in a corrupt PEB", () => {
   });
 });
 
-it("refuses a dynamic volume with a missing LEB instead of inventing bytes", () => {
+it("refuses a dynamic volume with a missing LEB instead of inventing bytes", async () => {
   const bytes = ubiImage([
     ...ubiLayoutPebs(RECORDS),
     {
@@ -539,7 +297,7 @@ it("refuses a dynamic volume with a missing LEB instead of inventing bytes", () 
       sqnum: 3n,
     },
   ]);
-  const [volume] = image(bytes).volumes;
+  const [volume] = (await image(bytes)).volumes;
   expect(volume).toMatchObject({
     extractRefusal: "missing_lebs",
     missingLebCount: 1,
@@ -550,7 +308,7 @@ it("refuses a dynamic volume with a missing LEB instead of inventing bytes", () 
   });
 });
 
-it("refuses a static volume whose LEBs disagree on used_ebs", () => {
+it("refuses a static volume whose LEBs disagree on used_ebs", async () => {
   const records: UbiFixtureVolumeRecord[] = [
     { id: 0, name: "kernel", type: "static", reservedPebs: 2 },
   ];
@@ -575,17 +333,17 @@ it("refuses a static volume whose LEBs disagree on used_ebs", () => {
       usedEbs: 1,
     },
   ]);
-  expect(image(bytes).volumes[0]).toMatchObject({
+  expect((await image(bytes)).volumes[0]).toMatchObject({
     extractRefusal: "invalid_static_size",
     usedEbs: null,
   });
 });
 
-it("uses the first valid volume table copy and names a disagreement", () => {
+it("uses the first valid volume table copy and names a disagreement", async () => {
   const slots = ubiVolumeTableSlots();
   const first = ubiVolumeTable(RECORDS, slots);
   const second = ubiVolumeTable([{ ...RECORDS[0]!, name: "renamed" }], slots);
-  const disagreeing = image(
+  const disagreeing = await image(
     ubiImage([
       ...ubiLayoutPebs(RECORDS, {}, [first, second]),
       { kind: "free" },
@@ -603,7 +361,7 @@ it("uses the first valid volume table copy and names a disagreement", () => {
 
   const corrupt = Buffer.from(first);
   corrupt[20] = 0x7a;
-  const fallback = image(
+  const fallback = await image(
     ubiImage([
       ...ubiLayoutPebs(RECORDS, {}, [corrupt, second]),
       { kind: "free" },
@@ -620,7 +378,7 @@ it("uses the first valid volume table copy and names a disagreement", () => {
     UBI_IMAGE_LIMITATIONS.volumeTableSingleCopy,
   );
 
-  const none = parse(
+  const none = await parse(
     ubiImage([
       ...ubiLayoutPebs(RECORDS, {}, [corrupt, corrupt]),
       { kind: "free" },
@@ -635,16 +393,16 @@ it("uses the first valid volume table copy and names a disagreement", () => {
   });
 });
 
-it("refuses an inconsistent eraseblock size or header layout", () => {
+it("refuses an inconsistent eraseblock size or header layout", async () => {
   const bytes = twoVolumeUbiImage();
-  expect(parse(bytes.subarray(0, bytes.length - 512))).toMatchObject({
+  expect(await parse(bytes.subarray(0, bytes.length - 512))).toMatchObject({
     ok: false,
     error: {
       kind: "malformed",
       message: expect.stringContaining("is not a multiple of the 2048-byte"),
     },
   });
-  expect(parse(bytes.subarray(0, 2048))).toMatchObject({
+  expect(await parse(bytes.subarray(0, 2048))).toMatchObject({
     ok: false,
     error: {
       message: expect.stringContaining("no second erase-counter header"),
@@ -654,7 +412,7 @@ it("refuses an inconsistent eraseblock size or header layout", () => {
     bytes.subarray(0, 4096),
     ubiImage([{ kind: "free" }], { imageSeq: 7 }),
   ]);
-  expect(parse(mixed)).toMatchObject({
+  expect(await parse(mixed)).toMatchObject({
     ok: false,
     error: {
       message: expect.stringContaining(
@@ -664,7 +422,7 @@ it("refuses an inconsistent eraseblock size or header layout", () => {
   });
 });
 
-it("treats a zero image sequence as unspecified, as Linux UBI attach does", () => {
+it("treats a zero image sequence as unspecified, as Linux UBI attach does", async () => {
   const legacy = ubiImage([{ kind: "free" }], { imageSeq: 0 });
   const tail = (imageSeq: number) =>
     ubiImage(
@@ -678,7 +436,7 @@ it("treats a zero image sequence as unspecified, as Linux UBI attach does", () =
       legacy,
       later,
     ]);
-  const parsed = image(zeroFirst(tail(0x1234_5678)));
+  const parsed = await image(zeroFirst(tail(0x1234_5678)));
   expect(parsed.geometry).toMatchObject({
     pebSize: 2048,
     imageSeq: 0x1234_5678,
@@ -686,16 +444,20 @@ it("treats a zero image sequence as unspecified, as Linux UBI attach does", () =
   expect(parsed.volumes[0]).toMatchObject({ dataBytes: 1920 });
   // A zero sequence after a nonzero one is accepted while sizing.
   expect(
-    image(
-      Buffer.concat([
-        ubiImage(ubiLayoutPebs(RECORDS).slice(0, 1)),
-        legacy,
-        ubiImage(ubiLayoutPebs(RECORDS).slice(1)),
-      ]),
+    (
+      await image(
+        Buffer.concat([
+          ubiImage(ubiLayoutPebs(RECORDS).slice(0, 1)),
+          legacy,
+          ubiImage(ubiLayoutPebs(RECORDS).slice(1)),
+        ]),
+      )
     ).geometry,
   ).toMatchObject({ pebSize: 2048, pebCount: 3, imageSeq: 0x1234_5678 });
   // Two different nonzero sequences still disagree after zeros.
-  expect(parse(Buffer.concat([zeroFirst(tail(5)), tail(6)]))).toMatchObject({
+  expect(
+    await parse(Buffer.concat([zeroFirst(tail(5)), tail(6)])),
+  ).toMatchObject({
     ok: false,
     error: {
       message: expect.stringContaining(
@@ -705,25 +467,27 @@ it("treats a zero image sequence as unspecified, as Linux UBI attach does", () =
   });
 });
 
-it("ignores LEBs of volumes without a volume table record", () => {
+it("ignores LEBs of volumes without a volume table record", async () => {
   const bytes = ubiImage([
     ...ubiLayoutPebs(RECORDS),
     { kind: "leb", volId: 5, lnum: 0, data: ubiLebData(0x35), sqnum: 2n },
     { kind: "leb", volId: 0, lnum: 9, data: ubiLebData(0x39), sqnum: 3n },
   ]);
-  const parsed = image(bytes);
+  const parsed = await image(bytes);
   expect(parsed.ignoredLebCount).toBe(2);
   expect(parsed.limitations).toContain(UBI_IMAGE_LIMITATIONS.ignoredLebs);
   expect(parsed.volumes[0]).toMatchObject({ dataBytes: 0, mappedLebCount: 0 });
 });
 
-it("normalizes unsafe and duplicate volume names into distinct paths", () => {
+it("normalizes unsafe and duplicate volume names into distinct paths", async () => {
   const records: UbiFixtureVolumeRecord[] = [
     { id: 0, name: "../etc", type: "dynamic", reservedPebs: 1 },
     { id: 1, name: "a/b", type: "dynamic", reservedPebs: 1 },
     { id: 2, name: "a_b", type: "dynamic", reservedPebs: 1 },
   ];
-  const parsed = image(ubiImage([...ubiLayoutPebs(records), { kind: "free" }]));
+  const parsed = await image(
+    ubiImage([...ubiLayoutPebs(records), { kind: "free" }]),
+  );
   expect(parsed.volumes.map((volume) => volume.path)).toEqual([
     "volumes/_etc",
     "volumes/a_b",
@@ -731,7 +495,7 @@ it("normalizes unsafe and duplicate volume names into distinct paths", () => {
   ]);
 });
 
-it("counts missing LEBs from mapped entries when a volume declares billions", () => {
+it("counts missing LEBs from mapped entries when a volume declares billions", async () => {
   const records: UbiFixtureVolumeRecord[] = [
     { id: 0, name: "huge", type: "static", reservedPebs: 0xffff_fff0 },
     { id: 1, name: "sparse", type: "dynamic", reservedPebs: 0xffff_fff0 },
@@ -756,7 +520,7 @@ it("counts missing LEBs from mapped entries when a volume declares billions", ()
       sqnum: 4n,
     },
   ]);
-  const [huge, sparse] = image(bytes).volumes;
+  const [huge, sparse] = (await image(bytes)).volumes;
   expect(huge).toMatchObject({
     extractRefusal: "missing_lebs",
     missingLebCount: 0xffff_ffef,
@@ -769,7 +533,7 @@ it("counts missing LEBs from mapped entries when a volume declares billions", ()
   });
 });
 
-it("refuses a PEB size measured across a skipped eraseblock", () => {
+it("refuses a PEB size measured across a skipped eraseblock", async () => {
   // PEB 1 is erased, so the second header is at PEB 2 and an even image size
   // divides by the doubled size; the header at PEB 3 contradicts it.
   const bytes = ubiImage([
@@ -778,7 +542,7 @@ it("refuses a PEB size measured across a skipped eraseblock", () => {
     ...ubiLayoutPebs(RECORDS).slice(1),
     { kind: "leb", volId: 0, lnum: 0, data: ubiLebData(0x30), sqnum: 2n },
   ]);
-  expect(parse(bytes)).toMatchObject({
+  expect(await parse(bytes)).toMatchObject({
     ok: false,
     error: {
       kind: "malformed",
@@ -810,23 +574,23 @@ describe("interrupted wear-leveling copies", () => {
       },
     ]);
 
-  it("keeps a newer copy whose data CRC verifies", () => {
+  it("keeps a newer copy whose data CRC verifies", async () => {
     const bytes = copied();
-    expect(reassemble(bytes, "rootfs").subarray(0, 4).toString("latin1")).toBe(
-      "COPY",
-    );
-    expect(image(bytes)).toMatchObject({
+    expect(
+      (await reassemble(bytes, "rootfs")).subarray(0, 4).toString("latin1"),
+    ).toBe("COPY");
+    expect(await image(bytes)).toMatchObject({
       interruptedCopyCount: 0,
       staleLebCopyCount: 1,
     });
   });
 
-  it("falls back to the older copy when the newer copy's data CRC fails", () => {
+  it("falls back to the older copy when the newer copy's data CRC fails", async () => {
     const bytes = copied(0);
-    expect(reassemble(bytes, "rootfs").subarray(0, 8).toString("latin1")).toBe(
-      "ORIGINAL",
-    );
-    const parsed = image(bytes);
+    expect(
+      (await reassemble(bytes, "rootfs")).subarray(0, 8).toString("latin1"),
+    ).toBe("ORIGINAL");
+    const parsed = await image(bytes);
     expect(parsed.interruptedCopyCount).toBe(1);
     expect(parsed.limitations).toContain(UBI_IMAGE_LIMITATIONS.interruptedCopy);
   });
@@ -854,16 +618,16 @@ describe("interrupted wear-leveling copies", () => {
       },
     ]);
 
-  it("falls back to an older wear-leveling copy whose data CRC verifies", () => {
+  it("falls back to an older wear-leveling copy whose data CRC verifies", async () => {
     const bytes = bothCopies();
-    expect(reassemble(bytes, "rootfs").subarray(0, 7).toString("latin1")).toBe(
-      "OLDCOPY",
-    );
-    expect(image(bytes).volumes[0]?.extractRefusal).toBeNull();
+    expect(
+      (await reassemble(bytes, "rootfs")).subarray(0, 7).toString("latin1"),
+    ).toBe("OLDCOPY");
+    expect((await image(bytes)).volumes[0]?.extractRefusal).toBeNull();
   });
 
-  it("refuses the volume when both competing copies fail their data CRC", () => {
-    const parsed = image(bothCopies(0));
+  it("refuses the volume when both competing copies fail their data CRC", async () => {
+    const parsed = await image(bothCopies(0));
     expect(parsed.interruptedCopyCount).toBe(1);
     expect(parsed.volumes[0]).toMatchObject({
       name: "rootfs",
@@ -905,7 +669,7 @@ describe("unverified wear-leveling copies of the layout volume", () => {
     },
   ];
 
-  it("ignores an unverified layout LEB 0 and uses the sound layout LEB 1 table", () => {
+  it("ignores an unverified layout LEB 0 and uses the sound layout LEB 1 table", async () => {
     const slots = ubiVolumeTableSlots();
     const staleTable = ubiVolumeTable(
       [{ id: 0, name: "stale", type: "dynamic", reservedPebs: 1 }],
@@ -933,7 +697,7 @@ describe("unverified wear-leveling copies of the layout volume", () => {
         sqnum: 4n,
       },
     ]);
-    const parsed = image(bytes);
+    const parsed = await image(bytes);
     expect(parsed.volumeTable).toMatchObject({
       copiesFound: 1,
       copiesValid: 1,
@@ -955,19 +719,19 @@ describe("unverified wear-leveling copies of the layout volume", () => {
       UBI_IMAGE_LIMITATIONS.volumeTableSingleCopy,
     );
     expect(parsed.limitations).toContain(UBI_IMAGE_LIMITATIONS.interruptedCopy);
-    expect(reassemble(bytes, "current").subarray(0, 7).toString("latin1")).toBe(
-      "CURRENT",
-    );
+    expect(
+      (await reassemble(bytes, "current")).subarray(0, 7).toString("latin1"),
+    ).toBe("CURRENT");
   });
 
-  it("refuses the image when both layout LEBs are unverified wear-leveling copies", () => {
+  it("refuses the image when both layout LEBs are unverified wear-leveling copies", async () => {
     const slots = ubiVolumeTableSlots();
     const table = ubiVolumeTable(RECORDS, slots);
     const bytes = ubiImage([
       ...unverifiedLayoutLeb(0, table, 1n),
       ...unverifiedLayoutLeb(1, table, 3n),
     ]);
-    expect(parse(bytes)).toMatchObject({
+    expect(await parse(bytes)).toMatchObject({
       ok: false,
       error: {
         kind: "malformed",
@@ -977,7 +741,7 @@ describe("unverified wear-leveling copies of the layout volume", () => {
   });
 });
 
-it("classifies a wear-leveling copy with data_size beyond leb_size - data_pad as corrupt", () => {
+it("classifies a wear-leveling copy with data_size beyond leb_size - data_pad as corrupt", async () => {
   // leb_size 1920 with alignment 1000 gives data_pad 920 and usable LEB 1000.
   const records: UbiFixtureVolumeRecord[] = [
     {
@@ -1011,7 +775,7 @@ it("classifies a wear-leveling copy with data_size beyond leb_size - data_pad as
       copyFlag: true,
     },
   ]);
-  const parsed = image(bytes);
+  const parsed = await image(bytes);
   const oversizedPeb = classifyUbiPeb(
     bytes.subarray(
       3 * parsed.geometry.pebSize,
@@ -1047,12 +811,12 @@ it("classifies a wear-leveling copy with data_size beyond leb_size - data_pad as
     extractRefusal: null,
     ranges: [{ lnum: 0, peb: 2, offset: 2 * 2048 + 128, length: 1000 }],
   });
-  expect(reassemble(bytes, "rootfs").equals(original.subarray(0, 1000))).toBe(
-    true,
-  );
+  expect(
+    (await reassemble(bytes, "rootfs")).equals(original.subarray(0, 1000)),
+  ).toBe(true);
 });
 
-it("refuses a static volume whose nonfinal LEB is short", () => {
+it("refuses a static volume whose nonfinal LEB is short", async () => {
   const records: UbiFixtureVolumeRecord[] = [
     { id: 0, name: "kernel", type: "static", reservedPebs: 2 },
   ];
@@ -1077,14 +841,14 @@ it("refuses a static volume whose nonfinal LEB is short", () => {
       usedEbs: 2,
     },
   ]);
-  expect(image(bytes).volumes[0]).toMatchObject({
+  expect((await image(bytes)).volumes[0]).toMatchObject({
     extractRefusal: "invalid_static_size",
     dataBytes: null,
     ranges: [],
   });
 });
 
-it("refuses a volume whose VID type or data_pad differs from its record", () => {
+it("refuses a volume whose VID type or data_pad differs from its record", async () => {
   const records: UbiFixtureVolumeRecord[] = [
     { id: 0, name: "typed", type: "dynamic", reservedPebs: 2 },
     // 1920 % 928 = 64, so the record itself is consistent.
@@ -1110,7 +874,7 @@ it("refuses a volume whose VID type or data_pad differs from its record", () => 
     },
     { kind: "leb", volId: 1, lnum: 0, data: ubiLebData(0x31), sqnum: 3n },
   ]);
-  const volumes = image(bytes).volumes;
+  const volumes = (await image(bytes)).volumes;
   for (const volume of volumes)
     expect(volume).toMatchObject({
       extractRefusal: "vid_record_mismatch",
@@ -1120,7 +884,7 @@ it("refuses a volume whose VID type or data_pad differs from its record", () => 
     });
 });
 
-it("keeps the stored bytes of a volume name that is not valid UTF-8", () => {
+it("keeps the stored bytes of a volume name that is not valid UTF-8", async () => {
   const records: UbiFixtureVolumeRecord[] = [
     {
       id: 0,
@@ -1138,7 +902,9 @@ it("keeps the stored bytes of a volume name that is not valid UTF-8", () => {
     },
     { id: 2, name: "caf\u00e9", type: "dynamic", reservedPebs: 1 },
   ];
-  const parsed = image(ubiImage([...ubiLayoutPebs(records), { kind: "free" }]));
+  const parsed = await image(
+    ubiImage([...ubiLayoutPebs(records), { kind: "free" }]),
+  );
   expect(
     parsed.volumes.map(({ name, nameBytesHex }) => ({ name, nameBytesHex })),
   ).toEqual([
@@ -1148,7 +914,7 @@ it("keeps the stored bytes of a volume name that is not valid UTF-8", () => {
   ]);
 });
 
-it("refuses an eraseblock size that also fits with erased eraseblocks between", () => {
+it("refuses an eraseblock size that also fits with erased eraseblocks between", async () => {
   // Written 32 KiB eraseblocks alternate with erased ones, so the second EC
   // header is 64 KiB away, the size divides the file, and no header lies off
   // the 64 KiB grid. The 128-slot volume table fits either LEB size.
@@ -1172,7 +938,7 @@ it("refuses an eraseblock size that also fits with erased eraseblocks between", 
     ],
     geometry,
   );
-  expect(parse(alternating)).toMatchObject({
+  expect(await parse(alternating)).toMatchObject({
     ok: false,
     error: {
       kind: "malformed",
@@ -1191,14 +957,15 @@ it("refuses an eraseblock size that also fits with erased eraseblocks between", 
     ],
     wide,
   );
-  expect(image(full).geometry).toMatchObject({ pebSize: 65536, pebCount: 3 });
-  expect(image(full).volumes[0]).toMatchObject({ dataBytes: 65408 });
+  const parsedFull = await image(full);
+  expect(parsedFull.geometry).toMatchObject({ pebSize: 65536, pebCount: 3 });
+  expect(parsedFull.volumes[0]).toMatchObject({ dataBytes: 65408 });
 });
 
-it("refuses a truncated image when embedded headers suggest a larger eraseblock", () => {
+it("refuses a truncated image when embedded headers suggest a larger eraseblock", async () => {
   const bytes = ubiImageWithEmbeddedPebHeaders();
-  expect(image(bytes).geometry.pebSize).toBe(32_768);
-  expect(parse(bytes.subarray(0, 73_728))).toMatchObject({
+  expect((await image(bytes)).geometry.pebSize).toBe(32_768);
+  expect(await parse(bytes.subarray(0, 73_728))).toMatchObject({
     ok: false,
     error: {
       kind: "malformed",
@@ -1207,7 +974,7 @@ it("refuses a truncated image when embedded headers suggest a larger eraseblock"
   });
 });
 
-it("refuses an image whose next erase-counter header disagrees with the first", () => {
+it("refuses an image whose next erase-counter header disagrees with the first", async () => {
   // A valid header with another image_seq or layout begins an eraseblock, so
   // it is the eraseblock size and the image is refused, not measured past.
   const geometry = { pebSize: 32 * 1024 };
@@ -1226,7 +993,7 @@ it("refuses an image whose next erase-counter header disagrees with the first", 
       ubiImage([layout1!, { kind: "erased" }], geometry),
     ]);
   expect(
-    parse(withSecond(ubiImage([rootfs], { ...geometry, imageSeq: 7 }))),
+    await parse(withSecond(ubiImage([rootfs], { ...geometry, imageSeq: 7 }))),
   ).toMatchObject({
     ok: false,
     error: {
@@ -1237,7 +1004,7 @@ it("refuses an image whose next erase-counter header disagrees with the first", 
     },
   });
   expect(
-    parse(
+    await parse(
       withSecond(
         ubiImage([rootfs], {
           ...geometry,
@@ -1263,7 +1030,7 @@ it("refuses an image whose next erase-counter header disagrees with the first", 
       ubiImage([peb], { ...geometry, imageSeq: index % 2 === 0 ? 5 : 6 }),
     ),
   );
-  expect(parse(alternating)).toMatchObject({
+  expect(await parse(alternating)).toMatchObject({
     ok: false,
     error: {
       message: expect.stringContaining(
@@ -1273,7 +1040,7 @@ it("refuses an image whose next erase-counter header disagrees with the first", 
   });
 });
 
-it("accepts an eraseblock size whose volume table padding rules out the smaller one", () => {
+it("accepts an eraseblock size whose volume table padding rules out the smaller one", async () => {
   // 128 KiB eraseblocks with data_offset 4096 leave a 126976-byte LEB, so
   // alignment 6144 pads 4096 bytes. A 64 KiB eraseblock would leave a
   // 61440-byte LEB that alignment 6144 divides, so its table would need
@@ -1308,7 +1075,7 @@ it("accepts an eraseblock size whose volume table padding rules out the smaller 
     ],
     geometry,
   );
-  const parsed = image(bytes);
+  const parsed = await image(bytes);
   expect(parsed.geometry).toMatchObject({ pebSize: 131072, pebCount: 3 });
   expect(parsed.volumes[0]).toMatchObject({
     name: "rootfs",
@@ -1333,7 +1100,7 @@ it("accepts an eraseblock size whose volume table padding rules out the smaller 
     ],
     geometry,
   );
-  expect(parse(unaligned)).toMatchObject({
+  expect(await parse(unaligned)).toMatchObject({
     ok: false,
     error: {
       message: expect.stringContaining(
@@ -1343,7 +1110,7 @@ it("accepts an eraseblock size whose volume table padding rules out the smaller 
   });
 });
 
-it("refuses two copies of one LEB that share a sequence number", () => {
+it("refuses two copies of one LEB that share a sequence number", async () => {
   const copy = (lnum: number, fill: number, volId = 0) => ({
     kind: "leb" as const,
     volId,
@@ -1352,7 +1119,9 @@ it("refuses two copies of one LEB that share a sequence number", () => {
     sqnum: 2n,
   });
   expect(
-    parse(ubiImage([...ubiLayoutPebs(RECORDS), copy(0, 0x30), copy(0, 0x31)])),
+    await parse(
+      ubiImage([...ubiLayoutPebs(RECORDS), copy(0, 0x30), copy(0, 0x31)]),
+    ),
   ).toMatchObject({
     ok: false,
     error: {
@@ -1366,25 +1135,30 @@ it("refuses two copies of one LEB that share a sequence number", () => {
   // The layout volume is held to the same rule.
   const [layout0] = ubiLayoutPebs(RECORDS);
   expect(
-    parse(ubiImage([layout0!, ...ubiLayoutPebs(RECORDS), { kind: "free" }])),
+    await parse(
+      ubiImage([layout0!, ...ubiLayoutPebs(RECORDS), { kind: "free" }]),
+    ),
   ).toMatchObject({
     ok: false,
     error: { message: expect.stringContaining("so neither copy is newer") },
   });
   // Equal sqnums on different LEBs are not a conflict.
   expect(
-    image(ubiImage([...ubiLayoutPebs(RECORDS), copy(0, 0x30), copy(1, 0x31)]))
-      .volumes[0],
+    (
+      await image(
+        ubiImage([...ubiLayoutPebs(RECORDS), copy(0, 0x30), copy(1, 0x31)]),
+      )
+    ).volumes[0],
   ).toMatchObject({ dataBytes: 3840 });
 });
 
-it("rejects a volume table record whose data_pad is not leb_size % alignment", () => {
+it("rejects a volume table record whose data_pad is not leb_size % alignment", async () => {
   const slots = ubiVolumeTableSlots();
   const padded = (alignment: number, dataPad: number) =>
     ubiVolumeTable([{ ...RECORDS[0]!, alignment, dataPad }], slots);
   const bad = padded(1, 1);
   // A malformed first copy loses to a valid second copy.
-  const fallback = image(
+  const fallback = await image(
     ubiImage([
       ...ubiLayoutPebs(RECORDS, {}, [bad, ubiVolumeTable(RECORDS, slots)]),
       { kind: "free" },
@@ -1396,7 +1170,7 @@ it("rejects a volume table record whose data_pad is not leb_size % alignment", (
     usableLebSize: 1920,
   });
   expect(
-    parse(
+    await parse(
       ubiImage([...ubiLayoutPebs(RECORDS, {}, [bad, bad]), { kind: "free" }]),
     ),
   ).toMatchObject({
@@ -1404,7 +1178,7 @@ it("rejects a volume table record whose data_pad is not leb_size % alignment", (
     error: { message: expect.stringContaining("outside the UBI layout") },
   });
   // 1920 % 1000 = 920 is the only padding alignment 1000 admits.
-  const aligned = image(
+  const aligned = await image(
     ubiImage([
       ...ubiLayoutPebs(RECORDS, {}, [padded(1000, 920), padded(1000, 920)]),
       { kind: "free" },
@@ -1416,7 +1190,7 @@ it("rejects a volume table record whose data_pad is not leb_size % alignment", (
   });
 });
 
-it("refuses a mapped static LEB that declares zero used_ebs", () => {
+it("refuses a mapped static LEB that declares zero used_ebs", async () => {
   const records: UbiFixtureVolumeRecord[] = [
     { id: 0, name: "kernel", type: "static", reservedPebs: 2 },
     { id: 1, name: "empty", type: "static", reservedPebs: 2 },
@@ -1433,7 +1207,7 @@ it("refuses a mapped static LEB that declares zero used_ebs", () => {
       usedEbs: 0,
     },
   ]);
-  const [kernel, empty] = image(bytes).volumes;
+  const [kernel, empty] = (await image(bytes)).volumes;
   expect(kernel).toMatchObject({
     extractRefusal: "invalid_static_size",
     mappedLebCount: 1,
@@ -1463,7 +1237,7 @@ const withEcField = (
   return copy;
 };
 
-it("refuses a header on a smaller grid beyond the spacing check", () => {
+it("refuses a header on a smaller grid beyond the spacing check", async () => {
   // Odd 2 KiB eraseblocks 1..9 are erased, so the second header is 4 KiB
   // away and the spacing check finds nothing off that grid. The free
   // eraseblock 11 begins on the 2 KiB grid, so 4 KiB would merge it into
@@ -1484,7 +1258,7 @@ it("refuses a header on a smaller grid beyond the spacing check", () => {
     { kind: "leb", volId: 0, lnum: 1, data: ubiLebData(0x31), sqnum: 3n },
     { kind: "free" },
   ]);
-  expect(parse(bytes)).toMatchObject({
+  expect(await parse(bytes)).toMatchObject({
     ok: false,
     error: {
       kind: "malformed",
@@ -1496,7 +1270,7 @@ it("refuses a header on a smaller grid beyond the spacing check", () => {
   });
 });
 
-it("refuses a smaller-grid header after written positions and on a finer grid", () => {
+it("refuses a smaller-grid header after written positions and on a finer grid", async () => {
   // The second header is 8 KiB away and nothing else lies off that grid in
   // the spacing check. The 4 KiB position at real eraseblock 2 is written (a
   // corrupt EC header), and the free eraseblock 21 begins on the 2 KiB grid
@@ -1522,7 +1296,7 @@ it("refuses a smaller-grid header after written positions and on a finer grid", 
     sqnum: 2n,
   };
   pebs[21] = { kind: "free" };
-  expect(parse(ubiImage(pebs))).toMatchObject({
+  expect(await parse(ubiImage(pebs))).toMatchObject({
     ok: false,
     error: {
       kind: "malformed",
@@ -1534,7 +1308,7 @@ it("refuses a smaller-grid header after written positions and on a finer grid", 
   });
 });
 
-it("accepts an eraseblock size whose static LEB cannot fit the smaller one", () => {
+it("accepts an eraseblock size whose static LEB cannot fit the smaller one", async () => {
   // Every header position on the 32 KiB grid is erased, but the static LEB
   // declares more data than a 32 KiB eraseblock holds.
   const wide = { pebSize: 64 * 1024 };
@@ -1543,7 +1317,7 @@ it("accepts an eraseblock size whose static LEB cannot fit the smaller one", () 
   ];
   const data = Buffer.alloc(64 * 1024 - 128, 0x4b);
   data.fill(0xff, 32 * 1024 - 128, 32 * 1024);
-  const parsed = image(
+  const parsed = await image(
     ubiImage(
       [
         ...ubiLayoutPebs(records, wide),
@@ -1678,16 +1452,19 @@ describe("erase-counter headers inside static LEB payload", () => {
   it.each([
     ["inside the spacing check", inSpacingCheck],
     ["beyond the spacing check", beyondSpacingCheck],
-  ])("accepts a header %s that no smaller LEB could hold", (_case, at) => {
-    const parsed = parse(nestedImage("static", at));
-    expect(parsed).toMatchObject({
-      ok: true,
-      value: {
-        geometry: { pebSize: wide.pebSize, pebCount: 8 },
-        volumes: [{ extractRefusal: null, dataBytes: 6 * lebBytes }],
-      },
-    });
-  });
+  ])(
+    "accepts a header %s that no smaller LEB could hold",
+    async (_case, at) => {
+      const parsed = await parse(nestedImage("static", at));
+      expect(parsed).toMatchObject({
+        ok: true,
+        value: {
+          geometry: { pebSize: wide.pebSize, pebCount: 8 },
+          volumes: [{ extractRefusal: null, dataBytes: 6 * lebBytes }],
+        },
+      });
+    },
+  );
 
   it.each([
     ["inside the spacing check", inSpacingCheck, 2 * 128 * 1024 + 64 * 1024],
@@ -1698,9 +1475,9 @@ describe("erase-counter headers inside static LEB payload", () => {
     ],
   ])(
     "still refuses a header %s when a smaller LEB fits",
-    (_case, at, offset) => {
+    async (_case, at, offset) => {
       // Dynamic LEBs declare no data size, so a smaller size stays possible.
-      expect(parse(nestedImage("dynamic", at))).toMatchObject({
+      expect(await parse(nestedImage("dynamic", at))).toMatchObject({
         ok: false,
         error: {
           kind: "malformed",
@@ -1718,7 +1495,7 @@ describe("erase-counter headers no eraseblock could begin at", () => {
   const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
   const lebBytes = wide.pebSize - wide.dataOffset;
 
-  it("reads a dynamic LEB holding a nested image the same in any PEB", () => {
+  it("reads a dynamic LEB holding a nested image the same in any PEB", async () => {
     // A nested image of 2 KiB eraseblocks at the start of a dynamic LEB puts
     // valid headers 4096 and 6144 bytes into the outer eraseblock, which no
     // eligible smaller eraseblock (8 KiB and up, dividing 128 KiB) begins at.
@@ -1745,7 +1522,7 @@ describe("erase-counter headers no eraseblock could begin at", () => {
         wide,
       );
     // LEB 0 sits in PEB 2, inside the spacing check; LEB 3 in PEB 5 beyond it.
-    const inSpacingCheck = parse(withNestedLeb(0));
+    const inSpacingCheck = await parse(withNestedLeb(0));
     expect(inSpacingCheck).toMatchObject({
       ok: true,
       value: {
@@ -1753,7 +1530,7 @@ describe("erase-counter headers no eraseblock could begin at", () => {
         volumes: [{ extractRefusal: null, mappedLebCount: 6 }],
       },
     });
-    expect(inSpacingCheck).toEqual(parse(withNestedLeb(3)));
+    expect(inSpacingCheck).toEqual(await parse(withNestedLeb(3)));
   });
 
   it.each([
@@ -1761,7 +1538,7 @@ describe("erase-counter headers no eraseblock could begin at", () => {
     ["a different layout", { pebSize: 64 * 1024, dataOffset: 2048 }],
   ])(
     "measures past a nested header of %s inside the first PEB's static data",
-    (_case, inner) => {
+    async (_case, inner) => {
       // The dump starts with a static LEB, layout LEBs elsewhere, and a
       // nested header 64 KiB into it. Its VID header declares 126976 bytes of
       // data, so the next eraseblock cannot begin before 128 KiB.
@@ -1790,7 +1567,7 @@ describe("erase-counter headers no eraseblock could begin at", () => {
       expect(first.ok && firstPebMinSize(bytes, first.value)).toBe(
         wide.pebSize,
       );
-      expect(parse(bytes)).toMatchObject({
+      expect(await parse(bytes)).toMatchObject({
         ok: true,
         value: {
           geometry: { pebSize: wide.pebSize, pebCount: 8 },
@@ -1822,7 +1599,7 @@ describe("erase-counter headers no eraseblock could begin at", () => {
     expect(ubiFirstVidHeaderOffset(first.value, 100)).toBeNull();
   });
 
-  it("measures past a nested image in the first PEB's dynamic data", () => {
+  it("measures past a nested image in the first PEB's dynamic data", async () => {
     // A dynamic VID header declares no data size, so only the file size rules
     // out the nested header 6144 bytes in: 524288 is not a multiple of it.
     const nested = ubiImage([{ kind: "free" }, { kind: "free" }]);
@@ -1839,7 +1616,7 @@ describe("erase-counter headers no eraseblock could begin at", () => {
       wide,
     );
     expect(bytes.length).toBe(4 * wide.pebSize);
-    expect(parse(bytes)).toMatchObject({
+    expect(await parse(bytes)).toMatchObject({
       ok: true,
       value: {
         geometry: { pebSize: wide.pebSize, pebCount: 4 },
@@ -1864,7 +1641,7 @@ it.each([
   ],
 ])(
   "retries past a dividing 64 KiB EC header (%s) in a dynamic first LEB when the volume table rules out smaller sizes",
-  (_case, inner) => {
+  async (_case, inner) => {
     // 128 KiB PEBs with data_offset 4096 leave a 126976-byte LEB. With
     // alignment 10240 and data_pad 4096 (126976 % 10240 === 4096), every
     // smaller dividing PEB size (64, 32, 16, 8 KiB) invalidates the volume
@@ -1904,7 +1681,7 @@ it.each([
       wide,
     );
     expect(firstLebImage.length % (64 * 1024)).toBe(0);
-    const parsed = image(firstLebImage);
+    const parsed = await image(firstLebImage);
     expect(parsed.geometry).toMatchObject({
       pebSize: wide.pebSize,
       pebCount: 3,
@@ -1915,11 +1692,10 @@ it.each([
       dataBytes: 122_880,
       extractRefusal: null,
     });
-    expect(reassemble(firstLebImage, "rootfs").equals(rootfsData)).toBe(true);
+    const firstRootfs = await reassemble(firstLebImage, "rootfs");
+    expect(firstRootfs.equals(rootfsData)).toBe(true);
     expect(
-      reassemble(firstLebImage, "rootfs").equals(
-        reassemble(trailingLebImage, "rootfs"),
-      ),
+      firstRootfs.equals(await reassemble(trailingLebImage, "rootfs")),
     ).toBe(true);
   },
 );
@@ -1983,8 +1759,8 @@ describe("passed-over candidate boundaries", () => {
     ],
   ] as const)(
     "refuses a 128 KiB retry when passed-over 64 KiB headers lie outside mapped non-layout LEBs (%s)",
-    (_case, pebs) => {
-      const parsed = parse(ubiImage(pebs, narrow));
+    async (_case, pebs) => {
+      const parsed = await parse(ubiImage(pebs, narrow));
       expect(parsed).toMatchObject({
         ok: false,
         error: {
@@ -1995,7 +1771,7 @@ describe("passed-over candidate boundaries", () => {
     },
   );
 
-  it("accepts a later dividing candidate that places a non-dividing mapped nested header inside mapped non-layout LEB data", () => {
+  it("accepts a later dividing candidate that places a non-dividing mapped nested header inside mapped non-layout LEB data", async () => {
     const lebBytes = wide.pebSize - wide.dataOffset;
     const nested = ubiImage(
       [
@@ -2030,7 +1806,7 @@ describe("passed-over candidate boundaries", () => {
       ],
       wide,
     );
-    const parsed = image(bytes);
+    const parsed = await image(bytes);
     expect(parsed.geometry).toMatchObject({
       pebSize: wide.pebSize,
       pebCount: 4,
@@ -2039,58 +1815,15 @@ describe("passed-over candidate boundaries", () => {
       { name: "rootfs", dataBytes: 2 * lebBytes, extractRefusal: null },
     ]);
     expect(
-      reassemble(bytes, "rootfs").equals(Buffer.concat([first, second])),
+      (await reassemble(bytes, "rootfs")).equals(
+        Buffer.concat([first, second]),
+      ),
     ).toBe(true);
   });
 
-  it("retries past a dividing 64 KiB EC header when a CRC-valid static VID needs a larger eraseblock", () => {
-    const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
-    const lebBytes = wide.pebSize - wide.dataOffset;
-    const rootfsData = Buffer.alloc(lebBytes, 0x52);
-    ubiImage([{ kind: "free" }], wide)
-      .subarray(0, 64)
-      .copy(rootfsData, 64 * 1024 - wide.dataOffset);
-    const staticData = Buffer.alloc(lebBytes, 0x53);
-    const bytes = ubiImage(
-      [
-        { kind: "leb", volId: 0, lnum: 0, data: rootfsData, sqnum: 2n },
-        {
-          kind: "leb",
-          volId: 1,
-          lnum: 0,
-          data: staticData,
-          sqnum: 3n,
-          volType: "static",
-          usedEbs: 1,
-        },
-        ...ubiLayoutPebs(
-          [
-            { id: 0, name: "rootfs", type: "dynamic", reservedPebs: 1 },
-            { id: 1, name: "kernel", type: "static", reservedPebs: 1 },
-          ],
-          wide,
-        ),
-      ],
-      wide,
-    );
-    expect(bytes.length).toBe(4 * wide.pebSize);
-    const parsed = image(bytes);
-    expect(parsed.geometry).toMatchObject({
-      pebSize: wide.pebSize,
-      pebCount: 4,
-    });
-    expect(parsed.corruptPebCount).toBe(0);
-    expect(parsed.volumes).toMatchObject([
-      { name: "rootfs", dataBytes: lebBytes, extractRefusal: null },
-      { name: "kernel", dataBytes: lebBytes, extractRefusal: null },
-    ]);
-    expect(reassemble(bytes, "rootfs").equals(rootfsData)).toBe(true);
-    expect(reassemble(bytes, "kernel").equals(staticData)).toBe(true);
-  });
-
-  it("keeps refusing a truncated dump when the later dividing candidate puts the mapped boundary inside a layout PEB", () => {
+  it("keeps refusing a truncated dump when the later dividing candidate puts the mapped boundary inside a layout PEB", async () => {
     const truncated = ubiImageWithEmbeddedPebHeaders().subarray(0, 73_728);
-    expect(parse(truncated)).toMatchObject({
+    expect(await parse(truncated)).toMatchObject({
       ok: false,
       error: {
         kind: "malformed",
@@ -2100,7 +1833,7 @@ describe("passed-over candidate boundaries", () => {
   });
 });
 
-it("keeps erase-counter facts of an eraseblock whose VID header is corrupt", () => {
+it("keeps erase-counter facts of an eraseblock whose VID header is corrupt", async () => {
   const bytes = ubiImage([
     ...ubiLayoutPebs(RECORDS),
     { kind: "leb", volId: 0, lnum: 0, data: ubiLebData(0x30), sqnum: 2n },
@@ -2114,7 +1847,7 @@ it("keeps erase-counter facts of an eraseblock whose VID header is corrupt", () 
       eraseCounter: 99n,
     },
   ]);
-  const parsed = image(bytes);
+  const parsed = await image(bytes);
   expect(parsed).toMatchObject({
     corruptPebCount: 1,
     mappedPebCount: 3,
@@ -2125,7 +1858,7 @@ it("keeps erase-counter facts of an eraseblock whose VID header is corrupt", () 
   const conflicting = withEcField(bytes, 3, 2048, (header) =>
     header.writeUInt32BE(0x9999, 24),
   );
-  expect(parse(conflicting)).toMatchObject({
+  expect(await parse(conflicting)).toMatchObject({
     ok: false,
     error: {
       kind: "malformed",
@@ -2136,13 +1869,13 @@ it("keeps erase-counter facts of an eraseblock whose VID header is corrupt", () 
   });
 });
 
-it("falls back to the other volume table copy when an update marker is invalid", () => {
+it("falls back to the other volume table copy when an update marker is invalid", async () => {
   const slots = ubiVolumeTableSlots();
   const valid = ubiVolumeTable([{ ...RECORDS[0]!, name: "second" }], slots);
   const invalid = ubiVolumeTable(RECORDS, slots);
   invalid[13] = 2;
   invalid.writeUInt32BE(~crc32(invalid.subarray(0, 168)) >>> 0, 168);
-  const parsed = image(
+  const parsed = await image(
     ubiImage([
       ...ubiLayoutPebs(RECORDS, {}, [invalid, valid]),
       { kind: "free" },
@@ -2159,7 +1892,7 @@ it("falls back to the other volume table copy when an update marker is invalid",
   });
 });
 
-it("counts known LEB gaps even when an earlier refusal prevents extraction", () => {
+it("counts known LEB gaps even when an earlier refusal prevents extraction", async () => {
   const records: UbiFixtureVolumeRecord[] = [
     { id: 0, name: "short-static", type: "static", reservedPebs: 3 },
     { id: 1, name: "mismatched-dynamic", type: "dynamic", reservedPebs: 4 },
@@ -2235,7 +1968,7 @@ it("counts known LEB gaps even when an earlier refusal prevents extraction", () 
     },
   ]);
   const [shortStatic, mismatchedDynamic, overlargeStatic, inconsistentStatic] =
-    image(bytes).volumes;
+    (await image(bytes)).volumes;
   expect(shortStatic).toMatchObject({
     extractRefusal: "invalid_static_size",
     missingLebCount: 1,

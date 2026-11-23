@@ -596,6 +596,7 @@ it("retries past a dividing 64 KiB EC header when a CRC-valid static VID needs 1
     expect(reader.formatMetadata()).toMatchObject({
       peb_size: 131_072,
       peb_count: 4,
+      corrupt_peb_count: 0,
     });
     expect(volumes).toMatchObject([
       { path: "volumes/rootfs", declaredSize: lebBytes },
