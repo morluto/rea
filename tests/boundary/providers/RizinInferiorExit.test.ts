@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -106,9 +107,7 @@ process.stdin.resume();`,
                     expect(await supervisor.waitForExit(1_000)).toBe(true);
                   else
                     await expect
-                      .poll(() => readFile(redirected, "utf8"), {
-                        timeout: 1_000,
-                      })
+                      .poll(() => readFile(redirected, "utf8"))
                       .toBe("redirected");
                 }
               } else if (line === "e dbg.exitkills") {
@@ -137,9 +136,7 @@ process.stdin.resume();`,
       },
     );
     try {
-      await expect
-        .poll(() => readFile(ready, "utf8"), { timeout: 2_000 })
-        .toBe("ready");
+      await expect.poll(() => readFile(ready, "utf8")).toBe("ready");
       const started = await manager.start({
         path: "fixture.bin",
         inferior_tty: tty,

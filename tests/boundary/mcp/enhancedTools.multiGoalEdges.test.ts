@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
@@ -230,4 +230,87 @@ describe("multi-goal mixed coverage", () => {
       },
     });
   });
+});
+
+describe("multi-goal traversal limits", () => {
+  it.each([
+    { limits: { max_depth: 0 }, reads: [], reached: false, truncated: true },
+    {
+      limits: { max_depth: 1 },
+      reads: ["0x1"],
+      reached: true,
+      truncated: true,
+    },
+    {
+      limits: { max_nodes: 1 },
+      reads: ["0x1"],
+      reached: true,
+      truncated: true,
+    },
+    {
+      limits: { max_nodes: 2 },
+      reads: ["0x1", "0x2"],
+      reached: true,
+      truncated: false,
+    },
+  ])(
+    "honors batch limits $limits through MCP",
+    async ({ limits, reads, reached, truncated }) => {
+      const actualReads: string[] = [];
+      const client = await connect({
+        execute: async (name, input) => {
+          const address = String(input.procedure);
+          if (name !== "procedure_address") actualReads.push(address);
+          return ok(
+            createAnalysisExecution(
+              name === "procedure_address"
+                ? address
+                : address === "0x1"
+                  ? ["0x2"]
+                  : [],
+              { id: "fixture", name: "fixture", version: "1" },
+              {
+                relationshipCoverage: {
+                  status: "complete",
+                  discovery: { callers: { status: "complete" } },
+                },
+              },
+            ),
+          );
+        },
+      });
+      const result = await client.callTool({
+        name: "trace_call_path",
+        arguments: {
+          start: "0x1",
+          goals: ["0x1", "0x2", "0x9"],
+          direction: "backward",
+          ...limits,
+        },
+      });
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        normalized_result: {
+          goal_status: "not_requested",
+          goal_results: [
+            { goal: "0x1", goal_status: "reached", traversal_path: ["0x1"] },
+            {
+              goal: "0x2",
+              goal_status: reached ? "reached" : "unknown",
+              traversal_path: reached ? ["0x1", "0x2"] : [],
+            },
+            {
+              goal: "0x9",
+              goal_status: truncated ? "unknown" : "not_reached",
+              traversal_path: [],
+            },
+          ],
+          roots: truncated ? [] : ["0x2"],
+          truncated,
+          search_scope: { discovery: truncated ? "partial" : "complete" },
+        },
+      });
+      expect(actualReads).toEqual(reads);
+    },
+  );
 });

@@ -1,5 +1,6 @@
 import {
   captureDecoderHeapRecovery,
+  captureDecoderHeapContinuingRecovery,
   CAPTURE_DECODER_OLD_GENERATION_SETTING,
   DEFAULT_CAPTURE_DECODER_HEAP,
 } from "../../../src/config/captureDecoderHeap.js";
@@ -10,8 +11,9 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
 
-import { captureDecoderProcessMemoryLimitBytes } from "../../../src/browser/history/CaptureRelease.js";
+import { javaScriptWorkerMemoryLimitBytes } from "../../../src/process/JavaScriptWorkerMemoryLimit.js";
 import { WEB_NETWORK_CAPTURE_LIMITS } from "../../../src/domain/webNetworkCapture.js";
+import { CAPTURE_RUNTIME_SUPPORTED } from "../../fixtures/captureDecoderLimits.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -52,10 +54,11 @@ const capture = (count: number) =>
 // the decoder's Job Object commit limit is the enforced bound instead, and
 // Bun elsewhere has no bound this capture can reach.
 const testHeap = { oldGenerationMiB: 64, source: "setting" } as const;
-const jobLimit = captureDecoderProcessMemoryLimitBytes(
-  testHeap.oldGenerationMiB,
-);
-it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
+const jobLimit = javaScriptWorkerMemoryLimitBytes(testHeap.oldGenerationMiB);
+it.skipIf(
+  !CAPTURE_RUNTIME_SUPPORTED ||
+    (process.versions.bun !== undefined && jobLimit === null),
+)(
   "reports real HAR memory exhaustion through CLI and MCP and preserves server usability",
   async () => {
     const root = await createTestTempDirectory("rea-har-capacity-");
@@ -87,7 +90,8 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
             setting: "capture.decoder_old_generation_mib",
             effective_value: testHeap.oldGenerationMiB,
             source: testHeap.source,
-            rea_restart_required: false,
+            update_mode: "runtime",
+            pending_restart: false,
           },
           reported_limits:
             jobLimit === null
@@ -111,7 +115,9 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
     expect(JSON.stringify(response)).not.toContain("caller-marked");
     expect(JSON.stringify(response)).not.toContain("rea doctor");
     const remediation = String(exhausted.error.remediation?.action ?? "");
-    expect(remediation).toContain(captureDecoderHeapRecovery(testHeap));
+    expect(remediation).toContain(
+      captureDecoderHeapContinuingRecovery(testHeap),
+    );
     const failed: unknown = await execute(
       process.execPath,
       [
@@ -147,7 +153,8 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
           setting: "capture.decoder_old_generation_mib",
           effective_value: testHeap.oldGenerationMiB,
           source: testHeap.source,
-          rea_restart_required: false,
+          update_mode: "runtime",
+          pending_restart: false,
         },
       },
       remediation: {
@@ -166,15 +173,7 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
       normalized_result: { total_records: 2 },
     });
     const controlText = JSON.stringify(control.structuredContent);
-    expect(controlText).toContain(
-      "The effective REA_CAPTURE_DECODER_OLD_GENERATION_MIB value is 64 MiB (source setting; default 192 MiB, floor 8 MiB, maximum 16384 MiB).",
-    );
-    expect(controlText).toContain("source setting");
-    expect(controlText).toContain("floor 8 MiB");
-    expect(controlText).toContain("maximum 16384 MiB");
-    expect(controlText).toContain(
-      "Set REA_CAPTURE_DECODER_OLD_GENERATION_MIB in the environment that starts REA",
-    );
+    expect(controlText).toContain(captureDecoderHeapRecovery(testHeap));
     const defaultServer = await connectLocalToolsMcp();
     const defaultControl = await defaultServer.call(
       "inspect_web_network_capture",
@@ -195,5 +194,4 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
       error: { code: "invalid_request" },
     });
   },
-  60_000,
 );

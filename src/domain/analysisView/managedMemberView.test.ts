@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE } from "../../contracts/managed/managedWorkflowExamples.js";
 import { freezeOwnedJsonTreeSnapshot } from "../immutableJson.js";
 import { managedMemberInspectionSchema } from "../managed/managedArtifact.js";
-import type { AnalysisViewParent } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   managedMembersViewRequestSchema,
   managedMembersViewPageSchema,
@@ -32,33 +32,47 @@ it("revalidates mutable managed facts despite a sealed flag and shallow freeze",
   });
 });
 
-it("retains historical unknowns while normalizing immutable managed parents", () => {
+it("keeps unexamined collections unknown while normalizing immutable managed parents", () => {
   const complete = managedMemberInspectionSchema.parse(
     MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE.static_members.normalized_result,
   );
-  const {
-    signature_resolution: _signature,
-    nesting_read: _nesting,
-    exported_types: _exported,
-    user_strings: _strings,
-    selection: _selection,
-    method_rows: _rows,
-    ...legacy
-  } = complete;
-  const input = parent(freezeOwnedJsonTreeSnapshot(legacy));
+  const unexamined = {
+    ...complete,
+    signature_resolution: null,
+    exported_types: null,
+    user_strings: null,
+    fields: [],
+    methods: [],
+    member_refs: [],
+    call_edges: [],
+    field_accesses: [],
+  };
+  const input = parent(freezeOwnedJsonTreeSnapshot(unexamined));
+  const coordinates = managedMembersViewRequestSchema.parse({
+    kind: "managed-members",
+    collection: "unresolved_definitions",
+    offset: 0,
+    limit: 1,
+  });
+  expect(projectManagedMemberView(input, coordinates)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError" },
+  });
   for (let attempt = 0; attempt < 2; attempt++) {
     expect(projectManagedMemberView(input, { kind: "summary" })).toMatchObject({
       ok: true,
       value: {
         summary: {
           signature_resolution: null,
-          nesting_read: null,
           reported_counts: { exported_types: null, user_strings: null },
         },
       },
     });
   }
-  expect(Object.hasOwn(legacy, "signature_resolution")).toBe(false);
+  const { nesting_read: _nesting, ...withoutNesting } = complete;
+  expect(
+    projectManagedMemberView(parent(withoutNesting), { kind: "summary" }),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
 });
 
 const methodFacts = () => {
@@ -239,25 +253,30 @@ it("rejects unsupported selectors and fields instead of silently ignoring caller
     ).toBe(false);
 });
 
-it("does not restore omitted defaulted columns and admits historical unknown IL offsets", () => {
+it("does not add omitted columns and requires the IL offset of every edge row", () => {
   const types = {
     collection: "types",
     rows: [{ token: "0x02000001", row_offset: 32, source_index: 0 }],
   };
   expect(managedMembersViewPageSchema.parse(types)).toEqual(types);
+  const edge = {
+    caller_token: "0x06000001",
+    opcode: "call",
+    target_token: "0x0a000001",
+    source_index: 0,
+  };
   const calls = managedMembersViewPageSchema.parse({
     collection: "call_edges",
-    rows: [
-      {
-        caller_token: "0x06000001",
-        opcode: "call",
-        target_token: "0x0a000001",
-      },
-    ],
+    rows: [{ ...edge, il_offset: null }],
   });
-  expect(calls.rows[0]).toMatchObject({ il_offset: null });
   expect(calls.rows[0]).not.toHaveProperty("target_identity_sha256");
   expect(calls.rows[0]).not.toHaveProperty("target_declaring_type");
+  expect(
+    managedMembersViewPageSchema.safeParse({
+      collection: "call_edges",
+      rows: [edge],
+    }).success,
+  ).toBe(false);
 });
 
 it("filters relationship endpoints from recorded facts rather than caller display text", () => {
@@ -269,6 +288,7 @@ it("filters relationship endpoints from recorded facts rather than caller displa
       caller_token: "0x06000001",
       il_offset: 0,
       target_identity_sha256: null,
+      target_row_resolved: false,
       caller: "Unrelated.Caller",
       opcode: "call",
       target_token: "0x0a000001",
@@ -280,6 +300,7 @@ it("filters relationship endpoints from recorded facts rather than caller displa
       caller_token: "0x06000002",
       il_offset: 0,
       target_identity_sha256: null,
+      target_row_resolved: false,
       caller: "Exact.Type.Target",
       opcode: "call",
       target_token: "0x0a000002",
@@ -293,6 +314,7 @@ it("filters relationship endpoints from recorded facts rather than caller displa
       method_token: "0x06000001",
       il_offset: 0,
       target_identity_sha256: null,
+      target_row_resolved: false,
       method: "Unrelated.Caller",
       opcode: "ldfld",
       field_token: "0x04000001",
@@ -303,6 +325,7 @@ it("filters relationship endpoints from recorded facts rather than caller displa
       method_token: "0x06000002",
       il_offset: 0,
       target_identity_sha256: null,
+      target_row_resolved: false,
       method: "Exact.Type.Target",
       opcode: "ldfld",
       field_token: "0x04000002",
@@ -352,5 +375,72 @@ it("filters relationship endpoints from recorded facts rather than caller displa
         rows: [{ source_index: 0 }],
       },
     });
+  }
+});
+
+it("preserves paging and unknown counts on first and repeated sealed-parent queries", () => {
+  const report = methodFacts();
+  const method = report.methods[1];
+  if (method === undefined) throw new Error("Method fixture is missing");
+  report.methods.splice(2, 0, {
+    ...method,
+    token: "0x06000005",
+    declaring_type: null,
+    declaring_type_token: null,
+  });
+  const sealed = parent(freezeOwnedJsonTreeSnapshot(report));
+  const cases = [
+    {
+      filter: { declaring_types: ["Exact.Type"] },
+      offset: 1,
+      total: 3,
+      unresolved: 1,
+      indices: [3, 4],
+    },
+    {
+      filter: { declaring_types: [] },
+      offset: 0,
+      total: 0,
+      unresolved: 0,
+      indices: [],
+    },
+    {
+      filter: { declaring_types: ["Exact.Type", "Other.Type"] },
+      offset: 1,
+      total: 4,
+      unresolved: 1,
+      indices: [1, 3],
+    },
+    {
+      filter: {
+        names: ["Keep"],
+        declaring_types: ["Exact.Type", "Other.Type"],
+      },
+      offset: 1,
+      total: 3,
+      unresolved: 1,
+      indices: [1, 4],
+    },
+  ];
+  for (const { filter, offset, total, unresolved, indices } of cases) {
+    const view = managedMembersViewRequestSchema.parse({
+      kind: "managed-members",
+      collection: "methods",
+      ...filter,
+      fields: [],
+      offset,
+      limit: 2,
+    });
+    for (let run = 0; run < 2; run += 1) {
+      const result = projectManagedMemberView(sealed, view);
+      if (!result.ok) throw result.error;
+      expect(result.value).toMatchObject({
+        coverage: { total },
+        page: {
+          unresolved_filter_rows: unresolved,
+          rows: indices.map((source_index) => ({ source_index })),
+        },
+      });
+    }
   }
 });

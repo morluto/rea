@@ -1,3 +1,4 @@
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { constants } from "node:buffer";
 
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
@@ -45,7 +46,7 @@ export const parseUtf8Json = (
     );
   let text: string;
   try {
-    const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+    const decoder = strictUtf8Decoder("preserve");
     if (bytes.byteLength <= constants.MAX_STRING_LENGTH) {
       text = decoder.decode(bytes);
     } else {

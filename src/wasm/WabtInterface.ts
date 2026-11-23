@@ -1,7 +1,11 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
-import { wasmInterfaceEntryRepresentationBytes } from "../domain/wasm/wasmInterface.js";
-import { WasmInterfaceBudget } from "./WasmInterfaceBudget.js";
+import {
+  DEFAULT_WASM_INTERFACE_REPRESENTATION_BYTES,
+  wasmInterfaceEntryRepresentationBytes,
+} from "../domain/wasm/wasmInterface.js";
+import { WasmInterfaceBudget } from "../domain/wasm/wasmInterfaceBudget.js";
 import type {
   WasmInterface,
   WasmInterfaceEntry,
@@ -11,50 +15,103 @@ import type {
 import { watString, watStringEnd } from "./WabtString.js";
 import { watCommentEnd } from "./WabtComment.js";
 
+const isWatWhitespace = (text: string, index: number): boolean => {
+  const code = text.charCodeAt(index);
+  if (code === 0x20 || (code >= 0x09 && code <= 0x0d)) return true;
+  return code >= 0x80 && /\s/u.test(text[index] ?? "");
+};
+
+const scanCommentEnd = (text: string, index: number): number | undefined => {
+  const code = text.charCodeAt(index);
+  if (code !== 0x3b && !(code === 0x28 && text.charCodeAt(index + 1) === 0x3b))
+    return undefined;
+  return watCommentEnd(text, index);
+};
+
+const scanNestedFormEnd = (form: string, start: number): number => {
+  let depth = 1;
+  let i = start + 1;
+  while (i < form.length && depth > 0) {
+    const commentEnd = scanCommentEnd(form, i);
+    if (commentEnd !== undefined) {
+      i = commentEnd;
+      continue;
+    }
+    const code = form.charCodeAt(i);
+    if (code === 0x22) i = watStringEnd(form, i + 1);
+    else {
+      if (code === 0x28) depth++;
+      else if (code === 0x29) depth--;
+      i++;
+    }
+  }
+  return i;
+};
+
+const scanAtomEnd = (form: string, start: number): number => {
+  let i = start;
+  while (i < form.length) {
+    const code = form.charCodeAt(i);
+    if (code === 0x28 || code === 0x29 || isWatWhitespace(form, i)) break;
+    i++;
+  }
+  return i;
+};
+
 /** Split direct WAT children only; function instruction bodies are never materialized. */
-const parts = (form: string): string[] => {
-  const budget = new WasmInterfaceBudget();
+const splitParts = (form: string, maximumBytes?: number): readonly string[] => {
+  const limit = maximumBytes ?? DEFAULT_WASM_INTERFACE_REPRESENTATION_BYTES;
+  if (!Number.isSafeInteger(limit) || limit < 0)
+    new WasmInterfaceBudget(maximumBytes);
+  let remaining = limit;
   const items: string[] = [];
   let i = 1;
-  while (i < form.length - 1) {
-    if (/\s/u.test(form[i] ?? "")) {
+  const last = form.length - 1;
+  while (i < last) {
+    if (isWatWhitespace(form, i)) {
       i++;
       continue;
     }
-    const commentEnd = watCommentEnd(form, i);
+    const commentEnd = scanCommentEnd(form, i);
     if (commentEnd !== undefined) {
       i = commentEnd;
       continue;
     }
     const start = i;
-    if (form[i] === '"') {
+    const code = form.charCodeAt(i);
+    if (code === 0x22) {
       i = watStringEnd(form, i + 1);
-    } else if (form[i] === "(") {
-      let depth = 1;
-      i++;
-      while (i < form.length && depth > 0) {
-        const commentEnd = watCommentEnd(form, i);
-        if (commentEnd !== undefined) i = commentEnd;
-        else if (form[i] === '"') i = watStringEnd(form, i + 1);
-        else {
-          if (form[i] === "(") depth++;
-          else if (form[i] === ")") depth--;
-          i++;
-        }
-      }
+    } else if (code === 0x28) {
+      i = scanNestedFormEnd(form, i);
     } else {
-      while (i < form.length && !/[\s()]/u.test(form[i] ?? "")) i++;
-      const atom = form.slice(start, i);
-      if (items[0] === "func" && items.length > 1 && !atom.startsWith("$"))
+      i = scanAtomEnd(form, i);
+      if (i > start && items[0] === "func" && items.length > 1 && code !== 0x24)
         break;
     }
     if (i <= start) throw new WabtAdmissionError("malformed_form");
-    budget.reserve(64 + (i - start) * 2);
+    remaining -= 64 + (i - start) * 2;
+    if (remaining < 0) new WasmInterfaceBudget(maximumBytes).reserve(limit + 1);
     items.push(form.slice(start, i));
   }
   return items;
 };
-const head = (form: string): string | undefined => parts(form)[0];
+const name = (text: string | undefined): string => {
+  if (text?.startsWith('"') !== true)
+    throw new WabtAdmissionError("name_missing");
+  return decodeStrictUtf8(watString(text, 1).bytes, "preserve");
+};
+const integer = (text: string): string | null => {
+  if (!/^(?:\d+|0x[\da-f]+)$/iu.test(text)) return null;
+  return BigInt(text).toString();
+};
+
+const DEFINITION_KINDS = new Set(["func", "table", "memory", "global", "tag"]);
+
+const toDefinitionKind = (rawKind: string): WasmInterfaceEntry["kind"] =>
+  DEFINITION_KINDS.has(rawKind)
+    ? (rawKind as WasmInterfaceEntry["kind"])
+    : "unknown";
+
 const admittedValues = new Set([
   "i32",
   "i64",
@@ -66,267 +123,408 @@ const admittedValues = new Set([
 ]);
 const isValueType = (type: string): type is WasmInterfaceValueType =>
   admittedValues.has(type);
-const values = (
-  form: string,
+
+const collectCategoryValues = (
+  bodyParts: readonly string[],
   category: string,
+  getGroupParts: (index: number) => readonly string[],
 ): WasmInterfaceValueType[] | null => {
-  const result: WasmInterfaceValueType[] = [];
-  for (const item of parts(form)) {
-    if (!item.startsWith("(")) continue;
-    const group = parts(item);
+  const values: WasmInterfaceValueType[] = [];
+  for (let i = 1; i < bodyParts.length; i++) {
+    if (bodyParts[i]!.charCodeAt(0) !== 0x28) continue;
+    const group = getGroupParts(i);
     if (group[0] !== category) continue;
-    for (const type of group.slice(1).filter((t) => !t.startsWith("$"))) {
+    for (let j = 1; j < group.length; j++) {
+      const type = group[j]!;
+      if (type.charCodeAt(0) === 0x24) continue;
       if (!isValueType(type)) return null;
-      result.push(type);
+      values.push(type);
     }
   }
-  return result;
+  return values;
 };
-const functionType = (
-  form: string,
+
+const parseFunctionType = (
+  bodyParts: readonly string[],
   kind: "func" | "tag",
+  splitGroup: (group: string) => readonly string[],
+  initialChildren?: readonly (readonly string[] | undefined)[],
 ): WasmInterfaceSignature | null => {
-  const params = values(form, "param");
-  const results = values(form, "result");
+  const children: (readonly string[] | undefined)[] = initialChildren
+    ? [...initialChildren]
+    : Array(bodyParts.length);
+  const getGroupParts = (index: number): readonly string[] => {
+    let group = children[index];
+    if (group === undefined) {
+      group = splitGroup(bodyParts[index]!);
+      children[index] = group;
+    }
+    return group;
+  };
+  const params = collectCategoryValues(bodyParts, "param", getGroupParts);
+  const results = collectCategoryValues(bodyParts, "result", getGroupParts);
   return params === null || results === null ? null : { kind, params, results };
 };
-const name = (text: string | undefined): string => {
-  if (text?.startsWith('"') !== true)
-    throw new WabtAdmissionError("name_missing");
-  return new TextDecoder("utf8", { fatal: true, ignoreBOM: true }).decode(
-    watString(text, 1).bytes,
-  );
+
+const collectSignatureTokens = (
+  kind: "memory" | "table",
+  parts: readonly string[],
+  splitGroup: (group: string) => readonly string[],
+): { readonly pageSize: string; readonly tokens: string[] } | null => {
+  let pageSize = "65536";
+  const tokens: string[] = [];
+  for (let i = 1; i < parts.length; i++) {
+    const token = parts[i]!;
+    const first = token.charCodeAt(0);
+    if (first === 0x28) {
+      const declaration = splitGroup(token);
+      if (
+        kind !== "memory" ||
+        declaration[0] !== "pagesize" ||
+        declaration.length !== 2
+      )
+        return null;
+      const parsedPageSize = integer(declaration[1] ?? "");
+      if (parsedPageSize === null) return null;
+      pageSize = parsedPageSize;
+    } else if (first !== 0x24) {
+      tokens.push(token);
+    }
+  }
+  return { pageSize, tokens };
 };
-const integer = (text: string): string | null => {
-  if (!/^(?:\d+|0x[\da-f]+)$/iu.test(text)) return null;
-  return BigInt(text).toString();
+
+const parseMemoryOrTableSignature = (
+  kind: "memory" | "table",
+  parts: readonly string[],
+  splitGroup: (group: string) => readonly string[],
+): WasmInterfaceSignature | null => {
+  const collected = collectSignatureTokens(kind, parts, splitGroup);
+  if (collected === null) return null;
+  const { pageSize, tokens } = collected;
+  let cursor = 0;
+  const firstToken = tokens[cursor];
+  const address_type = firstToken === "i64" ? "i64" : "i32";
+  if (firstToken === "i64" || firstToken === "i32") cursor++;
+  const minimum = integer(tokens[cursor++] ?? "");
+  const possibleMaximum =
+    cursor < tokens.length ? integer(tokens[cursor]!) : null;
+  if (possibleMaximum !== null) cursor++;
+  const shared = tokens[cursor] === "shared";
+  if (shared) cursor++;
+  if (minimum === null) return null;
+  if (kind === "memory")
+    return cursor === tokens.length
+      ? {
+          kind,
+          page_size: pageSize,
+          address_type,
+          minimum,
+          maximum: possibleMaximum,
+          shared,
+        }
+      : null;
+  const element = tokens[cursor++];
+  return cursor === tokens.length &&
+    (element === "funcref" || element === "externref")
+    ? {
+        kind,
+        address_type,
+        minimum,
+        maximum: possibleMaximum,
+        shared,
+        element,
+      }
+    : null;
+};
+
+const parseGlobalSignature = (
+  parts: readonly string[],
+  splitGroup: (group: string) => readonly string[],
+): WasmInterfaceSignature | null => {
+  const declaration = parts[1]?.startsWith("$") === true ? parts[2] : parts[1];
+  const group =
+    declaration?.startsWith("(") === true ? splitGroup(declaration) : undefined;
+  const mutable = group?.[0] === "mut";
+  const value_type = mutable ? group?.[1] : declaration;
+  return value_type !== undefined && isValueType(value_type)
+    ? { kind: "global", value_type, mutable }
+    : null;
+};
+
+const parseFormSignature = (
+  ctx: DecoderContext,
+  parts: readonly string[],
+): WasmInterfaceSignature | null => {
+  const kind = parts[0];
+  if (kind === "func" || kind === "tag") {
+    // Interpret group heads through the same comment/whitespace framing as
+    // their values; raw prefixes can mistake an explicit type for no type.
+    const childGroups: (readonly string[] | undefined)[] = Array(parts.length);
+    let typeUse: readonly string[] | undefined;
+    for (let i = 1; i < parts.length; i++) {
+      const token = parts[i]!;
+      if (token.charCodeAt(0) !== 0x28) continue;
+      const group = ctx.splitGroup(token);
+      childGroups[i] = group;
+      if (group[0] === "type") {
+        typeUse = group;
+        break;
+      }
+    }
+    if (typeUse === undefined)
+      return parseFunctionType(parts, kind, ctx.splitGroup, childGroups);
+    const reference = typeUse[1];
+    const index =
+      reference === undefined
+        ? undefined
+        : reference.startsWith("$")
+          ? ctx.typeNames.get(reference)
+          : Number(reference);
+    const type =
+      index == null || ctx.typeSpaceUnknown ? undefined : ctx.types[index];
+    return type?.kind === "func" ? { ...type, kind } : null;
+  }
+  if (kind === "memory" || kind === "table")
+    return parseMemoryOrTableSignature(kind, parts, ctx.splitGroup);
+  if (kind === "global") return parseGlobalSignature(parts, ctx.splitGroup);
+  return null;
+};
+
+interface DecoderContext {
+  readonly forms: readonly string[];
+  readonly result: WasmInterface;
+  readonly budget: WasmInterfaceBudget;
+  readonly splitGroup: (form: string) => readonly string[];
+  readonly getFormParts: (index: number) => readonly string[];
+  readonly types: (WasmInterfaceSignature | null)[];
+  readonly typeNames: Map<string, number | null>;
+  readonly definitionNames: Map<string, Map<string, number | null>>;
+  readonly definitions: Map<
+    string,
+    { signature: WasmInterfaceSignature | null }[]
+  >;
+  readonly ambiguousSpaces: Set<string>;
+  readonly typeSpaceUnknown: boolean;
+}
+
+const indexLabel = (
+  ctx: DecoderContext,
+  label: string,
+  space: string,
+  index: number,
+): void => {
+  let labels: Map<string, number | null>;
+  if (space === "type") {
+    labels = ctx.typeNames;
+  } else {
+    let existing = ctx.definitionNames.get(space);
+    if (existing === undefined) {
+      existing = new Map<string, number | null>();
+      ctx.definitionNames.set(space, existing);
+    }
+    labels = existing;
+  }
+  if (!labels.has(label)) {
+    labels.set(label, index);
+    return;
+  }
+  if (!ctx.ambiguousSpaces.has(space)) {
+    ctx.ambiguousSpaces.add(space);
+    ctx.result.issues.push(
+      `Ambiguous WABT identifiers in the ${space} index space; named references have unknown identity`,
+    );
+  }
+  labels.set(label, null);
+};
+
+const addDefinition = (
+  ctx: DecoderContext,
+  p: readonly string[],
+): {
+  index: number;
+  kind: WasmInterfaceEntry["kind"];
+  signature: WasmInterfaceSignature | null;
+} => {
+  const kind = toDefinitionKind(p[0] ?? "unknown");
+  let space = ctx.definitions.get(kind);
+  if (space === undefined) {
+    space = [];
+    ctx.definitions.set(kind, space);
+  }
+  const item = {
+    signature: parseFormSignature(ctx, p),
+  };
+  const label = p[1]?.startsWith("$") === true ? p[1] : undefined;
+  ctx.budget.reserve(256);
+  const index = space.length;
+  space.push(item);
+  if (label !== undefined) indexLabel(ctx, label, kind, index);
+  return { index, kind, signature: item.signature };
+};
+
+const appendImportEntry = (ctx: DecoderContext, formIndex: number): void => {
+  const p = ctx.getFormParts(formIndex);
+  const body = p[3];
+  if (body === undefined) throw new WabtAdmissionError("incomplete_import");
+  const observed = addDefinition(ctx, ctx.splitGroup(body));
+  const entry: WasmInterfaceEntry = {
+    direction: "import",
+    module: name(p[1]),
+    name: name(p[2]),
+    ...observed,
+    wat_form: ctx.forms[formIndex]!,
+    issue:
+      observed.signature === null
+        ? "Import type is outside admitted core signature semantics"
+        : null,
+  };
+  ctx.budget.reserve(wasmInterfaceEntryRepresentationBytes(entry));
+  ctx.result.entries.push(entry);
+};
+
+const appendExportEntry = (ctx: DecoderContext, formIndex: number): void => {
+  const p = ctx.getFormParts(formIndex);
+  const body = p[2];
+  if (body === undefined) throw new WabtAdmissionError("incomplete_export");
+  const descriptor = ctx.splitGroup(body);
+  const kind = toDefinitionKind(descriptor[0] ?? "unknown");
+  const reference = descriptor[1];
+  const space = ctx.definitions.get(kind);
+  const index =
+    reference === undefined
+      ? -1
+      : reference.startsWith("$")
+        ? (ctx.definitionNames.get(kind)?.get(reference) ?? -1)
+        : Number(reference);
+  const observed =
+    space !== undefined && Number.isSafeInteger(index) && index >= 0
+      ? space[index]
+      : undefined;
+  const entry: WasmInterfaceEntry = {
+    direction: "export",
+    module: null,
+    name: name(p[1]),
+    kind,
+    index: observed === undefined ? null : index,
+    signature: observed?.signature ?? null,
+    wat_form: ctx.forms[formIndex]!,
+    issue:
+      observed?.signature == null
+        ? "Export type/index is outside admitted core signature semantics"
+        : null,
+  };
+  ctx.budget.reserve(wasmInterfaceEntryRepresentationBytes(entry));
+  ctx.result.entries.push(entry);
+};
+
+/** Read only the leading WAT form keyword without splitting or retaining children. */
+const readFormHead = (form: string): string | undefined => {
+  let i = 1;
+  const last = form.length - 1;
+  while (i < last) {
+    if (isWatWhitespace(form, i)) {
+      i++;
+      continue;
+    }
+    const commentEnd = scanCommentEnd(form, i);
+    if (commentEnd !== undefined) {
+      i = commentEnd;
+      continue;
+    }
+    const code = form.charCodeAt(i);
+    if (code === 0x22 || code === 0x28) return undefined;
+    const end = scanAtomEnd(form, i);
+    return end > i ? form.slice(i, end) : undefined;
+  }
+  return undefined;
 };
 
 /** Resolve index spaces at the producer, not from retained raw WAT in consumers. */
 const decodeWabtInterface = (
   forms: readonly string[],
   result: WasmInterface,
+  maximumBytes: number | undefined,
 ): WasmInterface => {
-  const budget = new WasmInterfaceBudget();
-  const types: (WasmInterfaceSignature | null)[] = [];
-  const typeNames = new Map<string, number | null>();
-  const definitionNames = new Map<string, Map<string, number | null>>();
-  const indexLabel = (
-    labels: Map<string, number | null>,
-    label: string,
-    index: number,
-    space: string,
-  ) => {
-    const issue = `Ambiguous WABT identifiers in the ${space} index space; named references have unknown identity`;
-    if (labels.has(label) && !result.issues.includes(issue))
-      result.issues.push(issue);
-    labels.set(label, labels.has(label) ? null : index);
+  const shortGroupCache = new Map<string, readonly string[]>();
+  const splitGroup = (form: string): readonly string[] => {
+    if (form.length > 256) return splitParts(form, maximumBytes);
+    let cached = shortGroupCache.get(form);
+    if (cached === undefined) {
+      cached = splitParts(form, maximumBytes);
+      if (shortGroupCache.size < 4096) shortGroupCache.set(form, cached);
+    }
+    return cached;
   };
-  const definitions = new Map<
-    string,
-    { signature: WasmInterfaceSignature | null }[]
-  >();
-  const typeSpaceUnknown = forms.some((f) => head(f) === "rec");
-  for (const form of forms) {
-    const p = parts(form);
-    if (p[0] !== "type") continue;
+  const getFormParts = (index: number): readonly string[] =>
+    splitParts(forms[index]!, maximumBytes);
+  let typeSpaceUnknown = false;
+  const typeIndices: number[] = [];
+  const importIndices: number[] = [];
+  const definitionIndices: number[] = [];
+  const exportIndices: number[] = [];
+  for (let i = 0; i < forms.length; i++) {
+    const head = readFormHead(forms[i]!);
+    if (head === "rec") typeSpaceUnknown = true;
+    else if (head === "type") typeIndices.push(i);
+    else if (head === "import") importIndices.push(i);
+    else if (head === "export") exportIndices.push(i);
+    else if (head !== undefined && DEFINITION_KINDS.has(head))
+      definitionIndices.push(i);
+  }
+  const ctx: DecoderContext = {
+    forms,
+    result,
+    budget: new WasmInterfaceBudget(maximumBytes),
+    splitGroup,
+    getFormParts,
+    types: [],
+    typeNames: new Map(),
+    definitionNames: new Map(),
+    definitions: new Map(),
+    ambiguousSpaces: new Set(),
+    typeSpaceUnknown,
+  };
+  for (const i of typeIndices) {
+    const p = getFormParts(i);
     if (p[1]?.startsWith("$") === true)
-      indexLabel(typeNames, p[1], types.length, "type");
+      indexLabel(ctx, p[1], "type", ctx.types.length);
     const body = p.find((item) => item.startsWith("("));
-    budget.reserve(256 + (body?.length ?? 0) * 6);
-    types.push(
-      body !== undefined && head(body) === "func" && !typeSpaceUnknown
-        ? functionType(body, "func")
-        : null,
-    );
-  }
-  const signature = (form: string): WasmInterfaceSignature | null => {
-    const p = parts(form);
-    const kind = p[0];
-    if (kind === "func" || kind === "tag") {
-      // Interpret group heads through the same comment/whitespace framing as
-      // their values; raw prefixes can mistake an explicit type for no type.
-      const use = p.find((t) => t.startsWith("(") && head(t) === "type");
-      if (use === undefined) return functionType(form, kind);
-      const reference = parts(use)[1];
-      const index =
-        reference === undefined
-          ? undefined
-          : reference.startsWith("$")
-            ? typeNames.get(reference)
-            : Number(reference);
-      const type = index == null || typeSpaceUnknown ? undefined : types[index];
-      return type?.kind === "func" ? { ...type, kind } : null;
-    }
-    if (kind === "memory" || kind === "table") {
-      const groups = p.slice(1).filter((t) => t.startsWith("("));
-      let pageSize = "65536";
-      for (const group of groups) {
-        const declaration = parts(group);
-        if (
-          kind !== "memory" ||
-          declaration[0] !== "pagesize" ||
-          declaration.length !== 2
-        )
-          return null;
-        const parsedPageSize = integer(declaration[1] ?? "");
-        if (parsedPageSize === null) return null;
-        pageSize = parsedPageSize;
-      }
-      const tokens = p
-        .slice(1)
-        .filter((t) => !t.startsWith("$") && !t.startsWith("("));
-      const address_type = tokens[0] === "i64" ? "i64" : "i32";
-      if (tokens[0] === "i64" || tokens[0] === "i32") tokens.shift();
-      const minimum = integer(tokens.shift() ?? "");
-      const possibleMaximum =
-        tokens[0] === undefined ? null : integer(tokens[0]);
-      if (possibleMaximum !== null) tokens.shift();
-      const shared = tokens[0] === "shared";
-      if (shared) tokens.shift();
-      if (minimum === null) return null;
-      if (kind === "memory")
-        return tokens.length === 0
-          ? {
-              kind,
-              page_size: pageSize,
-              address_type,
-              minimum,
-              maximum: possibleMaximum,
-              shared,
-            }
-          : null;
-      const element = tokens.shift();
-      return tokens.length === 0 &&
-        element !== undefined &&
-        (element === "funcref" || element === "externref")
-        ? {
-            kind,
-            address_type,
-            minimum,
-            maximum: possibleMaximum,
-            shared,
-            element,
-          }
-        : null;
-    }
-    if (kind === "global") {
-      const declaration = p[1]?.startsWith("$") === true ? p[2] : p[1];
-      const group =
-        declaration?.startsWith("(") === true ? parts(declaration) : undefined;
-      const mutable = group?.[0] === "mut";
-      const value_type = mutable ? group?.[1] : declaration;
-      return value_type !== undefined && isValueType(value_type)
-        ? { kind, value_type, mutable }
-        : null;
-    }
-    return null;
-  };
-  const addDefinition = (
-    form: string,
-  ): {
-    index: number;
-    kind: WasmInterfaceEntry["kind"];
-    signature: WasmInterfaceSignature | null;
-  } => {
-    const p = parts(form);
-    const rawKind = p[0] ?? "unknown";
-    const kind = ["func", "table", "memory", "global", "tag"].includes(rawKind)
-      ? (rawKind as WasmInterfaceEntry["kind"])
-      : "unknown";
-    const space = definitions.get(kind) ?? [];
-    const item = { signature: signature(form) };
-    const label = p[1]?.startsWith("$") === true ? p[1] : undefined;
-    budget.reserve(256);
-    const index = space.length;
-    space.push(item);
-    definitions.set(kind, space);
-    if (label !== undefined) {
-      const labels =
-        definitionNames.get(kind) ?? new Map<string, number | null>();
-      indexLabel(labels, label, index, kind);
-      definitionNames.set(kind, labels);
-    }
-    return { index, kind, signature: item.signature };
-  };
-  for (const form of forms) {
-    const p = parts(form);
-    if (p[0] !== "import") continue;
-    const body = p[3];
-    if (body === undefined) throw new WabtAdmissionError("incomplete_import");
-    const observed = addDefinition(body);
-    const entry: WasmInterfaceEntry = {
-      direction: "import",
-      module: name(p[1]),
-      name: name(p[2]),
-      ...observed,
-      wat_form: form,
-      issue:
-        observed.signature === null
-          ? "Import type is outside admitted core signature semantics"
+    ctx.budget.reserve(256 + (body?.length ?? 0) * 6);
+    if (body === undefined || typeSpaceUnknown) {
+      if (body !== undefined) splitGroup(body);
+      ctx.types.push(null);
+    } else {
+      const bodyParts = splitGroup(body);
+      ctx.types.push(
+        bodyParts[0] === "func"
+          ? parseFunctionType(bodyParts, "func", splitGroup)
           : null,
-    };
-    budget.reserve(wasmInterfaceEntryRepresentationBytes(entry));
-    result.entries.push(entry);
+      );
+    }
   }
-  for (const form of forms) {
-    const kind = head(form);
-    if (
-      kind !== undefined &&
-      ["func", "table", "memory", "global", "tag"].includes(kind)
-    )
-      addDefinition(form);
-  }
-  for (const form of forms) {
-    const p = parts(form);
-    if (p[0] !== "export") continue;
-    const body = p[2];
-    if (body === undefined) throw new WabtAdmissionError("incomplete_export");
-    const descriptor = parts(body);
-    const rawKind = descriptor[0] ?? "unknown";
-    const kind = ["func", "table", "memory", "global", "tag"].includes(rawKind)
-      ? (rawKind as WasmInterfaceEntry["kind"])
-      : "unknown";
-    const reference = descriptor[1];
-    const space = definitions.get(kind) ?? [];
-    const index =
-      reference === undefined
-        ? -1
-        : reference.startsWith("$")
-          ? (definitionNames.get(kind)?.get(reference) ?? -1)
-          : Number(reference);
-    const observed =
-      Number.isSafeInteger(index) && index >= 0 ? space[index] : undefined;
-    const entry: WasmInterfaceEntry = {
-      direction: "export",
-      module: null,
-      name: name(p[1]),
-      kind,
-      index: observed === undefined ? null : index,
-      signature: observed?.signature ?? null,
-      wat_form: form,
-      issue:
-        observed?.signature == null
-          ? "Export type/index is outside admitted core signature semantics"
-          : null,
-    };
-    budget.reserve(wasmInterfaceEntryRepresentationBytes(entry));
-    result.entries.push(entry);
-  }
+  for (const i of importIndices) appendImportEntry(ctx, i);
+  for (const i of definitionIndices) addDefinition(ctx, getFormParts(i));
+  for (const i of exportIndices) appendExportEntry(ctx, i);
   // Unsupported signatures leave inventory completeness intact. A missing
   // signature is unknown per entry, not proof that a name is absent.
   return result;
 };
 
 /** New typed coverage may be incomplete without discarding existing decoded WAT Evidence. */
-export const parseWabtInterface = (forms: readonly string[]): WasmInterface => {
+export const parseWabtInterface = (
+  forms: readonly string[],
+  maximumBytes?: number,
+): WasmInterface => {
   const result: WasmInterface = { state: "complete", entries: [], issues: [] };
   try {
-    return decodeWabtInterface(forms, result);
+    return decodeWabtInterface(forms, result, maximumBytes);
   } catch (cause: unknown) {
     if (!(cause instanceof AnalysisResourceConstraintError)) throw cause;
     result.state = "partial";
     result.issues.push(cause.message);
+    if (cause.remediationAction !== undefined)
+      result.issues.push(cause.remediationAction);
     return result;
   }
 };

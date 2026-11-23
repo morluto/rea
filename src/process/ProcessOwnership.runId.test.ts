@@ -1,3 +1,4 @@
+import { ProcessOwnershipInspectionCancelled } from "./ProcessInspectionCancellation.js";
 import { expect, it } from "vitest";
 
 import type { ProcessOwnershipHost } from "./ProcessOwnership.js";
@@ -12,7 +13,10 @@ it.each([undefined, "selected-token", ""])(
     if (selected !== undefined) environment.REA_PROCESS_RUN_ID = selected;
     const host: ProcessOwnershipHost = {
       listProcesses: async () => [],
-      environment: async () => environment,
+      environment: async (pid) => {
+        expect(pid).toBe(42);
+        return environment;
+      },
       signalGroup: () => undefined,
     };
     expect(await readProcessRunId(42, host)).toBe(selected);
@@ -28,9 +32,14 @@ it("passes cancellation through run-token reads", async () => {
       if (signal === undefined) throw new Error("run-token signal was omitted");
       return await new Promise<Readonly<Record<string, string>>>(
         (_resolve, reject) => {
-          signal.addEventListener("abort", () => reject(signal.reason), {
-            once: true,
-          });
+          signal.addEventListener(
+            "abort",
+            () =>
+              reject(new ProcessOwnershipInspectionCancelled(signal.reason)),
+            {
+              once: true,
+            },
+          );
         },
       );
     },
@@ -40,5 +49,8 @@ it("passes cancellation through run-token reads", async () => {
   const reading = readProcessRunId(42, host, controller.signal);
   controller.abort(cancellation);
 
-  await expect(reading).rejects.toBe(cancellation);
+  await expect(reading).rejects.toMatchObject({
+    reason: cancellation,
+    cause: cancellation,
+  });
 });

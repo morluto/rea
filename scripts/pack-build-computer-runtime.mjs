@@ -9,8 +9,9 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { npmInvocation } from "./lib/npm-invocation.mjs";
+
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 
 const run = (command, args, cwd) => {
   const result = spawnSync(command, args, { cwd, stdio: "inherit" });
@@ -31,7 +32,8 @@ if (destination === undefined || !destination.endsWith(".tar.xz")) {
 const archive = resolve(destination);
 const work = await mkdtemp(join(tmpdir(), "rea-build-runtime-"));
 try {
-  run(npm, ["pack", "--pack-destination", work], root);
+  const pack = npmInvocation(["pack", "--pack-destination", work], process.env);
+  run(pack.command, pack.arguments, root);
   const [packed] = (await readdir(work)).filter((name) =>
     name.endsWith(".tgz"),
   );
@@ -43,7 +45,11 @@ try {
     join(root, "package-lock.json"),
     join(runtime, "package-lock.json"),
   );
-  run(npm, ["ci", "--omit=dev", "--omit=optional"], runtime);
+  const install = npmInvocation(
+    ["ci", "--omit=dev", "--omit=optional"],
+    process.env,
+  );
+  run(install.command, install.arguments, runtime);
   run("tar", ["-cJf", archive, "-C", work, "rea-prod"], work);
   const { size } = await stat(archive);
   process.stdout.write(

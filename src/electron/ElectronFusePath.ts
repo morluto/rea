@@ -1,4 +1,6 @@
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { assertArtifactReadActive } from "../resources/index.js";
 import type { BigIntStats } from "node:fs";
 import { lstat, readlink } from "node:fs/promises";
 import { basename, dirname, isAbsolute, sep } from "node:path";
@@ -215,10 +217,7 @@ const resolveInside = async (
       try {
         // A replacement character can alias a different, valid sibling name.
         // Preserve a literal UTF-8 BOM too: it is part of a filesystem name.
-        target = new TextDecoder("utf-8", {
-          fatal: true,
-          ignoreBOM: true,
-        }).decode(rawTarget);
+        target = decodeStrictUtf8(rawTarget, "preserve");
       } catch {
         throw new ElectronFusePathFailure(
           "invalid_value",
@@ -374,9 +373,12 @@ const isMissing = (cause: unknown): boolean =>
   "code" in cause &&
   ["ENOENT", "ENOTDIR"].includes(String(cause.code));
 
-/** Preserve a link target's terminal separator as a directory requirement. */
+/**
+ * Preserve a link target's terminal separator as a directory requirement.
+ * The target came from this host's readlink, so this host's separators apply.
+ */
 const symlinkTargetSegments = (target: string): readonly string[] => {
-  const separator = process.platform === "win32" ? /[\\/]/u : /\//u;
+  const separator = HOST_PLATFORM.platform === "win32" ? /[\\/]/u : /\//u;
   const parts = target.split(separator).filter((part) => part !== "");
   if (separator.test(target.slice(-1))) parts.push(".");
   return parts;

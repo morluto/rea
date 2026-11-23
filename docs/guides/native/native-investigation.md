@@ -34,6 +34,24 @@ Select an exact name or address from the returned inventory, then use it with
 that every target names its entry function `entry`. MCP uses `open_binary` and
 focused tools such as `list_procedures` and `analyze_function` on the same session.
 
+For analysis-inferred x86-32 Ghidra signatures, `native_api.prototype_conflicts` can
+identify a direct `EBP`-framed stack argument read beyond a zero-parameter
+inference, or an immediate `RET` cleanup (including zero) that disagrees with an
+inferred `stdcall` prototype whose parameters are simple four-byte stack slots.
+Each
+diagnostic retains the inferred claim, decoded instruction address/text,
+observed offset or cleanup size, and unresolved assumptions. It does **not**
+change the inferred signature or establish source-level parameters. The default
+`analyze_function` summary reports the diagnostic count; request the complete
+dossier, `inspect_native_api`, or a retained `native_api` view for the records.
+An omitted conflict list means this check was not recorded (including other
+providers and architectures); an empty list does not prove a correct prototype.
+The `EBP` read check requires an explicit `PUSH EBP; MOV EBP, ESP` entry frame,
+a reachable direct `[EBP + displacement]` operand on a path that has not
+overwritten `EBP`, and no inferred parameters. Return
+cleanup covers immediate `RET` instructions in the owned body or a direct,
+one-hop shared epilogue without expanding body ownership.
+
 | Question                                                     | Section                                                                                |
 | ------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
 | Which instructions, calls, references, or types are present? | [Native primitives](#native-instruction-call-and-type-primitives)                      |
@@ -187,15 +205,14 @@ address tokens, typed references and flow destinations. Mid-instruction, data,
 outside-memory and unlisted addresses have separate outcomes. For Ghidra,
 `not-in-listing` means the address is in memory without a listed instruction or
 defined data. REA does not attempt a decode there: the memory may be uninitialized
-or contain valid instructions. Older Evidence may report `undecodable` for this
-same ambiguous case; it does not establish that a decode failed. Effective
+or contain valid instructions. Effective
 memory base/index/displacement roles remain unavailable. Ghidra reports its program
 language variant in `mode`; other providers retain their own mode label. Ghidra
 MIPS results additionally expose `decoder_context`
 with the observed `ISA_MODE` register at the queried address and its provider
 source. A null value is unavailable, not mode zero; an empty array reports no
-available context register, and omission preserves older captures or providers
-that do not expose this facet. The context is an analysis observation, not proof
+available context register, and omission means the provider does not expose
+this facet for the program's architecture. The context is an analysis observation, not proof
 of a runtime processor state.
 
 `inspect_native_instruction` also returns `incoming_references` to the exact
@@ -229,8 +246,8 @@ profile produce a profile mismatch rather than replaying the former generic
 terminal result. The old snapshot's `evidence_bundle` remains valid retained
 Evidence: copy that object to a separate JSON file and use `rea evidence-import`
 to validate it. Run analysis without the old snapshot and save a fresh one
-under the current profile. Other providers and older captures may omit the
-classification evidence field.
+under the current profile. Other providers may omit the classification
+evidence field.
 
 Call resolution reports direct, resolved indirect, ambiguous, unresolved and
 non-call outcomes from static call references. It does not establish runtime
@@ -247,8 +264,10 @@ observation's own `limitations`, so a reason the provider reported for that
 entry, such as a Kuna export failure or a missing body, stays with the item.
 Null pseudocode is `capability_unavailable`; empty or non-text pseudocode is
 `unreadable_output`. Provider failures keep their typed error. Successful items
-do not repeat limitations; the batch Evidence aggregates every observation's
-limitations by provider and operation.
+also keep their own observation's limitations, so repeated selectors that the
+provider answered differently stay distinguishable, and an unavailable item
+keeps the provider's `pseudocode_absence` reason. The batch Evidence still
+aggregates every observation's limitations by provider and operation.
 Resolved entries also appear in the composed Evidence locations. New batch
 Evidence commits the revised workflow profile; retained historical Evidence
 remains valid. This tool
@@ -321,7 +340,12 @@ the others. A function that `procedure_info` classifies as external, such as an
 import, is counted as `external` and recorded with that status and the body
 fact as observed. It gets no file, no pseudocode is requested, and a resume
 skips it. A function whose classification is unknown is decompiled as usual;
-a provider that returns null pseudocode for it is reported as `no_pseudocode`. Inventory rows without an address are counted in the limitations. `--layout dwarf`
+a provider that returns null pseudocode for it is reported as `no_pseudocode`. Inventory rows without an address are counted in the limitations.
+The top-level `limitations` of the manifest and index count every retained
+non-external function record whose body is unavailable, including records an
+earlier run wrote, and repeat the reason when all of them share one. A resume
+that skips every file therefore keeps the caveat until a later attempt records
+a known body. `--layout dwarf`
 reports that compilation-unit paths are unavailable and still names files by
 address. Filters are a case-sensitive name substring, a case-sensitive name
 prefix, an inclusive address range (including uppercase hexadecimal input), and a positive safe-integer attempt limit. The limit does not allocate space in proportion to its value. Cancellation leaves
@@ -332,6 +356,10 @@ crashed run can be recovered by the next run. Failed descriptor or staging clean
 could not be written or read, for example on a full disk, the export stops with
 an error instead of decompiling the rest. Files and records already committed
 stay, `decompile-index.json` is still written, and a later resume continues.
+If the index was published before cancellation or a later failure, the error's
+`diagnostics.published_output` retains its `output_directory` and `index_path`.
+This receipt confirms publication, not completion of every selected function.
+Failed staging cleanup retains the same receipt through cleanup retry.
 
 Type inspection selects one exact database pathname or typed data address.
 Struct/union fields, enums, pointers, arrays, typedefs, size, alignment, packing
@@ -347,6 +375,21 @@ complete. These fields describe omissions from the response, independently of
 whether Ghidra recovered the original source layout.
 
 ### Hopper analysis behavior
+
+Hopper Evidence commits `analysis_profile.parameters.producer` as
+`{ rea_version, sources_sha256 }`. It replaces the former
+`function_dossier_coverage` marker. The source digest covers the packaged
+`bridge/hopper_bridge.py` that REA launches; changing that script or the REA
+release changes the profile digest and Evidence identity. A snapshot with the
+earlier profile is refused with `evidence_integrity_mismatch` before starting
+Hopper. Open the target without the old snapshot and save a fresh one; REA does
+not rewrite the old file. A matching profile does not enable Hopper snapshot
+replay: document observations remain live because Hopper has no revision token.
+
+Producer identity is computed once per REA process, so restart REA after editing
+packaged bridge files. Between releases, TypeScript-only edits within the same
+REA version do not change this identity. Regenerate observations after such
+development changes; the bridge digest does not fingerprint REA's TypeScript.
 
 Cursor navigation returns the observed object start when Hopper snaps an interior
 address; adjacent-object navigation rejects unmapped inputs and document ends.
@@ -413,7 +456,7 @@ configuration errors and do not fall back to 128. The setting is read from
 the environment that starts REA, while MCP `regex.worker_heap_request_mib`
 can override it for workers belonging to newly accepted searches. Use
 `update_analysis_settings` for either runtime control; accepted work keeps its
-budget. See the [settings design](../../design/limits-and-recovery.md).
+budget. See the [analysis settings and recovery](../../reference/limits-and-recovery.md).
 A heap failure names the effective request, known source, default, floor, and
 maximum. A positive Node.js
 `--max-old-space-size` on the process that starts
@@ -458,7 +501,9 @@ most 64 procedures and retains at most 4 MiB of encoded scan results. A composed
 workflow reuses its own index and clears it when the workflow finishes. The
 default cooperative scan budget is
 2,000 ms; set `REA_HOPPER_CALLER_SCAN_BUDGET_MS` to a positive integer number of
-milliseconds before starting REA to change it. The default limits additional
+milliseconds before starting REA to change the launch value, or use
+`update_analysis_settings` with `hopper.caller_scan_budget_ms` for newly accepted
+operations. The default limits additional
 work on the serial Hopper bridge; larger documents may need a higher setting.
 Results report the examined procedure count and any budget interruption.
 An individual page, native caller list, and target instruction list each have
@@ -527,6 +572,24 @@ nodes and edges. Node payloads are bounded to 8 MiB and serialized results to
 32 MiB. Pagination returns edges whose source is on the node page and preserves
 stable IDs for endpoints outside that page.
 
+After fully examining and retaining a callee's parameters, an unmatched
+recovered CALL operand is reported at the caller's call-site address in
+`unknowns[].call_inputs`. One group lists its `input_indices` (positive p-code
+input positions; input 0 is the destination), `call_node_id`, exact resolved
+`destination` selector and caller `evidence_id`. The operands themselves stay
+in the retained call node and source Evidence. For example, a three-argument
+call with only parameter ordinal 0 recovered retains the index-1 binding and
+reports indices `[2, 3]` together. This does not establish a variadic signature
+or invent formal parameters.
+
+A depth, function, node or edge refusal, unavailable value flow, or truncated
+callee recovery does not establish such an examined gap. Those conditions
+keep their existing unknowns and traversal reasons. Call-input groups remain
+available when paging omits their call node; follow `call_node_id` in subsequent
+pages or the source Evidence. Older traces may omit `call_inputs`. Parameter
+and return bindings use canonical procedure addresses established by analyzed
+dossiers while preserving the provider's destination selector.
+
 Procedure, node and edge `evidence_id` values identify the source function
 observations used by the trace. In an MCP session, retrieve them from the
 Evidence bundle for inspection or export. A replayed source keeps the original
@@ -567,15 +630,26 @@ truncation; a depth or candidate limit is reported only when no other path
 analyzes or queues that destination. `total_nodes` and `total_edges` count
 retained rows. `truncated` remains true for either kind of omission. Failed
 analyses and unresolved calls stay in `unknowns` and do not truncate the
-traversal. Each page reruns analysis; pages are not pinned to one snapshot
-across session edits.
+traversal. A provider-classified thunk whose target the trace did not reach
+by any path adds an unknown that names the target in `related_procedure`; the
+target is reported, not traversed. Each page reruns analysis; pages are not
+pinned to one snapshot across session edits.
 
 The raw Java `is_dead` flag can remain set after Ghidra decodes a live block;
 `block_membership` reports actual syntax-tree membership separately.
 
 The provider dossier itself retains up to 3,000 p-code operations, 64 inputs per
-operation and 12,000 def-use edges, with explicit omitted counts. A `STORE`
-may describe stack memory and does not itself prove persistent state.
+operation and 12,000 def-use edges, with explicit omitted counts. Memory effects
+cover high-p-code `LOAD` and `STORE` operations; direct memory address varnodes
+in other operations are excluded, so an empty effect list does not establish
+that the function accesses no memory. `procedure_references` can supply
+complementary recorded instruction references, with its own coverage limits. A
+`STORE` may describe stack memory and does not itself prove persistent state.
+The Ghidra analysis profile commits to this effect scope. Snapshots from before
+that commitment are rejected; analyze without the snapshot and save a fresh one.
+To keep historical Evidence, copy the old snapshot's `evidence_bundle` object to
+a separate JSON file and import that bundle. Import validates the Evidence; it
+does not replay the old provider analysis.
 
 Jump-table evidence keeps numeric `mappings`, explicit `default_targets`, and
 backing `data_sources` separate. A null case value denotes an unresolved
@@ -611,12 +685,13 @@ Native target admission checks Mach-O slice headers before assigning FAT
 identity. A shared `CAFEBABE` prefix whose declarations do not identify Mach-O
 images receives the generic unsupported-format refusal, including JVM class
 files larger than the bounded admission probe. This does not identify a partial
-prefix as a validated JVM class. For files sharing `CAFEBABE`, target admission
-checks complete JVM framing within the same 16 MiB class identity bound as the
-Mach-O image reader. A complete class remains unsupported even if its constant
-pool resembles a known FAT CPU declaration. Above that bound, an ambiguous
-malformed FAT interpretation remains unresolved. Malformed recognized FAT
-declarations retain their format-specific reasons.
+prefix as a validated JVM class. When the shared header fields form a plausible
+JVM version, target admission and the Mach-O image reader check complete JVM
+framing up to 16 MiB. A complete class remains
+unsupported even if its constant pool resembles a known FAT CPU declaration.
+Above that bound, a malformed FAT interpretation remains unresolved if the
+prefix could still belong to a JVM class. A header that rules out a JVM class
+allows the reader to report a recognized FAT range error directly.
 
 `inspect_artifact` and `extract_artifact` retain universal Mach-O slices under
 their exact `lipo` names, including 32-bit ARM implementations such as `armv7`,
@@ -626,6 +701,10 @@ Available CPU type, subtype/capability bits, byte range, and alignment remain
 checked against the source bytes. Inventory records source ranges and hashes, and
 extraction copies those ranges without running the target. This does not
 expand any analysis provider's supported architectures.
+An unnamed architecture can carry a numeric CPU type and base subtype in
+`lipo`'s label. The `PTR_AUTH_VERSION` line identifies a userspace or kernel
+ABI, while the exact version and full subtype code remain unknown when that
+line is the only capability information.
 Malformed successful `lipo` output reports a format failure with its parse
 diagnostic.
 Apple lipo's hidden ARM64 compatibility row is retained separately from the
@@ -635,10 +714,35 @@ per-row `hidden` marker from lipo output. Mach-O image and Electron fuse
 inspection include the row in architecture selection while retaining that
 marker in their reported slices.
 
+The four app resource commands, `inspect_plist`, `inspect_asset_catalog`,
+`inspect_keyed_archive`, and `decode_interface_builder`, use a separate read-only
+resource session when the CLI input is a bundle directory. They do not require
+`CFBundleExecutable`, resolve a program by filename convention, or establish
+executable identity. For MCP, select the app with `open_bundle_resources` before
+querying its resources. `inspect_plist` defaults to the selected bundle's
+Info.plist. A declared executable is not opened or validated by this resource
+route either.
+
+Resource-only Evidence has a null `subject`; results identify the selected
+root through `resource_root`, and executable target digests remain null. Use
+the reported per-resource provenance for the bytes actually read. A supported
+Info.plist layout identifies a resource root; it does not establish that the
+plist contents or every resource can be decoded. Parsing, resource selection,
+and filesystem failures remain explicit outcomes of their respective readers.
+
+Executable analysis still uses `open_binary` and the ordinary binary admission
+checks. Missing or invalid executable declarations, unsafe program names, and
+unresolved program paths remain typed failures on that route. Resource sessions
+do not support binary-only operations or binary analysis snapshots. See the
+[resource session contract](../../reference/mcp-contracts.md#identity-and-discovery)
+for session status and provenance semantics.
+
 `inspect_plist.format` describes the selected source, not plutil's conversion
 format. Sources explicitly identified as XML, binary or JSON retain those
-labels. For generic text, a bounded source-prefix probe recognizes leading XML
-markup, including UTF-8 and BOM-marked UTF-16 sources. Unidentified text and
+labels. For any other `file` description, a bounded source-prefix probe
+recognizes leading XML markup, including UTF-8 and BOM-marked UTF-16 sources.
+`file` reports `data` for XML containing a control character or NUL byte, which
+CoreFoundation can still read; the probe labels it `xml`. Unidentified text and
 OpenStep plists, including a data-only value such as `<deadbeef>`, report
 `unknown` even when plutil decodes their values through an XML conversion.
 
@@ -649,7 +753,11 @@ directly when their number facts need no further classification; explicitly
 identified JSON sources can have scalar roots. Unidentified primitive text keeps
 its existing conversion route, so OpenStep `123` remains a string. OpenStep,
 unsupported XML encodings such as UTF-32 and declared legacy encodings, and JSON
-numbers requiring XML type facts retain the `plutil` route. Invalid UTF-8 and
+numbers requiring XML type facts retain the `plutil` route. So does XML that
+REA's XML reader rejects as not well-formed, which CoreFoundation can still
+accept: a limitation names REA's reason, and a document `plutil` also rejects
+stays refused with its diagnostic. Plist structure errors in well-formed XML
+remain refusals without conversion. Invalid UTF-8 and
 encoding-declaration mismatches remain explicit failures. Direct-source
 provenance records `file` without claiming conversion; conversion limitations
 and invocations appear only when conversion actually ran.
@@ -664,12 +772,13 @@ bound. The XML estimate charges every element and every text, comment or CDATA
 node of the decoder's DOM at a measured upper bound, so a plist made of many
 small elements reaches it at a few MiB of source. JSON decode memory has not
 been measured and has no equivalent decode estimate. A refused input reports non-retryable `resource_constraint` with
-`reported_limits.maximum_input_bytes` or `maximum_decoded_bytes` as applicable.
-Ordinary direct-source decoding has a ceiling of 998 source nesting levels,
-derived from the existing 1000-level JSON result capacity by reserving one level
-for typed scalar fields and one for the result's `value` field. Deeper input reports
-`resource_constraint` with `reported_limits.maximum_nesting_depth: 998` and names
-the fixed nesting allowance. XML admission also requires native validation, which
+`reported_limits.maximum_input_bytes` for the input ceiling or `reported_limits: { boundary: "plist-decode-bytes", maximum: 67108864 }` for the decode budget (with `details.refusal.unit: "bytes"`).
+Ordinary direct-source decoding has a ceiling of 997 source nesting levels,
+derived from the existing 1000-level JSON result capacity. Three levels are
+reserved for typed scalar fields, the report value and its Evidence envelope.
+Deeper input reports `resource_constraint` with
+`reported_limits: { boundary: "plist-nesting-depth", maximum: 997 }` and `details.refusal` naming the fixed nesting allowance and its `unit` (`"levels"`).
+XML admission also requires native validation, which
 can refuse input below this decoding ceiling. Compatibility conversions can
 likewise encounter an earlier native utility refusal; both retain native
 diagnostics. Archive and Interface Builder decoding retain their separate
@@ -686,7 +795,13 @@ Selected plist paths preserve filesystem resolution, including `..` after a
 directory symlink and trailing directory separators. Resource-only bundle
 sessions resolve relative selections from the bundle root with the same path
 semantics as executable sessions; the reported source path retains those
-selected segments.
+selected segments. `source_sha256` identifies the stable bytes used for
+classification, decoding, and any native conversion. In an executable session the
+Evidence subject remains the open program, the same binding as other
+bundle-resource observations. A resource-only session keeps a null subject.
+For either bundle session, the selected plist must resolve inside the opened
+bundle. Use `rea inspect-plist <path>` or open the plist itself in MCP when
+it resides outside the bundle.
 
 A conversion refusal includes plutil's diagnostic from either output stream.
 `details.captured_output` retains bounded stdout/stderr excerpts, observed byte
@@ -739,13 +854,20 @@ segments do not produce file ranges. When the selected slice's container offset
 is unknown, those mapped locations are omitted with an explicit limitation;
 architecture inventory locations remain available.
 
+If a load-command or FAT table allowance stops inspection, the refusal reports
+the producer's budget name in `details.reported_limits.boundary` and its
+effective maximum in `details.reported_limits.maximum`. For example,
+`macho_load_command_projected_bytes` names the retained-output allowance and
+`macho_fat_slice_records` names the selected-slice table allowance. The native
+command timeout does not raise these budgets.
+
 `inspect_macho.encryption` reports the `LC_ENCRYPTION_INFO(_64)` state of every
 slice, not only the selected one. It decodes only the FAT table, slice headers
-and load commands. Like every Mach-O container read, a `0xcafebabe` input of at
-most 16 MiB is first read whole to rule out a JVM class file, so that read
-includes code bytes; larger inputs and thin images read only the structures
-above. A slice is `encrypted` when its single encryption command has a nonzero
-`cryptid`, `not-encrypted` when `cryptid` is zero, and `absent` only when every
+and load commands. A `0xcafebabe` input of at most 16 MiB with a plausible JVM
+version is first read whole to resolve its identity. That read can include code
+bytes. Other inputs read only the structures above. A slice is `encrypted`
+when its single encryption command has a nonzero `cryptid`, `not-encrypted`
+when `cryptid` is zero, and `absent` only when every
 load command was read and none was an encryption command. A command whose width
 or `cmdsize` contradicts the image, more than one such command, or a range past
 the slice is `malformed`; a slice whose commands could not be fully read is
@@ -841,6 +963,8 @@ complete observation.
   shared/cyclic references, class descriptors, raw serialized fields and
   malformed/unresolved/nil references. Missing fields stay absent; unknown
   classes are preserved. Select `root`, `offset` and `limit` explicitly.
+  Named parser limits report the exhausted bound and its maximum in
+  `details.reported_limits` on a `truncated` error.
   Binary references retain their serialized type-8 UID identity; ordinary
   dictionaries with `UID` or `CF$UID` keys remain authored data. XML uses
   Foundation's single numeric `CF$UID` dictionary convention for references;
@@ -895,6 +1019,10 @@ complete observation.
   a source-owned AppKit XIB with `ibtool`. Storyboards require an installed
   iOS platform; unsupported archive forms remain explicit.
   XML plist archives accept UTF-8 and BOM-marked UTF-16 in either byte order.
+  Bundle executable resolution and Hopper's minimum-version check admit
+  `Info.plist` only when its opened descriptor is a regular file of at most
+  64 MiB. A symlink at the selected path can resolve to that regular file.
+  The separate 16 MiB budget applies to the decoded representation.
   App bundle `Info.plist` executable resolution uses the same decoder as keyed
   archives and Interface Builder. The decoder consumes an initial
   BOM and rejects malformed byte sequences, unsupported encoding declarations,
@@ -985,11 +1113,12 @@ complete observation.
   (`default` or `caller`) and the bytes retained. A refusal names the observed
   file size, the effective budget and its source, and either the budget to
   select or, above 1 GiB, a deep analysis provider.
-  `swift_decls` lists each `__swift5_types` nominal type descriptor, which
-  survives stripping: `kind` (`class`, `struct`, `enum`, or `actor` from the
-  class actor flag), the descriptor's own `name`, `module`, `qualified_name`
-  (`Outer.Inner`), `generic`, the metadata `accessor_address`, the descriptor
-  `location`, and evidence citing its `__swift5_types` record.
+  `swift_decls` lists each `__swift5_types` and `__swift5_types2` nominal type
+  descriptor, which survives stripping: `kind` (`class`, `struct`, `enum`, or
+  `actor` from the class actor flag), the descriptor's own `name`, `module`,
+  `qualified_name` (`Outer.Inner`), `generic`, the metadata
+  `accessor_address`, the descriptor `location`, and evidence citing its type
+  record by section. Noncopyable types are recorded in `__swift5_types2`.
   Private and local types set `anonymous_context` because their anonymous
   context is omitted from `qualified_name`. When a parent context cannot be
   resolved, such as an extension of a type named only by a mangled name, a
@@ -1016,6 +1145,11 @@ complete observation.
   - `LC_DYLD_CHAINED_FIXUPS` rebases and binds, including the authenticated
     arm64e formats;
   - legacy `LC_DYLD_INFO` rebase and bind opcodes.
+
+  Text relocation records retain their import identity without claiming a
+  pointer value. Bind types are explicit: a non-lazy binding with no declared
+  type is invalid. Reads that overlap only part of an encoded chained-fixup word remain
+  unresolved rather than treating those stored bytes as an ordinary pointer.
 
   [dyld symbol names are byte strings](https://github.com/apple-oss-distributions/dyld/blob/dyld-1330/mach_o/BindOpcodes.cpp#L203-L208),
   compared with [`strcmp`](https://github.com/apple-oss-distributions/dyld/blob/dyld-1330/mach_o/BindOpcodes.cpp#L42-L56).
@@ -1074,7 +1208,16 @@ complete observation.
   implementations with a `category`. A category whose class reference is null,
   or is bound to a symbol other than `_OBJC_CLASS_$_`, such as the `_$s…CN`
   metadata symbol of another module's Swift class, keeps a null class, and
-  `objc_properties_categories` coverage names that reference. Swift
+  `objc_properties_categories` coverage names that reference. A category's
+  class property list (`@property (class)`), present when the image info
+  declares it, is not decoded: the category is partial with
+  `category_class_properties_not_decoded` and coverage names the list field.
+  A field bound to another image's symbol counts as a present list. When that
+  field or the image info cannot be read, the image info is too short to hold
+  its flags, or the field is zero while its pointer fixups are unknown, the
+  category keeps its decoded facts and is partial with
+  `category_class_properties_unreadable`.
+  Swift
   field-offset globals that are only
   initialized at runtime stay unresolved. Generic, resilient, async and
   coroutine tables, and inherited overrides, have explicit unsupported or
@@ -1089,7 +1232,9 @@ complete observation.
   offers direct metadata inspection or a `list_names` symbol inventory. The
   workflow tries direct metadata first and uses the symbol fallback only when
   that operation is unavailable; runtime failures remain failures rather than
-  being replaced by symbol-only results.
+  being replaced by symbol-only results. If the symbol fallback then fails or
+  returns an invalid inventory, the error also keeps the direct operation's
+  refusal under `details.diagnostics.binary_metadata_failure`.
 
 `get_objc_classes` keeps names from the provider inventory. It coalesces rows
 only when their exact selected-image pointer slots decode to the same class
@@ -1121,6 +1266,9 @@ original JSON scalar types. Values that JSON cannot represent faithfully,
 including unsafe integers, negative zero and non-finite numbers, remain null
 with a path-specific gap and incomplete capture coverage. Null alone does not
 establish that an accessibility value was successfully read or absent.
+Failed role, title, value or action reads add a path-specific gap and mark the
+capture truncated. An empty `actions` array with an action-read gap means the
+available actions are unknown.
 
 An initial PID or window mismatch is `invalid_request` on `pid` or
 `window_id` and leaves provider availability intact. A selected window that
@@ -1230,7 +1378,7 @@ resource, REA releases that runtime and admits the next observation.
 Cancellation observed while output and Evidence are finalized returns partial
 cancellation Evidence, even if the target has already exited.
 
-- the outcome, exit status and captured stdout/stderr (1 MiB kept per stream
+- the outcome, exit status and captured stdout/stderr (1 MiB by default kept per stream
   while excess bytes are drained and counted without growing capture files).
   Each stream reports `complete`; when draining could not finish, its byte
   count is an observed lower bound and truncation is explicit;
@@ -1238,21 +1386,43 @@ cancellation Evidence, even if the target has already exited.
 - `selected_file_sha256` and LLDB module identity observations. These checks do
   not pin the executable against concurrent mutation; `loaded_image_sha256`
   remains unknown;
-- signal or exception stops;
+- signal or exception stops. LLDB can report a requested breakpoint's own trap
+  as an `EXC_BREAKPOINT` exception without running its callback; a trap at a
+  requested location is recorded as that breakpoint's event. Any other
+  breakpoint trap, and any signal or exception stop on a requested location,
+  stays in `other_stops`, is counted in
+  `coverage.unattributed_breakpoint_stops`, and makes coverage partial, because
+  it may be a hit REA could not record;
 - every breakpoint's resolved locations; a breakpoint that matched no loaded
   code makes coverage partial;
 - limitations.
 
-The bridge limits retained event JSON to 8 MiB and caller frames to 65,536
-across the run. It checks admission before retaining another complete event;
+The bridge defaults to 8 MiB retained event JSON and 65,536 caller frames
+across the run. Select `capture_limits` before launch to adjust `trace_bytes`,
+`trace_frames`, `breakpoint_location_bytes`, `other_stops`, `selector_bytes`,
+and `output_bytes`. Defaults are respectively 8388608, 65536, 8388608, 256,
+1024, and 1048576. Byte budgets accept positive safe integers up to the smaller of the running
+Node Buffer and single-string representation ceilings; counts are positive safe
+integers. These representability ceilings do not establish available memory or
+raise complete Evidence/transport admission. Omitted fields keep their defaults. The journal shares
+`trace_bytes`; completed and partial capture readers use the selected budgets.
+For example, `"capture_limits":{"trace_bytes":16777216,"output_bytes":2097152}`
+selects 16 MiB trace/journal and 2 MiB retained output per stream. These choices
+do not extend `duration_ms`, `max_events`, the outer client deadline or MCP
+receive allowance, and require no REA restart. A larger budget applies to a new
+authorized observation; it cannot recover facts omitted from an earlier run. It checks admission before retaining another complete event;
 `resource-limit` reports which observations could not be completed without
 silently changing the requested event or frame settings.
-Resolved breakpoint locations have a separate aggregate 8 MiB metadata budget.
+Resolved breakpoint locations have a separate aggregate metadata budget,
+default 8 MiB (`capture_limits.breakpoint_location_bytes`).
 If their details exceed it, `location_count` retains the full observed match
 count, coverage is partial, and `breakpoint_locations_truncated` is true. This
 post-run metadata limit does not imply that the target was killed.
 
-Accepted entries and signal stops are also flushed to a bounded 8 MiB journal.
+Accepted entries and signal stops are also flushed to the bounded trace journal.
+When event admission stops, `coverage.capture_limit` identifies `trace_bytes`
+or `trace_frames` when the bridge supplied that fact; historical reports that
+lack it retain the combined limitation without guessing the exhausted resource.
 If cancellation, timeout, capture failure, or a later bridge error prevents a
 full result, the error retains this evidence in `details.partial_observation`
 with partial coverage. Available output prefixes remain inline; their byte
@@ -1277,13 +1447,13 @@ is present. A denied trace reports the `debugger-attach-denied` reason.
 
 ## Provider and verification boundaries
 
-Install a Ghidra 12.x (>=12.1) release and the 64-bit full JDK it declares, then configure REA to
+Install a Ghidra 12.x (>=12.2) release and the 64-bit full JDK it declares, then configure REA to
 use them. Ghidra analysis supports Linux x64/arm64 and macOS x64/arm64; each installation requires
 the matching native decompiler. Experimental Windows x64 P0 admits native
 x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, [DOS MZ
 executables](../../providers/ghidra-dos.md), plus explicitly selected
 [raw NMOS 6502 images](../../providers/raw-binary.md#nmos-6502) with a caller-supplied load address,
-on fixed local NTFS volumes. Other raw CPU families remain unsupported on Windows.
+on fixed local NTFS/ReFS volumes. Other raw CPU families remain unsupported on Windows.
 The boundary uses bundled Job Object ownership, protected runtime DACLs, and
 handle-based path admission. See [Windows Ghidra P0](../../providers/windows-ghidra-p0.md) and
 [issue #527](https://github.com/morluto/rea/issues/527).
@@ -1361,7 +1531,8 @@ before any comment or name is changed.
 - `npm run verify:ghidra`: host-native debug/stripped targets, native type layout,
   instruction/call facts, value dependencies and process/project cleanup.
 - `npm run verify:ghidra:aarch64-jump-table`: optimized ELF and byte/halfword
-  relative tables, plus ARM64 Mach-O on an ARM64 macOS host.
+  relative tables, plus ARM64 Mach-O on an ARM64 macOS host. The `and #0xff`
+  byte-offset fixture is expected to stay unrecovered on Ghidra 12.2.
 - `npm run verify:apple-dispatch`: source-built Objective-C protocols, classes,
   properties and categories, and Swift conformances and vtables. Each is linked
   with legacy `LC_DYLD_INFO` and with chained fixups (and as arm64e on Apple
@@ -1506,6 +1677,18 @@ because a JSON number cannot carry the sign of zero. `inspect_plist` and
 Builder node attributes use the same value. Positive zero and integer zero,
 including an `<integer>-0</integer>` literal, remain the number `0`.
 
+A dictionary that declares a key more than once keeps one value in the JSON
+result, the last one. When `inspect_plist` decodes binary, XML or OpenStep
+source directly, it reads each dictionary's keys before they collapse and adds
+a limitation with the count of affected dictionaries and replaced values and the
+first repeated key names. `inspect_keyed_archive`, Interface Builder analysis
+(per archive path) and the `codesign` entitlements in `inspect_signature` add the
+same limitation. Other plist readers may keep a different value. Opening an
+app bundle refuses an `Info.plist` that may declare `CFBundleExecutable` more
+than once, because which declaration names the program is ambiguous. JSON
+sources and plists decoded through a `plutil` conversion are not checked:
+those parsers keep one value per key before REA sees the result.
+
 Known non-finite reals are reported as
 `{ "$plist_type": "real", "value": "nan" | "+infinity" | "-infinity" }`.
 These are canonical numeric labels, not a claim about original source spelling.
@@ -1538,10 +1721,12 @@ returns ordered addresses with segments, source file offsets and containing
 procedures. The CLI equivalent is
 `rea search-bytes ./program '48 8B ?? ?? 89' --provider ghidra`.
 Use `start`/`end` to constrain the inclusive address window, and continue with
-`next_cursor` until `complete` is true. Inspect `searched` for page coverage and
-skipped uninitialized blocks. A missing match does not establish absence from
-uninitialized or excluded memory. See
-[Ghidra byte search](../../providers/ghidra-provider.md#masked-byte-search) for mask and coverage
+`next_cursor` until `complete` is true. A cursor from another target, analysis
+profile or project, pattern, mask, bounds, or document is rejected without
+schema-repair guidance; the error does not claim which of those differs.
+Inspect `searched` for page coverage and skipped uninitialized blocks. A
+missing match does not establish absence from uninitialized or excluded memory.
+See [Ghidra byte search](../../providers/ghidra-provider.md#masked-byte-search) for mask and coverage
 semantics. This query never executes or modifies target bytes.
 
 Exact-name xref lookup reports distinct candidate addresses as an input ambiguity;

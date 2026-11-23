@@ -11,7 +11,6 @@ import type {
   JavaScriptSemanticReference,
 } from "./javascriptSemanticIr.js";
 import { collectJavaScriptSemanticPromises } from "./javascriptSemanticPromises.js";
-import { collectJavaScriptSemanticObjects } from "./javascriptSemanticObjects.js";
 import { collectJavaScriptSemanticResources } from "./javascriptSemanticResources.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 
@@ -44,7 +43,6 @@ type DerivedSemanticAnalysis = Pick<
   | "eventOperations"
   | "frontiers"
   | "functionFingerprints"
-  | "objectOperations"
   | "promiseOperations"
   | "requestOperations"
   | "resourceOperations"
@@ -96,12 +94,6 @@ export function* collectJavaScriptDerivedSemanticsSteps(
     callables,
   );
   yield;
-  const objectOperations = collectJavaScriptSemanticObjects(
-    program,
-    state,
-    callables,
-  );
-  yield;
   const assignmentFlows = yield* collectAssignmentFlowsSteps(
     program,
     state,
@@ -140,7 +132,6 @@ export function* collectJavaScriptDerivedSemanticsSteps(
     ...childProcesses,
     ...dataEffects,
     resourceOperations,
-    objectOperations,
     functionFingerprints,
   };
 }
@@ -188,7 +179,7 @@ function* collectExpressionFlowsSteps(
         const expression = unwrapJavaScriptExpression(returnValue).node;
         const exact = readExactJavaScriptLiteral(expression);
         if (exact.found) {
-          const value = semanticPrimitiveSet([exact.value]);
+          const value = semanticPrimitiveSet([exact.value], state.precision);
           if (value.status === "literal" && literalReturns.length < budget)
             literalReturns.push({
               location: range(expression),
@@ -270,7 +261,9 @@ function* collectExpressionFlowsSteps(
         (t.isSequenceExpression(node) && index !== values.length - 1);
       const operand = unwrapJavaScriptExpression(value).node;
       const exact = readExactJavaScriptLiteral(operand);
-      const literal = exact.found ? semanticPrimitiveSet([exact.value]) : null;
+      const literal = exact.found
+        ? semanticPrimitiveSet([exact.value], state.precision)
+        : null;
       if (
         literal?.status === "unknown" &&
         literal.resourceLimit === "primitive-bytes"

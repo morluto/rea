@@ -6,7 +6,7 @@ import {
 import { nativeAotSnapshotObservationSchema } from "../../../src/domain/native/nativeAotSnapshotObservation.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { fileSnapshotPartialObservationSchema } from "../../../src/domain/fileSnapshotObservation.js";
 import { resolvedAnalysisError } from "../../../src/domain/analysisErrorBase.js";
@@ -14,7 +14,7 @@ import {
   GhidraSessionError,
   bindGhidraSessionFailure,
 } from "../../../src/ghidra/GhidraSessionError.js";
-import { err } from "../../../src/domain/result.js";
+import { err, ok } from "../../../src/domain/result.js";
 import {
   nativeAotPeFixture,
   nativeAotPeDigest,
@@ -24,8 +24,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { expect, it } from "vitest";
 
 import { logCliCommand } from "../../../src/cliLogging.js";
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
-import { ok } from "../../../src/domain/result.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { GhidraRequestQueue } from "../../../src/ghidra/GhidraRequestQueue.js";
 import { silentLogger } from "../../../src/logger.js";
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
@@ -100,7 +99,7 @@ it("preserves queue failure diagnostics through the provider, CLI adapter and SD
     process.exitCode = previousExitCode;
     await harness.close();
   }
-}, 30_000);
+});
 
 it.each(
   (["cancelled", "protocol"] as const).flatMap((kind) =>

@@ -205,6 +205,54 @@ describe("JavaScript semantic analysis: child-process signals", () => {
       null,
     ]);
   });
+  it("expands literal spreads and follows only immutable signal aliases", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      import { spawn } from "node:child_process";
+      function run(signals, pick) {
+        const child = spawn("/bin/tool");
+        child.kill(...[]);
+        child.kill(...["SIGINT"]);
+        child.kill(...[, "SIGINT"]);
+        child.kill(...[...["SIGINT"]]);
+        child.kill(...[], "SIGKILL");
+        child.kill(...signals);
+        const literals = ["SIGINT"];
+        child.kill(...literals);
+        const unset = undefined;
+        child.kill(unset);
+        const named = "SIGKILL";
+        const alias = named;
+        child.kill(alias);
+        let open = undefined;
+        child.kill(open);
+        let changed = undefined;
+        changed = pick();
+        child.kill(changed);
+      }
+      function shadowed(undefined) {
+        const child = spawn("/bin/tool");
+        const unset = undefined;
+        child.kill(unset);
+      }
+    `);
+
+    expect(
+      ir.childProcessInteractions.map(({ signalName }) => signalName),
+    ).toEqual([
+      "SIGTERM",
+      "SIGINT",
+      "SIGTERM",
+      "SIGINT",
+      "SIGKILL",
+      null,
+      null,
+      "SIGTERM",
+      "SIGKILL",
+      null,
+      null,
+      null,
+    ]);
+  });
 });
 
 describe("JavaScript semantic analysis: configuration value escapes", () => {
@@ -269,3 +317,18 @@ describe("JavaScript semantic analysis: configuration value escapes", () => {
     expect(configurationReads(body)).toEqual([]);
   });
 });
+
+it.each([
+  ["if (flag) child = spawn('tool');", "partial"],
+  ["child = spawn('tool');", "complete"],
+] as const)(
+  "keeps child-process incoming parameter uncertainty after %s",
+  (assignment, resolution) => {
+    const ir = analyzeJavaScriptSemantics(
+      `import { spawn } from 'node:child_process'; function stop(child, flag) { ${assignment} child.kill(); }`,
+    );
+    expect(ir.childProcessInteractions).toEqual([
+      expect.objectContaining({ kind: "signal", resolution }),
+    ]);
+  },
+);

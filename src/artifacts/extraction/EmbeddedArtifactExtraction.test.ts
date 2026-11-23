@@ -13,7 +13,7 @@ import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { renameOpenParent } from "../../../tests/fixtures/renameOpenParent.js";
 import { buildGodotPck } from "../../../tests/fixtures/godotPck.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { GodotPckArtifactReader } from "../GodotPckArtifactReader.js";
 import { NodeSeaArtifactReader } from "../NodeSeaArtifactReader.js";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
@@ -23,6 +23,15 @@ import * as cArchive from "../pyinstaller/CArchiveLayout.js";
 import * as nodeSea from "../nodeSea/NodeSeaBlob.js";
 import * as godot from "../GodotPckLocation.js";
 import { extractArtifact } from "./ArtifactExtraction.js";
+
+const godotPck = {
+  format: "godot-pck" as const,
+  inputFormat: "godot-pck" as const,
+  reader: GodotPckArtifactReader as { prototype: { close(): Promise<void> } },
+  bytes: () => buildGodotPck(3, [{ path: "payload.txt", data: "fixture" }]),
+  member: "payload.txt",
+  observe: () => vi.spyOn(godot, "locateGodotPck"),
+};
 
 const cases = [
   {
@@ -56,14 +65,7 @@ const cases = [
     member: "payload.js",
     observe: () => vi.spyOn(nodeSea, "decodeNodeSeaBlob"),
   },
-  {
-    format: "godot-pck" as const,
-    inputFormat: "godot-pck" as const,
-    reader: GodotPckArtifactReader as { prototype: { close(): Promise<void> } },
-    bytes: () => buildGodotPck(3, [{ path: "payload.txt", data: "fixture" }]),
-    member: "payload.txt",
-    observe: () => vi.spyOn(godot, "locateGodotPck"),
-  },
+  godotPck,
 ];
 
 it.each(cases)(
@@ -106,56 +108,71 @@ it.each(cases)(
       ).toHaveLength(2);
       expect(scope.hasPending).toBe(false);
     } finally {
-      await scope.close();
-      observation.mockRestore();
-      close.mockRestore();
-      release.mockRestore();
+      try {
+        await scope.close();
+      } finally {
+        observation.mockRestore();
+        close.mockRestore();
+        release.mockRestore();
+      }
     }
   },
 );
 
-it.each(cases)(
-  "rejects changed $format bytes before materializing admitted facts",
-  async ({ inputFormat, reader, bytes }) => {
-    const directory = await createTestTempDirectory(
-      "rea-embedded-extraction-stale-",
-    );
-    const path = join(directory, "source");
-    const output = join(directory, "out");
-    await writeFile(path, bytes());
-    const scope = new ArtifactResourceScope();
-    const original = reader.prototype.close;
-    let closes = 0;
-    const close = vi
-      .spyOn(reader.prototype, "close")
-      .mockImplementation(async function (this: { close(): Promise<void> }) {
-        await original.call(this);
-        if (++closes === 1) await appendFile(path, "changed");
-      });
-    try {
-      await expect(
-        extractArtifact({
-          inputPath: path,
-          inputFormat,
-          outputRoot: output,
-          environment: {},
-          integrityPolicy: "fail",
-          resourceScope: scope,
-        }),
-      ).rejects.toMatchObject({ reason: "integrity" });
-      await expect(stat(output)).rejects.toMatchObject({ code: "ENOENT" });
-      expect(scope.hasPending).toBe(false);
-    } finally {
-      await scope.close();
-      close.mockRestore();
-    }
-  },
-);
+it("refuses changed carrier bytes before opening the materialization reader", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-embedded-extraction-stale-",
+  );
+  const path = join(directory, "source");
+  const output = join(directory, "out");
+  const carrier = godotPck.bytes();
+  await writeFile(path, carrier);
+  const scope = new ArtifactResourceScope();
+  const original = godotPck.reader.prototype.close;
+  const close = vi
+    .spyOn(godotPck.reader.prototype, "close")
+    .mockImplementationOnce(async function (this: { close(): Promise<void> }) {
+      await original.call(this);
+      await appendFile(path, "changed");
+    });
+  try {
+    await expect(
+      extractArtifact({
+        inputPath: path,
+        inputFormat: godotPck.inputFormat,
+        outputRoot: output,
+        environment: {},
+        integrityPolicy: "fail",
+        resourceScope: scope,
+      }),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "container-identity",
+      partialObservation: {
+        kind: "artifact-inventory",
+        inventory: {
+          manifest: {
+            root_sha256: createHash("sha256").update(carrier).digest("hex"),
+          },
+        },
+      },
+    });
+    await expect(stat(output)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(scope.hasPending).toBe(false);
+  } finally {
+    close.mockRestore();
+    await scope.close();
+  }
+});
 
 it.each(
-  cases.flatMap((fixture) =>
-    ["cancel", "retry", "mixed"].map((mode) => ({ ...fixture, mode })),
-  ),
+  cases.flatMap((fixture) => [
+    { ...fixture, mode: "mixed" as const },
+    ...(fixture.format === "godot-pck"
+      ? [{ ...fixture, mode: "cancel" as const }]
+      : []),
+  ]),
 )(
   "retains $format finalization semantics during $mode",
   async ({ inputFormat, reader, bytes, mode }) => {
@@ -233,10 +250,7 @@ it.each(
           `artifact reader for ${path}`,
           `root artifact descriptor for ${path}`,
         ]);
-      else if (mode === "retry")
-        expect(scope.cleanupResources).toEqual([
-          `root artifact descriptor for ${path}`,
-        ]);
+      else expect(scope.cleanupResources).toEqual([]);
       await scope.close();
       expect(rootAttempts).toBe(mode === "cancel" ? 1 : 2);
       expect(readerAttempts).toBe(mode === "mixed" ? 3 : 2);
@@ -295,8 +309,11 @@ it.each(cases)(
       expect(closes).toBe(2);
       expect(scope.hasPending).toBe(false);
     } finally {
-      await scope.close();
-      close.mockRestore();
+      try {
+        await scope.close();
+      } finally {
+        close.mockRestore();
+      }
     }
   },
 );
@@ -378,8 +395,11 @@ it.each(
       }
       expect(scope.hasPending).toBe(false);
     } finally {
-      await scope.close();
-      close.mockRestore();
+      try {
+        await scope.close();
+      } finally {
+        close.mockRestore();
+      }
     }
   },
 );

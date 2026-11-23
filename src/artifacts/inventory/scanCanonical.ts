@@ -6,6 +6,7 @@ import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js"
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import {
   InesArtifactReader,
+  inesInventoryLimitation,
   type InesRegionScan,
 } from "../InesArtifactReader.js";
 
@@ -19,8 +20,11 @@ import {
   ArtifactReaderFailure,
   type ArtifactReader,
   type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
-import type { ArtifactResourceOwner } from "../ArtifactResourceScope.js";
+  type ArtifactResourceOwner,
+  hashStableRootArtifact,
+  hashStableRootArtifactHandle,
+  hostExecutableMarking,
+} from "../../resources/index.js";
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
@@ -34,6 +38,7 @@ import {
   materializeDirectoryNodes,
   rekeyOccurrences,
   rootOccurrenceFor,
+  type ArtifactParentResolution,
   type MutableOccurrence,
 } from "./ArtifactGraphConstruction.js";
 import {
@@ -42,12 +47,7 @@ import {
   artifactManifestId,
 } from "../../domain/artifactIdentity.js";
 import { classifyAndHashRootForInventory } from "./classify.js";
-import { hostExecutableMarking } from "../hostExecutableMarking.js";
 import type { HashResult } from "../ArtifactHash.js";
-import {
-  hashStableRootArtifact,
-  hashStableRootArtifactHandle,
-} from "./hashStableRootArtifact.js";
 import { createReader, inventoryCoverage } from "./reader.js";
 import {
   scanReader,
@@ -55,6 +55,7 @@ import {
 } from "./scanReader.js";
 import type { ArtifactInventoryOptions } from "./types.js";
 import type { ArtifactContainerIntegrityPair } from "../../domain/artifactIntegrity.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 export interface TransferredArtifactInventorySource {
   readonly owner: ArtifactResourceOwner;
@@ -125,6 +126,7 @@ const scanCanonical = async (
     digest: rootDigest,
     rootSource,
     readerAdmission,
+    recognitionLimitations,
   } = await classifyAndHashRootForInventory(
     path,
     metadata.isDirectory(),
@@ -142,6 +144,8 @@ const scanCanonical = async (
       readerAdmission,
       options.asarHeaderAdmission,
       selectedPath,
+      options.readerLimits,
+      options.integrity,
     );
   } catch (cause: unknown) {
     readerCreationFailure = { cause };
@@ -158,7 +162,7 @@ const scanCanonical = async (
       pendingContradictions,
       caseCollisionLimitation,
       inesRegionScan,
-      unknownParentOccurrences,
+      parentResolution,
       traversal,
       rootContradiction,
     } = await scanReader(
@@ -167,6 +171,7 @@ const scanCanonical = async (
       options.signal,
       options.integrity,
       options.asarHeaderAdmission,
+      options.acquisitionLimits,
     );
     outcome = {
       kind: "completed",
@@ -184,9 +189,10 @@ const scanCanonical = async (
         pendingContradictions,
         caseCollisionLimitation,
         inesRegionScan,
-        unknownParentOccurrences,
+        parentResolution,
         traversal,
         rootContradiction,
+        recognitionLimitations,
       }),
     };
   } catch (cause: unknown) {
@@ -217,7 +223,10 @@ const scanCanonical = async (
           pendingContradictions: [],
           caseCollisionLimitation: undefined,
           inesRegionScan: undefined,
-          unknownParentOccurrences: new Set(),
+          parentResolution: {
+            unknownParentOccurrences: new Set(),
+            limitations: [],
+          },
           rootContradiction: undefined,
           traversal: {
             status: "unknown",
@@ -235,7 +244,7 @@ const scanCanonical = async (
           cause.reason,
           rootFailure === undefined
             ? cause.message
-            : `${cause.message}; root observations could not be revalidated: ${rootFailure instanceof Error ? rootFailure.message : String(rootFailure)}`,
+            : `${cause.message}; root observations could not be revalidated: ${errorMessage(rootFailure)}`,
           {
             cause:
               rootFailure === undefined
@@ -247,7 +256,7 @@ const scanCanonical = async (
                   ),
             cleanup: cause.cleanup,
             cleanupLeases: cause.cleanupLeases,
-            userMessage: cause.userMessage,
+            ...cause.primaryFacts(),
             ...(retained === undefined
               ? {}
               : {
@@ -275,6 +284,7 @@ const scanCanonical = async (
       rootSource !== undefined &&
       (isZipPackageFormat(rootFormat) ||
         rootFormat === "ines" ||
+        rootFormat === "asar" ||
         (readerAdmission !== undefined && "kind" in readerAdmission))
         ? "transfer"
         : "release",
@@ -406,6 +416,7 @@ const cleanupInventoryOwners = async ({
 };
 
 interface SnapshotBuildInput {
+  readonly recognitionLimitations?: readonly string[] | undefined;
   readonly resourceScope: ArtifactInventoryOptions["resourceScope"];
   readonly path: string;
   readonly metadata: Stats;
@@ -419,7 +430,7 @@ interface SnapshotBuildInput {
   readonly pendingContradictions: PendingIntegrityContradiction[];
   readonly caseCollisionLimitation: string | undefined;
   readonly inesRegionScan: InesRegionScan | undefined;
-  readonly unknownParentOccurrences: ReadonlySet<MutableOccurrence>;
+  readonly parentResolution: ArtifactParentResolution;
   readonly traversal: ArtifactReaderTraversal;
   readonly rootContradiction: ArtifactContainerIntegrityPair | undefined;
 }
@@ -443,10 +454,11 @@ const buildInventorySnapshot = async (
     path,
     formatMetadata: reader?.formatMetadata?.(),
   });
+  rootOccurrence.limitations.push(...(input.recognitionLimitations ?? []));
   for (const occurrence of input.occurrences)
     if (
       occurrence.parent_occurrence_id === null &&
-      !input.unknownParentOccurrences.has(occurrence)
+      !input.parentResolution.unknownParentOccurrences.has(occurrence)
     )
       occurrence.parent_occurrence_id = rootOccurrence.occurrence_id;
   input.occurrences.unshift(rootOccurrence);
@@ -477,6 +489,7 @@ const buildInventorySnapshot = async (
   const edgeResult = createArtifactEdges(
     rootNode.artifact_id,
     input.occurrences,
+    input.traversal.status,
     reader?.provenance()[0],
   );
   const { edges } = edgeResult;
@@ -515,6 +528,7 @@ const buildInventorySnapshot = async (
       throw new ArtifactReaderFailure(
         "integrity",
         "Missing iNES reconstruction scan",
+        { integrityCheck: "inventory-node" },
       );
     ines = await reader.verifyReconstruction(
       rootDigest.sha256,
@@ -523,8 +537,12 @@ const buildInventorySnapshot = async (
     );
   }
   const traversal = inventoryCoverage(rootFormat, reader, input.traversal);
+  const relationshipLimitations = [
+    ...input.parentResolution.limitations,
+    ...edgeResult.limitations,
+  ];
   const coverage =
-    edgeResult.limitations.length === 0
+    relationshipLimitations.length === 0
       ? traversal.coverage
       : { ...traversal.coverage, status: "unknown" as const };
   return {
@@ -537,7 +555,12 @@ const buildInventorySnapshot = async (
     integrity_contradictions: integrityContradictions,
     coverage,
     limitations: buildLimitations(
-      [...traversal.limitations, ...edgeResult.limitations],
+      [
+        ...(ines === undefined ? [] : [inesInventoryLimitation(ines.header)]),
+        ...traversal.limitations,
+        ...relationshipLimitations,
+        ...(input.recognitionLimitations ?? []),
+      ],
       integrityContradictions,
       input.caseCollisionLimitation,
     ),
@@ -600,6 +623,7 @@ const verifyRootDigest = async (
     throw new ArtifactReaderFailure(
       "integrity",
       "Root artifact changed during inventory",
+      { integrityCheck: "container-identity" },
     );
 };
 

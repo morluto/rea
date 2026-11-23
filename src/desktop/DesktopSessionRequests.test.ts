@@ -4,40 +4,7 @@ import { setImmediate as tick } from "node:timers/promises";
 
 import { describe, expect, it } from "vitest";
 
-import {
-  SessionRequestQueue,
-  parseSessionRequest,
-} from "./DesktopSessionRequests.js";
-
-describe("parseSessionRequest", () => {
-  it("reads stop, unnamed and named checkpoints", () => {
-    expect(parseSessionRequest(" stop ")).toEqual({ kind: "stop" });
-    for (const line of ["", "  ", "checkpoint", "checkpoint   "])
-      expect(parseSessionRequest(line)).toEqual({
-        kind: "checkpoint",
-        name: undefined,
-      });
-    expect(parseSessionRequest("checkpoint  saved file")).toEqual({
-      kind: "checkpoint",
-      name: "saved file",
-    });
-    expect(parseSessionRequest("typed")).toEqual({
-      kind: "checkpoint",
-      name: "typed",
-    });
-  });
-
-  it("keeps a name that only starts with the keyword", () => {
-    expect(parseSessionRequest("checkpoint-2")).toEqual({
-      kind: "checkpoint",
-      name: "checkpoint-2",
-    });
-    expect(parseSessionRequest("checkpoints")).toEqual({
-      kind: "checkpoint",
-      name: "checkpoints",
-    });
-  });
-});
+import { SessionRequestQueue } from "./DesktopSessionRequests.js";
 
 describe("SessionRequestQueue", () => {
   it("queues lines in order and treats the end of input as stop", async () => {
@@ -46,13 +13,22 @@ describe("SessionRequestQueue", () => {
       createInterface({ input, terminal: false }),
     );
 
-    input.end("checkpoint typed\n\n");
+    input.end(
+      " stop \n\n  \ncheckpoint\ncheckpoint   \ncheckpoint  saved file\ntyped\ncheckpoint-2\ncheckpoints\n",
+    );
     await tick();
     await tick();
 
-    expect([queue.next(), queue.next(), queue.next(), queue.next()]).toEqual([
-      { kind: "checkpoint", name: "typed" },
+    expect(Array.from({ length: 11 }, () => queue.next())).toEqual([
+      { kind: "stop" },
       { kind: "checkpoint", name: undefined },
+      { kind: "checkpoint", name: undefined },
+      { kind: "checkpoint", name: undefined },
+      { kind: "checkpoint", name: undefined },
+      { kind: "checkpoint", name: "saved file" },
+      { kind: "checkpoint", name: "typed" },
+      { kind: "checkpoint", name: "checkpoint-2" },
+      { kind: "checkpoint", name: "checkpoints" },
       { kind: "stop" },
       undefined,
     ]);

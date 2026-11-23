@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createAnalysisProfile } from "../../src/domain/analysisProfile.js";
 import type { BinaryTarget } from "../../src/domain/binaryTargetTypes.js";
 import type { AnalysisError } from "../../src/domain/analysisErrorBase.js";
-import { HopperStartError } from "../../src/domain/hopperErrors.js";
+import { HopperStartError } from "../../src/hopper/HopperErrors.js";
 import type { Result } from "../../src/domain/result.js";
 import type {
   AnalysisClient,
@@ -14,7 +14,7 @@ import type {
   AnalysisProfileResolution,
   AnalysisProfileResolutionOptions,
   AnalysisProvider,
-} from "../../src/application/AnalysisProvider.js";
+} from "../../src/ports/AnalysisProvider.js";
 import { BinarySession } from "../../src/application/binary/BinarySession.js";
 import { SessionProviderRouter } from "../../src/application/binary/SessionProviderRouter.js";
 import { AnalysisProviderRegistry } from "../../src/application/binary/AnalysisProviderRegistry.js";

@@ -78,6 +78,10 @@ scenario whose declared variables are unset still validates; the missing-value
 failure belongs to capture. A schema-valid scenario does not prove that the
 executable or target is available on the host.
 
+For a locator with `kind: "role"`, set `name` to the element's exact full
+accessible name. Use the name shown in accessibility evidence, which can include
+text beyond the visible label. A partial name does not match.
+
 ## Minimal launch example
 
 Save this as `browser-scenario.json`, replacing the executable path with an
@@ -359,7 +363,7 @@ A `request` step sends one HTTP request from the page with the page's own
 recorded in the step's network events like any request the application makes.
 Use it to record an application's API, including writes, when driving the UI
 for each call would be slower or less exact than calling the endpoint the UI
-calls. It is the only action that changes application state without a user
+calls. This action directly sends a caller-declared HTTP request without a user
 gesture, so run scenarios with write requests only against an instance whose
 data you may change. This scenario creates one item:
 
@@ -531,7 +535,10 @@ id the application assigns:
   start origin as the browser spells it, so a path may name `My List` or
   `My%20List` (`{*}` matches one segment, and the query is ignored), and fails
   the step unless a 2xx JSON response arrives before its `timeout_ms`; one still
-  being read when the step times out or is cancelled saves nothing. A pointer
+  being read when the step times out or is cancelled saves nothing. Saved values
+  are committed only while the step remains active, after response reading and
+  any request-route cleanup succeed. Cancellation after that commit retains
+  them; a physical request or cleanup failure keeps its original reason. A pointer
   that names no string or number fails the step, so later steps never send a
   missing value, as does a response over 4,000,000 characters: a request step
   stops reading and aborts its fetch there. A UI step reads a body only when
@@ -592,22 +599,25 @@ id the application assigns:
   partial failures without retaining an image to scrub later. Other requested
   artifacts remain available; affected screenshot/aggregate completeness is
   partial and is not eligible for equality.
-- Saved URLs and expanded request JSON are admitted before building their expanded strings or
-  serializing. Its allowance is the smaller of Node's string limit and
-  one sixteenth of current V8 available heap bytes, allowing for the expanded
-  tree, serialization, Playwright transport and browser-side copies. Size
+- Saved URLs, structured queries, and expanded request JSON are admitted before
+  building their expanded strings or serializing. Their allowance is the smaller
+  of Node's string limit and one sixteenth of current V8 available heap bytes,
+  allowing for the expanded tree, serialization, Playwright transport and
+  browser-side copies. Size
   accounting includes JSON escaping and repeated references; each distinct
   saved value's size is measured once per request. An oversized request fails
   before browser dispatch; the complete request envelope, including repeated
-  header values, is checked as well. URL encoding uses a conservative
-  nine-characters-per-UTF-16-unit allowance before encoding a saved value.
+  header values, is checked as well. URI-component and form-query sizes are
+  counted with their respective escaping rules before encoding; repeated equal
+  components reuse their measured size.
   Reduce the payload/repetitions, or raise the parent
   Node heap and restart; this is a conservative allocation estimate, not a
   measurement or guarantee of browser/process-family memory.
-- Evidence records a request step's empty `save` list as absent, so a scenario
-  that saves nothing records the same parameters and `scenario_sha256` as
-  before saved values existed, and REA versions without saved values read its
-  captures.
+- Evidence records the current parsed request action, including `save: []`
+  when no values are saved. Its parameters and `scenario_sha256` use that
+  representation; new observations can have different identities from older
+  captures that omitted the empty list. Retained Evidence keeps its original
+  parameters and identity.
 
 ## Network evidence
 
@@ -666,10 +676,9 @@ transaction only when it was observed; a null predecessor does not establish
 that no earlier hop existed. Request events require both transaction fields;
 an absent ID is malformed capture data. `redirected_from_transaction_state`
 records `root` when Playwright observed no predecessor and `unknown` when a
-predecessor exists but was outside the capture. A linked predecessor is carried
-by `redirected_from_transaction_id` with no state field. Older captures without
-the state field retain the conservative meaning that a null predecessor is
-unknown.
+predecessor exists but was outside the capture. It is required when
+`redirected_from_transaction_id` is null and refused when the predecessor is
+linked; a request event that breaks either rule is malformed capture data.
 
 `scenario.network_content` records the resolved content selection. Comparing
 captures with different selections reports network evidence as unknown with a
@@ -687,12 +696,21 @@ request URL when CDP has no response body. Event and transaction references
 identify the associated Playwright response object, but do not verify that the
 retained bytes came from the original network transaction. Successful selected
 response bodies include this limitation in the capture. These bytes are not
-the compressed wire representation.
+the compressed wire representation. Playwright body media types come from
+the duplicate-preserving header read and carry `media_type_source` set to
+`content-type-header`. Identical repeated declarations retain one value.
+Conflicting, unavailable or redacted declarations leave the type null.
+Selecting a body allows that lookup even when full header values are omitted
+from Evidence. Views use any retained type declarations to interpret captures
+that predate `media_type_source`. Earlier REA versions can reject captures
+that include the new field.
 Headers preserve producer order and duplicates. Authorization,
 Proxy-Authorization, Cookie, and Set-Cookie values are null with
 `redacted: true`; ordinary values remain intact. Declared UTF-8 secret values
-and their standard URI/form or JSON-escaped representations are replaced without
-decoding unrelated binary bytes. Other encodings are not interpreted. Digests describe the
+and their standard URI/form or JSON-escaped representations are replaced.
+Known binary bodies are redacted as bytes. For an unknown media type, a JSON
+redaction pass can remove decoded secret spellings without assigning a type.
+Other encodings are not interpreted. Digests describe the
 retained representation after redaction.
 The selected body-byte limit also bounds that retained representation after
 secret expansion, before base64 serialization. Credential header values are

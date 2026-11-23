@@ -1,7 +1,9 @@
+import { assertArtifactReadActive } from "../resources/index.js";
 import {
   observeElfStringTableEntry,
   elfStringTableText,
 } from "../domain/elfStringTable.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { err, ok } from "../domain/result.js";
 import { readElfDynamicEntry } from "../domain/elfDynamicEntry.js";
 import {
@@ -12,15 +14,22 @@ import {
 } from "../domain/elfHashSymbolCount.js";
 import { readElfSectionHeader } from "../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../domain/elfProgramHeader.js";
-import { readElfSymbol } from "../domain/elfSymbol.js";
+import {
+  elfSymbolExportBinding,
+  elfSymbolExportVisibility,
+  elfSymbolSize,
+  readElfSymbol,
+} from "../domain/elfSymbol.js";
 import { readElfRawTableDeclarations } from "../domain/elfRawTableDeclarations.js";
+import { validateElfSectionTableFields } from "../domain/elfDeclaredRanges.js";
 import { Buffer } from "node:buffer";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { createElfLoadMap } from "./ElfLoadMap.js";
 import {
+  DART_SNAPSHOT_MAGIC,
+  readDartSnapshotHash,
   SNAPSHOT_HASH_LENGTH,
   SNAPSHOT_HASH_OFFSET,
-  SNAPSHOT_HASH_PATTERN,
 } from "./FlutterPayloadScan.js";
 import { readElfFixedHeader } from "../domain/elfFixedHeader.js";
 
@@ -32,38 +41,9 @@ const finishGnuHashCount = async (
   for (let step = walk.next(); ; step = walk.next()) {
     if (step.done === true) return step.value;
     await yieldToEventLoop();
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
   }
 };
-
-/** Bounds-checked little-endian reader over one loaded buffer. */
-class BoundedReader {
-  constructor(private readonly bytes: Buffer) {}
-
-  u8(offset: number): number | null {
-    return offset < this.bytes.length ? this.bytes.readUInt8(offset) : null;
-  }
-
-  u32(offset: number): number | null {
-    return offset + 4 <= this.bytes.length
-      ? this.bytes.readUInt32LE(offset)
-      : null;
-  }
-
-  u64(offset: number): number | null {
-    const low = this.u32(offset);
-    const high = this.u32(offset + 4);
-    if (low === null || high === null || high > 0x001fffff) return null;
-    return high * 0x1_0000_0000 + low;
-  }
-
-  cString(offset: number, tableEnd: number): string | null {
-    if (tableEnd < 0 || tableEnd > this.bytes.length) return null;
-    return elfStringTableText(
-      observeElfStringTableEntry(this.bytes.subarray(0, tableEnd), offset, 257),
-    );
-  }
-}
 
 export interface ElfSymbol {
   readonly name: string;
@@ -74,6 +54,8 @@ export interface ElfSymbol {
 
 export interface ElfParseFailure {
   readonly reason: string;
+  /** Requested name for an ordinary missing definition; other failures are structural. */
+  readonly missingSymbol?: string;
 }
 
 const SHT_DYNSYM = 11;
@@ -115,6 +97,8 @@ export const readElfHeader = (
     return { failure: { reason: "unsupported ELF type" } };
   const raw = readElfRawTableDeclarations(bytes, fixedHeader.value);
   if (!raw.ok) return { failure: { reason: raw.error.message } };
+  const sectionTable = validateElfSectionTableFields(raw.value);
+  if (!sectionTable.ok) return { failure: { reason: sectionTable.error } };
   const { programs, sections } = raw.value;
   const e_shoff =
     sections.offset <= BigInt(Number.MAX_SAFE_INTEGER)
@@ -188,13 +172,13 @@ export interface ElfSymbolInventory {
   readonly failures: readonly ElfParseFailure[];
 }
 
-/** Decode the ELF tables once and resolve only the requested definitions. */
+/** Decode the ELF tables once and resolve only the requested exported definitions. */
 export const readElfSymbols = async (
   bytes: Buffer,
   symbolNames: readonly string[],
   signal?: AbortSignal,
 ): Promise<ElfSymbolInventory> => {
-  signal?.throwIfAborted();
+  assertArtifactReadActive(signal);
   const failure = (reason: string): ElfSymbolInventory => ({
     symbols: [],
     failures: [{ reason }],
@@ -211,14 +195,14 @@ export const readElfSymbols = async (
     e_phentsize,
     e_phnum,
   } = parsed.header;
-  const reader = new BoundedReader(bytes);
-  const entrySize = is64 ? 24 : 16;
+  const reader = new BinaryReader(bytes, true, "ELF");
+  const entrySize = elfSymbolSize(is64 ? 64 : 32);
   const segments: { vaddr: number; offset: number; filesz: number }[] = [];
   let dynamicSegment: { offset: number; filesz: number } | null = null;
   for (let index = 0; index < e_phnum; index += 1) {
     if (index % 4096 === 0) {
       await yieldToEventLoop();
-      signal?.throwIfAborted();
+      assertArtifactReadActive(signal);
     }
     const base = e_phoff + index * e_phentsize;
     const parsedProgram = readElfProgramHeader(
@@ -284,7 +268,7 @@ export const readElfSymbols = async (
     for (let index = 0; index < e_shnum; index += 1) {
       if (index % 4096 === 0) {
         await yieldToEventLoop();
-        signal?.throwIfAborted();
+        assertArtifactReadActive(signal);
       }
       const header = e_shoff + index * e_shentsize;
       const parsedSection = readElfSectionHeader(
@@ -362,7 +346,7 @@ export const readElfSymbols = async (
     ) {
       if ((base - dynamicSegment.offset) % (4096 * dynamicEntrySize) === 0) {
         await yieldToEventLoop();
-        signal?.throwIfAborted();
+        assertArtifactReadActive(signal);
       }
       const parsedEntry = readElfDynamicEntry(
         bytes.subarray(base, base + dynamicEntrySize),
@@ -422,7 +406,7 @@ export const readElfSymbols = async (
       (offset) => {
         const mapped = toOffset(address, offset + 4);
         return mapped.ok
-          ? ok(reader.u32(mapped.value + offset)!)
+          ? ok(reader.u32(mapped.value + offset))
           : err(mapped.error.reason);
       };
     if (sysv === undefined && gnu === undefined)
@@ -466,10 +450,14 @@ export const readElfSymbols = async (
   const unresolved = new Set<string>();
   const failures = new Set<string>();
   for (const table of tables) {
+    const strings = bytes.subarray(
+      table.stringOffset,
+      table.stringOffset + table.stringSize,
+    );
     for (let index = 0; index < table.count; index += 1) {
       if (index % 4096 === 0) {
         await yieldToEventLoop();
-        signal?.throwIfAborted();
+        assertArtifactReadActive(signal);
       }
       const base = table.offset + index * entrySize;
       const parsedSymbol = readElfSymbol(
@@ -487,11 +475,16 @@ export const readElfSymbols = async (
           sectionIndex < 0xff00 &&
           (table.source === "dynamic-segment" || sectionIndex < e_shnum));
       if (!defined || nameOffset >= table.stringSize) continue;
-      const name = reader.cString(
-        table.stringOffset + nameOffset,
-        table.stringOffset + table.stringSize,
+      const name = elfStringTableText(
+        observeElfStringTableEntry(strings, nameOffset, 257),
       );
-      if (name === null || !wanted.has(name)) continue;
+      if (
+        name === null ||
+        !wanted.has(name) ||
+        elfSymbolExportBinding(symbol.binding) === undefined ||
+        elfSymbolExportVisibility(symbol.other) === undefined
+      )
+        continue;
       if (
         symbol.value > BigInt(Number.MAX_SAFE_INTEGER) ||
         symbol.size > BigInt(Number.MAX_SAFE_INTEGER)
@@ -522,12 +515,20 @@ export const readElfSymbols = async (
     failures.add(`Symbol ${name} has conflicting definitions`);
   }
   for (const name of unresolved) symbols.delete(name);
-  for (const name of wanted)
-    if (!symbols.has(name) && !ambiguous.has(name) && !unresolved.has(name))
-      failures.add(`symbol ${name} is not in the dynamic symbol table`);
   return {
     symbols: [...symbols.values()],
-    failures: [...failures].map((reason) => ({ reason })),
+    failures: [
+      ...[...failures].map((reason) => ({ reason })),
+      ...[...wanted]
+        .filter(
+          (name) =>
+            !symbols.has(name) && !ambiguous.has(name) && !unresolved.has(name),
+        )
+        .map((name) => ({
+          reason: `symbol ${name} has no exported dynamic definition`,
+          missingSymbol: name,
+        })),
+    ],
   };
 };
 
@@ -542,12 +543,13 @@ export const readSnapshotHeader = (
   hash: string | null;
   complete: boolean;
 } => {
-  const reader = new BoundedReader(bytes);
-  // The Dart magic bytes f5 f5 dc dc read little-endian. Kind and length
-  // fields are only meaningful in data-section headers; sections without
-  // the magic (instructions carry a different layout) report nulls.
-  const magic = reader.u32(offset);
-  if (magic !== 0xdcdcf5f5)
+  const magicSize = DART_SNAPSHOT_MAGIC.length;
+  if (
+    !Number.isSafeInteger(offset) ||
+    offset < 0 ||
+    offset > bytes.length - magicSize ||
+    !bytes.subarray(offset, offset + magicSize).equals(DART_SNAPSHOT_MAGIC)
+  )
     return {
       magicValid: false,
       kind: null,
@@ -555,25 +557,26 @@ export const readSnapshotHeader = (
       hash: null,
       complete: false,
     };
-  const headerLength = reader.u64(offset + 4);
-  const kind = reader.u64(offset + 12);
-  const candidate = bytes
-    .subarray(
-      offset + SNAPSHOT_HASH_OFFSET,
-      offset + SNAPSHOT_HASH_OFFSET + SNAPSHOT_HASH_LENGTH,
-    )
-    .toString("latin1");
-  const hash = SNAPSHOT_HASH_PATTERN.test(candidate) ? candidate : null;
+  const reader = new BinaryReader(bytes, true, "Dart snapshot");
+  const readSnapshotField = (fieldOffset: number): number | null => {
+    if (fieldOffset > bytes.length - 8) return null;
+    const value = reader.i64(fieldOffset);
+    return value >= 0n && value <= BigInt(Number.MAX_SAFE_INTEGER)
+      ? Number(value)
+      : null;
+  };
+  const headerLength = readSnapshotField(offset + magicSize);
+  const kind = readSnapshotField(offset + magicSize + 8);
+  const hash = readDartSnapshotHash(bytes, offset);
   // Dart's stored length excludes the four magic bytes and includes the
   // 20-byte fixed header and the version hash. Aligned data may follow it
   // inside the exported symbol, but the serialized snapshot must fit.
-  // Kind 3 is FullAOT in the supported Dart 2.14 layout; enum values change
-  // across SDK versions, so other kinds remain uninterpreted observations.
+  // The export profile interprets the kind. Its enum values vary by producer.
   const complete =
     headerLength !== null &&
-    headerLength >= SNAPSHOT_HASH_OFFSET + SNAPSHOT_HASH_LENGTH - 4 &&
-    headerLength <= bytes.length - offset - 4 &&
-    kind === 3 &&
+    headerLength >= SNAPSHOT_HASH_OFFSET + SNAPSHOT_HASH_LENGTH - magicSize &&
+    headerLength <= bytes.length - offset - magicSize &&
+    kind !== null &&
     hash !== null;
   return { magicValid: true, kind, headerLength, hash, complete };
 };

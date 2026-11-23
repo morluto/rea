@@ -3,147 +3,287 @@ import { expect, it, vi } from "vitest";
 import { HopperProvider } from "../hopper/HopperProvider.js";
 import { KunaProvider } from "../kuna/KunaProvider.js";
 import { silentLogger } from "../logger.js";
-import { ConfigurationError } from "../domain/configurationErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { regexMatchingDeadlineError } from "../process/RegexMatcher.js";
-import { parseEnvironment } from "./environment.js";
+import {
+  MAX_NODE_TIMER_DELAY_MS,
+  MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
+  MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
+} from "../domain/analysisResourceLimits.js";
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
+import {
+  regexMatchingDeadlineError,
+  regexWorkerHeapError,
+} from "../process/RegexMatcher.js";
 import { parseConfig } from "./parseConfig.js";
+import {
+  readRuntimeSetting,
+  runtimeAnalysisConfig,
+} from "./runtimeAnalysisSettings.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
   parseRegexMatchingDeadline,
+  resolveRegexMatchingDeadline,
   REGEX_MATCHING_DEADLINE_SETTING,
-  regexMatchingDeadlineConstraint,
+  regexMatchingDeadlineContinuingRecovery,
   regexMatchingDeadlineRecovery,
 } from "./regexMatchingDeadline.js";
-import { MAXIMUM_REGEX_MATCHING_DEADLINE_MS } from "../domain/analysisResourceLimits.js";
+import {
+  DEFAULT_REGEX_WORKER_HEAP_REQUEST,
+  parseRegexWorkerHeapRequest,
+  resolveRegexWorkerHeapRequest,
+  REGEX_WORKER_HEAP_REQUEST_SETTING,
+  regexWorkerHeapRequestContinuingRecovery,
+} from "./regexWorkerHeapRequest.js";
 
-const configured = (deadlineMs: number) =>
-  ({ deadlineMs, source: "setting" }) as const;
+const deadlines = {
+  setting: REGEX_MATCHING_DEADLINE_SETTING,
+  minimum: 1,
+  maximum: MAX_NODE_TIMER_DELAY_MS,
+  defaultBudget: DEFAULT_REGEX_MATCHING_DEADLINE,
+  parse: parseRegexMatchingDeadline,
+  configured: (deadlineMs: number) => ({ deadlineMs, source: "setting" }),
+};
+const heaps = {
+  setting: REGEX_WORKER_HEAP_REQUEST_SETTING,
+  minimum: MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
+  maximum: MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
+  defaultBudget: DEFAULT_REGEX_WORKER_HEAP_REQUEST,
+  parse: parseRegexWorkerHeapRequest,
+  configured: (heapMiB: number) => ({ heapMiB, source: "setting" }),
+};
 
-it("keeps the 5000 ms deadline when the setting is unset", () => {
-  expect(parseRegexMatchingDeadline(undefined)).toEqual({
-    ok: true,
-    value: DEFAULT_REGEX_MATCHING_DEADLINE,
+it.each([deadlines, heaps])(
+  "selects the default and admits both endpoints for $setting",
+  ({ minimum, maximum, defaultBudget, parse, configured }) => {
+    expect(parse(undefined)).toEqual({ ok: true, value: defaultBudget });
+    for (const value of [minimum, maximum]) {
+      expect(parse(String(value))).toEqual({
+        ok: true,
+        value: configured(value),
+      });
+    }
+  },
+);
+
+it.each([deadlines, heaps])(
+  "refuses malformed decimals and out-of-range values for $setting",
+  ({ setting, minimum, maximum, parse }) => {
+    for (const raw of [
+      "",
+      "0",
+      "-1",
+      "0128",
+      "10_000",
+      "1e4",
+      " 128",
+      "128 ",
+      "1.5",
+      String(minimum - 1),
+      String(maximum + 1),
+      "9".repeat(40),
+    ]) {
+      expect(parse(raw), JSON.stringify(raw)).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "ConfigurationError",
+          settings: [expect.objectContaining({ setting })],
+        },
+      });
+    }
+  },
+);
+
+it("uses selected regex budgets for provider capabilities", () => {
+  const environment = {
+    REA_REGEX_MATCHING_DEADLINE_MS: "10000",
+    REA_REGEX_WORKER_HEAP_REQUEST_MIB: "256",
+  };
+  const parsed = parseConfig(environment);
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value).toMatchObject({
+    regexMatchingDeadline: deadlines.configured(10_000),
+    regexWorkerHeapRequest: heaps.configured(256),
   });
-  const parsed = parseConfig({});
-  if (!parsed.ok) throw new Error("unset deadline was rejected");
-  expect(parsed.value.regexMatchingDeadline).toEqual(
-    DEFAULT_REGEX_MATCHING_DEADLINE,
+
+  const conflicting = {
+    REA_REGEX_MATCHING_DEADLINE_MS: "1",
+    REA_REGEX_WORKER_HEAP_REQUEST_MIB: "8",
+  };
+  vi.stubEnv(
+    REGEX_MATCHING_DEADLINE_SETTING,
+    conflicting.REA_REGEX_MATCHING_DEADLINE_MS,
   );
-  const recovery = regexMatchingDeadlineRecovery(
-    DEFAULT_REGEX_MATCHING_DEADLINE,
+  vi.stubEnv(
+    REGEX_WORKER_HEAP_REQUEST_SETTING,
+    conflicting.REA_REGEX_WORKER_HEAP_REQUEST_MIB,
   );
-  const projected = projectAnalysisError(
-    regexMatchingDeadlineError("search_procedures"),
-  );
-  expect(projected).toMatchObject({
+  try {
+    const providers = [
+      new HopperProvider(parsed.value, silentLogger, conflicting),
+      new KunaProvider(environment),
+    ];
+    for (const provider of providers) {
+      for (const operation of ["search_procedures", "search_strings"]) {
+        const facts = provider
+          .capabilities()
+          .find((item) => item.operation === operation)
+          ?.limitations.join(" ");
+        expect(facts).toContain("10000 ms matching deadline (source setting)");
+        expect(facts).toContain("256 MiB worker heap request (source setting)");
+      }
+    }
+
+    const defaults = parseConfig({});
+    if (!defaults.ok) throw defaults.error;
+    expect(defaults.value).toMatchObject({
+      regexMatchingDeadline: DEFAULT_REGEX_MATCHING_DEADLINE,
+      regexWorkerHeapRequest: DEFAULT_REGEX_WORKER_HEAP_REQUEST,
+    });
+    const kunaDefaults = new KunaProvider({})
+      .capabilities()
+      .find((item) => item.operation === "search_procedures")
+      ?.limitations.join(" ");
+    expect(kunaDefaults).toContain(
+      "5000 ms matching deadline (source default)",
+    );
+    expect(kunaDefaults).toContain(
+      "128 MiB worker heap request (source default)",
+    );
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+it.each([
+  {
+    setting: REGEX_MATCHING_DEADLINE_SETTING,
+    overrides: { "regex.matching_deadline_ms": 250 },
+    readBudget: (config: ReturnType<typeof runtimeAnalysisConfig>) => ({
+      deadlineMs: config.regexMatchingDeadline.deadlineMs,
+      source: config.regexMatchingDeadline.source,
+    }),
+    resolve: resolveRegexMatchingDeadline,
+    effective: { deadlineMs: 250, source: "runtime" },
+  },
+  {
+    setting: REGEX_WORKER_HEAP_REQUEST_SETTING,
+    overrides: { "regex.worker_heap_request_mib": 256 },
+    readBudget: (config: ReturnType<typeof runtimeAnalysisConfig>) => ({
+      heapMiB: config.regexWorkerHeapRequest.heapMiB,
+      source: config.regexWorkerHeapRequest.source,
+    }),
+    resolve: resolveRegexWorkerHeapRequest,
+    effective: { heapMiB: 256, source: "runtime" },
+  },
+] as const)(
+  "defers malformed $setting to the request and honors its override until reset",
+  ({ setting, overrides, readBudget, resolve, effective }) => {
+    const environment = { [setting]: "invalid" };
+    const parsed = parseConfig(environment);
+    if (!parsed.ok) throw parsed.error;
+    const live = runtimeAnalysisConfig(parsed.value);
+    const refused = {
+      ok: false,
+      error: {
+        _tag: "ConfigurationError",
+        settings: [expect.objectContaining({ setting })],
+      },
+    };
+    const read = () => readBudget(live);
+    expect(readRuntimeSetting(read)).toMatchObject(refused);
+    expect(readRuntimeSetting(() => resolve(environment))).toMatchObject(
+      refused,
+    );
+    expect(
+      readRuntimeSetting(() => new KunaProvider(environment)),
+    ).toMatchObject(refused);
+    runWithAnalysisOperationSnapshot({ revision: 1, overrides }, () => {
+      expect(read()).toEqual(effective);
+      expect(resolve(environment)).toEqual(effective);
+    });
+    expect(readRuntimeSetting(read)).toMatchObject(refused);
+    expect(readRuntimeSetting(() => resolve(environment))).toMatchObject(
+      refused,
+    );
+  },
+);
+
+it("projects a CPU deadline separately from worker heap and gives context-specific recovery", () => {
+  const deadline = DEFAULT_REGEX_MATCHING_DEADLINE;
+  const error = regexMatchingDeadlineError("search_procedures");
+  const continuing = projectAnalysisError(error);
+  const invocation = projectAnalysisError(error, "invocation");
+  expect(continuing).toMatchObject({
     code: "resource_constraint",
     details: {
       resource: "cpu",
       limit: {
         setting: "regex.matching_deadline_ms",
-        effective_value: 5000,
+        effective_value: deadline.deadlineMs,
         unit: "ms",
         minimum: 1,
-        maximum: MAXIMUM_REGEX_MATCHING_DEADLINE_MS,
+        maximum: MAX_NODE_TIMER_DELAY_MS,
         source: "default",
         applies_at: "next_operation",
         agent_editable: true,
         scope: "rea-runtime",
-        rea_restart_required: false,
+        update_mode: "runtime",
+        pending_restart: false,
       },
       reported_limits: {
-        matching_deadline_ms: DEFAULT_REGEX_MATCHING_DEADLINE.deadlineMs,
-        matching_deadline_source: DEFAULT_REGEX_MATCHING_DEADLINE.source,
+        matching_deadline_ms: deadline.deadlineMs,
+        matching_deadline_source: deadline.source,
       },
     },
   });
-  expect(projected.remediation.action).toContain(recovery);
-});
-
-it("uses a valid REA_REGEX_MATCHING_DEADLINE_MS override", () => {
-  expect(parseRegexMatchingDeadline("10000")).toEqual({
-    ok: true,
-    value: configured(10_000),
-  });
-  expect(
-    parseRegexMatchingDeadline(String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)),
-  ).toEqual({
-    ok: true,
-    value: configured(MAXIMUM_REGEX_MATCHING_DEADLINE_MS),
-  });
-  const parsed = parseConfig({ REA_REGEX_MATCHING_DEADLINE_MS: "10000" });
-  if (!parsed.ok) throw new Error("valid deadline was rejected");
-  expect(parsed.value.regexMatchingDeadline).toEqual(configured(10_000));
-  const hopper = new HopperProvider(parsed.value, silentLogger, {
-    REA_REGEX_MATCHING_DEADLINE_MS: "1",
-  });
-  const hopperText = hopper
-    .capabilities()
-    .find((capability) => capability.operation === "search_procedures")
-    ?.limitations.join(" ");
-  expect(hopperText).toMatch(/10000 ms matching deadline.*source setting/iu);
-
-  vi.stubEnv(REGEX_MATCHING_DEADLINE_SETTING, "1");
-  try {
-    const kuna = new KunaProvider({ REA_REGEX_MATCHING_DEADLINE_MS: "10000" });
-    const kunaText = kuna
-      .capabilities()
-      .find((capability) => capability.operation === "search_strings")
-      ?.limitations.join(" ");
-    expect(kunaText).toMatch(/10000 ms matching deadline.*source setting/iu);
-  } finally {
-    vi.unstubAllEnvs();
-  }
-
-  const ambient = new KunaProvider({});
-  expect(
-    ambient
-      .capabilities()
-      .find((capability) => capability.operation === "search_procedures")
-      ?.limitations,
-  ).toContainEqual(
-    expect.stringMatching(/5000 ms matching deadline.*source default/iu),
+  expect(continuing.remediation.action).toContain(
+    regexMatchingDeadlineContinuingRecovery(deadline),
+  );
+  expect(continuing.remediation.action).toContain("update_analysis_settings");
+  expect(invocation.remediation.action).toContain(
+    regexMatchingDeadlineRecovery(deadline),
+  );
+  expect(invocation.remediation.action).not.toContain(
+    "update_analysis_settings",
   );
 });
 
-it.each([
-  "",
-  "0",
-  "-1",
-  "05000",
-  "10_000",
-  "1e4",
-  " 5000",
-  "5000 ",
-  "1.5",
-  String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS + 1),
-  "9".repeat(40),
-])("rejects invalid %j as a configuration error", (value) => {
-  const parsed = parseRegexMatchingDeadline(value);
-  if (parsed.ok) throw new Error(`Accepted ${JSON.stringify(value)}`);
-  expect(parsed.error).toBeInstanceOf(ConfigurationError);
-  expect(parsed.error.settings).toEqual([
-    {
-      setting: "REA_REGEX_MATCHING_DEADLINE_MS",
-      constraint: regexMatchingDeadlineConstraint,
+it("reports effective and requested heap, with next-worker recovery", () => {
+  const request = DEFAULT_REGEX_WORKER_HEAP_REQUEST;
+  const projected = projectAnalysisError(
+    regexWorkerHeapError("search_procedures", new Error("heap"), {
+      kind: "effective",
+      mib: request.heapMiB,
+      overridden: false,
+    }),
+  );
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      resource: "memory",
+      limit: {
+        setting: "regex.worker_heap_request_mib",
+        effective_value: request.heapMiB,
+        unit: "MiB",
+        minimum: MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
+        maximum: MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
+        source: "default",
+        applies_at: "next_worker",
+        agent_editable: true,
+        scope: "rea-runtime",
+        update_mode: "runtime",
+        pending_restart: false,
+      },
+      reported_limits: {
+        worker_heap_mib: request.heapMiB,
+        requested_worker_heap_mib: request.heapMiB,
+        requested_worker_heap_source: request.source,
+      },
     },
-  ]);
-  expect(parsed.error.message).toBe(regexMatchingDeadlineConstraint);
-  const startup = parseEnvironment({ REA_REGEX_MATCHING_DEADLINE_MS: value });
-  if (startup.ok) throw new Error(`Startup accepted ${JSON.stringify(value)}`);
-  expect(startup.error.settings).toContainEqual({
-    setting: REGEX_MATCHING_DEADLINE_SETTING,
-    constraint: regexMatchingDeadlineConstraint,
   });
-  const config = parseConfig({ REA_REGEX_MATCHING_DEADLINE_MS: value });
-  if (config.ok)
-    throw new Error(`parseConfig accepted ${JSON.stringify(value)}`);
-  expect(projectAnalysisError(config.error)).toMatchObject({
-    code: "configuration_invalid",
-    message: expect.stringContaining("REA_REGEX_MATCHING_DEADLINE_MS"),
-  });
-  expect(
-    () => new KunaProvider({ REA_REGEX_MATCHING_DEADLINE_MS: value }),
-  ).toThrow(ConfigurationError);
+  expect(projected.remediation.action).toContain(
+    regexWorkerHeapRequestContinuingRecovery(request),
+  );
+  expect(projected.remediation.action).toContain("NODE_OPTIONS");
+  expect(projected.remediation.action).toContain("--max-old-space-size");
 });

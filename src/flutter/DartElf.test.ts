@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { readElfSymbols, readSnapshotHeader } from "./DartElf.js";
+import { withElf64DirectSectionCount } from "../native/elf/ElfNotes.fixture.js";
+import {
+  readElfHeader,
+  readElfSymbols,
+  readSnapshotHeader,
+} from "./DartElf.js";
 import {
   REFERENCE_HASH,
   buildElf32Image,
@@ -24,11 +29,12 @@ const readElfSymbol = async (bytes: Buffer, name: string) => {
  */
 const GALLERY_HASH = REFERENCE_HASH;
 
-const imageWithSections = (): Buffer => {
-  const elf = buildElf64Image([
-    { name: "_kDartVmSnapshotData", value: 0x400, size: 52 },
-    { name: "_kDartIsolateSnapshotData", value: 0x800, size: 52 },
-  ]);
+const snapshotSymbols = [
+  { name: "_kDartVmSnapshotData", value: 0x400, size: 52 },
+  { name: "_kDartIsolateSnapshotData", value: 0x800, size: 52 },
+];
+
+const withSnapshotSections = (elf: Buffer): Buffer => {
   const section = snapshotSection(GALLERY_HASH);
   return Buffer.concat([
     elf,
@@ -39,37 +45,39 @@ const imageWithSections = (): Buffer => {
   ]);
 };
 
-/** The same layout without section headers: symbols live in PT_DYNAMIC. */
+const imageWithSections = (): Buffer =>
+  withSnapshotSections(buildElf64Image(snapshotSymbols));
+
 const strippedImageWithSections = (
   extraDynamicEntries: ReadonlyArray<readonly [number, bigint]> = [],
-): Buffer => {
-  const elf = buildStrippedElf64Image(
-    [
-      { name: "_kDartVmSnapshotData", value: 0x400, size: 52 },
-      { name: "_kDartIsolateSnapshotData", value: 0x800, size: 52 },
-    ],
-    extraDynamicEntries,
+): Buffer =>
+  withSnapshotSections(
+    buildStrippedElf64Image(snapshotSymbols, extraDynamicEntries),
   );
-  const section = snapshotSection(GALLERY_HASH);
-  return Buffer.concat([
-    elf,
-    Buffer.alloc(0x400 - elf.length),
-    section,
-    Buffer.alloc(0x800 - 0x400 - section.length),
-    section,
-  ]);
-};
 
 describe("readElfSymbol", () => {
-  it("locates snapshot symbols in a synthetic ELF64 image", async () => {
-    const image = imageWithSections();
-    const isolateData = await readElfSymbol(image, "_kDartIsolateSnapshotData");
-    if ("failure" in isolateData) throw new Error(isolateData.failure.reason);
-    expect(isolateData.symbol.offset).toBe(0x800);
-    expect(isolateData.symbol.size).toBe(52);
-    const header = readSnapshotHeader(image, isolateData.symbol.offset);
-    expect(header.magicValid).toBe(true);
-    expect(header.kind).toBe(3);
+  it.each([
+    ["section table", imageWithSections],
+    ["dynamic segment", strippedImageWithSections],
+  ] as const)(
+    "locates an exact ELF64 snapshot range through a %s",
+    async (_, image) => {
+      const name = "_kDartIsolateSnapshotData";
+      expect(await readElfSymbols(image(), [name])).toEqual({
+        symbols: [{ name, offset: 0x800, size: 52 }],
+        failures: [],
+      });
+    },
+  );
+
+  it("refuses to read snapshot symbols through a reserved direct section count", async () => {
+    const image = withElf64DirectSectionCount(imageWithSections(), 0xff00);
+    expect(await readElfSymbols(image, ["_kDartIsolateSnapshotData"])).toEqual({
+      symbols: [],
+      failures: [
+        { reason: "ELF e_shnum uses a reserved direct section count" },
+      ],
+    });
   });
 
   it("refuses a non-ELF image instead of guessing", async () => {
@@ -77,22 +85,6 @@ describe("readElfSymbol", () => {
     expect("failure" in result && result.failure.reason).toBe(
       "not an ELF image",
     );
-  });
-
-  it("refuses an unknown symbol", async () => {
-    const result = await readElfSymbol(buildElf64Image([]), "_kDartAbsent");
-    expect("failure" in result).toBe(true);
-  });
-
-  it("locates snapshot symbols in a section-stripped ET_DYN image", async () => {
-    const image = strippedImageWithSections();
-    const isolateData = await readElfSymbol(image, "_kDartIsolateSnapshotData");
-    if ("failure" in isolateData) throw new Error(isolateData.failure.reason);
-    expect(isolateData.symbol.offset).toBe(0x800);
-    expect(isolateData.symbol.size).toBe(52);
-    const header = readSnapshotHeader(image, isolateData.symbol.offset);
-    expect(header.magicValid).toBe(true);
-    expect(header.kind).toBe(3);
   });
 
   it.each([
@@ -138,7 +130,7 @@ describe("readElfSymbol", () => {
     image.writeUInt16LE(1, 0x38); // e_phnum
     const result = await readElfSymbol(image, "_kDartVmSnapshotData");
     expect("failure" in result && result.failure.reason).toBe(
-      "symbol _kDartVmSnapshotData is not in the dynamic symbol table",
+      "symbol _kDartVmSnapshotData has no exported dynamic definition",
     );
   });
 
@@ -346,7 +338,9 @@ describe("ELF symbol-table ownership", () => {
       expect((await readElfSymbols(image, [name])).symbols).toEqual([]);
     },
   );
+});
 
+describe("stripped ELF symbol-table ownership", () => {
   it("uses DT_HASH's count when strings precede symbols instead of reading following payload", async () => {
     const image = strippedImageWithSections();
     const dynamic = Number(image.readBigUInt64LE(64 + 56 + 8));
@@ -362,10 +356,9 @@ describe("ELF symbol-table ownership", () => {
     expect(result.symbols).toEqual([
       { name: "_kDartVmSnapshotData", offset: 0x400, size: 52 },
     ]);
-    expect(result.failures).toContainEqual({
-      reason:
-        "symbol _kDartIsolateSnapshotData is not in the dynamic symbol table",
-    });
+    expect(result.failures.map(({ missingSymbol }) => missingSymbol)).toContain(
+      "_kDartIsolateSnapshotData",
+    );
     image.writeBigUInt64LE(0x60000001n, dynamic + 4 * 16); // No recognized count table.
     expect(
       (await readElfSymbols(image, ["_kDartVmSnapshotData"])).failures,
@@ -487,8 +480,9 @@ describe.each(Object.entries(ELF_CLASSES))(
         symbols: [],
         failures: [
           {
-            reason:
-              "Dynamic symbol table section offset disagrees with its PT_LOAD mapping",
+            reason: expect.stringMatching(
+              /dynamic symbol table.*section offset.*disagrees.*PT_LOAD/i,
+            ),
           },
         ],
       });
@@ -496,24 +490,145 @@ describe.each(Object.entries(ELF_CLASSES))(
   },
 );
 
+it("checks declared ELF table bounds from a prefix of the real image", () => {
+  const original = buildElf64Image([]);
+  const eof = BigInt(original.length);
+  const admission = (bytes: Buffer) =>
+    readElfHeader(bytes.subarray(0, 64), bytes.length);
+  expect(admission(original).header).toMatchObject({
+    e_phoff: 64,
+    e_shoff: 120,
+  });
+  expect(
+    readElfHeader(original.subarray(0, 63), original.length).header,
+  ).toBeUndefined();
+  for (const [at, value, reason] of [
+    [0x28, 0n, /section table is missing/],
+    [0x20, eof + 1n, /program header table/],
+    [0x28, eof - 1n, /section header table/],
+    [0x20, 1n, /program header table/],
+  ] as const) {
+    const bytes = Buffer.from(original);
+    bytes.writeBigUInt64LE(value, at);
+    expect(admission(bytes).failure?.reason ?? "", `field at ${at}`).toMatch(
+      reason,
+    );
+  }
+  for (const [at, value, reason] of [
+    [0x36, 0, /program header table/],
+    [0x38, 0, /program header table/],
+    [0x3a, 1, /section header table/],
+    [0x3c, 0, /section header table/],
+  ] as const) {
+    const bytes = Buffer.from(original);
+    bytes.writeUInt16LE(value, at);
+    expect(admission(bytes).failure?.reason ?? "", `field at ${at}`).toMatch(
+      reason,
+    );
+  }
+});
+
+it("rejects an unsupported class and admitted big-endian fixed fields", () => {
+  const bytes = buildElf64Image([]);
+  bytes[4] = 3;
+  expect(readElfHeader(bytes).failure?.reason).toMatch(/unsupported ELF class/);
+  bytes[4] = 2;
+  bytes[5] = 2;
+  bytes.writeUInt16BE(3, 16);
+  bytes.writeUInt32BE(1, 20);
+  bytes.writeUInt16BE(64, 52);
+  expect(readElfHeader(bytes).failure?.reason).toMatch(
+    /unsupported ELF byte order/,
+  );
+});
+
 describe("readSnapshotHeader", () => {
-  it("reads a synthesized data header", async () => {
-    const header = readSnapshotHeader(snapshotSection(GALLERY_HASH), 0);
-    expect(header.magicValid).toBe(true);
-    expect(header.kind).toBe(3);
+  it("cannot read a snapshot with invalid magic or an unusable offset", () => {
+    const bytes = snapshotSection(GALLERY_HASH);
+    for (const [buffer, offset] of [
+      [Buffer.alloc(8), 0],
+      [bytes, -1],
+      [bytes, 0.5],
+      [bytes, bytes.length - 3],
+    ] as const)
+      expect(readSnapshotHeader(buffer, offset)).toEqual({
+        magicValid: false,
+        kind: null,
+        headerLength: null,
+        hash: null,
+        complete: false,
+      });
   });
 
-  it("reports nulls for sections without the data magic", async () => {
-    const header = readSnapshotHeader(Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]), 0);
-    expect(header).toEqual({
-      magicValid: false,
+  it.each([0n, 15n, 47n, 48n, 49n, 1n << 63n])(
+    "retains the observed hash and checks declared length %s",
+    (length) => {
+      const bytes = snapshotSection(GALLERY_HASH, 0);
+      bytes.writeBigUInt64LE(length, 4);
+      expect(readSnapshotHeader(bytes, 0)).toEqual({
+        magicValid: true,
+        kind: 0,
+        headerLength:
+          length > BigInt(Number.MAX_SAFE_INTEGER) ? null : Number(length),
+        hash: GALLERY_HASH,
+        complete: length === 48n,
+      });
+    },
+  );
+
+  it("retains a backed length when the kind is truncated or unrepresentable", () => {
+    const bytes = snapshotSection(GALLERY_HASH);
+    expect(readSnapshotHeader(bytes.subarray(0, 19), 0)).toEqual({
+      magicValid: true,
       kind: null,
-      headerLength: null,
+      headerLength: 48,
       hash: null,
       complete: false,
     });
+    for (const kind of [-1n, 1n << 53n]) {
+      bytes.writeBigInt64LE(kind, 12);
+      expect(readSnapshotHeader(bytes, 0)).toEqual({
+        magicValid: true,
+        kind: null,
+        headerLength: 48,
+        hash: GALLERY_HASH,
+        complete: false,
+      });
+    }
   });
 });
+
+it.each([
+  ["ELF32 section", buildElf32Image],
+  ["ELF64 section", buildElf64Image],
+  ["ELF64 dynamic segment", buildStrippedElf64Image],
+] as const)(
+  "resolves only exported snapshot definitions from an %s table",
+  async (_, build) => {
+    const vm = "_kDartVmSnapshotData";
+    const isolate = "_kDartIsolateSnapshotData";
+    const local = "_kDartVmSnapshotInstructions";
+    const internal = "_kDartIsolateSnapshotInstructions";
+    const table = build([
+      { name: "unselected", value: 0x380, size: 16, binding: 0 },
+      { name: vm, value: 0x440, size: 52, other: 2 }, // Hidden decoy.
+      { name: vm, value: 0x400, size: 52, binding: 2 }, // Weak definition.
+      { name: isolate, value: 0x480, size: 52, other: 0x83 }, // Protected; upper bits are not visibility.
+      { name: local, value: 0x500, size: 16, binding: 0 },
+      { name: internal, value: 0x540, size: 16, other: 1 },
+    ]);
+    const image = Buffer.concat([table, Buffer.alloc(0x600 - table.length)]);
+    const result = await readElfSymbols(image, [vm, isolate, local, internal]);
+    expect(result.symbols).toEqual([
+      { name: vm, offset: 0x400, size: 52 },
+      { name: isolate, offset: 0x480, size: 52 },
+    ]);
+    expect(result.failures.map(({ missingSymbol }) => missingSymbol)).toEqual([
+      local,
+      internal,
+    ]);
+  },
+);
 
 it("keeps section admission ahead of program admission for unrepresentable raw offsets", async () => {
   const bytes = buildStrippedElf64Image([]);
@@ -547,13 +662,15 @@ it.each([256, 257])(
     bytes[stringOffset + 1 + length] = 0;
     bytes.writeBigUInt64LE(BigInt(length + 2), stringHeader + 0x20);
     bytes.writeBigUInt64LE(BigInt(bytes.length), 64 + 0x20);
-    expect(await readElfSymbols(bytes, [name])).toEqual(
+    expect(await readElfSymbols(bytes, [name])).toMatchObject(
       length === 256
         ? { symbols: [{ name, offset: 64, size: 4 }], failures: [] }
         : {
             symbols: [],
             failures: [
-              { reason: `symbol ${name} is not in the dynamic symbol table` },
+              {
+                missingSymbol: name,
+              },
             ],
           },
     );
@@ -578,11 +695,9 @@ it("checks raw symbol precision only after definition and requested-name selecti
     failures: [{ reason: "Symbol unselected has unrepresentable bounds" }],
   });
   bytes.writeUInt16LE(0, symbols + 6);
-  expect(await readElfSymbols(bytes, ["unselected"])).toEqual({
+  expect(await readElfSymbols(bytes, ["unselected"])).toMatchObject({
     symbols: [],
-    failures: [
-      { reason: "symbol unselected is not in the dynamic symbol table" },
-    ],
+    failures: [{ missingSymbol: "unselected" }],
   });
 });
 

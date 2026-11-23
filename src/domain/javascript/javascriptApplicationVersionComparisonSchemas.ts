@@ -8,10 +8,11 @@ import {
 } from "./javascriptApplicationGraph.js";
 import { JAVASCRIPT_APPLICATION_NODE_KINDS } from "./javascriptApplicationGraphSchemas.js";
 import { prefixedDigestSchema } from "../digests.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
+import { applicationCoverageStatusSchema } from "./javascriptApplicationEvidenceSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const nodeIdSchema = prefixedDigestSchema("jag_node");
-const textSchema = z.string().min(1);
 
 /** Check paired version identities and per-side native identity uniqueness. */
 const validateApplicationVersionIdentities = (
@@ -87,7 +88,7 @@ const inferredMatchSchema = z.strictObject({
   candidate_left_node_ids: emptyArraySchema,
   candidate_right_node_ids: emptyArraySchema,
 });
-const matchedItemMatchSchema = z.union([
+const matchedItemMatchSchema = z.discriminatedUnion("basis", [
   exactMatchSchema,
   sourceMapMatchSchema,
   inferredMatchSchema,
@@ -128,7 +129,7 @@ const comparisonItemContextShape = {
     ]),
   ),
   evidence_links: z.array(evidenceIdSchema).min(2),
-  limitations: z.array(textSchema),
+  limitations: z.array(nonEmptyTextSchema),
 };
 
 const comparisonItemSchema = z.union([
@@ -170,11 +171,15 @@ const comparisonItemSchema = z.union([
 ]);
 
 const comparisonCoverageSchema = z.strictObject({
-  left_graph_status: z.enum(["complete", "partial", "unknown", "unavailable"]),
-  right_graph_status: z.enum(["complete", "partial", "unknown", "unavailable"]),
+  left_graph_status: applicationCoverageStatusSchema,
+  right_graph_status: applicationCoverageStatusSchema,
   left_graph_omitted_count: z.int().min(0).nullable(),
   right_graph_omitted_count: z.int().min(0).nullable(),
-  status: z.enum(["complete-within-inputs", "partial", "truncated"]),
+  /**
+   * `unknown` when either source graph's coverage is unknown or unavailable;
+   * `truncated` and `partial` are known gaps.
+   */
+  status: z.enum(["complete-within-inputs", "partial", "truncated", "unknown"]),
 });
 
 /** Tiered module/entity matching plus its complete cross-version change graph. */
@@ -212,7 +217,7 @@ export const applicationVersionComparisonResultSchema = z
     graph: javascriptApplicationGraphSchema,
     coverage: comparisonCoverageSchema,
     evidence_links: z.array(evidenceIdSchema).min(2),
-    limitations: z.array(textSchema),
+    limitations: z.array(nonEmptyTextSchema),
   })
   .superRefine((result, context) => {
     const sourceGraphsComplete =
@@ -226,6 +231,17 @@ export const applicationVersionComparisonResultSchema = z
         code: "custom",
         path: ["coverage", "status"],
         message: "Comparison coverage must match source graph completeness",
+      });
+    const sourceGraphUnknown = [
+      result.coverage.left_graph_status,
+      result.coverage.right_graph_status,
+    ].some((status) => status === "unknown" || status === "unavailable");
+    if ((result.coverage.status === "unknown") !== sourceGraphUnknown)
+      context.addIssue({
+        code: "custom",
+        path: ["coverage", "status"],
+        message:
+          "Comparison coverage is unknown exactly when a source graph's coverage is unknown or unavailable",
       });
   });
 

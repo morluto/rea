@@ -36,11 +36,7 @@ import {
   swiftLargeStringLiteralOmissionSchema,
 } from "../domain/native/swiftStringLiteral.js";
 import { functionBodyEntryAgrees } from "../domain/native/functionBody.js";
-import {
-  jsonObjectSchema,
-  jsonValueSchema,
-  type JsonValue,
-} from "../domain/jsonValue.js";
+import { ownedJsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import {
   relationshipCoverageSchema,
@@ -48,6 +44,7 @@ import {
 } from "../domain/relationshipCoverage.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import { outputContractDiagnostics } from "../domain/native/nativeProviderOutput.js";
 import {
   ghidraIdentifierSchema,
   ghidraInputAddressSchema,
@@ -115,7 +112,7 @@ export const parseGhidraFunctionInput = (
   const parsed = inputSchemas[operation].safeParse(value);
   return parsed.success
     ? ok(
-        jsonObjectSchema.parse(
+        ownedJsonObjectSchema.parse(
           Object.fromEntries(
             Object.entries(parsed.data).filter(
               ([, value]) => value !== undefined,
@@ -196,7 +193,7 @@ const dossierReferenceEdge =
   });
 
 const ghidraFunctionDossier = functionDossierSchema
-  .extend({
+  .safeExtend({
     procedure: dossierProcedureIdentity.safeExtend({
       signature: functionDossierSchema.shape.procedure.shape.signature,
       locals: z.array(localVariable),
@@ -268,15 +265,6 @@ const ghidraFunctionDossier = functionDossierSchema
   .strict()
   .superRefine((value, context) => {
     if (
-      (value.swift_string_literals === undefined) !==
-      (value.swift_string_literal_omissions === undefined)
-    )
-      context.addIssue({
-        code: "custom",
-        message:
-          "Ghidra dossier must record Swift literals and their omissions together",
-      });
-    if (
       !value.limitations.some((item) => /indirect|computed/u.test(item)) ||
       !value.limitations.some((item) => /provider|Ghidra|Hopper/u.test(item))
     )
@@ -289,8 +277,8 @@ const ghidraFunctionInstructionWindow = functionInstructionWindowSchema
   .extend({ procedure: procedureIdentity })
   .strict();
 
-// Current Ghidra profiles commit to emitting containment exactly for an interior
-// listing address. The shared Evidence schema remains optional for older records.
+// Ghidra emits containment exactly for an interior listing address. The shared
+// schema keeps it optional: other statuses have no container.
 const ghidraInstruction = nativeInstructionSchema.superRefine(
   (value, context) => {
     if (
@@ -418,7 +406,12 @@ export const parseGhidraFunctionResult = (
         new AnalysisOutputError(
           operation,
           "Ghidra bridge returned an invalid function observation envelope for this operation",
-          envelope.success ? undefined : { cause: envelope.error },
+          envelope.success
+            ? undefined
+            : {
+                cause: envelope.error,
+                diagnostics: outputContractDiagnostics(envelope.error, value),
+              },
         ),
       );
     observation = envelope.data;
@@ -428,7 +421,9 @@ export const parseGhidraFunctionResult = (
   const parsed = resultSchemas[operation].safeParse(observation.value);
   return parsed.success
     ? ok({
-        value: jsonValueSchema.parse(parsed.data),
+        // `observation.value` comes from an admitted JsonValue and `resultSchemas[operation]`
+        // outputs fresh plain objects/arrays whose fields are all JSON-safe.
+        value: parsed.data as JsonValue,
         limitations: observation.limitations,
         ...(observation.cache_policy === undefined
           ? {}
@@ -461,7 +456,13 @@ export const parseGhidraFunctionResult = (
         new AnalysisOutputError(
           operation,
           "Ghidra bridge output did not match the function-analysis contract",
-          { cause: parsed.error },
+          {
+            cause: parsed.error,
+            diagnostics: outputContractDiagnostics(
+              parsed.error,
+              observation.value,
+            ),
+          },
         ),
       );
 };

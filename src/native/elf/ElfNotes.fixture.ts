@@ -226,31 +226,62 @@ export const elfNoteWithUnreadableSectionNameFixture = (
   return bytes;
 };
 
+export const elfCompressedNoteStorage = (
+  notes: Buffer,
+  bits: 32 | 64,
+  little: boolean,
+  alignment: number,
+): Buffer => {
+  const header = Buffer.alloc(bits === 64 ? 24 : 12);
+  write32(header, 0, 1, little); // ELFCOMPRESS_ZLIB
+  writeWord(header, bits === 64 ? 8 : 4, notes.length, bits, little);
+  writeWord(header, bits === 64 ? 16 : 8, alignment, bits, little);
+  return concat(header, deflateSync(notes));
+};
+
 /** A non-allocated SHT_NOTE whose stored bytes include an ELF compression header. */
 export const compressedElfNoteSectionFixture = (
   bits: 32 | 64 = 64,
   little = true,
+  ownership: "section" | "both" = "section",
 ): Buffer => {
   const notes = concat(
     gnuBuildIdNote(undefined, little),
     gnuAbiTagNote(little),
   );
-  const header = Buffer.alloc(bits === 64 ? 24 : 12);
-  write32(header, 0, 1, little); // ELFCOMPRESS_ZLIB
-  writeWord(header, bits === 64 ? 8 : 4, notes.length, bits, little);
-  writeWord(header, bits === 64 ? 16 : 8, 4, bits, little);
   const bytes = elfNoteFixture({
     bits,
     little,
     type: 1,
-    ownership: "section",
+    ownership,
     sectionName: ".debug.notes",
     alignment: bits === 64 ? 8 : 4,
-    notes: concat(header, deflateSync(notes)),
+    notes: elfCompressedNoteStorage(notes, bits, little, 4),
   });
-  const noteSection = (bits === 64 ? 64 : 52) + (bits === 64 ? 64 : 40);
+  const headerSize = bits === 64 ? 64 : 52;
+  const programSize = bits === 64 ? 56 : 32;
+  const sectionSize = bits === 64 ? 64 : 40;
+  const noteSection =
+    headerSize + (ownership === "both" ? programSize : 0) + sectionSize;
   writeWord(bytes, noteSection + 8, 0x800, bits, little);
   return bytes;
+};
+
+/** Move an ELF64 little-endian fixture's existing section rows to a backed direct-count table. */
+export const withElf64DirectSectionCount = (
+  image: Buffer,
+  count: number,
+): Buffer => {
+  const offset = Number(image.readBigUInt64LE(40));
+  const priorCount = image.readUInt16LE(60);
+  const table = Math.ceil(image.length / 8) * 8;
+  const result = Buffer.alloc(table + count * 64);
+  image.copy(result);
+  image.copy(result, table, offset, offset + priorCount * 64);
+  result.writeBigUInt64LE(BigInt(table), 40);
+  result.writeUInt16LE(64, 58);
+  result.writeUInt16LE(count, 60);
+  return result;
 };
 
 /** Valid ELF64 section count stored in section header zero per the gABI. */
@@ -299,6 +330,7 @@ export const compressedElfNoteFixture = (
   little = true,
   compressionType = 1,
   sectionName = ".note.gnu.build-id",
+  compressedPayload?: Buffer,
 ): Buffer => {
   const image = elfNoteFixture({
     bits,
@@ -327,7 +359,8 @@ export const compressedElfNoteFixture = (
   const namesSize = word(namesHeader + (wide ? 32 : 20));
   const names = image.subarray(namesOffset, namesOffset + namesSize);
   const compressed =
-    compressionType === 2 ? zstdCompressSync(names) : deflateSync(names);
+    compressedPayload ??
+    (compressionType === 2 ? zstdCompressSync(names) : deflateSync(names));
   const compressionHeaderBytes = wide ? 24 : 12;
   const replacement = Buffer.alloc(compressionHeaderBytes);
   if (little) replacement.writeUInt32LE(compressionType, 0);
@@ -419,13 +452,59 @@ export interface CorePrpsinfoOptions {
   readonly sid?: number;
   readonly fname?: string;
   readonly psargs?: string;
+  /** UID/GID byte width in the ELF32 descriptor. ELF64 always uses four bytes. */
+  readonly idWidth?: 2 | 4;
 }
 
-/** Linux CORE NT_PRPSINFO note (type 3). */
-export const corePrpsinfoNote = (options: CorePrpsinfoOptions = {}): Buffer => {
+/** Encode a full ELF32 Linux process record and a shortened record under the same ABI. */
+export const elf32ProcessIdentityFixture = (
+  machine: number,
+  little: boolean,
+  idWidth: 2 | 4,
+  flags = 0,
+) => {
+  const expected = {
+    state: 1,
+    uid: idWidth === 4 ? 70001 : 500,
+    gid: idWidth === 4 ? 90002 : 600,
+    pid: 1234,
+    ppid: 12,
+    pgrp: 4321,
+    sid: 5678,
+    filename: "core-probe",
+    psargs: "core-probe --flag",
+  };
+  const descriptor = corePrpsinfoDescriptor({
+    ...expected,
+    bits: 32,
+    idWidth,
+    little,
+    fname: expected.filename,
+  });
+  const shortened = descriptor.subarray(0, descriptor.length - 4);
+  const bytes = elfNoteFixture({
+    bits: 32,
+    little,
+    machine,
+    type: 4,
+    ownership: "program",
+    notes: concat(
+      elfNote("CORE", 3, descriptor, little),
+      elfNote("CORE", 3, shortened, little),
+    ),
+  });
+  write32(bytes, 36, flags, little);
+  return { bytes, shortened, expected };
+};
+
+/** Descriptor bytes for a Linux NT_PRPSINFO note. */
+export const corePrpsinfoDescriptor = (
+  options: CorePrpsinfoOptions = {},
+): Buffer => {
   const bits = options.bits ?? 64;
   const little = options.little ?? true;
-  const desc = Buffer.alloc(bits === 64 ? 136 : 124);
+  const idWidth = bits === 64 ? 4 : (options.idWidth ?? 2);
+  const desc = Buffer.alloc(bits === 64 ? 136 : idWidth === 4 ? 128 : 124);
   desc[0] = options.state ?? 0;
   desc[1] = (options.sname ?? "R").charCodeAt(0);
   desc[2] = options.zomb ?? 0;
@@ -455,29 +534,39 @@ export const corePrpsinfoNote = (options: CorePrpsinfoOptions = {}): Buffer => {
     psargs.copy(desc, 56, 0, Math.min(psargs.length, 80));
   } else {
     write32(desc, 4, options.flag ?? 0, little);
-    write16(desc, 8, options.uid ?? 1000, little);
-    write16(desc, 10, options.gid ?? 1000, little);
-    if (little) {
-      desc.writeInt32LE(options.pid ?? 1234, 12);
-      desc.writeInt32LE(options.ppid ?? 1, 16);
-      desc.writeInt32LE(options.pgrp ?? 1234, 20);
-      desc.writeInt32LE(options.sid ?? 1234, 24);
+    if (idWidth === 4) {
+      write32(desc, 8, options.uid ?? 1000, little);
+      write32(desc, 12, options.gid ?? 1000, little);
     } else {
-      desc.writeInt32BE(options.pid ?? 1234, 12);
-      desc.writeInt32BE(options.ppid ?? 1, 16);
-      desc.writeInt32BE(options.pgrp ?? 1234, 20);
-      desc.writeInt32BE(options.sid ?? 1234, 24);
+      write16(desc, 8, options.uid ?? 1000, little);
+      write16(desc, 10, options.gid ?? 1000, little);
+    }
+    const pidAt = 8 + idWidth * 2;
+    if (little) {
+      desc.writeInt32LE(options.pid ?? 1234, pidAt);
+      desc.writeInt32LE(options.ppid ?? 1, pidAt + 4);
+      desc.writeInt32LE(options.pgrp ?? 1234, pidAt + 8);
+      desc.writeInt32LE(options.sid ?? 1234, pidAt + 12);
+    } else {
+      desc.writeInt32BE(options.pid ?? 1234, pidAt);
+      desc.writeInt32BE(options.ppid ?? 1, pidAt + 4);
+      desc.writeInt32BE(options.pgrp ?? 1234, pidAt + 8);
+      desc.writeInt32BE(options.sid ?? 1234, pidAt + 12);
     }
     const fname = Buffer.from(`${options.fname ?? "app"}\0`, "latin1");
-    fname.copy(desc, 28, 0, Math.min(fname.length, 16));
+    fname.copy(desc, pidAt + 16, 0, Math.min(fname.length, 16));
     const psargs = Buffer.from(
       `${options.psargs ?? "./app --flag"}\0`,
       "latin1",
     );
-    psargs.copy(desc, 44, 0, Math.min(psargs.length, 80));
+    psargs.copy(desc, pidAt + 32, 0, Math.min(psargs.length, 80));
   }
-  return elfNote("CORE", 3, desc, little);
+  return desc;
 };
+
+/** Linux CORE NT_PRPSINFO note (type 3). */
+export const corePrpsinfoNote = (options: CorePrpsinfoOptions = {}): Buffer =>
+  elfNote("CORE", 3, corePrpsinfoDescriptor(options), options.little ?? true);
 
 export interface CoreFileMapping {
   readonly start: bigint | number;
@@ -552,4 +641,38 @@ export const coreAuxvNote = (
   writeWord(desc, offset, 0, bits, little);
   writeWord(desc, offset + wordBytes, 0, bits, little);
   return elfNote("CORE", 6, desc, little);
+};
+
+interface AndroidIdentNoteOptions {
+  readonly androidApi?: number;
+  readonly ndkVersion?: string | null;
+  readonly ndkBuildNumber?: string | null;
+  readonly extraTail?: Buffer;
+  readonly little?: boolean;
+  readonly alignment?: number;
+}
+
+/** Android NT_ANDROID_TYPE_IDENT (.note.android.ident) note (type 1). */
+export const androidIdentNote = (
+  options: AndroidIdentNoteOptions = {},
+): Buffer => {
+  const little = options.little ?? true;
+  const androidApi = options.androidApi ?? 24;
+  if (options.ndkVersion === null && options.ndkBuildNumber === null) {
+    const desc = Buffer.alloc(4);
+    write32(desc, 0, androidApi, little);
+    return elfNote("Android", 1, desc, little, options.alignment);
+  }
+  const desc = Buffer.alloc(132);
+  write32(desc, 0, androidApi, little);
+  const version = Buffer.from(`${options.ndkVersion ?? "r27c"}\0`, "latin1");
+  version.copy(desc, 4, 0, Math.min(version.length, 64));
+  const build = Buffer.from(
+    `${options.ndkBuildNumber ?? "12297006"}\0`,
+    "latin1",
+  );
+  build.copy(desc, 68, 0, Math.min(build.length, 64));
+  const payload =
+    options.extraTail === undefined ? desc : concat(desc, options.extraTail);
+  return elfNote("Android", 1, payload, little, options.alignment);
 };

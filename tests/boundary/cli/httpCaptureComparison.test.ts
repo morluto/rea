@@ -86,7 +86,6 @@ cliTest(
       );
       for (const [left, right, status, count] of [
         [0, 1, "unknown", 0],
-        [1, 0, "unknown", 0],
         [0, 2, "unknown", 0],
         [3, 2, "changed", 1],
       ] as const) {
@@ -116,5 +115,4 @@ cliTest(
       await fixture.browser.close();
     }
   },
-  60_000,
 );

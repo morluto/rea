@@ -1,26 +1,20 @@
 import { z } from "zod";
 
 import {
+  HOPPER_DIAGNOSTIC_TYPES,
   HopperProtocolError,
   HopperRemoteError,
-} from "../domain/hopperErrors.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+} from "./HopperErrors.js";
+import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { safeParseJson } from "../domain/safeJson.js";
+import type { JsonLineBridgeEnvelope } from "../process/JsonLineBridgeReader.js";
 
 const remoteErrorSchema = z
   .object({
     code: z.int(),
     message: z.string(),
-    type: z
-      .enum([
-        "remote",
-        "authorization",
-        "invalid_request",
-        "capability_unavailable",
-        "bridge_exception",
-      ])
-      .default("remote"),
+    type: z.enum(HOPPER_DIAGNOSTIC_TYPES).default("remote"),
   })
   .strict();
 
@@ -28,7 +22,7 @@ const responseSchema = z.union([
   z
     .object({
       id: z.int().nonnegative(),
-      result: jsonValueSchema,
+      result: ownedJsonValueSchema,
     })
     .strict(),
   z
@@ -83,7 +77,7 @@ export type HopperBridgeEvent = z.infer<typeof eventSchema>;
 export type HopperBridgeMessage = z.infer<typeof messageSchema>;
 
 /** Parse one complete Hopper NDJSON response or event line. */
-export const parseBridgeMessageLine = (
+const parseBridgeMessageLine = (
   line: string,
 ): Result<HopperBridgeMessage, HopperProtocolError> => {
   const decodedResult = safeParseJson(line);
@@ -106,14 +100,28 @@ export const parseBridgeMessageLine = (
       );
 };
 
+const hopperRemoteError = (
+  error: z.infer<typeof remoteErrorSchema>,
+): HopperRemoteError =>
+  new HopperRemoteError(error.code, error.message, {
+    diagnosticType: error.type,
+  });
+
 /** Project a parsed response into its result or expected remote failure. */
 export const responseResult = (
   response: HopperResponse,
 ): Result<JsonValue, HopperRemoteError> =>
   "error" in response
-    ? err(
-        new HopperRemoteError(response.error.code, response.error.message, {
-          diagnosticType: response.error.type,
-        }),
-      )
+    ? err(hopperRemoteError(response.error))
     : ok(response.result);
+
+/** Hopper's `result | error` plus events envelope for the shared JSON-line reader. */
+export const hopperReplyEnvelope: JsonLineBridgeEnvelope<
+  HopperBridgeMessage,
+  HopperRemoteError
+> = {
+  parse: parseBridgeMessageLine,
+  id: (message) => message.id,
+  remoteFailure: (message) =>
+    "error" in message ? hopperRemoteError(message.error) : undefined,
+};

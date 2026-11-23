@@ -6,7 +6,7 @@ import { expect, it } from "vitest";
 import { analysisViewCaptureEvidence } from "../../tests/fixtures/analysisView.js";
 import { createApplicationMcpHarness } from "../../tests/fixtures/applicationMcpHarness.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import type { Evidence } from "../domain/evidence.js";
+import { parseMcpToolError } from "../../tests/fixtures/mcpToolError.js";
 
 /**
  * Issue #8453 is about the delivered MCP error, not only the reader's result. On
@@ -17,55 +17,62 @@ import type { Evidence } from "../domain/evidence.js";
  */
 it("delivers a bounded file validation error through inspect_analysis_view", async () => {
   const root = await createTestTempDirectory("rea-mcp-bounded-issues-");
-  const evidencePath = join(root, "many.json");
-  const source = structuredClone(analysisViewCaptureEvidence());
-  const document = {
+  const source = analysisViewCaptureEvidence();
+  const { client } = await createApplicationMcpHarness();
+  const inspectFile = async (name: string, document: unknown) => {
+    const path = join(root, name);
+    await writeFile(path, JSON.stringify(document));
+    const result = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: { kind: "evidence-file", path },
+        view: { kind: "summary" },
+      },
+    });
+    const { error } = parseMcpToolError(result);
+    expect(error).toMatchObject({ code: "invalid_request", details: { path } });
+    return error;
+  };
+
+  const many = await inspectFile("many.json", {
     ...source,
     limitations: Array.from({ length: 125_000 }, (_value, index) => index),
-  } as unknown as Evidence;
-  await writeFile(evidencePath, JSON.stringify(document));
-
-  const { client } = await createApplicationMcpHarness();
-  const result = await client.callTool({
-    name: "inspect_analysis_view",
-    arguments: {
-      source: { kind: "evidence-file", path: evidencePath },
-      view: { kind: "summary" },
-    },
   });
+  const issues = many.details?.content_issues;
+  expect(issues).toEqual(
+    expect.arrayContaining([
+      { path: ["limitations", 0], reason: "invalid_type", expected: "string" },
+      expect.objectContaining({
+        path: [],
+        message: expect.stringContaining("validator issues were omitted"),
+      }),
+    ]),
+  );
+  expect(Buffer.byteLength(JSON.stringify(many), "utf8")).toBeLessThan(1 << 20);
 
-  expect(result.isError).toBe(true);
-  const text = (result.content as readonly { type: string; text?: string }[])
-    .flatMap(({ type, text: value }) =>
-      type === "text" && value !== undefined ? [value] : [],
-    )
-    .join("");
-  // The typed file error and the selected path survive the response boundary.
-  const delivered = JSON.parse(text) as {
-    error?: {
-      code?: string;
-      details?: {
-        path?: string;
-        content_issues?: readonly {
-          path?: readonly (string | number)[];
-          reason?: string;
-          message?: string;
-        }[];
-      };
-    };
-  };
-  expect(delivered.error?.code).toBe("invalid_request");
-  expect(delivered.error?.details?.path).toBe(evidencePath);
-  const issues = delivered.error?.details?.content_issues ?? [];
-  // Bounded rather than all 125,000, and explicitly incomplete.
-  expect(issues.length).toBeGreaterThan(0);
-  expect(issues.length).toBeLessThan(1_000);
-  expect(issues).toContainEqual(
+  // Projection may run out of work budget while the exact location still fits.
+  const fittingKey = "a".repeat(65_300);
+  const fitting = await inspectFile("fitting-key.json", {
+    ...source,
+    caller_input_paths: { [fittingKey]: false },
+  });
+  expect(fitting.details?.content_issues).toContainEqual(
+    expect.objectContaining({ path: ["caller_input_paths", fittingKey] }),
+  );
+
+  const longKey = await inspectFile("oversized-key.json", {
+    ...source,
+    caller_input_paths: { ["argument".repeat(10_000)]: false },
+  });
+  expect(longKey.details?.content_issues).toEqual([
+    {
+      path: ["caller_input_paths"],
+      reason: "invalid_value",
+      message: expect.stringContaining("nearest parent"),
+    },
     expect.objectContaining({
       path: [],
-      message: expect.stringContaining("validator issues were omitted"),
+      message: expect.stringContaining("1 of 1 validator issues were omitted"),
     }),
-  );
-  // The whole delivered response stays well inside the default MCP budget.
-  expect(Buffer.byteLength(text, "utf8")).toBeLessThan(1 << 20);
+  ]);
 });

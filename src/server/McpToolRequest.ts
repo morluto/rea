@@ -2,17 +2,33 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { RequestId } from "@modelcontextprotocol/server";
 import type { z } from "zod";
 
-import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../ports/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  cancelledBy,
+  type CallerAbort,
+  type OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
+
+import { callerAnalysisParameters } from "../application/AnalysisInput.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+import type { ProjectedErrorEncoding } from "./ToolResultDelivery.js";
 
 const currentRequest = new AsyncLocalStorage<McpToolRequest>();
 
 /** One SDK request owns validation, cancellation and its publication boundary. */
 export class McpToolRequest {
   readonly cancellation = new AbortController();
+  projectedErrorEncoding?: ProjectedErrorEncoding | undefined;
+  readonly #parameterSelections = new WeakMap<
+    object,
+    {
+      readonly tool: string;
+      readonly select: ReturnType<typeof callerAnalysisParameters>;
+    }
+  >();
   validation?: {
     readonly issues: readonly z.core.$ZodIssue[];
     readonly input: unknown;
@@ -37,6 +53,31 @@ export class McpToolRequest {
     readonly tool: string,
   ) {}
 
+  /** Capture only selected names at canonical validation, not the raw input tree. */
+  captureCallerParameters(tool: string, input: unknown, parsed: unknown): void {
+    if (parsed !== null && typeof parsed === "object")
+      this.#parameterSelections.set(parsed, {
+        tool,
+        select: callerAnalysisParameters(input),
+      });
+  }
+
+  /** The exact parsed object identifies its validation, including nested tool calls. */
+  callerParameters(
+    tool: string,
+    parsed: unknown,
+    parameters: Readonly<Record<string, JsonValue>>,
+  ): Readonly<Record<string, JsonValue>> {
+    const selection =
+      parsed !== null && typeof parsed === "object"
+        ? this.#parameterSelections.get(parsed)
+        : undefined;
+    // Dropping properties from a validated JSON object preserves its value type.
+    return (
+      selection?.tool === tool ? selection.select(parameters) : parameters
+    ) as Readonly<Record<string, JsonValue>>;
+  }
+
   beginHandler(): void {
     this.#handlerStarted = true;
   }
@@ -54,7 +95,7 @@ export class McpToolRequest {
   }
 
   /** A suppressed SDK reply releases admission after the handler's cleanup. */
-  cancel(reason?: unknown): void {
+  cancel(reason: CallerAbort | OwnerCancellation): void {
     this.cancellation.abort(reason);
     if (!this.#publicationStarted) this.#finishPublication();
   }
@@ -81,11 +122,7 @@ export class McpToolRequest {
         const cancellation =
           signal?.aborted === true ? signal : this.cancellation.signal;
         if (cancellation.aborted)
-          return err(
-            new AnalysisCancelledError(operationName, {
-              cause: cancellation.reason,
-            }),
-          );
+          return err(cancelledBy(operationName, cancellation));
         return ok(await operation(binding.value));
       });
 

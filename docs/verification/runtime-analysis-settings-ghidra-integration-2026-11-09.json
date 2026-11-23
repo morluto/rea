@@ -1,0 +1,232 @@
+{
+  "integration_base": "8dfc47b107afc0cf4b53322a10b94c666fe9e18b",
+  "tested_feature_head": "329df8b331ece4201e7ea0849643c4481611ac86",
+  "qualification": "Post-main-integration correctness run; not a performance comparison.",
+  "receipt": {
+    "status": "passed",
+    "platform": "darwin",
+    "architecture": "arm64",
+    "node": "v24.22.1",
+    "fixture": {
+      "kind": "volatile-straight-line",
+      "statements": 5400,
+      "source_bytes": 297679
+    },
+    "target_sha256": "0eabbda46fcb6bbb33a84df09f8a2f1b2e4621aa5c7b8c7216921188e3b55ad8",
+    "source_sha256": "8bc279d5a4881ca87d1629fc26d73d191986d2a2fb014f77a8d711ea0eca9426",
+    "compiler": {
+      "command": "cc",
+      "arguments": [
+        "-dynamiclib",
+        "-fPIC",
+        "-O0",
+        "/var/folders/xl/60j5sd4j6b99tn8q082l9t8r0000gn/T/rea-ghidra-decompile-timeout-8ppfRJ/slow-decompile.c",
+        "-o",
+        "/var/folders/xl/60j5sd4j6b99tn8q082l9t8r0000gn/T/rea-ghidra-decompile-timeout-8ppfRJ/slow-decompile.dylib"
+      ]
+    },
+    "provider": {
+      "id": "ghidra",
+      "name": "Ghidra",
+      "version": "12.1.4"
+    },
+    "analysis_profile_digest": "a70b06ba1d73ceb5b6e7ee2d9f7587583c17e076134ebb96f0169f6a8b95956a",
+    "configured_jvm_max_heap": "1G",
+    "elapsed_seconds": 16.838551541999998,
+    "stages": [
+      {
+        "stage": "operations_low",
+        "available": true,
+        "operations": 1,
+        "largest_input_count": 2,
+        "def_use_edges": 0,
+        "parameter_uses": 1,
+        "truncated": true,
+        "limits": {
+          "max_operations": 1,
+          "max_inputs_per_operation": 64,
+          "max_edges": 12000
+        },
+        "limits_reached": ["max_operations"],
+        "omitted_operations_lower_bound": 1,
+        "known_omitted_inputs": 0,
+        "known_omitted_edges": 0
+      },
+      {
+        "stage": "operations_recovered",
+        "available": true,
+        "operations": 8,
+        "largest_input_count": 2,
+        "def_use_edges": 6,
+        "parameter_uses": 1,
+        "truncated": false,
+        "limits": {
+          "max_operations": 3000,
+          "max_inputs_per_operation": 64,
+          "max_edges": 12000
+        },
+        "limits_reached": [],
+        "omitted_operations_lower_bound": 0,
+        "known_omitted_inputs": 0,
+        "known_omitted_edges": 0
+      },
+      {
+        "stage": "inputs_low",
+        "available": true,
+        "operations": 8,
+        "largest_input_count": 1,
+        "def_use_edges": 4,
+        "parameter_uses": 1,
+        "truncated": true,
+        "limits": {
+          "max_operations": 3000,
+          "max_inputs_per_operation": 1,
+          "max_edges": 12000
+        },
+        "limits_reached": ["max_inputs_per_operation"],
+        "omitted_operations_lower_bound": 0,
+        "known_omitted_inputs": 5,
+        "known_omitted_edges": 0
+      },
+      {
+        "stage": "inputs_recovered",
+        "available": true,
+        "operations": 8,
+        "largest_input_count": 2,
+        "def_use_edges": 6,
+        "parameter_uses": 1,
+        "truncated": false,
+        "limits": {
+          "max_operations": 3000,
+          "max_inputs_per_operation": 64,
+          "max_edges": 12000
+        },
+        "limits_reached": [],
+        "omitted_operations_lower_bound": 0,
+        "known_omitted_inputs": 0,
+        "known_omitted_edges": 0
+      },
+      {
+        "stage": "edges_low",
+        "available": true,
+        "operations": 8,
+        "largest_input_count": 2,
+        "def_use_edges": 1,
+        "parameter_uses": 1,
+        "truncated": true,
+        "limits": {
+          "max_operations": 3000,
+          "max_inputs_per_operation": 64,
+          "max_edges": 1
+        },
+        "limits_reached": ["max_edges"],
+        "omitted_operations_lower_bound": 0,
+        "known_omitted_inputs": 0,
+        "known_omitted_edges": 5
+      },
+      {
+        "stage": "edges_recovered",
+        "available": true,
+        "operations": 8,
+        "largest_input_count": 2,
+        "def_use_edges": 6,
+        "parameter_uses": 1,
+        "truncated": false,
+        "limits": {
+          "max_operations": 3000,
+          "max_inputs_per_operation": 64,
+          "max_edges": 12000
+        },
+        "limits_reached": [],
+        "omitted_operations_lower_bound": 0,
+        "known_omitted_inputs": 0,
+        "known_omitted_edges": 0
+      },
+      {
+        "stage": "operations_lowered",
+        "available": true,
+        "operations": 2,
+        "largest_input_count": 2,
+        "def_use_edges": 1,
+        "parameter_uses": 1,
+        "truncated": true,
+        "limits": {
+          "max_operations": 2,
+          "max_inputs_per_operation": 64,
+          "max_edges": 12000
+        },
+        "limits_reached": ["max_operations"],
+        "omitted_operations_lower_bound": 1,
+        "known_omitted_inputs": 0,
+        "known_omitted_edges": 0
+      },
+      {
+        "stage": "payload_1_mib",
+        "seconds": 1.6774305839999988,
+        "code": "execution_failure",
+        "message": "Ghidra decompilation failed: Exception while decompiling 00000414: Response buffer size exceeded for: target-0eabbda46fcb.dylib . The effective native decompiler payload allowance is 1 MiB. If the diagnostic reports payload exhaustion, in MCP raise ghidra.decompile_max_payload_mib with update_analysis_settings (integer MiB from 1 to 2047) and repeat the selected operation on this Program without restarting REA. For a one-shot CLI retry, set REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB to a larger MiB value in the environment that starts the next rea invocation, then repeat the selected operation; the previous invocation's Program is no longer active. Runtime null or an omitted launch seed restores the installed Ghidra default. This does not raise the decompile deadline, high-pcode projection budgets or MCP client limits. Only the decompiler failed for this procedure. The Ghidra session remains usable."
+      },
+      {
+        "stage": "payload_64_mib_recovered",
+        "seconds": 2.1426570829999982,
+        "pseudocode_bytes": 261131
+      },
+      {
+        "stage": "deadline_partial_dossier",
+        "seconds": 2.4800411670000013,
+        "pseudocode": {
+          "available": false,
+          "reason": "Ghidra decompilation of 0x414 exceeded the 1-second configured decompilation limit (ghidra.decompile_timeout_seconds; launch seed REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS)"
+        },
+        "assembly_lines": 49912,
+        "basic_blocks": 1,
+        "cache_policy": "live"
+      },
+      {
+        "stage": "deadline_pseudocode",
+        "seconds": 1.2235721249999987,
+        "code": "provider_timeout",
+        "message": "Ghidra decompilation of 0x414 exceeded the 1-second configured decompilation limit (ghidra.decompile_timeout_seconds; launch seed REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS). Only this procedure's decompilation was stopped. The Ghidra session remains usable.",
+        "limit": {
+          "setting": "ghidra.decompile_timeout_seconds",
+          "effective_value": 1,
+          "unit": "seconds",
+          "minimum": 1,
+          "maximum": 2147483,
+          "applies_at": "next_operation",
+          "agent_editable": true,
+          "scope": "rea-runtime",
+          "rea_restart_required": false
+        },
+        "remediation": {
+          "action": "Use analyze_function (CLI: `rea function`) for listing facts. Call update_analysis_settings with setting ghidra.decompile_timeout_seconds and action set to raise the per-function deadline for the next operation on this Program. For CLI or future REA processes, set REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS. Set the MCP tool-call deadline to cover startup and the full call; earlier cancellation closes the session. `rea setup` estimates deadlines for new Codex/Kimi registrations and preserves existing positive values; edit existing deadlines yourself."
+        }
+      },
+      {
+        "stage": "deadline_recovered_payload_null",
+        "seconds": 2.361492542,
+        "selected_timeout_seconds": 20,
+        "selected_payload_mib": null,
+        "pseudocode_bytes": 261131
+      }
+    ],
+    "initial_session_run_id": "89aac416-1a46-4eeb-9ddf-9652ba17262b",
+    "final_session_run_id": "89aac416-1a46-4eeb-9ddf-9652ba17262b",
+    "same_session_next_decompile": "succeeded",
+    "verifier_run": {
+      "run_id": "1c4699a5-d090-4cad-8271-961cdd41d23e",
+      "verifier_pid": 9490,
+      "parent_pid": 2850,
+      "process_lineage": {
+        "status": "verified",
+        "observed_at": "2026-11-09T21:55:25.629Z",
+        "launcher_pid": 9490,
+        "launcher_parent_pid": 2850,
+        "process_group_id": 9490,
+        "descendants": []
+      }
+    },
+    "scope": "Real Ghidra analysis of generated Mach-O/ELF through authenticated loopback: independent value-flow budgets, lowered admission, native payload exhaustion and recovery, natural decompile timeout with listing-backed partial facts, and deadline recovery on the same Program. No target execution. Windows and public CLI/MCP transport recovery are unverified. Timings are observations, not performance comparisons; CPU, peak process-family memory and agent tokens are unmeasured.",
+    "cleanup": "complete"
+  }
+}

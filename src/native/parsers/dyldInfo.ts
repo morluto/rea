@@ -19,11 +19,16 @@ interface ParsedDyldExport extends ParsedDyldSymbolFields {
   readonly sourceSymbol?: string;
 }
 
-/** Decode Apple's literal import framing; request nm facts for competing names. */
+/**
+ * Decode Apple's literal import framing. Competing readings of a chained row
+ * are settled by the import-table name at the row's ordinal when the caller
+ * supplies the table, otherwise by symbol-table names, requested when needed.
+ */
 export const parseDyldImports = (
   output: string,
   hasChainedFixups: boolean,
   knownImportNames?: ReadonlySet<string>,
+  chainedImportTable?: readonly (string | null)[],
 ): {
   readonly items: ParsedDyldImport[];
   readonly needsNameInventory: boolean;
@@ -64,12 +69,25 @@ export const parseDyldImports = (
             source,
           });
         }
-      if (readings.length > 1 && knownImportNames === undefined)
+      // A chained row's ordinal indexes the slice's own import table.
+      const tableName =
+        ordinal === null || chainedImportTable === undefined
+          ? undefined
+          : chainedImportTable[Number(ordinal[0].trimEnd())];
+      if (
+        readings.length > 1 &&
+        knownImportNames === undefined &&
+        tableName === undefined
+      )
         needsNameInventory = true;
       const matching =
-        readings.length > 1 && knownImportNames !== undefined
-          ? readings.filter(({ name }) => knownImportNames.has(name))
-          : readings;
+        readings.length <= 1
+          ? readings
+          : tableName !== undefined
+            ? readings.filter(({ name }) => name === tableName)
+            : knownImportNames !== undefined
+              ? readings.filter(({ name }) => knownImportNames.has(name))
+              : readings;
       const reading = matching.length === 1 ? matching[0] : undefined;
       const ambiguousSuffix =
         reading !== undefined &&
@@ -113,6 +131,61 @@ export const parseDyldExportAddressRow = (
     : { address: match[1], text: match[2] };
 };
 
+/** Decode one already-trimmed Apple dyld export row without re-splitting lines. */
+export const parseDyldExportLine = (
+  line: string,
+  offsets: boolean,
+  imageBase: string | null,
+  knownExportNames: ReadonlySet<string>,
+): ParsedDyldExport | null => {
+  // dyld_info prints `_sym (from lib)`, or `_new (_old from lib)` when the
+  // source library names the symbol differently. Split the trailing
+  // parenthesized suffix with string scans so a library path containing
+  // " from ", or a source symbol containing parentheses such as
+  // `operator()`, cannot pull the match into nested lazy quantifiers.
+  const reexport = parseReexportRow(line, knownExportNames);
+  if (reexport !== null)
+    return {
+      name: reexport.name,
+      address: null,
+      weak: null,
+      reexport: true,
+      source: reexport.source,
+      ...(reexport.sourceSymbol === undefined
+        ? {}
+        : { sourceSymbol: reexport.sourceSymbol }),
+    };
+  const row = parseDyldExportAddressRow(line);
+  if (row === null) return null;
+  const exported = /^(.+?)(?:\s+\[([^\]]+)\])?$/su.exec(row.text);
+  if (exported?.[1] === undefined) return null;
+  const rawName = row.text;
+  const literalName = knownExportNames.has(rawName);
+  // If nm establishes both interpretations, the textual row cannot bind an address or flags.
+  // Let the caller retain the exact nm names without guessing which one owns this row.
+  if (
+    literalName &&
+    exported[2] !== undefined &&
+    knownExportNames.has(exported[1])
+  )
+    return null;
+  const annotation = literalName ? undefined : exported[2];
+  const absolute = /\babsolute\b/u.test(annotation ?? "");
+  const address =
+    offsets && !absolute
+      ? imageBase === null
+        ? null
+        : `0x${(BigInt(imageBase) + BigInt(row.address)).toString(16)}`
+      : canonicalHex(row.address);
+  return {
+    name: literalName ? rawName : exported[1],
+    address,
+    weak: /\bweak-def\b/u.test(annotation ?? "") ? true : null,
+    reexport: false,
+    source: null,
+  };
+};
+
 /** Decode Apple dyld export rows, projecting export offsets to VM addresses. */
 export const parseDyldExports = (
   output: string,
@@ -122,59 +195,17 @@ export const parseDyldExports = (
   const offsets = /^\s*offset\s+symbol\s*$/mu.test(output);
   // dyld_info ends rows with LF. A carriage return before it belongs to the
   // symbol name, so export rows keep their trailing text.
-  return output.split("\n").flatMap<ParsedDyldExport>((rawLine) => {
-    const line = rawLine.trimStart();
-    // dyld_info prints `_sym (from lib)`, or `_new (_old from lib)` when the
-    // source library names the symbol differently. Split the trailing
-    // parenthesized suffix with string scans so a library path containing
-    // " from ", or a source symbol containing parentheses such as
-    // `operator()`, cannot pull the match into nested lazy quantifiers.
-    const reexport = parseReexportRow(line, knownExportNames);
-    if (reexport !== null)
-      return [
-        {
-          name: reexport.name,
-          address: null,
-          weak: null,
-          reexport: true,
-          source: reexport.source,
-          ...(reexport.sourceSymbol === undefined
-            ? {}
-            : { sourceSymbol: reexport.sourceSymbol }),
-        },
-      ];
-    const row = parseDyldExportAddressRow(line);
-    if (row === null) return [];
-    const exported = /^(.+?)(?:\s+\[([^\]]+)\])?$/su.exec(row.text);
-    if (exported?.[1] === undefined) return [];
-    const rawName = row.text;
-    const literalName = knownExportNames.has(rawName);
-    // If nm establishes both interpretations, the textual row cannot bind an address or flags.
-    // Let the caller retain the exact nm names without guessing which one owns this row.
-    if (
-      literalName &&
-      exported[2] !== undefined &&
-      knownExportNames.has(exported[1])
-    )
-      return [];
-    const annotation = literalName ? undefined : exported[2];
-    const absolute = /\babsolute\b/u.test(annotation ?? "");
-    const address =
-      offsets && !absolute
-        ? imageBase === null
-          ? null
-          : `0x${(BigInt(imageBase) + BigInt(row.address)).toString(16)}`
-        : canonicalHex(row.address);
-    return [
-      {
-        name: literalName ? rawName : exported[1],
-        address,
-        weak: /\bweak-def\b/u.test(annotation ?? "") ? true : null,
-        reexport: false,
-        source: null,
-      },
-    ];
-  });
+  const exports: ParsedDyldExport[] = [];
+  for (const rawLine of output.split("\n")) {
+    const parsed = parseDyldExportLine(
+      rawLine.trimStart(),
+      offsets,
+      imageBase,
+      knownExportNames,
+    );
+    if (parsed !== null) exports.push(parsed);
+  }
+  return exports;
 };
 
 const canonicalHex = (value: string | undefined): string | null =>

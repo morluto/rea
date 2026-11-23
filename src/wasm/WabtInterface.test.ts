@@ -1,17 +1,22 @@
 import { expect, it } from "vitest";
+import { parseWabtInterface } from "./WabtInterface.js";
 import { parseWabtWat } from "./WabtWat.js";
 
 it("resolves imported index spaces and decoded escaped names without depending on body/type numbering", () => {
+  const imported = String.raw`(import "a\22b" "\ef\bb\bf\00\0a" (func (;0;) (type 0)))`;
+  const exported = '(export "" (func 1))';
   const report = parseWabtWat(`(module
     (type (;0;) (func (param i32) (result i64)))
-    (import "a\\22b" "\\ef\\bb\\bf\\00" (func (;0;) (type 0)))
+    ${imported}
     (func (;1;) (type 0) (param i32) (result i64) local.get 0 i64.extend_i32_s)
-    (export "" (func 1)))`).interface;
-  expect(report.entries).toMatchObject([
+    ${exported})`);
+  expect(report.imports).toEqual([imported]);
+  expect(report.exports).toEqual([exported]);
+  expect(report.interface.entries).toMatchObject([
     {
       direction: "import",
       module: 'a"b',
-      name: "\ufeff\0",
+      name: "\ufeff\0\n",
       index: 0,
       signature: { kind: "func", params: ["i32"], results: ["i64"] },
     },
@@ -116,41 +121,48 @@ it("preserves custom memory page sizes and treats unadmitted nested declarations
     page_size: "1",
   });
   const unknown = parseWabtWat(
-    '(module (memory 1 (future-proposal 0)) (export "m" (memory 0)))',
+    String.raw`(module (memory 1 (future-proposal "ignored\ff")) (export "m" (memory 0)))`,
   ).interface;
-  expect(unknown.entries[0]?.signature).toBeNull();
+  expect(unknown.entries).toMatchObject([
+    { name: "m", signature: null, issue: expect.stringMatching(/\S/u) },
+  ]);
 });
 
-it("refuses typed name expansion within the source WABT byte cap before retaining interface output", () => {
-  const name = "x".repeat(6 * 1024 * 1024);
-  expect(
-    parseWabtWat(`(module (import "${name}" "f" (func)))`).interface,
-  ).toMatchObject({
+it("recovers typed name expansion with a larger selected interface allowance", () => {
+  const name = "x".repeat(500);
+  const wat = `(module (import "${name}" "f" (func)))`;
+  expect(parseWabtWat(wat, 1024).interface).toMatchObject({
     state: "partial",
     entries: [],
-    issues: [expect.stringMatching(/representation budget/u)],
+    issues: expect.arrayContaining([
+      expect.stringContaining("max_interface_bytes"),
+    ]),
+  });
+  expect(parseWabtWat(wat, 8192).interface).toMatchObject({
+    state: "complete",
+    entries: [{ direction: "import", module: name, name: "f" }],
+    issues: [],
   });
 });
 
 it("charges shared type signatures at every retained occurrence and preserves bounded partial facts", () => {
-  const params = Array(1000).fill("i32").join(" ");
+  const params = Array(64).fill("i32").join(" ");
   const exports = Array.from(
-    { length: 10000 },
+    { length: 100 },
     (_, i) => `(export "f${i}" (func 0))`,
   ).join(" ");
   const report = parseWabtWat(
     `(module (type (func (param ${params}))) (import "e" "f" (func (type 0))) ${exports})`,
+    16384,
   ).interface;
   expect(report.state).toBe("partial");
   expect(report.entries.length).toBeGreaterThan(1);
-  expect(report.entries.length).toBeLessThan(10001);
+  expect(report.entries.length).toBeLessThan(101);
   expect(report.entries[0]?.signature).toMatchObject({
     kind: "func",
     params: expect.any(Array),
   });
-  expect(Buffer.byteLength(JSON.stringify(report))).toBeLessThan(
-    32 * 1024 * 1024,
-  );
+  expect(Buffer.byteLength(JSON.stringify(report))).toBeLessThan(16384);
 });
 
 it("keeps collided labels unknown in each index space and preserves numeric and unique identities", () => {
@@ -232,4 +244,58 @@ it("rejects a second module after a CR-terminated line comment", () => {
       code: "unexpected_second_module",
     }),
   );
+});
+
+it("resolves repeated typed signatures across many functions while stopping at bodies", () => {
+  const functions = Array.from(
+    { length: 200 },
+    (_, i) =>
+      `(func $f${i} (type $sig) (local i32 i64) local.get 0 i64.extend_i32_s)`,
+  ).join("\n");
+  const exports = Array.from(
+    { length: 200 },
+    (_, i) => `(export "e${i}" (func $f${i}))`,
+  ).join("\n");
+  const report = parseWabtWat(`(module
+    (type $sig (func\u00a0(param i32) (result i64)))
+    (import "env" "imp" (func (type $sig)))
+    ${functions}
+    ${exports})`).interface;
+  expect(report.state).toBe("complete");
+  expect(report.entries).toHaveLength(201);
+  expect(report.entries[0]?.signature).toEqual({
+    kind: "func",
+    params: ["i32"],
+    results: ["i64"],
+  });
+  expect(report.entries[200]?.signature).toEqual({
+    kind: "func",
+    params: ["i32"],
+    results: ["i64"],
+  });
+});
+
+it("marks type index space unknown for commented rec forms and enforces tight interface budgets", () => {
+  const commentedRec = parseWabtInterface([
+    "( (; block comment before head ;) rec (type $a (func)))",
+    "(type (func (param i32)))",
+    "(func $f (type 0))",
+    '(export "f" (func $f))',
+  ]);
+  expect(commentedRec.state).toBe("complete");
+  expect(commentedRec.entries[0]).toMatchObject({
+    name: "f",
+    signature: null,
+    issue: expect.any(String),
+  });
+
+  const manyFunctions = Array.from(
+    { length: 50 },
+    (_, i) =>
+      `(func $f${i} (param i32) (result i64)) (export "e${i}" (func $f${i}))`,
+  ).join("\n");
+  const budgeted = parseWabtWat(`(module ${manyFunctions})`, 512).interface;
+  expect(budgeted.state).toBe("partial");
+  expect(budgeted.entries.length).toBeLessThan(50);
+  expect(budgeted.issues.length).toBeGreaterThan(0);
 });

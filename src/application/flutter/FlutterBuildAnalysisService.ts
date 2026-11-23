@@ -1,5 +1,6 @@
-import type { FlutterBuildAnalysisPort } from "./FlutterBuildAnalysisPort.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { RequestAnalysisPort } from "../../ports/AnalysisProvider.js";
+import type { FlutterRequest } from "../../domain/flutter/flutterBuildAnalysis.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   flutterRequestSchema,
   type FlutterOperation,
@@ -11,7 +12,7 @@ import type { Result } from "../../domain/result.js";
 
 /** Shared CLI/MCP admission, execution, and Evidence composition for Flutter. */
 export class FlutterBuildAnalysisService {
-  constructor(readonly provider: FlutterBuildAnalysisPort) {}
+  constructor(readonly provider: RequestAnalysisPort<FlutterRequest>) {}
 
   /** Run one caller-selected Flutter request and retain target identity inline. */
   execute(

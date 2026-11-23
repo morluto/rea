@@ -9,7 +9,7 @@ import {
 } from "../domain/firmware/espImage.js";
 import { firstUnerased } from "../domain/firmware/espImageStructures.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 
 const LABEL = "ESP flash image";
 const HEADER_BYTES = 24;
@@ -86,16 +86,28 @@ interface WrittenSegment {
 
 /** The segments region boundaries cut, kept where some region covers them. */
 const coveredSegments = (ranges: readonly FileRange[]): WrittenSegment[] => {
-  const cuts = [
-    ...new Set(ranges.flatMap(({ start, length }) => [start, start + length])),
-  ].sort((left, right) => left - right);
-  return cuts.slice(1).flatMap((end, index) => {
+  const deltas = new Map<number, number>();
+  for (const { start, length } of ranges) {
+    if (length <= 0) continue;
+    deltas.set(start, (deltas.get(start) ?? 0) + 1);
+    deltas.set(start + length, (deltas.get(start + length) ?? 0) - 1);
+  }
+  const cuts = [...deltas.keys()].sort((left, right) => left - right);
+  const segments: WrittenSegment[] = [];
+  let active = 0;
+  for (let index = 0; index + 1 < cuts.length; index += 1) {
     const start = cuts[index]!;
-    const covered = ranges.some(
-      (range) => range.start <= start && end <= range.start + range.length,
-    );
-    return covered ? [{ start, end, first: -1, last: -1, bytes: 0 }] : [];
-  });
+    active += deltas.get(start) ?? 0;
+    if (active > 0)
+      segments.push({
+        start,
+        end: cuts[index + 1]!,
+        first: -1,
+        last: -1,
+        bytes: 0,
+      });
+  }
+  return segments;
 };
 
 const tally = (

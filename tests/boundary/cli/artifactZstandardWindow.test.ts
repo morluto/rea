@@ -11,6 +11,8 @@ import {
   zstandardZipFixture,
 } from "../../fixtures/zipZstandard.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { analysisRefusalRemediation } from "../../../src/domain/analysisRefusal.js";
+import { ZIP_ZSTANDARD_WINDOW_CEILING } from "../../../src/resources/ZipArtifactReader.js";
 
 const expectRefusal = (diagnostic: unknown, large: boolean): void => {
   expect(diagnostic).toMatchObject({
@@ -23,8 +25,23 @@ const expectRefusal = (diagnostic: unknown, large: boolean): void => {
   if (large) {
     expect(diagnostic).toMatchObject({
       message: expect.stringContaining("fixed 128 MiB allowance"),
+      details: {
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance: ZIP_ZSTANDARD_WINDOW_CEILING.name,
+          limit: 2 ** 27,
+          unit: "bytes",
+          narrowing: ZIP_ZSTANDARD_WINDOW_CEILING.narrowing,
+        },
+      },
+      // The recovery is the reader's ceiling through the refusal formatter.
       remediation: {
-        action: expect.stringContaining("cannot be raised at runtime"),
+        action: analysisRefusalRemediation({
+          kind: "fixed_ceiling",
+          operation: (diagnostic as { details: { operation: string } }).details
+            .operation,
+          ceiling: ZIP_ZSTANDARD_WINDOW_CEILING,
+        }),
       },
     });
     expect(JSON.stringify(diagnostic)).not.toContain("fresh copy");
@@ -71,7 +88,7 @@ cliTest.for(["small", "large", "corrupt"] as const)(
           expect.arrayContaining([
             expect.objectContaining({
               subject: expect.objectContaining({
-                digest: expect.objectContaining({ sha256 }),
+                identity: expect.objectContaining({ sha256 }),
               }),
             }),
           ]),

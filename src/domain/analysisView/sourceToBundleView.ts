@@ -1,5 +1,4 @@
 import { z } from "zod";
-import type { JsonValue } from "../jsonValue.js";
 import {
   sourceToBundleComparisonResultSchema,
   type SourceToBundleComparisonResult,
@@ -18,7 +17,7 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { selectViewRows } from "./selectViewRows.js";
+import { pickFields, selectViewRows } from "./selectViewRows.js";
 
 const mapping = sourceToBundleComparisonResultSchema.shape.items.element;
 const candidate = mapping.shape.candidates.element;
@@ -98,13 +97,6 @@ const checkedReport = createAnalysisViewResultReader(
 );
 const selected = (values: readonly string[] | undefined) =>
   values === undefined ? undefined : new Set(values);
-const columns = (
-  row: object,
-  fields: readonly string[],
-): Record<string, JsonValue> => {
-  const source = row as Record<string, JsonValue>;
-  return Object.fromEntries(fields.map((field) => [field, source[field]!]));
-};
 
 /** Page facts owned by a complete comparison; page exhaustion does not upgrade source coverage. */
 export const projectSourceToBundleView = (
@@ -160,11 +152,13 @@ export const projectSourceToBundleView = (
       view,
       ...shared,
       summary: context,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const paths = selected(view.source_paths),
     ids = selected(view.mapping_ids),
     statuses = selected(view.statuses);
+  const filtered =
+    paths !== undefined || ids !== undefined || statuses !== undefined;
   const matches = (row: SourceToBundleComparisonResult["items"][number]) =>
     (paths === undefined || paths.has(row.source_path)) &&
     (ids === undefined || ids.has(row.mapping_id)) &&
@@ -186,9 +180,9 @@ export const projectSourceToBundleView = (
     const page = selectViewRows(
       report.items,
       view,
-      matches,
+      filtered ? matches : undefined,
       (row, source_index) => ({
-        ...columns(
+        ...pickFields(
           {
             ...row,
             source_index,
@@ -208,7 +202,7 @@ export const projectSourceToBundleView = (
     items = [];
     total = 0;
     for (const [source_index, row] of report.items.entries()) {
-      if (!matches(row)) continue;
+      if (filtered && !matches(row)) continue;
       const start = Math.max(0, view.offset - total);
       const end = Math.min(
         row.candidates.length,
@@ -223,7 +217,7 @@ export const projectSourceToBundleView = (
         ) {
           const candidate = row.candidates[candidate_index]!;
           items.push({
-            ...columns(candidate, fields),
+            ...pickFields(candidate, fields),
             mapping_id: row.mapping_id,
             source_path: row.source_path,
             source_index,

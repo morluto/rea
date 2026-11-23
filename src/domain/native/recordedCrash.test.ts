@@ -116,13 +116,11 @@ it.each([
       threads: [
         {
           ...v.threads[0],
-          registers: [
-            {
-              name: "rdi",
-              value: 9007199254740992,
-              location: { offset: "0x104", bytes: "0x8" },
-            },
-          ],
+          registers: v.threads[0]!.registers.map((register) =>
+            register.name === "rdi"
+              ? { ...register, value: 9007199254740992 }
+              : register,
+          ),
         },
       ],
     }),
@@ -148,13 +146,11 @@ it.each([
       threads: [
         {
           ...v.threads[0],
-          registers: [
-            {
-              name: "rdi",
-              value: "0x0",
-              location: { offset: "0x1e4", bytes: "0x8" },
-            },
-          ],
+          registers: v.threads[0]!.registers.map((register) =>
+            register.name === "rdi"
+              ? { ...register, location: { offset: "0x1e4", bytes: "0x8" } }
+              : register,
+          ),
         },
       ],
     }),
@@ -193,11 +189,24 @@ it.each([
       })),
     }),
   ],
-] as const)("rejects %s before Evidence serialization", (_name, change) =>
-  expect(
-    recordedCrashSchema.safeParse(change(recordedCrashFixture())).success,
-  ).toBe(false),
-);
+] as const)("rejects %s before Evidence serialization", (name, change) => {
+  const result = recordedCrashSchema.safeParse(change(recordedCrashFixture()));
+  expect(result.success).toBe(false);
+  if (result.success) throw new Error("Expected invalid recorded crash");
+  if (name === "register outside descriptor")
+    expect(result.error.issues).toContainEqual(
+      expect.objectContaining({
+        message: "Register source exceeds its descriptor.",
+      }),
+    );
+  if (name === "unsafe register number")
+    expect(result.error.issues).toContainEqual(
+      expect.objectContaining({
+        code: "invalid_type",
+        path: ["threads", 0, "registers", 14, "value"],
+      }),
+    );
+});
 
 it("does not interpret a signal through a mislabeled raw owner ABI", () => {
   const value = recordedCrashFixture();

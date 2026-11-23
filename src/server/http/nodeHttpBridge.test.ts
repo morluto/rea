@@ -2,13 +2,15 @@ import { once } from "node:events";
 import { createServer, type Server } from "node:http";
 import { connect } from "node:net";
 import type { AddressInfo } from "node:net";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it } from "vitest";
 
 import {
   toWebRequest,
   writeWebResponse,
   type WebResponseOptions,
 } from "./nodeHttpBridge.js";
+import { waitFor } from "../../../tests/support/testWait.js";
+import { CallerAbort } from "../../domain/analysisErrorCore.js";
 
 const servers: Server[] = [];
 const encoder = new TextEncoder();
@@ -66,7 +68,7 @@ it("ends a HEAD reply after the headers and cancels a body the handler attached"
   const response = await fetch(`${origin}/events`, { method: "HEAD" });
   expect(response.status).toBe(200);
   expect(response.headers.get("content-type")).toBe("text/event-stream");
-  await vi.waitFor(() => {
+  await waitFor(() => {
     expect(cancelled).toBe(true);
   });
   expect(pulls).toBeLessThanOrEqual(1);
@@ -93,7 +95,7 @@ it("finishes a HEAD reply without waiting on a teed body whose sibling stays liv
     method: "HEAD",
   });
   expect(response.status).toBe(200);
-  await vi.waitFor(() => {
+  await waitFor(() => {
     expect(finished).toBe(true);
   });
 });
@@ -126,11 +128,11 @@ it("cancels the body when an asynchronous route resolves after its client left",
   const socket = connect(port, "127.0.0.1");
   await once(socket, "connect");
   socket.write("GET /late HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
-  await vi.waitFor(() => {
+  await waitFor(() => {
     expect(received).toBe(true);
   });
   socket.destroy();
-  await vi.waitFor(() => {
+  await waitFor(() => {
     expect(settled).toBe(true);
     expect(cancelled).toBe(true);
   });
@@ -165,7 +167,7 @@ it("returns when a client leaves a teed streaming body whose sibling stays live"
   const first = await response.body.getReader().read();
   expect(decoder.decode(first.value)).toBe("data: first\n\n");
   leave.abort();
-  await vi.waitFor(() => {
+  await waitFor(() => {
     expect(settled).toBe(true);
   });
 });
@@ -196,33 +198,26 @@ it("forwards method, URL, headers and the request body as a web Request", async 
   expect(request.headers.get("host")).toBe(new URL(origin).host);
 });
 
-it("forwards GET requests without a body", async () => {
-  const origin = await serve((request) =>
-    Response.json({ bodyless: request.body === null }),
-  );
-  const response = await fetch(`${origin}/mcp`);
-  await expect(response.json()).resolves.toEqual({ bodyless: true });
-});
-
 it("streams response chunks as the handler produces them", async () => {
+  let bodyless: boolean | undefined;
   let release: () => void = () => undefined;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const origin = await serve(
-    () =>
-      new Response(
-        new ReadableStream({
-          async start(controller) {
-            controller.enqueue(encoder.encode("event: message\ndata: 1\n\n"));
-            await gate;
-            controller.enqueue(encoder.encode("event: message\ndata: 2\n\n"));
-            controller.close();
-          },
-        }),
-        { headers: { "content-type": "text/event-stream" } },
-      ),
-  );
+  const origin = await serve((request) => {
+    bodyless = request.body === null;
+    return new Response(
+      new ReadableStream({
+        async start(controller) {
+          controller.enqueue(encoder.encode("event: message\ndata: 1\n\n"));
+          await gate;
+          controller.enqueue(encoder.encode("event: message\ndata: 2\n\n"));
+          controller.close();
+        },
+      }),
+      { headers: { "content-type": "text/event-stream" } },
+    );
+  });
   const response = await fetch(`${origin}/stream`);
   expect(response.headers.get("content-type")).toBe("text/event-stream");
   const reader = response.body?.getReader();
@@ -237,14 +232,15 @@ it("streams response chunks as the handler produces them", async () => {
     rest += decoder.decode(value);
   }
   expect(rest).toContain("data: 2");
+  expect(bodyless).toBe(true);
 });
 
 it("aborts the web Request and cancels its response body when the client leaves", async () => {
-  let aborted = false;
+  let aborted: unknown;
   let cancelled = false;
   const origin = await serve((request) => {
     request.signal.addEventListener("abort", () => {
-      aborted = true;
+      aborted = request.signal.reason;
     });
     return new Response(
       new ReadableStream({
@@ -266,8 +262,9 @@ it("aborts the web Request and cancels its response body when the client leaves"
   if (reader === undefined) throw new Error("Response body missing");
   await reader.read();
   controller.abort();
-  await vi.waitFor(() => {
-    expect(aborted).toBe(true);
+  await waitFor(() => {
+    expect(aborted).toBeInstanceOf(CallerAbort);
+    expect(aborted).toMatchObject({ kind: "client-disconnected" });
     expect(cancelled).toBe(true);
   });
 });

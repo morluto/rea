@@ -8,9 +8,9 @@ import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const primaryFailures: Readonly<Record<string, string>> = {
+  "missing-schema": "controlled analysis failure",
   compiler: "controlled compiler failure",
   "open-reply": "controlled open-reply failure",
-  "missing-schema": "MCP tool omitted its output schema: procedure_address",
 };
 
 it.each([
@@ -54,6 +54,7 @@ it.each([
           };
         },
         mkdtemp: fs.mkdtemp,
+        realpath: fs.realpath,
         readFile: fs.readFile,
         async rm(path, options) {
           record("remove");
@@ -69,7 +70,9 @@ it.each([
                 ? { name } : { name, outputSchema: { type: "object" } }) };
           }
           async connect() {}
-          async callTool({ name }) {
+          async callTool({ name }, { toolDefinition }) {
+            if (!toolDefinition?.outputSchema?.properties)
+              throw new Error("canonical output schema was not bound");
             if (name === "open_binary") { fail("open-reply"); return {}; }
             if (name === "binary_session") return { open: !closed || stage === "session-check" };
             if (name === "close_binary") {
@@ -89,7 +92,7 @@ it.each([
         async snapshotHopperRuntime() {
           snapshotCalls++;
           if (snapshotCalls > 1) { record("snapshot"); fail("snapshot"); }
-          return new Set();
+          return { paths: new Set(), confirmedSessions: new Set(), unresolvedSessions: new Set() };
         },
         createVerifierRun: () => ({ run_id: "controlled" }),
         async completeVerifierRun() { record("lineage"); return { process_lineage: {} }; },
@@ -97,7 +100,7 @@ it.each([
       };
       globalThis.callPathVerifierControls = controls;
       const modules = new Map([
-        ["node:fs/promises", ["mkdtemp", "readFile", "rm"]],
+        ["node:fs/promises", ["mkdtemp", "realpath", "readFile", "rm"]],
         ["@modelcontextprotocol/client", ["Client"]],
         ["@modelcontextprotocol/client/stdio", ["StdioClientTransport"]],
         ["./lib/mcp-verifier-results.mjs", ["requireMcpOperationResult"]],
@@ -146,6 +149,7 @@ it.each([
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line) as string);
+  const cleanupFails = !(stage in primaryFailures) && stage !== "analysis";
   expect(attempted).toEqual([
     "compile",
     ...(stage === "compiler" ? [] : ["close_binary"]),
@@ -155,14 +159,13 @@ it.each([
     "snapshot",
     "snapshot",
     "lineage",
-    "remove",
+    ...(!cleanupFails || stage === "remove" ? ["remove"] : []),
   ]);
   const retained = (await readdir(root)).filter((name) =>
     name.startsWith("rea-call-path-goals-"),
   );
-  expect(retained).toHaveLength(stage === "remove" ? 1 : 0);
-  if (stage === "remove")
-    expect(result.stdout).not.toContain('"fixture_removed"');
+  expect(retained).toHaveLength(cleanupFails ? 1 : 0);
+  if (cleanupFails) expect(result.stdout).not.toContain('"fixture_removed"');
   if (
     !(stage in primaryFailures) &&
     stage !== "analysis" &&

@@ -8,8 +8,8 @@ import {
   type DesktopPathState,
   type DesktopWalk,
 } from "../../domain/desktop/desktopStateDiff.js";
-import type { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
-import { walkHomeState } from "../../desktop/HomeStateWalker.js";
+import type { CaptureContentStore } from "../../ports/CaptureContentStore.js";
+import type { DesktopCaptureProvider } from "../../ports/DesktopApplicationSession.js";
 
 /** Where each checkpoint walks and which paths count as application state. */
 export interface CheckpointScope {
@@ -45,6 +45,10 @@ const sameVersion = (left: DesktopPathState, right: DesktopPathState) =>
 /** Walks, diffs and retains state for each checkpoint in turn. */
 export class CheckpointRecorder {
   readonly checkpoints: DesktopCheckpoint[] = [];
+  readonly baselineNonFiles: {
+    path: string;
+    type: "directory" | "symlink" | "other";
+  }[] = [];
   /** Mount points any walk recorded without entering. */
   readonly mountPoints = new Set<string>();
   #previous: DesktopWalk = EMPTY_WALK;
@@ -57,7 +61,8 @@ export class CheckpointRecorder {
 
   constructor(
     readonly scope: CheckpointScope,
-    readonly store: DesktopContentStore,
+    readonly store: CaptureContentStore,
+    readonly walkHome: DesktopCaptureProvider["walkHome"],
   ) {}
 
   async #retain(
@@ -114,21 +119,24 @@ export class CheckpointRecorder {
     trigger: DesktopCheckpoint["trigger"],
     atMs: number,
     signal?: AbortSignal,
-  ): Promise<void> {
+  ): Promise<DesktopCheckpoint> {
     const { roots, excluded, maxEntries, contentRoots } = this.scope;
-    const walk = await walkHomeState(roots, excluded, maxEntries, signal);
+    const walk = await this.walkHome(roots, excluded, maxEntries, signal);
     for (const mountPoint of walk.mountPoints) this.mountPoints.add(mountPoint);
     const retained: DesktopCheckpoint["retained"] = [];
     let changes: DesktopCheckpoint["changes"] = [];
     let unconfirmed = 0;
     if (trigger === "baseline") {
-      for (const [path, state] of walk.entries)
+      for (const [path, state] of walk.entries) {
+        if (state.type !== "file")
+          this.baselineNonFiles.push({ path, type: state.type });
         if (state.type === "file" && isWithinAny(path, contentRoots))
           await this.#retain(path, state, retained, signal);
+      }
     } else
       ({ changes, unconfirmed } = await this.#changes(walk, retained, signal));
     this.#previous = walk;
-    this.checkpoints.push({
+    const checkpoint: DesktopCheckpoint = {
       name,
       trigger,
       at_ms: atMs,
@@ -139,6 +147,8 @@ export class CheckpointRecorder {
       unconfirmed_changes: unconfirmed,
       changes,
       retained,
-    });
+    };
+    this.checkpoints.push(checkpoint);
+    return checkpoint;
   }
 }

@@ -1,4 +1,4 @@
-import type { FridaInstrumentationPort } from "../application/frida/FridaInstrumentationPort.js";
+import type { FridaInstrumentationPort } from "../ports/frida/FridaInstrumentationPort.js";
 import {
   FridaInstrumentationManager,
   type FridaInstrumentationManagerOptions,

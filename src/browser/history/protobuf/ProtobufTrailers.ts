@@ -1,3 +1,4 @@
+import { strictUtf8Decoder } from "../../../domain/strictUtf8.js";
 import { err, ok, type Result } from "../../../domain/result.js";
 import type { ProtobufBudget } from "./ProtobufWire.js";
 
@@ -7,7 +8,11 @@ interface TrailerFacts {
 }
 
 type TrailerFailure = TrailerFacts & {
-  readonly kind: "invalid-utf8-value" | "invalid-name" | "invalid-value";
+  readonly kind:
+    | "invalid-utf8-value"
+    | "invalid-name"
+    | "invalid-value"
+    | "invalid-boundary";
   readonly reason: string;
 };
 
@@ -16,7 +21,7 @@ export const parseGrpcWebTrailers = (
   bytes: Uint8Array,
   budget: ProtobufBudget,
 ): Result<TrailerFacts, TrailerFailure> => {
-  let decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  let decoder = strictUtf8Decoder("preserve");
   const trailers: TrailerFacts["trailers"] = [];
   let examinedBytes = 0;
   const facts = (): TrailerFacts => ({
@@ -36,9 +41,15 @@ export const parseGrpcWebTrailers = (
     const lineExaminedBytes = hasSeparator ? end + 2 : lineEnd;
     if (lineEnd === start) {
       if (!hasSeparator) break;
+      if (lineExaminedBytes < bytes.length)
+        return err({
+          ...facts(),
+          examined_bytes: lineExaminedBytes,
+          kind: "invalid-boundary",
+          reason: "gRPC-web trailer block has bytes after a blank line",
+        });
       examinedBytes = lineExaminedBytes;
-      start = end + 2;
-      continue;
+      break;
     }
     let colon = start;
     while (colon < lineEnd && bytes[colon] !== 58) colon += 1;
@@ -50,15 +61,12 @@ export const parseGrpcWebTrailers = (
         reason:
           "gRPC-web trailer header names must be lower-case HTTP field names",
       });
-    let name = "";
     let validName = true;
     for (let index = start; index < colon; index += 1) {
-      const byte = bytes[index]!;
-      if (!isTrailerNameByte(byte)) {
+      if (!isTrailerNameByte(bytes[index]!)) {
         validName = false;
         break;
       }
-      name += String.fromCharCode(byte);
     }
     // Unlike ordinary HTTP/1 headers, in-body gRPC-Web names must be lower-case.
     if (!validName)
@@ -69,8 +77,16 @@ export const parseGrpcWebTrailers = (
         reason:
           "gRPC-web trailer header names must be lower-case HTTP field names",
       });
+    const name = Buffer.from(
+      bytes.buffer,
+      bytes.byteOffset + start,
+      colon - start,
+    ).toString("latin1");
     let valueStart = colon + 1;
-    while (valueStart < lineEnd && [9, 32].includes(bytes[valueStart]!))
+    while (
+      valueStart < lineEnd &&
+      (bytes[valueStart] === 9 || bytes[valueStart] === 32)
+    )
       valueStart += 1;
     // RFC 9110 permits HTAB but excludes other C0 controls and DEL.
     for (let index = valueStart; index < lineEnd; index += 1) {
@@ -86,14 +102,17 @@ export const parseGrpcWebTrailers = (
     }
     // RFC 9110 section 5.5: a field value excludes surrounding whitespace.
     let valueEnd = lineEnd;
-    while (valueEnd > valueStart && [9, 32].includes(bytes[valueEnd - 1]!))
+    while (
+      valueEnd > valueStart &&
+      (bytes[valueEnd - 1] === 9 || bytes[valueEnd - 1] === 32)
+    )
       valueEnd -= 1;
     let value: string;
     try {
       value = decoder.decode(bytes.subarray(valueStart, valueEnd));
     } catch (cause) {
       if (!(cause instanceof TypeError)) throw cause;
-      decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+      decoder = strictUtf8Decoder("preserve");
       opaqueValueFailure ??= {
         ...facts(),
         kind: "invalid-utf8-value",

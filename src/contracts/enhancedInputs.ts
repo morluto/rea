@@ -38,6 +38,22 @@ export const enhancedInputSchemas = {
         "A procedure symbol or address to resolve to its canonical entry",
       ),
     direction: callRelationshipDirectionSchema,
+    max_depth: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "Optional maximum traversal depth from the starting procedure (0 inspects only the start node). Omit to traverse the full observed graph.",
+      ),
+    max_nodes: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe(
+        "Optional maximum number of procedures to expand during traversal. Omit to traverse the full observed graph.",
+      ),
   }),
   analyze_swift_types: z.strictObject({
     category: z
@@ -70,10 +86,26 @@ export const enhancedInputSchemas = {
         .array(z.string().min(1))
         .min(1)
         .describe(
-          "Destination selectors decided in one exhaustive traversal; mutually exclusive with goal",
+          "Destination selectors decided in one shared traversal within caller-selected limits; mutually exclusive with goal",
         )
         .optional(),
       direction: callRelationshipDirectionSchema,
+      max_depth: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe(
+          "Optional maximum hop depth from start to expand (0 inspects no outgoing edges; 1 checks direct neighbors). Omit to traverse the full observed graph.",
+        ),
+      max_nodes: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe(
+          "Optional maximum number of procedures to expand during traversal. Omit to traverse the full observed graph.",
+        ),
     })
     .refine((input) => input.goal === undefined || input.goals === undefined, {
       message: "Supply goal or goals, not both",

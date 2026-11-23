@@ -9,7 +9,8 @@ import { applicationVersionComparisonResultSchema } from "../domain/javascript/j
 import { kernelModuleSchema } from "../domain/native/kernelModule.js";
 import { pinvokeVerificationSchema } from "../domain/managed/managedNativeVerificationSchemas.js";
 import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
-import { compactAdvertisedInputSchema } from "./compactInputSchema.js";
+import { advertisedInputDialectViolations } from "./advertisedDialect.js";
+import { projectToAdvertisedDialect } from "./advertisedDialectProjection.js";
 
 const directions = [
   [],
@@ -187,57 +188,101 @@ describe.each(["draft-2020-12", "draft-07"] as const)(
 );
 
 describe("fixed tuple element guidance in advertised projections", () => {
+  const tuplesIn = (schema: unknown): Record<string, unknown>[] => {
+    const found: Record<string, unknown>[] = [];
+    const visit = (value: unknown): void => {
+      if (Array.isArray(value)) {
+        value.forEach(visit);
+      } else if (typeof value === "object" && value !== null) {
+        const candidate = value as Record<string, unknown>;
+        if (
+          Array.isArray(candidate.prefixItems) ||
+          (Array.isArray(candidate.items) && "additionalItems" in candidate)
+        )
+          found.push(candidate);
+        Object.values(candidate).forEach(visit);
+      }
+    };
+    visit(schema);
+    return found;
+  };
+
   it.each(["draft-2020-12", "draft-07"] as const)(
-    "keeps literal item guidance in full and compact %s projections",
+    "keeps literal item guidance in full %s projections",
     (target) => {
       const full = z.toJSONSchema(relationshipCoverageSchema, {
         io: "output",
         target,
       });
-      for (const schema of [
-        full,
-        compactAdvertisedInputSchema(full, 64 * 1024).schema,
-      ]) {
-        const tupleSchemas: Record<string, unknown>[] = [];
-        const visit = (value: unknown): void => {
-          if (Array.isArray(value)) {
-            value.forEach(visit);
-          } else if (typeof value === "object" && value !== null) {
-            const candidate = value as Record<string, unknown>;
-            if (
-              Array.isArray(candidate.prefixItems) ||
-              (Array.isArray(candidate.items) && "additionalItems" in candidate)
-            )
-              tupleSchemas.push(candidate);
-            Object.values(candidate).forEach(visit);
-          }
-        };
-        visit(schema);
-
-        expect(tupleSchemas).toHaveLength(6);
-        for (const tuple of tupleSchemas) {
-          expect(tuple).toMatchObject({
-            type: "array",
-            minItems: expect.any(Number),
-            maxItems: expect.any(Number),
-          });
-          const positional = z
-            .array(z.object({ const: z.string() }))
-            .parse(tuple.prefixItems ?? tuple.items);
-          const rest = tuple.prefixItems ? tuple.items : tuple.additionalItems;
-          const ajv =
-            target === "draft-2020-12"
-              ? new Ajv2020({ strict: false })
-              : new Ajv({ strict: false });
-          const validateItem = ajv.compile(
-            z.record(z.string(), z.unknown()).parse(rest),
+      const tupleSchemas = tuplesIn(full);
+      expect(tupleSchemas).toHaveLength(6);
+      for (const tuple of tupleSchemas) {
+        expect(tuple).toMatchObject({
+          type: "array",
+          minItems: expect.any(Number),
+          maxItems: expect.any(Number),
+        });
+        const positional = z
+          .array(z.object({ const: z.string() }))
+          .parse(tuple.prefixItems ?? tuple.items);
+        const rest = tuple.prefixItems ? tuple.items : tuple.additionalItems;
+        const ajv =
+          target === "draft-2020-12"
+            ? new Ajv2020({ strict: false })
+            : new Ajv({ strict: false });
+        const validateItem = ajv.compile(
+          z.record(z.string(), z.unknown()).parse(rest),
+        );
+        for (const value of ["callers", "callees", "incoming", null])
+          expect(validateItem(value), JSON.stringify(tuple)).toBe(
+            positional.some((position) => position.const === value),
           );
-          for (const value of ["callers", "callees", "incoming", null])
-            expect(validateItem(value), JSON.stringify(tuple)).toBe(
-              positional.some((position) => position.const === value),
-            );
-        }
       }
+    },
+  );
+
+  it.each(["draft-2020-12", "draft-07"] as const)(
+    "advertises every position as one element enum in the portable %s dialect",
+    (target) => {
+      // Tuples are outside the portable dialect: the element schema becomes
+      // the union of the positions, and the length bounds stay.
+      const { schema } = projectToAdvertisedDialect(
+        z.toJSONSchema(
+          z.strictObject({ coverage: relationshipCoverageSchema }),
+          {
+            io: "output",
+            target,
+          },
+        ),
+      );
+      expect(tuplesIn(schema)).toEqual([]);
+      expect(
+        advertisedInputDialectViolations({
+          name: "probe",
+          inputSchema: schema,
+        }).filter(({ rule }) => rule !== "input-depth"),
+      ).toEqual([]);
+      const ajv = new Ajv2020({ strict: false });
+      const validate = ajv.compile(schema);
+      for (const limited_directions of directions)
+        expect(
+          validate({
+            coverage: {
+              status: "unknown",
+              reason: "fixture",
+              limited_directions,
+            },
+          }),
+          JSON.stringify(limited_directions),
+        ).toBe(
+          // Widened: any one or two known directions, in any order.
+          Array.isArray(limited_directions) &&
+            limited_directions.length > 0 &&
+            limited_directions.length <= 2 &&
+            limited_directions.every(
+              (direction) => direction === "callers" || direction === "callees",
+            ),
+        );
     },
   );
 });

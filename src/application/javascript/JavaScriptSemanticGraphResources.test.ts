@@ -9,25 +9,21 @@ import { resolveJavaScriptSemanticEvidence } from "../../../tests/support/javasc
 const SHA256 = "a".repeat(64);
 const GRAPH_ID = `jag_${"b".repeat(64)}`;
 
-it("projects literal events and exact timer cancellation", () => {
+it("keeps literal event links and dynamic event uncertainty", () => {
   const graph = graphFor(`
       function run(bus, dynamicName) {
-        const handle = setInterval(tick, 10);
         bus.on("ready", handler);
         bus.once(dynamicName, handler);
         bus.emit("ready");
         bus.removeListener("ready", handler);
-        clearInterval(handle);
       }
     `);
 
   const relations = new Set(graph.relations.map(({ relation }) => relation));
   for (const expected of [
-    "cancels-timer",
     "dispatches-candidate",
     "registers-listener",
     "removes-listener",
-    "schedules-timer",
   ] as const)
     expect(relations.has(expected)).toBe(true);
   expect(
@@ -44,9 +40,6 @@ it("projects literal events and exact timer cancellation", () => {
   ).toBe(true);
   expect(
     graph.coverage.families.find(({ family }) => family === "event"),
-  ).toMatchObject({ status: "partial" });
-  expect(
-    graph.coverage.families.find(({ family }) => family === "timer"),
   ).toMatchObject({ status: "partial" });
 });
 
@@ -65,32 +58,41 @@ it("projects child-process creation, I/O, listeners, and signals", () => {
       }
     `);
 
-  const relations = new Set(graph.relations.map(({ relation }) => relation));
-  for (const expected of [
-    "connects-stdio",
-    "forwards-signal",
-    "listens-error",
-    "listens-exit",
-    "spawns",
-    "supplies-argv",
-    "supplies-env",
-  ] as const)
-    expect(relations.has(expected)).toBe(true);
+  const child = graph.nodes.find(({ kind }) => kind === "child-process");
+  if (child === undefined) throw new Error("Expected the spawned child");
+  expect(child.properties).toMatchObject({
+    method: "spawn",
+    command: null,
+    argv_count: 2,
+    environment_supplied: true,
+    stdio_mode: "pipe",
+  });
   expect(
-    graph.nodes.find(
-      ({ kind, properties }) =>
-        kind === "child-process" &&
-        properties.method === "spawn" &&
-        properties.command === null,
-    ),
-  ).toBeDefined();
+    graph.relations
+      .filter(({ target_node_id }) => target_node_id === child.node_id)
+      .map(({ relation }) => relation),
+  ).toEqual(
+    expect.arrayContaining([
+      "forwards-signal",
+      "spawns",
+      "supplies-argv",
+      "supplies-env",
+    ]),
+  );
   expect(
-    graph.unknowns.some(
-      ({ family, detail }) =>
-        family === "child-process" &&
-        detail.includes("command remains unresolved"),
-    ),
-  ).toBe(true);
+    graph.relations
+      .filter(({ source_node_id }) => source_node_id === child.node_id)
+      .map(({ relation }) => relation),
+  ).toEqual(
+    expect.arrayContaining(["connects-stdio", "listens-error", "listens-exit"]),
+  );
+  expect(graph.unknowns).toContainEqual(
+    expect.objectContaining({
+      node_id: child.node_id,
+      family: "child-process",
+      detail: expect.stringContaining("command remains unresolved"),
+    }),
+  );
   expect(
     graph.coverage.families.find(({ family }) => family === "child-process"),
   ).toMatchObject({ status: "partial" });
@@ -231,18 +233,48 @@ it("projects built-in resource acquisition and release", () => {
   ).toMatchObject({ status: "partial" });
 });
 
-it.each(["+= 1", "++"])(
-  "projects both property dependencies for %s",
-  (operator) => {
-    const graph = graphFor(`
-      const source = { count: 1 };
-      source.count ${operator};
-    `);
-    const relations = graph.relations.map(({ relation }) => relation);
-    expect(relations).toContain("reads-property");
-    expect(relations).toContain("writes-property");
-  },
-);
+it("links the read and write of each update to the same property slot", () => {
+  const graph = graphFor(`
+    const source = { count: 1, total: 2 };
+    source.count += 1;
+    source.total++;
+  `);
+  for (const path of ["count", "total"]) {
+    const slot = graph.nodes.find(
+      ({ kind, properties }) =>
+        kind === "property-slot" && properties.property_pointer === `/${path}`,
+    );
+    if (slot === undefined) throw new Error(`Expected the ${path} slot`);
+    const updates = graph.nodes.filter(
+      ({ properties }) =>
+        Array.isArray(properties.property_path) &&
+        properties.property_path[0] === path,
+    );
+    const read = updates.find(
+      ({ properties }) => properties.operation_kind === "read",
+    );
+    const write = updates.find(
+      ({ properties }) => properties.operation_kind === "write",
+    );
+    if (read === undefined || write === undefined)
+      throw new Error(`Expected both operations for ${path}`);
+    expect(graph.relations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          relation: "reads-property",
+          source_node_id: slot.node_id,
+          target_node_id: read.node_id,
+        }),
+        expect.objectContaining({
+          relation: "writes-property",
+          source_node_id: write.node_id,
+          target_node_id: slot.node_id,
+        }),
+      ]),
+    );
+  }
+});
+
 it("does not project a literal property slot for dynamic destructuring", () => {
   const graph = graphFor(`
     const source = { token: "TOKEN" };
@@ -400,4 +432,34 @@ it("uses unavailable evidence when no source produced semantic IR", () => {
       location: { available: false, reason: "not-observed" },
     },
   );
+});
+
+it("retains conditional Node timer and child effects without proving a loader", () => {
+  const graph = graphFor(`
+    const { spawn } = require('child_process');
+    const { setTimeout } = require('timers');
+    const child = spawn('tool', []); child.kill();
+    setTimeout(() => {}, 1);
+  `);
+  const child = graph.nodes.find((node) => node.kind === "child-process");
+  const timer = graph.nodes.find((node) => node.kind === "timer");
+  for (const node of [child, timer]) {
+    expect(node?.properties.builtin_authority).toBe("candidate");
+    if (node === undefined) throw new Error("Expected candidate node");
+    expect(
+      resolveJavaScriptSemanticEvidence(graph, node.evidence),
+    ).toMatchObject({ state: "inferred", confidence: "low" });
+  }
+  for (const kind of [
+    "spawns",
+    "schedules-timer",
+    "forwards-signal",
+  ] as const) {
+    const relation = graph.relations.find((item) => item.relation === kind);
+    expect(relation).toMatchObject({ resolution: "candidate" });
+    if (relation === undefined) throw new Error(`Expected ${kind} relation`);
+    expect(
+      resolveJavaScriptSemanticEvidence(graph, relation.evidence),
+    ).toMatchObject({ state: "inferred", confidence: "low" });
+  }
 });

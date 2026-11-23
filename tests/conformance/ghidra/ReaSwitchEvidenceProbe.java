@@ -6,6 +6,7 @@ import generic.jar.ResourceFile;
 import ghidra.app.decompiler.ClangCaseToken;
 import ghidra.app.decompiler.ClangNode;
 import ghidra.app.decompiler.ClangToken;
+import ghidra.app.decompiler.ClangTokenGroup;
 import ghidra.app.script.GhidraScript;
 import ghidra.app.script.GhidraScriptProvider;
 import ghidra.app.script.GhidraScriptUtil;
@@ -39,6 +40,7 @@ import java.util.Set;
  */
 public class ReaSwitchEvidenceProbe extends GhidraScript {
     private GhidraScript bridge;
+    private Method indexCaseTokens;
     private Method typedCases;
     private Method exactValue;
     private final JsonArray checks = new JsonArray();
@@ -134,7 +136,9 @@ public class ReaSwitchEvidenceProbe extends GhidraScript {
     private Object evidence(Address dispatch, List<Address> destinations, ClangNode... tokens)
             throws Exception {
         JumpTable table = new JumpTable(dispatch, new ArrayList<>(destinations), false, 0);
-        return invoke(typedCases, bridge, table, List.of(tokens));
+        ClangTokenGroup root = new ClangTokenGroup(null);
+        for (ClangNode token : tokens) root.AddTokenGroup(token);
+        return invoke(typedCases, bridge, table, invoke(indexCaseTokens, bridge, root));
     }
 
     private void numericChecks() throws Exception {
@@ -221,7 +225,9 @@ public class ReaSwitchEvidenceProbe extends GhidraScript {
         bridge = provider.getScriptInstance(source, errorWriter);
         if (bridge == null) throw new IllegalStateException("Official provider returned no bridge instance");
         bridge.set(getState(), getControls());
-        typedCases = bridge.getClass().getDeclaredMethod("typedJumpTableCases", JumpTable.class, List.class);
+        indexCaseTokens = bridge.getClass().getDeclaredMethod("indexCaseTokens", ClangNode.class);
+        indexCaseTokens.setAccessible(true);
+        typedCases = bridge.getClass().getDeclaredMethod("typedJumpTableCases", JumpTable.class, Map.class);
         typedCases.setAccessible(true);
         exactValue = bridge.getClass().getDeclaredMethod("exactTypedCaseValue", ClangCaseToken.class);
         exactValue.setAccessible(true);

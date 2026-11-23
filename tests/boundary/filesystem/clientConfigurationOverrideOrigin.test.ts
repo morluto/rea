@@ -1,94 +1,83 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { join } from "node:path";
 import { writeFile } from "node:fs/promises";
 import { expect, it } from "vitest";
 import { readClientConfigurationFiles } from "../../../src/application/ClientConfigurationFiles.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 
-it("attributes case-folded Windows overrides without disclosing values", async () => {
-  const root = await createTestTempDirectory("rea-config-override-origin-");
-  const configPath = join(root, "client.json");
-  const client = { name: "cursor", format: "json", configPath } as const;
-  const result = await readClientConfigurationFiles(
-    client,
-    undefined,
-    "win32",
-    {
-      rea_asar_max_header_bytes: "0",
-    },
-  );
-  expect(result).toMatchObject({
-    ok: false,
-    error: {
-      detail: expect.stringContaining(
-        "launch overrides (REA_ASAR_MAX_HEADER_BYTES)",
-      ),
-    },
-  });
-});
-
-it("keeps a malformed stored environment attributed to its file", async () => {
-  const root = await createTestTempDirectory("rea-config-file-origin-");
-  const configPath = join(root, "client.json");
-  await writeFile(
-    configPath,
-    JSON.stringify({
-      mcpServers: {
-        rea: {
-          command: "rea",
-          args: ["mcp"],
-          env: { HOPPER_LOADER_ARGS_JSON: "not-json" },
-        },
-      },
-    }),
-  );
-  const result = await readClientConfigurationFiles({
-    name: "cursor",
-    format: "json",
-    configPath,
-  });
-  expect(result).toMatchObject({
-    ok: false,
-    error: { detail: expect.stringContaining(`Configuration ${configPath}`) },
-  });
-  if (!result.ok) expect(result.error.detail).not.toContain("not-json");
-});
-
-it.each([
+it.each<{
+  name: string;
+  platform?: NodeJS.Platform;
+  stored?: Record<string, string>;
+  overrides?: Record<string, string>;
+  reported: string;
+  setting?: string;
+  suppressed: string;
+}>([
   {
+    name: "case-folded Windows override for a missing file",
+    platform: "win32",
+    overrides: { rea_asar_max_header_bytes: "invalid-proposed-bytes" },
+    reported: "launch overrides (REA_ASAR_MAX_HEADER_BYTES)",
+    suppressed: "invalid-proposed-bytes",
+  },
+  {
+    name: "malformed stored environment",
+    stored: { HOPPER_LOADER_ARGS_JSON: "invalid-stored-bytes" },
+    reported: "has an invalid REA server environment",
+    suppressed: "invalid-stored-bytes",
+  },
+  {
+    name: "invalid combination of otherwise valid settings",
     stored: { REA_GHIDRA_LANGUAGE_ID: "x86:LE:64:default" },
     overrides: { REA_GHIDRA_PROJECT_PATH: "/tmp/selected-project.gpr" },
-    reported: "REA_GHIDRA_LANGUAGE_ID",
+    setting: "REA_GHIDRA_LANGUAGE_ID",
+    reported: "check the client configuration and proposed launch overrides",
+    suppressed: "/tmp/selected-project.gpr",
   },
   {
-    stored: { HOPPER_LOADER_ARGS_JSON: "invalid-json" },
+    name: "malformed stored environment beside valid overrides",
+    stored: { HOPPER_LOADER_ARGS_JSON: "invalid-combined-bytes" },
     overrides: { REA_ASAR_MAX_HEADER_BYTES: "1024" },
-    reported: "HOPPER_LOADER_ARGS_JSON",
+    setting: "HOPPER_LOADER_ARGS_JSON",
+    reported: "check the client configuration and proposed launch overrides",
+    suppressed: "invalid-combined-bytes",
   },
 ])(
-  "recommends checking both sources when the reported setting is not an override: $reported",
-  async ({ stored, overrides, reported }) => {
-    const root = await createTestTempDirectory("rea-config-merged-origin-");
+  "attributes $name without disclosing its value",
+  async ({
+    stored,
+    overrides,
+    reported,
+    platform = HOST_PLATFORM.platform,
+    setting = reported,
+    suppressed,
+  }) => {
+    const root = await createTestTempDirectory("rea-config-diagnostic-origin-");
     const configPath = join(root, "client.json");
-    await writeFile(
-      configPath,
-      JSON.stringify({
-        mcpServers: { rea: { command: "rea", args: ["mcp"], env: stored } },
-      }),
-    );
+    if (stored !== undefined)
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          mcpServers: { rea: { command: "rea", args: ["mcp"], env: stored } },
+        }),
+      );
     const result = await readClientConfigurationFiles(
-      { name: "cursor", format: "json", configPath },
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        format: "json",
+        configPath,
+      },
       undefined,
-      process.platform,
-      overrides,
+      platform,
+      overrides === undefined ? undefined : { writeOverrides: overrides },
     );
     if (result.ok) throw new Error("Expected rejected environment");
+    expect(result.error.path).toBe(configPath);
     expect(result.error.detail).toContain(reported);
-    expect(result.error.detail).toContain(
-      "check the client configuration and proposed launch overrides",
-    );
-    expect(result.error.detail).toContain(
-      "Check the launch environment and any existing registration settings",
-    );
-    expect(result.error.detail).not.toContain("invalid-json");
+    expect(result.error.detail).toContain(setting);
+    expect(result.error.detail).not.toContain(suppressed);
   },
 );

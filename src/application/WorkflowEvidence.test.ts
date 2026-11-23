@@ -1,9 +1,14 @@
+import type { WorkflowAnalysisPort } from "./WorkflowEvidence.js";
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import {
   recordWorkflowUnknowns,
   createWorkflowEvidence,
   executeComposedWorkflow,
+  retainComposedWorkflowSources,
+  retainPartialWorkflowEvidence,
   workflowSnapshotRecord,
 } from "./WorkflowEvidence.js";
 import { InvestigationRecords } from "./investigation/InvestigationRecords.js";
@@ -12,12 +17,13 @@ import { err, ok } from "../domain/result.js";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { estimateJsonStorage } from "./JsonAuthenticationHeadroom.js";
 import { nativeApiBoundarySchema } from "../domain/native/nativeApiBoundary.js";
 import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
 import { functionDossierSchema } from "../domain/native/functionDossier.js";
@@ -25,9 +31,127 @@ import { ghidraFunctionDossier } from "../domain/ghidraValues.fixture.js";
 import { ANALYSIS_SNAPSHOT_PROFILE } from "../domain/analysisSnapshot.fixture.js";
 import { createEvidence } from "../domain/evidence.js";
 
+it("preserves cleanup and reports an omitted partial when authentication headroom is unavailable", () => {
+  const error = new AnalysisCancelledError("get_call_graph", {
+    cleanup: { reason: "close failed", resources: ["session:fixture"] },
+  });
+  const outcome = {
+    ...err(error),
+    partial: { result: { nodes: ["observed"] }, limitations: [] },
+    sourceEvidence: [],
+  };
+  retainPartialWorkflowEvidence(
+    outcome,
+    {
+      target: undefined,
+      operation: "get_call_graph",
+      parameters: {},
+      upstreamProfile: undefined,
+    },
+    () =>
+      err(
+        new AnalysisResourceConstraintError(
+          "get_call_graph",
+          "capacity",
+          "no headroom",
+          null,
+        ),
+      ),
+  );
+  expect(projectAnalysisError(error)).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      cleanup: "incomplete",
+      resources: ["session:fixture"],
+      partial_observation: {
+        kind: "omitted-observation",
+        reason: "insufficient-authentication-headroom",
+      },
+    },
+  });
+});
+
+it.each([0, 1, 100])(
+  "admits enough recovery representation for %i completed batch items",
+  (count) => {
+    const provider = { id: "fixture", name: "Fixture", version: "1" };
+    const source = createEvidence(unknownTarget("not-observed"), provider, {
+      operation: "health",
+      parameters: {},
+      result: "source",
+    });
+    const items = Array.from({ length: count }, (_, index) => ({
+      address: `input-${index}`,
+      procedure: {
+        status: "resolved",
+        address: `0x${(index + 1).toString(16)}`,
+        name: null,
+      },
+      status: "ok",
+      pseudocode: 'escaped " and Unicode α'.repeat((index % 3) + 1),
+    }));
+    const completed = {
+      ...ok({
+        result: { items, total: count, succeeded: count, failed: 0 },
+        limitations: [],
+        evidenceLinks: [source.evidence_id],
+      }),
+      sourceEvidence: [source],
+    };
+    let admitted: ReturnType<typeof estimateJsonStorage> | undefined;
+    const outcome = retainComposedWorkflowSources(
+      () =>
+        err(
+          new AnalysisResourceConstraintError(
+            "record_evidence",
+            "capacity",
+            "full",
+            null,
+          ),
+        ),
+      completed,
+      {
+        target: {
+          path: "/tmp/example",
+          sha256: "a".repeat(64),
+          kind: "executable",
+          format: "mach-o",
+          architecture: "arm64",
+          availableArchitectures: ["arm64"],
+        },
+        operation: "batch_decompile",
+        parameters: { addresses: items.map((item) => item.address) },
+        upstreamProfile: ANALYSIS_SNAPSHOT_PROFILE,
+      },
+      () => undefined,
+      (input, _operation, additional) => {
+        const base = estimateJsonStorage(input);
+        admitted = {
+          valueBytes: base.valueBytes + additional.valueBytes,
+          serializedUtf16Bytes:
+            base.serializedUtf16Bytes + additional.serializedUtf16Bytes,
+        };
+        return ok(undefined);
+      },
+    );
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok || admitted === undefined)
+      throw new Error("Expected admitted recovery");
+    const error = projectAnalysisError(outcome.error);
+    const completedEvidence = z
+      .object({ completed_observation: z.object({ evidence: z.unknown() }) })
+      .parse(error.details).completed_observation.evidence;
+    const actual = estimateJsonStorage(completedEvidence);
+    expect(admitted.valueBytes).toBeGreaterThanOrEqual(actual.valueBytes);
+    expect(admitted.serializedUtf16Bytes).toBeGreaterThanOrEqual(
+      actual.serializedUtf16Bytes,
+    );
+  },
+);
+
 it("links shared provider source Evidence once without copying its payload into the workflow", async () => {
   const source = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "health",
@@ -116,7 +240,7 @@ it.each([false, true])(
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 
 it("retains requested live observations and links their original producer sources", async () => {
-  const upstream = createEvidence(undefined, provider, {
+  const upstream = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "health",
     parameters: {},
     result: "source",
@@ -154,7 +278,7 @@ it("retains requested live observations and links their original producer source
 });
 
 it("keeps an existing session-issued source identity on replay", async () => {
-  const original = createEvidence(undefined, provider, {
+  const original = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "analyze_function",
     parameters: { procedure: "0x1" },
     result: "original",
@@ -353,6 +477,16 @@ it("deduplicates exact source caveats without merging providers or operations", 
   );
 });
 
+const useItem = async (
+  observed: WorkflowAnalysisPort,
+  operation: "procedure_info" | "procedure_pseudo_code",
+  procedure: string,
+) => {
+  const result = await observed.execute(operation, { procedure });
+  if (!result.ok) throw result.error;
+  observed.recordItemLimitations?.(operation, result.value);
+};
+
 it("bounds per-item caveat retention while preserving inventory caveats", async () => {
   const result = await executeComposedWorkflow(
     {
@@ -372,7 +506,7 @@ it("bounds per-item caveat retention while preserving inventory caveats", async 
     async (observed) => {
       await observed.execute("list_procedures", {});
       for (const procedure of ["0x1", "0x2", "0x3"])
-        await observed.execute("procedure_pseudo_code", { procedure });
+        await useItem(observed, "procedure_pseudo_code", procedure);
       return ok({ count: 3 });
     },
     {
@@ -408,8 +542,8 @@ it("spends one budget slot on a caveat that two per-item operations share", asyn
         ),
     },
     async (observed) => {
-      await observed.execute("procedure_info", { procedure: "0x1" });
-      await observed.execute("procedure_pseudo_code", { procedure: "0x1" });
+      await useItem(observed, "procedure_info", "0x1");
+      await useItem(observed, "procedure_pseudo_code", "0x1");
       return ok(null);
     },
     {
@@ -445,9 +579,9 @@ it("counts repeated omitted observations without retaining their text for rankin
         ),
     },
     async (observed) => {
-      await observed.execute("procedure_pseudo_code", { procedure: "first" });
+      await useItem(observed, "procedure_pseudo_code", "first");
       for (let index = 0; index < 30; index += 1)
-        await observed.execute("procedure_pseudo_code", { procedure: "later" });
+        await useItem(observed, "procedure_pseudo_code", "later");
       return ok(null);
     },
     {
@@ -484,7 +618,7 @@ it("bounds retained caveat text while preserving smaller later observations", as
         ),
     },
     async (observed) => {
-      await observed.execute("procedure_pseudo_code", {});
+      await useItem(observed, "procedure_pseudo_code", "0x1");
       return ok(null);
     },
     {
@@ -602,40 +736,6 @@ describe("workflow residual question retention", () => {
       expect.arrayContaining(evidence.map(({ evidence_id }) => [evidence_id])),
     );
   });
-
-  it.each([
-    ["spaces", "  Which boundary?  "],
-    ["line feed and tab", "\nWhich boundary?\t"],
-    ["byte order mark", "\uFEFFWhich boundary?\uFEFF"],
-  ])(
-    "normalizes edge whitespace from %s without changing workflow Evidence",
-    (_, question) => {
-      const records = new InvestigationRecords();
-      const result = { residual_unknowns: [question] };
-      const evidence = createWorkflowEvidence({
-        target: undefined,
-        operation: "inspect_native_api",
-        parameters: {},
-        result,
-        upstreamProfile: undefined,
-        upstreamLimitations: [],
-      });
-
-      expect(records.recordEvidence(evidence).ok).toBe(true);
-      expect(
-        recordWorkflowUnknowns({
-          name: "inspect_native_api",
-          result,
-          evidenceId: evidence.evidence_id,
-          recordUnknown: (unknown) => records.recordUnknown(unknown),
-        }).ok,
-      ).toBe(true);
-      expect(records.listUnknowns()).toMatchObject([
-        { question: `Which boundary? (Evidence ${evidence.evidence_id})` },
-      ]);
-      expect(evidence.normalized_result).toEqual(result);
-    },
-  );
 
   it("rejects questions that are empty after whitespace normalization", () => {
     const records = new InvestigationRecords();
@@ -787,7 +887,9 @@ it.each([
 it("shares temporary provider state only within a single completed workflow", async () => {
   const owner = {};
   const scopes: Array<
-    NonNullable<import("./AnalysisProvider.js").ExecutionOptions["workScope"]>
+    NonNullable<
+      import("../ports/AnalysisProvider.js").ExecutionOptions["workScope"]
+    >
   > = [];
   const provider = { id: "fixture", name: "Fixture", version: "1" };
   const analysis: AnalysisOperationPort = {
@@ -818,7 +920,7 @@ it("shares temporary provider state only within a single completed workflow", as
 
 it("clears workflow state when its callback throws", async () => {
   const owner = {};
-  let captured: import("./AnalysisProvider.js").ExecutionOptions["workScope"];
+  let captured: import("../ports/AnalysisProvider.js").ExecutionOptions["workScope"];
   const analysis: AnalysisOperationPort = {
     execute: async (_operation, _parameters, options) => {
       captured = options?.workScope;

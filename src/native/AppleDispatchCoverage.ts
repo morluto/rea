@@ -1,9 +1,9 @@
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
-import type { PointerFixups } from "./AppleMachoFixups.js";
+import type { PointerFixups } from "../domain/apple/appleMachoFixups.js";
 import type {
   DecodeIssue,
   FacetDecodeFacts,
-} from "./AppleDispatchDecodeFacts.js";
+} from "../domain/apple/appleDispatchDecodeFacts.js";
 
 const describeFixups = (fixups: PointerFixups): string => {
   const descriptions: string[] = [];
@@ -53,68 +53,60 @@ export const pushDispatchCoverage = (input: {
     vtables,
     swift,
   } = input;
-  const classOwnedMethods = result.objc_dispatch_implementations.filter(
-    ({ category }) => category === undefined,
-  );
-  const classRecords = [
-    ...result.objc_classes.flatMap((record) =>
-      record.decode?.status === "decoded"
-        ? []
-        : [
-            `class ${record.name}: ${record.decode?.reason ?? record.decode?.status ?? "decode_status_missing"}`,
-          ],
-    ),
-    ...result.objc_protocol_records.flatMap((record) =>
-      record.decode.status === "decoded"
-        ? []
-        : [
-            `protocol ${record.name}: ${record.decode.reason ?? record.decode.status}`,
-          ],
-    ),
-    ...classOwnedMethods.flatMap((record) =>
-      record.decode.status === "decoded"
-        ? []
-        : [
-            `method ${record.class_name} ${record.method_type} ${record.selector}: ${record.decode.reason ?? record.decode.status}`,
-          ],
-    ),
-    ...result.objc_ivars.flatMap((record) =>
-      record.decode.status === "decoded"
-        ? []
-        : [
-            `ivar ${record.class_name}.${record.name}: ${record.decode.reason ?? record.decode.status}`,
-          ],
-    ),
-  ];
+  const classRecords: string[] = [];
+  let decodedClasses = 0;
+  for (const record of result.objc_classes) {
+    if (record.decode?.status === "decoded") decodedClasses++;
+    else
+      classRecords.push(
+        `class ${record.name}: ${record.decode?.reason ?? record.decode?.status ?? "decode_status_missing"}`,
+      );
+  }
+  for (const record of result.objc_protocol_records) {
+    if (record.decode.status !== "decoded")
+      classRecords.push(
+        `protocol ${record.name}: ${record.decode.reason ?? record.decode.status}`,
+      );
+  }
+  const categoryMethodReasons: string[] = [];
+  for (const record of result.objc_dispatch_implementations) {
+    if (record.decode.status === "decoded") continue;
+    if (record.category === undefined)
+      classRecords.push(
+        `method ${record.class_name} ${record.method_type} ${record.selector}: ${record.decode.reason ?? record.decode.status}`,
+      );
+    else
+      categoryMethodReasons.push(
+        `category method ${record.category} ${record.class_name} ${record.method_type} ${record.selector}: ${record.decode.reason ?? record.decode.status}`,
+      );
+  }
+  for (const record of result.objc_ivars) {
+    if (record.decode.status !== "decoded")
+      classRecords.push(
+        `ivar ${record.class_name}.${record.name}: ${record.decode.reason ?? record.decode.status}`,
+      );
+  }
   const classReasons = [
     ...failures,
     ...classRecords,
     ...(truncated || objcListScanTruncated ? ["max_records_reached"] : []),
   ];
-  const categoryMethods = result.objc_dispatch_implementations.filter(
-    ({ category }) => category !== undefined,
-  );
-  const categoryMethodReasons = categoryMethods.flatMap((record) =>
-    record.decode.status === "decoded"
-      ? []
-      : [
-          `category method ${record.category} ${record.class_name} ${record.method_type} ${record.selector}: ${record.decode.reason ?? record.decode.status}`,
-        ],
-  );
   result.coverage.push({
     facet: "objc_class_method_ivar_metadata",
     status: classReasons.length > 0 ? "partial" : "complete",
     reason: classReasons.join("; ") || null,
     examined,
-    decoded: result.objc_classes.filter(
-      ({ decode }) => decode?.status === "decoded",
-    ).length,
+    decoded: decodedClasses,
   });
+  let decodedRelativePointers = 0;
+  for (const item of result.relative_pointers) {
+    if (item.decode.status === "decoded") decodedRelativePointers++;
+  }
+  const hasUnresolvedRelativePointers =
+    decodedRelativePointers < result.relative_pointers.length;
   const relativePointerReasons = [
     ...(truncated || objcClassListScanTruncated ? ["max_records_reached"] : []),
-    ...(result.relative_pointers.some(
-      (item) => item.decode.status !== "decoded",
-    )
+    ...(hasUnresolvedRelativePointers
       ? ["relative_pointer_targets_unresolved"]
       : []),
   ];
@@ -123,10 +115,14 @@ export const pushDispatchCoverage = (input: {
     status: relativePointerReasons.length > 0 ? "partial" : "complete",
     reason: relativePointerReasons.join("; ") || null,
     examined: result.relative_pointers.length,
-    decoded: result.relative_pointers.filter(
-      (item) => item.decode.status === "decoded",
-    ).length,
+    decoded: decodedRelativePointers,
   });
+  let decodedCategories = 0;
+  for (const { decode } of result.objc_categories) {
+    if (decode.status === "decoded") decodedCategories++;
+  }
+  const hasUnresolvedCategories =
+    decodedCategories < result.objc_categories.length;
   const categoryFailures = categoryIssues.map(
     ({ code, location, message }) =>
       `${code}${location === undefined ? "" : ` at ${location}`}: ${message}`,
@@ -137,9 +133,7 @@ export const pushDispatchCoverage = (input: {
       truncated ||
       objcClassListScanTruncated ||
       categoryFailures.length > 0 ||
-      result.objc_categories.some(
-        ({ decode }) => decode.status !== "decoded",
-      ) ||
+      hasUnresolvedCategories ||
       categoryMethodReasons.length > 0
         ? "partial"
         : "complete",
@@ -152,9 +146,7 @@ export const pushDispatchCoverage = (input: {
           : []),
       ].join("; ") || null,
     examined: categoriesExamined,
-    decoded: result.objc_categories.filter(
-      ({ decode }) => decode.status === "decoded",
-    ).length,
+    decoded: decodedCategories,
   });
   const fixupReason = [
     describeFixups(fixups),
@@ -185,33 +177,28 @@ export const pushDispatchCoverage = (input: {
     examined: 0,
     decoded: 0,
   });
+  let hasUnresolvedWitnessSlot = false;
+  let hasUnresolvedVtableSlot = false;
+  for (const { table_kind, decode } of result.swift_dispatch_slots) {
+    if (decode.status === "decoded") continue;
+    if (table_kind === "witness_table") hasUnresolvedWitnessSlot = true;
+    else if (table_kind === "class_vtable") hasUnresolvedVtableSlot = true;
+    if (hasUnresolvedWitnessSlot && hasUnresolvedVtableSlot) break;
+  }
+  const hasUnresolvedSwiftConformance =
+    hasUnresolvedWitnessSlot ||
+    result.swift_conformances.some(({ decode }) => decode.status !== "decoded");
   result.coverage.push({
     facet: "swift_conformances_static_witness_slots",
     status:
-      swift.exhaustive &&
-      !truncated &&
-      !result.swift_conformances.some(
-        ({ decode }) => decode.status !== "decoded",
-      ) &&
-      !result.swift_dispatch_slots.some(
-        ({ table_kind, decode }) =>
-          table_kind === "witness_table" && decode.status !== "decoded",
-      )
+      swift.exhaustive && !truncated && !hasUnresolvedSwiftConformance
         ? "complete"
         : "partial",
     reason:
       [
         ...swift.issues.map(formatIssue),
         ...(truncated ? ["max_records_reached"] : []),
-        ...(result.swift_conformances.some(
-          ({ decode }) => decode.status !== "decoded",
-        ) ||
-        result.swift_dispatch_slots.some(
-          ({ table_kind, decode }) =>
-            table_kind === "witness_table" && decode.status !== "decoded",
-        )
-          ? ["swift_records_unresolved"]
-          : []),
+        ...(hasUnresolvedSwiftConformance ? ["swift_records_unresolved"] : []),
       ].join("; ") || null,
     examined: swift.examined,
     decoded: swift.decoded,
@@ -230,22 +217,14 @@ export const pushDispatchCoverage = (input: {
   result.coverage.push({
     facet: "swift_class_vtable_descriptors",
     status:
-      vtables.exhaustive &&
-      !truncated &&
-      !result.swift_dispatch_slots.some(
-        ({ table_kind, decode }) =>
-          table_kind === "class_vtable" && decode.status !== "decoded",
-      )
+      vtables.exhaustive && !truncated && !hasUnresolvedVtableSlot
         ? "complete"
         : "partial",
     reason:
       [
         ...vtables.issues.map(formatIssue),
         ...(truncated ? ["max_records_reached"] : []),
-        ...(result.swift_dispatch_slots.some(
-          ({ table_kind, decode }) =>
-            table_kind === "class_vtable" && decode.status !== "decoded",
-        )
+        ...(hasUnresolvedVtableSlot
           ? ["vtable_implementations_unresolved"]
           : []),
       ].join("; ") || null,

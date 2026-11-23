@@ -2,7 +2,6 @@ import { afterEach, expect, it, vi } from "vitest";
 
 import { createDoctorHostFixture } from "../../src/application/Doctor.fixture.js";
 import { HOPPER_RELEASES_URL } from "../../src/application/HopperReleaseFeed.js";
-import { macHopperHostVersionDetail } from "../../src/application/MacHopper.js";
 import { setupInstallFailure } from "../../src/application/SetupInstallFailure.js";
 import { runSetup } from "../../src/application/Setup.js";
 import { systemSetupHost } from "../../src/application/SetupHost.js";
@@ -41,7 +40,6 @@ const setupHopperOnMacos = async (version: string) => {
         platform: "darwin",
         macosVersion: () => Promise.resolve(version),
         executable: () => Promise.resolve(false),
-        validTarget: () => Promise.resolve(false),
       }),
       { HOME: "/fixture/home", USERPROFILE: "/fixture/home" },
     ),
@@ -83,14 +81,8 @@ it.each(["12.0", "12.3"])(
     expect(result.remediation).toContain(
       setupInstallFailure("incompatible_host_version").remediation,
     );
-    expect(result.remediation).toContain(
-      macHopperHostVersionDetail({
-        source: "release_feed",
-        packageUrl: PACKAGE_URL,
-        minimumVersion: "12.4",
-        hostVersion: version,
-      }),
-    );
+    expect(result.remediation).toMatch(/deployment_target/i);
+    expect(result.remediation).toMatch(/not downloaded/i);
     for (const fact of [PACKAGE_URL, "12.4", version, "HOPPER_LAUNCHER_PATH"])
       expect(result.remediation).toContain(fact);
     expect(requests).toEqual([HOPPER_RELEASES_URL]);

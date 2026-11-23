@@ -1,8 +1,9 @@
+import type { RequestAnalysisPort } from "../../ports/AnalysisProvider.js";
+import type { FlutterRequest } from "../../domain/flutter/flutterBuildAnalysis.js";
 import { expect, it } from "vitest";
 
 import { FlutterBuildAnalysisService } from "./FlutterBuildAnalysisService.js";
-import type { FlutterBuildAnalysisPort } from "./FlutterBuildAnalysisPort.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import { ok } from "../../domain/result.js";
@@ -23,7 +24,7 @@ const execution = createAnalysisExecution(
   identity,
 );
 
-const refusing: FlutterBuildAnalysisPort = {
+const refusing: RequestAnalysisPort<FlutterRequest> = {
   async inspectAvailability() {
     throw new Error("must not probe");
   },
@@ -51,7 +52,7 @@ it.each(malformedSelections)("refuses %j at admission", async (input) => {
 
 it("passes the validated request to the provider and seals Evidence", async () => {
   const seen: unknown[] = [];
-  const recording: FlutterBuildAnalysisPort = {
+  const recording: RequestAnalysisPort<FlutterRequest> = {
     async inspectAvailability() {
       return { status: "available", code: null, reason: null, diagnostics: {} };
     },

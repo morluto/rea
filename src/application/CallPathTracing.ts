@@ -8,9 +8,9 @@ import {
 import type {
   AnalysisOperation,
   ExecutionOptions,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { isAborted, cancelledBy } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -37,6 +37,8 @@ export interface CallPathTraceInput {
   readonly goal?: string | undefined;
   readonly goals?: readonly string[] | undefined;
   readonly direction: CallRelationshipDirection;
+  readonly max_depth?: number | undefined;
+  readonly max_nodes?: number | undefined;
 }
 
 interface TraceNode {
@@ -83,7 +85,7 @@ interface DiscoveredEdge {
   readonly discoveryDepth: number;
 }
 
-/** Batch goals share an exhaustive breadth-first traversal; legacy goal retains its early stop. */
+/** Batch goals share a breadth-first traversal within caller-selected limits; legacy goal retains its early stop. */
 export const traceCallPath = async (
   call: AnalysisCall,
   callRelationship: CallRelationshipObserver,
@@ -110,31 +112,51 @@ export const traceCallPath = async (
     }
     goals.push(address);
   }
-  const resolvedInput = {
+  const resolvedInput: CallPathTraceInput = {
     start: start.value,
     ...(goal === undefined ? {} : { goal }),
     ...(input.goals === undefined ? {} : { goals }),
     direction: input.direction,
+    ...(input.max_depth === undefined ? {} : { max_depth: input.max_depth }),
+    ...(input.max_nodes === undefined ? {} : { max_nodes: input.max_nodes }),
   };
-  if (isAborted(signal))
-    return err(
-      new AnalysisCancelledError("trace_call_path", { cause: signal?.reason }),
-    );
+  if (isAborted(signal)) return err(cancelledBy("trace_call_path", signal));
   const state = createTraceState(resolvedInput);
+  let expandedNodes = 0;
+  let depthLimited = false;
   while (
     state.queueIndex < state.queue.length &&
     state.traversalPath.length === 0
   ) {
-    if (isAborted(signal))
-      return err(
-        new AnalysisCancelledError("trace_call_path", {
-          cause: signal?.reason,
-        }),
-      );
-    const address = state.queue[state.queueIndex++];
+    if (isAborted(signal)) return err(cancelledBy("trace_call_path", signal));
+    const address = state.queue[state.queueIndex];
     if (address === undefined) break;
     const current = state.visited.get(address);
-    if (current === undefined) continue;
+    if (current === undefined) {
+      state.queueIndex += 1;
+      continue;
+    }
+    if (
+      resolvedInput.max_depth !== undefined &&
+      current.depth >= resolvedInput.max_depth
+    ) {
+      depthLimited = true;
+      state.queueIndex += 1;
+      continue;
+    }
+    if (
+      resolvedInput.max_nodes !== undefined &&
+      expandedNodes >= resolvedInput.max_nodes
+    ) {
+      const remaining = state.queue.length - state.queueIndex;
+      state.discovery = "partial";
+      state.residual.add(
+        `Call path traversal stopped at caller-selected max_nodes ${String(resolvedInput.max_nodes)} with ${String(remaining)} queued procedure(s) unexpanded. Raise or omit max_nodes to search further.`,
+      );
+      break;
+    }
+    state.queueIndex += 1;
+    expandedNodes += 1;
     const expanded = await expandAddress(callRelationship, {
       input: resolvedInput,
       state,
@@ -154,10 +176,17 @@ export const traceCallPath = async (
     }
     if (expanded.value) break;
   }
-  if (isAborted(signal))
-    return err(
-      new AnalysisCancelledError("trace_call_path", { cause: signal?.reason }),
+  if (
+    depthLimited &&
+    state.traversalPath.length === 0 &&
+    resolvedInput.max_depth !== undefined
+  ) {
+    state.discovery = "partial";
+    state.residual.add(
+      `Call path traversal stopped at caller-selected max_depth ${String(resolvedInput.max_depth)}; deeper call relationships were not expanded. Raise or omit max_depth to search further.`,
     );
+  }
+  if (isAborted(signal)) return err(cancelledBy("trace_call_path", signal));
   return ok(projectTrace(resolvedInput, state));
 };
 
@@ -202,10 +231,7 @@ const expandAddress = async (
     (read.status === "unavailable" && isAborted(signal))
   )
     return err(read.error);
-  if (isAborted(signal))
-    return err(
-      new AnalysisCancelledError("trace_call_path", { cause: signal?.reason }),
-    );
+  if (isAborted(signal)) return err(cancelledBy("trace_call_path", signal));
   if (read.status !== "observed") {
     state.failures.push({
       address,
@@ -369,6 +395,3 @@ const compareAddress = (left: string, right: string): number =>
 
 const sortedUniqueAddresses = (addresses: readonly string[]): string[] =>
   [...new Set(addresses)].sort(compareAddress);
-
-const isAborted = (signal: AbortSignal | undefined): boolean =>
-  signal?.aborted === true;

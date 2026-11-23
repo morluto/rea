@@ -1,14 +1,11 @@
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import { describe, expect, it } from "vitest";
-import {
-  traceNativeValues as traceNativeValuesCore,
-  UNRECORDED_NATIVE_VALUE_FLOW,
-} from "./NativeValueTrace.js";
+import { traceNativeValues as traceNativeValuesCore } from "./NativeValueTrace.js";
 import { executeComposedWorkflow } from "../WorkflowEvidence.js";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { ghidraFunctionDossier } from "../../domain/ghidraValues.fixture.js";
 import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
@@ -22,14 +19,22 @@ import {
 import { NoBinaryOpenError } from "../../domain/configurationErrors.js";
 import { ok, err } from "../../domain/result.js";
 import {
+  EXPECTED_UNRECORDED_VALUE_FLOW,
   nativeFlowDossier,
   pcodeOperation as node,
   pcodeScalar as scalar,
   staticValueGraph,
   valueTraceDiamond,
+  valueTraceUnboundArguments,
   valueTraceProvider as provider,
   valueTraceSubject as subject,
 } from "./NativeValueTrace.fixture.js";
+
+const valueFlowLimits = {
+  max_operations: 3_000,
+  max_inputs_per_operation: 64,
+  max_edges: 12_000,
+};
 
 const traceNativeValues: typeof traceNativeValuesCore = async (
   source,
@@ -96,6 +101,8 @@ const analysis: AnalysisOperationPort = {
           native_value_flow: {
             available: true,
             provenance: "ghidra-high-pcode",
+            limits: valueFlowLimits,
+            limits_reached: [],
             operations: callee
               ? [node("return", "0x2000", "RETURN")]
               : [node("call", "0x1000", "CALL")],
@@ -195,7 +202,7 @@ describe("native value trace seed admission", () => {
         {
           procedure: base.procedure.address,
           address: null,
-          reason: UNRECORDED_NATIVE_VALUE_FLOW,
+          reason: EXPECTED_UNRECORDED_VALUE_FLOW,
         },
       ],
     });
@@ -244,6 +251,8 @@ describe("native value parameter-use node membership", () => {
     const largeFlow = {
       available: true as const,
       provenance: "ghidra-high-pcode" as const,
+      limits: valueFlowLimits,
+      limits_reached: [],
       operations: Array.from({ length: operationCount }, (_, index) => ({
         ...node(`operation-${String(index)}`, procedureAddress, "MULTIEQUAL"),
         inputs: [scalar, scalar, scalar, scalar],
@@ -262,10 +271,7 @@ describe("native value parameter-use node membership", () => {
       known_omitted_edges: 0,
       limitations: [],
     };
-    const largeDossier = {
-      ...base,
-      native_value_flow: largeFlow,
-    };
+    const largeDossier = { ...base, native_value_flow: largeFlow };
     const largeAnalysis: AnalysisOperationPort = {
       execute: async () =>
         ok(createAnalysisExecution(largeDossier, provider, { subject })),
@@ -333,6 +339,8 @@ describe("native value parameter-use node membership", () => {
           native_value_flow: {
             available: true,
             provenance: "ghidra-high-pcode",
+            limits: valueFlowLimits,
+            limits_reached: [],
             operations: [
               node("parameter:0", address, "COPY"),
               node("parameter:0#1", address, "COPY"),
@@ -562,6 +570,53 @@ describe("native value failed-callee traversal", () => {
       reason: "Edge budget reached",
     });
   });
+});
+
+it("preserves and deduplicates source value-flow limitations across analyzed functions", async () => {
+  const base = functionDossierSchema.parse(ghidraFunctionDossier());
+  const caller = functionDossierSchema.parse(
+    nativeFlowDossier(base, {
+      address: "0x1000",
+      name: "caller",
+      operations: [node("call", "0x1000", "CALL")],
+      parameters: [],
+    }),
+  );
+  const callee = functionDossierSchema.parse(
+    nativeFlowDossier(base, {
+      address: "0x2000",
+      name: "callee",
+      operations: [],
+      parameters: [],
+    }),
+  );
+  if (
+    !caller.native_value_flow?.available ||
+    !callee.native_value_flow?.available
+  )
+    throw new Error("Expected available fixture value flow");
+  caller.native_value_flow.limitations = ["Shared provider caveat."];
+  callee.native_value_flow.limitations = [
+    "Shared provider caveat.",
+    "Callee-specific caveat.",
+  ];
+  const result = await traceNativeValues(
+    callBindingAnalysis({
+      callerAddress: "0x1000",
+      calleeAddress: "0x2000",
+      caller,
+      callee,
+    }),
+    { procedure: "0x1000", max_functions: 2 },
+  );
+  if (!result.ok) throw result.error;
+  const limitations = nativeValueTraceSchema.parse(result.value).limitations;
+  expect(limitations).toContain(
+    "Fixture (fixture 1) analyze_function: Callee-specific caveat.",
+  );
+  expect(
+    limitations.filter((item) => item.includes("Shared provider caveat.")),
+  ).toEqual(["Fixture (fixture 1) analyze_function: Shared provider caveat."]);
 });
 
 describe("native value call-binding fan-out", () => {
@@ -1384,5 +1439,507 @@ describe("native value traversal limits and policies", () => {
       ],
     });
     expect(limited.analyzed).toEqual(["0x1000"]);
+  });
+});
+
+describe("recovered call input bindings", () => {
+  it("locates recovered operands without inventing formal or variadic parameters", async () => {
+    const trace = await traced(valueTraceUnboundArguments().port, {
+      procedure: "0x1000",
+    });
+    const call = trace.nodes.find(({ id }) => id === "0x1000/call")!;
+    expect(
+      trace.edges.filter(({ kind }) => kind === "argument-binding"),
+    ).toMatchObject([
+      { source: call.id, target: "0x2000/parameter:0", input_index: 1 },
+    ]);
+    expect(trace.unknowns).toContainEqual({
+      procedure: "0x1000",
+      address: "0x1010",
+      reason: expect.stringContaining("no recovered parameter binding"),
+      call_inputs: {
+        call_node_id: call.id,
+        destination: "0x2000",
+        evidence_id: call.evidence_id,
+        input_indices: [2, 3],
+      },
+    });
+    expect(trace.traversal).toEqual({ status: "complete" });
+  });
+
+  it("keeps binding facts when a second alias resolves to an already analyzed callee", async () => {
+    const graph = staticValueGraph(
+      {
+        "0x1000": {
+          operations: [
+            node("call", "0x1010", "CALL"),
+            node("again", "0x1020", "CALL"),
+          ],
+        },
+        "0x2000": {
+          operations: [node("return", "0x2010", "RETURN")],
+          parameters: [{ ordinal: 0, name: "value", data_type: "/int" }],
+        },
+      },
+      {
+        "0x1010": [{ destination: "callee", status: "direct" }],
+        "0x1020": [{ destination: "also_callee", status: "direct" }],
+      },
+      { procedureAliases: { callee: "0x2000", also_callee: "0x2000" } },
+    );
+    const trace = await traced(graph.port, { procedure: "0x1000" });
+    expect(
+      trace.edges.filter(({ kind }) => kind === "argument-binding"),
+    ).toMatchObject([
+      { source: "0x1000/call", target: "0x2000/parameter:0", input_index: 1 },
+      { source: "0x1000/again", target: "0x2000/parameter:0", input_index: 1 },
+    ]);
+    expect(
+      trace.edges.filter(({ kind }) => kind === "return-binding"),
+    ).toMatchObject([
+      { source: "0x2000/return", target: "0x1000/call" },
+      { source: "0x2000/return", target: "0x1000/again" },
+    ]);
+    expect(trace.procedures.map(({ address }) => address)).toEqual([
+      "0x1000",
+      "0x2000",
+    ]);
+    expect(graph.analyzed).toEqual(["0x1000", "callee", "also_callee"]);
+    expect(trace.unknowns).toEqual([]);
+  });
+});
+
+it.each([
+  { max_depth: 0 },
+  { max_functions: 1 },
+  { max_nodes: 2 },
+  { max_edges: 1 },
+])(
+  "does not claim examined binding gaps after traversal refusal %j",
+  async (limits) => {
+    const trace = await traced(valueTraceUnboundArguments().port, {
+      procedure: "0x1000",
+      ...limits,
+    });
+    expect(trace.traversal.status).toBe("truncated");
+    expect(
+      trace.unknowns.some(({ call_inputs }) => call_inputs !== undefined),
+    ).toBe(false);
+  },
+);
+
+it.each([false, true])(
+  "keeps partial parameter recovery unknown (provider truncated=%s)",
+  async (truncated) => {
+    const graph = staticValueGraph(
+      {
+        "0x1000": { operations: [node("call", "0x1010", "CALL")] },
+        "0x2000": { operations: [], pcodeTruncated: truncated },
+      },
+      { "0x1010": [{ destination: "0x2000", status: "direct" }] },
+    );
+    const trace = await traced(graph.port, { procedure: "0x1000" });
+    const located = trace.unknowns.filter(
+      ({ call_inputs }) => call_inputs !== undefined,
+    );
+    expect(located).toHaveLength(truncated ? 0 : 1);
+    if (!truncated) expect(located[0]?.call_inputs?.input_indices).toEqual([1]);
+  },
+);
+
+it("does not invent a binding unknown for a fully examined zero-argument call", async () => {
+  const graph = staticValueGraph(
+    {
+      "0x1000": {
+        operations: [{ ...node("call", "0x1010", "CALL"), inputs: [scalar] }],
+      },
+      "0x2000": { operations: [] },
+    },
+    { "0x1010": [{ destination: "0x2000", status: "direct" }] },
+  );
+  expect((await traced(graph.port, { procedure: "0x1000" })).unknowns).toEqual(
+    [],
+  );
+});
+
+it("retains binding-gap indices even when paging omits their call node", async () => {
+  const trace = await traced(valueTraceUnboundArguments().port, {
+    procedure: "0x1000",
+    offset: 1,
+    limit: 1,
+  });
+  expect(trace.nodes.every(({ id }) => id !== "0x1000/call")).toBe(true);
+  expect(trace.unknowns).toContainEqual(
+    expect.objectContaining({
+      call_inputs: expect.objectContaining({
+        call_node_id: "0x1000/call",
+        input_indices: [2, 3],
+      }),
+    }),
+  );
+  expect(trace.page_truncated).toBe(true);
+  expect(trace.traversal.status).toBe("complete");
+});
+
+it("binds each exact call destination once when resolution repeats it", async () => {
+  const graph = staticValueGraph(
+    {
+      "0x1000": {
+        operations: [
+          {
+            ...node("call", "0x1010", "CALL"),
+            inputs: Array.from({ length: 1_001 }, () => scalar),
+          },
+        ],
+      },
+      "0x2000": {
+        operations: [],
+        parameters: [{ ordinal: 0, name: "fixed", data_type: "/int" }],
+      },
+    },
+    {
+      "0x1010": Array.from({ length: 16 }, () => ({
+        destination: "0x2000",
+        status: "direct" as const,
+      })),
+    },
+  );
+  const trace = await traced(graph.port, { procedure: "0x1000" });
+  const gaps = trace.unknowns.flatMap(({ call_inputs }) =>
+    call_inputs === undefined ? [] : [call_inputs],
+  );
+  expect(gaps).toHaveLength(1);
+  expect(gaps[0]?.input_indices).toEqual(
+    Array.from({ length: 999 }, (_, index) => index + 2),
+  );
+  expect(
+    trace.edges.filter(({ kind }) => kind === "argument-binding"),
+  ).toHaveLength(1);
+  expect(trace.edges.filter(({ kind }) => kind === "call")).toHaveLength(16);
+  expect(graph.analyzed).toEqual(["0x1000", "0x2000"]);
+});
+
+it("requires an Evidence owner for aliases of an already analyzed procedure", async () => {
+  const graph = staticValueGraph(
+    {
+      "0x1000": { operations: [node("call", "0x1010", "CALL")] },
+      "0x2000": { operations: [] },
+    },
+    {
+      "0x1010": [
+        { destination: "callee", status: "direct" },
+        { destination: "also_callee", status: "direct" },
+      ],
+    },
+    { procedureAliases: { callee: "0x2000", also_callee: "0x2000" } },
+  );
+  let expected: ReturnType<typeof createAnalysisExecutionEvidence> | undefined;
+  const result = await executeComposedWorkflow(graph.port, (owned) =>
+    traceNativeValuesCore(
+      {
+        execute: async (operation, parameters, options) => {
+          const execution = await owned.execute(operation, parameters, options);
+          if (
+            !execution.ok ||
+            operation !== "analyze_function" ||
+            parameters.procedure !== "also_callee"
+          )
+            return execution;
+          const { evidenceId: _evidenceId, ...unowned } = execution.value;
+          expected = createAnalysisExecutionEvidence(
+            operation,
+            parameters,
+            unowned,
+            "observed",
+          );
+          return ok(unowned);
+        },
+      },
+      { procedure: "0x1000" },
+    ),
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisCapabilityUnavailableError",
+      operation: "trace_native_values",
+    },
+  });
+  if (result.ok)
+    throw new Error("An unowned alias must not establish binding identity");
+  expect(expected).toBeDefined();
+  expect(result.error.partialObservation).toEqual(expected);
+  expect(graph.analyzed).toEqual(["0x1000", "callee", "also_callee"]);
+});
+
+const thunkDossier = (
+  thunkTarget: string,
+  operations: ReturnType<typeof node>[],
+) => {
+  const dossier = functionDossierSchema.parse(
+    nativeFlowDossier(functionDossierSchema.parse(ghidraFunctionDossier()), {
+      address: "0xc000",
+      name: "thunk",
+      operations,
+      parameters: [],
+    }),
+  );
+  return jsonValueSchema.parse({
+    ...dossier,
+    procedure: {
+      ...dossier.procedure,
+      classification: {
+        external: false,
+        thunk: true,
+        thunk_target: thunkTarget,
+        provenance: "ghidra-function-manager",
+      },
+    },
+  });
+};
+const thunkPort = (dossier: ReturnType<typeof jsonValueSchema.parse>) => {
+  const attempted: unknown[] = [];
+  const port: AnalysisOperationPort = {
+    execute: async (operation, parameters) => {
+      attempted.push([operation, parameters]);
+      if (operation !== "analyze_function")
+        throw new Error(`Unexpected native trace operation: ${operation}`);
+      return ok(createAnalysisExecution(dossier, provider, { subject }));
+    },
+  };
+  return { port, attempted };
+};
+// Rows are matched by their structured fields; the reason is any explanation.
+const externalTargetUnknown = {
+  procedure: "0xc000",
+  address: null,
+  related_procedure: "EXTERNAL:0x1",
+  reason: expect.any(String),
+};
+const thunkTargetRows = (unknowns: { related_procedure?: string }[]) =>
+  unknowns.filter(({ related_procedure }) => related_procedure !== undefined);
+
+describe("native value trace thunk targets", () => {
+  it("reports an external import target that the synthetic thunk model never reaches", async () => {
+    const { port, attempted } = thunkPort(
+      thunkDossier("EXTERNAL:0x1", [node("return", "0xc000", "RETURN")]),
+    );
+    const result = await traceNativeValues(port, { procedure: "0xc000" });
+    if (!result.ok) throw result.error;
+    expect(nativeValueTraceSchema.parse(result.value)).toMatchObject({
+      decompilations: 1,
+      edges: [],
+      traversal: { status: "complete" },
+      unknowns: [externalTargetUnknown],
+    });
+    expect(attempted).toEqual([["analyze_function", { procedure: "0xc000" }]]);
+  });
+
+  it("keeps an internal thunk whose model borrows its target's operations", async () => {
+    const { port, attempted } = thunkPort(
+      thunkDossier("0x2b8", [
+        node("copy", "0x2b8", "COPY"),
+        node("return", "0x2bc", "RETURN"),
+      ]),
+    );
+    const result = await traceNativeValues(port, { procedure: "0xc000" });
+    if (!result.ok) throw result.error;
+    expect(nativeValueTraceSchema.parse(result.value)).toMatchObject({
+      traversal: { status: "complete" },
+      unknowns: [],
+    });
+    expect(attempted).toEqual([["analyze_function", { procedure: "0xc000" }]]);
+  });
+
+  it("reports an internal thunk target whose only operation is not admitted", async () => {
+    const targetUnknown = {
+      ...externalTargetUnknown,
+      related_procedure: "0x2b8",
+    };
+    for (const block_membership of ["detached", "unavailable"]) {
+      const { port } = thunkPort(
+        thunkDossier("0x2b8", [
+          { ...node("copy", "0x2b8", "COPY"), block_membership },
+          node("return", "0x2bc", "RETURN"),
+        ]),
+      );
+      const result = await traceNativeValues(port, { procedure: "0xc000" });
+      if (!result.ok) throw result.error;
+      expect(nativeValueTraceSchema.parse(result.value)).toMatchObject({
+        traversal: { status: "complete" },
+        unknowns: [targetUnknown],
+      });
+    }
+    const { port } = thunkPort(
+      thunkDossier("0x2b8", [
+        node("return", "0x2bc", "RETURN"),
+        node("copy", "0x2b8", "COPY"),
+      ]),
+    );
+    const limited = await traceNativeValues(port, {
+      procedure: "0xc000",
+      max_nodes: 1,
+    });
+    if (!limited.ok) throw limited.error;
+    const trace = nativeValueTraceSchema.parse(limited.value);
+    expect(trace.traversal).toEqual({
+      status: "truncated",
+      reasons: ["max_nodes"],
+    });
+    expect(trace.unknowns).toContainEqual(targetUnknown);
+  });
+
+  it("keeps a thunk whose resolved call reaches its target and traverses it", async () => {
+    const graph = staticValueGraph(
+      { "0x2000": { operations: [node("return", "0x2000", "RETURN")] } },
+      { "0xc000": [{ destination: "0x2000", status: "direct" }] },
+    );
+    const thunk = thunkDossier("0x2000", [
+      node("call", "0xc000", "CALL"),
+      node("return", "0xc004", "RETURN"),
+    ]);
+    const port: AnalysisOperationPort = {
+      execute: (operation, parameters) =>
+        operation === "analyze_function" && parameters.procedure === "0xc000"
+          ? Promise.resolve(
+              ok(createAnalysisExecution(thunk, provider, { subject })),
+            )
+          : graph.port.execute(operation, parameters),
+    };
+    const result = await traceNativeValues(port, { procedure: "0xc000" });
+    if (!result.ok) throw result.error;
+    const parsed = nativeValueTraceSchema.parse(result.value);
+    expect(parsed).toMatchObject({
+      decompilations: 2,
+      traversal: { status: "complete" },
+      edges: expect.arrayContaining([
+        expect.objectContaining({
+          source: "0xc000/call",
+          target: "0x2000",
+          kind: "call",
+          status: "direct",
+        }),
+      ]),
+    });
+    expect(thunkTargetRows(parsed.unknowns)).toEqual([]);
+    expect(graph.analyzed).toEqual(["0x2000"]);
+  });
+});
+
+describe("native value trace thunk target ordering and limits", () => {
+  it("keeps a thunk whose target another path analyzes after the thunk", async () => {
+    const graph = staticValueGraph(
+      {
+        "0x1000": {
+          operations: [
+            node("call-thunk", "0x1000", "CALL"),
+            node("call-target", "0x1004", "CALL"),
+            node("return", "0x1008", "RETURN"),
+          ],
+        },
+        "0x2000": { operations: [node("return", "0x2000", "RETURN")] },
+      },
+      {
+        "0x1000": [{ destination: "0xc000", status: "direct" }],
+        "0x1004": [{ destination: "0x2000", status: "direct" }],
+      },
+    );
+    // The thunk's own model neither contains nor calls its target.
+    const thunk = thunkDossier("0x2000", [node("return", "0xc000", "RETURN")]);
+    const port: AnalysisOperationPort = {
+      execute: (operation, parameters) =>
+        operation === "analyze_function" && parameters.procedure === "0xc000"
+          ? Promise.resolve(
+              ok(createAnalysisExecution(thunk, provider, { subject })),
+            )
+          : graph.port.execute(operation, parameters),
+    };
+    const result = await traceNativeValues(port, { procedure: "0x1000" });
+    if (!result.ok) throw result.error;
+    const parsed = nativeValueTraceSchema.parse(result.value);
+    expect(parsed.procedures.map(({ address }) => address)).toEqual([
+      "0x1000",
+      "0xc000",
+      "0x2000",
+    ]);
+    expect(parsed.traversal).toEqual({ status: "complete" });
+    expect(thunkTargetRows(parsed.unknowns)).toEqual([]);
+  });
+
+  it("reports a thunk target whose call edge an exactly filled edge budget rejects", async () => {
+    const graph = staticValueGraph(
+      {},
+      { "0xc008": [{ destination: "0x2000", status: "direct" }] },
+    );
+    const dossier = functionDossierSchema.parse(
+      thunkDossier("0x2000", [
+        node("copy", "0xc000", "COPY"),
+        node("use", "0xc004", "COPY"),
+        node("call", "0xc008", "CALL"),
+        node("return", "0xc00c", "RETURN"),
+      ]),
+    );
+    if (!dossier.native_value_flow?.available)
+      throw new Error("Invalid fixture");
+    dossier.native_value_flow.def_use = [
+      { definition: "copy", use: "use", input_index: 0 },
+    ];
+    const thunk = jsonValueSchema.parse(dossier);
+    const port: AnalysisOperationPort = {
+      execute: (operation, parameters) =>
+        operation === "analyze_function"
+          ? parameters.procedure === "0xc000"
+            ? Promise.resolve(
+                ok(createAnalysisExecution(thunk, provider, { subject })),
+              )
+            : Promise.reject(
+                new Error(`Unexpected ${String(parameters.procedure)}`),
+              )
+          : graph.port.execute(operation, parameters),
+    };
+    // The def-use edge fills the budget exactly, so the call is resolved and
+    // then rejected: the target is neither an edge nor queued, so it stays unexamined.
+    const result = await traceNativeValues(port, {
+      procedure: "0xc000",
+      max_edges: 1,
+    });
+    if (!result.ok) throw result.error;
+    const parsed = nativeValueTraceSchema.parse(result.value);
+    expect(parsed).toMatchObject({
+      decompilations: 1,
+      traversal: { status: "truncated", reasons: ["max_edges"] },
+    });
+    expect(parsed.edges.map(({ kind }) => kind)).toEqual(["def-use"]);
+    expect(parsed.unknowns).toContainEqual({
+      procedure: "0xc000",
+      address: null,
+      reason: "Edge budget reached",
+    });
+    expect(parsed.unknowns).toContainEqual({
+      procedure: "0xc000",
+      address: null,
+      related_procedure: "0x2000",
+      reason: expect.any(String),
+    });
+    expect(graph.resolved).toEqual(["0xc008"]);
+  });
+
+  it("reports the thunk target alongside a missing def-use model", async () => {
+    const { port } = thunkPort(
+      jsonValueSchema.parse({
+        ...functionDossierSchema.parse(thunkDossier("EXTERNAL:0x1", [])),
+        native_value_flow: null,
+      }),
+    );
+    const result = await traceNativeValues(port, { procedure: "0xc000" });
+    if (!result.ok) throw result.error;
+    expect(nativeValueTraceSchema.parse(result.value).unknowns).toEqual([
+      {
+        procedure: "0xc000",
+        address: null,
+        reason: "Native def-use was not recorded for this procedure.",
+      },
+      externalTargetUnknown,
+    ]);
   });
 });

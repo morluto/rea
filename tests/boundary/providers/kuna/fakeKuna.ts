@@ -25,6 +25,8 @@ export interface FakeKunaString {
   readonly terminated?: boolean;
 }
 
+type FakeKunaGatedCommand = "decompile" | "decompile-project" | "strings";
+
 /** Scripted behavior of the fake `kuna` executable for one test. */
 export interface FakeKunaBehavior {
   /** Text printed by `--version`; `exit` fails the probe instead. */
@@ -53,7 +55,12 @@ export interface FakeKunaBehavior {
   readonly asmPadding?: number;
   /** Extra C comment bytes inside each exported body, for buffered-read capacity. */
   readonly cPadding?: number;
+  /** Exact bytes inside the first exported C body, for text-admission tests. */
+  readonly cBodyComment?: readonly number[];
   readonly decompile?: "ok" | "hang";
+  readonly standaloneFunctions?: readonly FakeKunaFunction[];
+  /** Hold successful work until releaseFakeKunaCommand acknowledges the test phase. */
+  readonly gatedCommands?: readonly FakeKunaGatedCommand[];
   /** Milliseconds one `decompile --addr` run takes before printing. */
   readonly decompileDelayMs?: number;
   /** Extra comment bytes in each `decompile --addr` text, for retention budgets. */
@@ -79,6 +86,17 @@ export interface FakeKunaBehavior {
   readonly pointerAliasReferences?: boolean;
   /** Additional exact-target incoming call-site addresses. */
   readonly extraXrefSources?: readonly number[];
+  readonly incomingRows?: Readonly<
+    Record<
+      string,
+      readonly {
+        readonly from: number;
+        readonly caller: number;
+        readonly kind: "call" | "data";
+        readonly instruction: string;
+      }[]
+    >
+  >;
   readonly referenceDelayMs?: number;
   readonly referencePadding?: number;
   /** `invalid-then-hang` writes a contradictory first row, then never finishes. */
@@ -111,6 +129,14 @@ fs.appendFileSync(__filename + ".calls", JSON.stringify({ pid: process.pid, at: 
 const args = process.argv.slice(2);
 const functions = behavior.functions ?? [{ name: "main", addr: "0x1000" }, { name: "helper", addr: "0x1040" }];
 const hang = () => setInterval(() => {}, 1000);
+const whenReleased = (command, action) => {
+  if (!behavior.gatedCommands?.includes(command)) { action(); return; }
+  const waiting = setInterval(() => {
+    if (!fs.existsSync(__filename + ".release-" + command)) return;
+    clearInterval(waiting);
+    action();
+  }, 10);
+};
 if (args[0] === "--version") {
   const version = behavior.version ?? { stdout: "kuna 1.833\n" };
   if ("exit" in version) { process.stderr.write("version probe failed\n"); process.exit(version.exit); }
@@ -134,13 +160,17 @@ if (args[0] === "--version") {
   if (behavior.strings === "exit-failure") { process.stderr.write("fixture string scan failed\n"); process.exit(7); }
   else if (behavior.strings === "hang") hang();
   else if (behavior.strings === "not-json") process.stdout.write("not string JSON");
-  else if (behavior.strings === "invalid-then-hang") { process.stdout.write('{"binary":' + JSON.stringify(args[1]) + ',"strings":[{"address":12288,"address_hex":"0x3001"}'); hang(); }
   else {
     if (behavior.stringStderrBytes) process.stderr.write(Buffer.alloc(behavior.stringStderrBytes, 0x78));
     if (!args.includes("--no-xrefs") || args[args.indexOf("--encoding") + 1] !== "all") throw new Error("strings must skip reference analysis and include all supported encodings");
     const rows = (behavior.stringRows ?? [{ address: 12288, text: "REA fixture prompt" }, { address: 12320, text: "Δelta", encoding: "utf8", terminated: false }]).map((item) => ({ address: item.address, address_hex: "0x" + item.address.toString(16), text: item.text, length: [...item.text].length, byte_length: Buffer.byteLength(item.text, item.encoding === "utf16" ? "utf16le" : "utf8") + (item.terminated === false ? 0 : item.encoding === "utf16" ? 2 : 1), nul_terminated: item.terminated !== false, encoding: item.encoding ?? "ascii", section: ".rodata", xrefs_count: 0, functions: [] }));
-    const document = { binary: args[1], encoding: "all", min_length: 5, filter: null, section: null, termination: "any", scanned: "sections", xrefs: false, count: rows.length + (behavior.strings === "miscounted" ? 1 : 0), strings: rows, padding: "x".repeat(behavior.stringPadding ?? 0) };
-    setTimeout(() => process.stdout.write(JSON.stringify(document)), behavior.stringDelayMs ?? 0);
+    if (behavior.strings === "invalid-then-hang") {
+      process.stdout.write('{"strings":[' + JSON.stringify({ ...rows[0], address_hex: "0x3001" }) + ",");
+      hang();
+    } else whenReleased("strings", () => {
+      const document = { binary: args[1], encoding: "all", min_length: 5, filter: null, section: null, termination: "any", scanned: "sections", xrefs: false, count: rows.length + (behavior.strings === "miscounted" ? 1 : 0), strings: rows, padding: "x".repeat(behavior.stringPadding ?? 0) };
+      setTimeout(() => process.stdout.write(JSON.stringify(document)), behavior.stringDelayMs ?? 0);
+    });
   }
 } else if (args[0] === "decompile-graph") {
   if (behavior.graph === "hang") hang();
@@ -163,7 +193,13 @@ if (args[0] === "--version") {
     const identity = (name, value) => ({ name, address: value, address_hex: "0x" + value.toString(16) });
     const aliases = target === "0x2000" ? [identity("puts.slot", 12288)] : [];
     const row = (from, to, kind) => ({ address: from, address_hex: "0x" + from.toString(16), from_address: from, from_address_hex: "0x" + from.toString(16), to_address: to, to_address_hex: "0x" + to.toString(16), kind, from_function: identity("main", 4096), to_function: null, instruction: "fixture reference" + "x".repeat(behavior.referencePadding ?? 0) });
-    const rows = [4100, ...(behavior.extraXrefSources ?? [])].map((source) => row(source, parseInt(target, 16), "call"));
+    const rows = behavior.incomingRows === undefined
+      ? [4100, ...(behavior.extraXrefSources ?? [])].map((source) => row(source, parseInt(target, 16), "call"))
+      : (behavior.incomingRows[target] ?? []).map(({ from, caller, kind, instruction }) => ({
+          ...row(from, parseInt(target, 16), kind),
+          from_function: identity("main", caller),
+          instruction,
+        }));
     if (aliases.length) rows.push(row(4164, 12288, "call"));
     const pointer = (from, to) => ({ kind: "pointer", from_address: from, from_address_hex: "0x" + from.toString(16), from_name: null, to_address: to, to_address_hex: "0x" + to.toString(16), to_name: null, width: 8, source: "dynamic-relocations" });
     const pointers = behavior.pointerAliasReferences ? [pointer(4352, parseInt(target, 16)), pointer(4368, 12288)] : undefined;
@@ -176,7 +212,7 @@ if (args[0] === "--version") {
   const mode = behavior.project ?? "ok";
   if (mode === "hang") hang();
   else if (mode === "exit-failure") { process.stderr.write("error: not in recognized object file format\n"); process.exit(1); }
-  else setTimeout(() => {
+  else whenReleased("decompile-project", () => setTimeout(() => {
     fs.mkdirSync(output, { recursive: true });
     let c = '#include "' + stem + '.h"\n\n';
     functions.forEach((fn, index) => {
@@ -184,7 +220,15 @@ if (args[0] === "--version") {
         ? "// Function: " + fn.name + " @ " + fn.addr + "\nint " + fn.name + "(void)\n{\n  return " + index + ";\n" + (behavior.cPadding ? "  /*" + "x".repeat(behavior.cPadding) + "*/\n" : "") + "}\n\n"
         : "// Function: " + fn.name + " @ " + fn.addr + "  (error: " + fn.error + ")\n\n";
     });
-    fs.writeFileSync(path.join(output, stem + ".c"), c);
+    if (behavior.cBodyComment === undefined) fs.writeFileSync(path.join(output, stem + ".c"), c);
+    else {
+      const comment = c.indexOf("  return 0;");
+      if (comment === -1) throw new Error("fixture requires a successful first C body");
+      fs.writeFileSync(path.join(output, stem + ".c"), Buffer.concat([
+        Buffer.from(c.slice(0, comment) + "  /*"), Buffer.from(behavior.cBodyComment),
+        Buffer.from("*/\n" + c.slice(comment)),
+      ]));
+    }
     fs.writeFileSync(path.join(output, stem + ".h"), "#pragma once\n");
     let asm = "; kuna decompile-project — " + stem + "\n\n; --- code section 0x1000..0x2000 ---\n\n";
     functions.forEach((fn) => { asm += fn.name + ":  ; " + fn.addr + "\n  " + fn.addr.slice(2).padStart(8, "0") + ": c3     RET\n\n"; });
@@ -197,17 +241,17 @@ if (args[0] === "--version") {
     const reported = mode === "miscounted" ? functions.length + 1 : functions.length - failed;
     if (mode === "noisy") process.stdout.write(Buffer.alloc(9 * 1024 * 1024, 0x20));
     if (mode !== "silent") process.stdout.write("wrote " + output + ": " + stem + ".c (" + c.length + " bytes); functions: " + reported + " ok, " + failed + " failed\n");
-  }, behavior.delayMs ?? 0);
+  }, behavior.delayMs ?? 0));
 } else if (args[0] === "decompile") {
   // decompile <input> <0xaddr> --addr: the single-function path.
-  const fn = functions.find((candidate) => candidate.addr === args[2]);
+  const fn = (behavior.standaloneFunctions ?? functions).find((candidate) => candidate.addr === args[2]);
   if (behavior.decompile === "hang") hang();
   else if (fn === undefined) { process.stderr.write("error: no function at " + args[2] + "\n"); process.exit(1); }
-  else setTimeout(() => {
+  else whenReleased("decompile", () => setTimeout(() => {
     const padding = behavior.decompilePadding === undefined ? "" : "/*" + "x".repeat(behavior.decompilePadding) + "*/\n";
     process.stdout.write("int " + fn.name + "(void) // single-function\n" + padding + "{\n  return 0;\n}\n");
     fs.appendFileSync(__filename + ".exits", JSON.stringify({ pid: process.pid, at: Date.now() }) + "\n");
-  }, behavior.decompileDelayMs ?? 0);
+  }, behavior.decompileDelayMs ?? 0));
 } else {
   process.stderr.write("unexpected command\n");
   process.exit(2);
@@ -267,3 +311,9 @@ export const fakeKunaExits = async (
       }),
   );
 };
+
+/** Release a command only after the test has observed its required interleaving. */
+export const releaseFakeKunaCommand = (
+  path: string,
+  command: FakeKunaGatedCommand,
+): Promise<void> => writeFile(`${path}.release-${command}`, "released");

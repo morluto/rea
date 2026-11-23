@@ -1,18 +1,24 @@
 import { expect, it } from "vitest";
+import { machoImageWithUnknownCommand } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { fat } from "../../../src/domain/binaryTarget.fixture.js";
 import {
   createRustImage,
   createRustImageWithGoSection,
   createRustHashOverflowImage,
+  createRustWasmModule,
+  createWasmSectionFlood,
   compressRustElfSectionNames,
   rustElfSectionNameFixture,
   RUSTC_HASH,
   rustDependencyPayload,
+  WASM_MODULE_HEADER,
+  wasmCustomSection,
+  wasmSection,
 } from "../../fixtures/rust/image.js";
 import { readRustBinaryImage } from "../../../src/rust/RustBinaryImage.js";
-import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
+import { readBinaryContainer } from "../../../src/domain/native/readBinaryContainer.js";
 import { readGoBinaryImage } from "../../../src/go/GoBinaryImage.js";
-import { RustAuditableFormatFailure } from "../../../src/rust/RustAuditableReader.js";
+import { ParseFailureError } from "../../../src/domain/parseFailure.js";
 
 const packages = [
   {
@@ -43,7 +49,7 @@ it.each([
   "retains read-only ELF section bytes with a %s name",
   (name, expectedName) => {
     const bytes = rustElfSectionNameFixture(name);
-    const container = readBinaryContainer(bytes);
+    const container = readBinaryContainer(bytes, "elf-directory");
     expect(container.load_regions?.every(({ write }) => write)).toBe(true);
     expect(container.sections).toContainEqual(
       expect.objectContaining({
@@ -72,7 +78,9 @@ it.each([
     const bytes = rustElfSectionNameFixture("empty");
     bytes.writeUInt32LE(type, 384 + 4);
     bytes.writeBigUInt64LE(flags, 384 + 8);
-    expect(readBinaryContainer(bytes).sections).not.toContainEqual(
+    expect(
+      readBinaryContainer(bytes, "elf-directory").sections,
+    ).not.toContainEqual(
       expect.objectContaining({ offset: 2048, read_only: true }),
     );
     expect(readRustBinaryImage(bytes).rustc_commit).toBeNull();
@@ -83,9 +91,9 @@ it("does not scan an unnamed ELF section whose declared range leaves the file", 
   const bytes = rustElfSectionNameFixture("empty");
   // The compiler path still exists at 2048, but its declared section no longer fits.
   bytes.writeBigUInt64LE(BigInt(bytes.length), 384 + 32);
-  expect(readBinaryContainer(bytes).sections).not.toContainEqual(
-    expect.objectContaining({ read_only: true }),
-  );
+  expect(
+    readBinaryContainer(bytes, "elf-directory").sections,
+  ).not.toContainEqual(expect.objectContaining({ read_only: true }));
   expect(readRustBinaryImage(bytes).rustc_commit).toBeNull();
 });
 
@@ -110,6 +118,23 @@ it.each(["elf", "pe"] as const)(
   },
 );
 
+it.each([
+  ["\\", [{ hash: RUSTC_HASH, file_offset: 2048 }]],
+  ["-", undefined],
+] as const)(
+  "reads a rustc hash followed by %s only when it is a path separator",
+  (separator, hashes) => {
+    // Windows builds store /rustc/<hash>\library\...; the fixture path is at 2048.
+    const bytes = createRustImage({ format: "pe" });
+    bytes.write(
+      separator,
+      2048 + "/rustc/".length + RUSTC_HASH.length,
+      "latin1",
+    );
+    expect(readRustBinaryImage(bytes).rustc_commit?.hashes).toEqual(hashes);
+  },
+);
+
 it("reads a Mach-O __DATA,.dep-v0 section", () => {
   const image = readRustBinaryImage(createRustImage({ format: "macho" }));
   expect(image).toMatchObject({
@@ -127,6 +152,198 @@ it("reads a Mach-O __DATA,.dep-v0 section", () => {
     },
   });
 });
+
+it("preserves the 32-bit width of a thin Mach-O with no dependency section", () => {
+  const bytes = Buffer.from(machoImageWithUnknownCommand(false, 12));
+  expect(readRustBinaryImage(bytes)).toMatchObject({
+    format: "macho",
+    bits: 32,
+    auditable_metadata: null,
+  });
+});
+
+it("reads a .dep-v0 custom section and a data-section rustc hash from a WebAssembly module", () => {
+  const bytes = createRustWasmModule();
+  expect(readRustBinaryImage(bytes)).toEqual({
+    format: "wasm",
+    architecture: "wasm",
+    bits: null,
+    byte_order: "little",
+    auditable_metadata: expect.objectContaining({
+      section_name: ".dep-v0",
+      file_offset: bytes.indexOf(rustDependencyPayload()),
+      section_bytes: rustDependencyPayload().length,
+      format_version: 1,
+      root_package_index: 1,
+      packages,
+      dependency_edges: [{ from_index: 1, to_index: 0 }],
+    }),
+    rustc_commit: {
+      evidence_kind: "inferred",
+      hashes: [{ hash: RUSTC_HASH, file_offset: bytes.indexOf("/rustc/") }],
+    },
+  });
+});
+
+it("returns null metadata for a WebAssembly module without .dep-v0", () => {
+  const bytes = createRustWasmModule({ omitSection: true });
+  const image = readRustBinaryImage(bytes);
+  expect(image).toMatchObject({ format: "wasm", bits: null });
+  expect(image.auditable_metadata).toBeNull();
+  expect(image.rustc_commit?.hashes).toEqual([
+    { hash: RUSTC_HASH, file_offset: bytes.indexOf("/rustc/") },
+  ]);
+});
+
+it.each([
+  [
+    "a component",
+    Buffer.from("0061736d0d000100", "hex"),
+    { kind: "unsupported", format: "wasm", offset: 6, field: "layer" },
+  ],
+  [
+    "a pre-release core module",
+    Buffer.from("0061736d0d000000", "hex"),
+    { kind: "unsupported", format: "wasm", offset: 4, field: "version" },
+  ],
+  [
+    "a truncated header",
+    WASM_MODULE_HEADER.subarray(0, 6),
+    { kind: "truncated", format: "wasm", offset: 0 },
+  ],
+  [
+    "a section past the end of the file",
+    Buffer.concat([WASM_MODULE_HEADER, Buffer.from([0x01, 0x05, 0x00])]),
+    { kind: "truncated", format: "wasm", offset: 8, field: "section" },
+  ],
+  [
+    "a section size cut off by the end of the file",
+    Buffer.concat([WASM_MODULE_HEADER, Buffer.from([0x00, 0x80])]),
+    { kind: "truncated", format: "wasm", offset: 9, field: "section size" },
+  ],
+  [
+    "a custom name length cut off by its section",
+    Buffer.concat([
+      WASM_MODULE_HEADER,
+      wasmSection(0, Buffer.from([0x80])),
+      wasmSection(1, Buffer.from([0x00])),
+    ]),
+    {
+      kind: "malformed",
+      format: "wasm",
+      offset: 10,
+      field: "custom section name length",
+    },
+  ],
+  [
+    "a custom name length cut off by the final section",
+    Buffer.concat([WASM_MODULE_HEADER, wasmSection(0, Buffer.from([0x80]))]),
+    {
+      kind: "malformed",
+      format: "wasm",
+      offset: 10,
+      field: "custom section name length",
+    },
+  ],
+  [
+    "a section size over 32 bits",
+    Buffer.concat([
+      WASM_MODULE_HEADER,
+      Buffer.from([0x00, 0xff, 0xff, 0xff, 0xff, 0x1f]),
+    ]),
+    { kind: "malformed", format: "wasm", offset: 9, field: "section size" },
+  ],
+  [
+    "a custom name past its section",
+    Buffer.concat([
+      WASM_MODULE_HEADER,
+      wasmSection(0, Buffer.from([0x05, 0x61])),
+    ]),
+    {
+      kind: "malformed",
+      format: "wasm",
+      offset: 10,
+      field: "custom section name",
+    },
+  ],
+  [
+    "a non-UTF-8 custom section name",
+    Buffer.concat([
+      WASM_MODULE_HEADER,
+      wasmCustomSection(Buffer.from([0xff]), Buffer.alloc(0)),
+    ]),
+    {
+      kind: "malformed",
+      format: "wasm",
+      offset: 11,
+      field: "custom section name",
+    },
+  ],
+  [
+    "a second data section",
+    createRustWasmModule({ sections: [wasmSection(11, Buffer.from([0]))] }),
+    { kind: "malformed", format: "wasm", field: "data section" },
+  ],
+] as const)("refuses WebAssembly with %s", (_name, bytes, failure) => {
+  expect(() => readRustBinaryImage(bytes)).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining(failure),
+    }),
+  );
+});
+
+it("reports a duplicate .dep-v0 section ahead of the section bound that follows it", () => {
+  const bytes = createRustWasmModule({
+    sections: [
+      wasmCustomSection(".dep-v0", rustDependencyPayload()),
+      createWasmSectionFlood(65_537).subarray(WASM_MODULE_HEADER.length),
+    ],
+  });
+  expect(() => readRustBinaryImage(bytes)).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "malformed",
+        format: "rust-auditable",
+      }),
+    }),
+  );
+});
+
+it("bounds the synchronous WebAssembly section walk", () => {
+  expect(
+    readRustBinaryImage(createWasmSectionFlood(65_536)).auditable_metadata,
+  ).toBeNull();
+  expect(() => readRustBinaryImage(createWasmSectionFlood(65_537))).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        format: "wasm",
+        limit: { name: "max_wasm_sections", maximum: 65_536 },
+      }),
+    }),
+  );
+});
+
+it.each([
+  ["a truncated size", Buffer.from([0x00, 0x80]), "truncated", "section size"],
+  [
+    "an overflowing size",
+    Buffer.from([0x00, 0xff, 0xff, 0xff, 0xff, 0x1f]),
+    "malformed",
+    "section size",
+  ],
+  ["missing contents", Buffer.from([0x00, 0x01]), "truncated", "section"],
+] as const)(
+  "reports %s at the WebAssembly section limit",
+  (_name, tail, kind, field) => {
+    const bytes = Buffer.concat([createWasmSectionFlood(65_536), tail]);
+    expect(() => readRustBinaryImage(bytes)).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({ kind, format: "wasm", field }),
+      }),
+    );
+  },
+);
 
 it("preserves the arm64_32 Mach-O CPU family when dependency metadata is absent", () => {
   const bytes = createRustImage({
@@ -211,16 +428,6 @@ it("recognizes zero-virtual-size PE raw padding without accepting payload junk",
   );
 });
 
-it("returns null metadata when the dependency section is absent", () => {
-  const image = readRustBinaryImage(
-    createRustImage({ format: "elf", omitSection: true }),
-  );
-  expect(image.auditable_metadata).toBeNull();
-  expect(image.rustc_commit?.hashes).toEqual([
-    { hash: RUSTC_HASH, file_offset: 2048 },
-  ]);
-});
-
 it.each([1, 2])(
   "reads dependency metadata through ELF section-name compression %i",
   (compressionType) => {
@@ -287,25 +494,53 @@ it("finds rustc paths in read-only ELF load data without section headers", () =>
   expect(readRustBinaryImage(bytes).rustc_commit).toBeNull();
 });
 
+const thrown = (read: () => unknown): unknown => {
+  try {
+    read();
+  } catch (cause: unknown) {
+    return cause;
+  }
+  throw new Error("expected a container failure");
+};
+
 it("refuses a universal Mach-O container", () => {
-  expect(() => readRustBinaryImage(fat([0x0100000c]))).toThrow(
-    RustAuditableFormatFailure,
+  const cause = thrown(() => readRustBinaryImage(fat([0x0100000c])));
+  expect(cause).toBeInstanceOf(ParseFailureError);
+  expect(cause).toMatchObject({
+    failure: {
+      kind: "unsupported",
+      detail: expect.stringContaining("thin slice"),
+    },
+  });
+});
+
+it("keeps the container's truncated failure and its facts unchanged", () => {
+  const bytes = createRustImage({ format: "elf" });
+  // The fixture's first program header is at byte 128; p_filesz and
+  // p_memsz are at +32 and +40.
+  bytes.writeBigUInt64LE(BigInt(bytes.length) * 2n, 128 + 32);
+  bytes.writeBigUInt64LE(BigInt(bytes.length) * 2n, 128 + 40);
+  const container = thrown(() => readBinaryContainer(bytes, "elf-directory"));
+  const rust = thrown(() => readRustBinaryImage(bytes));
+  expect(rust).toBeInstanceOf(ParseFailureError);
+  expect((rust as ParseFailureError).failure).toEqual(
+    (container as ParseFailureError).failure,
   );
-  expect(() => readRustBinaryImage(fat([0x0100000c]))).toThrow(/thin slice/);
+  expect((rust as ParseFailureError).failure).toMatchObject({
+    kind: "truncated",
+    format: "elf",
+    offset: expect.any(Number),
+    field: expect.any(String),
+  });
 });
 
 it("does not read SHT_NOBITS dependency sections as stored bytes", () => {
   const bytes = createRustImage({ format: "elf" });
   // The fixture writes the .dep-v0 section header at byte 384.
   bytes.writeUInt32LE(8, 384 + 4);
-  let metadata: unknown;
-  try {
-    metadata = readRustBinaryImage(bytes).auditable_metadata;
-  } catch (cause: unknown) {
-    expect(cause).toBeInstanceOf(RustAuditableFormatFailure);
-    return;
-  }
-  expect(metadata).toBeNull();
+  expect(thrown(() => readRustBinaryImage(bytes))).toMatchObject({
+    failure: { kind: "malformed", format: "rust-auditable" },
+  });
 });
 
 it("reads a rustc path from a read-only ELF section whose name exceeds 64 bytes", () => {
@@ -324,16 +559,33 @@ it("reads a rustc path from a read-only ELF section whose name exceeds 64 bytes"
   });
 });
 
-it("refuses read-only data with more distinct rustc paths than it retains", () => {
+it("retains dependency facts when compiler paths exceed the selected prefix", () => {
   const bytes = createRustHashOverflowImage();
-  expect(() => readRustBinaryImage(bytes)).toThrow(
-    expect.objectContaining({
-      constraint: {
-        resource: "capacity",
-        reported_limits: { maximum_rustc_hashes: 64 },
-      },
-    }),
-  );
+  const partial = readRustBinaryImage(bytes);
+  expect(partial.auditable_metadata?.packages.map(({ name }) => name)).toEqual([
+    "itoa",
+    "sample",
+  ]);
+  expect(partial.rustc_commit?.hashes).toHaveLength(64);
+  expect(partial.rustc_commit?.coverage).toEqual({
+    status: "partial",
+    reason: "max_rustc_hashes",
+    effective_limit: 64,
+    limit: {
+      control_kind: "parameter",
+      parameter: "max_rustc_hashes",
+      effective_value: 64,
+      unit: "count",
+      minimum: 1,
+      maximum: Number.MAX_SAFE_INTEGER,
+      default_value: 64,
+      applies_at: "next_call",
+    },
+  });
+  const recovered = readRustBinaryImage(bytes, 65);
+  expect(recovered.rustc_commit?.hashes).toHaveLength(65);
+  expect(recovered.rustc_commit).not.toHaveProperty("coverage");
+  expect(recovered.auditable_metadata).toEqual(partial.auditable_metadata);
 });
 
 it.each([
@@ -366,10 +618,21 @@ it.each([
     } else {
       sectionName.copy(control, sectionOffset);
     }
-    expect(readBinaryContainer(bytes).load_regions).toEqual(
-      readBinaryContainer(control).load_regions,
+    expect(readBinaryContainer(bytes, "elf-directory").load_regions).toEqual(
+      readBinaryContainer(control, "elf-directory").load_regions,
     );
-    expect(() => readGoBinaryImage(bytes)).toThrow(/build-info|mapped/i);
+    const failureKind =
+      fault === "compressed"
+        ? "unsupported"
+        : fault === "out-of-file"
+          ? "truncated"
+          : "malformed";
+    expect(() => readGoBinaryImage(bytes)).toThrow(
+      expect.objectContaining({
+        message: expect.stringMatching(/build-info|mapped/i),
+        failure: expect.objectContaining({ kind: failureKind }),
+      }),
+    );
     expect(readRustBinaryImage(bytes)).toMatchObject({
       format,
       auditable_metadata: { file_offset: 1024, packages },

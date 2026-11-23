@@ -61,5 +61,4 @@ it.each([
       );
     expect(targets).toEqual(targetLine === null ? [] : [targetLine]);
   },
-  20_000,
 );

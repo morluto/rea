@@ -2,14 +2,14 @@ import { expect, it } from "vitest";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import { parseEnvironment } from "./environment.js";
 import {
   WINDOWS_CHANGE_TIME_DRIFT_MS,
   WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
   WINDOWS_CHANGE_TIME_SETTLE_POLL_MS,
+  applyWindowsChangeTimeSnapshot,
   resolveWindowsChangeTimeSettle,
-  windowsChangeTimeSettingFailure,
-  windowsChangeTimeSettingMessage,
 } from "./windowsChangeTimeSettle.js";
 
 const requiredFacts = (
@@ -29,7 +29,7 @@ const requiredFacts = (
   expect(message).toContain(String(fact.defaultValue));
   expect(message).toContain(String(fact.floor));
   expect(message).toContain(String(fact.maximum));
-  expect(message).toContain("restart REA");
+  expect(message).toContain("positive decimal integer");
 };
 
 it("keeps today's settle defaults when the settings are unset", () => {
@@ -46,11 +46,7 @@ it("keeps today's settle defaults when the settings are unset", () => {
   });
   const startup = parseEnvironment({});
   if (!startup.ok) throw new Error("unset settle settings were rejected");
-  expect(startup.value.REA_WINDOWS_CHANGE_TIME_DRIFT_MS).toBeUndefined();
-  expect(startup.value.REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS).toBeUndefined();
-  expect(
-    startup.value.REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
-  ).toBeUndefined();
+  expect(startup.ok).toBe(true);
 });
 
 it("uses valid settle overrides", () => {
@@ -77,9 +73,7 @@ it("uses valid settle overrides", () => {
     REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS: "1000",
   });
   if (!startup.ok) throw new Error("valid settle settings were rejected");
-  expect(startup.value.REA_WINDOWS_CHANGE_TIME_DRIFT_MS).toBe(60_000);
-  expect(startup.value.REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS).toBe(1);
-  expect(startup.value.REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS).toBe(1_000);
+  expect(startup.ok).toBe(true);
 });
 
 it.each([
@@ -94,33 +88,55 @@ it.each([
   [WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS, "0"],
   [WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS, "1001"],
 ] as const)("rejects %s=%j", (bound, value) => {
-  const failure = windowsChangeTimeSettingFailure(bound, value);
-  expect(failure).toEqual({
-    setting: bound.setting,
-    currentValue: value,
-    source: "setting",
-    defaultValue: bound.defaultValue,
-    floor: bound.floor,
-    maximum: bound.maximum,
-    unit: bound.unit,
-    restartRequired: true,
-  });
-  const message = windowsChangeTimeSettingMessage(failure);
-  requiredFacts(message, failure);
   const resolved = resolveWindowsChangeTimeSettle({ [bound.setting]: value });
   if (resolved.ok) throw new Error(`Accepted ${bound.setting}=${value}`);
   expect(resolved.error).toBeInstanceOf(ConfigurationError);
-  expect(resolved.error.settings).toEqual([
-    { setting: bound.setting, constraint: message },
-  ]);
-  expect(projectAnalysisError(resolved.error)).toMatchObject({
-    code: "configuration_invalid",
-    details: { settings: [{ setting: bound.setting, constraint: message }] },
-  });
-  const startup = parseEnvironment({ [bound.setting]: value });
-  if (startup.ok) throw new Error(`Startup accepted ${bound.setting}=${value}`);
-  expect(startup.error.settings).toContainEqual({
+  const message = resolved.error.settings[0]?.constraint;
+  if (message === undefined) throw new Error("Missing configuration guidance");
+  requiredFacts(message, { ...bound, currentValue: value, source: "setting" });
+  const facts = {
     setting: bound.setting,
     constraint: message,
+    update_mode: "runtime" as const,
+  };
+  expect(resolved.error.settings).toEqual([facts]);
+  expect(resolved.error.settings[0]).not.toHaveProperty("pending_restart");
+  expect(message).toContain("supplied");
+  expect(projectAnalysisError(resolved.error)).toMatchObject({
+    code: "configuration_invalid",
+    details: { settings: [facts] },
+  });
+  const startup = parseEnvironment({ [bound.setting]: value });
+  if (!startup.ok)
+    throw new Error(`Startup rejected runtime seed ${bound.setting}`);
+});
+
+it("applies a Windows settle override before rejecting the launch value", () => {
+  const limits = runWithAnalysisOperationSnapshot(
+    {
+      revision: 1,
+      overrides: {
+        "windows.change_time_drift_ms": 50,
+        "windows.change_time_settle_poll_ms": 10,
+        "windows.change_time_settle_max_polls": 4,
+      },
+    },
+    () => {
+      const resolved = resolveWindowsChangeTimeSettle({
+        REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "nope",
+        REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS: "0",
+        REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS: "1001",
+      });
+      if (!resolved.ok) throw resolved.error;
+      return applyWindowsChangeTimeSnapshot(resolved.value);
+    },
+  );
+  expect(limits).toMatchObject({
+    driftMs: 50,
+    driftSource: "runtime",
+    pollMs: 10,
+    pollSource: "runtime",
+    maxPolls: 4,
+    maxPollsSource: "runtime",
   });
 });

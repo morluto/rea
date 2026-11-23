@@ -26,8 +26,7 @@ export const ghidraFileOffsetOutcome = (
     ? FILE_OFFSET_OUTCOMES[code as keyof typeof FILE_OFFSET_OUTCOMES]
     : undefined;
 
-const LOAD_IMAGE =
-  "inspect_native_load_image (CLI: `rea inspect-native-load-image <path> --provider ghidra --json`)";
+const LOAD_IMAGE = "inspect_native_load_image";
 const UNCHANGED = "Do not repeat the unchanged call.";
 const SELECT_MAPPED = `Review Ghidra's memory blocks and source-file mappings with ${LOAD_IMAGE}, then select an address inside an initialized mapping of the admitted file. ${UNCHANGED}`;
 
@@ -55,6 +54,15 @@ export const ghidraFileOffsetUnavailable = (
     operation,
     {
       ...options,
+      related: {
+        ...options.related,
+        operations: [
+          ...new Set([
+            ...(options.related?.operations ?? []),
+            "inspect_native_load_image",
+          ]),
+        ],
+      },
       userMessage: `${reason.trim().replace(/\.$/u, "")}. REA establishes no single exact original-file offset for this well-formed address and does not derive or choose one.`,
       remediationAction: REMEDIATION[outcome],
       conformsToInputContract: true,

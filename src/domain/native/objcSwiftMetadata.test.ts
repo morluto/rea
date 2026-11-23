@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   inspectNativeDispatchMetadata,
-  objcImplementationClassName,
+  swiftConformanceSchema,
 } from "./objcSwiftMetadata.js";
 
 describe("symbol-only Objective-C implementation identity", () => {
   it.each([" ", "  ", "\t"])(
-    "interprets legacy symbol ownership with separator %j without rewriting retained facts",
+    "separates category ownership with separator %j",
     (separator) => {
       const metadata = inspectNativeDispatchMetadata(
         [
@@ -18,37 +18,13 @@ describe("symbol-only Objective-C implementation identity", () => {
         ],
         1,
       );
-      const current = metadata.objc_dispatch_implementations[0]!;
-      const { category: _category, ...record } = current;
-      const legacy = { ...record, class_name: "StoreController(Actions)" };
-      expect(objcImplementationClassName(legacy)).toBe("StoreController");
-      expect(legacy.class_name).toBe("StoreController(Actions)");
-      expect(legacy.evidence).toBe(current.evidence);
-      expect(objcImplementationClassName({ ...legacy, evidence: [] })).toBe(
-        legacy.class_name,
-      );
-      expect(
-        objcImplementationClassName({
-          ...legacy,
-          evidence: [
-            ...legacy.evidence,
-            {
-              ...legacy.evidence[0]!,
-              description:
-                "Provider symbol -[OtherController(Actions) buildTapped:]",
-            },
-          ],
-        }),
-      ).toBe(legacy.class_name);
-      expect(objcImplementationClassName({ ...legacy, category: null })).toBe(
-        legacy.class_name,
-      );
-      expect(
-        objcImplementationClassName({
-          ...legacy,
-          decode: { status: "decoded", reason: null },
-        }),
-      ).toBe(legacy.class_name);
+      expect(metadata.objc_dispatch_implementations).toMatchObject([
+        {
+          class_name: "StoreController",
+          category: "Actions",
+          selector: "buildTapped:",
+        },
+      ]);
     },
   );
 
@@ -369,4 +345,74 @@ it("derives classes only from complete class symbol leaves", () => {
       reason: "provider_name_inventory_has_no_supported_objc_method_symbols",
     }),
   );
+});
+
+it("requires the Swift ABI type-reference kind on every conformance", () => {
+  const field = swiftConformanceSchema.shape.type_reference_kind;
+  expect(field.safeParse(0).success).toBe(true);
+  expect(field.safeParse(undefined).success).toBe(false);
+});
+
+describe("dispatch implementation composite-key ordering parity", () => {
+  it("orders quotes, backslashes, punctuation, null addresses, categories, and code points per the composite-key contract regardless of inventory order", () => {
+    const entries = [
+      { address: "0x1000", name: '-[Class"A sel:]' },
+      { address: "0x1000", name: "-[Class!A sel:]" },
+      { address: "0x1000", name: "-[ClassA(Cat) sel:]" },
+      { address: "0x1000", name: "-[ClassA sel:]" },
+      { address: "0x2000", name: "-[ClassA sel:]" },
+      { address: "", name: "-[ClassA sel:]" },
+      { address: "0x1000", name: "-[Class\\A sel:]" },
+      { address: "0x1000", name: "+[ClassA sel:]" },
+      { address: "0x1000", name: "-[ClassA alt:]" },
+      { address: "0x1000", name: "-[Class\uE000 sel:]" },
+      { address: "0x1000", name: "-[Class\u{10000} sel:]" },
+    ];
+    // Canonical order of compositeKey([class_name, selector, method_type, implementation_address ?? "", category ?? null])
+    // under compareUnicodeCodePoints:
+    // - "!" (0x21) precedes "A" (0x41)
+    // - selector "alt:" precedes "sel:"; method_type "class" precedes "instance"
+    // - missing address normalizes to "" (closing quote 0x22 < "0" 0x30)
+    // - quoted category "\"Cat\"" (0x22) precedes null (0x6e "n") at the same address
+    // - JSON escapes "\"" -> "\\\"" (0x5c, 0x22) and "\\" -> "\\\\" (0x5c, 0x5c), placing both after "A" (0x41)
+    // - BMP U+E000 precedes supplementary U+10000 (not UTF-16 lead surrogate 0xD800)
+    const expected = [
+      ["Class!A", "sel:", "instance", "0x1000", null],
+      ["ClassA", "alt:", "instance", "0x1000", null],
+      ["ClassA", "sel:", "class", "0x1000", null],
+      ["ClassA", "sel:", "instance", null, null],
+      ["ClassA", "sel:", "instance", "0x1000", "Cat"],
+      ["ClassA", "sel:", "instance", "0x1000", null],
+      ["ClassA", "sel:", "instance", "0x2000", null],
+      ['Class"A', "sel:", "instance", "0x1000", null],
+      ["Class\\A", "sel:", "instance", "0x1000", null],
+      ["Class\uE000", "sel:", "instance", "0x1000", null],
+      ["Class\u{10000}", "sel:", "instance", "0x1000", null],
+    ];
+    const project = (
+      metadata: ReturnType<typeof inspectNativeDispatchMetadata>,
+    ) =>
+      metadata.objc_dispatch_implementations.map(
+        ({
+          class_name,
+          selector,
+          method_type,
+          implementation_address,
+          category,
+        }) => [
+          class_name,
+          selector,
+          method_type,
+          implementation_address,
+          category ?? null,
+        ],
+      );
+    const forward = inspectNativeDispatchMetadata(entries, entries.length);
+    const reversed = inspectNativeDispatchMetadata(
+      [...entries].reverse(),
+      entries.length,
+    );
+    expect(project(forward)).toEqual(expected);
+    expect(project(reversed)).toEqual(expected);
+  });
 });

@@ -3,10 +3,12 @@ import { JadxInterruption } from "./JadxInterruption.js";
 import { z } from "zod";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -24,6 +26,10 @@ import {
 import { androidSnapshotCopy } from "./AndroidTargetSnapshot.js";
 import type { JadxSession } from "./JadxSession.js";
 import type { JadxMcpTransport } from "./JadxMcpTransport.js";
+import type { OwnedMcpTransportFailure } from "../process/OwnedMcpStdioTransport.js";
+import { jadxHeapExhausted } from "./JadxProtocol.js";
+import { JADX_HEAP_REMEDIATION } from "./JadxRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 interface FailureContext {
   readonly cause: unknown;
@@ -42,6 +48,13 @@ type DiagnosticFailure = {
   | { readonly kind: "startup"; readonly command: string }
   | { readonly kind: "execution" }
   | { readonly kind: "output"; readonly reason: string }
+  | {
+      readonly kind: "output_limit";
+      readonly limit: Extract<
+        OwnedMcpTransportFailure,
+        { readonly kind: "output_limit" }
+      >;
+    }
   | { readonly kind: "cancelled" }
   | { readonly kind: "timeout"; readonly timeoutMs: number }
 );
@@ -113,14 +126,9 @@ const observeJadxFailure = (
             cause: cancellation.reason,
             ...jadxOperationTimeoutGuidance(timeoutMs),
           })
-        : new AnalysisCancelledError(request.operation, {
-            cause: cancellation.reason,
-          });
+        : cancelledBy(request.operation, carriedReason(cancellation.reason));
   if (cause instanceof RegularFileCleanupFailure) {
-    const reason =
-      cause.cleanupCause instanceof Error
-        ? cause.cleanupCause.message
-        : String(cause.cleanupCause);
+    const reason = errorMessage(cause.cleanupCause);
     // A finished copy or its cancellation can sit on this close or inside a
     // nested one when another descriptor also rejected close. Name every
     // descriptor that failed; the copied output path stays on the observation.
@@ -138,9 +146,10 @@ const observeJadxFailure = (
               cause: nestedCancellation.reason,
               ...jadxOperationTimeoutGuidance(timeoutMs),
             })
-          : new AnalysisCancelledError(request.operation, {
-              cause: nestedCancellation.reason,
-            });
+          : cancelledBy(
+              request.operation,
+              carriedReason(nestedCancellation.reason),
+            );
     const snapshotObservation =
       completed === undefined
         ? undefined
@@ -176,10 +185,7 @@ const observeJadxFailure = (
         ? primaryCause
         : new ProviderAdapterError("jadx", request.operation, {
             cause: primaryCause,
-            userMessage:
-              primaryCause instanceof Error
-                ? primaryCause.message
-                : String(primaryCause),
+            userMessage: errorMessage(primaryCause),
           }));
     const cleanup = new ProviderCleanupError(
       "jadx",
@@ -235,6 +241,13 @@ const observeJadxFailure = (
       ...diagnostic,
       kind: "output",
       reason: "JADX response violated the pinned upstream protocol",
+    };
+  if (observed?.kind === "output_limit")
+    return {
+      ...diagnostic,
+      cause: observed.cause,
+      kind: "output_limit",
+      limit: observed,
     };
   if (observed?.kind === "protocol")
     return {
@@ -312,12 +325,14 @@ const presentDiagnosticFailure = (
   failure: DiagnosticFailure,
 ): AnalysisError => {
   const output = failure.transport?.diagnostics();
-  const options = {
-    cause: failure.cause,
-    ...(output === undefined ? {} : { capturedOutput: output }),
-  };
+  const captured = output === undefined ? {} : { capturedOutput: output };
+  const options = { cause: failure.cause, ...captured };
   if (failure.kind === "cancelled")
-    return new AnalysisCancelledError(failure.operation, options);
+    return cancelledBy(
+      failure.operation,
+      carriedReason(failure.cause),
+      captured,
+    );
   if (failure.kind === "timeout")
     return new AnalysisTimeoutError(failure.operation, failure.timeoutMs, {
       ...options,
@@ -325,8 +340,41 @@ const presentDiagnosticFailure = (
     });
   if (failure.kind === "output")
     return new AnalysisOutputError(failure.operation, failure.reason, options);
+  if (failure.kind === "output_limit") {
+    const { scope, ceiling } = failure.limit;
+    return new AnalysisResourceConstraintError(
+      failure.operation,
+      "transport",
+      `${failure.limit.cause.message}; no partial Evidence was returned.`,
+      {
+        [scope === "frame" ? "max_response_bytes" : "max_operation_bytes"]:
+          ceiling.limit,
+      },
+      {
+        ...options,
+        // REA bounds JADX stdio output at fixed sizes with no runtime override.
+        retryable: false,
+        fixedAllowance: ceiling,
+      },
+    );
+  }
   if (failure.kind === "startup") {
-    const reason = `Java could not start REA's Android bridge using ${failure.command}: ${failure.cause instanceof Error ? failure.cause.message : String(failure.cause)}. ${output === undefined || output.stderr.length === 0 ? "No launcher stderr was observed." : "Review the retained launcher diagnostics."}${output?.truncated === true ? " Diagnostics are incomplete." : ""} Review the selected Java/JADX configuration; for a JVM memory limit, review REA_JADX_HEAP_MIB and inherited JVM options such as JAVA_TOOL_OPTIONS.`;
+    // Before the handshake the retained stderr is the only evidence of why the
+    // launcher stopped; a heap shortage there is a resource limit, not setup.
+    if (jadxHeapExhausted(output?.stderr ?? ""))
+      return new AnalysisResourceConstraintError(
+        failure.operation,
+        "memory",
+        "The JADX worker JVM ran out of heap before REA's Android bridge answered",
+        // The bridge never reported its heap, so the limit stays unknown.
+        { observed_max_heap_bytes: null },
+        {
+          ...options,
+          retryable: false,
+          remediationAction: JADX_HEAP_REMEDIATION,
+        },
+      );
+    const reason = `Java could not start REA's Android bridge using ${failure.command}: ${errorMessage(failure.cause)}. ${output === undefined || output.stderr.length === 0 ? "No launcher stderr was observed." : "Review the retained launcher diagnostics."}${output?.truncated === true ? " Diagnostics are incomplete." : ""} Review the selected Java/JADX configuration; for a JVM memory limit, review REA_JADX_HEAP_MIB and inherited JVM options such as JAVA_TOOL_OPTIONS.`;
     return new AnalysisCapabilityUnavailableError(
       "jadx",
       failure.operation,
@@ -340,10 +388,7 @@ const presentDiagnosticFailure = (
   return new ProviderAdapterError("jadx", failure.operation, {
     ...options,
     diagnostics: {
-      reason:
-        failure.cause instanceof Error
-          ? failure.cause.message
-          : String(failure.cause),
+      reason: errorMessage(failure.cause),
     },
   });
 };

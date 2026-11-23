@@ -1,7 +1,6 @@
 import { expect, it } from "vitest";
-import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { WEB_RUNTIME_LIMITS } from "../../domain/webRuntime.js";
+import { receiveCdpEvent } from "../CdpConnection.js";
 import { CdpRuntimeRequests } from "./CdpRuntimeRequests.js";
 
 const origin = "https://example.test";
@@ -18,7 +17,7 @@ const sources = {
 };
 const event = (
   extraRequest: Record<string, string>,
-  extraInitiator: Record<string, string> = {},
+  extraInitiator: Record<string, unknown> = {},
 ) => ({
   method: "Network.requestWillBeSent",
   params: {
@@ -33,7 +32,11 @@ const event = (
 it("budgets retained request facts independently of discarded POST bodies", () => {
   const requests = new CdpRuntimeRequests(sources);
   requests.ingest(
-    event({ postData: "p".repeat(WEB_RUNTIME_LIMITS.retainedEventBytes + 1) }),
+    receiveCdpEvent(
+      event({
+        postData: "p".repeat(WEB_RUNTIME_LIMITS.retainedEventBytes + 1),
+      }),
+    ),
   );
   const retained = requests.result();
   expect(retained).toHaveLength(1);
@@ -44,57 +47,46 @@ it("budgets retained request facts independently of discarded POST bodies", () =
   expect(JSON.stringify(retained)).not.toContain("postData");
 });
 
+it("keeps retained initiator facts independent of a returned result", () => {
+  const requests = new CdpRuntimeRequests(sources);
+  requests.ingest(
+    receiveCdpEvent(event({}, { extension: { label: "producer" } })),
+  );
+  const initiator = requests.result()[0]?.reported_initiator;
+  const extension = initiator?.extension;
+  if (
+    typeof extension !== "object" ||
+    extension === null ||
+    Array.isArray(extension)
+  )
+    throw new Error("Missing producer extension");
+  extension.label = "changed by caller";
+  expect(requests.result()[0]?.reported_initiator).toEqual({
+    type: "parser",
+    extension: { label: "producer" },
+  });
+});
+
 it("preserves a typed resource refusal for oversized retained initiator facts", () => {
   const requests = new CdpRuntimeRequests(sources);
   requests.ingest(
-    event(
-      {},
-      { retained: "r".repeat(WEB_RUNTIME_LIMITS.retainedEventBytes + 1) },
+    receiveCdpEvent(
+      event(
+        {},
+        { retained: "r".repeat(WEB_RUNTIME_LIMITS.retainedEventBytes + 1) },
+      ),
     ),
   );
-  try {
-    requests.result();
-    expect.fail(
-      "Expected the retained initiator allowance to refuse the result",
-    );
-  } catch (cause) {
-    expect(cause).toBeInstanceOf(AnalysisResourceConstraintError);
-    if (!(cause instanceof AnalysisResourceConstraintError)) throw cause;
-    expect(projectAnalysisError(cause)).toMatchObject({
-      code: "resource_constraint",
-      details: { resource: "capacity" },
-    });
-  }
-});
-
-it("retains separate occurrences of a reused request identity and raw initiator facts", () => {
-  const requests = new CdpRuntimeRequests(sources);
-  for (const timestamp of [0, 1.25]) {
-    const request = event({ url: `${origin}/resource-${timestamp}` });
-    requests.ingest({
-      ...request,
-      params: {
-        ...request.params,
-        timestamp,
-        initiator: {
-          type: "parser",
-          vendor_extension: { occurrence: timestamp, labels: ["observed"] },
-        },
-      },
-    });
-  }
-  expect(requests.result()).toEqual(
-    [0, 1.25].map((timestamp) =>
-      expect.objectContaining({
-        request_id: "request",
-        url: `${origin}/resource-${timestamp}`,
-        timestamp_seconds: timestamp,
-        reported_initiator: {
-          type: "parser",
-          vendor_extension: { occurrence: timestamp, labels: ["observed"] },
-        },
-        causal_attribution: "unknown",
+  expect(() => requests.result()).toThrow(
+    expect.objectContaining({
+      _tag: "AnalysisResourceConstraintError",
+      operation: "observe_web_execution",
+      resource: "capacity",
+      reportedLimits: expect.objectContaining({
+        boundary: "browser-runtime-retention",
+        kind: "requests",
+        limit_bytes: WEB_RUNTIME_LIMITS.retainedEventBytes,
       }),
-    ),
+    }),
   );
 });

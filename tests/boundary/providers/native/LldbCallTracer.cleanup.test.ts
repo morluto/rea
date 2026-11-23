@@ -14,7 +14,9 @@ import { observeProcessStartIdentity } from "../../../../src/process/ProcessOwne
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
+  type ProviderProcessHandle,
 } from "../../../../src/process/ProviderProcess.js";
+import { stopTestChild } from "../../../support/process/stopTestChild.js";
 import type { NativeCallTracer } from "../../../../src/native/LldbCallTracer.js";
 import { LldbCallTracer } from "../../../../src/native/LldbCallTracer.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
@@ -86,6 +88,7 @@ it.skipIf(process.platform === "win32")(
   async () => {
     let cleanupFailures = 2;
     let ownedPid: number | undefined;
+    let ownedProcess: ProviderProcessHandle | undefined;
     const tracer = createTracer(async (_exe, _args, options) => {
       const target = spawn(process.execPath, ["-e", "process.exit(0)"], {
         stdio: "ignore",
@@ -100,6 +103,7 @@ it.skipIf(process.platform === "win32")(
         runId: randomUUID(),
         hostEnvironment: options.environment,
       });
+      ownedProcess = launched.process;
       ownedPid = launched.process.pid;
       const supervisor = new ProviderProcessSupervisor({
         ...launched,
@@ -148,6 +152,7 @@ it.skipIf(process.platform === "win32")(
       expect(() => process.kill(pid, 0)).toThrow();
       await expect(access(root)).rejects.toThrow();
     } finally {
+      if (ownedProcess !== undefined) await stopTestChild(ownedProcess);
       await client.close();
     }
   },
@@ -245,6 +250,56 @@ it.skipIf(process.platform === "win32")(
     } finally {
       await stopChild(child);
       await client.close();
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "counts a killed target that its parent has not reaped yet as terminated",
+  async () => {
+    // The shell replaces itself with a parent that never waits, like a
+    // debugserver that has not reaped its killed debuggee yet.
+    const parent = spawn(
+      "/bin/sh",
+      ["-c", "sleep 60 & echo $!; exec sleep 60"],
+      { detached: true, stdio: ["ignore", "pipe", "ignore"] },
+    );
+    try {
+      const [line] = (await once(parent.stdout!, "data")) as [Buffer];
+      const pid = Number(line.toString("utf8").trim());
+      const identity = await observeProcessStartIdentity(pid);
+      if (identity?.state !== "readable")
+        throw new Error("Host could not read fixture process identity");
+      const tracer = createTracer(async (_exe, _args, options) => {
+        await writeFile(options.pidPath, String(pid));
+        return {
+          kind: "exited",
+          targetLaunched: true,
+          exitCode: 0,
+          output: "",
+          targetIdentity: identity.identity,
+          cleanupFailure: undefined,
+        };
+      });
+      const client = createClient(tracer);
+      try {
+        const trace = await tracer.trace(request);
+        if (trace.ok) throw new Error("Expected a missing tracer result");
+        expect(trace.error).not.toBeInstanceOf(ProviderCleanupError);
+        expect(trace.error.message).not.toContain("SIGKILL");
+        // The PID still answers kill(pid, 0), but its start identity has exited.
+        expect(() => process.kill(pid, 0)).not.toThrow();
+        expect(await observeProcessStartIdentity(pid)).toBeUndefined();
+        expect((await client.close()).ok).toBe(true);
+      } finally {
+        await client.close();
+      }
+    } finally {
+      // The unreaped parent still holds its process group, so this stops the
+      // background target too even when setup failed before the tracer ran.
+      if (parent.exitCode === null && parent.signalCode === null)
+        process.kill(-parent.pid!, "SIGKILL");
+      await stopChild(parent);
     }
   },
 );
