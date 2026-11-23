@@ -22,8 +22,7 @@ each method to its code address. See [Native method addresses](#native-method-ad
 
 ## MCP
 
-MCP defaults to a compact summary and retains the complete decoded Evidence in
-the session. MCP requires an absolute filesystem path:
+MCP requires an absolute filesystem path:
 
 ```json
 {
@@ -34,8 +33,8 @@ the session. MCP requires an absolute filesystem path:
 }
 ```
 
-The summary retains the complete decoded Evidence in the session and returns a
-linked `inspect_analysis_view` overview: artifact identity, metadata version,
+MCP defaults to a compact summary. It retains the complete decoded Evidence in
+the session and returns a linked `inspect_analysis_view` overview: artifact identity, metadata version,
 index widths and `counts` (`sections`, `images`, `types`, `methods`,
 `nested_types`, `fields`, `properties`, `events`, `parameters` and
 `string_literals`) without rows. Use `normalized_result.parent_evidence_id` to page
@@ -136,21 +135,18 @@ budget.
 rea inspect-il2cpp-metadata /absolute/path/global-metadata.dat --json
 ```
 
-The CLI defaults to complete Evidence. For compact delivery, explicitly preserve
-the full Evidence in a new file:
+The CLI defaults to complete Evidence. Compact delivery requires
+`--evidence_output`, which never overwrites an existing file. The saved bundle
+preserves every decoded row; query it offline by the returned
+`parent_evidence_id`, without the original file:
 
 ```bash
 rea inspect-il2cpp-metadata /absolute/path/global-metadata.dat \
-  --detail summary --evidence_output /tmp/metadata-evidence.json --json
-jq -c '{source: {kind: "inline", evidence: .records[0]}, view: {kind: "il2cpp-metadata", collection: "methods", indices: [9785], fields: ["name", "declaring_type"]}}' \
-  /tmp/metadata-evidence.json > /tmp/metadata-query.json
-rea inspect-analysis-view /tmp/metadata-query.json --json
+  --detail summary --evidence_output metadata-evidence.json --json
+rea inspect-analysis-view --evidence-bundle metadata-evidence.json \
+  '{"source":{"kind":"retained-evidence","evidence_id":"<parent_evidence_id>"},"view":{"kind":"il2cpp-metadata","collection":"methods","indices":[9785],"fields":["name","declaring_type"]}}' \
+  --json
 ```
-
-Use the exported Evidence with the CLI's inline Evidence source format described
-in [CLI and Evidence](getting-started/cli.md#run-a-command). Compact delivery requires
-`--evidence_output`; existing files are never overwritten. The full export
-preserves every decoded row for subsequent queries without the original file.
 
 `--binary PATH` links method addresses, `--architecture arm64|amd64` selects
 exactly one slice of a universal Mach-O and `--generic-instances` adds generic
@@ -251,12 +247,31 @@ same virtual address and file bytes contributes one record. Distinct virtual
 record addresses remain distinct candidates, and conflicting file mappings
 remain malformed.
 
-Module records establish names through their declared NUL-terminated string pointers. NUL/0xFF padding, spaces, Unicode and suffix-shared storage are supported. A pointer to a longer string does not match just its suffix; a pointer directly into a shared suffix may name it. Exact reversed UTF-8 matching avoids rescanning the file for every name and retains duplicate-name owners until module records resolve them. A contributor investigated a Linux
-`GameAssembly.so` from Unity 2023.2.13f1 whose static registration was not located. When no static pair is resolved on x86-64 or arm64, the reader searches executable ranges for bytes consistent with a reference to a module-array candidate: RIP-relative LEA/MOV on x86-64, an adjacent `adrp`/`add` pair on arm64. Exactly one referenced array candidate must remain. `code_gen_modules_field` is then `null`, and Evidence is **inferred**: instruction boundaries, the absence of a static registration elsewhere, and runtime use were not verified. The module records and slots themselves remain file observations. Static-table associations are **derived**. Otherwise the result is `code-registration-not-found`. Cpp2IL's StrippedCodeRegSupport plugin also recovers the module list of an inlined CodeRegistration from the module names; this fallback additionally requires the exact located module set and a single code reference. A Unity 2022.3.62f3 macOS Master build checked by a contributor keeps neither registration symbol; its type table is then inferred as described below.
+Module records establish names through their declared NUL-terminated string
+pointers. NUL/0xFF padding, spaces, Unicode and suffix-shared storage are
+supported. A pointer to a longer string does not match just its suffix; a
+pointer directly into a shared suffix may name it. Exact reversed UTF-8 matching
+avoids rescanning the file for every name and retains duplicate-name owners
+until module records resolve them.
+
+A static registration is not always found: contributors checked a Linux
+`GameAssembly.so` from Unity 2023.2.13f1 where it was not located, and a Unity
+2022.3.62f3 macOS Master build that keeps neither registration symbol. When no static pair is resolved on x86-64 or arm64, the reader
+searches executable ranges for bytes consistent with a reference to a
+module-array candidate: RIP-relative LEA/MOV on x86-64, or an adjacent
+`adrp`/`add` pair on arm64. Exactly one referenced array candidate must remain,
+and it must contain exactly the located module set. `code_gen_modules_field` is
+then `null` and Evidence is **inferred**: instruction boundaries, the absence of
+a static registration elsewhere, and runtime use were not verified. The module
+records and slots remain file observations, and static-table associations are
+**derived**. Otherwise the result is `code-registration-not-found`. Cpp2IL's
+StrippedCodeRegSupport plugin similarly recovers an inlined CodeRegistration's
+module list from module names. The Master build's type table is then inferred
+as described below.
 
 The binary/metadata pair is caller-selected. Name/count/token agreement is structural evidence, not a cryptographic same-build proof. File-offset locations refer to the primary metadata artifact; linked virtual addresses refer to `binary.artifact`. Both SHA-256 identities remain available in compact native pages as `artifact` and `binary_source`.
 
-Contributor-reported verification (not all rerun by the follow-up): macOS arm64 and x86_64 slices from Unity 2021.3.45f2, 2022.3.30f1, 2022.3.62f3 and
+Contributor-reported verification, not all rerun by maintainers: macOS arm64 and x86_64 slices from Unity 2021.3.45f2, 2022.3.30f1, 2022.3.62f3 and
 6000.0.84f1 against dSYM symbols; Android arm64 and x86-64 from 2022.3.62f3
 against `libil2cpp.sym.so`; Windows x64 from 2023.2.13f1 (metadata version 29,
 the MIT-licensed game Between Two Worlds 1.0.5, `GameAssembly.dll` SHA-256
@@ -278,6 +293,12 @@ The result adds:
   `code_gen_modules_field` (the address of `codeGenModulesCount`, or `null` as
   described above), `code_gen_modules_array` (the module pointer array) and
   `code_gen_modules` (`image`, record `address`, `method_pointer_count`);
+  Compact summaries omit `code_gen_modules` and keep its count in
+  `counts.code_gen_modules`; query `collection: "code_gen_modules"` with batch
+  `image_indices` or source `indices`, `fields` and pagination. A module row's
+  `index` is its retained position and `image` joins the image collection.
+  Scalar registration facts and both source identities stay inline, and complete
+  Evidence retains the full table.
 - `method_addresses`: one row per method index with `state`, `address` and
   `rva` (address minus `image_base`), both hexadecimal strings. `state` is
   `code` when the module slot holds an unambiguously mapped executable address, `no-body` when an observed slot is zero,
@@ -440,8 +461,6 @@ reported: versions 27.0 to 27.2 share that header number but place the
 Il2CppType byref flag in different bits, so a rendered name could gain or lose
 `&` without warning.
 
-The builds checked are listed after the module search rules above.
-
 | Reason                                  | Category    | Meaning                                                                                                      |
 | --------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------ |
 | `unsupported-container`                 | unsupported | Not a 64-bit little-endian Mach-O, PE or ELF image (ELF: AArch64 or x86-64 with dynamic section).            |
@@ -459,7 +478,7 @@ The builds checked are listed after the module search rules above.
 | `generic-method-registration-not-found` | input error | No CodeRegistration layout bounds every genericMethodTable row, or the generic tables are unreadable.        |
 | `ambiguous-generic-method-registration` | input error | More than one CodeRegistration layout bounds every genericMethodTable row.                                   |
 
-Format failures name `binary_path` and slice-selection failures name `binary_architecture`; capacity refusals remain typed resource errors whose `reported_limits` name the exceeded budget (`boundary`, the capacity reason) and its `maximum`, with `details.refusal.unit` naming the unit the budget counts (`"entries"`, `"bytes"` or `"frames"`). Failed linking preserves the metadata source identity, validated counts, selected binary path/architecture and its SHA-256 when observed, plus prior producer observations. It never publishes an incomplete native table as complete. The binary input is bounded to 1 GiB. The virtual-pointer index has the same 1 GiB estimated representation allowance, reserving 2 KiB per distinct virtual destination before insertion for retained Maps and finish-time lookup storage. Repeated declarations of one destination share that reservation. This conservative allocation accounting is separate from actual process RSS and the report allowance; exhaustion returns a typed `native-index-capacity` refusal before another destination is retained.
+Format failures name `binary_path` and slice-selection failures name `binary_architecture`; capacity refusals remain typed resource errors whose `reported_limits` name the exceeded budget (`boundary`, the capacity reason) and its `maximum`, with `details.refusal.unit` naming the unit the budget counts (`"entries"`, `"bytes"` or `"frames"`). Failed linking preserves the metadata source identity, validated counts, selected binary path/architecture and its SHA-256 when observed, plus prior producer observations. It never publishes an incomplete native table as complete. The binary input is bounded to 1 GiB. The virtual-pointer index has the same 1 GiB estimated representation allowance ([#14175](https://github.com/morluto/rea/issues/14175) reports a real Unity 6 arm64 build that exceeds it), reserving 2 KiB per distinct virtual destination before insertion for retained Maps and finish-time lookup storage. Repeated declarations of one destination share that reservation. This conservative allocation accounting is separate from actual process RSS and the report allowance; exhaustion returns a typed `native-index-capacity` refusal before another destination is retained.
 
 Scans yield cooperatively in bounded batches. Name-address retention and reverse-trie construction are each limited to 65,536 entries/nodes and fallback module-array candidates to 64 (`native-index-capacity`); exceeding capacity does not prove absence. Rendered type text has a 64 MiB UTF-8 cache-workspace guard, separate from the 64 MiB encoded-report admission, and 64 nested rendering frames (`native-type-text-capacity` / `type-nesting-capacity`). Genuine cycles are malformed; unsupported type kinds are explicit coverage failures. Native row/text admission runs before allocation or retention. Unused generic parameter names are read on demand from the same stable metadata snapshot. There is no cross-inspection file cache; validated immutable Evidence is reused for session views.
 
@@ -588,7 +607,7 @@ were compiled into the native binary or how they behave at runtime.
 `verify:pcap`, because no real game metadata ships with the repository. Normal
 inspection does not need it.
 
-The follow-up was checked against the public Cpp2IL
+Metadata inventory was checked against the public Cpp2IL
 [`Simple_2022_3_35` sample](https://github.com/SamboyCoding/Cpp2IL/tree/b5ad444b82267cb1e4b88b8b373c008105bdea52/TestFiles/Simple_2022_3_35):
 version 31, 1,892,268 bytes, SHA-256
 `2441635a7c234a1a34deccc6a9906d6f5abcbdab078a38b2bf488a52a4962c48`.
@@ -596,10 +615,3 @@ An independent byte-layout oracle matched all 36 images, 2,468 types and 12,409
 methods. Corresponding managed DLLs independently matched names and ownership
 for 35 images, 2,463 types and 12,406 methods; the generated image has no matching
 DLL. This does not establish real-producer coverage for versions 29 or 39.
-
-Compact native summaries omit the `binary.code_gen_modules` table and keep its
-count in `counts.code_gen_modules`. Query `collection: "code_gen_modules"`
-with batch `image_indices` or source `indices`, selected `fields` and pagination.
-Module row `index` is its retained collection position; `image` joins the
-metadata image collection. Scalar registration facts and both source identities
-remain inline. Complete Evidence retains the original full table.

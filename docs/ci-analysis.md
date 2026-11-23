@@ -84,7 +84,7 @@ The retained JSON error has category `unsupported_target`; the step exits nonzer
 Restore the correct path before using the example normally.
 
 To exercise partial analysis, append `export const broken = ;` to the demo's
-JavaScript. REA 6.7.0 retains `data.normalized_result.statistics.parse_failures`
+JavaScript. The pinned REA retains `data.normalized_result.statistics.parse_failures`
 and an incomplete-coverage limitation while the operation can still exit zero.
 Inspect those facts instead of treating process success as full coverage. The
 report JSON and diagnostics remain unfiltered in all three cases.
