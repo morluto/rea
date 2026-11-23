@@ -1,11 +1,16 @@
 import { expect, it } from "vitest";
-import { readGoBinaryImage } from "../../go/GoBinaryImage.js";
-import { readPeImage } from "../../domain/native/peImage.js";
+import {
+  readPeImage,
+  readPeImageFromReader,
+} from "../../domain/native/peImage.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";
 import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { readBinaryContainer } from "../../domain/native/readBinaryContainer.js";
 import {
+  goByteSource,
+  readGoFixture,
+  GO_MODULE_TEXT,
   createGoBinaryFixture,
   setGoPeVirtualSize,
 } from "../../../tests/fixtures/go/image.js";
@@ -79,35 +84,55 @@ it.each(["NE", "LE", "LX"])(
 
 it.each([32, 64] as const)(
   "uses raw-size fallback for PE%d Go build-info and keeps RVA mappings intact",
-  (bits) => {
+  async (bits) => {
     for (const encoding of ["inline", "pointer"] as const) {
       const fixture = createGoBinaryFixture({ format: "pe", bits, encoding });
-      const expected = readGoBinaryImage(fixture.bytes).build_info;
-      expect(expected).toMatchObject({ go_version: "go1.26.0" });
       setGoPeVirtualSize(fixture.bytes, 0);
 
-      const container = readPeImage(fixture.bytes);
+      const container = await readPeImageFromReader(
+        goByteSource(fixture.bytes),
+      );
       expect(container.sections[0]).toMatchObject({
         name: ".data",
         offset: 1024,
         size: 2048,
         file_backed: true,
+        virtual_address: 0x400,
+        virtual_size: 0,
+        raw_size: 2048,
+        characteristics: 0xc0000040,
       });
       expect(container.mappings[0]).toMatchObject({
         address: 0x10400n,
         offset: 1024,
         size: 2048,
       });
-      expect(container.sections[0]).toMatchObject({
-        virtual_address: 0x400,
-        virtual_size: 0,
-        raw_size: 2048,
-        characteristics: 0xc0000040,
-      });
-      expect(container).not.toHaveProperty("data_ranges");
       expect(container.image_base).toBe(0x10000n);
       expect(container.executable_mappings).toEqual([]);
-      expect(readGoBinaryImage(fixture.bytes).build_info).toEqual(expected);
+      expect((await readGoFixture(fixture.bytes)).build_info).toMatchObject({
+        go_version: "go1.26.0",
+        encoding,
+        header_offset: fixture.headerOffset,
+        module_text: GO_MODULE_TEXT,
+        module: {
+          path: "example.com/tool/cmd/tool",
+          main: { path: "example.com/tool", version: "(devel)" },
+          dependencies: [
+            {
+              path: "example.com/dependency",
+              version: "v1.2.3",
+              replacement: { path: "../dependency" },
+            },
+          ],
+        },
+        go_version_bytes_base64: Buffer.from("go1.26.0").toString("base64"),
+        module_bytes_base64: fixture.moduleBytes.toString("base64"),
+        version_location: { offset: fixture.versionOffset, bytes: 8 },
+        module_location: {
+          offset: fixture.moduleOffset,
+          bytes: fixture.moduleBytes.length,
+        },
+      });
     }
   },
 );
@@ -133,9 +158,9 @@ it.each([32, 64] as const)(
   },
 );
 
-it("keeps Go fallback candidates when a PE section has no printable name", () => {
+it("keeps Go fallback candidates when a PE section has no printable name", async () => {
   const fixture = createGoBinaryFixture({ format: "pe", bits: 64 });
-  const expected = readGoBinaryImage(fixture.bytes).build_info;
+  const expected = (await readGoFixture(fixture.bytes)).build_info;
   expect(expected).toMatchObject({ go_version: "go1.26.0" });
   const pe = fixture.bytes.readUInt32LE(0x3c);
   const section = pe + 24 + fixture.bytes.readUInt16LE(pe + 20);
@@ -146,12 +171,12 @@ it("keeps Go fallback candidates when a PE section has no printable name", () =>
     name: "",
     characteristics: 0xc0000040,
   });
-  expect(readGoBinaryImage(fixture.bytes).build_info).toEqual(expected);
+  expect((await readGoFixture(fixture.bytes)).build_info).toEqual(expected);
 });
 
 it.each(["inline", "pointer"] as const)(
   "does not search PE raw alignment padding beyond a nonzero VirtualSize (%s)",
-  (encoding) => {
+  async (encoding) => {
     const fixture = createGoBinaryFixture({ format: "pe", bits: 64, encoding });
     // Put an otherwise valid, aligned record in the raw-only tail.
     fixture.bytes.copy(
@@ -176,7 +201,7 @@ it.each(["inline", "pointer"] as const)(
       raw_size: 2048,
     });
     expect(container).not.toHaveProperty("data_ranges");
-    expect(readGoBinaryImage(fixture.bytes).build_info).toBeNull();
+    expect((await readGoFixture(fixture.bytes)).build_info).toBeNull();
   },
 );
 
@@ -230,5 +255,29 @@ it.each([0xffff, 0x8664 ^ 0x7b79])(
       architecture: `pe-machine-${machine}`,
       bits: 64,
     });
+  },
+);
+
+it.each([0x014c, 0x8664])(
+  "admits a streamed empty section table at EOF for machine %s",
+  async (machine) => {
+    const bytes = pe(machine);
+    const peOffset = bytes.readUInt32LE(60);
+    const image = bytes.subarray(
+      0,
+      peOffset + 24 + bytes.readUInt16LE(peOffset + 20),
+    );
+    const reads: number[] = [];
+    const streamed = await readPeImageFromReader({
+      size: image.length,
+      prefix: image.subarray(0, 64),
+      readRange: async (offset, length) => {
+        reads.push(length);
+        return image.subarray(offset, offset + length);
+      },
+    });
+    expect(streamed).toEqual(readPeImage(image));
+    expect(streamed.sections).toEqual([]);
+    expect(reads.every((length) => length > 0)).toBe(true);
   },
 );

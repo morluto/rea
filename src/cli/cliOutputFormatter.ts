@@ -22,10 +22,11 @@
  * IN THE SOFTWARE.
  */
 import { createRequire } from "node:module";
+import { edgeSpan } from "../kernel/trimEdges.js";
 
 import { encode as encodeToon } from "@toon-format/toon";
 
-import type { CliOutputFormat } from "../cliOutput.js";
+import type { CliOutputFormat } from "./cliOutput.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -384,13 +385,29 @@ const escapeTableCell = (value: string): string =>
 const encodeMarkdownWhitespace = (whitespace: string): string =>
   whitespace.replace(/\s/g, (character) => `&#${character.charCodeAt(0)};`);
 
+const isAsciiInlineSpace = (character: string): boolean =>
+  character === " " || character === "\t";
+
+const encodeMarkdownEdges = (
+  value: string,
+  predicate: (character: string) => boolean,
+): string => {
+  const { start, end } = edgeSpan(value, predicate);
+  return start === 0 && end === value.length
+    ? value
+    : encodeMarkdownWhitespace(value.slice(0, start)) +
+        value.slice(start, end) +
+        encodeMarkdownWhitespace(value.slice(end));
+};
+
 /** Heading and paragraph facts are literal data, including block syntax. */
 const escapeMarkdownText = (value: string): string =>
-  escapeTableCell(value)
-    .replace(/^(\s*)([-+=])/, "$1\\$2")
-    .replace(/^(\s*\d{1,9})([.)])(?=\s|$)/, "$1\\$2")
-    .replace(/^[ \t]+/, encodeMarkdownWhitespace)
-    .replace(/[ \t]+$/u, encodeMarkdownWhitespace);
+  encodeMarkdownEdges(
+    escapeTableCell(value)
+      .replace(/^(\s*)([-+=])/, "$1\\$2")
+      .replace(/^(\s*\d{1,9})([.)])(?=\s|$)/, "$1\\$2"),
+    isAsciiInlineSpace,
+  );
 
 const markdownHeading = (path: readonly string[]): string =>
   `## ${escapeMarkdownText(path.join("."))}\n\n`;
@@ -398,21 +415,10 @@ const markdownHeading = (path: readonly string[]): string =>
 const markdownEdgeWhitespace = /[\t \p{Z}\ufeff]/u;
 
 /** Encode edge spacing that Markdown can represent as character references. */
-const encodeMarkdownTableCell = (value: string): string => {
-  const escaped = escapeTableCell(value);
-  let start = 0;
-  let end = escaped.length;
-  // Scan each edge once instead of retrying a trailing match at every suffix.
-  while (start < end && markdownEdgeWhitespace.test(escaped[start]!))
-    start += 1;
-  while (end > start && markdownEdgeWhitespace.test(escaped[end - 1]!))
-    end -= 1;
-  return (
-    encodeMarkdownWhitespace(escaped.slice(0, start)) +
-    escaped.slice(start, end) +
-    encodeMarkdownWhitespace(escaped.slice(end))
+const encodeMarkdownTableCell = (value: string): string =>
+  encodeMarkdownEdges(escapeTableCell(value), (character) =>
+    markdownEdgeWhitespace.test(character),
   );
-};
 
 const renderTable = (
   headers: readonly string[],

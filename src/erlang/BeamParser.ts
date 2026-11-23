@@ -1,5 +1,9 @@
 import { isUtf8 } from "node:buffer";
-import { ArtifactReaderFailure } from "../resources/index.js";
+import { createHash } from "node:crypto";
+import {
+  ArtifactReaderFailure,
+  type StableArtifactHandle,
+} from "../resources/index.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
 import { decodeLimit } from "../domain/parseFailure.js";
 import {
@@ -18,13 +22,21 @@ const LIMITATIONS = [
   "Atom names are structural table entries; they do not authenticate the originating compiler or module checksum.",
 ] as const;
 
-const requireRange = (bytes: Buffer, offset: number, length: number): void => {
+const STREAM_CHUNK_BYTES = 1024 * 1024;
+const RETAINED_TABLE_CHUNKS = new Set(["AtU8", "Atom", "ExpT", "ImpT", "FunT"]);
+const CODE_HEADER_BYTES = 20;
+
+const requireRange = (
+  fileSize: number,
+  offset: number,
+  length: number,
+): void => {
   if (
     !Number.isSafeInteger(offset) ||
     !Number.isSafeInteger(length) ||
     offset < 0 ||
     length < 0 ||
-    offset > bytes.length - length
+    offset > fileSize - length
   )
     fail(
       `BEAM range ${String(offset)} + ${String(length)} leaves the artifact.`,
@@ -163,30 +175,26 @@ const frameRows = (payload: Buffer, width: number, label: string) => {
   return { reader, count, rowBytes, trailingBytes: payload.length - bytesRead };
 };
 
-const parseRows = ({
-  reader,
-  count,
-  rowBytes,
-}: ReturnType<typeof frameRows>): number[][] => {
-  const rows: number[][] = [];
-  for (let index = 0; index < count; index += 1) {
-    const row: number[] = [];
-    const start = 4 + index * rowBytes;
-    for (let fieldOffset = 0; fieldOffset < rowBytes; fieldOffset += 4)
-      row.push(reader.u32(start + fieldOffset));
-    rows.push(row);
-  }
+const mapRows = <Row>(
+  { reader, count, rowBytes }: ReturnType<typeof frameRows>,
+  project: (reader: BinaryReader, start: number) => Row,
+): Row[] => {
+  const rows: Row[] = [];
+  for (let index = 0; index < count; index += 1)
+    rows.push(project(reader, 4 + index * rowBytes));
   return rows;
 };
 
 const parseCode = (
-  payload: Buffer,
+  header: Buffer,
+  payloadLength: number,
   chunkOffset: number,
 ): NonNullable<ErlangBeam["code"]> => {
-  if (payload.length < 20) fail("BEAM Code chunk is truncated.");
-  const reader = new BinaryReader(payload, false, "beam");
+  if (payloadLength < CODE_HEADER_BYTES || header.length < CODE_HEADER_BYTES)
+    fail("BEAM Code chunk is truncated.");
+  const reader = new BinaryReader(header, false, "beam");
   const infoSize = reader.u32(0);
-  if (infoSize < 16 || infoSize > payload.length - 4)
+  if (infoSize < 16 || infoSize > payloadLength - 4)
     fail("BEAM Code header size is invalid.");
   const instructionsOffset = 4 + infoSize;
   return {
@@ -197,66 +205,26 @@ const parseCode = (
     extra_header_bytes: infoSize - 16,
     instructions: {
       offset: chunkOffset + 8 + instructionsOffset,
-      bytes: payload.length - instructionsOffset,
+      bytes: payloadLength - instructionsOffset,
     },
   };
 };
 
-/** Decode one FOR1/BEAM IFF container into bounded chunk and table facts. */
-export const parseErlangBeam = (
-  bytes: Buffer,
+interface RetainedBeamChunk {
+  readonly payload: Buffer;
+  readonly payloadLength: number;
+  readonly offset: number;
+}
+
+const buildErlangBeamReport = (
+  fileSize: number,
+  formSize: number,
+  formEnd: number,
+  chunks: ErlangBeam["chunks"],
+  payloads: ReadonlyMap<string, RetainedBeamChunk>,
   artifact: ErlangBeam["artifact"],
   input: InspectErlangBeamInput,
 ): ErlangBeam => {
-  requireRange(bytes, 0, 12);
-  if (bytes.subarray(0, 4).toString("latin1") !== "FOR1")
-    fail("Expected a FOR1 IFF container.");
-  const carrier = new BinaryReader(bytes, false, "beam");
-  const formSize = carrier.u32(4);
-  if (formSize < 4) fail("BEAM form size is shorter than the BEAM tag.");
-  requireRange(bytes, 8, formSize);
-  if (bytes.subarray(8, 12).toString("latin1") !== "BEAM")
-    fail("Expected a BEAM form type.");
-  const formEnd = 8 + formSize;
-  const form = new BinaryReader(
-    carrier.range(0, formEnd, "BEAM form"),
-    false,
-    "beam",
-  );
-  const chunks: ErlangBeam["chunks"] = [];
-  const payloads = new Map<string, { payload: Buffer; offset: number }>();
-  let at = 12;
-  while (at < formEnd) {
-    if (formEnd - at < 8) fail("BEAM chunk header is truncated.");
-    const size = form.u32(at + 4);
-    const payloadOffset = at + 8;
-    if (size > formEnd - payloadOffset)
-      fail("BEAM chunk payload exceeds the form.");
-    const padded = payloadOffset + size + ((4 - (size % 4)) % 4);
-    if (padded > formEnd) fail("BEAM chunk padding exceeds the form.");
-    if (chunks.length >= input.max_chunks)
-      throw decodeLimit(
-        "beam",
-        `BEAM form exceeds the ${String(input.max_chunks)}-chunk budget.`,
-        { name: "max_chunks", maximum: input.max_chunks },
-      );
-    const name = form.range(at, 4, "BEAM chunk name").toString("latin1");
-    const payload = form.range(payloadOffset, size, "BEAM chunk payload");
-    chunks.push({
-      index: chunks.length,
-      name,
-      location: { offset: at, bytes: padded - at },
-      payload: {
-        location: { offset: payloadOffset, bytes: size },
-        bytes: size,
-        sha256: sha256Hex(payload),
-      },
-    });
-    // OTP's loader replaces the selected payload on each matching chunk.
-    // Keep every occurrence above; decode the last occurrence of each name.
-    payloads.set(name, { payload, offset: at });
-    at = padded;
-  }
   const utf8AtomChunk = payloads.get("AtU8");
   const legacyAtomChunk = payloads.get("Atom");
   // Historical OTP selects Atom when AtU8 has no payload. Without a legacy
@@ -307,43 +275,53 @@ export const parseErlangBeam = (
   const exports =
     exportTable === null
       ? null
-      : parseRows(exportTable).map((row) => ({
-          function_index: row[0]!,
-          function: atomAt(atoms, row[0]!),
-          arity: row[1]!,
-          label: row[2]!,
-        }));
+      : mapRows(exportTable, (reader, start) => {
+          const functionIndex = reader.u32(start);
+          return {
+            function_index: functionIndex,
+            function: atomAt(atoms, functionIndex),
+            arity: reader.u32(start + 4),
+            label: reader.u32(start + 8),
+          };
+        });
   const imports =
     importTable === null
       ? null
-      : parseRows(importTable).map((row) => ({
-          module_index: row[0]!,
-          module: atomAt(atoms, row[0]!),
-          function_index: row[1]!,
-          function: atomAt(atoms, row[1]!),
-          arity: row[2]!,
-        }));
+      : mapRows(importTable, (reader, start) => {
+          const moduleIndex = reader.u32(start);
+          const functionIndex = reader.u32(start + 4);
+          return {
+            module_index: moduleIndex,
+            module: atomAt(atoms, moduleIndex),
+            function_index: functionIndex,
+            function: atomAt(atoms, functionIndex),
+            arity: reader.u32(start + 8),
+          };
+        });
   // A four-byte zero count remains a decoded, explicitly empty table.
   const lambdas =
     lambdaTable === null
       ? null
-      : parseRows(lambdaTable).map((row) => ({
-          function_index: row[0]!,
-          function: atomAt(atoms, row[0]!),
-          arity: row[1]!,
-          label: row[2]!,
-          index: row[3]!,
-          free_vars: row[4]!,
-          old_unique: row[5]!,
-        }));
+      : mapRows(lambdaTable, (reader, start) => {
+          const functionIndex = reader.u32(start);
+          return {
+            function_index: functionIndex,
+            function: atomAt(atoms, functionIndex),
+            arity: reader.u32(start + 4),
+            label: reader.u32(start + 8),
+            index: reader.u32(start + 12),
+            free_vars: reader.u32(start + 16),
+            old_unique: reader.u32(start + 20),
+          };
+        });
   const codeChunk = payloads.get("Code");
   const code =
     codeChunk === undefined
       ? null
-      : parseCode(codeChunk.payload, codeChunk.offset);
+      : parseCode(codeChunk.payload, codeChunk.payloadLength, codeChunk.offset);
   // A conformant FOR1 form sizes itself to the file; any surplus bytes trail an
   // unexamined region. Disclose them instead of reporting complete coverage.
-  const trailingBytes = bytes.length - formEnd;
+  const trailingBytes = fileSize - formEnd;
   const unexamined: string[] = [];
   if (trailingBytes > 0)
     unexamined.push(
@@ -380,4 +358,189 @@ export const parseErlangBeam = (
     },
     limitations: [...LIMITATIONS, ...unexamined],
   };
+};
+
+/** Decode one FOR1/BEAM IFF container into bounded chunk and table facts. */
+export const parseErlangBeam = (
+  bytes: Buffer,
+  artifact: ErlangBeam["artifact"],
+  input: InspectErlangBeamInput,
+): ErlangBeam => {
+  requireRange(bytes.length, 0, 12);
+  if (bytes.subarray(0, 4).toString("latin1") !== "FOR1")
+    fail("Expected a FOR1 IFF container.");
+  const carrier = new BinaryReader(bytes, false, "beam");
+  const formSize = carrier.u32(4);
+  if (formSize < 4) fail("BEAM form size is shorter than the BEAM tag.");
+  requireRange(bytes.length, 8, formSize);
+  if (bytes.subarray(8, 12).toString("latin1") !== "BEAM")
+    fail("Expected a BEAM form type.");
+  const formEnd = 8 + formSize;
+  const form = new BinaryReader(
+    carrier.range(0, formEnd, "BEAM form"),
+    false,
+    "beam",
+  );
+  const chunks: ErlangBeam["chunks"] = [];
+  const payloads = new Map<string, RetainedBeamChunk>();
+  let at = 12;
+  while (at < formEnd) {
+    if (formEnd - at < 8) fail("BEAM chunk header is truncated.");
+    const size = form.u32(at + 4);
+    const payloadOffset = at + 8;
+    if (size > formEnd - payloadOffset)
+      fail("BEAM chunk payload exceeds the form.");
+    const padded = payloadOffset + size + ((4 - (size % 4)) % 4);
+    if (padded > formEnd) fail("BEAM chunk padding exceeds the form.");
+    if (chunks.length >= input.max_chunks)
+      throw decodeLimit(
+        "beam",
+        `BEAM form exceeds the ${String(input.max_chunks)}-chunk budget.`,
+        { name: "max_chunks", maximum: input.max_chunks },
+      );
+    const name = form.range(at, 4, "BEAM chunk name").toString("latin1");
+    const payload = form.range(payloadOffset, size, "BEAM chunk payload");
+    chunks.push({
+      index: chunks.length,
+      name,
+      location: { offset: at, bytes: padded - at },
+      payload: {
+        location: { offset: payloadOffset, bytes: size },
+        bytes: size,
+        sha256: sha256Hex(payload),
+      },
+    });
+    // OTP's loader replaces the selected payload on each matching chunk.
+    // Keep every occurrence above; decode the last occurrence of each name.
+    payloads.set(name, { payload, payloadLength: size, offset: at });
+    at = padded;
+  }
+  return buildErlangBeamReport(
+    bytes.length,
+    formSize,
+    formEnd,
+    chunks,
+    payloads,
+    artifact,
+    input,
+  );
+};
+
+const streamChunkDigest = async (
+  handle: StableArtifactHandle,
+  payloadOffset: number,
+  size: number,
+  retainPrefixBytes: number,
+): Promise<{ readonly sha256: string; readonly prefix: Buffer }> => {
+  const hash = createHash("sha256");
+  const prefix = Buffer.alloc(Math.min(size, retainPrefixBytes));
+  for (let offset = 0; offset < size; offset += STREAM_CHUNK_BYTES) {
+    const length = Math.min(STREAM_CHUNK_BYTES, size - offset);
+    const part = await handle.readRange(payloadOffset + offset, length);
+    if (part.length !== length)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        "BEAM payload ended before its admitted extent.",
+        { integrityCheck: "read-coverage" },
+      );
+    hash.update(part);
+    if (offset < prefix.length)
+      part.copy(
+        prefix,
+        offset,
+        0,
+        Math.min(part.length, prefix.length - offset),
+      );
+  }
+  return { sha256: hash.digest("hex"), prefix };
+};
+
+/**
+ * Decode one FOR1/BEAM IFF container from a verified random-access handle,
+ * retaining only decoded table chunks and the 20-byte Code header while
+ * streaming SHA-256 digests over bulk chunks such as Code, Dbgi, and LitT.
+ */
+export const parseErlangBeamFromHandle = async (
+  handle: StableArtifactHandle,
+  artifact: ErlangBeam["artifact"],
+  input: InspectErlangBeamInput,
+): Promise<ErlangBeam> => {
+  requireRange(handle.size, 0, 12);
+  const header =
+    handle.prefix.length >= 12
+      ? handle.prefix.subarray(0, 12)
+      : await handle.readRange(0, 12);
+  if (header.subarray(0, 4).toString("latin1") !== "FOR1")
+    fail("Expected a FOR1 IFF container.");
+  const formSize = new BinaryReader(header, false, "beam").u32(4);
+  if (formSize < 4) fail("BEAM form size is shorter than the BEAM tag.");
+  requireRange(handle.size, 8, formSize);
+  if (header.subarray(8, 12).toString("latin1") !== "BEAM")
+    fail("Expected a BEAM form type.");
+  const formEnd = 8 + formSize;
+  const chunks: ErlangBeam["chunks"] = [];
+  const payloads = new Map<string, RetainedBeamChunk>();
+  let at = 12;
+  while (at < formEnd) {
+    if (formEnd - at < 8) fail("BEAM chunk header is truncated.");
+    const chunkHeader = await handle.readRange(at, 8);
+    const size = new BinaryReader(chunkHeader, false, "beam").u32(4);
+    const payloadOffset = at + 8;
+    if (size > formEnd - payloadOffset)
+      fail("BEAM chunk payload exceeds the form.");
+    const padded = payloadOffset + size + ((4 - (size % 4)) % 4);
+    if (padded > formEnd) fail("BEAM chunk padding exceeds the form.");
+    if (chunks.length >= input.max_chunks)
+      throw decodeLimit(
+        "beam",
+        `BEAM form exceeds the ${String(input.max_chunks)}-chunk budget.`,
+        { name: "max_chunks", maximum: input.max_chunks },
+      );
+    const name = chunkHeader.subarray(0, 4).toString("latin1");
+    let sha256: string;
+    if (RETAINED_TABLE_CHUNKS.has(name)) {
+      const payload =
+        size === 0
+          ? Buffer.alloc(0)
+          : await handle.readRange(payloadOffset, size);
+      sha256 = sha256Hex(payload);
+      payloads.set(name, { payload, payloadLength: size, offset: at });
+    } else if (name === "Code") {
+      const streamed = await streamChunkDigest(
+        handle,
+        payloadOffset,
+        size,
+        CODE_HEADER_BYTES,
+      );
+      sha256 = streamed.sha256;
+      payloads.set(name, {
+        payload: streamed.prefix,
+        payloadLength: size,
+        offset: at,
+      });
+    } else {
+      const streamed = await streamChunkDigest(handle, payloadOffset, size, 0);
+      sha256 = streamed.sha256;
+    }
+    chunks.push({
+      index: chunks.length,
+      name,
+      location: { offset: at, bytes: padded - at },
+      payload: {
+        location: { offset: payloadOffset, bytes: size },
+        bytes: size,
+        sha256,
+      },
+    });
+    at = padded;
+  }
+  return buildErlangBeamReport(
+    handle.size,
+    formSize,
+    formEnd,
+    chunks,
+    payloads,
+    artifact,
+    input,
+  );
 };

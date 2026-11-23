@@ -10,11 +10,11 @@ import {
   API_CONTRACT_PROVIDER,
 } from "../domain/apiContract/apiContract.js";
 import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
 import {
   deliverWithService,
-  registerContractCommand,
   type EvidenceInspectionService,
-} from "./contractCommand.js";
+} from "./contractCommandRunners.js";
 
 /** Standard one-shot publication keeps complete inventory Evidence for later offline pages. */
 export const registerApiContractCommand = (

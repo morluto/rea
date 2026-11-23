@@ -21,7 +21,7 @@ import { err, ok } from "../../../src/domain/result.js";
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { gdbMcpServer } from "../../fixtures/debuggerMcp.js";
-import type { GdbToolOptions } from "../../../src/server/serviceToolBindings.js";
+import type { GdbToolOptions } from "../../../src/server/debuggerToolBindings.js";
 import {
   createBinarySessionTargets,
   createCacheProvider,

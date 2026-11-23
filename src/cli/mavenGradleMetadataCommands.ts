@@ -3,10 +3,8 @@ import type { Logger } from "pino";
 import { createMavenGradleMetadataService } from "../composition/mavenGradleMetadata.js";
 import { MAVEN_GRADLE_METADATA_TOOL_CONTRACTS } from "../contracts/java/mavenGradleMetadataToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  inspectWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { inspectWithService } from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 /** Inspect operator-selected POM or module metadata through the same shared workflow as MCP. */

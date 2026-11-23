@@ -60,7 +60,7 @@ if (await pathExists(join(root, "src"))) {
     "dist/cli-runtime/mcpDoctor.js",
     "dist/mcpDoctor.js",
     "dist/cli.js",
-    "dist/cliOutput.js",
+    "dist/cli/cliOutput.js",
     "skills/reverse-engineer-anything/SKILL.md",
   ])
     await access(join(root, path));

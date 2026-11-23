@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   ArtifactReaderFailure,
   assertArtifactReadActive,
@@ -22,10 +23,8 @@ import {
   type ImageSection,
   type BinaryContainer,
 } from "../../domain/binaryContainer.js";
-import {
-  readElfImage,
-  readElfImageCooperative,
-} from "../../domain/native/elfImage.js";
+import { readElfImageFromReader } from "../../domain/native/elfImage.js";
+import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
@@ -34,6 +33,7 @@ type Report = KernelModule;
 type Limitations = string[];
 
 const MAGIC = Buffer.from(MODULE_SIGNATURE_MAGIC, "latin1");
+const SIGNATURE_HASH_CHUNK_BYTES = 1 << 20;
 const MODULE_CODECS = ["gzip", "xz", "zstd"] as const;
 
 const exceeds = (examined: number, maxEntries: number): void => {
@@ -165,35 +165,15 @@ interface SectionUse {
   readonly limitations: Limitations;
 }
 
-const parseModinfo = (
-  bytes: Buffer,
-  section: ElfSection | undefined,
+const parseModinfoStored = (
+  stored: Buffer,
+  location: { offset: number; bytes: number },
+  compressed: boolean,
   use: SectionUse,
   examined: { count: number },
   input: InspectKernelModuleInput,
 ): NonNullable<Report["modinfo"]> => {
-  if (section === undefined)
-    return {
-      status: use.namesComplete ? "absent" : "unknown",
-      location: null,
-      sha256: null,
-      entries: [],
-      reason: null,
-    };
-  const location = locationOf(section);
-  if (section.type === 8 || location === null || !inFile(section, bytes.length))
-    return {
-      status: "malformed",
-      location: null,
-      sha256: null,
-      entries: [],
-      reason: "modinfo_section_not_file_backed",
-    };
-  const stored = bytes.subarray(
-    location.offset,
-    location.offset + location.bytes,
-  );
-  if (section.compressed)
+  if (compressed)
     return {
       status: "unsupported",
       location,
@@ -278,44 +258,19 @@ const parseModinfo = (
   };
 };
 
-const parseVersions = (
-  bytes: Buffer,
-  section: ElfSection | undefined,
+const parseVersionsStored = (
+  stored: Buffer,
+  location: { offset: number; bytes: number },
+  compressed: boolean,
   bits: 32 | 64,
   little: boolean,
-  use: SectionUse,
   examined: { count: number },
   maxEntries: number,
 ): NonNullable<Report["versions"]> => {
   const layout =
     bits === 64 ? "elf64_unsigned_long_name56" : "elf32_unsigned_long_name60";
   const entryBytes = KERNEL_MODULE_VERSION_ENTRY_BYTES;
-  if (section === undefined)
-    return {
-      status: use.namesComplete ? "absent" : "unknown",
-      layout,
-      entry_bytes: entryBytes,
-      location: null,
-      sha256: null,
-      entries: [],
-      reason: null,
-    };
-  const location = locationOf(section);
-  if (section.type === 8 || location === null || !inFile(section, bytes.length))
-    return {
-      status: "malformed",
-      layout,
-      entry_bytes: entryBytes,
-      location: null,
-      sha256: null,
-      entries: [],
-      reason: "versions_section_not_file_backed",
-    };
-  const stored = bytes.subarray(
-    location.offset,
-    location.offset + location.bytes,
-  );
-  if (section.compressed)
+  if (compressed)
     return {
       status: "unsupported",
       layout,
@@ -386,7 +341,7 @@ const presence = (
 };
 
 const sized = (
-  bytes: Buffer,
+  fileLength: number,
   section: ElfSection | undefined,
   namesComplete: boolean,
   limitations: Limitations,
@@ -399,7 +354,7 @@ const sized = (
       bytes: null,
       compressed: null,
     };
-  if (!inFile(section, bytes.length) || section.type === 8) {
+  if (!inFile(section, fileLength) || section.type === 8) {
     limitations.push(
       `${label} is declared but not file-backed, so its size is unknown.`,
     );
@@ -423,36 +378,53 @@ const sized = (
   };
 };
 
-const parseSignature = (bytes: Buffer): Report["signature"] => {
+const parseSignatureTrailer = (
+  fileLength: number,
+  tail: Buffer,
+):
+  | { readonly done: true; readonly signature: Report["signature"] }
+  | {
+      readonly done: false;
+      readonly magic: { offset: number; bytes: number };
+      readonly info: NonNullable<NonNullable<Report["signature"]>["info"]>;
+      readonly pkcs7Offset: number;
+      readonly pkcs7Bytes: number;
+    } => {
   if (
-    bytes.length < MAGIC.length ||
-    !bytes.subarray(bytes.length - MAGIC.length).equals(MAGIC)
+    fileLength < MAGIC.length ||
+    !tail.subarray(tail.length - MAGIC.length).equals(MAGIC)
   )
     return {
-      status: "absent",
-      magic: null,
-      info: null,
-      pkcs7: null,
-      reason: null,
+      done: true,
+      signature: {
+        status: "absent",
+        magic: null,
+        info: null,
+        pkcs7: null,
+        reason: null,
+      },
     };
   const magic = {
-    offset: bytes.length - MAGIC.length,
+    offset: fileLength - MAGIC.length,
     bytes: MAGIC.length,
   };
   if (magic.offset < MODULE_SIGNATURE_INFO_BYTES)
     return {
-      status: "malformed",
-      magic,
-      info: null,
-      pkcs7: null,
-      reason: "signature_trailer_truncated",
+      done: true,
+      signature: {
+        status: "malformed",
+        magic,
+        info: null,
+        pkcs7: null,
+        reason: "signature_trailer_truncated",
+      },
     };
   const infoOffset = magic.offset - MODULE_SIGNATURE_INFO_BYTES;
-  const footer = new BinaryReader(
-    bytes.subarray(infoOffset, magic.offset),
-    false,
-    "elf",
+  const infoSlice = tail.subarray(
+    tail.length - MAGIC.length - MODULE_SIGNATURE_INFO_BYTES,
+    tail.length - MAGIC.length,
   );
+  const footer = new BinaryReader(infoSlice, false, "elf");
   const info = {
     location: { offset: infoOffset, bytes: MODULE_SIGNATURE_INFO_BYTES },
     algo: footer.u8(0),
@@ -466,19 +438,25 @@ const parseSignature = (bytes: Buffer): Report["signature"] => {
   const isPkcs7 = info.id_type === MODULE_SIGNATURE_PKCS7_ID_TYPE;
   if (info.sig_len >= infoOffset || (isPkcs7 && info.sig_len === 0))
     return {
-      status: "malformed",
-      magic,
-      info,
-      pkcs7: null,
-      reason: "signature_length_inconsistent",
+      done: true,
+      signature: {
+        status: "malformed",
+        magic,
+        info,
+        pkcs7: null,
+        reason: "signature_length_inconsistent",
+      },
     };
   if (!isPkcs7)
     return {
-      status: "unsupported",
-      magic,
-      info,
-      pkcs7: null,
-      reason: "signature_id_type_not_pkcs7",
+      done: true,
+      signature: {
+        status: "unsupported",
+        magic,
+        info,
+        pkcs7: null,
+        reason: "signature_id_type_not_pkcs7",
+      },
     };
   const parametersNonzero =
     info.algo !== 0 ||
@@ -488,20 +466,69 @@ const parseSignature = (bytes: Buffer): Report["signature"] => {
     info.pad.some((value) => value !== 0);
   if (parametersNonzero)
     return {
-      status: "malformed",
-      magic,
-      info,
-      pkcs7: null,
-      reason: "signature_parameters_nonzero",
+      done: true,
+      signature: {
+        status: "malformed",
+        magic,
+        info,
+        pkcs7: null,
+        reason: "signature_parameters_nonzero",
+      },
     };
-  const pkcs7 = bytes.subarray(infoOffset - info.sig_len, infoOffset);
   return {
-    status: "present",
+    done: false,
     magic,
     info,
+    pkcs7Offset: infoOffset - info.sig_len,
+    pkcs7Bytes: info.sig_len,
+  };
+};
+
+const readSourceRange = async (
+  source: NativeByteSource,
+  offset: number,
+  length: number,
+): Promise<Buffer> => {
+  if (length === 0) return Buffer.alloc(0);
+  const { prefix } = source;
+  if (prefix !== undefined && offset + length <= prefix.length)
+    return prefix.subarray(offset, offset + length);
+  const bytes = await source.readRange(offset, length);
+  if (bytes.length !== length)
+    throw new ArtifactReaderFailure(
+      "format",
+      "Kernel module ended before the admitted file range.",
+    );
+  return bytes;
+};
+
+const parseSignatureFromSource = async (
+  source: NativeByteSource,
+  signal: AbortSignal | undefined,
+): Promise<Report["signature"]> => {
+  const tailLen = Math.min(
+    source.size,
+    MAGIC.length + MODULE_SIGNATURE_INFO_BYTES,
+  );
+  const tail = await readSourceRange(source, source.size - tailLen, tailLen);
+  const trailer = parseSignatureTrailer(source.size, tail);
+  if (trailer.done) return trailer.signature;
+
+  const hash = createHash("sha256");
+  const end = trailer.pkcs7Offset + trailer.pkcs7Bytes;
+  for (let offset = trailer.pkcs7Offset; offset < end;) {
+    assertArtifactReadActive(signal);
+    const length = Math.min(end - offset, SIGNATURE_HASH_CHUNK_BYTES);
+    hash.update(await readSourceRange(source, offset, length));
+    offset += length;
+  }
+  return {
+    status: "present",
+    magic: trailer.magic,
+    info: trailer.info,
     pkcs7: {
-      location: { offset: infoOffset - info.sig_len, bytes: info.sig_len },
-      sha256: sha256Hex(pkcs7),
+      location: { offset: trailer.pkcs7Offset, bytes: trailer.pkcs7Bytes },
+      sha256: hash.digest("hex"),
     },
     reason: null,
   };
@@ -515,15 +542,105 @@ const signatureLimitation = (signature: Report["signature"]): string => {
   return "The appended signature trailer was not accepted as an unvalidated PKCS#7 range.";
 };
 
-/** Decode kernel-module metadata from an admitted in-memory ELF image. */
-const parseKernelModuleImage = (
-  bytes: Buffer,
-  artifact: Report["artifact"],
-  input: InspectKernelModuleInput,
-  image: ReturnType<typeof readElfImage>,
-): Report => {
+const modinfoSectionLocation = (
+  section: ElfSection | undefined,
+  fileLength: number,
+  use: SectionUse,
+):
+  | { readonly ready: false; readonly result: NonNullable<Report["modinfo"]> }
+  | {
+      readonly ready: true;
+      readonly location: { offset: number; bytes: number };
+      readonly compressed: boolean;
+    } => {
+  if (section === undefined)
+    return {
+      ready: false,
+      result: {
+        status: use.namesComplete ? "absent" : "unknown",
+        location: null,
+        sha256: null,
+        entries: [],
+        reason: null,
+      },
+    };
+  const location = locationOf(section);
+  if (section.type === 8 || location === null || !inFile(section, fileLength))
+    return {
+      ready: false,
+      result: {
+        status: "malformed",
+        location: null,
+        sha256: null,
+        entries: [],
+        reason: "modinfo_section_not_file_backed",
+      },
+    };
+  return { ready: true, location, compressed: section.compressed };
+};
+
+const versionsSectionLocation = (
+  section: ElfSection | undefined,
+  fileLength: number,
+  bits: 32 | 64,
+  use: SectionUse,
+):
+  | { readonly ready: false; readonly result: NonNullable<Report["versions"]> }
+  | {
+      readonly ready: true;
+      readonly location: { offset: number; bytes: number };
+      readonly compressed: boolean;
+    } => {
+  const layout =
+    bits === 64 ? "elf64_unsigned_long_name56" : "elf32_unsigned_long_name60";
+  const entryBytes = KERNEL_MODULE_VERSION_ENTRY_BYTES;
+  if (section === undefined)
+    return {
+      ready: false,
+      result: {
+        status: use.namesComplete ? "absent" : "unknown",
+        layout,
+        entry_bytes: entryBytes,
+        location: null,
+        sha256: null,
+        entries: [],
+        reason: null,
+      },
+    };
+  const location = locationOf(section);
+  if (section.type === 8 || location === null || !inFile(section, fileLength))
+    return {
+      ready: false,
+      result: {
+        status: "malformed",
+        layout,
+        entry_bytes: entryBytes,
+        location: null,
+        sha256: null,
+        entries: [],
+        reason: "versions_section_not_file_backed",
+      },
+    };
+  return { ready: true, location, compressed: section.compressed };
+};
+
+interface KernelModulePrepared {
+  readonly facts: ReturnType<typeof headerFacts>;
+  readonly sections: readonly ElfSection[];
+  readonly namesComplete: boolean;
+  readonly limitations: Limitations;
+  readonly use: SectionUse;
+  readonly examined: { count: number };
+  readonly duplicateSections: () => boolean;
+  readonly modinfoSection: ElfSection | undefined;
+  readonly versionsSection: ElfSection | undefined;
+  readonly firstNamedSection: (name: string) => ElfSection | undefined;
+}
+
+const prepareKernelModule = (
+  image: Extract<BinaryContainer, { format: "elf" }>,
+): KernelModulePrepared => {
   const facts = headerFacts(image);
-  if (facts.type !== 1) return notApplicable(artifact, facts);
   const sections = image.sections.filter(
     (section): section is ElfSection => section.format === "elf",
   );
@@ -550,32 +667,49 @@ const parseKernelModuleImage = (
       "Linux's module loader (find_sec) reads the first section with the name.",
     );
   };
-  const modinfo = parseModinfo(
-    bytes,
-    firstNamedSection(".modinfo"),
+  const modinfoSection = firstNamedSection(".modinfo");
+  const versionsSection = firstNamedSection("__versions");
+  return {
+    facts,
+    sections,
+    namesComplete,
+    limitations,
     use,
     examined,
-    input,
-  );
-  const versions = parseVersions(
-    bytes,
-    firstNamedSection("__versions"),
-    image.bits,
-    image.byte_order === "little",
-    use,
+    duplicateSections: () => duplicateSections,
+    modinfoSection,
+    versionsSection,
+    firstNamedSection,
+  };
+};
+
+const finalizeKernelModule = (
+  fileLength: number,
+  artifact: Report["artifact"],
+  input: InspectKernelModuleInput,
+  prepared: KernelModulePrepared,
+  modinfo: NonNullable<Report["modinfo"]>,
+  versions: NonNullable<Report["versions"]>,
+  signature: Report["signature"],
+): Report => {
+  const {
+    facts,
+    sections,
+    namesComplete,
+    limitations,
     examined,
-    input.max_entries,
-  );
+    firstNamedSection,
+  } = prepared;
   const modulePresence = presence(
     firstNamedSection(".gnu.linkonce.this_module"),
     namesComplete,
-    bytes.length,
+    fileLength,
   );
   const ksymtabNamed = sections.filter(
     (section) => section.name?.startsWith("__ksymtab") === true,
   );
   const ksymtabSections = ksymtabNamed.filter(
-    (section) => section.type !== 8 && inFile(section, bytes.length),
+    (section) => section.type !== 8 && inFile(section, fileLength),
   );
   const unbacked = ksymtabNamed.length - ksymtabSections.length;
   if (unbacked > 0)
@@ -603,21 +737,20 @@ const parseKernelModuleImage = (
     limitations.push(
       "Section names are incomplete, so a missing .modinfo, __versions, this_module, __ksymtab, .init.text, or .exit.text section is unknown rather than absent.",
     );
-  const signature = parseSignature(bytes);
-  if (modinfo?.status === "absent")
+  if (modinfo.status === "absent")
     limitations.push("No .modinfo section was declared.");
-  if (versions?.status === "absent")
+  if (versions.status === "absent")
     limitations.push("No __versions section was declared.");
   limitations.push(signatureLimitation(signature));
   const initText = sized(
-    bytes,
+    fileLength,
     firstNamedSection(".init.text"),
     namesComplete,
     limitations,
     ".init.text",
   );
   const exitText = sized(
-    bytes,
+    fileLength,
     firstNamedSection(".exit.text"),
     namesComplete,
     limitations,
@@ -630,7 +763,7 @@ const parseKernelModuleImage = (
     section.entries.some((entry) => entry.status !== "observed");
   const coveragePartial =
     !namesComplete ||
-    duplicateSections ||
+    prepared.duplicateSections() ||
     unbacked > 0 ||
     ksymtab.some((section) => section.reason !== null) ||
     sectionIncomplete(modinfo) ||
@@ -670,36 +803,73 @@ const parseKernelModuleImage = (
   };
 };
 
-export const parseKernelModule = (
-  bytes: Buffer,
-  artifact: Report["artifact"],
-  input: InspectKernelModuleInput,
-): Report =>
-  moduleCompressionReport(bytes, artifact) ??
-  parseKernelModuleImage(
-    bytes,
-    artifact,
-    input,
-    readElfImage(bytes, "inspect_kernel_module"),
-  );
-
-/** Same report as {@link parseKernelModule}. Section names yield for `signal`. */
-export const parseKernelModuleCooperative = async (
-  bytes: Buffer,
+/** Decode kernel-module metadata positionally over a bounded file handle. */
+export const parseKernelModuleFromHandle = async (
+  source: NativeByteSource,
   artifact: Report["artifact"],
   input: InspectKernelModuleInput,
   signal?: AbortSignal,
 ): Promise<Report> => {
   assertArtifactReadActive(signal);
-  return (
-    moduleCompressionReport(bytes, artifact) ??
-    parseKernelModuleImage(
-      bytes,
-      artifact,
-      input,
-      await readElfImageCooperative(bytes, "inspect_kernel_module", () =>
-        yieldArtifactRead(signal),
-      ),
-    )
+  const magicProbe = await readSourceRange(source, 0, Math.min(source.size, 8));
+  const compressed = moduleCompressionReport(magicProbe, artifact);
+  if (compressed !== null) return compressed;
+  const image = await readElfImageFromReader(
+    source,
+    "inspect_kernel_module",
+    () => yieldArtifactRead(signal),
+  );
+  const facts = headerFacts(image);
+  if (facts.type !== 1) return notApplicable(artifact, facts);
+  const prepared = prepareKernelModule(image);
+  const modinfoLoc = modinfoSectionLocation(
+    prepared.modinfoSection,
+    source.size,
+    prepared.use,
+  );
+  const modinfo = modinfoLoc.ready
+    ? parseModinfoStored(
+        await readSourceRange(
+          source,
+          modinfoLoc.location.offset,
+          modinfoLoc.location.bytes,
+        ),
+        modinfoLoc.location,
+        modinfoLoc.compressed,
+        prepared.use,
+        prepared.examined,
+        input,
+      )
+    : modinfoLoc.result;
+  const versionsLoc = versionsSectionLocation(
+    prepared.versionsSection,
+    source.size,
+    image.bits,
+    prepared.use,
+  );
+  const versions = versionsLoc.ready
+    ? parseVersionsStored(
+        await readSourceRange(
+          source,
+          versionsLoc.location.offset,
+          versionsLoc.location.bytes,
+        ),
+        versionsLoc.location,
+        versionsLoc.compressed,
+        image.bits,
+        image.byte_order === "little",
+        prepared.examined,
+        input.max_entries,
+      )
+    : versionsLoc.result;
+  const signature = await parseSignatureFromSource(source, signal);
+  return finalizeKernelModule(
+    source.size,
+    artifact,
+    input,
+    prepared,
+    modinfo,
+    versions,
+    signature,
   );
 };

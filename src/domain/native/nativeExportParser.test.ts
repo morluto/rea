@@ -6,10 +6,12 @@ import {
   elfAliasedVersionImage,
   peExportImage,
 } from "../../../tests/fixtures/binaryDiagnostics/nativeExports.js";
+import { elfDynamicExportsImage } from "../../../tests/fixtures/binaryDiagnostics/elfDynamicExports.js";
 import * as nativeExportContracts from "./nativeExports.js";
 import { BinaryFormatFailure } from "../binaryContainer.js";
 import {
   parseNativeExports,
+  parseNativeExportsFromHandle,
   parseNativeExportsSteps,
 } from "./nativeExportParser.js";
 
@@ -292,6 +294,39 @@ it.each(["requirements", "definitions"] as const)(
     }
   },
 );
+
+it("ends an exhausted ELF name cache scope after one diagnostic", () => {
+  const suffix = "v".repeat(65_533);
+  const requirements = Array.from({ length: 43 }, (_, index) => ({
+    index: index + 2,
+    name: `${String(index).padStart(2, "0")}${suffix}`,
+  }));
+  const lastName = requirements.at(-1)!.name;
+  const result = parse(
+    elfExportImage({
+      symbols: [{ name: "kept", version: 2 }],
+      versionRequirements: [
+        ...requirements,
+        { index: 45, name: lastName },
+        { index: 46, name: lastName },
+      ],
+    }),
+  );
+  expect(result).toMatchObject({
+    exports: [{ name: "kept", version: { index: 2, name: null } }],
+    coverage: { status: "partial", examined_entries: 1, exports: 1 },
+    issues: [
+      {
+        code: "version_unresolved",
+        message: expect.stringContaining("16 MiB cache allowance"),
+      },
+      {
+        code: "version_unresolved",
+        message: expect.stringContaining("Version index 2"),
+      },
+    ],
+  });
+});
 
 const peExportNameAcrossSections = (overlapAtRva?: number): Buffer => {
   const bytes = Buffer.concat([
@@ -923,30 +958,53 @@ describe("ELF export version and name coverage", () => {
   });
 });
 
-it.each(["definition", "requirement"] as const)(
-  "retains an export with an over-limit version %s name as partial",
+it.each(["definition", "requirement", "definition auxiliary"] as const)(
+  "keeps an unreadable version %s name unknown and reads the following name",
   (kind) => {
     const longName = "v".repeat(65_536);
-    const result = parse(
-      elfExportImage({
-        symbols: [{ name: "kept", version: 2 }],
-        ...(kind === "definition"
-          ? { versionDefinitions: ["base", longName] }
-          : { versionRequirements: [{ index: 2, name: longName }] }),
-      }),
-    );
-    expect(result.exports).toMatchObject([
-      { name: "kept", version: { index: 2, name: null } },
-    ]);
-    expect(result.coverage.status).toBe("partial");
-    expect(result.issues).toEqual(
-      expect.arrayContaining([
+    const prior = { index: 2, name: "PRIOR" };
+    const bytes = elfExportImage({
+      symbols: [
+        { name: "limited", version: 2 },
+        { name: "sibling", version: 3 },
+      ],
+      ...(kind === "requirement"
+        ? {
+            versionRequirements: [
+              prior,
+              { index: 2, name: longName },
+              { index: 3, name: "KNOWN" },
+            ],
+          }
+        : {
+            versionRequirements: [prior],
+            versionDefinitions: ["base", longName, "KNOWN"],
+          }),
+    });
+    if (kind === "definition auxiliary") {
+      const sections = Number(bytes.readBigUInt64LE(40));
+      const definitions = Number(bytes.readBigUInt64LE(sections + 4 * 64 + 24));
+      // Header two still supplies index 2 and the next record. Its name
+      // points inside its own header instead of to auxiliary data.
+      bytes.writeUInt32LE(0, definitions + 28 + 12);
+    }
+    const issue =
+      kind === "definition auxiliary"
+        ? "name entry leaves its section"
+        : "65536-byte read allowance";
+    expect(parse(bytes)).toMatchObject({
+      exports: [
+        { name: "limited", version: { index: 2, name: null } },
+        { name: "sibling", version: { index: 3, name: "KNOWN" } },
+      ],
+      coverage: { status: "partial", examined_entries: 2, exports: 2 },
+      issues: expect.arrayContaining([
         expect.objectContaining({
           code: "version_unresolved",
-          message: expect.stringContaining("65536-byte read allowance"),
+          message: expect.stringContaining(issue),
         }),
       ]),
-    );
+    });
   },
 );
 
@@ -980,71 +1038,95 @@ describe("ELF version requirements", () => {
     });
   });
 
-  it("keeps version definitions and requirements in the same symbol lookup", () => {
+  it("keeps a competing requirement name unknown when definitions cannot be read", () => {
+    const image = (truncatedVersionDefinitions = false) =>
+      elfExportImage({
+        symbols: [
+          { name: "ambiguous", version: 0x8002 },
+          { name: "required", version: 4 },
+        ],
+        versionDefinitions: ["libfixture.so", "DEFINITION"],
+        versionRequirements: [
+          { index: 2, name: "REQUIREMENT" },
+          { index: 4, name: "INDEPENDENT" },
+        ],
+        truncatedVersionDefinitions,
+      });
+    const valid = image();
+    expect(parse(valid)).toMatchObject({
+      exports: [
+        {
+          name: "ambiguous",
+          version: { index: 2, name: "DEFINITION", hidden: true },
+        },
+        { name: "required", version: { index: 4, name: "INDEPENDENT" } },
+      ],
+      coverage: { status: "complete", examined_entries: 2, exports: 2 },
+      issues: [],
+    });
+
+    for (const [bytes, issue] of [
+      [compressExportSection(valid, 4), "SHF_COMPRESSED"],
+      [image(true), "chain ends before its declared count"],
+    ] as const) {
+      expect(parse(bytes)).toMatchObject({
+        exports: [
+          {
+            name: "ambiguous",
+            version: {
+              index: 2,
+              name: null,
+              name_bytes_base64: null,
+              name_utf8_decodable: null,
+              hidden: true,
+            },
+          },
+          { name: "required", version: { index: 4, name: null } },
+        ],
+        coverage: { status: "partial", examined_entries: 2, exports: 2 },
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            code: "version_unresolved",
+            message: expect.stringContaining(issue),
+          }),
+        ]),
+      });
+    }
+  });
+
+  it("keeps an independent definition when version requirements end early", () => {
+    // One shared string fills nearly all of the retained name budget across
+    // the prefix. Its logical charge must be released with the discarded names.
+    const prefixName = "p".repeat(65_534);
+    const definition = "d".repeat(1024);
+    const tailIndex = 259;
     const result = parse(
       elfExportImage({
         symbols: [
-          { name: "defined_version", version: 2 },
-          { name: "required_version", version: 4 },
+          { name: "from_prefix", version: 3 },
+          { name: "from_tail", version: tailIndex },
+          { name: "defined", version: 2 },
         ],
-        versionDefinitions: ["libfixture.so", "FIXTURE_1"],
+        versionDefinitions: ["libfixture.so", definition],
         versionRequirements: [
-          { index: 3, name: "GLIBC_2.2.5" },
-          { index: 4, name: "GLIBC_2.3" },
+          ...Array.from({ length: 256 }, (_, index) => ({
+            index: index + 3,
+            name: prefixName,
+          })),
+          { index: tailIndex, name: "TAIL" },
         ],
-      }),
-    );
-
-    expect(result).toMatchObject({
-      coverage: { status: "complete", exports: 2 },
-      issues: [],
-      exports: [
-        { name: "defined_version", version: { index: 2, name: "FIXTURE_1" } },
-        {
-          name: "required_version",
-          version: { index: 4, name: "GLIBC_2.3" },
-        },
-      ],
-    });
-  });
-
-  it("uses a definition name when a requirement shares its index", () => {
-    const bytes = elfExportImage({
-      symbols: [{ name: "ambiguous", version: 2 }],
-      versionDefinitions: ["libfixture.so", "DEFINITION"],
-      versionRequirements: [{ index: 2, name: "REQUIREMENT" }],
-    });
-    const result = parse(bytes);
-
-    expect(result.exports).toMatchObject([
-      {
-        name: "ambiguous",
-        version: { index: 2, name: "DEFINITION", hidden: false },
-      },
-    ]);
-    expect(result.coverage.status).toBe("complete");
-    expect(result.issues).toEqual([]);
-    expect(parse(compressExportSection(bytes, 4))).toMatchObject({
-      exports: [{ name: "ambiguous", version: { index: 2, name: null } }],
-      coverage: { status: "partial" },
-    });
-  });
-
-  it("retains exports and reports a truncated version-requirement chain", () => {
-    const result = parse(
-      elfExportImage({
-        symbols: [{ name: "stdout", type: 1, version: 3 }],
-        versionRequirements: [{ index: 3, name: "GLIBC_2.2.5" }],
         truncatedVersionRequirements: true,
       }),
     );
 
-    expect(result.exports).toMatchObject([
-      { name: "stdout", version: { index: 3, name: null, hidden: false } },
-    ]);
-    expect(result.coverage.status).toBe("partial");
-    expect(result.issues).toEqual(
-      expect.arrayContaining([
+    expect(result).toMatchObject({
+      exports: [
+        { name: "from_prefix", version: { index: 3, name: null } },
+        { name: "from_tail", version: { index: tailIndex, name: null } },
+        { name: "defined", version: { index: 2, name: definition } },
+      ],
+      coverage: { status: "partial", examined_entries: 3, exports: 3 },
+      issues: expect.arrayContaining([
         expect.objectContaining({
           code: "version_unresolved",
           message: expect.stringContaining(
@@ -1052,41 +1134,7 @@ describe("ELF version requirements", () => {
           ),
         }),
       ]),
-    );
-  });
-
-  it("marks a definition chain that ends before its declared count", () => {
-    const result = parse(
-      elfExportImage({
-        symbols: [{ name: "defined_version", version: 2 }],
-        versionDefinitions: ["libfixture.so", "FIXTURE_1"],
-        truncatedVersionDefinitions: true,
-      }),
-    );
-
-    expect(result.exports).toMatchObject([
-      {
-        name: "defined_version",
-        version: {
-          index: 2,
-          name: null,
-          name_bytes_base64: null,
-          name_utf8_decodable: null,
-          hidden: false,
-        },
-      },
-    ]);
-    expect(result.coverage.status).toBe("partial");
-    expect(result.issues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "version_unresolved",
-          message: expect.stringContaining(
-            "chain ends before its declared count",
-          ),
-        }),
-      ]),
-    );
+    });
   });
 });
 
@@ -1512,5 +1560,126 @@ describe("ELF sections of a once-only type", () => {
     expect(result.exports).toEqual([
       expect.objectContaining({ name: "stdout", version: "unknown" }),
     ]);
+  });
+});
+
+describe("positional native export parser", () => {
+  const inspect = (
+    bytes: Buffer,
+    readRange: (offset: number, length: number) => Promise<Buffer>,
+  ) =>
+    parseNativeExportsFromHandle(
+      { size: bytes.length, readRange },
+      artifact,
+      async () => {},
+    );
+
+  it("reads the shared ELF symbol and version string table once", async () => {
+    const bytes = elfExportImage({
+      symbols: [
+        { name: "defined", version: 2 },
+        { name: "copied", version: 3 },
+      ],
+      versionDefinitions: ["BASE", "LOCAL_1"],
+      versionRequirements: [{ index: 3, name: "EXTERNAL_1" }],
+    });
+    const dynstr = Number(bytes.readBigUInt64LE(40)) + 2 * 64;
+    const offset = Number(bytes.readBigUInt64LE(dynstr + 24));
+    const length = Number(bytes.readBigUInt64LE(dynstr + 32));
+    const readRange = vi.fn(async (start: number, size: number) =>
+      Buffer.from(bytes.subarray(start, start + size)),
+    );
+    const result = await inspect(bytes, readRange);
+    expect(result).toEqual(parse(bytes));
+    expect(result.exports).toMatchObject([
+      { name: "defined", version: { name: "LOCAL_1" } },
+      { name: "copied", version: { name: "EXTERNAL_1" } },
+    ]);
+    expect(
+      readRange.mock.calls.filter(
+        ([start, size]) => start === offset && size === length,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("keeps equal-sized ELF version string tables distinct", async () => {
+    const original = elfExportImage({
+      symbols: [
+        { name: "defined", version: 2 },
+        { name: "copied", version: 3 },
+      ],
+      versionDefinitions: ["BASE", "ORIGINAL"],
+      versionRequirements: [{ index: 3, name: "ORIGINAL" }],
+    });
+    const table = Number(original.readBigUInt64LE(40));
+    const count = original.readUInt16LE(60);
+    const dynstr = table + 2 * 64;
+    const offset = Number(original.readBigUInt64LE(dynstr + 24));
+    const length = Number(original.readBigUInt64LE(dynstr + 32));
+    const copies = Buffer.alloc(length);
+    original.copy(copies, 0, offset, offset + length);
+    copies.write("DISTINCT", copies.indexOf("ORIGINAL"), "latin1");
+    const bytes = Buffer.concat([
+      original,
+      original.subarray(dynstr, dynstr + 64),
+      copies,
+    ]);
+    bytes.writeUInt16LE(count + 1, 60);
+    bytes.writeUInt32LE(count, table + 4 * 64 + 40);
+    bytes.writeBigUInt64LE(
+      BigInt(original.length + 64),
+      table + count * 64 + 24,
+    );
+    const result = await inspect(bytes, async (start, size) => {
+      const destination = Buffer.alloc(size);
+      bytes.copy(destination, 0, start, start + size);
+      return destination;
+    });
+    expect(result.exports).toMatchObject([
+      { name: "defined", version: { name: "DISTINCT" } },
+      { name: "copied", version: { name: "ORIGINAL" } },
+    ]);
+    expect(result.issues).toEqual([]);
+  });
+
+  it.each([
+    ["sysv", 0x300, 8],
+    ["gnu", 0x340, 16],
+  ] as const)(
+    "preserves a physical %s header read failure",
+    async (hash, header, headerBytes) => {
+      const bytes = elfDynamicExportsImage({ hash });
+      const failure = Object.assign(new Error("read failed"), { code: "EIO" });
+      await expect(
+        inspect(bytes, async (start, size) => {
+          if (start === header && size === headerBytes) throw failure;
+          return bytes.subarray(start, start + size);
+        }),
+      ).rejects.toBe(failure);
+    },
+  );
+
+  it("serves nearby short PE names from a bounded window", async () => {
+    const image = peExportImage({
+      functions: [{ rva: 0x3000 }, { rva: 0x3100 }],
+      names: [
+        { name: "first", index: 0 },
+        { name: "second", index: 1 },
+      ],
+    });
+    const bytes = Buffer.concat([image, Buffer.alloc(8192)]);
+    const sectionHeader = 152 + 240;
+    const rawStart = bytes.readUInt32LE(sectionHeader + 20);
+    bytes.writeUInt32LE(bytes.length - rawStart, sectionHeader + 8);
+    bytes.writeUInt32LE(bytes.length - rawStart, sectionHeader + 16);
+    const readRange = vi.fn(async (start: number, size: number) =>
+      bytes.subarray(start, start + size),
+    );
+    expect(await inspect(bytes, readRange)).toEqual(parse(bytes));
+    expect(
+      readRange.mock.calls
+        .filter(([, size]) => size >= 4096)
+        .map(([, size]) => size),
+    ).toEqual([4096]);
   });
 });

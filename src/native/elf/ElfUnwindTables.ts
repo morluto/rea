@@ -7,12 +7,17 @@ import {
   uniqueKeyed,
 } from "../../domain/keyedCollection.js";
 import {
+  ArtifactReaderFailure,
   assertArtifactReadActive,
   yieldArtifactRead,
 } from "../../resources/index.js";
 import { decodeLimit } from "../../domain/parseFailure.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
-import { elfSymbolSize, readElfSymbolAt } from "../../domain/elfSymbol.js";
+import {
+  elfSymbolSize,
+  readElfSymbolFieldsAt,
+  readElfSymbolValueAt,
+} from "../../domain/elfSymbol.js";
 import {
   elfStringTableText,
   observeElfStringTableEntry,
@@ -30,9 +35,10 @@ import {
 import { buildIntervalIndex } from "./ElfIntervalIndex.js";
 import {
   ELF_PT_GNU_EH_FRAME,
-  readElfDirectoryFromBuffer,
-  readElfDirectoryFromBufferCooperative,
+  readElfDirectoryFromReader,
   type ElfProgramDeclaration,
+  type ElfSectionDirectory,
+  type NativeByteSource,
   type NativeSection,
 } from "../../domain/native/nativeSectionDirectory.js";
 
@@ -239,57 +245,86 @@ const placeSection = (
 export const ELF_UNWIND_FORMAT = "elf-unwind-ranges";
 export const ELF_UNWIND_RECORD_LIMIT = "max_ranges";
 const OPERATION = "inspect_elf_unwind_ranges";
+const STREAM_WINDOW_BYTES = 65536;
+/** Maximum bytes one DW_EH_PE value can occupy (8-byte alignment + 8-byte value, or 10-byte LEB). */
+const MAX_ENCODED_POINTER_BYTES = 16;
+/** Maximum bytes before the .eh_frame_hdr binary search table (4 + 2 * 16 + margin). */
+const MAX_EH_FRAME_HDR_PREFIX_BYTES = 48;
 
-/** Read .eh_frame/.eh_frame_hdr function ranges. Truncation stays incomplete. */
-export const parseElfUnwindRanges = (
-  bytes: Buffer,
-  artifact: ElfUnwindRanges["artifact"],
-  input: InspectElfUnwindRangesInput,
-  signal?: AbortSignal,
-): ElfUnwindRanges => {
-  assertArtifactReadActive(signal);
-  return elfUnwindRangesFromDirectory(
-    bytes,
-    artifact,
-    input,
-    readElfDirectoryFromBuffer(bytes, OPERATION),
-    signal,
-  );
-};
+interface ReadStep {
+  readonly offset: number;
+  readonly length: number;
+}
 
-/** Read the same unwind facts while allowing compressed section names to yield. */
-export const parseElfUnwindRangesCooperative = async (
-  bytes: Buffer,
+function* readSlice(
+  offset: number,
+  length: number,
+): Generator<ReadStep, Buffer, Buffer> {
+  if (length <= 0) return Buffer.alloc(0);
+  return yield { offset, length };
+}
+
+/** Read unwind ranges over a bounded file handle. Truncation stays incomplete. */
+export const parseElfUnwindRangesFromHandle = async (
+  source: NativeByteSource,
   artifact: ElfUnwindRanges["artifact"],
   input: InspectElfUnwindRangesInput,
   signal?: AbortSignal,
 ): Promise<ElfUnwindRanges> => {
-  if (signal === undefined) return parseElfUnwindRanges(bytes, artifact, input);
   assertArtifactReadActive(signal);
-  const directory = await readElfDirectoryFromBufferCooperative(
-    bytes,
+  const directory = await readElfDirectoryFromReader(
+    source,
     () => yieldArtifactRead(signal),
     OPERATION,
   );
-  return elfUnwindRangesFromDirectory(
-    bytes,
+  const steps = elfUnwindRangesSteps(
+    source.size,
     artifact,
     input,
     directory,
     signal,
   );
+  let next = steps.next();
+  while (!next.done) {
+    assertArtifactReadActive(signal);
+    const { offset, length } = next.value;
+    const slice =
+      source.prefix !== undefined && offset + length <= source.prefix.length
+        ? source.prefix.subarray(offset, offset + length)
+        : await source.readRange(offset, length);
+    if (slice.length !== length)
+      throw new ArtifactReaderFailure(
+        "format",
+        "ELF unwind range ended before its admitted file extent.",
+      );
+    next = steps.next(slice);
+  }
+  return next.value;
 };
 
-const elfUnwindRangesFromDirectory = (
-  bytes: Buffer,
+interface SliceAccessors {
+  readonly readU8: (offset: number, end: number) => number | null;
+  readonly readU32: (offset: number, end: number) => number | null;
+  readonly readU64: (offset: number, end: number) => bigint | null;
+  readonly readLeb: (
+    offset: number,
+    end: number,
+    signed: boolean,
+  ) => { readonly value: bigint; readonly next: number } | null;
+  readonly readEncoded: ReadEncoded;
+  readonly findNul: (start: number, end: number) => number;
+  readonly subarray: (start: number, end: number) => Buffer;
+}
+
+function* elfUnwindRangesSteps(
+  fileBytes: number,
   artifact: ElfUnwindRanges["artifact"],
   input: InspectElfUnwindRangesInput,
-  directory: ReturnType<typeof readElfDirectoryFromBuffer>,
+  directory: ElfSectionDirectory,
   signal?: AbortSignal,
-): ElfUnwindRanges => {
+): Generator<ReadStep, ElfUnwindRanges, Buffer> {
   assertArtifactReadActive(signal);
   const little = directory.little;
-  const reader = new BinaryReader(bytes, little, "elf");
   const bits = directory.bits;
   const addressSize = bits === 64 ? 8 : 4;
   const limitations: string[] = [];
@@ -326,7 +361,7 @@ const elfUnwindRangesFromDirectory = (
     );
     if (
       !admitted.ok ||
-      program.file_offset + program.file_size > BigInt(bytes.length)
+      program.file_offset + program.file_size > BigInt(fileBytes)
     ) {
       fail(
         "An invalid PT_LOAD mapping was excluded from unwind address resolution.",
@@ -364,9 +399,7 @@ const elfUnwindRangesFromDirectory = (
 
   const debugSection = debugSections[0];
   const debugPlacement =
-    debugSection === undefined
-      ? null
-      : placeSection(debugSection, bytes.length);
+    debugSection === undefined ? null : placeSection(debugSection, fileBytes);
   let debugFrame: ElfUnwindRanges["debug_frame"];
   if (debugPlacement === null)
     debugFrame = {
@@ -385,7 +418,7 @@ const elfUnwindRangesFromDirectory = (
   // translation falls through to PT_LOAD for bytes no ALLOC section maps.
   const mapped = directory.sections.flatMap((section) => {
     if ((section.flags & SHF_ALLOC) === 0n) return [];
-    const location = placeSection(section, bytes.length).location;
+    const location = placeSection(section, fileBytes).location;
     return location === null || location.bytes === 0
       ? []
       : [{ section, size: BigInt(location.bytes) }];
@@ -462,34 +495,8 @@ const elfUnwindRangesFromDirectory = (
   const within = (offset: number, size: number): boolean =>
     offset >= 0 &&
     size >= 0 &&
-    offset <= bytes.length &&
-    size <= bytes.length - offset;
-  const readU8 = (offset: number, end: number): number | null =>
-    offset < end && offset < bytes.length ? (bytes[offset] ?? null) : null;
-  // A field must fit its record as well as the file, even if another record
-  // makes bytes available at the same offset.
-  const fieldFits = (offset: number, size: number, end: number): boolean =>
-    offset + size <= end && within(offset, size);
-  const readU32 = (offset: number, end: number): number | null =>
-    fieldFits(offset, 4, end) ? reader.u32(offset) : null;
-  const readU64 = (offset: number, end: number): bigint | null =>
-    fieldFits(offset, 8, end) ? reader.word(offset, 64) : null;
-  const readS16 = (offset: number, end: number): number | null =>
-    fieldFits(offset, 2, end) ? reader.i16(offset) : null;
-  const readU16 = (offset: number, end: number): number | null =>
-    fieldFits(offset, 2, end) ? reader.u16(offset) : null;
-  const readS32 = (offset: number, end: number): number | null =>
-    fieldFits(offset, 4, end) ? reader.i32(offset) : null;
-  const readS64 = (offset: number, end: number): bigint | null =>
-    fieldFits(offset, 8, end) ? reader.i64(offset) : null;
-  const readLeb = (
-    offset: number,
-    end: number,
-    signed: boolean,
-  ): { readonly value: bigint; readonly next: number } | null => {
-    const read = readLeb128(bytes, offset, end, signed ? SLEB64 : ULEB64);
-    return "failure" in read ? null : read;
-  };
+    offset <= fileBytes &&
+    size <= fileBytes - offset;
   const safeInt = (value: bigint): number | null =>
     value >= BigInt(Number.MIN_SAFE_INTEGER) &&
     value <= BigInt(Number.MAX_SAFE_INTEGER)
@@ -498,124 +505,191 @@ const elfUnwindRangesFromDirectory = (
 
   let datarelMissing = false;
   let datarelUsed = false;
-  const readEncoded: ReadEncoded = (offset, end, encoding, bases) => {
-    if ((encoding & 0xff) === 0xff) return "omit";
-    if (encoding === 0x50) {
-      const field = vaForFileOffset(offset);
-      if (field === null) return null;
-      const align = BigInt(addressSize);
-      const aligned = (field + align - 1n) & ~(align - 1n);
-      const file = offset + Number(aligned - field);
-      const width = addressSize;
-      const raw = width === 8 ? readU64(file, end) : readU32(file, end);
-      if (raw === null) return null;
-      return {
-        address: typeof raw === "bigint" ? raw : BigInt(raw),
-        indirect: false,
-        next: file + width,
-      };
-    }
-    const format = encoding & 0x0f;
-    let raw: bigint | null = null;
-    let next = offset;
-    switch (format) {
-      case 0: {
-        const value =
-          addressSize === 8 ? readU64(offset, end) : readU32(offset, end);
-        if (value === null) return null;
-        raw = typeof value === "bigint" ? value : BigInt(value);
-        next = offset + addressSize;
-        break;
+  const createSliceAccessors = (
+    slice: Buffer,
+    baseOffset: number,
+  ): SliceAccessors => {
+    const reader = new BinaryReader(slice, little, "elf");
+    const sliceEnd = baseOffset + slice.length;
+    const fieldFits = (offset: number, size: number, end: number): boolean =>
+      offset >= baseOffset &&
+      size >= 0 &&
+      offset + size <= end &&
+      offset + size <= sliceEnd &&
+      within(offset, size);
+    const readU8 = (offset: number, end: number): number | null =>
+      fieldFits(offset, 1, end) ? (slice[offset - baseOffset] ?? null) : null;
+    const readU32 = (offset: number, end: number): number | null =>
+      fieldFits(offset, 4, end) ? reader.u32(offset - baseOffset) : null;
+    const readU64 = (offset: number, end: number): bigint | null =>
+      fieldFits(offset, 8, end) ? reader.word(offset - baseOffset, 64) : null;
+    const readS16 = (offset: number, end: number): number | null =>
+      fieldFits(offset, 2, end) ? reader.i16(offset - baseOffset) : null;
+    const readU16 = (offset: number, end: number): number | null =>
+      fieldFits(offset, 2, end) ? reader.u16(offset - baseOffset) : null;
+    const readS32 = (offset: number, end: number): number | null =>
+      fieldFits(offset, 4, end) ? reader.i32(offset - baseOffset) : null;
+    const readS64 = (offset: number, end: number): bigint | null =>
+      fieldFits(offset, 8, end) ? reader.i64(offset - baseOffset) : null;
+    const readLeb = (
+      offset: number,
+      end: number,
+      signed: boolean,
+    ): { readonly value: bigint; readonly next: number } | null => {
+      const localOffset = offset - baseOffset;
+      const localEnd = Math.min(end, sliceEnd) - baseOffset;
+      if (localOffset < 0 || localOffset > localEnd) return null;
+      const read = readLeb128(
+        slice,
+        localOffset,
+        localEnd,
+        signed ? SLEB64 : ULEB64,
+      );
+      return "failure" in read
+        ? null
+        : { value: read.value, next: read.next + baseOffset };
+    };
+    const readEncoded: ReadEncoded = (offset, end, encoding, bases) => {
+      if ((encoding & 0xff) === 0xff) return "omit";
+      if (encoding === 0x50) {
+        const field = vaForFileOffset(offset);
+        if (field === null) return null;
+        const align = BigInt(addressSize);
+        const aligned = (field + align - 1n) & ~(align - 1n);
+        const file = offset + Number(aligned - field);
+        const width = addressSize;
+        const raw = width === 8 ? readU64(file, end) : readU32(file, end);
+        if (raw === null) return null;
+        return {
+          address: typeof raw === "bigint" ? raw : BigInt(raw),
+          indirect: false,
+          next: file + width,
+        };
       }
-      case 1: {
-        const value = readLeb(offset, end, false);
-        if (value === null) return null;
-        raw = value.value;
-        next = value.next;
-        break;
+      const format = encoding & 0x0f;
+      let raw: bigint | null = null;
+      let next = offset;
+      switch (format) {
+        case 0: {
+          const value =
+            addressSize === 8 ? readU64(offset, end) : readU32(offset, end);
+          if (value === null) return null;
+          raw = typeof value === "bigint" ? value : BigInt(value);
+          next = offset + addressSize;
+          break;
+        }
+        case 1: {
+          const value = readLeb(offset, end, false);
+          if (value === null) return null;
+          raw = value.value;
+          next = value.next;
+          break;
+        }
+        case 2: {
+          const value = readU16(offset, end);
+          if (value === null) return null;
+          raw = BigInt(value);
+          next = offset + 2;
+          break;
+        }
+        case 3: {
+          const value = readU32(offset, end);
+          if (value === null) return null;
+          raw = BigInt(value);
+          next = offset + 4;
+          break;
+        }
+        case 4: {
+          const value = readU64(offset, end);
+          if (value === null) return null;
+          raw = value;
+          next = offset + 8;
+          break;
+        }
+        case 9: {
+          const value = readLeb(offset, end, true);
+          if (value === null) return null;
+          raw = value.value;
+          next = value.next;
+          break;
+        }
+        case 0x0a: {
+          const value = readS16(offset, end);
+          if (value === null) return null;
+          raw = BigInt(value);
+          next = offset + 2;
+          break;
+        }
+        case 0x0b: {
+          const value = readS32(offset, end);
+          if (value === null) return null;
+          raw = BigInt(value);
+          next = offset + 4;
+          break;
+        }
+        case 0x0c: {
+          const value = readS64(offset, end);
+          if (value === null) return null;
+          raw = value;
+          next = offset + 8;
+          break;
+        }
+        default:
+          return null;
       }
-      case 2: {
-        const value = readU16(offset, end);
-        if (value === null) return null;
-        raw = BigInt(value);
-        next = offset + 2;
-        break;
-      }
-      case 3: {
-        const value = readU32(offset, end);
-        if (value === null) return null;
-        raw = BigInt(value);
-        next = offset + 4;
-        break;
-      }
-      case 4: {
-        const value = readU64(offset, end);
-        if (value === null) return null;
-        raw = value;
-        next = offset + 8;
-        break;
-      }
-      case 9: {
-        const value = readLeb(offset, end, true);
-        if (value === null) return null;
-        raw = value.value;
-        next = value.next;
-        break;
-      }
-      case 0x0a: {
-        const value = readS16(offset, end);
-        if (value === null) return null;
-        raw = BigInt(value);
-        next = offset + 2;
-        break;
-      }
-      case 0x0b: {
-        const value = readS32(offset, end);
-        if (value === null) return null;
-        raw = BigInt(value);
-        next = offset + 4;
-        break;
-      }
-      case 0x0c: {
-        const value = readS64(offset, end);
-        if (value === null) return null;
-        raw = value;
-        next = offset + 8;
-        break;
-      }
-      default:
-        return null;
-    }
-    if (bases.lengthOnly) return { address: raw, indirect: false, next };
-    // libgcc reads a raw zero as a null pointer: no base is added and an
-    // indirect pointer is not followed.
-    if (raw === 0n) return { address: 0n, indirect: false, next };
-    const application = encoding & 0x70;
-    let address = raw;
-    if (application === 0x10) {
-      const field = vaForFileOffset(offset);
-      if (field === null) return null;
-      address += field;
-    } else if (application === 0x20) {
-      if (bases.textrel === null) return null;
-      address += bases.textrel;
-    } else if (application === 0x30) {
-      if (bases.datarel === null) {
-        datarelMissing = true;
-        return null;
-      }
-      datarelUsed = true;
-      address += bases.datarel;
-    } else if (application === 0x40) {
-      if (bases.funcrel === null) return null;
-      address += bases.funcrel;
-    } else if (application !== 0) return null;
-    // libgcc computes in _Unwind_Ptr, so a resolved address wraps at the ELF
-    // address width.
-    address = BigInt.asUintN(bits, address);
-    const indirect = (encoding & 0x80) !== 0;
-    if (indirect) sawIndirect = true;
-    return { address, indirect, next };
+      if (bases.lengthOnly) return { address: raw, indirect: false, next };
+      // libgcc reads a raw zero as a null pointer: no base is added and an
+      // indirect pointer is not followed.
+      if (raw === 0n) return { address: 0n, indirect: false, next };
+      const application = encoding & 0x70;
+      let address = raw;
+      if (application === 0x10) {
+        const field = vaForFileOffset(offset);
+        if (field === null) return null;
+        address += field;
+      } else if (application === 0x20) {
+        if (bases.textrel === null) return null;
+        address += bases.textrel;
+      } else if (application === 0x30) {
+        if (bases.datarel === null) {
+          datarelMissing = true;
+          return null;
+        }
+        datarelUsed = true;
+        address += bases.datarel;
+      } else if (application === 0x40) {
+        if (bases.funcrel === null) return null;
+        address += bases.funcrel;
+      } else if (application !== 0) return null;
+      // libgcc computes in _Unwind_Ptr, so a resolved address wraps at the ELF
+      // address width.
+      address = BigInt.asUintN(bits, address);
+      const indirect = (encoding & 0x80) !== 0;
+      if (indirect) sawIndirect = true;
+      return { address, indirect, next };
+    };
+    const findNul = (start: number, end: number): number => {
+      const localStart = Math.max(0, start - baseOffset);
+      const localEnd = Math.min(slice.length, end - baseOffset);
+      if (localStart >= localEnd) return -1;
+      return slice.subarray(localStart, localEnd).indexOf(0);
+    };
+    const subarray = (start: number, end: number): Buffer => {
+      const localStart = Math.max(0, start - baseOffset);
+      const localEnd = Math.min(slice.length, end - baseOffset);
+      return localStart >= localEnd
+        ? Buffer.alloc(0)
+        : slice.subarray(localStart, localEnd);
+    };
+    return {
+      readU8,
+      readU32,
+      readU64,
+      readLeb,
+      readEncoded,
+      findNul,
+      subarray,
+    };
   };
 
   const encodingOf = (raw: number): Encoding => ({
@@ -630,7 +704,7 @@ const elfUnwindRangesFromDirectory = (
   let headerLocation: FileRange | null = null;
   let headerStatus: HeaderDecode["status"] = "absent";
   if (hdrSection !== undefined) {
-    const placement = placeSection(hdrSection, bytes.length);
+    const placement = placeSection(hdrSection, fileBytes);
     if (placement.problem !== null) {
       headerStatus = "incomplete";
       fail(
@@ -667,22 +741,31 @@ const elfUnwindRangesFromDirectory = (
   } else if (!namesKnown) headerStatus = "unknown";
   else headerStatus = "absent";
 
-  const header =
-    headerStatus === "present" && headerLocation !== null
-      ? decodeHeader(
-          headerLocation,
-          hdrBase,
-          textBaseAddress,
-          readEncoded,
-          readU8,
-          safeInt,
-          hex,
-          fileOffsetForVa,
-          fail,
-          signal,
-          { maxRows: input.max_ranges, addressSize },
-        )
-      : emptyHeader(headerStatus, headerLocation);
+  let header: HeaderDecode;
+  if (headerStatus === "present" && headerLocation !== null) {
+    const hdrReadBytes = Math.min(
+      headerLocation.bytes,
+      MAX_EH_FRAME_HDR_PREFIX_BYTES +
+        input.max_ranges * 2 * MAX_ENCODED_POINTER_BYTES,
+    );
+    const hdrSlice = yield* readSlice(headerLocation.offset, hdrReadBytes);
+    const hdrAccess = createSliceAccessors(hdrSlice, headerLocation.offset);
+    header = decodeHeader(
+      headerLocation,
+      hdrBase,
+      textBaseAddress,
+      hdrAccess.readEncoded,
+      hdrAccess.readU8,
+      safeInt,
+      hex,
+      fileOffsetForVa,
+      fail,
+      signal,
+      { maxRows: input.max_ranges, addressSize },
+    );
+  } else {
+    header = emptyHeader(headerStatus, headerLocation);
+  }
 
   const ehSection = ehSections[0];
   let frameStatus: ElfUnwindRanges["eh_frame"]["status"] = "absent";
@@ -696,7 +779,7 @@ const elfUnwindRangesFromDirectory = (
   let tableBound: number | null = null;
   if (ehSection !== undefined) {
     frameSource = "section";
-    const placement = placeSection(ehSection, bytes.length);
+    const placement = placeSection(ehSection, fileBytes);
     frameLocation = placement.location;
     if (placement.problem === "nobits") {
       frameStatus = "incomplete";
@@ -734,7 +817,7 @@ const elfUnwindRangesFromDirectory = (
       const end = safeInt(load.offset + load.fileSize);
       frameStatus = "present";
       frameSource = "program";
-      frameEnd = Math.min(end ?? bytes.length, bytes.length);
+      frameEnd = Math.min(end ?? fileBytes, fileBytes);
       frameLocation = {
         offset: start,
         bytes: Math.max(0, frameEnd - start),
@@ -781,7 +864,7 @@ const elfUnwindRangesFromDirectory = (
   }
 
   // DW_EH_PE_datarel in .eh_frame is GOT-relative (LSB; i386/x86-64 psABI).
-  const gotBase = resolveGotBase(bytes, directory);
+  const gotBase = yield* resolveGotBase(fileBytes, directory);
   datarelMissing = false;
   datarelUsed = false;
 
@@ -819,6 +902,24 @@ const elfUnwindRangesFromDirectory = (
   if (frameStatus === "present" && frameLocation !== null) {
     let cursor = frameLocation.offset;
     const extent = frameEnd;
+    let winBuf: Buffer = Buffer.alloc(0);
+    let winBase = 0;
+    let winAccess = createSliceAccessors(winBuf, 0);
+    function* ensureFrameWindow(
+      offset: number,
+      minBytes: number,
+    ): Generator<ReadStep, void, Buffer> {
+      const available = Math.min(minBytes, extent - offset);
+      if (offset >= winBase && offset + available <= winBase + winBuf.length)
+        return;
+      const readLen = Math.min(
+        Math.max(STREAM_WINDOW_BYTES, available),
+        extent - offset,
+      );
+      winBuf = yield* readSlice(offset, readLen);
+      winBase = offset;
+      winAccess = createSliceAccessors(winBuf, winBase);
+    }
     // An unbounded header-located table stops at its first undecodable
     // record, as libgcc's linear FDE search does, instead of reading on.
     const stopAtBadRecord = frameSource === "program" && tableBound === null;
@@ -830,7 +931,8 @@ const elfUnwindRangesFromDirectory = (
         frameStatus = "incomplete";
         break;
       }
-      const initialLength = readU32(cursor, extent);
+      yield* ensureFrameWindow(cursor, 12);
+      const initialLength = winAccess.readU32(cursor, extent);
       if (initialLength === null) {
         fail(".eh_frame ended inside a record.");
         frameStatus = "incomplete";
@@ -838,12 +940,24 @@ const elfUnwindRangesFromDirectory = (
       }
       if (initialLength === 0) {
         if (scanPastTerminator) {
-          for (let at = cursor + 4; at < extent; at += 1) {
-            if (bytes[at] !== 0) {
-              fail("Non-zero bytes follow the .eh_frame terminator.");
-              break;
+          let at = cursor + 4;
+          let nonZero = false;
+          while (at < extent && !nonZero) {
+            assertArtifactReadActive(signal);
+            const chunkLen = Math.min(STREAM_WINDOW_BYTES, extent - at);
+            const chunk =
+              at >= winBase && at + chunkLen <= winBase + winBuf.length
+                ? winBuf.subarray(at - winBase, at - winBase + chunkLen)
+                : yield* readSlice(at, chunkLen);
+            for (let i = 0; i < chunk.length; i += 1) {
+              if (chunk[i] !== 0) {
+                nonZero = true;
+                break;
+              }
             }
+            at += chunk.length;
           }
+          if (nonZero) fail("Non-zero bytes follow the .eh_frame terminator.");
         }
         cursor += 4;
         terminated = true;
@@ -861,7 +975,7 @@ const elfUnwindRangesFromDirectory = (
       // 64-bit format widens that field, and .debug_frame is not decoded here.
       const idWidth = 4;
       if (initialLength === 0xffffffff) {
-        const extended = readU64(cursor + 4, extent);
+        const extended = winAccess.readU64(cursor + 4, extent);
         if (extended === null || extended > BigInt(Number.MAX_SAFE_INTEGER)) {
           fail(".eh_frame ended inside a record.");
           frameStatus = "incomplete";
@@ -876,7 +990,11 @@ const elfUnwindRangesFromDirectory = (
         break;
       }
       const recordStart = cursor;
-      const id = readU32(body, recordEnd);
+      yield* ensureFrameWindow(
+        recordStart,
+        Math.min(recordEnd - recordStart, STREAM_WINDOW_BYTES),
+      );
+      const id = winAccess.readU32(body, recordEnd);
       if (id === null) {
         fail(".eh_frame ended inside a record.");
         frameStatus = "incomplete";
@@ -891,14 +1009,39 @@ const elfUnwindRangesFromDirectory = (
       examined += 1;
       let undecoded = false;
       if (isCie) {
-        const cie = decodeCie({
-          bytes,
+        if (
+          recordEnd > winBase + winBuf.length &&
+          winAccess.findNul(body + idWidth + 1, recordEnd) < 0
+        ) {
+          yield* ensureFrameWindow(recordStart, recordEnd - recordStart);
+        }
+        const cie = yield* decodeCie({
           recordStart,
           recordEnd,
           body: body + idWidth,
-          readU8,
-          readLeb,
-          readEncoded,
+          findNul: winAccess.findNul,
+          subarray: winAccess.subarray,
+          *readU8(offset, end) {
+            if (offset >= end) return null;
+            yield* ensureFrameWindow(offset, 1);
+            return winAccess.readU8(offset, end);
+          },
+          *readLeb(offset, end, signed) {
+            if (offset >= end) return null;
+            yield* ensureFrameWindow(
+              offset,
+              Math.min(Math.ceil(ULEB64.bits / 7), end - offset),
+            );
+            return winAccess.readLeb(offset, end, signed);
+          },
+          *readEncoded(offset, end, encoding, bases) {
+            if (offset < end)
+              yield* ensureFrameWindow(
+                offset,
+                Math.min(MAX_ENCODED_POINTER_BYTES, end - offset),
+              );
+            return winAccess.readEncoded(offset, end, encoding, bases);
+          },
           safeInt,
           encodingOf,
           datarel: gotBase?.address ?? null,
@@ -934,8 +1077,8 @@ const elfUnwindRangesFromDirectory = (
                   recordEnd,
                   body: body + idWidth,
                   cie,
-                  readLeb,
-                  readEncoded,
+                  readLeb: winAccess.readLeb,
+                  readEncoded: winAccess.readEncoded,
                   safeInt,
                   bases: fdeBases,
                   lengthBases: fdeLengthBases,
@@ -983,7 +1126,7 @@ const elfUnwindRangesFromDirectory = (
 
   const wantedStarts = new Set<bigint>();
   for (const range of ranges) wantedStarts.add(range.startValue);
-  const symbols = scanSymbols(bytes, directory, wantedStarts, signal, {
+  const symbols = yield* scanSymbols(directory, wantedStarts, signal, {
     fail,
     note,
   });
@@ -1007,15 +1150,12 @@ const elfUnwindRangesFromDirectory = (
     if (symbols.has(range.startValue)) withSymbols += 1;
   const decodeName = symbolNameDecoder();
   // Names and address strings are formatted only for the returned page.
-  const pageRows = (
-    input.offset >= ranges.length
-      ? []
-      : ranges.slice(input.offset, input.offset + input.limit)
-  ).map((range) => {
+  const pageRows: ElfUnwindRanges["ranges"] = [];
+  for (const range of ranges.slice(input.offset, input.offset + input.limit)) {
     const symbol = symbols.get(range.startValue)?.name;
     const section = containingSection?.(range.startValue) ?? null;
     const endValue = BigInt.asUintN(bits, range.startValue + range.sizeValue);
-    return {
+    pageRows.push({
       index: range.index,
       start: hex(range.startValue),
       end: hex(endValue),
@@ -1029,7 +1169,7 @@ const elfUnwindRangesFromDirectory = (
       symbol:
         symbol === undefined
           ? null
-          : { text: decodeName(symbol), trust: "untrusted" as const },
+          : { text: yield* decodeName(symbol), trust: "untrusted" as const },
       cie_index: range.cie_index,
       lsda:
         range.lsda === null
@@ -1040,8 +1180,8 @@ const elfUnwindRangesFromDirectory = (
             },
       personality: range.personality,
       location: range.location,
-    };
-  });
+    });
+  }
   const pageCieIndexes = new Set(pageRows.map((range) => range.cie_index));
   const pageCies = cies.filter((cie) => pageCieIndexes.has(cie.index));
   const agreement = headerAgreement(
@@ -1128,7 +1268,7 @@ const elfUnwindRangesFromDirectory = (
     limitations,
   };
   return returned;
-};
+}
 
 const fileRange = (section: NativeSection): FileRange | null => {
   if (
@@ -1147,10 +1287,14 @@ const fileRange = (section: NativeSection): FileRange | null => {
  * or when a repeated PT_DYNAMIC header, SHT_DYNAMIC section or allocated GOT
  * section leaves the source ambiguous.
  */
-const resolveGotBase = (
-  bytes: Buffer,
-  directory: ReturnType<typeof readElfDirectoryFromBuffer>,
-): { readonly address: bigint; readonly source: string } | null => {
+function* resolveGotBase(
+  fileBytes: number,
+  directory: ElfSectionDirectory,
+): Generator<
+  ReadStep,
+  { readonly address: bigint; readonly source: string } | null,
+  Buffer
+> {
   // The ELF gABI allows one PT_DYNAMIC and one SHT_DYNAMIC section; with
   // repeats, read neither rather than choosing one by position or falling
   // back to another source.
@@ -1179,16 +1323,20 @@ const resolveGotBase = (
   if (dynamic !== null) {
     const start = dynamic.offset;
     const end = dynamic.offset + dynamic.fileSize;
-    if (start >= 0n && end <= BigInt(bytes.length)) {
-      const limit = Number(end);
+    if (start >= 0n && end <= BigInt(fileBytes)) {
       const width = directory.bits === 64 ? 16 : 8;
+      const maxRead = Math.min(
+        Number(dynamic.fileSize),
+        MAX_DYNAMIC_ENTRIES * width,
+      );
+      const dynBytes = yield* readSlice(Number(start), maxRead);
       for (
-        let at = Number(start), index = 0;
-        at + width <= limit && index < MAX_DYNAMIC_ENTRIES;
+        let at = 0, index = 0;
+        at + width <= dynBytes.length && index < MAX_DYNAMIC_ENTRIES;
         at += width, index += 1
       ) {
         const entry = readElfDynamicEntry(
-          bytes.subarray(at, at + width),
+          dynBytes.subarray(at, at + width),
           directory.bits,
           directory.little,
         );
@@ -1211,7 +1359,7 @@ const resolveGotBase = (
       return { address: section.value.address, source: `the ${name} section` };
   }
   return null;
-};
+}
 
 interface ProgramSpan {
   readonly flags: number;
@@ -1501,29 +1649,40 @@ const minimumEncodedBytes = (encoding: number, addressSize: 4 | 8): number => {
   }
 };
 
-const decodeCie = (args: {
-  readonly bytes: Buffer;
+const decodeCie = function* (args: {
   readonly recordStart: number;
   readonly recordEnd: number;
   readonly body: number;
-  readonly readU8: (offset: number, end: number) => number | null;
+  readonly findNul: (start: number, end: number) => number;
+  readonly subarray: (start: number, end: number) => Buffer;
+  readonly readU8: (
+    offset: number,
+    end: number,
+  ) => Generator<ReadStep, number | null, Buffer>;
   readonly readLeb: (
     offset: number,
     end: number,
     signed: boolean,
-  ) => { readonly value: bigint; readonly next: number } | null;
-  readonly readEncoded: ReadEncoded;
+  ) => Generator<ReadStep, ReturnType<SliceAccessors["readLeb"]>, Buffer>;
+  readonly readEncoded: (
+    ...args: Parameters<ReadEncoded>
+  ) => Generator<ReadStep, ReturnType<ReadEncoded>, Buffer>;
   readonly safeInt: (value: bigint) => number | null;
   readonly encodingOf: (raw: number) => Encoding;
   readonly datarel: bigint | null;
   readonly textrel: bigint | null;
   readonly fail: (text: string) => void;
-}): Omit<CieRecord, "index"> | "unknown-augmentation" | null => {
+}): Generator<
+  ReadStep,
+  Omit<CieRecord, "index"> | "unknown-augmentation" | null,
+  Buffer
+> {
   const {
-    bytes,
     recordStart,
     recordEnd,
     body,
+    findNul,
+    subarray,
     readU8,
     readLeb,
     readEncoded,
@@ -1533,31 +1692,29 @@ const decodeCie = (args: {
     textrel,
     fail,
   } = args;
-  const version = readU8(body, recordEnd);
+  const version = yield* readU8(body, recordEnd);
   if (version === null) {
     fail("A CIE record is truncated.");
     return null;
   }
   let cursor = body + 1;
-  // One bounded NUL search inside the record. The text stays a view of the
-  // record bytes, so a long target-controlled augmentation is never built up
-  // character by character.
-  const terminator = bytes.subarray(cursor, recordEnd).indexOf(0);
-  const augmentation = bytes.subarray(
-    cursor,
-    terminator < 0 ? recordEnd : cursor + terminator,
+  // One bounded NUL search inside the record. Copy only the short augmentation
+  // bytes so the streaming window buffer is never retained by the CIE record.
+  const terminator = findNul(cursor, recordEnd);
+  const augmentation = Buffer.from(
+    subarray(cursor, terminator < 0 ? recordEnd : cursor + terminator),
   );
   cursor = terminator < 0 ? recordEnd : cursor + terminator + 1;
   if (version !== 1 && version !== 3) {
     fail(`CIE version ${String(version)} is not decoded.`);
     return null;
   }
-  const code = readLeb(cursor, recordEnd, false);
+  const code = yield* readLeb(cursor, recordEnd, false);
   if (code === null) {
     fail("A CIE record is truncated.");
     return null;
   }
-  const data = readLeb(code.next, recordEnd, true);
+  const data = yield* readLeb(code.next, recordEnd, true);
   if (data === null) {
     fail("A CIE record is truncated.");
     return null;
@@ -1571,10 +1728,10 @@ const decodeCie = (args: {
   cursor = data.next;
   let returnAddress: number | null;
   if (version === 1) {
-    returnAddress = readU8(cursor, recordEnd);
+    returnAddress = yield* readU8(cursor, recordEnd);
     cursor += 1;
   } else {
-    const register = readLeb(cursor, recordEnd, false);
+    const register = yield* readLeb(cursor, recordEnd, false);
     if (register === null) {
       fail("A CIE record is truncated.");
       return null;
@@ -1589,7 +1746,7 @@ const decodeCie = (args: {
   const hasZ = augmentation[0] === AUG_Z;
   let augEnd = cursor;
   if (hasZ) {
-    const length = readLeb(cursor, recordEnd, false);
+    const length = yield* readLeb(cursor, recordEnd, false);
     if (length === null) {
       fail("A CIE augmentation length is truncated.");
       return null;
@@ -1614,7 +1771,7 @@ const decodeCie = (args: {
   const letters = hasZ ? augmentation.subarray(1) : augmentation;
   for (const letter of letters) {
     if (letter === AUG_L) {
-      const raw = readU8(cursor, hasZ ? augEnd : recordEnd);
+      const raw = yield* readU8(cursor, hasZ ? augEnd : recordEnd);
       if (raw === null) {
         fail("A CIE augmentation is truncated.");
         return null;
@@ -1622,17 +1779,22 @@ const decodeCie = (args: {
       lsda = encodingOf(raw);
       cursor += 1;
     } else if (letter === AUG_P) {
-      const raw = readU8(cursor, hasZ ? augEnd : recordEnd);
+      const raw = yield* readU8(cursor, hasZ ? augEnd : recordEnd);
       if (raw === null) {
         fail("A CIE augmentation is truncated.");
         return null;
       }
-      const encoded = readEncoded(cursor + 1, hasZ ? augEnd : recordEnd, raw, {
-        datarel,
-        textrel,
-        funcrel: null,
-        lengthOnly: false,
-      });
+      const encoded = yield* readEncoded(
+        cursor + 1,
+        hasZ ? augEnd : recordEnd,
+        raw,
+        {
+          datarel,
+          textrel,
+          funcrel: null,
+          lengthOnly: false,
+        },
+      );
       if (encoded === null || encoded === "omit") {
         fail("A CIE personality pointer could not be decoded.");
         return null;
@@ -1644,7 +1806,7 @@ const decodeCie = (args: {
       };
       cursor = encoded.next;
     } else if (letter === AUG_R) {
-      const raw = readU8(cursor, hasZ ? augEnd : recordEnd);
+      const raw = yield* readU8(cursor, hasZ ? augEnd : recordEnd);
       if (raw === null) {
         fail("A CIE augmentation is truncated.");
         return null;
@@ -1804,8 +1966,11 @@ const decodeFde = (args: {
   };
 };
 
-/** A readable, non-empty symbol name still held as string-table bytes. */
-type SymbolName = Extract<ElfStringTableObservation, { state: "terminated" }>;
+/** The source range of a validated NUL-terminated symbol name. */
+interface SymbolName {
+  readonly offset: number;
+  readonly contentBytes: number;
+}
 
 interface MatchedSymbol {
   readonly name: SymbolName;
@@ -1816,18 +1981,17 @@ interface MatchedSymbol {
 /**
  * Exact-start symbol names for the FDE starts in `wanted`. Candidate records
  * are filtered on decoded symbol facts before reading names,
- * and each name stays a view of the string table decoded only for returned rows.
+ * and each name retains only its location and length until page selection.
  */
-const scanSymbols = (
-  bytes: Buffer,
-  directory: ReturnType<typeof readElfDirectoryFromBuffer>,
+function* scanSymbols(
+  directory: ElfSectionDirectory,
   wanted: ReadonlySet<bigint>,
   signal: AbortSignal | undefined,
   report: {
     readonly fail: (text: string) => void;
     readonly note: (text: string) => void;
   },
-): Map<bigint, MatchedSymbol> => {
+): Generator<ReadStep, Map<bigint, MatchedSymbol>, Buffer> {
   const { fail, note } = report;
   const found = new Map<bigint, MatchedSymbol>();
   const tables = directory.sections.filter(
@@ -1880,18 +2044,33 @@ const scanSymbols = (
       count = remaining;
     }
     remaining -= count;
-    const stringBytes = bytes.subarray(
-      Number(strings.offset),
-      Number(strings.offset + strings.size),
-    );
+    const strStart = Number(strings.offset);
+    const strSize = Number(strings.size);
+    const strEnd = strStart + strSize;
+    let strWinBuf: Buffer = Buffer.alloc(0);
+    let strWinStart = 0;
     const symtabBonus = table.type === SHT_SYMTAB ? 1 : 0;
     // Observation per string-table offset; null when the name is unreadable.
     const names = new Map<number, SymbolName | null>();
+    let recentName: SymbolName | undefined;
+    const entriesPerChunk = Math.max(
+      1,
+      Math.floor(STREAM_WINDOW_BYTES / width),
+    );
+    let symChunk: Buffer = Buffer.alloc(0);
+    let symChunkFirst = 0;
+    let symChunkCount = 0;
     for (let index = 0; index < count; index += 1) {
       assertArtifactReadActive(signal);
-      const at = start + index * width;
-      const symbol = readElfSymbolAt(
-        bytes,
+      if (index < symChunkFirst || index >= symChunkFirst + symChunkCount) {
+        const batch = Math.min(entriesPerChunk, count - index);
+        symChunk = yield* readSlice(start + index * width, batch * width);
+        symChunkFirst = index;
+        symChunkCount = batch;
+      }
+      const at = (index - symChunkFirst) * width;
+      const symbol = readElfSymbolFieldsAt(
+        symChunk,
         at,
         directory.bits,
         directory.little,
@@ -1913,7 +2092,12 @@ const scanSymbols = (
         continue;
       if (sectionIndex === SHN_UNDEF) continue;
       if (sectionIndex >= SHN_LORESERVE && sectionIndex !== SHN_ABS) continue;
-      let address = symbol.value;
+      let address = readElfSymbolValueAt(
+        symChunk,
+        at,
+        directory.bits,
+        directory.little,
+      );
       if (relocatable && sectionIndex !== SHN_ABS) {
         const owner = byIndex.get(sectionIndex);
         if (owner !== undefined) address += owner.address;
@@ -1925,12 +2109,49 @@ const scanSymbols = (
       if (!wanted.has(address)) continue;
       let name = names.get(nameOffset);
       if (name === undefined) {
-        const observed = observeElfStringTableEntry(
-          stringBytes,
-          nameOffset,
-          65536,
-        );
-        name = observed.state === "terminated" ? observed : null;
+        name = null;
+        if (nameOffset >= 0 && nameOffset < strSize) {
+          const offset = strStart + nameOffset;
+          if (
+            recentName !== undefined &&
+            offset >= recentName.offset &&
+            offset <= recentName.offset + recentName.contentBytes
+          ) {
+            // A suffix through the admitted terminator has no earlier NUL.
+            const contentBytes =
+              recentName.offset + recentName.contentBytes - offset;
+            name = { contentBytes, offset };
+          } else {
+            const relative = offset - strWinStart;
+            let observed: ElfStringTableObservation | undefined;
+            if (relative >= 0 && relative < strWinBuf.length)
+              observed = observeElfStringTableEntry(
+                strWinBuf,
+                relative,
+                STREAM_WINDOW_BYTES,
+              );
+            if (
+              observed === undefined ||
+              (observed.state === "truncated" &&
+                strWinStart + strWinBuf.length < strEnd)
+            ) {
+              strWinBuf = yield* readSlice(
+                offset,
+                Math.min(STREAM_WINDOW_BYTES, strEnd - offset),
+              );
+              strWinStart = offset;
+              observed = observeElfStringTableEntry(
+                strWinBuf,
+                0,
+                STREAM_WINDOW_BYTES,
+              );
+            }
+            if (observed.state === "terminated") {
+              name = { contentBytes: observed.contentBytes, offset };
+              recentName = name;
+            }
+          }
+        }
         names.set(nameOffset, name);
       }
       if (name === null) {
@@ -1959,16 +2180,18 @@ const scanSymbols = (
     }
   }
   return found;
-};
+}
 
 /**
  * Decode returned symbol names once each, charging their text against a fixed
  * allowance before converting it.
  */
-const symbolNameDecoder = (): ((name: SymbolName) => string) => {
+const symbolNameDecoder = (): ((
+  name: SymbolName,
+) => Generator<ReadStep, string, Buffer>) => {
   const decoded = new Map<SymbolName, string>();
   let charged = 0;
-  return (name) => {
+  return function* (name) {
     const cached = decoded.get(name);
     if (cached !== undefined) return cached;
     charged += name.contentBytes;
@@ -1981,7 +2204,13 @@ const symbolNameDecoder = (): ((name: SymbolName) => string) => {
           maximum: MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES,
         },
       );
-    const text = elfStringTableText(name) ?? "";
+    const bytes = yield* readSlice(name.offset, name.contentBytes);
+    const text = elfStringTableText({
+      state: "terminated",
+      contentBytes: name.contentBytes,
+      examinedBytes: name.contentBytes + 1,
+      bytes,
+    });
     decoded.set(name, text);
     return text;
   };

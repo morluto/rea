@@ -1,8 +1,9 @@
+import type { RequestAnalysisPort } from "../../../src/ports/AnalysisProvider.js";
+import type { AdbRequest } from "../../../src/domain/adb/adbDeviceAnalysis.js";
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 
-import type { AdbDeviceAnalysisPort } from "../../../src/application/adb/AdbDeviceAnalysisPort.js";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { ADB_TOOL_CONTRACTS } from "../../../src/contracts/adb/adbToolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -312,7 +313,7 @@ const results: Readonly<Record<string, unknown>> = {
 };
 
 it("advertises exact valid ADB schemas and records inline evidence through MCP", async () => {
-  const provider: AdbDeviceAnalysisPort = {
+  const provider: RequestAnalysisPort<AdbRequest> = {
     async inspectAvailability() {
       return { status: "available", code: null, reason: null, diagnostics: {} };
     },
@@ -405,7 +406,7 @@ it("advertises exact valid ADB schemas and records inline evidence through MCP",
 });
 
 it("rejects invalid tool input before reaching the provider", async () => {
-  const provider: AdbDeviceAnalysisPort = {
+  const provider: RequestAnalysisPort<AdbRequest> = {
     async inspectAvailability() {
       return { status: "available", code: null, reason: null, diagnostics: {} };
     },

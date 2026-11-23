@@ -250,14 +250,22 @@ class MiParser {
         flushRun();
         flushEscaped();
         this.#cursor = index + 1;
-        const joined = Buffer.concat(chunks);
+        const joined =
+          chunks.length === 0
+            ? EMPTY_BYTES
+            : chunks.length === 1
+              ? chunks[0]!
+              : Buffer.concat(chunks);
         return ok({
           kind: "const",
-          bytes: new Uint8Array(
-            joined.buffer,
-            joined.byteOffset,
-            joined.byteLength,
-          ),
+          bytes:
+            joined instanceof Buffer
+              ? new Uint8Array(
+                  joined.buffer,
+                  joined.byteOffset,
+                  joined.byteLength,
+                )
+              : joined,
         });
       }
       if (code !== 0x5c) {
@@ -334,10 +342,16 @@ export const parseGdbMiDoneRecord = (
   return parsed;
 };
 
+const EMPTY_BYTES = new Uint8Array(0);
+
 /** The text of a C-string constant, or undefined if it is not strict UTF-8. */
 export const gdbMiConstText = (value: GdbMiValue): string | undefined =>
   value.kind === "const" && isUtf8(value.bytes)
-    ? Buffer.from(value.bytes).toString("utf8")
+    ? Buffer.from(
+        value.bytes.buffer,
+        value.bytes.byteOffset,
+        value.bytes.byteLength,
+      ).toString("utf8")
     : undefined;
 
 /** Every result named `name` in a result sequence. */

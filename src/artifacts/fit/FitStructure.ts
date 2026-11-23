@@ -10,7 +10,7 @@ import { artifactExpansionBudgetBytes } from "../../domain/artifactExpansionBudg
 import type {
   FitImageMetadata,
   FitMetadata,
-} from "../../domain/artifactFormatMetadata.js";
+} from "../../domain/formatMetadata/firmwareMetadata.js";
 import {
   MAX_DEVICETREE_FILE_BYTES,
   type Devicetree,

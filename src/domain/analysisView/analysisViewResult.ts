@@ -219,6 +219,14 @@ import { byteEntropySummaryViewResultSchema } from "./summarySchemas/byteEntropy
 import { dartAotSummaryViewResultSchema } from "./summarySchemas/dartAotSummarySchema.js";
 import { desktopApplicationSummaryViewResultSchema } from "./summarySchemas/desktopApplicationSummarySchema.js";
 import { devicetreeSummaryViewResultSchema } from "./summarySchemas/devicetreeSummarySchema.js";
+import {
+  uefiExtractionPageViewResultSchema,
+  uefiExtractionSummaryViewResultSchema,
+} from "./summarySchemas/uefiExtractionSummarySchema.js";
+import {
+  uefiFirmwarePageViewResultSchema,
+  uefiFirmwareSummaryViewResultSchema,
+} from "./summarySchemas/uefiFirmwareSummarySchema.js";
 import { elfDependenciesSummaryViewResultSchema } from "./summarySchemas/elfDependenciesSummarySchema.js";
 import {
   endpointComparisonPageViewResultSchema,
@@ -359,6 +367,10 @@ export {
   rustBinarySummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
+  uefiExtractionPageViewResultSchema,
+  uefiExtractionSummaryViewResultSchema,
+  uefiFirmwarePageViewResultSchema,
+  uefiFirmwareSummaryViewResultSchema,
   wasmArtifactSummaryViewResultSchema,
   webBundlePageViewResultSchema,
   webBundleSummaryViewResultSchema,
@@ -711,6 +723,8 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     nativeValueTraceSummaryViewResultSchema,
     erlangBeamSummaryViewResultSchema,
     devicetreeSummaryViewResultSchema,
+    uefiFirmwareSummaryViewResultSchema,
+    uefiExtractionSummaryViewResultSchema,
     pythonPycSummaryViewResultSchema,
     nativeExportsSummaryViewResultSchema,
     elfDependenciesSummaryViewResultSchema,
@@ -765,6 +779,8 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     devicetree: devicetreePageContextSchema,
     items: devicetreeViewItemsSchema,
   }),
+  uefiFirmwarePageViewResultSchema,
+  uefiExtractionPageViewResultSchema,
   webSourceLocationMatchesViewResultSchema,
   webSourceLocationTextViewResultSchema,
   erlangBeamTableViewResultSchema,
