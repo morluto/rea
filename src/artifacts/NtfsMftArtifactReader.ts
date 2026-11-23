@@ -19,6 +19,7 @@ import {
   type PositionalArtifactEntries,
 } from "./PositionalArtifactReader.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 
 /**
@@ -76,7 +77,11 @@ export class NtfsMftArtifactReader extends PositionalArtifactReader<ArtifactForm
         const written = decoder.value.write(chunk);
         if (!written.ok) throw this.#failure(written.error);
       }
-    const image = decoder.value.finish();
+    const image = await decoder.value.finish((offset, length) =>
+      readFileHandleRange(handle, offset, length, () =>
+        this.assertOpen(signal),
+      ),
+    );
     if (!image.ok) throw this.#failure(image.error);
     return image.value;
   }
