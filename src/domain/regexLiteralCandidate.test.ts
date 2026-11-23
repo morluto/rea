@@ -90,6 +90,10 @@ it("extracts literals guaranteed by every top-level alternative", () => {
   expect(extractRequiredRegexLiteral("foo|foobar", true)).toBe("foo");
   expect(extractRequiredRegexLiteral("pre(?:a|b)fix|prefix", true)).toBe("pre");
   expect(extractRequiredRegexLiteral("storage|store", false)).toBe("stor");
+  expect(
+    extractRequiredRegexLiteral("^(?:matched|absent)$", true),
+  ).toBeUndefined();
+  expect(extractRequiredRegexLiteral("(?:a|ab)", true)).toBeUndefined();
   expect(extractRequiredRegexLiteral("foo|", true)).toBeUndefined();
   expect(extractRequiredRegexLiteral("foo|\\d+", true)).toBeUndefined();
   expect(extractRequiredRegexLiteral("🧪ab|🧪ac", true)).toBe("🧪a");

@@ -344,7 +344,11 @@ const collectRequiredRuns = (
         // The common segment floats inside each branch, so it cannot join
         // neighbouring literals; it is only guaranteed on its own.
         flush();
-        if (common !== undefined && common.length > 0) runs.push(common);
+        if (
+          common !== undefined &&
+          Array.from(common).length >= MIN_ALTERNATION_LITERAL_CODE_POINTS
+        )
+          runs.push(common);
         index = quantifier.nextIndex;
         continue;
       }
@@ -398,6 +402,10 @@ const collectRequiredRuns = (
 };
 
 const MAX_COMMON_LITERAL_CODE_POINTS = 1024;
+
+// An alternation-common segment is only worth a provider round trip when it
+// can prune; a single shared code point matches nearly every value.
+const MIN_ALTERNATION_LITERAL_CODE_POINTS = 2;
 
 /** Split by top-level `|`, honouring escapes, classes and group nesting. */
 const splitTopLevelAlternatives = (pattern: string): readonly string[] => {
@@ -490,7 +498,11 @@ export const extractRequiredRegexLiteral = (
       if (runs.length === 0) return undefined;
       runSets.push(runs);
     }
-    return longestCommonLiteral(runSets);
+    const common = longestCommonLiteral(runSets);
+    return common !== undefined &&
+      Array.from(common).length >= MIN_ALTERNATION_LITERAL_CODE_POINTS
+      ? common
+      : undefined;
   }
   let longest = "";
   for (const run of collectRequiredRuns(pattern, groups, caseSensitive)) {
