@@ -83,7 +83,7 @@ export const javascriptFactGroupsViewRequestSchema = z.strictObject({
     .array(propertyKeySchema)
     .min(1)
     .describe(
-      'Exact retained property names whose value combinations form groups, e.g. ["operation", "channel"]. A missing key is omitted from the group, distinct from retained null. Rows are ordered by the canonical JSON of their values. Read matching observations with javascript-facts and the same where plus where.properties.',
+      'Exact retained property names whose value combinations form groups, e.g. ["operation", "channel"]. A missing key is omitted from the group, distinct from retained null. Rows are ordered by the canonical JSON of their values. When every grouped value is a present JSON scalar, read its observations with javascript-facts and the same where plus where.properties; array, object and missing values cannot be selected that way.',
     ),
   offset: z.number().int().nonnegative().default(0),
   limit: z.number().int().positive().default(256),
