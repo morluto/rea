@@ -1,10 +1,12 @@
 # Flattened devicetree inspection
 
 `inspect_devicetree` / `rea inspect-devicetree` reads a local DTB without an
-engine, target execution or external tools. It supports FDT versions 16 and 17;
-other versions return `unsupported_target`. Corrupt recognized blobs return
-`invalid_request`, and exhausted budgets return `resource_constraint` without
-partial success.
+engine, target execution or external tools. It supports FDT versions 16 and 17.
+As [DTSpec §5.1](https://devicetree-specification.readthedocs.io/en/stable/flattened-format.html#versioning)
+requires, a later version whose `last_comp_version` is 17 or lower is read with
+the version 17 header layout. Other versions return `unsupported_target`.
+Corrupt recognized blobs return `invalid_request`, and exhausted budgets return
+`resource_constraint` without partial success.
 
 [DTSpec §5.4.1](https://devicetree-specification.readthedocs.io/en/stable/flattened-format.html#lexical-structure)
 requires zero padding after structure node names and property values. For
@@ -86,9 +88,10 @@ for example `--max-nodes 16384`. View pages contain at most 256 rows.
 
 ## Verification
 
-Synthetic tests cover v16/v17, malformed headers/blocks/names/tokens, resource
-limits, derived values, and CLI/MCP delivery including retained pages after
-removing the input. The optional real lane requires **dtc 1.8.1**:
+Synthetic tests cover v16/v17, a later version backwards compatible with v17,
+malformed headers/blocks/names/tokens, resource limits, derived values, and
+CLI/MCP delivery including retained pages after removing the input. The
+optional real lane requires **dtc 1.8.1**:
 
 ```bash
 npm run build:cached

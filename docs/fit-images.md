@@ -19,12 +19,13 @@ use the current projection identity; there is no pre-coverage FIT summary varian
 
 ## Recognition
 
-A FIT is a flattened devicetree (FDT v16 or v17) with a top-level `/images`
+A FIT is a flattened devicetree (FDT v16 or v17, or a later version backwards
+compatible with v17) with a top-level `/images`
 node. Recognition walks the structure block within the first 4 KiB of the file
 only; the file name does not matter. A devicetree whose `/images` node begins
 after 4 KiB or a devicetree without `/images` stays on the plain devicetree
 route: `open_binary` refuses it and [`inspect_devicetree`](devicetree.md)
-can parse it when its FDT version is 16 or 17. Other FDT versions are not
+can parse it in the same FDT versions. Other FDT versions are not
 recognized as FIT and are also unsupported by `inspect_devicetree`. A U-Boot control DTB
 that contains `/images` is treated as a FIT. The container format is `fit`.
 
