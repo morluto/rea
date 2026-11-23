@@ -16,6 +16,7 @@ import { canonicalJson } from "./comparisonSemantics.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { jsonValueSchema } from "./jsonValue.js";
+import { functionCfgDossier } from "../../tests/fixtures/functionCfgDossier.js";
 
 import { compareFunctions } from "./functionComparison.js";
 import type { RelationshipCoverage } from "./relationshipCoverage.js";
@@ -735,6 +736,61 @@ describe("function comparison ordering controls", () => {
     });
     expect(comparison.status).toBe("unknown");
   });
+});
+
+it.each([
+  { entryOffset: 0n, status: "unchanged" },
+  { entryOffset: 0x10n, status: "changed" },
+])(
+  "retains the CFG entry after relocation: $status",
+  ({ entryOffset, status }) => {
+    const left = observe("a", functionCfgDossier());
+    const rightValue = functionCfgDossier(0x2000n, entryOffset);
+    rightValue.procedure.address = rightValue.procedure.address.replace(
+      "0x",
+      "0X00",
+    );
+    rightValue.basic_blocks.reverse();
+    const right = observe("b", rightValue);
+    const result = compareFunctions(
+      functionSnapshotFixture(left),
+      functionSnapshotFixture(right),
+    );
+    expect(result.status).toBe(status);
+    expect(
+      result.dimensions.find(({ dimension }) => dimension === "cfg"),
+    ).toMatchObject({ status, left_count: 3, right_count: 3 });
+    expect(
+      result.dimensions
+        .filter(({ dimension }) => dimension !== "cfg")
+        .every(({ status: value }) => value === "unchanged"),
+    ).toBe(true);
+  },
+);
+
+it.each(["0x1001", "0x1030", "ram:0x1000", "not-an-address"])(
+  "keeps CFG entry coordinates outside known block starts unknown: %s",
+  (entry) => {
+    const value = functionCfgDossier();
+    value.procedure.address = entry;
+    const source = functionSnapshotFixture(observe("a", value));
+    expect(
+      compareFunctions(source, source).dimensions.find(
+        ({ dimension }) => dimension === "cfg",
+      ),
+    ).toMatchObject({ status: "unknown", left_count: 3, right_count: 3 });
+  },
+);
+
+it("keeps a declared but empty CFG without an observed entry block unknown", () => {
+  const value = functionCfgDossier();
+  value.basic_blocks = [];
+  const source = functionSnapshotFixture(observe("a", value));
+  expect(
+    compareFunctions(source, source).dimensions.find(
+      ({ dimension }) => dimension === "cfg",
+    ),
+  ).toMatchObject({ status: "unknown", left_count: 0, right_count: 0 });
 });
 
 describe("function comparison CFG address normalization", () => {

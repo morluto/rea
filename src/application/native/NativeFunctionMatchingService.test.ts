@@ -9,6 +9,7 @@ import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.
 import { DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES } from "../../domain/analysisResourceLimits.js";
 import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { procedureInfoSchema } from "../../domain/native/procedureInfo.js";
+import { functionCfgDossier } from "../../../tests/fixtures/functionCfgDossier.js";
 import {
   nativeMatchingNamedInventory as nativeMatchingInventory,
   nativeMatchingInventory as unqualifiedInventory,
@@ -187,6 +188,68 @@ it.each(["literals-only", "omissions-only", "paired", "unsupported"])(
     });
     expect(result.ok).toBe(coverage === "paired" || coverage === "unsupported");
     if (!result.ok) expect(result.error._tag).toBe("EvidenceIntegrityError");
+  },
+);
+
+it.each([
+  { entryOffset: 0n, candidates: 1, connected: true },
+  { entryOffset: 0x10n, candidates: 1, connected: false },
+  { entryOffset: 1n, candidates: 0, connected: false },
+])(
+  "binds structural candidates to the observed CFG entry: $entryOffset",
+  async ({ entryOffset, candidates, connected }) => {
+    const profile = createAnalysisProfile(nativeMatchingProvider, {
+      fixture: "rooted-structural-candidates",
+    });
+    const observation = (side: "1" | "2", offset: bigint, name: string) => {
+      const value = functionCfgDossier(
+        side === "1" ? 0x1000n : 0x2000n,
+        offset,
+      );
+      value.procedure.name = name;
+      value.referenced_strings = [
+        {
+          address: "0x9000",
+          source_address: value.procedure.address,
+          value: "informative marker",
+        },
+      ];
+      return createEvidence(
+        nativeMatchingTarget(side),
+        nativeMatchingProvider,
+        {
+          operation: "analyze_function",
+          parameters: { procedure: value.procedure.address },
+          result: value,
+          analysisProfile: profile,
+          relationshipCoverage: { status: "complete" },
+        },
+      );
+    };
+    const left = observation("1", 0n, "old_behavior");
+    const right = observation("2", entryOffset, "new_behavior");
+    const rightAddress = `0x${(0x2000n + entryOffset).toString(16)}`;
+    const inventory = (side: "1" | "2", address: string, value: string) =>
+      createEvidence(nativeMatchingTarget(side), nativeMatchingProvider, {
+        operation: "list_procedures",
+        parameters: {},
+        result: [{ address, value }],
+        analysisProfile: profile,
+      });
+    const { report } = await compare({
+      left: inventory("1", "0x1000", "old_behavior"),
+      right: inventory("2", rightAddress, "new_behavior"),
+      left_observations: [left],
+      right_observations: [right],
+    });
+    expect(report.source_coverage.left_structural_candidates).toBe(1);
+    expect(report.source_coverage.right_structural_candidates).toBe(candidates);
+    expect(report.summary).toEqual({
+      matched: 0,
+      only_left: connected ? 0 : 1,
+      only_right: connected ? 0 : 1,
+      unresolved: connected ? 1 : 0,
+    });
   },
 );
 

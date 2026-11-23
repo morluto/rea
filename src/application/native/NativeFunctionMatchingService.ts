@@ -201,7 +201,7 @@ const matchWithAdmission = async (
         right_evidence_id: right.evidence_id,
         left_observation_ids: leftObservations.map((x) => x.evidence_id),
         right_observation_ids: rightObservations.map((x) => x.evidence_id),
-        algorithm: "exact-symbol-body-bytes-and-structural-candidates-v1",
+        algorithm: "exact-symbol-body-bytes-and-structural-candidates-v2",
       },
       result: report,
       limitations,

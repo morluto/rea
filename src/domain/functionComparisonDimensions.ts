@@ -661,8 +661,8 @@ const compareCfg = (
 ): FunctionDimension => {
   const leftBlocks = left.dossier.basic_blocks;
   const rightBlocks = right.dossier.basic_blocks;
-  const leftGraph = normalizeCfg(leftBlocks);
-  const rightGraph = normalizeCfg(rightBlocks);
+  const leftGraph = normalizeCfg(leftBlocks, left.dossier.procedure.address);
+  const rightGraph = normalizeCfg(rightBlocks, right.dossier.procedure.address);
   if (leftGraph === null || rightGraph === null)
     return unresolvedDimension({
       dimension: "cfg",
@@ -670,7 +670,7 @@ const compareCfg = (
       leftCount: leftBlocks.length,
       rightCount: rightBlocks.length,
       limitations: [
-        "CFG addresses could not be normalized to local block indices.",
+        "CFG addresses and function entry could not be normalized to local block indices.",
       ],
     });
   return compareValues("cfg", leftGraph, rightGraph, context);
