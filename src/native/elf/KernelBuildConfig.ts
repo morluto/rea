@@ -533,6 +533,10 @@ const findConfig = async (
         candidateLen < span.size - gzipAt &&
         (closing < 0 || closing >= gzipAt + candidateLen)
       ) {
+        if (closing < 0) {
+          truncated = true;
+          break;
+        }
         compressedLimit ??= maxCandidateBytes;
         continue;
       }
@@ -891,7 +895,7 @@ const reportFromSearch = async (
       ...search.extraLimitations,
       ...(found === "truncated"
         ? [
-            "An IKCFG_ST gzip member runs past the searched bytes. The config is incomplete and is not reported as absent.",
+            "An IKCFG_ST gzip candidate has incomplete framing in the searched bytes.",
           ]
         : []),
       ...(found === "exhausted"
