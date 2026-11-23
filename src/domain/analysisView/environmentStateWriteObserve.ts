@@ -180,6 +180,11 @@ export interface ObservationSearch {
   readonly from: number;
   /** Completion must be established before a read may supply a write observation. */
   readonly chronology: StateRecordChronology;
+  /** A read overlapping a related captured write cannot establish its result. */
+  readonly overlapsWrite: (
+    record: StateRecordFacts,
+    exclude?: number,
+  ) => boolean;
   readonly viewOf: (ordinal: number) => StateView | undefined;
   readonly withBody: <T>(
     ordinal: number,
@@ -241,11 +246,16 @@ export const laterObservation = (
     ) => boolean;
   },
 ): Observed | undefined => {
-  for (const record of search.records.slice(search.from + 1)) {
+  const { records } = search;
+  const source = records[search.from]!;
+  if (search.overlapsWrite(source, source.ordinal)) return undefined;
+  for (let index = search.from + 1; index < records.length; index++) {
+    const record = records[index]!;
     if (target.isWrite(record)) return undefined;
     // The same overlap the check path ignores: the write was still running when this read began.
     if (
-      !search.chronology.completedBefore(search.records[search.from]!, record)
+      !search.chronology.completedBefore(source, record) ||
+      search.overlapsWrite(record)
     )
       continue;
     const view = search.viewOf(record.ordinal);

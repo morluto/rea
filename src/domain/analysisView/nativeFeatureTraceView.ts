@@ -146,9 +146,6 @@ export const projectNativeFeatureTraceView = (
         trace.matches.length +
           trace.references.length +
           trace.residual_unknowns.length,
-        trace.matches.length +
-          trace.references.length +
-          trace.residual_unknowns.length,
       ),
     });
   const select = <Value>(

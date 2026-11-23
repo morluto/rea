@@ -15,7 +15,9 @@ not establish live model-service acceptance.
 
 `rea mcp doctor --json` starts the production MCP adapter with the current runtime
 executable and environment. A healthy result establishes that adapter's
-initialization, discovery and target-free request flow; it does not verify a
+initialization, discovery and target-free request flow, with the request-flow
+reply validated against the canonical `binary_session` output contract whatever
+output schema profile the server lists. It does not verify a
 client's configured launcher or its inherited environment. Test the generated
 registration through the actual client, including a reduced `PATH` when checking
 desktop or service startup. Record the client version and launch environment
@@ -28,12 +30,10 @@ declaration renderers rendered the full `compare_web_captures` input as
 `args: unknown`: its generated TypeScript type exceeds Pi's 16,000-character
 default. REA keeps the full advertisement's fields by inlining references when
 the shared form would exceed Pi's 32-reference expansion limit; retaining that
-shared form would leave later fields unknown instead. The existing
-`REA_MCP_INPUT_SCHEMA_PROFILE=compact` profile lets callers stay below
-its character limit by advertising reduced nested validation structure, while
-REA continues to validate calls against the complete canonical input schema.
-Compact is the default for the server's advertised inputs; an explicit `full`
-choice is preserved. See the [compact input schema profile](../reference/mcp-contracts.md#compact-input-schema-profile)
+shared form would leave later fields unknown instead. The compact
+input presentation keeps advertised inputs below its character limit by
+reducing nested validation structure, while REA continues to validate calls
+against the complete canonical input schema. See the [compact input schema profile](../reference/mcp-contracts.md#compact-input-schema-profile)
 for details of its reduced forms.
 
 Custom renderer hosts can raise `inputMaxChars` through `renderToolSignature` or
@@ -43,15 +43,47 @@ does not establish broader Pi compatibility. See the pinned upstream
 [`declarations.ts`](https://github.com/earendil-works/pi/blob/b45e0ebcc5ae2fc42a6f2f23104d10e656e6bedb/packages/codemode/src/declarations.ts)
 and [renderer usage notes](https://github.com/earendil-works/pi/blob/b45e0ebcc5ae2fc42a6f2f23104d10e656e6bedb/packages/codemode/README.md#declarations-for-the-model).
 
+## Cline
+
+The original contributor reported a run on 2026-11-11 on Linux (Fedora 45),
+using Cline CLI 3.0.74 and the integration based on REA `main` at `9924bf344`.
+That run checked client config listing and a direct registered-server MCP
+handshake that listed the complete catalog of that build. It predates the
+verifier lifecycle changes below and does not establish their real-client
+behavior.
+
+`npm run verify:cline-client` creates its sandbox home before launching commands
+and removes inherited `CLINE_MCP_SETTINGS_PATH`, `CLINE_DATA_DIR` and `CLINE_DIR`.
+Setup therefore exercises the default
+`~/.cline/data/settings/cline_mcp_settings.json` path under the sandboxed home.
+Cline's CLI must list that registration using the sandbox's explicit
+`--data-dir`; this checks the file parser, not independent default-home discovery.
+The exact registered launcher then
+completes SDK initialization and tool discovery through REA's owned stdio
+transport. Stdin stays open until discovery finishes. Command and transport
+cleanup completes before the verifier records lineage or reports success.
+
+The updated orchestration has recording-port coverage for delayed discovery,
+failed server identification and failed cleanup. These tests use the installed
+SDK and verifier lifecycle owner, but do not execute Cline or a real REA server.
+The updated real-client lane has not been rerun during this reconciliation.
+
+Not covered by the lane: a model-driven tool call inside Cline. Cline's provider
+configuration (`providers.json`) is versioned and auth-shaped, and the CLI ignores
+`OPENAI_BASE_URL`, so the loopback model fixture cannot drive it without depending
+on that private schema. The IDE extension is not covered either: its MCP settings are
+UI-managed and live under editor-specific `globalStorage` roots, which `rea setup`
+does not write in this release.
+
 <a id="llamacpp"></a>
 
 ## llama.cpp
 
 The [manual stdio connection](../getting-started/client-configuration.md#llamacpp) was checked on
 macOS arm64 with Node.js 24.18.0, llama-server b11715 (`9d1878a43`), and the
-published `rea-agents@6.5.0` package. `GET /tools` exposed 207 REA tools without
+published `rea-agents@6.5.0` package. `GET /tools` exposed REA tools without
 enabling llama.cpp's built-in tools. With the source checkout at `9e372c6`, all
-207 forwarded names, descriptions and input schemas matched a direct MCP client.
+forwarded names, descriptions and input schemas matched a direct MCP client.
 
 Calls through `POST /tools` returned session metadata and JavaScript analysis
 Evidence for a fixture at a Unicode path. A missing target returned REA's input
@@ -75,8 +107,10 @@ lanes require an installed native client. Select its executable with
 They configure disposable profiles through the public REA CLI, preserve caller
 settings and backups, and exercise real stdio MCP calls and skill loading. The
 `call` mode checks complete catalog discovery and actual JavaScript Evidence;
-pass `-- chat` to check plain chat with REA enabled. Qwen also reads the full
-result that its client offloads, and Pi exercises default codemode execution.
+pass `-- chat` to check plain chat with REA enabled. When Qwen saves the installed
+skill's tool output, the fixture uses native `read_file` pages and verifies the
+complete body and reported digest before analysis. It also reads offloaded REA
+Evidence. Pi exercises default codemode execution.
 Use `REA_VERIFY_RUNTIME_ROOT` to select a production-only installed REA package.
 Receipts retain client versions, result digests, host coverage and owned-process
 cleanup. These lanes use a deterministic loopback model and do not prove live
@@ -174,39 +208,30 @@ ID). Every actual HTTP request's model is checked and recorded separately.
 Both `HOME` and `USERPROFILE` point to the disposable account; native `skill add`
 still selects the installed skill directory explicitly.
 
-The same native client passed full-profile chat and analysis with the actual
-wire model `gpt-4.1` under a distinct BYOK model ID:
+The same native client passed chat and analysis under REA's former full input
+profile with the actual wire model `gpt-4.1` under a distinct BYOK model ID:
 
 ```bash
 REA_VERIFY_COPILOT_MODEL=rea-gpt-4.1 REA_VERIFY_COPILOT_WIRE_MODEL=gpt-4.1 npm run verify:copilot-client -- chat
 REA_VERIFY_COPILOT_MODEL=rea-gpt-4.1 REA_VERIFY_COPILOT_WIRE_MODEL=gpt-4.1 npm run verify:copilot-client -- call
 ```
 
-These runs retain full canonical input/output schemas, all tools, installed-skill
-loading and complete Evidence readback. They use the fixture's requested
-one-million-token BYOK prompt setting; effective capacity and live API acceptance
-remain unknown. With the built-in `gpt-4.1` model ID, the verified client still
-blocks the full input-schema profile before HTTP with
-`compaction_static_context_blocked`, even when requesting a larger BYOK prompt
-capacity. The effective capacity is unknown. The default verifier preserves
-the complete catalog and full schemas. To verify the existing compact profile:
+Those runs used the fixture's requested one-million-token BYOK prompt setting;
+effective capacity and live API acceptance remain unknown. With the built-in
+`gpt-4.1` model ID, the verified client blocked the former full input-schema
+profile before HTTP with `compaction_static_context_blocked`. That profile was
+removed, so the verifier now compares the input schemas forwarded by Copilot
+with REA's compact advertisement:
 
 ```bash
-REA_VERIFY_COPILOT_MODEL=gpt-4.1 REA_VERIFY_COPILOT_SCHEMA_PROFILE=compact npm run verify:copilot-client -- chat
-REA_VERIFY_COPILOT_MODEL=gpt-4.1 REA_VERIFY_COPILOT_SCHEMA_PROFILE=compact npm run verify:copilot-client -- call
+REA_VERIFY_COPILOT_MODEL=gpt-4.1 npm run verify:copilot-client -- chat
+REA_VERIFY_COPILOT_MODEL=gpt-4.1 npm run verify:copilot-client -- call
 ```
 
-The verifier explicitly writes either selected profile into its disposable
-registration and compares the input schemas forwarded by Copilot with that
-profile's advertised schemas. A run must not infer `full` from an unset setting:
-REA's runtime default is now `compact`. The recorded client results above remain
-scoped to their executed revisions; this verifier correction is not a new client run.
-
-Both native workflows passed with the complete tool inventory. The verifier selects the
-profile only in its disposable Copilot registration and records it in the
-receipt. Compact advertisements can reduce nested validation structure; the
-server still validates complete canonical inputs. This is a tested alternate
-workflow, not a fix for the full-profile client/model limit tracked in #1554.
+The recorded client results above remain scoped to their executed revisions;
+this verifier change is not a new client run. Compact native workflows passed
+with the complete tool inventory. Compact advertisements can reduce nested
+validation structure; the server still validates complete canonical inputs.
 Live model APIs, native Windows and default OS-home skill discovery remain
 unverified.
 
@@ -216,7 +241,9 @@ POSIX lane isolates `GROK_HOME`, an independent Git workspace and additional
 skill roots, disables foreign configuration discovery, guards setup writes,
 preserves unrelated registrations/backups and checks idempotence. Call mode
 loads the full skill through native `read_file`, queries all REA names and input
-schemas through native `search_tool`, and calls analysis through `use_tool`.
+schemas through bounded native `search_tool` keyword queries, checking the
+collected union against the complete catalog, and calls analysis through
+`use_tool`.
 If discovery reports `partial`, the native agent diagnoses REA registration and
 retries discovery. No startup-timeout override or fixed readiness delay is used.
 A larger Unicode-path fixture exercises native result offloading: the full
@@ -282,14 +309,23 @@ through the public CLI and checks that only caller patches remain. `HOME` and
 `USERPROFILE` point to the disposable account. The native default
 `~/.agents/skills` search path discovers
 the installed skill without a `DSH_AGENTS_HOME` override. A separate Git root prevents inherited project skills from
-masking a missing installation. The default `call` mode checks skill loading,
+masking a missing installation. SIGINT and SIGTERM cancel the active owned
+command and run cleanup before reporting failure. The receipt records the
+interruption and the kept artifacts include any captured headless output.
+The default `call` mode checks skill loading,
 complete catalog discovery, the actual forwarded input schemas and regexes,
 and full JavaScript Evidence for a Unicode path. Use `-- chat` for ordinary
 chat with REA enabled, or `REA_VERIFY_RUNTIME_ROOT` for an installed package.
 The fixture uses Harness's custom OpenAI adapter and the one-million-token
 context capacity declared by its default DeepSeek Flash model; it does not
 establish live DeepSeek API or native Windows coverage. Receipts include
-request artifacts, result digests and owned-process lineage.
+request artifacts, result digests and owned-process lineage. `finalSeen`
+records the model fixture's answer, and `clientFinalSeen` records the exact
+answer in the terminal headless JSON event. A passing receipt also requires
+successful client termination, uninstall, and verifier cleanup.
+
+Passing native verifier receipts require verified lineage with no live
+descendants.
 
 The DSH acceptance journey also exercises public setup, approval, doctor,
 generated-launcher MCP startup and uninstall without an installed Harness.
@@ -643,3 +679,65 @@ npm run evidence:check
 
 The records preserve unsupported and unverified coverage as explicit unknowns.
 Run the matching real-tool prerequisites described in this guide.
+
+### Focused tool-description trials
+
+For a wording or discoverability question, begin with one representative case
+per affected workflow boundary and its nearest valid alternative. Repeat a
+concrete failure or ambiguous result after repair. Add repetitions when the
+requested confidence or comparison needs them; a large matrix is not the default.
+Use the user's selected model and budget, and verify the actual client and Node
+executables used by the trial rather than assuming the development shell's
+versions apply.
+
+Reuse the existing optional lane and source-owned scenarios where they fit:
+
+```bash
+REA_AGENT_EVAL_SCENARIOS=javascript-module-view npm run verify:agent
+```
+
+Select the account-supported model with `REA_AGENT_EVAL_MODEL`. Read the selected
+prompt and rubric before interpreting the gate: closed factual scenarios request
+complete producer Evidence, while `javascript-module-view` exercises retained
+views with heuristic scoring. Neither gate alone proves correct selection or
+fully supported prose for a different task. Extend the narrow scenario or grader
+in the existing evaluation tooling when necessary; reusable runners and fixtures
+belong there, not in skills or copied temporary harnesses.
+
+Capture the actual `initialize` and `tools/list` surface. Compact presentation may
+remove parameter descriptions or nested selector shapes, so a concise exact call
+example can remain necessary. Verify the producer-to-consumer handoff before
+removing its visible syntax. For a wording comparison, hold prompts, schemas,
+tool order, fixtures, permissions and host settings fixed; change one surface at
+a time. Use fresh agent context without the audit's answers. Record later source,
+fixture or runtime changes separately rather than claiming a controlled delta.
+
+Score these outcomes separately:
+
+- Tool selection, accepting other valid routes.
+- Canonical argument validity and the exact requested paths, IDs, selectors,
+  fields, units and delivery. Structurally valid arguments can select the wrong
+  input; fixtures should refuse that selection instead of returning the expected
+  answer anyway.
+- Recovery and cleanup. A valid unresolved lookup is not a malformed request;
+  normal status reads and cleanup-only retries are not automatically mistakes.
+  Do not infer that work stopped from a host-only timeout.
+- Final claims against returned facts and coverage. Correct text does not erase
+  malformed-call loops, and valid calls do not prove every claim. A failed name
+  lookup is not a negative reference search; an exhausted partial page does not
+  establish absence in unexamined source. Generic responses without state facts
+  cannot establish that a session is closed.
+
+Retain prompts, condition/catalog hashes, actual calls/results, failures, final
+answers, model/client/runtime versions and cleanup outcomes. Report whole-task
+input, cached input, output and elapsed time when available, and label unmeasured
+CPU or process-family memory. Fewer description bytes do not establish fewer
+task tokens or faster execution. Remove copied authentication after owned
+processes settle and review retained artifacts before sharing them.
+
+Controlled errors can test agent recovery without target effects. Label them as
+simulated and verify applicable workflows separately through the production
+adapter and real provider boundaries. State tool-subset versus full/progressive
+catalog scope and remaining provider/host coverage. Small one-shot trials are
+smoke checks, not statistical success rates or evidence that newer models need
+less guidance in general.

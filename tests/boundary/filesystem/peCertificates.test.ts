@@ -1,7 +1,7 @@
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createPeCertificatesService } from "../../../src/composition/binaryDiagnostics.js";
+import { createPeCertificatesService } from "../../../src/composition/binaryDiagnostics/peCertificates.js";
 import { peCertificateFixture } from "../../../src/native/pe/PeCertificates.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 

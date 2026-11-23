@@ -1,14 +1,15 @@
 /** One thin Mach-O slice and the CPU identity its header and FAT entry declare. */
-export interface UniversalSlice {
+interface UniversalSlice {
   readonly bytes: Buffer;
   readonly cpuType: number;
   readonly cpuSubtype: number;
-  /** Declare a different CPU in the FAT table than in the slice header. */
+  /** Override the FAT CPU identity independently of the thin header. */
   readonly tableCpuType?: number;
+  readonly tableCpuSubtype?: number;
 }
 
 /** The FAT32 container and where each slice landed. */
-export interface UniversalMachoFixture {
+interface UniversalMachoFixture {
   readonly bytes: Buffer;
   readonly slices: readonly {
     readonly offset: number;
@@ -38,7 +39,7 @@ export const universalMacho = (
     const { offset: sliceOffset, size } = placed[index]!;
     const entry = 8 + index * 20;
     bytes.writeUInt32BE(slice.tableCpuType ?? slice.cpuType, entry);
-    bytes.writeUInt32BE(slice.cpuSubtype, entry + 4);
+    bytes.writeUInt32BE(slice.tableCpuSubtype ?? slice.cpuSubtype, entry + 4);
     bytes.writeUInt32BE(sliceOffset, entry + 8);
     bytes.writeUInt32BE(size, entry + 12);
     bytes.writeUInt32BE(ALIGNMENT_EXPONENT, entry + 16);

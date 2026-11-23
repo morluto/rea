@@ -6,8 +6,8 @@ import {
   reduceToShallowProperties,
   schemaDepth,
   serializedBytes,
-  stripAnnotations,
 } from "./compactJsonSchema.js";
+import { JsonSchemaReferences } from "./jsonSchemaReferences.js";
 
 // Output schemas dominate a complete `tools/list` frame. The compact profile
 // bounds each advertised output contract so frame-capped hosts can finish the
@@ -53,7 +53,11 @@ export const compactAdvertisedOutputSchema = (
   schema: Record<string, unknown>,
   budgetBytes: number,
 ): CompactedOutputSchema => {
-  const inline = inlineWithinBudget(stripAnnotations(schema), budgetBytes);
+  const references = new JsonSchemaReferences(schema);
+  const inline = inlineWithinBudget(schema, budgetBytes, {
+    stripAnnotations: true,
+    references,
+  });
   if (inline !== undefined && schemaDepth(inline) <= COMPACT_SCHEMA_MAX_DEPTH)
     return {
       schema: withoutContentBoundIdentity(inline),
@@ -64,7 +68,7 @@ export const compactAdvertisedOutputSchema = (
   // valid canonical output.
   const reduced =
     schema.type === "object" || isSchemaObject(schema.properties)
-      ? reduceToShallowProperties(schema, OUTPUT_REDUCED_ANNOTATION)
+      ? reduceToShallowProperties(schema, OUTPUT_REDUCED_ANNOTATION, references)
       : jsonValueSchema();
   if (serializedBytes(reduced) <= budgetBytes)
     return {

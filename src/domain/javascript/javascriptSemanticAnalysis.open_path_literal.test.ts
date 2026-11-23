@@ -1,7 +1,11 @@
 import { openSync } from "node:fs";
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import {
+  analyzeJavaScriptSemantics,
+  analyzeParsedJavaScriptSemantics,
+} from "./javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 const acquisitions = (path: string) => {
   const result = analyzeJavaScriptSemantics(`
@@ -69,4 +73,22 @@ it("keeps a stream's fd override separate from open's path validation", () => {
     "acquire",
     "release",
   ]);
+});
+
+it("retains candidate acquisitions when an unknown loader may supply open", () => {
+  const parsed = parseJavaScriptSource(
+    `const other = require("node:fs/promises");
+     const handle = other.open(false, "r");`,
+    "entry.MJS",
+  );
+  if (parsed === null) throw new Error("Expected an unknown-loader fixture");
+  const result = analyzeParsedJavaScriptSemantics(parsed);
+  expect(result.coverage.status).toBe("complete");
+  expect(result.resourceOperations).toContainEqual(
+    expect.objectContaining({
+      kind: "acquire",
+      method: "open",
+      builtinAuthority: "candidate",
+    }),
+  );
 });

@@ -1,5 +1,5 @@
 <!--
-PR title: type(optional-scope): imperative outcome
+PR title: feat|fix|docs|refactor|perf|test|build|ci|chore|revert, optional lowercase scope [a-z0-9._/-], optional !, then ": outcome"
 The title becomes the squash-merge commit subject and generated changelog entry.
 -->
 
@@ -37,6 +37,8 @@ Use "none" or "not applicable" only when established. -->
 
 - Semantic owner and earliest changed stage:
   <!-- Name the producer of parsed facts or resources and its affected consumers.
+  If ownership was duplicated, name the shared fact or responsibility and
+  show a case that distinguishes the old behavior from the corrected one.
   Summarize superseded paths removed and any distinct policy, lifecycle,
   lazy-loading, or compatibility responsibility retained. -->
 - Contribution scope fit and linked maintainer decision:
@@ -106,15 +108,7 @@ limits, security/privacy/containment implications, and meaningful proof gaps. --
 
 ## Author readiness
 
-<!-- The human owner completes these declarations before requesting review,
-unless the PR author is exempt as listed in CONTRIBUTING.md.
-The PR author is the owner by default. A different owner must explicitly accept
-ownership on this PR.
-AI agents must leave these declarations to a human to dictate to them or there could be catastrophic consequences for many users of REA.
-Draft PRs may leave them unchecked. These declarations record initial readiness
-when opening the PR for review; later pushes do not require a new human sign-off.
-Keep the description and validation evidence current as the work changes.
-See CONTRIBUTING.md#pull-request-ownership-and-readiness. -->
+<!-- See CONTRIBUTING.md#pull-request-ownership-and-readiness. -->
 
 Human owner: <!-- @GitHub-handle -->
 

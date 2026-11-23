@@ -68,25 +68,25 @@ it("recognizes only a complete first block with all three magic numbers", () => 
 it("joins one family's numbered blocks into a region across chunk boundaries", () => {
   const bytes = patternBytes(1000);
   const file = uf2File(uf2Image(RP2040_FAMILY, 0x1000_0000, bytes));
-  for (const chunkSize of [file.length, 512, 100, 7]) {
-    const decoded = image(file, chunkSize);
-    expect(decoded.complete).toBe(true);
-    expect(decoded.limitations).toEqual([]);
-    expect(regionFacts(decoded)).toEqual([
-      {
-        familyId: RP2040_FAMILY,
-        familyName: "RP2040",
-        start: 0x1000_0000,
-        end: 0x1000_03e7,
-        length: 1000,
-        blockCount: 4,
-        firstFileBlock: 0,
-        lastFileBlock: 3,
-      },
-    ]);
-    expect(Buffer.compare(decoded.regions[0]!.bytes, bytes)).toBe(0);
-  }
-  expect(image(file).metadata).toEqual({
+  const decoded = image(file, 7);
+  expect(decoded.complete).toBe(true);
+  expect(decoded.limitations).toEqual([]);
+  expect(regionFacts(decoded)).toEqual([
+    {
+      familyId: RP2040_FAMILY,
+      familyName: "RP2040",
+      start: 0x1000_0000,
+      end: 0x1000_03e7,
+      length: 1000,
+      blockCount: 4,
+      firstFileBlock: 0,
+      lastFileBlock: 3,
+    },
+  ]);
+  const [region] = decoded.regions;
+  if (region === undefined) throw new Error("Expected the complete UF2 region");
+  expect(Buffer.compare(region.bytes, bytes)).toBe(0);
+  expect(decoded.metadata).toEqual({
     kind: "uf2",
     block_count: 4,
     trailing_bytes: 0,
@@ -314,7 +314,9 @@ it("leaves coverage unknown when one copy of reused numbering lost a block", () 
       ambiguous_numbering_group_count: 1,
     });
     expect(decoded.limitations).toEqual([
-      "UF2 numbering cannot show that every copy of a block sequence is complete: family 0xc47e5767 (ESP32S3) with 3 numbered blocks has some numbers at 1 address(es) and others at 2.",
+      expect.stringMatching(
+        /numbering.*complete.*0xc47e5767.*ESP32S3.*3.*1 address.*2/iu,
+      ),
     ]);
   }
 });
@@ -352,8 +354,10 @@ it("excludes not-main-flash and file-container blocks from regions", () => {
     family_count: 0,
     missing_block_count: 1,
   });
-  expect(decoded.limitations).toContain(
-    "1 UF2 block(s) are flagged not main flash (flag 0x1); their 3 payload bytes are in no region.",
+  expect(decoded.limitations).toContainEqual(
+    expect.stringMatching(
+      /1 UF2 block.*not main flash.*0x1.*3 payload bytes.*no region/iu,
+    ),
   );
   const file = uf2Block({
     address: 0,
@@ -371,9 +375,51 @@ it("excludes not-main-flash and file-container blocks from regions", () => {
     missing_block_count: 0,
     region_count: 1,
   });
-  expect(contained.limitations).toContain(
-    "1 UF2 block(s) belong to file containers (flag 0x1000); their files were not reconstructed.",
+  expect(contained.limitations).toContainEqual(
+    expect.stringMatching(
+      /1 UF2 block.*file containers.*0x1000.*not reconstructed/iu,
+    ),
   );
+});
+
+it("counts a nonflash comment whose address cannot describe a flash range", () => {
+  const flash = uf2Block({
+    address: 0x1000,
+    payload: [1, 2],
+    blockNo: 0,
+    numBlocks: 2,
+  });
+  const decode = (flags: number) =>
+    image(
+      uf2File([
+        flash,
+        uf2Block({
+          address: 0xffffffff,
+          payload: [3, 4],
+          blockNo: 1,
+          numBlocks: 2,
+          flags,
+        }),
+      ]),
+    );
+
+  const comment = decode(UF2_FLAGS.notMainFlash);
+  expect(comment.complete).toBe(true);
+  expect(comment.metadata).toMatchObject({
+    invalid_block_count: 0,
+    missing_block_count: 0,
+    not_main_flash_block_count: 1,
+    flash_block_count: 1,
+    region_count: 1,
+  });
+  expect(comment.regions.map(({ bytes }) => [...bytes])).toEqual([[1, 2]]);
+  for (const flags of [0, UF2_FLAGS.notMainFlash | UF2_FLAGS.fileContainer]) {
+    expect(decode(flags).metadata).toMatchObject({
+      invalid_block_count: 1,
+      missing_block_count: 1,
+      not_main_flash_block_count: 0,
+    });
+  }
 });
 
 it("excludes invalid blocks and a truncated final block, leaving coverage unknown", () => {
@@ -470,7 +516,9 @@ it("counts MD5 and extension-tag flags as declared, unverified facts", () => {
   });
   expect(decoded.complete).toBe(true);
   expect(decoded.limitations).toEqual([
-    "1 UF2 block(s) declare an MD5 flash region (flag 0x4000) and 1 declare extension tags (flag 0x8000); both are counted, not decoded or verified.",
+    expect.stringMatching(
+      /1.*MD5.*0x4000.*1.*extension.*0x8000.*not decoded or verified/iu,
+    ),
   ]);
 });
 

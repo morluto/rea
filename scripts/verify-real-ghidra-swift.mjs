@@ -1,18 +1,9 @@
 #!/usr/bin/env node
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import {
-  copyFile,
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { copyFile, mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
@@ -22,9 +13,18 @@ import {
   spawnOwnedProviderProcess,
 } from "../dist/process/ProviderProcess.js";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
-const execute = promisify(execFile);
 const run = createVerifierRun();
 const installation = await inspectVerifierGhidraInstallation({
   environment: process.env,
@@ -33,17 +33,41 @@ const installation = await inspectVerifierGhidraInstallation({
 });
 if (process.platform !== "darwin" || installation.status !== "available")
   throw new Error(
-    "verify:ghidra:swift requires macOS, Ghidra 12.1.4 with its native decompiler, and JDK 21; set GHIDRA_INSTALL_DIR and JAVA_HOME.",
+    "verify:ghidra:swift requires macOS, Ghidra 12.2 with its native decompiler, and JDK 25; set GHIDRA_INSTALL_DIR and JAVA_HOME.",
   );
+// swiftc and clang share one command owner, including the pre-workspace probe.
+const commands = await createVerifierCommands();
+const commandInterruption = bindVerifierCommandInterruption(commands);
+const execOwned = commandInterruption.exec;
+const { untilInterrupted, throwIfInterrupted } = commandInterruption;
+const finishCommandInterruption = () => commandInterruption.finish();
 try {
-  await execute("swiftc", ["--version"], { timeout: 10_000 });
+  await execOwned("swiftc", ["--version"], { timeout: 10_000 });
 } catch (cause) {
+  try {
+    await commands.close();
+  } catch (closeCause) {
+    throw new AggregateError(
+      [cause, closeCause],
+      "verify:ghidra:swift requires the host Swift compiler (swiftc), and closing its command owner failed.",
+    );
+  }
+  if (commandInterruption.signal.aborted) throw cause;
   throw new Error(
     "verify:ghidra:swift requires the host Swift compiler (swiftc).",
     { cause },
   );
 }
-const root = await mkdtemp(join(tmpdir(), "rea-ghidra-swift-"));
+// Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
+const rootFixture = await VerifierFixture.open({
+  prefix: "rea-ghidra-swift-",
+  private: false,
+});
+const root = rootFixture.path;
+const retainWorkspace = (message, options) => {
+  rootFixture.retain(message);
+  return new Error(message, options);
+};
 const client = new Client({ name: "ghidra-swift-verifier", version: "1" });
 const transport = new StdioClientTransport({
   command: process.execPath,
@@ -71,128 +95,174 @@ const literalObjects = ["decoder-safeguards.S", "unresolved-string-jump.s"].map(
   }),
 );
 const reports = [];
+let connected = false;
+let verifierRun;
 let literalReport;
 let decoderCleaned = true;
-try {
-  await execute("swiftc", ["-O", "-g", source, "-o", binary], {
-    timeout: 60_000,
-  });
-  await mkdir(join(root, "copied"));
-  const copied = join(root, "copied", "swift-inventory");
-  await copyFile(binary, copied);
-  // Decoding covers AArch64 register pairs, so build that slice on any Mac host.
-  for (const { source: assembly, object } of literalObjects)
-    await execute(
-      "xcrun",
+// The root is removed only after the session, client and decoder confirm.
+rootFixture.releaseAfter(async () => {
+  if (connected) await call("close_binary", {});
+});
+rootFixture.releaseAfter(() => client.close());
+rootFixture.releaseAfter(() => transport.close());
+rootFixture.releaseAfter(async () => {
+  assert.equal(decoderCleaned, true, "Owned decoder cleanup remains pending");
+  verifierRun = await completeVerifierRun(run);
+  assertVerifierCleanupComplete(verifierRun.process_lineage);
+});
+commandInterruption.retainWorkspaceIfInterrupted(rootFixture);
+await withVerifierFixture(rootFixture, async () => {
+  let primaryFailure;
+  try {
+    await execOwned("swiftc", ["-O", "-g", source, "-o", binary], {
+      timeout: 60_000,
+    });
+    await mkdir(join(root, "copied"));
+    const copied = join(root, "copied", "swift-inventory");
+    await copyFile(binary, copied);
+    // Decoding covers AArch64 register pairs, so build that slice on any Mac host.
+    for (const { source: assembly, object } of literalObjects)
+      await execOwned(
+        "xcrun",
+        [
+          "clang",
+          "-target",
+          "arm64-apple-macosx13.0",
+          "-c",
+          assembly,
+          "-o",
+          object,
+        ],
+        { timeout: 60_000 },
+      );
+    await execOwned(
+      "swiftc",
       [
-        "clang",
+        "-O",
         "-target",
         "arm64-apple-macosx13.0",
-        "-c",
-        assembly,
+        literalSource,
+        ...literalObjects.map(({ object }) => object),
         "-o",
-        object,
+        literalBinary,
       ],
       { timeout: 60_000 },
     );
-  await execute(
-    "swiftc",
-    [
-      "-O",
-      "-target",
-      "arm64-apple-macosx13.0",
-      literalSource,
-      ...literalObjects.map(({ object }) => object),
-      "-o",
-      literalBinary,
-    ],
-    { timeout: 60_000 },
-  );
-  await verifyDecoderSafeguards();
-  await client.connect(transport);
-  for (const [variant, path] of [
-    ["debug", binary],
-    ["without-dsym", copied],
-  ]) {
-    await call("open_binary", { path, provider_id: "ghidra" });
-    try {
-      const procedures = await call("list_procedures", {});
-      const inventory = await call("analyze_swift_types", {});
-      assert(
-        inventory.total > 0,
-        "Swift procedures disappeared from the inventory",
-      );
-      assert(
-        inventory.categories.other.count > 0,
-        "Top-level Swift symbols were lost",
-      );
-      const structs = await call("analyze_swift_types", {
-        category: "structs",
-      });
-      assert(
-        structs.categories.structs.count > 0,
-        "Modern struct symbols were lost",
-      );
-      const metadata = await call("analyze_swift_types", {
-        category: "structs",
-        pattern: "VMa",
-      });
-      assert.equal(
-        metadata.total,
-        2,
-        "Pair and Scorer metadata accessors must both be classified",
-      );
-      const pair = await call("analyze_swift_types", {
-        category: "structs",
-        pattern: "Pair",
-      });
-      assert(pair.total > 0, "Literal name filtering lost Pair symbols");
-      const unresolved = await call("analyze_swift_types", {
-        category: "structs",
-        pattern: "swiftIndirect",
-      });
-      assert(
-        unresolved.unclassified.length > 0,
-        "Unsupported categories must remain explicit",
-      );
-      const entries = Object.values(inventory.categories).flatMap(
-        (category) => category.items,
-      );
-      assert.equal(
-        new Set(entries.map((entry) => entry.name)).size,
-        inventory.total,
-      );
-      assert(
-        !entries.some(
-          (entry) =>
-            entry.name === "entry" || entry.name === "_swift_allocObject",
-        ),
-      );
-      for (const entry of entries)
+    await verifyDecoderSafeguards();
+    await untilInterrupted(
+      client.connect(transport, { signal: commandInterruption.signal }),
+    );
+    connected = true;
+    for (const [variant, path] of [
+      ["debug", binary],
+      ["without-dsym", copied],
+    ]) {
+      await call("open_binary", { path, provider_id: "ghidra" });
+      await withVerifierCleanup(async () => {
+        const procedures = await call("list_procedures", {});
+        const inventory = await call("analyze_swift_types", {});
         assert(
-          procedures.some(
-            (procedure) =>
-              procedure.address === entry.address &&
-              procedure.value === entry.name,
+          inventory.total > 0,
+          "Swift procedures disappeared from the inventory",
+        );
+        assert(
+          inventory.categories.other.count > 0,
+          "Top-level Swift symbols were lost",
+        );
+        const structs = await call("analyze_swift_types", {
+          category: "structs",
+        });
+        assert(
+          structs.categories.structs.count > 0,
+          "Modern struct symbols were lost",
+        );
+        const metadata = await call("analyze_swift_types", {
+          category: "structs",
+          pattern: "VMa",
+        });
+        assert.equal(
+          metadata.total,
+          2,
+          "Pair and Scorer metadata accessors must both be classified",
+        );
+        const pair = await call("analyze_swift_types", {
+          category: "structs",
+          pattern: "Pair",
+        });
+        assert(pair.total > 0, "Literal name filtering lost Pair symbols");
+        const unresolved = await call("analyze_swift_types", {
+          category: "structs",
+          pattern: "swiftIndirect",
+        });
+        assert(
+          unresolved.unclassified.length > 0,
+          "Unsupported categories must remain explicit",
+        );
+        const entries = Object.values(inventory.categories).flatMap(
+          (category) => category.items,
+        );
+        assert.equal(
+          new Set(entries.map((entry) => entry.name)).size,
+          inventory.total,
+        );
+        assert(
+          !entries.some(
+            (entry) =>
+              entry.name === "entry" || entry.name === "_swift_allocObject",
           ),
         );
-      reports.push({
-        variant,
-        total: inventory.total,
-        structs: structs.total,
-        metadata_accessors: metadata.total,
-        unclassified: inventory.unclassified.length,
-      });
-    } finally {
-      await call("close_binary", {});
+        for (const entry of entries)
+          assert(
+            procedures.some(
+              (procedure) =>
+                procedure.address === entry.address &&
+                procedure.value === entry.name,
+            ),
+          );
+        reports.push({
+          variant,
+          total: inventory.total,
+          structs: structs.total,
+          metadata_accessors: metadata.total,
+          unclassified: inventory.unclassified.length,
+        });
+      }, [() => call("close_binary", {})]);
     }
+    literalReport = await verifyStringLiterals();
+  } catch (cause) {
+    primaryFailure = cause;
   }
-  literalReport = await verifyStringLiterals();
-} finally {
-  await client.close();
-  await transport.close();
-  if (decoderCleaned) await rm(root, { recursive: true, force: true });
-}
+  // Close the command owner before release observes the parent tree.
+  let cleanupFailure;
+  try {
+    await rootFixture.closeEarly([() => commands.close()]);
+  } catch (cause) {
+    cleanupFailure = cause;
+  }
+  if (cleanupFailure !== undefined || primaryFailure !== undefined)
+    throw retainWorkspace(
+      `Swift verification failed; retained diagnostic workspace: ${root}`,
+      {
+        cause:
+          cleanupFailure === undefined
+            ? primaryFailure
+            : primaryFailure === undefined
+              ? cleanupFailure
+              : new AggregateError(
+                  [primaryFailure, cleanupFailure],
+                  "Swift verification and command cleanup both failed",
+                ),
+      },
+    );
+  const interrupted = commandInterruption.reason();
+  if (interrupted !== undefined)
+    throw retainWorkspace(
+      `Swift verification interrupted; retained diagnostic workspace: ${root}`,
+      { cause: interrupted },
+    );
+});
+const releaseInterrupted = finishCommandInterruption();
+if (releaseInterrupted !== undefined) throw releaseInterrupted;
 console.log(
   JSON.stringify(
     {
@@ -200,7 +270,7 @@ console.log(
       provider: "ghidra",
       fixtures: reports,
       swift_string_literals: literalReport,
-      verifier_run: await completeVerifierRun(run),
+      verifier_run: verifierRun,
     },
     null,
     2,
@@ -208,9 +278,10 @@ console.log(
 );
 
 async function call(name, arguments_) {
+  throwIfInterrupted();
   const response = await client.callTool(
     { name, arguments: arguments_ },
-    { timeout: 180_000 },
+    { timeout: 180_000, signal: commandInterruption.signal },
   );
   if (name === "analyze_swift_types")
     assert.ok(response.structuredContent, `${name} omitted structured result`);
@@ -220,7 +291,7 @@ async function call(name, arguments_) {
 // Literal text lives only in register constants, so it must come from the decoded pairs.
 async function verifyStringLiterals() {
   await call("open_binary", { path: literalBinary, provider_id: "ghidra" });
-  try {
+  return withVerifierCleanup(async () => {
     const procedures = await call("list_procedures", {});
     const expected = {
       smallLiteral: [["SleepDisabled", "small"]],
@@ -281,9 +352,7 @@ async function verifyStringLiterals() {
     decoded.unresolvedStringJump =
       unresolvedDossier.swift_string_literal_omissions.length;
     return decoded;
-  } finally {
-    await call("close_binary", {});
-  }
+  }, [() => call("close_binary", {})]);
 }
 
 // Exercise the Java producer inside an ephemeral Ghidra database. The explicit
@@ -366,7 +435,7 @@ async function runDecoderProbe(scripts, report) {
         : "Swift decoder probe timed out",
     );
     assert.ok(
-      await supervisor.waitForOutputClose(1_000),
+      await untilInterrupted(supervisor.waitForOutputClose(1_000)),
       "Swift decoder probe output did not close",
     );
     const snapshot = supervisor.snapshot();

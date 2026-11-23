@@ -4,16 +4,13 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { z } from "zod";
 
-import { compareTestSelection } from "./test-selection.mjs";
+import { parseTestSelection } from "./test-selection.mjs";
 
 const root = process.cwd();
 const historyDirectory = join(root, ".cache/ci-test-history");
 const historyPath = join(historyDirectory, "test-results.json");
-const selectionDirectory = join(root, ".cache/ci-test-selection");
-const selectionPath = join(selectionDirectory, "report.json");
 // Never let a failed or partial rerun leave a previous successful history file.
 await rm(historyPath, { force: true });
-await rm(selectionPath, { force: true });
 const report = z
   .object({
     version: z.literal(1),
@@ -51,45 +48,36 @@ const groupResults = [
 const groupsCompleted = groupResults.every((state) =>
   ["success", "failure"].includes(state),
 );
-const passed =
+const failedFiles = files
+  .filter(({ state }) => state === "failed")
+  .map(({ name }) => name)
+  .sort();
+const workflowPassed =
   groupResults.every((state) => state === "success") &&
-  process.env.MERGE_RESULT === "success" &&
-  report.success;
+  process.env.MERGE_RESULT === "success";
+const passed =
+  workflowPassed &&
+  report.success &&
+  failedFiles.length === 0 &&
+  (report.unhandledErrors ?? 0) === 0;
 // Successful shards and merged reports must account for the complete portable
-// inventory. Coverage thresholds alone cannot prove that every file ran.
+// inventory, or exactly the selected subset. Coverage thresholds alone cannot
+// prove that every file ran.
 const verifyInventory = process.env.CI_VERIFY_TEST_INVENTORY === "true";
-const expected =
-  verifyInventory || process.env.CI_TEST_SELECTION
-    ? execFileSync("git", ["ls-files", "-z", "--", "src", "tests"], {
+const selection = process.env.CI_TEST_SELECTION
+  ? parseTestSelection(process.env.CI_TEST_SELECTION)
+  : undefined;
+const selected = selection?.mode === "selected";
+const expected = !verifyInventory
+  ? []
+  : selected
+    ? selection.files
+    : execFileSync("git", ["ls-files", "-z", "--", "src", "tests"], {
         encoding: "utf8",
         maxBuffer: 8 * 1024 * 1024,
       })
         .split("\0")
-        .filter((path) => path.endsWith(".test.ts"))
-    : [];
-let selection;
-if (process.env.CI_TEST_SELECTION) {
-  const comparison = compareTestSelection(
-    JSON.parse(process.env.CI_TEST_SELECTION),
-    expected,
-    files,
-  );
-  selection = {
-    ...comparison,
-    complete:
-      comparison.complete &&
-      report.unhandledErrors === 0 &&
-      ["passed", "failed"].includes(report.reason) &&
-      groupsCompleted &&
-      ["success", "failure"].includes(process.env.MERGE_RESULT),
-    executionSha: process.env.GITHUB_SHA ?? null,
-    prHeadSha: process.env.CI_PR_HEAD_SHA ?? null,
-    runId: process.env.GITHUB_RUN_ID ?? null,
-    runAttempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
-  };
-  await mkdir(selectionDirectory, { recursive: true });
-  await writeFile(selectionPath, JSON.stringify(selection));
-}
+        .filter((path) => path.endsWith(".test.ts"));
 if (passed && verifyInventory) {
   const actual = files.map(({ name }) => name);
   if (actual.length === 0)
@@ -100,12 +88,32 @@ if (passed && verifyInventory) {
   const unexpected = actual.filter((path) => !expectedSet.has(path));
   if (missing.length || unexpected.length || actualSet.size !== actual.length)
     throw new Error(
-      `Incomplete portable test inventory: ${JSON.stringify({ missing, unexpected, duplicateFiles: actual.length - actualSet.size })}`,
+      `Incomplete ${selected ? "selected" : "portable"} test inventory: ${JSON.stringify({ missing, unexpected, duplicateFiles: actual.length - actualSet.size })}`,
     );
   if (files.every(({ state }) => state === "skipped"))
     throw new Error("Every portable test module was skipped");
 }
+// A selected subset is not a timing baseline for the complete suite.
+const publishesHistory = passed && !selected;
 const skippedFiles = files.filter(({ state }) => state === "skipped");
+const failureListLimit = 20;
+const failureDetails =
+  !passed || failedFiles.length > 0
+    ? [
+        `Failed test modules reported: ${failedFiles.length}.`,
+        ...failedFiles
+          .slice(0, failureListLimit)
+          .map((name) => `- ${JSON.stringify(name)}`),
+        ...(failedFiles.length > failureListLimit
+          ? [
+              `… ${failedFiles.length - failureListLimit} more in the test report.`,
+            ]
+          : []),
+        ...(report.unhandledErrors === undefined
+          ? []
+          : [`Unhandled Vitest errors reported: ${report.unhandledErrors}.`]),
+      ]
+    : [];
 const summary = [
   groupsCompleted
     ? "## Merged test diagnostics"
@@ -113,11 +121,7 @@ const summary = [
   "",
   ...(selection
     ? [
-        "### Observational PR test selection",
-        "",
-        `Plan: ${selection.plan.mode}. Proposed files: ${selection.selected.length}; omitted: ${selection.omitted.length}.`,
-        `Full-run comparison: ${selection.complete ? "complete" : "incomplete"}; failures outside proposed selection: ${selection.missedFailures.length}.`,
-        "This observational report cannot enable omissions or qualify a revision. Skipped, missing, and interrupted observations do not establish parity.",
+        `Portable tests: ${selected ? `${selection.files.length} selected files` : "complete suite"}. ${selection.reason}.`,
         "",
       ]
     : []),
@@ -125,11 +129,14 @@ const summary = [
   ...(process.env.SOURCE_REQUIRED === "true"
     ? [`Source result: ${process.env.SOURCE_RESULT ?? "unknown"}.`]
     : []),
+  ...(failureDetails.length > 0
+    ? ["", "```text", ...failureDetails, "```", ""]
+    : []),
   `Skipped test modules: ${skippedFiles.length}. Their skip reasons and required coverage are not established by this report.`,
   ...(skippedFiles.length ? [""] : []),
   ...skippedFiles.map(({ name }) => `- ${name.replaceAll("|", "\\|")}`),
   "",
-  passed
+  publishesHistory
     ? "Successful timing history is available."
     : "This report is diagnostic only and is not a successful timing baseline.",
   "",
@@ -146,11 +153,15 @@ const summary = [
     ),
   "",
 ].join("\n");
-if (process.env.GITHUB_STEP_SUMMARY)
+if (process.env.GITHUB_STEP_SUMMARY) {
   await appendFile(process.env.GITHUB_STEP_SUMMARY, summary);
-else console.log(summary);
+  if (failureDetails.length > 0) console.log(failureDetails.join("\n"));
+} else console.log(summary);
 
-if (passed) {
+if (workflowPassed && !passed)
+  throw new Error("Merged test report does not confirm successful tests");
+
+if (publishesHistory) {
   await mkdir(historyDirectory, { recursive: true });
   await writeFile(
     historyPath,

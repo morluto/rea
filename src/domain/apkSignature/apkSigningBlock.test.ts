@@ -1,10 +1,22 @@
+import { isParseLimit } from "../parseFailureAnalysisError.js";
 import { describe, expect, it } from "vitest";
+import { zip64Tail } from "../../../tests/fixtures/apkSignature/zip64Tail.js";
 
 import {
   APK_BLOCK_ID,
-  locateApkSigningBlock,
-  parseZipTail,
+  locateApkSigningBlockFromReader,
+  parseZipTailFromReader,
+  type ZipTail,
 } from "./apkSigningBlock.js";
+import { bufferByteSource } from "../byteSource.js";
+
+const parseZipTail = async (bytes: Uint8Array) => {
+  const result = await parseZipTailFromReader(bufferByteSource(bytes, 4));
+  return result.ok ? { ok: true as const, value: result.value.tail } : result;
+};
+
+const locateApkSigningBlock = (bytes: Uint8Array, tail: ZipTail) =>
+  locateApkSigningBlockFromReader(bufferByteSource(bytes, 4), tail);
 
 /** Little-endian byte builder for a minimal APK-like tail. */
 class Bytes {
@@ -67,7 +79,7 @@ const apkWithBlock = (
 describe("APK signing block locator", () => {
   it.each([1, 22, 23, 0xffffffff])(
     "refuses a directory extent overlapping or extending beyond the EOCD by %s bytes",
-    (extra) => {
+    async (extra) => {
       const bytes = apkWithBlock([]);
       const eocd = bytes.length - 22;
       const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -76,14 +88,14 @@ describe("APK signing block locator", () => {
         extra === 0xffffffff ? extra - 1 : 4 + extra,
         true,
       );
-      expect(parseZipTail(bytes)).toMatchObject({
+      expect(await parseZipTail(bytes)).toMatchObject({
         ok: false,
         error: { kind: "malformed-zip" },
       });
     },
   );
-  it("parses the ZIP tail to the central-directory offset", () => {
-    const tail = parseZipTail(
+  it("parses the ZIP tail to the central-directory offset", async () => {
+    const tail = await parseZipTail(
       apkWithBlock([{ id: APK_BLOCK_ID.signatureV2, value: [1, 2, 3, 4] }]),
     );
     expect(tail.ok).toBe(true);
@@ -92,15 +104,15 @@ describe("APK signing block locator", () => {
     expect(tail.value.totalEntries).toBe(1);
   });
 
-  it("locates the signing block and frames its id-value pairs", () => {
+  it("locates the signing block and frames its id-value pairs", async () => {
     const bytes = apkWithBlock([
       { id: APK_BLOCK_ID.signatureV2, value: [0xaa, 0xbb, 0xcc, 0xdd] },
       { id: APK_BLOCK_ID.signatureV3, value: [0x11, 0x22] },
     ]);
-    const tail = parseZipTail(bytes);
+    const tail = await parseZipTail(bytes);
     expect(tail.ok).toBe(true);
     if (!tail.ok) return;
-    const block = locateApkSigningBlock(bytes, tail.value);
+    const block = await locateApkSigningBlock(bytes, tail.value);
     expect(block.ok).toBe(true);
     if (!block.ok || block.value === null)
       throw new Error("Expected an APK signing block");
@@ -111,49 +123,67 @@ describe("APK signing block locator", () => {
     expect([...block.value.pairs[0]!.value]).toEqual([0xaa, 0xbb, 0xcc, 0xdd]);
   });
 
-  it("returns null when no block magic precedes the central directory", () => {
+  it("names the enforced limit for a physically framed extra pair", async () => {
+    const bytes = apkWithBlock(
+      Array.from({ length: 4097 }, () => ({ id: 0xffffffff, value: [] })),
+    );
+    const tail = await parseZipTail(bytes);
+    if (!tail.ok) throw new Error("Expected a framed ZIP tail");
+    const result = await locateApkSigningBlock(bytes, tail.value);
+    if (result.ok) throw new Error("Expected a signing-block pair refusal");
+    expect(isParseLimit(result.error, "apk-signing-block")).toBe(true);
+    expect(result.error).toMatchObject({
+      failure: {
+        limit: { name: "max_signing_block_pairs", maximum: 4096 },
+      },
+    });
+  });
+
+  it("returns null when no block magic precedes the central directory", async () => {
     const bytes = apkWithBlock(
       [{ id: APK_BLOCK_ID.signatureV2, value: [1, 2, 3, 4] }],
       false,
     );
-    const tail = parseZipTail(bytes);
+    const tail = await parseZipTail(bytes);
     expect(tail.ok).toBe(true);
     if (!tail.ok) return;
-    const block = locateApkSigningBlock(bytes, tail.value);
+    const block = await locateApkSigningBlock(bytes, tail.value);
     expect(block.ok).toBe(true);
     if (!block.ok) return;
     expect(block.value).toBeNull();
   });
 
-  it("refuses a buffer with no end-of-central-directory record", () => {
-    const result = parseZipTail(Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8]));
+  it("refuses a buffer with no end-of-central-directory record", async () => {
+    const result = await parseZipTail(
+      Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8]),
+    );
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("not-a-zip");
   });
 
-  it("calls a ZIP with local headers but no EOCD damaged, not foreign", () => {
+  it("calls a ZIP with local headers but no EOCD damaged, not foreign", async () => {
     const bytes = apkWithBlock([
       { id: APK_BLOCK_ID.signatureV2, value: [1, 2, 3, 4] },
     ]);
     bytes.set([0x50, 0x4b, 0x03, 0x04], 0);
-    const result = parseZipTail(bytes.subarray(0, bytes.length - 22));
+    const result = await parseZipTail(bytes.subarray(0, bytes.length - 22));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("malformed-zip");
   });
 
-  it("refuses a block footer smaller than its own 24 bytes", () => {
+  it("refuses a block footer smaller than its own 24 bytes", async () => {
     const bytes = apkWithBlock([
       { id: APK_BLOCK_ID.signatureV2, value: [1, 2, 3, 4] },
     ]);
-    const tail = parseZipTail(bytes);
+    const tail = await parseZipTail(bytes);
     expect(tail.ok).toBe(true);
     if (!tail.ok) return;
     // Trailing size sits 24 bytes before the central directory.
     const at = tail.value.centralDirectoryOffset - 24;
     bytes.set([16, 0, 0, 0, 0, 0, 0, 0], at);
-    const block = locateApkSigningBlock(bytes, tail.value);
+    const block = await locateApkSigningBlock(bytes, tail.value);
     expect(block.ok).toBe(false);
     if (block.ok) return;
     expect(block.error).toMatchObject({
@@ -162,24 +192,83 @@ describe("APK signing block locator", () => {
     });
   });
 
-  it("flags a leading/trailing size mismatch as malformed", () => {
+  it("flags a leading/trailing size mismatch as malformed", async () => {
     const bytes = apkWithBlock([
       { id: APK_BLOCK_ID.signatureV2, value: [1, 2, 3, 4] },
     ]);
     // Corrupt the leading size (first byte of the block, after 10 filler bytes).
     bytes[10] = 0xff;
-    const tail = parseZipTail(bytes);
+    const tail = await parseZipTail(bytes);
     expect(tail.ok).toBe(true);
     if (!tail.ok) return;
-    const block = locateApkSigningBlock(bytes, tail.value);
+    const block = await locateApkSigningBlock(bytes, tail.value);
     expect(block.ok).toBe(false);
     if (block.ok) return;
     expect(block.error.kind).toBe("malformed-block");
   });
 });
 
+describe("Zip64 volume declarations", () => {
+  it.each([16, 20])(
+    "refuses a Zip64 end record naming another volume at field %s",
+    async (field) => {
+      const { bytes, recordOffset } = await zip64Tail();
+      expect((await parseZipTail(bytes)).ok).toBe(true);
+      new DataView(bytes.buffer).setUint32(recordOffset + field, 1, true);
+      expect(await parseZipTail(bytes)).toMatchObject({
+        ok: false,
+        error: { kind: "zip64-unsupported" },
+      });
+    },
+  );
+
+  it("accepts deferred classic disk fields but refuses another disk", async () => {
+    const { bytes, eocdOffset } = await zip64Tail();
+    const view = new DataView(bytes.buffer);
+    view.setUint16(eocdOffset + 4, 0xffff, true);
+    view.setUint16(eocdOffset + 6, 0xffff, true);
+    expect((await parseZipTail(bytes)).ok).toBe(true);
+    view.setUint16(eocdOffset + 6, 1, true);
+    expect(await parseZipTail(bytes)).toMatchObject({
+      ok: false,
+      error: { kind: "zip64-unsupported" },
+    });
+  });
+});
+
 describe("Zip64 end-of-central-directory", () => {
-  it("follows a Zip64 EOCD locator to the central-directory offset", () => {
+  it.each([43n, 45n, 1n << 63n])(
+    "rejects a Zip64 record whose declared body size is %s",
+    async (size) => {
+      const { bytes, recordOffset } = await zip64Tail();
+      expect((await parseZipTail(bytes)).ok).toBe(true);
+      new DataView(bytes.buffer).setBigUint64(recordOffset + 4, size, true);
+      expect(await parseZipTail(bytes)).toMatchObject({
+        ok: false,
+        error: { kind: "malformed-zip", offset: recordOffset + 4 },
+      });
+    },
+  );
+
+  it("allows a Zip64 extensible sector that fits before the locator", async () => {
+    const { bytes, recordOffset, locatorOffset } = await zip64Tail();
+    const extension = Uint8Array.of(0xfe, 0xff, 1, 0, 0, 0, 0);
+    const extended = new Uint8Array(bytes.length + extension.length);
+    extended.set(bytes.subarray(0, locatorOffset));
+    extended.set(extension, locatorOffset);
+    extended.set(
+      bytes.subarray(locatorOffset),
+      locatorOffset + extension.length,
+    );
+    new DataView(extended.buffer).setBigUint64(
+      recordOffset + 4,
+      BigInt(44 + extension.length),
+      true,
+    );
+    expect((await parseZipTail(extended)).ok).toBe(true);
+  });
+
+  it("follows a Zip64 EOCD locator to the central-directory offset", async () => {
     const body = new Bytes().raw(Array.from({ length: 40 }, () => 0));
     const cdOffset = body.b.length;
     const cd = new Bytes().raw([0xca, 0xfe, 0xca, 0xfe]);
@@ -205,7 +294,7 @@ describe("Zip64 end-of-central-directory", () => {
       .u32(0xffffffff)
       .u32(0xffffffff)
       .u16(0);
-    const tail = parseZipTail(
+    const tail = await parseZipTail(
       Uint8Array.from([
         ...body.b,
         ...cd.b,
@@ -222,7 +311,7 @@ describe("Zip64 end-of-central-directory", () => {
     expect(tail.value.totalEntries).toBe(1);
   });
 
-  it("takes the Zip64 entry count when only the 16-bit count saturates", () => {
+  it("takes the Zip64 entry count when only the 16-bit count saturates", async () => {
     const body = new Bytes().raw(Array.from({ length: 40 }, () => 0));
     const cdOffset = body.b.length;
     const cd = new Bytes().raw([0xca, 0xfe, 0xca, 0xfe]);
@@ -249,7 +338,7 @@ describe("Zip64 end-of-central-directory", () => {
       .u32(cd.b.length)
       .u32(cdOffset)
       .u16(0);
-    const tail = parseZipTail(
+    const tail = await parseZipTail(
       Uint8Array.from([
         ...body.b,
         ...cd.b,
@@ -265,7 +354,7 @@ describe("Zip64 end-of-central-directory", () => {
     expect(tail.value.classicEntryCount).toBe(0xffff);
   });
 
-  it("keeps exactly 65,535 entries when no Zip64 record exists", () => {
+  it("keeps exactly 65,535 entries when no Zip64 record exists", async () => {
     const cd = new Bytes().raw([0xca, 0xfe, 0xca, 0xfe]);
     const eocd = new Bytes()
       .u32(0x06054b50)
@@ -276,7 +365,7 @@ describe("Zip64 end-of-central-directory", () => {
       .u32(cd.b.length)
       .u32(0)
       .u16(0);
-    const tail = parseZipTail(Uint8Array.from([...cd.b, ...eocd.b]));
+    const tail = await parseZipTail(Uint8Array.from([...cd.b, ...eocd.b]));
     expect(tail.ok).toBe(true);
     if (!tail.ok) return;
     expect(tail.value.totalEntries).toBe(0xffff);
@@ -284,7 +373,7 @@ describe("Zip64 end-of-central-directory", () => {
 });
 
 describe("EOCD that cannot describe the archive", () => {
-  it("refuses a fake empty EOCD planted in the real EOCD's comment", () => {
+  it("refuses a fake empty EOCD planted in the real EOCD's comment", async () => {
     const real = apkWithBlock([
       { id: APK_BLOCK_ID.signatureV2, value: [1, 2, 3, 4] },
     ]);
@@ -301,13 +390,13 @@ describe("EOCD that cannot describe the archive", () => {
       .u32(0)
       .u16(0);
     const bytes = Uint8Array.from([...real, ...fake.b]);
-    const tail = parseZipTail(bytes);
+    const tail = await parseZipTail(bytes);
     expect(tail.ok).toBe(false);
     if (tail.ok) return;
     expect(tail.error.kind).toBe("malformed-zip");
   });
 
-  it("refuses an archive whose comment holds a second, non-empty EOCD", () => {
+  it("refuses an archive whose comment holds a second, non-empty EOCD", async () => {
     const real = apkWithBlock([
       { id: APK_BLOCK_ID.signatureV2, value: [1, 2, 3, 4] },
     ]);
@@ -322,9 +411,68 @@ describe("EOCD that cannot describe the archive", () => {
       .u32(0)
       .u16(0);
     real[real.length - 2] = fake.b.length;
-    const tail = parseZipTail(Uint8Array.from([...real, ...fake.b]));
+    const tail = await parseZipTail(Uint8Array.from([...real, ...fake.b]));
     expect(tail.ok).toBe(false);
     if (tail.ok) return;
     expect(tail.error.kind).toBe("malformed-zip");
+  });
+});
+
+describe("classic ZIP disk declarations", () => {
+  it.each([
+    [1, 0],
+    [0, 1],
+    [1, 1],
+  ])(
+    "refuses disk %s and directory disk %s before selecting a local span",
+    async (disk, directoryDisk) => {
+      const bytes = apkWithBlock([]);
+      const eocd = bytes.length - 22;
+      const view = new DataView(bytes.buffer);
+      view.setUint16(eocd + 4, disk, true);
+      view.setUint16(eocd + 6, directoryDisk, true);
+      expect(await parseZipTail(bytes)).toMatchObject({
+        ok: false,
+        error: { kind: "multi-disk-unsupported" },
+      });
+    },
+  );
+
+  it.each([0, 2])(
+    "refuses a single-disk record declaring %s of its one entry",
+    async (entriesOnDisk) => {
+      const bytes = apkWithBlock([]);
+      const eocd = bytes.length - 22;
+      new DataView(bytes.buffer).setUint16(eocd + 8, entriesOnDisk, true);
+      expect(await parseZipTail(bytes)).toMatchObject({
+        ok: false,
+        error: { kind: "malformed-zip", offset: eocd + 8 },
+      });
+    },
+  );
+
+  it("checks disk ownership in the count-saturated classic fallback", async () => {
+    const bytes = apkWithBlock([]);
+    const eocd = bytes.length - 22;
+    const view = new DataView(bytes.buffer);
+    view.setUint16(eocd + 4, 1, true);
+    view.setUint16(eocd + 8, 0xffff, true);
+    view.setUint16(eocd + 10, 0xffff, true);
+    expect(await parseZipTail(bytes)).toMatchObject({
+      ok: false,
+      error: { kind: "multi-disk-unsupported" },
+    });
+  });
+
+  it("checks per-disk counts in the count-saturated classic fallback", async () => {
+    const bytes = apkWithBlock([]);
+    const eocd = bytes.length - 22;
+    const view = new DataView(bytes.buffer);
+    view.setUint16(eocd + 8, 0xfffe, true);
+    view.setUint16(eocd + 10, 0xffff, true);
+    expect(await parseZipTail(bytes)).toMatchObject({
+      ok: false,
+      error: { kind: "malformed-zip", offset: eocd + 8 },
+    });
   });
 });

@@ -66,6 +66,8 @@ rea decode-android-resources /targets/Example.apk --locales de --locales pt-BR
 rea decode-android-resources /targets/Example.apk --locales de --locales pt-BR --string-tables-only
 rea decode-android-resources /targets/Example.apk --no-strings
 rea decode-android-resources /targets/Example.apk --decode-timeout-ms 900000
+rea decode-android-resources /targets/Example.apk --string-offset 2000 --string-limit 100 --string-tables-only
+rea decode-android-resources /targets/Example.apk --max-string-table-bytes 16777216 --max-total-string-table-bytes 67108864
 ```
 
 Equivalent MCP methods are `inspect_apktool_client` and
@@ -87,6 +89,31 @@ responses and charges the aggregate output budget for one copy per table.
 Omitting the option preserves existing responses. `include_strings: false`
 still suppresses all string projection, including in this mode.
 
+Use `string_offset` and `string_limit` (CLI `--string-offset` and
+`--string-limit`) to select a page of valid parsed entries from each requested
+table, in source order. Defaults are offset 0 and limit 2000. Explicit page or
+budget controls include `string_tables` even for a single primary table; its
+`page` gives the requested offset and limit, returned count, and `next_offset`.
+Retry that offset with the same locale and confirm `target.sha256` matches.
+Each call decodes a fresh owned snapshot; it does not retain a workspace or
+promise identity across changed APKs. A null continuation means the page reaches
+the end, while table coverage remains partial if earlier entries were omitted.
+An offset at or beyond the end returns an empty, present table with known counts.
+If the continuation equals the requested offset, no output entry fit: increase
+`max_total_strings` or use `string_tables_only` before retrying.
+
+`max_total_strings` (CLI `--max-total-strings`, default 10000) bounds returned
+string copies across all tables. Raise it, request fewer locales, or use
+`string_tables_only` when aggregate output is exhausted. The legacy
+multi-table shape charges both copies of primary strings. `max_string_table_bytes`
+(CLI `--max-string-table-bytes`, default 8388608) bounds one XML source read;
+`max_total_string_table_bytes` (CLI `--max-total-string-table-bytes`, default 33554432) bounds XML reads across distinct physical tables. Locale aliases
+share the physical read and parsed page. Raise the relevant read budget to
+retry an oversized table; a larger string limit or timeout does not raise it.
+These controls take nonnegative safe-integer offsets and positive safe-integer
+budgets, apply on the next decode, and require no REA restart. Process memory
+and response transport capacity still apply.
+
 ## Interpret the result
 
 - **An owned APK snapshot is digested and decoded.** `target.sha256` and
@@ -98,8 +125,9 @@ still suppresses all string projection, including in this mode.
   `access_denied`, while a missing or non-regular selected path reports
   `invalid_request` with the rejected `path` field.
 - **Metadata comes from apktool.yml as apktool printed it.** Version codes
-  keep their own spelling (`'7'` versus `7`); `package_name` is read from
-  the decoded manifest, not inferred.
+  keep their own spelling (`'7'` versus `7`). The `package_name` field
+  follows the [decoded manifest rules](android-analysis.md#manifest-component-projection)
+  and preserves the decoded attribute value.
   The `version: 2.9.0`-or-later header that Apktool 2.9+ and 3 emit selects
   their single-line string dialect: literal hashes, single quotes, empty
   strings, and the text `null` stay part of the value; producer backslashes
@@ -111,14 +139,16 @@ still suppresses all string projection, including in this mode.
   and [string escape owner](https://github.com/iBotPeaches/Apktool/blob/18b5e99cb56ff9451e8aa55b065dcf5bbd616975/brut.j.yaml/src/main/java/brut/yaml/YamlStringEscapeUtils.java#L55-L116).
 - **The manifest is the decoded text**, bounded at 512 KiB and reported as
   truncated when larger.
-- **Strings are projected verbatim.** Escaped entities stay escaped, and
+- **Strings are projected verbatim.** The root must be `<resources>` in no
+  namespace. Only its direct `<string>` children in no namespace contribute
+  entries. Escaped entities stay escaped, and
   entries containing nested markup (`<b>`, `<xliff:g>`) are counted as
   unparsed rather than flattened — the limitation names the examined count.
   Malformed XML and a wrong document root are whole-document projection
   failures: the result is partial, the failure reason is disclosed, and entry
   counts remain unknown. They are not counted as one unsupported string.
-  The default table is bounded to 2000 entries with partial coverage when more
-  exist. `locales` lists observed regular `strings.xml` tables whose exact
+  The default page returns up to 2000 entries with partial coverage when more
+  exist; its limitation names the next `string_offset`. `locales` lists observed regular `strings.xml` tables whose exact
   `values-<locale>` directory is selectable by the request's locale grammar.
   Locale suffixes allow up to 23 ASCII characters, derived from Apktool's
   language, script, region, and variant fields; for example,
@@ -133,9 +163,10 @@ still suppresses all string projection, including in this mode.
   When multiple tables are requested with `locales`, `string_tables` records
   each projected table with its locale, status (`present`, `missing`,
   `oversized`, `malformed`, or `skipped`), entry counts, and coverage,
-  bounded at an aggregate budget of 10,000 strings and 32 MiB XML. When `locales`
-  is omitted and `string_tables_only` is not true, legacy single-table payloads are preserved
-  without adding `string_tables`.
+  with default aggregate budgets of 10,000 strings and 32 MiB XML. When `locales`
+  is omitted, `string_tables_only` is not true and no string page or budget
+  control is selected, legacy single-table payloads are preserved without adding
+  `string_tables`.
 - **Smali is skipped by design** (`apktool d --no-src`): Java-source
   recovery belongs to the JADX family. Resource smali edits and rebuild are
   a follow-up lane with mutation authority.
@@ -156,8 +187,8 @@ still suppresses all string projection, including in this mode.
 - The version probe waits 20000 ms and retains 65536 bytes. This release has
   no runtime override for that probe. `decode_timeout_ms` does not raise it.
 - Manifest reads are bounded to 512 KiB before decoding UTF-8. Strings XML
-  reads are bounded to 8 MiB; larger documents are skipped with partial
-  coverage and an explicit limit, rather than reported as missing.
+  reads default to 8 MiB per table; larger documents are skipped with partial
+  coverage and an explicit read-budget recovery, rather than reported as missing.
 - `decoded_file_count` is capped at 100,000 files; the cap is reported in
   the limitations when hit.
 - An ordinary nonzero decode exit surfaces as `unsupported_target` naming
@@ -165,6 +196,12 @@ still suppresses all string projection, including in this mode.
   Launcher startup, ownership preparation, signal termination and incomplete
   output collection remain provider failures; they do not establish that the
   selected APK is unsupported.
+- When Apktool's JVM reports `java.lang.OutOfMemoryError`, the decode surfaces
+  as `resource_constraint` for memory, or for capacity when it could not
+  create a native thread. This holds even if the stack trace overflows the
+  capture budget, because REA watches for the report while output streams.
+  REA does not set Apktool's heap; raise the launcher JVM's `-Xmx` or decode a
+  smaller APK.
 
 ## Real verification
 

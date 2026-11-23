@@ -4,11 +4,9 @@ import assert from "node:assert/strict";
 import { constants } from "node:buffer";
 import { createHash } from "node:crypto";
 
-import { digestCanonicalValue } from "../../../dist/domain/canonicalDigest.js";
-import {
-  createEvidence,
-  parseEvidence,
-} from "../../../dist/domain/evidence.js";
+import { digestCanonicalValue } from "#dist/domain/canonicalDigest.js";
+import { createEvidence, parseEvidence } from "#dist/domain/evidence.js";
+import { unknownTarget } from "#dist/domain/targetIdentity.js";
 
 // This opt-in check crosses the actual engine string limit; keep it outside
 // routine source tests. Build first, then run this script with the local Node.
@@ -26,7 +24,7 @@ expected.update("]}");
 assert.equal(digestCanonicalValue(value), expected.digest("hex"));
 
 const evidence = createEvidence(
-  undefined,
+  unknownTarget("not-observed"),
   { id: "large-json-fixture", name: "Large JSON fixture", version: "1" },
   { operation: "inspect_fixture", parameters: {}, result: value },
 );

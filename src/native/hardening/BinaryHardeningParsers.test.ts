@@ -1,22 +1,29 @@
 import { expect, it } from "vitest";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   ELF_HARDENING_PROPERTIES,
   MACHO_HARDENING_PROPERTIES,
   PE_HARDENING_PROPERTIES,
   type BinaryHardeningRow,
 } from "../../domain/native/binaryHardening.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
-import { readElfImage } from "../metadata/ElfImage.js";
-import { readMachoImage } from "../metadata/MachoImage.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import { readElfImage } from "../../domain/native/elfImage.js";
+import { readMachoImage } from "../../domain/apple/machoImage.js";
+import { elfNote, elfNoteFixture } from "../elf/ElfNotes.fixture.js";
 import {
   elfHardeningFixture,
   fatMachoHardeningFixture,
   machoHardeningFixture,
   peHardeningImage,
 } from "./BinaryHardening.fixture.js";
-import { readElfHardening } from "./ElfHardening.js";
-import { readMachoHardening } from "./MachoHardening.js";
+import {
+  readElfHardening,
+  readElfHardeningFromHandle,
+} from "./ElfHardening.js";
+import {
+  readMachoHardening,
+  readMachoHardeningFromHandle,
+} from "./MachoHardening.js";
 import { readPeHardening } from "./PeHardening.js";
 
 const states = (rows: readonly BinaryHardeningRow[]) =>
@@ -180,6 +187,27 @@ it("rejects truncated, duplicate and over-budget ELF tables", () => {
   expect(() =>
     readElfHardening(elfHardeningFixture({ duplicateStack: true })),
   ).toThrow(expect.objectContaining({ kind: "malformed" }));
+  // A file-backed PT_DYNAMIC of 65,537 entries exceeds the entry allowance,
+  // which counts entries, not bytes.
+  const fixture = elfHardeningFixture();
+  const wide = Buffer.concat([fixture, Buffer.alloc(65_537 * 16)]);
+  const programs = Number(wide.readBigUInt64LE(32));
+  const dynamic = Array.from(
+    { length: wide.readUInt16LE(56) },
+    (_, index) => programs + index * wide.readUInt16LE(54),
+  ).find((at) => wide.readUInt32LE(at) === 2);
+  if (dynamic === undefined) throw new Error("Fixture has no PT_DYNAMIC");
+  wide.writeBigUInt64LE(BigInt(fixture.length), dynamic + 8);
+  wide.writeBigUInt64LE(65_537n * 16n, dynamic + 32);
+  expect(() => readElfHardening(wide.subarray(0, fixture.length))).toThrow(
+    expect.objectContaining({
+      kind: "malformed",
+      message: expect.stringContaining("truncated ELF program"),
+    }),
+  );
+  expect(() => readElfHardening(wide)).toThrow(
+    expect.objectContaining({ maximum_bytes: 65_536, unit: "entries" }),
+  );
   const overBudget = readElfHardening(
     elfHardeningFixture({ symbolBudget: true }),
   );
@@ -433,26 +461,34 @@ it("keeps Mach-O siblings when one slice is big-endian, mismatched or malformed"
   );
   expect(oneSlice[0]?.slice?.architecture).toBe("arm64");
 
-  const hugeSymbols = (
-    await readMachoHardening(machoHardeningFixture({ nsyms: 65537 }))
-  )[0];
+  const hugeSlice = machoHardeningFixture({ nsyms: 65537 });
+  const hugeSymbols = (await readMachoHardening(hugeSlice))[0];
   expect(hugeSymbols?.status).toBe("parsed");
   expect(findRow(hugeSymbols?.rows ?? [], "pie").state).toBe("enabled");
   expect(findRow(hugeSymbols?.rows ?? [], "stack_protector")).toMatchObject({
     state: "unknown",
     note: expect.stringContaining("structural budget"),
   });
-  const hugeSlice = machoHardeningFixture({ nsyms: 65537 });
+  // The fixture ends with one string-table NUL after its symbol array.
+  const truncatedSymbols = hugeSlice.subarray(0, -2);
+  const truncatedStrings = hugeSlice.subarray(0, -1);
+  for (const truncated of [truncatedSymbols, truncatedStrings])
+    await expect(readMachoHardening(truncated)).rejects.toMatchObject({
+      kind: "malformed",
+      message: expect.stringContaining("table extends outside the slice"),
+    });
   const kept = await readMachoHardening(
     fatMachoHardeningFixture([
       { bytes: arm, cpuType: 0x0100000c, cpuSubtype: 0 },
       { bytes: hugeSlice, cpuType: 0x0100000c, cpuSubtype: 0 },
+      { bytes: truncatedSymbols, cpuType: 0x0100000c, cpuSubtype: 0 },
     ]),
   );
   expect(kept[0]?.status).toBe("parsed");
   expect(findRow(kept[0]?.rows ?? [], "pie").state).toBe("enabled");
   expect(kept[1]?.status).toBe("parsed");
   expect(findRow(kept[1]?.rows ?? [], "stack_protector").state).toBe("unknown");
+  expect(kept[2]).toMatchObject({ status: "malformed", rows: [] });
   await expect(
     readMachoHardening(machoHardeningFixture({ brokenStrx: true })),
   ).rejects.toMatchObject({ kind: "malformed" });
@@ -491,6 +527,49 @@ it("keeps repeated DT_NEEDED and still rejects a duplicated singular tag", () =>
   expect(() =>
     readElfHardening(elfHardeningFixture({ duplicateFlags: true })),
   ).toThrow(expect.objectContaining({ kind: "malformed" }));
+});
+
+it("walks note framing without reading a whole opaque descriptor", async () => {
+  const bytes = elfNoteFixture({
+    ownership: "section",
+    notes: elfNote("GNU", 3, Buffer.alloc(96 * 1024)),
+  });
+  const report = await readElfHardeningFromHandle({
+    size: bytes.length,
+    readRange: async (offset, length) => {
+      expect(length).toBeLessThanOrEqual(65536);
+      return bytes.subarray(offset, offset + length);
+    },
+  });
+  expect(report).toEqual(readElfHardening(bytes));
+});
+
+it("reuses a Mach-O window for nearby short import names", async () => {
+  const names = "alpha\0beta\0__stack_chk_fail\0";
+  const bytes = machoHardeningFixture({
+    stackChk: true,
+    symbolName: names + "x".repeat(65536),
+    nsyms: 3,
+  });
+  const symtab = 32 + 72;
+  const symoff = bytes.readUInt32LE(symtab + 8);
+  const stroff = bytes.readUInt32LE(symtab + 16);
+  for (const [index, at] of [1, 7, 12].entries()) {
+    bytes.writeUInt32LE(at, symoff + 16 * index);
+    bytes[symoff + 16 * index + 4] = 1;
+  }
+  let stringReads = 0;
+  const report = await readMachoHardeningFromHandle({
+    size: bytes.length,
+    readRange: async (offset, length) => {
+      if (offset >= stroff) stringReads++;
+      return bytes.subarray(offset, offset + length);
+    },
+  });
+  expect(findRow(report[0]?.rows ?? [], "stack_protector").state).toBe(
+    "enabled",
+  );
+  expect(stringReads).toBe(1);
 });
 
 it("reads a 4-aligned build-id note and bounds aliased note walks", () => {
@@ -726,6 +805,22 @@ it.each([true, false])(
     }
   },
 );
+
+it("uses the ELF byte order when counting sectionless imports through DT_HASH", () => {
+  const image = readElfHardening(
+    elfHardeningFixture({
+      little: false,
+      sections: false,
+      stackChk: true,
+      fortify: true,
+    }),
+  );
+  expect(image.byte_order).toBe("big");
+  expect(states(image.rows)).toMatchObject({
+    stack_protector: "enabled",
+    fortify: "enabled",
+  });
+});
 
 it("reads sectionless GNU hash buckets with many non-owning load declarations", () => {
   const original = elfHardeningFixture({ sections: false, stackChk: true });
@@ -1053,6 +1148,22 @@ it("reports the note budget it hit and keeps the header rows", () => {
   expect(findRow(text.rows, "aarch64_bti_pac").state).toBe("not_applicable");
 });
 
+it("rejects an incomplete note at the hardening entry limit", () => {
+  const note = elfNote("REA", 9, Buffer.from([1]));
+  const image = elfNoteFixture({
+    ownership: "program",
+    notes: Buffer.concat([
+      ...Array<Buffer>(256).fill(note),
+      note.subarray(0, note.length - 1),
+    ]),
+  });
+  expect(() => readElfHardening(image)).toThrow(
+    expect.objectContaining({
+      kind: "malformed",
+    }),
+  );
+});
+
 it("skips an empty SHT_NOTE section instead of rejecting the image", () => {
   const bytes = elfHardeningFixture({
     propertyCarrier: "pt-note",
@@ -1066,37 +1177,121 @@ it("skips an empty SHT_NOTE section instead of rejecting the image", () => {
   }
   expect(sectionAt).toBeGreaterThan(0);
   bytes.writeBigUInt64LE(0n, sectionAt + 32);
-  expect(() => readElfImage(bytes)).not.toThrow();
+  expect(() => readElfImage(bytes, "elf-directory")).not.toThrow();
   const image = readElfHardening(bytes);
   expect(image.status).toBe("parsed");
   expect(findRow(image.rows, "nx").state).toBe("enabled");
   expect(findRow(image.rows, "cet_ibt_shstk").state).toBe("enabled");
 });
 
-it("leaves GNU property rows unknown behind a compressed note section", () => {
-  const image = readElfHardening(
-    elfHardeningFixture({
+it.each(["pt-note", "pt-gnu-property", "section"] as const)(
+  "keeps GNU properties unknown when %s overlaps compressed note bytes",
+  (carrier) => {
+    const bytes = elfHardeningFixture({
       compressedPropertyNote: true,
       property: { arch: "x86", value: 0b11 },
-      propertyCarrier: "pt-note",
-    }),
-  );
-  expect(image.status).toBe("parsed");
-  expect(findRow(image.rows, "nx").state).toBe("enabled");
-  expect(findRow(image.rows, "cet_ibt_shstk")).toMatchObject({
-    state: "unknown",
-    note: expect.stringContaining("compressed SHT_NOTE"),
-  });
-});
+      propertyCarrier: carrier === "pt-gnu-property" ? carrier : "pt-note",
+      disjointNoteSections: carrier === "section" ? 1 : 0,
+    });
+    const section = elfSectionAt(bytes, 7);
+    const alias = bytes.readBigUInt64LE(section + 24) + 4n;
+    const program = elfProgramAt(
+      bytes,
+      carrier === "pt-gnu-property" ? 0x6474e553 : 4,
+    );
+    // This 12-byte alias exposes the compression header as invalid note framing.
+    const offsetField = carrier === "section" ? section + 64 + 24 : program + 8;
+    bytes.writeBigUInt64LE(alias, offsetField);
+    if (carrier === "section") {
+      bytes.writeUInt32LE(0, program);
+    } else {
+      bytes.writeBigUInt64LE(12n, program + 32);
+      bytes.writeBigUInt64LE(12n, program + 40);
+    }
+    const image = readElfHardening(bytes);
+    expect(image.status).toBe("parsed");
+    expect(findRow(image.rows, "nx").state).toBe("enabled");
+    expect(findRow(image.rows, "cet_ibt_shstk")).toMatchObject({
+      state: "unknown",
+      note: expect.stringContaining("compressed SHT_NOTE"),
+    });
+    const header = bytes.subarray(Number(alias), Number(alias) + 12);
+    const disjoint = Buffer.concat([bytes, header]);
+    disjoint.writeBigUInt64LE(BigInt(bytes.length), offsetField);
+    expect(() => readElfHardening(disjoint)).toThrow(
+      /note entry exceeds its table/u,
+    );
+  },
+);
+
+/**
+ * Count the array elements an operation walks, through iteration and the
+ * element-visiting array methods. Throws once past `allowed`, so a quadratic
+ * walk stops at the bound instead of running on. The methods are patched
+ * directly: a spy's own bookkeeping iterates arrays and would count itself.
+ */
+const countArrayVisits = <T>(
+  allowed: number,
+  run: () => T,
+): { readonly result: T; readonly visited: number } => {
+  const keys: readonly (string | symbol)[] = [
+    "every",
+    "filter",
+    "find",
+    "findIndex",
+    "findLast",
+    "findLastIndex",
+    "flatMap",
+    "forEach",
+    "includes",
+    "indexOf",
+    "map",
+    "reduce",
+    "some",
+    "sort",
+    "toSorted",
+    Symbol.iterator,
+  ];
+  const prototype = Array.prototype as unknown as Record<
+    PropertyKey,
+    (this: readonly unknown[], ...args: unknown[]) => unknown
+  >;
+  const originals = keys.map((key) => [key, prototype[key]!] as const);
+  let visited = 0;
+  let counting = true;
+  for (const [key, original] of originals)
+    prototype[key] = function (...args) {
+      if (counting && (visited += this.length) > allowed) {
+        counting = false;
+        throw new Error("array elements walked past bound");
+      }
+      return original.apply(this, args);
+    };
+  let result: T;
+  let walked: number;
+  try {
+    result = run();
+  } finally {
+    counting = false;
+    walked = visited;
+    for (const [key, original] of originals) prototype[key] = original;
+  }
+  return { result, visited: walked };
+};
 
 it("admits a hostile section table without rescanning every span", () => {
-  const started = performance.now();
-  const image = readElfHardening(
-    elfHardeningFixture({ disjointNoteSections: 65000 }),
+  // Each section header is walked a fixed number of times while sections are
+  // parsed, sorted and indexed. Rescanning the note spans for every span
+  // walks sections^2 elements.
+  const sections = 65_000;
+  const bytes = elfHardeningFixture({ disjointNoteSections: sections });
+  const allowed = 64 * sections;
+  const { result: image, visited } = countArrayVisits(allowed, () =>
+    readElfHardening(bytes),
   );
-  expect(performance.now() - started).toBeLessThan(5000);
+  expect(visited).toBeLessThanOrEqual(allowed);
   expect(findRow(image.rows, "cet_ibt_shstk").state).toBe("unknown");
-}, 60000);
+});
 
 it("cites a non-ASCII import name by its source bytes", () => {
   const name = "__\u00ff_chk";
@@ -1107,6 +1302,21 @@ it("cites a non-ASCII import name by its source bytes", () => {
   const at = row.location?.offset ?? 0;
   expect(bytes.subarray(at, at + 7).toString("latin1")).toBe(name);
 });
+
+it.each(["__chk", "__chk_fail"])(
+  "recognizes the %s import as a FORTIFY sign",
+  (name) => {
+    const bytes = elfHardeningFixture({ fortify: true, fortifyName: name });
+    const row = findRow(readElfHardening(bytes).rows, "fortify");
+    expect(row).toMatchObject({
+      state: "enabled",
+      location: { bytes: name.length },
+    });
+    expect(row.basis).toContain(name);
+    const at = row.location?.offset ?? 0;
+    expect(bytes.subarray(at, at + name.length).toString("latin1")).toBe(name);
+  },
+);
 
 it("keeps malformed name offsets malformed in both formats", async () => {
   await expect(
@@ -1183,6 +1393,20 @@ it("keeps header rows when a slice has conflicting encryption commands", async (
   expect(findRow(image?.rows ?? [], "encrypted")).toMatchObject({
     state: "unknown",
     note: expect.stringContaining("encryption load commands"),
+  });
+});
+
+it("keeps a later malformed encryption command distinct from duplicate ambiguity", async () => {
+  const bytes = machoHardeningFixture({
+    extraCommands: [
+      machoCommand(LC_ENCRYPTION_INFO_64, 24),
+      machoCommand(LC_ENCRYPTION_INFO_64, 24),
+      machoCommand(LC_ENCRYPTION_INFO_64, 8),
+    ],
+  });
+  await expect(readMachoHardening(bytes)).rejects.toMatchObject({
+    kind: "malformed",
+    message: expect.stringContaining("cmdsize 8"),
   });
 });
 
@@ -1405,14 +1629,67 @@ it("sizes an empty DT_GNU_HASH table only from an agreeing SHT_DYNSYM", () => {
     strings.readBigUInt64LE(elfSectionAt(strings, SHT_STRTAB) + 32) - 1n,
     elfSectionAt(strings, SHT_STRTAB) + 32,
   );
-  for (const bytes of [moved, offset, strings])
+  const compressedSymbols = Buffer.from(agreeing);
+  compressedSymbols.writeBigUInt64LE(0x800n, section + 8);
+  const compressedStrings = Buffer.from(agreeing);
+  compressedStrings.writeBigUInt64LE(
+    0x800n,
+    elfSectionAt(compressedStrings, SHT_STRTAB) + 8,
+  );
+  const wrongStringType = Buffer.from(agreeing);
+  wrongStringType.writeUInt32LE(
+    1,
+    elfSectionAt(wrongStringType, SHT_STRTAB) + 4,
+  );
+  for (const bytes of [
+    moved,
+    offset,
+    strings,
+    compressedSymbols,
+    compressedStrings,
+    wrongStringType,
+  ])
     expect(
       findRow(readElfHardening(bytes).rows, "stack_protector"),
     ).toMatchObject({
       state: "unknown",
       note: expect.stringContaining("DT_GNU_HASH"),
     });
+  // A loader-owned hash count needs no section fallback, so compressed section
+  // declarations cannot hide imports named by DT_SYMTAB and DT_STRTAB.
+  const hashed = elfHardeningFixture({ stackChk: true });
+  for (const type of [SHT_DYNSYM, SHT_STRTAB])
+    hashed.writeBigUInt64LE(0x800n, elfSectionAt(hashed, type) + 8);
+  expect(findRow(readElfHardening(hashed).rows, "stack_protector").state).toBe(
+    "enabled",
+  );
 });
+
+it.each([32, 64] as const)(
+  "does not interpret %i-bit Mach-O debug symbol type bits as an import",
+  async (bits) => {
+    const bytes = machoHardeningFixture({ bits, stackChk: true });
+    let commandAt = bits === 64 ? 32 : 28;
+    let symbolAt: number | undefined;
+    for (let index = 0; index < bytes.readUInt32LE(16); index += 1) {
+      if (bytes.readUInt32LE(commandAt) === 2)
+        symbolAt = bytes.readUInt32LE(commandAt + 8);
+      commandAt += bytes.readUInt32LE(commandAt + 4);
+    }
+    if (symbolAt === undefined) throw new Error("Missing LC_SYMTAB");
+    expect(
+      findRow(
+        (await readMachoHardening(bytes))[0]?.rows ?? [],
+        "stack_protector",
+      ).state,
+    ).toBe("enabled");
+    // N_STAB takes precedence over ordinary N_TYPE and N_EXT interpretation.
+    bytes.writeUInt8(0x21, symbolAt + 4);
+    const image = (await readMachoHardening(bytes))[0];
+    expect(findRow(image?.rows ?? [], "stack_protector").state).toBe("unknown");
+    expect(findRow(image?.rows ?? [], "pie").state).toBe("enabled");
+  },
+);
 
 it("keeps an unresolved symbol count distinct from an absent table", () => {
   const image = readElfHardening(
@@ -1529,7 +1806,7 @@ it("rejects p_filesz one above p_memsz like the ELF image reader", () => {
   const load = elfProgramAt(bytes, PT_LOAD);
   bytes.writeBigUInt64LE(bytes.readBigUInt64LE(load + 32) - 1n, load + 40);
   const message = "ELF load segment sizes or addresses are invalid";
-  expect(() => readElfImage(bytes)).toThrow(message);
+  expect(() => readElfImage(bytes, "elf-directory")).toThrow(message);
   expect(() => readElfHardening(bytes)).toThrow(
     expect.objectContaining({ kind: "malformed", message }),
   );
@@ -1703,19 +1980,62 @@ it("accepts well-formed segments with sections and file payloads", async () => {
   const probe = machoHardeningFixture({
     extraCommands: [machoSegment(64, { commandSize: size })],
   });
+  const segment = machoSegment(64, {
+    commandSize: size,
+    sections: 1,
+    vmSize: probe.length,
+    fileSize: probe.length,
+  });
+  segment.write("__restrict", 72, "latin1");
   const image = (
     await readMachoHardening(
-      machoHardeningFixture({
-        extraCommands: [
-          machoSegment(64, {
-            commandSize: size,
-            sections: 1,
-            vmSize: probe.length,
-            fileSize: probe.length,
-          }),
-        ],
-      }),
+      machoHardeningFixture({ extraCommands: [segment] }),
     )
   )[0];
   expect(findRow(image?.rows ?? [], "restrict_segment").state).toBe("enabled");
+});
+
+it.each([
+  ["another section", "__other"],
+  ["no section", null],
+] as const)(
+  "reports a __RESTRICT segment with %s as unrestricted, as dyld does",
+  async (_label, restrictSection) => {
+    for (const bits of [32, 64] as const) {
+      const bytes = machoHardeningFixture({
+        bits,
+        restrict: true,
+        restrictSection,
+      });
+      const restrict = findRow(
+        (await readMachoHardening(bytes))[0]?.rows ?? [],
+        "restrict_segment",
+      );
+      expect(restrict).toMatchObject({
+        state: "disabled",
+        basis: expect.stringContaining("no __restrict section"),
+      });
+      const named = restrict.location;
+      if (named === null) throw new Error("Missing segment name location");
+      expect(
+        bytes.subarray(named.offset, named.offset + named.bytes).toString(),
+      ).toBe("__RESTRICT\0\0\0\0\0\0");
+    }
+  },
+);
+
+it("locates the __restrict section that makes dyld restrict an image", async () => {
+  for (const bits of [32, 64] as const) {
+    const bytes = machoHardeningFixture({ bits, restrict: true });
+    const restrict = findRow(
+      (await readMachoHardening(bytes))[0]?.rows ?? [],
+      "restrict_segment",
+    );
+    expect(restrict.state).toBe("enabled");
+    const section = restrict.location;
+    if (section === null) throw new Error("Missing section name location");
+    expect(
+      bytes.subarray(section.offset, section.offset + section.bytes).toString(),
+    ).toBe("__restrict\0\0\0\0\0\0");
+  }
 });

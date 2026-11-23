@@ -1,3 +1,4 @@
+import { SIMULATED_LINUX_X64 } from "../fixtures/simulatedHost.js";
 import {
   access,
   lstat,
@@ -8,15 +9,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  afterEach,
-  beforeAll,
-  beforeEach,
-  expect,
-  it,
-  onTestFinished,
-  vi,
-} from "vitest";
+import { afterEach, beforeAll, expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { primaryAnalysisError } from "../../src/domain/analysisErrorBase.js";
@@ -32,11 +25,8 @@ import {
 import { prepareProcessOwnershipInspection } from "../../src/process/ProcessOwnershipObservation.js";
 import { spawnOwnedProviderProcess } from "../../src/process/ProviderProcess.js";
 import { PrivateRuntimeRoot } from "../../src/process/PrivateRuntimeRoot.js";
-import {
-  withArtifactFileHandle,
-  ArtifactFileCleanupFailure,
-} from "../../src/artifacts/ArtifactFileOperation.js";
-import * as artifacts from "../../src/artifacts/readStableArtifact.js";
+import { ArtifactFileCleanupFailure } from "../../src/resources/ArtifactFileOperation.js";
+import * as artifacts from "../../src/resources/readStableArtifact.js";
 import {
   recordedCrashFixture,
   recordedCrashFixtureBytes,
@@ -48,24 +38,13 @@ import {
 } from "../support/workspace/workspaceFixture.js";
 
 const supportedHost = process.platform !== "win32";
-const platform = Object.getOwnPropertyDescriptor(process, "platform");
-const architecture = Object.getOwnPropertyDescriptor(process, "arch");
 const worker = fileURLToPath(
   new URL("../fixtures/pwntoolsChangingArtifact.mjs", import.meta.url),
 );
 beforeAll(() =>
   supportedHost ? prepareProcessOwnershipInspection() : undefined,
 );
-beforeEach(() => {
-  // Use the actual host inspector; simulate only the decoder availability gate.
-  Object.defineProperty(process, "platform", { value: "linux" });
-  Object.defineProperty(process, "arch", { value: "x64" });
-});
 afterEach(() => {
-  if (platform !== undefined)
-    Object.defineProperty(process, "platform", platform);
-  if (architecture !== undefined)
-    Object.defineProperty(process, "arch", architecture);
   vi.restoreAllMocks();
 });
 
@@ -180,6 +159,7 @@ it.runIf(supportedHost).each(["decoder", "debugger"] as const)(
         });
       },
       async () => root,
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(() => provider.close());
     const result = await provider.inspectAndClose({
@@ -194,7 +174,9 @@ it.runIf(supportedHost).each(["decoder", "debugger"] as const)(
           phase: stage,
           resource_failure_marker: { resource: null },
           exit_code: PWNTOOLS_MEMORY_FAILURE_EXIT,
-          captured_output: { stdout: "stage diagnostic" },
+        },
+        captured_output: {
+          stdout: expect.stringContaining("stage diagnostic"),
         },
       },
     });
@@ -220,6 +202,7 @@ it.runIf(supportedHost)(
         });
       },
       async () => root,
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(() => provider.close());
     const result = await provider.inspectAndClose({
@@ -266,6 +249,7 @@ it.runIf(supportedHost).each([
         return launched;
       },
       async () => root,
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
       cleanupAllowed = true;
@@ -350,6 +334,7 @@ it.runIf(supportedHost)(
         };
       },
       async () => root,
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
       cleanupAllowed = true;
@@ -365,7 +350,7 @@ it.runIf(supportedHost)(
       code: "cleanup_incomplete",
       details: {
         captured_output: { truncated: true },
-        diagnostics: { primary_error: { code: "unreadable_output" } },
+        diagnostics: { primary_error: { code: "resource_constraint" } },
         partial_observation: {
           artifact: { path },
           diagnostics: { stdout: "basic diagnostic" },
@@ -406,13 +391,6 @@ it.runIf(supportedHost).each(["decoder", "debugger"])(
         const resources = args[4];
         if (resources === undefined)
           throw new Error("Reply must have an artifact resource owner");
-        const file = await open(reply, "r");
-        const close = file.close.bind(file);
-        emergencyCloses.push(close);
-        file.close = async () => {
-          if (!releaseAllowed) throw closeFailure;
-          await close();
-        };
         const retain = resources.retain.bind(resources);
         const spy = vi
           .spyOn(resources, "retain")
@@ -421,12 +399,25 @@ it.runIf(supportedHost).each(["decoder", "debugger"])(
             controller.abort(reason);
           });
         try {
-          return await withArtifactFileHandle(
-            reply,
-            file,
+          return await read(
+            args[0],
+            args[1],
+            args[2],
+            {
+              lstat: (filePath) => lstat(filePath, { bigint: true }),
+              open: async (filePath, flags) => {
+                const file = await open(filePath, flags);
+                const close = file.close.bind(file);
+                emergencyCloses.push(close);
+                file.close = async () => {
+                  if (!releaseAllowed) throw closeFailure;
+                  await close();
+                };
+                return file;
+              },
+            },
             resources,
-            controller.signal,
-            () => read(...args),
+            args[5],
           );
         } finally {
           spy.mockRestore();
@@ -448,6 +439,7 @@ it.runIf(supportedHost).each(["decoder", "debugger"])(
         });
       },
       async () => root,
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
       releaseAllowed = true;
@@ -586,6 +578,7 @@ it.runIf(supportedHost).each(
         });
       },
       async () => root,
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
       releaseAllowed = true;
@@ -694,6 +687,7 @@ it.runIf(supportedHost)(
           prefix: "operation-",
         });
       },
+      SIMULATED_LINUX_X64,
     );
     onTestFinished(async () => {
       await provider.close();

@@ -1,11 +1,12 @@
+import type { HostPlatform } from "../platform/HostPlatform.js";
 import type {
   RetainedResourceScope,
   ProviderAvailability,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
-} from "../application/Doctor.js";
+} from "../ports/DoctorProviderInspection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   inspectJadxAvailability,
@@ -15,14 +16,26 @@ import {
 } from "./JadxConfiguration.js";
 import { JADX_JAR_CONFIGURATION_REMEDIATION } from "./JadxRelease.js";
 
+/** Client settings consulted by this readiness probe. */
+export const JADX_DOCTOR_SETTINGS = [
+  "REA_JADX_MCP_JAR",
+  "JAVA_HOME",
+  "PATH",
+  "REA_JADX_HEAP_MIB",
+  "REA_JADX_ACTIVE_PROCESSOR_COUNT",
+  "REA_JADX_OPERATION_TIMEOUT_MS",
+] as const;
+
 /** Project the validated JADX configuration into the doctor contract. */
 export const inspectJadxProvider = async (
   environment: Readonly<Record<string, string | undefined>>,
   resourceOwner: RetainedResourceScope,
+  host: HostPlatform,
   signal?: AbortSignal,
 ): Promise<DoctorProviderInspection> => {
   const configured = environment.REA_JADX_MCP_JAR !== undefined;
   const availability = await inspectJadxAvailability(environment, {
+    host,
     resourceOwner,
     signal,
   });

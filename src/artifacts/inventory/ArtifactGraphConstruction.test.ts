@@ -14,13 +14,20 @@ import {
   resolveOccurrenceParents,
 } from "./ArtifactGraphConstruction.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
-import { createAsarHeaderSignatureProbe } from "../AsarHeader.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import {
+  translateArtifactFailure,
+  createAsarHeaderSignatureProbe,
+} from "../../resources/index.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { artifactIdForContent } from "../../domain/artifactIdentity.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";
-import type { ArtifactEntry } from "../ArtifactReader.js";
+import { parseExecutableHeader } from "../../domain/binaryTarget.js";
+import {
+  minimalElfImage,
+  minimalMachoImage,
+} from "../../../tests/fixtures/nativeHeaders.js";
+import type { ArtifactEntry } from "../../resources/ArtifactReader.js";
 import { dfuseFile } from "../../domain/firmware/dfuse.fixture.js";
 import {
   RP2040_FAMILY,
@@ -36,7 +43,7 @@ import {
   esp8266Image,
   espImage,
 } from "../../../tests/fixtures/espImage.js";
-import { devicetreeFixture } from "../../firmware/devicetree/Devicetree.fixture.js";
+import { devicetreeFixture } from "../../domain/firmware/devicetree.fixture.js";
 import { fitFixture } from "../fit/FitImage.fixture.js";
 
 it("joins only observed PE signature bytes across stream chunks", () => {
@@ -63,6 +70,21 @@ it("joins only observed PE signature bytes across stream chunks", () => {
   ).toBe("pe");
 });
 
+it("retains a PE record whose optional header crosses the retained prefix", () => {
+  const bytes = pe(0x8664, 8_000);
+  const probe = createArtifactClassificationProbe();
+  probe.write(bytes.subarray(0, 8_192));
+  const partial = probe.finish(bytes.length);
+  expect(
+    classifyArtifactContent("native.exe", partial, bytes.length).format,
+  ).toBe("unknown");
+  probe.write(bytes.subarray(8_192));
+  const complete = probe.finish(bytes.length);
+  expect(
+    classifyArtifactContent("native.exe", complete, bytes.length).format,
+  ).toBe("pe");
+});
+
 it("classifies original DOS header padding as an executable", () => {
   const bytes = Buffer.alloc(128);
   bytes.write("MZ", 0, "ascii");
@@ -75,6 +97,47 @@ it("classifies original DOS header padding as an executable", () => {
   expect(classifyArtifactBytesAtPath("legacy.exe", bytes)).toEqual({
     kind: "executable",
     format: "dos-mz",
+  });
+});
+
+describe("native header admission", () => {
+  const corruptCommands = () => {
+    // #6154: a valid header whose first command is cmd=cmdsize=0xffffffff.
+    const bytes = minimalMachoImage(64);
+    bytes.writeUInt32LE(1, 16);
+    bytes.writeUInt32LE(32, 20);
+    bytes.writeUInt32LE(0xffffffff, 32);
+    bytes.writeUInt32LE(0xffffffff, 36);
+    return bytes;
+  };
+  it.each([
+    { name: "ELF magic alone", bytes: Buffer.from("7f454c46", "hex") },
+    {
+      name: "ELF magic in a header-sized stub",
+      bytes: Buffer.concat([Buffer.from("7f454c46", "hex"), Buffer.alloc(60)]),
+    },
+    { name: "Mach-O magic alone", bytes: Buffer.from("cffaedfe", "hex") },
+    { name: "Mach-O with corrupt load commands", bytes: corruptCommands() },
+  ])("refuses $name as target resolution does", ({ bytes }) => {
+    expect(parseExecutableHeader(bytes, "arm64").ok).toBe(false);
+    expect(classifyArtifactBytesAtPath("program", bytes)).toEqual({
+      kind: "unknown",
+      format: "unknown",
+    });
+  });
+
+  it.each([
+    { format: "elf", bytes: minimalElfImage() },
+    { format: "mach-o", bytes: minimalMachoImage() },
+  ])("admits a decodable $format header", ({ format, bytes }) => {
+    expect(parseExecutableHeader(bytes, "arm64")).toMatchObject({
+      ok: true,
+      value: { format },
+    });
+    expect(classifyArtifactBytesAtPath("program", bytes)).toEqual({
+      kind: "executable",
+      format,
+    });
   });
 });
 
@@ -157,7 +220,7 @@ it.each(["directory", "symlink"] as const)(
   },
 );
 
-it.each(["directory", "zip", "node-sea"] as const)(
+it.each(["directory", "zip", "node-sea", "deno-standalone"] as const)(
   "omits false storage declarations for %s readers",
   (sourceFormat) => {
     const occurrence = createOccurrence(
@@ -260,11 +323,11 @@ describe("source-map artifact relationships", () => {
       );
       sourceMap.artifact_id = contentId("3");
 
-      const result = createArtifactEdges(contentId("4"), [
-        directory,
-        ...targets,
-        sourceMap,
-      ]);
+      const result = createArtifactEdges(
+        contentId("4"),
+        [directory, ...targets, sourceMap],
+        "complete",
+      );
       const edge = result.edges.find(
         ({ occurrence_id }) => occurrence_id === sourceMap.occurrence_id,
       );
@@ -298,11 +361,11 @@ describe("source-map artifact relationships", () => {
     );
     directory.artifact_id = contentId("3");
 
-    const { edges, limitations } = createArtifactEdges(contentId("4"), [
-      archive,
-      script,
-      directory,
-    ]);
+    const { edges, limitations } = createArtifactEdges(
+      contentId("4"),
+      [archive, script, directory],
+      "complete",
+    );
 
     expect(directory).toMatchObject({
       artifact_kind: "container",
@@ -574,6 +637,28 @@ it("classifies nested UF2 by block magics and DfuSe by prefix and suffix", () =>
   expect(
     classifyArtifactContent("firmware/update.bin", partial, dfu.length + 1),
   ).toMatchObject({ format: "file" });
+});
+
+it("classifies a $MFT stream by its FILE record header, under any name", () => {
+  const mft = Buffer.alloc(2_048);
+  mft.write("FILE", 0, "latin1");
+  mft.writeUInt32LE(1024, 28);
+  for (const path of ["evidence/$MFT", "evidence/mft.raw", "evidence/records"])
+    expect(classifyArtifactBytesAtPath(path, mft)).toEqual({
+      kind: "executable",
+      format: "ntfs-mft",
+    });
+});
+
+it("leaves plain content beginning with FILE unclassified as MFT", () => {
+  const text = Buffer.from(
+    "FILE is a plain text prefix, not an NTFS record header",
+  );
+  expect(
+    classifyArtifactBytesAtPath("evidence/readme.txt", text),
+  ).toMatchObject({
+    format: "file",
+  });
 });
 
 it("classifies a FIT by a /images node within the first 4 KiB", () => {

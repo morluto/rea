@@ -48,20 +48,24 @@ for (const symlinks of [0, 1, 65])
           examined: 2,
           omitted: 1 + symlinks,
         });
-      expect(report.limitations).toContain(
-        "1 Interface Builder archive(s) omitted because unsupported uid exact range.",
+      expect(report.limitations).toContainEqual(
+        expect.stringMatching(/1.*omitted.*unsupported uid exact range/iu),
       );
       if (symlinks > 0)
-        expect(report.limitations).toContain(
-          `${symlinks} Interface Builder archive(s) omitted because symlink not followed.`,
+        expect(report.limitations).toContainEqual(
+          expect.stringMatching(
+            new RegExp(`${symlinks}.*omitted.*symlink not followed`, "iu"),
+          ),
         );
       if (symlinks < 64)
-        expect(report.limitations).toContain(
-          "Unsupported.nib: omitted because unsupported uid exact range.",
+        expect(report.limitations).toContainEqual(
+          expect.stringMatching(
+            /Unsupported\.nib.*omitted.*unsupported uid exact range/iu,
+          ),
         );
       else
-        expect(report.limitations).toContain(
-          "2 additional omitted archive path(s) and their reasons were not retained; reporting is bounded to 64 paths.",
+        expect(report.limitations).toContainEqual(
+          expect.stringMatching(/2.*omitted.*not retained.*64 paths/iu),
         );
       const result = await analyzeAppleAssetCatalogs({
         bundlePath: bundle,

@@ -1,23 +1,17 @@
-import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
-import { inspectSignalDecodersInputSchema } from "../domain/signals/signalDecoders.js";
-import { z } from "incur";
+import type { Logger } from "pino";
+
 import type { SignalRecordingService } from "../application/signals/SignalRecordingService.js";
 import { createSignalRecordingService } from "../composition/signals.js";
+import { SIGNAL_TOOL_CONTRACTS } from "../contracts/signals/signalToolContracts.js";
+import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
 import {
-  signalRecordingOptionsSchema,
-  signalRecordingSelectorBudgetIssue,
-  withinSignalRecordingSelectorBudget,
-} from "../domain/signals/signalRecording.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { logCliCommand } from "../cliLogging.js";
-import type { Logger } from "pino";
+  analyzeWithService,
+  inspectWithService,
+} from "./contractCommandRunners.js";
+import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
 import type { CliInstance } from "./types.js";
-import { withCommandCancellation } from "./commandCancellation.js";
-import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
-import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
-import { cliDecimalField, cliDecimalShape } from "./options.js";
-import { localPathStringSchema } from "../domain/localPath.js";
-import { absoluteCallerPath } from "../filesystem/callerPath.js";
+
 export const registerSignalCommands = (
   cli: CliInstance,
   logger: Logger,
@@ -27,108 +21,68 @@ export const registerSignalCommands = (
     "decode" | "inspectDecoders" | "close"
   > = createSignalRecordingService(environment),
 ): void => {
-  cli.command(CLI_COMMANDS.inspectSignalDecoders, {
-    description: "Search installed sigrok decoders or selected decoder help",
-    options: z
-      .object({
-        ...cliDecimalShape(inspectSignalDecodersInputSchema.shape),
-        limit: cliDecimalField(
-          z
-            .number()
-            .int()
-            .positive()
-            .max(Number.MAX_SAFE_INTEGER)
-            .optional()
-            .describe(
-              "Maximum matching decoders or help lines to return; defaults to 50",
-            ),
-        ),
-        all: z
-          .boolean()
-          .default(false)
-          .describe("Return all remaining matches"),
-      })
-      .superRefine((options, context) => {
-        if (options.all && options.limit !== undefined)
-          context.addIssue({
-            code: "custom",
-            path: ["all"],
-            message: "all and limit are mutually exclusive",
-          });
+  const close = () => service.close();
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(SIGNAL_TOOL_CONTRACTS, "inspect_signal_decoders"),
+    {
+      description: "Search installed sigrok decoders or selected decoder help",
+      jsonText: ["producer_limits"],
+      nullFlags: {
+        limit: { key: "all", description: "Return all remaining matches" },
+      },
+      fields: {
+        producer_limits: { description: PRODUCER_LIMITS_HELP },
+        limit: {
+          description:
+            "Maximum matching decoders or help lines to return; defaults to 50",
+        },
+      },
+    },
+    analyzeWithService(
+      () => ({
+        inspect: (input, options) => service.inspectDecoders(input, options),
+        close,
       }),
-    run: ({ options: { all, ...options } }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.inspectSignalDecoders, async () =>
-          finishAnalysisCommand(
-            () =>
-              service.inspectDecoders(
-                { ...options, ...(all ? { limit: null } : {}) },
-                { signal },
-              ),
-            service,
-            "sigrok-recording",
-            "inspect_signal_decoders",
-            signal,
-          ).then(projectCliAnalysisResult),
-        ),
-      ),
-  });
-  cli.command(CLI_COMMANDS.decodeSignalRecording, {
-    description:
-      "Decode an existing signal recording with caller-supplied sigrok",
-    args: z.object({
-      path: localPathStringSchema.describe("Local signal recording"),
-    }),
-    options: z
-      .object({
-        ...cliDecimalShape(signalRecordingOptionsSchema.shape),
-        line_limit: cliDecimalField(
-          z
-            .number()
-            .int()
-            .positive()
-            .optional()
-            .describe("Returned output lines per page; default 50"),
-        ),
-        all_lines: z
-          .boolean()
-          .default(false)
-          .describe(
+      "sigrok-recording",
+    ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(SIGNAL_TOOL_CONTRACTS, "decode_signal_recording"),
+    {
+      description:
+        "Decode an existing signal recording with caller-supplied sigrok",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      jsonText: ["producer_limits"],
+      nullFlags: {
+        line_limit: {
+          key: "all_lines",
+          description:
             "Return all remaining output lines instead of a bounded page",
-          ),
-      })
-      .superRefine((options, context) => {
-        if (options.all_lines && options.line_limit !== undefined)
-          context.addIssue({
-            code: "custom",
-            path: ["all_lines"],
-            message: "all_lines and line_limit are mutually exclusive",
-          });
-      })
-      .refine(
-        withinSignalRecordingSelectorBudget,
-        signalRecordingSelectorBudgetIssue,
-      ),
-    run: ({ args, options: { all_lines, ...options } }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.decodeSignalRecording, async () => {
-          return finishCliEvidenceCommand(
-            args.path,
-            () =>
-              service.decode(
-                {
-                  ...options,
-                  ...(all_lines ? { line_limit: null } : {}),
-                  path: absoluteCallerPath(args.path),
-                },
-                { signal },
-              ),
-            service,
-            "sigrok-recording",
-            "decode_signal_recording",
-            signal,
-          ).then(projectCliAnalysisResult);
-        }),
-      ),
-  });
+        },
+      },
+      crossFieldRules: "argv",
+      fields: {
+        path: { description: "Local signal recording" },
+        producer_limits: { description: PRODUCER_LIMITS_HELP },
+        input_format: { name: "input_format" },
+        line_offset: { name: "line_offset" },
+        line_limit: {
+          name: "line_limit",
+          description: "Returned output lines per page; default 50",
+        },
+      },
+    },
+    inspectWithService(
+      () => ({
+        inspect: (input, options) => service.decode(input, options),
+        close,
+      }),
+      "sigrok-recording",
+    ),
+  );
 };

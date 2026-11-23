@@ -1,8 +1,15 @@
 import { readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { createBinaryHardeningService } from "../../../src/composition/binaryDiagnostics.js";
+import { scheduler } from "node:timers/promises";
+import { describe, expect, it, vi } from "vitest";
+import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
+import {
+  MAXIMUM_ZSTD_MAX_FRAMES,
+  MINIMUM_ZSTD_MAX_FRAMES,
+} from "../../../src/domain/analysisResourceLimits.js";
+import { createBinaryHardeningService } from "../../../src/composition/binaryDiagnostics/binaryHardening.js";
 import { elfHardeningFixture } from "../../../src/native/hardening/BinaryHardening.fixture.js";
+import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("binary hardening stable filesystem boundary", () => {
@@ -66,6 +73,99 @@ describe("binary hardening stable filesystem boundary", () => {
       });
       expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     } finally {
+      await service.close();
+    }
+  });
+
+  it("reports the dynamic-table allowance in entries, not bytes", async () => {
+    const root = await createTestTempDirectory("rea-binary-hardening-entries-");
+    const path = join(root, "app");
+    // A file-backed PT_DYNAMIC of 65,537 entries (16 bytes each in ELF64).
+    const fixture = elfHardeningFixture();
+    const bytes = Buffer.concat([fixture, Buffer.alloc(65_537 * 16)]);
+    const programs = Number(bytes.readBigUInt64LE(32));
+    const dynamic = Array.from(
+      { length: bytes.readUInt16LE(56) },
+      (_, index) => programs + index * bytes.readUInt16LE(54),
+    ).find((at) => bytes.readUInt32LE(at) === 2);
+    if (dynamic === undefined) throw new Error("Fixture has no PT_DYNAMIC");
+    bytes.writeBigUInt64LE(BigInt(fixture.length), dynamic + 8);
+    bytes.writeBigUInt64LE(65_537n * 16n, dynamic + 32);
+    await writeFile(path, bytes);
+    const service = createBinaryHardeningService();
+    try {
+      const result = await service.inspect({ path });
+      if (result.ok) throw new Error("Expected the entry allowance refusal");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        fixedAllowance: { limit: 65_536, unit: "entries" },
+      });
+    } finally {
+      await service.close();
+    }
+  });
+});
+
+describe("binary hardening compressed ELF names", () => {
+  it("projects a section-name frame cap as an adjustable zstd.max_frames limit", async () => {
+    const root = await createTestTempDirectory("rea-binary-hardening-zstd-");
+    const path = join(root, "app");
+    await writeFile(path, elfFrameAllowanceFixture());
+    const service = createBinaryHardeningService();
+    try {
+      const result = await runWithAnalysisOperationSnapshot(
+        { revision: 1, overrides: { "zstd.max_frames": 1 } },
+        () =>
+          service.inspect({ path }, { signal: new AbortController().signal }),
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        operation: "inspect_binary_hardening",
+        resource: "cpu",
+        limit: {
+          setting: "zstd.max_frames",
+          effective_value: 1,
+          source: "runtime",
+          minimum: MINIMUM_ZSTD_MAX_FRAMES,
+          maximum: MAXIMUM_ZSTD_MAX_FRAMES,
+          unit: "count",
+        },
+      });
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("cancels a many-frame compressed section-name table", async () => {
+    const root = await createTestTempDirectory("rea-binary-hardening-cancel-");
+    const path = join(root, "app");
+    await writeFile(path, elfFrameAllowanceFixture());
+    const reason = new Error("stop hardening frames");
+    const controller = new AbortController();
+    const yieldImpl = scheduler.yield.bind(scheduler);
+    let yields = 0;
+    const spy = vi.spyOn(scheduler, "yield").mockImplementation(async () => {
+      yields += 1;
+      await yieldImpl();
+      if (yields === 1) controller.abort(reason);
+    });
+    const service = createBinaryHardeningService();
+    try {
+      const result = await service.inspect(
+        { path },
+        { signal: controller.signal },
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        operation: "inspect_binary_hardening",
+        cause: reason,
+      });
+    } finally {
+      spy.mockRestore();
       await service.close();
     }
   });

@@ -1,3 +1,5 @@
+import { AnalysisSettings } from "../application/AnalysisSettings.js";
+import { runtimeAnalysisConfig } from "../config/runtimeAnalysisSettings.js";
 import { describe, expect, it, vi } from "vitest";
 
 import { parseConfig } from "../config/parseConfig.js";
@@ -192,6 +194,27 @@ describe("Hopper provider target support", () => {
   });
 });
 
+describe("Hopper Xtensa support", () => {
+  it("declines Xtensa with the Ghidra-directed reason", () => {
+    const config = parseConfig({});
+    if (!config.ok) throw new Error("expected valid configuration");
+    const provider = new HopperProvider(config.value, silentLogger, {});
+    const target = {
+      path: "/tmp/esp32s3.elf",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "elf",
+      architecture: "xtensa",
+      availableArchitectures: ["xtensa"],
+    } as const satisfies BinaryTarget;
+    expect(provider.inspectTargetSupport(target)).toMatchObject({
+      status: "unsupported",
+      code: "architecture_unsupported",
+      reason: hopperDeclinedArchitectureReason("xtensa"),
+    });
+  });
+});
+
 describe("Hopper relationship coverage", () => {
   it.each([
     ["procedure_callers", ["callers"]],
@@ -272,6 +295,7 @@ describe("Hopper relationship coverage", () => {
         sha256: "a".repeat(64),
         kind: "database",
         format: "analysis-database",
+        databaseEngine: "hopper",
       });
       try {
         const observed = await client.execute(operation, {
@@ -311,8 +335,11 @@ describe("Hopper relationship coverage", () => {
           ),
         });
       } finally {
-        await client.close();
-        callTool.mockRestore();
+        try {
+          await client.close();
+        } finally {
+          callTool.mockRestore();
+        }
       }
     },
   );
@@ -378,6 +405,7 @@ describe("Hopper caller reconciliation failures", () => {
       sha256: "a".repeat(64),
       kind: "database",
       format: "analysis-database",
+      databaseEngine: "hopper",
     });
     try {
       const observed = await client.execute("procedure_callers", {
@@ -404,8 +432,84 @@ describe("Hopper caller reconciliation failures", () => {
         },
       });
     } finally {
-      await client.close();
-      callTool.mockRestore();
+      try {
+        await client.close();
+      } finally {
+        callTool.mockRestore();
+      }
     }
   });
+});
+
+it("reports invalid regex configuration honestly without blocking capability discovery", () => {
+  const environment = { REA_REGEX_MATCHING_DEADLINE_MS: "invalid" };
+  const parsed = parseConfig(environment);
+  if (!parsed.ok) throw parsed.error;
+  const settings = new AnalysisSettings(environment);
+  const provider = new HopperProvider(
+    runtimeAnalysisConfig(parsed.value, settings.read),
+    silentLogger,
+    environment,
+  );
+  const limitation = () =>
+    provider
+      .capabilities()
+      .find(({ operation }) => operation === "search_strings")
+      ?.limitations.join(" ");
+  expect(limitation()).toContain("invalid launch configuration");
+  expect(limitation()).not.toContain("5000 ms matching deadline");
+  expect(
+    settings.update({
+      changes: [
+        { setting: "regex.matching_deadline_ms", action: "set", value: 3000 },
+      ],
+    }).ok,
+  ).toBe(true);
+  expect(settings.run(limitation)).toContain(
+    "3000 ms matching deadline (source runtime)",
+  );
+  expect(
+    settings.update({
+      changes: [{ setting: "regex.matching_deadline_ms", action: "reset" }],
+    }).ok,
+  ).toBe(true);
+  expect(limitation()).toContain("invalid launch configuration");
+});
+
+it("preserves pre-abort with invalid startup seed", async () => {
+  const environment = { REA_HOPPER_STARTUP_TIMEOUT_MS: "invalid" };
+  const parsed = parseConfig(environment);
+  if (!parsed.ok) throw parsed.error;
+  const settings = new AnalysisSettings(environment);
+  const provider = new HopperProvider(
+    runtimeAnalysisConfig(parsed.value, settings.read),
+    silentLogger,
+    environment,
+  );
+  const controller = new AbortController();
+  const reason = new Error("caller cancelled");
+  controller.abort(reason);
+  const client = provider.createClient({
+    path: "/tmp/test.hop",
+    sha256: "a".repeat(64),
+    kind: "database",
+    format: "analysis-database",
+    databaseEngine: "hopper",
+  });
+  const result = await client.execute(
+    "health",
+    {},
+    { signal: controller.signal },
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "HopperCancelledError" },
+  });
+  if (result.ok) throw new Error("Expected cancellation");
+  expect(result.error.cause).toBe(reason);
+  expect(await client.execute("health", {})).toMatchObject({
+    ok: false,
+    error: { _tag: "ConfigurationError" },
+  });
+  expect(await client.close()).toMatchObject({ ok: true });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { JsonValue } from "../jsonValue.js";
+import { jsonObjectSchema, type JsonValue } from "../jsonValue.js";
 import { webNetworkCaptureSchema } from "../webNetworkCapture.js";
 import { EnvironmentStateAccumulator } from "./EnvironmentStateAccumulator.js";
 import {
@@ -52,39 +52,78 @@ const ISO_SECONDS = {
 const stateOf = (rows: readonly TimedCaptureRow[]): StateView =>
   environmentStateViewOf(timedCaptureEvidence(rows));
 
-it("retains learned clock rules but withholds their serving when the global clock is unknown", () => {
-  const baseline = stateOf(BOOK_ROWS);
-  const unknown = stateOf([
-    ...BOOK_ROWS,
-    ["GET", "/api/health", { ready: true }, 200, undefined, -1],
-  ]);
-  expect(baseline.write_clock).not.toBeNull();
-  expect(unknown.write_clock).toBeNull();
-  const generatesClock = (plan: StateView["writes"][number]) =>
-    plan.rules.some((rule) =>
-      ["clock", "held-clock", "nested-clock"].includes(rule.rule),
-    );
-  const clockPlans = baseline.writes.filter(
-    (plan) => plan.served && generatesClock(plan),
-  );
-  expect(clockPlans.length).toBeGreaterThan(0);
-  for (const plan of clockPlans)
-    expect(
-      unknown.writes.find((candidate) => candidate.tool === plan.tool),
-    ).toEqual({
-      ...plan,
-      served: false,
-      reason: "unknown-clock",
+it.each([-1, undefined])(
+  "withholds only clocked writes when a record at start offset %s has unknown completion",
+  (startOffsetSeconds) => {
+    const baseline = stateOf(BOOK_ROWS);
+    const unknown = stateOf([
+      ...BOOK_ROWS,
+      [
+        "GET",
+        "/api/health",
+        { ready: true },
+        200,
+        undefined,
+        -1,
+        startOffsetSeconds,
+      ],
+    ]);
+    expect(baseline.write_clock).toBe(BOOK_WRITE_CLOCK);
+    expect(unknown.write_clock).toBeNull();
+    const generatesClock = (plan: StateView["writes"][number]) =>
+      plan.rules.some((rule) =>
+        ["clock", "held-clock", "nested-clock"].includes(rule.rule),
+      );
+    const served = baseline.writes.filter((plan) => plan.served);
+    expect(served.some(generatesClock)).toBe(true);
+    expect(served.some((plan) => !generatesClock(plan))).toBe(true);
+    for (const plan of served)
+      expect(
+        unknown.writes.find((candidate) => candidate.tool === plan.tool),
+      ).toEqual(
+        generatesClock(plan)
+          ? { ...plan, served: false, reason: "unknown-clock" }
+          : plan,
+      );
+  },
+);
+
+it.each([
+  ["000000000", 0, "2026-10-17T18:00:12.000Z"],
+  ["000001", 0, "2026-10-17T18:00:13.000Z"],
+  ["000000001", 0, "2026-10-17T18:00:13.000Z"],
+  ["123000000", 0, "2026-10-17T18:00:13.000Z"],
+  ["999999", 0.001, "2026-10-17T18:00:13.000Z"],
+  ["999999", 0.001001, "2026-10-17T18:00:14.000Z"],
+])(
+  "starts the served clock after a final captured fractional instant .%s plus %sms",
+  (fraction, duration, expected) => {
+    const evidence = timedCaptureEvidence([
+      ...BOOK_ROWS,
+      ["GET", "/api/health", { ready: true }, 200, undefined, 0],
+    ]);
+    const capture = webNetworkCaptureSchema.parse(evidence.normalized_result);
+    const state = environmentStateViewOf({
+      ...evidence,
+      normalized_result: {
+        ...capture,
+        records: capture.records.map((record, index) =>
+          index === capture.records.length - 1
+            ? {
+                ...record,
+                reported: {
+                  ...jsonObjectSchema.parse(record.reported),
+                  startedDateTime: `2026-10-17T18:00:12.${fraction}Z`,
+                  time: duration,
+                },
+              }
+            : record,
+        ),
+      },
     });
-  const independent = baseline.writes.filter(
-    (plan) => plan.served && !generatesClock(plan),
-  );
-  expect(independent.length).toBeGreaterThan(0);
-  for (const plan of independent)
-    expect(
-      unknown.writes.find((candidate) => candidate.tool === plan.tool),
-    ).toEqual(plan);
-});
+    expect(state.write_clock).toBe(expected);
+  },
+);
 
 it.each(["delete", "mismatched-query"])(
   "does not parse unused request content for %s under a bounded state allowance",
@@ -1561,11 +1600,14 @@ const notesOf = (state: StateView) =>
   state.entities
     .filter((entity) => entity.type === "/api/notes")
     .map((entity) => entity.id);
-/** Two notes read, the given exchanges, then a POST elsewhere whose returned id the notes are read under. */
-const published = (before: readonly TimedCaptureRow[]): TimedCaptureRow[] => [
+const NOTES_INIT_ROWS: readonly TimedCaptureRow[] = [
   ["GET", "/api/notes", [A, B]],
   ["GET", "/api/notes/1001", A],
   ["GET", "/api/notes/1002", B],
+];
+/** Two notes read, the given exchanges, then a POST elsewhere whose returned id the notes are read under. */
+const published = (before: readonly TimedCaptureRow[]): TimedCaptureRow[] => [
+  ...NOTES_INIT_ROWS,
   ...before,
   ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
   ["GET", "/api/notes/1003", C],
@@ -1610,9 +1652,6 @@ describe("creates read under another path", () => {
       effect: "none",
       reason: "no-state-target",
     });
-    expect(planOf(stateOf(published([])), "post_drafts_publish")).toMatchObject(
-      { effect: "create" },
-    );
   });
 
   /** A create linked under project 11, then a call for project 12, whose note a later item read and delete show. */
@@ -1830,80 +1869,68 @@ describe("item lines first recorded after a write, against the lines left", () =
   });
 });
 
-describe("reads overlapping a linked create", () => {
-  it("links a create whose id only a list still running when it began showed before", () => {
-    const state = stateOf([
-      ["GET", "/api/notes", [A, B]],
-      ["GET", "/api/notes/1001", A],
-      ["GET", "/api/notes/1002", B],
-      // Begun before the publish and finished after it, so it may show what the publish made.
-      ["GET", "/api/notes", [A, B, C], 200, undefined, 2500],
-      ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
-      ["GET", "/api/notes/1003", C],
-      ["GET", "/api/notes", [A, B, C]],
-    ]);
-    expect(planOf(state, "post_drafts_publish")).toMatchObject({
-      effect: "create",
-      target: "/api/notes",
-    });
-    expect(notesOf(state)).toEqual(["1001", "1002"]);
-  });
-});
+describe("reads that do not rule out a linked create", () => {
+  const user = (id: number, login: string) => ({ id, login });
+  const changed = user(1001, "alpha2");
 
-describe("earlier reads of the returned id under other types", () => {
-  it("links a create whose id an earlier read of another type named", () => {
-    const user = { id: 1003, login: "gamma" };
-    const state = stateOf([
-      ["GET", "/api/users/1003", user],
-      ["GET", "/api/notes", [A, B]],
-      ["GET", "/api/notes/1001", A],
-      ["GET", "/api/notes/1002", B],
-      ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
-      ["GET", "/api/notes/1003", C],
-      ["GET", "/api/notes", [A, B, C]],
-    ]);
-    expect(planOf(state, "post_drafts_publish")).toMatchObject({
-      effect: "create",
-      target: "/api/notes",
-    });
-  });
-});
-
-describe("item reads that show no entity", () => {
-  it("links a create past a read of its id that answered JSON null under another type", () => {
-    const user = (id: number, login: string) => ({ id, login });
-    const state = stateOf([
-      ["GET", "/api/notes", [A, B]],
-      ["GET", "/api/notes/1001", A],
-      ["GET", "/api/notes/1002", B],
-      ["GET", "/api/users/1001", user(1001, "alpha")],
-      // Ends the users' initial reads, so the null read below plans nothing.
-      [
-        "PATCH",
-        "/api/users/1001",
-        user(1001, "alpha2"),
-        200,
-        { login: "alpha2" },
+  it.each<{
+    name: string;
+    rows: readonly TimedCaptureRow[];
+    afterPublish?: TimedCaptureRow;
+    observation: number;
+  }>([
+    {
+      name: "a list still running when the publish began",
+      rows: [
+        ...NOTES_INIT_ROWS,
+        ["GET", "/api/notes", [A, B, C], 200, undefined, 2500],
       ],
-      ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
-      ["GET", "/api/users/1003", null],
-      ["GET", "/api/notes/1003", C],
-      ["GET", "/api/notes", [A, B, C]],
-    ]);
-    expect(planOf(state, "post_drafts_publish")).toMatchObject({
-      effect: "create",
-      target: "/api/notes",
-    });
-  });
+      observation: 5,
+    },
+    {
+      name: "the same id seen under another type before the publish",
+      rows: [
+        ["GET", "/api/users/1003", user(1003, "gamma")],
+        ...NOTES_INIT_ROWS,
+      ],
+      observation: 5,
+    },
+    {
+      name: "another type answering JSON null for the same id",
+      rows: [
+        ...NOTES_INIT_ROWS,
+        ["GET", "/api/users/1001", user(1001, "alpha")],
+        // End the users' initial reads before their null response.
+        ["PATCH", "/api/users/1001", changed, 200, { login: "alpha2" }],
+      ],
+      afterPublish: ["GET", "/api/users/1003", null],
+      observation: 7,
+    },
+  ])(
+    "links the publish to the new note despite $name",
+    ({ rows, afterPublish, observation }) => {
+      const state = stateOf([
+        ...rows,
+        ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
+        ...(afterPublish === undefined ? [] : [afterPublish]),
+        ["GET", "/api/notes/1003", C],
+        ["GET", "/api/notes", [A, B, C]],
+      ]);
+      expect(planOf(state, "post_drafts_publish")).toMatchObject({
+        effect: "create",
+        target: "/api/notes",
+        observation: { ordinal: observation, pointer: "" },
+      });
+      expect(notesOf(state)).toEqual(["1001", "1002"]);
+    },
+  );
 });
 
 describe("what a linked create observes", () => {
   it("observes a linked create only in a read of an id its response named, inside an envelope too", () => {
     const D = note(1004, "Delta");
     const state = stateOf([
-      ["GET", "/api/notes", [A, B]],
-      ["GET", "/api/notes/1001", A],
-      ["GET", "/api/notes/1002", B],
+      ...NOTES_INIT_ROWS,
       [
         "POST",
         "/api/drafts/publish",
@@ -2349,6 +2376,7 @@ describe("evidence a learned sort keeps answering to", () => {
     expect(state.writes).toEqual([
       expect.objectContaining({ served: false, reason: "contradicted" }),
     ]);
+    expect(state.views.length).toBeGreaterThan(0);
     for (const view of state.views)
       expect(view).not.toHaveProperty("sorted_arrays");
   });

@@ -60,68 +60,6 @@ export async function readTestDurations(
   }
 }
 
-/**
- * Case counts from the competing-loader file before it was split: 54 cases
- * stayed in the percent-path file and 46 ran in each of the three dual-surface
- * shards. History that still names only the original path is that combined
- * cost. The shards are retired; one file now runs every loader through stdio
- * MCP plus a few compiled CLI parity cases.
- */
-const LOADER_HISTORY_SOURCE =
-  "tests/acceptance/applications/javascriptLiteralPercentPaths.test.ts";
-const LOADER_HISTORY_PARTS = [
-  "tests/acceptance/applications/javascriptLiteralLoaderOwnershipEarly.test.ts",
-  "tests/acceptance/applications/javascriptLiteralLoaderOwnershipMiddle.test.ts",
-  "tests/acceptance/applications/javascriptLiteralLoaderOwnershipLate.test.ts",
-] as const;
-const LOADER_HISTORY_CONSOLIDATED =
-  "tests/acceptance/applications/javascriptLiteralLoaderOwnership.test.ts";
-const LOADER_HISTORY_REMAINDER_CASES = 54;
-const LOADER_HISTORY_PART_CASES = 46;
-const LOADER_HISTORY_CASES =
-  LOADER_HISTORY_REMAINDER_CASES +
-  LOADER_HISTORY_PART_CASES * LOADER_HISTORY_PARTS.length;
-
-/**
- * Charge the consolidated loader file until its own duration is published.
- * A pre-split percent-path duration keeps 54/192 and gives 138/192 to the
- * consolidated file. Recorded Early/Middle/Late durations are summed instead,
- * and a partial set is scaled as three equal shares. That weight is the old
- * dual-surface cost, so the first schedule overestimates the demoted file.
- * A published consolidated duration stands, including beside retired shards.
- */
-export function seedLoaderOwnershipDurations(
-  durations: ReadonlyMap<string, number>,
-): Map<string, number> {
-  if (durations.has(LOADER_HISTORY_CONSOLIDATED)) return new Map(durations);
-  const recordedParts = LOADER_HISTORY_PARTS.flatMap((path) => {
-    const duration = durations.get(path);
-    return duration === undefined ? [] : [duration];
-  });
-  if (recordedParts.length > 0) {
-    const seeded = new Map(durations);
-    const sum = recordedParts.reduce((total, duration) => total + duration, 0);
-    seeded.set(
-      LOADER_HISTORY_CONSOLIDATED,
-      (sum * LOADER_HISTORY_PARTS.length) / recordedParts.length,
-    );
-    return seeded;
-  }
-  const combined = durations.get(LOADER_HISTORY_SOURCE);
-  if (combined === undefined) return new Map(durations);
-  const seeded = new Map(durations);
-  const loaderCases = LOADER_HISTORY_CASES - LOADER_HISTORY_REMAINDER_CASES;
-  seeded.set(
-    LOADER_HISTORY_SOURCE,
-    (combined * LOADER_HISTORY_REMAINDER_CASES) / LOADER_HISTORY_CASES,
-  );
-  seeded.set(
-    LOADER_HISTORY_CONSOLIDATED,
-    (combined * loaderCases) / LOADER_HISTORY_CASES,
-  );
-  return seeded;
-}
-
 type TimedItem<T> = {
   item: T;
   key: string;
@@ -263,9 +201,8 @@ export class CiTestSequencer extends BaseSequencer {
     const shard = this.ctx.config.shard;
     if (!historyPath || !shard) return super.shard(files);
     const root = this.ctx.config.root;
-    const recorded = await readTestDurations(historyPath, root);
-    if (!recorded) return super.shard(files);
-    const durations = seedLoaderOwnershipDurations(recorded);
+    const durations = await readTestDurations(historyPath, root);
+    if (!durations) return super.shard(files);
 
     const weighted = files.map((item) => {
       const path = relative(root, resolve(root, item.moduleId))

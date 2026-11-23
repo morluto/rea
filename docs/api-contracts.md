@@ -85,10 +85,35 @@ names are retained. Original bytes remain in the caller's artifact; complete
 inventory Evidence does not embed the entire source JSON. Duplicate JSON members
 use the shared parser's last-value-wins behavior, recorded in source coverage.
 
-If decoding or later validation fails after a verified read, the typed error
-retains a compact `file-snapshot-hash` observation with the exact path, digest
-and byte length. Syntax diagnostics do not quote source JSON. Cancellation
-does not replace a parser failure that has already completed.
+If decoding or validation fails after a verified read and before any operation,
+reference, or diagnostic row is retained, the typed error keeps a compact
+`file-snapshot-hash` observation with the exact path, digest and byte length.
+Syntax diagnostics do not quote source JSON. Cancellation does not replace a
+parser failure that has already completed.
+
+When cancellation or the retained-facts limit stops OpenAPI traversal after at
+least one operation, reference, or diagnostic row, that observation is
+authenticated Evidence for the partial inventory rather than the hash. The
+normalized result uses the same inventory shape, `source_coverage.status` is
+`partial`, and only the examined rows are present. Reuse those rows with
+`inspect_analysis_view`. A session that already retained the Evidence uses:
+
+```json
+{
+  "source": { "kind": "retained-evidence", "evidence_id": "<evidence_id>" },
+  "view": {
+    "kind": "api-contract",
+    "collection": "operations",
+    "offset": 0,
+    "limit": 64
+  }
+}
+```
+
+An inline record uses the same view with
+`source: { "kind": "inline", "evidence": <complete Evidence> }`. Do not reread
+the file to reconstruct the rows. A later hash is not substituted once this
+Evidence is attached.
 
 ## Resource bounds and verification
 

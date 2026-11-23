@@ -35,16 +35,18 @@ export default {
         text: "response.current_file === undefined",
       },
     ]),
-    ...mutationRanges("src/rizin/RizinDebugSessionManager.ts", [
+    ...mutationRanges("src/rizin/RizinDebugFrames.ts", [
       {
-        kind: "declaration",
-        name: "isRizinCommandDeadlineExpired",
+        kind: "expression",
+        text: "remaining <= 0",
       },
       {
         kind: "declaration",
         name: "snapshot",
         withinBlockWithBinding: "output",
       },
+    ]),
+    ...mutationRanges("src/rizin/RizinDebugEvidence.ts", [
       {
         kind: "declaration",
         name: "createRizinCommandTimeoutEvidence",

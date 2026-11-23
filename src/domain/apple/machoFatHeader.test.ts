@@ -12,21 +12,7 @@ const formats = [
 ] as const;
 
 it.each(formats)(
-  "preserves incomplete FAT format evidence ($magic)",
-  (format) => {
-    const bytes = Buffer.alloc(8);
-    bytes.writeUInt32BE(format.magic);
-    for (let observed = 0; observed < 8; observed++)
-      expect(readFatHeaderPrefix(bytes.subarray(0, observed))).toEqual(
-        observed < 4
-          ? { state: "unknown", requiredBytes: 4 }
-          : { state: "incomplete", ...format, requiredBytes: 8 },
-      );
-  },
-);
-
-it.each(formats)(
-  "retains raw zero and maximum counts without policy or table allocation ($magic)",
+  "preserves partial format and raw count evidence from the same FAT view ($magic)",
   (format) => {
     const backing = Buffer.alloc(27, 0xa5);
     const window = backing.subarray(7, 15);
@@ -36,6 +22,13 @@ it.each(formats)(
       window.byteLength,
     );
     view.setUint32(0, format.magic, false);
+    for (let observed = 0; observed < window.length; observed++)
+      expect(readFatHeaderPrefix(window.subarray(0, observed))).toEqual(
+        observed < 4
+          ? { state: "unknown", requiredBytes: 4 }
+          : { state: "incomplete", ...format, requiredBytes: 8 },
+      );
+
     for (const count of [0, 0xffffffff]) {
       view.setUint32(4, count, format.littleEndian);
       const before = Buffer.from(backing);

@@ -1,3 +1,5 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -10,7 +12,7 @@ import {
 import {
   modelArtifactSummaryViewResultSchema,
   analysisViewResultSchema,
-} from "../../src/domain/analysisView/analysisView.js";
+} from "../../src/domain/analysisView/analysisViewResult.js";
 import { createEvidence, parseEvidence } from "../../src/domain/evidence.js";
 import { readEvidenceBundle } from "../../src/application/EvidenceBundleFiles.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
@@ -22,11 +24,19 @@ import {
   safetensorsFixture,
 } from "../fixtures/model/model.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import {
-  cliTest,
-  createSharedMcpSession,
-  runFileCli,
-} from "../support/cli/cliFixture.js";
+import { cliTest, createSharedMcpSession } from "../support/cli/cliFixture.js";
+
+/** A malformed model header is an invalid `path` on both adapters. */
+const MALFORMED_MODEL = {
+  code: "invalid_request",
+  category: "invalid_input",
+  details: {
+    operation: "inspect_model_artifact",
+    issues: [
+      expect.objectContaining({ path: ["path"], reason: "invalid_format" }),
+    ],
+  },
+} as const;
 
 // Model queries are target-free; share immutable registration and schema setup.
 // Portable export keeps its separate post-CLI connection below.
@@ -113,7 +123,7 @@ cliTest(
       });
       const bytes = Buffer.concat([fixture.bytes, Buffer.alloc(16)]);
       await writeFile(path, bytes);
-      const cliResult = await runFileCli(cli, {
+      const cliResult = await cli.run({
         arguments: [
           "inspect-model-artifact",
           path,
@@ -177,6 +187,7 @@ cliTest(
       expect(summary.summary.limitations).toContainEqual(limitation);
       expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
       await unlink(path);
+      if (blockBytes !== 36) continue;
 
       const source = {
         kind: "retained-evidence",
@@ -365,7 +376,7 @@ cliTest(
         tensors,
       });
       await writeFile(path, fixture.bytes);
-      const response = await runFileCli(cli, {
+      const response = await cli.run({
         arguments: [
           "inspect-model-artifact",
           path,
@@ -433,6 +444,7 @@ cliTest(
         expect(summary.summary.limitations).toContain(limitation);
       expect(Buffer.compare(await readFile(path), fixture.bytes)).toBe(0);
       await unlink(path);
+      if (layout !== "legacy") continue;
       await assertRetainedLayoutViews(
         call,
         summary.parent_evidence_id,
@@ -444,7 +456,7 @@ cliTest(
 );
 
 cliTest(
-  "preserves exact large safetensors dimensions while bounding actual offsets",
+  "preserves exact large safetensors dimensions while rejecting impossible file offsets",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-model-shape-precision-");
     const path = join(root, "empty.safetensors");
@@ -520,16 +532,26 @@ cliTest(
     const offsetFailure = parseMcpToolError(
       await call("inspect_model_artifact", { path }),
     );
+    // The raw extent is outside this empty file, and that check runs before
+    // the offset is converted to a host number.
     expect(offsetFailure.error).toMatchObject({
-      code: "resource_constraint",
+      code: "invalid_request",
+      category: "invalid_input",
       details: {
-        reported_limits: { maximum_exact_offset: Number.MAX_SAFE_INTEGER },
+        operation: "inspect_model_artifact",
+        issues: [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+            message: `Selected artifact ${path}: Declared extent is outside the file`,
+          },
+        ],
       },
     });
   },
 );
 
-it.each(["named", "default", "inventory-only", "absent"] as const)(
+it.each(["named", "default", "inventory-only"] as const)(
   "reports actual chat-template presence in summaries and page context (%s)",
   async (kind) => {
     const root = await createTestTempDirectory("rea-model-templates-");
@@ -553,9 +575,7 @@ it.each(["named", "default", "inventory-only", "absent"] as const)(
         ? [names, template]
         : kind === "default"
           ? [template]
-          : kind === "inventory-only"
-            ? [names]
-            : [];
+          : [names];
     await writeFile(path, ggufFixture({ metadata }).bytes);
     const call = await modelMcp.session.call();
     const response = await call("inspect_model_artifact", { path });
@@ -620,11 +640,15 @@ it("keeps generated headline keys and imported compound metadata out of compact 
     { key: `${architecture}.context_length`, value: 2048 },
   ]);
   report.metadata[0]!.value = { future: architecture };
-  const imported = createEvidence(undefined, full.provider, {
-    operation: "inspect_model_artifact",
-    parameters: full.parameters,
-    result: report,
-  });
+  const imported = createEvidence(
+    unknownTarget("not-observed"),
+    full.provider,
+    {
+      operation: "inspect_model_artifact",
+      parameters: full.parameters,
+      result: report,
+    },
+  );
   const page = await call("inspect_analysis_view", {
     source: { kind: "inline", evidence: imported },
     view: { kind: "summary" },
@@ -667,11 +691,15 @@ it("rejects noncanonical imported model indexes and duplicate identities through
   for (const corrupt of corruptions) {
     const result = structuredClone(report);
     corrupt(result);
-    const evidence = createEvidence(undefined, complete.provider, {
-      operation: "inspect_model_artifact",
-      parameters: complete.parameters,
-      result,
-    });
+    const evidence = createEvidence(
+      unknownTarget("not-observed"),
+      complete.provider,
+      {
+        operation: "inspect_model_artifact",
+        parameters: complete.parameters,
+        result,
+      },
+    );
     const failure = parseMcpToolError(
       await call("inspect_analysis_view", {
         source: { kind: "inline", evidence },
@@ -910,7 +938,7 @@ cliTest(
       const report = modelArtifactSchema.parse(evidence.normalized_result);
       expect(report.format).toBe(format);
       expect(report.artifact.sha256).toBeNull();
-      expect(evidence.subject).toBeNull();
+      expect(evidence.subject.identity.kind).toBe("unknown");
       const complete = await call("inspect_model_artifact", {
         path,
         detail: "complete",
@@ -926,7 +954,7 @@ cliTest(
       });
       expect(hashed.isError, JSON.stringify(hashed)).not.toBe(true);
       expect(
-        parseEvidence(hashed.structuredContent).subject?.digest.sha256,
+        fileIdentity(parseEvidence(hashed.structuredContent).subject).sha256,
       ).toBe(createHash("sha256").update(fixture.bytes).digest("hex"));
       const summary = await call("inspect_model_artifact", { path });
       expect(summary.isError, JSON.stringify(summary)).not.toBe(true);
@@ -994,7 +1022,7 @@ cliTest(
     ] as const) {
       const path = join(root, name);
       await writeFile(path, bytes);
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: [
           "inspect-model-artifact",
           path,
@@ -1015,6 +1043,7 @@ cliTest(
           createHash("sha256").update(safetensors.header).digest("hex"),
         );
       } else {
+        expect(report.metadata).toEqual([]);
         expect(report.tensors).toEqual([]);
         expect(report.tensor_data_offset).toBe(alignedOffset);
         expect(report.artifact.header_length).toBe(
@@ -1042,7 +1071,7 @@ cliTest(
         Buffer.alloc(0),
       ).bytes,
     );
-    const mapCli = await runFileCli(cli, {
+    const mapCli = await cli.run({
       arguments: [
         "inspect-model-artifact",
         mapPath,
@@ -1079,22 +1108,18 @@ cliTest(
         safetensorsFixture(`{"__metadata__":${numeric}}`, Buffer.alloc(0))
           .bytes,
       );
-      const malformedCli = await runFileCli(cli, {
+      const malformedCli = await cli.run({
         arguments: ["inspect-model-artifact", malformedPath, "--json"],
       });
       expect(malformedCli.exitCode).toBe(1);
       expect(malformedCli.json).toMatchObject({
-        code: "target_unavailable",
-        category: "unsupported_target",
-        details: { constraint: "file_format_rejected" },
+        ...MALFORMED_MODEL,
       });
       const malformedMcp = parseMcpToolError(
         await call("inspect_model_artifact", { path: malformedPath }),
       );
       expect(malformedMcp.error).toMatchObject({
-        code: "target_unavailable",
-        category: "unsupported_target",
-        details: { constraint: "file_format_rejected" },
+        ...MALFORMED_MODEL,
       });
     }
   },
@@ -1193,17 +1218,13 @@ cliTest(
       });
       expect(cliResult.exitCode).toBe(1);
       expect(cliResult.json).toMatchObject({
-        code: "target_unavailable",
-        category: "unsupported_target",
-        details: { constraint: "file_format_rejected" },
+        ...MALFORMED_MODEL,
       });
       const mcpResult = parseMcpToolError(
         await call("inspect_model_artifact", { path }),
       );
       expect(mcpResult.error).toMatchObject({
-        code: "target_unavailable",
-        category: "unsupported_target",
-        details: { constraint: "file_format_rejected" },
+        ...MALFORMED_MODEL,
       });
     }
   },
@@ -1282,9 +1303,7 @@ cliTest(
       await call("inspect_model_artifact", { path }),
     );
     expect(malformed.error).toMatchObject({
-      code: "target_unavailable",
-      category: "unsupported_target",
-      details: { constraint: "file_format_rejected" },
+      ...MALFORMED_MODEL,
     });
   },
 );

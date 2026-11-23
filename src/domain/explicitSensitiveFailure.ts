@@ -1,3 +1,4 @@
+import { unescapeJsonPointerToken } from "./jsonPointer.js";
 import { BrowserObservationError } from "./browserObservationError.js";
 import { EvidenceFileError } from "./evidenceErrors.js";
 import type { AnalysisError } from "./analysisErrorBase.js";
@@ -12,6 +13,7 @@ import {
   resourceConstraintRecovery,
   AnalysisCancelledError,
   AnalysisTimeoutError,
+  cancelledBy,
 } from "./analysisErrorCore.js";
 import { redactExplicitText } from "./explicitSensitiveValues.js";
 import type { JsonValue } from "./jsonValue.js";
@@ -54,7 +56,7 @@ const redactSensitivePointer = (
 ): string => {
   let parent = "";
   for (const segment of pointer.split("/").slice(1)) {
-    const decoded = segment.replaceAll("~1", "/").replaceAll("~0", "~");
+    const decoded = unescapeJsonPointerToken(segment);
     const child = `${parent}/${segment}`;
     if (text(decoded) !== decoded || text(child) !== child) return parent;
     parent = child;
@@ -84,6 +86,9 @@ export const redactSensitiveFailure = (
   // Other observation owners already apply their format-aware exclusions.
   if (redacted !== error && error.partialObservation !== undefined)
     redacted.retainPartialObservation(error.partialObservation);
+  if (redacted !== error)
+    for (const secondary of error.secondaryFailures)
+      redacted.retainSecondaryFailure(redactSensitiveFailure(secondary, text));
   return redacted === error ? error : mirrorCleanup(error, redacted, text);
 };
 
@@ -142,6 +147,8 @@ const redactFailure = (
   const context = {
     cause: error,
     ...(error.limit === undefined ? {} : { limit: error.limit }),
+
+    ...(error.related === undefined ? {} : { related: error.related }),
     ...(guidance === undefined
       ? {}
       : {
@@ -203,6 +210,9 @@ const redactFailure = (
         ? {}
         : { systemCode: error.systemCode }),
       ...(retainedPath === undefined ? {} : { path: retainedPath }),
+      ...(error.detectedKind === undefined
+        ? {}
+        : { detectedKind: error.detectedKind }),
       ...(error.userMessage === undefined
         ? {}
         : { userMessage: text(error.userMessage) }),
@@ -219,11 +229,15 @@ const redactFailure = (
         : { contentIssues: error.contentIssues.map(issueProjection) }),
     });
   }
-  if (error instanceof AnalysisCancelledError)
-    return new AnalysisCancelledError(error.operation, {
-      ...context,
-      cause: error.cause,
+  if (error instanceof AnalysisCancelledError) {
+    const { cause: _redacted, ...cancellationContext } = context;
+    return cancelledBy(error.operation, error, {
+      ...cancellationContext,
+      ...(error.userMessage === undefined
+        ? {}
+        : { userMessage: text(error.userMessage) }),
     });
+  }
   if (error instanceof AnalysisTimeoutError)
     return new AnalysisTimeoutError(error.operation, error.timeoutMs, {
       ...context,
@@ -233,6 +247,9 @@ const redactFailure = (
       ...(error.remediationAction === undefined
         ? {}
         : { remediationAction: text(error.remediationAction) }),
+      ...(error.limit === undefined ? {} : { limit: error.limit }),
+
+      ...(error.related === undefined ? {} : { related: error.related }),
     });
   if (error instanceof AnalysisAccessDeniedError)
     return new AnalysisAccessDeniedError(
@@ -246,7 +263,7 @@ const redactFailure = (
       error.operation,
       text(error.path),
       text(error.reason),
-      context,
+      { ...context, integrityCheck: error.integrityCheck },
     );
   if (error instanceof AnalysisInputError)
     return new AnalysisInputError(
@@ -264,11 +281,16 @@ const redactFailure = (
       error.issues.map(issueProjection),
     );
   if (error instanceof AnalysisOutputError)
-    return new AnalysisOutputError(
-      error.operation,
-      text(error.reason),
-      context,
-    );
+    return new AnalysisOutputError(error.operation, text(error.reason), {
+      ...context,
+      ...(error.userMessage === undefined
+        ? {}
+        : { userMessage: text(error.userMessage) }),
+      ...(error.remediationAction === undefined
+        ? {}
+        : { remediationAction: text(error.remediationAction) }),
+      cleanupOnly: error.cleanupOnly,
+    });
   if (error instanceof AnalysisCapabilityUnavailableError)
     return new AnalysisCapabilityUnavailableError(
       error.providerId,
@@ -309,7 +331,16 @@ const redactFailure = (
       error.resource,
       text(error.reason),
       error.reportedLimits === null ? null : diagnostics(error.reportedLimits),
-      { ...context, ...resourceConstraintRecovery(error, text) },
+      {
+        ...context,
+        ...resourceConstraintRecovery(error, text),
+        ...(error.limit === undefined ? {} : { limit: error.limit }),
+
+        ...(error.related === undefined ? {} : { related: error.related }),
+        ...(error.requestSent === undefined
+          ? {}
+          : { requestSent: error.requestSent }),
+      },
     );
   if (error instanceof ProviderCleanupError)
     return new ProviderCleanupError(

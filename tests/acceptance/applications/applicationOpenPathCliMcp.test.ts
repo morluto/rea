@@ -7,6 +7,7 @@ import { expect } from "vitest";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { canonicalInputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -18,8 +19,6 @@ cliTest.for([
   async ([path, count], { cli }) => {
     const { client, call } = await connectLocalToolsMcp({
       REA_MCP_TOOL_FAMILIES: "electron",
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
-      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
     });
     const definition = (await client.listTools()).tools.find(
       ({ name }) => name === "analyze_javascript_application",
@@ -29,7 +28,7 @@ cliTest.for([
     const validate = new Ajv2020({
       strict: false,
       validateFormats: false,
-    }).compile(definition.inputSchema);
+    }).compile(canonicalInputSchema(definition.name));
     const root = await createTestTempDirectory("rea-open-path-");
     const source = `import { open as openFile } from "node:fs/promises";\nconst handle = await openFile(${path}, "r");\nawait handle.close();\n`;
     const sha256 = createHash("sha256").update(source).digest("hex");

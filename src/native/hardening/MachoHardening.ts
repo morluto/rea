@@ -1,6 +1,11 @@
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import { validateFatSliceIdentity } from "../../domain/apple/machoContainer.js";
-import { machoArchitectureName } from "../../domain/apple/machoCpuIdentity.js";
 import {
+  machoArchitectureName,
+  machoKnownArm64Subtype,
+} from "../../domain/apple/machoCpuIdentity.js";
+import {
+  admitMachoSymtabRanges,
   MACHO_HEADER_FLAGS_OFFSET,
   readMachoLinkeditDataCommand,
   readMachoSymtabCommand,
@@ -15,10 +20,10 @@ import {
   readMachoSegmentHeader,
 } from "../../domain/apple/machoSegmentHeader.js";
 import { machoBinaryArchitecture } from "../../domain/binaryTarget.js";
-import { decodeMachoFixedName } from "../AppleMachoNames.js";
+import { decodeMachoFixedName } from "../../domain/apple/appleMachoNames.js";
 import {
   elfStringTableText,
-  observeElfStringTableEntry,
+  observeElfStringTableWindow,
 } from "../../domain/elfStringTable.js";
 import {
   type BinaryHardeningImage,
@@ -29,9 +34,12 @@ import {
   MAX_BINARY_HARDENING_SYMBOL_SCAN_BYTES,
   MAX_BINARY_HARDENING_TABLE_ENTRIES,
 } from "../../domain/native/binaryHardening.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
-import { readMachoEncryption } from "../../artifacts/apple/MachoEncryptionReader.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
+import {
+  BinaryFormatFailure,
+  BinaryReader,
+} from "../../domain/binaryContainer.js";
+import { readMachoEncryption } from "../../domain/apple/machoEncryptionReader.js";
 import {
   frameLoadCommands,
   readMachoContainer,
@@ -39,7 +47,10 @@ import {
   type MachoLoadCommand,
   type MachoSliceHeader,
   type ReadAt,
-} from "../../artifacts/apple/MachoLoadCommandReader.js";
+} from "../../domain/apple/machoLoadCommandReader.js";
+import type { ByteSource } from "../../domain/byteSource.js";
+
+const STREAM_WINDOW_BYTES = 65536;
 
 const MH_EXECUTE = 0x2;
 const MH_DYLIB = 0x6;
@@ -48,10 +59,6 @@ const MH_ALLOW_STACK_EXECUTION = 0x20000;
 const MH_PIE = 0x200000;
 const MH_NO_HEAP_EXECUTION = 0x1000000;
 const CPU_TYPE_ARM64 = 0x0100000c;
-const LC_SEGMENT = 0x1;
-const LC_SYMTAB = 0x2;
-const LC_SEGMENT_64 = 0x19;
-const LC_CODE_SIGNATURE = 0x1d;
 const MAPPING_BUDGET = 4096;
 
 function malformed(message: string): never {
@@ -100,7 +107,33 @@ export const readMachoHardening = async (
       return Buffer.alloc(0);
     return bytes.subarray(offset, Math.min(bytes.length, offset + length));
   };
-  const container = await readMachoContainer(readAt, bytes.length);
+  return readMachoHardeningFromReader(readAt, bytes.length, signal);
+};
+
+/** Same Mach-O hardening read over a random-access handle without buffering the full image. */
+export const readMachoHardeningFromHandle = async (
+  source: ByteSource,
+  signal?: AbortSignal,
+): Promise<BinaryHardeningImage[]> => {
+  assertArtifactReadActive(signal);
+  const readAt: ReadAt = async (offset, length) => {
+    assertArtifactReadActive(signal);
+    if (offset < 0 || length <= 0 || offset >= source.size)
+      return Buffer.alloc(0);
+    const clamped = Math.min(length, source.size - offset);
+    if (source.prefix !== undefined && offset + clamped <= source.prefix.length)
+      return source.prefix.subarray(offset, offset + clamped);
+    return source.readRange(offset, clamped);
+  };
+  return readMachoHardeningFromReader(readAt, source.size, signal);
+};
+
+const readMachoHardeningFromReader = async (
+  readAt: ReadAt,
+  fileSize: number,
+  signal?: AbortSignal,
+): Promise<BinaryHardeningImage[]> => {
+  const container = await readMachoContainer(readAt, fileSize);
   if (container.kind === "not-mach-o")
     throw new BinaryFormatFailure(
       "unsupported",
@@ -117,10 +150,10 @@ export const readMachoHardening = async (
       container.hidden.status,
       container.hidden.reason,
     );
-  const refs = sliceRefs(container, bytes.length);
+  const refs = sliceRefs(container, fileSize);
   const encryption = await readMachoEncryption(
     readAt,
-    bytes.length,
+    fileSize,
     MAPPING_BUDGET,
   );
   if (encryption.status === "not-mach-o")
@@ -141,7 +174,7 @@ export const readMachoHardening = async (
     )
       malformed("Mach-O encryption slice order disagrees with the container");
     assertArtifactReadActive(signal);
-    images.push(await readSliceImage(bytes, ref, encrypted));
+    images.push(await readSliceImage(readAt, fileSize, ref, encrypted));
   }
   return images;
 };
@@ -235,14 +268,13 @@ const failedImage = (
 });
 
 const readSliceImage = async (
-  bytes: Buffer,
+  readAt: ReadAt,
+  fileSize: number,
   ref: SliceRef,
   encrypted: MachoSliceEncryption,
 ): Promise<BinaryHardeningImage> => {
   if (ref.rangeIssue !== null)
     return failedImage(ref, ref.rangeIssue.status, ref.rangeIssue.reason);
-  const readAt: ReadAt = async (offset, length) =>
-    bytes.subarray(offset, Math.min(bytes.length, offset + length));
   const table = await readSliceCommandTable(readAt, ref.offset, ref.size);
   if (table.status !== "read") {
     // A thin image has no sibling slice. A bad header is a failed file.
@@ -278,7 +310,14 @@ const readSliceImage = async (
   try {
     const facts = readCommandFacts(table, header.wide, ref.size);
     admitEncryption(encrypted);
-    const rows = buildRows(bytes, ref, header, facts, encrypted);
+    const rows = await buildRows(
+      readAt,
+      fileSize,
+      ref,
+      header,
+      facts,
+      encrypted,
+    );
     return {
       format: "mach-o",
       status: "parsed",
@@ -293,7 +332,7 @@ const readSliceImage = async (
       rows,
     };
   } catch (cause) {
-    if (cause instanceof BinaryFormatFailure && cause.kind === "malformed") {
+    if (cause instanceof BinaryFormatFailure && cause.kind !== "unsupported") {
       if (ref.thin) throw cause;
       return failedImage(ref, "malformed", cause.message, header);
     }
@@ -303,8 +342,10 @@ const readSliceImage = async (
 
 /** Facts the rows need. A load command table can hold millions of small frames. */
 type CommandFacts = {
-  /** Table-relative offset of the first `__RESTRICT` segment command. */
+  /** Table-relative offset of the first `__restrict` section header in a `__RESTRICT` segment. */
   restrict: number | null;
+  /** Table-relative offset of the first `__RESTRICT` segment command. */
+  restrictSegment: number | null;
   /** Table-relative offset of the first `LC_CODE_SIGNATURE` command. */
   signature: number | null;
   symtab: MachoLoadCommand | null;
@@ -316,14 +357,23 @@ const readCommandFacts = (
   wide: boolean,
   sliceSize: number,
 ): CommandFacts => {
-  const facts: CommandFacts = { restrict: null, signature: null, symtab: null };
+  const facts: CommandFacts = {
+    restrict: null,
+    restrictSegment: null,
+    signature: null,
+    symtab: null,
+  };
   const framed = frameLoadCommands(table, (command) => {
-    if (segmentName(command, wide, sliceSize) === "__RESTRICT")
-      facts.restrict ??= command.offset;
-    if (command.command === LC_CODE_SIGNATURE) {
+    const segment = readSegment(command, wide, sliceSize);
+    if (segment?.name === "__RESTRICT") {
+      facts.restrictSegment ??= command.offset;
+      if (segment.restrictSection !== null)
+        facts.restrict ??= command.offset + segment.restrictSection;
+    }
+    if (command.command === LC.CODE_SIGNATURE) {
       admitCodeSignature(command, sliceSize);
       facts.signature ??= command.offset;
-    } else if (command.command === LC_SYMTAB) {
+    } else if (command.command === LC.SYMTAB) {
       if (facts.symtab !== null)
         malformed("Mach-O slice has more than one LC_SYMTAB");
       facts.symtab = command;
@@ -340,7 +390,10 @@ const readCommandFacts = (
  * wrong width, is structural and fails the slice before any row exists.
  */
 const admitEncryption = (encrypted: MachoSliceEncryption): void => {
-  if (encrypted.status === "malformed" && encrypted.commands.length < 2)
+  if (
+    encrypted.status === "malformed" &&
+    encrypted.malformed_kind !== "duplicate-commands"
+  )
     malformed(
       encrypted.reason ?? "Mach-O encryption load command is malformed",
     );
@@ -350,7 +403,7 @@ const admitCodeSignature = (
   { body, index }: MachoLoadCommand,
   sliceSize: number,
 ): void => {
-  const data = readMachoLinkeditDataCommand(LC_CODE_SIGNATURE, body, true);
+  const data = readMachoLinkeditDataCommand(LC.CODE_SIGNATURE, body, true);
   if (data === null)
     return malformed(
       `load command ${index} is too short for LC_CODE_SIGNATURE`,
@@ -362,13 +415,14 @@ const admitCodeSignature = (
     );
 };
 
-const buildRows = (
-  bytes: Buffer,
+const buildRows = async (
+  readAt: ReadAt,
+  fileSize: number,
   ref: SliceRef,
   header: MachoSliceHeader,
-  { restrict, signature, symtab }: CommandFacts,
+  { restrict, restrictSegment, signature, symtab }: CommandFacts,
   encrypted: MachoSliceEncryption,
-): BinaryHardeningRow[] => {
+): Promise<BinaryHardeningRow[]> => {
   const flagLocation = {
     offset: ref.offset + MACHO_HEADER_FLAGS_OFFSET,
     bytes: 4,
@@ -386,7 +440,6 @@ const buildRows = (
       flagLocation,
     );
   };
-  const architecture = machoArchitectureName(header.cpuType, header.cpuSubtype);
   const pie =
     header.fileType === MH_DYLIB || header.fileType === MH_BUNDLE
       ? row(
@@ -413,12 +466,29 @@ const buildRows = (
       "MH_ALLOW_STACK_EXECUTION",
     ),
     bit("no_heap_execution", MH_NO_HEAP_EXECUTION, "MH_NO_HEAP_EXECUTION"),
-    restrict === null
-      ? row("restrict_segment", "disabled", "No segment is named __RESTRICT.")
-      : row("restrict_segment", "enabled", "A segment is named __RESTRICT.", {
-          offset: ref.offset + header.headerSize + restrict + 8,
-          bytes: 16,
-        }),
+    // dyld restricts an image only for a __restrict section in a __RESTRICT segment.
+    restrict !== null
+      ? row(
+          "restrict_segment",
+          "enabled",
+          "A __RESTRICT segment holds a __restrict section.",
+          { offset: ref.offset + header.headerSize + restrict, bytes: 16 },
+        )
+      : restrictSegment !== null
+        ? row(
+            "restrict_segment",
+            "disabled",
+            "A __RESTRICT segment holds no __restrict section, which dyld requires.",
+            {
+              offset: ref.offset + header.headerSize + restrictSegment + 8,
+              bytes: 16,
+            },
+          )
+        : row(
+            "restrict_segment",
+            "disabled",
+            "No __RESTRICT segment is present.",
+          ),
     signature === null
       ? row(
           "code_signature_present",
@@ -435,8 +505,8 @@ const buildRows = (
           },
         ),
     encryptionRow(encrypted),
-    arm64Row(header.cpuType, architecture, ref.offset),
-    stackRow(bytes, ref, header.wide, symtab),
+    arm64Row(header.cpuType, header.cpuSubtype, ref.offset),
+    await stackRow(readAt, fileSize, ref, header.wide, symtab),
     row(
       "hardened_runtime",
       "unknown",
@@ -454,14 +524,15 @@ const buildRows = (
   return rows;
 };
 
-const segmentName = (
+/** A segment's name and the command-relative offset of its first `__restrict` section header. */
+const readSegment = (
   command: MachoLoadCommand,
   wide: boolean,
   sliceSize: number,
-): string | null => {
-  const expected = wide ? LC_SEGMENT_64 : LC_SEGMENT;
+): { name: string; restrictSection: number | null } | null => {
+  const expected = wide ? LC.SEGMENT_64 : LC.SEGMENT;
   if (command.command !== expected) {
-    if (command.command === LC_SEGMENT || command.command === LC_SEGMENT_64)
+    if (command.command === LC.SEGMENT || command.command === LC.SEGMENT_64)
       malformed("Mach-O segment command width does not match the slice header");
     return null;
   }
@@ -476,6 +547,7 @@ const segmentName = (
   );
   if (!admitted.ok) malformed(admitted.error.message);
   const sectionWidth = wide ? 80 : 68;
+  let restrictSection: number | null = null;
   for (let index = 0; index < header.value.sectionCount; index += 1) {
     const at = header.value.headerSize + index * sectionWidth;
     const section = readMachoSectionHeader(
@@ -486,10 +558,15 @@ const segmentName = (
     if (!section.ok) malformed(section.error.message);
     const payload = admitMachoSectionPayload(section.value, sliceSize);
     if (!payload.ok) malformed(payload.error.message);
+    if (decodeMachoFixedName(section.value.nameBytes) === "__restrict")
+      restrictSection ??= at;
   }
   // The fixed 16-byte name ends at the first NUL. Trailing-only stripping
   // would keep junk after an embedded NUL and miss __RESTRICT.
-  return decodeMachoFixedName(header.value.nameBytes);
+  return {
+    name: decodeMachoFixedName(header.value.nameBytes),
+    restrictSection,
+  };
 };
 
 const unknownStackBudget = (
@@ -523,7 +600,7 @@ const encryptionRow = (encrypted: MachoSliceEncryption): BinaryHardeningRow => {
 
 const arm64Row = (
   cpuType: number,
-  architecture: string,
+  cpuSubtype: number,
   sliceOffset: number,
 ): BinaryHardeningRow => {
   const location = { offset: sliceOffset + 8, bytes: 4 };
@@ -534,6 +611,14 @@ const arm64Row = (
       `CPU type 0x${cpuType.toString(16)} is not ARM64.`,
       location,
     );
+  const architecture = machoKnownArm64Subtype(cpuSubtype);
+  if (architecture === undefined)
+    return row(
+      "arm64e",
+      "unknown",
+      `Unrecognized ARM64 CPU subtype 0x${(cpuSubtype >>> 0).toString(16)}; arm64e status is unknown.`,
+      { offset: sliceOffset + 8, bytes: 4 },
+    );
   const enabled = architecture === "arm64e" || architecture === "arm64e.x1";
   return row(
     "arm64e",
@@ -543,12 +628,18 @@ const arm64Row = (
   );
 };
 
-const stackRow = (
-  bytes: Buffer,
+const asBuffer = (bytes: Uint8Array): Buffer =>
+  Buffer.isBuffer(bytes)
+    ? bytes
+    : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+const stackRow = async (
+  readAt: ReadAt,
+  fileSize: number,
   ref: SliceRef,
   wide: boolean,
   symtab: MachoLoadCommand | null,
-): BinaryHardeningRow => {
+): Promise<BinaryHardeningRow> => {
   if (symtab === null)
     return row(
       "stack_protector",
@@ -559,65 +650,107 @@ const stackRow = (
     );
   const fields = readMachoSymtabCommand(symtab.body, true);
   if (fields === null) malformed("Mach-O LC_SYMTAB command is truncated");
-  const { symoff, nsyms, stroff, strsize } = fields;
-  // One oversized symbol table must not drop the header rows or sibling slices.
-  if (nsyms > MAX_BINARY_HARDENING_TABLE_ENTRIES) return unknownStackBudget();
-  const width = wide ? 16 : 12;
-  if (
-    symoff > ref.size ||
-    stroff > ref.size ||
-    nsyms * width > ref.size - symoff ||
-    strsize > ref.size - stroff
-  )
+  const { symoff, nsyms, stroff } = fields;
+  const ranges = admitMachoSymtabRanges(fields, wide, ref.size);
+  if (ranges === null)
     malformed("Mach-O symbol or string table extends outside the slice");
-  const symbolAt = ref.offset + symoff;
-  const stringAt = ref.offset + stroff;
-  if (
-    nsyms * width > bytes.length - symbolAt ||
-    strsize > bytes.length - stringAt
-  )
+  const { width, symbolsEnd, stringsEnd } = ranges;
+  if (symbolsEnd > fileSize - ref.offset || stringsEnd > fileSize - ref.offset)
     malformed("Mach-O symbol or string table extends outside the file");
-  const strings = bytes.subarray(stringAt, stringAt + strsize);
+  // Keep header rows and sibling slices when the backed table exceeds the scan limit.
+  if (nsyms > MAX_BINARY_HARDENING_TABLE_ENTRIES) return unknownStackBudget();
+  const stringAt = ref.offset + stroff;
+  const stringSize = stringsEnd - stroff;
+  const stringEnd = stringAt + stringSize;
+  const symBase = ref.offset + symoff;
+  const entriesPerChunk = Math.max(1, Math.floor(STREAM_WINDOW_BYTES / width));
+  let symChunk: Buffer = Buffer.alloc(0);
+  let symReader = new BinaryReader(symChunk, true, "macho");
+  let symChunkFirst = 0;
+  let symChunkCount = 0;
+  let strWinBuf: Buffer = Buffer.alloc(0);
+  let strWinStart = 0;
   let scanned = 0;
   let unterminated = false;
   let found: BinaryHardeningRow | null = null;
   for (let index = 0; index < nsyms; index += 1) {
-    const entry = symbolAt + index * width;
-    const nameOffset = bytes.readUInt32LE(entry);
+    if (index < symChunkFirst || index >= symChunkFirst + symChunkCount) {
+      const batch = Math.min(entriesPerChunk, nsyms - index);
+      symChunk = asBuffer(await readAt(symBase + index * width, batch * width));
+      symReader = new BinaryReader(symChunk, true, "macho");
+      symChunkFirst = index;
+      symChunkCount = batch;
+    }
+    const entry = (index - symChunkFirst) * width;
+    const nameOffset = symReader.u32(entry);
     if (nameOffset === 0) continue;
-    // N_EXT with N_TYPE clear is an undefined external. A defined export of
-    // the same name, including libc itself, is not an import into this image.
-    const nType = bytes.readUInt8(entry + 4);
-    if ((nType & 0x0e) !== 0 || (nType & 0x01) === 0) continue;
+    // N_STAB records use a different type namespace. Only an ordinary N_EXT
+    // with N_TYPE clear is an undefined external; defined exports are not imports.
+    const nType = symReader.u8(entry + 4);
+    if ((nType & 0xe0) !== 0 || (nType & 0x0e) !== 0 || (nType & 0x01) === 0)
+      continue;
     // A common definition shares those type bits but carries its size in
     // n_value, so only a zero n_value names an import.
     if (
-      bytes.readUInt32LE(entry + 8) !== 0 ||
-      (wide && bytes.readUInt32LE(entry + 12) !== 0)
+      symReader.u32(entry + 8) !== 0 ||
+      (wide && symReader.u32(entry + 12) !== 0)
     )
       continue;
     // After a match, later records are still admitted so symbol order cannot
     // hide a damaged table; their names need not be read.
     if (found !== null) {
-      if (nameOffset >= strings.length)
+      if (nameOffset >= stringSize)
         malformed("Mach-O symbol name offset is outside the string table");
       continue;
     }
-    const observed = observeElfStringTableEntry(
-      strings,
-      nameOffset,
-      MAX_BINARY_HARDENING_SYMBOL_NAME_BYTES,
-    );
+    if (nameOffset >= stringSize)
+      malformed("Mach-O symbol name offset is outside the string table");
+    const absPos = stringAt + nameOffset;
+    const remaining = stringEnd - absPos;
+    const maximum = MAX_BINARY_HARDENING_SYMBOL_NAME_BYTES;
+    const observe = () =>
+      observeElfStringTableWindow(
+        strWinBuf.subarray(
+          absPos - strWinStart,
+          absPos - strWinStart + maximum,
+        ),
+        remaining,
+      );
+    const cached =
+      absPos >= strWinStart && absPos < strWinStart + strWinBuf.length
+        ? observe()
+        : null;
+    let observed = cached;
+    if (
+      cached === null ||
+      (cached.state === "truncated" &&
+        cached.scanLimited &&
+        cached.examinedBytes < maximum)
+    ) {
+      const readLen = Math.min(
+        Math.max(STREAM_WINDOW_BYTES, maximum),
+        remaining,
+      );
+      strWinBuf = asBuffer(await readAt(absPos, readLen));
+      strWinStart = absPos;
+      observed = observe();
+    }
+    if (observed === null || observed.state === "outside")
+      malformed("Mach-O symbol name offset is outside the string table");
     scanned += observed.examinedBytes;
     if (scanned > MAX_BINARY_HARDENING_SYMBOL_SCAN_BYTES)
       return unknownStackBudget();
-    if (observed.state === "outside")
-      malformed("Mach-O symbol name offset is outside the string table");
     // A name past the window is unresolved. Later symbols can still carry the sign.
     if (observed.state === "truncated") {
       unterminated = true;
       continue;
     }
+    if (
+      (observed.contentBytes !== 16 && observed.contentBytes !== 17) ||
+      observed.bytes[0] !== 0x5f ||
+      observed.bytes[1] !== 0x5f
+    )
+      continue;
     const name = elfStringTableText(observed) ?? "";
     if (name === "__stack_chk_fail" || name === "___stack_chk_fail")
       found = row(

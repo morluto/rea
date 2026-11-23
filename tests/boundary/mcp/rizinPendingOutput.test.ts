@@ -1,8 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { McpServer } from "@modelcontextprotocol/server";
+import { rizinDebugMcpServer } from "../../fixtures/debuggerMcp.js";
 import { expect, it } from "vitest";
 
-import { registerRizinDebugTools } from "../../../src/server/registerRizinDebugTools.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -11,6 +10,7 @@ import {
   createRizinTestManager,
   rizinTestInferiorTty,
 } from "../providers/RizinTestInferiorTty.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const test = it.skipIf(process.platform === "win32");
 
@@ -44,20 +44,16 @@ test.each([
       },
     });
     const manager = createRizinTestManager(
-      {},
+      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "100" },
       {
         spawnProcess: injected.spawnProcess,
-        frameTimeoutMs: 100,
       },
     );
-    const server = new McpServer({ name: "rizin-partial-test", version: "1" });
-    registerRizinDebugTools(
-      server,
-      manager,
-      silentLogger,
-      createToolResultDelivery(undefined),
+    const server = rizinDebugMcpServer("rizin-partial-test", manager);
+    const client = new Client(
+      { name: "rizin-partial-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
     );
-    const client = new Client({ name: "rizin-partial-test", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -66,7 +62,7 @@ test.each([
       const startReply = await client.callTool({
         name: "start_rizin_debug_session",
         arguments: {
-          path: "fixture.bin",
+          path: "/tmp/fixture.bin",
           inferior_tty: await rizinTestInferiorTty(),
         },
       });
@@ -98,38 +94,106 @@ test.each([
 );
 
 test.each([
-  { mode: "exit", maximum: 10, invalid: true, expected: "first\n�A" },
-  { mode: "cancel", maximum: 9, invalid: true, expected: "first\n�" },
-  { mode: "exit", maximum: 9, invalid: false, expected: "first\n�" },
-  { mode: "cancel", maximum: 8, invalid: true, expected: "first" },
+  {
+    mode: "exit",
+    maximum: 10,
+    invalid: true,
+    expected: "first\n�A",
+    payload: null,
+  },
+  {
+    mode: "cancel",
+    maximum: 9,
+    invalid: true,
+    expected: "first\n�",
+    payload: null,
+  },
+  {
+    mode: "exit",
+    maximum: 9,
+    invalid: false,
+    expected: "first\n�",
+    payload: null,
+  },
+  {
+    mode: "cancel",
+    maximum: 8,
+    invalid: true,
+    expected: "first",
+    payload: null,
+  },
+  { mode: "exit", maximum: 3, invalid: false, expected: "", payload: "🚀🚀X" },
+  {
+    mode: "exit",
+    maximum: 4,
+    invalid: false,
+    expected: "🚀",
+    payload: "🚀🚀X",
+  },
+  {
+    mode: "exit",
+    maximum: 7,
+    invalid: false,
+    expected: "🚀",
+    payload: "🚀🚀X",
+  },
+  {
+    mode: "exit",
+    maximum: 8,
+    invalid: false,
+    expected: "🚀🚀",
+    payload: "🚀🚀X",
+  },
+  {
+    mode: "exit",
+    maximum: 5,
+    invalid: false,
+    expected: "中",
+    payload: "中文X",
+  },
+  {
+    mode: "exit",
+    maximum: 6,
+    invalid: false,
+    expected: "中文",
+    payload: "中文X",
+  },
+  {
+    mode: "exit",
+    maximum: 3,
+    invalid: false,
+    expected: "hel",
+    payload: "hello",
+  },
 ])(
   "bounds pending UTF-8 after $mode (budget: $maximum, invalid: $invalid)",
-  async ({ mode, maximum, invalid, expected }) => {
+  async ({ mode, maximum, invalid, expected, payload }) => {
     const controller = new AbortController();
     const injected = createInjectedProcess({
       onWrite: (text, control) => {
         if (!text.includes("!echo __REA_COMMAND_COMPLETE_")) return;
         control.output(
-          Buffer.concat([
-            Buffer.from("first\0"),
-            invalid ? Buffer.from([0xff]) : Buffer.from("�"),
-            Buffer.from("ABCDEFGHIJKLM"),
-          ]),
+          payload === null
+            ? Buffer.concat([
+                Buffer.from("first\0"),
+                invalid ? Buffer.from([0xff]) : Buffer.from("�"),
+                Buffer.from("ABCDEFGHIJKLM"),
+              ])
+            : Buffer.from(payload),
         );
         if (mode === "exit") control.exit();
         else controller.abort();
       },
     });
     const manager = createRizinTestManager(
-      {},
+      { REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: String(maximum) },
       {
         spawnProcess: injected.spawnProcess,
-        maxCommandOutputBytes: maximum,
       },
     );
     try {
       const started = await manager.start({
-        path: "fixture.bin",
+        path: "/tmp/fixture.bin",
         inferior_tty: await rizinTestInferiorTty(),
       });
       if (!started.ok) throw started.error;
@@ -184,7 +248,7 @@ test("rejects an unfinished unsolicited frame before command dispatch", async ()
   );
   try {
     const started = await manager.start({
-      path: "fixture.bin",
+      path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
     if (!started.ok) throw started.error;
@@ -217,7 +281,7 @@ test.each(["_", "__REA_", "marker-prefix"])(
     );
     try {
       const started = await manager.start({
-        path: "fixture.bin",
+        path: "/tmp/fixture.bin",
         inferior_tty: await rizinTestInferiorTty(),
       });
       if (!started.ok) throw started.error;
@@ -253,7 +317,7 @@ test("retains partial bytes and uncertainty when exited output never closes", as
   );
   try {
     const started = await manager.start({
-      path: "fixture.bin",
+      path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
     if (!started.ok) throw started.error;
@@ -299,7 +363,7 @@ test.each(["cancel", "overflow", "cancel-overflow"] as const)(
     );
     try {
       const started = await manager.start({
-        path: "fixture.bin",
+        path: "/tmp/fixture.bin",
         inferior_tty: await rizinTestInferiorTty(),
       });
       if (!started.ok) throw started.error;
@@ -352,7 +416,7 @@ test.each(["before-wait", "during-wait"])(
     );
     try {
       const started = await manager.start({
-        path: "fixture.bin",
+        path: "/tmp/fixture.bin",
         inferior_tty: await rizinTestInferiorTty(),
       });
       if (!started.ok) throw started.error;
@@ -395,7 +459,7 @@ test("marks output discarded by the byte queue limit during exit drainage", asyn
   );
   try {
     const started = await manager.start({
-      path: "fixture.bin",
+      path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
     if (!started.ok) throw started.error;
@@ -437,16 +501,17 @@ test("publishes the bounded prefix when an oversized frame has no terminator", a
     },
   });
   const manager = createRizinTestManager(
-    {},
+    {
+      REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: "20",
+      REA_DEBUGGER_COMMAND_DEADLINE_MS: "100",
+    },
     {
       spawnProcess: injected.spawnProcess,
-      maxCommandOutputBytes: 20,
-      frameTimeoutMs: 100,
     },
   );
   try {
     const started = await manager.start({
-      path: "fixture.bin",
+      path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
     if (!started.ok) throw started.error;

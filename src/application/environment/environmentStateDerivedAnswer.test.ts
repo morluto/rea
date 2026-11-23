@@ -33,6 +33,44 @@ const objectOf = (body: JsonValue | undefined): Record<string, JsonValue> => {
   return body;
 };
 
+describe("served path-derived fields", () => {
+  it.each([false, true])(
+    "preserves repeated parameter occurrences (ambiguous: %s)",
+    (ambiguous) => {
+      const project = ambiguous ? 1 : 3;
+      const path = `/api/orgs/1/projects/${project}/tasks`;
+      const first = { id: 1, name: "Old", orgId: 1, projectId: project };
+      const made = { id: 2, name: "Recorded", orgId: 1, projectId: project };
+      const tasks = servedFrom([
+        ["GET", path, [first]],
+        ["GET", `${path}/1`, first],
+        ["GET", "/api/orgs/2/projects/4/tasks", []],
+        ["POST", path, made, 201, { name: "Recorded" }],
+        ["GET", `${path}/2`, made],
+        ["GET", path, [first, made]],
+      ]);
+      const tool = "post_orgs_projects_tasks_by_id_id_2";
+      const args = { id: "2", id_2: "4", body: { name: "Elsewhere" } };
+      if (ambiguous) {
+        // Equal recorded values establish no choice between the path positions.
+        const before = tasks.snapshot();
+        expect(tasks.call(tool, args).ok).toBe(false);
+        expect(tasks.snapshot()).toBe(before);
+        expect(
+          tasks.answer(tool, { id: "1", id_2: "1", body: { name: "Here" } })
+            .body,
+        ).toMatchObject({ name: "Here", orgId: 1, projectId: 1 });
+      } else {
+        expect(tasks.answer(tool, args).body).toMatchObject({
+          name: "Elsewhere",
+          orgId: 2,
+          projectId: 4,
+        });
+      }
+    },
+  );
+});
+
 describe("served values an application derives from others", () => {
   it("stamps a created tag's clocks with trailing fraction zeros dropped, as the capture spelled them", () => {
     const tags = servedFrom(TAG_ROWS);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   collectWebModuleImports,
+  createCapturedModuleMatcher,
   matchCapturedModules,
 } from "./webModuleImports.js";
 import { exportedWebScriptSchema } from "./webScriptExport.js";
@@ -54,13 +55,34 @@ describe("native module syntax observations", () => {
     ]);
     expect(collectWebModuleImports(source, "main.ts").imports).toEqual([]);
   });
-  it("uses UTF-16 source locations after astral characters", () => {
-    const source = 'const emoji = "😀";\nimport "./x.js";';
-    const item = collectWebModuleImports(source, "main.js").imports[0];
-    expect(item?.start).toEqual({
-      offset: source.indexOf('"./x.js"'),
-      line: 2,
-      column: 7,
+  it("retains exact import identity and ranges through erased syntax", () => {
+    const imports = [
+      ['"./dep.js" as const', "./dep.js"],
+      ['"./dep.js" satisfies string', "./dep.js"],
+      ['"./dep.js"!', "./dep.js"],
+      ["`./dep.js` as const", "./dep.js"],
+      ["`./${name}.js` as const", null],
+    ] as const;
+    const source = imports
+      .map(([expression]) => `import(${expression});`)
+      .join("\n");
+    expect(collectWebModuleImports(source, "main.ts")).toEqual({
+      state: "parsed",
+      diagnostics: [],
+      imports: imports.map(([expression, specifier], index) => {
+        const offset = source.indexOf(expression);
+        return {
+          kind: "dynamic-import",
+          specifier,
+          expression,
+          start: { offset, line: index + 1, column: 7 },
+          end: {
+            offset: offset + expression.length,
+            line: index + 1,
+            column: 7 + expression.length,
+          },
+        };
+      }),
     });
   });
   it("reports unparseable input without asserting an empty complete graph", () => {
@@ -138,35 +160,35 @@ const script = (
     },
   });
 describe("captured module candidates", () => {
-  it("keeps query versions separate and response fragment matching weaker", () => {
+  it("retains exact capture versions and separates query and weaker fragment matches", () => {
+    const url = "https://app.test/a.js?v=1";
     const scripts = [
-      script("https://app.test/a.js?v=1#one", "page-script"),
-      script("https://app.test/a.js?v=1#two", "page-script"),
-      script("https://app.test/a.js?v=1", "scenario-response"),
-      script("https://app.test/a.js?v=2", "scenario-response"),
-    ];
-    expect(
-      matchCapturedModules("https://app.test/a.js?v=1#one", scripts).map(
-        (item) => [item.script_index, item.match],
-      ),
-    ).toEqual([
-      [0, "exact-reported-url"],
-      [2, "response-url-without-fragment"],
-    ]);
-  });
-  it("preserves every captured version at the same URL and never picks one", () => {
-    const url = "https://app.test/a.js";
-    const candidates = matchCapturedModules(url, [
+      script(`${url}#one`, "page-script"),
+      script(`${url}#two`, "page-script"),
       script(url, "scenario-response"),
       script(url, "scenario-response", "b".repeat(64)),
+      script("https://app.test/a.js?v=2", "scenario-response"),
+    ];
+    expect(matchCapturedModules(url, scripts)).toEqual([
+      { script_index: 2, match: "exact-reported-url", script: scripts[2] },
+      { script_index: 3, match: "exact-reported-url", script: scripts[3] },
     ]);
-    expect(candidates).toHaveLength(2);
-    expect(
-      matchCapturedModules(
-        "https://app.test/lazy.js",
-        candidates.map((item) => item.script),
-      ),
-    ).toEqual([]);
+    expect(matchCapturedModules(`${url}#one`, scripts)).toEqual([
+      { script_index: 0, match: "exact-reported-url", script: scripts[0] },
+      {
+        script_index: 2,
+        match: "response-url-without-fragment",
+        script: scripts[2],
+      },
+      {
+        script_index: 3,
+        match: "response-url-without-fragment",
+        script: scripts[3],
+      },
+    ]);
+    expect(matchCapturedModules("https://app.test/lazy.js", scripts)).toEqual(
+      [],
+    );
   });
   it("retains exact non-URL identities without matching response fragments", () => {
     const scripts = [
@@ -182,6 +204,167 @@ describe("captured module candidates", () => {
     ).toEqual([
       [0, "exact-reported-url"],
       [1, "exact-reported-url"],
+    ]);
+  });
+});
+
+it.each(["main.mjs", "main.js", "view.jsx"])(
+  "retains original expression offsets for a BOM-prefixed hashbang in %s",
+  (path) => {
+    const source =
+      '\uFEFF#!/usr/bin/env node\r\nconst face = "😀"; import "./dep.mjs"; import(`./${part}.mjs`);';
+    const result = collectWebModuleImports(source, path);
+    expect(result.state).toBe("parsed");
+    expect(result.diagnostics).toEqual(
+      path === "main.js"
+        ? [expect.stringContaining("package loader mode is unknown")]
+        : [],
+    );
+    expect(result.imports.map(({ expression }) => expression)).toEqual([
+      '"./dep.mjs"',
+      "`./${part}.mjs`",
+    ]);
+    for (const item of result.imports) {
+      expect(item.start.offset).toBe(source.indexOf(item.expression));
+      expect(source.slice(item.start.offset, item.end.offset)).toBe(
+        item.expression,
+      );
+      expect(item.start.line).toBe(2);
+      expect(item.start.column).toBe(
+        source.split("\r\n")[1]!.indexOf(item.expression),
+      );
+    }
+  },
+);
+
+describe("keyword-indexed traversal and indexed candidate matching", () => {
+  it("handles sources without module keywords and out-of-order nested dynamic imports", () => {
+    expect(collectWebModuleImports("const x = 1 + 2;", "main.mjs")).toEqual({
+      imports: [],
+      state: "parsed",
+      diagnostics: [],
+    });
+    expect(
+      collectWebModuleImports('const s = "import export";', "main.mjs").imports,
+    ).toEqual([]);
+    const nested = collectWebModuleImports(
+      'import(wrap(import("./inner.js")));',
+      "main.mjs",
+    );
+    expect(
+      nested.imports.map((item) => [item.expression, item.specifier]),
+    ).toEqual([
+      ['wrap(import("./inner.js"))', null],
+      ['"./inner.js"', "./inner.js"],
+    ]);
+
+    const decorated = collectWebModuleImports(
+      'class C { m(@dec(import("./inner.js")) x) {} }',
+      "main.mjs",
+    );
+    expect(decorated.state).toBe("parsed");
+    expect(
+      decorated.imports.map((item) => [item.kind, item.specifier]),
+    ).toEqual([["dynamic-import", "./inner.js"]]);
+  });
+
+  it.each([
+    [
+      "TS typed parameter with default",
+      'class C { m(@dec(import("./id.js")) x: any = 1) {} }',
+      "main.ts",
+      ["./id.js"],
+    ],
+    [
+      "TS destructured object parameter",
+      'class C { m(@dec(import("./obj.js")) { a }: any) {} }',
+      "main.ts",
+      ["./obj.js"],
+    ],
+    [
+      "TS destructured object parameter with default",
+      'class C { m(@dec(import("./objd.js")) { a }: any = {}) {} }',
+      "main.ts",
+      ["./objd.js"],
+    ],
+    [
+      "TS setter parameter with default",
+      'class C { set x(@dec(import("./setp.js")) v: any = 1) {} }',
+      "main.ts",
+      ["./setp.js"],
+    ],
+    [
+      "object-literal method",
+      'const o = { @dec(import("./om.js")) m() {} };',
+      "main.mjs",
+      ["./om.js"],
+    ],
+    [
+      "object-literal property",
+      'const o = { @dec(import("./op.js")) p: 1 };',
+      "main.mjs",
+      ["./op.js"],
+    ],
+  ])(
+    "retains dynamic imports inside decorators on %s",
+    (_label, source, path, expectedSpecifiers) => {
+      const result = collectWebModuleImports(source, path);
+      expect(result.state).toBe("parsed");
+      expect(result.diagnostics).toEqual([]);
+      expect(result.imports.map((item) => item.specifier)).toEqual(
+        expectedSpecifiers,
+      );
+      for (const item of result.imports)
+        expect(source.slice(item.start.offset, item.end.offset)).toBe(
+          item.expression,
+        );
+    },
+  );
+
+  it("preserves ascending script_index order across exact and fragment-stripped matches", () => {
+    const scripts = [
+      script("https://app.test/a.js", "scenario-response"),
+      script("https://app.test/a.js#one", "page-script"),
+      script("https://app.test/a.js", "scenario-response", "b".repeat(64)),
+    ];
+    const expected = [
+      {
+        script_index: 0,
+        match: "response-url-without-fragment",
+        script: scripts[0],
+      },
+      { script_index: 1, match: "exact-reported-url", script: scripts[1] },
+      {
+        script_index: 2,
+        match: "response-url-without-fragment",
+        script: scripts[2],
+      },
+    ];
+    expect(matchCapturedModules("https://app.test/a.js#one", scripts)).toEqual(
+      expected,
+    );
+    expect(
+      matchCapturedModules(
+        "https://app.test/a.js#one",
+        Object.freeze([...scripts]),
+      ),
+    ).toEqual(expected);
+
+    const matcher = createCapturedModuleMatcher(scripts);
+    // 1st call (linear) and 2nd+ calls (indexed) must return identical order.
+    expect(matcher("https://app.test/a.js#one")).toEqual(expected);
+    expect(matcher("https://app.test/a.js#one")).toEqual(expected);
+    expect(matcher("https://APP.test/a.js")).toEqual([
+      {
+        script_index: 0,
+        match: "response-url-without-fragment",
+        script: scripts[0],
+      },
+      {
+        script_index: 2,
+        match: "response-url-without-fragment",
+        script: scripts[2],
+      },
     ]);
   });
 });

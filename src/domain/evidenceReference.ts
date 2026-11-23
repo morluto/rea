@@ -34,19 +34,44 @@ export const evidenceInputSchema = declareEvidenceInput(
 );
 export type EvidenceInput = z.output<typeof evidenceInputSchema>;
 
-/** Borrow a selected inline record until its resource and format owner admits it. */
-export const borrowEvidenceInput = () => {
-  const input = z.unknown().nonoptional();
-  input._zod.processJSONSchema = evidenceInputSchema._zod.processJSONSchema;
-  return declareBorrowedEvidenceInput(input, evidenceInputSchema);
+/**
+ * Advertise `declaration` for a borrowed parser. Zod rebuilds a derived schema,
+ * such as one returned by `.describe()`, from its definition through the
+ * instance constructor, so the projection belongs to that constructor rather
+ * than to one instance.
+ */
+const advertisedAs = <Schema extends z.ZodType>(
+  schema: Schema,
+  declaration: z.ZodType,
+): Schema => {
+  const base = schema._zod.constr as unknown as {
+    init: (instance: Schema, definition: Schema["_zod"]["def"]) => void;
+  };
+  const Borrowed = z.core.$constructor<Schema>(
+    `BorrowedEvidence${schema._zod.def.type}`,
+    (instance, definition) => {
+      base.init(instance, definition);
+      instance._zod.processJSONSchema = (context, json, params) =>
+        declaration._zod.processJSONSchema!(context, json, params);
+    },
+  );
+  return new Borrowed(schema._zod.def);
 };
+
+/** Borrow a selected inline record until its resource and format owner admits it. */
+export const borrowEvidenceInput = () =>
+  declareBorrowedEvidenceInput(
+    advertisedAs(z.unknown().nonoptional(), evidenceInputSchema),
+    evidenceInputSchema,
+  );
 
 /** Borrow array width too; its service must admit capacity before resolution. */
 export const borrowEvidenceArray = () => {
   const declaration = z.array(evidenceInputSchema);
-  const input = z.custom<unknown[]>(Array.isArray);
-  input._zod.processJSONSchema = declaration._zod.processJSONSchema;
-  return declareBorrowedEvidenceInput(input, declaration);
+  return declareBorrowedEvidenceInput(
+    advertisedAs(z.custom<unknown[]>(Array.isArray), declaration),
+    declaration,
+  );
 };
 
 /** Evidence input, or one record read from a local Evidence file or bundle. */

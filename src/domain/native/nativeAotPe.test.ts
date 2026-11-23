@@ -11,7 +11,8 @@ import {
 const SUMMARY_BUDGET = NATIVE_AOT_MAX_REPORT_BYTES;
 
 const linkedTableFixture = (shape: "deep" | "wide" | "interfaces") => {
-  const count = shape === "interfaces" ? 4 : 24;
+  // Deep and wide graphs cross the initial 128-row index allocation.
+  const count = shape === "interfaces" ? 4 : 130;
   const bytes = Buffer.alloc(0xa00 + count * 64);
   nativeAotPeFixture().copy(bytes);
   const data = 0x98 + 0xf0 + 40;
@@ -33,8 +34,10 @@ const linkedTableFixture = (shape: "deep" | "wide" | "interfaces") => {
           : 0x140002200n;
     bytes.writeBigUInt64LE(parent, offset + 8);
     if (shape === "interfaces" && index < 2) {
+      bytes.writeUInt16LE(1, offset + 16);
       bytes.writeUInt16LE(1, offset + 18);
-      bytes.writeBigUInt64LE(address(2), offset + 24);
+      bytes.writeBigUInt64LE(0x140001040n, offset + 24);
+      bytes.writeBigUInt64LE(address(2), offset + 32);
     }
   }
   return {
@@ -64,6 +67,24 @@ describe("NativeAOT indexed MethodTable closure", () => {
         "0x1400022c0",
         ...expected,
       ]);
+      if (shape === "interfaces") {
+        expect(
+          parsed.readTypeDetail("0x140002400", SUMMARY_BUDGET),
+        ).toMatchObject({
+          interfaces: [{ address: "0x140002480", type: null }],
+          virtual_slots: [
+            {
+              slot: 0,
+              slot_address: "0x140002418",
+              target_address: "0x140001040",
+            },
+          ],
+          derived_memory: {
+            size_bytes: 40,
+            sha256: nativeAotPeDigest(bytes.subarray(0xa00, 0xa28)),
+          },
+        });
+      }
       expect(Buffer.compare(bytes, before)).toBe(0);
     },
   );
@@ -78,6 +99,32 @@ describe("NativeAOT indexed MethodTable closure", () => {
     );
     expect(parsed.summary.method_tables).toBe(0);
     expect(parsed.summary.reason).toEqual({ code: "no_system_object_root" });
+  });
+});
+
+describe("NativeAOT RTR directory regions", () => {
+  it("reads neither of two FROZEN_OBJECT_REGION sections and reports partial", () => {
+    const bytes = nativeAotPeFixture();
+    const header = 0x600;
+    // Declare a third RTR row repeating the frozen region row.
+    bytes.writeUInt16LE(3, header + 12);
+    bytes.copy(bytes, header + 64, header + 40, header + 64);
+    const parsed = parseNativeAotPe(
+      bytes,
+      nativeAotPeDigest(bytes),
+      SUMMARY_BUDGET,
+    );
+    expect(parsed.summary).toMatchObject({
+      status: "partial",
+      reason: { code: "ambiguous_frozen_object_region" },
+      truncated: false,
+      method_tables: 3,
+      frozen_strings: [],
+      coverage: { frozen_string_candidates: 0 },
+    });
+    expect(parsed.summary.limitations).toContain(
+      "The RTR directory declares 2 FROZEN_OBJECT_REGION sections, so none was read.",
+    );
   });
 });
 
