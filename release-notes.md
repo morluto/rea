@@ -399,6 +399,7 @@
 * **kuna:** avoid per-line Buffer.concat allocations in KunaProjectFiles.scanLines ([#13270](https://github.com/morluto/rea/issues/13270)) ([f7355b1](https://github.com/morluto/rea/commit/f7355b1b61cf01098ce3bf1bc8d67bd659418e25))
 * **kuna:** share stat-verified executable cache and fuse .c export hashing with source scanning ([#13508](https://github.com/morluto/rea/issues/13508)) ([963535f](https://github.com/morluto/rea/commit/963535fb15ec0fa01fced2a8272c7b0acf4da748))
 * **macho:** bound positional command string probes ([#13925](https://github.com/morluto/rea/issues/13925)) ([8ad7517](https://github.com/morluto/rea/commit/8ad75170fdb25b0d4e83cf8dcaf7815981cf5ee1))
+* **macho:** defer segment geometry until lazy metadata needs it ([#13949](https://github.com/morluto/rea/issues/13949)) ([622c9a7](https://github.com/morluto/rea/commit/622c9a79d63c328a6fb082293ab8200c919a8beb))
 * **macho:** streamline legacy rebase run marking ([#13881](https://github.com/morluto/rea/issues/13881)) ([4d6ca25](https://github.com/morluto/rea/commit/4d6ca255459e052a6a91d454aa24d308b26a04cb))
 * **macho:** streamline native export inventory merging ([#13932](https://github.com/morluto/rea/issues/13932)) ([5142124](https://github.com/morluto/rea/commit/5142124ca3d52367b1266b14d8587f4a65cb633a))
 * **macho:** streamline slice selection diagnostics ([#13905](https://github.com/morluto/rea/issues/13905)) ([389d984](https://github.com/morluto/rea/commit/389d984b4fda665ca5f27c7dc4a38c89a98aed77))
