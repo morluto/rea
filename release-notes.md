@@ -497,6 +497,7 @@
 ### Code Refactoring
 
 * **adb:** extract AdbFileStaging module from AdbProvider ([#13705](https://github.com/morluto/rea/issues/13705)) ([5a163e8](https://github.com/morluto/rea/commit/5a163e8e7511a65ce5f804d64d30761d4fe78075))
+* **adb:** extract read-only shell inspection operations from AdbProvider ([#13975](https://github.com/morluto/rea/issues/13975)) ([25e7a85](https://github.com/morluto/rea/commit/25e7a85687b8f875fcfc88d57762f58132043602))
 * **analysis-view:** unify 4 retained-summary wrappers into executeRetainedSummaryOperation ([#13810](https://github.com/morluto/rea/issues/13810)) ([55c4f56](https://github.com/morluto/rea/commit/55c4f5633c47411a0b2a2ed85c550d3d1af1adda))
 * **apple:** read dispatch relative displacements through the shared readers ([0ae58b4](https://github.com/morluto/rea/commit/0ae58b4a1fe1778f49def9920a214498a2ce084d)), closes [#11865](https://github.com/morluto/rea/issues/11865)
 * **apple:** share chained import decoding and proofs ([#13788](https://github.com/morluto/rea/issues/13788)) ([e012b68](https://github.com/morluto/rea/commit/e012b68371e52210785adec3c8f50e613cb4c685))
@@ -561,6 +562,7 @@
 * **process:** compose analysis runtime cleanup through the shared owner ([2d36025](https://github.com/morluto/rea/commit/2d360253ddf8c2ab2c0c4a6a3186a8e981a8e090)), closes [#11859](https://github.com/morluto/rea/issues/11859)
 * **providers:** adopt offlineArtifactFailureDialect in BEAM, V8, NuGet, and LNK providers ([#13936](https://github.com/morluto/rea/issues/13936)) ([3bced62](https://github.com/morluto/rea/commit/3bced62366b02160e3651b8f5773be1dfb7f2b07))
 * **providers:** adopt offlineArtifactFailureDialect in BinaryHardeningProvider and PeBinaryFailure ([#13970](https://github.com/morluto/rea/issues/13970)) ([aaf5acd](https://github.com/morluto/rea/commit/aaf5acd015a58e3a58f774c79e2dfa91d6937f02))
+* **providers:** adopt offlineArtifactFailureDialect in KernelBuildConfigProvider ([#13973](https://github.com/morluto/rea/issues/13973)) ([15f3855](https://github.com/morluto/rea/commit/15f3855a4092ae5ccae0e2ad7fdd9ad6367c95ef))
 * **providers:** adopt offlineArtifactFailureDialect in NativeInitializers, Go, Rust, and ElfUnwind providers ([#13966](https://github.com/morluto/rea/issues/13966)) ([8e5b041](https://github.com/morluto/rea/commit/8e5b041cb4e13d8641073494c0461ad7ee603a60))
 * **providers:** adopt offlineArtifactFailureDialect in PE, ELF, and Apple IPS providers ([#13954](https://github.com/morluto/rea/issues/13954)) ([fc23eb6](https://github.com/morluto/rea/commit/fc23eb65aaf65532e3a4f6377a92b7e1765f4f6e))
 * **providers:** share offlineArtifactFailureDialect across offline providers ([#13921](https://github.com/morluto/rea/issues/13921)) ([68803f0](https://github.com/morluto/rea/commit/68803f0082055a51a283351d77cff4001a2813f1))
