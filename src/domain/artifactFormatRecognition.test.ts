@@ -113,7 +113,7 @@ it("recognizes a CrAU v2 payload after the uImage magic check", () => {
   });
 });
 
-it.each([16, 17])(
+it.each([16, 17, 18])(
   "recognizes FIT from an FDT v%s structure in a bounded prefix",
   (version) => {
     const bytes = devicetreeFixture(

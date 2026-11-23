@@ -393,6 +393,21 @@ it.each([16, 17] as const)(
     expect(() => parse(bytes)).toThrow("FDT block outside totalsize");
   },
 );
+it("reads a later version only when it is backwards compatible with v17", () => {
+  const bytes = devicetreeFixture(undefined, 18);
+  expect(parse(bytes)).toMatchObject({
+    header: {
+      version: 18,
+      last_comp_version: 16,
+      size_dt_struct: bytes.readUInt32BE(36),
+    },
+    summary: { model: "Test board" },
+  });
+  bytes.writeUInt32BE(18, 24);
+  expect(() => parse(bytes)).toThrow(
+    "FDT version 18 with last_comp_version 18 is unsupported",
+  );
+});
 it("bounds expansion of repeated paths before allocation", () => {
   const longName = "a".repeat(4096);
   let node: FixtureNode = { name: longName };
