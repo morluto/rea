@@ -3,10 +3,12 @@ import { managedMemberInspectionSchema } from "../managed/managedArtifact.js";
 import { unresolvedDefinitionSchema } from "../managed/managedUnresolvedDefinitions.js";
 
 const member = managedMemberInspectionSchema.shape;
+const interfaceInventory = member.interface_implementations.unwrap().unwrap();
 
 const rows = {
   types: member.types.element,
   exported_types: member.exported_types.unwrap().element,
+  interface_implementations: interfaceInventory.shape.rows.element,
   fields: member.fields.element,
   methods: member.methods.element,
   member_refs: member.member_refs.element,
@@ -26,7 +28,7 @@ const namedRequest = {
     .array(z.string())
     .exactOptional()
     .describe(
-      "Exact name, called-method target_name or accessed field_name; empty matches nothing.",
+      "Exact name, declared interface_name, called-method target_name or accessed field_name; empty matches nothing.",
     ),
 };
 const declaredRequest = {
@@ -35,7 +37,7 @@ const declaredRequest = {
     .array(z.string())
     .exactOptional()
     .describe(
-      "Exact defining type (fields/methods), parent type (member_refs), or target type (call_edges/field_accesses). Filters intersect.",
+      "Exact declaring type (interface_implementations/fields/methods), parent type (member_refs), or target type (call_edges/field_accesses). Filters intersect.",
     ),
 };
 
@@ -60,6 +62,11 @@ export const managedMembersViewRequestSchema = z.discriminatedUnion(
       ...namedRequest,
       collection: z.literal("exported_types"),
       fields: fieldsOf(rows.exported_types.keyof()),
+    }),
+    z.strictObject({
+      ...declaredRequest,
+      collection: z.literal("interface_implementations"),
+      fields: fieldsOf(rows.interface_implementations.keyof()),
     }),
     z.strictObject({
       ...declaredRequest,
@@ -120,6 +127,17 @@ export const managedMembersViewPageSchema = z.discriminatedUnion("collection", [
   rowsOf(
     "exported_types",
     rows.exported_types.partial().required({ token: true, row_offset: true }),
+  ),
+  rowsOf(
+    "interface_implementations",
+    rows.interface_implementations.partial().required({
+      token: true,
+      row_offset: true,
+      class_row: true,
+      class_token: true,
+      interface_coded_index: true,
+      interface_token: true,
+    }),
   ),
   rowsOf(
     "fields",
@@ -184,6 +202,10 @@ export const managedMemberSummarySchema = z.strictObject({
   method_rows: member.method_rows,
   unresolved_method_names_examined: z.boolean().exactOptional(),
   coverage: member.coverage,
+  interface_implementations: interfaceInventory
+    .omit({ rows: true })
+    .nullable()
+    .exactOptional(),
   user_strings: z
     .strictObject({
       state: member.user_strings.unwrap().shape.state,
@@ -194,6 +216,7 @@ export const managedMemberSummarySchema = z.strictObject({
   reported_counts: z.strictObject({
     types: z.int().nonnegative(),
     exported_types: nullableCount,
+    interface_implementations: nullableCount.exactOptional(),
     fields: z.int().nonnegative(),
     methods: z.int().nonnegative(),
     member_refs: z.int().nonnegative(),

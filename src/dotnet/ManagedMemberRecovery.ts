@@ -54,6 +54,7 @@ export const prepareManagedMemberRecovery = (
     signature_resolution: null,
     assembly: null,
     exported_types: null,
+    interface_implementations: null,
     fields: [],
     methods: [],
     member_refs: [],

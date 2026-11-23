@@ -18,6 +18,168 @@ const parent = (normalizedResult: unknown): AnalysisViewParent => ({
   limitations: [],
 });
 
+const interfaceFacts = () => {
+  const report = managedMemberInspectionSchema.parse(
+    MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE.static_members.normalized_result,
+  );
+  report.interface_implementations = {
+    state: "partial",
+    issues: [
+      {
+        code: "invalid-row",
+        scope: "metadata.InterfaceImpl",
+        offset: 300,
+        detail: "Unreadable owner",
+      },
+    ],
+    rows: [
+      {
+        token: "0x09000001",
+        row_offset: 200,
+        class_row: 1,
+        class_token: "0x02000001",
+        declaring_type: "Demo.Worker",
+        interface_coded_index: 9,
+        interface_token: "0x01000002",
+        interface_name: "Contracts.IWorker",
+      },
+      {
+        token: "0x09000002",
+        row_offset: 204,
+        class_row: 1,
+        class_token: "0x02000001",
+        declaring_type: "Demo.Worker",
+        interface_coded_index: 13,
+        interface_token: "0x01000003",
+        interface_name: "Contracts.IOther",
+      },
+      {
+        token: "0x09000003",
+        row_offset: 208,
+        class_row: 1,
+        class_token: "0x02000001",
+        declaring_type: "Demo.Worker",
+        interface_coded_index: 6,
+        interface_token: "0x1b000001",
+        interface_name: "Contracts.IWorker",
+      },
+      {
+        token: "0x09000004",
+        row_offset: 300,
+        class_row: 0,
+        class_token: null,
+        declaring_type: null,
+        interface_coded_index: 9,
+        interface_token: "0x01000002",
+        interface_name: "Contracts.IWorker",
+      },
+    ],
+  };
+  return report;
+};
+
+it("summarizes interface coverage and count without copying declaration rows", () => {
+  const report = interfaceFacts();
+  const projected = projectManagedMemberView(parent(report), {
+    kind: "summary",
+  });
+  if (!projected.ok) throw projected.error;
+  if (!("summary" in projected.value)) throw new Error("Wrong view");
+  expect(projected.value.summary).toMatchObject({
+    interface_implementations: {
+      state: "partial",
+      issues: report.interface_implementations?.issues,
+    },
+    reported_counts: { interface_implementations: 4 },
+  });
+  expect(projected.value.summary.interface_implementations).not.toHaveProperty(
+    "rows",
+  );
+});
+
+it("filters interfaces before paging and retains raw coordinates with independent coverage", () => {
+  const report = interfaceFacts();
+  const before = JSON.stringify(report);
+  const result = projectManagedMemberView(
+    parent(freezeOwnedJsonTreeSnapshot(report)),
+    managedMembersViewRequestSchema.parse({
+      kind: "managed-members",
+      collection: "interface_implementations",
+      names: ["Contracts.IWorker"],
+      declaring_types: ["Demo.Worker"],
+      fields: [],
+      offset: 1,
+      limit: 1,
+    }),
+  );
+  if (!result.ok) throw result.error;
+  if (!("page" in result.value)) throw new Error("Wrong view");
+  expect(result.value).toMatchObject({
+    source_coverage: {
+      state: "partial",
+      issues: report.interface_implementations?.issues,
+    },
+    coverage: { total: 2, examined: 1, next_offset: null },
+    page: { source_count: 4, unresolved_filter_rows: 1 },
+  });
+  expect(result.value.page.rows).toEqual([
+    {
+      source_index: 2,
+      token: "0x09000003",
+      row_offset: 208,
+      class_row: 1,
+      class_token: "0x02000001",
+      interface_coded_index: 6,
+      interface_token: "0x1b000001",
+    },
+  ]);
+  expect(managedMembersViewPageSchema.parse(result.value.page)).toEqual(
+    result.value.page,
+  );
+  expect(JSON.stringify(report)).toBe(before);
+});
+
+it("does not convert omitted or null historical interface evidence into an empty inventory", () => {
+  const original = managedMemberInspectionSchema.parse(
+    MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE.static_members.normalized_result,
+  );
+  const { interface_implementations: _unused, ...historical } = original;
+  for (const report of [
+    historical,
+    { ...historical, interface_implementations: null },
+  ]) {
+    const result = projectManagedMemberView(
+      parent(report),
+      managedMembersViewRequestSchema.parse({
+        kind: "managed-members",
+        collection: "interface_implementations",
+      }),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisInputError" },
+    });
+    const summary = projectManagedMemberView(parent(report), {
+      kind: "summary",
+    });
+    if (!summary.ok) throw summary.error;
+    if (!("summary" in summary.value)) throw new Error("Wrong view");
+    if ("interface_implementations" in report) {
+      expect(summary.value.summary).toMatchObject({
+        interface_implementations: null,
+        reported_counts: { interface_implementations: null },
+      });
+    } else {
+      expect(summary.value.summary).not.toHaveProperty(
+        "interface_implementations",
+      );
+      expect(summary.value.summary.reported_counts).not.toHaveProperty(
+        "interface_implementations",
+      );
+    }
+  }
+});
+
 it("revalidates mutable managed facts despite a sealed flag and shallow freeze", () => {
   const source = managedMemberInspectionSchema.parse(
     MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE.static_members.normalized_result,

@@ -32,6 +32,8 @@ interface ManagedPeFixtureOptions {
    */
   readonly distinctMemberNames?: boolean;
   readonly ilBody?: Buffer;
+  /** InterfaceImpl rows as [TypeDef row, TypeDefOrRef coded interface]. */
+  readonly interfaceImplementations?: readonly (readonly [number, number])[];
   readonly malformedAssemblyReferenceRows?: readonly number[];
   readonly malformedCustomAttributeRows?: readonly number[];
   readonly metadataExtraData?: number;
@@ -829,6 +831,7 @@ const fixtureIndexWidths = ({
     [4, options.fieldRowCount ?? 1],
     [6, options.methodRowCount ?? 1],
     [8, 0],
+    [9, options.interfaceImplementations?.length ?? 0],
     [10, options.memberRefRowCount ?? 1],
     [
       12,
@@ -923,6 +926,19 @@ const fixtureMetadataRows = ({
     ],
     typeRefTable(options, indexes, heapSizes, widths),
     typeDefTable(options, indexes, heapSizes, widths, nestedRows),
+    ...(options.interfaceImplementations === undefined
+      ? []
+      : ([
+          [
+            9,
+            options.interfaceImplementations.map(([owner, implemented]) =>
+              Buffer.concat([
+                metadataIndex(owner, widths.table(2)),
+                metadataIndex(implemented, widths.typeDefOrRef),
+              ]),
+            ),
+          ],
+        ] as const)),
     [
       4,
       Array.from({ length: options.fieldRowCount ?? 1 }, (_, index) =>

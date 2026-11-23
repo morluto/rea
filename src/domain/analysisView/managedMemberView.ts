@@ -34,7 +34,7 @@ import type {
 
 export const MANAGED_MEMBER_SCOPE_GUIDANCE = {
   selectedNominalRows:
-    "Exported types and member references cover the whole assembly. Named type rows, fields, methods, call edges, field accesses and user strings follow the declaring-type selection.",
+    "Exported types and member references cover the whole assembly. Named type rows, interface declarations, fields, methods, call edges, field accesses and user strings follow the declaring-type selection.",
   unresolvedTypeRows:
     "Unresolved TypeDef coordinates cover the assembly-wide name scan.",
   unresolvedMethodRows:
@@ -127,6 +127,25 @@ const collectionPage = (
           rows: report.fields,
           identity: ["token", "row_offset", "declaring_type_token"],
           name: "name",
+          declaringType: "declaring_type",
+          cacheOwner: report,
+        },
+        view,
+      );
+    case "interface_implementations":
+      return selectRows(
+        {
+          collection,
+          rows: report.interface_implementations?.rows,
+          identity: [
+            "token",
+            "row_offset",
+            "class_row",
+            "class_token",
+            "interface_coded_index",
+            "interface_token",
+          ],
+          name: "interface_name",
           declaringType: "declaring_type",
           cacheOwner: report,
         },
@@ -375,6 +394,7 @@ const summarizeMembers = (
   const {
     types,
     exported_types,
+    interface_implementations,
     fields,
     methods,
     member_refs,
@@ -386,6 +406,17 @@ const summarizeMembers = (
   } = report;
   return {
     ...identity,
+    ...(interface_implementations === undefined
+      ? {}
+      : {
+          interface_implementations:
+            interface_implementations === null
+              ? null
+              : {
+                  state: interface_implementations.state,
+                  issues: interface_implementations.issues,
+                },
+        }),
     ...(unresolved_definitions === undefined
       ? {}
       : {
@@ -399,6 +430,12 @@ const summarizeMembers = (
     reported_counts: {
       types: types.length,
       exported_types: exported_types?.length ?? null,
+      ...(interface_implementations === undefined
+        ? {}
+        : {
+            interface_implementations:
+              interface_implementations?.rows.length ?? null,
+          }),
       fields: fields.length,
       methods: methods.length,
       member_refs: member_refs.length,
@@ -538,7 +575,13 @@ export const projectManagedMemberView = (
             state: report.user_strings.state,
             issues: report.user_strings.issues,
           }
-        : report.coverage,
+        : view.collection === "interface_implementations" &&
+            report.interface_implementations != null
+          ? {
+              state: report.interface_implementations.state,
+              issues: report.interface_implementations.issues,
+            }
+          : report.coverage,
     coverage: pageViewCoverage(view.offset, page.rows.length, total),
   });
 };

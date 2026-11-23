@@ -103,6 +103,35 @@ Likewise, a returned text page does not establish the whole parent's length
 unless the result reports that extent or exhaustion. Paging reuses completed
 Evidence and does not establish current live state.
 
+Managed member inspection also retains the explicit `InterfaceImpl` metadata
+table in `interface_implementations: {state, rows, issues}`. Each row preserves
+its table token and byte offset, the raw Class row and Interface coded index,
+their admitted tokens, and readable declaring-type/interface names. Its
+coverage is independent of method and field decoding. An examined empty table
+has `state: "complete"` and `rows: []`; an omitted historical field or `null`
+means this inventory was not examined. Partial rows or a capacity-limited empty
+inventory do not establish absence. Previously decoded members and user
+strings remain available when this additional inventory reaches the metadata
+representation limit.
+
+Complete interface coverage describes the declaration rows, not complete name
+resolution. For example, an already unreadable local TypeDef name can leave
+`interface_name: null` beside its observed token in a complete declaration
+inventory; the TypeDef's own failed-name evidence remains in the member report.
+Such a null name is unknown, not an absent interface or a filter match.
+
+Page these declarations with
+`view: {"kind":"managed-members","collection":"interface_implementations","offset":0,"limit":64}`.
+Exact `names` filters match `interface_name`, and `declaring_types` filters match
+the declaring type; filters intersect before paging. Projection with `fields`
+always retains the original row coordinates and tokens. Summaries report the
+inventory's coverage and returned count without copying its rows. Interface
+rows follow `type_names` selection independently of MethodDef paging. A generic
+TypeSpec's display name identifies its nominal type; its original TypeSpec
+token stays distinct from other instantiations. These are file-backed explicit
+declarations under ECMA-335 II.22.23, not inherited interface closure,
+cross-assembly type binding, generic-argument identity, or runtime dispatch.
+
 Saved records from the pre-6.6 identity projection that omitted
 `relationship_coverage: null` from its digest remain incompatible, even when
 the serialized field is present. REA recognizes that exact previous commitment
