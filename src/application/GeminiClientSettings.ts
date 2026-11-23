@@ -2,23 +2,27 @@ import { realpath, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { stripComments } from "jsonc-parser";
 import { z } from "zod";
+import { jsonRecordSchema } from "../domain/jsonRecord.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
-  clientConfigurationValuesEqual,
   clientRegistrationEntry,
   geminiServerPolicyBlock,
   parseGeminiMcpPolicy,
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
+import { clientConfigurationValuesEqual } from "./ClientConfigurationValues.js";
 import {
+  launchedRegistrationEntry,
   readConfigurationFile,
   readConfigurationText,
   type ClientConfigurationFileError,
 } from "./ClientConfigurationFiles.js";
 import type { SetupClient } from "./SupportedClients.js";
+import { readJunieLocationBlock } from "./JunieClientSettings.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type SettingsSource = { path: string; document: ClientConfigurationDocument };
 const folderTrustSchema = z
@@ -34,8 +38,7 @@ const folderTrustSchema = z
       .optional(),
   })
   .passthrough();
-const trustRulesSchema = z.record(
-  z.string(),
+const trustRulesSchema = jsonRecordSchema(
   z.enum(["TRUST_FOLDER", "TRUST_PARENT", "DO_NOT_TRUST"]),
 );
 const sourceFailure = (
@@ -44,20 +47,20 @@ const sourceFailure = (
 ): ClientConfigurationFileError => ({
   kind: "malformed",
   path,
-  detail: `Gemini settings in ${path} are malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
+  detail: `Gemini settings in ${path} are malformed: ${errorMessage(cause)}`,
 });
 
-// Gemini resolves symlinks when possible and compares macOS/Windows paths without case.
-const normalizedPath = async (
-  path: string,
-  platform: NodeJS.Platform,
-): Promise<string> => {
-  const physical = await realpath(path).catch(() => path);
-  const absolute = resolve(physical).replaceAll("\\", "/");
+// Gemini normalizes trust-file keys before replacement and rule precedence.
+const normalizedPath = (path: string, platform: NodeJS.Platform): string => {
+  const absolute = resolve(path).replaceAll("\\", "/");
   return platform === "win32" || platform === "darwin"
     ? absolute.toLowerCase()
     : absolute;
 };
+
+// Applicability additionally resolves symlinks, without changing rule identity.
+const physicalPath = async (path: string, platform: NodeJS.Platform) =>
+  normalizedPath(await realpath(path).catch(() => path), platform);
 
 const workspaceTrusted = async (
   settings: NonNullable<SetupClient["geminiSettings"]>,
@@ -78,21 +81,29 @@ const workspaceTrusted = async (
   );
   if (!text.ok) return text;
   if (text.value === undefined) return ok(false);
-  let rules: z.output<typeof trustRulesSchema>;
+  let rules: ReadonlyMap<string, z.output<typeof trustRulesSchema>[string]>;
   try {
     // Gemini strips comments, but rejects trailing commas, BOMs and invalid trust levels.
-    rules = trustRulesSchema.parse(JSON.parse(stripComments(text.value)));
+    const parsed = trustRulesSchema.parse(
+      JSON.parse(stripComments(text.value)),
+    );
+    rules = new Map(
+      Object.entries(parsed).map(([path, level]) => [
+        normalizedPath(path, settings.platform),
+        level,
+      ]),
+    );
   } catch (cause: unknown) {
     return err(sourceFailure(settings.trustedFoldersPath, cause));
   }
-  const workspace = await normalizedPath(
+  const workspace = await physicalPath(
     settings.workspaceDirectory,
     settings.platform,
   );
   let longest = -1;
   let trusted = false;
-  for (const [path, level] of Object.entries(rules)) {
-    const effective = await normalizedPath(
+  for (const [path, level] of rules) {
+    const effective = await physicalPath(
       level === "TRUST_PARENT" ? dirname(path) : path,
       settings.platform,
     );
@@ -120,6 +131,8 @@ export const readClientPolicyBlock = async (
   desiredRegistration?: unknown,
   resources?: ArtifactResourceScope,
 ): Promise<Result<string | undefined, ClientConfigurationFileError>> => {
+  if (client.junieSettings !== undefined)
+    return readJunieLocationBlock(client.junieSettings, resources);
   if (client.name !== "gemini_cli" || client.geminiSettings === undefined)
     return ok(undefined);
   const settings = client.geminiSettings;
@@ -138,11 +151,11 @@ export const readClientPolicyBlock = async (
     if (parsed.value !== undefined)
       sources.push({ path, document: parsed.value });
   }
-  const workspace = await normalizedPath(
+  const workspace = await physicalPath(
     settings.workspaceDirectory,
     settings.platform,
   );
-  const home = await normalizedPath(
+  const home = await physicalPath(
     dirname(dirname(client.configPath)),
     settings.platform,
   );
@@ -161,7 +174,7 @@ export const readClientPolicyBlock = async (
           : err({
               kind: "unreadable" as const,
               path,
-              detail: `Configuration ${path} could not be read: ${cause instanceof Error ? cause.message : String(cause)}`,
+              detail: `Configuration ${path} could not be read: ${errorMessage(cause)}`,
             }),
     );
     if (!present.ok) return present;
@@ -215,8 +228,16 @@ export const readClientPolicyBlock = async (
   if (
     override !== undefined &&
     !clientConfigurationValuesEqual(
-      override.document.servers[PRODUCT_IDENTITY.mcpServerKey],
-      desired,
+      launchedRegistrationEntry(
+        override.document.servers[PRODUCT_IDENTITY.mcpServerKey],
+        override.document.environmentKey,
+        settings.platform,
+      ),
+      launchedRegistrationEntry(
+        desired,
+        override.document.environmentKey,
+        settings.platform,
+      ),
     )
   )
     return ok(

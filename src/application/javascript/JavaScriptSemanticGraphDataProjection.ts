@@ -10,6 +10,7 @@ import {
   addSemanticGraphUnknown,
 } from "./JavaScriptSemanticGraphConstruction.js";
 import {
+  inferredSemanticEvidenceAt,
   builtinSemanticNode,
   builtinSemanticRelation,
   unknownSemanticEvidence,
@@ -135,7 +136,7 @@ export const projectSemanticRequests = (
     if (request === undefined) continue;
     if (operation.kind === "request")
       projectRequestConstruction(context, operation, request);
-    else projectResponseConsumer(context, operation, request);
+    else projectResponseConsumer(context, operation, request, requestNodes);
     if (operation.resolution !== "complete")
       addDataUnknown({
         context,
@@ -224,16 +225,31 @@ const projectResponseConsumer = (
   context: SemanticFlowProjectionContext,
   operation: JavaScriptSemanticRequestOperation,
   response: JavaScriptSemanticGraphNode,
+  requestNodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
 ): void => {
+  const authority = builtinSemanticRelation(
+    context.file,
+    operation,
+    operation.resolution === "complete" ? "resolved" : "candidate",
+  );
+  const evidence =
+    authority.evidence ??
+    inferredSemanticEvidenceAt(context.file, operation.location);
+  for (const requestId of operation.linkedRequestIds)
+    addSemanticGraphRelation(context.state, {
+      source: requestNodes.get(requestId),
+      target: response,
+      relation: "consumed-by",
+      ...authority,
+      evidence,
+      properties: { method: operation.method },
+    });
   addSemanticGraphRelation(context.state, {
     source: response,
     target: context.callSiteAt(operation.location),
     relation: "consumed-by",
-    ...builtinSemanticRelation(
-      context.file,
-      operation,
-      operation.resolution === "complete" ? "resolved" : "candidate",
-    ),
+    ...authority,
+    evidence,
     properties: { method: operation.method },
   });
 };

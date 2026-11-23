@@ -1,3 +1,4 @@
+import { unescapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, isTimestamp } from "./appTask.js";
 import {
@@ -6,6 +7,7 @@ import {
   selectorOf,
   type Condition,
 } from "./viewSelector.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** The arrays a pointer stepped into, each as the pointer to it. */
 interface ArraySteps {
@@ -30,16 +32,13 @@ type Stepped =
   | { readonly kind: "none"; readonly reason?: string }
   | { readonly kind: "unresolved"; readonly problem: string };
 
+/** The conditions in a pointer's last reference token, when it is a selector. */
+export const lastSelectorOf = (pointer: string): readonly Condition[] =>
+  selectorOf(
+    unescapeJsonPointerToken(pointer.slice(pointer.lastIndexOf("/") + 1)),
+  ) ?? [];
+
 const INDEX = /^(?:0|[1-9][0-9]*)$/u;
-
-/** A pointer segment for a key: `~` and `/` escaped as RFC 6901 writes them. */
-export const escapeToken = (token: string) =>
-  token.replaceAll("~", "~0").replaceAll("/", "~1");
-
-const isRecord = (
-  value: JsonValue | null | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const own = (record: Record<string, JsonValue>, key: string) =>
   Object.hasOwn(record, key) ? record[key] : undefined;
@@ -226,7 +225,7 @@ export const locatePointer = (
   const segments = pointer.slice(1).split("/");
   const steps = { searched: [] as string[], byPosition: [] as string[] };
   for (const [position, segment] of segments.entries()) {
-    const token = segment.replaceAll("~1", "/").replaceAll("~0", "~");
+    const token = unescapeJsonPointerToken(segment);
     if (Array.isArray(current)) {
       const array = segments
         .slice(0, position)

@@ -1,13 +1,16 @@
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
+import type { RegexConfigurationSnapshot } from "../process/RegexMatcher.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
+  isAborted,
 } from "../domain/analysisErrorCore.js";
 import {
   analysisSearchPredicate,
-  analysisSearchQuerySchema,
+  type AnalysisSearchQuery,
 } from "../domain/analysisSearch.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import { extractRequiredRegexLiteral } from "../domain/regexLiteralCandidate.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { normalizeKunaAddress } from "./KunaAddress.js";
@@ -36,24 +39,15 @@ export class KunaStringQueries {
     parameters: Readonly<Record<string, JsonValue>>,
     installation: KunaInstallation,
     signal: AbortSignal | undefined,
+    query: AnalysisSearchQuery | undefined,
+    regex: RegexConfigurationSnapshot | undefined,
   ): Promise<
     Result<
       { readonly result: JsonValue; readonly source: JsonValue },
       AnalysisError
     >
   > {
-    if (signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal?.reason }),
-      );
-    const query =
-      operation === "search_strings"
-        ? analysisSearchQuerySchema.safeParse(parameters)
-        : undefined;
-    if (query !== undefined && !query.success)
-      return err(
-        analysisInputErrorFromIssues(operation, query.error.issues, parameters),
-      );
+    if (signal?.aborted === true) return err(cancelledBy(operation, signal));
     const address =
       operation === "list_strings" && parameters.address !== undefined
         ? normalizeKunaAddress(parameters.address)
@@ -73,27 +67,42 @@ export class KunaStringQueries {
     const inventory = await this.#load(installation, operation, signal);
     if (!inventory.ok)
       return err(kunaQueryFailureForCaller(inventory.error, operation));
-    if (this.#cancelled(signal))
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal?.reason }),
-      );
+    if (isAborted(signal)) return err(cancelledBy(operation, signal));
     const available = inventory.value.items;
     let items: KunaStringItem[] | undefined;
     if (address !== undefined)
       items = kunaStringsAtAddress(inventory.value, address);
-    if (query?.success === true) {
-      if (query.data.mode === "regex") {
+    if (query !== undefined) {
+      if (query.mode === "regex") {
+        const requiredLiteral = extractRequiredRegexLiteral(
+          query.pattern,
+          query.case_sensitive,
+        );
+        const prefilter =
+          requiredLiteral === undefined
+            ? undefined
+            : analysisSearchPredicate({
+                pattern: requiredLiteral,
+                mode: "literal",
+                case_sensitive: query.case_sensitive,
+              });
+        let candidates = available;
         const matched = await this.work.match({
           operation,
-          pattern: query.data.pattern,
-          caseSensitive: query.data.case_sensitive,
-          values: () => available.map((item) => item.value),
+          pattern: query.pattern,
+          caseSensitive: query.case_sensitive,
+          values: () => {
+            if (prefilter !== undefined)
+              candidates = available.filter((item) => prefilter(item.value));
+            return candidates.map((item) => item.value);
+          },
           signal,
+          ...regex,
         });
         if (!matched.ok) return matched;
-        items = matched.value.map((index) => available[index]!);
+        items = matched.value.map((index) => candidates[index]!);
       } else {
-        const predicate = analysisSearchPredicate(query.data);
+        const predicate = analysisSearchPredicate(query);
         items = available.filter((item) => predicate(item.value));
       }
     }
@@ -128,6 +137,12 @@ export class KunaStringQueries {
       return this.#load(installation, operation, signal);
     }
     if (this.#pending === undefined) {
+      // Read the deadline in the requesting operation's snapshot; a malformed
+      // launch seed without an override is refused here as a value.
+      const deadline = readRuntimeSetting(() =>
+        kunaProjectDeadline(installation.configuration),
+      );
+      if (!deadline.ok) return deadline;
       const pending = this.work.start<KunaStringInventory>(
         (producerSignal) =>
           this.work.scan(
@@ -146,7 +161,7 @@ export class KunaStringQueries {
                 "any",
                 "--no-xrefs",
               ],
-              deadline: kunaProjectDeadline(installation.configuration),
+              deadline: deadline.value,
             },
             new KunaStringInventoryReader(),
             producerSignal,
@@ -165,10 +180,6 @@ export class KunaStringQueries {
       void pending.promise.then(release, release);
     }
     return this.work.wait(this.#pending, signal, operation);
-  }
-
-  #cancelled(signal: AbortSignal | undefined): boolean {
-    return signal?.aborted === true;
   }
 
   /** Called only after session-owned work has drained. */

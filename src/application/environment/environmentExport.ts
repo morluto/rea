@@ -2,7 +2,7 @@ import { isAbsolute } from "node:path";
 import { getHeapStatistics } from "node:v8";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
@@ -18,11 +18,11 @@ import { RegularFileChangedError } from "../../filesystem/RegularFile.js";
 import {
   bindArtifactFileCleanup,
   ArtifactFileCleanupFailure,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+  AnalysisCleanupLease,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   BundleFileHostFailure,
   bundleTarballDigest,
@@ -33,7 +33,7 @@ import {
 } from "./environmentBundleWrite.js";
 import { sealOwnedJsonInput } from "../OwnedJsonInput.js";
 import { nativeJsonParseRequiredBytes } from "../JsonInputFile.js";
-import { readRegularFile } from "../RegularFileRead.js";
+import { readRegularFile } from "../../process/RegularFileRead.js";
 import {
   JSON_INPUT_RESOURCE_REMEDIATION,
   parseUtf8Json,
@@ -331,11 +331,7 @@ export const readEnvironmentExportFile = async (
         cause.outcome.kind === "failed" ? cause.outcome.cause : undefined;
       return err(
         primary instanceof AnalysisError
-          ? analysisErrorWithCleanupFailure(
-              primary,
-              cleanup,
-              operation,
-            ).bindCleanupDependencies([primary, cleanup])
+          ? analysisErrorWithCleanupDependencies(primary, cleanup, operation)
           : cleanup,
       );
     }

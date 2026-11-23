@@ -3,7 +3,9 @@ import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { gzipSync } from "node:zlib";
 import { expect, it } from "vitest";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { createDeferred } from "../../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   inspectKernelBuildConfigInputSchema,
   kernelBuildConfigSchema,
@@ -27,20 +29,32 @@ import {
   trailingBytesKernelConfigFixture,
   truncatedKernelConfigFixture,
 } from "./KernelBuildConfig.fixture.js";
+import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
 import {
   KernelBuildConfigBudgetFailure,
-  parseKernelBuildConfig,
+  parseKernelBuildConfigFromHandle,
 } from "./KernelBuildConfig.js";
 
 const artifactPath = "/artifacts/vmlinux";
+
+const bufferSource = (bytes: Buffer): NativeByteSource => ({
+  size: bytes.length,
+  prefix: bytes,
+  readRange: (offset, length) =>
+    Promise.resolve(
+      offset < 0 || length <= 0 || offset >= bytes.length
+        ? Buffer.alloc(0)
+        : bytes.subarray(offset, Math.min(bytes.length, offset + length)),
+    ),
+});
 
 const parse = async (
   bytes: Buffer,
   extra: Partial<Omit<InspectKernelBuildConfigInput, "path">> = {},
 ) =>
   kernelBuildConfigSchema.parse(
-    await parseKernelBuildConfig(
-      bytes,
+    await parseKernelBuildConfigFromHandle(
+      bufferSource(bytes),
       { path: artifactPath, sha256: "ab".repeat(32), bytes: bytes.length },
       inspectKernelBuildConfigInputSchema.parse({
         path: artifactPath,
@@ -155,23 +169,23 @@ it.each(["disabled", "assigned"])(
   },
 );
 
-it("keeps the strict grammar for malformed quoted values", async () => {
+it("refuses malformed Kconfig values without returning entries", async () => {
   for (const value of [
     '"open',
     '"bad \\q"',
     '"a"b"',
     '"tail\\"',
     '"a\rb"',
-    '"a\u2028b"',
     "y\u2028",
-  ])
-    expect(
-      (
-        await parse(
-          framed(gzipSync(Buffer.from(`CONFIG_X=${value}\n`, "utf8"))),
-        )
-      ).config.status,
-    ).toBe("malformed");
+    "xyz",
+  ]) {
+    const report = await parse(framed(gzipSync(`CONFIG_X=${value}\n`)));
+    expect(report.config, JSON.stringify(value)).toMatchObject({
+      status: "malformed",
+      reason: "config_text_invalid",
+      entries: [],
+    });
+  }
 });
 
 it("does not treat an ordinary IKCFG_ST string as a config", async () => {
@@ -204,7 +218,7 @@ it("reports a framed member whose text fails the grammar as malformed, not absen
     option_count: 0,
     entries: [],
   });
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("unknown");
   expect(
     report.limitations.some((line) => line.includes("not a .config")),
   ).toBe(true);
@@ -219,8 +233,34 @@ it("reports a framed member with a bad CRC-32 as malformed, not absent", async (
     sha256: null,
     option_count: 0,
   });
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("unknown");
   expect(report.limitations.some((line) => line.includes("CRC-32"))).toBe(true);
+});
+
+it("reads the full little-endian gzip extra field before the config", async () => {
+  const member = gzipSync(Buffer.from(SAMPLE_KERNEL_CONFIG, "latin1"));
+  const header = Buffer.from(member.subarray(0, 10));
+  header[3] = 0x04;
+  // XLEN = 260, containing one 256-byte subfield.
+  const extra = Buffer.concat([
+    Buffer.from([4, 1, 0x52, 0x45, 0, 1]),
+    Buffer.alloc(256),
+  ]);
+  const frame = (payload: Buffer) =>
+    Buffer.concat([
+      Buffer.from("IKCFG_ST"),
+      header,
+      extra,
+      payload,
+      Buffer.from("IKCFG_ED"),
+    ]);
+  expect((await parse(frame(member.subarray(10)))).config).toMatchObject({
+    status: "present",
+    option_count: 9,
+  });
+  expect((await parse(frame(Buffer.alloc(0)))).config.status).not.toBe(
+    "present",
+  );
 });
 
 it("checks the optional gzip header CRC before accepting a member", async () => {
@@ -274,7 +314,7 @@ it("reports a framed member that does not decode as malformed, not absent", asyn
       gzip: { space: "file", offset: 8, bytes: body.length },
       end_marker: { space: "file", offset: bytes.length - 8, bytes: 8 },
     });
-    expect(report.coverage.status).toBe("incomplete");
+    expect(report.coverage.status).toBe("unknown");
     expect(
       (await parse(Buffer.concat([bytes, embeddedKernelConfig()]))).config
         .status,
@@ -296,7 +336,7 @@ it("reports a truncated IKCFG member as incomplete, not absent", async () => {
     status: "incomplete",
     reason: "config_gzip_truncated",
   });
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
 });
 
 it("inflates a bzImage gzip payload and reports payload-relative offsets", async () => {
@@ -332,15 +372,16 @@ it("names an xz bzImage payload as unsupported without searching it", async () =
   });
 });
 
-it("keeps truncated and unusable bzImage payloads incomplete", async () => {
+it("keeps coverage unknown for truncated and unusable bzImage payloads", async () => {
   const truncated = await parse(bzImageTruncatedGzipFixture());
   expect(truncated.payload.status).toBe("truncated");
   expect(truncated.config.reason).toBe("payload_truncated");
-  expect(truncated.coverage.status).toBe("incomplete");
+  expect(truncated.coverage.status).toBe("unknown");
 
   const old = await parse(bzImageFixture(gzipSync("x"), { version: 0x0206 }));
   expect(old.payload.status).toBe("unavailable");
   expect(old.config.reason).toBe("setup_header_payload_unavailable");
+  expect(old.coverage).toMatchObject({ status: "unknown", examined_bytes: 0 });
 
   const short = bzImageFixture(gzipSync("x"));
   short.writeUInt32LE(0xffff, 0x24c);
@@ -373,19 +414,21 @@ it("names a whole-file codec stream without inflating it", async () => {
 
 it("fails closed when a config exceeds its entry or inflation budget", async () => {
   // Recovery reads the typed knob, never the message text.
-  for (const [bytes, extra, knob] of [
-    [kernelBuildConfigFixture(), { max_entries: 2 }, "max_entries"],
-    [kernelBuildConfigFixture(), { max_config_bytes: 64 }, "max_config_bytes"],
-    [bzImageGzipFixture(), { max_payload_bytes: 64 }, "max_payload_bytes"],
+  for (const [bytes, knob, maximum] of [
+    [kernelBuildConfigFixture(), "max_entries", 2],
+    [kernelBuildConfigFixture(), "max_config_bytes", 64],
+    [bzImageGzipFixture(), "max_payload_bytes", 64],
   ] as const) {
-    const failure = parse(bytes, extra);
+    const failure = parse(bytes, { [knob]: maximum });
     await expect(failure).rejects.toBeInstanceOf(
       KernelBuildConfigBudgetFailure,
     );
     await expect(failure).rejects.toMatchObject({
-      reason: "limit",
-      boundary: "capacity",
-      knob,
+      failure: {
+        kind: "limit",
+        format: "kernel-build-config",
+        limit: { name: knob, maximum },
+      },
     });
   }
 });
@@ -401,6 +444,92 @@ it("ignores banner-shaped text that is unterminated or lacks a version", async (
 const framed = (member: Buffer): Buffer =>
   Buffer.concat([Buffer.from("IKCFG_ST"), member, Buffer.from("IKCFG_ED")]);
 
+it("reuses a positional scan window across nearby marker probes", async () => {
+  const decoys = Buffer.from("IKCFG_ST compatible sample text\0".repeat(6));
+  const image = Buffer.concat([decoys, embeddedKernelConfig()]);
+  let reads = 0;
+  const input = inspectKernelBuildConfigInputSchema.parse({
+    path: artifactPath,
+  });
+  const report = await parseKernelBuildConfigFromHandle(
+    {
+      size: image.length,
+      readRange: async (offset, length) => {
+        reads++;
+        return image.subarray(offset, offset + length);
+      },
+    },
+    { path: artifactPath, sha256: "ab".repeat(32), bytes: image.length },
+    input,
+  );
+  expect(report.config).toMatchObject({
+    status: "present",
+    marker: { space: "file", offset: decoys.length, bytes: 8 },
+    option_count: 9,
+  });
+  expect(reads).toBeLessThanOrEqual(5);
+});
+
+it("reports the compressed candidate allowance for framed gzip and incomplete coverage without a closing marker", async () => {
+  const plain = gzipSync("CONFIG_X=y\n");
+  const header = Buffer.from(plain.subarray(0, 10));
+  header[3] = 0x10;
+  const comment = Buffer.alloc(1024 * 1024, 0x61);
+  const image = framed(
+    Buffer.concat([header, comment, Buffer.alloc(1), plain.subarray(10)]),
+  );
+  await expect(parse(image, { max_config_bytes: 64 })).rejects.toMatchObject({
+    failure: {
+      kind: "limit",
+      limit: { name: "compressed_candidate_bytes", maximum: 1024 * 1024 },
+    },
+  });
+  expect((await parse(image)).config).toMatchObject({
+    status: "present",
+    option_count: 1,
+  });
+  const unframed = image.subarray(0, -8);
+  for (const limits of [{}, { max_config_bytes: 64 }]) {
+    const report = await parse(unframed, limits);
+    expect(report.config).toMatchObject({
+      status: "incomplete",
+      reason: "config_gzip_truncated",
+    });
+    expect(report.coverage.status).toBe("partial");
+  }
+});
+
+it("rejects a short positional read of an admitted banner range", async () => {
+  const bannerOffset = 1024;
+  const banner = Buffer.from(SAMPLE_KERNEL_BANNER);
+  const image = Buffer.concat([
+    Buffer.alloc(bannerOffset),
+    banner,
+    Buffer.alloc(1),
+  ]);
+  const input = inspectKernelBuildConfigInputSchema.parse({
+    path: artifactPath,
+  });
+  await expect(
+    parseKernelBuildConfigFromHandle(
+      {
+        size: image.length,
+        readRange: async (offset, length) => {
+          const end = offset + length;
+          if (offset === bannerOffset && length === banner.length)
+            return image.subarray(offset, end - 1);
+          return image.subarray(offset, end);
+        },
+      },
+      { path: artifactPath, sha256: "ab".repeat(32), bytes: image.length },
+      input,
+    ),
+  ).rejects.toMatchObject({
+    reason: "format",
+    message: "Kernel image ended before the admitted file range.",
+  });
+});
+
 it("stops inflating decoy candidates after the candidate cap and reports incomplete", async () => {
   const decoy = framed(gzipSync(Buffer.from("hello world\n")));
   const report = await parse(
@@ -414,7 +543,7 @@ it("stops inflating decoy candidates after the candidate cap and reports incompl
     reason: "config_search_exhausted",
     marker: null,
   });
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(
     report.limitations.some((line) => line.includes("16 IKCFG_ST gzip")),
   ).toBe(true);
@@ -465,21 +594,6 @@ it("charges cut-off decoy members against the total inflate budget", async () =>
   });
 });
 
-it("bounds each candidate's inflate input by its closing IKCFG_ED", async () => {
-  const bomb = gzipSync(Buffer.alloc(1 << 20));
-  const report = await parse(
-    Buffer.concat([
-      Buffer.from("IKCFG_ST"),
-      bomb.subarray(0, 100),
-      Buffer.from("IKCFG_ED"),
-      bomb.subarray(100),
-      embeddedKernelConfig(),
-    ]),
-    { max_config_bytes: 65536 },
-  );
-  expect(report.config).toMatchObject({ status: "present", option_count: 9 });
-});
-
 it("does not let an oversized decoy hide a later config", async () => {
   const decoy = Buffer.concat([
     Buffer.from("IKCFG_ST"),
@@ -511,39 +625,28 @@ it("finds a banner after overlapping unterminated repeats in one linear scan", a
   });
 });
 
-it("honors cancellation during the marker, inflate, and banner scans", async () => {
-  const input = inspectKernelBuildConfigInputSchema.parse({
-    path: artifactPath,
-  });
-  const artifact = { path: artifactPath, sha256: "ab".repeat(32), bytes: 0 };
-  const abortAfter = (checks: number): AbortSignal => {
-    let reads = 0;
-    return {
-      get aborted() {
-        reads += 1;
-        return reads > checks;
-      },
-      reason: new Error("stop"),
-    } as unknown as AbortSignal;
-  };
-  const decoy = framed(gzipSync(Buffer.from("hello world\n")));
-  const cancelled = async (bytes: Buffer, checks: number): Promise<unknown> => {
-    try {
-      await parseKernelBuildConfig(bytes, artifact, input, abortAfter(checks));
-    } catch (error) {
-      return error;
-    }
-    return null;
-  };
-  for (const [bytes, checks] of [
-    [Buffer.concat([decoy, decoy, decoy]), 2],
-    [kernelBuildConfigFixture(), 0],
-    [Buffer.from("Linux version ".repeat(20_000)), 1],
-    [bzImageGzipFixture(), 0],
-  ] as const) {
-    const error = await cancelled(bytes, checks);
-    expect(error).toBeInstanceOf(ArtifactReaderFailure);
-    expect((error as ArtifactReaderFailure).reason).toBe("cancelled");
+it("reports the link-time banner after the kbuild placeholder banner", async () => {
+  // Linux 6.1+ keeps init/version.o's weak banner, built before the build
+  // number and timestamp exist, ahead of the banner the kernel prints.
+  const head = "Linux version 6.18.0 (u@h) (gcc 13.2.0) #";
+  const other = "Linux version 1.0.0 (x@y) (cc) #2";
+  const linked = `${head}1 SMP PREEMPT Tue Oct  6 19:13:07 UTC 2026`;
+  // No build number, then a set KBUILD_BUILD_VERSION with no timestamp.
+  for (const placeholder of [`${head} SMP PREEMPT `, `${head}1 SMP PREEMPT `]) {
+    const bytes = Buffer.from(
+      `${placeholder}\n\0${other}\n\0${placeholder}\n\0${linked}\n`,
+    );
+    expect((await parse(bytes)).banner).toMatchObject({
+      text: linked,
+      version: "6.18.0",
+      builder: "u@h",
+      compiler: "gcc 13.2.0",
+      location: { offset: bytes.length - linked.length - 1 },
+    });
+    // Without a matching link-time banner the placeholder is still reported.
+    expect(
+      (await parse(Buffer.from(`${placeholder}\n\0${other}\n`))).banner,
+    ).toMatchObject({ text: placeholder, location: { offset: 0 } });
   }
 });
 
@@ -551,27 +654,59 @@ it("honors an abort raised while the parse is running", async () => {
   const input = inspectKernelBuildConfigInputSchema.parse({
     path: artifactPath,
   });
-  const artifact = { path: artifactPath, sha256: "ab".repeat(32), bytes: 0 };
-  for (const bytes of [
-    kernelBuildConfigFixture(),
-    bzImageGzipFixture(),
-    Buffer.from("Linux version ".repeat(300_000)),
+  const gzip = gzipSync(SAMPLE_KERNEL_CONFIG);
+  for (const { stage, bytes, selectedRead } of [
+    {
+      stage: "config marker scan",
+      bytes: Buffer.alloc((1 << 20) + 128),
+      selectedRead: (offset: number, length: number) =>
+        offset === 0 && length > 4096,
+    },
+    {
+      stage: "declared bzImage payload",
+      bytes: bzImageFixture(gzip),
+      selectedRead: (offset: number, length: number) =>
+        offset === 2576 && length === gzip.length,
+    },
   ]) {
     const controller = new AbortController();
-    const pending = parseKernelBuildConfig(
-      bytes,
-      artifact,
+    const reason = new Error(`abort during ${stage}`);
+    const reached = createDeferred<void>();
+    const release = createDeferred<void>();
+    let readsAfterBoundary = 0;
+    let paused = false;
+    const pending = parseKernelBuildConfigFromHandle(
+      {
+        size: bytes.length,
+        readRange: async (offset, length) => {
+          if (paused) readsAfterBoundary += 1;
+          if (selectedRead(offset, length)) {
+            paused = true;
+            reached.resolve();
+            await release.promise;
+          }
+          return bytes.subarray(offset, offset + length);
+        },
+      },
+      { path: artifactPath, sha256: "ab".repeat(32), bytes: bytes.length },
       input,
       controller.signal,
     );
-    // Runs only once the parser gives the event loop a turn.
-    setImmediate(() => controller.abort(new Error("stop")));
-    const error: unknown = await Promise.resolve(pending).then(
-      () => null,
-      (cause: unknown) => cause,
-    );
-    expect(error).toBeInstanceOf(ArtifactReaderFailure);
-    expect((error as ArtifactReaderFailure).reason).toBe("cancelled");
+    try {
+      await awaitAcknowledgement(reached.promise, pending, stage);
+      controller.abort(reason);
+      release.resolve();
+      const failure = await pending.catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+      if (!(failure instanceof ArtifactReaderFailure))
+        throw new Error("Expected cancellation");
+      expect(failure.reason).toBe("cancelled");
+      expect(failure.cause).toBe(reason);
+      expect(readsAfterBoundary).toBe(0);
+    } finally {
+      release.resolve();
+      await pending.catch(() => undefined);
+    }
   }
 });
 
@@ -602,7 +737,12 @@ it("yields to the event loop while decoding and validating one long value", asyn
     reason: undefined,
   } as unknown as AbortSignal;
   try {
-    const report = await parseKernelBuildConfig(bytes, artifact, input, signal);
+    const report = await parseKernelBuildConfigFromHandle(
+      bufferSource(bytes),
+      artifact,
+      input,
+      signal,
+    );
     expect(report.config).toMatchObject({ status: "present", option_count: 1 });
   } finally {
     running = false;
@@ -668,7 +808,12 @@ it("yields to the event loop while marker searches find nothing", async () => {
     reason: undefined,
   } as unknown as AbortSignal;
   try {
-    const report = await parseKernelBuildConfig(bytes, artifact, input, signal);
+    const report = await parseKernelBuildConfigFromHandle(
+      bufferSource(bytes),
+      artifact,
+      input,
+      signal,
+    );
     expect(report.config.status).toBe("absent");
     expect(report.banner.status).toBe("absent");
   } finally {
@@ -707,7 +852,12 @@ it("retains incomplete coverage for a partial config end marker", async () => {
     bytes.indexOf(Buffer.from("IKCFG_ST")) + 20,
   );
   const report = await parse(bytes.subarray(0, end + 7));
-  expect(report.config.status).not.toBe("absent");
+  expect(report.config).toMatchObject({
+    status: "incomplete",
+    reason: "config_gzip_truncated",
+    entries: [],
+  });
+  expect(report.coverage.status).toBe("partial");
 });
 
 it("ignores marker bytes inside a gzip member", async () => {

@@ -1,15 +1,20 @@
 import { expect, it } from "vitest";
-import { environmentManifestCaptureFixture } from "../../../tests/fixtures/analysisView.js";
 import type { WebNetworkCaptureRecord } from "../webNetworkCapture.js";
 import { EnvironmentManifestAccumulator } from "./EnvironmentManifestAccumulator.js";
+import { EnvironmentStateAccumulator } from "./EnvironmentStateAccumulator.js";
+import { STATE_BODY_LIMIT_BYTES } from "./environmentStateRules.js";
 
 const sample = (
   ordinal: number,
   path: string,
   postText?: string,
+  response?: { readonly text: string; readonly mimeType?: string },
 ): WebNetworkCaptureRecord => ({
-  ...environmentManifestCaptureFixture().records[0]!,
   ordinal,
+  location: { kind: "json-pointer", pointer: `/log/entries/${ordinal}` },
+  binary_fields: [],
+  numeric_literals: [],
+  redactions: [],
   limitations: [],
   reported: {
     request: {
@@ -19,7 +24,13 @@ const sample = (
         ? {}
         : { postData: { mimeType: "application/json", text: postText } }),
     },
-    response: { status: 200, content: { mimeType: "application/json" } },
+    response: {
+      status: 200,
+      content: {
+        mimeType: "application/json",
+        ...response,
+      },
+    },
   },
 });
 
@@ -29,61 +40,134 @@ const finished = (accumulator: EnvironmentManifestAccumulator) => {
   return result.value;
 };
 
-it("refuses a body parse that exceeds the budget without retaining a partial tool", () => {
-  const accumulator = new EnvironmentManifestAccumulator(32 * 1024);
-  expect(accumulator.add(sample(0, "/api/items")).ok).toBe(true);
-  const before = finished(accumulator);
-  const body = `{"name":"${"x".repeat(2_000)}"}`;
-  expect(accumulator.add(sample(1, "/api/items", body))).toMatchObject({
+it("charges request shapes to the manifest without exhausting the state budget", () => {
+  const limit = 128 * 1024;
+  const write = sample(
+    1,
+    "/api/export-events",
+    `{"name":"${"x".repeat(STATE_BODY_LIMIT_BYTES)}"}`,
+  );
+  const manifest = new EnvironmentManifestAccumulator(limit);
+  expect(finished(manifest).origin).toBe("");
+  expect(manifest.add(sample(0, "/api/items"), "absent").ok).toBe(true);
+  const before = finished(manifest);
+  expect(before.limitations.join(" ")).not.toContain("no primary origin");
+  expect(
+    manifest.add(
+      { ...write, limitations: ["rejected-only limitation"] },
+      "redacted",
+    ),
+  ).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
   });
-  expect(finished(accumulator)).toEqual(before);
-  expect(accumulator.add(sample(2, "/api/items", '{"name":"n"}')).ok).toBe(
-    true,
-  );
-  expect(finished(accumulator).tools.map((tool) => tool.body_shape)).toEqual([
-    null,
-    { type: "object", properties: { name: "string" } },
+  expect(finished(manifest)).toEqual(before);
+  expect(
+    manifest.add({
+      ...sample(1, "/api/items"),
+      limitations: ["uncommitted limitation", "x".repeat(100_000)],
+    }).ok,
+  ).toBe(false);
+  expect(finished(manifest)).toEqual(before);
+  expect(
+    manifest.add(
+      {
+        ...sample(2, "/api/export-events", '{"batch":7}', {
+          text: '{"memo":"[REDACTED]"}',
+        }),
+        limitations: ["accepted record limitation"],
+      },
+      "redacted",
+    ).ok,
+  ).toBe(true);
+  const after = finished(manifest);
+  expect(after.records.map(({ ordinal }) => ordinal)).toEqual([0, 2]);
+  expect(after.tools).toMatchObject([
+    {
+      name: "post_export_events",
+      body_shape: { type: "object", properties: { batch: "number" } },
+      record_ordinals: [2],
+    },
+    { name: "get_items", body_shape: null, record_ordinals: [0] },
+  ]);
+  expect(after.limitations).toContain("accepted record limitation");
+  expect(
+    after.limitations.filter((item) =>
+      item.includes("scenario transactions with a usable request line"),
+    ),
+  ).toEqual([
+    expect.stringContaining(
+      "1 of 2 scenario transactions with a usable request line retained a response body with declared secret values",
+    ),
+    expect.stringContaining(
+      "1 of 2 scenario transactions with a usable request line retained no response body",
+    ),
+  ]);
+
+  const state = new EnvironmentStateAccumulator(limit);
+  const read = sample(0, "/api/items", undefined, {
+    text: '[{"id":1}]',
+    mimeType: "Application/Vnd.Notes+JSON; charset=UTF-8",
+  });
+  expect(state.add(read).ok).toBe(true);
+  expect(state.add(write)).toEqual({ ok: true, value: undefined });
+  const projected = state.finishState();
+  if (!projected.ok) throw projected.error;
+  expect(projected.value.entities).toMatchObject([
+    {
+      id: "1",
+      collection: "/api/items",
+      fields: { id: 1 },
+      record_ordinals: [0],
+    },
+  ]);
+  expect(projected.value.writes).toMatchObject([
+    { tool: "post_export_events", served: false, reason: "no-state-target" },
   ]);
 });
 
-it("charges every retained record pointer so many records exhaust a small budget", () => {
+it("reserves request media normalization when the state reads the body", () => {
+  const accumulator = new EnvironmentStateAccumulator(128 * 1024);
+  const write = sample(0, "/api/export-events", "{}");
+  (
+    write.reported as { request: { postData: { mimeType: string } } }
+  ).request.postData.mimeType = `Application/vnd.${"X".repeat(100_000)}+JSON`;
+  expect(accumulator.add(write)).toEqual({ ok: true, value: undefined });
+  expect(accumulator.finishState()).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
+  });
+});
+
+it("charges each record pointer and retains repeated route and query facts once", () => {
   const accumulator = new EnvironmentManifestAccumulator(64 * 1024);
+  const attempts = 160;
   let accepted = 0;
-  for (; accepted < 1000; accepted += 1) {
+  for (; accepted < attempts; accepted += 1) {
     const result = accumulator.add(
-      sample(accepted, `/api/route${String(accepted)}`),
+      sample(accepted, "/api/items/7?page=1&page=2"),
     );
     if (result.ok) continue;
     expect(result.error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
+      resource: "memory",
     });
     break;
   }
-  expect(accepted).toBeGreaterThan(0);
-  expect(accepted).toBeLessThan(1000);
+  expect(accepted).toBeGreaterThanOrEqual(90);
+  expect(accepted).toBeLessThan(attempts);
   const manifest = finished(accumulator);
-  expect(manifest.records).toHaveLength(accepted);
-  expect(manifest.tools).toHaveLength(accepted);
-  expect(manifest.coverage.total).toBe(accepted);
-});
-
-it("retains repeated observed values, statuses and query names once across many samples", () => {
-  const accumulator = new EnvironmentManifestAccumulator(1024 * 1024);
-  for (let ordinal = 0; ordinal < 1000; ordinal += 1)
-    expect(
-      accumulator.add(sample(ordinal, "/api/items/7?page=1&page=2")).ok,
-    ).toBe(true);
-  const manifest = finished(accumulator);
-  expect(manifest.tools).toHaveLength(1);
-  expect(manifest.tools[0]).toMatchObject({
-    params: [{ observed_values: ["7"] }],
-    query_parameter_names: ["page"],
-    statuses: [200],
-  });
-  expect(manifest.tools[0]?.record_ordinals).toHaveLength(1000);
-  expect(manifest.records).toHaveLength(1000);
+  const ordinals = Array.from({ length: accepted }, (_, ordinal) => ordinal);
+  expect(manifest.records.map(({ ordinal }) => ordinal)).toEqual(ordinals);
+  expect(manifest.tools).toMatchObject([
+    {
+      params: [{ observed_values: ["7"] }],
+      query_parameter_names: ["page"],
+      statuses: [200],
+      record_ordinals: ordinals,
+    },
+  ]);
+  expect(manifest.coverage.total).toBe(1);
 });
 
 it("charges every literal route part so a path of many short segments fails closed", () => {
@@ -96,27 +180,23 @@ it("charges every literal route part so a path of many short segments fails clos
   expect(finished(accumulator).tools).toHaveLength(1);
 });
 
-it("charges a request media type before scanning it so an oversized one fails closed", () => {
-  const accumulator = new EnvironmentManifestAccumulator(64 * 1024);
-  const record = sample(0, "/api/items", "{}");
-  (
-    record.reported as { request: { postData: { mimeType: string } } }
-  ).request.postData.mimeType = `application/json${"x".repeat(100_000)}`;
-  expect(accumulator.add(record)).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
-  });
-  expect(finished(accumulator).tools).toHaveLength(0);
-});
-
-it("charges the group key before building it so an oversized request method fails closed", () => {
-  const accumulator = new EnvironmentManifestAccumulator(64 * 1024);
-  const record = sample(0, "/api/items");
-  (record.reported as { request: { method: string } }).request.method =
-    `GET${"X".repeat(100_000)}`;
-  expect(accumulator.add(record)).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
-  });
-  expect(finished(accumulator).tools).toHaveLength(0);
-});
+const oversized = "x".repeat(100_000);
+it.each([
+  ["method", { method: `GET${oversized}` }],
+  [
+    "request media type",
+    { postData: { mimeType: `application/json${oversized}`, text: "{}" } },
+  ],
+] as const)(
+  "refuses an oversized %s before retaining a tool",
+  (_, overrides) => {
+    const accumulator = new EnvironmentManifestAccumulator(64 * 1024);
+    const record = sample(0, "/api/items", "{}");
+    Object.assign((record.reported as { request: object }).request, overrides);
+    expect(accumulator.add(record)).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
+    });
+    expect(finished(accumulator).tools).toEqual([]);
+  },
+);

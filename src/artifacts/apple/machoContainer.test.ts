@@ -7,7 +7,7 @@ import {
   machoImage,
   readerOf,
 } from "./MachoImage.fixture.js";
-import { readMachoImage } from "./MachoLoadCommandReader.js";
+import { readMachoImage } from "../../domain/apple/machoLoadCommandReader.js";
 import { javaClassFile } from "../../../tests/fixtures/javaClassFile.js";
 import { classifyArtifactBytes } from "../inventory/ArtifactGraphConstruction.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
@@ -25,17 +25,42 @@ import {
 const classify = (bytes: Uint8Array) => {
   const header = readFatContainerHeader(bytes, bytes.byteLength);
   if (header.state !== "parsed") return header;
-  return classifyFatContainerIdentity(header, (offset) => {
-    if (offset + 4 > bytes.byteLength) return undefined;
-    return new DataView(
-      bytes.buffer,
-      bytes.byteOffset,
-      bytes.byteLength,
-    ).getUint32(offset, false);
-  });
+  return classifyFatContainerEvidence(header, bytes);
 };
 
 describe("FAT declaration facts", () => {
+  it.each([false, true])(
+    "bounds 64-bit ranges to the supplied table view (littleEndian=%s)",
+    (littleEndian) => {
+      const backing = new Uint8Array(40).fill(0xff);
+      const table = backing.subarray(3, 35);
+      const fields = new DataView(
+        table.buffer,
+        table.byteOffset,
+        table.byteLength,
+      );
+      const options = { count: 1, wide: true, littleEndian };
+      const offset = 0x1_0000_0008n;
+      fields.setBigUint64(8, offset, littleEndian);
+      fields.setBigUint64(16, 0x1_0000_0010n, littleEndian);
+      expect(readFatSliceDeclarations(table, options)).toMatchObject({
+        status: "parsed",
+        slices: [{ offset: Number(offset), size: 0x1_0000_0010 }],
+      });
+      expect(
+        readFatSliceDeclarations(table.subarray(0, 31), options),
+      ).toMatchObject({
+        status: "malformed",
+        reason: "FAT table is truncated",
+      });
+      fields.setBigUint64(16, 1n << 53n, littleEndian);
+      expect(readFatSliceDeclarations(table, options)).toMatchObject({
+        status: "malformed",
+        reason: "FAT offset or size exceeds the safe range",
+      });
+    },
+  );
+
   it.each([
     { wide: false, littleEndian: false },
     { wide: false, littleEndian: true },
@@ -184,32 +209,17 @@ it("preserves explicit unknown slice evidence instead of falling back to retaine
 });
 
 describe("FAT Mach-O identity", () => {
-  it("does not treat known CPU declarations as proof when slices are ar archives", async () => {
-    const archive = arArchive();
+  it.each([
+    { layout: "all archives", first: arArchive() },
+    {
+      layout: "mixed Mach-O and archive",
+      first: machoImage({ cpu: CPU.x86_64 }),
+    },
+  ])("keeps $layout outside Mach-O identity", async ({ first }) => {
     const bytes = fatImage([
-      { cpu: CPU.x86_64, bytes: archive },
-      { cpu: CPU.arm64, bytes: archive },
-    ]);
-
-    expect(classify(bytes)).toEqual({ state: "not-mach-o" });
-    expect(await readMachoImage(readerOf(bytes), bytes.byteLength)).toEqual({
-      status: "not-mach-o",
-    });
-    expect(parseExecutableHeader(Buffer.from(bytes), "arm64")).toEqual({
-      ok: false,
-      error: "unsupported binary format",
-    });
-  });
-
-  it("rejects a mixed FAT container instead of selecting an ar slice as Mach-O", async () => {
-    const bytes = fatImage([
-      {
-        cpu: CPU.x86_64,
-        bytes: machoImage({ cpu: CPU.x86_64 }),
-      },
+      { cpu: CPU.x86_64, bytes: first },
       { cpu: CPU.arm64, bytes: arArchive() },
     ]);
-
     expect(classify(bytes)).toEqual({ state: "not-mach-o" });
     expect(await readMachoImage(readerOf(bytes), bytes.byteLength)).toEqual({
       status: "not-mach-o",
@@ -314,6 +324,21 @@ describe("FAT Mach-O identity", () => {
 });
 
 describe("FAT slice header identity and bounds", () => {
+  it.each([
+    { major: 55, minor: 1, expected: true },
+    { major: 56, minor: 0, expected: true },
+    { major: 56, minor: 65535, expected: true },
+    { major: 56, minor: 1, expected: false },
+  ])(
+    "checks class major $major and minor $minor for JVM identity",
+    ({ major, minor, expected }) => {
+      const bytes = javaClassFile();
+      bytes.writeUInt16BE(minor, 4);
+      bytes.writeUInt16BE(major, 6);
+      expect(isJvmClassFile(bytes)).toBe(expected);
+    },
+  );
+
   const classWithInterface = (reference: number): Buffer => {
     // Retain enough bytes for the coincident FAT table claim to be readable;
     // otherwise rejecting JVM identity would still yield not-fat on truncation.
@@ -379,7 +404,7 @@ describe("FAT slice header identity and bounds", () => {
     });
   });
 
-  it("keeps unresolved headers unknown and preserves declared-range failures", () => {
+  it("keeps unresolved headers unknown and reports physical range failures before probing them", () => {
     const bytes = Buffer.alloc(28);
     bytes.writeUInt32BE(0xcafebabe, 0);
     bytes.writeUInt32BE(1, 4);
@@ -389,38 +414,69 @@ describe("FAT slice header identity and bounds", () => {
     bytes.writeUInt32BE(12, 24);
     const header = readFatContainerHeader(bytes, 4128);
     if (header.state !== "parsed") throw new Error("expected parsed FAT table");
-    expect(classifyFatContainerIdentity(header, () => undefined)).toEqual({
+    expect(classifyFatContainerEvidence(header, bytes)).toEqual({
       state: "needs-slice-header",
       offsets: [4096],
     });
 
-    const badRange = {
-      ...header,
-      rangeIssues: [
-        { category: "malformed" as const, reason: "bad test range" },
-      ],
-    };
-    expect(classifyFatContainerIdentity(badRange, () => null)).toEqual({
+    bytes.writeUInt32BE(0, 20);
+    const badRange = readFatContainerHeader(bytes, 4128);
+    if (badRange.state !== "parsed")
+      throw new Error("expected FAT range issue");
+    expect(
+      classifyFatContainerIdentity(badRange, () => {
+        throw new Error("an invalid range must not be probed");
+      }),
+    ).toEqual({
       state: "malformed",
       category: "malformed",
-      reason: "bad test range",
+      reason: "FAT architecture 0 has an invalid slice range",
     });
   });
 
-  it("classifies a valid but too-short slice without inventing header bytes", () => {
-    const bytes = Buffer.alloc(31);
+  it("uses the retained magic of a valid slice when an earlier invalid range shares its offset", () => {
+    const cpu = { type: 0x12345678, subtype: 0 };
+    const thin = { cpu, bytes: machoImage({ cpu }) };
+    const bytes = Buffer.concat([
+      Buffer.alloc(3),
+      fatImage([thin, thin]),
+    ]).subarray(3);
+    const offset = bytes.readUInt32BE(8 + 20 + 8);
+    bytes.writeUInt32BE(offset, 8 + 8);
+    bytes.writeUInt32BE(0, 8 + 12);
+    const header = readFatContainerHeader(bytes, bytes.length);
+    if (header.state !== "parsed") throw new Error("expected parsed FAT table");
+    expect(
+      classifyFatContainerEvidence(header, bytes.subarray(0, offset + 3)),
+    ).toEqual({ state: "needs-slice-header", offsets: [offset] });
+    const prefix = bytes.subarray(0, offset + 4);
+    expect(classifyFatContainerEvidence(header, prefix)).toEqual({
+      state: "malformed",
+      category: "malformed",
+      reason: "FAT architecture 0 has an invalid slice range",
+    });
+    expect(parseExecutableHeader(prefix, "arm64", bytes.length)).toEqual({
+      ok: false,
+      error: "FAT architecture 0 has an invalid slice range",
+    });
+  });
+
+  it("keeps a three-byte slice outside Mach-O identity with the fourth magic byte in the file", () => {
+    const bytes = Buffer.alloc(32);
     bytes.writeUInt32BE(0xcafebabe, 0);
     bytes.writeUInt32BE(1, 4);
     bytes.writeUInt32BE(CPU.arm64.type, 8);
     bytes.writeUInt32BE(28, 16);
     bytes.writeUInt32BE(3, 20);
-    bytes.set([0xcf, 0xfa, 0xed], 28);
+    bytes.writeUInt32BE(0xcffaedfe, 28);
     const header = readFatContainerHeader(bytes, bytes.length);
     if (header.state !== "parsed") throw new Error("expected parsed FAT table");
+    const expected = { state: "not-mach-o" };
+    expect(classifyFatContainerEvidence(header, bytes)).toEqual(expected);
     expect(
       classifyFatContainerIdentity(header, () => {
-        throw new Error("a three-byte slice cannot provide a four-byte magic");
+        throw new Error("three declared bytes cannot supply a four-byte read");
       }),
-    ).toEqual({ state: "not-mach-o" });
+    ).toEqual(expected);
   });
 });

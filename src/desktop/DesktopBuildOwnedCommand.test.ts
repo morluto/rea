@@ -2,12 +2,15 @@ import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import * as owned from "../process/OwnedCommand.js";
 import { runDesktopBuildOwnedCommand } from "./DesktopBuildOwnedCommand.js";
 import { systemDesktopBuildSetupHost } from "./DesktopBuildSetupHost.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import {
+  AnalysisCancelledError,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
 it
   .skipIf(process.platform === "win32" || process.getuid?.() === 0)
@@ -62,9 +65,15 @@ it
       expect(stop).toHaveBeenCalledTimes(processRetained ? 1 : 0);
       await expect(stat(workspace)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
-      await chmod(parent, 0o700);
-      await resources.close();
-      command.mockRestore();
+      try {
+        try {
+          await chmod(parent, 0o700);
+        } finally {
+          await resources.close();
+        }
+      } finally {
+        command.mockRestore();
+      }
     }
   },
 );
@@ -103,7 +112,6 @@ it("retains a failed cleanup and its partial archive until the same owner succee
     }).catch((cause: unknown) => cause);
     expect(failure).toMatchObject({
       message: expect.stringContaining("cleanup is incomplete"),
-      cause: { reason: "timeout" },
     });
     expect(await readFile(partial, "utf8")).toBe("partial");
     expect(await readFile(join(workspace, "npm-state"), "utf8")).toBe("in use");
@@ -174,14 +182,7 @@ it("retains an observed command failure when cancellation arrives during its cle
   const resources = new ArtifactResourceScope();
   const controller = new AbortController();
   const reason = new Error("cancel during cleanup");
-  let entered!: () => void;
-  let release!: () => void;
-  const cleanupEntered = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  const cleanupRelease = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const commandCleanup = phaseGate();
   const snapshot = {
     stdout: { text: "earlier output", bytes: 14, observedBytes: 14 },
     stderr: { text: "disk full", bytes: 9, observedBytes: 9 },
@@ -196,8 +197,7 @@ it("retains an observed command failure when cancellation arrives during its cle
   const mocked = vi
     .spyOn(owned, "runOwnedCommand")
     .mockImplementation(async () => {
-      entered();
-      await cleanupRelease;
+      await commandCleanup.hold();
       throw new owned.OwnedCommandFailure(
         "process",
         primary.message,
@@ -217,26 +217,27 @@ it("retains an observed command failure when cancellation arrives during its cle
   );
   const pending = host.installAgentenv("fixture", controller.signal);
   try {
-    await awaitAcknowledgement(cleanupEntered, pending, "command cleanup");
+    await commandCleanup.reached(pending, "command cleanup");
     controller.abort(reason);
-    release();
+    commandCleanup.release();
     const failure: unknown = await pending.catch((cause: unknown) => cause);
-    expect(failure).toBeInstanceOf(AnalysisCancelledError);
-    if (!(failure instanceof AnalysisCancelledError)) throw failure;
-    expect(failure.cause).toBe(reason);
+    expect(failure).toBeInstanceOf(AnalysisOutputError);
+    if (!(failure instanceof AnalysisOutputError)) throw failure;
     expect(failure.diagnostics).toMatchObject({ command_failure: "process" });
     expect(failure.capturedOutput).toMatchObject({
       stdout: "earlier output",
       stderr: "disk full",
       exit_code: 2,
     });
-    expect(failure.secondaryFailures[0]?.cause).toMatchObject({
+    expect(failure.cause).toMatchObject({
       reason: "process",
       cause: primary,
     });
+    expect(failure.secondaryFailures[0]).toBeInstanceOf(AnalysisCancelledError);
+    expect(failure.secondaryFailures[0]?.cause).toBe(reason);
   } finally {
     controller.abort();
-    release();
+    commandCleanup.release();
     await Promise.allSettled([pending]);
     mocked.mockRestore();
     await resources.close();

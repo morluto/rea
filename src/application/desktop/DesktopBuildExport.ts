@@ -7,10 +7,9 @@ import {
   READER_RUNNER_SLACK_S,
   readerTimeout,
 } from "../../domain/desktop/appTaskReaders.js";
-import { BUILD_REA_TIMEOUT_S } from "../../desktop/BuildComputerController.js";
 import { BuildComputerLongRuns } from "../../desktop/BuildComputerLongRuns.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "../../domain/analysisErrorCore.js";
 import type { desktopTaskSchema } from "../../domain/desktop/appTask.js";
 import { counted } from "../../domain/desktop/appExportUnowned.js";
 import { END_CHECKPOINT } from "../../domain/desktop/buildCapture.js";
@@ -30,15 +29,15 @@ import {
 } from "../../domain/desktop/buildSecrets.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import {
+  BUILD_REA_TIMEOUT_S,
   fetchHomeFolder,
-  type ControlledComputer,
 } from "../../desktop/BuildComputerController.js";
+import type { ControlledComputer } from "../../ports/BuildComputerControl.js";
 import {
   adapterError,
   ENDS,
-  errorText,
   readOutput,
   refused,
   reportedFailure,
@@ -46,9 +45,12 @@ import {
   WORK,
 } from "./DesktopBuildCommands.js";
 import {
+  planOutputTree,
   writeOutputTree,
-  writtenWithOpenHandles,
+  desktopOutputFailure,
+  type DesktopOutputCompletion,
 } from "./DesktopOutputTree.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const EXPORT = "export_build_environment";
 const exportResultSchema = z.looseObject({
@@ -173,17 +175,19 @@ const writeBundle = async (
     guard,
   }: { readonly directory: string; readonly guard: BundleGuard },
   signal: AbortSignal,
-): Promise<
-  Result<{ readonly files: number; readonly bytes: number }, AnalysisError>
-> => {
+): Promise<{
+  readonly files: number;
+  readonly bytes: number;
+  readonly completion: DesktopOutputCompletion;
+}> => {
   let fetched = { files: 0, bytes: 0 };
   const holding: {
     path: string;
     handles: string[];
     unchecked: boolean;
   }[] = [];
-  const unclosed = await writeOutputTree(
-    directory,
+  const completion = await writeOutputTree(
+    await planOutputTree(directory, { operation: EXPORT, field: "directory" }),
     async (tree) => {
       fetched = await fetchHomeFolder(
         computer,
@@ -215,15 +219,7 @@ const writeBundle = async (
     { operation: EXPORT, field: "directory" },
     signal,
   );
-  return unclosed === undefined
-    ? ok(fetched)
-    : err(
-        writtenWithOpenHandles(
-          { provider: AGENTENV_PROVIDER, operation: EXPORT, what: "bundle" },
-          directory,
-          unclosed,
-        ),
-      );
+  return { ...fetched, completion };
 };
 
 /** The export's arguments past the capture and the bundle: the tasks and each one's end, the ends, the install, and withheld state with its consents. */
@@ -376,6 +372,13 @@ export const exportBuild = async (
       }
     | undefined;
   try {
+    // Admit the host folder by the rule the bundle is written under before
+    // running anything in the computer, so an unusable folder is refused
+    // before the in-computer export runs rather than when its bundle returns.
+    await planOutputTree(request.directory, {
+      operation: EXPORT,
+      field: "directory",
+    });
     const argv = [
       "export-desktop-application",
       `${folder}/capture`,
@@ -443,12 +446,18 @@ export const exportBuild = async (
       },
       signal,
     );
-    if (!written.ok) return written;
     published = {
       directory: request.directory,
       environment: result.environment,
-      ...written.value,
+      files: written.files,
+      bytes: written.bytes,
     };
+    const outputFailure = desktopOutputFailure(
+      { provider: AGENTENV_PROVIDER, operation: EXPORT, what: "bundle" },
+      request.directory,
+      written.completion,
+    );
+    if (outputFailure !== undefined) throw outputFailure;
     const kept = await keepWithheld(computer, withheld, result.withheld_files, {
       keep: capture.keep,
       signal,
@@ -457,8 +466,8 @@ export const exportBuild = async (
     return ok({
       directory: request.directory,
       environment: result.environment,
-      files: written.value.files,
-      bytes: written.value.bytes,
+      files: written.files,
+      bytes: written.bytes,
       tasks: result.tasks,
       seed_files: result.seed_files,
       scrubbed_files: result.scrubbed_files,
@@ -473,10 +482,10 @@ export const exportBuild = async (
       cause instanceof AnalysisError
         ? cause
         : signal.aborted && cause === signal.reason
-          ? new AnalysisCancelledError(EXPORT, { cause })
+          ? cancelledBy(EXPORT, carriedReason(cause))
           : adapterError(
               EXPORT,
-              redactSecrets(errorText(cause), capture.secrets),
+              redactSecrets(errorMessage(cause), capture.secrets),
               cause,
             );
     if (published !== undefined)

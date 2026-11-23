@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import type { DesktopViewPolicyInput } from "../../domain/desktop/desktopViewPolicy.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { exportedStateFiles } from "../../domain/desktop/appExport.js";
@@ -6,7 +7,10 @@ import {
   withheldFiles,
   type WithholdSelection,
 } from "../../domain/desktop/appWithheld.js";
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  cancelledBy,
+} from "../../domain/analysisErrorCore.js";
 import { draftTaskFiles } from "../../domain/desktop/appTaskDraft.js";
 import { draftNotes } from "../../domain/desktop/appTaskDraftNotes.js";
 import { desktopApplicationStateSchema } from "../../domain/desktop/desktopState.js";
@@ -59,9 +63,10 @@ const draft = async (
   selection: DraftSelection,
   viewPolicy: DesktopViewPolicyInput | undefined,
 ): Promise<Evidence> => {
-  const { evidence, capture } = await readDesktopCapture(folder, signal);
+  const source = await readDesktopCapture(folder, signal);
+  const { evidence, capture } = source;
   const stateEvidence = await inspectDesktopApplicationState(
-    folder,
+    source,
     readers,
     signal,
     { viewPolicy },
@@ -117,9 +122,7 @@ const draft = async (
   });
   const environment = exportEnvironmentName(capture, undefined);
   const result = {
-    ...(state.effective_view_policy === undefined
-      ? {}
-      : { effective_view_policy: state.effective_view_policy }),
+    effective_view_policy: state.effective_view_policy,
     application: {
       environment,
       title: capture.application.desktop_entry?.name ?? environment,
@@ -158,8 +161,8 @@ const draft = async (
       .filter((home) => isWithinAny(home, paths) && held(home))
       .sort(),
   } as unknown as JsonValue;
-  signal?.throwIfAborted();
-  return createEvidence(undefined, DESKTOP_PROVIDER, {
+  if (signal?.aborted === true) throw cancelledBy(OPERATION, signal);
+  return createEvidence(unknownTarget("not-observed"), DESKTOP_PROVIDER, {
     predicateType: "rea.desktop-application-task-draft",
     operation: OPERATION,
     parameters: {

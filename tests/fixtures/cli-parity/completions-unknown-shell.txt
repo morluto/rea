@@ -1,0 +1,7 @@
+$ rea completions powershell
+exit: 1
+--- stdout
+Error (INVALID_SHELL): Unknown shell 'powershell'. Supported: bash, fish, nushell, zsh
+<end>
+--- stderr
+<end>

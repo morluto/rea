@@ -10,7 +10,7 @@ import {
   partialRelationshipCoverageSchema,
   unknownRelationshipCoverageSchema,
 } from "../relationshipCoverage.js";
-import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../analysisErrorProjectionSchema.js";
 
 export const nativeObservationOperationSchema = z.enum(
   NATIVE_OBSERVATION_OPERATIONS,

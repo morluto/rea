@@ -1,16 +1,24 @@
 import { z } from "zod";
 
+import { canonicalBase64Schema } from "../domain/stringPatterns.js";
+
 /** Where a data-plane file part names its path in the home. */
-const DATA_OBJECTS = "urn:agentenv:data-objects/v1";
+export const DATA_OBJECTS = "urn:agentenv:data-objects/v1";
 /** A `data/get` answer: file parts, each naming its home path, or an error. */
 export const dataGetSchema = z.union([
   z.object({
     result: z.object({
       parts: z.array(
         z.looseObject({
-          file: z.looseObject({ bytes: z.string().optional() }).optional(),
+          file: z
+            .looseObject({ bytes: canonicalBase64Schema.optional() })
+            .optional(),
           metadata: z
-            .record(z.string(), z.looseObject({ path: z.string().optional() }))
+            .looseObject({
+              [DATA_OBJECTS]: z
+                .looseObject({ path: z.string().optional() })
+                .optional(),
+            })
             .optional(),
         }),
       ),
@@ -74,7 +82,7 @@ export const readHomeFiles = async (
       ? []
       : [
           {
-            path: Object.values(part.metadata ?? {})[0]?.path,
+            path: part.metadata?.[DATA_OBJECTS]?.path,
             bytes: Buffer.from(encoded, "base64"),
           },
         ];

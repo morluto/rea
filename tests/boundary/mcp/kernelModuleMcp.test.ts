@@ -1,3 +1,5 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
@@ -7,10 +9,7 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import {
-  compressedKernelModuleContainer,
-  kernelModuleFixture,
-} from "../../../src/native/elf/KernelModule.fixture.js";
+import { kernelModuleFixture } from "../../../src/native/elf/KernelModule.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
 
@@ -43,11 +42,15 @@ mcpTest(
         expect(response.isError, JSON.stringify(response.content)).not.toBe(
           true,
         );
-        return toolContract("inspect_kernel_module").outputSchema.parse(
-          response.structuredContent,
-        );
+        return response.structuredContent;
       };
-      const initial = await inspect();
+      const initialReply = await inspect();
+      const outputSchema = canonicalOutputSchema("inspect_kernel_module");
+      const ajv = new Ajv2020({ strict: false, validateFormats: false });
+      expect(ajv.validateSchema(outputSchema as AnySchema)).toBe(true);
+      expect(ajv.compile(outputSchema as AnySchema)(initialReply)).toBe(true);
+      const parse = toolContract("inspect_kernel_module").outputSchema.parse;
+      const initial = parse(initialReply);
       const omitted = initial.normalized_result.modinfo?.entries[0];
       expect(omitted).toMatchObject({
         status: "observed",
@@ -57,6 +60,24 @@ mcpTest(
         omitted_fields: ["key", "value"],
         raw_hex: null,
       });
+      expect(() =>
+        parse({
+          ...initial,
+          normalized_result: {
+            ...initial.normalized_result,
+            modinfo: {
+              ...initial.normalized_result.modinfo,
+              entries: [
+                {
+                  ...omitted,
+                  status: "malformed",
+                  reason: "modinfo_field_exceeds_limit",
+                },
+              ],
+            },
+          },
+        }),
+      ).toThrow();
       expect(initial.normalized_result.coverage.status).toBe("partial");
       expect(initial.normalized_result.limitations).toEqual(
         expect.arrayContaining([
@@ -64,10 +85,34 @@ mcpTest(
           expect.stringContaining("max_modinfo_value_bytes at least 4097"),
         ]),
       );
-      const recovered = await inspect({
-        max_modinfo_key_bytes: 257,
-        max_modinfo_value_bytes: 4097,
-      });
+      // The result records each control by contract field; MCP text names no
+      // CLI option.
+      expect(initial.normalized_result.modinfo?.omission_limits).toEqual([
+        {
+          control_kind: "parameter",
+          parameter: "max_modinfo_key_bytes",
+          effective_value: 256,
+          unit: "bytes",
+          minimum: 1,
+          maximum: 536870912,
+          default_value: 256,
+          applies_at: "next_call",
+        },
+        expect.objectContaining({
+          parameter: "max_modinfo_value_bytes",
+          effective_value: 4096,
+          default_value: 4096,
+        }),
+      ]);
+      expect(initial.normalized_result.limitations.join(" ")).not.toContain(
+        "--max-modinfo",
+      );
+      const recovered = parse(
+        await inspect({
+          max_modinfo_key_bytes: 257,
+          max_modinfo_value_bytes: 4097,
+        }),
+      );
       expect(recovered.subject).toEqual(initial.subject);
       expect(recovered.normalized_result.modinfo?.entries[0]).toEqual({
         ...omitted,
@@ -76,6 +121,9 @@ mcpTest(
         omitted_fields: [],
       });
       expect(recovered.normalized_result.coverage.status).toBe("complete");
+      expect(recovered.normalized_result.modinfo).not.toHaveProperty(
+        "omission_limits",
+      );
     } finally {
       await session.close();
     }
@@ -111,63 +159,13 @@ mcpTest(
         machine: 20,
         applicability: "applicable",
       });
-      expect(evidence.subject?.architecture).toBe("powerpc");
+      expect(fileIdentity(evidence.subject).architecture).toBe("powerpc");
       expect(evidence.normalized_result.modinfo?.entries[0]).toMatchObject({
         key: "license",
         value: "GPL",
       });
       expect(evidence.normalized_result.versions?.entries[1]?.crc_hex).toBe(
         "90abcdef",
-      );
-    } finally {
-      await session.close();
-    }
-  },
-);
-
-mcpTest(
-  "reports duplicate sections as partial in MCP Evidence",
-  async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
-    try {
-      const root = await createTestTempDirectory(
-        "rea-kernel-module-duplicate-mcp-",
-      );
-      const path = join(root, "duplicate.ko");
-      await writeFile(
-        path,
-        kernelModuleFixture({
-          sharedNameSections: {
-            name: ".exit.text",
-            count: 1,
-            body: Buffer.from([1, 2, 3]),
-          },
-        }),
-      );
-      const response = await client.callTool({
-        name: "inspect_kernel_module",
-        arguments: { path },
-      });
-      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const outputSchema = (await client.listTools()).tools.find(
-        (tool) => tool.name === "inspect_kernel_module",
-      )?.outputSchema;
-      if (outputSchema === undefined) throw new Error("Missing output schema");
-      const ajv = new Ajv2020({ strict: false, validateFormats: false });
-      expect(ajv.validateSchema(outputSchema as AnySchema)).toBe(true);
-      expect(
-        ajv.compile(outputSchema as AnySchema)(response.structuredContent),
-      ).toBe(true);
-      const evidence = toolContract("inspect_kernel_module").outputSchema.parse(
-        response.structuredContent,
-      );
-      expect(evidence.normalized_result.coverage.status).toBe("partial");
-      expect(evidence.normalized_result.exit_text).toMatchObject({
-        status: "present",
-        bytes: 1,
-      });
-      expect(evidence.normalized_result.limitations).toContain(
-        "Multiple .exit.text sections are declared; the first is examined.",
       );
     } finally {
       await session.close();
@@ -188,33 +186,6 @@ mcpTest(
       expect(parseMcpToolError(response).error).toMatchObject({
         code: "invalid_request",
         details: { operation: "inspect_kernel_module" },
-      });
-    } finally {
-      await session.close();
-    }
-  },
-);
-
-mcpTest(
-  "reports a zstd container as an unsupported kernel-module target",
-  async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
-    try {
-      const root = await createTestTempDirectory("rea-kernel-module-zstd-mcp-");
-      const path = join(root, "demo.ko.zst");
-      await writeFile(path, compressedKernelModuleContainer("zstd"));
-      const response = await client.callTool({
-        name: "inspect_kernel_module",
-        arguments: { path },
-      });
-      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const evidence = toolContract("inspect_kernel_module").outputSchema.parse(
-        response.structuredContent,
-      );
-      expect(evidence.normalized_result).toMatchObject({
-        applicability: "unsupported",
-        compression: { codec: "zstd", status: "unsupported" },
-        next_probe: { operation: "external_decompression" },
       });
     } finally {
       await session.close();

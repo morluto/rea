@@ -1,6 +1,6 @@
 import type { FileHandle } from "node:fs/promises";
 
-import type { EspFlashImageMetadata } from "../domain/artifactFormatMetadata.js";
+import type { EspFlashImageMetadata } from "../domain/formatMetadata/firmwareMetadata.js";
 import { ESP_CHIP_TABLE_SOURCE } from "../domain/firmware/espChips.js";
 import {
   espErasedSlotLimitation,
@@ -20,7 +20,7 @@ import {
 import { offsetText } from "../domain/firmware/espImageStructures.js";
 import { ESP_OTA_SELECT_ENTRY_BYTES } from "../domain/firmware/espOtaData.js";
 import { isEspAppPartition } from "../domain/firmware/espPartitionTable.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import {
   decodeEspFlashImage,
   firstUnerasedInRange,
@@ -119,10 +119,7 @@ export class EspFlashImageArtifactReader extends PositionalArtifactReader {
       entries: plan.regions.map((region) =>
         regionEntry(region, written.get(region), fileSize),
       ),
-      coverage:
-        facts.coverage === "unknown" || limitations.length > 0
-          ? { status: facts.coverage, limitations }
-          : undefined,
+      coverage: { status: facts.coverage, limitations },
     };
   }
 
@@ -268,19 +265,24 @@ const regionEntry = (
   encrypted: false,
   // A partition past the end holds no bytes: its entry is the empty range
   // at the end of the file, which opens as an empty stream without a read.
-  byteOffset: Math.min(region.fileOffset, fileSize),
+  // A zero-byte partition before the selected origin also has no file bytes.
+  // Its offset is clamped to the start of the carrier so provenance stays
+  // nonnegative.
+  byteOffset: Math.min(Math.max(region.fileOffset, 0), fileSize),
   declaredIntegrity: null,
   unpacked: false,
   limitations:
-    region.available === 0
-      ? [
-          `${region.path} lies outside the dump: the file holds none of its ${String(region.length)} bytes.`,
-        ]
-      : region.available < region.length
+    region.availability === "empty"
+      ? [`${region.path} declares zero bytes.`]
+      : region.availability === "missing"
         ? [
-            `${region.path} is truncated: the dump holds ${String(region.available)} of its ${String(region.length)} bytes.`,
+            `${region.path} lies outside the dump: the file holds none of its ${String(region.length)} bytes.`,
           ]
-        : [],
+        : region.availability === "truncated"
+          ? [
+              `${region.path} is truncated: the dump holds ${String(region.available)} of its ${String(region.length)} bytes.`,
+            ]
+          : [],
   adapterKey: `esp-flash-image:${region.path}`,
   ...(region.partition === undefined
     ? {}
@@ -332,6 +334,7 @@ const layoutMetadata = (
         status: table.md5.status,
         stored: table.md5.stored,
         computed: table.md5.computed,
+        entries_after_checksum: table.md5.entriesAfterChecksum,
       },
     },
     partitions_outside_dump: table.partitions

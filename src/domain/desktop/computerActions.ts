@@ -187,7 +187,7 @@ const w3cKey = (spelling: string): string => {
 };
 
 /** W3C key names from W3C names or model spellings such as `ctrl+s`, which name a chord in order. */
-export const w3cKeys = (keys: readonly string[]): string[] =>
+const w3cKeys = (keys: readonly string[]): string[] =>
   keys.flatMap((key) =>
     ONE_CHARACTER.test(key) ? [key] : key.split(/\+(?!$)/u).map(w3cKey),
   );

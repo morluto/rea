@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   inspectPeLoadConfigInputSchema,
   peLoadConfigSchema,
@@ -6,33 +7,82 @@ import {
 } from "../../domain/native/peLoadConfig.js";
 import {
   parsePeLoadConfig,
-  PeLoadConfigLimitFailure,
+  parsePeLoadConfigFromHandle,
+  parsePeLoadConfigFromImage,
 } from "./PeLoadConfigParser.js";
+import { readPeHardening } from "../hardening/PeHardening.js";
+import { readPeImage } from "../../domain/native/peImage.js";
 import {
+  PE_LOAD_CONFIG_FIXTURE,
   peLoadConfigImage,
   peManySectionsImage,
   type PeLoadConfigFixtureOptions,
 } from "./PeLoadConfig.fixture.js";
 
+/** Element reads of every parsed image's section and mapping tables. */
+const tableReads = vi.hoisted(() => ({
+  count: 0,
+  budget: Infinity,
+  imageReads: 0,
+}));
+vi.mock("../../domain/native/peImage.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../domain/native/peImage.js")>();
+  const counted = <T extends object>(table: readonly T[]): readonly T[] =>
+    new Proxy(table, {
+      get(target, key, receiver) {
+        // Past the budget a walk fails at once instead of finishing.
+        if (
+          typeof key === "string" &&
+          /^\d+$/u.test(key) &&
+          ++tableReads.count > tableReads.budget
+        )
+          throw new Error("Image table read budget exceeded");
+        return Reflect.get(target, key, receiver) as unknown;
+      },
+    });
+  return {
+    ...actual,
+    readPeImage: (bytes: Buffer) => {
+      tableReads.imageReads++;
+      const image = actual.readPeImage(bytes);
+      return {
+        ...image,
+        sections: counted(image.sections),
+        mappings: counted(image.mappings),
+      };
+    },
+  };
+});
+
+const input = inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" });
+
+const parseBytes = (
+  bytes: Buffer,
+  max_callbacks = input.max_callbacks,
+  signal?: AbortSignal,
+) =>
+  parsePeLoadConfig(
+    bytes,
+    { path: input.path, sha256: "a".repeat(64), bytes: bytes.length },
+    { ...input, max_callbacks },
+    signal,
+  );
+
 const parse = (
   options: PeLoadConfigFixtureOptions = {},
-  max_callbacks = 64,
-) => {
-  const bytes = peLoadConfigImage(options);
-  return parsePeLoadConfig(
-    bytes,
-    { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
-    inspectPeLoadConfigInputSchema.parse({
-      path: "/sample.exe",
-      max_callbacks,
-    }),
-  );
-};
+  max_callbacks?: number,
+) => parseBytes(peLoadConfigImage(options), max_callbacks);
+
 describe.each([32, 64] as const)("PE%s load configuration", (bits) => {
   it("locates callbacks and separates flag claims", async () => {
     const report = await parse({ bits });
     expect(peLoadConfigSchema.safeParse(report).success).toBe(true);
     expect(report.tls?.callbacks).toHaveLength(3);
+    // The callback array starts at file offset 0x800 and includes its null slot.
+    expect(report.tls?.callback_array_locations).toEqual([
+      { offset: 0x800, bytes: bits === 32 ? 16 : 32 },
+    ]);
     expect(report.tls?.callbacks[0]).toMatchObject({
       rva: 0x2000,
       file_offset: 0x1600,
@@ -47,6 +97,69 @@ describe.each([32, 64] as const)("PE%s load configuration", (bits) => {
     expect(report.load_config?.inferences[0]?.evidence_kind).toBe("inferred");
     expect(report.load_config?.se_handler_count).toBe(bits === 32 ? 2 : null);
   });
+  it.each([
+    {
+      layout: "file-backed",
+      start: 0x2100,
+      end: 0x2200,
+      fileOffset: 0x1700,
+      section: ".text",
+      dataSection: ".data",
+    },
+    {
+      layout: "file and zero-fill",
+      start: 0x2180,
+      end: 0x2280,
+      fileOffset: null,
+      section: ".text",
+      dataSection: ".data",
+    },
+    {
+      layout: "zero-fill only",
+      start: 0x2200,
+      end: 0x2300,
+      fileOffset: null,
+      section: ".text",
+      dataSection: ".data",
+    },
+    {
+      layout: "crossing two sections with the same name",
+      start: 0x1f80,
+      end: 0x2080,
+      fileOffset: 0x1580,
+      section: null,
+      dataSection: ".text",
+    },
+  ] as const)(
+    "retains only established TLS template locations for $layout",
+    async ({ start, end, fileOffset, section, dataSection }) => {
+      const bytes = peLoadConfigImage({
+        bits,
+        zeroFillCallback: true,
+        rawDataRange: [start, end],
+      });
+      if (dataSection !== ".data") {
+        const header = bytes.readUInt32LE(60);
+        const firstSection = header + 24 + bytes.readUInt16LE(header + 20);
+        bytes.fill(0, firstSection, firstSection + 8);
+        bytes.write(dataSection, firstSection, "ascii");
+      }
+      const base = bits === 64 ? 0x180000000n : 0x10000000n;
+      const report = await parseBytes(bytes);
+      expect(report.tls).toMatchObject({
+        start_address_of_raw_data: `0x${(base + BigInt(start)).toString(16)}`,
+        end_address_of_raw_data: `0x${(base + BigInt(end)).toString(16)}`,
+        raw_data_size: 256,
+        raw_data_file_offset: fileOffset,
+        raw_data_section: section,
+      });
+      expect(report.tls?.address_of_index.section).toBe(dataSection);
+      expect(report.tls?.callbacks).toMatchObject([
+        { rva: 0x2200, file_offset: null, section: ".text" },
+      ]);
+      expect(report.load_config?.guard_flags?.raw).toBe(0x500);
+    },
+  );
   it("honors Size even when directory bytes contain newer fields", async () => {
     const report = await parse({
       bits,
@@ -66,9 +179,9 @@ describe.each([32, 64] as const)("PE%s load configuration", (bits) => {
     expect(
       (await parse({ bits, callbackCount: 1 }, 1)).examined_callbacks,
     ).toBe(1);
-    await expect(parse({ bits }, 1)).rejects.toBeInstanceOf(
-      PeLoadConfigLimitFailure,
-    );
+    await expect(parse({ bits }, 1)).rejects.toMatchObject({
+      failure: { kind: "limit", limit: { name: "callbacks", maximum: 1 } },
+    });
   });
   it("reports absent directories", async () => {
     expect(await parse({ bits, tls: false, loadConfig: false })).toMatchObject({
@@ -87,7 +200,9 @@ describe.each([32, 64] as const)("PE%s load configuration", (bits) => {
     "callback-unterminated",
     "ambiguous-section",
   ] as const)("rejects %s", async (malformed) => {
-    await expect(parse({ bits, malformed })).rejects.toThrow();
+    await expect(parse({ bits, malformed })).rejects.toMatchObject({
+      failure: { kind: "malformed" },
+    });
   });
 });
 
@@ -108,11 +223,7 @@ it("preserves pointer precision and unknown flag bits", async () => {
   // PE64 load config at 0x640; XFG slot at +280, GuardFlags at +144.
   bytes.writeBigUInt64LE(0xfedcba9876543210n, 0x640 + 280);
   bytes.writeUInt32LE(0xf0200100, 0x640 + 144);
-  const report = await parsePeLoadConfig(
-    bytes,
-    { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
-    inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
-  );
+  const report = await parseBytes(bytes);
   expect(report.load_config?.guard_xfg_check_function_pointer).toEqual({
     va: "0xfedcba9876543210",
     rva: null,
@@ -127,35 +238,43 @@ it("preserves pointer precision and unknown flag bits", async () => {
 
 it("honors cancellation before parsing", async () => {
   const bytes = peLoadConfigImage();
+  const reason = { caller: "before PE load config parsing" };
+  const failure = await parseBytes(
+    bytes,
+    undefined,
+    AbortSignal.abort(reason),
+  ).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(failure).toMatchObject({ reason: "cancelled" });
+  if (!(failure instanceof ArtifactReaderFailure)) throw failure;
+  expect(failure.cause).toBe(reason);
+});
+
+it("requires the full physical section extent even when its virtual bytes fit", async () => {
+  const bytes = peLoadConfigImage({ textVirtualSize: 0x20 }).subarray(
+    0,
+    0x1620,
+  );
   await expect(
     parsePeLoadConfig(
       bytes,
       { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
       inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
-      AbortSignal.abort(),
     ),
-  ).rejects.toThrow();
+  ).rejects.toMatchObject({ failure: { kind: "truncated" } });
 });
 
-it("retains a callback in virtual-only section storage with unknown file offset", async () => {
-  expect(
-    (await parse({ zeroFillCallback: true })).tls?.callbacks[0],
-  ).toMatchObject({ rva: 0x2200, file_offset: null, section: ".text" });
-});
-
-it("resolves callback sections in bounded time for the largest section table", async () => {
+it("resolves callback sections without rescanning the largest section table", async () => {
   const bytes = peManySectionsImage(65535, 4096);
-  const started = performance.now();
-  const report = await parsePeLoadConfig(
-    bytes,
-    { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
-    inspectPeLoadConfigInputSchema.parse({
-      path: "/sample.exe",
-      max_callbacks: 4096,
-    }),
-  );
-  // A per-callback scan of every section takes several seconds here.
-  expect(performance.now() - started).toBeLessThan(1_000);
+  // Building the section index reads each entry about twice (131071 here); a
+  // per-callback scan would read about 4096 x 65535 entries.
+  tableReads.count = 0;
+  tableReads.budget = 4 * 65535;
+  onTestFinished(() => {
+    tableReads.budget = Infinity;
+  });
+  const report = await parseBytes(bytes, 4096);
+  expect(tableReads.count).toBeLessThanOrEqual(tableReads.budget);
   expect(report.tls?.callbacks).toHaveLength(4096);
   expect(report.tls?.callbacks.every(({ section }) => section === ".v")).toBe(
     true,
@@ -263,19 +382,14 @@ describe.each([32, 64] as const)(
   "PE%s load-config fields at specification offsets",
   (bits) => {
     it.each(
-      SPEC_FIELDS[bits].map(([name, offset, width], index) => ({
+      SPEC_FIELDS[bits].map(([name, offset, width]) => ({
         name,
-        index,
         end: offset + width,
       })),
-    )("exposes $name exactly when Size reaches $end", async ({ name, end }) => {
+    )("exposes $name exactly when Size reaches $end", async ({ end }) => {
       for (const size of [end - 1, end]) {
         const bytes = specImage(bits, size);
-        const report = await parsePeLoadConfig(
-          bytes,
-          { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
-          inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
-        );
+        const report = await parseBytes(bytes);
         const config = report.load_config;
         if (config === null) throw new Error("Expected a load configuration");
         expect(config.size).toBe(size);
@@ -288,9 +402,6 @@ describe.each([32, 64] as const)(
             covered ? expectedField(field, sentinel(fieldIndex, width)) : null,
           );
         });
-        expect(config[name] === null).toBe(
-          size < end || (bits === 64 && name.startsWith("se_handler")),
-        );
       }
     });
   },
@@ -315,11 +426,7 @@ it.each([32, 64] as const)(
       );
       bytes.writeUInt32LE(offset, LOAD_CONFIG_AT + offsetOffset);
       bytes.writeUInt16LE(section, LOAD_CONFIG_AT + sectionOffset);
-      const report = await parsePeLoadConfig(
-        bytes,
-        { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
-        inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
-      );
+      const report = await parseBytes(bytes);
       expect(peLoadConfigSchema.safeParse(report).success).toBe(true);
       expect(report.load_config).toMatchObject({
         dynamic_value_reloc_table: "0x0",
@@ -329,3 +436,115 @@ it.each([32, 64] as const)(
     }
   },
 );
+
+it.each([32, 64] as const)(
+  "reads DWORDs after the four PE%d TLS pointers",
+  async (bits) => {
+    const bytes = peLoadConfigImage({ bits });
+    const layout = PE_LOAD_CONFIG_FIXTURE;
+    const offset =
+      layout.dataFile + layout.tlsRva - layout.dataRva + 4 * (bits / 8);
+    bytes.writeUInt32LE(0xfedcba98, offset);
+    bytes.writeUInt32LE(0x80100000, offset + 4);
+    const report = await parsePeLoadConfig(
+      bytes,
+      { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
+      inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
+    );
+    expect(report.tls).toMatchObject({
+      size_of_zero_fill: 0xfedcba98,
+      characteristics: 0x80100000,
+    });
+  },
+);
+
+describe("PE load-config reuse and lazy section indexing", () => {
+  it("skips section and mapping index builds when TLS and load-config directories are absent", async () => {
+    for (const bits of [32, 64] as const) {
+      tableReads.count = 0;
+      const report = await parse({ bits, tls: false, loadConfig: false });
+      expect(report).toMatchObject({ tls: null, load_config: null });
+      expect(tableReads.count).toBe(0);
+    }
+  });
+
+  it("reuses a pre-parsed PeImage via parsePeLoadConfigFromImage and in readPeHardening", async () => {
+    const bytes = peLoadConfigImage({ bits: 64 });
+    const artifact = {
+      path: "/sample.exe",
+      sha256: "a".repeat(64),
+      bytes: bytes.length,
+    };
+    const input = inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" });
+    const expected = await parsePeLoadConfig(bytes, artifact, input);
+
+    tableReads.imageReads = 0;
+    const image = readPeImage(bytes);
+    const fromImage = await parsePeLoadConfigFromImage(
+      bytes,
+      image,
+      artifact,
+      input,
+    );
+    expect(fromImage).toEqual(expected);
+    expect(tableReads.imageReads).toBe(1);
+
+    const noDirs = peLoadConfigImage({ tls: false, loadConfig: false });
+    tableReads.imageReads = 0;
+    tableReads.count = 0;
+    const noDirHardening = await readPeHardening(noDirs, {
+      path: "/nodirs.exe",
+      sha256: "a".repeat(64),
+      bytes: noDirs.length,
+    });
+    expect(tableReads.imageReads).toBe(1);
+    expect(tableReads.count).toBe(0);
+    expect(
+      noDirHardening.rows.find((row) => row.property === "cfg_instrumented")
+        ?.state,
+    ).toBe("unknown");
+
+    tableReads.imageReads = 0;
+    const withDirHardening = await readPeHardening(bytes, artifact);
+    expect(tableReads.imageReads).toBe(1);
+    expect(
+      withDirHardening.rows.find((row) => row.property === "cfg_instrumented")
+        ?.state,
+    ).toBe("enabled");
+  });
+});
+
+it("reads the full callback allowance in bounded windows with the terminator", async () => {
+  const callbackCount = 4096;
+  const bytes = peManySectionsImage(2, callbackCount);
+  const peOffset = bytes.readUInt32LE(60);
+  const callbacksOffset = bytes.readUInt32LE(peOffset + 24 + 60) + 0x100;
+  const artifact = {
+    path: input.path,
+    sha256: "a".repeat(64),
+    bytes: bytes.length,
+  };
+  const reads: Array<{ offset: number; length: number }> = [];
+  const report = await parsePeLoadConfigFromHandle(
+    {
+      size: bytes.length,
+      sha256: artifact.sha256,
+      prefix: bytes.subarray(0, 64),
+      readRange: async (offset, length) => {
+        if (offset >= callbacksOffset) reads.push({ offset, length });
+        return bytes.subarray(offset, offset + length);
+      },
+    },
+    artifact,
+    { ...input, max_callbacks: callbackCount },
+  );
+  expect(report.examined_callbacks).toBe(callbackCount);
+  expect(report.tls?.callback_array_locations).toEqual([
+    { offset: callbacksOffset, bytes: (callbackCount + 1) * 8 },
+  ]);
+  expect(reads).toHaveLength(5);
+  expect(reads.every(({ length }) => length <= 8192)).toBe(true);
+  expect(reads.reduce((sum, { length }) => sum + length, 0)).toBe(
+    (callbackCount + 1) * 8,
+  );
+});

@@ -1,7 +1,17 @@
-import { basename, join } from "node:path";
+import { readNativeProcessIdentityMap } from "./ProcessOwnershipObservation.js";
+import {
+  readProcessRunToken,
+  readProcessRunTokens,
+} from "./ProcessRunTokenObservations.js";
+import { ExecFileOutputCancelledError } from "./ExecFileOutput.js";
+import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { RetainedCommandCleanup } from "./RetainedCommandCleanup.js";
 
 const fixture = vi.hoisted(() => {
   let start!: () => void;
@@ -10,14 +20,22 @@ const fixture = vi.hoisted(() => {
   let started: Promise<void>;
   let stopped: Promise<void>;
   let gate: Promise<void>;
-  let mode: "failure" | "abort" | "cleanup";
-  let failRemoval = false;
+  let mode: "failure" | "abort" | "cleanup" | "abort-error";
+  let remainingRemovalFailures = 0;
   let calls = 0;
   const compilerFailure = new Error("controlled compiler failure");
+  const compilerAbortError = new DOMException(
+    "independent compiler failure",
+    "AbortError",
+  );
   return {
     compilerFailure,
-    configure(selected: "failure" | "abort" | "cleanup") {
-      failRemoval = selected === "cleanup";
+    compilerAbortError,
+    configure(
+      selected: "failure" | "abort" | "cleanup" | "abort-error",
+      removalFailures = selected === "cleanup" ? 1 : 0,
+    ) {
+      remainingRemovalFailures = removalFailures;
       mode = selected;
       calls = 0;
       started = new Promise((resolve) => {
@@ -31,10 +49,13 @@ const fixture = vi.hoisted(() => {
       });
     },
     remove() {
-      if (failRemoval) {
-        failRemoval = false;
+      if (remainingRemovalFailures > 0) {
+        remainingRemovalFailures--;
         throw new Error("controlled cleanup failure");
       }
+    },
+    allowRemoval() {
+      remainingRemovalFailures = 0;
     },
     get started() {
       return started;
@@ -60,7 +81,9 @@ const fixture = vi.hoisted(() => {
         options.signal?.addEventListener("abort", aborted, { once: true });
         start();
         await gate;
-        if (mode !== "failure") throw options.signal?.reason;
+        if (mode === "abort-error") throw compilerAbortError;
+        if (mode !== "failure")
+          throw new ExecFileOutputCancelledError(options.signal?.reason);
         throw compilerFailure;
       }
       const output = args[args.indexOf("-o") + 1];
@@ -89,18 +112,21 @@ import {
   DarwinProcessOwnershipInspectionError,
 } from "./DarwinProcessRunTokenReader.js";
 
-it.each(["failure", "abort", "cleanup"] as const)(
+const createFixtureReader = () =>
+  createDarwinProcessRunTokenReader({
+    compiler: {
+      kind: "swiftc",
+      executable: join(tmpdir(), "fixture-swiftc"),
+      sdkRoot: tmpdir(),
+    },
+    environment: {},
+  });
+
+it.each(["failure", "abort", "cleanup", "abort-error"] as const)(
   "handles a %s outcome for a waiter joining retirement",
   async (mode) => {
     fixture.configure(mode);
-    const reader = createDarwinProcessRunTokenReader({
-      compiler: {
-        kind: "swiftc",
-        executable: join(tmpdir(), "fixture-swiftc"),
-        sdkRoot: tmpdir(),
-      },
-      environment: {},
-    });
+    const reader = createFixtureReader();
     const controller = new AbortController();
     const first = reader.prepare(controller.signal);
     let second: Promise<string> | undefined;
@@ -108,19 +134,25 @@ it.each(["failure", "abort", "cleanup"] as const)(
       fixture.release();
       await Promise.allSettled([first, second, reader.close()]);
     });
-    await fixture.started;
+    await awaitAcknowledgement(fixture.started, first, "compiler startup");
     controller.abort(new Error("first caller left"));
-    await fixture.stopped;
+    await awaitAcknowledgement(fixture.stopped, first, "compiler cancellation");
     second = reader.prepare();
     fixture.release();
     if (mode === "cleanup")
       await expect(first).rejects.toMatchObject({
         cause: expect.objectContaining({ message: "first caller left" }),
       });
-    else await expect(first).rejects.toThrow("first caller left");
-    if (mode === "failure") {
+    else
+      await expect(first).rejects.toMatchObject({
+        reason: expect.objectContaining({ message: "first caller left" }),
+      });
+    if (mode === "failure" || mode === "abort-error") {
       await expect(second).rejects.toMatchObject({
-        cause: fixture.compilerFailure,
+        cause:
+          mode === "failure"
+            ? fixture.compilerFailure
+            : fixture.compilerAbortError,
       });
       expect(fixture.calls).toBe(1);
     } else if (mode === "cleanup") {
@@ -133,6 +165,42 @@ it.each(["failure", "abort", "cleanup"] as const)(
         throw new Error("expected cleanup owner");
       expect(failure.cleanupFailure?.cleanupIncomplete).toBe(true);
       expect(fixture.calls).toBe(1);
+      const rows = [
+        {
+          pid: 42,
+          parentPid: 1,
+          processGroupId: 42,
+          state: "S",
+          command: "fixture",
+        },
+      ];
+      const fail = async (): Promise<never> => {
+        throw failure;
+      };
+      const host = {
+        listProcesses: async () => rows,
+        environment: fail,
+        runTokens: fail,
+        processIdentities: fail,
+        signalGroup: () => {
+          throw new Error("Unexpected signal");
+        },
+      };
+      const batch = async () => {
+        for await (const _row of readProcessRunTokens(host, rows)) {
+          throw new Error(
+            "Retained inspector must not produce unavailable rows",
+          );
+        }
+      };
+      const observations = await Promise.all(
+        [
+          readNativeProcessIdentityMap(rows, host),
+          readProcessRunToken(host, 42),
+          batch(),
+        ].map((pending) => pending.catch((cause: unknown) => cause)),
+      );
+      for (const observation of observations) expect(observation).toBe(failure);
       await failure.cleanupOwner?.close();
       expect(failure.cleanupFailure?.cleanupIncomplete).toBe(false);
     } else {
@@ -141,3 +209,63 @@ it.each(["failure", "abort", "cleanup"] as const)(
     }
   },
 );
+
+it("transfers the same helper root after a second failed cleanup", async () => {
+  fixture.configure("failure", 2);
+  const reader = createFixtureReader();
+  const prepare = reader.prepare();
+  const first = prepare.catch((cause: unknown) => cause);
+  onTestFinished(async () => {
+    fixture.release();
+    await first;
+    fixture.allowRemoval();
+    await reader.close();
+  });
+  await awaitAcknowledgement(fixture.started, prepare, "compiler startup");
+  fixture.release();
+  const initialFailure = await first;
+  if (!(initialFailure instanceof DarwinProcessOwnershipInspectionError))
+    throw new Error("Expected the initial inspection cleanup failure", {
+      cause: initialFailure,
+    });
+  const [root] = initialFailure.cleanupFailure?.cleanupResources ?? [];
+  if (root === undefined) throw new Error("Missing retained helper root");
+  expect(initialFailure.cause).toBe(fixture.compilerFailure);
+  expect(initialFailure.cleanupFailure?.cleanupIncomplete).toBe(true);
+  await expect(access(root)).resolves.toBeUndefined();
+
+  const retryFailure = await reader.prepare().catch((cause: unknown) => cause);
+  if (!(retryFailure instanceof DarwinProcessOwnershipInspectionError))
+    throw new Error("Expected the retry inspection cleanup failure", {
+      cause: retryFailure,
+    });
+  const owner = retryFailure.cleanupOwner;
+  if (owner === undefined) throw new Error("Missing retry cleanup owner");
+  expect(owner).toBe(initialFailure.cleanupOwner);
+  expect(retryFailure.cleanupFailure).toBeInstanceOf(ProviderCleanupError);
+  expect(retryFailure.cleanupFailure?.cleanupResources).toEqual([root]);
+  expect(retryFailure.cleanupFailure?.cleanupIncomplete).toBe(true);
+  expect(fixture.calls).toBe(1);
+
+  const fixtureDirectory = await createTestTempDirectory(
+    "rea-retained-command-",
+  );
+  const scratch = join(fixtureDirectory, "command");
+  await mkdir(scratch);
+  const retained = new RetainedCommandCleanup(scratch, retryFailure);
+  try {
+    expect(retained.cleanupResources).toEqual([root, scratch]);
+  } finally {
+    await retained.close();
+  }
+  await expect(access(fixtureDirectory)).resolves.toBeUndefined();
+  await expect(access(scratch)).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(access(root)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(initialFailure.cleanupFailure?.cleanupIncomplete).toBe(false);
+  expect(retryFailure.cleanupFailure?.cleanupIncomplete).toBe(false);
+
+  const replacement = await reader.prepare();
+  expect(dirname(replacement)).not.toBe(root);
+  await owner.close();
+  await expect(readFile(replacement, "utf8")).resolves.toBe("fixture");
+});

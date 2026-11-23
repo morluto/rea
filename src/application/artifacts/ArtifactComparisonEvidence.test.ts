@@ -1,16 +1,21 @@
+import {
+  fileSubjectTarget,
+  displayedEvidenceSubject,
+} from "../../../tests/fixtures/evidenceSubject.js";
+import { RECREATE_EVIDENCE_GUIDANCE } from "../../domain/evidenceFormat.js";
 import { expect, it } from "vitest";
 
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../contracts/artifactComparisonExample.js";
-import {
-  artifactInventorySummaryViewResultSchema,
-  sealAnalysisView,
-} from "../../domain/analysisView/analysisView.js";
+import { sealAnalysisView } from "../../domain/analysisView/analysisView.js";
+import { artifactInventorySummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/artifactInventorySummarySchema.js";
 import {
   createEvidence,
   parseEvidence,
+  evidenceSubjectTarget,
   rebindEvidenceToTargetPath,
   type Evidence,
+  type EvidenceSubjectTarget,
 } from "../../domain/evidence.js";
 import {
   EvidenceIntegrityError,
@@ -41,38 +46,25 @@ const recreateSummary = (
   normalizedResult: Evidence["normalized_result"],
   parameters: Evidence["parameters"] = summary.parameters,
 ): Evidence => {
-  if (summary.subject === null)
-    throw new Error("artifact summary fixture must identify its subject");
-  return createEvidence(
-    {
-      path: summary.subject.local_path,
-      sha256: summary.subject.digest.sha256,
-      format: summary.subject.format,
-      ...(summary.subject.architecture === null
-        ? {}
-        : { architecture: summary.subject.architecture }),
-    },
-    summary.provider,
-    {
-      predicateType: summary.predicate_type,
-      operation: summary.operation,
-      parameters,
-      result: normalizedResult,
-      ...(summary.analysis_profile === null
-        ? {}
-        : { analysisProfile: summary.analysis_profile }),
-      rawResult: summary.raw_result,
-      confidence: summary.confidence,
-      authority: summary.authority,
-      environment: summary.environment,
-      limitations: summary.limitations,
-      ...(summary.relationship_coverage === null
-        ? {}
-        : { relationshipCoverage: summary.relationship_coverage }),
-      locations: summary.locations,
-      evidenceLinks: summary.evidence_links,
-    },
-  );
+  return createEvidence(fileSubjectTarget(summary.subject), summary.provider, {
+    predicateType: summary.predicate_type,
+    operation: summary.operation,
+    parameters,
+    result: normalizedResult,
+    ...(summary.analysis_profile === null
+      ? {}
+      : { analysisProfile: summary.analysis_profile }),
+    rawResult: summary.raw_result,
+    confidence: summary.confidence,
+    authority: summary.authority,
+    environment: summary.environment,
+    limitations: summary.limitations,
+    ...(summary.relationship_coverage === null
+      ? {}
+      : { relationshipCoverage: summary.relationship_coverage }),
+    locations: summary.locations,
+    evidenceLinks: summary.evidence_links,
+  });
 };
 
 it("reports a missing retained parent instead of treating summary facts as inventory", async () => {
@@ -157,15 +149,14 @@ it("rejects summary facts that do not reproject from the complete parent", async
 
 it("accepts display-only subject changes excluded from Evidence identity", async () => {
   const { parent, summary } = await artifactSummary();
-  if (summary.subject === null)
+  if (summary.subject.identity.kind !== "file")
     throw new Error("artifact summary fixture must identify its subject");
   const displayOnly = parseEvidence({
     ...summary,
-    subject: {
-      ...summary.subject,
+    subject: displayedEvidenceSubject(summary.subject, {
       name: "renamed.app",
       local_path: "/display-only/renamed.app",
-    },
+    }),
   });
   const resolved = resolveArtifactComparisonEvidence(
     displayOnly,
@@ -182,13 +173,19 @@ const hashesUnknown =
 type SummaryEra = "pre-ce1f4b1bb" | "pre-b395190e4" | "current";
 
 /** Recommit an inventory whose two independent unknowns exercise both migrations. */
-const unknownInventory = () => {
+const unknownInventory = (target: Partial<EvidenceSubjectTarget> = {}) => {
   const original = ARTIFACT_COMPARISON_EXAMPLE.left;
   const inventory = artifactInventoryResultSchema.parse(
     original.normalized_result,
   );
   inventory.coverage.status = "unknown";
   inventory.occurrences[0]!.hash_status = "unavailable";
+  if (target.format === "esp-flash-image") {
+    inventory.manifest.root_format = target.format;
+    for (const occurrence of inventory.occurrences)
+      if (occurrence.logical_path === ".")
+        occurrence.artifact_format = target.format;
+  }
   const graphSha256 = artifactGraphDigest({
     nodes: inventory.nodes,
     occurrences: inventory.occurrences,
@@ -205,6 +202,7 @@ const unknownInventory = () => {
       path: "historical-inventory",
       sha256: inventory.manifest.root_sha256,
       format: "file",
+      ...target,
     },
     original.provider,
     {
@@ -237,9 +235,8 @@ const summaryAtEra = async (era: SummaryEra, aliasPath?: string) => {
     aliasPath === undefined
       ? parent
       : rebindEvidenceToTargetPath(parent, {
+          ...fileSubjectTarget(parent.subject),
           path: aliasPath,
-          sha256: parent.subject!.digest.sha256,
-          format: parent.subject!.format,
         });
   const projected = await inspectAnalysisView({
     source: { kind: "inline", evidence: selectedParent },
@@ -272,18 +269,20 @@ const summaryAtEra = async (era: SummaryEra, aliasPath?: string) => {
   };
 };
 
-it.each<SummaryEra>(["pre-ce1f4b1bb", "pre-b395190e4", "current"])(
-  "authenticates the exact %s summary against its retained inventory",
+// The Evidence format owner no longer rebuilds 6.7-era summary identities.
+it.each<SummaryEra>(["pre-ce1f4b1bb", "pre-b395190e4"])(
+  "refuses the %s summary with recreate guidance",
   async (era) => {
     const { parent, summary } = await summaryAtEra(era);
-    expect(resolveArtifactComparisonEvidence(summary, () => parent)).toEqual({
-      ok: true,
-      value: parent,
-    });
+    const resolved = resolveArtifactComparisonEvidence(summary, () => parent);
+    expect(resolved.ok).toBe(false);
+    if (resolved.ok) return;
+    expect(resolved.error).toBeInstanceOf(EvidenceIntegrityError);
+    expect(resolved.error.message).toContain(RECREATE_EVIDENCE_GUIDANCE);
   },
 );
 
-it.each<SummaryEra>(["pre-ce1f4b1bb", "pre-b395190e4", "current"])(
+it.each<SummaryEra>(["current"])(
   "authenticates a %s summary projected from the caller alias against the original retained parent",
   async (era) => {
     const { parent, summary } = await summaryAtEra(era, "/selected/alias.bin");
@@ -299,14 +298,13 @@ it.each<SummaryEra>(["pre-ce1f4b1bb", "pre-b395190e4", "current"])(
   },
 );
 
-it.each<SummaryEra>(["pre-ce1f4b1bb", "pre-b395190e4", "current"])(
+it.each<SummaryEra>(["current"])(
   "authenticates a %s summary after its retained parent is rebound to an alias path",
   async (era) => {
     const { parent, summary } = await summaryAtEra(era);
     const rebound = rebindEvidenceToTargetPath(parent, {
+      ...fileSubjectTarget(parent.subject),
       path: "/selected/alias.bin",
-      sha256: parent.subject!.digest.sha256,
-      format: parent.subject!.format,
     });
     expect(rebound.evidence_id).toBe(parent.evidence_id);
     expect(resolveArtifactComparisonEvidence(summary, () => rebound)).toEqual({
@@ -371,64 +369,41 @@ it.each([
   },
 );
 
-it.each<SummaryEra>(["pre-ce1f4b1bb", "pre-b395190e4"])(
-  "rejects a %s summary when lookup returns another inventory",
-  async (era) => {
-    const { summary } = await summaryAtEra(era);
-    const resolved = resolveArtifactComparisonEvidence(
-      summary,
-      () => ARTIFACT_COMPARISON_EXAMPLE.right,
-    );
-    expect(resolved.ok).toBe(false);
-    if (!resolved.ok)
-      expect(resolved.error).toMatchObject({ reason: "identity_mismatch" });
-  },
-);
-
-it.each(["provider", "authority", "locations", "links"] as const)(
-  "rejects a validly recommitted historical summary with altered %s",
-  async (field) => {
-    const { parent, summary } = await summaryAtEra("pre-ce1f4b1bb");
-    const altered: Evidence = {
-      ...summary,
-      ...(field === "provider"
-        ? { provider: { ...summary.provider, version: "altered" } }
-        : field === "authority"
-          ? { authority: "analyst-inference" as const }
-          : field === "locations"
-            ? {
-                locations: [
-                  { kind: "artifact-path" as const, path: "different.bin" },
-                ],
-              }
-            : {
-                evidence_links: [ARTIFACT_COMPARISON_EXAMPLE.right.evidence_id],
-              }),
-    };
-    const forged = recreateSummary(altered, summary.normalized_result);
-    expect(parseEvidence(forged).evidence_id).toBe(forged.evidence_id);
-    expect(forged.evidence_id).not.toBe(summary.evidence_id);
-    const resolved = resolveArtifactComparisonEvidence(forged, () => parent);
-    expect(resolved.ok).toBe(false);
-    if (!resolved.ok)
-      expect(resolved.error).toBeInstanceOf(EvidenceIntegrityError);
-  },
-);
-
-it("authenticates a retained parent's content instead of trusting its original ID", async () => {
-  const { parent, summary } = await summaryAtEra("pre-b395190e4");
-  const tampered: Evidence = {
-    ...parent,
-    limitations: ["changed without recomputing the Evidence ID"],
-  };
-  expect(tampered.evidence_id).toBe(parent.evidence_id);
-  const resolved = resolveArtifactComparisonEvidence(summary, () => tampered);
-  expect(resolved.ok).toBe(false);
-  if (!resolved.ok)
-    expect(resolved.error).toBeInstanceOf(EvidenceIntegrityError);
+it("rejects a recommitted current summary whose authority differs from its projection", async () => {
+  const { parent, summary } = await summaryAtEra("current");
+  const forged = recreateSummary(
+    { ...summary, authority: "analyst-inference" },
+    summary.normalized_result,
+  );
+  expect(forged.evidence_id).not.toBe(summary.evidence_id);
+  const resolved = resolveArtifactComparisonEvidence(forged, () => parent);
+  expect(resolved).toMatchObject({
+    ok: false,
+    error: { _tag: "EvidenceIntegrityError" },
+  });
 });
 
-it.each<SummaryEra>(["pre-ce1f4b1bb", "pre-b395190e4", "current"])(
+it("authenticates a retained parent's content instead of trusting its original ID", async () => {
+  const { parent, summary } = await summaryAtEra("current");
+  expect(resolveArtifactComparisonEvidence(summary, () => parent)).toEqual({
+    ok: true,
+    value: parent,
+  });
+  const tampered: Evidence = {
+    ...parent,
+    // The Evidence ID commits to the raw result. The inventory summary
+    // omits it, so reprojection cannot detect this substitution.
+    raw_result: { changed: true },
+  };
+  expect(
+    resolveArtifactComparisonEvidence(summary, () => tampered),
+  ).toMatchObject({
+    ok: false,
+    error: { _tag: "EvidenceIntegrityError", issuePath: ["evidence_id"] },
+  });
+});
+
+it.each<SummaryEra>(["current"])(
   "preserves both immutable Evidence commitments when resolving %s",
   async (era) => {
     const { parent, summary } = await summaryAtEra(era, "/selected/alias.bin");
@@ -451,3 +426,30 @@ it.each<SummaryEra>(["pre-ce1f4b1bb", "pre-b395190e4", "current"])(
     expect(parseEvidence(summary).evidence_id).toBe(before.summaryId);
   },
 );
+
+it("authenticates an alias summary of a selected flash image against its retained inventory", async () => {
+  const parent = unknownInventory({
+    format: "esp-flash-image",
+    selection: {
+      kind: "esp-flash",
+      flash_offset: 0x1_0000,
+      partition_table_offset: 0x8000,
+    },
+  });
+  const { name: _name, ...target } = evidenceSubjectTarget(parent.subject)!;
+  const alias = rebindEvidenceToTargetPath(parent, {
+    ...target,
+    path: "/selected/alias.bin",
+  });
+  expect(alias.subject?.local_path).toBe("/selected/alias.bin");
+  const summary = await inspectAnalysisView({
+    source: { kind: "inline", evidence: alias },
+    view: { kind: "summary" },
+  });
+  if (!summary.ok) throw summary.error;
+  // The owner rebinds its retained parent to the alias with the selection, so
+  // the reprojected summary names the same path and Evidence ID.
+  expect(
+    resolveArtifactComparisonEvidence(summary.value, () => parent),
+  ).toEqual({ ok: true, value: parent });
+});

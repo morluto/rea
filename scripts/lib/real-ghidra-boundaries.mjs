@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "./canonical-output-schema.mjs";
 import {
   requireMcpToolError,
   mcpTextValue,
@@ -10,7 +11,6 @@ import { access, readFile, readdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import { GHIDRA_ANNOTATIONS_RETAINED } from "../../dist/ghidra/GhidraProviderClient.js";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../dist/contracts/officialToolContracts.js";
@@ -44,15 +44,19 @@ export async function verifyGhidraBoundaries(
   addFormats(ajv);
   const validators = new Map();
   for (const tool of catalog.tools) {
-    for (const key of ["inputSchema", "outputSchema"])
+    const outputSchema = canonicalOutputSchema(tool.name);
+    for (const [key, schema] of [
+      ["inputSchema", tool.inputSchema],
+      ["outputSchema", outputSchema],
+    ])
       assert.ok(
-        ajv.validateSchema(tool[key]),
+        ajv.validateSchema(schema),
         `${tool.name} ${key}: ${JSON.stringify(ajv.errors)}`,
       );
     validators.set(
       tool.name,
-      (tool.outputSchema?.$id && ajv.getSchema(tool.outputSchema.$id)) ||
-        ajv.compile(tool.outputSchema),
+      (outputSchema.$id && ajv.getSchema(outputSchema.$id)) ||
+        ajv.compile(outputSchema),
     );
   }
   let successfulCalls = 0;
@@ -212,7 +216,12 @@ export async function verifyGhidraBoundaries(
   );
   const names = await call("list_names");
   const batchIdentity = await verifyGhidraBatchIdentity(call, names);
-  const instructionFlow = await verifyGhidraInstructionFlow(call, names, cli);
+  const instructionFlow = await verifyGhidraInstructionFlow(
+    call,
+    names,
+    cli,
+    target,
+  );
   const leaf = names.find((item) =>
     item.value.endsWith("rea_ghidra_inventory_leaf"),
   );
@@ -566,7 +575,11 @@ export async function verifyGhidraBoundaries(
   // The producer reason describes the failure; continuing-session guidance
   // is projected separately and the following live calls verify it.
   assert.match(regexError.details.reason, /stack while matching pattern/u);
-  assert.ok(regexError.message.includes(GHIDRA_ANNOTATIONS_RETAINED));
+  assert.ok(
+    regexError.message.includes(
+      "The active analysis session and annotations remain available.",
+    ),
+  );
   rejectedCalls++;
   const nestedPattern = "(".repeat(12000) + "a" + ")".repeat(12000);
   const compileFailure = await client.callTool(

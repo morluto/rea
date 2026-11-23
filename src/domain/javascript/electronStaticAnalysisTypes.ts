@@ -67,7 +67,7 @@ export type ElectronBrowserWindowFinding = ElectronBrowserWindowPreload & {
   /** Electron identity is conditional on an unproved loader. */
   readonly loader_authority?: "candidate";
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 };
@@ -89,7 +89,7 @@ export type ElectronContextBridgeFinding = ElectronContextBridgeApiKey & {
   /** Electron identity is conditional on an unproved loader. */
   readonly loader_authority?: "candidate";
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 };
@@ -155,7 +155,7 @@ interface ElectronIpcFindingContext {
   /** Electron identity is conditional on an unproved loader. */
   readonly loader_authority?: "candidate";
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
   /** Outer syntax invocation when a wrapper produced this underlying IPC call. */
@@ -167,7 +167,11 @@ export type ElectronIpcFinding = ElectronIpcDescriptor &
   ElectronIpcHandler &
   ElectronIpcFindingContext &
   (
-    | { readonly channel: string; readonly channel_expression: null }
+    | {
+        readonly channel: string;
+        readonly channel_expression: null;
+        readonly channel_basis?: "static-value";
+      }
     | {
         readonly channel: null;
         readonly channel_expression: string;
@@ -201,7 +205,7 @@ export interface ElectronSenderValidationFinding {
   /** Electron identity is conditional on an unproved loader. */
   readonly loader_authority?: "candidate";
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 }
@@ -211,7 +215,7 @@ interface ElectronUtilityProcessFindingState {
   /** Electron identity is conditional on an unproved loader. */
   readonly loader_authority?: "candidate";
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 }
@@ -244,7 +248,7 @@ export interface ElectronNativeAddonBindingFinding {
   /** Electron identity is conditional on an unproved loader. */
   readonly loader_authority?: "candidate";
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 }
@@ -276,7 +280,7 @@ export interface ElectronProtocolFinding {
   /** Electron identity is conditional on an unproved loader. */
   readonly loader_authority?: "candidate";
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 }
@@ -316,7 +320,7 @@ export interface ElectronDynamicCodeFinding {
    */
   readonly source_text: ElectronStaticValue;
   readonly module_key: string | null;
-  /** Recovered factory runtime; absent in older or unbundled findings. */
+  /** Recovered factory runtime; absent when no bundler factory runtime was recovered. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
 }

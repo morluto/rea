@@ -10,6 +10,7 @@ import {
   addSemanticGraphUnknown,
 } from "./JavaScriptSemanticGraphConstruction.js";
 import {
+  inferredSemanticEvidenceAt,
   unknownSemanticEvidence,
   builtinSemanticNode,
   builtinSemanticRelation,
@@ -39,6 +40,7 @@ export const projectSemanticEvents = (
         source: eventEmitterNode(context, operation),
         target: event,
         relation,
+        evidence: inferredSemanticEvidenceAt(context.file, operation.location),
         resolution:
           operation.resolution === "complete" ? "resolved" : "candidate",
       });
@@ -48,6 +50,7 @@ export const projectSemanticEvents = (
         source: event,
         target: listener,
         relation,
+        evidence: inferredSemanticEvidenceAt(context.file, operation.location),
         resolution:
           operation.resolution === "complete" ? "resolved" : "candidate",
       });

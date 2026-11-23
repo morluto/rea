@@ -1,15 +1,12 @@
 import { createHash } from "node:crypto";
 import { expect, it, vi } from "vitest";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
 import {
   elfUnwindRangesSchema,
   inspectElfUnwindRangesInputSchema,
 } from "../../domain/native/elfUnwindRanges.js";
-import {
-  ElfUnwindSymbolTextFailure,
-  parseElfUnwindRanges,
-} from "./ElfUnwindTables.js";
+import { parseElfUnwindRangesFromHandle } from "./ElfUnwindTables.js";
 import {
   UNWIND_FN_A,
   UNWIND_FN_A_SIZE,
@@ -20,6 +17,7 @@ import {
   UNWIND_PERSONALITY,
   UNWIND_SUFFIX_VA,
   elfUnwindAbsentFixture,
+  elfUnwindByteSource,
   elfUnwindFixture,
   elfUnwindSectionlessFixture,
 } from "./ElfUnwindTables.fixture.js";
@@ -53,26 +51,138 @@ vi.mock("../../domain/elfStringTable.js", async (importOriginal) => {
 
 const address = (value: number): string => `0x${value.toString(16)}`;
 
-const parse = (bytes: Buffer, raw: Readonly<Record<string, unknown>> = {}) => {
+it.each([true, false])(
+  "retains valid ten-byte sign padding in CIE alignment (little %s)",
+  async (little) => {
+    const report = await parse(
+      elfUnwindFixture({
+        little,
+        header: "match",
+        leb128: { dataAlignment: [0xfc, ...Array<number>(8).fill(0xff), 0x7f] },
+      }),
+    );
+    expect(report.cies[0]?.data_alignment).toBe(-4);
+    expect(report.coverage).toMatchObject({
+      status: "complete",
+      total_ranges: 2,
+    });
+  },
+);
+
+it("rejects an overflowing ULEB pointer instead of wrapping it to a fabricated function address", async () => {
+  const report = await parse(
+    elfUnwindFixture({
+      header: "absent",
+      leb128: {
+        pointers: {
+          signed: false,
+          start: [0x81, ...Array<number>(8).fill(0x80), 0x02],
+          size: [0x20],
+        },
+      },
+    }),
+  );
+  expect(report.ranges.map((r) => r.start)).toEqual([address(UNWIND_FN_B)]);
+  expect(report.coverage.status).toBe("partial");
+});
+
+it("rejects a padded negative SLEB range instead of publishing a huge positive size", async () => {
+  const report = await parse(
+    elfUnwindFixture({
+      header: "absent",
+      leb128: {
+        pointers: {
+          signed: true,
+          start: [0x80, 0x82, 0x80, 0x02],
+          size: [...Array<number>(9).fill(0xff), 0x7f],
+        },
+      },
+    }),
+  );
+  expect(report.ranges.map((r) => r.start)).toEqual([address(UNWIND_FN_B)]);
+  expect(report.limitations).toContain("An FDE address range is negative.");
+});
+
+it.each([
+  {
+    signed: false,
+    start: [...Array<number>(9).fill(0xff), 0x01],
+    expected: "0xffffffffffffffff",
+  },
+  {
+    signed: true,
+    start: [...Array<number>(9).fill(0x80), 0x7f],
+    expected: "0x8000000000000000",
+  },
+  {
+    signed: true,
+    start: [...Array<number>(9).fill(0xff), 0x00],
+    expected: "0x7fffffffffffffff",
+  },
+])(
+  "retains the representable LEB128 boundary $expected",
+  async ({ signed, start, expected }) => {
+    const report = await parse(
+      elfUnwindFixture({
+        header: "absent",
+        leb128: { pointers: { signed, start, size: [0x20] } },
+      }),
+    );
+    expect(report.ranges.map((r) => r.start)).toContain(expected);
+    expect(report.coverage.status).toBe("complete");
+  },
+);
+
+it.each(
+  [
+    [...Array<number>(9).fill(0x80), 0x01],
+    [...Array<number>(9).fill(0xff), 0x7e],
+    Array<number>(10).fill(0x80),
+  ].map((start) => ({ start })),
+)(
+  "omits an overflowing or unterminated signed operand and retains its sibling FDE (%j)",
+  async ({ start }) => {
+    const report = await parse(
+      elfUnwindFixture({
+        header: "absent",
+        leb128: { pointers: { signed: true, start, size: [0x20] } },
+      }),
+    );
+    expect(report.ranges.map((r) => r.start)).toEqual([address(UNWIND_FN_B)]);
+    expect(report.coverage.status).toBe("partial");
+  },
+);
+
+const parse = async (
+  bytes: Buffer,
+  raw: Readonly<Record<string, unknown>> = {},
+  readRange?: NativeByteSource["readRange"],
+  signal?: AbortSignal,
+) => {
   const input = inspectElfUnwindRangesInputSchema.parse({
     path: "/artifacts/unwind.elf",
     ...raw,
   });
+  const source =
+    readRange === undefined
+      ? elfUnwindByteSource(bytes)
+      : { size: bytes.length, readRange };
   return elfUnwindRangesSchema.parse(
-    parseElfUnwindRanges(
-      bytes,
+    await parseElfUnwindRangesFromHandle(
+      source,
       {
         path: input.path,
         sha256: createHash("sha256").update(bytes).digest("hex"),
         bytes: bytes.length,
       },
       input,
+      signal,
     ),
   );
 };
 
-it("recovers two ELF64 ranges, an indirect personality, and a header mismatch", () => {
-  const report = parse(elfUnwindFixture());
+it("recovers two ELF64 ranges, an indirect personality, and a header mismatch", async () => {
+  const report = await parse(elfUnwindFixture());
   expect(report.format).toBe("elf64");
   expect(report.byte_order).toBe("little");
   expect(report.machine).toBe(62);
@@ -160,20 +270,35 @@ it("recovers two ELF64 ranges, an indirect personality, and a header mismatch", 
   );
 });
 
-it("agrees with a header whose search table names the same FDE starts", () => {
-  const report = parse(elfUnwindFixture({ header: "match" }));
-  expect(report.coverage.eh_frame_hdr_agreement).toBe("agree");
-  expect(report.coverage.status).toBe("complete");
-  expect(report.eh_frame_hdr).toMatchObject({
-    status: "present",
-    version: 1,
-    fde_count: 2,
-    table_entries: 2,
-    eh_frame_pointer: "0x401000",
-  });
-  expect(report.limitations).not.toContain(
-    "The .eh_frame_hdr binary search table does not match the decoded FDEs.",
-  );
+it("keeps separate symbol terminators in either order under an agreeing header", async () => {
+  const bytes = elfUnwindFixture({ header: "match" });
+  const { offset } = findSection(bytes, ".symtab");
+  const alpha = bytes.readUInt32LE(offset + 24);
+  const mid = bytes.readUInt32LE(offset + 48);
+  bytes.writeBigUInt64LE(BigInt(UNWIND_FN_B), offset + 48 + 8);
+  for (const [first, second, names] of [
+    [alpha, mid, ["alpha", "mid"]],
+    [mid, alpha, ["mid", "alpha"]],
+  ] as const) {
+    bytes.writeUInt32LE(first, offset + 24);
+    bytes.writeUInt32LE(second, offset + 48);
+    const report = await parse(bytes);
+    expect(report.ranges.map(({ symbol }) => symbol?.text)).toEqual(names);
+    expect(report.coverage).toMatchObject({
+      status: "complete",
+      eh_frame_hdr_agreement: "agree",
+    });
+    expect(report.eh_frame_hdr).toMatchObject({
+      status: "present",
+      version: 1,
+      fde_count: 2,
+      table_entries: 2,
+      eh_frame_pointer: "0x401000",
+    });
+    expect(report.limitations).not.toContain(
+      "The .eh_frame_hdr binary search table does not match the decoded FDEs.",
+    );
+  }
 });
 
 it.each([
@@ -181,8 +306,8 @@ it.each([
   ["elf64", 64, true, 62],
 ] as const)(
   "decodes %s %s-endian unwind tables",
-  (_label, bits, little, machine) => {
-    const report = parse(
+  async (_label, bits, little, machine) => {
+    const report = await parse(
       elfUnwindFixture({ bits, little, machine, header: "match" }),
     );
     expect(report.format).toBe(bits === 64 ? "elf64" : "elf32");
@@ -199,17 +324,19 @@ it.each([
   },
 );
 
-it("reads a version 3 return-address register and a dynsym name", () => {
-  const version = parse(elfUnwindFixture({ version3: true, header: "match" }));
+it("reads a version 3 return-address register and a dynsym name", async () => {
+  const version = await parse(
+    elfUnwindFixture({ version3: true, header: "match" }),
+  );
   expect(version.cies[0]).toMatchObject({
     version: 3,
     return_address_register: 128,
   });
-  const dynsym = parse(
+  const dynsym = await parse(
     elfUnwindFixture({ symbolSource: "dynsym", header: "match" }),
   );
   expect(dynsym.ranges[0]?.symbol?.text).toBe("alpha");
-  const unnamed = parse(
+  const unnamed = await parse(
     elfUnwindFixture({ symbolSource: "none", header: "match" }),
   );
   expect(unnamed.coverage).toMatchObject({
@@ -219,10 +346,10 @@ it("reads a version 3 return-address register and a dynsym name", () => {
   });
 });
 
-it("keeps earlier FDEs when a later record is truncated", () => {
-  const report = parse(elfUnwindFixture({ truncate: true }));
+it("keeps earlier FDEs when a later record is truncated", async () => {
+  const report = await parse(elfUnwindFixture({ truncate: true }));
   expect(report.eh_frame.status).toBe("incomplete");
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.ranges.map((range) => range.start)).toEqual([
     address(UNWIND_FN_A),
   ]);
@@ -233,27 +360,46 @@ it("keeps earlier FDEs when a later record is truncated", () => {
   expect(report.eh_frame.status).not.toBe("absent");
 });
 
-it("reports trailing bytes after the terminator as incomplete coverage", () => {
-  const report = parse(
+it("reports trailing bytes after the terminator as incomplete coverage", async () => {
+  const report = await parse(
     elfUnwindFixture({ trailingByte: true, header: "match" }),
   );
   expect(report.ranges).toHaveLength(2);
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toContain(
     "Non-zero bytes follow the .eh_frame terminator.",
   );
 });
 
-it("reports a missing header without dropping decoded ranges", () => {
-  const report = parse(elfUnwindFixture({ header: "absent" }));
+it("rejects a short positional read of an admitted frame range", async () => {
+  const bytes = elfUnwindFixture({ header: "match" });
+  const { offset: frameOffset } = findSection(bytes, ".eh_frame");
+  let frameReads = 0;
+  await expect(
+    parse(bytes, {}, async (offset, length) => {
+      if (offset === frameOffset) {
+        frameReads++;
+        return Buffer.alloc(0);
+      }
+      return bytes.subarray(offset, offset + length);
+    }),
+  ).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/unwind range.*admitted file extent/iu),
+  });
+  expect(frameReads).toBe(1);
+});
+
+it("reports a missing header without dropping decoded ranges", async () => {
+  const report = await parse(elfUnwindFixture({ header: "absent" }));
   expect(report.ranges).toHaveLength(2);
   expect(report.eh_frame_hdr.status).toBe("absent");
   expect(report.coverage.eh_frame_hdr_agreement).toBe("unavailable");
   expect(report.coverage.status).toBe("complete");
 });
 
-it("reads one agreeing range from PT_GNU_EH_FRAME when section headers are absent", () => {
-  const report = parse(elfUnwindSectionlessFixture());
+it("reads one agreeing range from PT_GNU_EH_FRAME when section headers are absent", async () => {
+  const report = await parse(elfUnwindSectionlessFixture());
   expect(report.eh_frame).toMatchObject({
     status: "present",
     source: "program",
@@ -276,9 +422,9 @@ it("reads one agreeing range from PT_GNU_EH_FRAME when section headers are absen
   expect(report.limitations).toContain(".debug_frame presence is unknown.");
 });
 
-it("bounds a header-located .eh_frame without a terminator by its search table", () => {
+it("bounds a header-located .eh_frame without a terminator by its search table", async () => {
   const bytes = elfUnwindSectionlessFixture({ unterminated: "decodable" });
-  const report = parse(bytes);
+  const report = await parse(bytes);
   expect(report.eh_frame).toMatchObject({
     status: "present",
     source: "program",
@@ -300,8 +446,8 @@ it("bounds a header-located .eh_frame without a terminator by its search table",
   );
 });
 
-it("stops a header-located .eh_frame without a search table at its first undecodable record", () => {
-  const report = parse(
+it("stops a header-located .eh_frame without a search table at its first undecodable record", async () => {
+  const report = await parse(
     elfUnwindSectionlessFixture({
       unterminated: "undecodable",
       emptyTable: true,
@@ -315,7 +461,7 @@ it("stops a header-located .eh_frame without a search table at its first undecod
     address(UNWIND_FN_A),
   ]);
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     total_ranges: 1,
     examined_records: 3,
   });
@@ -324,19 +470,19 @@ it("stops a header-located .eh_frame without a search table at its first undecod
   );
 });
 
-it("rejects a program-header table outside the file before decoding unwind tables", () => {
+it("rejects a program-header table outside the file before decoding unwind tables", async () => {
   const bytes = elfUnwindSectionlessFixture();
   bytes.writeBigUInt64LE(BigInt(bytes.length), 32);
-  expect(() => parse(bytes)).toThrow(
+  await expect(parse(bytes)).rejects.toThrow(
     expect.objectContaining({ kind: "malformed" }),
   );
 });
 
-it("reports .eh_frame as unknown when the header cannot locate it", () => {
+it("reports .eh_frame as unknown when the header cannot locate it", async () => {
   const bytes = elfUnwindSectionlessFixture();
   const headerOffset = Number(bytes.readBigUInt64LE(64 + 56 + 8));
   bytes[headerOffset + 1] = 0x0f;
-  const report = parse(bytes);
+  const report = await parse(bytes);
   expect(report.eh_frame).toEqual({
     status: "unknown",
     source: null,
@@ -345,7 +491,7 @@ it("reports .eh_frame as unknown when the header cannot locate it", () => {
   expect(report.eh_frame_hdr.status).toBe("incomplete");
   expect(report.ranges).toEqual([]);
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     total_ranges: 0,
     total_cies: 0,
     eh_frame_hdr_agreement: "unavailable",
@@ -355,8 +501,8 @@ it("reports .eh_frame as unknown when the header cannot locate it", () => {
   );
 });
 
-it("reports known absence when no unwind section or segment is declared", () => {
-  const report = parse(elfUnwindAbsentFixture());
+it("reports known absence when no unwind section or segment is declared", async () => {
+  const report = await parse(elfUnwindAbsentFixture());
   expect(report.eh_frame.status).toBe("absent");
   expect(report.debug_frame.status).toBe("absent");
   expect(report.coverage).toMatchObject({
@@ -368,8 +514,8 @@ it("reports known absence when no unwind section or segment is declared", () => 
   expect(report.ranges).toEqual([]);
 });
 
-it("pages ranges without changing coverage totals", () => {
-  const report = parse(elfUnwindFixture(), { offset: 1, limit: 1 });
+it("pages ranges without changing coverage totals", async () => {
+  const report = await parse(elfUnwindFixture(), { offset: 1, limit: 1 });
   expect(report.ranges.map((range) => range.index)).toEqual([1]);
   expect(report.page).toEqual({
     offset: 1,
@@ -378,7 +524,7 @@ it("pages ranges without changing coverage totals", () => {
     total: 2,
     next_offset: null,
   });
-  const past = parse(elfUnwindFixture(), { offset: 9, limit: 1 });
+  const past = await parse(elfUnwindFixture(), { offset: 9, limit: 1 });
   expect(past.ranges).toEqual([]);
   expect(past.page).toMatchObject({
     offset: 9,
@@ -388,8 +534,8 @@ it("pages ranges without changing coverage totals", () => {
   });
 });
 
-it("returns only the CIEs a page's ranges name, however many the image has", () => {
-  const report = parse(elfUnwindFixture({ extraCies: 500 }), {
+it("returns only the CIEs a page's ranges name, however many the image has", async () => {
+  const report = await parse(elfUnwindFixture({ extraCies: 500 }), {
     offset: 1,
     limit: 1,
   });
@@ -401,47 +547,42 @@ it("returns only the CIEs a page's ranges name, however many the image has", () 
     total_cies: 502,
     examined_records: 504,
   });
-  const first = parse(elfUnwindFixture({ extraCies: 500 }), { limit: 1 });
+  const first = await parse(elfUnwindFixture({ extraCies: 500 }), { limit: 1 });
   expect(first.cies.map((cie) => cie.index)).toEqual([0]);
   expect(first.coverage.total_cies).toBe(502);
 });
 
-it("fails closed when the CIE or FDE budget is exhausted", () => {
-  const bytes = elfUnwindFixture();
-  const input = inspectElfUnwindRangesInputSchema.parse({
-    path: "/artifacts/unwind.elf",
-    max_ranges: 1,
-  });
-  expect(() =>
-    parseElfUnwindRanges(
-      bytes,
-      {
-        path: input.path,
-        sha256: "a".repeat(64),
-        bytes: bytes.length,
-      },
-      input,
-    ),
-  ).toThrow(ArtifactReaderFailure);
-});
+it.each([
+  { field: "CIE", maximum: 1, suffixNames: 0 },
+  { field: "FDE", maximum: 2, suffixNames: 1 },
+])(
+  "fails closed when the $field budget is exhausted",
+  async ({ field, maximum, suffixNames }) => {
+    const bytes = elfUnwindFixture({ suffixNames });
+    await expect(parse(bytes, { max_ranges: maximum })).rejects.toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "limit",
+          format: "elf-unwind-ranges",
+          field,
+          offset: expect.any(Number),
+          limit: { name: "max_ranges", maximum },
+        }),
+      }),
+    );
+  },
+);
 
-it("stops when the caller has already cancelled", () => {
-  const bytes = elfUnwindFixture();
-  const input = inspectElfUnwindRangesInputSchema.parse({
-    path: "/artifacts/unwind.elf",
+it("preserves caller cancellation without reading a header", async () => {
+  const reason = Symbol("stop before unwind inspection");
+  const read = vi.fn(async () => Buffer.alloc(0));
+  await expect(
+    parse(elfUnwindFixture(), {}, read, AbortSignal.abort(reason)),
+  ).rejects.toMatchObject({
+    reason: "cancelled",
+    cause: reason,
   });
-  expect(() =>
-    parseElfUnwindRanges(
-      bytes,
-      {
-        path: input.path,
-        sha256: "a".repeat(64),
-        bytes: bytes.length,
-      },
-      input,
-      AbortSignal.abort(),
-    ),
-  ).toThrow(ArtifactReaderFailure);
+  expect(read).not.toHaveBeenCalled();
 });
 
 const findSection = (bytes: Buffer, name: string) => {
@@ -462,8 +603,35 @@ const findSection = (bytes: Buffer, name: string) => {
   throw new Error(`fixture has no ${name}`);
 };
 
-it("keeps .eh_frame ranges when .debug_frame is SHT_NOBITS", () => {
-  const report = parse(
+it.each(["compressed-symbols", "compressed-names", "non-string-names"])(
+  "retains unwind ranges without interpreting %s as ordinary symbol storage",
+  async (storage) => {
+    const bytes = elfUnwindFixture({ header: "match" });
+    expect((await parse(bytes)).ranges[0]?.symbol?.text).toBe("alpha");
+    const section = findSection(
+      bytes,
+      storage === "compressed-symbols" ? ".symtab" : ".strtab",
+    );
+    if (storage === "non-string-names")
+      bytes.writeUInt32LE(1, section.headerOffset + 4);
+    else bytes.writeBigUInt64LE(0x800n, section.headerOffset + 8);
+
+    const report = await parse(bytes);
+    expect(report.ranges.map(({ start }) => start)).toEqual([
+      address(UNWIND_FN_A),
+      address(UNWIND_FN_B),
+    ]);
+    expect(report.ranges.map(({ symbol }) => symbol)).toEqual([null, null]);
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      ranges_with_symbols: 0,
+      eh_frame_hdr_agreement: "agree",
+    });
+  },
+);
+
+it("keeps .eh_frame ranges when .debug_frame is SHT_NOBITS", async () => {
+  const report = await parse(
     elfUnwindFixture({
       header: "match",
       backing: { section: ".debug_frame", kind: "nobits" },
@@ -476,7 +644,7 @@ it("keeps .eh_frame ranges when .debug_frame is SHT_NOBITS", () => {
     address(UNWIND_FN_B),
   ]);
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     eh_frame_hdr_agreement: "agree",
   });
   expect(report.limitations).toContain(
@@ -484,8 +652,8 @@ it("keeps .eh_frame ranges when .debug_frame is SHT_NOBITS", () => {
   );
 });
 
-it("reports a .debug_frame past the end of file without a file range", () => {
-  const report = parse(
+it("reports a .debug_frame past the end of file without a file range", async () => {
+  const report = await parse(
     elfUnwindFixture({
       header: "match",
       backing: { section: ".debug_frame", kind: "past-eof" },
@@ -493,15 +661,15 @@ it("reports a .debug_frame past the end of file without a file range", () => {
   );
   expect(report.debug_frame).toEqual({ status: "incomplete", location: null });
   expect(report.ranges).toHaveLength(2);
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
 });
 
-it("decodes the in-file prefix of an .eh_frame that runs past the end of file", () => {
+it("decodes the in-file prefix of an .eh_frame that runs past the end of file", async () => {
   const bytes = elfUnwindFixture({
     header: "match",
     backing: { section: ".eh_frame", kind: "past-eof" },
   });
-  const report = parse(bytes);
+  const report = await parse(bytes);
   const { offset } = findSection(bytes, ".eh_frame");
   expect(report.eh_frame).toEqual({
     status: "incomplete",
@@ -510,7 +678,7 @@ it("decodes the in-file prefix of an .eh_frame that runs past the end of file", 
   });
   expect(report.ranges).toHaveLength(2);
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     total_ranges: 2,
     eh_frame_hdr_agreement: "agree",
   });
@@ -522,20 +690,29 @@ it("decodes the in-file prefix of an .eh_frame that runs past the end of file", 
 it.each([
   [".eh_frame", ".eh_frame is declared but not file-backed."],
   [".eh_frame_hdr", ".eh_frame_hdr is declared but not file-backed."],
-] as const)("reports a SHT_NOBITS %s without a file range", (section, text) => {
-  const report = parse(
-    elfUnwindFixture({ header: "match", backing: { section, kind: "nobits" } }),
-  );
-  const table = section === ".eh_frame" ? report.eh_frame : report.eh_frame_hdr;
-  expect(table.status).toBe("incomplete");
-  expect(table.location).toBeNull();
-  expect(report.coverage.status).toBe("incomplete");
-  expect(report.limitations).toContain(text);
-  if (section === ".eh_frame_hdr") expect(report.ranges).toHaveLength(2);
-});
+] as const)(
+  "reports a SHT_NOBITS %s without a file range",
+  async (section, text) => {
+    const report = await parse(
+      elfUnwindFixture({
+        header: "match",
+        backing: { section, kind: "nobits" },
+      }),
+    );
+    const table =
+      section === ".eh_frame" ? report.eh_frame : report.eh_frame_hdr;
+    expect(table.status).toBe("incomplete");
+    expect(table.location).toBeNull();
+    expect(report.coverage.status).toBe("partial");
+    expect(report.limitations).toContain(text);
+    if (section === ".eh_frame_hdr") expect(report.ranges).toHaveLength(2);
+  },
+);
 
-it("resolves .eh_frame datarel pointers against the GOT, not .eh_frame_hdr", () => {
-  const report = parse(elfUnwindFixture({ header: "match", datarel: "got" }));
+it("resolves .eh_frame datarel pointers against the GOT, not .eh_frame_hdr", async () => {
+  const report = await parse(
+    elfUnwindFixture({ header: "match", datarel: "got" }),
+  );
   expect(report.cies[0]?.pointer_encoding).toEqual({
     raw: 0x3b,
     name: "datarel|sdata4",
@@ -554,23 +731,25 @@ it("resolves .eh_frame datarel pointers against the GOT, not .eh_frame_hdr", () 
   expect(UNWIND_GOT_VA).not.toBe(UNWIND_HDR_VA);
 });
 
-it("does not use a non-allocated GOT section as the data-relative base", () => {
+it("does not use a non-allocated GOT section as the data-relative base", async () => {
   const bytes = elfUnwindFixture({ header: "match", datarel: "got" });
   const { headerOffset } = findSection(bytes, ".got.plt");
   bytes.writeBigUInt64LE(1n, headerOffset + 8);
   bytes.writeBigUInt64LE(0x500000n, headerOffset + 16);
-  const report = parse(bytes);
-  expect(report.coverage.status).toBe("incomplete");
+  const report = await parse(bytes);
+  expect(report.coverage.status).toBe("partial");
   expect(report.ranges.map((range) => range.start)).not.toContain("0x4fc100");
 });
 
-it("leaves .eh_frame datarel pointers unresolved when no GOT is declared", () => {
-  const report = parse(elfUnwindFixture({ header: "match", datarel: "none" }));
+it("leaves .eh_frame datarel pointers unresolved when no GOT is declared", async () => {
+  const report = await parse(
+    elfUnwindFixture({ header: "match", datarel: "none" }),
+  );
   expect(report.ranges.map((range) => range.start)).toEqual([
     address(UNWIND_FN_B),
   ]);
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     total_ranges: 1,
     eh_frame_hdr_agreement: "disagree",
   });
@@ -579,11 +758,13 @@ it("leaves .eh_frame datarel pointers unresolved when no GOT is declared", () =>
   );
 });
 
-it("caps symbol lookup across .symtab and .dynsym together", () => {
-  const report = parse(elfUnwindFixture({ header: "match", symbolCap: true }));
+it("caps symbol lookup across .symtab and .dynsym together", async () => {
+  const report = await parse(
+    elfUnwindFixture({ header: "match", symbolCap: true }),
+  );
   expect(report.ranges).toHaveLength(2);
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     ranges_with_symbols: 0,
   });
   expect(report.limitations).toContain(
@@ -591,12 +772,26 @@ it("caps symbol lookup across .symtab and .dynsym together", () => {
   );
 });
 
+it("keeps the symbol scan allowance for later tables when an earlier table has no string table", async () => {
+  const bytes = elfUnwindFixture({ header: "match", symbolCap: true });
+  const section = findSection(bytes, ".symtab");
+  bytes.writeUInt32LE(0, section.headerOffset + 40);
+  const report = await parse(bytes);
+  expect(report.ranges[0]?.symbol?.text).toBe("alpha");
+  expect(report.coverage.status).toBe("partial");
+  expect(report.limitations).not.toContain(
+    "Symbol tables were capped at 65536 combined entries.",
+  );
+});
+
 it.each([".eh_frame", ".eh_frame_hdr"] as const)(
   "reports coverage incomplete when a duplicate %s is ignored",
-  (duplicate) => {
-    const report = parse(elfUnwindFixture({ header: "match", duplicate }));
+  async (duplicate) => {
+    const report = await parse(
+      elfUnwindFixture({ header: "match", duplicate }),
+    );
     expect(report.ranges).toHaveLength(2);
-    expect(report.coverage.status).toBe("incomplete");
+    expect(report.coverage.status).toBe("partial");
     expect(report.limitations).toContain(
       `Multiple ${duplicate} sections were declared; only the first was decoded.`,
     );
@@ -605,8 +800,8 @@ it.each([".eh_frame", ".eh_frame_hdr"] as const)(
 
 it.each(["duplicate-row", "shared-fde"] as const)(
   "reports header disagreement for a %s search table",
-  (header) => {
-    const report = parse(elfUnwindFixture({ header }));
+  async (header) => {
+    const report = await parse(elfUnwindFixture({ header }));
     expect(report.ranges).toHaveLength(2);
     expect(report.coverage.eh_frame_hdr_agreement).toBe("disagree");
     expect(report.limitations).toContain(
@@ -620,8 +815,8 @@ it.each([
   ["elf32 big-endian", 32, false],
 ] as const)(
   "keeps a 4-byte CIE ID after a 64-bit .eh_frame length (%s)",
-  (_label, bits, little) => {
-    const report = parse(
+  async (_label, bits, little) => {
+    const report = await parse(
       elfUnwindFixture({
         bits,
         little,
@@ -650,8 +845,8 @@ it.each([
   ["elf32 big-endian", 32, false],
 ] as const)(
   "resolves .eh_frame datarel pointers against DT_PLTGOT (%s)",
-  (_label, bits, little) => {
-    const report = parse(
+  async (_label, bits, little) => {
+    const report = await parse(
       elfUnwindFixture({ bits, little, header: "match", datarel: "dynamic" }),
     );
     expect(report.ranges.map((range) => range.start)).toEqual([
@@ -665,8 +860,86 @@ it.each([
   },
 );
 
-it("caps .eh_frame_hdr rows at the max_ranges budget and marks the comparison incomplete", () => {
-  const report = parse(elfUnwindFixture({ header: "duplicate-row" }), {
+const GOT_UNKNOWN =
+  "A DW_EH_PE_datarel .eh_frame value needs a GOT base that could not be determined; that value is unresolved.";
+
+it.each([
+  ["elf64 little-endian", 64, true],
+  ["elf32 big-endian", 32, false],
+] as const)(
+  "reads DT_PLTGOT through the single PT_DYNAMIC header (%s)",
+  async (_label, bits, little) => {
+    const report = await parse(
+      elfUnwindFixture({
+        bits,
+        little,
+        header: "match",
+        datarel: "dynamic",
+        dynamicPrograms: 1,
+        dynamicSection: false,
+      }),
+    );
+    expect(report.ranges.map((range) => range.start)).toEqual([
+      address(UNWIND_FN_A),
+      address(UNWIND_FN_B),
+    ]);
+    expect(report.coverage.status).toBe("complete");
+    expect(report.limitations).toContain(
+      "DW_EH_PE_datarel .eh_frame values were resolved against the GOT base from DT_PLTGOT.",
+    );
+  },
+);
+
+it.each([
+  ["repeated PT_DYNAMIC headers", { dynamicPrograms: 2 }],
+  ["repeated SHT_DYNAMIC sections", { duplicate: ".dynamic" }],
+] as const)(
+  "keeps the GOT unknown when %s leave the dynamic table ambiguous",
+  async (_label, options) => {
+    const report = await parse(
+      elfUnwindFixture({ header: "match", datarel: "dynamic", ...options }),
+    );
+    expect(report.ranges.map((range) => range.start)).not.toContain(
+      address(UNWIND_FN_A),
+    );
+    expect(report.coverage.status).toBe("partial");
+    expect(report.limitations).toContain(GOT_UNKNOWN);
+  },
+);
+
+it("keeps the GOT unknown when repeated allocated .got.plt sections disagree", async () => {
+  const report = await parse(
+    elfUnwindFixture({
+      header: "match",
+      datarel: "got",
+      duplicate: ".got.plt",
+    }),
+  );
+  expect(report.ranges.map((range) => range.start)).not.toContain(
+    address(UNWIND_FN_A),
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(report.limitations).toContain(GOT_UNKNOWN);
+});
+
+it("keeps the GOT unknown when compressed dynamic storage resembles decoded entries", async () => {
+  const bytes = elfUnwindFixture({ header: "match", datarel: "dynamic" });
+  const section = findSection(bytes, ".dynamic");
+  // The payload still resembles ordinary DT_PLTGOT/DT_NULL entries, but the
+  // declaration makes it opaque compressed storage, not a decoded table.
+  bytes.writeBigUInt64LE(0x800n, section.headerOffset + 8);
+  const report = await parse(bytes);
+  expect(report.ranges.map((range) => range.start)).not.toContain(
+    address(UNWIND_FN_A),
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(report.limitations).toContain(
+    "A DW_EH_PE_datarel .eh_frame value needs a GOT base that could not be determined; that value is unresolved.",
+  );
+});
+
+it("caps .eh_frame_hdr rows at the max_ranges budget and marks the comparison incomplete", async () => {
+  const report = await parse(elfUnwindFixture({ header: "duplicate-row" }), {
     max_ranges: 2,
   });
   expect(report.ranges).toHaveLength(2);
@@ -676,7 +949,7 @@ it("caps .eh_frame_hdr rows at the max_ranges budget and marks the comparison in
     table_entries: 2,
   });
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     eh_frame_hdr_agreement: "unavailable",
   });
   expect(report.limitations).toContain(
@@ -684,8 +957,8 @@ it("caps .eh_frame_hdr rows at the max_ranges budget and marks the comparison in
   );
 });
 
-it("bounds an overstated .eh_frame_hdr fde_count by the section bytes", () => {
-  const report = parse(
+it("bounds an overstated .eh_frame_hdr fde_count by the section bytes", async () => {
+  const report = await parse(
     elfUnwindFixture({ header: "match", headerCount: 0x7fffffff }),
     { max_ranges: 65536 },
   );
@@ -701,8 +974,8 @@ it("bounds an overstated .eh_frame_hdr fde_count by the section bytes", () => {
   );
 });
 
-it("reports an .eh_frame_hdr fde_count above 32 bits as undecoded, keeping the FDEs", () => {
-  const report = parse(
+it("reports an .eh_frame_hdr fde_count above 32 bits as undecoded, keeping the FDEs", async () => {
+  const report = await parse(
     elfUnwindFixture({ header: "match", headerCount: 0x1_0000_0002n }),
   );
   expect(report.ranges).toHaveLength(2);
@@ -717,24 +990,36 @@ it("reports an .eh_frame_hdr fde_count above 32 bits as undecoded, keeping the F
   );
 });
 
-it("reports a header with an omitted search table as present without failing coverage", () => {
-  const report = parse(
-    elfUnwindFixture({ header: "match", headerCount: "omit" }),
-  );
-  expect(report.ranges).toHaveLength(2);
-  expect(report.eh_frame_hdr).toMatchObject({
-    status: "present",
-    fde_count: null,
-    table_entries: 0,
-    fde_count_encoding: { raw: 0xff },
-    table_encoding: { raw: 0xff },
-  });
-  expect(report.coverage.eh_frame_hdr_agreement).toBe("unavailable");
-  expect(report.coverage.status).toBe("complete");
+it("keeps a header with an omitted search table complete with or without a count", async () => {
+  for (const count of [null, 2]) {
+    const bytes = elfUnwindFixture({
+      header: "match",
+      headerCount: count ?? "omit",
+    });
+    bytes[findSection(bytes, ".eh_frame_hdr").offset + 3] = 0xff;
+    const report = await parse(bytes);
+    expect(report.ranges).toHaveLength(2);
+    expect(report.eh_frame_hdr).toMatchObject({
+      status: "present",
+      fde_count: count,
+      table_entries: 0,
+      fde_count_encoding: { raw: count === null ? 0xff : 0x03 },
+      table_encoding: { raw: 0xff },
+    });
+    expect(report.coverage).toMatchObject({
+      status: "complete",
+      eh_frame_hdr_agreement: "unavailable",
+    });
+    expect(report.limitations).not.toContainEqual(
+      expect.stringMatching(/search table.*indirect/iu),
+    );
+  }
 });
 
-it("reports a raw zero LSDA pointer as no LSDA, not the field address", () => {
-  const report = parse(elfUnwindFixture({ header: "match", zeroLsda: true }));
+it("reports a raw zero LSDA pointer as no LSDA, not the field address", async () => {
+  const report = await parse(
+    elfUnwindFixture({ header: "match", zeroLsda: true }),
+  );
   expect(report.cies[1]?.lsda_encoding).toEqual({
     raw: 0x1b,
     name: "pcrel|sdata4",
@@ -746,8 +1031,8 @@ it("reports a raw zero LSDA pointer as no LSDA, not the field address", () => {
   expect(report.coverage.status).toBe("complete");
 });
 
-it("skips an FDE with a raw zero initial location as a discarded entry", () => {
-  const report = parse(
+it("skips an FDE with a raw zero initial location as a discarded entry", async () => {
+  const report = await parse(
     elfUnwindFixture({ header: "match", discardedFde: true }),
   );
   expect(report.ranges.map((range) => range.start)).toEqual([
@@ -765,8 +1050,10 @@ it("skips an FDE with a raw zero initial location as a discarded entry", () => {
   );
 });
 
-it("does not claim PT_GNU_EH_FRAME was ignored when it supplied the header", () => {
-  const report = parse(elfUnwindSectionlessFixture({ sections: ".eh_frame" }));
+it("does not claim PT_GNU_EH_FRAME was ignored when it supplied the header", async () => {
+  const report = await parse(
+    elfUnwindSectionlessFixture({ sections: ".eh_frame" }),
+  );
   expect(report.eh_frame).toMatchObject({
     status: "present",
     source: "section",
@@ -781,8 +1068,8 @@ it("does not claim PT_GNU_EH_FRAME was ignored when it supplied the header", () 
   );
 });
 
-it("notes an ignored PT_GNU_EH_FRAME only when a .eh_frame_hdr section overrides different bytes", () => {
-  const report = parse(
+it("notes an ignored PT_GNU_EH_FRAME only when a .eh_frame_hdr section overrides different bytes", async () => {
+  const report = await parse(
     elfUnwindSectionlessFixture({ sections: ".eh_frame_hdr" }),
   );
   expect(report.eh_frame_hdr.status).toBe("present");
@@ -792,20 +1079,20 @@ it("notes an ignored PT_GNU_EH_FRAME only when a .eh_frame_hdr section overrides
   );
 });
 
-it("uses the load mapping for a non-allocated unwind header", () => {
+it("uses the load mapping for a non-allocated unwind header", async () => {
   const bytes = elfUnwindSectionlessFixture({ sections: ".eh_frame_hdr" });
   const { headerOffset } = findSection(bytes, ".eh_frame_hdr");
   bytes.writeBigUInt64LE(0n, headerOffset + 8);
   bytes.writeBigUInt64LE(0n, headerOffset + 16);
-  const report = parse(bytes);
+  const report = await parse(bytes);
   expect(report.coverage).toMatchObject({
     status: "complete",
     eh_frame_hdr_agreement: "agree",
   });
 });
 
-it("translates and places addresses only through SHF_ALLOC sections", () => {
-  const report = parse(
+it("translates and places addresses only through SHF_ALLOC sections", async () => {
+  const report = await parse(
     elfUnwindSectionlessFixture({
       sections: ".eh_frame",
       nonAllocOverlay: true,
@@ -827,15 +1114,15 @@ it("translates and places addresses only through SHF_ALLOC sections", () => {
   });
 });
 
-it("does not decode FDEs against a CIE with an unrecognized augmentation letter", () => {
-  const report = parse(
+it("does not decode FDEs against a CIE with an unrecognized augmentation letter", async () => {
+  const report = await parse(
     elfUnwindFixture({ header: "match", unknownAugmentation: true }),
   );
   expect(report.cies.map((cie) => cie.augmentation.text)).toEqual(["zPLRB"]);
   expect(report.ranges.map((range) => range.start)).toEqual([
     address(UNWIND_FN_B),
   ]);
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toEqual(
     expect.arrayContaining([
       "A CIE augmentation has an unrecognized letter, so its pointer encodings cannot be trusted; that CIE was not decoded.",
@@ -846,8 +1133,8 @@ it("does not decode FDEs against a CIE with an unrecognized augmentation letter"
 
 it.each([32, 64] as const)(
   "wraps an unsigned pcrel ELF%i initial location at the address width",
-  (bits) => {
-    const report = parse(
+  async (bits) => {
+    const report = await parse(
       elfUnwindFixture({ bits, header: "match", unsignedPcrel: {} }),
     );
     expect(report.ranges[0]).toMatchObject({
@@ -858,8 +1145,8 @@ it.each([32, 64] as const)(
   },
 );
 
-it("wraps an ELF32 FDE end that overflows the address space", () => {
-  const report = parse(
+it("wraps an ELF32 FDE end that overflows the address space", async () => {
+  const report = await parse(
     elfUnwindFixture({
       bits: 32,
       header: "match",
@@ -873,14 +1160,14 @@ it("wraps an ELF32 FDE end that overflows the address space", () => {
   });
 });
 
-it("scans and decodes a symbol name shared by many symbols once, only for FDE starts", () => {
+it("scans and decodes a symbol name shared by many symbols once, only for FDE starts", async () => {
   const bytes = elfUnwindFixture({
     header: "match",
     sharedName: { symbols: 4096, bytes: 60000 },
   });
   stringTable.observed.length = 0;
   stringTable.decoded.length = 0;
-  const report = parse(bytes, { limit: 1 });
+  const report = await parse(bytes, { limit: 1 });
   expect(report.ranges).toHaveLength(1);
   expect(report.ranges[0]?.symbol?.text).toBe("n".repeat(60000));
   expect(report.coverage).toMatchObject({
@@ -894,14 +1181,14 @@ it("scans and decodes a symbol name shared by many symbols once, only for FDE st
   expect(shared(stringTable.decoded)).toBe(1);
 });
 
-it("skips an FDE whose initial location is indirect instead of reporting the pointer slot", () => {
-  const report = parse(
+it("skips an FDE whose initial location is indirect instead of reporting the pointer slot", async () => {
+  const report = await parse(
     elfUnwindFixture({ header: "match", indirectStart: true }),
   );
   expect(report.ranges.map((range) => range.start)).toEqual([
     address(UNWIND_FN_B),
   ]);
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toEqual(
     expect.arrayContaining([
       "1 FDE has an indirect initial location that was not dereferenced; its function start is unknown and it was skipped.",
@@ -910,24 +1197,24 @@ it("skips an FDE whose initial location is indirect instead of reporting the poi
   );
 });
 
-it("does not locate .eh_frame through an indirect .eh_frame_hdr eh_frame_ptr", () => {
+it("does not locate .eh_frame through an indirect .eh_frame_hdr eh_frame_ptr", async () => {
   const bytes = elfUnwindSectionlessFixture();
   bytes[Number(bytes.readBigUInt64LE(64 + 56 + 8)) + 1] = 0x9b;
-  const report = parse(bytes);
+  const report = await parse(bytes);
   expect(report.eh_frame.status).toBe("unknown");
   expect(report.ranges).toEqual([]);
   expect(report.eh_frame_hdr).toMatchObject({
     status: "incomplete",
     eh_frame_pointer: null,
   });
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toContain(
     "The .eh_frame_hdr eh_frame_ptr is indirect and was not dereferenced, so it does not locate .eh_frame.",
   );
 });
 
-it("stops a header-located .eh_frame without a search table at a CIE with an unrecognized augmentation", () => {
-  const report = parse(
+it("stops a header-located .eh_frame without a search table at a CIE with an unrecognized augmentation", async () => {
+  const report = await parse(
     elfUnwindSectionlessFixture({
       unterminated: "rejected-cie",
       emptyTable: true,
@@ -937,7 +1224,7 @@ it("stops a header-located .eh_frame without a search table at a CIE with an unr
     address(UNWIND_FN_A),
   ]);
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     total_ranges: 1,
     examined_records: 3,
   });
@@ -949,33 +1236,103 @@ it("stops a header-located .eh_frame without a search table at a CIE with an unr
   );
 });
 
-it("reports coverage incomplete when a duplicate PT_GNU_EH_FRAME is ignored", () => {
-  const report = parse(
+it("reports coverage incomplete when a duplicate PT_GNU_EH_FRAME is ignored", async () => {
+  const report = await parse(
     elfUnwindSectionlessFixture({ duplicateProgramHeader: true }),
   );
   expect(report.ranges.map((range) => range.start)).toEqual([
     address(UNWIND_FN_A),
   ]);
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toContain(
     "Multiple PT_GNU_EH_FRAME program headers were declared; only the first was decoded.",
   );
 });
 
-it("bounds the symbol-name text decoded for one page by its own allowance", () => {
+it("bounds the symbol-name text decoded for one page by its own allowance", async () => {
   const bytes = elfUnwindFixture({ header: "absent", suffixNames: 300 });
-  const page = parse(bytes, { limit: 200 });
+  const page = await parse(bytes, { limit: 200 });
   expect(page.ranges).toHaveLength(200);
   expect(page.ranges[2]).toMatchObject({
     start: address(UNWIND_SUFFIX_VA),
     symbol: { text: "s".repeat(65535) },
   });
-  expect(() => parse(bytes, { limit: 300 })).toThrow(
-    ElfUnwindSymbolTextFailure,
+  await expect(parse(bytes, { limit: 300 })).rejects.toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: { name: "symbol_name_text_bytes", maximum: 16 * 1024 * 1024 },
+      }),
+    }),
   );
 });
 
-it("reads a long CIE augmentation as one byte slice instead of building it per character", () => {
+it("reads only the selected symbol name when adjacent ranges share string bytes", async () => {
+  const bytes = elfUnwindFixture({ header: "absent", suffixNames: 2 });
+  const { offset } = findSection(bytes, ".strtab");
+  const reads: { offset: number; length: number }[] = [];
+  stringTable.observed.length = 0;
+  const page = { offset: 2, limit: 1 };
+  const report = await parse(bytes, page, async (at, length) => {
+    if (at === offset + 1 || at === offset + 2)
+      reads.push({ offset: at, length });
+    return bytes.subarray(at, at + length);
+  });
+  expect(report.ranges).toMatchObject([
+    {
+      index: 2,
+      start: address(UNWIND_SUFFIX_VA),
+      size: "4",
+      symbol: { text: "s".repeat(65535), trust: "untrusted" },
+    },
+  ]);
+  expect(reads.filter(({ length }) => length < 65536)).toEqual([
+    { offset: offset + 1, length: 65535 },
+  ]);
+  expect(stringTable.observed.filter((length) => length >= 65534)).toEqual([
+    65535,
+  ]);
+});
+
+it("refills a symbol window that ends before a different name's terminator", async () => {
+  const fixture = elfUnwindFixture({ header: "absent", suffixNames: 2 });
+  const { headerOffset } = findSection(fixture, ".strtab");
+  const { offset: symbols } = findSection(fixture, ".symtab");
+  const first = "a".repeat(32768);
+  const second = "b".repeat(32768);
+  const strings = Buffer.from(`\0${first}\0${second}\0`, "latin1");
+  const bytes = Buffer.concat([fixture, strings]);
+  bytes.writeBigUInt64LE(BigInt(fixture.length), headerOffset + 24);
+  bytes.writeBigUInt64LE(BigInt(strings.length), headerOffset + 32);
+  bytes.writeUInt32LE(first.length + 2, symbols + 48);
+  const report = await parse(bytes, { offset: 2, limit: 2 });
+  expect(report.ranges.map(({ symbol }) => symbol?.text)).toEqual([
+    first,
+    second,
+  ]);
+  expect(report.coverage.ranges_with_symbols).toBe(2);
+});
+
+it("completes a CIE whose fields follow a NUL at the read window boundary", async () => {
+  const bytes = elfUnwindFixture({ header: "match", longAugmentation: 65522 });
+  const report = await parse(bytes);
+  expect(report.ranges.map(({ start }) => start)).toEqual([
+    address(UNWIND_FN_A),
+    address(UNWIND_FN_B),
+  ]);
+  expect(report.coverage).toMatchObject({
+    status: "complete",
+    total_ranges: 2,
+  });
+  expect(report.cies[0]).toMatchObject({
+    code_alignment: 1,
+    data_alignment: -4,
+    return_address_register: 16,
+    signal_frame: true,
+  });
+});
+
+it("reads a long CIE augmentation as one byte slice instead of building it per character", async () => {
   const letters = 1 << 20;
   const bytes = elfUnwindFixture({
     header: "match",
@@ -983,7 +1340,7 @@ it("reads a long CIE augmentation as one byte slice instead of building it per c
   });
   const fromCharCode = vi.spyOn(String, "fromCharCode");
   try {
-    const report = parse(bytes, { limit: 1 });
+    const report = await parse(bytes, { limit: 1 });
     expect(report.cies[0]).toMatchObject({
       augmentation: { text: `zRS${"S".repeat(letters)}` },
       signal_frame: true,
@@ -995,10 +1352,10 @@ it("reads a long CIE augmentation as one byte slice instead of building it per c
   }
 });
 
-it("does not compare or bound by an .eh_frame_hdr search table with an indirect encoding", () => {
+it("does not compare or bound by an .eh_frame_hdr search table with an indirect encoding", async () => {
   const bytes = elfUnwindFixture({ header: "match" });
   bytes[findSection(bytes, ".eh_frame_hdr").offset + 3] = 0xbb;
-  const report = parse(bytes);
+  const report = await parse(bytes);
   expect(report.ranges.map((range) => range.start)).toEqual([
     address(UNWIND_FN_A),
     address(UNWIND_FN_B),
@@ -1009,7 +1366,7 @@ it("does not compare or bound by an .eh_frame_hdr search table with an indirect 
     fde_count: 2,
   });
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     eh_frame_hdr_agreement: "unavailable",
   });
   expect(report.limitations).toContain(
@@ -1020,17 +1377,17 @@ it("does not compare or bound by an .eh_frame_hdr search table with an indirect 
     unterminated: "decodable",
   });
   sectionless[Number(sectionless.readBigUInt64LE(64 + 56 + 8)) + 3] = 0xbb;
-  const unbounded = parse(sectionless);
-  expect(unbounded.coverage.status).toBe("incomplete");
+  const unbounded = await parse(sectionless);
+  expect(unbounded.coverage.status).toBe("partial");
   expect(unbounded.limitations).not.toContain(
     "The .eh_frame located only through the .eh_frame_hdr eh_frame_ptr has no section bounds and no terminator after the last FDE its search table names; bytes after that FDE were not decoded.",
   );
 });
 
-it("leaves a non-zero indirect .eh_frame_hdr FDE count unresolved", () => {
+it("leaves a non-zero indirect .eh_frame_hdr FDE count unresolved", async () => {
   const bytes = elfUnwindFixture({ header: "match" });
   bytes[findSection(bytes, ".eh_frame_hdr").offset + 2] = 0x83;
-  const report = parse(bytes);
+  const report = await parse(bytes);
   expect(report.ranges).toHaveLength(2);
   expect(report.eh_frame_hdr).toMatchObject({
     status: "incomplete",
@@ -1038,7 +1395,7 @@ it("leaves a non-zero indirect .eh_frame_hdr FDE count unresolved", () => {
     table_entries: 0,
   });
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     eh_frame_hdr_agreement: "unavailable",
   });
   expect(report.limitations).toContain(
@@ -1046,27 +1403,10 @@ it("leaves a non-zero indirect .eh_frame_hdr FDE count unresolved", () => {
   );
 });
 
-it("reports a header that declares a count but omits its search table as present", () => {
-  const bytes = elfUnwindFixture({ header: "match" });
-  bytes[findSection(bytes, ".eh_frame_hdr").offset + 3] = 0xff;
-  const report = parse(bytes);
-  expect(report.eh_frame_hdr).toMatchObject({
-    status: "present",
-    fde_count: 2,
-    table_entries: 0,
-    table_encoding: { raw: 0xff },
-  });
-  expect(report.coverage).toMatchObject({
-    status: "complete",
-    eh_frame_hdr_agreement: "unavailable",
-  });
-  expect(report.limitations).not.toContain(
-    "The .eh_frame_hdr search table uses an indirect encoding that was not dereferenced; it was not compared with the decoded FDEs.",
+it("names a range from an STT_GNU_IFUNC resolver symbol at its exact start", async () => {
+  const report = await parse(
+    elfUnwindFixture({ header: "match", ifunc: true }),
   );
-});
-
-it("names a range from an STT_GNU_IFUNC resolver symbol at its exact start", () => {
-  const report = parse(elfUnwindFixture({ header: "match", ifunc: true }));
   expect(report.ranges[0]).toMatchObject({
     start: address(UNWIND_FN_A),
     symbol: { text: "alpha" },
@@ -1077,21 +1417,50 @@ it("names a range from an STT_GNU_IFUNC resolver symbol at its exact start", () 
   );
 });
 
-it("excludes load mappings whose file size exceeds memory size", () => {
+it("names an ARM Thumb range from a function symbol whose value sets bit 0", async () => {
+  // AAELF32: a Thumb STT_FUNC value is the code address with bit 0 set, and
+  // an IFUNC resolver in Thumb code is marked the same way.
+  for (const variant of [
+    { symbolSource: "symtab" },
+    { symbolSource: "dynsym" },
+    { ifunc: true },
+  ] as const) {
+    const report = await parse(
+      elfUnwindFixture({
+        bits: 32,
+        machine: 40,
+        header: "match",
+        thumb: true,
+        ...variant,
+      }),
+    );
+    expect(report.ranges[0]).toMatchObject({
+      start: address(UNWIND_FN_A),
+      symbol: { text: "alpha" },
+    });
+  }
+  // Another machine keeps the value as written, so bit 0 names no FDE start.
+  const x86 = await parse(
+    elfUnwindFixture({ bits: 32, machine: 3, header: "match", thumb: true }),
+  );
+  expect(x86.ranges[0]?.symbol?.text).toBe("$t");
+});
+
+it("excludes load mappings whose file size exceeds memory size", async () => {
   const bytes = elfUnwindSectionlessFixture();
   const phoff = Number(bytes.readBigUInt64LE(32));
   bytes.writeBigUInt64LE(0n, phoff + 40);
-  const report = parse(bytes);
-  expect(report.coverage.status).toBe("incomplete");
+  const report = await parse(bytes);
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toContain(
     "An invalid PT_LOAD mapping was excluded from unwind address resolution.",
   );
 });
 
-it("compares the header pointer with a nonallocated frame's mapped address", () => {
+it("compares the header pointer with a nonallocated frame's mapped address", async () => {
   const bytes = elfUnwindSectionlessFixture({ sections: ".eh_frame_hdr" });
   const section = findSection(bytes, ".eh_frame");
   bytes.writeBigUInt64LE(0n, section.headerOffset + 8);
   bytes.writeBigUInt64LE(0n, section.headerOffset + 16);
-  expect(parse(bytes).coverage.eh_frame_hdr_agreement).toBe("agree");
+  expect((await parse(bytes)).coverage.eh_frame_hdr_agreement).toBe("agree");
 });

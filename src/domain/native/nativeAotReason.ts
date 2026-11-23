@@ -59,6 +59,7 @@ const NATIVE_AOT_SIMPLE_REASON_CODES = [
   "no_rtr_directory",
   "ambiguous_rtr_directory",
   "dehydrated_section_count",
+  "ambiguous_frozen_object_region",
 ] as const;
 
 const nativeAotHydrationFactsSchema = z.strictObject({

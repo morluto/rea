@@ -5,7 +5,6 @@ import {
   isApplicationDconfGroup,
   namedInTitles,
   roleFacts,
-  sqliteSidecarRoots,
   stateReasons,
   stateRole,
   type DesktopRoleFacts,
@@ -140,6 +139,25 @@ describe("stateReasons", () => {
     expect(reasons("/home/ada/Documents/today.tx")).toEqual([]);
   });
 
+  it.each([
+    ["𐐀notes.txt", ["opened_by_application"]],
+    ["notes.txt𐐀", ["opened_by_application"]],
+    ["📄notes.txt", ["opened_by_application", "named_in_window_title"]],
+    ["notes.txt📄", ["opened_by_application", "named_in_window_title"]],
+  ])("attributes an opened file using the boundary in %s", (name, reasons) => {
+    const path = "/home/ada/notes.txt";
+    const facts: DesktopRoleFacts = {
+      home: "/home/ada",
+      stateDirectories: [],
+      stateTails: [],
+      selectedRoots: [],
+      selections: [],
+      titles: [`${name} - Editor`],
+      openedFiles: new Set([path]),
+    };
+    expect(stateReasons(facts, path, [], false)).toEqual(reasons);
+  });
+
   it("names a file by its whole name or path, never by a folder segment, a cache or a dconf database", () => {
     // CherryTree shows the document's folder, whose path holds the segment "user".
     const cherry = [
@@ -241,10 +259,15 @@ describe("sqliteSidecarRoots", () => {
     const database = "/home/ada/Documents/books.db";
     const wal = `${database}-wal`;
     const journal = `${database}-journal`;
-    expect(sqliteSidecarRoots([database, wal, journal])).toEqual(
-      new Set([wal, journal]),
-    );
-    expect(sqliteSidecarRoots([wal])).toEqual(new Set());
+    const sidecars = (roots: string[]) =>
+      roleFacts({
+        host: { home: "/home/ada" },
+        application: { state_directories: [] },
+        state: { content_roots: roots, selected_paths: [] },
+        session: { windows: [], opened_files: [] },
+      } as unknown as DesktopApplicationCapture).sqliteSidecars;
+    expect(sidecars([database, wal, journal])).toEqual(new Set([wal, journal]));
+    expect(sidecars([wal])).toEqual(new Set());
   });
 
   it("keeps a separately selected journal-named document alongside automatic sidecars", () => {

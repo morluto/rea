@@ -1,18 +1,22 @@
 import {
+  ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+  hasAdvertisedInputDialectViolation,
+} from "./advertisedDialect.js";
+import { projectToAdvertisedDialect } from "./advertisedDialectProjection.js";
+import {
   COMPACT_SCHEMA_MAX_DEPTH,
-  hasGatewayIncompatibleShape,
   inlineWithinBudget,
   isSchemaObject,
   reduceToShallowProperties,
   schemaDepth,
   serializedBytes,
-  stripAnnotations,
-  typeArrayItemUnions,
 } from "./compactJsonSchema.js";
+import { JsonSchemaReferences } from "./jsonSchemaReferences.js";
 
-// Kimi expands schema-local references before sending tools to Moonshot.
-// Compact advertisements must fit after expansion, independently of client
-// reference handling. Canonical server-side validation remains unchanged.
+// The compact input presentation: every advertised input schema is
+// self-contained (the dialect admits no `$ref` or `$defs`), inside the
+// per-tool byte budget, and in the portable advertised dialect. Canonical
+// server-side validation remains unchanged.
 
 export type AdvertisedInputSchemaPresentation = "inline" | "reduced";
 
@@ -24,6 +28,8 @@ export interface CompactInputSchemaPresentation {
 export interface CompactedInputSchema {
   readonly schema: Record<string, unknown>;
   readonly presentation: AdvertisedInputSchemaPresentation;
+  /** Input guidance the schema does not carry; it joins the tool description. */
+  readonly guidance: readonly string[];
 }
 
 const INPUT_REDUCED_ANNOTATION =
@@ -43,69 +49,84 @@ const retainRootPropertyGuidance = (
     !isSchemaObject(stripped.properties)
   )
     return stripped;
-  const properties = { ...stripped.properties };
+  let properties: Record<string, unknown> | undefined;
   for (const name of retainedRootPropertyDescriptions) {
     const source = schema.properties[name];
-    const kept = properties[name];
+    const kept = (properties ?? stripped.properties)[name];
     if (
       isSchemaObject(source) &&
       isSchemaObject(kept) &&
       typeof source.description === "string"
-    )
+    ) {
+      properties ??= { ...stripped.properties };
       properties[name] = { ...kept, description: source.description };
+    }
   }
-  return { ...stripped, properties };
+  return properties === undefined ? stripped : { ...stripped, properties };
 };
 
 /**
  * Render an advertised input schema within a per-schema byte budget for
- * providers that validate the literal serialized schema size. Validation
- * keywords and the canonical contract are preserved; only
- * annotation prose and, for structurally oversized schemas, nested
- * validation detail leave the advertised form.
+ * providers that validate the literal serialized schema size. The complete
+ * validation structure is projected into the portable dialect when it fits;
+ * otherwise only root properties and their types remain.
  */
 export const compactAdvertisedInputSchema = (
   schema: Record<string, unknown>,
   budgetBytes: number,
 ): CompactedInputSchema => {
-  const expanded = inlineWithinBudget(stripAnnotations(schema), budgetBytes);
+  const references = new JsonSchemaReferences(schema);
+  const expanded = inlineWithinBudget(schema, budgetBytes, {
+    stripAnnotations: true,
+    references,
+  });
   const inline =
     expanded === undefined
       ? undefined
-      : typeArrayItemUnions(retainRootPropertyGuidance(schema, expanded));
+      : projectToAdvertisedDialect(
+          retainRootPropertyGuidance(schema, expanded),
+        );
   if (
     inline !== undefined &&
-    serializedBytes(inline) <= budgetBytes &&
-    schemaDepth(inline) <= COMPACT_SCHEMA_MAX_DEPTH &&
-    !hasGatewayIncompatibleShape(inline)
+    serializedBytes(inline.schema) <= budgetBytes &&
+    schemaDepth(inline.schema) <= COMPACT_SCHEMA_MAX_DEPTH &&
+    !hasAdvertisedInputDialectViolation(inline.schema, {
+      skipRootBounds: budgetBytes <= ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+    })
   )
-    return { schema: inline, presentation: "inline" };
-  const reduced = reduceToShallowProperties(schema, INPUT_REDUCED_ANNOTATION);
-  if (serializedBytes(reduced) <= budgetBytes)
-    return { schema: reduced, presentation: "reduced" };
+    return { ...inline, presentation: "inline" };
+  const reduced = projectToAdvertisedDialect(
+    reduceToShallowProperties(schema, INPUT_REDUCED_ANNOTATION, references),
+  );
+  if (serializedBytes(reduced.schema) <= budgetBytes)
+    return { ...reduced, presentation: "reduced" };
   // A future contract with an extreme root-property count still advertises
   // an honest, budget-fitting shape instead of an oversized one.
   return {
-    schema: reduceToShallowProperties(
-      {
-        type: "object",
-        description:
-          (typeof schema.description === "string"
-            ? `${schema.description} `
-            : "") + INPUT_REDUCED_ANNOTATION,
-      },
-      INPUT_REDUCED_ANNOTATION,
+    ...projectToAdvertisedDialect(
+      reduceToShallowProperties({ type: "object" }, INPUT_REDUCED_ANNOTATION),
     ),
     presentation: "reduced",
   };
 };
 
-/** Return the JSON schema clients receive for the selected input presentation. */
-export const presentAdvertisedInputSchema = (
+// Registration needs the guidance and the SDK later needs the schema; both
+// read one projection of the same memoized canonical schema object.
+const compacted = new WeakMap<object, Map<number, CompactedInputSchema>>();
+
+/** The compact advertised input with its guidance; `advertisedTool.ts` composes the tool. */
+export const presentAdvertisedInput = (
   schema: Record<string, unknown>,
-  compactPresentation: CompactInputSchemaPresentation | undefined,
-): Record<string, unknown> =>
-  compactPresentation === undefined
-    ? schema
-    : compactAdvertisedInputSchema(schema, compactPresentation.budgetBytes)
-        .schema;
+  compactPresentation: CompactInputSchemaPresentation,
+): Pick<CompactedInputSchema, "schema" | "guidance"> => {
+  const { budgetBytes } = compactPresentation;
+  let byBudget = compacted.get(schema);
+  if (byBudget === undefined) compacted.set(schema, (byBudget = new Map()));
+  let presented = byBudget.get(budgetBytes);
+  if (presented === undefined)
+    byBudget.set(
+      budgetBytes,
+      (presented = compactAdvertisedInputSchema(schema, budgetBytes)),
+    );
+  return presented;
+};

@@ -10,7 +10,7 @@ import {
   type NativeCommandCapture,
   type NativeCommandOptions,
   type NativeCommandRunner,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import { createTestBinarySession } from "../../../fixtures/binarySession.js";
 import { createApplicationMcpHarness } from "../../../fixtures/applicationMcpHarness.js";
@@ -21,6 +21,8 @@ import {
 } from "../../../fixtures/nativeCommands.js";
 
 const missingUuidDiagnostic = "missing LC_UUID load command";
+const unbackedTextDiagnostic =
+  "section '__TEXT/__text' has offset=0 but is not a zero-fill section type";
 
 const dyldDiagnosticOutput = (path: string, diagnostic: string): string =>
   `${path} [arm64]:\n   ${diagnostic}\n`;
@@ -92,24 +94,19 @@ class UuidlessDyldRunner implements NativeCommandRunner {
 }
 
 it.each([
-  { fileType: "4", diagnostic: "unknown mh.filetype 4" },
-  { fileType: "CORE", diagnostic: "unknown mh.filetype 4" },
-  { fileType: "3", diagnostic: "unknown mh.filetype 3" },
-  { fileType: "4", diagnostic: "unknown filetype 4" },
-  { fileType: "3", diagnostic: "unknown filetype 3" },
+  { fileType: 4, diagnostic: "unknown mh.filetype 4" },
+  { fileType: 3, diagnostic: "unknown mh.filetype 3" },
+  { fileType: 4, diagnostic: "unknown filetype 4" },
+  { fileType: 3, diagnostic: "unknown filetype 3" },
   {
-    fileType: "10",
-    diagnostic:
-      "section '__TEXT/__text' has offset=0 but is not a zero-fill section type",
+    fileType: 10,
+    diagnostic: unbackedTextDiagnostic,
   },
 ])(
   "classifies $diagnostic for Mach-O type $fileType before nm fallback",
   async ({ fileType, diagnostic }) => {
     const runner = new UuidlessDyldRunner(diagnostic);
-    const target = await makeTarget(
-      "refused-type",
-      fileType === "CORE" ? 4 : Number(fileType),
-    );
+    const target = await makeTarget("refused-type", fileType);
     const path = target.path;
     const result = await new NativeMacOSProvider({}, runner, "darwin")
       .createClient(target)
@@ -120,9 +117,7 @@ it.each([
       error: {
         _tag: "AnalysisUnsupportedTargetError",
         path,
-        reason: expect.stringContaining(
-          fileType === "10" ? "dSYM" : diagnostic,
-        ),
+        reason: expect.stringContaining(fileType === 10 ? "dSYM" : diagnostic),
         remediationAction: expect.stringContaining("linked Mach-O"),
         capturedOutput: {
           stdout: dyldDiagnosticOutput(path, diagnostic),
@@ -141,19 +136,14 @@ it.each([
 );
 
 it.each([
-  { fileType: "2", signal: null, diagnostic: "unknown mh.filetype 4" },
-  { fileType: "UNKNOWN", signal: null, diagnostic: "unknown mh.filetype 4" },
-  { fileType: "4", signal: "SIGTERM", diagnostic: "unknown mh.filetype 4" },
-  { fileType: "2", signal: null, diagnostic: "unknown filetype 4" },
-  { fileType: "4", signal: "SIGTERM", diagnostic: "unknown filetype 4" },
+  { fileType: 3, signal: null },
+  { fileType: 99, signal: null },
+  { fileType: 4, signal: "SIGTERM" },
 ])(
-  "keeps $diagnostic as a failure for header $fileType and signal $signal",
-  async ({ fileType, signal, diagnostic }) => {
-    const runner = new UuidlessDyldRunner(diagnostic, "", signal);
-    const target = await makeTarget(
-      "conflicting-type",
-      fileType === "UNKNOWN" ? 99 : Number(fileType),
-    );
+  "keeps the dyld_info refusal as a failure for header $fileType and signal $signal",
+  async ({ fileType, signal }) => {
+    const runner = new UuidlessDyldRunner("unknown mh.filetype 4", "", signal);
+    const target = await makeTarget("conflicting-type", fileType);
     const result = await new NativeMacOSProvider({}, runner, "darwin")
       .createClient(target)
       .execute("inspect_macho", {});
@@ -206,25 +196,39 @@ it("returns readable Mach-O Evidence when dyld_info identifies a missing UUID", 
   );
 });
 
-it("keeps other dyld_info nonzero exits as command failures", async () => {
-  const target = await makeTarget("malformed");
-  const runner = new UuidlessDyldRunner("malformed load command table");
-  const result = await new NativeMacOSProvider({}, runner, "darwin")
-    .createClient(target)
-    .execute("inspect_macho", {});
+it.each([
+  { stdout: "malformed load command table", stderr: "" },
+  { stdout: "unknown mh.filetype 4\nmalformed load command", stderr: "" },
+  { stdout: "unknown mh.filetype 4", stderr: "read failed\n" },
+  { stdout: `${missingUuidDiagnostic}\n${unbackedTextDiagnostic}`, stderr: "" },
+])(
+  "preserves a dyld_info command failure with stdout $stdout and stderr $stderr",
+  async ({ stdout, stderr }) => {
+    const target = await makeTarget("malformed", 4);
+    const runner = new UuidlessDyldRunner(stdout, stderr);
+    const result = await new NativeMacOSProvider({}, runner, "darwin")
+      .createClient(target)
+      .execute("inspect_macho", {});
 
-  expect(result.ok).toBe(false);
-  if (result.ok) return;
-  expect(result.error).toMatchObject({
-    _tag: "ProviderAdapterError",
-    diagnostics: { tool: "dyld_info", reason: "nonzero-exit", exit_code: 1 },
-    capturedOutput: {
-      stdout: dyldDiagnosticOutput(target.path, "malformed load command table"),
-      exit_code: 1,
-      truncated: false,
-    },
-  });
-});
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "ProviderAdapterError",
+        diagnostics: {
+          tool: "dyld_info",
+          reason: "nonzero-exit",
+          exit_code: 1,
+        },
+        capturedOutput: {
+          stdout: dyldDiagnosticOutput(target.path, stdout),
+          stderr,
+          exit_code: 1,
+          truncated: false,
+        },
+      },
+    });
+  },
+);
 
 it("does not treat a newline in the echoed operand path as dyld_info evidence", async () => {
   const target = await makeTarget("\nmissing LC_UUID load command\n");

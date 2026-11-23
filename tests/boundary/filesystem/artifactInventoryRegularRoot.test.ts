@@ -68,6 +68,79 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
+it("shares the examined-entry allowance across directory and embedded archive traversal", async () => {
+  const root = await createTestTempDirectory("rea-inventory-shared-budget-");
+  const archive = asarHeaderBytes(
+    '{"files":{"main.js":{"size":0,"offset":"0"}}}',
+  );
+  await writeFile(join(root, "app.asar"), archive);
+  await writeFile(join(root, "sibling.txt"), "ordinary input");
+  const options = {
+    acquisitionLimits: { maximumEntries: 2, maximumBytes: 2_048 },
+  };
+
+  await expect(
+    inventoryArtifact(root, {
+      acquisitionLimits: { ...options.acquisitionLimits, maximumEntries: NaN },
+    }),
+  ).rejects.toMatchObject({ _tag: "InternalInvariantError" });
+  const bounded = await inventoryArtifact(root, options);
+  expect(bounded.coverage).toEqual({
+    scope: "container-entries",
+    status: "unknown",
+  });
+  expect(bounded.occurrences).toHaveLength(3); // The root does not consume a member slot.
+  expect(bounded.limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("acquisition allowance exhausted"),
+    ]),
+  );
+
+  await rm(join(root, "sibling.txt"));
+  const exact = await inventoryArtifact(root, options);
+  expect(exact.coverage).toEqual({
+    scope: "container-entries",
+    status: "complete",
+  });
+  expect(
+    exact.occurrences.map(({ logical_path }) => logical_path).sort(),
+  ).toEqual([".", "app.asar", "app.asar/main.js"]);
+});
+
+it.skipIf(process.platform === "win32")(
+  "charges an omitted directory entry to the inventory allowance shared with embedded members",
+  async () => {
+    const root = await createTestTempDirectory("rea-inventory-omitted-budget-");
+    await writeFile(
+      join(root, "app.asar"),
+      asarHeaderBytes('{"files":{"main.js":{"size":0,"offset":"0"}}}'),
+    );
+    await promisify(execFile)("mkfifo", [join(root, "pipe")]);
+
+    const bounded = await inventoryArtifact(root, {
+      acquisitionLimits: { maximumEntries: 2, maximumBytes: 2_048 },
+    });
+    expect(bounded.coverage).toEqual({
+      scope: "container-entries",
+      status: "unknown",
+    });
+    const sawMember = bounded.occurrences.some(
+      ({ logical_path }) => logical_path === "app.asar/main.js",
+    );
+    const sawPipe = bounded.limitations.some((message) =>
+      message.includes('omitted fifo at "pipe"'),
+    );
+    // Native listings can put either child first. Only one can use the budget
+    // slot that remains after admitting the archive itself.
+    expect(Number(sawMember) + Number(sawPipe)).toBe(1);
+    expect(bounded.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("acquisition allowance exhausted"),
+      ]),
+    );
+  },
+);
+
 it("rejects a root path replaced between its initial stat and open", async () => {
   const root = await createTestTempDirectory("rea-artifact-root-replaced-");
   const path = join(root, "input.bin");
@@ -82,7 +155,7 @@ it("rejects a root path replaced between its initial stat and open", async () =>
     classifyAndHashRoot(path, false, expectedMetadata),
   ).rejects.toMatchObject({
     reason: "integrity",
-    message: `Root artifact changed before inventory: ${path}`,
+    integrityCheck: "container-identity",
   });
 });
 

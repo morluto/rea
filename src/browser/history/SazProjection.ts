@@ -1,16 +1,18 @@
 import { captureBudgets } from "./CaptureBudgets.js";
-import { createHash } from "node:crypto";
 import { isUtf8 } from "node:buffer";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import { CaptureRedaction, capturePointer } from "./CaptureRedaction.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 export type SazValue =
   | JsonValue
   | Buffer
   | { readonly [key: string]: SazValue }
   | readonly SazValue[];
+
+const SAZ_HTTP_FIELD_POINTER_RE = /^\/(request|response)\//;
 
 /** Project native byte fields with the same credential and explicit-literal exclusions as HAR. */
 export const projectSazRecord = (
@@ -27,7 +29,7 @@ export const projectSazRecord = (
   ): JsonValue => {
     if (depth > captureBudgets().depth)
       throw new CaptureFormatError(
-        "input-limit",
+        { name: "nesting-depth", maximum: captureBudgets().depth },
         `SAZ projection exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
         pointer,
       );
@@ -35,7 +37,7 @@ export const projectSazRecord = (
       return redactor.credential(pointer);
     if (Buffer.isBuffer(value)) {
       const base64 = value.toString("base64");
-      const sha256 = createHash("sha256").update(value).digest("hex");
+      const sha256 = sha256Hex(value);
       const hidden =
         redactor.sensitiveBytes(value) ||
         sensitiveValues.some(
@@ -73,7 +75,8 @@ export const projectSazRecord = (
       // HTTP fields are Latin-1 views of bytes. A UTF-8 declaration must also
       // exclude its byte spelling, even when its display is mojibake.
       if (
-        /^\/(request|response)\//.test(pointer) &&
+        sensitiveValues.length > 0 &&
+        SAZ_HTTP_FIELD_POINTER_RE.test(pointer) &&
         !pointer.endsWith("/member") &&
         redactor.sensitiveBytes(Buffer.from(value, "latin1"))
       ) {

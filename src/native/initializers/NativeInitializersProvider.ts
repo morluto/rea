@@ -1,28 +1,29 @@
 import {
+  isParseLimit,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
+import {
+  imageFileSizeRemediation,
   projectArtifactCloseFailure,
   projectStableArtifactFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
-import {
-  artifactFileCancellationCause,
+  ArtifactReaderFailure,
+  readStableArtifact,
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
-  type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { NativeInitializersPort } from "../../application/binaryDiagnostics/NativeInitializersPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
-import { AnalysisError } from "../../domain/analysisErrorBase.js";
+  type StableArtifactSnapshot,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
+  BinaryFormatFailure,
+  BinaryResourceFailure,
+  binaryResourceCeiling,
+} from "../../domain/binaryContainer.js";
+import type { NativeInitializersPort } from "../../ports/binaryDiagnostics/NativeInitializersPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_NATIVE_INITIALIZERS_FILE_BYTES,
@@ -35,20 +36,16 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { NATIVE_INITIALIZERS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
-  BinaryFormatFailure,
-  BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
-import { ElfPointerRelocationFailure } from "../metadata/ElfPointerRelocations.js";
-import { requireSelectedNativeImage } from "../metadata/MachoSliceSelection.js";
+  ELF_POINTER_RELOCATION_FORMAT,
+  ElfPointerRelocationFailure,
+} from "../../domain/native/elfPointerRelocations.js";
+import { hasMachoMagic } from "../../domain/apple/machoContainer.js";
+import { requireSelectedNativeImage } from "../../domain/apple/machoSliceSelection.js";
 import { readElfInitializers } from "./ElfInitializers.js";
 import { readMachoInitializers } from "./MachoInitializers.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_native_initializers";
-
-const MACHO_MAGICS = new Set([
-  0xfeedface, 0xcefaedfe, 0xfeedfacf, 0xcffaedfe, 0xcafebabe, 0xbebafeca,
-  0xcafebabf, 0xbfbafeca,
-]);
 
 const isElf = (bytes: Buffer): boolean =>
   bytes.length >= 4 &&
@@ -56,9 +53,6 @@ const isElf = (bytes: Buffer): boolean =>
   bytes[1] === 0x45 &&
   bytes[2] === 0x4c &&
   bytes[3] === 0x46;
-
-const isMacho = (bytes: Buffer): boolean =>
-  bytes.length >= 4 && MACHO_MAGICS.has(bytes.readUInt32BE(0));
 
 /** Portable ELF and Mach-O initializer reader over one stable regular file. */
 export class NativeInitializersProvider implements NativeInitializersPort {
@@ -81,9 +75,10 @@ export class NativeInitializersProvider implements NativeInitializersPort {
     input: InspectNativeInitializersInput,
     options?: ExecutionOptions,
   ) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -105,7 +100,7 @@ export class NativeInitializersProvider implements NativeInitializersPort {
         return ok(report);
       });
     } catch (cause) {
-      return err(nativeInitializersFailure(cause, input));
+      return err(nativeInitializersFailure(cause, input, snapshot));
     }
   }
 }
@@ -129,7 +124,11 @@ export const readNativeInitializers = async (
   );
   const page = { offset: input.offset, limit: input.limit };
   const inspection = await inspectSelected(bytes, selected, page, signal);
-  return { artifact, ...inspection };
+  return {
+    artifact,
+    ...inspection,
+    limitations: [...inspection.limitations, ...selected.limitations],
+  };
 };
 
 const inspectSelected = async (
@@ -146,7 +145,7 @@ const inspectSelected = async (
       );
     return readElfInitializers(selected.bytes, page, signal);
   }
-  if (!isMacho(container) && !isMacho(selected.bytes))
+  if (!hasMachoMagic(container) && !hasMachoMagic(selected.bytes))
     throw new BinaryFormatFailure(
       "malformed",
       "Selected file is not an ELF or Mach-O image",
@@ -184,135 +183,81 @@ const architectureName = (cpuType: number): string => {
   }
 };
 
-const fileSizeRemediation = (input: InspectNativeInitializersInput): string =>
-  input.max_file_bytes >= MAX_INSPECT_NATIVE_INITIALIZERS_FILE_BYTES
-    ? `The image exceeds the ${String(MAX_INSPECT_NATIVE_INITIALIZERS_FILE_BYTES)}-byte input ceiling this operation accepts. This release has no runtime override. Select a smaller artifact.`
-    : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
-
-const failurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
-  input: InspectNativeInitializersInput,
-): AnalysisError => {
-  const { cause, origin } = facts;
-  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
-    return cause;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      { cause },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
-  if (
-    cause instanceof ElfPointerRelocationFailure &&
-    cause.reason === "native-index-capacity"
-  )
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "capacity",
-      `Selected artifact ${input.path}: ${cause.message}`,
-      { boundary: "structure" },
-      {
-        cause,
-        ...fixedAllowanceOptions(
-          "The native initializer structural allowance",
-          "parser",
-        ),
-      },
-    );
-  if (cause instanceof BinaryResourceFailure)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "capacity",
-      `Selected artifact ${input.path}: ${cause.message}`,
-      { boundary: cause.boundary, maximum: cause.maximum_bytes },
-      {
-        cause,
-        ...fixedAllowanceOptions(
-          "The native initializer structural allowance",
-          "parser",
-        ),
-      },
-    );
-  if (cause instanceof BinaryFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: `Selected artifact ${input.path}: ${cause.message}`,
-          },
-        ]);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        cause.message,
-        { max_file_bytes: input.max_file_bytes },
-        {
-          cause,
-          retryable: false,
-          remediationAction: fileSizeRemediation(input),
-        },
-      );
-    if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        { path: ["path"], reason: "invalid_format", message: cause.message },
-      ]);
-  }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected image could not be read (${String(cause.code)}): ${input.path}.`,
-        },
-      ]);
-  }
-  return new ProviderAdapterError(NATIVE_INITIALIZERS_PROVIDER.id, OPERATION, {
-    cause,
-    diagnostics: {
-      path: input.path,
-      reason: cause instanceof Error ? cause.message : String(cause),
-    },
-  });
-};
-
 const nativeInitializersFailure = (
   cause: unknown,
   input: InspectNativeInitializersInput,
-): AnalysisError =>
-  projectStableArtifactFailure(
+  snapshot?: StableArtifactSnapshot,
+): AnalysisError => {
+  const facts = artifactFilePrimaryFacts(cause);
+  const primary = classifyProviderFailure(
+    facts.cause,
+    offlineArtifactFailureDialect(facts, {
+      providerId: NATIVE_INITIALIZERS_PROVIDER.id,
+      operation: OPERATION,
+      path: input.path,
+      description: "image",
+      recognise: (failure, origin) => {
+        if (
+          failure instanceof ElfPointerRelocationFailure &&
+          isParseLimit(failure, ELF_POINTER_RELOCATION_FORMAT)
+        )
+          return parseLimitConstraint(OPERATION, "capacity", failure, {
+            path: input.path,
+            ...fixedAllowanceOptions(
+              "The native initializer structural allowance",
+              "parser",
+              {
+                limit: failure.failure.limit.maximum,
+                ...(failure.unit === undefined ? {} : { unit: failure.unit }),
+              },
+            ),
+          });
+        if (failure instanceof BinaryResourceFailure)
+          return parseLimitConstraint(OPERATION, "capacity", failure, {
+            path: input.path,
+            ...fixedAllowanceOptions(
+              "The native initializer structural allowance",
+              "parser",
+              binaryResourceCeiling(failure),
+            ),
+          });
+        if (
+          origin === "owned-or-classified" &&
+          failure instanceof ArtifactReaderFailure &&
+          failure.reason === "limit"
+        )
+          return new AnalysisResourceConstraintError(
+            OPERATION,
+            "file-size",
+            failure.message,
+            { max_file_bytes: input.max_file_bytes },
+            {
+              cause: failure,
+              retryable: false,
+              remediationAction: imageFileSizeRemediation(
+                input.max_file_bytes,
+                MAX_INSPECT_NATIVE_INITIALIZERS_FILE_BYTES,
+              ),
+            },
+          );
+        return undefined;
+      },
+      unclassified: (failure) =>
+        new ProviderAdapterError(NATIVE_INITIALIZERS_PROVIDER.id, OPERATION, {
+          cause: failure,
+          diagnostics: {
+            path: input.path,
+            reason: errorMessage(failure),
+          },
+        }),
+    }),
+  );
+  return projectStableArtifactFailure(
     cause,
-    failurePrimary(artifactFilePrimaryFacts(cause), input),
+    primary,
     input.path,
     NATIVE_INITIALIZERS_PROVIDER.id,
     OPERATION,
+    snapshot,
   );
+};

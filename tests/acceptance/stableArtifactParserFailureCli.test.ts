@@ -26,10 +26,20 @@ for (const command of [
     async ({ cli }) => {
       const root = await createTestTempDirectory("rea-format-refusal-");
       const path = join(root, "foreign.bin");
-      const bytes = Buffer.alloc(64, 0x7f);
+      const isBeam = command === "inspect-erlang-beam";
+      const bytes = isBeam ? Buffer.from("FOR1") : Buffer.alloc(64, 0x7f);
       await writeFile(path, bytes);
       const result = await cli.run({ arguments: [command, path, "--json"] });
       expect(result.exitCode, result.stderr).toBe(1);
+      if (isBeam || command === "inspect-kernel-module") {
+        expect(result.json).toMatchObject({
+          code: "invalid_request",
+          details: {
+            operation: command.replaceAll("-", "_"),
+            issues: [{ path: ["path"], reason: "invalid_format" }],
+          },
+        });
+      }
       expect(result.json).toMatchObject({
         details: {
           partial_observation: {

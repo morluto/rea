@@ -1,3 +1,4 @@
+import { jsonPointerTokens } from "../../domain/jsonPointer.js";
 import {
   createdFields,
   documentBodyProblem,
@@ -32,6 +33,7 @@ import {
 } from "../../domain/analysisView/environmentStateWriteLinks.js";
 import {
   pathValuesOf,
+  pathParameterKeys,
   type GeneratedRule,
   type StateWritePlan,
   type WriteCall,
@@ -52,7 +54,6 @@ import {
   collectionMatch,
   decodedSegment,
   isObject,
-  pointerTokens,
   scalarText,
   type JsonObject,
   type StateEntity,
@@ -106,14 +107,12 @@ export const pathValues = (
   args: ReplayArguments,
 ): Map<string, string> => {
   const names = environmentToolArguments(tool).path;
-  const template = tool.path_template
-    .slice(tool.path_template.indexOf("/") + 1)
-    .split("/");
+  const keys = pathParameterKeys(tool.path_template);
   const values = new Map<string, string>();
   for (const param of tool.params) {
     const value = ownMember(args, names.get(param.name) ?? param.name);
-    const segment = template[param.index] ?? "";
-    if (typeof value === "string") values.set(segment.slice(1, -1), value);
+    const key = keys.get(param.index);
+    if (typeof value === "string" && key !== undefined) values.set(key, value);
   }
   return values;
 };
@@ -397,6 +396,7 @@ export const writeAnswer = (
         readonly id: string;
         readonly sent?: readonly string[];
       }
+    | { readonly body: JsonValue }
     | ((
         recorded: JsonValue | undefined,
       ) => Result<JsonValue | undefined, string>),
@@ -410,14 +410,14 @@ export const writeAnswer = (
   if (plan.response === null || exchange === undefined)
     return err(refused(tool, `Tool ${tool.name} has no recorded response.`));
   const exact =
-    selectReplayExchange(
-      tool,
-      new Map([[exchange.ordinal, exchange]]),
-      args,
-      request.observedQuery,
-    )?.exact === true;
+    selectReplayExchange(tool, serving.source.exchanges, args, {
+      observedQuery: request.observedQuery,
+      eligibleOrdinals: new Set([exchange.ordinal]),
+    })?.exact === true;
   if (plan.response.shape === "recorded")
     return ok({ ...replayAnswer(serving.source, exchange, exact), state });
+  if (typeof rendered !== "function" && "body" in rendered)
+    return stateAnswer(serving, { exchange, exact }, rendered.body, state);
   const recorded = recordedJson(exchange);
   const body =
     typeof rendered === "function"
@@ -436,7 +436,7 @@ export const writeAnswer = (
             // A member the call sent and the plan stores as sent is answered as sent; any other keeps the recorded answer.
             unloaded: (plan.observation?.read?.unloaded ?? []).filter(
               (path) => {
-                const [field] = pointerTokens(path);
+                const [field] = jsonPointerTokens(path);
                 return !(
                   rendered.sent?.includes(field!) === true &&
                   plan.rules.some(
@@ -841,20 +841,11 @@ const answerDocument = (
     view: "document-write",
     path: held.path,
   } as const;
-  const answer =
+  const rendered =
     plan.response?.shape === "entity"
-      ? (() => {
-          const exchange = serving.source.exchanges.get(plan.response.ordinal);
-          return exchange === undefined
-            ? err(refused(tool, `Tool ${tool.name} has no recorded response.`))
-            : stateAnswer(
-                serving,
-                { exchange, exact: true },
-                written.value,
-                state,
-              );
-        })()
-      : writeAnswer(serving, request, { fields: undefined, id: "" }, state);
+      ? { body: written.value }
+      : { fields: undefined, id: "" };
+  const answer = writeAnswer(serving, request, rendered, state);
   if (!answer.ok) return answer;
   const set = serving.store.setDocument(held.tool, written.value);
   if (!set.ok) return set;

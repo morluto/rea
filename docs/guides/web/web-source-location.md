@@ -48,6 +48,11 @@ It includes generated-only mappings. This follows
 with one-based lines in REA's public contract. A point result does not establish
 coverage of a source range, execution or UI causality.
 
+Adjacent indexed sections may contribute mappings at the same generated
+position. Those candidates are retained together, with their own section,
+source, name and embedded-content identities. A mapping strictly after the
+following section's start remains an invalid overlap.
+
 Mapped entries preserve the raw source name/root, section path, section-local
 source index and flattened index. Duplicate URLs remain distinct, including
 entries with different embedded contents. Missing source names retain a null
@@ -66,15 +71,15 @@ selected file identities.
 The adapter uses the locked upstream
 [`@jridgewell/trace-mapping` 0.3.31](https://github.com/jridgewell/trace-mapping)
 without modifying its code. It validates map/VLQ structure before allocation,
-normalizes nested indexed offsets before upstream flattening, checks section
-boundaries and indexes, and retains raw declaration identity. It supports regular
+normalizes nested indexed offsets, decodes and validates each leaf's mappings,
+and traces those validated rows directly, retaining raw declaration identity. It supports regular
 maps and inline indexed sections. Numeric `version: 3` is required on the root
 and every embedded map, including indexed ancestors. Invalid embedded headers
 report their section path and cannot produce descendant mapping facts. This
 uses the rejection option for version errors allowed by
-[ECMA-426](https://tc39.es/ecma426/#sec-decodeindexsourcemap).
-Equal section starts are allowed when earlier sections contribute no mappings;
-actual decoded mappings must stay before the next section boundary.
+[ECMA-426](https://tc39.es/ecma426/#sec-DecodeIndexSourceMap).
+Equal section starts and mappings at the next section's start are allowed;
+decoded mappings strictly past the next or an enclosing section boundary are rejected.
 External section URLs return an actionable
 unsupported-profile error. This is a defined decoder profile, not a claim to
 implement every current source-map extension.
@@ -115,9 +120,7 @@ are made.
 ## Compact point delivery and retained source text
 
 Summary delivery is useful for large point answers. Complete output can answer
-a small-map task with fewer calls. The
-[delivery qualification](../../verification/source-location-delivery.md)
-records measured task costs and first-use discovery tradeoffs.
+a small-map task with fewer calls.
 
 Complete delivery remains the default and includes raw map text and embedded source
 content. Select `detail: "summary"` in MCP, or `--detail summary` with
@@ -199,16 +202,12 @@ budgets.
 | `codec_heap_mib`   | 192      | Local codec old-generation request; process-memory enforcement remains host dependent |
 | `fetch_bytes`      | 67108864 | Aggregate response bytes and, independently, resolved-identity bytes                  |
 
-The local 8 MiB admission covers the pinned 4,284,329-byte main map and 5,529,840-byte
-DateSelect map from Actual Budget without an admission retry. This is an artifact
-compatibility allowance, not a context or latency optimization: complete Evidence
-retains raw map text, and those two measured replies estimate 1.59 and 2.23 million
-tokens. A smaller admission refuses the map; it does not compact successful
-Evidence. MCP retains complete Evidence before encoding; an oversized response
+The local map admission defaults to 8 MiB. Complete Evidence retains raw map
+text, so a larger admitted map can produce a large response. MCP retains complete
+Evidence before encoding; an oversized response
 returns its retained reference for `export_evidence_bundle`, or callers can use
 complete CLI JSON. Select opt-in compact delivery above to keep complete Evidence accessible while returning only point metadata or an explicitly selected text page.
-Browser collection keeps its separate conservative defaults; see the
-[calibration record](../../verification/source-map-budget-calibration.md).
+Browser collection keeps its separate conservative defaults.
 
 Local tracing accepts all listed fields except `fetch_bytes`. Bundle fetching
 accepts all except `map_bytes` and `codec_heap_mib`: it uses its existing
@@ -235,31 +234,33 @@ is `--source-map-bytes 8388608`; the other local flags are
 `--source-map-section-depth` and `--source-map-codec-heap-mib`.
 `analyze-web-bundle` instead offers `--source-map-fetch-bytes` and the shared
 output/record/depth flags. Raising only `decoded_records` does not raise the
-independent row or segment budgets. Failed local decoding returns no partial
-point evidence; completed browser map observations retain their existing
-partial/unknown semantics. Wait for retained cleanup to settle before retrying.
+independent row or segment budgets. A failure before local decoding produces
+a valid report leaves point evidence unavailable. Cancellation or incomplete
+cleanup after decoding can retain the finished report in partial Evidence.
+Wait for retained cleanup to settle before retrying.
 
-## Verification
+## Browser collection results
 
 Browser bundle collection uses absolute section offsets for nested inline maps.
 If caller cancellation stops browser map fetching after some items complete,
 the failed bundle request retains those items with the captured page in partial
-Evidence and marks bundle analysis `not_performed`. This is distinct from the
-local source-map decoder's failure semantics above.
+Evidence and marks bundle analysis `not_performed`.
 An enclosing column offset contributes only when the nested section starts on
-that enclosing section's first generated line. Parent boundaries still clip
+that enclosing section's first generated line. Parent boundaries still constrain
 preceding browser mappings when a nested section starts with a gap or has no
-child leaves. Raw map text, original source identities and the dedicated decoder
+child leaves: mappings at the boundary are retained, and mappings past it are rejected.
+Raw map text, original source identities and the dedicated decoder
 profile are preserved.
 
 Browser `original_module_edges` carry a `declaration_index` joining each edge to
 its `original_sources` declaration, including repeated source URLs across indexed
-sections. Imports are deduplicated within each declaration. Older observations
-may omit the index; their edge declaration identity remains unknown.
+sections. Imports are deduplicated within each declaration. Each mapping row
+likewise carries its section-local `source_index` and the `declaration_index`
+of the original source it maps to.
 
 Browser collection defaults to 64 MiB of map responses per inspection and
 preflights indexed sections, sources, names, generated rows and mapping segments
-against a 262144-record decode budget before upstream flattening. Indexed maps
+against a 262144-record decode budget before decoding validated leaf mappings. Indexed maps
 default to 64 nested levels. These structural limits bound decoded object
 growth while preserving large embedded `sourcesContent` strings within the
 response-byte budget. It also bounds the expanded inline evidence to 32 MiB
@@ -278,15 +279,18 @@ Malformed UTF-8 map responses are reported as invalid rather than repaired with
 replacement characters.
 For browser fetching, an `invalid` map or structural or decoder capacity
 failure has `artifact: null`, empty decoded arrays, and an explicit limitation.
-When its bounded response body was read in full, optional `response_identity`
-records that body's SHA-256 digest and byte count after HTTP content decoding
-and before UTF-8 decoding. It is not a digest of partial reads or a claim that
-the map was valid; historical items may omit it. Malformed text is omitted so
+An `invalid` map was always read in full, so it always carries
+`response_identity`; a `fetch_failed` item carries it only when its bounded
+response body was read in full. It records that body's SHA-256 digest and byte
+count after HTTP content decoding and before UTF-8 decoding. It is not a digest
+of partial reads or a claim that the map was valid. Malformed text is omitted so
 it does not consume the 32 MiB inline budget needed by later valid maps. A
 response whose text cannot fit that budget is refused before JSON parsing and
 source-map decoding, and retains the same
 completed-body identity. Successful and partial maps keep their full original
 text, including BOM and XSSI framing; only their parsing view removes it.
+
+## Verification
 
 Focused tests cover duplicate mappings, indexed offsets/overlap/local indexes,
 32-bit VLQ overflow, nullable content, UTF-16/CRLF positions, immutable artifact

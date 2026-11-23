@@ -1,50 +1,40 @@
+import { hasDosMzMagic } from "../../domain/dosMz.js";
+import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import {
+  imageFileSizeRemediation,
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
-  type StableArtifactSnapshot,
-  readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import {
+  withStableArtifactHandle,
   artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
-  artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { BinaryHardeningPort } from "../../application/binaryDiagnostics/BinaryHardeningPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
-import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { BinaryHardeningPort } from "../../ports/binaryDiagnostics/BinaryHardeningPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   BINARY_HARDENING_LIMITATIONS,
   MAX_INSPECT_BINARY_HARDENING_FILE_BYTES,
-  type BinaryHardening,
   type InspectBinaryHardeningInput,
 } from "../../domain/native/binaryHardening.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { BINARY_HARDENING_PROVIDER } from "../../domain/investigationProviders.js";
 import {
-  BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
-import { readElfHardening } from "./ElfHardening.js";
-import { readMachoHardening } from "./MachoHardening.js";
-import { readPeHardening } from "./PeHardening.js";
+  binaryResourceCeiling,
+} from "../../domain/binaryContainer.js";
+import { readElfHardeningFromHandle } from "./ElfHardening.js";
+import { readMachoHardeningFromHandle } from "./MachoHardening.js";
+import { readPeHardeningFromHandle } from "./PeHardening.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_binary_hardening";
+const HEADER_PREFIX_BYTES = 4096;
 
 /** Portable ELF, PE, and Mach-O hardening reader over one stable regular file. */
 export class BinaryHardeningProvider implements BinaryHardeningPort {
@@ -67,25 +57,73 @@ export class BinaryHardeningProvider implements BinaryHardeningPort {
     input: InspectBinaryHardeningInput,
     options?: ExecutionOptions,
   ) {
-    let snapshot: StableArtifactSnapshot | undefined;
+    let snapshot:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
       return await this.#resources.run(async () => {
-        snapshot = await readStableArtifact(
+        const report = await withStableArtifactHandle(
           input.path,
           input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        assertArtifactReadActive(options?.signal);
-        const report = await readBinaryHardening(
-          snapshot.bytes,
           {
-            path: input.path,
-            sha256: snapshot.sha256,
-            bytes: snapshot.bytes.length,
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
+            onIdentity: (identity) => {
+              snapshot = identity;
+            },
           },
-          options?.signal,
+          async (handle) => {
+            assertArtifactReadActive(options?.signal);
+            const source = {
+              size: handle.size,
+              prefix: handle.prefix,
+              readRange: (offset: number, length: number) =>
+                handle.readRange(offset, length),
+            };
+            const artifact = {
+              path: input.path,
+              sha256: handle.sha256,
+              bytes: handle.size,
+            };
+            if (
+              handle.prefix.length >= 4 &&
+              handle.prefix[0] === 0x7f &&
+              handle.prefix[1] === 0x45 &&
+              handle.prefix[2] === 0x4c &&
+              handle.prefix[3] === 0x46
+            )
+              return {
+                artifact,
+                format: "elf" as const,
+                images: [
+                  await readElfHardeningFromHandle(source, options?.signal),
+                ],
+                limitations: [...BINARY_HARDENING_LIMITATIONS],
+              };
+            if (hasDosMzMagic(handle.prefix))
+              return {
+                artifact,
+                format: "pe" as const,
+                images: [
+                  await readPeHardeningFromHandle(
+                    source,
+                    artifact,
+                    options?.signal,
+                  ),
+                ],
+                limitations: [...BINARY_HARDENING_LIMITATIONS],
+              };
+            return {
+              artifact,
+              format: "mach-o" as const,
+              images: await readMachoHardeningFromHandle(
+                source,
+                options?.signal,
+              ),
+              limitations: [...BINARY_HARDENING_LIMITATIONS],
+            };
+          },
         );
         assertArtifactReadActive(options?.signal);
         return ok(report);
@@ -96,155 +134,61 @@ export class BinaryHardeningProvider implements BinaryHardeningPort {
   }
 }
 
-/** Dispatch one stable buffer to the ELF, PE, or Mach-O hardening reader. */
-export const readBinaryHardening = async (
-  bytes: Buffer,
-  artifact: BinaryHardening["artifact"],
-  signal?: AbortSignal,
-): Promise<BinaryHardening> => {
-  assertArtifactReadActive(signal);
-  if (
-    bytes.length >= 4 &&
-    bytes[0] === 0x7f &&
-    bytes[1] === 0x45 &&
-    bytes[2] === 0x4c &&
-    bytes[3] === 0x46
-  )
-    return {
-      artifact,
-      format: "elf",
-      images: [readElfHardening(bytes, signal)],
-      limitations: [...BINARY_HARDENING_LIMITATIONS],
-    };
-  if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a)
-    return {
-      artifact,
-      format: "pe",
-      images: [await readPeHardening(bytes, artifact, signal)],
-      limitations: [...BINARY_HARDENING_LIMITATIONS],
-    };
-  return {
-    artifact,
-    format: "mach-o",
-    images: await readMachoHardening(bytes, signal),
-    limitations: [...BINARY_HARDENING_LIMITATIONS],
-  };
-};
-
-const fileSizeRemediation = (input: InspectBinaryHardeningInput): string =>
-  input.max_file_bytes >= MAX_INSPECT_BINARY_HARDENING_FILE_BYTES
-    ? `The image exceeds the ${String(MAX_INSPECT_BINARY_HARDENING_FILE_BYTES)}-byte input ceiling this operation accepts. This release has no runtime override. Select a smaller artifact.`
-    : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
-
-const binaryHardeningFailurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
-  input: InspectBinaryHardeningInput,
-): AnalysisError => {
-  const { cause, origin } = facts;
-  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
-    return cause;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      { cause },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
-  if (cause instanceof BinaryResourceFailure)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "capacity",
-      `Selected artifact ${input.path}: ${cause.message}`,
-      { boundary: cause.boundary, maximum: cause.maximum_bytes },
-      {
-        cause,
-        ...fixedAllowanceOptions(
-          "The binary hardening structural allowance",
-          "parser",
-        ),
-      },
-    );
-  if (cause instanceof BinaryFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: `Selected artifact ${input.path}: ${cause.message}`,
-          },
-        ]);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        cause.message,
-        { max_file_bytes: input.max_file_bytes },
-        {
-          cause,
-          retryable: false,
-          remediationAction: fileSizeRemediation(input),
-        },
-      );
-    if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        { path: ["path"], reason: "invalid_format", message: cause.message },
-      ]);
-  }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected image could not be read (${String(cause.code)}): ${input.path}.`,
-        },
-      ]);
-  }
-  return new ProviderAdapterError(BINARY_HARDENING_PROVIDER.id, OPERATION, {
-    cause,
-    diagnostics: {
-      path: input.path,
-      reason: cause instanceof Error ? cause.message : String(cause),
-    },
-  });
-};
-
 const binaryHardeningFailure = (
   cause: unknown,
   input: InspectBinaryHardeningInput,
-  snapshot?: StableArtifactSnapshot,
-): AnalysisError =>
-  projectStableArtifactFailure(
+  snapshot?: { readonly sha256: string; readonly bytes: number },
+): AnalysisError => {
+  const facts = artifactFilePrimaryFacts(cause);
+  const primary = classifyProviderFailure(
+    facts.cause,
+    offlineArtifactFailureDialect(facts, {
+      providerId: BINARY_HARDENING_PROVIDER.id,
+      operation: OPERATION,
+      path: input.path,
+      description: "image",
+      recognise: (failure) =>
+        failure instanceof BinaryResourceFailure
+          ? parseLimitConstraint(OPERATION, "capacity", failure, {
+              path: input.path,
+              ...fixedAllowanceOptions(
+                "The binary hardening structural allowance",
+                "parser",
+                binaryResourceCeiling(failure),
+              ),
+            })
+          : undefined,
+      fileSize: (failure) =>
+        new AnalysisResourceConstraintError(
+          OPERATION,
+          "file-size",
+          failure.message,
+          { max_file_bytes: input.max_file_bytes },
+          {
+            cause: failure,
+            retryable: false,
+            remediationAction: imageFileSizeRemediation(
+              input.max_file_bytes,
+              MAX_INSPECT_BINARY_HARDENING_FILE_BYTES,
+            ),
+          },
+        ),
+      unclassified: (failure) =>
+        new ProviderAdapterError(BINARY_HARDENING_PROVIDER.id, OPERATION, {
+          cause: failure,
+          diagnostics: {
+            path: input.path,
+            reason: errorMessage(failure),
+          },
+        }),
+    }),
+  );
+  return projectStableArtifactFailure(
     cause,
-    binaryHardeningFailurePrimary(artifactFilePrimaryFacts(cause), input),
+    primary,
     input.path,
     BINARY_HARDENING_PROVIDER.id,
     OPERATION,
     snapshot,
   );
+};

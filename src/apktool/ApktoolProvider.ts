@@ -1,21 +1,29 @@
+import {
+  deadlineParameterLimit,
+  MAX_NODE_TIMER_DELAY_MS,
+} from "../domain/analysisResourceLimits.js";
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { processInspectionCancellationError } from "../providers/OwnedCommandCleanup.js";
 import { APKTOOL_PROVIDER_IDENTITY } from "./ApktoolProviderIdentity.js";
 import { countDecodedFiles } from "./ApktoolDecodedInventory.js";
 import { ApktoolWorkspace } from "./ApktoolWorkspace.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
+  ArtifactResourceScope,
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   artifactFileCancellationCause,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { capturedApktoolFailureOutput } from "./ApktoolCommandOutput.js";
+import { providerOutcomeOf } from "../process/ProviderOutcome.js";
+import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
 import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ellipsisExcerpt } from "../domain/excerpt.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
@@ -26,38 +34,41 @@ import {
   type ProviderAvailability,
   createAnalysisExecution,
   type AnalysisExecution,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
-  apktoolResultSchemas,
   apktoolStringTablesRequested,
   DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
-  MAX_APKTOOL_DECODE_TIMEOUT_MS,
   type ApktoolRequest,
   type ApktoolDecodeResult,
 } from "../domain/apktool/apktoolResourceAnalysis.js";
 import { projectApktoolStringTables } from "./ApktoolStringTables.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisCancelledError,
   AnalysisProtocolError,
-  AnalysisResourceConstraintError,
-  AnalysisTimeoutError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
+  OwnerCancellation,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
+import {
+  externalJvmExhaustionRecovery,
+  type ExternalJvm,
+} from "../process/RuntimeExhaustion.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { WindowsBatchCommandError } from "../process/WindowsBatchCommand.js";
-import { ownedProcessPrerequisiteAvailability } from "../application/ownedProcessAvailability.js";
+import { ownedProcessPrerequisiteAvailability } from "../providers/ownedProcessAvailability.js";
 import {
   ApktoolConfigurationFailure,
   apktoolConfigurationAvailability,
@@ -75,16 +86,31 @@ import {
 const DECODE_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MANIFEST_MAX_BYTES = 512 * 1024;
 const MAX_DECODED_ENTRIES_VISITED = 100_000;
-const STDERR_EXCERPT_BYTES = 512;
+/** Apktool's decoder runs in the selected launcher's JVM, whose limits REA does not set. */
+const APKTOOL_JVM: ExternalJvm = {
+  program: "Apktool's",
+  role: "decoder",
+  raise: (option) =>
+    `Raise the ${option} of the selected Apktool launcher's JVM`,
+  settings: "the selected Apktool launcher's JVM memory settings",
+  threads:
+    "Check host thread/process limits and available native memory for the selected Apktool launcher",
+  smaller: "decode a smaller APK",
+};
 
-const apktoolDecodeTimeoutGuidance = (
-  timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
+const STDERR_EXCERPT_CHARACTERS = 512;
+
+const apktoolDecodeTimeoutGuidance = (timeoutMs: number) => ({
   userMessage: `apktool decode reached its ${String(timeoutMs)} ms wall-clock deadline (deadlineExpired).`,
+  limit: deadlineParameterLimit(
+    "decode_timeout_ms",
+    timeoutMs,
+    DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
+  ),
   remediationAction: `${
-    timeoutMs < MAX_APKTOOL_DECODE_TIMEOUT_MS
-      ? `Increase decode_timeout_ms above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_APKTOOL_DECODE_TIMEOUT_MS)}; omitted means ${String(DEFAULT_APKTOOL_DECODE_TIMEOUT_MS)}), or use rea decode-android-resources <path> --decode-timeout-ms <milliseconds> on the CLI.`
-      : `decode_timeout_ms is already at the maximum ${String(MAX_APKTOOL_DECODE_TIMEOUT_MS)} ms; do not increase it further.`
+    timeoutMs < MAX_NODE_TIMER_DELAY_MS
+      ? `Increase decode_timeout_ms above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)}; omitted means ${String(DEFAULT_APKTOOL_DECODE_TIMEOUT_MS)}).`
+      : `decode_timeout_ms is already at the maximum ${String(MAX_NODE_TIMER_DELAY_MS)} ms; do not increase it further.`
   } A change applies on the next decode. It does not raise the ${String(DECODE_MAX_OUTPUT_BYTES)}-byte output capture allowance or the version probe; both have no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
 });
 
@@ -92,8 +118,7 @@ const throwIfCancelled = (
   operation: string,
   signal: AbortSignal | undefined,
 ): void => {
-  if (signal?.aborted === true)
-    throw new AnalysisCancelledError(operation, { cause: signal.reason });
+  if (signal?.aborted === true) throw cancelledBy(operation, signal);
 };
 
 interface DecodeLimits {
@@ -111,14 +136,17 @@ const runApktool = async (
   environment: Readonly<Record<string, string | undefined>>,
   commands: ApktoolCommandCleanup,
   root: string,
+  platform: NodeJS.Platform,
 ): Promise<Result<{ stdout: string; stderr: string }, AnalysisError>> => {
-  if (signal?.aborted === true)
-    return err(
-      new AnalysisCancelledError(operation, { cause: signal?.reason }),
-    );
+  if (signal?.aborted === true) return err(cancelledBy(operation, signal));
   let invocation: ReturnType<typeof apktoolInvocation>;
   try {
-    invocation = apktoolInvocation(selection, arguments_, environment);
+    invocation = apktoolInvocation(
+      selection,
+      arguments_,
+      environment,
+      platform,
+    );
   } catch (cause) {
     if (!(cause instanceof WindowsBatchCommandError)) throw cause;
     const reason = `The apktool batch launcher cannot receive REA's decode paths through cmd.exe: ${cause.message}`;
@@ -146,10 +174,13 @@ const runApktool = async (
       {
         timeoutMs: limits.timeoutMs,
         diagnosticBytes: limits.maxOutputBytes,
+        // Apktool is a Java program; its heap exhaustion is not a target refusal.
+        runtime: "jvm",
       },
       signal === undefined ? {} : { signal },
     );
-    return ok({ stdout: output.stdout.text, stderr: output.stderr.text });
+    const { stdout, stderr } = capturedProviderOutput(output);
+    return ok({ stdout, stderr });
   } catch (cause) {
     return err(
       commands.retainFailure(
@@ -163,89 +194,90 @@ const runApktool = async (
 };
 
 const apktoolCommandFailure = (
-  cause: unknown,
+  failure: unknown,
   operation: string,
   targetPath: string,
   selection: ApktoolCommandSelection,
   limits: DecodeLimits,
 ): AnalysisError => {
-  const capturedOutput = capturedApktoolFailureOutput(cause);
-  if (!(cause instanceof OwnedCommandFailure))
+  const capturedOutput = capturedApktoolFailureOutput(failure);
+  const inspectionCancellation =
+    !(failure instanceof OwnedCommandFailure) ||
+    failure.preparationFailure !== undefined
+      ? processInspectionCancellationError(failure, operation)
+      : undefined;
+  if (inspectionCancellation !== undefined) return inspectionCancellation;
+  const userMessage = `The selected Apktool command failed while decoding ${targetPath}`;
+  const diagnostics = {
+    selected_command: selection.command,
+    target_path: targetPath,
+  };
+  const outcome = providerOutcomeOf(failure);
+  if (outcome === undefined)
     return new ProviderAdapterError("apktool", operation, {
-      cause,
-      diagnostics: {
-        selected_command: selection.command,
-        target_path: targetPath,
-      },
+      ...(failure instanceof OwnedCommandFailure ? { userMessage } : {}),
+      cause: failure,
       ...(capturedOutput === undefined ? {} : { capturedOutput }),
+      diagnostics,
     });
-
-  const output = cause.snapshot;
-  if (cause.reason === "cancelled")
-    return new AnalysisCancelledError(operation, {
-      cause: cause.cancellation?.reason,
-      ...(capturedOutput === undefined ? {} : { capturedOutput }),
-    });
-  if (cause.reason === "timeout")
-    return new AnalysisTimeoutError(operation, limits.timeoutMs, {
-      cause,
-      ...(capturedOutput === undefined ? {} : { capturedOutput }),
-      ...apktoolDecodeTimeoutGuidance(limits.timeoutMs),
-    });
-  if (cause.reason === "output-limit") {
-    return new AnalysisResourceConstraintError(
-      operation,
-      "memory",
-      `apktool output exceeded the ${String(limits.maxOutputBytes)}-byte capture budget`,
-      { max_output_bytes: limits.maxOutputBytes },
-      {
-        cause,
-        ...(capturedOutput === undefined ? {} : { capturedOutput }),
-        ...fixedAllowanceOptions(
-          `The apktool output capture allowance of ${String(limits.maxOutputBytes)} bytes (this release has no runtime override; decode_timeout_ms does not raise it)`,
-          "capture",
-        ),
-      },
-    );
-  }
-  // A physical launcher/capture failure does not establish target refusal.
-  // Only a fully collected ordinary nonzero decode exit carries that meaning.
-  if (
-    cause.processError !== undefined ||
-    cause.collectionFailure ||
-    cause.preparationFailure !== undefined ||
-    output === null ||
-    output.exitCode === null ||
-    output.exitCode === undefined ||
-    output.exitCode === 0 ||
-    output.signal !== null ||
-    output.outputIncomplete === true ||
-    output.diagnosticTruncated === true
-  )
-    return new ProviderAdapterError("apktool", operation, {
-      cause,
-      userMessage: `The selected Apktool command failed while decoding ${targetPath}`,
-      diagnostics: {
-        selected_command: selection.command,
-        target_path: targetPath,
-      },
-      ...(capturedOutput === undefined ? {} : { capturedOutput }),
-    });
-  return new AnalysisUnsupportedTargetError(
+  return classifyProviderOutcome(outcome, {
+    providerId: APKTOOL_PROVIDER_IDENTITY.id,
     operation,
-    targetPath,
-    output?.stderr.text.trim().slice(0, STDERR_EXCERPT_BYTES) ||
-      `apktool exited with code ${String(output?.exitCode ?? "unknown")} for ${operation}`,
-    {
-      cause,
-      ...(capturedOutput === undefined ? {} : { capturedOutput }),
+    capturedOutput: capturedProviderOutput,
+    // Ownership preparation can retain output before any process exists.
+    details: capturedOutput === undefined ? {} : { capturedOutput },
+    timeout: {
+      ms: limits.timeoutMs,
+      ...apktoolDecodeTimeoutGuidance(limits.timeoutMs),
     },
-  );
+    outputLimit: {
+      limits: { max_output_bytes: limits.maxOutputBytes },
+      recovery: fixedAllowanceOptions(
+        "The apktool output capture allowance (decode_timeout_ms does not raise it)",
+        "capture",
+        { limit: limits.maxOutputBytes, unit: "bytes" },
+      ),
+    },
+    runtimeExhaustion: ({ area }) => ({
+      limits: null,
+      recovery: {
+        retryable: false,
+        remediationAction: `${externalJvmExhaustionRecovery(area, APKTOOL_JVM)} Repeating the unchanged request is expected to fail the same way.`,
+      },
+    }),
+    dialect: (exit, details, unclassified) => {
+      // A physical launcher/capture failure does not establish target refusal.
+      // Only a fully collected ordinary nonzero decode exit carries that meaning.
+      if (
+        exit.kind !== "exited" ||
+        !(failure instanceof OwnedCommandFailure) ||
+        failure.processError !== undefined ||
+        failure.preparationFailure !== undefined ||
+        exit.exitCode === null ||
+        exit.exitCode === 0 ||
+        exit.signal !== null ||
+        exit.output?.truncated !== false
+      )
+        return unclassified({ userMessage, diagnostics });
+      return new AnalysisUnsupportedTargetError(
+        operation,
+        targetPath,
+        ellipsisExcerpt(
+          exit.output.snapshot.stderr.text.trim(),
+          STDERR_EXCERPT_CHARACTERS,
+        ) ||
+          `apktool exited with code ${String(exit.exitCode)} for ${operation}`,
+        details,
+      );
+    },
+  });
 };
 
 export interface ApktoolProviderOptions {
   readonly environment?: Readonly<Record<string, string | undefined>>;
   readonly removeWorkspace?: (path: string) => Promise<void>;
+  /** The host apktool runs on; defaults to the running host. */
+  readonly platform?: NodeJS.Platform;
 }
 
 type DecodeFacts = Pick<ApktoolDecodeResult, "client" | "target" | "locale"> &
@@ -263,6 +295,7 @@ type DecodeFacts = Pick<ApktoolDecodeResult, "client" | "target" | "locale"> &
  * (`--no-src`) because Java-source recovery belongs to the JADX family.
  */
 export class ApktoolProvider {
+  private readonly platform: NodeJS.Platform;
   private readonly selectedEnvironment:
     | Readonly<Record<string, string | undefined>>
     | undefined;
@@ -278,22 +311,26 @@ export class ApktoolProvider {
   #closePromise: Promise<void> | undefined;
 
   constructor(options: ApktoolProviderOptions = {}) {
+    this.platform = options.platform ?? HOST_PLATFORM.platform;
     this.selectedEnvironment =
       options.environment === undefined
         ? undefined
-        : snapshotEnvironment(options.environment);
+        : snapshotEnvironment(options.environment, this.platform);
     this.removeWorkspace = options.removeWorkspace;
   }
 
   private operationEnvironment(): Readonly<NodeJS.ProcessEnv> {
-    return this.selectedEnvironment ?? snapshotEnvironment(process.env);
+    return (
+      this.selectedEnvironment ??
+      snapshotEnvironment(process.env, this.platform)
+    );
   }
 
   /** Probe the selected apktool launcher; decodes nothing. */
   inspectAvailability(signal?: AbortSignal): Promise<ProviderAvailability> {
     if (this.#closing)
       return Promise.reject(
-        new AnalysisCancelledError("inspect_apktool_client"),
+        cancelledBy("inspect_apktool_client", OwnerCancellation.ownerClosed),
       );
     const operationSignal =
       signal === undefined
@@ -325,12 +362,13 @@ export class ApktoolProvider {
     try {
       const selection = await resolveApktoolCommand(
         environment,
-        process.platform,
+        this.platform,
         signal,
       );
       await inspectApktoolClient(selection, this.#commands, {
         signal,
         environment,
+        platform: this.platform,
       });
       throwIfCancelled("inspect_apktool_client", signal);
       return {
@@ -355,7 +393,7 @@ export class ApktoolProvider {
   /** Retain failed cleanup ownership and retry it on close. */
   async close(): Promise<void> {
     this.#closing = true;
-    this.#shutdown.abort();
+    this.#shutdown.abort(OwnerCancellation.ownerClosed);
     this.#closePromise ??= this.#drainAndClean().catch((cause: unknown) => {
       this.#closePromise = undefined;
       throw cause;
@@ -369,7 +407,7 @@ export class ApktoolProvider {
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     if (this.#closing)
       return Promise.resolve(
-        err(new AnalysisCancelledError(request.operation)),
+        err(cancelledBy(request.operation, OwnerCancellation.ownerClosed)),
       );
     const signal =
       options?.signal === undefined
@@ -398,21 +436,20 @@ export class ApktoolProvider {
     signal: AbortSignal,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     if (signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(request.operation, { cause: signal.reason }),
-      );
+      return err(cancelledBy(request.operation, signal));
     const environment = this.operationEnvironment();
     let selection: ApktoolCommandSelection;
     let identity: ApktoolClientIdentity;
     try {
       selection = await resolveApktoolCommand(
         environment,
-        process.platform,
+        this.platform,
         signal,
       );
       identity = await inspectApktoolClient(selection, this.#commands, {
         signal,
         environment,
+        platform: this.platform,
       });
     } catch (cause) {
       if (cause instanceof AnalysisError)
@@ -439,10 +476,7 @@ export class ApktoolProvider {
         ),
       );
     }
-    if (signal.aborted)
-      return err(
-        new AnalysisCancelledError(request.operation, { cause: signal.reason }),
-      );
+    if (signal.aborted) return err(cancelledBy(request.operation, signal));
     const client = {
       command: selection.command,
       command_source: selection.commandSource,
@@ -499,11 +533,7 @@ export class ApktoolProvider {
     if (first === undefined) return;
     throw failures.reduce(
       (primary, cleanup) =>
-        analysisErrorWithCleanupFailure(
-          primary,
-          cleanup,
-          "close",
-        ).bindCleanupDependencies([primary, cleanup]),
+        analysisErrorWithCleanupDependencies(primary, cleanup, "close"),
       first,
     );
   }
@@ -573,6 +603,7 @@ export class ApktoolProvider {
         environment,
         this.#commands,
         root,
+        this.platform,
       );
       if (!decoded.ok) {
         throw decoded.error;
@@ -672,14 +703,10 @@ export class ApktoolProvider {
       completedDecode.coverage = coverage;
       if (!projection.ok) throw projection.error.cause;
       result = ok(
-        createAnalysisExecution(
-          apktoolResultSchemas.decode_android_resources.parse(completedDecode),
-          provider,
-          {
-            subject: { path: input.path, sha256, format: "apk" },
-            limitations,
-          },
-        ),
+        createAnalysisExecution(completedDecode, provider, {
+          subject: { path: input.path, sha256, format: "apk" },
+          limitations,
+        }),
       );
     } catch (cause) {
       const { cause: physical, origin } = artifactFilePrimaryFacts(cause);
@@ -689,9 +716,10 @@ export class ApktoolProvider {
           : origin === "owned-or-classified" &&
               physical instanceof ArtifactReaderFailure &&
               physical.reason === "cancelled"
-            ? new AnalysisCancelledError(operation, {
-                cause: artifactFileCancellationCause(physical),
-              })
+            ? cancelledBy(
+                operation,
+                carriedReason(artifactFileCancellationCause(physical)),
+              )
             : new AnalysisProtocolError("Apktool resource projection failed", {
                 cause: physical,
               });
@@ -710,11 +738,7 @@ export class ApktoolProvider {
         physical === cause && cause instanceof AnalysisError
           ? cause
           : failure.cleanupIncomplete
-            ? analysisErrorWithCleanupFailure(
-                primary,
-                failure,
-                operation,
-              ).bindCleanupDependencies([primary, failure])
+            ? analysisErrorWithCleanupDependencies(primary, failure, operation)
             : primary;
       if (
         completedDecode !== undefined &&
@@ -754,47 +778,31 @@ export class ApktoolProvider {
         });
       result = err(retained);
     }
-    const released = await this.#artifacts.release(owner);
-    const observation =
-      result.ok && (released.kind === "failed" || signal?.aborted === true)
-        ? createAnalysisExecutionEvidence(
+    const completed = result;
+    return finalizedResult(
+      await runOwned(async () => completed, {
+        providerId: "apktool",
+        operation,
+        signal,
+        close: async () => {
+          const released = await this.#artifacts.release(owner);
+          if (released.kind === "failed")
+            throw new ProviderCleanupError(
+              "apktool",
+              [root],
+              {},
+              { operation, cause: released.cause },
+            );
+        },
+        cleanupLeases: [lease],
+        partial: (execution) =>
+          createAnalysisExecutionEvidence(
             operation,
             input,
-            result.value,
+            execution,
             "observed",
-          )
-        : undefined;
-    if (result.ok && signal?.aborted)
-      result = err(
-        new AnalysisCancelledError(operation, {
-          cause: signal.reason,
-          partialObservation: observation,
-        }),
-      );
-    if (released.kind === "failed") {
-      const cleanup = new ProviderCleanupError(
-        "apktool",
-        [root],
-        {},
-        {
-          operation,
-          cause: released.cause,
-          ...(observation === undefined
-            ? {}
-            : { partialObservation: observation }),
-        },
-      );
-      new AnalysisCleanupLeaseGroup(cleanup, [lease]);
-      return err(
-        result.ok
-          ? cleanup
-          : analysisErrorWithCleanupFailure(
-              result.error,
-              cleanup,
-              operation,
-            ).bindCleanupDependencies([result.error, cleanup]),
-      );
-    }
-    return result;
+          ),
+      }),
+    );
   }
 }

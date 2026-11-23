@@ -1,3 +1,5 @@
+import { ZIP_EOCD_BYTES } from "../zipEndOfCentralDirectory.js";
+import { ZIP_SIGNATURES } from "../zipPackageFormat.js";
 import { XML_ELEMENT_OPENING } from "../xmlDocument.js";
 import {
   DESKTOP_VIEW_DEFAULTS,
@@ -7,6 +9,13 @@ import {
 import { PYTHON_JSON_READER } from "./appExportPythonJson.js";
 import { PYTHON_XML_READER } from "./appExportPythonXml.js";
 import { PYTHON_ZIP_HELPERS } from "./appExportPythonZip.js";
+import {
+  DESKTOP_LINE_BREAK,
+  KEYFILE_CONTROL_LINE,
+  KEYFILE_ENTRY_LINE,
+  PYTHON_ECMASCRIPT_TRIM_CHARACTERS,
+} from "./desktopTextSyntax.js";
+import { PYTHON_X11_PROPERTIES } from "./x11Windows.js";
 
 /** The generated module's imports. */
 /** The class method that holds readiness until the app's own window shows, not a splash screen with its class. */
@@ -20,6 +29,7 @@ export const PYTHON_READY_CHECK = `
 export const PYTHON_IMPORTS = `from __future__ import annotations
 
 from array import array
+from itertools import islice
 import binascii
 import contextlib
 import copy
@@ -28,6 +38,7 @@ import io
 import json
 import math
 import os
+import errno
 import re
 import sqlite3
 import struct
@@ -77,11 +88,15 @@ def _opens_element(text: str) -> bool:
         elif character == ">":
             return XML_ELEMENT_OPENING.match(text[index + 1:].lstrip()) is not None
     return False
-GROUP_HEADER = re.compile(r"^\[([^\]]+)\]$")
-LINE_BREAK = re.compile(r"\r?\n")
+KEYFILE_CONTROL_LINE = re.compile(${JSON.stringify(KEYFILE_CONTROL_LINE)})
+KEYFILE_ENTRY_LINE = re.compile(${JSON.stringify(KEYFILE_ENTRY_LINE)})
+LINE_BREAK = re.compile(${JSON.stringify(DESKTOP_LINE_BREAK)})
+ECMASCRIPT_TRIM_CHARACTERS = ${PYTHON_ECMASCRIPT_TRIM_CHARACTERS}
 SQLITE_HEADER = b"SQLite format 3\x00"
 GVDB_HEADER = b"GVariant"
-ZIP_HEADER = b"PK\x03\x04"
+ZIP_SIGNATURES = (${ZIP_SIGNATURES.map((signature) => `bytes(${JSON.stringify(signature)})`).join(", ")})
+ZIP_HEADER = ZIP_SIGNATURES[0]
+ZIP_EOCD_BYTES = ${String(ZIP_EOCD_BYTES)}
 GZIP_HEADER = b"\x1f\x8b\x08"
 XML_SPACE = "xml:space"
 MAX_SAFE_INTEGER = 2**53 - 1
@@ -99,20 +114,23 @@ def _respelled(text: str, home: Path) -> str:
     return re.sub(re.escape(SEED_HOME) + r"(?![\w.@+~-])", lambda _: str(home), text)
 
 
+UTF16_CODECS = {b"\xff\xfe": "utf-16-le", b"\xfe\xff": "utf-16-be"}
+
+
 def _respelled_utf16(data: bytes, home: Path) -> bytes:
     """A UTF-16 text file with a byte-order mark respelled like a text seed, its mark kept; any other bytes as given."""
-    for mark, codec in ((b"\xff\xfe", "utf-16-le"), (b"\xfe\xff", "utf-16-be")):
-        if data.startswith(mark):
-            try:
-                text = data[len(mark):].decode(codec)
-            except UnicodeDecodeError:
-                return data
-            return mark + _respelled(text, home).encode(codec) if SEED_HOME in text else data
-    return data
+    mark = data[:2]
+    codec = UTF16_CODECS.get(mark)
+    if codec is None:
+        return data
+    try:
+        text = data[2:].decode(codec)
+    except UnicodeDecodeError:
+        return data
+    return mark + _respelled(text, home).encode(codec) if SEED_HOME in text else data
 
 
-#: What marks a window as not yet the app's own: skipping the taskbar, as splash screens and dialogs do, or a splash type.
-SPLASH_MARKS = ("_NET_WM_STATE_SKIP_TASKBAR", "_NET_WM_WINDOW_TYPE_SPLASH")
+${PYTHON_X11_PROPERTIES}
 
 
 def _taskbar_window(window_class: str) -> bool:
@@ -122,10 +140,14 @@ def _taskbar_window(window_class: str) -> bool:
         done = subprocess.run(["xprop", *args], capture_output=True, text=True)
         return done.stdout if done.returncode == 0 else ""
 
-    for window in re.findall(r"0x[0-9a-f]+", xprop("-root", "_NET_CLIENT_LIST").partition("#")[2]):
-        props = xprop("-id", window, "WM_CLASS", "_NET_WM_STATE", "_NET_WM_WINDOW_TYPE")
-        classes = re.findall(r'"((?:[^"\\]|\\.)*)"', props.partition("WM_CLASS")[2].split("\n", 1)[0])
-        if window_class in classes and not any(mark in props for mark in SPLASH_MARKS):
+    root = _x11_properties(xprop("-root", "_NET_CLIENT_LIST"))
+    for window in _x11_client_ids(root):
+        props = _x11_properties(xprop("-id", window, "WM_CLASS", "_NET_WM_STATE", "_NET_WM_WINDOW_TYPE"))
+        if _x11_window_class(props) != window_class:
+            continue
+        states = [atom.strip(ECMASCRIPT_TRIM_CHARACTERS) for atom in props.get("_NET_WM_STATE", "").split(",")]
+        types = [atom.strip(ECMASCRIPT_TRIM_CHARACTERS) for atom in props.get("_NET_WM_WINDOW_TYPE", "").split(",")]
+        if "_NET_WM_STATE_SKIP_TASKBAR" not in states and "_NET_WM_WINDOW_TYPE_SPLASH" not in types:
             return True
     return False
 
@@ -141,10 +163,10 @@ def _seed_home(home: Path) -> None:
         target = home / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         data = source.read_bytes()
-        if relative in TEXT_SEEDS:
-            data = _respelled(data.decode("utf-8"), home).encode("utf-8")
-        else:
+        if data[:2] in UTF16_CODECS:
             data = _respelled_utf16(data, home)
+        elif relative in TEXT_SEEDS:
+            data = _respelled(data.decode("utf-8"), home).encode("utf-8")
         target.write_bytes(data)
         mode = SEED_MODES.get(relative)
         if mode is not None:
@@ -177,8 +199,44 @@ def _ensure_state_aliases(home: Path) -> None:
 
 
 def _dconf(arguments: list, environment: dict) -> str:
-    return subprocess.run(["dconf", *arguments], env={**os.environ, **environment}, capture_output=True, text=True,
-                          check=True).stdout
+    child_environment = {**os.environ, **environment}
+    refusal = None
+    missing = None
+    for directory in os.get_exec_path(child_environment):
+        command = os.path.join(directory, "dconf")
+        if not os.path.isabs(command):
+            command = os.path.join(os.getcwd(), command)
+        try:
+            child = subprocess.Popen([command, *arguments], env=child_environment,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        except OSError as error:
+            # Popen identifies an exec failure with the executable filename;
+            # parent capacity, pipe setup and cwd failures are not PATH misses.
+            if error.filename != command:
+                raise
+            # Match Python's executable search: retain the first non-missing
+            # spawn error, but never retry a child that actually started.
+            if error.errno in (errno.ENOENT, errno.ENOTDIR):
+                missing = error
+            elif refusal is None:
+                refusal = error
+            continue
+        break
+    else:
+        if refusal is not None:
+            raise refusal
+        if missing is not None:
+            raise missing
+        raise FileNotFoundError(errno.ENOENT, "dconf is not installed (dconf-cli)", "dconf")
+    with child:
+        try:
+            stdout, stderr = child.communicate()
+        except BaseException:
+            child.kill()
+            raise
+        result = subprocess.CompletedProcess(child.args, child.returncode, stdout, stderr)
+        result.check_returncode()
+        return result.stdout
 
 
 def _load_dconf(home: Path) -> None:
@@ -195,8 +253,13 @@ def _load_dconf(home: Path) -> None:
             keyfiles.mkdir()
             if database.is_file():
                 profile = Path(scratch, "profile")
-                profile.write_text(f"file-db:{database}\n")
-                existing = _dconf(["dump", "/"], {"DCONF_PROFILE": str(profile)})
+                with database.open("rb") as source:
+                    # Parent ownership survives wrappers replacing stdin or closing child fds.
+                    source_path = f"/proc/{os.getpid()}/fd/{source.fileno()}"
+                    # Missing descriptor paths must not become a successful empty dump.
+                    os.stat(source_path)
+                    profile.write_text(f"file-db:{source_path}\n")
+                    existing = _dconf(["dump", "/"], {"DCONF_PROFILE": str(profile.resolve())})
                 (keyfiles / "00-existing").write_text(existing)
             (keyfiles / "01-captured").write_text(_respelled(DCONF, home))
             _dconf(["compile", str(Path(scratch, "user")), str(keyfiles)], {})
@@ -218,9 +281,9 @@ def _cell(value, encoding: str):
         return _sqlite_text(data, encoding) if value[0] == "t" else {"blob_hex": data.hex()}
     if isinstance(value, int) and abs(value) > MAX_SAFE_INTEGER:
         return {"integer": str(value)}
-    # JSON has no infinities or negative zero; REA's SQLite reader spells them as strings.
+    # Keep JSON's missing REAL values distinct from literal TEXT spellings.
     if isinstance(value, float) and (math.isinf(value) or (value == 0 and math.copysign(1, value) < 0)):
-        return "Infinity" if value == math.inf else "-Infinity" if value == -math.inf else "-0"
+        return {"real": "Infinity" if value == math.inf else "-Infinity" if value == -math.inf else "-0"}
     return value
 
 
@@ -319,25 +382,24 @@ def _sqlite(path: Path) -> dict:
 
 
 def _text(text: str) -> dict:
-    lines = LINE_BREAK.split(text)
-    if lines[-1] == "":
-        lines.pop()
-    view = {"lines": lines[:MAX_LINES], "line_count": len(lines), "truncated": len(lines) > MAX_LINES}
+    count = text.count("\n") + int(bool(text) and not text.endswith("\n"))
+    lines = list(islice(_each_line(text), min(MAX_LINES, count)))
+    view = {"lines": lines, "line_count": count, "truncated": count > MAX_LINES}
     return {"format": "text", "view": view, "truncated": view["truncated"]}
 
 
 def _keyfile_line(raw: str) -> tuple:
     """A key file line as REA reads it: skip (blank or comment), group, entry or other."""
-    line = raw.strip()
-    if not line or line[0] in "#;":
-        return ("skip",)
-    header = GROUP_HEADER.match(line)
-    if header:
-        return ("group", header.group(1))
-    key, equals, value = raw.partition("=")
-    key = key.strip()
-    # Only ASCII space and tab immediately after '=' are padding.
-    return ("entry", key, value.lstrip(" \t")) if equals and key else ("other",)
+    control = KEYFILE_CONTROL_LINE.fullmatch(raw.strip(ECMASCRIPT_TRIM_CHARACTERS))
+    if control is not None:
+        name = control.group(1)
+        return ("skip",) if name is None else ("group", name)
+    entry = KEYFILE_ENTRY_LINE.fullmatch(raw)
+    if entry is not None:
+        key = entry.group(1).strip(ECMASCRIPT_TRIM_CHARACTERS)
+        if key:
+            return ("entry", key, entry.group(2))
+    return ("other",)
 
 
 def _each_line(text: str):
@@ -363,7 +425,7 @@ def _is_keyfile(text: str) -> bool:
 
 def _keyfile(text: str) -> dict:
     groups, group = {}, ""
-    for line in map(_keyfile_line, LINE_BREAK.split(text)):
+    for line in map(_keyfile_line, _each_line(text)):
         if line[0] == "group":
             group = line[1]
             groups.setdefault(group, {})
@@ -379,7 +441,7 @@ ${PYTHON_JSON_READER}
 def _text_view(name: str, text: str, size: int) -> dict:
     """The format REA's state view detects for decoded text of size bytes, and its view; a JSON or key file over the
     parsed-view limit is refused before its value is built."""
-    trimmed = re.sub(r"^[\s﻿]+", "", text)
+    trimmed = text.lstrip(ECMASCRIPT_TRIM_CHARACTERS)
     if name.lower().endswith(".json") or trimmed[:1] in ("[", "{"):
         view = _json_view(text, size)
         if view is not None:
@@ -400,12 +462,21 @@ def _text_view(name: str, text: str, size: int) -> dict:
 def _bytes_view(name: str, data: bytes) -> dict:
     """The view of a document that is no database or archive: its text's, or none when it is binary."""
     try:
-        text = data.decode("utf-8-sig") if b"\x00" not in data[:8192] else None
+        codec = UTF16_CODECS.get(bytes(data[:2]))
+        if codec is not None:
+            text = data[2:].decode(codec)
+        else:
+            text = data.decode("utf-8-sig") if b"\x00" not in data[:8192] else None
     except UnicodeDecodeError:
         text = None
-    if text is None:
+    if text is None or (codec is not None and "\x00" in text):
         return {"format": "binary", "view": None, "truncated": False}
     return _text_view(name, text, len(data))
+
+
+def _is_zip(data: bytes) -> bool:
+    """Recognize storage signatures before the directory reader checks validity."""
+    return data.startswith(ZIP_HEADER) or (len(data) >= ZIP_EOCD_BYTES and data.startswith(ZIP_SIGNATURES))
 
 
 def _view(path: Path) -> dict:
@@ -417,7 +488,8 @@ def _view(path: Path) -> dict:
         data = file.read(min(8192, MAX_VIEW_BYTES + 1))
         if len(data) > MAX_VIEW_BYTES:
             return too_large
-        whole = data.startswith(GZIP_HEADER) or (not data.startswith(SQLITE_HEADER) and b"\x00" not in data)
+        whole = (data.startswith(GZIP_HEADER) or data[:2] in UTF16_CODECS
+                 or (not data.startswith(SQLITE_HEADER) and b"\x00" not in data))
         remaining = MAX_VIEW_BYTES + 1 - len(data)
         if whole and remaining > 0:
             data += file.read(remaining)
@@ -425,7 +497,7 @@ def _view(path: Path) -> dict:
         return too_large
     if data.startswith(SQLITE_HEADER):
         return _sqlite(path)
-    if data.startswith(ZIP_HEADER):
+    if _is_zip(data):
         with path.open("rb") as file:
             return _zip(file, os.fstat(file.fileno()).st_size)
     if data.startswith(GZIP_HEADER):

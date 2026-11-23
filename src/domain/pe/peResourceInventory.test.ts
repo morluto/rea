@@ -1,0 +1,1030 @@
+import { dosMz, nonPeWindowsMz } from "../binaryTarget.fixture.js";
+import { createHash } from "node:crypto";
+import { describe, expect, it } from "vitest";
+import {
+  inspectPeResourcesInputSchema,
+  peResourcesSchema,
+} from "../native/peResources.js";
+import {
+  hasPeResourceName,
+  locatePeResourcePayloads,
+  readPeResourceLayout,
+} from "./peResourceLayout.js";
+import {
+  parsePeResources,
+  parsePeResourcesFromSource,
+  peResourceLimitBoundary,
+} from "./peResourceInventory.js";
+import { peResourceFixture } from "./peResources.fixture.js";
+import { ParseFailureError } from "../parseFailure.js";
+
+const parse = (bytes: Buffer, maxEntries = 4096, signal?: AbortSignal) =>
+  parsePeResources(
+    bytes,
+    {
+      path: "/fixtures/example.exe",
+      bytes: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    },
+    inspectPeResourcesInputSchema.parse({
+      path: "/fixtures/example.exe",
+      max_entries: maxEntries,
+    }),
+    signal,
+  );
+
+describe("word-aligned PE resource records", () => {
+  it.each([false, true])(
+    "preserves word-aligned resource records after UTF-16 names (PE32+ = %s)",
+    async (plus) => {
+      for (const identities of [
+        { type: 10, name: 1, language: "AB" },
+        { type: "AB", name: 1, language: 1033 },
+      ]) {
+        const payload = Buffer.from("opaque resource");
+        const fixture = peResourceFixture(
+          plus,
+          [{ ...identities, payload }],
+          65536,
+          2,
+        );
+        const dataOffset = fixture.dataOffsets[0];
+        if (dataOffset === undefined)
+          throw new Error("Missing fixture data entry");
+        expect(fixture.dataOffsets.some((at) => at % 4 === 2)).toBe(true);
+        if (typeof identities.type === "string")
+          expect(fixture.directoryOffsets.some((at) => at % 4 === 2)).toBe(
+            true,
+          );
+        const result = peResourcesSchema.parse(await parse(fixture.bytes));
+        expect(
+          result.directories.map(({ location }) => location.offset),
+        ).toEqual(fixture.directoryOffsets);
+        expect(result.coverage).toMatchObject({
+          status: "complete",
+          resources: 1,
+        });
+        expect(result.resources[0]?.data_entry_location).toEqual({
+          offset: dataOffset,
+          bytes: 16,
+        });
+        expect(result.resources[0]?.payload.sha256).toBe(
+          createHash("sha256").update(payload).digest("hex"),
+        );
+        expect(result.resources[0]?.payload.location.offset).toBe(
+          fixture.bytes.readUInt32LE(dataOffset) - 0x1c00,
+        );
+        fixture.bytes.writeUInt32LE(
+          dataOffset - 0x400 + 15,
+          fixture.directoryAt + 4,
+        );
+        await expect(parse(fixture.bytes)).rejects.toMatchObject({
+          kind: "malformed",
+        });
+      }
+    },
+  );
+});
+
+describe("portable PE resource parsing", () => {
+  it.each([false, true])(
+    "preserves original identities, ranges, hashes and icon candidates (PE32+ = %s)",
+    async (plus) => {
+      const { bytes } = peResourceFixture(plus);
+      const result = peResourcesSchema.parse(await parse(bytes));
+      expect(result.format).toBe(plus ? "pe32-plus" : "pe32");
+      expect(result.coverage).toMatchObject({
+        status: "complete",
+        resources: 5,
+      });
+      expect(
+        result.resources.map(({ type, name, language }) => [
+          type,
+          name,
+          language,
+        ]),
+      ).toContainEqual([
+        { kind: "id", id: 10 },
+        { kind: "id", id: 7 },
+        { kind: "id", id: 1041 },
+      ]);
+      const named = result.resources.find(({ name }) => name.kind === "name");
+      expect(named?.name).toMatchObject({
+        kind: "name",
+        name: "7",
+        utf16le_hex: "3700",
+      });
+      for (const resource of result.resources) {
+        const { offset, bytes: size } = resource.payload.location;
+        expect(resource.payload.rva - offset).toBe(0x1c00);
+        expect(resource.payload.sha256).toBe(
+          createHash("sha256")
+            .update(bytes.subarray(offset, offset + size))
+            .digest("hex"),
+        );
+      }
+      expect(result.icon_groups[0]?.images).toMatchObject([
+        {
+          resource_id: 1,
+          candidate_resource_indices: [0, 1],
+          same_language_resource_index: 0,
+          size_matches: true,
+        },
+        {
+          resource_id: 99,
+          candidate_resource_indices: [],
+          same_language_resource_index: null,
+          size_matches: null,
+        },
+      ]);
+    },
+  );
+
+  it("distinguishes an absent resource directory from a present empty tree", async () => {
+    const fixture = peResourceFixture(false, []);
+    expect(await parse(fixture.bytes)).toMatchObject({
+      directory: { rva: 0x2000 },
+      directories: [{ path: [], entry_locations: [] }],
+      resources: [],
+      coverage: { resources: 0, examined_entries: 0 },
+    });
+    fixture.bytes.fill(0, fixture.directoryAt, fixture.directoryAt + 8);
+    expect(await parse(fixture.bytes)).toMatchObject({
+      directory: null,
+      directories: [],
+      resources: [],
+    });
+  });
+
+  it.each([10, 11, "named type"])(
+    "retains identity and incoming entry ranges for empty branch %s",
+    async (type) => {
+      const fixture = peResourceFixture(false, [
+        { type, name: 7, language: 1033, payload: Buffer.from("control") },
+      ]);
+      const populated = peResourcesSchema.parse(await parse(fixture.bytes));
+      expect(populated.resources[0]?.type).toMatchObject(
+        typeof type === "number"
+          ? { kind: "id", id: type }
+          : { kind: "name", name: type },
+      );
+      // Empty the type directory while retaining its incoming root entry.
+      const typeDirectory = fixture.directoryOffsets[1]!;
+      fixture.bytes.writeUInt16LE(0, typeDirectory + 12);
+      fixture.bytes.writeUInt16LE(0, typeDirectory + 14);
+      const report = peResourcesSchema.parse(await parse(fixture.bytes));
+      expect(report.resources).toEqual([]);
+      expect(report.directories.map(({ path }) => path)).toEqual([
+        [],
+        [populated.resources[0]!.type],
+      ]);
+      expect(report.directories[1]?.entry_locations).toEqual([
+        populated.resources[0]!.entry_locations[0],
+      ]);
+      expect(report.coverage).toEqual({
+        status: "complete",
+        examined_entries: 1,
+        resources: 0,
+      });
+    },
+  );
+
+  it.each([
+    [
+      "truncated directory",
+      (fixture: ReturnType<typeof peResourceFixture>) =>
+        fixture.bytes.writeUInt32LE(17, fixture.directoryAt + 4),
+    ],
+    [
+      "cycle",
+      (fixture: ReturnType<typeof peResourceFixture>) =>
+        fixture.bytes.writeUInt32LE(
+          0x80000000,
+          (fixture.entryOffsets[0] ?? 0) + 4,
+        ),
+    ],
+    [
+      "bad payload RVA",
+      (fixture: ReturnType<typeof peResourceFixture>) =>
+        fixture.bytes.writeUInt32LE(0xfffffff0, fixture.dataOffsets[0]),
+    ],
+    [
+      "overlapping payloads",
+      (fixture: ReturnType<typeof peResourceFixture>) =>
+        fixture.bytes.writeUInt32LE(
+          fixture.bytes.readUInt32LE(fixture.dataOffsets[0]) + 1,
+          fixture.dataOffsets[1],
+        ),
+    ],
+    [
+      "bad named counts",
+      (fixture: ReturnType<typeof peResourceFixture>) =>
+        fixture.bytes.writeUInt16LE(1, 0x400 + 12),
+    ],
+    [
+      "truncated data entry",
+      (fixture: ReturnType<typeof peResourceFixture>) =>
+        fixture.bytes.writeUInt32LE(
+          0x7fffffff,
+          (fixture.entryOffsets.at(-1) ?? 0) + 4,
+        ),
+    ],
+  ])("rejects %s without partial success", async (_name, mutate) => {
+    const fixture = peResourceFixture();
+    mutate(fixture);
+    await expect(parse(fixture.bytes)).rejects.toMatchObject({
+      kind: "malformed",
+    });
+  });
+});
+
+it.each([false, true])(
+  "rejects descending numeric sibling IDs without sorting the resource tree (PE32+ = %s)",
+  async (plus) => {
+    const { bytes, directoryOffsets } = peResourceFixture(plus, [
+      { type: 10, name: 4, language: 1, payload: Buffer.from("a") },
+      { type: 10, name: 9, language: 1, payload: Buffer.from("b") },
+    ]);
+    const ordered = await parse(bytes);
+    expect(ordered.resources.map(({ name }) => name)).toEqual([
+      { kind: "id", id: 4 },
+      { kind: "id", id: 9 },
+    ]);
+    const nameDirectory = directoryOffsets[1];
+    if (nameDirectory === undefined) throw new Error("Missing name directory");
+    bytes.writeUInt32LE(9, nameDirectory + 16);
+    bytes.writeUInt32LE(4, nameDirectory + 24);
+    await expect(parse(bytes)).rejects.toMatchObject({
+      kind: "malformed",
+      message: "PE resource directory numeric IDs are out of order.",
+    });
+  },
+);
+
+it("validates a streamed icon group's length before reading its entries", async () => {
+  const maxRead = 1024 * 1024;
+  const payload = Buffer.alloc(maxRead + 16);
+  payload.writeUInt16LE(1, 2);
+  payload.writeUInt16LE(1, 4);
+  const { bytes, dataOffsets } = peResourceFixture(
+    false,
+    [{ type: 14, name: 42, language: 1033, payload }],
+    payload.length + 4096,
+  );
+  const payloadOffset = bytes.readUInt32LE(dataOffsets[0]) - 0x1c00;
+  const reads: Array<{ offset: number; length: number }> = [];
+  const path = "/fixtures/example.exe";
+  await expect(
+    parsePeResourcesFromSource(
+      {
+        size: bytes.length,
+        prefix: bytes.subarray(0, 64),
+        readRange: async (offset, length) => {
+          expect(length).toBeLessThanOrEqual(maxRead);
+          reads.push({ offset, length });
+          return bytes.subarray(offset, offset + length);
+        },
+      },
+      {
+        path,
+        bytes: bytes.length,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      },
+      inspectPeResourcesInputSchema.parse({ path }),
+    ),
+  ).rejects.toMatchObject({
+    kind: "malformed",
+    message: "RT_GROUP_ICON length does not match its image count.",
+  });
+  expect(reads.at(-1)).toEqual({ offset: payloadOffset, length: 6 });
+});
+
+describe("PE header admission and bounded traversal", () => {
+  it.each([
+    [
+      "truncated DOS header",
+      (fixture: ReturnType<typeof peResourceFixture>) =>
+        fixture.bytes.subarray(0, 63),
+    ],
+    [
+      "invalid optional magic",
+      (fixture: ReturnType<typeof peResourceFixture>) => {
+        fixture.bytes.writeUInt16LE(0, 0x98);
+        return fixture.bytes;
+      },
+    ],
+    [
+      "unbacked virtual payload",
+      (fixture: ReturnType<typeof peResourceFixture>) => {
+        fixture.bytes.writeUInt32LE(0x10000, fixture.sectionAt + 8);
+        fixture.bytes.writeUInt32LE(0x8000, fixture.dataOffsets[0]);
+        return fixture.bytes;
+      },
+    ],
+    [
+      "duplicate sibling IDs",
+      (fixture: ReturnType<typeof peResourceFixture>) => {
+        fixture.bytes.writeUInt32LE(
+          fixture.bytes.readUInt32LE(fixture.entryOffsets[0]),
+          (fixture.entryOffsets[0] ?? 0) + 8,
+        );
+        return fixture.bytes;
+      },
+    ],
+    [
+      "section beginning inside a header-backed payload",
+      (fixture: ReturnType<typeof peResourceFixture>) => {
+        fixture.bytes.writeUInt32LE(0x100, fixture.dataOffsets[0]);
+        fixture.bytes.writeUInt32LE(4, (fixture.dataOffsets[0] ?? 0) + 4);
+        fixture.bytes.writeUInt16LE(2, 0x86);
+        const section = fixture.sectionAt + 40;
+        fixture.bytes.writeUInt32LE(4, section + 8);
+        fixture.bytes.writeUInt32LE(0x102, section + 12);
+        fixture.bytes.writeUInt32LE(4, section + 16);
+        const rawOffset = fixture.bytes.length;
+        fixture.bytes = Buffer.concat([fixture.bytes, Buffer.alloc(4)]);
+        fixture.bytes.writeUInt32LE(rawOffset, section + 20);
+        return fixture.bytes;
+      },
+    ],
+    [
+      "overlapping virtual sections",
+      (fixture: ReturnType<typeof peResourceFixture>) => {
+        fixture.bytes.writeUInt16LE(2, 0x86);
+        fixture.bytes.copy(
+          fixture.bytes,
+          fixture.sectionAt + 40,
+          fixture.sectionAt,
+          fixture.sectionAt + 40,
+        );
+        fixture.bytes.writeUInt32LE(0, fixture.sectionAt + 40 + 16);
+        return fixture.bytes;
+      },
+    ],
+    [
+      "malformed icon group",
+      (fixture: ReturnType<typeof peResourceFixture>) => {
+        const data = fixture.dataOffsets.at(-1) ?? 0;
+        const offset = fixture.bytes.readUInt32LE(data) - 0x1c00;
+        fixture.bytes.writeUInt16LE(3, offset + 4);
+        return fixture.bytes;
+      },
+    ],
+  ])("rejects %s", async (_name, mutate) => {
+    await expect(parse(mutate(peResourceFixture()))).rejects.toMatchObject({
+      kind: "malformed",
+    });
+  });
+
+  it("keeps icon size mismatch and unresolved language distinct", async () => {
+    const fixture = peResourceFixture();
+    const data = fixture.dataOffsets.at(-1) ?? 0;
+    const payload = fixture.bytes.readUInt32LE(data) - 0x1c00;
+    fixture.bytes.writeUInt32LE(123, payload + 14);
+    let report = await parse(fixture.bytes);
+    expect(report.icon_groups[0]?.images[0]).toMatchObject({
+      same_language_resource_index: 0,
+      size_matches: false,
+    });
+    const languageEntry = report.resources[4]?.entry_locations[2]?.offset ?? 0;
+    fixture.bytes.writeUInt32LE(2057, languageEntry);
+    report = await parse(fixture.bytes);
+    expect(report.icon_groups[0]?.images[0]).toMatchObject({
+      candidate_resource_indices: [0, 1],
+      same_language_resource_index: null,
+      size_matches: null,
+    });
+  });
+
+  it("preserves exact shared payload ranges and hashes", async () => {
+    const fixture = peResourceFixture();
+    fixture.bytes.writeUInt32LE(
+      fixture.bytes.readUInt32LE(fixture.dataOffsets[0]),
+      fixture.dataOffsets[1],
+    );
+    const result = await parse(fixture.bytes);
+    expect(result.resources[0]?.payload).toEqual(result.resources[1]?.payload);
+  });
+
+  it("enforces entry budgets before traversing large tables", async () => {
+    const failure = await parse(peResourceFixture().bytes, 1).catch(
+      (cause: unknown) => cause,
+    );
+    expect(failure).toMatchObject({
+      kind: "limit",
+      failure: { format: "pe", limit: { name: "max_entries", maximum: 1 } },
+    });
+    const limit =
+      failure instanceof ParseFailureError && failure.failure.kind === "limit"
+        ? failure.failure.limit
+        : undefined;
+    expect(
+      limit === undefined ? undefined : peResourceLimitBoundary(limit),
+    ).toBe("capacity");
+  });
+
+  it("allows cancellation while traversing resource entries", async () => {
+    const controller = new AbortController();
+    const parsing = parse(peResourceFixture().bytes, 4096, controller.signal);
+    const reason = { caller: "during PE resource traversal" };
+    controller.abort(reason);
+    await expect(parsing).rejects.toBe(reason);
+  });
+});
+
+describe("PE resource section virtual extent", () => {
+  const sectionSizes = (fixture: ReturnType<typeof peResourceFixture>) => {
+    const virtualSize = fixture.bytes.readUInt32LE(fixture.sectionAt + 8);
+    const rawSize = fixture.bytes.readUInt32LE(fixture.sectionAt + 16);
+    expect(rawSize - virtualSize).toBeGreaterThanOrEqual(8);
+    return { virtualSize, rawSize };
+  };
+
+  it.each([
+    [0, /RVA.*(?:missing|overlapping).*section/iu],
+    [-2, /range.*virtual size/iu],
+  ])(
+    "rejects a payload reaching raw alignment padding past VirtualSize (start %i)",
+    async (start, message) => {
+      const fixture = peResourceFixture();
+      const { virtualSize } = sectionSizes(fixture);
+      const rva = 0x2000 + virtualSize + start;
+      fixture.bytes.writeUInt32LE(rva, fixture.dataOffsets[0]);
+      fixture.bytes.writeUInt32LE(4, (fixture.dataOffsets[0] ?? 0) + 4);
+      await expect(parse(fixture.bytes)).rejects.toMatchObject({
+        kind: "malformed",
+        message: expect.stringMatching(message),
+      });
+    },
+  );
+
+  it("retains an empty payload that ends its section's virtual extent", async () => {
+    const fixture = peResourceFixture();
+    const { virtualSize } = sectionSizes(fixture);
+    fixture.bytes.writeUInt32LE(0x2000 + virtualSize, fixture.dataOffsets[0]);
+    fixture.bytes.writeUInt32LE(0, (fixture.dataOffsets[0] ?? 0) + 4);
+
+    const result = peResourcesSchema.parse(await parse(fixture.bytes));
+    expect(result.coverage).toMatchObject({ status: "complete", resources: 5 });
+    expect(result.resources[0]).toMatchObject({
+      type: { kind: "id", id: 3 },
+      name: { kind: "id", id: 1 },
+      language: { kind: "id", id: 1033 },
+      payload: {
+        rva: 0x2000 + virtualSize,
+        location: { offset: 0x400 + virtualSize, bytes: 0 },
+        sha256: createHash("sha256").digest("hex"),
+      },
+    });
+  });
+
+  it("rejects an empty payload past its section's virtual extent", async () => {
+    const fixture = peResourceFixture();
+    const { virtualSize } = sectionSizes(fixture);
+    fixture.bytes.writeUInt32LE(
+      0x2000 + virtualSize + 1,
+      fixture.dataOffsets[0],
+    );
+    fixture.bytes.writeUInt32LE(0, (fixture.dataOffsets[0] ?? 0) + 4);
+    await expect(parse(fixture.bytes)).rejects.toMatchObject({
+      kind: "malformed",
+      message: expect.stringMatching(/RVA.*(?:missing|overlapping).*section/iu),
+    });
+  });
+
+  it("rejects an empty virtual-end payload without a file-backed location", async () => {
+    const fixture = peResourceFixture();
+    const { rawSize } = sectionSizes(fixture);
+    fixture.bytes.writeUInt32LE(rawSize + 1, fixture.sectionAt + 8);
+    fixture.bytes.writeUInt32LE(0x2000 + rawSize + 1, fixture.dataOffsets[0]);
+    fixture.bytes.writeUInt32LE(0, (fixture.dataOffsets[0] ?? 0) + 4);
+    await expect(parse(fixture.bytes)).rejects.toMatchObject({
+      kind: "malformed",
+      message: expect.stringMatching(/range.*file-backed/iu),
+    });
+  });
+
+  it("maps an empty payload at a section boundary into the section that starts there", async () => {
+    const fixture = peResourceFixture();
+    const { virtualSize } = sectionSizes(fixture);
+    const laterRva = 0x2000 + virtualSize;
+    const rawOffset = fixture.bytes.length;
+    const payload = Buffer.from("LATE");
+    const bytes = Buffer.concat([fixture.bytes, payload]);
+    bytes.writeUInt16LE(2, 0x86);
+    const later = fixture.sectionAt + 40;
+    bytes.writeUInt32LE(payload.length, later + 8);
+    bytes.writeUInt32LE(laterRva, later + 12);
+    bytes.writeUInt32LE(payload.length, later + 16);
+    bytes.writeUInt32LE(rawOffset, later + 20);
+    bytes.writeUInt32LE(laterRva, fixture.dataOffsets[0]);
+    bytes.writeUInt32LE(0, (fixture.dataOffsets[0] ?? 0) + 4);
+
+    const result = peResourcesSchema.parse(await parse(bytes));
+    expect(result.resources[0]?.payload.location).toEqual({
+      offset: rawOffset,
+      bytes: 0,
+    });
+  });
+
+  it("maps raw bytes when VirtualSize is zero, as the image loader does", async () => {
+    const fixture = peResourceFixture();
+    fixture.bytes.writeUInt32LE(0, fixture.sectionAt + 8);
+    expect(await parse(fixture.bytes)).toMatchObject({
+      coverage: { status: "complete", resources: 5 },
+    });
+  });
+
+  it("selects a later section that starts inside earlier raw padding", async () => {
+    const fixture = peResourceFixture();
+    const { virtualSize } = sectionSizes(fixture);
+    const laterRva = 0x2000 + Math.ceil(virtualSize / 4) * 4;
+    const rawOffset = fixture.bytes.length;
+    const payload = Buffer.from("LATE");
+    const bytes = Buffer.concat([fixture.bytes, payload]);
+    bytes.writeUInt16LE(2, 0x86);
+    const later = fixture.sectionAt + 40;
+    bytes.writeUInt32LE(payload.length, later + 8);
+    bytes.writeUInt32LE(laterRva, later + 12);
+    bytes.writeUInt32LE(payload.length, later + 16);
+    bytes.writeUInt32LE(rawOffset, later + 20);
+    bytes.writeUInt32LE(laterRva, fixture.dataOffsets[0]);
+    bytes.writeUInt32LE(payload.length, (fixture.dataOffsets[0] ?? 0) + 4);
+
+    const result = peResourcesSchema.parse(await parse(bytes));
+    expect(result.resources[0]?.payload).toMatchObject({
+      rva: laterRva,
+      location: { offset: rawOffset, bytes: payload.length },
+      sha256: createHash("sha256").update(payload).digest("hex"),
+    });
+  });
+});
+
+describe("PE resource ownership boundaries", () => {
+  const singleResource = () =>
+    peResourceFixture(false, [
+      { type: 10, name: 1, language: 1033, payload: Buffer.from("DATA") },
+    ]);
+  const secondSection = (
+    fixture: ReturnType<typeof peResourceFixture>,
+    virtualSize: number,
+    rva: number,
+    rawSize: number,
+  ): Buffer => {
+    fixture.bytes.writeUInt16LE(2, 0x86);
+    const section = fixture.sectionAt + 40;
+    fixture.bytes.writeUInt32LE(virtualSize, section + 8);
+    fixture.bytes.writeUInt32LE(rva, section + 12);
+    fixture.bytes.writeUInt32LE(rawSize, section + 16);
+    if (rawSize === 0) return fixture.bytes;
+    fixture.bytes.writeUInt32LE(fixture.bytes.length, section + 20);
+    return Buffer.concat([fixture.bytes, Buffer.alloc(rawSize)]);
+  };
+
+  it("keeps locations and digests unchanged for a zero-extent section inside the resource interval", async () => {
+    const baseline = peResourcesSchema.parse(
+      await parse(singleResource().bytes),
+    );
+    const fixture = singleResource();
+    const bytes = secondSection(fixture, 0, 0x2001, 0);
+
+    const result = peResourcesSchema.parse(await parse(bytes));
+    expect(result.coverage).toMatchObject({ status: "complete" });
+    expect(result.resources[0]?.payload).toEqual(
+      baseline.resources[0]?.payload,
+    );
+  });
+
+  it("maps a payload after an expired section nested in its owner", () => {
+    const fixture = singleResource();
+    const [entry] = fixture.dataOffsets;
+    if (entry === undefined) throw new Error("Expected a resource data entry");
+    const rva = fixture.bytes.readUInt32LE(entry);
+    const size = fixture.bytes.readUInt32LE(entry + 4);
+    const expected = readPeResourceLayout(fixture.bytes).map(rva, size);
+    const bytes = secondSection(fixture, 1, rva - 2, 0);
+
+    expect(readPeResourceLayout(bytes).map(rva, size)).toBe(expected);
+    expect(() => readPeResourceLayout(bytes).map(rva - 2, 1)).toThrow(
+      /overlapping section mappings/iu,
+    );
+  });
+
+  it("still rejects a positive-extent section inside the resource interval", async () => {
+    const fixture = singleResource();
+    const bytes = secondSection(fixture, 4, 0x2001, 0);
+    await expect(parse(bytes)).rejects.toMatchObject({
+      kind: "malformed",
+      message: expect.stringMatching(/interval.*overlapping.*sections/iu),
+    });
+  });
+
+  it("keeps a header-backed payload whose interval contains a zero-extent section", async () => {
+    const fixture = singleResource();
+    fixture.bytes.writeUInt32LE(0x100, fixture.dataOffsets[0]);
+    fixture.bytes.writeUInt32LE(4, (fixture.dataOffsets[0] ?? 0) + 4);
+    const bytes = secondSection(fixture, 0, 0x102, 0);
+
+    const result = peResourcesSchema.parse(await parse(bytes));
+    expect(result.resources[0]?.payload).toMatchObject({
+      rva: 0x100,
+      location: { offset: 0x100, bytes: 4 },
+      sha256: createHash("sha256")
+        .update(bytes.subarray(0x100, 0x104))
+        .digest("hex"),
+    });
+  });
+
+  it("rejects an empty header payload whose RVA starts a file-backed section", async () => {
+    const fixture = singleResource();
+    fixture.bytes.writeUInt32LE(0x100, fixture.dataOffsets[0]);
+    fixture.bytes.writeUInt32LE(0, (fixture.dataOffsets[0] ?? 0) + 4);
+    const bytes = secondSection(fixture, 4, 0x100, 4);
+    await expect(parse(bytes)).rejects.toMatchObject({
+      kind: "malformed",
+      message: expect.stringMatching(/ambiguous.*header.*RVA/iu),
+    });
+  });
+
+  it("retains an empty header payload that no section owns", async () => {
+    const fixture = singleResource();
+    fixture.bytes.writeUInt32LE(0x100, fixture.dataOffsets[0]);
+    fixture.bytes.writeUInt32LE(0, (fixture.dataOffsets[0] ?? 0) + 4);
+
+    const result = peResourcesSchema.parse(await parse(fixture.bytes));
+    expect(result.resources[0]?.payload).toMatchObject({
+      rva: 0x100,
+      location: { offset: 0x100, bytes: 0 },
+      sha256: createHash("sha256").digest("hex"),
+    });
+  });
+});
+
+const probeSeaName = (bytes: Buffer) =>
+  hasPeResourceName(
+    bytes.subarray(0, 64),
+    bytes.length,
+    async (offset, length) =>
+      offset < 0 || length > bytes.length - offset
+        ? undefined
+        : bytes.subarray(offset, offset + length),
+    10,
+    "NODE_SEA_BLOB",
+    4096,
+  );
+
+const payloadsOf = (bytes: Buffer, name = "NODE_SEA_BLOB", maxEntries = 4096) =>
+  locatePeResourcePayloads(
+    bytes.subarray(0, 64),
+    bytes.length,
+    async (offset, length) =>
+      offset < 0 || length > bytes.length - offset
+        ? undefined
+        : bytes.subarray(offset, offset + length),
+    10,
+    name,
+    maxEntries,
+  );
+
+const supplementaryName = {
+  name: "\u{10000}",
+  utf16le_hex: "00d800dc",
+  payload: "supplementary",
+};
+const privateUseName = {
+  name: "\u{e000}",
+  utf16le_hex: "00e0",
+  payload: "private use",
+};
+
+it.each([
+  { order: "UTF-8 byte", first: privateUseName, second: supplementaryName },
+  {
+    order: "UTF-16 code unit",
+    first: supplementaryName,
+    second: privateUseName,
+  },
+])(
+  "preserves named siblings and exact payload lookup in $order order",
+  async ({ first, second }) => {
+    const { bytes, directoryOffsets } = peResourceFixture(
+      false,
+      [first, second].map(({ name, payload }) => ({
+        type: 10,
+        name,
+        language: 1033,
+        payload: Buffer.from(payload),
+      })),
+    );
+    const [root, names] = directoryOffsets;
+    if (root === undefined || names === undefined)
+      throw new Error("Missing resource fixture directories");
+    const firstEntry = names + 16;
+    const secondEntry = firstEntry + 8;
+    const firstName = root + (bytes.readUInt32LE(firstEntry) & 0x7fff_ffff) + 2;
+    // Store the selected order explicitly. The fixture's default name order
+    // only affects the placement of strings and child directories.
+    if (bytes.readUInt16LE(firstName) !== first.name.charCodeAt(0)) {
+      const saved = Buffer.from(bytes.subarray(firstEntry, secondEntry));
+      bytes.copy(bytes, firstEntry, secondEntry, secondEntry + 8);
+      saved.copy(bytes, secondEntry);
+    }
+
+    const report = peResourcesSchema.parse(await parse(bytes));
+    expect(report.coverage).toMatchObject({ status: "complete", resources: 2 });
+    expect(report.resources.map(({ name }) => name)).toMatchObject([
+      { kind: "name", name: first.name, utf16le_hex: first.utf16le_hex },
+      { kind: "name", name: second.name, utf16le_hex: second.utf16le_hex },
+    ]);
+    expect(
+      report.resources.map(({ entry_locations }) => entry_locations[1]?.offset),
+    ).toEqual([firstEntry, secondEntry]);
+    for (const { name, payload } of [first, second]) {
+      const ranges = await payloadsOf(bytes, name);
+      expect(
+        ranges.map((range) =>
+          bytes.toString("utf8", range.offset, range.offset + range.bytes),
+        ),
+      ).toEqual([payload]);
+    }
+  },
+);
+
+it("locates every language payload of a named resource with the bounded walk", async () => {
+  const fixture = peResourceFixture(false, [
+    { type: 10, name: "NODE_SEA_BLOB", language: 1, payload: Buffer.from("a") },
+    {
+      type: 10,
+      name: "NODE_SEA_BLOB",
+      language: 2,
+      payload: Buffer.from("bc"),
+    },
+    { type: 10, name: "OTHER", language: 1, payload: Buffer.from("d") },
+  ]);
+  const report = await parse(fixture.bytes);
+  const expected = report.resources
+    .filter(
+      (resource) =>
+        resource.name.kind === "name" && resource.name.name === "NODE_SEA_BLOB",
+    )
+    .map(({ payload }) => payload.location);
+  expect(await payloadsOf(fixture.bytes)).toEqual(
+    expected.map(({ offset, bytes }) => ({ offset, bytes })),
+  );
+  expect(await payloadsOf(fixture.bytes, "ABSENT")).toEqual([]);
+});
+
+it("reports a named resource that cannot resolve to a payload as malformed", async () => {
+  const fixture = peResourceFixture(false, [
+    { type: 10, name: "NODE_SEA_BLOB", language: 1, payload: Buffer.from("a") },
+  ]);
+  fixture.bytes.writeUInt32LE(0xffff_fff0, fixture.dataOffsets[0]!);
+  await expect(payloadsOf(fixture.bytes)).rejects.toMatchObject({
+    kind: "malformed",
+  });
+});
+
+it("distinguishes a backed directory beyond the budget from a truncated directory", async () => {
+  const fixture = peResourceFixture(false, [
+    { type: 10, name: "NODE_SEA_BLOB", language: 1, payload: Buffer.from("a") },
+  ]);
+  await expect(
+    payloadsOf(fixture.bytes, "NODE_SEA_BLOB", 3),
+  ).resolves.toHaveLength(1);
+  await expect(payloadsOf(fixture.bytes, "OTHER", 2)).resolves.toEqual([]);
+  await expect(
+    payloadsOf(fixture.bytes, "NODE_SEA_BLOB", 2),
+  ).rejects.toMatchObject({
+    kind: "limit",
+    failure: { limit: { name: "max_entries", maximum: 2, required: 3 } },
+  });
+
+  const [root, , languages] = fixture.directoryOffsets;
+  if (root === undefined || languages === undefined)
+    throw new Error("Missing resource fixture directories");
+  // Keep the language directory header but exclude the first row from the resource interval.
+  fixture.bytes.writeUInt32LE(languages - root + 16, fixture.directoryAt + 4);
+  await expect(
+    payloadsOf(fixture.bytes, "NODE_SEA_BLOB", 2),
+  ).rejects.toMatchObject({
+    kind: "malformed",
+  });
+});
+
+it("keeps an out-of-interval name unresolved beside a confirmed resource", async () => {
+  const fixture = peResourceFixture(false, [
+    { type: 10, name: "NODE_SEA_BLOB", language: 1, payload: Buffer.from("a") },
+    { type: 10, name: "OTHER", language: 1, payload: Buffer.from("b") },
+  ]);
+  const [root, names] = fixture.directoryOffsets;
+  if (root === undefined || names === undefined)
+    throw new Error("Missing resource fixture directories");
+  const otherName =
+    root + (fixture.bytes.readUInt32LE(names + 16 + 8) & 0x7fff_ffff);
+  const otherPayload = otherName + 2;
+  const locate = (name: string) =>
+    locatePeResourcePayloads(
+      fixture.bytes.subarray(0, 64),
+      fixture.bytes.length,
+      async (offset, length) => {
+        if (offset <= otherPayload && offset + length > otherPayload)
+          throw new Error(
+            "Different-length candidate should not need a name payload read",
+          );
+        return fixture.bytes.subarray(offset, offset + length);
+      },
+      10,
+      name,
+      4096,
+    );
+  await expect(locate("NODE_SEA_BLOB")).resolves.toHaveLength(1);
+
+  fixture.bytes.writeUInt16LE(65_535, otherName);
+  await expect(locate("NOT_PRESENT")).resolves.toEqual([]);
+  await expect(locate("NODE_SEA_BLOB")).rejects.toMatchObject({
+    kind: "malformed",
+    message: expect.stringContaining("cannot be read"),
+  });
+});
+
+it("fails closed when a duplicate resource type branch cannot be read beside the named resource", async () => {
+  const fixture = peResourceFixture(false, [
+    { type: 10, name: "NODE_SEA_BLOB", language: 1, payload: Buffer.from("a") },
+    { type: 11, name: "OTHER", language: 1, payload: Buffer.from("b") },
+  ]);
+  // Root type entries follow the 16-byte root directory header at 0x400.
+  const duplicate = 0x400 + 16 + 8;
+  fixture.bytes.writeUInt32LE(10, duplicate);
+  fixture.bytes.writeUInt32LE(0xffff_fff0, duplicate + 4);
+  await expect(payloadsOf(fixture.bytes)).rejects.toMatchObject({
+    kind: "malformed",
+    message: expect.stringContaining("cannot be read"),
+  });
+  await expect(parse(fixture.bytes)).rejects.toMatchObject({
+    kind: "malformed",
+  });
+  expect(await probeSeaName(fixture.bytes)).toBe(true);
+  expect(await payloadsOf(fixture.bytes, "ABSENT")).toEqual([]);
+});
+
+it("fails closed when a duplicate resource type branch is a data entry beside the named resource", async () => {
+  const fixture = peResourceFixture(false, [
+    { type: 10, name: "NODE_SEA_BLOB", language: 1, payload: Buffer.from("a") },
+    { type: 11, name: "OTHER", language: 1, payload: Buffer.from("b") },
+  ]);
+  // Retype the second root entry as RT_RCDATA and clear its directory bit.
+  const duplicate = 0x400 + 16 + 8;
+  fixture.bytes.writeUInt32LE(10, duplicate);
+  fixture.bytes.writeUInt32LE(
+    fixture.bytes.readUInt32LE(duplicate + 4) & 0x7fff_ffff,
+    duplicate + 4,
+  );
+  await expect(payloadsOf(fixture.bytes)).rejects.toMatchObject({
+    kind: "malformed",
+    message: expect.stringContaining("cannot be read"),
+  });
+  expect(await probeSeaName(fixture.bytes)).toBe(true);
+  expect(await payloadsOf(fixture.bytes, "ABSENT")).toEqual([]);
+});
+
+it("rejects a language directory beside a readable language payload", async () => {
+  const fixture = peResourceFixture(false, [
+    { type: 10, name: "NODE_SEA_BLOB", language: 1, payload: Buffer.from("a") },
+    { type: 10, name: "NODE_SEA_BLOB", language: 2, payload: Buffer.from("b") },
+  ]);
+  const leaf = fixture.entryOffsets.findLast(
+    (at) => (fixture.bytes.readUInt32LE(at + 4) & 0x80000000) === 0,
+  );
+  if (leaf === undefined) throw new Error("Expected a language leaf");
+  fixture.bytes.writeUInt32LE(
+    (fixture.bytes.readUInt32LE(leaf + 4) | 0x80000000) >>> 0,
+    leaf + 4,
+  );
+  await expect(payloadsOf(fixture.bytes)).rejects.toMatchObject({
+    kind: "malformed",
+    message: expect.stringContaining("language entry"),
+  });
+  await expect(parse(fixture.bytes)).rejects.toMatchObject({
+    kind: "malformed",
+  });
+});
+
+it("matches resource names by their exact UTF-16 bytes without losing source identity", async () => {
+  const fixture = peResourceFixture(false, [
+    {
+      type: 10,
+      name: "NODE_SEA_BLOB",
+      language: 1033,
+      payload: Buffer.from("data"),
+    },
+  ]);
+  expect(await probeSeaName(fixture.bytes)).toBe(true);
+  const entry = fixture.entryOffsets.find(
+    (at) => (fixture.bytes.readUInt32LE(at) & 0x80000000) !== 0,
+  );
+  if (entry === undefined) throw new Error("Expected named resource fixture");
+  const nameAt = 0x400 + (fixture.bytes.readUInt32LE(entry) & 0x7fffffff);
+  fixture.bytes[nameAt + 3] = 1;
+  expect(await probeSeaName(fixture.bytes)).toBe(false);
+  const report = await parse(fixture.bytes);
+  expect(report.resources[0]?.name).toMatchObject({
+    kind: "name",
+    name: "\u014eODE_SEA_BLOB",
+    utf16le_hex: fixture.bytes
+      .subarray(nameAt + 2, nameAt + 2 + 26)
+      .toString("hex"),
+  });
+  fixture.bytes.writeUInt16LE(0xffff, nameAt);
+  expect(await probeSeaName(fixture.bytes)).toBe(false);
+  await expect(parse(fixture.bytes)).rejects.toMatchObject({
+    kind: "malformed",
+  });
+});
+
+it("keeps name probing independent of full resource name/ID partition admission", async () => {
+  const fixture = peResourceFixture(false, [
+    {
+      type: 10,
+      name: "NODE_SEA_BLOB",
+      language: 1033,
+      payload: Buffer.from("data"),
+    },
+  ]);
+  const names = fixture.directoryOffsets[1];
+  if (names === undefined) throw new Error("Expected resource names directory");
+  fixture.bytes.writeUInt16LE(0, names + 12);
+  fixture.bytes.writeUInt16LE(1, names + 14);
+  expect(await probeSeaName(fixture.bytes)).toBe(true);
+  await expect(parse(fixture.bytes)).rejects.toMatchObject({
+    kind: "malformed",
+    message: expect.stringMatching(/name\/ID.*counts.*encoded identities/iu),
+  });
+});
+
+it("keeps raw name probing separate from full resource-name alignment admission", async () => {
+  const fixture = peResourceFixture(false, [
+    {
+      type: 10,
+      name: "NODE_SEA_BLOB",
+      language: 1033,
+      payload: Buffer.from("data"),
+    },
+  ]);
+  const entry = fixture.entryOffsets.find(
+    (at) => (fixture.bytes.readUInt32LE(at) & 0x80000000) !== 0,
+  );
+  if (entry === undefined) throw new Error("Expected named resource fixture");
+  const original = 0x400 + (fixture.bytes.readUInt32LE(entry) & 0x7fffffff);
+  const nameBytes = 2 + fixture.bytes.readUInt16LE(original) * 2;
+  const previousEnd = fixture.bytes.readUInt32LE(fixture.directoryAt + 4);
+  const unaligned = previousEnd % 2 === 0 ? previousEnd + 1 : previousEnd;
+  const extendedEnd = unaligned + nameBytes;
+  expect(0x400 + extendedEnd).toBeLessThanOrEqual(fixture.bytes.length);
+  fixture.bytes.copy(
+    fixture.bytes,
+    0x400 + unaligned,
+    original,
+    original + nameBytes,
+  );
+  fixture.bytes.writeUInt32LE(0x80000000 + unaligned, entry);
+  fixture.bytes.writeUInt32LE(extendedEnd, fixture.directoryAt + 4);
+  fixture.bytes.writeUInt32LE(extendedEnd, fixture.sectionAt + 8);
+  expect(await probeSeaName(fixture.bytes)).toBe(true);
+  await expect(parse(fixture.bytes)).rejects.toMatchObject({
+    kind: "malformed",
+    message: expect.stringMatching(/unaligned.*resource name/iu),
+  });
+});
+
+it.each(["DOS", "NE", "LE", "LX"] as const)(
+  "leaves %s targets outside the opportunistic PE resource probe",
+  async (format) => {
+    const bytes = format === "DOS" ? dosMz(1024) : nonPeWindowsMz(format);
+    await expect(probeSeaName(bytes)).resolves.toBe(false);
+    await expect(payloadsOf(bytes)).resolves.toEqual([]);
+  },
+);
+
+it("preserves unsigned group-icon fields and rejects a partial entry", async () => {
+  const group = Buffer.alloc(20);
+  group.writeUInt16LE(1, 2);
+  group.writeUInt16LE(1, 4);
+  group.writeUInt16LE(0x8123, 10);
+  group.writeUInt16LE(0x4567, 12);
+  group.writeUInt32LE(0xfedcba98, 14);
+  group.writeUInt16LE(0xabcd, 18);
+  const fixture = (payload: Buffer) =>
+    peResourceFixture(false, [{ type: 14, name: 7, language: 1033, payload }])
+      .bytes;
+  const result = await parse(fixture(group));
+  expect(result.icon_groups[0]?.images[0]).toMatchObject({
+    planes: 0x8123,
+    bit_count: 0x4567,
+    declared_bytes: 0xfedcba98,
+    resource_id: 0xabcd,
+    candidate_resource_indices: [],
+  });
+  await expect(parse(fixture(group.subarray(0, 19)))).rejects.toMatchObject({
+    kind: "malformed",
+  });
+});

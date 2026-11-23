@@ -3,11 +3,11 @@ import {
   javaScriptRoutesCompleteDeliveryShape,
   webRoutesSummaryDeliveryShape,
 } from "../domain/analysisView/javascriptRoutesView.js";
+import { javaScriptRoutesViewResultSchema } from "../domain/analysisView/summarySchemas/javascriptRoutesSummarySchema.js";
 import {
-  javaScriptRoutesViewResultSchema,
-  webBundleSummaryViewResultSchema,
   webBundlePageViewResultSchema,
-} from "../domain/analysisView/analysisView.js";
+  webBundleSummaryViewResultSchema,
+} from "../domain/analysisView/summarySchemas/webBundleSummarySchemas.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import {
   inspectWebPageInputSchema,
@@ -40,17 +40,24 @@ import {
   webScreenshotDiffSchema,
   webScreenshotSchema,
 } from "../domain/webScreenshot.js";
-import { toolContractMetadata } from "./toolEffects.js";
+import {
+  toolContractMetadata,
+  browserEvidenceEffects,
+  evidenceEffects,
+  toolEffects,
+} from "./toolEffects.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
+import { presentRootDiscriminator } from "../domain/schemaAnnotations.js";
 
 const listOutputSchema = evidenceResultOf(browserTargetListSchema);
 const inspectionOutputSchema = evidenceResultOf(webPageInspectionSchema);
-export const analyzeWebBundleRequestSchema = z
-  .discriminatedUnion("detail", [
+export const analyzeWebBundleRequestSchema = presentRootDiscriminator(
+  z.discriminatedUnion("detail", [
     analyzeWebBundleInputSchema.extend(javaScriptRoutesCompleteDeliveryShape),
     analyzeWebBundleInputSchema.extend(webRoutesSummaryDeliveryShape),
-  ])
-  .meta({ "x-rea-root-discriminator": "detail" });
+  ]),
+  "detail",
+);
 const bundleOutputSchema = evidenceResultOf(
   z.union([
     webBundleAnalysisSchema,
@@ -169,7 +176,8 @@ const exampleScenarioCapture = () => ({
 export const BROWSER_TOOL_CONTRACTS = [
   {
     name: "list_browser_targets",
-    ...toolContractMetadata("list_browser_targets"),
+    cli: true,
+    ...toolContractMetadata("list_browser_targets", browserEvidenceEffects),
     description:
       "List pages exposed by one loopback Chrome DevTools Protocol endpoint, optionally filtered by exact origin. Returns target IDs and URLs; query values and fragments are preserved, with URL userinfo credentials removed. Use a returned target ID with inspect_web_page. discovery_timeout_ms controls discovery; command_timeout_ms does not apply. Browser-socket endpoints remain shared by the active browser provider until it closes or target-session cleanup is unconfirmed; cancellation/deadline on a clean socket releases only this call’s lease.",
     kind: "browser-provider",
@@ -186,7 +194,8 @@ export const BROWSER_TOOL_CONTRACTS = [
   },
   {
     name: "inspect_web_page",
-    ...toolContractMetadata("inspect_web_page"),
+    cli: true,
+    ...toolContractMetadata("inspect_web_page", browserEvidenceEffects),
     description:
       "Passively inspect one selected page target through CDP without evaluating JavaScript, navigating, clicking, closing, or mutating the page. If no origin filter is supplied, capture is scoped to the target's current origin. Returns DOM structure, accessibility, scripts, resources, attach-window network and console metadata, workers, and redacted storage inventory as Evidence.",
     kind: "browser-provider",
@@ -204,7 +213,15 @@ export const BROWSER_TOOL_CONTRACTS = [
   },
   {
     name: "analyze_web_bundle",
-    ...toolContractMetadata("analyze_web_bundle"),
+    cli: true,
+    ...toolContractMetadata(
+      "analyze_web_bundle",
+      toolEffects({
+        ...browserEvidenceEffects,
+        launchesProcess: true,
+        writesFilesystem: true,
+      }),
+    ),
     description:
       'Recover a static chunk graph, route/endpoint candidates, vendor fingerprints and page-declared WebMCP metadata from JavaScript on one selected CDP page. May fetch source maps only from the target origin or explicitly selected origins; application JavaScript is not executed. detail summary retains complete Evidence; view {kind: "web-bundle", collection: "endpoints"} selects endpoint rows, and javascript-routes views select route patterns/occurrences/sources/unknowns. Read later pages with inspect_analysis_view. Static candidates do not establish runtime reachability or a complete route set.',
     kind: "browser-provider",
@@ -227,7 +244,8 @@ export const BROWSER_TOOL_CONTRACTS = [
   },
   {
     name: "observe_web_session",
-    ...toolContractMetadata("observe_web_session"),
+    cli: true,
+    ...toolContractMetadata("observe_web_session", browserEvidenceEffects),
     description:
       "Arm a CDP observation window of the requested duration while the user operates the page. By default it follows the selected target's current origin; an explicit origin list controls which origins may be retained. Records navigation, redirect, lifecycle, and failure events.",
     kind: "browser-provider",
@@ -246,7 +264,8 @@ export const BROWSER_TOOL_CONTRACTS = [
   },
   {
     name: "discover_webmcp_tools",
-    ...toolContractMetadata("discover_webmcp_tools"),
+    cli: true,
+    ...toolContractMetadata("discover_webmcp_tools", browserEvidenceEffects),
     description:
       "Passively inventory every page-registered WebMCP tool and its complete structural input-schema summary using the experimental CDP WebMCP domain. Metadata is page-declared-untrusted; REA never registers or invokes discovered tools.",
     kind: "browser-provider",
@@ -265,7 +284,8 @@ export const BROWSER_TOOL_CONTRACTS = [
   },
   {
     name: "compare_web_captures",
-    ...toolContractMetadata("compare_web_captures"),
+    cli: true,
+    ...toolContractMetadata("compare_web_captures", evidenceEffects),
     description:
       "Compare two passive page inspections or two recorded browser scenarios. For passive captures, pass before/after with each complete inspect_web_page normalized_result in inspection and optional complete discover_webmcp_tools normalized_result in webmcp. For scenarios, pass complete normalized_result objects as before_scenario/after_scenario; use exactly one input group. Returns artifact differences and alignment failures. Scenario steps align by exact IDs; optional literal normalization is recorded. HTTP requests and ordered WebSocket streams are compared without inventing stable identities for same-URL connections. Missing or truncated Evidence never proves equality.",
     kind: "browser-provider",
@@ -293,7 +313,8 @@ export const BROWSER_TOOL_CONTRACTS = [
   },
   {
     name: "capture_web_screenshot",
-    ...toolContractMetadata("capture_web_screenshot"),
+    cli: true,
+    ...toolContractMetadata("capture_web_screenshot", browserEvidenceEffects),
     description:
       "Capture the current visible viewport of one configured page as an inline, content-addressed PNG artifact. The operation never scrolls, navigates, or evaluates page JavaScript.",
     kind: "browser-provider",
@@ -311,7 +332,8 @@ export const BROWSER_TOOL_CONTRACTS = [
   },
   {
     name: "compare_web_screenshots",
-    ...toolContractMetadata("compare_web_screenshots"),
+    cli: true,
+    ...toolContractMetadata("compare_web_screenshots", evidenceEffects),
     description:
       "Compare two self-verifying PNG screenshot artifacts with local pixel metrics. Returns exact changed-pixel ratios and channel deltas without OCR or external services.",
     kind: "browser-provider",

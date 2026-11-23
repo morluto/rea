@@ -19,7 +19,11 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { selectViewRows } from "./selectViewRows.js";
+import {
+  pickFields,
+  selectIndexedViewRows,
+  selectViewRows,
+} from "./selectViewRows.js";
 
 const peRow = pe.shape.exports.element;
 const elfRow = elf.shape.exports.element;
@@ -57,19 +61,7 @@ export const nativeExportsViewRequestSchema = z.discriminatedUnion(
 
 export const nativeExportsViewItemsSchema = z.union([
   z.array(peRow.partial().extend(sourceIndex)),
-  z.array(
-    elfRow.partial().extend({
-      ...sourceIndex,
-      // Historical defaults normalize complete source rows, never omitted columns.
-      name_bytes_base64: elfRow.shape.name_bytes_base64
-        .removeDefault()
-        .optional(),
-      name_utf8_decodable: elfRow.shape.name_utf8_decodable
-        .removeDefault()
-        .optional(),
-      visibility: elfRow.shape.visibility.removeDefault().optional(),
-    }),
-  ),
+  z.array(elfRow.partial().extend(sourceIndex)),
   z.array(issue.extend(sourceIndex)),
 ]);
 
@@ -138,26 +130,22 @@ export const projectNativeExportsView = (
       kind: "summary" as const,
       view,
       summary,
-      coverage: completeWithinViewCoverage(exports.length, exports.length),
+      coverage: completeWithinViewCoverage(exports.length),
     });
   const indices =
     view.indices === undefined ? undefined : new Set(view.indices);
   if (view.collection === "issues") {
     const selected =
       indices === undefined
-        ? {
-            rows: issues
-              .slice(view.offset, view.offset + view.limit)
-              .map((row, index) => ({
-                ...row,
-                source_index: view.offset + index,
-              })),
-            total: issues.length,
-          }
-        : selectViewRows(
+        ? selectViewRows(issues, view, undefined, (row, source_index) => ({
+            ...row,
+            source_index,
+          }))
+        : selectIndexedViewRows(
             issues,
+            indices,
             view,
-            (_, index) => indices.has(index),
+            undefined,
             (row, source_index) => ({ ...row, source_index }),
           );
     return ok({
@@ -194,21 +182,6 @@ export const projectNativeExportsView = (
               : [];
           }),
         );
-  if (
-    names !== undefined &&
-    names.size > 0 &&
-    report.format === "elf" &&
-    report.exports.some(
-      (row) =>
-        row.name_utf8_decodable === null ||
-        (row.name_utf8_decodable &&
-          row.name_bytes_base64 === null &&
-          !/^[\x00-\x7f]*$/u.test(row.name)),
-    )
-  )
-    shared.unknowns.push(
-      "Some ELF names lack retained encoding facts and cannot be matched by UTF-8 identity; select their source indices. A no-match page does not establish their absence.",
-    );
   // A projected decoded name still carries its exact bytes and encoding qualification.
   const columns = new Set<string>(fields);
   if (report.format === "elf" && columns.has("name")) {
@@ -220,34 +193,23 @@ export const projectNativeExportsView = (
     row: NativeExports["exports"][number],
     source_index: number,
   ) => ({
-    ...Object.fromEntries(
-      Object.entries(row).filter(([key]) => columns.has(key)),
-    ),
+    ...pickFields(row, columns),
     source_index,
   });
-  // Unfiltered pages use the owner's original order directly; no whole-table scan.
+  const matchesName =
+    names === undefined
+      ? undefined
+      : (row: NativeExports["exports"][number]) =>
+          "name_utf8_decodable" in row
+            ? row.name_utf8_decodable === true &&
+              (row.name_bytes_base64 !== null
+                ? encodedNames!.has(row.name_bytes_base64)
+                : names.has(row.name))
+            : row.name !== null && names.has(row.name);
   const selected =
-    names === undefined && indices === undefined
-      ? {
-          rows: rows
-            .slice(view.offset, view.offset + view.limit)
-            .map((row, index) => projectRow(row, view.offset + index)),
-          total: rows.length,
-        }
-      : selectViewRows(
-          rows,
-          view,
-          (row, index) =>
-            (indices === undefined || indices.has(index)) &&
-            (names === undefined ||
-              ("name_utf8_decodable" in row
-                ? row.name_utf8_decodable === true &&
-                  (row.name_bytes_base64 !== null
-                    ? encodedNames!.has(row.name_bytes_base64)
-                    : /^[\x00-\x7f]*$/u.test(row.name) && names.has(row.name))
-                : row.name !== null && names.has(row.name))),
-          projectRow,
-        );
+    indices !== undefined
+      ? selectIndexedViewRows(rows, indices, view, matchesName, projectRow)
+      : selectViewRows(rows, view, matchesName, projectRow);
   return ok({
     ...shared,
     kind: "native-exports" as const,

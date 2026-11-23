@@ -3,16 +3,23 @@ export class OwnedMcpServers<Server extends { close(): Promise<void> }> {
   private readonly servers = new Map<Server, () => Promise<void>>();
   private accepting = true;
 
-  create(factory: () => Server): Server {
+  create(
+    factory: () => Server,
+    closeServer?: (server: Server) => Promise<void>,
+  ): Server {
     if (!this.accepting) throw new Error("MCP connection is closed");
     const server = factory();
-    const close = server.close.bind(server);
+    const close =
+      closeServer === undefined
+        ? server.close.bind(server)
+        : () => closeServer(server);
     const ownedClose = async (): Promise<void> => {
       await close();
       this.servers.delete(server);
     };
     this.servers.set(server, ownedClose);
-    server.close = ownedClose;
+    // A materialized runtime shares an SDK instance with the protocol owner.
+    if (closeServer === undefined) server.close = ownedClose;
     return server;
   }
 

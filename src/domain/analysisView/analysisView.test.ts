@@ -3,8 +3,18 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
+import {
+  freezeJsonSnapshot,
+  isImmutableJsonSnapshot,
+} from "../immutableJson.js";
+import { byteEntropySchema } from "../native/byteEntropy.js";
+import * as jsApplicationAnalysis from "../javascript/javascriptApplicationAnalysis.js";
+import {
+  javascriptFactsViewRequestSchema,
+  projectJavaScriptFacts,
+} from "./javascriptFactsView.js";
 import { functionDossierSchema } from "../native/functionDossier.js";
 import { ghidraFunctionDossier } from "../ghidraValues.fixture.js";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
@@ -27,13 +37,13 @@ import {
 } from "../javascript/javascriptSemanticGraph.js";
 import { sourceMapReference } from "../javascript/javascriptApplicationGraph.fixture.js";
 import { createArtifactInspection } from "../artifactInspection.js";
-import { javascriptModulePaths } from "./javascriptApplicationView.js";
 import {
-  analysisViewResultSchema,
   inspectAnalysisViewInputSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+  type AnalysisViewRequest,
+} from "./analysisViewRequest.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { analysisViewResultSchema } from "./analysisViewResult.js";
 
 const layoutParent = (): AnalysisViewParent => {
   const evidence = analysisViewLayoutEvidence();
@@ -65,6 +75,19 @@ const nativeParent = (
   normalizedResult: result,
   limitations: ["Retained provider limitation"],
   artifact: { path: "/fixtures/example.exe", sha256: "a".repeat(64) },
+});
+
+it("returns input errors for malformed parent Evidence identifiers before projection", () => {
+  for (const evidenceId of [`xx_${"a".repeat(64)}`, "ev_bad"])
+    expect(
+      projectAnalysisView(
+        { ...nativeParent(), evidenceId },
+        { kind: "summary" },
+      ),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
+  expect(projectAnalysisView(nativeParent(), { kind: "summary" }).ok).toBe(
+    true,
+  );
 });
 
 it("projects native procedure and bounded assembly and high-pcode with exact parent identity", () => {
@@ -190,7 +213,7 @@ it("keeps value-flow counts unknown when value flow is unrecorded or unavailable
   if (!unrecorded.ok) throw unrecorded.error;
   expect(analysisViewResultSchema.parse(unrecorded.value)).toMatchObject({
     summary: {
-      value_flow: { available: false, truncated: false },
+      value_flow: { available: false, truncated: null },
       counts: flowCounts,
     },
     unknowns: expect.arrayContaining(["native_value_flow was not recorded"]),
@@ -432,6 +455,7 @@ it("pages every retained dossier collection and the native API record", () => {
     page("swift_string_literals", {
       ...original,
       swift_string_literals: [literal],
+      swift_string_literal_omissions: [],
     }),
   ).toMatchObject({ item: [literal], coverage: { total: 1 } });
   expect(page("swift_string_literals")).toMatchObject({
@@ -568,7 +592,7 @@ it("projects layout summary, facet, item, and stable pages", () => {
       format: "elf",
       counts: { sections: 3, symbols: 3, segments: 0, relocations: 0 },
     },
-    coverage: completeWithinViewCoverage(6, 6),
+    coverage: completeWithinViewCoverage(6),
   });
   const mitigations = projectAnalysisView(parent, {
     kind: "facet",
@@ -692,6 +716,40 @@ it.each(["sections", "symbols"] as const)(
   },
 );
 
+it.each([
+  { collection: "sections", name: ".data", ambiguous: ".text" },
+  { collection: "symbols", name: "start", ambiguous: "main" },
+] as const)(
+  "reuses sealed $collection for exact-name selections",
+  ({ collection, name, ambiguous }) => {
+    const layout = freezeJsonSnapshot(analysisViewLayoutFixture());
+    const parent = {
+      ...layoutParent(),
+      normalizedResult: layout,
+      sealedResult: true,
+    };
+    expect(isImmutableJsonSnapshot(layout[collection])).toBe(false);
+    const select = (name: string) =>
+      projectAnalysisView(parent, {
+        kind: "item",
+        collection,
+        selector: { name },
+      });
+
+    const first = select(name);
+    expect(first).toMatchObject({
+      ok: true,
+      value: { item: layout[collection][2] },
+    });
+    expect(isImmutableJsonSnapshot(layout[collection])).toBe(true);
+    expect(select(ambiguous)).toMatchObject({
+      ok: false,
+      error: { issues: [{ expected: [{ index: 0 }, { index: 1 }] }] },
+    });
+    expect(select(name)).toEqual(first);
+  },
+);
+
 it("rejects ambiguous layout names with candidate indexes", () => {
   const parent = layoutParent();
   const result = projectAnalysisView(parent, {
@@ -779,9 +837,6 @@ it("projects JavaScript summary and preserves selected module observations", () 
     selector: { path: "renderer.js" },
   });
   if (!item.ok) throw item.error;
-  const moduleNode = analysis.graph.nodes[0];
-  if (moduleNode === undefined) throw new Error("missing module");
-  expect(javascriptModulePaths(moduleNode)).toEqual(["renderer.js"]);
   if (item.value.kind !== "item") throw new Error("expected item view");
   expect(item.value.item).toMatchObject({
     path: "renderer.js",
@@ -1795,5 +1850,868 @@ it("selects a unique content-deduplicated module by any retained path", () => {
       kind: "item",
       item: { node_id: node.node_id, path },
     });
+  }
+});
+
+it("ranks only the longest byte entropy runs with stable offset ties", () => {
+  const runs = Array.from({ length: 1024 }, (_, index) => ({
+    offset: Math.floor((1023 - index) / 2) * 256,
+    length: ((index % 19) + 1) * 256,
+    classification: index % 2 === 0 ? "high" : "low",
+  }));
+  runs.push({ offset: 0, length: 8192, classification: "high" });
+  runs.push({ offset: 0, length: 8192, classification: "low" });
+  const result = projectAnalysisView(
+    {
+      predicateType: "rea.byte-entropy",
+      evidenceId: `ev_${"1".repeat(64)}`,
+      operation: "inspect_byte_entropy",
+      limitations: [],
+      normalizedResult: {
+        artifact: {
+          path: "/tmp/fixture",
+          bytes: 262144,
+          sha256: "2".repeat(64),
+        },
+        block_size: 256,
+        window: { offset: 0, length: 262144 },
+        file_entropy: 4,
+        thresholds: { high: 7.5, low: 0.5 },
+        blocks: [],
+        runs,
+        limitations: [],
+      },
+    },
+    { kind: "summary" },
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    value: {
+      summary: {
+        run_count: runs.length,
+        top_runs: runs
+          .toSorted((a, b) => b.length - a.length || a.offset - b.offset)
+          .slice(0, 10),
+      },
+    },
+  });
+});
+
+const multiModuleJavaScriptAnalysis = () => {
+  const base = analysisViewJavaScriptAnalysis();
+  const baseObs = base.graph.nodes[0]!.observations[0]!;
+  const makeNode = (
+    kind: "javascript-asset" | "javascript-module",
+    path: string,
+    shaSuffix: string,
+    extraPaths: readonly string[] = [],
+  ) => {
+    const sha256 = shaSuffix.repeat(64);
+    const makeObs = (obsPath: string | null, tag: string) => ({
+      label: tag,
+      properties: { ...(obsPath === null ? {} : { path: obsPath }), tag },
+      evidence: {
+        ...baseObs.evidence,
+        ...(obsPath === null
+          ? {
+              state: "inferred" as const,
+              confidence: "medium" as const,
+              limitations: ["Inferred without source location"],
+            }
+          : {}),
+        artifact: {
+          available: true as const,
+          artifact_id: `art_${sha256}`,
+          sha256,
+        },
+        location:
+          obsPath === null
+            ? {
+                available: false as const,
+                reason: "not-applicable" as const,
+                detail: "Location omitted",
+              }
+            : {
+                available: true as const,
+                value: { kind: "artifact-path" as const, path: obsPath },
+              },
+      },
+    });
+    return createJavaScriptApplicationNode({
+      kind,
+      identity: {
+        strategy: "content-digest",
+        stability: "global-exact",
+        sha256,
+      },
+      observations: [
+        makeObs(path, `${tagPrefix(kind)}:${path}`),
+        ...extraPaths.map((extra) =>
+          makeObs(extra, `${tagPrefix(kind)}:${extra}`),
+        ),
+        makeObs(null, `${tagPrefix(kind)}:noloc`),
+      ],
+    });
+  };
+  const tagPrefix = (kind: "javascript-asset" | "javascript-module") =>
+    kind === "javascript-asset" ? "asset" : "mod";
+  const assetA = makeNode("javascript-asset", "a.js", "1", ["b.js"]);
+  const modB = makeNode("javascript-module", "b.js", "2");
+  const assetA2 = makeNode("javascript-asset", "a.js", "3");
+  const modC = makeNode("javascript-module", "c.js", "4");
+  const { graph_id: _gid, ...restGraph } = base.graph;
+  const graph = createJavaScriptApplicationGraph({
+    ...restGraph,
+    root_node_ids: [base.graph.nodes[0]!.node_id],
+    nodes: [base.graph.nodes[0]!, assetA, modB, assetA2, modC],
+    edges: [],
+  });
+  return {
+    analysis: analysisViewBindJavaScriptGraphs(base, graph),
+    ids: {
+      assetA: assetA.node_id,
+      modB: modB.node_id,
+      assetA2: assetA2.node_id,
+      modC: modC.node_id,
+    },
+  };
+};
+
+it("preserves exact parity and WeakMap reuse for indexed JavaScript module and fact views", () => {
+  const { analysis, ids } = multiModuleJavaScriptAnalysis();
+  const unsealed = javascriptParent(analysis);
+  const sealed: AnalysisViewParent = {
+    ...unsealed,
+    sealedResult: true,
+    normalizedResult: freezeJsonSnapshot(structuredClone(analysis)),
+  };
+  const parseSpy = vi.spyOn(
+    jsApplicationAnalysis,
+    "parseOwnedJavaScriptApplicationAnalysisSteps",
+  );
+  try {
+    const views: AnalysisViewRequest[] = [
+      { kind: "summary" },
+      { kind: "item", collection: "modules", selector: { node_id: ids.modB } },
+      { kind: "item", collection: "modules", selector: { node_id: "missing" } },
+      { kind: "item", collection: "modules", selector: { path: "c.js" } },
+      { kind: "item", collection: "modules", selector: { path: "a.js" } },
+      { kind: "item", collection: "modules", selector: { path: "none.js" } },
+      { kind: "page", collection: "modules", offset: 1, limit: 2 },
+      {
+        kind: "javascript",
+        collection: "modules",
+        projection: "references",
+        where: {},
+        offset: 1,
+        limit: 2,
+      },
+      {
+        kind: "javascript",
+        collection: "modules",
+        projection: "references",
+        where: { path: "b.js" },
+        offset: 0,
+        limit: 10,
+      },
+      {
+        kind: "javascript",
+        collection: "modules",
+        projection: "references",
+        where: { kind: "javascript-module" },
+        offset: 0,
+        limit: 10,
+      },
+      {
+        kind: "javascript",
+        collection: "modules",
+        projection: "references",
+        where: { kind: "javascript-asset", path: "b.js" },
+        offset: 0,
+        limit: 10,
+      },
+      {
+        kind: "javascript-facts",
+        where: {},
+        property_keys: ["tag", "path"],
+        include_available_property_keys: true,
+        offset: 1,
+        limit: 5,
+      },
+      {
+        kind: "javascript-facts",
+        where: { kinds: ["javascript-asset"], paths: ["a.js"] },
+        property_keys: ["tag"],
+        include_available_property_keys: false,
+        offset: 0,
+        limit: 10,
+      },
+      {
+        kind: "javascript-facts",
+        where: {
+          kinds: ["javascript-module", "javascript-asset"],
+          paths: ["b.js", "a.js"],
+        },
+        property_keys: ["tag"],
+        include_available_property_keys: false,
+        offset: 1,
+        limit: 4,
+      },
+      {
+        kind: "javascript-facts",
+        where: { kinds: [] },
+        property_keys: [],
+        include_available_property_keys: false,
+        offset: 0,
+        limit: 10,
+      },
+    ];
+
+    const sealedResults = views.map((view) =>
+      projectAnalysisView(sealed, view),
+    );
+    expect(parseSpy).toHaveBeenCalledTimes(1);
+    for (const [index, view] of views.entries()) {
+      const sealedRes = sealedResults[index]!;
+      const unsealedRes = projectAnalysisView(unsealed, view);
+      expect(sealedRes.ok).toBe(unsealedRes.ok);
+      if (sealedRes.ok && unsealedRes.ok)
+        expect(sealedRes.value).toEqual(unsealedRes.value);
+    }
+    expect(parseSpy).toHaveBeenCalledTimes(1 + views.length);
+
+    const factView = inspectAnalysisViewInputSchema.parse({
+      source: { kind: "inline", evidence: {} },
+      view: {
+        kind: "javascript-facts",
+        where: {
+          kinds: ["javascript-module", "javascript-asset"],
+          paths: ["b.js", "a.js"],
+        },
+        property_keys: ["tag"],
+        offset: 0,
+        limit: 10,
+      },
+    }).view;
+    if (factView.kind !== "javascript-facts") throw new Error("wrong view");
+    expect(
+      projectJavaScriptFacts(
+        (sealed.normalizedResult as typeof analysis).graph.nodes,
+        factView,
+        sealed.normalizedResult as object,
+      ),
+    ).toEqual(projectJavaScriptFacts(analysis.graph.nodes, factView));
+  } finally {
+    parseSpy.mockRestore();
+  }
+});
+
+const interleavedFactsJavaScriptAnalysis = () => {
+  const base = analysisViewJavaScriptAnalysis();
+  const baseObs = base.graph.nodes[0]!.observations[0]!;
+  type FactKind =
+    | "javascript-asset"
+    | "javascript-module"
+    | "javascript-expression"
+    | "browser-window"
+    | "native-addon";
+  type ObsSpec =
+    | {
+        readonly kind: "artifact-path";
+        readonly path: string;
+        readonly tag: string;
+      }
+    | {
+        readonly kind: "source-range";
+        readonly source: string;
+        readonly tag: string;
+      }
+    | { readonly kind: "url"; readonly url: string; readonly tag: string }
+    | { readonly kind: "unavailable"; readonly tag: string };
+
+  let counter = 0;
+  const makeNode = (kind: FactKind, specs: readonly ObsSpec[]) => {
+    counter += 1;
+    const hex = counter.toString(16).padStart(2, "0");
+    const sha256 = hex.repeat(32);
+    return createJavaScriptApplicationNode({
+      kind,
+      identity: {
+        strategy: "content-digest",
+        stability: "global-exact",
+        sha256,
+      },
+      observations: specs.map((spec) => ({
+        label: spec.tag,
+        properties: {
+          tag: spec.tag,
+          ...(spec.kind === "artifact-path"
+            ? { path: spec.path }
+            : spec.kind === "source-range"
+              ? { path: spec.source }
+              : {}),
+        },
+        evidence: {
+          ...baseObs.evidence,
+          ...(spec.kind === "unavailable"
+            ? {
+                state: "inferred" as const,
+                confidence: "medium" as const,
+                limitations: ["Inferred without source location"],
+              }
+            : {}),
+          artifact: {
+            available: true as const,
+            artifact_id: `art_${sha256}`,
+            sha256,
+          },
+          location:
+            spec.kind === "artifact-path"
+              ? {
+                  available: true as const,
+                  value: { kind: "artifact-path" as const, path: spec.path },
+                }
+              : spec.kind === "source-range"
+                ? {
+                    available: true as const,
+                    value: {
+                      kind: "source-range" as const,
+                      source: spec.source,
+                      start: { line: 1, column: 0 },
+                      end: { line: 1, column: 8 },
+                    },
+                  }
+                : spec.kind === "url"
+                  ? {
+                      available: true as const,
+                      value: { kind: "url" as const, url: spec.url },
+                    }
+                  : {
+                      available: false as const,
+                      reason: "not-applicable" as const,
+                      detail: "Location omitted",
+                    },
+        },
+      })),
+    });
+  };
+
+  const nodes = [
+    base.graph.nodes[0]!,
+    makeNode("javascript-asset", [
+      { kind: "artifact-path", path: "a.js", tag: "asset-a-1" },
+      { kind: "artifact-path", path: "b.js", tag: "asset-b-1" },
+      { kind: "source-range", source: "d.js", tag: "asset-d-1" },
+    ]),
+    makeNode("javascript-module", [
+      { kind: "artifact-path", path: "b.js", tag: "mod-b-1" },
+      { kind: "artifact-path", path: "a.js", tag: "mod-a-1" },
+      { kind: "unavailable", tag: "mod-noloc-1" },
+    ]),
+    makeNode("browser-window", [
+      { kind: "artifact-path", path: "c.js", tag: "win-c-1" },
+      {
+        kind: "url",
+        url: "https://example.invalid/app.html",
+        tag: "win-url-1",
+      },
+    ]),
+    makeNode("javascript-expression", [
+      { kind: "source-range", source: "d.js", tag: "expr-d-1" },
+      { kind: "artifact-path", path: "a.js", tag: "expr-a-1" },
+    ]),
+    makeNode("javascript-module", [
+      { kind: "source-range", source: "d.js", tag: "mod-d-1" },
+      { kind: "artifact-path", path: "b.js", tag: "mod-b-2" },
+    ]),
+    // Skewed large bucket in (javascript-asset, a.js) plus small interleaved entries
+    makeNode(
+      "javascript-asset",
+      Array.from({ length: 14 }, (_, idx) => ({
+        kind: "artifact-path" as const,
+        path: "a.js",
+        tag: `asset-a-bulk-${idx}`,
+      })),
+    ),
+    makeNode("native-addon", [
+      { kind: "artifact-path", path: "c.js", tag: "addon-c-1" },
+    ]),
+    makeNode("javascript-asset", [
+      { kind: "artifact-path", path: "b.js", tag: "asset-b-2" },
+      { kind: "artifact-path", path: "a.js", tag: "asset-a-2" },
+    ]),
+    makeNode("browser-window", [
+      { kind: "artifact-path", path: "a.js", tag: "win-a-1" },
+    ]),
+  ];
+
+  const { graph_id: _gid, ...restGraph } = base.graph;
+  const graph = createJavaScriptApplicationGraph({
+    ...restGraph,
+    root_node_ids: [base.graph.nodes[0]!.node_id],
+    nodes,
+    edges: [],
+  });
+  return analysisViewBindJavaScriptGraphs(base, graph);
+};
+
+it("paginates multi-bucket JavaScript facts with exact parity across kinds, paths, and combined filters", () => {
+  const analysis = interleavedFactsJavaScriptAnalysis();
+  const unsealed = javascriptParent(analysis);
+  const sealedResult = freezeJsonSnapshot(structuredClone(analysis));
+  const sealed: AnalysisViewParent = {
+    ...unsealed,
+    sealedResult: true,
+    normalizedResult: sealedResult,
+  };
+  const sealedNodes = (sealedResult as typeof analysis).graph.nodes;
+
+  const whereModes: readonly {
+    readonly paths?: readonly string[];
+    readonly kinds?: readonly (typeof analysis.graph.nodes)[number]["kind"][];
+  }[] = [
+    { kinds: ["javascript-asset", "javascript-module", "browser-window"] },
+    { paths: ["a.js", "b.js", "d.js"] },
+    {
+      kinds: ["javascript-asset", "javascript-module"],
+      paths: ["a.js", "b.js", "d.js"],
+    },
+  ];
+
+  for (const where of whereModes) {
+    const baseline = projectJavaScriptFacts(analysis.graph.nodes, {
+      kind: "javascript-facts",
+      where: {
+        ...(where.paths ? { paths: [...where.paths] } : {}),
+        ...(where.kinds ? { kinds: [...where.kinds] } : {}),
+      },
+      property_keys: ["tag", "path"],
+      include_available_property_keys: true,
+      offset: 0,
+      limit: 1000,
+    });
+    const total = baseline.total;
+    expect(total).toBeGreaterThan(6);
+
+    const windowCases: readonly {
+      readonly offset: number;
+      readonly limit: number;
+    }[] = [
+      { offset: 0, limit: 3 },
+      { offset: 2, limit: 5 },
+      { offset: Math.max(0, total - 2), limit: 5 },
+      { offset: total - 1, limit: 1 },
+      { offset: total, limit: 4 },
+      { offset: total + 50, limit: 5 },
+    ];
+
+    for (const { offset, limit } of windowCases) {
+      const view: AnalysisViewRequest = {
+        kind: "javascript-facts",
+        where: {
+          ...(where.paths ? { paths: [...where.paths] } : {}),
+          ...(where.kinds ? { kinds: [...where.kinds] } : {}),
+        },
+        property_keys: ["tag", "path"],
+        include_available_property_keys: true,
+        offset,
+        limit,
+      };
+      const sealedView = projectAnalysisView(sealed, view);
+      const unsealedView = projectAnalysisView(unsealed, view);
+      expect(sealedView.ok).toBe(true);
+      expect(unsealedView.ok).toBe(true);
+      if (sealedView.ok && unsealedView.ok) {
+        expect(sealedView.value).toEqual(unsealedView.value);
+      }
+
+      if (view.kind !== "javascript-facts") throw new Error("wrong view");
+      const sealedDirect = projectJavaScriptFacts(
+        sealedNodes,
+        view,
+        sealedResult,
+      );
+      const unsealedDirect = projectJavaScriptFacts(analysis.graph.nodes, view);
+      expect(sealedDirect).toEqual(unsealedDirect);
+      expect(sealedDirect.total).toBe(total);
+      expect(sealedDirect.rows).toEqual(
+        baseline.rows.slice(offset, offset + limit),
+      );
+    }
+
+    for (const pageLimit of [1, 5]) {
+      const collected: typeof baseline.rows = [];
+      let cursor = 0;
+      while (true) {
+        const view: AnalysisViewRequest = {
+          kind: "javascript-facts",
+          where: {
+            ...(where.paths ? { paths: [...where.paths] } : {}),
+            ...(where.kinds ? { kinds: [...where.kinds] } : {}),
+          },
+          property_keys: ["tag"],
+          include_available_property_keys: false,
+          offset: cursor,
+          limit: pageLimit,
+        };
+        const sealedRes = projectAnalysisView(sealed, view);
+        const unsealedRes = projectAnalysisView(unsealed, view);
+        expect(sealedRes).toEqual(unsealedRes);
+        if (!sealedRes.ok || sealedRes.value.kind !== "javascript-facts") {
+          throw new Error("unexpected result");
+        }
+        collected.push(...sealedRes.value.rows);
+        if (sealedRes.value.coverage.exhausted) {
+          expect(sealedRes.value.coverage.next_offset).toBeNull();
+          break;
+        }
+        cursor = sealedRes.value.coverage.next_offset!;
+      }
+      expect(collected).toHaveLength(total);
+      expect(collected.map((row) => row.properties.tag)).toEqual(
+        baseline.rows.map((row) => row.properties.tag),
+      );
+    }
+  }
+});
+
+it("matches unindexed output across large-offset multi-bucket seek thresholds", () => {
+  const base = analysisViewJavaScriptAnalysis();
+  const baseObs = base.graph.nodes[0]!.observations[0]!;
+  const kinds = [
+    "javascript-asset",
+    "javascript-module",
+    "javascript-expression",
+  ] as const;
+  const paths = ["chunk-0.js", "chunk-1.js", "chunk-2.js"] as const;
+  const nodes = Array.from({ length: 160 }, (_, nodeIdx) => {
+    const sha256 = (nodeIdx + 1).toString(16).padStart(64, "0");
+    const kind = kinds[nodeIdx % kinds.length]!;
+    return createJavaScriptApplicationNode({
+      kind,
+      identity: {
+        strategy: "content-digest",
+        stability: "global-exact",
+        sha256,
+      },
+      observations: Array.from({ length: 4 }, (_, obsIdx) => {
+        const path = paths[(nodeIdx + obsIdx) % paths.length]!;
+        return {
+          label: `obs-${nodeIdx}-${obsIdx}`,
+          properties: { seq: nodeIdx * 4 + obsIdx, path },
+          evidence: {
+            ...baseObs.evidence,
+            artifact: {
+              available: true as const,
+              artifact_id: `art_${sha256}`,
+              sha256,
+            },
+            location: {
+              available: true as const,
+              value: { kind: "artifact-path" as const, path },
+            },
+          },
+        };
+      }),
+    });
+  });
+
+  const { graph_id: _gid, ...restGraph } = base.graph;
+  const graph = createJavaScriptApplicationGraph({
+    ...restGraph,
+    root_node_ids: [base.graph.nodes[0]!.node_id],
+    nodes: [base.graph.nodes[0]!, ...nodes],
+    edges: [],
+  });
+  const analysis = analysisViewBindJavaScriptGraphs(base, graph);
+  const unsealed = javascriptParent(analysis);
+  const sealedResult = freezeJsonSnapshot(structuredClone(analysis));
+  const sealed: AnalysisViewParent = {
+    ...unsealed,
+    sealedResult: true,
+    normalizedResult: sealedResult,
+  };
+  const sealedNodes = (sealedResult as typeof analysis).graph.nodes;
+  const total = 640; // 160 * 4 across 9 (kind, path) buckets; seekThreshold = max(64, 9 * 8) = 72
+
+  for (const [offset, limit] of [
+    [0, 5],
+    [250, 7],
+    [total - 3, 10],
+    [total, 5],
+  ] as const) {
+    const view: AnalysisViewRequest = {
+      kind: "javascript-facts",
+      where: {
+        kinds: [...kinds],
+        paths: [...paths],
+      },
+      property_keys: ["seq", "path"],
+      include_available_property_keys: false,
+      offset,
+      limit,
+    };
+    expect(projectAnalysisView(sealed, view)).toEqual(
+      projectAnalysisView(unsealed, view),
+    );
+    if (view.kind !== "javascript-facts") throw new Error("wrong view");
+    expect(projectJavaScriptFacts(sealedNodes, view, sealedResult)).toEqual(
+      projectJavaScriptFacts(analysis.graph.nodes, view),
+    );
+  }
+});
+
+it("handles missing buckets, deduplicated filters, and single-bucket fallback", () => {
+  const analysis = interleavedFactsJavaScriptAnalysis();
+  const unsealed = javascriptParent(analysis);
+  const sealedResult = freezeJsonSnapshot(structuredClone(analysis));
+  const sealed: AnalysisViewParent = {
+    ...unsealed,
+    sealedResult: true,
+    normalizedResult: sealedResult,
+  };
+  const sealedNodes = (sealedResult as typeof analysis).graph.nodes;
+
+  const edgeViews: readonly AnalysisViewRequest[] = [
+    // Missing filter values mixed with populated multi-bucket filters
+    {
+      kind: "javascript-facts",
+      where: {
+        kinds: ["javascript-asset", "unknown", "javascript-module"],
+        paths: ["a.js", "missing.js", "b.js"],
+      },
+      property_keys: ["tag"],
+      include_available_property_keys: false,
+      offset: 1,
+      limit: 6,
+    },
+    {
+      kind: "javascript-facts",
+      where: { paths: ["missing.js", "a.js", "b.js"] },
+      property_keys: ["tag"],
+      include_available_property_keys: false,
+      offset: 2,
+      limit: 5,
+    },
+    // All-missing buckets (buckets.length === 0)
+    {
+      kind: "javascript-facts",
+      where: { kinds: ["unknown"], paths: ["missing.js"] },
+      property_keys: ["tag"],
+      include_available_property_keys: false,
+      offset: 0,
+      limit: 5,
+    },
+    // Single matching bucket alongside missing entries (buckets.length === 1)
+    {
+      kind: "javascript-facts",
+      where: {
+        kinds: ["javascript-asset", "unknown"],
+        paths: ["a.js", "missing.js"],
+      },
+      property_keys: ["tag"],
+      include_available_property_keys: false,
+      offset: 3,
+      limit: 4,
+    },
+    {
+      kind: "javascript-facts",
+      where: {
+        kinds: ["javascript-asset", "unknown"],
+        paths: ["a.js", "missing.js"],
+      },
+      property_keys: ["tag"],
+      include_available_property_keys: false,
+      offset: 999,
+      limit: 4,
+    },
+    // Duplicate entries collapsing to single bucket vs multi-bucket
+    {
+      kind: "javascript-facts",
+      where: {
+        kinds: ["javascript-asset", "javascript-asset"],
+        paths: ["a.js", "a.js"],
+      },
+      property_keys: ["tag"],
+      include_available_property_keys: false,
+      offset: 0,
+      limit: 50,
+    },
+    {
+      kind: "javascript-facts",
+      where: {
+        kinds: ["javascript-asset", "javascript-asset", "javascript-module"],
+      },
+      property_keys: ["tag"],
+      include_available_property_keys: false,
+      offset: 1,
+      limit: 8,
+    },
+  ];
+
+  for (const view of edgeViews) {
+    expect(projectAnalysisView(sealed, view)).toEqual(
+      projectAnalysisView(unsealed, view),
+    );
+    if (view.kind !== "javascript-facts") throw new Error("wrong view");
+    expect(projectJavaScriptFacts(sealedNodes, view, sealedResult)).toEqual(
+      projectJavaScriptFacts(analysis.graph.nodes, view),
+    );
+  }
+});
+
+it("enforces limit boundaries and filter-order determinism across cold and warm caches", () => {
+  const analysis = interleavedFactsJavaScriptAnalysis();
+  const unsealed = javascriptParent(analysis);
+  const sealedResult = freezeJsonSnapshot(structuredClone(analysis));
+  const sealed: AnalysisViewParent = {
+    ...unsealed,
+    sealedResult: true,
+    normalizedResult: sealedResult,
+  };
+  const sealedNodes = (sealedResult as typeof analysis).graph.nodes;
+
+  // Schema rejects limit: 0
+  expect(
+    javascriptFactsViewRequestSchema.safeParse({
+      kind: "javascript-facts",
+      property_keys: [],
+      limit: 0,
+    }).success,
+  ).toBe(false);
+  expect(
+    inspectAnalysisViewInputSchema.safeParse({
+      source: { kind: "inline", evidence: {} },
+      view: { kind: "javascript-facts", property_keys: [], limit: 0 },
+    }).success,
+  ).toBe(false);
+
+  // Direct call parity for limit: 0 across unfiltered, single-bucket, and multi-bucket
+  for (const where of [
+    {},
+    { kinds: ["javascript-asset" as const], paths: ["a.js"] },
+    {
+      kinds: ["javascript-asset" as const, "javascript-module" as const],
+      paths: ["a.js", "b.js"],
+    },
+  ]) {
+    const directZeroLimit = {
+      kind: "javascript-facts" as const,
+      where,
+      property_keys: ["tag"],
+      include_available_property_keys: false,
+      offset: 0,
+      limit: 0,
+    };
+    const indexedZero = projectJavaScriptFacts(
+      sealedNodes,
+      directZeroLimit,
+      sealedResult,
+    );
+    const unindexedZero = projectJavaScriptFacts(
+      analysis.graph.nodes,
+      directZeroLimit,
+    );
+    expect(indexedZero).toEqual(unindexedZero);
+    expect(indexedZero.rows).toEqual([]);
+    expect(indexedZero.total).toBeGreaterThan(0);
+  }
+
+  // Determinism across reversed filter order and cold vs warm WeakMap cache
+  const freshColdResult = freezeJsonSnapshot(structuredClone(analysis));
+  const freshColdParent: AnalysisViewParent = {
+    ...unsealed,
+    sealedResult: true,
+    normalizedResult: freshColdResult,
+  };
+  const forwardView = {
+    kind: "javascript-facts" as const,
+    where: {
+      kinds: ["javascript-asset" as const, "javascript-module" as const],
+      paths: ["a.js", "b.js", "d.js"],
+    },
+    property_keys: ["tag"],
+    include_available_property_keys: false,
+    offset: 2,
+    limit: 6,
+  };
+  const reversedView = {
+    ...forwardView,
+    where: {
+      kinds: ["javascript-module" as const, "javascript-asset" as const],
+      paths: ["d.js", "b.js", "a.js"],
+    },
+  };
+  const coldForward = projectAnalysisView(freshColdParent, forwardView);
+  const warmReversed = projectAnalysisView(freshColdParent, reversedView);
+  const cachedForward = projectAnalysisView(sealed, forwardView);
+  if (
+    !coldForward.ok ||
+    !warmReversed.ok ||
+    !cachedForward.ok ||
+    coldForward.value.kind !== "javascript-facts" ||
+    warmReversed.value.kind !== "javascript-facts"
+  ) {
+    throw new Error("expected javascript-facts result");
+  }
+  expect(coldForward.value.rows).toEqual(warmReversed.value.rows);
+  expect(coldForward.value.coverage).toEqual(warmReversed.value.coverage);
+  expect(coldForward).toEqual(cachedForward);
+  expect(
+    projectJavaScriptFacts(sealedNodes, forwardView, sealedResult),
+  ).toEqual(projectJavaScriptFacts(sealedNodes, reversedView, sealedResult));
+});
+
+it("caches sealed inspect_byte_entropy and analyze_function parents across repeated calls", () => {
+  const entropyPayload = {
+    artifact: { path: "/tmp/fixture", bytes: 256, sha256: "2".repeat(64) },
+    block_size: 256,
+    window: { offset: 0, length: 256 },
+    file_entropy: 4,
+    thresholds: { high: 7.5, low: 0.5 },
+    blocks: [{ offset: 0, length: 256, entropy: 4 }],
+    runs: [],
+    limitations: [],
+  };
+  const entropyParent: AnalysisViewParent = {
+    predicateType: "rea.byte-entropy",
+    evidenceId: `ev_${"1".repeat(64)}`,
+    operation: "inspect_byte_entropy",
+    limitations: [],
+    sealedResult: true,
+    normalizedResult: freezeJsonSnapshot(entropyPayload),
+  };
+  const native = nativeParent();
+  const sealedNative: AnalysisViewParent = {
+    ...native,
+    sealedResult: true,
+    normalizedResult: freezeJsonSnapshot(
+      structuredClone(native.normalizedResult) as Record<string, never>,
+    ),
+  };
+  const entropySpy = vi.spyOn(byteEntropySchema, "safeParse");
+  const dossierSpy = vi.spyOn(functionDossierSchema, "safeParse");
+  try {
+    expect(projectAnalysisView(entropyParent, { kind: "summary" }).ok).toBe(
+      true,
+    );
+    expect(
+      projectAnalysisView({ ...entropyParent }, { kind: "summary" }).ok,
+    ).toBe(true);
+    expect(entropySpy).toHaveBeenCalledTimes(1);
+
+    expect(projectAnalysisView(sealedNative, { kind: "summary" }).ok).toBe(
+      true,
+    );
+    expect(
+      projectAnalysisView(
+        { ...sealedNative },
+        { kind: "native", facet: "procedure", offset: 0, limit: 64 },
+      ).ok,
+    ).toBe(true);
+    expect(dossierSpy).toHaveBeenCalledTimes(1);
+  } finally {
+    entropySpy.mockRestore();
+    dossierSpy.mockRestore();
   }
 });

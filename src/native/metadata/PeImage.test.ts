@@ -1,10 +1,13 @@
 import { expect, it } from "vitest";
 import { readGoBinaryImage } from "../../go/GoBinaryImage.js";
-import { readPeImage } from "./PeImage.js";
+import {
+  readPeImage,
+  readPeImageFromReader,
+} from "../../domain/native/peImage.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";
 import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
-import { BinaryFormatFailure } from "./BinaryContainer.js";
-import { readBinaryContainer } from "./readBinaryContainer.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import { readBinaryContainer } from "../../domain/native/readBinaryContainer.js";
 import {
   createGoBinaryFixture,
   setGoPeVirtualSize,
@@ -68,7 +71,7 @@ it.each(["NE", "LE", "LX"])(
   (signature) => {
     const bytes = pe(0x014c).subarray(0, 66);
     bytes.write(signature, 64, "ascii");
-    expect(() => readBinaryContainer(bytes)).toThrow(
+    expect(() => readBinaryContainer(bytes, "elf-directory")).toThrow(
       expect.objectContaining({
         kind: "unsupported",
         message: expect.stringContaining(signature),
@@ -230,5 +233,29 @@ it.each([0xffff, 0x8664 ^ 0x7b79])(
       architecture: `pe-machine-${machine}`,
       bits: 64,
     });
+  },
+);
+
+it.each([0x014c, 0x8664])(
+  "admits a streamed empty section table at EOF for machine %s",
+  async (machine) => {
+    const bytes = pe(machine);
+    const peOffset = bytes.readUInt32LE(60);
+    const image = bytes.subarray(
+      0,
+      peOffset + 24 + bytes.readUInt16LE(peOffset + 20),
+    );
+    const reads: number[] = [];
+    const streamed = await readPeImageFromReader({
+      size: image.length,
+      prefix: image.subarray(0, 64),
+      readRange: async (offset, length) => {
+        reads.push(length);
+        return image.subarray(offset, offset + length);
+      },
+    });
+    expect(streamed).toEqual(readPeImage(image));
+    expect(streamed.sections).toEqual([]);
+    expect(reads.every((length) => length > 0)).toBe(true);
   },
 );

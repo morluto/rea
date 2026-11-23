@@ -1,16 +1,14 @@
 import { describe, expect, it } from "vitest";
-import type { AnalysisOperationPort } from "../AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../ports/AnalysisProvider.js";
 import { ok } from "../../domain/result.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
 } from "../../domain/analysisErrorCore.js";
 import { nativeValueTraceSchema } from "../../domain/native/nativeValueTrace.js";
+import { traceNativeValues } from "./NativeValueTrace.js";
 import {
-  CLEANUP_STOPPED_VALUE_TRACE,
-  traceNativeValues,
-} from "./NativeValueTrace.js";
-import {
+  EXPECTED_CLEANUP_STOPPED_TRACE,
   failingValueTraceReads,
   valueTraceDiamond,
   valueTraceProvider as provider,
@@ -149,7 +147,7 @@ describe("native value trace child stops", () => {
         {
           procedure: "0x1000",
           address: "0x1008",
-          reason: CLEANUP_STOPPED_VALUE_TRACE,
+          reason: EXPECTED_CLEANUP_STOPPED_TRACE,
         },
       ],
     );

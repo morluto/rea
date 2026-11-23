@@ -1,4 +1,3 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
 import { expect, it } from "vitest";
 import { z } from "zod";
@@ -8,28 +7,33 @@ import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { mcpTest } from "../../support/mcp/mcpFixture.js";
 
-it("keeps concurrent SDK validation issues attached to their own tool call", async () => {
-  let calls = 0;
-  const server = createServer({
-    kind: "fixed",
-    analysis: {
-      execute: () => {
-        calls += 1;
-        return Promise.resolve(observed(null));
+const malformedRead = { address: 123, length: 0, document: false };
+const readIssues = [
+  { path: ["address"], reason: "invalid_type", expected: "string" },
+  { path: ["length"], reason: "out_of_range", minimum: 1 },
+  { path: ["document"], reason: "invalid_type", expected: "string" },
+];
+
+mcpTest(
+  "keeps concurrent SDK validation issues attached to their own tool call",
+  async ({ mcp }) => {
+    let calls = 0;
+    const server = createServer({
+      kind: "fixed",
+      analysis: {
+        execute: () => {
+          calls += 1;
+          return Promise.resolve(observed(null));
+        },
       },
-    },
-  });
-  const client = new Client({ name: "input-issue-attribution", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
+    });
+    const client = await mcp.connect(server);
     const [read, search, missing] = await Promise.all([
       client.callTool({
         name: "read_bytes",
-        arguments: { address: 123, length: 0, document: false },
+        arguments: malformedRead,
       }),
       client.callTool({
         name: "search_bytes",
@@ -41,11 +45,7 @@ it("keeps concurrent SDK validation issues attached to their own tool call", asy
       error: {
         code: "invalid_request",
         details: {
-          issues: [
-            { path: ["address"], reason: "invalid_type", expected: "string" },
-            { path: ["length"], reason: "out_of_range", minimum: 1 },
-            { path: ["document"], reason: "invalid_type", expected: "string" },
-          ],
+          issues: readIssues,
         },
       },
     });
@@ -77,69 +77,43 @@ it("keeps concurrent SDK validation issues attached to their own tool call", asy
     });
     expect(calls).toBe(0);
     await expect(client.ping()).resolves.toBeDefined();
-  } finally {
-    await client.close();
-    await server.close();
-  }
-});
+  },
+);
 
 it("preserves field diagnostics over production stdio and keeps serving", async () => {
   const { call, client } = await connectLocalToolsMcp();
-  const result = await call("read_bytes", {
-    address: 123,
-    length: 0,
-    document: false,
-  });
+  const result = await call("read_bytes", malformedRead);
   expect(parseMcpToolError(result)).toMatchObject({
     error: {
       code: "invalid_request",
       recovery: { kind: "inspect_input_contract", operation: "read_bytes" },
       details: {
-        issues: expect.arrayContaining([
-          expect.objectContaining({
-            path: ["address"],
-            reason: "invalid_type",
-            expected: "string",
-          }),
-          expect.objectContaining({
-            path: ["length"],
-            reason: "out_of_range",
-            minimum: 1,
-          }),
-          expect.objectContaining({
-            path: ["document"],
-            reason: "invalid_type",
-            expected: "string",
-          }),
-        ]),
+        issues: readIssues,
       },
     },
   });
   await expect(client.ping()).resolves.toBeDefined();
 });
 
-it("retains mixed SDK field diagnostics without repeating custom guidance", async () => {
-  const info = { name: "custom-issues", version: "1" };
-  const server = new EvidenceMcpServer(
-    info,
-    { capabilities: {} },
-    undefined,
-    createToolResultDelivery(4096),
-  );
-  const inputSchema = z.strictObject({
-    first: z.string().regex(/^a$/u, "first correction"),
-    second: z.string().regex(/^b$/u, "second correction"),
-    count: z.number(),
-  });
-  server.registerTool("custom_issues", { inputSchema }, async () => ({
-    content: [{ type: "text", text: "unexpected dispatch" }],
-  }));
-  const client = new Client(info);
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
+mcpTest(
+  "retains mixed SDK field diagnostics without repeating custom guidance",
+  async ({ mcp }) => {
+    const info = { name: "custom-issues", version: "1" };
+    const server = new EvidenceMcpServer(
+      info,
+      { capabilities: {} },
+      undefined,
+      createToolResultDelivery(4096),
+    );
+    const inputSchema = z.strictObject({
+      first: z.string().regex(/^a$/u, "first correction"),
+      second: z.string().regex(/^b$/u, "second correction"),
+      count: z.number(),
+    });
+    server.registerTool("custom_issues", { inputSchema }, async () => ({
+      content: [{ type: "text", text: "unexpected dispatch" }],
+    }));
+    const client = await mcp.connect(server);
     const argumentsValue = {
       first: "wrong",
       second: "wrong",
@@ -187,35 +161,29 @@ it("retains mixed SDK field diagnostics without repeating custom guidance", asyn
     expect(text.split("first correction")).toHaveLength(2);
     expect(text.split("second correction")).toHaveLength(2);
     expect(error.message.split(unknownIssue.message)).toHaveLength(2);
-  } finally {
-    await client.close();
-    await server.close();
-  }
-});
+  },
+);
 
-it("keeps same-path union and independent issues attributed to their producers", async () => {
-  const info = { name: "issue-producer", version: "1" };
-  const server = new EvidenceMcpServer(
-    info,
-    { capabilities: {} },
-    undefined,
-    createToolResultDelivery(4096),
-  );
-  const inputSchema = z.intersection(
-    z.object({
-      a: z.union([z.object({ x: z.string() }), z.object({ x: z.number() })]),
-    }),
-    z.object({ a: z.object({ x: z.array(z.string()) }) }),
-  );
-  server.registerTool("overlapping_issues", { inputSchema }, async () => ({
-    content: [{ type: "text", text: "unexpected dispatch" }],
-  }));
-  const client = new Client(info);
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
+mcpTest(
+  "keeps same-path union and independent issues attributed to their producers",
+  async ({ mcp }) => {
+    const info = { name: "issue-producer", version: "1" };
+    const server = new EvidenceMcpServer(
+      info,
+      { capabilities: {} },
+      undefined,
+      createToolResultDelivery(4096),
+    );
+    const inputSchema = z.intersection(
+      z.object({
+        a: z.union([z.object({ x: z.string() }), z.object({ x: z.number() })]),
+      }),
+      z.object({ a: z.object({ x: z.array(z.string()) }) }),
+    );
+    server.registerTool("overlapping_issues", { inputSchema }, async () => ({
+      content: [{ type: "text", text: "unexpected dispatch" }],
+    }));
+    const client = await mcp.connect(server);
     const input = { a: { x: false } };
     const parsed = inputSchema.safeParse(input);
     if (parsed.success) throw new Error("expected invalid input");
@@ -228,104 +196,75 @@ it("keeps same-path union and independent issues attributed to their producers",
       arguments: input,
     });
     const error = parseMcpToolError(result).error;
-    const issues = z
-      .array(
-        z
-          .object({
-            expected: z.unknown().optional(),
-            message: z.string().optional(),
-          })
-          .passthrough(),
-      )
-      .parse(error.details?.issues);
+    const issues = error.details?.issues;
+    expect(issues).toHaveLength(3);
     expect(issues).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
+        {
           path: ["a", "x"],
           reason: "invalid_type",
           expected: "array",
           message: rawArrayIssue.message,
-        }),
-        expect.objectContaining({
-          path: ["a", "x"],
-          reason: "invalid_type",
-          expected: "string",
-        }),
-        expect.objectContaining({
-          path: ["a", "x"],
-          reason: "invalid_type",
-          expected: "number",
-        }),
+        },
+        { path: ["a", "x"], reason: "invalid_type", expected: "string" },
+        { path: ["a", "x"], reason: "invalid_type", expected: "number" },
       ]),
     );
-    const stringIssue = issues.find((issue) => issue.expected === "string");
-    expect(stringIssue?.message).not.toBe(rawArrayIssue.message);
-  } finally {
-    await client.close();
-    await server.close();
-  }
-});
+  },
+);
 
-it("discloses when bounded projection cannot retain union branch details", async () => {
-  const info = { name: "bounded-issues", version: "1" };
-  const server = new EvidenceMcpServer(
-    info,
-    { capabilities: {} },
-    undefined,
-    createToolResultDelivery(4096),
-  );
-  const branches = Array.from({ length: 256 }, (_, index) =>
-    z.object({ [`field_${String(index)}`]: z.string() }),
-  );
-  const first = branches[0];
-  const second = branches[1];
-  if (first === undefined || second === undefined)
-    throw new Error("missing branches");
-  const inputSchema = z.object({
-    value: z.union([first, second, ...branches.slice(2)]),
-  });
-  server.registerTool("bounded_issues", { inputSchema }, async () => ({
-    content: [{ type: "text", text: "unexpected dispatch" }],
-  }));
-  const sdkServer = new McpServer(info);
-  sdkServer.registerTool("bounded_issues", { inputSchema }, async () => ({
-    content: [{ type: "text", text: "unexpected dispatch" }],
-  }));
-  const keySchema = z.strictObject({});
-  const unreachable = async () => ({
-    content: [{ type: "text" as const, text: "unexpected dispatch" }],
-  });
-  server.registerTool("long_key", { inputSchema: keySchema }, unreachable);
-  sdkServer.registerTool("long_key", { inputSchema: keySchema }, unreachable);
-  const client = new Client(info);
-  const sdkClient = new Client(info);
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  const [sdkClientTransport, sdkServerTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-    await sdkServer.connect(sdkServerTransport);
-    await sdkClient.connect(sdkClientTransport);
-    const sdkResult = await sdkClient.callTool({
-      name: "bounded_issues",
-      arguments: { value: {} },
-    });
-    const sdkText = sdkResult.content.find(
-      (item) => item.type === "text",
-    )?.text;
-    const prefix =
-      "Input validation error: Invalid arguments for tool bounded_issues: ";
-    expect(sdkText?.startsWith(prefix)).toBe(true);
-    const diagnostic = sdkText?.slice(prefix.length);
-    expect(diagnostic).toBeTruthy();
-    const result = await client.callTool({
-      name: "bounded_issues",
-      arguments: { value: {} },
-    });
-    expect(parseMcpToolError(result)).toMatchObject({
-      error: {
+mcpTest(
+  "discloses when bounded projection cannot retain raw SDK field details",
+  async ({ mcp }) => {
+    const info = { name: "bounded-issues", version: "1" };
+    const server = new EvidenceMcpServer(
+      info,
+      { capabilities: {} },
+      undefined,
+      createToolResultDelivery(4096),
+    );
+    const sdkServer = new McpServer(info);
+    const branches = Array.from({ length: 256 }, (_, index) =>
+      z.object({ [`field_${String(index)}`]: z.string() }),
+    );
+    const cases = [
+      {
+        name: "bounded_issues",
+        inputSchema: z.object({ value: z.union(branches) }),
+        arguments: { value: {} },
+      },
+      {
+        name: "long_key",
+        inputSchema: z.strictObject({}),
+        arguments: { [`key_${"x".repeat(1600)}`]: true },
+      },
+    ];
+    const unexpectedDispatch = () => {
+      throw new Error("Invalid input reached tool execution");
+    };
+    for (const { name, inputSchema } of cases) {
+      server.registerTool(name, { inputSchema }, unexpectedDispatch);
+      sdkServer.registerTool(name, { inputSchema }, unexpectedDispatch);
+    }
+    const client = await mcp.connect(server);
+    const sdkClient = await mcp.connect(sdkServer);
+
+    for (const { name, arguments: input } of cases) {
+      const [result, original] = await Promise.all([
+        client.callTool({ name, arguments: input }),
+        sdkClient.callTool({ name, arguments: input }),
+      ]);
+      const sdkText = original.content.find(
+        (item) => item.type === "text",
+      )?.text;
+      const prefix = `Input validation error: Invalid arguments for tool ${name}: `;
+      if (sdkText === undefined || !sdkText.startsWith(prefix))
+        throw new Error(`Expected the SDK's argument diagnostic for ${name}`);
+      const diagnostic = sdkText.slice(prefix.length);
+      expect(diagnostic, name).not.toBe("");
+
+      const { error } = parseMcpToolError(result);
+      expect(error, name).toMatchObject({
         code: "invalid_request",
         details: {
           issues: [
@@ -337,45 +276,9 @@ it("discloses when bounded projection cannot retain union branch details", async
             },
           ],
         },
-      },
-    });
-    const argumentsWithLongKey = { [`key_${"x".repeat(1600)}`]: true };
-    const sdkLongKey = await sdkClient.callTool({
-      name: "long_key",
-      arguments: argumentsWithLongKey,
-    });
-    const sdkLongText = sdkLongKey.content.find(
-      (item) => item.type === "text",
-    )?.text;
-    const keyPrefix =
-      "Input validation error: Invalid arguments for tool long_key: ";
-    expect(sdkLongText?.startsWith(keyPrefix)).toBe(true);
-    const keyDiagnostic = sdkLongText?.slice(keyPrefix.length);
-    expect(keyDiagnostic).toBeTruthy();
-    const longKey = await client.callTool({
-      name: "long_key",
-      arguments: argumentsWithLongKey,
-    });
-    const longKeyError = parseMcpToolError(longKey).error;
-    expect(longKeyError).toMatchObject({
-      code: "invalid_request",
-      details: {
-        issues: [
-          {
-            path: [],
-            reason: "invalid_value",
-            message: keyDiagnostic,
-            observed: { field_details: "omitted" },
-          },
-        ],
-      },
-    });
-    expect(longKeyError.message).not.toContain(keyDiagnostic);
+      });
+      expect(error.message, name).not.toContain(diagnostic);
+    }
     await expect(client.ping()).resolves.toBeDefined();
-  } finally {
-    await client.close();
-    await server.close();
-    await sdkClient.close();
-    await sdkServer.close();
-  }
-});
+  },
+);

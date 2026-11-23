@@ -1,6 +1,14 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readFile,
+  realpath,
+  rename,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -8,7 +16,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../resources/SafeOutputTree.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+import type { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { safeParseEvidence } from "../../domain/evidenceValidation.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../../domain/analysisErrorCore.js";
+import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
+import { RetainedContent } from "./DesktopRetainedContent.js";
 import {
   VARICAD_FILE,
   VARICAD_URL,
@@ -19,21 +37,16 @@ import type {
   DesktopApplicationCapture,
 } from "../../domain/desktop/desktopCapture.js";
 import { renderBuildBundle } from "../../domain/desktop/appBuild.js";
+import { parseOneLineSources } from "../../domain/desktop/aptRepositories.js";
 import { readDownloadInstall } from "./DesktopExportInstall.js";
-import {
-  NO_LAUNCH_DOCUMENT,
-  launchDocumentNote,
-  seedWording,
-} from "../../domain/desktop/appExport.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
+import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
-  seedLimitation,
-  trashedFilesLimitation,
-} from "./DesktopExportLimitations.js";
-import {
+  DATABASE,
   EDITED_NOTE,
   HOME,
   NOTE,
+  SETTINGS,
   capture,
   change,
   checkpoint,
@@ -59,26 +72,6 @@ const exportCapture = async (
     signal,
   );
   return { result, directory };
-};
-
-/** Export the fixture capture with its package's apt sources replaced. */
-const exportWithSources = async (
-  sources: readonly string[],
-  origins?: readonly (string | null)[],
-) => {
-  const local = capture();
-  const { result } = await exportCapture({
-    ...local,
-    application: {
-      ...local.application,
-      package: {
-        ...local.application.package,
-        sources: [...sources],
-        ...(origins === undefined ? {} : { source_origins: [...origins] }),
-      },
-    },
-  });
-  return result;
 };
 
 /** Export the fixture capture walked under other spellings, with its baseline files and files created later. */
@@ -158,60 +151,130 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("exportDesktopApplication", () => {
-  it("writes a computer app bundle with owned paths and the baseline seed", async () => {
-    const { result, directory } = await exportCapture(capture());
-
-    if (result instanceof Error) throw result;
-    expect(result.operation).toBe("export_desktop_application");
-    expect(result.normalized_result).toMatchObject({
-      environment: "notes",
-      paths: [".config/notes", ".local/share/notes", "Documents"],
-      seed_files: [".config/notes/settings.ini", ".local/share/notes/notes.db"],
-      unseeded_files: [],
-    });
-    expect(
-      await readFile(join(directory, "envs/notes/env.toml"), "utf8"),
-    ).toContain('module = "notes_app.py:Notes"');
-    const module = await readFile(
-      join(directory, "envs/notes/notes_app.py"),
-      "utf8",
-    );
-    expect(module).toContain('packages=Packages(apt=["notes"])');
-    expect(module).toContain('window={"class": "Notes"}');
-    expect(module).toContain("@reset_data");
-    expect(
-      await readFile(
-        join(directory, "envs/notes/seed/.config/notes/settings.ini"),
-        "utf8",
-      ),
-    ).toBe("[ui]\nwrap=false\n");
-  });
-
-  it.each([
-    [[], []],
-    [
-      ["https://ppa.launchpadcontent.net/a/b/ubuntu noble/main amd64 Packages"],
-      ["LP-PPA-a-b"],
-    ],
-  ])(
-    "refuses an application not installed from the Ubuntu 24.04 archive (%j)",
-    async (sources, origins) => {
-      const refused = await exportWithSources(sources, origins);
-
-      expect(refused instanceof Error ? refused.message : "").toContain(
-        "export_desktop_application",
-      );
+it("exports and drafts state from the same capture each cites", async () => {
+  const local = capture();
+  const original = {
+    ...local,
+    application: {
+      ...local.application,
+      package: {
+        ...local.application.package,
+        sources: ["http://mirror.local/ubuntu noble/universe amd64 Packages"],
+        source_origins: ["Ubuntu"],
+      },
     },
+  };
+  const folder = await writeCaptureFolder(original);
+  const capturePath = join(folder, "capture.json");
+  const originalJson = await readFile(capturePath, "utf8");
+  const source = safeParseEvidence(JSON.parse(originalJson));
+  if (!source.ok) throw new Error("Invalid original capture fixture");
+  const replacement = await writeCaptureFolder({
+    ...original,
+    state: {
+      ...original.state,
+      checkpoints: [
+        checkpoint(
+          "replacement",
+          "baseline",
+          [],
+          [
+            retained(SETTINGS, "[ui]\nwrap=true\n"),
+            retained(DATABASE, "SQLite format 3\0v1"),
+          ],
+        ),
+      ],
+    },
+  });
+  const replacementJson = await readFile(
+    join(replacement, "capture.json"),
+    "utf8",
+  );
+  const replaceAfterClose = async () => {
+    const nextCapture = join(folder, "next-capture.json");
+    await writeFile(nextCapture, replacementJson);
+    const close = OwnedFileHandle.prototype.close;
+    return vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementationOnce(async function (this: OwnedFileHandle) {
+        await close.call(this);
+        await rename(nextCapture, capturePath);
+      });
+  };
+  const exportRead = await replaceAfterClose();
+  const directory = join(folder, "bundle");
+  const result = await exportDesktopApplication(
+    { capture: folder, directory, name: undefined, tasks: [] },
+    readers,
   );
 
-  it("accepts an application from an Ubuntu 24.04 mirror", async () => {
-    const result = await exportWithSources(
-      ["http://mirror.local/ubuntu noble/universe amd64 Packages"],
-      ["Ubuntu"],
-    );
+  if (result instanceof Error) throw result;
+  expect(result.operation).toBe("export_desktop_application");
+  expect(result.parameters.capture_evidence_id).toBe(source.value.evidence_id);
+  expect(await readFile(capturePath, "utf8")).toBe(replacementJson);
+  expect(
+    await readFile(
+      join(directory, "envs/notes/seed/.config/notes/settings.ini"),
+      "utf8",
+    ),
+  ).toBe("[ui]\nwrap=false\n");
+  expect(result.normalized_result).toMatchObject({
+    environment: "notes",
+    checkpoints: { seed: "baseline", end: "edited" },
+    paths: [".config/notes", ".local/share/notes", "Documents"],
+    seed_files: [".config/notes/settings.ini", ".local/share/notes/notes.db"],
+    unseeded_files: [],
+  });
+  expect(
+    await readFile(join(directory, "envs/notes/env.toml"), "utf8"),
+  ).toContain('module = "notes_app.py:Notes"');
+  const module = await readFile(
+    join(directory, "envs/notes/notes_app.py"),
+    "utf8",
+  );
+  expect(module).toContain('packages=Packages(apt=["notes"])');
+  expect(module).toContain('window={"class": "Notes"}');
+  expect(module).toContain("@reset_data");
 
-    expect(result).not.toBeInstanceOf(Error);
+  exportRead.mockRestore();
+  await writeFile(capturePath, originalJson);
+  await replaceAfterClose();
+  const draft = await draftDesktopApplicationTask(folder, readers);
+  if (draft instanceof Error) throw draft;
+  expect(draft.parameters.capture_evidence_id).toBe(source.value.evidence_id);
+  expect(await readFile(capturePath, "utf8")).toBe(replacementJson);
+  expect(draft.normalized_result).toMatchObject({
+    checkpoints: { baseline: "baseline", final: "edited" },
+    task: {
+      checks: expect.arrayContaining([
+        expect.objectContaining({ kind: "lines_present", lines: ["milk"] }),
+      ]),
+    },
+  });
+});
+
+describe("exportDesktopApplication", () => {
+  it("refuses an unconfigured PPA before writing a bundle", async () => {
+    const local = capture();
+    const { result, directory } = await exportCapture({
+      ...local,
+      application: {
+        ...local.application,
+        package: {
+          ...local.application.package,
+          sources: [
+            "https://ppa.launchpadcontent.net/a/b/ubuntu noble/main amd64 Packages",
+          ],
+          source_origins: ["LP-PPA-a-b"],
+        },
+      },
+    });
+    expect(result).toMatchObject({
+      _tag: "AnalysisInputError",
+      operation: "export_desktop_application",
+      issues: [expect.objectContaining({ path: ["capture"] })],
+    });
+    expect(await exists(directory)).toBe(false);
   });
 
   it("prefixes a derived name the bundle name check refuses", async () => {
@@ -286,6 +349,268 @@ describe("exportDesktopApplication", () => {
     expect(result.limitations.join("\n")).toContain("/media/usb");
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "replays a traversing launch root at the same path used for seed files and selected aliases",
+  async () => {
+    const home = await realpath(
+      await createTestTempDirectory("desktop-source-"),
+    );
+    const base = `${home}/profiles//current/..`;
+    const logical = `${base}/./notes`;
+    await mkdir(`${home}/profiles`);
+    await mkdir(`${home}/resolved/profile`, { recursive: true });
+    await mkdir(`${home}/resolved/notes`);
+    await symlink(`${home}/resolved/profile`, `${home}/profiles/current`);
+    const physical = await realpath(logical);
+    const settings = `${physical}/settings.ini`;
+    const text = "[ui]\nwrap=false\n";
+    await writeFile(settings, text);
+    const local = capture();
+    const { result, directory } = await exportCapture({
+      ...local,
+      host: { ...local.host, home },
+      application: {
+        ...local.application,
+        argv: [
+          "env",
+          `XDG_CONFIG_HOME=${base}`,
+          "MODE=dark",
+          "sh",
+          "-c",
+          'test "$MODE" = dark && test "$2" = --theme=dark && test "$3" = --line=10 && cat "$XDG_CONFIG_HOME/notes/settings.ini" "$1" "$4"',
+          "notes",
+          `${logical}/settings.ini`,
+          "--theme=dark",
+          "--line=10",
+          "settings.ini",
+        ],
+        working_directory: logical,
+        state_directories: [{ path: logical, exists_at_start: true }],
+      },
+      state: {
+        ...local.state,
+        roots: [home],
+        content_roots: [physical],
+        state_directories: [physical],
+        selected_paths: [
+          { path: `${home}/settings`, physical, kind: "directory" },
+        ],
+        checkpoints: [
+          checkpoint("baseline", "baseline", [], [retained(settings, text)]),
+        ],
+      },
+    });
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      paths: ["resolved/notes"],
+      seed_files: ["resolved/notes/settings.ini"],
+    });
+
+    const replay = await createTestTempDirectory("desktop-replay-");
+    const { stdout } = await execute("python3", [
+      "-I",
+      "-B",
+      "-c",
+      `import ast, subprocess, sys
+from pathlib import Path
+module = Path(sys.argv[1])
+home = Path(sys.argv[2])
+tree = ast.parse(module.read_text(encoding="utf-8"))
+launch = next(node for node in ast.walk(tree) if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "Launch")
+command = ast.literal_eval(next(key.value for key in launch.keywords if key.arg == "command"))
+tree.body = [node for node in tree.body
+             if not isinstance(node, ast.ClassDef)
+             and (not isinstance(node, ast.ImportFrom) or not node.module.startswith("agentenv_protocol"))]
+scope = {"__file__": str(module)}
+exec(compile(tree, str(module), "exec"), scope)
+scope["_seed_home"](home)
+scope["_ensure_state_aliases"](home)
+assert (home / "settings/settings.ini").read_bytes() == (home / "resolved/notes/settings.ini").read_bytes()
+assert not (home / "profiles").exists()
+subprocess.run(command, env={"HOME": str(home), "PATH": "/usr/bin:/bin"}, check=True)`,
+      join(directory, "envs/notes/notes_app.py"),
+      replay,
+    ]);
+    expect(stdout).toBe(text.repeat(3));
+  },
+);
+
+it.each([
+  { option: "--theme=dark/variant", refused: false },
+  { option: "--settings=dark", refused: true },
+])(
+  "requires observed path evidence before refusing $option",
+  async ({ option, refused }) => {
+    const local = capture();
+    const logical = `${HOME}/profiles/current/../notes`;
+    const physical = `${HOME}/resolved/notes`;
+    const external = "/mnt/shared/themes";
+    const { result, directory } = await exportCapture({
+      ...local,
+      application: {
+        ...local.application,
+        argv: ["notes", option, "settings.ini"],
+        working_directory: logical,
+        state_directories: [
+          { path: logical, exists_at_start: true },
+          { path: `${logical}/dark`, exists_at_start: true },
+        ],
+      },
+      state: {
+        ...local.state,
+        content_roots: [physical, external],
+        state_directories: [physical, external],
+        selected_paths: [],
+        checkpoints: [
+          checkpoint(
+            "baseline",
+            "baseline",
+            [],
+            [retained(`${physical}/settings.ini`, "[ui]\nwrap=false\n")],
+          ),
+        ],
+      },
+    });
+    if (refused) {
+      expect(result).toBeInstanceOf(AnalysisInputError);
+      expect(await exists(directory)).toBe(false);
+      return;
+    }
+    if (result instanceof Error) throw result;
+    const module = await readFile(
+      join(directory, "envs/notes/notes_app.py"),
+      "utf8",
+    );
+    const launch = module
+      .split("\n")
+      .find((line) => line.includes("launch=Launch("));
+    expect(launch).toContain(option);
+    expect(launch).toContain("resolved/notes/settings.ini");
+  },
+);
+
+it("writes portable seed names for state paths with empty or self-directory components", async () => {
+  const local = capture();
+  const physical = `${HOME}/.config/notes`;
+  const { result, directory } = await exportCapture({
+    ...local,
+    application: {
+      ...local.application,
+      state_directories: [
+        { path: `${HOME}/./.config//notes`, exists_at_start: true },
+      ],
+    },
+    state: {
+      ...local.state,
+      content_roots: [physical],
+      state_directories: [physical],
+      checkpoints: [
+        checkpoint(
+          "baseline",
+          "baseline",
+          [],
+          [retained(`${physical}/settings.ini`, "[ui]\nwrap=false\n")],
+        ),
+      ],
+    },
+  });
+  if (result instanceof Error) throw result;
+  expect(result.normalized_result).toMatchObject({
+    seed_files: [".config/notes/settings.ini"],
+  });
+  expect(
+    await readFile(
+      join(directory, "envs/notes/seed/.config/notes/settings.ini"),
+      "utf8",
+    ),
+  ).toBe("[ui]\nwrap=false\n");
+});
+
+it("refuses a traversing launch root with conflicting seed locations", async () => {
+  const local = capture();
+  const base = `${HOME}/profiles/current/..`;
+  const settings = [`${HOME}/first/notes`, `${HOME}/second/notesrc`];
+  const { result, directory } = await exportCapture({
+    ...local,
+    application: {
+      ...local.application,
+      argv: ["env", `XDG_CONFIG_HOME=${base}`, "notes"],
+      state_directories: [
+        { path: `${base}/notes`, exists_at_start: true },
+        { path: `${base}/notesrc`, exists_at_start: true },
+      ],
+    },
+    state: {
+      ...local.state,
+      content_roots: settings,
+      state_directories: settings,
+    },
+  });
+  expect(result).toBeInstanceOf(AnalysisInputError);
+  if (!(result instanceof AnalysisInputError))
+    throw new Error("expected export refusal");
+  expect(result.userMessage).toContain("do not agree on a replay location");
+  expect(await exists(directory)).toBe(false);
+});
+
+it.each(["file", "directory", "ancestor"] as const)(
+  "reconciles a traversing %s launch path with a separately selected seed",
+  async (kind) => {
+    const local = capture();
+    const base = `${HOME}/profiles/current/..`;
+    const logical = `${base}/notes`;
+    const physical = `${HOME}/resolved/notes`;
+    const settings = `${physical}/settings.ini`;
+    const selected = `${HOME}/Documents/settings.ini`;
+    const { result, directory } = await exportCapture({
+      ...local,
+      application: {
+        ...local.application,
+        argv:
+          kind === "file"
+            ? ["notes", `${logical}/settings.ini`]
+            : [
+                "env",
+                `XDG_CONFIG_HOME=${kind === "directory" ? logical : base}`,
+                "notes",
+              ],
+        state_directories: [{ path: logical, exists_at_start: true }],
+      },
+      state: {
+        ...local.state,
+        content_roots: [physical],
+        state_directories: [physical],
+        selected_paths: [{ path: selected, physical: settings, kind: "file" }],
+        checkpoints: [
+          checkpoint(
+            "baseline",
+            "baseline",
+            [],
+            [retained(settings, "[ui]\nwrap=false\n")],
+          ),
+        ],
+      },
+    });
+    if (kind !== "file") {
+      expect(result).toBeInstanceOf(AnalysisInputError);
+      expect(await exists(directory)).toBe(false);
+      return;
+    }
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      seed_files: ["Documents/settings.ini"],
+    });
+    const module = await readFile(
+      join(directory, "envs/notes/notes_app.py"),
+      "utf8",
+    );
+    const launch = module
+      .split("\n")
+      .find((line) => line.includes("launch=Launch("));
+    expect(launch).toContain("Documents/settings.ini");
+  },
+);
 
 it("seeds the app's state at its own path and retains a selected alias", async () => {
   const local = capture();
@@ -520,13 +845,9 @@ describe("exportDesktopApplication and the desktop Trash", () => {
         "Documents/today.txt",
       ],
     });
-    const trashPaths = [
-      ".local/share/Trash/files/today.txt",
-      ".local/share/Trash/info/today.txt.trashinfo",
-    ];
-    const notice = trashedFilesLimitation(trashPaths);
-    expect(result.limitations).toContain(notice);
-    for (const path of trashPaths) expect(notice).toContain(`~/${path}`);
+    expect(result.limitations).toContain(
+      "The desktop Trash held 2 file(s) at the seed checkpoint, which are not seeded: ~/.local/share/Trash/files/today.txt, ~/.local/share/Trash/info/today.txt.trashinfo. Restore one the task needs and capture again.",
+    );
   });
 });
 
@@ -724,6 +1045,13 @@ describe("exportDesktopApplication of lock files and folders the app held files 
     expect(readme).toContain(
       "`~/.config/notes/.lock`, `~/Documents/.~lock.today.txt#`",
     );
+    const heldOpen = result.limitations.find((limitation) =>
+      limitation.startsWith("The application held files open in"),
+    );
+    expect(heldOpen).toContain("held files open in ~/Documents,");
+    expect(heldOpen).toContain(
+      "the seed holds ~/Documents/today.txt from there",
+    );
   });
 
   it("seeds project lock files the capture recognized as documents and a lock-named file the caller selected, and leaves out a *.lock file directly in a state directory", async () => {
@@ -798,19 +1126,6 @@ describe("exportDesktopApplication of lock files and folders the app held files 
     expect(leftOut[0]).toContain(
       "~/.config/notes/.lock, ~/.config/notes/db.lock, ~/Documents/.~lock.today.txt#.",
     );
-  });
-
-  it("names the seed files under a folder the app held files open in, rather than saying nothing there is seeded", async () => {
-    const { result } = await exportLocked();
-
-    const heldOpen = result.limitations.find((limitation) =>
-      limitation.startsWith("The application held files open in"),
-    );
-    expect(heldOpen).toContain("held files open in ~/Documents,");
-    expect(heldOpen).toContain(
-      "the seed holds ~/Documents/today.txt from there",
-    );
-    expect(heldOpen).not.toContain("nothing there is seeded");
   });
 });
 
@@ -938,58 +1253,47 @@ const withWritten = (
   };
 };
 
-describe("exportDesktopApplication of Poedit's locks and a seed's mode", () => {
-  it("leaves out a lock in the home and Lucene's write.lock, and never owns the home's lock", async () => {
-    const index = `${HOME}/.local/share/notes/TranslationMemory`;
-    const { result } = await exportLocked(
-      withWritten([
-        // wxWidgets' single-instance lock, which holds a PID and must stay 0600.
-        [`${HOME}/poedit.lock`, "4242\n", "opened", 0o600],
-        [`${index}/write.lock`, "", "state", 0o644],
-        [`${index}/segments_2`, "seg\n", "state", 0o644],
-      ]),
-      ["4242\n", "", "seg\n"],
-    );
+it("keeps captured seed modes and omits Poedit and Lucene runtime locks", async () => {
+  const index = `${HOME}/.local/share/notes/TranslationMemory`;
+  const { result, directory } = await exportLocked(
+    withWritten([
+      // wxWidgets' single-instance lock, which holds a PID and must stay 0600.
+      [`${HOME}/poedit.lock`, "4242\n", "opened", 0o600],
+      [`${index}/write.lock`, "", "state", 0o644],
+      [`${index}/segments_2`, "seg\n", "state", 0o644],
+      [`${HOME}/.config/notes/secret.ini`, "[s]\n", "state", 0o600],
+      [`${HOME}/.config/notes/run.sh`, "#!/bin/sh\n", "state", 0o755],
+    ]),
+    ["4242\n", "", "seg\n", "[s]\n", "#!/bin/sh\n"],
+  );
 
-    const exported = z
-      .object({ seed_files: z.array(z.string()), paths: z.array(z.string()) })
-      .parse(result.normalized_result);
-    expect(exported.seed_files).toContain(
-      ".local/share/notes/TranslationMemory/segments_2",
-    );
-    expect(exported.seed_files).not.toContain("poedit.lock");
-    expect(exported.seed_files).not.toContain(
-      ".local/share/notes/TranslationMemory/write.lock",
-    );
-    expect(exported.paths).not.toContain("poedit.lock");
-    expect(
-      result.limitations.find((limitation) =>
-        limitation.startsWith("Left out of the seed: lock files"),
-      ),
-    ).toContain("~/.local/share/notes/TranslationMemory/write.lock");
-    // Nothing tells the agent to own the home's lock.
-    expect(
-      result.limitations.filter((limitation) =>
-        limitation.includes("~/poedit.lock"),
-      ),
-    ).toEqual([]);
-  });
-
-  it("keeps a seed file's captured mode when it is not the bundle's 0644", async () => {
-    const { directory } = await exportLocked(
-      withWritten([
-        [`${HOME}/.config/notes/secret.ini`, "[s]\n", "state", 0o600],
-        [`${HOME}/.config/notes/run.sh`, "#!/bin/sh\n", "state", 0o755],
-      ]),
-      ["[s]\n", "#!/bin/sh\n"],
-    );
-
-    expect(
-      await readFile(join(directory, "envs/notes/notes_app.py"), "utf8"),
-    ).toContain(
-      'SEED_MODES = {".config/notes/run.sh": 0o755, ".config/notes/secret.ini": 0o600}',
-    );
-  });
+  const exported = z
+    .object({ seed_files: z.array(z.string()), paths: z.array(z.string()) })
+    .parse(result.normalized_result);
+  expect(exported.seed_files).toContain(
+    ".local/share/notes/TranslationMemory/segments_2",
+  );
+  expect(exported.seed_files).not.toContain("poedit.lock");
+  expect(exported.seed_files).not.toContain(
+    ".local/share/notes/TranslationMemory/write.lock",
+  );
+  expect(exported.paths).not.toContain("poedit.lock");
+  expect(
+    result.limitations.find((limitation) =>
+      limitation.startsWith("Left out of the seed: lock files"),
+    ),
+  ).toContain("~/.local/share/notes/TranslationMemory/write.lock");
+  // Nothing tells the agent to own the home's lock.
+  expect(
+    result.limitations.filter((limitation) =>
+      limitation.includes("~/poedit.lock"),
+    ),
+  ).toEqual([]);
+  expect(
+    await readFile(join(directory, "envs/notes/notes_app.py"), "utf8"),
+  ).toContain(
+    'SEED_MODES = {".config/notes/run.sh": 0o755, ".config/notes/secret.ini": 0o600}',
+  );
 });
 
 describe("exportDesktopApplication of the app's logs", () => {
@@ -1320,6 +1624,43 @@ describe("exportDesktopApplication of a program in another package", () => {
   });
 });
 
+it("exports APT's architecture-independent package after all explicit architectures were removed", async () => {
+  const [entry] = parseOneLineSources(
+    "deb [arch=arm64 arch-=arm64] https://downloads.typora.io/linux ./",
+    "vendor.list",
+  );
+  if (entry === undefined) throw new Error("APT source did not parse");
+  expect(entry.architectures).toEqual(["all"]);
+  const recorded = vendorCapture(VERIFIED_KEY);
+  const installed = recorded.application.package;
+  const repositories = installed.apt_repositories?.map((repository) => ({
+    ...repository,
+    architectures: [...entry.architectures],
+  }));
+  const exportFor = (architecture: string) =>
+    exportVendorCapture({
+      ...recorded,
+      application: {
+        ...recorded.application,
+        package: { ...installed, architecture, apt_repositories: repositories },
+      },
+    });
+
+  const admitted = await exportFor("all");
+  if (admitted.result instanceof Error) throw admitted.result;
+  expect(
+    await readFile(
+      join(admitted.directory, "envs/typora/typora_app.py"),
+      "utf8",
+    ),
+  ).toContain('AptSource(apt="https://downloads.typora.io/linux"');
+
+  const refused = await exportFor("arm64");
+  expect(refused.result).toMatchObject({ _tag: "AnalysisInputError" });
+  expect(JSON.stringify(refused.result)).toContain("it serves only all");
+  expect(await exists(refused.directory)).toBe(false);
+});
+
 describe("exportDesktopApplication from a vendor repository", () => {
   it("copies the verified key, declares the repository and library packages, and turns the sandbox off", async () => {
     const { result, directory } = await exportVendorCapture(
@@ -1377,6 +1718,83 @@ describe("exportDesktopApplication from a vendor repository", () => {
       'packages=Packages(apt=["typora", "libgbm1", "libnss3"]),\n    sources=[AptSource(apt="https://downloads.typora.io/linux", suite="./", components=[], key="apt-keys/typora.gpg")],',
     );
   });
+
+  const withRepositoryUri = (uri: string, repoUri?: string) => {
+    const capture = vendorCapture(VERIFIED_KEY);
+    const installed = capture.application.package;
+    return {
+      ...capture,
+      application: {
+        ...capture.application,
+        package: {
+          ...installed,
+          apt_repositories: installed.apt_repositories?.map((repository) => ({
+            ...repository,
+            uri,
+            ...(repoUri === undefined ? {} : { repo_uri: repoUri }),
+          })),
+        },
+      },
+    };
+  };
+
+  it.each([
+    [
+      "https://vendor.invalid/a%2Cb",
+      "https://vendor.invalid/a,b/",
+      "https://vendor.invalid/a,b",
+    ],
+    [
+      "https://vendor.invalid/a%252Cb",
+      "https://vendor.invalid/a%2Cb/",
+      "https://vendor.invalid/a%2Cb",
+    ],
+  ])(
+    "declares the observed APT repository behind %s",
+    async (authored, observed, declared) => {
+      const local = withRepositoryUri(authored, observed);
+      const { result, directory } = await exportVendorCapture(local);
+      if (result instanceof Error) throw result;
+      const module = await readFile(
+        join(directory, "envs/typora/typora_app.py"),
+        "utf8",
+      );
+      expect(module).toContain(
+        `AptSource(apt="${declared}", suite="./", components=[], key="apt-keys/typora.gpg")`,
+      );
+      expect(await readFile(join(directory, "README.md"), "utf8")).toContain(
+        declared,
+      );
+    },
+  );
+
+  it.each([
+    [
+      "https://vendor.invalid/a%20b",
+      "https://vendor.invalid/a b/",
+      "cannot be represented as one AgentEnv deb822 URI token",
+    ],
+    [
+      "https://vendor.invalid/a%0ab",
+      "https://vendor.invalid/a",
+      "contains an escaped control byte",
+    ],
+    [
+      "https://vendor.invalid/a%2Cb",
+      undefined,
+      "the capture does not record apt's Repo-URI",
+    ],
+  ])(
+    "withholds an APT declaration that cannot preserve %s",
+    async (authored, observed, reason) => {
+      const { result, directory } = await exportVendorCapture(
+        withRepositoryUri(authored, observed),
+      );
+      expect(result).toBeInstanceOf(Error);
+      expect(JSON.stringify(result)).toContain(reason);
+      expect(await exists(directory)).toBe(false);
+    },
+  );
 
   it("refuses a vendor repository whose key the capture did not verify", async () => {
     const { result, directory } = await exportVendorCapture(
@@ -1571,22 +1989,35 @@ const exportDownload = async (
 };
 
 it("bounds download-install input and preserves cancellation", async () => {
-  const oversized = await exportDownload(downloadCapture(), {
-    text: "a".repeat(64 * 1024),
-  });
-  expect(oversized.result).toMatchObject({
+  const path = join(
+    await createTestTempDirectory("download-install-limit-"),
+    "install.json",
+  );
+  const exact = JSON.stringify(APPIMAGE_INSTALL).padEnd(64 * 1024, " ");
+  await writeFile(path, exact);
+  await expect(readDownloadInstall(path)).resolves.toEqual(APPIMAGE_INSTALL);
+
+  await writeFile(path, exact + " ");
+  await expect(readDownloadInstall(path)).rejects.toMatchObject({
     _tag: "AnalysisInputError",
+    userMessage: expect.stringContaining("at most 65536 bytes"),
     issues: [expect.objectContaining({ path: ["download_install"] })],
   });
   const controller = new AbortController();
-  const reason = new Error("cancelled input read");
+  const reason = new AnalysisInputError("caller", {
+    userMessage: "cancelled input read",
+  });
   controller.abort(reason);
   await expect(
     readDownloadInstall(
       join(await createTestTempDirectory("download-input-"), "file"),
       controller.signal,
     ),
-  ).rejects.toBe(reason);
+  ).rejects.toMatchObject({
+    _tag: "AnalysisCancelledError",
+    operation: "export_desktop_application",
+    cause: reason,
+  } satisfies Partial<AnalysisCancelledError>);
 });
 
 describe("exportDesktopApplication from a download", () => {
@@ -1921,7 +2352,9 @@ const exportSeeded = async (
 
 /** The limitations on what the launch opens, found by the lead their formatter gives them. */
 const launchLimitations = (limitations: readonly string[]) =>
-  limitations.filter((line) => line.includes(NO_LAUNCH_DOCUMENT));
+  limitations.filter((line) =>
+    line.includes("The app opens no document at launch"),
+  );
 
 /**
  * The seed-then-end capture of an app whose titles name no file, given the
@@ -2014,20 +2447,47 @@ describe("exportDesktopApplication launch document by a title", () => {
   });
 });
 
+const FALLBACK_NOTES_COMMAND = `command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec 'notes'"]`;
+
 describe("exportDesktopApplication launch document", () => {
-  it("opens the seed's one document when the desktop entry takes files", async () => {
+  it("opens the sole captured document only when the desktop entry takes files", async () => {
     const { result, module, readme } = await exportSeeded("notes %U");
 
     expect(module).toContain(
       `command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec 'notes' \\"$HOME\\"/'Documents/today.txt'"]`,
     );
     expect(readme).toContain(
-      launchDocumentNote({
-        opens: { kind: "seed", document: "Documents/today.txt" },
-      }),
+      "At launch the app opens `~/Documents/today.txt`, the seed's one document.",
     );
-    expect(readme).toContain("`~/Documents/today.txt`");
     expect(launchLimitations(result.limitations)).toEqual([]);
+    expect(result.parameters.synthetic_seed).toBe(false);
+    expect(
+      result.limitations.filter(
+        (line) =>
+          line.startsWith("The seed is") || line.startsWith("The seed was"),
+      ),
+    ).toEqual([
+      "The seed is the user's real state at the seed checkpoint; keep the bundle local.",
+    ]);
+    expect(readme).toContain(
+      "The seed is the user's real data. Keep this bundle local; do not publish it.",
+    );
+    expect(readme).not.toContain("`envs/notes/seed/`");
+
+    for (const [exec, reason] of [
+      ["notes", "Exec takes no file"],
+      [null, "without a desktop entry"],
+    ] as const) {
+      const fallback = await exportSeeded(exec);
+      const launch = launchLimitations(fallback.result.limitations);
+      expect(fallback.module, String(exec)).toContain(FALLBACK_NOTES_COMMAND);
+      expect(launch, String(exec)).toEqual([expect.stringContaining(reason)]);
+      expect(
+        fallback.result.limitations.filter((line) => !launch.includes(line)),
+        String(exec),
+      ).toEqual(result.limitations);
+      expect(fallback.readme, String(exec)).toContain(launch[0]);
+    }
   });
 
   it.each([
@@ -2061,24 +2521,6 @@ describe("exportDesktopApplication launch document", () => {
     },
   );
 
-  it.each(["notes", null])(
-    "launches as captured, and says why in the README and limitations, when Exec is %j",
-    async (exec) => {
-      const opened = await exportSeeded("notes %U");
-      const { result, module, readme } = await exportSeeded(exec);
-      const launch = launchLimitations(result.limitations);
-
-      expect(module).toContain(
-        `command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec 'notes'"]`,
-      );
-      expect(launch).toHaveLength(1);
-      expect(
-        result.limitations.filter((line) => !launch.includes(line)),
-      ).toEqual(opened.result.limitations);
-      for (const line of launch) expect(readme).toContain(line);
-    },
-  );
-
   it("launches as captured from a baseline seed, which holds no document", async () => {
     const local = capture();
     const { result, directory } = await exportCapture({
@@ -2103,9 +2545,7 @@ describe("exportDesktopApplication launch document", () => {
     expect(launchLimitations(result.limitations)).toEqual([]);
     expect(
       await readFile(join(directory, "envs/notes/notes_app.py"), "utf8"),
-    ).toContain(
-      `command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec 'notes'"]`,
-    );
+    ).toContain(FALLBACK_NOTES_COMMAND);
   });
 
   it("names the environment for a desktop entry id ending in a version by the id without it", async () => {
@@ -2132,28 +2572,22 @@ describe("exportDesktopApplication launch document", () => {
     expect(result.normalized_result).toMatchObject({ environment: "glabels" });
   });
 
-  it("says a seed made for the task was made for it, and a captured one is the user's own", async () => {
-    const made = await exportSeeded("notes %U", { syntheticSeed: true });
-    const captured = await exportSeeded("notes %U");
-    const notice = (syntheticSeed: boolean) =>
-      seedWording({ name: "notes", seedCheckpoint: "seed", syntheticSeed })
-        .notice;
+  it("identifies synthetic seed provenance in both the Evidence and bundle", async () => {
+    const { result, readme } = await exportSeeded("notes %U", {
+      syntheticSeed: true,
+    });
 
-    expect(made.result.parameters).toMatchObject({ synthetic_seed: true });
-    expect(captured.result.parameters).toMatchObject({ synthetic_seed: false });
-    for (const [exported, synthetic] of [
-      [made, true],
-      [captured, false],
-    ] as const) {
-      expect(exported.result.limitations).toContain(seedLimitation(synthetic));
-      expect(exported.result.limitations).not.toContain(
-        seedLimitation(!synthetic),
-      );
-      expect(exported.readme).toContain(notice(synthetic));
-      expect(exported.readme).not.toContain(notice(!synthetic));
-    }
-    expect(made.readme).toContain("`envs/notes/seed/`");
-    expect(captured.readme).not.toContain("`envs/notes/seed/`");
+    expect(result.parameters.synthetic_seed).toBe(true);
+    expect(result.limitations).toContain(
+      "The seed was made for the task, not taken from a user's own data; read it before publishing the bundle.",
+    );
+    expect(result.limitations).not.toContain(
+      "The seed is the user's real state at the seed checkpoint; keep the bundle local.",
+    );
+    expect(readme).toContain(
+      "The seed was made for this task, not taken from a user's own data; read `envs/notes/seed/` before publishing the bundle.",
+    );
+    expect(readme).not.toContain("The seed is the user's real data.");
   });
 });
 
@@ -2217,17 +2651,224 @@ describe("exportDesktopApplication launch document beside its lock", () => {
   });
 });
 
-describe("exportDesktopApplication bundle writes", () => {
-  it.each(["cancelled", "out of space"])(
-    "removes the unpublished bundle when its write fails (%s)",
-    async (failure) => {
+describe("exportDesktopApplication retained input finalization", () => {
+  it("honors cancellation during retained input finalization before publication", async () => {
+    const controller = new AbortController();
+    const reason = new Error("cancel during seed finalization");
+    let writing = false;
+    let finalized = false;
+    const write = unspied("write");
+    vi.spyOn(SafeOutputTree.prototype, "write").mockImplementation(
+      async function (this: SafeOutputTree, ...args) {
+        const written = await write.apply(this, args);
+        writing = true;
+        return written;
+      },
+    );
+    const release = RetainedContent.prototype.release;
+    vi.spyOn(RetainedContent.prototype, "release").mockImplementation(
+      async function (this: RetainedContent, resources) {
+        const result = await release.call(this, resources);
+        if (writing) {
+          finalized = true;
+          controller.abort(reason);
+        }
+        return result;
+      },
+    );
+    const { result, directory } = await exportCapture(
+      capture(),
+      controller.signal,
+    );
+    expect(finalized).toBe(true);
+    expect(result).toMatchObject({ _tag: "AnalysisCancelledError" });
+    expect((result as Error).cause).toBe(reason);
+    expect(await exists(directory)).toBe(false);
+  });
+
+  it.each([false, true])(
+    "finalizes retained seed inputs before publication and retains cleanup retry (rollback fails: %s)",
+    async (rollbackFails) => {
+      let writing = false;
+      let reading = false;
+      const blocked = new Set<OwnedFileHandle>();
+      const leases: AnalysisCleanupLease[] = [];
+      if (rollbackFails)
+        vi.spyOn(
+          SafeOutputTree.prototype,
+          "closeHandles",
+        ).mockRejectedValueOnce(new Error("output close failed"));
+      const write = unspied("write");
+      vi.spyOn(SafeOutputTree.prototype, "write").mockImplementation(
+        async function (this: SafeOutputTree, ...args) {
+          const written = await write.apply(this, args);
+          writing = true;
+          return written;
+        },
+      );
+      const read = RetainedContent.prototype.read;
+      vi.spyOn(RetainedContent.prototype, "read").mockImplementation(
+        async function (this: RetainedContent, ...args) {
+          reading = writing;
+          try {
+            return await read.apply(this, args);
+          } finally {
+            reading = false;
+          }
+        },
+      );
+      const close = OwnedFileHandle.prototype.close;
+      const closing = vi
+        .spyOn(OwnedFileHandle.prototype, "close")
+        .mockImplementation(function (this: OwnedFileHandle) {
+          if (reading && blocked.size === 0) blocked.add(this);
+          return blocked.has(this)
+            ? Promise.reject(new Error("retained seed close failed"))
+            : close.call(this);
+        });
+      const release = ArtifactResourceScope.prototype.release;
+      vi.spyOn(ArtifactResourceScope.prototype, "release").mockImplementation(
+        async function (this: ArtifactResourceScope, owner) {
+          const result = await release.call(this, owner);
+          if (result.kind === "failed") leases.push(result.lease);
+          return result;
+        },
+      );
+      try {
+        const { result, directory } = await exportCapture(capture());
+        expect(blocked.size).toBe(1);
+        expect(result).toBeInstanceOf(AnalysisError);
+        if (!(result instanceof AnalysisError))
+          throw new Error("expected cleanup failure");
+        expect(result.cleanupIncomplete).toBe(true);
+        expect(result.cleanupResources).toHaveLength(rollbackFails ? 2 : 1);
+        if (rollbackFails) expect(result.cleanupResources).toContain(directory);
+        expect(await exists(directory)).toBe(rollbackFails);
+        expect(leases).toHaveLength(rollbackFails ? 2 : 1);
+        closing.mockRestore();
+        await leases[0]!.release();
+        expect(result.cleanupIncomplete).toBe(rollbackFails);
+        for (const lease of leases.slice(1)) await lease.release();
+        expect(result.cleanupIncomplete).toBe(false);
+        expect(await exists(directory)).toBe(false);
+      } finally {
+        closing.mockRestore();
+        for (const lease of leases) await lease.release();
+      }
+    },
+  );
+});
+
+describe("exportDesktopApplication published close cancellation", () => {
+  it.skipIf(process.platform === "win32").each([false, true])(
+    "retains cancellation after publication and physical close (close fails: %s)",
+    async (closeFails) => {
       const controller = new AbortController();
+      const reason = new Error("cancel during published output close");
+      const closeFailure = new Error(
+        "published output descriptor close failed",
+      );
+      const leases: AnalysisCleanupLease[] = [];
+      let isPublished = () => false;
+      let publishedCloseAttempts = 0;
+      let physicalCloses = 0;
+      const commit = unspied("commit");
+      vi.spyOn(SafeOutputTree.prototype, "commit").mockImplementation(
+        async function (this: SafeOutputTree, ...args) {
+          isPublished = () => this.published;
+          return commit.apply(this, args);
+        },
+      );
+      const close = OwnedFileHandle.prototype.close;
+      const closing = vi
+        .spyOn(OwnedFileHandle.prototype, "close")
+        .mockImplementation(async function (this: OwnedFileHandle) {
+          if (!isPublished()) return close.call(this);
+          publishedCloseAttempts += 1;
+          if (closeFails) {
+            controller.abort(reason);
+            throw closeFailure;
+          }
+          await close.call(this);
+          physicalCloses += 1;
+          controller.abort(reason);
+        });
+      const release = ArtifactResourceScope.prototype.release;
+      vi.spyOn(ArtifactResourceScope.prototype, "release").mockImplementation(
+        async function (this: ArtifactResourceScope, owner) {
+          const result = await release.call(this, owner);
+          if (result.kind === "failed") leases.push(result.lease);
+          return result;
+        },
+      );
+      try {
+        const { result, directory } = await exportCapture(
+          capture(),
+          controller.signal,
+        );
+        expect(isPublished()).toBe(true);
+        expect(publishedCloseAttempts).toBeGreaterThan(0);
+        expect(physicalCloses).toBe(closeFails ? 0 : 1);
+        expect(
+          (await readFile(join(directory, "README.md"), "utf8")).length,
+        ).toBeGreaterThan(0);
+        expect(result).toBeInstanceOf(AnalysisError);
+        if (!(result instanceof AnalysisError))
+          throw new Error("expected published completion cancellation");
+        expect(result.partialObservation).toMatchObject({
+          operation: "export_desktop_application",
+        });
+        if (closeFails) {
+          expect(result).toMatchObject({ _tag: "ProviderAdapterError" });
+          expect(result.cause).toBeInstanceOf(AggregateError);
+          if (!(result.cause instanceof AggregateError))
+            throw new Error("expected actual descriptor cleanup failure");
+          expect(result.cause.errors).toContain(closeFailure);
+          expect(result.secondaryFailures).toContainEqual(
+            expect.objectContaining({
+              _tag: "AnalysisCancelledError",
+              cause: reason,
+            }),
+          );
+          expect(result.cleanupResources).toEqual([directory]);
+          expect(leases).toHaveLength(1);
+          closing.mockRestore();
+          await leases[0]!.release();
+          expect(result.cleanupIncomplete).toBe(false);
+          expect(await exists(join(directory, "README.md"))).toBe(true);
+        } else {
+          expect(result).toMatchObject({ _tag: "AnalysisCancelledError" });
+          expect(result.cause).toBe(reason);
+          expect(leases).toHaveLength(0);
+        }
+      } finally {
+        closing.mockRestore();
+        for (const lease of leases) await lease.release();
+      }
+    },
+  );
+});
+
+describe("exportDesktopApplication bundle writes", () => {
+  it.each([
+    { abort: false, physical: true },
+    { abort: true, physical: true },
+    { abort: true, physical: false },
+  ])(
+    "retains the write outcome and removes the unpublished bundle (physical: $physical, abort: $abort)",
+    async ({ abort, physical }) => {
+      const controller = new AbortController();
+      const reason = { source: "caller" };
+      const failure = Object.assign(new Error("out of space"), {
+        code: "ENOSPC",
+      });
       const original = unspied("write");
       vi.spyOn(SafeOutputTree.prototype, "write").mockImplementation(
         async function (this: SafeOutputTree, ...args) {
           if (!args[0].includes("/seed/")) return original.apply(this, args);
-          if (failure === "cancelled") controller.abort();
-          throw Object.assign(new Error(failure), { code: "ENOSPC" });
+          if (abort) controller.abort(reason);
+          if (!physical) return original.apply(this, args);
+          throw failure;
         },
       );
 
@@ -2236,9 +2877,27 @@ describe("exportDesktopApplication bundle writes", () => {
         controller.signal,
       );
 
-      expect(result).toBeInstanceOf(Error);
-      if (failure === "cancelled")
-        expect(result).toMatchObject({ _tag: "AnalysisCancelledError" });
+      expect(result).toBeInstanceOf(AnalysisError);
+      if (!(result instanceof AnalysisError)) throw result;
+      if (physical) {
+        expect(result).toMatchObject({ _tag: "ProviderAdapterError" });
+        expect(result.cause).toBe(failure);
+        if (abort)
+          expect(result.secondaryFailures).toContainEqual(
+            expect.objectContaining({
+              _tag: "AnalysisCancelledError",
+              cause: reason,
+            }),
+          );
+        else expect(result.secondaryFailures).toEqual([]);
+      } else {
+        expect(result).toMatchObject({
+          _tag: "AnalysisCancelledError",
+          operation: "export_desktop_application",
+        });
+        expect(result.cause).toBe(reason);
+      }
+      expect(result.cleanupResources).toEqual([]);
       expect(await exists(directory)).toBe(false);
     },
   );

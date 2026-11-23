@@ -3,13 +3,15 @@ import { z } from "zod";
 import { emptyArraySchema } from "../emptyArraySchema.js";
 import { evidenceInputSchema } from "../evidenceReference.js";
 import {
+  managedInspectionStateSchema,
   cliMetadataGuidSchema,
+  managedMetadataStatusSchema,
   managedNativeImportSchema,
 } from "./managedArtifact.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
-const textSchema = z.string().min(1);
 
 const nativeSymbolSchema = z.strictObject({
   evidence_id: evidenceIdSchema,
@@ -43,14 +45,14 @@ const pinvokeVerificationContextShape = {
   item_id: prefixedDigestSchema("mnv_pinvoke"),
   managed: verifiedManagedDeclarationSchema,
   evidence_links: z.array(evidenceIdSchema).min(1),
-  limitations: z.array(textSchema),
+  limitations: z.array(nonEmptyTextSchema),
 };
 
 const observedCandidatesSchema = z
   .tuple([nativeSymbolSchema], nativeSymbolSchema)
   .check(z.minLength(1));
 
-export const pinvokeVerificationSchema = z.union([
+export const pinvokeVerificationSchema = z.discriminatedUnion("basis", [
   z.strictObject({
     ...pinvokeVerificationContextShape,
     status: z.literal("verified"),
@@ -143,7 +145,11 @@ export const managedNativeVerificationRequestSchema = z
   .superRefine(distinctNativeSources);
 
 const verificationCoverageSchema = z.strictObject({
-  status: z.enum(["complete-within-inputs", "partial"]),
+  status: z
+    .enum(["complete-within-inputs", "partial", "unknown"])
+    .describe(
+      "unknown when the managed boundary inspection is unavailable; partial for a partial inspection, unsupported native Evidence or non-exhaustive exports.",
+    ),
 });
 
 /** Provider-neutral managed/native verification result. */
@@ -160,10 +166,10 @@ export const managedNativeVerificationResultSchema = z
       artifact_sha256: digestSchema,
       artifact_path: z.string().min(1),
       mvid: cliMetadataGuidSchema.nullable(),
-      metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
+      metadata_status: managedMetadataStatusSchema,
       pinvoke_imports_total: z.int().min(0),
       native_implementations_total: z.int().min(0),
-      coverage_state: z.enum(["complete", "partial", "unavailable"]),
+      coverage_state: managedInspectionStateSchema,
     }),
     native_observations: z.strictObject({
       total: z.int().min(1),
@@ -180,13 +186,13 @@ export const managedNativeVerificationResultSchema = z
     }),
     pinvoke_imports: z.array(pinvokeVerificationSchema),
     native_implementations: z.strictObject({
-      runtime_provided: z.int().nonnegative().nullable().default(null),
+      runtime_provided: z.int().nonnegative(),
       unresolved: z.int().min(0),
-      reason: textSchema,
+      reason: nonEmptyTextSchema,
     }),
     coverage: verificationCoverageSchema,
     evidence_links: z.array(evidenceIdSchema).min(2),
-    limitations: z.array(textSchema),
+    limitations: z.array(nonEmptyTextSchema),
   })
   .superRefine((result, context) => {
     const observedNativeCount =

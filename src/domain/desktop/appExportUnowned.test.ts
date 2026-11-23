@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   heldOpenLimitation,
@@ -9,7 +9,9 @@ import {
   unownedChangedFolders,
   unownedFoldersLimitation,
   unretainedOpenedLimitation,
+  unreadDconfLimitation,
 } from "./appExportUnowned.js";
+import { stateFilesByHomePath } from "./appExport.js";
 import type { DesktopStatePath } from "./desktopState.js";
 
 const version = (index: number) => ({
@@ -51,6 +53,77 @@ const file = (
           complete: true,
         },
       ],
+});
+
+it("reports the distinct recovery for each unread dconf seed", () => {
+  const path = ".config/dconf/user";
+  const retained = {
+    ...version(1),
+    format: "dconf",
+    sha256: "a".repeat(64),
+    view_error: "selected reader exited",
+    view_failure: {
+      kind: "exited",
+      code: null,
+      exit_code: 17,
+      command: "fixture-dconf",
+      stderr: "selected reader exited",
+    },
+  } as const;
+  const baseline: DesktopStatePath["versions"][number] = {
+    ...version(0),
+    format: "dconf",
+    sha256: "b".repeat(64),
+    view: { groups: {}, other_groups: [] },
+  };
+  for (const [snapshot, recovery] of [
+    [
+      retained,
+      "Review the reported dconf read failure before exporting again.",
+    ],
+    [
+      { ...version(1), view_error: "content not retained" },
+      "Capture again with the changed dconf database retained.",
+    ],
+    [
+      {
+        ...retained,
+        view_error: "no reader selected",
+        view_failure: {
+          ...retained.view_failure,
+          kind: "not-installed",
+          code: "ENOENT",
+          exit_code: null,
+          stderr: null,
+        },
+      },
+      "Export again where dconf-cli is installed, or with REA_DCONF_COMMAND naming dconf.",
+    ],
+    [
+      {
+        ...retained,
+        view_error: "cannot open the saved database descriptor",
+        view_failure: {
+          ...retained.view_failure,
+          kind: "descriptor-unavailable",
+          exit_code: null,
+          stderr: null,
+        },
+      },
+      "Export on Linux with readable /proc file descriptors to recover these settings.",
+    ],
+  ] as const) {
+    const database: DesktopStatePath = {
+      ...file("shared_desktop"),
+      format: "dconf",
+      versions: [baseline, snapshot],
+    };
+    const { dconf } = stateFilesByHomePath([database], () => path);
+    expect(unreadDconfLimitation(dconf, 0)).toBeUndefined();
+    const limitation = unreadDconfLimitation(dconf, 1);
+    expect(limitation).toContain(snapshot.view_error);
+    expect(limitation?.split("are not seeded. ")[1]).toBe(recovery);
+  }
 });
 
 describe("unownedChangedFolders", () => {
@@ -96,7 +169,7 @@ describe("unownedChangedFolders", () => {
     expect(unownedFoldersLimitation([])).toBeUndefined();
   });
 
-  it("collapses tens of thousands of separate folders in time that grows with their number, not its square", () => {
+  it("collapses tens of thousands of separate folders with work that grows with their number, not its square", () => {
     const count = 20_000;
     const files = new Map<string, DesktopStatePath>();
     for (let n = 0; n < count; n += 1)
@@ -106,17 +179,39 @@ describe("unownedChangedFolders", () => {
     files.set("Projects/p1-old/notes.txt", file("unrelated"));
     files.set("Owned/a.txt", file("document"));
 
-    const started = performance.now();
-    const folders = unownedChangedFolders(files, ["Owned/b"]);
-    const elapsedMs = performance.now() - started;
+    // A path is compared with the folders it lies in, by lookup or prefix:
+    // a few comparisons per path and folder level. Comparing each folder with
+    // every other makes count^2 of them; the spies stop such a walk at the
+    // bound instead of letting it run on.
+    const allowed = 24 * files.size;
+    let comparisons = 0;
+    const counted = (original: (...args: never[]) => unknown) =>
+      function (this: unknown, ...args: never[]) {
+        if (++comparisons > allowed)
+          throw new Error("folders compared pairwise");
+        return original.apply(this, args);
+      } as never;
+    const { has } = Set.prototype;
+    const { startsWith } = String.prototype;
+    const spies = [
+      vi.spyOn(Set.prototype, "has").mockImplementation(counted(has)),
+      vi
+        .spyOn(String.prototype, "startsWith")
+        .mockImplementation(counted(startsWith)),
+    ];
+    let folders: readonly string[];
+    try {
+      folders = unownedChangedFolders(files, ["Owned/b"]);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
 
+    expect(comparisons).toBeLessThanOrEqual(allowed);
     expect(folders).toHaveLength(count + 2);
     expect(folders).toEqual(
       expect.arrayContaining(["Projects/p1", "Projects/p1-old", "Owned/a.txt"]),
     );
     expect(folders).not.toContain("Projects/p1/sub");
-    // Comparing each folder with every other took tens of seconds at this count.
-    expect(elapsedMs).toBeLessThan(2_000);
   });
 });
 
@@ -369,4 +464,20 @@ describe("runtimeSeeds", () => {
       },
     ]);
   });
+});
+
+it.each([
+  [
+    "Documents/quarter\nreport.gnucash",
+    "Documents/quarter\nreport.gnucash.LCK",
+  ],
+  ["Documents/quarter\nreport.gsb", "Documents/.quarter\nreport.gsb.lock"],
+  ["Documents/quarter\nreport.vym", "Documents/quarter\nreport.vym.lock"],
+])("identifies a sibling document lock for %j", (document, lock) => {
+  expect(isLockFile(lock, [], new Set([document]))).toBe(true);
+  expect(isLockFile(lock, [], new Set())).toBe(false);
+});
+
+it("recognizes a LibreOffice lock whose document name contains a line break", () => {
+  expect(isLockFile("Documents/.~lock.quarter\nreport.ods#", [])).toBe(true);
 });

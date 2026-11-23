@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { afterAll, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
@@ -5,14 +6,14 @@ import { z } from "zod";
 import type {
   JebAnalysisPort,
   JebAnalysisAvailability,
-} from "../../../src/application/jeb/JebAnalysisPort.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/jeb/JebAnalysisPort.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { AnalysisTimeoutError } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
 import { JebMcpCleanupFailure } from "../../../src/jeb/JebMcpConnectionOwner.js";
 import { jebMcpTimeoutGuidance } from "../../../src/jeb/JebMcpDeadline.js";
 import type { JebMcpConnection } from "../../../src/jeb/JebMcpConnection.js";
@@ -122,7 +123,7 @@ it("preserves the JEB discovery timeout when availability cleanup is incomplete"
   const lease = new AnalysisCleanupLease(() => Promise.resolve(), [resource]);
   lease.bindCleanupError(cleanup);
   const timeout = new AnalysisTimeoutError("jeb_mcp_catalog", 250, {
-    ...jebMcpTimeoutGuidance("discovery", 250),
+    ...jebMcpTimeoutGuidance("discovery", 250, "setting"),
   });
   const failure = new JebMcpCleanupFailure(timeout, cleanup, "jeb_mcp_catalog");
   const connection: JebMcpConnection = {
@@ -230,7 +231,8 @@ it("advertises exact valid JEB schemas and records inline evidence through MCP",
     throw new Error("JEB tools must publish both schemas");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validateSchema(advertised.inputSchema)).toBe(true);
-  const outputSchema: Record<string, unknown> = advertised.outputSchema ?? {};
+  const outputSchema: Record<string, unknown> =
+    canonicalOutputSchema(advertised.name) ?? {};
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   expect(ajv.validate(advertised.inputSchema, {})).toBe(true);
   expect(ajv.validate(advertised.inputSchema, { unexpected: 1 })).toBe(false);

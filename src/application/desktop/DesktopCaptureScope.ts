@@ -1,20 +1,50 @@
 import { lstat } from "node:fs/promises";
-import { basename, isAbsolute, resolve } from "node:path";
+import { basename, isAbsolute } from "node:path";
 
 import type { DesktopApplicationInventory } from "../../domain/desktop/desktopCapture.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import { SQLITE_SIDECARS } from "../../domain/desktop/stateFormats.js";
-import type { WindowMatching } from "../../desktop/DesktopSessionObservations.js";
-import { canonicalPath } from "./DesktopCaptureOutput.js";
+import type { WindowMatching } from "../../ports/DesktopApplicationSession.js";
+import { absoluteCallerPath } from "../../filesystem/callerPath.js";
+import { canonicalCallerPath } from "../../filesystem/canonicalCallerPath.js";
 import type { CheckpointScope } from "./DesktopCheckpointRecorder.js";
 
 const unique = (paths: readonly string[]) => [...new Set(paths)];
+
+/** A discovered state path whose physical file cannot be established. */
+const unresolvedStateDirectory = (cause: unknown): boolean => {
+  const code = (cause as NodeJS.ErrnoException).code;
+  return (
+    code === "ENOENT" ||
+    code === "EACCES" ||
+    code === "EPERM" ||
+    code === "ENOTDIR" ||
+    code === "ELOOP"
+  );
+};
+
+/**
+ * Canonicalize a discovered state directory when the filesystem can. An
+ * unreadable path or dangling symlink stays the discovered absolute path so
+ * the capture can publish that unknown instead of aborting.
+ */
+const canonicalStateDirectory = async (path: string): Promise<string> => {
+  try {
+    return await canonicalCallerPath(path);
+  } catch (cause: unknown) {
+    if (!unresolvedStateDirectory(cause)) throw cause;
+    return absoluteCallerPath(path);
+  }
+};
 
 /** Whether the walked path is a directory. A missing path is not one, matching the sidecar decision. */
 const pathKind = async (path: string): Promise<"file" | "directory"> =>
   (await lstat(path).then(
     (stats) => stats.isDirectory(),
-    () => false,
+    (cause: unknown) => {
+      if ((cause as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw cause;
+    },
   ))
     ? "directory"
     : "file";
@@ -43,6 +73,30 @@ export interface CaptureScope {
  * home directory, which would retain and walk whole trees. A selected path
  * that is not a directory brings its SQLite sidecars as content roots too.
  */
+const SCOPE_PATH_CONCURRENCY = 16;
+
+const mapBounded = async <T, U>(
+  items: readonly T[],
+  fn: (item: T) => Promise<U>,
+): Promise<U[]> => {
+  if (items.length <= 1) return Promise.all(items.map(fn));
+  const results = new Array<U>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]!);
+    }
+  };
+  await Promise.all(
+    Array.from(
+      { length: Math.min(SCOPE_PATH_CONCURRENCY, items.length) },
+      worker,
+    ),
+  );
+  return results;
+};
+
 export const captureScope = async (
   request: {
     readonly arguments: readonly string[];
@@ -55,16 +109,15 @@ export const captureScope = async (
   output: string,
 ): Promise<CaptureScope> => {
   const canonical = (paths: readonly string[]) =>
-    Promise.all(paths.map((path) => canonicalPath(path)));
+    mapBounded(paths, (path) => canonicalCallerPath(path));
   const named = (paths: readonly string[]) =>
-    Promise.all(
-      paths.map(async (path) => ({
-        path: resolve(path),
-        physical: await canonicalPath(path),
-      })),
-    );
-  const stateDirectories = await canonical(
-    inventory.state_directories.map((entry) => entry.path),
+    mapBounded(paths, async (path) => ({
+      path: absoluteCallerPath(path),
+      physical: await canonicalCallerPath(path),
+    }));
+  const stateDirectories = await mapBounded(
+    inventory.state_directories,
+    (entry) => canonicalStateDirectory(entry.path),
   );
   const argumentPaths = await named(
     request.arguments.filter((value) => isAbsolute(value)),
@@ -74,7 +127,7 @@ export const captureScope = async (
       .map(({ physical }) => physical)
       .filter((path) => isWithinAny(home, [path])),
   );
-  const selectedPaths = await Promise.all(
+  const selectedPaths = await mapBounded(
     [
       ...new Map(
         [
@@ -84,10 +137,11 @@ export const captureScope = async (
           ),
         ].map((entry) => [entry.path, entry]),
       ).values(),
-    ].map(async (entry) => ({
+    ],
+    async (entry) => ({
       ...entry,
       kind: await pathKind(entry.physical),
-    })),
+    }),
   );
   const selected = unique(selectedPaths.map(({ physical }) => physical));
   // A database selected on its own is unreadable without its logs. A directory

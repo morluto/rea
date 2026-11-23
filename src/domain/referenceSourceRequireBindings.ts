@@ -1,3 +1,4 @@
+import type { JavaScriptMemberMutationAllowance } from "./javascript/javascriptSemanticWorkAllowance.js";
 import * as t from "@babel/types";
 import { posix } from "node:path";
 
@@ -6,7 +7,7 @@ import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascript/javascriptAstValues.js";
-import { isUnmodifiedGlobalReference } from "./javascript/javascriptSemanticAmbientWrites.js";
+import { isUnmodifiedGlobalReference } from "./javascript/javascriptSemanticGlobalReference.js";
 import {
   indexJavaScriptBindingsWithReceiversSteps,
   type JavaScriptReceiverIndex,
@@ -47,6 +48,7 @@ export type ReferenceSourceRequireInvocation =
 export const referenceSourceRequireCalls = (
   file: Pick<ParsedJavaScriptSource, "program">,
   path: string,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): ReadonlyMap<
   ReferenceSourceRequireInvocation,
   ReferenceSourceRequireCall
@@ -58,6 +60,8 @@ export const referenceSourceRequireCalls = (
     indexJavaScriptBindingsWithReceiversSteps(
       file.program,
       runtimeContext === "module" ? undefined : "commonjs-wrapper",
+      undefined,
+      memberMutationAllowance,
     ),
   );
   const factoryBindings: ReadonlySet<string> = new Set();
@@ -75,9 +79,16 @@ export const referenceSourceRequireCalls = (
         !t.isNewExpression(node)
       )
         return;
-      if (callReceiverIdentifier(node.callee) === undefined) return;
-      let fact = semanticRequireLoaderAt(node, index.bindings, factoryBindings);
       const callee = unwrapJavaScriptExpression(node.callee).node;
+      if (
+        !t.isCallExpression(callee) &&
+        !t.isOptionalCallExpression(callee) &&
+        !hasIdentifierReceiver(callee)
+      )
+        return;
+      if (t.isCallExpression(callee) || t.isOptionalCallExpression(callee))
+        completeSemanticSteps(index.indexMemberMutationFactsSteps());
+      let fact = semanticRequireLoaderAt(node, index.bindings, factoryBindings);
       if (
         fact === "create-require" ||
         ((t.isMemberExpression(callee) ||
@@ -86,8 +97,6 @@ export const referenceSourceRequireCalls = (
             semanticStaticPropertyKey(callee.property, callee.computed) ?? "",
           ))
       ) {
-        // Definitions identify a possible factory. Its mutable member reads
-        // need the shared write index before they can prove an association.
         completeSemanticSteps(index.indexMemberMutationFactsSteps());
         fact = semanticRequireLoaderAt(node, index.bindings, factoryBindings);
       }
@@ -153,12 +162,7 @@ export const referenceSourceRequireCalls = (
       });
     },
   });
-  if (
-    candidates.some(
-      ({ call }) =>
-        !t.isIdentifier(unwrapJavaScriptExpression(call.callee).node),
-    )
-  )
+  if (candidates.some(({ call }) => hasMemberCallee(call)))
     completeSemanticSteps(index.indexMemberMutationFactsSteps());
   return new Map(
     candidates.map(
@@ -169,8 +173,7 @@ export const referenceSourceRequireCalls = (
             arguments: callArguments,
             ...(limitation === undefined ? {} : { limitation }),
             resolutionBase:
-              !t.isIdentifier(unwrapJavaScriptExpression(call.callee).node) &&
-              hasPriorMemberMutation(index, call)
+              hasMemberCallee(call) && hasPriorMemberMutation(index, call)
                 ? "unknown"
                 : resolutionBase,
           },
@@ -220,15 +223,17 @@ const hasPriorMemberMutation = (
   );
 };
 
-const callReceiverIdentifier = (
-  callee: t.Node | null | undefined,
-): t.Identifier | undefined => {
-  if (!t.isNode(callee)) return undefined;
-  let expression = unwrapJavaScriptExpression(callee).node;
+const hasMemberCallee = (call: ReferenceSourceRequireInvocation): boolean => {
+  const callee = unwrapJavaScriptExpression(call.callee).node;
+  return t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee);
+};
+
+const hasIdentifierReceiver = (callee: t.Node): boolean => {
+  let expression = callee;
   while (
     t.isMemberExpression(expression) ||
     t.isOptionalMemberExpression(expression)
   )
     expression = unwrapJavaScriptExpression(expression.object).node;
-  return t.isIdentifier(expression) ? expression : undefined;
+  return t.isIdentifier(expression);
 };

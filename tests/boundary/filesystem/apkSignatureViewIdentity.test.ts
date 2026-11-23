@@ -1,3 +1,7 @@
+import {
+  fileIdentity,
+  changedEvidenceSubject,
+} from "../../fixtures/evidenceSubject.js";
 import { rebindEvidenceToTargetPath } from "../../../src/domain/evidence.js";
 import { EvidenceLedger } from "../../../src/application/investigation/EvidenceLedger.js";
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
@@ -23,7 +27,7 @@ it("checks parent subject identity again when signing facts are already cached",
     const result = await service.inspect({ path, detail: "complete" });
     if (!result.ok) throw result.error;
     const evidence = result.value;
-    if (evidence.subject === null || evidence.subject.format !== "apk")
+    if (fileIdentity(evidence.subject).format !== "apk")
       throw new Error("selected file subject missing");
     const parent = {
       predicateType: evidence.predicate_type,
@@ -39,14 +43,17 @@ it("checks parent subject identity again when signing facts are already cached",
     for (const format of ["file", "apk", "zip"] as const)
       expect(
         projectApkSignatureView(
-          { ...parent, subject: { ...evidence.subject, format } },
+          {
+            ...parent,
+            subject: changedEvidenceSubject(evidence.subject, { format }),
+          },
           { kind: "summary" },
         ).ok,
       ).toBe(true);
     const rebound = rebindEvidenceToTargetPath(evidence, {
       path: join(root, "alias.apk"),
-      sha256: evidence.subject.digest.sha256,
-      format: evidence.subject.format,
+      sha256: fileIdentity(evidence.subject).sha256,
+      format: fileIdentity(evidence.subject).format,
     });
     const exporting = new EvidenceLedger();
     expect(exporting.record(rebound).ok).toBe(true);
@@ -65,11 +72,8 @@ it("checks parent subject identity again when signing facts are already cached",
       artifact: { path },
     });
     for (const subject of [
-      { ...evidence.subject, format: "directory" as const },
-      {
-        ...evidence.subject,
-        digest: { ...evidence.subject.digest, sha256: "00".repeat(32) },
-      },
+      changedEvidenceSubject(evidence.subject, { format: "directory" }),
+      changedEvidenceSubject(evidence.subject, { sha256: "00".repeat(32) }),
     ]) {
       const invalid = projectApkSignatureView(
         { ...parent, subject },

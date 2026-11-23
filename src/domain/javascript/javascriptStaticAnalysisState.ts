@@ -1,7 +1,7 @@
 import type * as t from "@babel/types";
 import type { JavaScriptBundlerFactoryRoles } from "./javascriptBundlerFactoryRoles.js";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
-import type { JavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
+import type { JavaScriptRpcScan } from "./javascriptRpcEndpoint.js";
 import type { JavaScriptStaticPathIntrinsicQuery } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 
@@ -92,6 +92,7 @@ export interface JavaScriptAnalysisAccumulator {
   )[];
   readonly contextBridgeApis: LocatedJavaScriptFinding<ElectronContextBridgeFinding>[];
   readonly ipc: LocatedJavaScriptFinding<ElectronIpcFinding>[];
+  readonly pendingIpcChannels: Map<number, t.Node>;
   readonly senderValidations: LocatedJavaScriptFinding<ElectronSenderValidationFinding>[];
   readonly utilityProcesses: LocatedJavaScriptFinding<ElectronUtilityProcessFinding>[];
   readonly nativeAddonBindings: LocatedJavaScriptFinding<ElectronNativeAddonBindingFinding>[];
@@ -137,7 +138,10 @@ export interface JavaScriptFindingContext {
   readonly expressionShapes: JavaScriptExpressionShapeResolver;
   readonly source: string;
   readonly accumulator: JavaScriptAnalysisAccumulator;
-  readonly vitePreloadDependencyTable: readonly (string | undefined)[] | null;
+  readonly vitePreloadDependencyTable: {
+    readonly helper: t.Node;
+    readonly dependencies: readonly (string | undefined)[];
+  } | null;
   readonly openReceiverFacts?: ReadonlyMap<number, JavaScriptOpenReceiverFact>;
   /** Proven Electron export path segments by root offset. */
   readonly electronBindings?: ReadonlyMap<number, readonly string[]>;
@@ -204,6 +208,7 @@ export const createJavaScriptAnalysisAccumulator = (
   pendingWindowOpenHandlers: [],
   contextBridgeApis: [],
   ipc: [],
+  pendingIpcChannels: new Map(),
   senderValidations: [],
   utilityProcesses: [],
   nativeAddonBindings: [],

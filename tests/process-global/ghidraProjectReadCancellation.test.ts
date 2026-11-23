@@ -1,56 +1,86 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, realpath, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
+import { setImmediate } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
-import { ArtifactFileCancelled } from "../../src/artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { AnalysisCancelledError } from "../../src/domain/analysisErrorCore.js";
 import { resolveGhidraProject } from "../../src/ghidra/GhidraProjectSnapshot.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { phaseGate } from "../support/lifecycleHarness.js";
 
-const fault = vi.hoisted(() => ({ reason: undefined as unknown }));
-vi.mock(
-  "../../src/artifacts/ArtifactFileOperation.js",
-  async (importOriginal) => {
-    const original =
-      await importOriginal<
-        typeof import("../../src/artifacts/ArtifactFileOperation.js")
-      >();
-    return {
-      ...original,
-      withArtifactRegularFile: async () => {
-        throw new ArtifactFileCancelled({
-          reason: fault.reason,
-          outcome: { kind: "completed", value: undefined },
-        });
-      },
-    };
-  },
-);
+const projectFileClose = vi.hoisted(() => ({
+  path: "",
+  hold: undefined as ((handle: FileHandle) => Promise<void>) | undefined,
+}));
 
-it.each([null, "cancel file read", { source: "caller" }])(
-  "preserves an owned file-read cancellation through project profile resolution: %j",
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...original,
+    open: async (...args: Parameters<typeof original.open>) => {
+      const handle = await original.open(...args);
+      const hold =
+        args[0] === projectFileClose.path ? projectFileClose.hold : undefined;
+      if (hold === undefined) return handle;
+      const close = handle.close.bind(handle);
+      handle.close = async () => {
+        await hold(handle);
+        await close();
+      };
+      return handle;
+    },
+  };
+});
+
+it.each([null, { source: "caller" }])(
+  "preserves cancellation reason %j while closing the final project file",
   async (reason) => {
-    const root = await createTestTempDirectory("rea-ghidra-read-cancel-");
-    await mkdir(join(root, "selected.rep"));
-    await writeFile(join(root, "selected.gpr"), "marker");
+    const root = await realpath(
+      await createTestTempDirectory("rea-ghidra-read-cancel-"),
+    );
+    const marker = join(root, "selected.gpr");
+    const data = join(root, "selected.rep");
+    const lastFile = join(data, "last");
+    await mkdir(data);
+    await writeFile(marker, "marker");
+    await writeFile(lastFile, "project data");
     const resources = new ArtifactResourceScope();
-    fault.reason = reason;
+    const gate = phaseGate<FileHandle>();
+    const controller = new AbortController();
+    projectFileClose.path = lastFile;
+    projectFileClose.hold = gate.hold;
+    const pending = resolveGhidraProject(
+      { path: marker },
+      { path: join(root, "target") },
+      resources,
+      controller.signal,
+    );
     try {
-      let failure: unknown;
-      try {
-        await resolveGhidraProject(
-          { path: join(root, "selected.gpr") },
-          { path: join(root, "target") },
-          resources,
-        );
-      } catch (cause) {
-        failure = cause;
-      }
-      expect(failure).toBeInstanceOf(AnalysisCancelledError);
-      if (!(failure instanceof AnalysisCancelledError))
-        throw new Error("Expected cancellation");
-      expect(failure.cause).toBe(reason);
+      const handle = await gate.reached(pending, "final project file close");
+      expect(handle.fd).toBeGreaterThanOrEqual(0);
+      controller.abort(reason);
+      expect(
+        await Promise.race([
+          pending.then(
+            () => "settled",
+            () => "settled",
+          ),
+          setImmediate("held"),
+        ]),
+      ).toBe("held");
+
+      gate.release();
+      await expect(pending).rejects.toBeInstanceOf(AnalysisCancelledError);
+      await expect(pending).rejects.toMatchObject({
+        operation: "resolve_analysis_profile",
+        cause: reason,
+      });
+      expect(handle.fd).toBe(-1);
     } finally {
+      gate.release();
+      await pending.catch(() => undefined);
+      projectFileClose.hold = undefined;
       await resources.close();
     }
   },

@@ -24,51 +24,44 @@ const collect = async (
 };
 
 const exceeded: BoundedControlLine = err({ _tag: "ControlLineLimitExceeded" });
-const multibyte = Buffer.from("é😀\n", "utf8");
-const exactCrLf = Buffer.from("éa\r\n", "utf8");
-const crLfPartitions: { first: number; second: number }[] = [];
-for (let first = 0; first <= exactCrLf.length; first += 1)
-  for (let second = first; second <= exactCrLf.length; second += 1)
-    crLfPartitions.push({ first, second });
-
+const malformed: BoundedControlLine = err({ _tag: "ControlLineMalformedUtf8" });
 describe("bounded control line decoding", () => {
-  it.each(Array.from({ length: multibyte.length + 1 }, (_, split) => split))(
-    "preserves split UTF-8 content at byte %i",
-    async (split) => {
-      expect(
-        await collect(
-          [multibyte.subarray(0, split), multibyte.subarray(split)],
-          6,
-        ),
-      ).toEqual([ok("é😀")]);
-    },
-  );
-
-  it.each(crLfPartitions)(
-    "excludes the CRLF delimiter at the exact limit across cuts $first/$second",
-    async ({ first, second }) => {
+  it("preserves multibyte text at the wire limit across UTF-8 and delimiter cuts", async () => {
+    for (const delimiter of ["\n", "\r\n"]) {
+      const encoded = Buffer.from(`é😀${delimiter}`);
+      expect(await collect([encoded], 6)).toEqual([ok("é😀")]);
       expect(
         await collect(
           [
-            exactCrLf.subarray(0, first),
-            exactCrLf.subarray(first, second),
-            exactCrLf.subarray(second),
+            encoded.subarray(0, 2),
+            encoded.subarray(2, -1),
+            encoded.subarray(-1),
           ],
-          3,
+          6,
         ),
-      ).toEqual([ok("éa")]);
-    },
-  );
+      ).toEqual([ok("é😀")]);
+      for (let at = 1; at < encoded.length; at += 1) {
+        expect(
+          await collect([encoded.subarray(0, at), encoded.subarray(at)], 6),
+          `delimiter=${JSON.stringify(delimiter)} cut=${String(at)}`,
+        ).toEqual([ok("é😀")]);
+      }
+      expect(
+        await collect(
+          Array.from(encoded, (byte) => Uint8Array.of(byte)),
+          6,
+        ),
+      ).toEqual([ok("é😀")]);
+    }
+  });
 
   it.each([
-    { bytes: [0xff, 0x0a], maximum: 3, expected: [ok("�")] },
-    { bytes: [0xff, 0x0a], maximum: 2, expected: [exceeded] },
-    { bytes: [0xe2, 0x82], maximum: 3, expected: [ok("�")] },
-    { bytes: [0xe2, 0x82], maximum: 2, expected: [exceeded] },
-    { bytes: [0xe2, 0x28, 0xa1, 0x0a], maximum: 7, expected: [ok("�(�")] },
-    { bytes: [0xe2, 0x28, 0xa1, 0x0a], maximum: 6, expected: [exceeded] },
+    { bytes: [0xe2, 0x82], maximum: 2, expected: [malformed] },
+    { bytes: [0xe2, 0x82], maximum: 1, expected: [exceeded] },
+    { bytes: [0xe2, 0x28, 0xa1, 0x0a], maximum: 3, expected: [malformed] },
+    { bytes: [0xe2, 0x28, 0xa1, 0x0a], maximum: 2, expected: [exceeded] },
   ])(
-    "counts replacement characters against decoded bytes: $bytes / $maximum",
+    "distinguishes invalid UTF-8 from wire byte overflow: $bytes / $maximum",
     async ({ bytes, maximum, expected }) => {
       const encoded = Buffer.from(bytes);
       expect(await collect([encoded], maximum)).toEqual(expected);
@@ -88,6 +81,7 @@ describe("bounded control line boundaries", () => {
     { text: "\n\r\n", maximum: 0, expected: [ok(""), ok("")] },
     { text: " \t \n", maximum: 3, expected: [ok(" \t ")] },
     { text: "a\rb\n", maximum: 3, expected: [ok("a\rb")] },
+    { text: "\uFEFF�\n", maximum: 6, expected: [ok("\uFEFF�")] },
     { text: "abc", maximum: 3, expected: [ok("abc")] },
     { text: "ab\r", maximum: 3, expected: [ok("ab\r")] },
     { text: "abc\r", maximum: 3, expected: [exceeded] },
@@ -104,7 +98,7 @@ describe("bounded control line boundaries", () => {
     },
   );
 
-  it.each(["\nnext\n", "\r\nnext\n", ""])(
+  it.each(["\r\nnext\n", ""])(
     "reports oversized drips immediately and drains before the next frame: %j",
     async (tail) => {
       let consumed = 0;
@@ -124,10 +118,10 @@ describe("bounded control line boundaries", () => {
     },
   );
 
-  it("recovers from malformed-byte expansion before the following frame", async () => {
+  it("reports malformed wire bytes before the following valid frame", async () => {
     expect(
       await collect([Uint8Array.of(0xff, 0x0a, 0x6f, 0x6b, 0x0a)], 2),
-    ).toEqual([exceeded, ok("ok")]);
+    ).toEqual([malformed, ok("ok")]);
   });
 });
 

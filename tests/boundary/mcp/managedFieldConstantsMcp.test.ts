@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -36,19 +37,12 @@ it("retains lossless field constants in MCP Evidence and pages them after the so
   const definition = tools.find(
     (tool) => tool.name === "inspect_managed_members",
   );
-  if (definition?.outputSchema === undefined)
-    throw new Error("Member output schema missing");
-  const outputSchema: Record<string, unknown> = definition.outputSchema;
+  if (definition === undefined) throw new Error("Member output schema missing");
   const reply = await client.callTool(
     { name: definition.name, arguments: { path, detail: "complete" } },
-    { toolDefinition: definition },
+    { toolDefinition: withCanonicalOutputSchema(definition) },
   );
   expect(reply.isError).not.toBe(true);
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  expect(
-    ajv.validate(outputSchema, reply.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const parent = parseEvidence(reply.structuredContent);
   const { fields } = managedMemberInspectionSchema.parse(
     parent.normalized_result,
@@ -66,9 +60,8 @@ it("retains lossless field constants in MCP Evidence and pages them after the so
   );
   await unlink(path);
   const viewTool = tools.find((tool) => tool.name === "inspect_analysis_view");
-  if (viewTool?.outputSchema === undefined)
-    throw new Error("View output schema missing");
-  const viewOutputSchema: Record<string, unknown> = viewTool.outputSchema;
+  if (viewTool === undefined) throw new Error("View output schema missing");
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const request = {
     source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
     view: {
@@ -85,13 +78,9 @@ it("retains lossless field constants in MCP Evidence and pages them after the so
   ).toBe(true);
   const page = await client.callTool(
     { name: viewTool.name, arguments: request },
-    { toolDefinition: viewTool },
+    { toolDefinition: withCanonicalOutputSchema(viewTool) },
   );
   expect(page.isError).not.toBe(true);
-  expect(
-    ajv.validate(viewOutputSchema, page.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const view = parseEvidence(page.structuredContent).normalized_result;
   expect(view).toMatchObject({
     parent_evidence_id: parent.evidence_id,

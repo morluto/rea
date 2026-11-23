@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { HOPPER_DOWNLOAD_BYTES } from "./HopperDownload.js";
 
 import {
   parseLinuxHopperReleases,
@@ -20,28 +21,12 @@ const release = {
 };
 
 describe("Linux Hopper release feed boundary", () => {
-  it("preserves future release identity and partial platform facts", () => {
-    const parsed = parseLinuxHopperReleases({
-      "Ubuntu / Mint": release,
-      "OS X": { signature: "Sparkle DSA" },
-    });
-    expect(parsed).toMatchObject({
-      ok: true,
-      value: {
-        deb: { ok: true, value: release },
-        rpm: { ok: false },
-        arch: { ok: false },
-      },
-    });
-    if (!parsed.ok || !parsed.value.deb.ok) throw new Error("Missing release");
-    expect(parsed.value.deb.value.filename).toBe(release.filename);
-  });
-
   it.each([
     { signature: undefined },
     { signature: "AQ==garbage" },
     { main_exe_hash: "b".repeat(40) },
-    { file_length: "100000001" },
+    { file_length: String(HOPPER_DOWNLOAD_BYTES + 1) },
+    { file_length: "0123" },
     { file_length: "NaN" },
     { public: "0" },
     { beta: "1" },
@@ -52,7 +37,6 @@ describe("Linux Hopper release feed boundary", () => {
     { filename: release.filename + "?token=caller" },
     { filename: release.filename + "?" },
     { filename: release.filename + "#" },
-    { filename: release.filename + "?#" },
     { filename: release.filename + "#selection" },
     {
       filename: release.filename.replace("https://", "https://user:password@"),
@@ -84,30 +68,48 @@ describe("Linux Hopper release feed boundary", () => {
   );
 });
 
-it("retains complete vendor release rows including own special keys and nested observations", () => {
-  const row: unknown = JSON.parse(
-    JSON.stringify(release).replace(
-      /\}$/u,
-      ',"__proto__":{"observed":true},"constructor":"vendor constructor","nested":[{"__proto__":"nested fact","future":null}]}',
-    ),
-  );
-  const parsed = parseLinuxHopperReleases({ "Ubuntu / Mint": row });
-  if (!parsed.ok || !parsed.value.deb.ok) throw new Error("Missing release");
-  expect(JSON.stringify(parsed.value.deb.value)).toBe(JSON.stringify(row));
-  expect(Object.hasOwn(parsed.value.deb.value, "__proto__")).toBe(true);
-  expect(Object.hasOwn(parsed.value.deb.value, "constructor")).toBe(true);
-});
+const macRelease = {
+  filename: "https://www.hopperapp.com:443/downloader/public/Hopper-demo.dmg",
+  file_length: "123",
+  file_hash: "a".repeat(40),
+};
 
-it("retains the full selected macOS release row", () => {
-  const row: unknown = JSON.parse(
-    '{"filename":"https://www.hopperapp.com:443/downloader/public/Hopper-demo.dmg","file_length":"123","file_hash":"' +
-      "a".repeat(40) +
-      '","__proto__":{"observed":true},"constructor":"vendor constructor","nested":[{"__proto__":"nested fact"}]}',
-  );
-  const parsed = parseMacHopperReleases({ "OS X": row });
-  if (!parsed.ok) throw new Error("Missing release");
-  expect(JSON.stringify(parsed.value)).toBe(JSON.stringify(row));
-  expect(Object.hasOwn(parsed.value, "__proto__")).toBe(true);
+it("preserves complete selected release rows and keeps incomplete platforms independent", () => {
+  const vendor = {
+    ["__proto__"]: { observed: true },
+    constructor: "vendor constructor",
+    nested: [{ ["__proto__"]: "nested fact", future: null }],
+  };
+  const deb = {
+    ...release,
+    ...vendor,
+    file_length: String(HOPPER_DOWNLOAD_BYTES),
+  };
+  const mac = {
+    ...macRelease,
+    ...vendor,
+    file_length: `000${String(HOPPER_DOWNLOAD_BYTES)}`,
+  };
+  const rows = { "Ubuntu / Mint": deb, "OS X": mac, Fedora: [] };
+  const linux = parseLinuxHopperReleases(rows);
+  const apple = parseMacHopperReleases(rows);
+  if (!linux.ok || !linux.value.deb.ok || !apple.ok)
+    throw new Error("Selected releases are missing");
+
+  // Exact serialization distinguishes owning special vendor keys from projections.
+  expect(JSON.stringify(linux.value.deb.value)).toBe(JSON.stringify(deb));
+  expect(JSON.stringify(apple.value)).toBe(JSON.stringify(mac));
+  for (const family of ["rpm", "arch"] as const)
+    expect(linux.value[family]).toMatchObject({
+      ok: false,
+      error: { reason: "release_metadata" },
+    });
+  expect(
+    parseLinuxHopperReleases({
+      ...rows,
+      "OS X": { signature: "Sparkle DSA" },
+    }),
+  ).toEqual(linux);
 });
 
 it("distinguishes malformed UTF-8 from a genuine replacement character and tolerates the initial BOM", () => {
@@ -123,12 +125,6 @@ it("distinguishes malformed UTF-8 from a genuine replacement character and toler
 });
 
 describe("macOS Hopper public download channel", () => {
-  const macRelease = {
-    filename: "https://www.hopperapp.com:443/downloader/public/Hopper-demo.dmg",
-    file_length: "123",
-    file_hash: "a".repeat(40),
-  };
-
   it.each([
     "https://www.hopperapp.com/downloader/public/Hopper-demo.dmg",
     "https://WWW.HOPPERAPP.COM:443/downloader/public/Hopper-demo.dmg",

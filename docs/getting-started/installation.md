@@ -3,15 +3,16 @@
 Run REA, connect your selected agents, and check the tools needed for your task.
 Setup previews configuration changes and asks for approval before applying them.
 
-| Task                               | Section                                                                                                             |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Connect an agent                   | [Start setup](#start-setup), then [review changes](#review-setup-changes)                                           |
-| Install a Claude Code/Codex plugin | [Agent plugins and marketplaces](#agent-plugins-and-marketplaces)                                                   |
-| Run unreleased code                | [Run REA from a checkout](#run-rea-from-a-checkout)                                                                 |
-| Diagnose one task                  | [Scoped readiness checks](#check-readiness-for-your-task)                                                           |
-| Configure an analysis engine       | [Hopper](#hopper), [Ghidra](#ghidra), the [IDA guide](../providers/ida-provider.md), or [Kuna](../kuna-provider.md) |
-| Update or remove REA               | [Maintenance](#diagnose-update-and-remove)                                                                          |
-| Resolve a client-specific problem  | [Client configuration](client-configuration.md)                                                                     |
+| Task                                  | Section                                                                                                             |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Connect an agent                      | [Start setup](#start-setup), then [review changes](#review-setup-changes)                                           |
+| Install a Claude Code/Codex plugin    | [Agent plugins and marketplaces](#agent-plugins-and-marketplaces)                                                   |
+| Install the Cursor Marketplace plugin | [Cursor Marketplace](#cursor-marketplace)                                                                           |
+| Run unreleased code                   | [Run REA from a checkout](#run-rea-from-a-checkout)                                                                 |
+| Diagnose one task                     | [Scoped readiness checks](#check-readiness-for-your-task)                                                           |
+| Configure an analysis engine          | [Hopper](#hopper), [Ghidra](#ghidra), the [IDA guide](../providers/ida-provider.md), or [Kuna](../kuna-provider.md) |
+| Update or remove REA                  | [Maintenance](#diagnose-update-and-remove)                                                                          |
+| Resolve a client-specific problem     | [Client configuration](client-configuration.md)                                                                     |
 
 ## Start setup
 
@@ -50,7 +51,10 @@ installation or connection and requires its own explicit approval. It can also
 save verified paths for an existing Ghidra installation.
 
 After selection, review the plan's exact paths and changes and approve before
-REA writes files or installs Hopper. You can cancel at any prompt.
+REA writes files or installs Hopper. The approval view also shows known manual
+completion steps for selected clients, such as Grok Bot's hosted connector.
+Approving the local changes does not complete those manual steps. You can cancel
+at any prompt.
 
 Before applying changes, REA checks your current configuration. The plan lists:
 
@@ -94,7 +98,7 @@ approve replacing it. A different existing installation path is foreign to the
 current entrypoint; a path that cannot be resolved remains unknown. Cordis uses
 its stable REA entry ID instead of launcher identity.
 Setup also retains valid environment overrides in REA's existing server entry,
-such as `REA_MCP_INPUT_SCHEMA_PROFILE`, `REA_MCP_OUTPUT_SCHEMA_PROFILE`, and
+such as `REA_MCP_OUTPUT_SCHEMA_PROFILE`,
 `REA_MCP_MAX_RESPONSE_BYTES`, and `REA_MCP_TOOL_FAMILIES`.
 Detected provider settings replace only matching environment keys.
 Setup manages REA's launcher, selected provider settings, and recommended timeout
@@ -213,8 +217,11 @@ instructions and references. Consumers should use `identity.skill.state`,
 obsolete `installed_catalog_digest` field has been removed; current catalog
 identity remains available at `identity.catalog`.
 
-Setup pins package-runner MCP registrations to the exact installed REA version,
-installs the matching skill and on-demand references in the same plan, and adds
+Setup records MCP registrations that launch the installation performing setup
+directly: its absolute JavaScript runtime and entry script, followed by `mcp`
+(see [MCP Registry](#mcp-registry)). Client starts therefore run that
+installation instead of resolving a package. In the same plan, setup installs
+the matching skill and on-demand references and adds
 `startup_timeout_sec = 30` for Codex and Grok Build when no positive timeout
 is already configured. Codex also receives a
 `tool_timeout_sec` derived from known provider startup plus operation headroom.
@@ -348,7 +355,7 @@ remove it with `claude mcp remove --scope local rea` from the same directory.
 `rea update` doesn't refresh it either, so it continues using the selected installation.
 To move it to a newer release, first back up the project entry in
 `~/.claude.json` and record its environment and other metadata. In particular,
-preserve caller-selected overrides such as `REA_MCP_INPUT_SCHEMA_PROFILE` and
+preserve caller-selected overrides such as `REA_MCP_OUTPUT_SCHEMA_PROFILE` and
 `REA_MCP_MAX_RESPONSE_BYTES`, and `REA_MCP_TOOL_FAMILIES`. Run `claude mcp remove --scope local rea` from the
 same directory, then recreate it with the platform-appropriate command above
 and the new version. Reapply every recorded environment value with Claude
@@ -392,15 +399,15 @@ A scoped report has `scope.mode: "explicit"`. Its `scope_checks` determine
 `environment_healthy` summarizes the full audit. `--target` adds a target check,
 but the report remains audit-wide unless a scope option is also supplied.
 
-With one selected client, Ghidra, IDA, JADX and Kuna provider checks use the
-client's recorded environment over the terminal it inherits. If that registration
-cannot be read or a setting a provider needs cannot be resolved, its available
-value is `null` and its check is `unknown`; its configured value is also `null`
-when the configuration setting itself is unknown. Doctor does not infer
-readiness from the terminal. A missing registration still uses terminal settings
-for setup. Other checks, including Hopper, use the terminal running doctor. A
-client-started server may receive a different environment, and doctor cannot
-observe it. When an available
+With one selected client, the Hopper, ilspycmd, Ghidra, IDA, JADX and Kuna
+checks use its recorded environment over the terminal it inherits. If Doctor cannot read the registration or resolve
+a setting a provider needs, the affected check reports `unknown`. For Ghidra,
+IDA, JADX and Kuna, the provider's available value is also `null`; its configured
+value is `null` when the configuration setting itself is unknown. A missing
+registration still uses terminal settings for setup. Doctor validates
+`REA_HOPPER_STARTUP_TIMEOUT_MS` independently of launcher discovery and reports
+an unresolved value in the selected registration as `unknown`. A client-started
+server may receive a different environment, which doctor cannot observe. When an available
 provider relies on a setting that a registration's file does not record, or
 records with other text, doctor adds a non-blocking
 `registration_environment:<client>` check with `classification: "unknown"`. The
@@ -430,12 +437,15 @@ selected engine. See [provider selection](cli.md#choose-a-provider).
 ### Linux owned-process prerequisite
 
 On Linux, REA's shared process supervisor requires a procps-compatible `ps`
-on REA's `PATH` for ownership checks before launching a child. Ghidra, JADX,
-firmware tools and static JavaScript/Electron analysis use these checks.
-Install your distribution's `procps` or `procps-ng` package, or put another
-procps-compatible `ps` on `PATH` before
+for ownership checks before launching a child. Ghidra, JADX, firmware tools
+and static JavaScript/Electron analysis use these checks. REA runs the first
+executable of `/bin/ps`, `/usr/bin/ps` and `/run/current-system/sw/bin/ps`
+(NixOS), and searches its own `PATH` only when none exists, so a wrapper or
+agent `PATH` cannot replace the system `ps`. On macOS REA always runs
+`/bin/ps`. Install your distribution's `procps` or `procps-ng` package before
 running those workflows. A missing or incompatible command causes a refusal
-before the supervised child starts.
+before the supervised child starts; its message and `ps_command` and
+`ps_source` diagnostics name the `ps` REA ran.
 
 The public error code varies by caller: `capability_unavailable`,
 `provider_unavailable` or `execution_failure`. Some provider adapters report
@@ -460,7 +470,9 @@ rea uninstall --purge-data
 ```
 
 Uninstall preserves Hopper, Node.js, Evidence files, captures, unrelated skills
-and other MCP servers. Purging removes REA's legacy cache and state under
+and other MCP servers. Uninstall and `--purge-data` leave the saved provider
+settings file `rea.json` in place and can run when it is malformed. Purging
+removes REA's legacy cache and state under
 `~/.rea`, the default Kuna cache (`~/Library/Caches/rea/kuna` on macOS or
 `${XDG_CACHE_HOME:-~/.cache}/rea/kuna` on Linux), and Linux Hopper release
 archives under `${XDG_CACHE_HOME:-~/.cache}/rea/hopper-releases`. Other cache
@@ -481,6 +493,12 @@ updated stops the remaining removals. Uninstall reports each candidate
 their individual `actions` alongside its aggregate status and detail,
 including earlier removals when a later file fails. The paths name
 the discovered configuration candidates, not resolved physical file identities.
+If resource cleanup remains incomplete, uninstall reports a failed
+`uninstall_cleanup` item alongside the completed removals, with a structured
+`cleanup` observation naming the outstanding resources. An embedded host retains
+the exact cleanup owners: retrying that host's `close()` updates previously
+returned cleanup observations when release is confirmed. A new CLI invocation
+does not inherit those owners; inspect the reported resources before proceeding.
 For JSON clients, uninstall removes every repeated `rea` member in the effective
 server table only when each registration is REA-owned. An unowned earlier
 member, or an unowned OpenCode V1 entry that removing V2 would expose, stops
@@ -567,7 +585,9 @@ global directory without its `package.json` is not treated as an owned
 installation, because Bun would install into the nearest ancestor project
 instead.
 Its maintenance plan selects only existing REA registrations and an already
-installed REA skill. Run the returned scoped setup command to review and approve
+installed REA skill. A client whose configuration location or registration
+cannot be resolved is left unmaintained and named with its own recovery; the
+other clients are still maintained. Run the returned scoped setup command to review and approve
 those changes, then restart affected agents. The plan is returned in terminal,
 non-TTY, and JSON modes without applying configuration changes.
 
@@ -616,10 +636,21 @@ npm ci
 npm run build:cached
 ```
 
+These commands do not build the Windows x64 native addon or its manifest.
+Windows workflows that need native controls require the extra step in
+[Windows source checkouts](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#windows-source-checkouts).
+
 Then run `npm link` once in the checkout to put its `rea` on your `PATH`, or,
 wherever these docs say `rea …`, run
 `node /absolute/path/to/rea/scripts/rea.mjs …`. Setup run this way registers
 the checkout's `scripts/rea.mjs` with your agents.
+
+Avoid `npx rea-agents` from inside this checkout. Its package name is
+`rea-agents`, so npm can select the checkout, including when the requested
+version matches it. If the checkout's `rea` command is unavailable, the launch
+fails. Use the linked `rea` or
+`node /absolute/path/to/rea/scripts/rea.mjs` forms above. Run setup through
+that entrypoint to register the checkout for your agent.
 
 After `git pull`, run `npm ci` and `npm run build:cached` again. If the
 checkout's skill changed, refresh each installed copy before restarting its
@@ -669,35 +700,50 @@ readiness for one task instead of auditing every integration, see
 Setup can configure these clients for REA's local MCP server. Grok Bot uses a manual
 hosted connector; see [its configuration](client-configuration.md#other-client-settings).
 
-| Client             | `--client` value |
-| ------------------ | ---------------- |
-| Claude Code        | `claude_code`    |
-| Claude Desktop     | `claude_desktop` |
-| Codex              | `codex`          |
-| Cursor             | `cursor`         |
-| CodeBuddy          | `codebuddy`      |
-| Gemini CLI         | `gemini_cli`     |
-| Windsurf           | `windsurf`       |
-| Devin              | `devin`          |
-| OpenCode           | `opencode`       |
-| Antigravity        | `antigravity`    |
-| GitHub Copilot CLI | `copilot_cli`    |
-| Command Code       | `commandcode`    |
-| Qwen Code          | `qwen_code`      |
-| Kimi Code          | `kimi`           |
-| VS Code            | `vscode`         |
-| Grok Build         | `grok_build`     |
-| OMP                | `omp`            |
-| Pi                 | `pi`             |
-| Hermes             | `hermes`         |
-| Qoder              | `qoder`          |
-| Factory Droid      | `droid`          |
-| Trae               | `trae`           |
-| WorkBuddy          | `workbuddy`      |
-| LM Studio          | `lm_studio`      |
-| ZCode              | `zcode`          |
-| DeepSeek Harness   | `dsh`            |
-| FreeBuff           | `freebuff`       |
+| Client                    | `--client` value        |
+| ------------------------- | ----------------------- |
+| Claude Code               | `claude_code`           |
+| Claude Desktop            | `claude_desktop`        |
+| Codex                     | `codex`                 |
+| Cursor                    | `cursor`                |
+| CodeBuddy                 | `codebuddy`             |
+| Cline CLI                 | `cline`                 |
+| Gemini CLI                | `gemini_cli`            |
+| Windsurf                  | `windsurf`              |
+| Devin                     | `devin`                 |
+| OpenCode                  | `opencode`              |
+| Antigravity               | `antigravity`           |
+| GitHub Copilot CLI        | `copilot_cli`           |
+| Command Code              | `commandcode`           |
+| Qwen Code                 | `qwen_code`             |
+| Kimi Code                 | `kimi`                  |
+| VS Code                   | `vscode`                |
+| Grok Build                | `grok_build`            |
+| OMP                       | `omp`                   |
+| Pi                        | `pi`                    |
+| Hermes                    | `hermes`                |
+| Qoder                     | `qoder`                 |
+| Factory Droid             | `droid`                 |
+| Trae                      | `trae`                  |
+| WorkBuddy                 | `workbuddy`             |
+| LM Studio                 | `lm_studio`             |
+| ZCode                     | `zcode`                 |
+| DeepSeek Harness          | `dsh`                   |
+| FreeBuff                  | `freebuff`              |
+| Cline VS Code extension   | `cline_vscode`          |
+| Cline in VS Code Insiders | `cline_vscode_insiders` |
+| Cline in VSCodium         | `cline_vscodium`        |
+| Cline in Cursor           | `cline_cursor`          |
+| Cline in Windsurf         | `cline_windsurf`        |
+| Kiro                      | `kiro`                  |
+| Mastra Code               | `mastracode`            |
+| Zed                       | `zed`                   |
+| Amp                       | `amp`                   |
+| MCPorter                  | `mcporter`              |
+| fx                        | `fx`                    |
+| Junie                     | `junie`                 |
+| Goose                     | `goose`                 |
+| Kilo Code                 | `kilo`                  |
 
 `droid`, `dsh`, `kimi`, `qoder`, `trae`, `workbuddy`, and `zcode` require
 `rea-agents@6.5.0` or later. The 6.4.0 registry check above does not cover them.
@@ -705,6 +751,17 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 `rea setup --client freebuff` as an unsupported client.
 
 `lm_studio` requires a release after 6.8.0.
+
+`cline_vscode`, `cline_vscode_insiders`, `cline_vscodium`, `cline_cursor`,
+`cline_windsurf`, `kiro`, `mastracode`, `zed` and `amp` require a release after
+6.9.0. Earlier releases could register Cline in VS Code, Kiro, Mastra Code, Zed
+and Amp only through `rea mcp add`, and could not register Cline in VS Code
+Insiders, VSCodium, Cursor or Windsurf at all; doctor, update and uninstall did
+not see those registrations. Current releases inspect, refresh and remove them
+like any other setup client. `mcporter` also requires a release after 6.9.0;
+setup never selects it from detection, because MCPorter already imports the
+registrations setup writes for other clients. Select it with
+`--client mcporter`. `fx`, `junie`, `goose` and `kilo` also require a release after 6.9.0.
 
 See [client configuration and troubleshooting](client-configuration.md) for
 configuration paths, profiles, trust policies, and schema-limit workarounds.
@@ -967,8 +1024,25 @@ reports `busy` at stage `launch`; `analysis_activity` describes bridge requests
 and can remain idle until the socket is ready. Cleanup work reports `busy` at
 stage `connection`.
 
-If macOS denies Apple Events, allow the application that starts REA under
-**System Settings → Privacy & Security → Automation**, then retry. REA releases
+If macOS denies Apple Events, REA reports
+`details.launch_rejection.boundary: "apple_events_authorization"` with
+`reason: "not_authorized"`,
+`responsibility: "client_or_disclaimed_runtime"`,
+`settings_pane: "privacy_security_automation"`, and
+`entitlement_id: "com.apple.security.automation.apple-events"`,
+category `unavailable`, and `retryable: false`. The helper does not identify
+the responsible process, so `responsibility` covers both an authorizable client
+and a client that disclaims TCC responsibility.
+Allow the application that macOS identifies as responsible for REA under
+**System Settings → Privacy & Security → Automation**. Some MCP clients, including
+Claude Desktop, disclaim responsibility, so macOS attributes the request to the
+REA runtime, such as `node`; changing the client's Automation setting cannot
+authorize that runtime. In this case start REA from a client macOS can authorize,
+such as Claude Code or Terminal. A hardened-runtime application requires the
+`com.apple.security.automation.apple-events` entitlement before macOS will
+prompt; if the responsible client lacks it, ask its developer to add the
+entitlement. Retrying from the same unauthorized client will not succeed until
+authorization changes. REA releases
 the target reservation when the native helper reports its complete authorization
 rejection after literal argument admission. Before application handoff, REA refuses
 double quotes, backslashes, or line breaks in the final launcher path or arguments,
@@ -1035,14 +1109,17 @@ Loader selection reads the Mach-O container header, including FAT files with a
 single architecture. For FAT32 and FAT64 containers, REA validates the
 architecture table and selected Mach-O header, prepares a private thin image,
 and loads it with Hopper's native Mach-O loader instead of Hopper's implicit
-FAT slice choice. For arm64 targets, REA ranks subtype bases 0 (plain arm64) and
-2 (arm64e), ignoring capability bits for ranking while retaining the raw subtype
-for slice identity. These slices' function-entry encodings decode under
-`--aarch64`, ahead of Apple's arm64e.x1 variant (base subtype 12), which is
-selected only when it is the arm64 family's only candidate. REA checks the
-entire source's SHA-256 while copying the slice; source identity and reported
-offsets still refer to the original container. Any other ambiguous architecture
-subtype requires an explicitly extracted thin image; REA does not guess.
+FAT slice choice. Hopper reads the slice that `open_binary` admitted for the
+session, the same slice other tools and the session's Evidence name; it does not
+rank slices again. For arm64 targets, admission prefers subtype bases 0 (plain
+arm64), then 2 (arm64e), then 1 (arm64v8), ignoring capability bits for ranking
+while retaining the raw subtype for slice identity. These slices'
+function-entry encodings decode under `--aarch64`, ahead of Apple's arm64e.x1
+variant (base subtype 12), which is selected only when no preferred subtype is
+present. REA checks the entire source's SHA-256 while copying the slice; source
+identity and reported offsets still refer to the original container. When
+admission cannot choose one slice, open an explicitly extracted thin image; REA
+does not guess.
 Set `HOPPER_LOADER_ARGS_JSON` in REA's launch environment to a JSON array of
 strings to override the derived Hopper loader arguments, for example
 `["-l","Mach-O"]`. Empty string elements are preserved; NUL bytes are not
@@ -1130,20 +1207,42 @@ copying license secrets into logs, or killing unrelated Hopper processes.
 
 REA connects to an existing Ghidra installation on Linux x64/arm64, macOS x64/arm64,
 or experimental Windows x64 P0.
-It accepts Ghidra 12.x (>=12.1) and the 64-bit full JDK declared by that installation's
+It accepts Ghidra 12.x (>=12.2) and the 64-bit full JDK declared by that installation's
 `application.java.min` and `application.java.max`. The JDK's reported platform must also
 map to the same native decompiler directory as the host: a JDK running under
 emulation (for example x86_64 under Rosetta on Apple silicon) or reporting a
 non-host `os.name` fails the doctor
 even when it is an otherwise accepted 64-bit full JDK. Select a matching JDK
 through `JAVA_HOME`; adding another decompiler in the JVM-selected directory
-does not satisfy this host-validated admission rule. Current 12.1 releases require
-JDK 21 or newer; Ghidra 12.2 declares JDK 25 or newer. Neither sets a maximum.
-The bridge is verified with Ghidra 12.1.4
-and JDK 21. Each installation must include the native decompiler for the host
+does not satisfy this host-validated admission rule. Ghidra 12.2 declares
+JDK 25 or newer and sets no maximum. The bridge is verified with Ghidra 12.2
+and JDK 25. Ghidra 12.1 is not accepted: the bridge calls
+`PrototypeModel.getStorageLocations` with the four-argument form added in 12.2,
+and 12.1 only has the three-argument method. A session whose parsed
+`application.version` is 12.2 with patch 0 records known provider
+defect `ghidra-9996`: Clang `-O0` x86-64 switches whose case labels start above
+zero can lose jump-table flow references and yield incorrect decompiler output.
+`12.2`, `12.2.0`, and `12.2.0` with a suffix all carry it.
+[Ghidra #9996](https://github.com/NationalSecurityAgency/ghidra/issues/9996) is
+closed by `c93917a622211349998f641de54cfdbe0e0e5bee` and milestoned for 12.2.1,
+which is not yet released. The limitation clears on parsed `12.2.1` and is
+absent from later patches and later minors. REA's switch verifier compiles with `-O2`, so it does not
+detect this shape. Every admitted session also records `ghidra-10154`.
+[Ghidra #10154](https://github.com/NationalSecurityAgency/ghidra/issues/10154)
+is open: an AArch64 byte-offset switch bounded only by `and #0xff` loses its
+jump table and the function body stops at the indirect branch. The report's
+example is an optimized Swift enum switch. REA reproduced that instruction
+shape on 12.2 with an AArch64 ELF object whose table has 256 readable bytes.
+A compare-bounded byte switch in that same object still recovers. The issue has no fix commit and no
+milestone, so the record stays on `12.2.1` and every other admitted build
+until a release is known to clear it.
+
+Each installation must include the native decompiler for the host
 architecture in `Ghidra/Features/Decompiler/os/<platform>/` or the corresponding
-`build/os/<platform>/` directory. Linux ARM64 uses `linux_arm_64`; official
-release archives may require you to build that native component separately.
+`build/os/<platform>/` directory. Linux ARM64 uses `linux_arm_64`. Official
+release archives ship native binaries only for Windows and Linux x64, so on
+Linux ARM64 build them with the release's
+[native component instructions](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.2_build/GhidraDocs/GettingStarted.md#building-native-components).
 REA checks the executable prerequisite by inspecting the file's own executable
 header, so a native component built for another platform or architecture is
 reported as incompatible instead of being admitted from its directory name, and
@@ -1191,7 +1290,7 @@ require Hopper; Windows P0 remains read-only.
 Windows P0 admits native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs,
 [DOS MZ executables](../providers/ghidra-dos.md), plus explicitly
 selected [raw NMOS 6502 images](../providers/raw-binary.md#nmos-6502) with a caller-supplied
-entry at file offset 0, on fixed local NTFS volumes. Other raw CPU families remain
+entry at file offset 0, on fixed local NTFS/ReFS volumes. Other raw CPU families remain
 unsupported on Windows.
 The npm package bundles native Job Object ownership, protected private runtime
 DACLs, and handle-based path admission; no separate addon installation is needed.
@@ -1201,8 +1300,8 @@ limitations.
 Extract Ghidra and install the JDK outside REA, then export absolute paths:
 
 ```bash
-export GHIDRA_INSTALL_DIR=/absolute/path/to/ghidra_12.1.4_PUBLIC
-export JAVA_HOME=/absolute/path/to/jdk-21 # optional if java/javac are on PATH
+export GHIDRA_INSTALL_DIR=/absolute/path/to/ghidra_12.2_PUBLIC
+export JAVA_HOME=/absolute/path/to/jdk-25 # optional if java/javac are on PATH
 rea doctor --json
 rea setup
 ```
@@ -1227,8 +1326,8 @@ and any parsed properties when the selected runtime cannot be admitted.
 On Windows, configure the existing installation in PowerShell:
 
 ```powershell
-$env:GHIDRA_INSTALL_DIR = "C:\tools\ghidra_12.1.4_PUBLIC"
-$env:JAVA_HOME = "C:\Program Files\Java\jdk-21"
+$env:GHIDRA_INSTALL_DIR = "C:\tools\ghidra_12.2_PUBLIC"
+$env:JAVA_HOME = "C:\Program Files\Java\jdk-25"
 rea doctor --json
 rea providers --json
 ```
@@ -1240,17 +1339,61 @@ installation remains unavailable on Windows. Setup never installs Ghidra,
 Java, or Python. It preserves valid detected Ghidra/JDK settings in agent
 registrations. See [Windows Ghidra P0](../providers/windows-ghidra-p0.md) for provider diagnostics.
 
-The separate `rea mcp add` builtin delegates most clients to Incur's package-runner
-child launcher. Run that acquisition from a trusted directory; prefer managed
-`rea setup` when supported. That child launcher can fail on Windows with `MCP_ADD_FAILED: spawn npx ENOENT`
-before registering a client. REA's setup path is unaffected. For a client supported
-by setup, review `rea setup --client opencode --skill=false --dry-run --json`
-(substitute its client ID), then use the same scoped command without `--dry-run`
-and approve the displayed plan. Non-interactive application additionally needs
-`--yes`. This configures setup's user-level client location; it does not replace
-`mcp add --no-global`, arbitrary `--command` registrations, or unsupported clients.
-The builtin launcher defect remains pending a dependency fix; a successful setup
-run does not verify that `mcp add` works on Windows.
+`rea mcp add` registers the selected server launcher directly in client settings.
+It does not acquire a package or start the server. Omit `--command` to register
+the runtime and REA entrypoint currently executing the CLI. Use `--agent` to
+select clients; repeat it for a mixed selection. With no selection, REA uses
+detected user-level clients and Amp; if none of the other supported clients are
+detected, it selects their full registration catalog and Amp.
+
+REA preserves existing environment overrides, client policy, peer servers and
+unrelated settings. Registration checks the effective client environment
+before writing and reports the field to repair if it is invalid. A changed
+existing file gets a private backup. Repeating the same registration keeps
+the file and creates no new backup. The result reports exact
+`command` and `args`, each selected client's effective scope, and configured,
+unchanged, failed or not-started outcomes. A partial failure returns a nonzero
+status while retaining successful client outcomes and recovery paths.
+
+User-level registration for a client that `rea setup` also supports uses that
+client's setup definition, so the same native read rules apply, and doctor,
+update and uninstall inspect, refresh and remove what it wrote. For Kilo Code
+that is the last user-scope file Kilo loads (its config root, `KILO_CONFIG`,
+`~/.kilocode`, `~/.kilo`, then `KILO_CONFIG_DIR`); a relative Kilo path is
+reported as unresolved because Kilo's working directory is unknown.
+`KILO_CONFIG_CONTENT` is read as Kilo's highest layer and never edited: setup
+reports Kilo as needing manual repair when that value changes the `rea` entry,
+and doctor reports the registration Kilo actually loads. Uninstall changes no
+Kilo file when another layer or that value would keep a `rea` entry in effect,
+or expose a different one, after removal. Gemini CLI
+registration fails without writing when Gemini's system, defaults or trusted
+workspace settings exclude `rea`, leave it off a nonempty allowlist, or define
+a different `rea` entry with higher precedence. On Windows, registration refuses
+to write a Claude Desktop MSIX configuration the running app could overwrite,
+or any file this process's MSIX AppData redirection would divert.
+Because `rea mcp add` writes without an approval step, after it changes Claude
+Desktop's configuration it prints a notice on stderr: a running Claude Desktop
+can rewrite the file from memory and drop the registration, so quit it fully,
+rerun `rea mcp add`, then start it again. The JSON report is unchanged.
+fx registration follows `FX_HOME` and fails without writing when fx would
+refuse its value or when it contains `.` or `..` segments, which could name the
+home folder.
+
+`--no-global` writes only project-level settings. A selection containing Amp or
+another client without project storage fails before any writes; select those
+clients in a separate global registration. Managed `rea setup` remains available
+for its supported clients and additional setup tasks. Registration preserves
+Windows launcher paths and arguments as data. Windows ACL privacy cannot be
+verified through POSIX mode bits; Fx results distinguish requested Windows modes
+from verified POSIX modes. Controlled source tests do not establish real Windows
+client behavior.
+
+`rea mcp add --command` accepts stdio launcher text. An HTTP(S) URL in the
+executable position is refused before any settings change; configure remote MCP
+transport in the client's own settings. Earlier delegated registration could
+interpret a URL as remote transport for some clients while storing it as an
+executable for Amp. That inconsistent URL interpretation and package acquisition
+are removed. Launcher arguments that happen to contain URLs remain arguments.
 
 When `GHIDRA_INSTALL_DIR` is unset, doctor and the Ghidra provider also search
 `PATH` for `ghidra` or `ghidraRun`, resolve the selected launcher through its
@@ -1260,7 +1403,7 @@ the application metadata and headless launcher. An explicitly supplied
 REA reports that error instead of silently selecting another installation.
 This discovery is read-only and does not execute the Ghidra launcher.
 
-Doctor validates the platform, architecture, Ghidra 12.x (>=12.1) application version,
+Doctor validates the platform, architecture, Ghidra 12.x (>=12.2) application version,
 `support/analyzeHeadless` or `support/analyzeHeadless.bat`, the installation's
 Java major range, 64-bit JDK bitness, and the presence of `javac`/`javac.exe`.
 It also checks that the reported JVM `os.arch` and `os.name` map to the same native decompiler
@@ -1349,8 +1492,8 @@ empty, invalid or out-of-range supplied values fail configuration validation.
 When the deadline elapses, the `provider_timeout` error names
 `REA_GHIDRA_STARTUP_TIMEOUT_MS` with the deadline that was applied. In
 fresh-import mode it also suggests `REA_GHIDRA_DISABLED_ANALYZERS` for analyzers
-that dominate the time and `REA_GHIDRA_PROJECT_PATH` for reusing a completed
-analysis; in existing-project mode it omits that import and analyzer advice.
+that dominate the time and the Program reuse choices below; in existing-project
+mode it omits that import and analyzer advice.
 REA parses the supplied configuration environment and
 passes the deadline to each provider client; a startup failure is returned by the query that triggered it,
 without exposing partial analysis. This deadline is separate from MCP transport
@@ -1377,11 +1520,33 @@ the settings update does not clear cleanup blockers. To change the launch
 environment instead, export useful Evidence, close the binary and resolve any
 cleanup failure, update the client's REA server launch configuration, then
 restart REA and reconnect. Allow startup plus the query in the client's own
-tool-call deadline; runtime updates do not change that deadline. Each new startup attempt uses
-a fresh ephemeral import; smaller result requests do not reduce the prerequisite
-auto-analysis. A larger time allowance does not raise the JVM heap limit or
+tool-call deadline; runtime updates do not change that deadline. In the default
+fresh-import mode, each new startup attempt repeats import and analysis; smaller
+result requests do not reduce that prerequisite. A larger time allowance does not raise the JVM heap limit or
 guarantee completion. Keep [heap and host CPU controls](#ghidra-heap-and-cpu-controls)
 appropriate for the machine.
+
+For repeated CLI commands on a large binary, explicitly choose where the analyzed
+Program is retained:
+
+- [Owned Program checkpoints](#automatically-checkpoint-an-owned-ghidra-program)
+  (`REA_GHIDRA_CHECKPOINT_DIR`) save completed analysis automatically for supported
+  stock native ELF, PE and Mach-O imports on Linux/macOS. Initial analysis must
+  finish once; later invocations restore the saved Program without auto-analysis.
+  This mode excludes analysis overrides. For customized analysis, reuse a project
+  already analyzed with the desired settings rather than discarding those choices
+  to enable checkpoints.
+- [An existing Ghidra project](#reuse-an-existing-ghidra-project)
+  (`REA_GHIDRA_PROJECT_PATH`, with `REA_GHIDRA_PROGRAM_NAME` when needed) reuses a
+  Program already analyzed and saved in Ghidra. REA opens a private copy without
+  auto-analysis and leaves the caller's project unchanged.
+
+Configure the selection in each CLI invocation's environment or in the MCP server
+registration, then restart that server. A running MCP session already reuses its
+Program across queries. `--snapshot` caches REA query results, not the analyzed
+Ghidra Program: a query absent from that snapshot still needs provider startup.
+Neither reuse mode resumes unfinished initial auto-analysis or removes its
+first-run time and memory requirements.
 
 One session contains exactly one imported Program; use `provider_id: "ghidra"`, `--provider ghidra`, or
 `REA_ANALYSIS_PROVIDER=ghidra` when both Hopper and Ghidra support the target.
@@ -1409,7 +1574,7 @@ invocation instead. In MCP, `ghidra.decompile_timeout_seconds` can override the 
 value for newly accepted operations on the existing Program; explicit `null`
 removes the deadline. A transient timeout remains uncached so the same function
 can be retried after an update. See the
-[settings design](../design/limits-and-recovery.md#runtime-settings-through-mcp).
+[analysis settings and recovery](../reference/limits-and-recovery.md#runtime-settings-through-mcp).
 Codex/Kimi registrations derived by `rea setup` add the selected launch value
 to the tool deadline as a single-decompile estimate; a runtime update does not
 change that registration. A bulk call can need that limit for
@@ -1421,10 +1586,14 @@ pseudocode is never treated as original source or Hopper-equivalent text.
 
 ### Missing macOS native decompiler
 
-If `rea doctor --json` reports `native_decompiler` as missing on macOS x64,
-the extracted Ghidra archive may include the decompiler source without the
-macOS executable. For Ghidra 12.1.4, you can build it manually with an existing
-Xcode Command Line Tools installation, `make`, and `bison`:
+If `rea doctor --json` reports `native_decompiler` as missing on macOS x64 or
+arm64, the official release archive does not ship a macOS decompiler. Ghidra
+12.2's `ghidra_12.2_PUBLIC_20261016.zip` includes only `os/linux_x86_64` and
+`os/win_x86_64`, the same gap tracked in
+[#7018](https://github.com/morluto/rea/issues/7018) and
+[#7019](https://github.com/morluto/rea/issues/7019). The archive includes the
+decompiler source. For Ghidra 12.2, you can build the executable manually with
+an existing Xcode Command Line Tools installation, `make`, and `bison`:
 
 ```bash
 cd "$GHIDRA_INSTALL_DIR/Ghidra/Features/Decompiler/src/decompile/cpp"
@@ -1438,10 +1607,10 @@ rea doctor --json
 
 The copy step requires the destination to be absent and preserves an existing
 decompiler. This recipe is specific to macOS x64: the
-[Ghidra 12.1.4 Makefile](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/Ghidra/Features/Decompiler/src/decompile/cpp/Makefile)
+[Ghidra 12.2 Makefile](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.2_build/Ghidra/Features/Decompiler/src/decompile/cpp/Makefile)
 explicitly selects `-arch x86_64` on Darwin. For a Gradle
 build, follow the matching release's
-[native component instructions](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/GhidraDocs/GettingStarted.md#building-native-components).
+[native component instructions](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.2_build/GhidraDocs/GettingStarted.md#building-native-components).
 REA accepts the matching executable under either `os/<platform>/` or
 `build/os/<platform>/`; it does not build the component during setup or diagnosis.
 
@@ -1449,8 +1618,8 @@ REA accepts the matching executable under either `os/<platform>/` or
 
 On Apple Silicon the same source build works with explicit overrides; no
 Makefile edits and no Rosetta are needed. The Darwin block in the
-[Ghidra 12.1.4 Makefile](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/Ghidra/Features/Decompiler/src/decompile/cpp/Makefile)
-pins `-arch x86_64`, but `ARCH_TYPE` and `OSDIR` are ordinary make variables,
+[Ghidra 12.2 Makefile](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.2_build/Ghidra/Features/Decompiler/src/decompile/cpp/Makefile)
+still pins `-arch x86_64` and `OSDIR=mac_x86_64`, but `ARCH_TYPE` and `OSDIR` are ordinary make variables,
 and command-line assignments replace them for every compile and link rule:
 
 ```bash
@@ -1463,12 +1632,13 @@ test ! -e "$decompiler_dir/decompile" && test ! -L "$decompiler_dir/decompile" &
 rea doctor --json
 ```
 
-Verified end to end on macOS 15.6 arm64 with Apple clang 17 and the stock
-bison 2.3, against Ghidra 12.1.4: the build produces a Mach-O arm64
-`ghidra_opt`, the doctor check `ghidra-native_decompiler` turns healthy with
-"reports mach-o arm64, which matches darwin/arm64", and `rea decompile` on an
-arm64 Mach-O returns decompiled C through the headless provider. The JDK is
-not needed for the make step, only for the Ghidra provider. If your toolchain
+Recorded on Ghidra 12.1.4 (no longer accepted); not yet re-run on 12.2. On
+macOS 15.6 arm64 with Apple clang 17 and the stock bison 2.3, that build
+produced a Mach-O arm64 `ghidra_opt`, the doctor check
+`ghidra-native_decompiler` turned healthy with "reports mach-o arm64, which
+matches darwin/arm64", and `rea decompile` on an arm64 Mach-O returned
+decompiled C through the headless provider. The JDK is not needed for the make
+step, only for the Ghidra provider. If your toolchain
 rejects the inherited `-mmacosx-version-min=10.6` flag, retry the make with
 `ADDITIONAL_FLAGS="-w"`.
 
@@ -1520,9 +1690,10 @@ time proportional to Program size; saving runs once after first analysis and
 again only when the Program changes.
 
 This initial mode supports stock native ELF, PE and Mach-O imports on POSIX.
-Windows, special pinned-loader profiles, caller-selected `.gpr` projects,
-language/analyzer overrides, analysis seeds and extra analysis extensions are
-not admitted with this setting; unset it to use their existing workflows.
+Windows, special pinned-loader profiles, committed ELF image bases (the MIPS32
+shared-image lane), caller-selected `.gpr` projects, language/analyzer
+overrides, analysis seeds and extra analysis extensions are not admitted with
+this setting; unset it to use their existing workflows.
 The checkpoint directory must be private to the current user.
 
 REA analysis snapshots remain separate immutable query results. Initial analysis
@@ -1679,6 +1850,8 @@ Each line is `address<TAB>kind[<TAB>name]`, where kind is `function`, `code` or 
 
 Label seeds can name mapped uninitialized storage such as `.bss`; function and code seeds require initialized bytes.
 
+When Ghidra has no function for a requested procedure, the error's remediation names this seed recovery. A `resolve_containing_procedure` result of `not_in_procedure` carries it as a limitation, and an `inspect_native_instruction` result with status `not-in-listing` carries the `code` seed variant. None of these establishes that the address holds code. Seeds apply only to a fresh import, so a session with `REA_GHIDRA_PROJECT_PATH` or `REA_GHIDRA_CHECKPOINT_DIR` names the setting to unset first.
+
 To skip a named Ghidra auto-analyzer (for example, when default auto-analysis
 stalls in one analyzer on a Swift/Objective-C arm64 Mach-O):
 
@@ -1732,7 +1905,7 @@ before opening a new Ghidra session. On Linux and macOS, REA chooses the first
 nonempty setting in this order: `GHIDRA_HEADLESS_MAXMEM`, `GHIDRA_MAXMEM`, then
 `2G`. The chosen value becomes the JVM's `-Xmx` argument. Use a JVM heap-size
 value such as `512M` or `2G`; an invalid value causes Java startup to fail.
-The supported Ghidra 12.1.4 Windows headless script consumes the same settings
+The supported Ghidra 12.2 Windows headless script consumes the same settings
 with the same precedence.
 
 For a small target on a constrained host:
@@ -1843,7 +2016,10 @@ The repository's single-plugin marketplaces are declared in
 `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`.
 Both select an exact `rea-agents` npm version instead of mutable source-checkout
 contents. Release Please updates their selectors alongside the plugin manifests.
-No plugin-only publication or generated skill files committed to Git are needed.
+Claude Code and Codex do not need plugin-only publication or generated skill
+files committed to Git. The Cursor Marketplace plugin is the exception in
+[Cursor Marketplace](#cursor-marketplace): its skill copy is committed because
+that install is a Git checkout.
 The qualified release archive contains a runtime-only manifest and
 `npm-shrinkwrap.json` plus bundled runtime dependencies, including PTY packages
 for each supported OS and CPU; development dependencies and development-only overrides
@@ -1884,7 +2060,8 @@ only the registrations and skill locations that `rea setup` manages, so for a
 plugin-only install `rea doctor --client <id>` and `rea doctor --skill` report
 `missing` and recommend `rea setup`. Do not follow that remediation. Check the
 plugin with the client instead (`claude plugin list` and `/mcp` in Claude
-Code, `codex plugin list` in Codex).
+Code, `codex plugin list` in Codex, Cursor's plugin settings for a Marketplace
+install).
 
 For analysis engines, ask the connected server: have the agent call
 `binary_session` and read `result.tool_availability`, which reports what the
@@ -1897,7 +2074,7 @@ terminal, use the package runner at the version the plugin pins:
 <!-- x-release-please-start-version -->
 
 ```bash
-npx -y rea-agents@6.8.0 doctor --provider ghidra --json
+npx -y rea-agents@6.10.1 doctor --provider ghidra --json
 ```
 
 <!-- x-release-please-end -->
@@ -1906,6 +2083,66 @@ If your installed plugin is older, use the version in its manifest instead.
 That report describes the terminal's environment, not the plugin server's.
 The server inherits the client's environment, so a setting such as
 `GHIDRA_INSTALL_DIR` that exists only in your terminal does not reach it.
+
+### Cursor Marketplace
+
+Cursor's Marketplace installs this public repository as one plugin. The
+install includes both the `reverse-engineer-anything` skill and the `rea` MCP
+server. REA does not publish an MCP-only "Add to Cursor" install link, because
+that link would register the server without the skill.
+
+The manifest is `.cursor-plugin/plugin.json`. Cursor discovers `mcp.json` at
+the repository root and the skill directory named by `skills`. The committed
+skill is `.cursor-plugin/skills/reverse-engineer-anything`, a copy of the
+authored skill at `.agents/skills/reverse-engineer-anything`.
+`node scripts/generate-cursor-plugin-skill.mjs --check` fails when that copy
+drifts, including in `npm run docs:check` and package prepack. Marketplace
+installs are a Git checkout and do not contain `dist/`. The server entry
+therefore runs the published package instead of a local build:
+
+<!-- x-release-please-start-version -->
+
+```json
+{
+  "mcpServers": {
+    "rea": {
+      "command": "npx",
+      "args": ["-y", "rea-agents@6.10.1", "mcp"]
+    }
+  }
+}
+```
+
+<!-- x-release-please-end -->
+
+Release Please updates that pin with `.cursor-plugin/plugin.json` and
+`package.json`. The skill text can describe capabilities newer than the pinned
+server until the next release; follow the connected server's tool list. The
+same pin is what `rea doctor --provider <id>` should use when you inspect an
+engine from a terminal, as shown above.
+
+A Marketplace install gives you:
+
+- the `reverse-engineer-anything` skill and its references
+- an `rea` MCP server launched with `npx -y rea-agents@<pinned version> mcp`
+  (Cursor shows it as `plugin-rea-rea`)
+- the shared plugin logo at `assets/rea-plugin.png`
+
+It does not install analysis engines, put `rea` on `PATH`, or write
+`~/.cursor/mcp.json`. `rea setup --client cursor` remains the direct
+registration path and still writes that file plus the setup-owned skill. Use
+the Marketplace plugin or that registration, not both, so Cursor does not
+start two `rea` servers.
+
+Node.js and npm must be available to Cursor. The plugin does not install them.
+Restart Cursor after the plugin is listed. If tools stay missing, read the
+plugin server's launch error. `rea doctor --client cursor` does not see
+Marketplace state and can report `missing`; do not run setup to repair a
+plugin-only install.
+
+Publishing the listing is a separate maintainer step at
+[cursor.com/marketplace/publish](https://cursor.com/marketplace/publish).
+This repository change does not submit the plugin.
 
 ## MCP Registry
 
@@ -1951,9 +2188,10 @@ before running setup again. A global installation provides a more durable path.
 
 ## Package runners and global installation
 
-Package runners can select project-local packages and read project configuration,
-even for explicit version requests. Acquire REA from a trusted working directory,
-outside the target project, and pass absolute target paths to analysis commands.
+Package runners can read project configuration. Acquire REA from a trusted
+working directory outside the target project and any REA source checkout, and
+pass absolute target paths to analysis commands. To run REA from its checkout,
+use the [source checkout instructions](#run-rea-from-a-checkout).
 REA cannot validate package acquisition that happens before its entrypoint starts.
 To request the latest release explicitly, use:
 
