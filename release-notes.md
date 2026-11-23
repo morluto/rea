@@ -971,6 +971,7 @@
 * **ida:** consolidate verifier admission and oracle checks ([#13003](https://github.com/morluto/rea/issues/13003)) ([6cf4328](https://github.com/morluto/rea/commit/6cf432865676df308bc7ba6cd29b6688a4c66753))
 * **ida:** consolidate worker release and retry checks ([#12993](https://github.com/morluto/rea/issues/12993)) ([4df6b37](https://github.com/morluto/rea/commit/4df6b371b08bdc219a0d90d13605a99319c65d73))
 * **ida:** consolidate workspace copy and release checks ([#12991](https://github.com/morluto/rea/issues/12991)) ([8fefe18](https://github.com/morluto/rea/commit/8fefe18381bf69b3785c9ae4195067c0ef7ba076))
+* **ida:** decode the Hex-Rays query line without importing site ([#14144](https://github.com/morluto/rea/issues/14144)) ([3a63f78](https://github.com/morluto/rea/commit/3a63f7803f98dc57dfc5a6205bb8a0a22c89a40d))
 * **ida:** remove unused target setup from configuration checks ([#12821](https://github.com/morluto/rea/issues/12821)) ([e023c9f](https://github.com/morluto/rea/commit/e023c9fe5451b41d6f88843fd1b250b375fc5376))
 * **ida:** use owned configuration fixtures ([e023c9f](https://github.com/morluto/rea/commit/e023c9fe5451b41d6f88843fd1b250b375fc5376))
 * **il2cpp:** consolidate retained metadata projection coverage ([#12870](https://github.com/morluto/rea/issues/12870)) ([cfc1644](https://github.com/morluto/rea/commit/cfc1644238016a78bb31c122561849698df4f29b))
