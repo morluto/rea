@@ -223,6 +223,7 @@ interface ChainWalk {
 class ChainTable {
   readonly #walks = new Map<number, ChainWalk>();
   /** Sectors visited across every walk of one parse. */
+  // not-an-allowance: cumulative visit tally, compared with the aggregate budget only to stop and report exhaustion; it charges nothing.
   #visited = 0;
 
   constructor(
