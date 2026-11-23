@@ -246,6 +246,36 @@ it("stops the eraseblock search at the fixed ceiling", async () => {
   }
 });
 
+it("reads no VID header past the eraseblock ceiling", async () => {
+  const vidHeaderOffset = UBI_MAX_PEB_BYTES * 4;
+  const path = await fixture(
+    ubiImage([{ kind: "free" }], {
+      vidHeaderOffset,
+      dataOffset: vidHeaderOffset + 64,
+    }),
+  );
+  await truncate(path, vidHeaderOffset + 4096);
+  const admitted = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new UbiImageArtifactReader(path, admitted);
+  const reads = vi.spyOn(admitted.handle, "read");
+  try {
+    await expect(entries(reader)).rejects.toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+      parserLimit: { name: UBI_PEB_SIZE_LIMIT, maximum: UBI_MAX_PEB_BYTES },
+    });
+    for (const [, , length, offset] of reads.mock
+      .calls as readonly (readonly unknown[])[])
+      expect(Number(length) + Number(offset)).toBeLessThanOrEqual(
+        UBI_MAX_PEB_BYTES + 64,
+      );
+  } finally {
+    reads.mockRestore();
+    await reader.close();
+    await admitted.handle.close();
+  }
+});
+
 it("names the eraseblock count ceiling it stops at", async () => {
   const path = await fixture(ubiImage([{ kind: "free" }, { kind: "free" }]));
   await truncate(path, 2048 * (UBI_MAX_PEBS + 1));

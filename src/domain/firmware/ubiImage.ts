@@ -641,22 +641,33 @@ const isVolumeType = (volType: number): boolean =>
   volType === VOLUME_TYPE_DYNAMIC || volType === VOLUME_TYPE_STATIC;
 
 /**
+ * The file offset of the first PEB's VID header when it lies inside both the
+ * file and the fixed eraseblock ceiling, or null. A header past the ceiling
+ * belongs to no admissible eraseblock, so it is never read: the eraseblock
+ * search then reaches its bounded refusal without buffering up to the
+ * declared offset.
+ */
+export const ubiFirstVidHeaderOffset = (
+  first: UbiEcHeader,
+  fileSize: number,
+): number | null =>
+  first.vidHeaderOffset + UBI_HEADER_BYTES <=
+  Math.min(fileSize, UBI_MAX_PEB_BYTES)
+    ? first.vidHeaderOffset
+    : null;
+
+/**
  * The smallest eraseblock size the first PEB's own VID header fits, read from
- * its first `vidHeaderOffset + 64` bytes, or 0 when it holds no valid VID
+ * the 64 bytes at `ubiFirstVidHeaderOffset`, or 0 when they hold no valid VID
  * header. As `classifyUbiPeb` requires, the LEB must hold data_pad plus
  * data_size and more than data_pad, so a valid EC header nearer than this
  * lies inside the first PEB's declared data, not at the next eraseblock.
  */
 export const ubiFirstPebMinSize = (
-  bytes: Uint8Array,
+  vidBytes: Uint8Array,
   first: UbiEcHeader,
 ): number => {
-  const read = readVidHeader(
-    bytes.subarray(
-      first.vidHeaderOffset,
-      first.vidHeaderOffset + UBI_HEADER_BYTES,
-    ),
-  );
+  const read = readVidHeader(vidBytes.subarray(0, UBI_HEADER_BYTES));
   if (read.state === "invalid" || !isVolumeType(read.vid.volType)) return 0;
   const { dataPad, dataSize } = read.vid;
   return first.dataOffset + dataPad + Math.max(dataSize, 1);

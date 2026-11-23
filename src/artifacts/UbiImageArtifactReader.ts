@@ -34,6 +34,7 @@ import {
   findUbiEcHeader,
   ubiCandidateGridOffsets,
   ubiFirstPebMinSize,
+  ubiFirstVidHeaderOffset,
   findUbiSpacingConflict,
   parseUbiFirstEcHeader,
   parseUbiVolumeTable,
@@ -204,16 +205,20 @@ export class UbiImageArtifactReader implements ArtifactReader {
     if (!first.ok) throw parseFailure(first.error);
     // The eraseblock size is the distance to the next erase-counter header
     // past the data the first PEB's VID header declares.
-    const minPebSize = ubiFirstPebMinSize(
-      await readArtifactFileBytes(
-        handle,
-        0,
-        Math.min(size, first.value.vidHeaderOffset + UBI_HEADER_BYTES),
-        size,
-        signal,
-      ),
-      first.value,
-    );
+    const vidHeaderOffset = ubiFirstVidHeaderOffset(first.value, size);
+    const minPebSize =
+      vidHeaderOffset === null
+        ? 0
+        : ubiFirstPebMinSize(
+            await readArtifactFileBytes(
+              handle,
+              vidHeaderOffset,
+              UBI_HEADER_BYTES,
+              size,
+              signal,
+            ),
+            first.value,
+          );
     const scanEnd = Math.min(size, UBI_MAX_PEB_BYTES + UBI_HEADER_BYTES);
     let next: number | null = null;
     for (

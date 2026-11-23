@@ -9,6 +9,7 @@ import {
   findUbiEcHeader,
   ubiCandidateGridOffsets,
   ubiFirstPebMinSize,
+  ubiFirstVidHeaderOffset,
   findUbiSpacingConflict,
   parseUbiFirstEcHeader,
   parseUbiVolumeTable,
@@ -30,8 +31,10 @@ import {
   ubiVolumeTableBytes,
   UBI_IMAGE_LIMITATIONS,
   UBI_LAYOUT_VOLUME_ID,
+  UBI_MAX_PEB_BYTES,
   type UbiImage,
   type UbiImageParseError,
+  type UbiEcHeader,
   type UbiPeb,
 } from "./ubiImage.js";
 import {
@@ -47,6 +50,14 @@ import {
 } from "./ubiImage.fixture.js";
 import type { Result } from "../result.js";
 
+/** The first PEB's minimum size, read from its VID header alone. */
+const firstPebMinSize = (bytes: Buffer, first: UbiEcHeader): number => {
+  const at = ubiFirstVidHeaderOffset(first, bytes.length);
+  return at === null
+    ? 0
+    : ubiFirstPebMinSize(bytes.subarray(at, at + 64), first);
+};
+
 /** The reader's pipeline over an in-memory image. */
 const parse = (bytes: Buffer): Result<UbiImage, UbiImageParseError> => {
   const first = parseUbiFirstEcHeader(bytes.subarray(0, 64), bytes.length);
@@ -56,7 +67,7 @@ const parse = (bytes: Buffer): Result<UbiImage, UbiImageParseError> => {
     bytes.subarray(start),
     start,
     first.value,
-    ubiFirstPebMinSize(bytes, first.value),
+    firstPebMinSize(bytes, first.value),
   );
   const spacing =
     next === null ? null : ubiSpacingCheckRange(next, bytes.length);
@@ -1646,7 +1657,7 @@ describe("erase-counter headers no eraseblock could begin at", () => {
         wide,
       );
       const first = parseUbiFirstEcHeader(bytes.subarray(0, 64), bytes.length);
-      expect(first.ok && ubiFirstPebMinSize(bytes, first.value)).toBe(
+      expect(first.ok && firstPebMinSize(bytes, first.value)).toBe(
         wide.pebSize,
       );
       expect(parse(bytes)).toMatchObject({
@@ -1660,10 +1671,31 @@ describe("erase-counter headers no eraseblock could begin at", () => {
     },
   );
 
+  it("reads no VID header the eraseblock ceiling rules out", () => {
+    const bytes = ubiImage([{ kind: "free" }]);
+    const first = parseUbiFirstEcHeader(bytes.subarray(0, 64), bytes.length);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    expect(ubiFirstVidHeaderOffset(first.value, bytes.length)).toBe(64);
+    const far = {
+      ...first.value,
+      vidHeaderOffset: UBI_MAX_PEB_BYTES,
+      dataOffset: UBI_MAX_PEB_BYTES + 64,
+    };
+    expect(ubiFirstVidHeaderOffset(far, UBI_MAX_PEB_BYTES * 4)).toBeNull();
+    expect(
+      ubiFirstVidHeaderOffset(
+        { ...far, vidHeaderOffset: UBI_MAX_PEB_BYTES - 64 },
+        UBI_MAX_PEB_BYTES * 4,
+      ),
+    ).toBe(UBI_MAX_PEB_BYTES - 64);
+    expect(ubiFirstVidHeaderOffset(first.value, 100)).toBeNull();
+  });
+
   it("sets no minimum size when the first PEB holds no valid VID header", () => {
     const bytes = ubiImage([{ kind: "free" }, { kind: "free" }]);
     const first = parseUbiFirstEcHeader(bytes.subarray(0, 64), bytes.length);
-    expect(first.ok && ubiFirstPebMinSize(bytes, first.value)).toBe(0);
+    expect(first.ok && firstPebMinSize(bytes, first.value)).toBe(0);
   });
 });
 
