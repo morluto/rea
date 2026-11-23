@@ -123,19 +123,20 @@ const parseCatalogReport = (
   const parsed = parseAnalysisViewResult(unityAddressablesSchema, parent);
   if (!parsed.ok) return parsed;
   const report = reusable ? (key as Report) : parsed.value;
+  let bundles = 0;
+  let dependencyEdges = 0;
+  for (const location of report.locations) {
+    if (location.data?.kind === "asset-bundle") bundles += 1;
+    dependencyEdges += location.dependencies.length;
+  }
   const checked = {
     report,
     counts: {
       providers: report.providers.length,
       keys: report.keys.length,
       locations: report.locations.length,
-      bundles: report.locations.filter(
-        (location) => location.data?.kind === "asset-bundle",
-      ).length,
-      dependency_edges: report.locations.reduce(
-        (total, location) => total + location.dependencies.length,
-        0,
-      ),
+      bundles,
+      dependency_edges: dependencyEdges,
     },
   };
   if (reusable) checkedReports.set(key, checked);

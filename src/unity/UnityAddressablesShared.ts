@@ -2,9 +2,20 @@ import { BinaryReader } from "../domain/binaryContainer.js";
 import type { UnityAddressables } from "../domain/unity/unityAddressables.js";
 import { UNITY_ADDRESSABLES_FORMAT } from "./UnityAddressablesFormat.js";
 
-/** Little-endian field reader; callers check record bounds before reading. */
-export const littleEndian = (bytes: Buffer): BinaryReader =>
-  new BinaryReader(bytes, true, UNITY_ADDRESSABLES_FORMAT);
+const readers = new WeakMap<Buffer, BinaryReader>();
+
+/**
+ * Little-endian field reader, one per buffer; callers check record bounds
+ * before reading.
+ */
+export const littleEndian = (bytes: Buffer): BinaryReader => {
+  let reader = readers.get(bytes);
+  if (reader === undefined) {
+    reader = new BinaryReader(bytes, true, UNITY_ADDRESSABLES_FORMAT);
+    readers.set(bytes, reader);
+  }
+  return reader;
+};
 
 /** Decoded catalog facts before source identity and limitations are attached. */
 export type DecodedUnityAddressables = Omit<
