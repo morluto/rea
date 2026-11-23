@@ -4,8 +4,11 @@ import { ElfNotesService } from "./ElfNotesService.js";
 import { ELF_NOTES_PROVIDER } from "../../domain/investigationProviders.js";
 import { createHash } from "node:crypto";
 import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
-import { elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
-import { parseElfNotes } from "../../native/elf/ElfNoteParser.js";
+import {
+  elfNoteByteSource,
+  elfNoteFixture,
+} from "../../native/elf/ElfNotes.fixture.js";
+import { parseElfNotesFromHandle } from "../../native/elf/ElfNoteParser.js";
 import { ok } from "../../domain/result.js";
 import {
   AnalysisCancelledError,
@@ -16,14 +19,15 @@ import {
 const identity = ELF_NOTES_PROVIDER;
 const path = "/artifacts/app";
 const bytes = elfNoteFixture({ ownership: "none" });
-const report = parseElfNotes(
-  bytes,
+const report = await parseElfNotesFromHandle(
+  elfNoteByteSource(bytes),
   {
     path,
     sha256: createHash("sha256").update(bytes).digest("hex"),
     bytes: bytes.length,
   },
   inspectElfNotesInputSchema.parse({ path }),
+  async () => {},
 );
 
 it("rejects a relative path and extra arguments before reading", async () => {
