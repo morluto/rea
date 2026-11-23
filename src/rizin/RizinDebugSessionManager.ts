@@ -4,7 +4,6 @@ import {
   type DebuggerLaunchFileObservation,
 } from "../process/DebuggerLaunchFile.js";
 import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
-import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "./RizinDebuggerProviderIdentity.js";
 import {
   createRizinCommandEvidence,
   createRizinCommandTimeoutEvidence,
@@ -13,10 +12,7 @@ import {
   MAX_QUEUED_FRAME_BYTES,
   MAX_QUEUED_FRAMES,
   parseRizinPtraceRows,
-  RIZIN_LAUNCH_PROVENANCE_LIMITATION,
-  RIZIN_SESSION_TARGET_LIMITATION,
   rizinCaptureStoppedSentence,
-  rizinCommandTimeoutLimitation,
   type RizinCommandCapture,
   type RizinCommandInterruption,
   type RizinDebugCommandResult,
@@ -59,15 +55,12 @@ import {
   stoppedDebuggerSessionError,
   unknownDebuggerSessionError,
 } from "../domain/debuggerSessionErrors.js";
-import type {
-  AnalysisError,
-  AnalysisErrorOptions,
-} from "../domain/analysisErrorBase.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   analysisErrorWithCleanupDependencies,
   analysisErrorWithCleanupFailure,
 } from "../domain/analysisErrorCleanup.js";
-import { createEvidence, type Evidence } from "../domain/evidence.js";
+import type { Evidence } from "../domain/evidence.js";
 import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
