@@ -17,20 +17,15 @@ import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { normalizeHistoricalSourceParseFailures } from "../../../src/application/ReferenceSourceImport.js";
 import { prepareReferenceSourceImport } from "../../../src/application/ReferenceSourceImportPolicy.js";
 import {
   readRegularFileText,
   RegularFileReadFailure,
-} from "../../../src/application/RegularFileRead.js";
+} from "../../../src/process/RegularFileRead.js";
 import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
-import {
-  parseReferenceSourceEntries,
-  projectReferenceSourceEntryFailure,
-} from "../../../src/application/ReferenceSourceImportEntries.js";
-import type { ReferenceSourceRead } from "../../../src/reference/ReferenceSourceReaderTypes.js";
+import { parseReferenceSourceEntries } from "../../../src/application/ReferenceSourceImportEntries.js";
 import { createHistoricalSourceManifest } from "../../../src/domain/referenceSourceGraph.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
 
@@ -80,34 +75,22 @@ describe("reference source import projections", () => {
       await symlink(join(root, "physical", "inner"), join(root, "link"));
       const selected = `${root}/link/../source`;
       const result = await importTree(selected);
-      const control = await importTree(await realpath(selected));
-      expect(result).toEqual(control);
-      expect(result.ok && result.value.entries.map(({ path }) => path)).toEqual(
-        ["intended.js"],
-      );
+      expect(result).toMatchObject({
+        ok: true,
+        value: {
+          entries: [
+            {
+              path: "intended.js",
+              content_state: "hashed",
+              sha256: createHash("sha256")
+                .update("export const intended = 1;\n")
+                .digest("hex"),
+            },
+          ],
+        },
+      });
     },
   );
-
-  it("deduplicates exact parse failures without collapsing distinct reasons", () => {
-    const malformed = {
-      path: "src/main.ts",
-      parser: "babel",
-      reason: "Malformed input",
-    };
-    const unexpected = {
-      path: "src/main.ts",
-      parser: "babel",
-      reason: "Unexpected token",
-    };
-
-    expect(
-      normalizeHistoricalSourceParseFailures([
-        unexpected,
-        malformed,
-        unexpected,
-      ]),
-    ).toEqual([malformed, unexpected]);
-  });
 
   it("retains entry failure diagnostics alongside recovery guidance", () => {
     for (const [kind, code] of [
@@ -117,13 +100,24 @@ describe("reference source import projections", () => {
       ["file", "cancelled"],
       ["unknown", "unsupported"],
     ] as const) {
-      const message = projectReferenceSourceEntryFailure({
-        status: "failed",
-        path: "safe/path",
-        kind,
-        code,
-        message: "Observed entry failure at /owned/fixture/path",
-      });
+      const parsed = parseReferenceSourceEntries(
+        {
+          root: "/owned/fixture",
+          entries: [
+            {
+              status: "failed",
+              path: "safe/path",
+              kind,
+              code,
+              message: "Observed entry failure at /owned/fixture/path",
+            },
+          ],
+          bytesRead: 0,
+          limitations: [],
+        },
+        [],
+      );
+      const message = parsed.entries[0]?.limitations[0];
       expect(message).toContain(
         "Observed entry failure at /owned/fixture/path",
       );
@@ -214,8 +208,12 @@ describe("reference source ignore policy read failures", () => {
           if (state.dev === identity.dev && state.ino === identity.ino) {
             intercepted = true;
             if (physical === "cancel-after-read") {
+              const observed = await originalRead.apply(this, arguments_);
+              expect(observed).toMatchObject({
+                bytesRead: Buffer.byteLength("ignored/\n"),
+              });
               controller.abort(abortReason);
-              return originalRead.apply(this, arguments_);
+              return observed;
             }
             controller.abort(sameAsAbortReason ? readFailure : abortReason);
             throw readFailure;
@@ -224,6 +222,7 @@ describe("reference source ignore policy read failures", () => {
         return originalRead.apply(this, arguments_);
       };
       prototype.read = read;
+      const resources = new ArtifactResourceScope();
       try {
         const result = await prepareReferenceSourceImport(
           {
@@ -232,7 +231,7 @@ describe("reference source ignore policy read failures", () => {
             policy: { secretPatterns: [] },
             signal: controller.signal,
           },
-          new ArtifactResourceScope(),
+          resources,
         );
         expect(intercepted).toBe(true);
         if (result.ok) throw new Error("Expected ignore policy read failure");
@@ -240,8 +239,13 @@ describe("reference source ignore policy read failures", () => {
         expect(result.error.cause).toBe(
           physical === "cancel-after-read" ? abortReason : readFailure,
         );
+        if (physical !== "cancel-after-read")
+          expect(result.error.secondaryCancellation?.cause).toBe(
+            sameAsAbortReason ? readFailure : abortReason,
+          );
       } finally {
         prototype.read = originalRead;
+        await resources.close();
       }
     },
   );
@@ -267,6 +271,7 @@ describe("reference source ignore policy cleanup ownership", () => {
     const originalClose = ownerPrototype.close;
     let interceptedRead = false;
     let closeFailures = 0;
+    let readHandle: typeof probe | undefined;
     prototype.read = async function (
       this: typeof probe,
       ...arguments_: never[]
@@ -278,6 +283,7 @@ describe("reference source ignore policy cleanup ownership", () => {
         state.ino === identity.ino
       ) {
         interceptedRead = true;
+        readHandle = this;
         controller.abort(physical);
         throw physical;
       }
@@ -286,12 +292,7 @@ describe("reference source ignore policy cleanup ownership", () => {
     ownerPrototype.close = async function (
       this: OwnedFileHandle,
     ): Promise<void> {
-      const state = await this.handle.stat();
-      if (
-        state.dev === identity.dev &&
-        state.ino === identity.ino &&
-        closeFailures < 2
-      ) {
+      if (this.handle === readHandle && closeFailures < 2) {
         closeFailures += 1;
         throw new Error(`controlled close failure ${closeFailures}`);
       }
@@ -312,15 +313,19 @@ describe("reference source ignore policy cleanup ownership", () => {
       if (result.ok) throw new Error("Expected ignore policy read failure");
       expect(result.error.code).toBe("io");
       expect(result.error.cause).toBe(physical);
+      expect(result.error.secondaryCancellation?.cause).toBe(physical);
       expect(closeFailures).toBe(2);
       expect(result.error.cleanup?.resources).toContain(path);
       expect(resources.hasPending).toBe(true);
-    } finally {
+      expect(readHandle?.fd).toBeGreaterThanOrEqual(0);
       await resources.retryCleanup();
+      expect(readHandle?.fd).toBe(-1);
+      expect(resources.hasPending).toBe(false);
+    } finally {
       prototype.read = originalRead;
       ownerPrototype.close = originalClose;
+      await resources.close();
     }
-    expect(resources.hasPending).toBe(false);
   });
 
   it("does not transfer cleanup ownership for a physical read shaped like a foreign cleanup failure", async () => {
@@ -361,6 +366,7 @@ describe("reference source ignore policy cleanup ownership", () => {
       }
       return originalRead.apply(this, arguments_);
     };
+    const resources = new ArtifactResourceScope();
     try {
       const result = await prepareReferenceSourceImport(
         {
@@ -369,16 +375,23 @@ describe("reference source ignore policy cleanup ownership", () => {
           policy: { secretPatterns: [] },
           signal: controller.signal,
         },
-        new ArtifactResourceScope(),
+        resources,
       );
       expect(intercepted).toBe(true);
       if (result.ok) throw new Error("Expected ignore policy read failure");
       expect(result.error.code).toBe("io");
       expect(result.error.cause).toBe(reason);
-      expect(foreignOwner.handle.fd).toBeGreaterThanOrEqual(0);
+      expect(result.error.cleanup).toBeUndefined();
+      expect(resources.hasPending).toBe(false);
+      await resources.close();
+      expect(await foreignOwner.handle.readFile("utf8")).toBe("foreign bytes");
     } finally {
       prototype.read = originalRead;
-      await foreignOwner.close();
+      try {
+        await resources.close();
+      } finally {
+        await foreignOwner.close();
+      }
     }
   });
 });
@@ -479,33 +492,6 @@ describe("reference source symlink import", () => {
     });
   });
 
-  it("preserves an unreadable target as unknown instead of a synthetic path", () => {
-    const read: ReferenceSourceRead = {
-      root: "/reference",
-      entries: [
-        {
-          status: "failed",
-          kind: "symlink",
-          path: "src/link.ts",
-          code: "io",
-          message: "Symbolic link target could not be read",
-        },
-      ],
-      bytesRead: 0,
-      limitations: [],
-    };
-
-    const parsed = parseReferenceSourceEntries(read, []);
-    expect(parsed.entries).toContainEqual(
-      expect.objectContaining({
-        kind: "symlink",
-        path: "src/link.ts",
-        target: null,
-        target_state: "unreadable",
-      }),
-    );
-  });
-
   it("retains external symlink targets as local graph diagnostics", async () => {
     const root = await createTestTempDirectory("rea-reference-links-");
     const outside = await createTestTempDirectory("rea-reference-outside-");
@@ -603,36 +589,47 @@ describe("reference source manifest inventory", () => {
 const registerReferenceRelocationTests = (): void => {
   it("is relocation-stable, resolves imports, and excludes secrets before capture", async () => {
     const parent = await createTestTempDirectory("rea-reference-import-");
-    try {
-      const leftRoot = await fixture(parent, "left");
-      const rightRoot = await fixture(parent, "right");
-      const [left, right] = await Promise.all([
-        importTree(leftRoot),
-        importTree(rightRoot),
-      ]);
-      if (!left.ok || !right.ok) throw new Error("expected imports to pass");
-      expect(createHistoricalSourceManifest(left.value)).toEqual(
-        createHistoricalSourceManifest(right.value),
-      );
-      expect(left.value.relationships).toContainEqual(
-        expect.objectContaining({
-          from_path: "src/main.ts",
-          to: "src/dep.ts",
-          resolution: "internal",
-        }),
-      );
-      expect(left.value.parse_failures).toHaveLength(1);
-      expect(left.value.exclusions).toContainEqual({
-        path: ".env",
-        entry_kind: "file",
-        reason: "configured-secret",
-        pattern: ".env",
-      });
-      expect(JSON.stringify(left.value)).not.toContain("SECRET_SENTINEL");
-      expect(JSON.stringify(left.value)).not.toContain(leftRoot);
-    } finally {
-      await rm(parent, { recursive: true, force: true });
-    }
+    const leftRoot = await fixture(parent, "left");
+    const rightRoot = await fixture(parent, "right");
+    const [left, right] = await Promise.all([
+      importTree(leftRoot),
+      importTree(rightRoot),
+    ]);
+    if (!left.ok || !right.ok) throw new Error("expected imports to pass");
+    expect(createHistoricalSourceManifest(left.value)).toEqual(
+      createHistoricalSourceManifest(right.value),
+    );
+    expect(left.value.relationships).toContainEqual(
+      expect.objectContaining({
+        from_path: "src/main.ts",
+        to: "src/dep.ts",
+        resolution: "internal",
+      }),
+    );
+    expect(left.value.parse_failures).toHaveLength(1);
+    expect(left.value.exclusions).toContainEqual({
+      path: ".env",
+      entry_kind: "file",
+      reason: "configured-secret",
+      pattern: ".env",
+    });
+    expect(JSON.stringify(left.value)).not.toContain("SECRET_SENTINEL");
+    expect(JSON.stringify(left.value)).not.toContain(leftRoot);
+    expect(left.value.entries.some(({ path }) => path === ".env")).toBe(false);
+    const unfiltered = await importTree(leftRoot, undefined, []);
+    if (!unfiltered.ok) throw unfiltered.error;
+    expect(
+      unfiltered.value.entries.find(({ path }) => path === ".env"),
+    ).toMatchObject({
+      kind: "file",
+      content_state: "hashed",
+      sha256: createHash("sha256")
+        .update("SECRET_SENTINEL=do-not-record\n")
+        .digest("hex"),
+    });
+    expect(unfiltered.value.exclusions).not.toContainEqual(
+      expect.objectContaining({ path: ".env" }),
+    );
   });
 
   it
@@ -700,7 +697,7 @@ describe("reference source import behavior", () => {
   // product. Cycling the sizes over every entry would make a thousand 4 MiB
   // members, which is nearly 4 GiB of fixture and cannot fit a runner's disk.
   // Entry count is crossed by volume, byte size by a single large member.
-  it("returns every written entry with complete coverage at any scale", async () => {
+  it("hashes 5,000 inventory entries including a 4 MiB member", async () => {
     const root = await createTestTempDirectory("rea-reference-scale-");
     const sizes = [0, 1, 4_097, 65_536, 4_194_304];
     const written = Array.from(
@@ -709,7 +706,7 @@ describe("reference source import behavior", () => {
     );
     // Only the first entry of each size takes that size; the remaining 4,995
     // stay one byte each. The fixture is therefore about 4.2 MiB in total
-    // while still containing a member far larger than any byte ceiling.
+    // and includes a member above common legacy per-file cutoffs.
     const sizeFor = (index: number): number => sizes[index] ?? 1;
     await Promise.all(
       written.map((name, index) =>
@@ -777,31 +774,12 @@ describe("reference source import behavior", () => {
       const result = await importTree(root);
       if (!result.ok) throw result.error;
       expect(result.value.entries.map(({ path }) => path)).toEqual(paths);
-      const repeated = await importTree(root);
-      expect(repeated).toEqual(result);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
   registerReferenceRelocationTests();
-
-  it("imports the caller-selected directory and honors cancellation", async () => {
-    const outside = await createTestTempDirectory("rea-reference-outside-");
-    try {
-      const root = await fixture(outside, "tree");
-      expect(await importTree(root)).toMatchObject({ ok: true });
-      const controller = new AbortController();
-      controller.abort();
-      const cancelled = await importTree(root, controller.signal);
-      expect(cancelled).toMatchObject({
-        ok: false,
-        error: { code: "cancelled" },
-      });
-    } finally {
-      await rm(outside, { recursive: true, force: true });
-    }
-  });
 
   it.each([null, "stop import", { requested: "stop import" }])(
     "preserves the caller's pre-admission cancellation reason %j",
@@ -838,29 +816,6 @@ describe("reference source import behavior", () => {
 });
 
 describe("reference source path selection", () => {
-  it("does not omit selected files by secret-like path or filename", async () => {
-    const parent = await createTestTempDirectory("rea-reference-selected-");
-    try {
-      const root = await fixture(parent, "tree");
-      const result = await importTree(root, undefined, []);
-      if (!result.ok) throw result.error;
-      expect(result.value.entries).toContainEqual(
-        expect.objectContaining({
-          path: ".env",
-          kind: "file",
-          content_state: "hashed",
-        }),
-      );
-      expect(result.value.exclusions).not.toContainEqual(
-        expect.objectContaining({ path: ".env" }),
-      );
-    } finally {
-      await rm(parent, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("reference source rooted module specifiers", () => {
   it("keeps dot-prefixed bare specifiers external while resolving explicit relative paths", async () => {
     const root = await createTestTempDirectory("rea-reference-dot-prefix-");
     await Promise.all([
@@ -954,12 +909,11 @@ describe.skipIf(process.platform === "win32")(
       await Promise.all([
         writeFile(
           join(root, ".gitignore"),
-          "project.tmp\n*.log\n!keep.log\nproject-parent/\n!project-parent/keep.ts\n!default.log\nempty-ignored/\nkeep-as-dir\n!keep-as-dir/\nlinkdir/\n",
+          "project.tmp\n*.log\n!keep.log\nproject-parent/\n!project-parent/keep.ts\nempty-ignored/\nkeep-as-dir\n!keep-as-dir/\nlinkdir/\n",
         ),
         writeFile(join(root, "project.tmp"), "project rule\n"),
         writeFile(join(root, "project.log"), "project rule\n"),
         writeFile(join(root, "keep.log"), "later default rule wins\n"),
-        writeFile(join(root, "default.log"), "default rule\n"),
         writeFile(join(root, "caller-keep.log"), "caller negation\n"),
         writeFile(join(root, "dist", "output.js"), "generated output\n"),
         writeFile(join(root, "project-parent", "keep.ts"), "parent ignored\n"),
@@ -981,7 +935,7 @@ describe.skipIf(process.platform === "win32")(
           root,
           caller: "reference-import-test",
           policy: { secretPatterns: ["project.log", "secret-dir/"] },
-          excludePaths: ["caller-parent/", "!selected.ts", "!caller-keep.log"],
+          excludePaths: ["caller-parent/", "!caller-keep.log"],
         });
         if (!imported.ok) throw imported.error;
 

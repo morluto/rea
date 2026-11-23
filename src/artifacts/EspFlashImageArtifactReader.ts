@@ -1,6 +1,6 @@
 import type { FileHandle } from "node:fs/promises";
 
-import type { EspFlashImageMetadata } from "../domain/artifactFormatMetadata.js";
+import type { EspFlashImageMetadata } from "../domain/formatMetadata/firmwareMetadata.js";
 import { ESP_CHIP_TABLE_SOURCE } from "../domain/firmware/espChips.js";
 import {
   espErasedSlotLimitation,
@@ -20,7 +20,7 @@ import {
 import { offsetText } from "../domain/firmware/espImageStructures.js";
 import { ESP_OTA_SELECT_ENTRY_BYTES } from "../domain/firmware/espOtaData.js";
 import { isEspAppPartition } from "../domain/firmware/espPartitionTable.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import {
   decodeEspFlashImage,
   firstUnerasedInRange,
@@ -119,10 +119,7 @@ export class EspFlashImageArtifactReader extends PositionalArtifactReader {
       entries: plan.regions.map((region) =>
         regionEntry(region, written.get(region), fileSize),
       ),
-      coverage:
-        facts.coverage === "unknown" || limitations.length > 0
-          ? { status: facts.coverage, limitations }
-          : undefined,
+      coverage: { status: facts.coverage, limitations },
     };
   }
 
@@ -337,6 +334,7 @@ const layoutMetadata = (
         status: table.md5.status,
         stored: table.md5.stored,
         computed: table.md5.computed,
+        entries_after_checksum: table.md5.entriesAfterChecksum,
       },
     },
     partitions_outside_dump: table.partitions

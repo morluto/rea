@@ -7,9 +7,10 @@ import {
   inspectElfUnwindRangesInputSchema,
   type ElfUnwindRanges,
 } from "../../domain/native/elfUnwindRanges.js";
-import { parseElfUnwindRanges } from "../../native/elf/ElfUnwindTables.js";
+import { parseElfUnwindRangesFromHandle } from "../../native/elf/ElfUnwindTables.js";
 import {
   elfUnwindAbsentFixture,
+  elfUnwindByteSource,
   elfUnwindFixture,
   elfUnwindSectionlessFixture,
 } from "../../native/elf/ElfUnwindTables.fixture.js";
@@ -27,67 +28,16 @@ const undecodableHeaderPointer = (): Buffer => {
   bytes[Number(bytes.readBigUInt64LE(64 + 56 + 8)) + 1] = 0x0f;
   return bytes;
 };
-const report: ElfUnwindRanges = {
-  artifact: {
-    path: "/artifacts/app",
-    sha256: "a".repeat(64),
-    bytes: 512,
-  },
-  format: "elf64",
-  byte_order: "little",
-  machine: 62,
-  type: 3,
-  type_name: "shared",
-  eh_frame: { status: "absent", source: null, location: null },
-  eh_frame_hdr: {
-    status: "absent",
-    location: null,
-    version: null,
-    eh_frame_pointer_encoding: null,
-    fde_count_encoding: null,
-    table_encoding: null,
-    eh_frame_pointer: null,
-    fde_count: null,
-    table_entries: 0,
-  },
-  debug_frame: { status: "absent", location: null },
-  cies: [],
-  ranges: [],
-  page: {
-    offset: 0,
-    limit: 256,
-    returned: 0,
-    total: 0,
-    next_offset: null,
-  },
-  coverage: {
-    status: "complete",
-    total_ranges: 0,
-    total_cies: 0,
-    ranges_with_symbols: 0,
-    ranges_without_symbols: 0,
-    eh_frame_hdr_agreement: "unavailable",
-    examined_records: 0,
-  },
-  limitations: [
-    "No .eh_frame section or PT_GNU_EH_FRAME segment was declared.",
-    "No .eh_frame_hdr section or PT_GNU_EH_FRAME segment was declared.",
-    "CFA instructions are counted but not evaluated.",
-    ".debug_frame is absent; only .eh_frame was examined.",
-    "Symbol names, section names, and augmentation strings are target-derived and untrusted.",
-  ],
-};
-
 const parsed = (
   bytes: Buffer,
   raw: Readonly<Record<string, unknown>> = {},
-): ElfUnwindRanges => {
+): Promise<ElfUnwindRanges> => {
   const input = inspectElfUnwindRangesInputSchema.parse({
     path: "/artifacts/unwind.elf",
     ...raw,
   });
-  return parseElfUnwindRanges(
-    bytes,
+  return parseElfUnwindRangesFromHandle(
+    elfUnwindByteSource(bytes),
     {
       path: input.path,
       sha256: "a".repeat(64),
@@ -96,6 +46,8 @@ const parsed = (
     input,
   );
 };
+
+const report = await parsed(elfUnwindAbsentFixture());
 
 const accept = async (
   value: ElfUnwindRanges,
@@ -134,11 +86,10 @@ it("rejects a relative path and extra arguments before reading", async () => {
 
 it("records an absent unwind table for the selected ELF", async () => {
   const result = await accept(report);
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",
-    subject: { format: "elf", architecture: "x86_64" },
+    subject: { identity: { format: "elf", architecture: "x86_64" } },
     normalized_result: report,
   });
   expect(result.value.locations).toEqual([
@@ -209,17 +160,15 @@ it.each([
     elfUnwindFixture({ header: "match", headerCount: 0x7fffffff }),
   ],
 ] as const)("accepts parser output for %s", async (_label, bytes) => {
-  const value = parsed(bytes);
+  const value = await parsed(bytes);
   const result = await accept(value);
-  expect(result.ok, _label).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.normalized_result).toEqual(value);
 });
 
 it("accepts a paged parser report without changing coverage", async () => {
-  const value = parsed(elfUnwindFixture(), { offset: 1, limit: 1 });
+  const value = await parsed(elfUnwindFixture(), { offset: 1, limit: 1 });
   const result = await accept(value, { offset: 1, limit: 1 });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.normalized_result).toMatchObject({
     page: { offset: 1, limit: 1, returned: 1, total: 2, next_offset: null },
@@ -228,13 +177,12 @@ it("accepts a paged parser report without changing coverage", async () => {
 });
 
 it("bounds CIE Evidence locations by the page, not by the CIE count", async () => {
-  const value = parsed(elfUnwindFixture({ extraCies: 500 }), {
+  const value = await parsed(elfUnwindFixture({ extraCies: 500 }), {
     offset: 1,
     limit: 1,
   });
   expect(value.coverage.total_cies).toBe(502);
   const result = await accept(value, { offset: 1, limit: 1 });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.normalized_result).toMatchObject({
     cies: [{ index: 1 }],
@@ -244,8 +192,8 @@ it("bounds CIE Evidence locations by the page, not by the CIE count", async () =
 });
 
 it("rejects a page that returns a CIE none of its ranges name", async () => {
-  const full = parsed(elfUnwindFixture({ extraCies: 2 }));
-  const page = parsed(elfUnwindFixture({ extraCies: 2 }), {
+  const full = await parsed(elfUnwindFixture({ extraCies: 2 }));
+  const page = await parsed(elfUnwindFixture({ extraCies: 2 }), {
     offset: 1,
     limit: 1,
   });
@@ -260,11 +208,10 @@ it("rejects a page that returns a CIE none of its ranges name", async () => {
 });
 
 it("accepts an FDE with a zero LSDA under a CIE that declares an LSDA encoding", async () => {
-  const value = parsed(elfUnwindFixture({ zeroLsda: true }));
+  const value = await parsed(elfUnwindFixture({ zeroLsda: true }));
   expect(value.cies[1]?.lsda_encoding?.raw).toBe(0x1b);
   expect(value.ranges[1]?.lsda).toBeNull();
   const result = await accept(value);
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.normalized_result).toMatchObject({
     ranges: [{ lsda: null }, { lsda: null }],
@@ -287,14 +234,13 @@ it("accepts a header that declares a count but omits its search table", async ()
     )
       bytes[Number(bytes.readBigUInt64LE(at + 24)) + 3] = 0xff;
   }
-  const value = parsed(bytes);
+  const value = await parsed(bytes);
   expect(value.eh_frame_hdr).toMatchObject({
     status: "present",
     fde_count: 2,
     table_encoding: { raw: 0xff },
   });
   const result = await accept(value);
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.normalized_result).toMatchObject({
     coverage: { status: "complete", eh_frame_hdr_agreement: "unavailable" },
@@ -302,14 +248,13 @@ it("accepts a header that declares a count but omits its search table", async ()
 });
 
 it("accepts a null personality stored under an indirect encoding", async () => {
-  const value = parsed(elfUnwindFixture({ nullPersonality: true }));
+  const value = await parsed(elfUnwindFixture({ nullPersonality: true }));
   expect(value.cies[1]?.personality).toMatchObject({
     address: "0x0",
     indirect: false,
     encoding: { raw: 0x9b },
   });
   const result = await accept(value);
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.normalized_result).toMatchObject({
     ranges: [{ personality: null }, { personality: { address: "0x0" } }],
@@ -317,7 +262,7 @@ it("accepts a null personality stored under an indirect encoding", async () => {
 });
 
 it("rejects a direct personality reported as indirect", async () => {
-  const value = parsed(elfUnwindFixture({ nullPersonality: true }));
+  const value = await parsed(elfUnwindFixture({ nullPersonality: true }));
   const cie = value.cies[1];
   if (cie?.personality == null) throw new Error("fixture has no personality");
   cie.personality.encoding = { raw: 0x1b, name: "pcrel|sdata4" };
@@ -357,7 +302,7 @@ it.each([
     },
   ],
 ] as const)("rejects parser output with %s", async (_label, mutate) => {
-  const value = structuredClone(parsed(elfUnwindFixture()));
+  const value = structuredClone(await parsed(elfUnwindFixture()));
   mutate(value);
   const result = await accept(value);
   expect(result.ok).toBe(false);
@@ -365,21 +310,22 @@ it.each([
 });
 
 it("reports a header capped by max_ranges as an incomplete Result", async () => {
-  const value = parsed(elfUnwindFixture({ header: "duplicate-row" }), {
+  const value = await parsed(elfUnwindFixture({ header: "duplicate-row" }), {
     max_ranges: 2,
   });
   const result = await accept(value, { max_ranges: 2 });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.normalized_result).toMatchObject({
     eh_frame_hdr: { status: "incomplete", fde_count: 3, table_entries: 2 },
-    coverage: { status: "incomplete", eh_frame_hdr_agreement: "unavailable" },
+    coverage: { status: "partial", eh_frame_hdr_agreement: "unavailable" },
   });
 });
 
 it("rejects header table entries beyond the max_ranges budget", async () => {
   const value = structuredClone(
-    parsed(elfUnwindFixture({ header: "duplicate-row" }), { max_ranges: 2 }),
+    await parsed(elfUnwindFixture({ header: "duplicate-row" }), {
+      max_ranges: 2,
+    }),
   );
   value.eh_frame_hdr.table_entries = 3;
   const result = await accept(value, { max_ranges: 2 });
@@ -388,7 +334,7 @@ it("rejects header table entries beyond the max_ranges budget", async () => {
 });
 
 it("rejects a report whose artifact path is not the selected file", async () => {
-  const value = structuredClone(parsed(elfUnwindFixture()));
+  const value = structuredClone(await parsed(elfUnwindFixture()));
   value.artifact.path = "/artifacts/other";
   const result = await new ElfUnwindRangesService({
     identity,

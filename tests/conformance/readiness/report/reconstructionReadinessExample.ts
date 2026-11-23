@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../../src/domain/targetIdentity.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../../src/domain/evidenceBundle.js";
 import { READINESS_REQUIRED_CHECKS } from "./reconstructionReadinessJourneyFindings.js";
@@ -14,7 +15,7 @@ import {
 const HASH = "a".repeat(64);
 const sourceEvidence = (variant: string) =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     {
       id: "rea-readiness-fixture",
       name: "REA readiness fixture",

@@ -120,7 +120,7 @@ const objectTarget = (
     objectNode: slot,
     slot,
     slotApplicability: "resolved",
-    presence: fact.presence,
+    presence: operation.sourcePresence ?? fact.presence,
     receiverResolved:
       receiver.presence === "present" &&
       semanticContainer(receiver.value) !== null,
@@ -189,7 +189,7 @@ const addObjectUnknown = (
     family: "object-flow",
     relation_kinds: [relation],
     reason: "ambiguous-target",
-    detail: `Static ${operation.kind} property ${operation.propertyPath === null ? "path is unresolved" : semanticPropertyPointer(operation.propertyPath)} has ${target.presence} presence; its receiver is ${target.receiverResolved ? "a retained container" : "unresolved or not a retained container"}; object identity is ${operation.resolution}.`,
+    detail: `Static ${operation.kind} property ${operation.propertyPath === null ? "path is unresolved" : semanticPropertyPointer(operation.propertyPath)} has ${target.presence} presence; its receiver is ${target.receiverResolved ? "a retained container" : "unresolved or not a retained container"}; operation coverage is ${operation.resolution}.`,
     candidate_node_ids: [],
     evidence: unknownSemanticEvidence(context.file, operation.location),
   });

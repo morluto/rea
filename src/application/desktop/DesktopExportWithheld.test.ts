@@ -12,11 +12,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../resources/SafeOutputTree.js";
 import {
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
-} from "../../artifacts/ArtifactResourceScope.js";
+} from "../../resources/ArtifactResourceScope.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
@@ -374,7 +374,10 @@ it.skipIf(process.platform === "win32")(
     const release = ArtifactResourceScope.prototype.release;
     vi.spyOn(ArtifactResourceScope.prototype, "release").mockImplementation(
       async function (this: ArtifactResourceScope, owner) {
-        if (owner.kind === "output-tree") {
+        if (
+          owner.kind === "output-tree" &&
+          owner.tree instanceof SafeOutputTree
+        ) {
           const tree = owner.tree;
           isPublished = () => tree.published;
           closingPublished = true;
@@ -409,7 +412,9 @@ it.skipIf(process.platform === "win32")(
       for (const { owner } of failures) {
         expect(owner.kind).toBe("output-tree");
         if (owner.kind === "output-tree")
-          expect(owner.tree.published).toBe(true);
+          expect(
+            owner.tree instanceof SafeOutputTree && owner.tree.published,
+          ).toBe(true);
       }
       for (const cause of [bundleClose, copyClose])
         expect(
@@ -565,7 +570,15 @@ describe("exportDesktopApplication of withheld sign-in state", () => {
 
     const { root } = refused;
     const consent = join(root, "consent.json");
-    await writeFile(consent, JSON.stringify(CONSENT));
+    const consents = {
+      consents: Array.from({ length: 8_192 }, (_, index) => ({
+        ...CONSENT.consents[0]!,
+        subject: `record ${String(index)}`,
+      })),
+    };
+    const bytes = JSON.stringify(consents);
+    expect(Buffer.byteLength(bytes)).toBeGreaterThan(1024 * 1024);
+    await writeFile(consent, bytes);
     const { result, directory } = await exportWithheld({
       withhold: { paths: [SETTINGS] },
       seedWithheld: true,
@@ -578,7 +591,7 @@ describe("exportDesktopApplication of withheld sign-in state", () => {
     });
     expect(
       JSON.parse(await readFile(join(directory, "consent.json"), "utf8")),
-    ).toEqual(CONSENT);
+    ).toEqual(consents);
     expect(
       await readFile(join(directory, "envs/notes/env.toml"), "utf8"),
     ).not.toContain("[settings]");

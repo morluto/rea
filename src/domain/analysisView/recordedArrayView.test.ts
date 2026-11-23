@@ -1,12 +1,12 @@
+import { UNKNOWN_EVIDENCE_SUBJECT } from "../../../tests/fixtures/evidenceSubject.js";
+import { unknownTarget } from "../targetIdentity.js";
 import { expect, it } from "vitest";
 import { createEvidence } from "../evidence.js";
 import { MAX_JSON_DEPTH, type JsonValue } from "../jsonValue.js";
 import { projectAnalysisError } from "../analysisErrorProjection.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
-import {
-  analysisViewRequestSchema,
-  projectAnalysisView,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 const nested = (levels: number): JsonValue => {
   let value: JsonValue = "leaf";
@@ -26,7 +26,7 @@ const parent = (
   sealedResult: true,
   provider: { id: "fixture", name: "Fixture", version: "1" },
   artifact: null,
-  subject: null,
+  subject: UNKNOWN_EVIDENCE_SUBJECT,
   parameters,
   limitations: [],
 });
@@ -47,7 +47,7 @@ it("omits parent parameters that would exceed Evidence depth by one level", () =
   // leaf at depth 1000 there, and one level deeper under normalized_result.
   const parameters = nested(MAX_JSON_DEPTH - 1);
   const admitted = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "xrefs",
@@ -56,7 +56,7 @@ it("omits parent parameters that would exceed Evidence depth by one level", () =
       rawResult: { values: ["row"] },
     },
   );
-  expect(admitted.parameters).toStrictEqual(parameters);
+  expect(JSON.stringify(admitted.parameters)).toBe(JSON.stringify(parameters));
   const projected = project(parent(parameters));
   if (!projected.ok) throw projected.error;
   expect(projected.value).toMatchObject({
@@ -67,7 +67,7 @@ it("omits parent parameters that would exceed Evidence depth by one level", () =
   expect(projected.value.limitations.join("\n")).toContain("JSON depth");
   expect(() =>
     createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "view", name: "View", version: "1" },
       {
         operation: "inspect_analysis_view",
@@ -85,20 +85,19 @@ it("keeps parameters that still fit one level below the Evidence root", () => {
   if (!projected.ok) throw projected.error;
   if (projected.value.kind !== "recorded-array")
     throw new Error("expected a recorded-array page");
-  expect(projected.value.source_parameters).toEqual(parameters);
+  expect(JSON.stringify(projected.value.source_parameters)).toBe(
+    JSON.stringify(parameters),
+  );
 });
 
 it("returns a typed depth refusal instead of throwing when a row cannot be nested", () => {
   const projected = project(parent({}, nested(MAX_JSON_DEPTH - 1)));
-  expect(projected.ok).toBe(false);
-  if (projected.ok) return;
+  if (projected.ok) throw new Error("expected a depth refusal");
   expect(projectAnalysisError(projected.error)).toMatchObject({
     code: "resource_constraint",
     details: { reported_limits: { maximum_json_depth: MAX_JSON_DEPTH } },
+    remediation: { action: expect.stringContaining("JSON depth") },
   });
-  expect(projectAnalysisError(projected.error).remediation.action).toContain(
-    "JSON depth",
-  );
 });
 
 it("stops before a later row exceeds the output Evidence depth", () => {
@@ -115,9 +114,12 @@ it("stops before a later row exceeds the output Evidence depth", () => {
     }),
   );
   if (!projected.ok) throw projected.error;
-  expect(projected.value).toMatchObject({
-    kind: "recorded-array",
-    rows: [first],
-    coverage: { examined: 1, total: 3, next_offset: 1 },
+  if (projected.value.kind !== "recorded-array")
+    throw new Error("expected a recorded-array page");
+  expect(projected.value.coverage).toMatchObject({
+    examined: 1,
+    total: 3,
+    next_offset: 1,
   });
+  expect(JSON.stringify(projected.value.rows)).toBe(JSON.stringify([first]));
 });

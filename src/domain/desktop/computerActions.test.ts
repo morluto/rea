@@ -1,31 +1,50 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  computerActionInputSchema,
-  driverCall,
-  w3cKeys,
-} from "./computerActions.js";
+import { computerActionInputSchema, driverCall } from "./computerActions.js";
 
 describe("computer actions", () => {
   it("translates model key spellings to W3C names and keeps W3C names and characters", () => {
-    expect(w3cKeys(["ctrl+s"])).toEqual(["Control", "s"]);
-    expect(w3cKeys(["cmd+Shift+z"])).toEqual(["Meta", "Shift", "z"]);
-    expect(w3cKeys(["Return", "esc", "pgdn", "f5", "space"])).toEqual([
-      "Enter",
-      "Escape",
-      "PageDown",
-      "F5",
-      " ",
-    ]);
-    expect(w3cKeys(["Control", "ArrowUp", "+", "ctrl++"])).toEqual([
+    const keys = [
+      "ctrl+s",
+      "cmd+Shift+z",
+      "Return",
+      "esc",
+      "pgdn",
+      "f5",
+      "space",
       "Control",
       "ArrowUp",
       "+",
-      "Control",
-      "+",
-    ]);
-    // An unknown name passes through for the driver to refuse with its hint.
-    expect(w3cKeys(["Hyper"])).toEqual(["Hyper"]);
+      "ctrl++",
+      // An unknown name passes through for the driver to refuse with its hint.
+      "Hyper",
+    ];
+    expect(driverCall("key", { keys })).toEqual({
+      ok: true,
+      value: {
+        tool: "computer_key",
+        arguments: {
+          keys: [
+            "Control",
+            "s",
+            "Meta",
+            "Shift",
+            "z",
+            "Enter",
+            "Escape",
+            "PageDown",
+            "F5",
+            " ",
+            "Control",
+            "ArrowUp",
+            "+",
+            "Control",
+            "+",
+            "Hyper",
+          ],
+        },
+      },
+    });
   });
 
   it("passes the driver's arguments through and translates key fields", () => {

@@ -1,3 +1,4 @@
+import { unescapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { isNameLikeKey } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
@@ -19,11 +20,9 @@ const documentAt = (view: JsonValue | null, pointer: string) => {
 
 /** The value of the name-like attribute a pointer's last step names its element by, as `label` for `[name=elementInformation][@name=label]`. */
 const fieldKeyOf = (element: string) =>
-  selectorOf(
-    (element.split("/").at(-1) ?? "")
-      .replaceAll("~1", "/")
-      .replaceAll("~0", "~"),
-  )?.find(({ prefix, key }) => prefix === "@" && isNameLikeKey(key))?.value;
+  selectorOf(unescapeJsonPointerToken(element.split("/").at(-1) ?? ""))?.find(
+    ({ prefix, key }) => prefix === "@" && isNameLikeKey(key),
+  )?.value;
 
 /**
  * Text an app shows of another field it keeps, which changed alike: a text

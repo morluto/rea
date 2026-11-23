@@ -1,69 +1,52 @@
 import { appendCallerPath } from "../filesystem/callerPath.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import {
-  copyFile,
-  lstat,
-  mkdir,
-  open,
-  realpath,
-  rename,
-  rm,
-} from "node:fs/promises";
+import { lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
+  type ArtifactResourceScope,
   withArtifactFileHandle,
   withArtifactRegularFile,
   assertArtifactReadActive,
   artifactFilePrimaryFacts,
   mapArtifactFileFailure,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import {
   sameRegularFileState,
   RegularFileChangedError,
 } from "../filesystem/RegularFile.js";
 import { acquireOwnedLease, type OwnedLease } from "../process/OwnedLease.js";
 import {
-  ghidraFileFailure,
+  copyGhidraRegularFile,
+  ghidraFileDialect,
   readGhidraProfileArtifact,
 } from "./GhidraFileArtifacts.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
-const sourceIdentitySchema = z
+const sourceSchema = z
   .object({
     file: z.string().regex(/^program-[a-f0-9-]{36}\.gzf$/),
     sha256: digest,
+    kind: z.enum(["initial-analysis", "retained"]),
   })
   .strict();
-const sourceSchema = sourceIdentitySchema.extend({
-  kind: z.enum(["initial-analysis", "retained"]),
-});
 type CheckpointSource = z.infer<typeof sourceSchema>;
-const manifestIdentitySchema = z.object({
-  target_sha256: digest,
-  base_profile_digest: digest,
-});
-const manifestSchema = z.union([
-  manifestIdentitySchema
-    .extend({ version: z.literal(2), source: sourceSchema })
-    .strict(),
-  // Earlier local checkpoints have no initial-generation proof. Retain their
-  // data, binding their identity to the verified content rather than guessing.
-  manifestIdentitySchema
-    .extend({ version: z.literal(1), source: sourceIdentitySchema })
-    .strict()
-    .transform((value) => ({
-      ...value,
-      version: 2 as const,
-      source: { ...value.source, kind: "retained" as const },
-    })),
-]);
+const manifestSchema = z
+  .object({
+    version: z.literal(2),
+    target_sha256: digest,
+    base_profile_digest: digest,
+    source: sourceSchema,
+  })
+  .strict();
 const stateSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("initial-analysis") }).strict(),
   z.object({ kind: z.literal("retained"), sha256: digest }).strict(),
@@ -155,14 +138,15 @@ async function readSource(
     );
   } catch (cause: unknown) {
     if (missing(cause) && !resources.hasPending) return null;
-    throw ghidraFileFailure(
+    throw classifyProviderFailure(
       mapArtifactFileFailure(cause, (primary) =>
         primary instanceof SyntaxError || primary instanceof z.ZodError
           ? failure(selection.directory, "the manifest is malformed", primary)
           : primary,
       ),
-      "resolve_analysis_profile",
-      { path: appendCallerPath(selection.directory, "current.json") },
+      ghidraFileDialect("resolve_analysis_profile", {
+        path: appendCallerPath(selection.directory, "current.json"),
+      }),
     );
   }
   if (
@@ -178,7 +162,10 @@ async function readSource(
   try {
     actual = await hashGhidraPackedProgram(path, resources, signal);
   } catch (cause: unknown) {
-    throw ghidraFileFailure(cause, "resolve_analysis_profile", { path });
+    throw classifyProviderFailure(
+      cause,
+      ghidraFileDialect("resolve_analysis_profile", { path }),
+    );
   }
   if (actual !== manifest.source.sha256)
     throw failure(
@@ -196,9 +183,7 @@ export async function resolveGhidraCheckpoint(
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
 ): Promise<GhidraCheckpointSelection> {
-  const key = createHash("sha256")
-    .update(JSON.stringify([targetSha256, profile.digest]))
-    .digest("hex");
+  const key = sha256Hex(JSON.stringify([targetSha256, profile.digest]));
   const selection = {
     directory: appendCallerPath(root, key),
     key,
@@ -217,7 +202,8 @@ export class GhidraCheckpoint {
   #source: CheckpointSource | null | undefined;
   #state: GhidraCheckpointSelection["state"];
   readonly #pendingRemoval = new Set<string>();
-  readonly #cleanupFailures = new Set<ProviderCleanupError>();
+  /** Reported by every removal failure until a retry removes every file. */
+  #cleanupRelease = new AnalysisCleanupRelease();
   #publishedInput: string | undefined;
   constructor(
     readonly selection: GhidraCheckpointSelection,
@@ -326,45 +312,35 @@ export class GhidraCheckpoint {
     let failed = false;
     try {
       assertArtifactReadActive(signal);
-      await copyFile(path, destination, constants.COPYFILE_EXCL);
-      const sha256 = await hashGhidraPackedProgram(
-        destination,
-        this.resources,
+      const hash = createHash("sha256");
+      await copyGhidraRegularFile(path, destination, this.resources, {
         signal,
-      );
+        hash,
+        sync: true,
+      });
+      const sha256 = hash.digest("hex");
       const source: CheckpointSource = {
         file,
         sha256,
         kind: previous === null ? "initial-analysis" : "retained",
       };
-      for (const [output, bytes] of [
-        [destination, undefined],
-        [
-          temporary,
-          JSON.stringify({
-            version: 2,
-            target_sha256: this.selection.target_sha256,
-            base_profile_digest: this.selection.base_profile_digest,
-            source,
-          }),
-        ],
-      ] as const) {
-        const handle = await open(
-          output,
-          bytes === undefined ? "r+" : "wx",
-          0o600,
-        );
-        await withArtifactFileHandle(
-          output,
-          handle,
-          this.resources,
-          signal,
-          async (handle) => {
-            if (bytes !== undefined) await handle.writeFile(bytes);
-            await handle.sync();
-          },
-        );
-      }
+      const metadata = JSON.stringify({
+        version: 2,
+        target_sha256: this.selection.target_sha256,
+        base_profile_digest: this.selection.base_profile_digest,
+        source,
+      });
+      const handle = await open(temporary, "wx", 0o600);
+      await withArtifactFileHandle(
+        temporary,
+        handle,
+        this.resources,
+        signal,
+        async (handle) => {
+          await handle.writeFile(metadata);
+          await handle.sync();
+        },
+      );
       assertArtifactReadActive(signal);
       await rename(
         temporary,
@@ -388,19 +364,28 @@ export class GhidraCheckpoint {
     } catch (cause: unknown) {
       if (failed)
         throw analysisErrorWithCleanupFailure(
-          ghidraFileFailure(primary, "checkpoint_program", {
-            path: this.selection.directory,
-          }),
-          ghidraFileFailure(cause, "checkpoint_program", {
-            path: this.selection.directory,
-          }),
+          classifyProviderFailure(
+            primary,
+            ghidraFileDialect("checkpoint_program", {
+              path: this.selection.directory,
+            }),
+          ),
+          classifyProviderFailure(
+            cause,
+            ghidraFileDialect("checkpoint_program", {
+              path: this.selection.directory,
+            }),
+          ),
         );
       throw cause;
     }
     if (failed)
-      throw ghidraFileFailure(primary, "checkpoint_program", {
-        path: this.selection.directory,
-      });
+      throw classifyProviderFailure(
+        primary,
+        ghidraFileDialect("checkpoint_program", {
+          path: this.selection.directory,
+        }),
+      );
     assertArtifactReadActive(signal);
   }
 
@@ -414,17 +399,16 @@ export class GhidraCheckpoint {
           "ghidra",
           [...this.#pendingRemoval],
           {
-            reason: `Checkpoint file cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+            reason: `Checkpoint file cleanup failed: ${errorMessage(cause)}`,
             checkpoint: this.observation,
           },
           { cause },
         );
-        this.#cleanupFailures.add(error);
-        throw error;
+        throw this.#cleanupRelease.bind(error);
       }
     }
-    for (const failure of this.#cleanupFailures) failure.resolveCleanup();
-    this.#cleanupFailures.clear();
+    this.#cleanupRelease.confirm();
+    this.#cleanupRelease = new AnalysisCleanupRelease();
   }
   async close(): Promise<void> {
     await this.retryCleanup();

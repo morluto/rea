@@ -1,16 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import {
   attachManagedDecodeBudget,
   ManagedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
-import { memberListRowLookup } from "./ManagedMemberPointers.js";
-import { readManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+} from "../domain/managed/managedDecodeBudget.js";
+import { memberListRowLookup } from "../domain/managed/managedMemberPointers.js";
+import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import { buildManagedMemberPointerFixture } from "./ManagedPe.fixture.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
-import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
-
-const representationCapacity = 64 * 1024 * 1024;
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
+import { ManagedReaderFailure } from "../domain/managed/managedReaderFailure.js";
 
 const pointerFixture = () => {
   const bytes = buildManagedMemberPointerFixture();
@@ -25,72 +23,49 @@ const pointerFixture = () => {
   // the metadata version/string admission already exercised by the parser.
   const budget = new ManagedDecodeBudget();
   attachManagedDecodeBudget(layout, budget);
-  const indexBytes =
-    ((layout.table(6)?.rowCount ?? 0) + 1) * Uint32Array.BYTES_PER_ELEMENT +
-    256;
-  return { bytes, layout, budget, indexBytes };
+  // Two MethodDef rows and the zero sentinel need three uint32 slots.
+  return { bytes, layout, budget, indexBytes: 3 * 4 + 256 };
 };
 
-describe("managed member pointer index capacity", () => {
-  it("rejects insufficient capacity before allocating the inverse index", () => {
+it.each([
+  ["one byte short", 1, 0],
+  ["exact capacity", 0, 1],
+] as const)(
+  "constructs the inverse pointer index at %s",
+  (_label, shortfall, expectedAllocations) => {
     const { bytes, layout, budget, indexBytes } = pointerFixture();
-    budget.reserve(representationCapacity - indexBytes + 1, null);
+    budget.reserve(budget.maximumBytes - indexBytes + shortfall, null);
+    const lookup = () => memberListRowLookup(bytes, layout, 6);
     let allocations = 0;
-    let failure: unknown;
-    // Proxy forwards static BYTES_PER_ELEMENT too: losing it would produce a
-    // NaN admission failure and falsely pass a before-allocation assertion.
+    // Forward static width facts too so invalid allocation setup cannot pass as refusal.
     vi.stubGlobal(
       "Uint32Array",
       new Proxy(Uint32Array, {
-        construct(target, arguments_, newTarget) {
-          allocations += 1;
-          return Reflect.construct(target, arguments_, newTarget);
+        construct(target, args, newTarget) {
+          allocations++;
+          return Reflect.construct(target, args, newTarget);
         },
       }),
     );
     try {
-      memberListRowLookup(bytes, layout, 6);
-    } catch (cause: unknown) {
-      failure = cause;
+      if (shortfall === 1) {
+        expect(lookup).toThrow(
+          expect.objectContaining({
+            issue: expect.objectContaining({
+              code: "resource-limit",
+              scope: "metadata.representation",
+              offset: layout.table(5)?.offset,
+            }),
+          }),
+        );
+      } else {
+        for (const read of [lookup(), lookup()])
+          expect([read(1), read(2)]).toEqual([2, 1]);
+        expect(() => budget.reserve(1, null)).toThrow(ManagedReaderFailure);
+      }
+      expect(allocations).toBe(expectedAllocations);
     } finally {
       vi.unstubAllGlobals();
     }
-
-    expect(failure).toBeInstanceOf(ManagedReaderFailure);
-    expect(failure).toMatchObject({
-      issue: {
-        code: "resource-limit",
-        scope: "metadata.representation",
-        offset: layout.table(5)?.offset,
-      },
-    });
-    expect(allocations).toBe(0);
-  });
-
-  it("reuses one layout's index without allocating or charging it again", () => {
-    const { bytes, layout, budget, indexBytes } = pointerFixture();
-    budget.reserve(representationCapacity - indexBytes, null);
-    let allocations = 0;
-    let observed: number[];
-    vi.stubGlobal(
-      "Uint32Array",
-      new Proxy(Uint32Array, {
-        construct(target, arguments_, newTarget) {
-          allocations += 1;
-          return Reflect.construct(target, arguments_, newTarget);
-        },
-      }),
-    );
-    try {
-      const first = memberListRowLookup(bytes, layout, 6);
-      const repeated = memberListRowLookup(bytes, layout, 6);
-      observed = [first(1), first(2), repeated(1), repeated(2)];
-    } finally {
-      vi.unstubAllGlobals();
-    }
-
-    expect(observed).toEqual([2, 1, 2, 1]);
-    expect(allocations).toBe(1);
-    expect(() => budget.reserve(1, null)).toThrow(ManagedReaderFailure);
-  });
-});
+  },
+);

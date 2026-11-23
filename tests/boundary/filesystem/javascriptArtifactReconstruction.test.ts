@@ -16,7 +16,7 @@ import { scanArtifactInventory } from "../../fixtures/artifactInventory.js";
 import type {
   ArtifactEntry,
   ArtifactReader,
-} from "../../../src/artifacts/ArtifactReader.js";
+} from "../../../src/resources/ArtifactReader.js";
 import { writeJavaScriptArtifactFixture } from "../../fixtures/javascriptArtifactApplication.js";
 
 it("reads local source maps as part of static artifact analysis", async () => {
@@ -383,7 +383,7 @@ it("retains every repeated content observation and containment path", async () =
     truncated: false,
     omitted_count: 0,
   });
-}, 15_000);
+});
 
 it("rejects NUL paths through the public request contract before reconstruction", async () => {
   const input = { input_path: "invalid\u0000.asar" };

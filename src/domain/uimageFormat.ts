@@ -1,6 +1,8 @@
 import { crc32 } from "node:zlib";
 
+import { BinaryReader } from "./binaryContainer.js";
 import { err, ok, type Result } from "./result.js";
+import { strictUtf8Decoder } from "./strictUtf8.js";
 
 /**
  * U-Boot legacy uImage header (U-Boot `include/image.h`, all fields
@@ -13,9 +15,11 @@ export const UIMAGE_NAME_LENGTH = 32;
 
 /** Cap on multi-image sub-images: one inventory entry per sub-image. */
 export const UIMAGE_MAX_SUB_IMAGES = 4096;
+const UIMAGE_SIZE_ENTRY_BYTES = 4;
 
 /** Bytes of payload prefix that can hold a maximal multi-image size table. */
-export const UIMAGE_MULTI_TABLE_WINDOW = (UIMAGE_MAX_SUB_IMAGES + 1) * 4;
+export const UIMAGE_MULTI_TABLE_WINDOW =
+  (UIMAGE_MAX_SUB_IMAGES + 1) * UIMAGE_SIZE_ENTRY_BYTES;
 
 /**
  * Multi (4) and script (6) payloads begin with the size table: mkimage writes
@@ -33,7 +37,7 @@ export interface UImageSubImage {
 }
 
 export interface UImageHeaderFields {
-  readonly magic: number;
+  readonly magic: typeof UIMAGE_MAGIC;
   readonly timestamp: number;
   readonly timestampIso: string;
   readonly payloadSize: number;
@@ -191,11 +195,14 @@ const malformed = (message: string): UImageParseError => ({
   _tag: "UImageFormatFailure",
   message,
 });
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const UTF8 = strictUtf8Decoder("preserve");
 
 /** True when the first four bytes are the U-Boot legacy magic. */
 export const hasUImageMagic = (prefix: Buffer): boolean =>
-  prefix.length >= 4 && prefix.readUInt32BE(0) === UIMAGE_MAGIC;
+  prefix.length >= 4 &&
+  ((prefix[0]! << 24) | (prefix[1]! << 16) | (prefix[2]! << 8) | prefix[3]!) >>>
+    0 ===
+    UIMAGE_MAGIC;
 
 /**
  * Parse the 64-byte header and verify its CRC32 (computed over the header
@@ -211,14 +218,20 @@ export const parseUImageHeaderFields = (
         `uImage header is truncated: ${header.length} bytes, expected ${UIMAGE_HEADER_SIZE}`,
       ),
     );
-  if (header.readUInt32BE(0) !== UIMAGE_MAGIC)
+  const reader = new BinaryReader(
+    header.subarray(0, UIMAGE_HEADER_SIZE),
+    false,
+    "uimage",
+  );
+  const magic = reader.u32(0);
+  if (magic !== UIMAGE_MAGIC)
     return err(
       malformed(
-        `uImage magic mismatch: expected 0x${UIMAGE_MAGIC.toString(16)}, found 0x${header.readUInt32BE(0).toString(16)}`,
+        `uImage magic mismatch: expected 0x${UIMAGE_MAGIC.toString(16)}, found 0x${magic.toString(16)}`,
       ),
     );
-  const declaredHeaderCrc = header.readUInt32BE(4);
-  const zeroed = Buffer.from(header.subarray(0, UIMAGE_HEADER_SIZE));
+  const declaredHeaderCrc = reader.u32(4);
+  const zeroed = Buffer.from(reader.bytes);
   zeroed.writeUInt32BE(0, 4);
   const computedHeaderCrc = crc32(zeroed);
   if (computedHeaderCrc !== declaredHeaderCrc)
@@ -227,8 +240,8 @@ export const parseUImageHeaderFields = (
         `uImage header CRC32 mismatch: declared 0x${declaredHeaderCrc.toString(16)}, computed 0x${computedHeaderCrc.toString(16)}`,
       ),
     );
-  const timestamp = header.readUInt32BE(8);
-  const nameBytes = header.subarray(32, 32 + UIMAGE_NAME_LENGTH);
+  const timestamp = reader.u32(8);
+  const nameBytes = reader.range(32, UIMAGE_NAME_LENGTH, "uImage image name");
   const nul = nameBytes.indexOf(0);
   let name: string | null;
   try {
@@ -238,19 +251,19 @@ export const parseUImageHeaderFields = (
   } catch {
     name = null;
   }
-  const os = header[28] ?? 0;
-  const arch = header[29] ?? 0;
-  const type = header[30] ?? 0;
-  const compression = header[31] ?? 0;
+  const os = reader.bytes[28] ?? 0;
+  const arch = reader.bytes[29] ?? 0;
+  const type = reader.bytes[30] ?? 0;
+  const compression = reader.bytes[31] ?? 0;
   return ok({
-    magic: UIMAGE_MAGIC,
+    magic,
     timestamp,
     timestampIso: new Date(timestamp * 1000).toISOString(),
-    payloadSize: header.readUInt32BE(12),
-    loadAddress: header.readUInt32BE(16),
-    entryPoint: header.readUInt32BE(20),
+    payloadSize: reader.u32(12),
+    loadAddress: reader.u32(16),
+    entryPoint: reader.u32(20),
     headerCrc32: declaredHeaderCrc,
-    dataCrc32: header.readUInt32BE(24),
+    dataCrc32: reader.u32(24),
     os,
     osName: named(OS_NAMES, os),
     arch,
@@ -282,17 +295,22 @@ export const parseMultiImageTable = (
     return err(
       malformed("uImage payload size is not an exact nonnegative extent"),
     );
+  const table = new BinaryReader(
+    prefix.subarray(0, Math.min(prefix.length, payloadSize)),
+    false,
+    "uimage",
+  );
   const sizes: number[] = [];
   let cursor = 0;
   for (;;) {
-    if (cursor + 4 > prefix.length || cursor + 4 > payloadSize)
+    if (cursor + UIMAGE_SIZE_ENTRY_BYTES > table.bytes.length)
       return err(
         malformed(
           "uImage multi-image size table has no zero terminator inside the payload",
         ),
       );
-    const size = prefix.readUInt32BE(cursor);
-    cursor += 4;
+    const size = table.u32(cursor);
+    cursor += UIMAGE_SIZE_ENTRY_BYTES;
     if (size === 0) break;
     sizes.push(size);
     if (sizes.length > UIMAGE_MAX_SUB_IMAGES) {
@@ -304,7 +322,7 @@ export const parseMultiImageTable = (
           (index + 1 < sizes.length ? Math.ceil(current / 4) * 4 : current),
         0,
       );
-      if (cursor + 4 + minimumData > payloadSize)
+      if (cursor + UIMAGE_SIZE_ENTRY_BYTES + minimumData > payloadSize)
         return err(
           malformed(
             "uImage multi-image table and declared sub-images cannot fit in the payload",

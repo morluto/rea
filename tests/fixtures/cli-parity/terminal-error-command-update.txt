@@ -1,0 +1,7 @@
+$ rea doctor --update  # stdout is a terminal
+exit: 1
+--- stdout
+Error (UPDATE_FAILED): Use 'rea update' to update the identified installation. The '--update' alias accepts only global output flags.
+<end>
+--- stderr
+<end>

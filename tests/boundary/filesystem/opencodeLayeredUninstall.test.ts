@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -10,9 +11,12 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { effectiveClientConfiguration } from "../../../src/application/ClientConfigurationFiles.js";
 import { parseClientConfiguration } from "../../../src/application/ClientConfigurationDocument.js";
 
-it.each(["native", "legacy"])(
-  "retains an owned %s lower layer when a foreign upper layer inherits its fields",
-  async (dialect) => {
+it.each([
+  { dialect: "native", status: "complete" },
+  { dialect: "legacy", status: "failed" },
+] as const)(
+  "reports $status when removing a lower owned row under a partial $dialect row",
+  async ({ dialect, status }) => {
     const home = await createTestTempDirectory("rea-opencode-layered-foreign-");
     const directory = join(home, ".config/opencode");
     await mkdir(directory, { recursive: true });
@@ -33,14 +37,16 @@ it.each(["native", "legacy"])(
           }
         : {
             mcp: {
-              servers: {},
               rea: { type: "local", command: ["rea", "mcp"], enabled: true },
             },
           },
     );
-    const partial = JSON.stringify({
-      mcp: { servers: { rea: { command: ["/usr/bin/false"] } } },
-    });
+    const upperRow = { command: ["/usr/bin/false"] };
+    const partial = JSON.stringify(
+      dialect === "native"
+        ? { mcp: { servers: { rea: upperRow } } }
+        : { mcp: { rea: upperRow } },
+    );
     await writeFile(lower, owned);
     await writeFile(upper, partial);
     const effective = async () =>
@@ -54,28 +60,44 @@ it.each(["native", "legacy"])(
             sourcePath,
           })),
         ),
+        undefined,
+        HOST_PLATFORM.platform,
       )?.servers.rea;
     const before = await effective();
-    expect(before).toMatchObject({
-      type: "local",
-      command: ["/usr/bin/false"],
-      disabled: false,
-    });
+    expect(before).toEqual(
+      dialect === "native"
+        ? upperRow
+        : { ...upperRow, type: "local", disabled: false },
+    );
     const result = await runUninstall(
       false,
       systemUninstallHost(home, undefined, {
         XDG_CONFIG_HOME: join(home, ".config"),
       }),
     );
-    expect(result.status).toBe("failed");
+    expect(result.status).toBe(status);
     expect(result.items).toContainEqual(
-      expect.objectContaining({
-        name: "opencode",
-        status: "failed",
-        detail: expect.stringContaining("change an unowned"),
-      }),
+      expect.objectContaining(
+        status === "failed"
+          ? {
+              name: "opencode",
+              status: "failed",
+              detail: expect.stringContaining("change an unowned"),
+            }
+          : { name: "opencode", status: "removed" },
+      ),
     );
-    expect(await readFile(lower, "utf8")).toBe(owned);
+    if (status === "failed") {
+      expect(await readFile(lower, "utf8")).toBe(owned);
+      await expect(access(`${lower}.rea.backup`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } else {
+      expect(JSON.parse(await readFile(lower, "utf8"))).toEqual({
+        mcp: { servers: {} },
+      });
+      expect(await readFile(`${lower}.rea.backup`, "utf8")).toBe(owned);
+    }
     expect(await readFile(upper, "utf8")).toBe(partial);
     expect(await effective()).toEqual(before);
   },

@@ -101,7 +101,6 @@ cliTest.for([
   "policy_filtered",
 ] as const)(
   "does not infer an accessibility change from a %s tree",
-  { timeout: 60_000 },
   async (coverage, { cli }) => {
     const before = accessibleCapture();
     const after = structuredClone(before);
@@ -158,7 +157,6 @@ cliTest.for([
   ["known roles differ", "button", "link", "changed"],
 ] as const)(
   "does not infer role equality or change when %s",
-  { timeout: 60_000 },
   async ([_label, beforeRole, afterRole, status], { cli }) => {
     const before = accessibleCapture();
     const after = structuredClone(before);
@@ -218,7 +216,6 @@ cliTest(
       },
     });
   },
-  60_000,
 );
 
 cliTest(

@@ -1,9 +1,9 @@
 import { err, ok, type Result } from "../result.js";
 
 /** ":" + count + address + type + 255 data bytes + checksum, excluding EOL. */
-export const INTEL_HEX_MAX_LINE_CHARS = 521;
+const INTEL_HEX_MAX_LINE_CHARS = 521;
 /** "S" + type + count + 255 counted bytes, excluding EOL. */
-export const SREC_MAX_LINE_CHARS = 514;
+const SREC_MAX_LINE_CHARS = 514;
 
 export type HexRecordEncoding = "intel-hex" | "srec";
 
@@ -62,11 +62,24 @@ const HEX_VALUES = ((): Int8Array => {
   return table;
 })();
 
+const INTEL_HEX_TYPE_NAMES: readonly string[] = [
+  "00",
+  "01",
+  "02",
+  "03",
+  "04",
+  "05",
+];
+
 export const hex = (value: number, digits: number): string =>
   value.toString(16).padStart(digits, "0");
 
-export const readBigEndian = (bytes: Uint8Array): number =>
-  bytes.reduce((value, byte) => value * 256 + byte, 0);
+export const readBigEndian = (bytes: Uint8Array): number => {
+  let value = 0;
+  for (let index = 0; index < bytes.length; index += 1)
+    value = value * 256 + bytes[index]!;
+  return value;
+};
 
 export const maxLineChars = (encoding: HexRecordEncoding): number =>
   encoding === "intel-hex" ? INTEL_HEX_MAX_LINE_CHARS : SREC_MAX_LINE_CHARS;
@@ -84,6 +97,7 @@ export const trimTrailingBlanks = (
 const decodeHexDigits = (
   line: Uint8Array,
   from: number,
+  scratch?: Uint8Array,
 ): Result<Uint8Array, string> => {
   for (let column = from; column < line.length; column += 1)
     if (HEX_VALUES[line[column] ?? 0] === -1)
@@ -92,23 +106,33 @@ const decodeHexDigits = (
       );
   if ((line.length - from) % 2 !== 0)
     return err(`odd number of hex digits (${String(line.length - from)})`);
-  const bytes = new Uint8Array((line.length - from) / 2);
-  for (let index = 0; index < bytes.length; index += 1)
+  const byteLength = (line.length - from) / 2;
+  const bytes =
+    scratch !== undefined && scratch.length >= byteLength
+      ? scratch.subarray(0, byteLength)
+      : new Uint8Array(byteLength);
+  for (let index = 0; index < byteLength; index += 1)
     bytes[index] =
       (HEX_VALUES[line[from + index * 2] ?? 0] ?? 0) * 16 +
       (HEX_VALUES[line[from + index * 2 + 1] ?? 0] ?? 0);
   return ok(bytes);
 };
 
-const byteSum = (bytes: Uint8Array): number =>
-  bytes.reduce((sum, byte) => sum + byte, 0);
+const byteSum = (bytes: Uint8Array, end = bytes.length): number => {
+  let sum = 0;
+  for (let index = 0; index < end; index += 1) sum += bytes[index]!;
+  return sum;
+};
 
 const startCharacterFailure = (line: Uint8Array, expected: string): string =>
   `invalid character 0x${hex(line[0] ?? 0, 2)} at column 1; a record starts with '${expected}'`;
 
-const parseIntelRecord = (line: Uint8Array): Result<HexRecord, string> => {
+const parseIntelRecord = (
+  line: Uint8Array,
+  scratch?: Uint8Array,
+): Result<HexRecord, string> => {
   if (line[0] !== COLON) return err(startCharacterFailure(line, ":"));
-  const decoded = decodeHexDigits(line, 1);
+  const decoded = decodeHexDigits(line, 1, scratch);
   if (!decoded.ok) return decoded;
   const bytes = decoded.value;
   if (bytes.length < 5)
@@ -117,13 +141,13 @@ const parseIntelRecord = (line: Uint8Array): Result<HexRecord, string> => {
     );
   const count = bytes[0] ?? 0;
   const typeCode = bytes[3] ?? 0;
-  const type = hex(typeCode, 2);
+  const type = INTEL_HEX_TYPE_NAMES[typeCode] ?? hex(typeCode, 2);
   if (bytes.length !== count + 5)
     return err(
       `record type ${type} byte count 0x${hex(count, 2)} declares ${String(count)} data bytes, but the line holds ${String(bytes.length - 5)}`,
     );
   const declared = bytes[bytes.length - 1] ?? 0;
-  const computed = -byteSum(bytes.subarray(0, -1)) & 0xff;
+  const computed = -byteSum(bytes, bytes.length - 1) & 0xff;
   if (declared !== computed)
     return err(
       `record type ${type} checksum 0x${hex(declared, 2)} does not match computed 0x${hex(computed, 2)}`,
@@ -147,7 +171,10 @@ const parseIntelRecord = (line: Uint8Array): Result<HexRecord, string> => {
   });
 };
 
-const parseSrecRecord = (line: Uint8Array): Result<HexRecord, string> => {
+const parseSrecRecord = (
+  line: Uint8Array,
+  scratch?: Uint8Array,
+): Result<HexRecord, string> => {
   if (line[0] !== LETTER_S) return err(startCharacterFailure(line, "S"));
   if (line.length < 2) return err("record has no type character");
   const digit = (line[1] ?? 0) - 0x30;
@@ -156,7 +183,7 @@ const parseSrecRecord = (line: Uint8Array): Result<HexRecord, string> => {
       `invalid record type character 0x${hex(line[1] ?? 0, 2)} at column 2`,
     );
   const type = `S${String(digit)}`;
-  const decoded = decodeHexDigits(line, 2);
+  const decoded = decodeHexDigits(line, 2, scratch);
   if (!decoded.ok) return decoded;
   const bytes = decoded.value;
   const count = bytes[0] ?? 0;
@@ -186,5 +213,8 @@ const parseSrecRecord = (line: Uint8Array): Result<HexRecord, string> => {
 export const parseRecord = (
   encoding: HexRecordEncoding,
   line: Uint8Array,
+  scratch?: Uint8Array,
 ): Result<HexRecord, string> =>
-  encoding === "intel-hex" ? parseIntelRecord(line) : parseSrecRecord(line);
+  encoding === "intel-hex"
+    ? parseIntelRecord(line, scratch)
+    : parseSrecRecord(line, scratch);

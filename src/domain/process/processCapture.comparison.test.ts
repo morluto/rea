@@ -10,7 +10,6 @@ import { parseProcessCapture } from "./processCaptureParsing.js";
 import type { FileState } from "./processCapture.js";
 
 import {
-  deriveProcessComparisonStatus,
   PROCESS_COMPARISON_DIMENSIONS,
   processCaptureComparisonSchema,
 } from "./processComparison.js";
@@ -282,8 +281,159 @@ it("does not report timing ignored by one terminal trace source", () => {
       dimension: "terminal",
       left_at_ms: 50,
       right_at_ms: 60,
+      // The trace made the raw at_ms part of the question, so the field list
+      // names exactly that timing value and nothing else.
+      fields: ["at_ms"],
       left: { kind: "raw" },
       right: { kind: "raw" },
+    },
+  });
+});
+
+it("names compared lifecycle timing and retains ignored settlement timing as evidence", () => {
+  const base = parseProcessCapture(FINALIZED_PROCESS_CAPTURE_EXAMPLE);
+  const finalization = base.exit.finalization;
+  if (finalization === undefined || finalization.elapsed_ms === null)
+    throw new Error("Finalization fixture must retain its deadline outcome");
+  const elapsedMs = finalization.elapsed_ms;
+  const capture = (offset: number) => ({
+    ...base,
+    exit: {
+      ...base.exit,
+      finalization: {
+        ...finalization,
+        elapsed_ms: elapsedMs + offset,
+      },
+    },
+    settlement: {
+      ...base.settlement,
+      elapsed_ms: base.settlement.elapsed_ms + offset,
+    },
+    event_journal: [
+      {
+        capture_order: 0,
+        collection: "filesystem_checkpoints" as const,
+        index: 0,
+      },
+      { capture_order: 1, collection: "lifecycle" as const, index: 0 },
+      { capture_order: 2, collection: "lifecycle" as const, index: 1 },
+      {
+        capture_order: 3,
+        collection: "filesystem_checkpoints" as const,
+        index: 1,
+      },
+    ],
+  });
+  const left = capture(0);
+  const right = capture(10);
+  const { elapsed_ms: _ignoredElapsedMs, ...settlementExact } = left.settlement;
+
+  expect(
+    compareFullyObserved(left, right, {
+      traceSpecification: {
+        events: [
+          {
+            id: "exit",
+            source: "lifecycle",
+            exact: jsonValueSchema.parse({ event: "exit", ...left.exit }),
+            ignore_fields: ["elapsed_ms"],
+            cardinality: { kind: "required" },
+          },
+          {
+            id: "settlement",
+            source: "lifecycle",
+            exact: jsonValueSchema.parse({
+              event: "settlement",
+              ...settlementExact,
+            }),
+            ignore_fields: ["elapsed_ms"],
+            cardinality: { kind: "required" },
+          },
+        ],
+        language: {
+          kind: "finite_traces",
+          variants: [{ id: "lifecycle", trace: ["exit", "settlement"] }],
+        },
+      },
+    }),
+  ).toMatchObject({
+    trace: { verdict: "different" },
+    exit: "changed",
+    first_divergence: {
+      status: "found",
+      dimension: "exit",
+      fields: ["finalization.elapsed_ms"],
+      left: { settlement: left.settlement },
+      right: { settlement: right.settlement },
+    },
+  });
+});
+
+it("reports compared dispatch timing when the trace ignores the interaction schedule", () => {
+  const base = emptyCapture();
+  const interaction = {
+    sequence: 0,
+    type: "input" as const,
+    data: "request",
+    outcome: "dispatched" as const,
+  };
+  const capture = (scheduledMs: number, dispatchedMs: number) => ({
+    ...base,
+    interaction_events: [
+      {
+        ...interaction,
+        scheduled_at_ms: scheduledMs,
+        dispatched_at_ms: dispatchedMs,
+      },
+    ],
+    event_journal: (
+      [
+        { collection: "filesystem_checkpoints", index: 0 },
+        { collection: "interaction_events", index: 0 },
+        { collection: "lifecycle", index: 0 },
+        { collection: "lifecycle", index: 1 },
+        { collection: "filesystem_checkpoints", index: 1 },
+      ] as const
+    ).map(({ collection, index }, capture_order) => ({
+      collection,
+      index,
+      capture_order,
+    })),
+  });
+  const left = capture(5, 10);
+  const right = capture(8, 20);
+  expect(compareFullyObserved(left, right).first_divergence).toMatchObject({
+    status: "found",
+    dimension: "interaction",
+    fields: ["scheduled_at_ms"],
+  });
+  expect(
+    compareFullyObserved(left, right, {
+      traceSpecification: {
+        events: [
+          {
+            id: "request",
+            source: "interaction",
+            exact: { ...interaction, dispatched_at_ms: 10 },
+            ignore_fields: ["scheduled_at_ms"],
+            cardinality: { kind: "required" },
+          },
+        ],
+        language: {
+          kind: "finite_traces",
+          variants: [{ id: "interaction", trace: ["request"] }],
+        },
+      },
+    }),
+  ).toMatchObject({
+    trace: { verdict: "different" },
+    interaction: "changed",
+    first_divergence: {
+      status: "found",
+      dimension: "interaction",
+      fields: ["dispatched_at_ms"],
+      left: { scheduled_at_ms: 5 },
+      right: { scheduled_at_ms: 8 },
     },
   });
 });
@@ -402,9 +552,166 @@ it("preserves independently observed file changes alongside an unknown effect", 
       expect(compareFullyObserved(a, b, options)).toMatchObject({
         filesystem: "changed",
         status: "changed",
+        terminal: "unchanged",
+        interaction: "unchanged",
+        exit: "unchanged",
+        process: "unchanged",
         first_divergence: { status: "unknown" },
       });
   }
+});
+
+const captureWithFileHashBudget = (
+  sha256: string,
+  omitDigest: boolean,
+  conflictingDigest?: string,
+) => {
+  const base = emptyCapture();
+  const known = {
+    path: "root_0:known.txt",
+    type: "file" as const,
+    mode: 0o644,
+    size: 4,
+    sha256,
+    symlink_target: null,
+  };
+  const large = {
+    ...known,
+    path: "root_0:large.bin",
+    size: 4096,
+    sha256: omitDigest ? null : "c".repeat(64),
+  };
+  const files = [
+    known,
+    ...(conflictingDigest === undefined
+      ? []
+      : [{ ...known, sha256: conflictingDigest }]),
+    large,
+  ];
+  const hashedBytes =
+    known.size +
+    (omitDigest ? 0 : large.size) +
+    (conflictingDigest === undefined ? 0 : known.size);
+  const coverage = {
+    ...base.truncation_details.filesystem_before,
+    hash_budget_bytes: hashedBytes,
+    hashed_bytes: hashedBytes,
+    hash_omissions: omitDigest
+      ? [
+          {
+            path: large.path,
+            size_bytes: large.size,
+            remaining_budget_bytes: 0,
+            reason: "file_bytes_budget" as const,
+            system_code: null,
+          },
+        ]
+      : [],
+  };
+  return {
+    ...base,
+    files_before: files,
+    files_after: files,
+    filesystem_checkpoints: base.filesystem_checkpoints.map((checkpoint) => ({
+      ...checkpoint,
+      files,
+      truncated: omitDigest,
+    })),
+    truncated: omitDigest,
+    residual_unknowns: omitDigest
+      ? [
+          {
+            scope: "filesystem" as const,
+            reason: "Whole-file digest omitted.",
+          },
+        ]
+      : [],
+    truncation_details: {
+      ...base.truncation_details,
+      filesystem_before: coverage,
+      filesystem_after: coverage,
+    },
+  };
+};
+
+it("preserves digest differences when another file exceeds the hash budget", () => {
+  const left = captureWithFileHashBudget("a".repeat(64), true);
+  const right = captureWithFileHashBudget("b".repeat(64), true);
+  const completeLeft = captureWithFileHashBudget("a".repeat(64), false);
+  const completeRight = captureWithFileHashBudget("b".repeat(64), false);
+
+  for (const [a, b] of [
+    [left, left],
+    [left, completeLeft],
+    [completeLeft, left],
+  ] as const)
+    expect(compareProcessCaptures(a, b)).toMatchObject({
+      status: "unknown",
+      filesystem: "unknown",
+      first_divergence: { status: "unknown" },
+    });
+  expect(compareProcessCaptures(completeLeft, completeRight)).toMatchObject({
+    status: "changed",
+    filesystem: "changed",
+    first_divergence: {
+      status: "found",
+      dimension: "filesystem",
+      fields: ["files[0].sha256"],
+    },
+  });
+  for (const [a, b] of [
+    [left, right],
+    [right, left],
+    [left, completeRight],
+    [completeRight, left],
+  ] as const)
+    expect(compareProcessCaptures(a, b)).toMatchObject({
+      status: "changed",
+      filesystem: "changed",
+      first_divergence: { status: "unknown" },
+    });
+});
+
+it("keeps conflicting digests for one path unknown under partial coverage", () => {
+  const known = captureWithFileHashBudget("a".repeat(64), true);
+  const ambiguous = captureWithFileHashBudget(
+    "a".repeat(64),
+    true,
+    "b".repeat(64),
+  );
+  for (const [left, right] of [
+    [ambiguous, ambiguous],
+    [known, ambiguous],
+    [ambiguous, known],
+  ] as const)
+    expect(compareProcessCaptures(left, right)).toMatchObject({
+      status: "unknown",
+      filesystem: "unknown",
+      first_divergence: { status: "unknown" },
+    });
+});
+
+it("keeps partial file differences unknown when legacy normalization differs", () => {
+  const left = captureWithFileHashBudget("a".repeat(64), true);
+  const right = captureWithFileHashBudget("b".repeat(64), true);
+  const normalization = {
+    ...right.normalization,
+    time_bucket_ms: right.normalization.time_bucket_ms + 1,
+  };
+  expect(
+    compareProcessCaptures(left, {
+      ...right,
+      normalization,
+      manifest: {
+        ...right.manifest,
+        normalization_sha256: digestProcessCommitment(normalization),
+      },
+    }),
+  ).toMatchObject({
+    status: "unknown",
+    filesystem: "unknown",
+    first_divergence: { status: "unknown" },
+  });
 });
 
 it("compares exact symlink bytes beside an unrelated unknown effect", () => {
@@ -641,11 +948,6 @@ it.each(PROCESS_COMPARISON_DIMENSIONS)(
   (dimension) => {
     const baseline = compareFullyObserved(emptyCapture(), emptyCapture());
     const result = { ...baseline, [dimension]: "contradiction" as const };
-    expect(
-      deriveProcessComparisonStatus(
-        PROCESS_COMPARISON_DIMENSIONS.map((name) => result[name]),
-      ),
-    ).toBe("contradiction");
     expect(processCaptureComparisonSchema.safeParse(result).success).toBe(
       false,
     );
@@ -673,9 +975,6 @@ it.each([
       ["contradiction", other],
       [other, "contradiction"],
     ] as const) {
-      expect(deriveProcessComparisonStatus([terminal, interaction])).toBe(
-        expected,
-      );
       expect(
         processCaptureComparisonSchema.parse({
           ...compareFullyObserved(emptyCapture(), emptyCapture()),
@@ -684,6 +983,14 @@ it.each([
           status: expected,
         }),
       ).toMatchObject({ status: expected });
+      expect(
+        processCaptureComparisonSchema.safeParse({
+          ...compareFullyObserved(emptyCapture(), emptyCapture()),
+          terminal,
+          interaction,
+          status: expected === "truncated" ? "contradiction" : "truncated",
+        }).success,
+      ).toBe(false);
     }
   },
 );
@@ -810,6 +1117,156 @@ it("compares raw terminal and process observations while honoring normalization 
   ).toMatchObject({ process: "changed", status: "changed" });
 });
 
+it("names the compared field that differed inside a filesystem checkpoint", () => {
+  const capture = (root: string) => {
+    const base = emptyCapture();
+    const file = {
+      path: `${root}:out.txt`,
+      type: "file" as const,
+      mode: 0o644,
+      size: 4,
+      sha256: "a".repeat(64),
+      symlink_target: null,
+    };
+    return {
+      ...base,
+      files_after: [file],
+      filesystem_checkpoints: base.filesystem_checkpoints.map((checkpoint) => ({
+        ...checkpoint,
+        files: checkpoint.name === "before" ? [] : [file],
+      })),
+    };
+  };
+
+  expect(
+    compareFullyObserved(capture("root_0"), capture("root_1")),
+  ).toMatchObject({
+    filesystem: "changed",
+    first_divergence: {
+      status: "found",
+      dimension: "filesystem",
+      index: 1,
+      fields: ["files[0].path"],
+    },
+  });
+});
+
+it("names every differing field of one observation in sorted order", () => {
+  const capture = (side: "left" | "right") => ({
+    ...emptyCapture(),
+    process_samples: [
+      {
+        at_ms: 10,
+        pid: side === "left" ? 2 : 3,
+        parent_pid: side === "left" ? 1 : 4,
+        process_group_id: side === "left" ? 2 : 5,
+        session_id: side === "left" ? 2 : 6,
+        command: side === "left" ? "worker-a" : "worker-b",
+      },
+    ],
+  });
+
+  expect(compareFullyObserved(capture("left"), capture("right"))).toMatchObject(
+    {
+      process: "changed",
+      first_divergence: {
+        status: "found",
+        dimension: "process",
+        index: 0,
+        fields: [
+          "command",
+          "parent_pid",
+          "pid",
+          "process_group_id",
+          "session_id",
+        ],
+      },
+    },
+  );
+});
+
+it("bounds the field list when a wide observation differs throughout", () => {
+  const capture = (root: string) => {
+    const base = emptyCapture();
+    const files = Array.from({ length: 10 }, (_entry, index) => ({
+      path: `${root}:f${index}.txt`,
+      type: "file" as const,
+      mode: 0o644,
+      size: 1,
+      sha256: "a".repeat(64),
+      symlink_target: null,
+    }));
+    return {
+      ...base,
+      files_after: files,
+      filesystem_checkpoints: base.filesystem_checkpoints.map((checkpoint) => ({
+        ...checkpoint,
+        files: checkpoint.name === "before" ? [] : files,
+      })),
+    };
+  };
+
+  const divergence = compareFullyObserved(
+    capture("root_0"),
+    capture("root_1"),
+  ).first_divergence;
+  if (divergence.status !== "found")
+    throw new Error("A differing file set must locate a divergence");
+  expect(divergence.fields).toStrictEqual(
+    Array.from({ length: 8 }, (_entry, index) => `files[${index}].path`),
+  );
+});
+
+it("reports an observation that is present on one side only as the whole field", () => {
+  const sample = {
+    at_ms: 10,
+    pid: 1,
+    parent_pid: 0,
+    process_group_id: 1,
+    session_id: 1,
+    command: "worker",
+  };
+  const withSample = { ...emptyCapture(), process_samples: [sample] };
+
+  expect(compareFullyObserved(withSample, emptyCapture())).toMatchObject({
+    process: "removed",
+    first_divergence: {
+      status: "found",
+      dimension: "process",
+      index: 0,
+      fields: ["$"],
+    },
+  });
+});
+
+it("accepts a divergence recorded before the compared field list existed", () => {
+  const capture = (pid: number) => ({
+    ...emptyCapture(),
+    process_samples: [
+      {
+        at_ms: 10,
+        pid,
+        parent_pid: 0,
+        process_group_id: 1,
+        session_id: 1,
+        command: "worker",
+      },
+    ],
+  });
+  const comparison = compareFullyObserved(capture(1), capture(2));
+  const divergence = comparison.first_divergence;
+  if (divergence.status !== "found")
+    throw new Error("A differing PID must locate a divergence");
+  const { fields: _compared, ...legacyDivergence } = divergence;
+
+  expect(
+    processCaptureComparisonSchema.parse({
+      ...comparison,
+      first_divergence: legacyDivergence,
+    }),
+  ).toMatchObject({ status: "changed", process: "changed" });
+});
+
 it("keeps filesystem comparison unknown without coverage and reports observed changes", () => {
   const capture = emptyCapture();
   const incomplete = {
@@ -818,10 +1275,14 @@ it("keeps filesystem comparison unknown without coverage and reports observed ch
       { scope: "filesystem" as const, reason: "watcher unavailable" },
     ],
   };
-  expect(compareFullyObserved(incomplete, incomplete)).toMatchObject({
-    filesystem: "unknown",
-    status: "unknown",
-  });
+  for (const [left, right] of [
+    [capture, incomplete],
+    [incomplete, capture],
+  ] as const)
+    expect(compareFullyObserved(left, right)).toMatchObject({
+      filesystem: "unknown",
+      status: "unknown",
+    });
 
   const finalFile = {
     path: "root_0:created.txt",
@@ -960,6 +1421,10 @@ it("refuses mixed terminal observation versions even with PID and port rules dis
       scenario: committed,
       full_scenario_sha256: digestProcessCommitment(committed),
       normalization_sha256: digestProcessCommitment(scenario.normalization),
+      root_process: {
+        state: "unknown",
+        reason: "the fixture launched no process",
+      },
       comparison_contract: contract,
       comparison_contract_sha256: digestProcessCommitment(contract),
     },
@@ -1005,6 +1470,10 @@ it("refuses mixed path normalization versions even with PID and port rules disab
       scenario: committed,
       full_scenario_sha256: digestProcessCommitment(committed),
       normalization_sha256: digestProcessCommitment(scenario.normalization),
+      root_process: {
+        state: "unknown",
+        reason: "the fixture launched no process",
+      },
       comparison_contract: contract,
       comparison_contract_sha256: digestProcessCommitment(contract),
     },

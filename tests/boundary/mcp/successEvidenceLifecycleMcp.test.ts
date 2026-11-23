@@ -22,7 +22,7 @@ import {
   createDeferred,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -51,7 +51,7 @@ const fixture = async () => ({
 
 /** Observe the public session admission port without depending on its private bookkeeping. */
 const observeLifecycle = (session: BinarySession, events: string[]) => {
-  const resetEntered = createDeferred<void>();
+  const resetEntry = phaseArrival();
   let activeCalls = 0;
   let resetCompleted = false;
   const originalAdmission = session.withAdmittedAnalysis.bind(session);
@@ -70,14 +70,14 @@ const observeLifecycle = (session: BinarySession, events: string[]) => {
     .spyOn(session, "resetInvestigation")
     .mockImplementation((options) => {
       const resetting = originalReset(options);
-      resetEntered.resolve();
+      resetEntry.arrive();
       return resetting.finally(() => {
         resetCompleted = true;
         events.push("reset-completed");
       });
     });
   return {
-    resetEntered: resetEntered.promise,
+    resetEntry,
     get activeCalls() {
       return activeCalls;
     },
@@ -93,10 +93,9 @@ const observeLifecycle = (session: BinarySession, events: string[]) => {
 
 /** Hold a genuine successful reply below REA's transport wrapper, before physical send. */
 const holdPublication = (events: string[]) => {
-  const entered = createDeferred<void>();
-  const release = createDeferred<void>();
+  const sending = phaseGate();
   const settled = createDeferred<void>();
-  const cancelled = createDeferred<void>();
+  const cancellation = phaseArrival();
   const originalSend = InMemoryTransport.prototype.send;
   let heldId: string | number | undefined;
   let offered: Evidence | undefined;
@@ -119,9 +118,8 @@ const holdPublication = (events: string[]) => {
       ) {
         heldId = message.id;
         offered = parseEvidence(message.result.structuredContent);
-        entered.resolve();
         try {
-          await release.promise;
+          await sending.hold();
           await originalSend.call(this, message, options);
           events.push("success-published");
         } finally {
@@ -135,18 +133,18 @@ const holdPublication = (events: string[]) => {
         message.method === "notifications/cancelled" &&
         message.params?.["requestId"] === heldId
       )
-        cancelled.resolve();
+        cancellation.arrive();
     });
   return {
-    entered: entered.promise,
+    reached: sending.reached,
     settled: settled.promise,
-    cancelled: cancelled.promise,
+    cancellation,
     evidence: () => {
       if (offered === undefined)
         throw new Error("No call-path reply reached transport");
       return offered;
     },
-    release: () => release.resolve(),
+    release: () => sending.release(),
     join: async () => {
       if (offered !== undefined) await settled.promise;
     },
@@ -163,19 +161,14 @@ it("keeps successful Evidence admitted through physical publication before a lat
   const running = test.client.callTool(request);
   let resetting: Promise<CallToolResult> | undefined;
   try {
-    await awaitAcknowledgement(
-      publication.entered,
-      running,
-      "successful call-path publication",
-    );
+    await publication.reached(running, "successful call-path publication");
     const expected = createEvidenceBundle([source, publication.evidence()]);
     expect(test.session.exportEvidenceBundle()).toEqual(expected);
     resetting = test.client.callTool({
       name: "reset_investigation",
       arguments: { save_path: checkpoint },
     });
-    await awaitAcknowledgement(
-      lifecycle.resetEntered,
+    await lifecycle.resetEntry.reached(
       resetting,
       "reset after successful handler",
     );
@@ -226,26 +219,20 @@ it("does not release an already-started successful send when SDK cancellation pr
     );
   let resetting: Promise<CallToolResult> | undefined;
   try {
-    await awaitAcknowledgement(
-      publication.entered,
-      running,
-      "cancellable successful publication",
-    );
+    await publication.reached(running, "cancellable successful publication");
     const expected = createEvidenceBundle([source, publication.evidence()]);
     resetting = test.client.callTool({
       name: "reset_investigation",
       arguments: { save_path: checkpoint },
     });
-    await awaitAcknowledgement(
-      lifecycle.resetEntered,
+    await lifecycle.resetEntry.reached(
       resetting,
       "reset behind cancellable publication",
     );
     controller.abort(
       new Error("Caller cancelled an already-started successful send"),
     );
-    await awaitAcknowledgement(
-      publication.cancelled,
+    await publication.cancellation.reached(
       publication.settled,
       "successful-send cancellation delivery",
     );

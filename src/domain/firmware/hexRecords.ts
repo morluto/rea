@@ -1,4 +1,4 @@
-import type { HexRecordsMetadata } from "../artifactFormatMetadata.js";
+import type { HexRecordsMetadata } from "../formatMetadata/firmwareMetadata.js";
 import { err, ok, type Result } from "../result.js";
 import { mergeArenaRuns, type RunConflict } from "./addressRuns.js";
 import type { RegionDecodeFailure, RegionDecoder } from "./regionDecoder.js";
@@ -106,9 +106,10 @@ const formatFailure = (line: number, detail: string): RegionDecodeFailure => ({
 class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
   readonly #encoding: HexRecordEncoding;
   readonly #line: Uint8Array;
+  readonly #scratch: Uint8Array;
   readonly #runs: RecordRun[] = [];
   #arena: Uint8Array;
-  #arenaUsed = 0;
+  #arenaWriteOffset = 0;
   #lineLength = 0;
   #lineNumber = 0;
   #recordCount = 0;
@@ -127,7 +128,9 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
   constructor(encoding: HexRecordEncoding, fileBytes: number) {
     this.#encoding = encoding;
     // One extra byte holds the CR of a CRLF line at the maximum length.
-    this.#line = new Uint8Array(maxLineChars(encoding) + 1);
+    const maxChars = maxLineChars(encoding);
+    this.#line = new Uint8Array(maxChars + 1);
+    this.#scratch = new Uint8Array(Math.ceil(maxChars / 2));
     this.#arena = new Uint8Array(Math.floor(fileBytes / 2));
   }
 
@@ -182,7 +185,11 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
       return err(this.#overlong(this.#lineNumber));
     length = trimTrailingBlanks(this.#line, length);
     if (length === 0) return ok(undefined);
-    const parsed = parseRecord(this.#encoding, this.#line.subarray(0, length));
+    const parsed = parseRecord(
+      this.#encoding,
+      this.#line.subarray(0, length),
+      this.#scratch,
+    );
     if (!parsed.ok) return err(this.#failure(parsed.error));
     if (this.#termination !== undefined)
       return err(
@@ -201,7 +208,6 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
   }
 
   #applyIntel(record: HexRecord): Result<void, RegionDecodeFailure> {
-    const value = readBigEndian(record.data);
     switch (record.type) {
       case "00":
         return this.#intelData(record);
@@ -209,18 +215,24 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
         this.#termination = { value: record.type, line: this.#lineNumber };
         return ok(undefined);
       case "02":
-      case "04":
+      case "04": {
+        const value = readBigEndian(record.data);
         this.#segmentRecords ||= record.type === "02";
         this.#linearRecords ||= record.type === "04";
         this.#baseFromSegment = record.type === "02";
         this.#base = record.type === "02" ? value * 16 : value * 0x1_0000;
         return ok(undefined);
-      case "03":
+      }
+      case "03": {
+        const value = readBigEndian(record.data);
         return this.#declareStartSegment([value >>> 16, value & 0xffff]);
-      default:
+      }
+      default: {
         // "05": the start linear address.
+        const value = readBigEndian(record.data);
         this.#linearRecords = true;
         return this.#declareStart(value, record.type);
+      }
     }
   }
 
@@ -330,7 +342,7 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
     data: Uint8Array,
   ): Result<void, RegionDecodeFailure> {
     if (data.length === 0) return ok(undefined);
-    if (this.#arenaUsed + data.length > this.#arena.length)
+    if (this.#arenaWriteOffset + data.length > this.#arena.length)
       return err({
         kind: "limit",
         boundary: "file-size",
@@ -350,15 +362,15 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
         });
       this.#runs.push({
         address,
-        offset: this.#arenaUsed,
+        offset: this.#arenaWriteOffset,
         length: data.length,
         recordCount: 1,
         firstLine: this.#lineNumber,
         lastLine: this.#lineNumber,
       });
     }
-    this.#arena.set(data, this.#arenaUsed);
-    this.#arenaUsed += data.length;
+    this.#arena.set(data, this.#arenaWriteOffset);
+    this.#arenaWriteOffset += data.length;
     return ok(undefined);
   }
 

@@ -1,15 +1,14 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import { createConnection, Server } from "node:net";
 import { promisify } from "node:util";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { HopperStartError } from "../domain/hopperErrors.js";
-import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { HopperStartError } from "../hopper/HopperErrors.js";
 // Unix socket paths have a short platform limit; the canonical system temp path can exceed it.
 const createTestTempDirectory = async (prefix: string): Promise<string> => {
   const directory = await mkdtemp(join("/tmp", prefix));
@@ -75,10 +74,30 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-const { acquireLinuxHopperApplicationLease } = await import("./HopperLease.js");
+const { acquireLinuxHopperApplicationLease } =
+  await import("../hopper/HopperLease.js");
 const { acquireOwnedLease } = await import("./OwnedLease.js");
 const { HopperApplicationLauncher } =
   await import("../hopper/BridgeLauncher.js");
+
+/** Leave the production lease's real socket path bound by an exited process. */
+const leaveStaleHopperSocket = async (directory: string): Promise<string> => {
+  const reservation = await acquireLinuxHopperApplicationLease({
+    directory,
+    runId: "discover-stale-fixture-path",
+  });
+  if (!reservation.acquired) throw new Error("expected socket reservation");
+  const socketPath = reservation.lease.socketPath;
+  await reservation.lease.release();
+  if (socketPath === undefined) throw new Error("expected owned socket path");
+  await promisify(execFile)(process.execPath, [
+    "--input-type=module",
+    "-e",
+    'import {createServer} from "node:net"; createServer().listen(process.argv[1],()=>process.exit(0));',
+    socketPath,
+  ]);
+  return socketPath;
+};
 
 afterEach(() => {
   injection.directory = undefined;
@@ -94,51 +113,8 @@ afterEach(() => {
 describe.skipIf(process.platform === "win32")(
   "accepted lease connections",
   () => {
-    it("joins concurrent release callers until the listening server finishes closing", async () => {
-      const directory = await createTestTempDirectory("rea-release-join-");
-      const acquired = await acquireOwnedLease({
-        identity: { test: "concurrent-release" },
-        directory,
-        runId: "concurrent-release",
-        failure: (failure) => new Error(failure.kind),
-      });
-      if (!acquired.acquired) throw new Error("expected acquired lease");
-      onTestFinished(() => acquired.lease.release());
-      const started = createDeferred<void>();
-      const finish = createDeferred<void>();
-      const close = Server.prototype.close;
-      vi.spyOn(Server.prototype, "close").mockImplementationOnce(function (
-        this: Server,
-        callback,
-      ) {
-        return close.call(this, (cause) => {
-          started.resolve();
-          void finish.promise.then(() => callback?.(cause));
-        });
-      });
-      let firstFinished = false;
-      let secondFinished = false;
-      const first = acquired.lease.release().then(() => {
-        firstFinished = true;
-      });
-      await started.promise;
-      const second = acquired.lease.release().then(() => {
-        secondFinished = true;
-      });
-      try {
-        await new Promise<void>((resolve) => setImmediate(resolve));
-        expect(firstFinished).toBe(false);
-        expect(secondFinished).toBe(false);
-      } finally {
-        finish.resolve();
-        await Promise.all([first, second]);
-      }
-      expect(firstFinished).toBe(true);
-      expect(secondFinished).toBe(true);
-    });
-
     it.each([false, true])(
-      "closes a held peer and preserves retry after failure=%s",
+      "joins release callers for a held peer after failed close=%s",
       async (failClose) => {
         const directory = await createTestTempDirectory("rea-peer-");
         const input = {
@@ -171,23 +147,46 @@ describe.skipIf(process.platform === "win32")(
           peer.once("error", reject);
         });
         expect(peer.writable).toBe(true);
+        const close = Server.prototype.close;
+        const closeCalls = vi.spyOn(Server.prototype, "close");
         if (failClose) {
-          const close = Server.prototype.close;
-          vi.spyOn(Server.prototype, "close")
-            .mockImplementationOnce(function (this: Server, callback) {
-              callback?.(new Error("injected socket close failure"));
-              return this;
-            })
-            .mockImplementation(function (this: Server, callback) {
-              return close.call(this, callback);
-            });
+          closeCalls.mockImplementationOnce(function (this: Server, callback) {
+            callback?.(new Error("injected socket close failure"));
+            return this;
+          });
           await expect(acquired.lease.release()).rejects.toThrow(
             "injected socket close failure",
           );
         }
-        // The peer stays open until the owner releases; a test timeout catches the
-        // original server.close deadlock without relying on elapsed-time assertions.
-        await acquired.lease.release();
+        const leaseClose = phaseGate();
+        closeCalls.mockImplementationOnce(function (this: Server, callback) {
+          return close.call(this, (cause) => {
+            void leaseClose.hold().then(() => callback?.(cause));
+          });
+        });
+        let settled = 0;
+        const first = acquired.lease.release().then(() => {
+          settled += 1;
+        });
+        let second: Promise<void> | undefined;
+        try {
+          await leaseClose.reached(first, "lease close of held peer");
+          second = acquired.lease.release().then(() => {
+            settled += 1;
+          });
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          expect(settled).toBe(0);
+          expect(closeCalls).toHaveBeenCalledTimes(failClose ? 2 : 1);
+        } finally {
+          leaseClose.release();
+          peer.destroy();
+          await Promise.allSettled([
+            first,
+            ...(second === undefined ? [] : [second]),
+          ]);
+        }
+        await first;
+        await second;
         const next = await acquireOwnedLease(input);
         expect(next.acquired).toBe(true);
         if (next.acquired) await next.lease.release();
@@ -201,17 +200,7 @@ describe.skipIf(process.platform === "win32")(
   () => {
     it("preserves the failed recovery operation when its directory cleanup also fails", async () => {
       const directory = await createTestTempDirectory("rea-recovery-primary-");
-      const key = createHash("sha256")
-        .update(JSON.stringify({ application: "linux-hopper-demo" }))
-        .digest("hex")
-        .slice(0, 32);
-      const socketPath = join(directory, `${key}.sock`);
-      await promisify(execFile)(process.execPath, [
-        "--input-type=module",
-        "-e",
-        'import {createServer} from "node:net"; createServer().listen(process.argv[1],()=>process.exit(0));',
-        socketPath,
-      ]);
+      await leaveStaleHopperSocket(directory);
       injection.staleRemoveFailure = true;
       injection.recoveryRemoveFailures = 1;
       const resources = new ArtifactResourceScope();
@@ -240,16 +229,7 @@ describe.skipIf(process.platform === "win32")(
           "rea-socket-permissions-",
         );
         if (recovering) {
-          const key = createHash("sha256")
-            .update(JSON.stringify({ application: "linux-hopper-demo" }))
-            .digest("hex")
-            .slice(0, 32);
-          await promisify(execFile)(process.execPath, [
-            "--input-type=module",
-            "-e",
-            'import {createServer} from "node:net"; createServer().listen(process.argv[1],()=>process.exit(0));',
-            join(directory, `${key}.sock`),
-          ]);
+          await leaveStaleHopperSocket(directory);
           injection.recoveryRemoveFailures = 1;
         }
         const close = Server.prototype.close;
@@ -304,17 +284,7 @@ describe.skipIf(process.platform === "win32")(
       "retains both failed recovery owners while %s needs another retry",
       async (remaining) => {
         const directory = await createTestTempDirectory("rea-recovery-close-");
-        const key = createHash("sha256")
-          .update(JSON.stringify({ application: "linux-hopper-demo" }))
-          .digest("hex")
-          .slice(0, 32);
-        const socketPath = join(directory, `${key}.sock`);
-        await promisify(execFile)(process.execPath, [
-          "--input-type=module",
-          "-e",
-          'import {createServer} from "node:net"; createServer().listen(process.argv[1],()=>process.exit(0));',
-          socketPath,
-        ]);
+        const socketPath = await leaveStaleHopperSocket(directory);
         const close = Server.prototype.close;
         let closeFailures = remaining === "socket" ? 2 : 1;
         vi.spyOn(Server.prototype, "close").mockImplementation(function (

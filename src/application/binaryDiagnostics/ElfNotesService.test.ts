@@ -2,7 +2,13 @@ import { parseEvidence } from "../../domain/evidence.js";
 import { expect, it } from "vitest";
 import { ElfNotesService } from "./ElfNotesService.js";
 import { ELF_NOTES_PROVIDER } from "../../domain/investigationProviders.js";
-import type { ElfNotes } from "../../domain/native/elfNotes.js";
+import { createHash } from "node:crypto";
+import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
+import {
+  elfNoteByteSource,
+  elfNoteFixture,
+} from "../../native/elf/ElfNotes.fixture.js";
+import { parseElfNotesFromHandle } from "../../native/elf/ElfNoteParser.js";
 import { ok } from "../../domain/result.js";
 import {
   AnalysisCancelledError,
@@ -11,22 +17,18 @@ import {
 } from "../../domain/analysisErrorCore.js";
 
 const identity = ELF_NOTES_PROVIDER;
-const report: ElfNotes = {
-  artifact: {
-    path: "/artifacts/app",
-    sha256: "a".repeat(64),
-    bytes: 512,
+const path = "/artifacts/app";
+const bytes = elfNoteFixture({ ownership: "none" });
+const report = await parseElfNotesFromHandle(
+  elfNoteByteSource(bytes),
+  {
+    path,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    bytes: bytes.length,
   },
-  format: "elf64",
-  byte_order: "little",
-  machine: 62,
-  type: 3,
-  type_name: "shared",
-  tables: [],
-  entries: [],
-  coverage: { status: "complete", examined_tables: 0, examined_entries: 0 },
-  limitations: ["No PT_NOTE program header or SHT_NOTE section was declared."],
-};
+  inspectElfNotesInputSchema.parse({ path }),
+  async () => {},
+);
 
 it("rejects a relative path and extra arguments before reading", async () => {
   let calls = 0;
@@ -57,7 +59,7 @@ it("records the selected ELF and an absent note table", async () => {
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",
-    subject: { format: "elf", architecture: "x86_64" },
+    subject: { identity: { format: "elf", architecture: "x86_64" } },
     normalized_result: report,
   });
 });
@@ -128,4 +130,22 @@ it("retains a completed observation when the caller cancels as the provider comp
     operation: "inspect_elf_notes",
     normalized_result: report,
   });
+});
+
+it("keeps a failed report for a different artifact outside admitted Evidence", async () => {
+  const foreignReport = {
+    ...report,
+    artifact: { ...report.artifact, path: "/artifacts/other" },
+  };
+  const failure = new AnalysisCancelledError("inspect_elf_notes", {
+    partialObservation: foreignReport,
+  });
+  const service = new ElfNotesService({
+    identity,
+    inspect: async () => ({ ok: false, error: failure }),
+  });
+  const result = await service.inspect({ path });
+  if (result.ok) throw new Error("Expected the original provider failure");
+  expect(result.error).toBe(failure);
+  expect(result.error.partialObservation).toBe(foreignReport);
 });

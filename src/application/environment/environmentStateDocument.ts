@@ -1,3 +1,4 @@
+import { environmentEntityKey } from "../../domain/analysisView/environmentStateIdentity.js";
 import { types } from "node:util";
 import { z } from "zod";
 
@@ -28,7 +29,6 @@ import {
   type JsonValue,
 } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
 import type { EnvironmentState } from "./environmentState.js";
 import { ENVIRONMENT_SERVE_OPERATION } from "./environmentSource.js";
 import { REA_STATE_FORMAT } from "./environmentTools.js";
@@ -216,7 +216,7 @@ interface EntityCheck {
 }
 
 const entityKey = (entity: Pick<StateEntity, "type" | "collection" | "id">) =>
-  compositeKey([entity.type, entity.collection, entity.id]);
+  environmentEntityKey(entity.type, entity.collection, entity.id);
 
 /** The first problem with an entity's view values: each names an item or list view of its type once and keeps its identity. */
 const viewFieldsProblem = (
@@ -290,11 +290,12 @@ const documentsProblem = (
   state: EnvironmentState,
   documents: ParsedDocument["documents"],
 ): AnalysisInputIssue | undefined => {
+  const initialByTool = new Map(
+    state.documents.map((candidate) => [candidate.tool, candidate]),
+  );
   const tools = new Set<string>();
   for (const [index, document] of documents.entries()) {
-    const initial = state.documents.find(
-      (candidate) => candidate.tool === document.tool,
-    );
+    const initial = initialByTool.get(document.tool);
     if (
       state.views.get(document.tool)?.shape !== "document" ||
       initial === undefined ||
@@ -379,19 +380,22 @@ const heldContent = (
       record_ordinals: unchanged ? recorded.record_ordinals : [],
     };
   }),
-  documents: document.documents.map(({ tool, path, value }) => {
-    const recorded = state.documents.find(
-      (candidate) => candidate.tool === tool,
+  documents: (() => {
+    const recordedByTool = new Map(
+      state.documents.map((candidate) => [candidate.tool, candidate]),
     );
-    return {
-      tool,
-      path,
-      value,
-      ...(recorded !== undefined && same(value, recorded.value)
-        ? { record_ordinal: recorded.record_ordinal }
-        : {}),
-    };
-  }),
+    return document.documents.map(({ tool, path, value }) => {
+      const recorded = recordedByTool.get(tool);
+      return {
+        tool,
+        path,
+        value,
+        ...(recorded !== undefined && same(value, recorded.value)
+          ? { record_ordinal: recorded.record_ordinal }
+          : {}),
+      };
+    });
+  })(),
 });
 
 /**

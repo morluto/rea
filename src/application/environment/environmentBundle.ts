@@ -21,15 +21,15 @@ import type { EnvironmentToolDefinition } from "./environmentTools.js";
 export const ENVIRONMENT_EXPORT_OPERATION = "environment-export";
 
 /** The image the exported Dockerfile builds from; the agentenv runner builds it with Docker. */
-export const BUNDLE_BASE_IMAGE = `node:${PACKAGE_METADATA.pinnedNodeVersion}-bookworm-slim`;
+const BUNDLE_BASE_IMAGE = `node:${PACKAGE_METADATA.pinnedNodeVersion}-bookworm-slim`;
 
 /** The port the agentenv framework maps for an MCP server env; it sets the host but not the port. */
-export const BUNDLE_MCP_PORT = 18765;
+const BUNDLE_MCP_PORT = 18765;
 /** Host names the exported env container is addressed by: the published loopback port and the compose service name. */
-export const BUNDLE_ALLOWED_HOSTS = "127.0.0.1,localhost";
+const BUNDLE_ALLOWED_HOSTS = "127.0.0.1,localhost";
 
 /** Name of the packed CLI inside the env folder when a tarball is exported. */
-export const BUNDLE_TARBALL_NAME = "rea-agents.tgz";
+const BUNDLE_TARBALL_NAME = "rea-agents.tgz";
 
 /** Where the Dockerfile installs the CLI from. */
 export type EnvironmentPackageSource =
@@ -152,7 +152,7 @@ const READINESS_PROBE_LAYER =
   "RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*";
 
 /** The Dockerfile text: pinned base image, readiness probe interpreter, pinned CLI, listener defaults, non-root user. */
-export const bundleDockerfile = (
+const bundleDockerfile = (
   source: EnvironmentPackageSource,
   name?: string,
 ): string =>
@@ -196,7 +196,7 @@ const pythonLiteral = (value: string | number | null): string =>
   value === null ? "None" : JSON.stringify(value);
 
 /** The verifier script in the shape of the agentenv echo example's `verify(mcp_url)`. */
-export const bundleVerifier = (
+const bundleVerifier = (
   plan: Pick<EnvironmentBundlePlan, "toolCount" | "check" | "state">,
 ): string =>
   [
@@ -241,7 +241,7 @@ export const bundleVerifier = (
   ].join("\n");
 
 /** The smoke task: deploy the env locally, then run the verifier against it. */
-export const bundleSmokeTask = (name: string): string =>
+const bundleSmokeTask = (name: string): string =>
   `${JSON.stringify(
     [
       { id: "env", type: "deploy_env", env_id: name, sandbox_type: "local" },
@@ -280,10 +280,7 @@ from their recordings because the state is unavailable
 };
 
 /** The bundle README: provenance, what the environment serves and does not establish, how to run it, and the rights note. */
-export const bundleReadme = (
-  source: EnvironmentSource,
-  plan: ReadmePlan,
-): string => {
+const bundleReadme = (source: EnvironmentSource, plan: ReadmePlan): string => {
   const { manifest } = source;
   const check =
     plan.check === null

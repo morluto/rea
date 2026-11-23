@@ -1,4 +1,12 @@
 import { readProcessInspectionFile } from "./ProcessInspectionFile.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import {
+  describeSystemPs,
+  PROCESS_INVENTORY_PS_ARGUMENTS,
+  LINUX_SYSTEM_PS_LOCATIONS,
+  resolveSystemPs,
+  type SystemPs,
+} from "./systemPs.js";
 import {
   assertProcessOwnershipInspectionActive,
   ProcessOwnershipIdentityBatchFailure,
@@ -30,9 +38,9 @@ import { descendantsOf, liveProcesses } from "./ProcessOwnershipProcessTree.js";
 import {
   execFileOutput,
   execFileOutputFailure,
-  HOST_SPAWN_CAPACITY_CODES,
   spawnCapacityExhausted,
 } from "./ExecFileOutput.js";
+import { launchExhaustedResource } from "./launchFailure.js";
 import {
   createDarwinProcessRunTokenReader,
   DarwinProcessOwnershipInspectionError,
@@ -56,6 +64,7 @@ import type {
   ProcessTableEntry,
 } from "./ProcessOwnership.js";
 import type { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Native preparation transfers its typed helper owner instead of an unavailable row. */
 const rethrowInspectionFailure = (cause: unknown): void => {
@@ -101,6 +110,7 @@ export const observeOwnedProcessGroups = async (
       host,
       signal,
     );
+    const groupIdSet = new Set(groupIds);
     const candidateProcesses = observationRows.filter((process) => {
       if (retainedPids.has(process.pid)) return true;
       const identity = firstIdentities.get(process.pid);
@@ -108,12 +118,12 @@ export const observeOwnedProcessGroups = async (
         if (processIdentityHasExited(identity)) return false;
         if (
           identity.relation?.state === "observed" &&
-          groupIds.includes(identity.relation.processGroupId)
+          groupIdSet.has(identity.relation.processGroupId)
         )
           return true;
-        return groupIds.includes(process.processGroupId);
+        return groupIdSet.has(process.processGroupId);
       }
-      return groupIds.includes(process.processGroupId);
+      return groupIdSet.has(process.processGroupId);
     });
     const facts = await readProcessOwnershipFacts(
       candidateProcesses,
@@ -126,7 +136,7 @@ export const observeOwnedProcessGroups = async (
       listedRows: processes.length,
       listedPids: new Set(processes.map(({ pid }) => pid)),
       leaderPid: -1,
-      processGroupIds: new Set(groupIds),
+      processGroupIds: groupIdSet,
       scopeFacts: facts,
     });
     const observations = new Map<number, ProcessGroupObservation>(
@@ -137,7 +147,7 @@ export const observeOwnedProcessGroups = async (
       // An initial unreadable membership remains uncertain only while the
       // final native fact does not establish that this candidate has exited.
       if (
-        groupIds.includes(fact.process.processGroupId) &&
+        groupIdSet.has(fact.process.processGroupId) &&
         (fact.identityBefore.state !== "readable" ||
           fact.identityBefore.relation?.state !== "observed")
       )
@@ -150,13 +160,16 @@ export const observeOwnedProcessGroups = async (
         fact.identityAfter.relation?.state === "observed"
           ? fact.identityAfter.relation.processGroupId
           : undefined;
-      const candidateGroups = groupIds.filter(
-        (groupId) =>
-          nativeGroupId === groupId ||
-          (nativeGroupId === undefined &&
-            fact.process.processGroupId === groupId),
-      );
-      for (const groupId of candidateGroups) {
+      const matchedGroupId =
+        nativeGroupId !== undefined
+          ? groupIdSet.has(nativeGroupId)
+            ? nativeGroupId
+            : undefined
+          : groupIdSet.has(fact.process.processGroupId)
+            ? fact.process.processGroupId
+            : undefined;
+      if (matchedGroupId !== undefined) {
+        const groupId = matchedGroupId;
         if (observations.get(groupId)?.state === "unverifiable") continue;
         if (
           fact.state !== "same-generation" ||
@@ -340,6 +353,9 @@ export const observeOwnedProcessLineage = async (
       latestRefreshPids = new Set(refreshed.map(({ pid }) => pid));
     }
   }
+  const refreshDescendantPids = new Set(
+    refreshDescendants.map(({ pid }) => pid),
+  );
   return {
     status: "verified",
     observedAt: new Date().toISOString(),
@@ -353,7 +369,7 @@ export const observeOwnedProcessLineage = async (
           ({ pid }) =>
             (latestRefreshPids === undefined || latestRefreshPids.has(pid)) &&
             !suppressedRefreshPids.has(pid) &&
-            !refreshDescendants.some((descendant) => descendant.pid === pid),
+            !refreshDescendantPids.has(pid),
         ),
         ...refreshDescendants,
       ]
@@ -749,7 +765,7 @@ const identityFact = (
   };
 
 const readIdentityFacts = async (
-  processes: readonly ProcessTableEntry[],
+  processes: readonly Pick<ProcessTableEntry, "pid">[],
   host: ProcessOwnershipHost,
   phase: "before" | "after",
   signal?: AbortSignal,
@@ -802,7 +818,7 @@ export const readNativeProcessIdentityMap = async (
  * A deadline, unavailable read or changed generation remains explicit evidence.
  */
 export const settleExitingProcessIdentities = async (
-  processes: readonly ProcessTableEntry[],
+  processes: readonly Pick<ProcessTableEntry, "pid">[],
   host: ProcessOwnershipHost,
   initial: ReadonlyMap<number, ProcessIdentityObservation>,
   signal?: AbortSignal,
@@ -856,7 +872,7 @@ export const settleVanishedTokenFacts = async (
   budget: ProcessExitSettlementBudget,
   signal?: AbortSignal,
 ): Promise<readonly ProcessOwnershipFact[]> => {
-  if ((host.platform ?? process.platform) !== "linux") return facts;
+  if ((host.platform ?? HOST_PLATFORM.platform) !== "linux") return facts;
   let pending = facts
     .filter(
       ({ token, identityAfter }) =>
@@ -979,7 +995,7 @@ export const readProcessOwnershipFacts = async (
   // missing procfs entry with signal-zero ESRCH. Keep the previous live
   // observation if the refresh is unreadable; PID reuse remains a mismatch.
   let finalObservedAfter = observedAfter;
-  if ((host.platform ?? process.platform) === "linux") {
+  if ((host.platform ?? HOST_PLATFORM.platform) === "linux") {
     const disappearing = processes.filter(({ pid }) => {
       const token = tokens.get(pid);
       return (
@@ -1174,7 +1190,7 @@ export const reobserveUnavailableTokenFacts = async (
 
 /** Create the operating-system process inspector for an explicit host context. */
 export const createSystemProcessOwnershipHost = (
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   hostEnvironment: NodeJS.ProcessEnv = process.env,
   options: {
     /** Override the compiler executable used by the Darwin native reader. */
@@ -1183,11 +1199,17 @@ export const createSystemProcessOwnershipHost = (
     readonly darwinModuleCachePath?: string;
     /** Deadline for Darwin ownership-helper compilation. */
     readonly compileTimeoutMs?: number;
-    /** Subprocess output execution seam for testing process listing failures. */
-    readonly execFileOutput?: typeof execFileOutput;
+    /** Fixed Linux `ps` locations checked before PATH; tests model a host without them. */
+    readonly linuxPsLocations?: readonly string[];
   } = {},
 ): ProcessOwnershipHost => {
-  const runExecFileOutput = options.execFileOutput ?? execFileOutput;
+  const selectPs = () =>
+    resolveSystemPs(
+      platform,
+      options.linuxPsLocations === undefined
+        ? {}
+        : { linuxLocations: options.linuxPsLocations },
+    );
   const darwinModuleCachePath =
     options.darwinModuleCachePath ??
     hostEnvironment.REA_DARWIN_MODULE_CACHE_PATH;
@@ -1222,13 +1244,12 @@ export const createSystemProcessOwnershipHost = (
             : { compileTimeoutMs: options.compileTimeoutMs }),
         })
       : undefined;
-  const listProcesses = async (signal?: AbortSignal) => {
-    if (platform === "win32") return [];
+  const listProcessesWith = async (ps: SystemPs, signal?: AbortSignal) => {
     let stdout: string;
     try {
-      ({ stdout } = await runExecFileOutput(
-        "ps",
-        ["-axo", "pid=,ppid=,pgid=,uid=,stat=,command="],
+      ({ stdout } = await execFileOutput(
+        ps.command,
+        PROCESS_INVENTORY_PS_ARGUMENTS,
         {
           env: hostEnvironment,
           stopSignal: "SIGTERM",
@@ -1272,13 +1293,42 @@ export const createSystemProcessOwnershipHost = (
           return undefined;
         }
       };
+      const LINUX_PROC_INSPECTION_CONCURRENCY = 48;
+
+      const allSettledBounded = async <T, U>(
+        items: readonly T[],
+        concurrency: number,
+        fn: (item: T, index: number) => Promise<U>,
+      ): Promise<PromiseSettledResult<U>[]> => {
+        const results = new Array<PromiseSettledResult<U>>(items.length);
+        if (items.length === 0) return results;
+        let next = 0;
+        const worker = async (): Promise<void> => {
+          while (next < items.length) {
+            const index = next++;
+            try {
+              const value = await fn(items[index]!, index);
+              results[index] = { status: "fulfilled", value };
+            } catch (reason: unknown) {
+              results[index] = { status: "rejected", reason };
+            }
+          }
+        };
+        await Promise.all(
+          Array.from({ length: Math.min(concurrency, items.length) }, worker),
+        );
+        return results;
+      };
+
       const physicalReadFailures: {
         pid: number;
         requestIndex: number;
         cause: unknown;
       }[] = [];
-      const results = await Promise.allSettled(
-        processes.map(async ({ pid }, requestIndex) => {
+      const results = await allSettledBounded(
+        processes,
+        LINUX_PROC_INSPECTION_CONCURRENCY,
+        async ({ pid }, requestIndex) => {
           if (!Number.isSafeInteger(pid) || pid <= 0)
             return [
               pid,
@@ -1307,6 +1357,9 @@ export const createSystemProcessOwnershipHost = (
               state: "readable" as const,
               identity: `linux-starttime:${facts.startTime}`,
               ...(facts.name === "" ? {} : { name: facts.name }),
+              ...(facts.kernelThread === true
+                ? { kernelThread: true as const }
+                : {}),
               ...(effectiveUid === undefined ? {} : { effectiveUid }),
               ...(environmentRestriction === undefined
                 ? {}
@@ -1484,7 +1537,7 @@ export const createSystemProcessOwnershipHost = (
               { state: "unavailable", reason: errorMessage(cause) } as const,
             ] as const;
           }
-        }),
+        },
       );
       const observations = new Map<number, ProcessIdentityObservation>();
       const failures: { pid: number; requestIndex: number; cause: unknown }[] =
@@ -1521,9 +1574,18 @@ export const createSystemProcessOwnershipHost = (
       );
     }
   };
+  /**
+   * Execution failures keep their identity; the message names the `ps` that
+   * ran (`spawn /usr/bin/ps ENOENT`, or bare `ps` for the PATH fallback).
+   */
+  const listProcesses = async (signal?: AbortSignal) =>
+    platform === "win32"
+      ? []
+      : await listProcessesWith(await selectPs(), signal);
   const safeListProcesses = async (signal?: AbortSignal) => {
+    const ps = await selectPs();
     try {
-      return await listProcesses(signal);
+      return await listProcessesWith(ps, signal);
     } catch (cause: unknown) {
       rethrowInspectionFailure(cause);
       const failure = execFileOutputFailure(cause);
@@ -1531,8 +1593,7 @@ export const createSystemProcessOwnershipHost = (
         spawnCapacityExhausted(failure) ||
         (typeof cause === "object" &&
           cause !== null &&
-          typeof Reflect.get(cause, "code") === "string" &&
-          HOST_SPAWN_CAPACITY_CODES.has(Reflect.get(cause, "code") as string))
+          launchExhaustedResource(Reflect.get(cause, "code")) !== undefined)
       )
         throw cause;
       const rawCode =
@@ -1545,10 +1606,15 @@ export const createSystemProcessOwnershipHost = (
         throw new LinuxOwnedProcessPrerequisiteError(cause, {
           missing: systemCode === "ENOENT",
           systemCode,
+          ps,
         });
       throw new ProcessAdmissionError(
         "baseline_unavailable",
-        systemCode === undefined ? undefined : { system_code: systemCode },
+        {
+          ...(systemCode === undefined ? {} : { system_code: systemCode }),
+          ps_command: ps.command,
+          ps_source: ps.source,
+        },
         { cause },
       );
     }
@@ -1563,22 +1629,27 @@ export const createSystemProcessOwnershipHost = (
       ({ pid }) => identities.get(pid)?.state !== "readable",
     );
     if (unreadable.length > 0) {
+      const unreadablePids = new Set(unreadable.map(({ pid }) => pid));
       const stillLive = liveProcesses(await safeListProcesses(signal)).filter(
-        ({ pid }) => unreadable.some((entry) => entry.pid === pid),
+        ({ pid }) => unreadablePids.has(pid),
       );
       const retried = await processIdentities(stillLive, signal);
       identities = new Map([...identities, ...retried]);
       const unresolved = stillLive.filter(
         ({ pid }) => identities.get(pid)?.state !== "readable",
       );
-      const liveAfterRetry = liveProcesses(await safeListProcesses(signal));
-      const stillUnresolved = unresolved.filter(({ pid }) =>
-        liveAfterRetry.some((entry) => entry.pid === pid),
-      );
-      if (stillUnresolved.length > 0)
-        throw new ProcessAdmissionError("identity_snapshot_unavailable", {
-          live_processes: stillUnresolved.length,
-        });
+      if (unresolved.length > 0) {
+        const liveAfterRetryPids = new Set(
+          liveProcesses(await safeListProcesses(signal)).map(({ pid }) => pid),
+        );
+        const stillUnresolved = unresolved.filter(({ pid }) =>
+          liveAfterRetryPids.has(pid),
+        );
+        if (stillUnresolved.length > 0)
+          throw new ProcessAdmissionError("identity_snapshot_unavailable", {
+            live_processes: stillUnresolved.length,
+          });
+      }
     }
     return processes.map(({ pid }) => {
       const observation = identities.get(pid);
@@ -1634,8 +1705,8 @@ export const createSystemProcessOwnershipHost = (
           environment.REA_PROCESS_RUN_ID = observation.runId;
         return environment;
       }
-      const { stdout } = await runExecFileOutput(
-        "ps",
+      const { stdout } = await execFileOutput(
+        (await selectPs()).command,
         ["eww", "-p", String(pid)],
         {
           env: hostEnvironment,
@@ -1681,7 +1752,9 @@ export const createSystemProcessOwnershipHost = (
   };
 };
 
-export const systemProcessOwnershipHost = createSystemProcessOwnershipHost();
+export const systemProcessOwnershipHost = createSystemProcessOwnershipHost(
+  HOST_PLATFORM.platform,
+);
 
 /**
  * Observe a live PID's start identity, optionally binding it to an owned run.
@@ -1695,14 +1768,13 @@ export const observeProcessStartIdentity = async (
 ): Promise<ProcessIdentityObservation | undefined> => {
   if (host.processIdentities === undefined)
     return { state: "unavailable", reason: "process identity is unsupported" };
-  const identity: ProcessIdentityObservation = (
-    await host.processIdentities([{ pid }])
-  ).get(pid) ?? {
-    state: "unavailable",
-    reason: "process identity was not returned",
-  };
-  if (identity.state === "absent" || processIdentityHasExited(identity))
-    return undefined;
+  const identity = liveProcessIdentity(
+    (await host.processIdentities([{ pid }])).get(pid) ?? {
+      state: "unavailable",
+      reason: "process identity was not returned",
+    },
+  );
+  if (identity === undefined) return undefined;
   if (expectedRunId === undefined || identity.state !== "readable")
     return identity;
   const process = (await host.listProcesses()).find(
@@ -1741,17 +1813,49 @@ export const observeProcessStartIdentity = async (
       };
 };
 
-/** Confirm whether the process that held an authenticated bridge has exited. */
+/** An absent or exited identity has no live process; others stay as observed. */
+const liveProcessIdentity = (
+  identity: ProcessIdentityObservation,
+): ProcessIdentityObservation | undefined =>
+  identity.state === "absent" || processIdentityHasExited(identity)
+    ? undefined
+    : identity;
+
+/**
+ * Confirm whether the process that held an authenticated bridge has exited.
+ * `exiting` is a positively observed native exit in progress (Linux
+ * PF_EXITING before state Z) that outlasted the cleanup grace; like
+ * `present`, it does not confirm exit.
+ */
 export const observeProcessStartIdentityExit = async (
   pid: number,
   expectedIdentity: string,
   host: ProcessOwnershipHost = systemProcessOwnershipHost,
-): Promise<"exited" | "present" | "unverified"> => {
+): Promise<"exited" | "exiting" | "present" | "unverified"> => {
   try {
-    const observed = await observeProcessStartIdentity(pid, host);
+    let observed = await observeProcessStartIdentity(pid, host);
+    // An exiting process closes its sockets before it becomes a zombie, so a
+    // caller that reacts to the closed transport can observe the same
+    // generation mid-exit. The shared settlement waits only for that
+    // positively observed state of the same identity.
+    if (
+      observed?.state === "readable" &&
+      observed.identity === expectedIdentity
+    ) {
+      const settled = (
+        await settleExitingProcessIdentities(
+          [{ pid }],
+          host,
+          new Map([[pid, observed]]),
+        )
+      ).get(pid);
+      observed =
+        settled === undefined ? observed : liveProcessIdentity(settled);
+    }
     if (observed === undefined) return "exited";
     if (observed.state !== "readable") return "unverified";
-    return observed.identity === expectedIdentity ? "present" : "exited";
+    if (observed.identity !== expectedIdentity) return "exited";
+    return processIdentityIsExiting(observed) ? "exiting" : "present";
   } catch (cause: unknown) {
     rethrowInspectionFailure(cause);
     return "unverified";
@@ -1783,13 +1887,14 @@ export const signalProcessWithStartIdentity = async (
 };
 
 /** Actionable remediation when Linux `ps` is missing or incompatible. */
-export const LINUX_PROCESS_OWNERSHIP_REMEDIATION =
-  "Install your distribution's procps or procps-ng package, or put a procps-compatible ps on REA's PATH, then retry.";
+export const LINUX_PROCESS_OWNERSHIP_REMEDIATION = `Install your distribution's procps or procps-ng package so a procps-compatible ps exists at ${LINUX_SYSTEM_PS_LOCATIONS.join(", ")}; REA uses its own PATH only when none of those exists. Then retry.`;
 
 /** Options describing why Linux process ownership inspection could not run `ps`. */
 export interface LinuxOwnedProcessPrerequisiteOptions {
   readonly missing?: boolean;
   readonly systemCode?: string | undefined;
+  /** The `ps` that failed, recorded in the diagnostics and reason. */
+  readonly ps?: SystemPs;
 }
 
 /** Refusal before an owned launch when Linux `ps` is missing or incompatible. */
@@ -1824,12 +1929,14 @@ export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavai
       admissionCode === undefined &&
       (options.missing ??
         (resolvedCode === "ENOENT" || resolvedCode === undefined));
+    const ran =
+      options.ps === undefined ? "" : ` (ran ${describeSystemPs(options.ps)})`;
     const reason =
       admissionCode !== undefined || isMissing
-        ? `Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: ${errorMessage(cause)}`
+        ? `Linux process ownership inspection requires a procps-compatible ps before launching a child: ${errorMessage(cause)}${ran}`
         : resolvedCode !== undefined
-          ? `Linux process ownership inspection failed to execute ps (${resolvedCode}): ${errorMessage(cause)}`
-          : `Linux process ownership inspection could not obtain the process table using ps: ${errorMessage(cause)}`;
+          ? `Linux process ownership inspection failed to execute ps (${resolvedCode}): ${errorMessage(cause)}${ran}`
+          : `Linux process ownership inspection could not obtain the process table using ps: ${errorMessage(cause)}${ran}`;
     const remediation =
       admissionCode !== undefined
         ? processOwnershipAdmissionRecovery(admissionCode, "linux")
@@ -1850,6 +1957,9 @@ export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavai
           ? {}
           : { admission_code: admissionCode }),
         ...(resolvedCode === undefined ? {} : { system_code: resolvedCode }),
+        ...(options.ps === undefined
+          ? {}
+          : { ps_command: options.ps.command, ps_source: options.ps.source }),
       },
     });
     this.systemCode = resolvedCode;
@@ -1865,7 +1975,7 @@ export const DARWIN_PROCESS_OWNERSHIP_REMEDIATION =
 export const processOwnershipAdmissionRecovery = (
   code: string,
   platform: NodeJS.Platform = systemProcessOwnershipHost.platform ??
-    process.platform,
+    HOST_PLATFORM.platform,
   systemCode?: string,
 ): string => {
   if (code === "identity_snapshot_unavailable")
@@ -1879,12 +1989,12 @@ export const processOwnershipAdmissionRecovery = (
   if (code === "baseline_unavailable") {
     if (systemCode === "ENOENT")
       return platform === "darwin"
-        ? "Ensure ps is available on PATH and process ownership inspection is supported on macOS before launching captured children."
+        ? "Ensure /bin/ps runs and process ownership inspection is supported on macOS before launching captured children."
         : LINUX_PROCESS_OWNERSHIP_REMEDIATION;
     if (systemCode !== undefined)
       return `Verify host process table inspection can execute ps (${systemCode}) before launching captured children, then retry.`;
     return platform === "darwin"
-      ? "Ensure ps is available on PATH and process ownership inspection is supported on macOS before launching captured children."
+      ? "Ensure /bin/ps runs and process ownership inspection is supported on macOS before launching captured children."
       : "Ensure process ownership inspection is supported on the host platform before launching captured children.";
   }
   return "Verify host process ownership inspection prerequisites before retrying.";
@@ -1917,6 +2027,3 @@ const processIsGone = async (
     return false;
   }
 };
-
-export const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

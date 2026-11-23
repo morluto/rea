@@ -194,6 +194,27 @@ describe("Hopper provider target support", () => {
   });
 });
 
+describe("Hopper Xtensa support", () => {
+  it("declines Xtensa with the Ghidra-directed reason", () => {
+    const config = parseConfig({});
+    if (!config.ok) throw new Error("expected valid configuration");
+    const provider = new HopperProvider(config.value, silentLogger, {});
+    const target = {
+      path: "/tmp/esp32s3.elf",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "elf",
+      architecture: "xtensa",
+      availableArchitectures: ["xtensa"],
+    } as const satisfies BinaryTarget;
+    expect(provider.inspectTargetSupport(target)).toMatchObject({
+      status: "unsupported",
+      code: "architecture_unsupported",
+      reason: hopperDeclinedArchitectureReason("xtensa"),
+    });
+  });
+});
+
 describe("Hopper relationship coverage", () => {
   it.each([
     ["procedure_callers", ["callers"]],
@@ -274,6 +295,7 @@ describe("Hopper relationship coverage", () => {
         sha256: "a".repeat(64),
         kind: "database",
         format: "analysis-database",
+        databaseEngine: "hopper",
       });
       try {
         const observed = await client.execute(operation, {
@@ -313,8 +335,11 @@ describe("Hopper relationship coverage", () => {
           ),
         });
       } finally {
-        await client.close();
-        callTool.mockRestore();
+        try {
+          await client.close();
+        } finally {
+          callTool.mockRestore();
+        }
       }
     },
   );
@@ -380,6 +405,7 @@ describe("Hopper caller reconciliation failures", () => {
       sha256: "a".repeat(64),
       kind: "database",
       format: "analysis-database",
+      databaseEngine: "hopper",
     });
     try {
       const observed = await client.execute("procedure_callers", {
@@ -406,8 +432,11 @@ describe("Hopper caller reconciliation failures", () => {
         },
       });
     } finally {
-      await client.close();
-      callTool.mockRestore();
+      try {
+        await client.close();
+      } finally {
+        callTool.mockRestore();
+      }
     }
   });
 });
@@ -465,6 +494,7 @@ it("preserves pre-abort with invalid startup seed", async () => {
     sha256: "a".repeat(64),
     kind: "database",
     format: "analysis-database",
+    databaseEngine: "hopper",
   });
   const result = await client.execute(
     "health",

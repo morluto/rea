@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { NativeAotParserLimits } from "./nativeAotPe.js";
 import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import {
+  DEFAULT_NATIVE_AOT_PARSER_LIMITS,
+  NATIVE_AOT_BASE_WORK_UNITS,
   NATIVE_AOT_MAX_REPORT_BYTES,
+  NATIVE_AOT_MAX_SOURCE_BYTES,
+  nativeAotParserLimitsFor,
   parseNativeAotPe,
 } from "./nativeAotPe.js";
 import {
@@ -11,6 +15,34 @@ import {
 } from "../../../tests/fixtures/nativeaotPe.js";
 
 const REPORT_BUDGET = NATIVE_AOT_MAX_REPORT_BYTES;
+
+describe("NativeAOT work budget scaling", () => {
+  it("grows with the admitted image and stops at the source-byte ceiling", () => {
+    const small = nativeAotParserLimitsFor(1024);
+    const large = nativeAotParserLimitsFor(26_180_096);
+    expect(small.workUnits).toBeGreaterThan(NATIVE_AOT_BASE_WORK_UNITS);
+    // bflat 8.0.2's 26,180,096-byte image needs 71,645,819 units to complete.
+    expect(large.workUnits).toBeGreaterThan(71_645_819);
+    expect(nativeAotParserLimitsFor(Number.MAX_SAFE_INTEGER)).toEqual(
+      DEFAULT_NATIVE_AOT_PARSER_LIMITS,
+    );
+    expect(DEFAULT_NATIVE_AOT_PARSER_LIMITS.sourceBytes).toBe(
+      NATIVE_AOT_MAX_SOURCE_BYTES,
+    );
+  });
+
+  it("charges an image against the budget for its own size by default", () => {
+    const bytes = nativeAotPeFixture();
+    const report = parseNativeAotPe(
+      bytes,
+      nativeAotPeDigest(bytes),
+      REPORT_BUDGET,
+    ).summary;
+    expect(report.coverage.work_budget_units).toBe(
+      nativeAotParserLimitsFor(bytes.length).workUnits,
+    );
+  });
+});
 
 describe("NativeAOT parser resource budgets", () => {
   it("reports source-cap rejection without hashing or inventing omitted-byte coverage", () => {
@@ -398,3 +430,68 @@ it("reports a frozen-string scan stopped during a budgeted image read", () => {
   });
   expect(partial.frozen_strings).toEqual(complete.frozen_strings);
 });
+
+it.each([
+  { kind: "a surrogate pair", value: "😀", equivalent: "éé", prefixUnit: 0 },
+  {
+    kind: "an unpaired high surrogate",
+    value: "\ud83dA",
+    equivalent: "\u0001A",
+    prefixUnit: 0xdc00,
+  },
+  {
+    kind: "an unpaired low surrogate",
+    value: "A\ude00",
+    equivalent: "A\u0001",
+    prefixUnit: 0,
+  },
+])(
+  "charges the exact JSON bytes for frozen UTF-16 with $kind",
+  ({ value, equivalent, prefixUnit }) => {
+    const parse = (text: string) => {
+      const bytes = nativeAotPeFixture();
+      // DOS field outside the string. For the unpaired high case this is an
+      // unrelated low surrogate at the offset a base-less lookahead would read.
+      bytes.writeUInt16LE(prefixUnit, 2);
+      const frozenObject = 0x900;
+      const data = Buffer.from(text, "utf16le");
+      bytes.writeUInt32LE(text.length, frozenObject + 8);
+      data.copy(bytes, frozenObject + 12);
+      bytes.writeUInt16LE(0, frozenObject + 12 + data.length);
+      const sha = nativeAotPeDigest(bytes);
+      return (budget: number) => parseNativeAotPe(bytes, sha, budget).summary;
+    };
+    expect(Buffer.byteLength(JSON.stringify(value))).toBe(
+      Buffer.byteLength(JSON.stringify(equivalent)),
+    );
+    // The control has the same JSON width and number of code units without
+    // needing surrogate lookahead. Find its exact admission boundary.
+    const control = parse(equivalent);
+    let low = 0;
+    let high = REPORT_BUDGET;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      try {
+        if (control(middle).frozen_strings.length > 0) high = middle;
+        else low = middle + 1;
+      } catch (cause) {
+        expect(cause).toMatchObject({
+          diagnostics: { code: "summary_exceeds_budget" },
+        });
+        low = middle + 1;
+      }
+    }
+    expect(control(low).frozen_strings).toEqual([
+      { address: "0x140002300", value: equivalent },
+    ]);
+    const subject = parse(value);
+    const atBoundary = subject(low);
+    expect(atBoundary.frozen_strings).toEqual([
+      { address: "0x140002300", value },
+    ]);
+    expect(Buffer.byteLength(JSON.stringify(atBoundary))).toBeLessThanOrEqual(
+      low,
+    );
+    expect(subject(low - 1).frozen_strings).toEqual([]);
+  },
+);

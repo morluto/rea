@@ -2,7 +2,7 @@ import type { Readable } from "node:stream";
 import type { McpServerFactory } from "@modelcontextprotocol/server";
 import type { Logger } from "pino";
 
-import type { OptionalProviderLoadResult } from "../application/OptionalObservationProviders.js";
+import type { OptionalProviderLoadResult } from "../ports/OptionalObservationProviders.js";
 
 /** Teardown handle every MCP transport returns to the runtime. */
 export interface McpServerHandle {
@@ -36,5 +36,9 @@ export interface RuntimeDependencies {
   readonly setExitCode: (code: number) => void;
   readonly registerShutdown: (handler: () => void) => () => void;
   readonly createServer?: typeof import("../server/createServer.js").createServer;
+  /** Close materialized server resources when the SDK transport has another owner. */
+  readonly closeServer?: (
+    server: ReturnType<typeof import("../server/createServer.js").createServer>,
+  ) => Promise<void>;
   readonly loadOptionalProviders?: () => Promise<OptionalProviderLoadResult>;
 }

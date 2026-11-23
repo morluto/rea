@@ -130,6 +130,18 @@ MAX_FRAME_BYTES, BRIDGE_MAX_REQUEST_BYTES_SOURCE = (
 )
 
 
+def _bridge_source_sha256() -> str | None:
+    """Digest this plugin file so REA can tell its packaged copy from another one."""
+    try:
+        with open(__file__, "rb") as source:
+            return hashlib.sha256(source.read()).hexdigest()
+    except (NameError, OSError):
+        return None
+
+
+BRIDGE_SOURCE_SHA256 = _bridge_source_sha256()
+
+
 def _bridge_max_request_bytes_recovery():
     return (
         "The effective REA_BRIDGE_MAX_REQUEST_BYTES value is %d bytes "
@@ -544,6 +556,8 @@ class _RequestDispatcher(QObject):
                 "ok": False,
                 "error": "active-document-generation-changed",
                 "execution_state": "not_started",
+                "document_generation": self.generation,
+                "output_truncated": False,
             })
             self._record_command_completion(request_id, "not_started")
             request["_event"].set()
@@ -554,6 +568,8 @@ class _RequestDispatcher(QObject):
                 "ok": False,
                 "error": "invalid-command",
                 "execution_state": "not_started",
+                "document_generation": self.generation,
+                "output_truncated": False,
             })
             self._record_command_completion(request_id, "not_started")
             request["_event"].set()
@@ -575,6 +591,7 @@ class _RequestDispatcher(QObject):
                 "cutter_version": self.cutter_version,
                 "identity_status": "partial",
                 "execution_state": "complete",
+                "output_truncated": False,
             })
             self._record_command_completion(request_id, "complete")
         else:
@@ -586,6 +603,7 @@ class _RequestDispatcher(QObject):
                 "cutter_version": self.cutter_version,
                 "identity_status": "partial",
                 "execution_state": "unknown",
+                "output_truncated": False,
                 "message": "The command raised an exception; it may have produced partial effects. Do not retry automatically.",
             })
             self._record_command_completion(request_id, "failed")
@@ -655,6 +673,7 @@ class _BridgeServer(threading.Thread):
             "cutter_version": self.dispatcher.cutter_version,
             "identity_status": "partial",
             "max_request_bytes": MAX_FRAME_BYTES,
+            "bridge_source_sha256": BRIDGE_SOURCE_SHA256,
         }
         if os.name == "nt":
             _write_windows_descriptor(self.directory, self.descriptor, json.dumps(payload).encode("utf-8"))
@@ -958,15 +977,6 @@ class _BridgeServer(threading.Thread):
             proof.update(fragment.encode("utf-8"))
         return proof.hexdigest()
 
-    def _encode_authenticated_response(
-        self, value: dict[str, Any], client_nonce: str, server_nonce: str
-    ) -> bytes | None:
-        """Return one exact frame. The socket path writes the same pieces."""
-        proof = self._authenticated_proof(value, client_nonce, server_nonce)
-        if proof is None:
-            return None
-        return b"".join(self._iter_authenticated_frame(value, proof))
-
     def _iter_authenticated_frame(self, value: dict[str, Any], proof: str):
         yield _AUTHENTICATED_PREFIX
         for fragment in _response_fragments(value):
@@ -1254,12 +1264,19 @@ def _escape_json_fragment(fragment: str) -> bytes:
     return json.dumps(fragment, ensure_ascii=False)[1:-1].encode("utf-8")
 
 
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f]")
+_EXIT_CONTAINER = object()
+
+
 def _within_response_limit(value: Any) -> bool:
-    pending = [value]
+    pending: list[Any] = [value]
     seen: set[int] = set()
     size = 0
     while pending:
         current = pending.pop()
+        if isinstance(current, tuple) and len(current) == 2 and current[0] is _EXIT_CONTAINER:
+            seen.discard(current[1])
+            continue
         if isinstance(current, str):
             size += 2
             if len(current) > MAX_FRAME_BYTES - size:
@@ -1279,11 +1296,12 @@ def _within_response_limit(value: Any) -> bool:
             size += current.count('"') + current.count("\\")
             # A short escape is two JSON bytes and was already counted as one.
             # Other controls expand to a six-byte \\u00XX sequence.
-            size += sum(
-                1 if ord(character) in (0x08, 0x09, 0x0A, 0x0C, 0x0D) else 5
-                for character in current
-                if ord(character) < 0x20
-            )
+            if _CONTROL_CHAR_RE.search(current) is not None:
+                size += sum(
+                    1 if ord(character) in (0x08, 0x09, 0x0A, 0x0C, 0x0D) else 5
+                    for character in current
+                    if ord(character) < 0x20
+                )
         elif isinstance(current, dict):
             identity = id(current)
             if identity in seen:
@@ -1295,6 +1313,7 @@ def _within_response_limit(value: Any) -> bool:
             size += 2 + count + max(0, count - 1)
             if size > MAX_FRAME_BYTES:
                 return False
+            pending.append((_EXIT_CONTAINER, identity))
             pending.extend(current.keys())
             pending.extend(current.values())
         elif isinstance(current, (list, tuple)):
@@ -1307,6 +1326,7 @@ def _within_response_limit(value: Any) -> bool:
             size += 2 + max(0, count - 1)
             if size > MAX_FRAME_BYTES:
                 return False
+            pending.append((_EXIT_CONTAINER, identity))
             pending.extend(current)
         elif current is None:
             size += 4

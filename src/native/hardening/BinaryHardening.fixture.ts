@@ -1,4 +1,9 @@
-import { elfNote, gnuBuildIdNote } from "../elf/ElfNotes.fixture.js";
+import { keyedBy, uniqueKeyed } from "../../domain/keyedCollection.js";
+import {
+  elfCompressedNoteStorage,
+  elfNote,
+  gnuBuildIdNote,
+} from "../elf/ElfNotes.fixture.js";
 import {
   peLoadConfigImage,
   type PeLoadConfigFixtureMalformed,
@@ -85,7 +90,7 @@ export interface ElfHardeningFixtureOptions {
   readonly longSymbolName?: boolean;
   /** Replace `__memcpy_chk`; bytes are written as latin1. */
   readonly fortifyName?: string;
-  /** Mark `.note.gnu.property` as SHF_COMPRESSED. */
+  /** Store `.note.gnu.property` as an ELF zlib section with SHF_COMPRESSED. */
   readonly compressedPropertyNote?: boolean;
   /** Disjoint `.note.gnu.property` sections holding one empty note each. */
   readonly disjointNoteSections?: number;
@@ -705,12 +710,17 @@ const assignElfProgramSpans = (
   },
 ): void => {
   const programAt = (typeId: number, payload: number, size: number): void => {
-    const program = programs.find((candidate) => candidate.type === typeId);
-    if (program === undefined) return;
-    program.offset = payload;
-    program.address = payload;
-    program.filesz = size;
-    program.memsz = size;
+    const program = uniqueKeyed(
+      keyedBy(programs, ({ type }) => type),
+      typeId,
+    );
+    if (!program.ok) throw new Error("fixture repeats a program type");
+    if (program.value === undefined) return;
+    const header = program.value;
+    header.offset = payload;
+    header.address = payload;
+    header.filesz = size;
+    header.memsz = size;
   };
   if (facts.interp) programAt(PT_INTERP, facts.interpAt, facts.interpBytes);
   if (facts.dynamic)
@@ -881,7 +891,11 @@ export const elfHardeningFixture = (
   const shentsize = bits === 64 ? 64 : 40;
   const propertyAlign = bits === 64 ? 8 : 4;
   const symbols = elfSymbolPayload(options, bits, little);
-  const note = elfPropertyNote(options, bits, little);
+  const rawNote = elfPropertyNote(options, bits, little);
+  const note =
+    options.compressedPropertyNote === true && rawNote.length !== 0
+      ? elfCompressedNoteStorage(rawNote, bits, little, propertyAlign)
+      : rawNote;
   const buildIdCount =
     options.buildIdCount ??
     (options.buildId === true || (options.buildIdSections ?? 0) > 0 ? 1 : 0);
@@ -1006,6 +1020,8 @@ export interface MachoHardeningFixtureOptions {
   readonly restrict?: boolean;
   /** Segment name, including an embedded NUL, instead of plain __RESTRICT. */
   readonly restrictName?: string;
+  /** Section name in the restrict segment; `null` omits the section. Default `__restrict`. */
+  readonly restrictSection?: string | null;
   readonly codeSignature?: boolean;
   /** `null` omits the encryption command. `false` keeps cryptid 0. */
   readonly encrypted?: boolean | null;
@@ -1076,9 +1092,7 @@ const machoSymbolPayload = (
           : options.stackChk === false
             ? 1
             : 0)) + (options.trailingBrokenStrx === true ? 1 : 0);
-  const storedSymbols =
-    options.nsyms !== undefined && options.nsyms > 4096 ? 0 : declaredSymbols;
-  const symbolBytes = Buffer.alloc(Math.max(storedSymbols, 0) * nlistWidth);
+  const symbolBytes = Buffer.alloc(declaredSymbols * nlistWidth);
   const symbolType = options.definedSymbol === true ? 0x0f : 0x01;
   const writeSymbol = (index: number, nameOffset: number): void => {
     const at = index * nlistWidth;
@@ -1088,7 +1102,7 @@ const machoSymbolPayload = (
       symbolBytes.writeUInt32LE(options.commonSize, at + 8);
   };
   if (options.symbolScanBudget === true) {
-    for (let index = 0; index < storedSymbols; index += 1)
+    for (let index = 0; index < declaredSymbols; index += 1)
       writeSymbol(index, 1);
   } else if (options.brokenStrx === true && symbolBytes.length >= 4)
     writeSymbol(0, 50);
@@ -1098,7 +1112,7 @@ const machoSymbolPayload = (
   )
     writeSymbol(0, 1);
   if (options.trailingBrokenStrx === true)
-    writeSymbol(storedSymbols - 1, strings.length + 50);
+    writeSymbol(declaredSymbols - 1, strings.length + 50);
   return { wantSymtab, strings, declaredSymbols, symbolBytes };
 };
 
@@ -1113,18 +1127,29 @@ export const machoHardeningFixture = (
   const cpuSubtype = options.cpuSubtype ?? 0;
   const flags = options.flags ?? 0x200000 | 0x1000000;
   const commands: Buffer[] = [];
-  const segment = (name: string): Buffer => {
-    const size = wide ? 72 : 56;
+  const segment = (name: string, sectionName: string | null = null): Buffer => {
+    const headerSize = wide ? 72 : 56;
+    const size = headerSize + (sectionName === null ? 0 : wide ? 80 : 68);
     const body = Buffer.alloc(size);
     body.writeUInt32LE(wide ? 0x19 : 0x1, 0);
     body.writeUInt32LE(size, 4);
     body.write(name, 8, "latin1");
+    if (sectionName !== null) {
+      body.writeUInt32LE(1, wide ? 64 : 48);
+      body.write(sectionName, headerSize, "latin1");
+      body.write(name, headerSize + 16, "latin1");
+    }
     return body;
   };
+  const restrictSection =
+    options.restrictSection === undefined
+      ? "__restrict"
+      : options.restrictSection;
   commands.push(segment("__TEXT"));
-  if (options.restrict === true) commands.push(segment("__RESTRICT"));
+  if (options.restrict === true)
+    commands.push(segment("__RESTRICT", restrictSection));
   if (options.restrictName !== undefined)
-    commands.push(segment(options.restrictName));
+    commands.push(segment(options.restrictName, restrictSection));
   for (const command of options.extraCommands ?? []) commands.push(command);
   const { wantSymtab, strings, declaredSymbols, symbolBytes } =
     machoSymbolPayload(options, wide);

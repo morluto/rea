@@ -17,7 +17,7 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { selectViewRows } from "./selectViewRows.js";
+import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
 
 const code = pythonPycSchema.shape.code_objects.element;
 
@@ -40,10 +40,6 @@ export const pythonPycSummaryDeliveryShape = {
   detail: z.literal("summary"),
   view: pythonPycViewRequestSchema.exactOptional(),
 };
-export const pythonPycDeliverySchema = z.discriminatedUnion("detail", [
-  z.strictObject(pythonPycCompleteDeliveryShape),
-  z.strictObject(pythonPycSummaryDeliveryShape),
-]);
 
 export const pythonPycViewItemsSchema = z.array(
   code.partial().extend({ source_index: z.int().nonnegative() }),
@@ -102,10 +98,7 @@ export const projectPythonPycView = (
       kind: "summary" as const,
       view,
       summary,
-      coverage: completeWithinViewCoverage(
-        code_objects.length,
-        code_objects.length,
-      ),
+      coverage: completeWithinViewCoverage(code_objects.length),
     });
   const names = view.names === undefined ? undefined : new Set(view.names);
   const indices =
@@ -117,6 +110,8 @@ export const projectPythonPycView = (
     ),
     source_index,
   });
+  const matches = (row: PythonPycCodeObject) =>
+    names === undefined || names.has(row.name);
   const selected =
     names === undefined && indices === undefined
       ? {
@@ -125,14 +120,15 @@ export const projectPythonPycView = (
             .map((row, index) => projectRow(row, view.offset + index)),
           total: code_objects.length,
         }
-      : selectViewRows(
-          code_objects,
-          view,
-          (row, index) =>
-            (names === undefined || names.has(row.name)) &&
-            (indices === undefined || indices.has(index)),
-          projectRow,
-        );
+      : indices !== undefined
+        ? selectIndexedViewRows(
+            code_objects,
+            indices,
+            view,
+            matches,
+            projectRow,
+          )
+        : selectViewRows(code_objects, view, matches, projectRow);
   return ok({
     ...shared,
     kind: "python-pyc" as const,

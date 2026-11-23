@@ -5,9 +5,10 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { access, mkdir, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
-import { buffer } from "node:stream/consumers";
 import { createPackageWithOptions } from "@electron/asar";
 import { Readable } from "node:stream";
+import { setImmediate } from "node:timers/promises";
+import { phaseGate } from "../support/lifecycleHarness.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const fault = vi.hoisted(() => ({
@@ -18,6 +19,7 @@ const fault = vi.hoisted(() => ({
   abortAfterRead: false,
   abortAtFinalIdentity: false,
   readFinished: false,
+  onRead: undefined as (() => Promise<void>) | undefined,
   opened: [] as FileHandle[],
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -56,6 +58,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
           bytesRead: number;
           buffer: Buffer;
         };
+        if (result.bytesRead > 0) await fault.onRead?.();
         if (result.bytesRead === 0) {
           fault.readFinished = true;
           if (fault.abortAfterRead) fault.controller?.abort(fault.reason);
@@ -68,8 +71,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { AsarArtifactReader } from "../../src/artifacts/AsarArtifactReader.js";
-import { SafeOutputTree } from "../../src/artifacts/SafeOutputTree.js";
-import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
+import { SafeOutputTree } from "../../src/resources/SafeOutputTree.js";
+import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 const trees: SafeOutputTree[] = [];
@@ -81,6 +84,7 @@ beforeEach(() => {
   fault.abortAfterRead = false;
   fault.abortAtFinalIdentity = false;
   fault.readFinished = false;
+  fault.onRead = undefined;
   fault.opened = [];
 });
 afterEach(async () => {
@@ -168,6 +172,9 @@ it.each(["idle", "active", "read-failure"])(
     await writeFile(join(input, "member.bin"), "unpacked member bytes");
     await createPackageWithOptions(input, archive, { unpack: "*.bin" });
     const reader = new AsarArtifactReader(archive);
+    const activeRead = stage === "active" ? phaseGate() : undefined;
+    let consuming: Promise<unknown> | undefined;
+    if (activeRead !== undefined) fault.onRead = () => activeRead.hold();
     try {
       const entries = [];
       for await (const entry of reader.entries()) entries.push(entry);
@@ -184,11 +191,24 @@ it.each(["idle", "active", "read-failure"])(
       if (stage === "read-failure") fault.failure = failure;
       const source = await reader.open(entry, fault.controller.signal);
       expect(fault.opened).toHaveLength(1);
+      let delivered = 0;
+      const consume = async () => {
+        for await (const chunk of source as AsyncIterable<Buffer>)
+          delivered += chunk.length;
+      };
       const result =
         stage === "idle"
           ? new Promise<unknown>((resolve) => source.once("error", resolve))
-          : buffer(source).catch((cause: unknown) => cause);
+          : (consuming = consume().catch((cause: unknown) => cause));
+      if (activeRead !== undefined)
+        await activeRead.reached(result, "ASAR descriptor read completion");
       if (stage !== "read-failure") fault.controller.abort(fault.reason);
+      if (activeRead !== undefined) {
+        await setImmediate();
+        expect(source.destroyed).toBe(false);
+        expect(fault.opened[0]?.fd).toBeGreaterThanOrEqual(0);
+        activeRead.release();
+      }
       if (stage === "read-failure")
         await expect(result).resolves.toMatchObject({
           reason: "io",
@@ -199,12 +219,18 @@ it.each(["idle", "active", "read-failure"])(
           reason: "cancelled",
           cancellation: { reason: fault.reason },
         });
+      expect(delivered).toBe(0);
       fault.failure = undefined;
       await reader.close();
       expect(fault.opened[0]?.fd).toBe(-1);
     } finally {
-      fault.failure = undefined;
-      await reader.close();
+      activeRead?.release();
+      try {
+        await consuming;
+      } finally {
+        fault.failure = undefined;
+        await reader.close();
+      }
     }
   },
 );

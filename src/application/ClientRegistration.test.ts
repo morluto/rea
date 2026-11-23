@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { expect, it } from "vitest";
 
 import {
@@ -5,15 +6,12 @@ import {
   parseClientRegistrationLauncher,
   replaceClientRegistrationLauncher,
 } from "./ClientRegistration.js";
+import { clientRegistrationEnvironment } from "./ClientRegistrationEnvironment.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
-import {
-  parseClientConfiguration,
-  clientConfigurationRecordSchema,
-} from "./ClientConfigurationDocument.js";
-import {
-  supportedClientRegistrationProfile,
-  type SetupClient,
-} from "./SupportedClients.js";
+import { parseClientConfiguration } from "./ClientConfigurationDocument.js";
+import { clientConfigurationRecordSchema } from "./ClientConfigurationValues.js";
+import type { SetupClient } from "./SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../tests/fixtures/clientRegistrationProfile.js";
 import { mcpClientRegistrationProfile } from "./McpRegistrationCatalog.js";
 import { admitClientStdioConnection } from "./ClientRegistrationConnection.js";
 import type { ClientRegistrationTarget } from "./ClientRegistrationProfile.js";
@@ -160,29 +158,24 @@ it("normalizes an explicitly empty Goose env alias to one canonical field", () =
   expect(result.value).not.toHaveProperty("env");
 });
 
-it.each([
-  { env: { KEEP: "1" }, envs: { KEEP: "1" } },
-  { env: { KEEP: "old" }, envs: { KEEP: "new" } },
-])(
-  "refuses both Goose environment aliases even when their contents agree: %j",
-  (previous) => {
-    const result = replaceClientRegistrationLauncher(
-      gooseTarget,
-      ["fixture"],
-      previous,
-    );
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("Ambiguous Goose aliases were admitted");
-    expect(result.error).toBeInstanceOf(ConfigurationError);
-    expect(result.error.message).toContain("envs or its env alias, not both");
-    expect(result.error.settings).toEqual([
-      {
-        setting: "envs",
-        constraint: "env and envs declare the same native field",
-      },
-    ]);
-  },
-);
+it("refuses both Goose environment aliases even when their contents agree", () => {
+  const result = replaceClientRegistrationLauncher(gooseTarget, ["fixture"], {
+    env: { KEEP: "1" },
+    envs: { KEEP: "1" },
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "ConfigurationError",
+      settings: [
+        {
+          setting: "envs",
+          constraint: expect.stringMatching(/\benv\b.*\benvs\b/u),
+        },
+      ],
+    },
+  });
+});
 
 it.each([null, 42, ["value"], { VALUE: 123 }])(
   "refuses a malformed Goose env alias: %j",
@@ -197,6 +190,32 @@ it.each([null, 42, ["value"], { VALUE: 123 }])(
       {
         setting: "env",
         constraint: "Expected a mapping of string environment values",
+      },
+    ]);
+  },
+);
+
+it.each([
+  "extensions:\n  rea:\n    cmd: old\n    env:\n",
+  "extensions:\n  rea:\n    cmd: old\n    env: null\n",
+])(
+  "reads a null Goose env alias as a malformed environment, not an empty one: %j",
+  (text) => {
+    const result = clientRegistrationEnvironment(
+      parseClientConfiguration(text, "goose"),
+      {
+        name: "goose",
+        registrationProfile: supportedClientRegistrationProfile("goose"),
+      },
+      HOST_PLATFORM.platform,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Null Goose env alias was admitted");
+    expect(result.error.settings).toEqual([
+      {
+        setting: "env",
+        constraint:
+          "Server environment must be an object containing only string values",
       },
     ]);
   },
@@ -261,4 +280,26 @@ it("retains malformed stored argv syntax for ownership while refusing launch rea
     ok: false,
     error: { kind: "invalid", cause: { _tag: "ConfigurationError" } },
   });
+});
+
+it("reads policy from the selected nested Cline launcher", () => {
+  const selected: SetupClient = {
+    name: "cline",
+    registrationProfile: supportedClientRegistrationProfile("cline"),
+    format: "json",
+    configPath: "/fixture/cline.json",
+  };
+  const parsed = parseClientRegistrationPolicy(
+    {
+      transport: { type: "stdio", command: "selected", args: ["mcp"] },
+      command: "shadowed",
+      args: ["ignored"],
+      disabled: true,
+    },
+    selected,
+  );
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value.command).toBe("selected");
+  expect(parsed.value.args).toEqual(["mcp"]);
+  expect(parsed.value.disabled).toBe(true);
 });

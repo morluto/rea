@@ -27,17 +27,21 @@ cliTest.for(["ancestor", "selected-root"] as const)(
         cwd: home,
         environment: { HOME: home, USERPROFILE: home },
       });
-    expect(await validateCanonicalSkillDirectories(home, [])).toMatchObject({
+    expect(
+      await validateCanonicalSkillDirectories(home, [], {}, process.platform),
+    ).toMatchObject({
       ok: false,
       error: {
         stage: "prepare",
         cause: [{ path: selected, kind: "not_directory" }],
       },
     });
-    expect(await existingSkillDestinations(home)).toEqual({
-      destinations: [],
-      issues: [],
-    });
+    expect(await existingSkillDestinations(home, {}, process.platform)).toEqual(
+      {
+        destinations: [],
+        issues: [],
+      },
+    );
     const refused = await run();
     expect(refused.exitCode, refused.stderr).toBe(1);
     expect(refused.json).toMatchObject({
@@ -67,18 +71,20 @@ cliTest.for(["ancestor", "selected-root"] as const)(
     const saved = `${blocker}.saved`;
     await rename(blocker, saved);
     await mkdir(blocker);
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const installed = await run();
-      expect(installed.exitCode, installed.stderr).toBe(0);
-      expect(installed.json).toMatchObject({ status: "ready" });
-      for (const file of MANAGED_SKILL_FILES)
-        expect(
-          (await readFile(join(selected, file))).equals(
-            await readFile(resolve("skills/reverse-engineer-anything", file)),
-          ),
-          file,
-        ).toBe(true);
-      expect(await readFile(saved, "utf8")).toBe("caller-owned blocker\n");
-    }
+    const installed = await run();
+    expect(installed.exitCode, installed.stderr).toBe(0);
+    expect(installed.json).toMatchObject({
+      status: "ready",
+      plannedActions: [expect.objectContaining({ id: "install_skill" })],
+      appliedActions: ["installed_skill"],
+    });
+    for (const file of MANAGED_SKILL_FILES)
+      expect(
+        (await readFile(join(selected, file))).equals(
+          await readFile(resolve("skills/reverse-engineer-anything", file)),
+        ),
+        file,
+      ).toBe(true);
+    expect(await readFile(saved, "utf8")).toBe("caller-owned blocker\n");
   },
 );

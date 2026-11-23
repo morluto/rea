@@ -87,6 +87,31 @@ const inferredJumpTableSchema = z
   })
   .strict();
 
+const prototypeConflictFacts = {
+  inferred_signature: z.string().min(1),
+  signature_source: z.string().min(1),
+  inferred_parameter_count: z.int().nonnegative(),
+  instruction_address: z.string().min(1),
+  instruction: z.string().min(1),
+  unresolved_assumptions: z.array(z.string().min(1)).min(1),
+} as const;
+const prototypeConflictSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    ...prototypeConflictFacts,
+    kind: z.literal("stack-argument-read"),
+    frame_offset_bytes: z.int().positive(),
+  }),
+  z.strictObject({
+    ...prototypeConflictFacts,
+    kind: z.literal("return-stack-cleanup"),
+    cleanup_bytes: z.int().nonnegative(),
+    inferred_stack_bytes: z.int().nonnegative(),
+  }),
+]);
+
+/** One instruction-level disagreement between an inferred prototype and observed code. */
+export type NativePrototypeConflict = z.infer<typeof prototypeConflictSchema>;
+
 export const availableNativeApiBoundarySchema = z
   .object({
     available: z.literal(true),
@@ -95,6 +120,8 @@ export const availableNativeApiBoundarySchema = z
     calling_convention: z.string().min(1),
     return_type: inferredReturnTypeSchema,
     parameters: z.array(inferredParameterTypeSchema),
+    /** Omitted on older dossiers or providers without an instruction consistency check. */
+    prototype_conflicts: z.array(prototypeConflictSchema).exactOptional(),
     jump_tables: z.array(inferredJumpTableSchema),
     pseudocode: z
       .object({

@@ -3,19 +3,20 @@ import { z } from "zod";
 import { apiContractSchema } from "../domain/apiContract/apiContract.js";
 import { inspectApiContractInputSchema } from "../domain/apiContract/apiContractQuery.js";
 import {
-  apiContractSummaryViewResultSchema,
   apiContractPageViewResultSchema,
+  apiContractSummaryViewResultSchema,
   graphqlContractPageViewResultSchema,
-} from "../domain/analysisView/analysisView.js";
+} from "../domain/analysisView/summarySchemas/apiContractSummarySchemas.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
-import { toolContractMetadata } from "./toolEffects.js";
+import { toolContractMetadata, evidenceEffects } from "./toolEffects.js";
 import type { ToolContract } from "./toolContractTypes.js";
 
 /** Named, provider-free contract for declarations in one local specification. */
 export const API_CONTRACT_TOOL_CONTRACTS = [
   {
     name: "inspect_api_contract",
-    ...toolContractMetadata("inspect_api_contract"),
+    cli: true,
+    ...toolContractMetadata("inspect_api_contract", evidenceEffects),
     kind: "application",
     description:
       'Inspect declared APIs in local OpenAPI JSON or GraphQL SDL without a session, network requests or target execution. OpenAPI 3.0/3.1/3.2 returns inline method/path operations with source pointers; references remain unresolved. format:"graphql-sdl" returns types/fields and optional operations_path bindings, preserving aliases, fragment/spread owners and unknowns without expanding fragments or claiming full operation validation. Default summary retains Evidence; view overrides detail. For HTTP rows use view {kind:"api-contract",collection:"operations",methods:["GET"],limit:20}; GraphQL uses view {kind:"graphql-contract",collection:"references",limit:20}. inspect_analysis_view pages the same retained facts. Source declaration coverage stays separate from page exhaustion; paging does not increase parser allowances. Introspection, runtime behavior and contract comparison are outside scope.',

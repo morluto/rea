@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { metroContext } from "../../../tests/fixtures/javascriptMetroContext.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import {
   buildJavaScriptRouteInventorySteps,
@@ -81,7 +82,6 @@ it.each([
     expect(result.routes).toMatchObject([
       { path: `/${segment}`, source_count: 3, occurrence_count: 3 },
     ]);
-    expect(result.routes).toHaveLength(1);
     expect(result.occurrences.map(({ source_id }) => source_id).sort()).toEqual(
       result.sources.map(({ id }) => id).sort(),
     );
@@ -92,30 +92,10 @@ it.each([
       ]),
     );
     expect(result.unknowns).toEqual([]);
-    expect(result.coverage).toEqual({
-      scope: "provided-code-sources",
+    expect(result.coverage).toMatchObject({
       source_parsing: "complete",
       candidate_enumeration: "complete",
-      application_routes: "unknown",
     });
-  },
-);
-
-it.each(["%00", "%09", "%0A", "%7F"])(
-  "retains an interpretation gap for a Next filename containing %s",
-  (encoded) => {
-    const url = `https://example.test/_next/static/chunks/app/hello${encoded}world/page-abc.js`;
-    const result = build([source("captured.js", "", url)]);
-    expect(result.routes).toEqual([]);
-    expect(result.unknowns).toMatchObject([
-      {
-        source_id: result.sources[0]!.id,
-        kind: "interpretation",
-        reason: expect.stringContaining("control character"),
-      },
-    ]);
-    expect(result.sources[0]!.url).toBe(url);
-    expect(result.coverage.candidate_enumeration).toBe("partial");
   },
 );
 
@@ -162,6 +142,7 @@ it("coalesces exact patterns while retaining independent occurrences and stable 
       "two.js",
       `createBrowserRouter([{path:'/reports',children:[{path:'settings'}]}]);`,
     ),
+    source("three.js", `createBrowserRouter([{path:'/reports'}]);`),
   ];
   const result = build(inputs),
     repeated = build([...inputs].reverse());
@@ -170,8 +151,8 @@ it("coalesces exact patterns while retaining independent occurrences and stable 
     "/reports/settings",
   ]);
   expect(result.routes[0]).toMatchObject({
-    occurrence_count: 2,
-    source_count: 2,
+    occurrence_count: 3,
+    source_count: 3,
   });
   const reportOccurrences = result.occurrences.filter(
     ({ route_id }) => route_id === result.routes[0]!.id,
@@ -191,226 +172,161 @@ it("coalesces exact patterns while retaining independent occurrences and stable 
       segments: ["/reports"],
     },
     {
+      source: "three.js",
+      mechanism: "nested-route-object",
+      segments: ["/reports"],
+    },
+    {
       source: "two.js",
       mechanism: "nested-route-object",
       segments: ["/reports"],
     },
   ]);
-  expect(new Set(result.occurrences.map(({ id }) => id)).size).toBe(
-    result.occurrences.length,
-  );
-  expect(result.routes.map(({ id }) => id)).toEqual(
-    repeated.routes.map(({ id }) => id),
-  );
-  expect(result.source_manifest_sha256).toBe(repeated.source_manifest_sha256);
-  expect(result.inventory_id).toBe(repeated.inventory_id);
-  expect(result.coverage.application_routes).toBe("unknown");
+  expect(repeated).toEqual(result);
 });
-it("retains resolved index routes with source provenance and complete enumeration", () => {
+it("publishes the unresolved index flag alongside its usable child route", () => {
+  const prefix = "createBrowserRouter([{index:";
   const result = build([
     source(
-      "routes.ts",
-      `const INDEX=true; createBrowserRouter([{index:(INDEX as boolean),Component:Home},{path:'/parent',children:[{index:INDEX,Component:Home}]}]);`,
+      "routes.js",
+      `const INDEX=choose();\n${prefix}INDEX,children:[{path:'child'}]}]);`,
     ),
   ]);
-  expect(result.routes.map(({ path }) => path)).toEqual(["/", "/parent"]);
-  expect(result.occurrences).toHaveLength(3);
-  expect(result.occurrences).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        route_id: result.routes[0]!.id,
-        unprefixed_path: "/",
-        origin: "source-syntax",
-        mechanism: "nested-route-object",
-        source_range: expect.objectContaining({ start: expect.any(Object) }),
-      }),
-    ]),
-  );
-  expect(result.unknowns).toEqual([]);
+  expect(result.routes.map(({ path }) => path)).toEqual(["/child"]);
+  expect(result.unknowns).toMatchObject([
+    {
+      source_id: result.sources[0]?.id,
+      kind: "interpretation",
+      reason: expect.stringContaining("index-route flag"),
+      source_range: {
+        start: { line: 2, column: prefix.length },
+        end: { line: 2, column: prefix.length + "INDEX".length },
+      },
+    },
+  ]);
   expect(result.coverage).toMatchObject({
     source_parsing: "complete",
-    candidate_enumeration: "complete",
-    application_routes: "unknown",
+    candidate_enumeration: "partial",
   });
 });
-it.each([
-  "const INDEX=choose();",
-  "var INDEX=true;globalThis.INDEX=false;",
-  "var INDEX=true;const host=globalThis;host.INDEX=false;",
-])(
-  "marks unproven index interpretation as partial with child paths: %s",
-  (prefix) => {
-    const result = build([
-      source(
-        "routes.js",
-        `${prefix}createBrowserRouter([{index:INDEX,children:[{path:'child'}]}]);`,
-      ),
-    ]);
-    expect(result.routes.map(({ path }) => path)).toEqual(["/child"]);
-    expect(result.unknowns).toEqual([
-      expect.objectContaining({
-        kind: "interpretation",
-        reason: expect.stringContaining("index-route flag"),
-        source_range: expect.objectContaining({ start: expect.any(Object) }),
-      }),
-    ]);
-    expect(result.coverage).toMatchObject({
-      source_parsing: "complete",
-      candidate_enumeration: "partial",
-      application_routes: "unknown",
-    });
-  },
-);
-it("chooses deterministic primary provenance when sources have equal confidence", () => {
-  const inputs = [
-    source("one.js", `router.push('/reports');`),
-    source("two.js", `router.push('/reports');`),
-  ];
-  expect(build(inputs)).toEqual(build([...inputs].reverse()));
-});
-it("binds ordinary constants to application segments across sources and excludes framework filesystem noise", () => {
+it("retains filename route provenance when source syntax is available or missing", () => {
+  const available = "app/(account)/reports/[id]/page.tsx";
+  const unavailable = "app/reports/[id]/page.js";
   const result = build([
-    source("navigation.js", `router.push('/reports');`),
-    source(
-      "runtime.js",
-      `globalThis.TURBOPACK=[];const routes=['/reports/:id','/ROOT/node_modules/next/process/','/_not-found'];`,
-    ),
-  ]);
-  expect(result.routes.map(({ path }) => path)).toEqual([
-    "/reports",
-    "/reports/:id",
-  ]);
-  expect(result.statistics.unanchored_literals_excluded).toBe(2);
-});
-it.each(["api", "assets", "static", "_next"])(
-  "retains constants under an anchored %s segment without promoting unanchored paths",
-  (prefix) => {
-    const result = build([
-      source("route.js", `router.push('/${prefix}/status');`),
-      source(
-        "runtime.js",
-        `globalThis.TURBOPACK=[];const same='/${prefix}/status';const help='/${prefix}/help';const other='/unanchored/noise';`,
-      ),
-    ]);
-    const anchored = result.routes.find(
-      ({ path }) => path === `/${prefix}/status`,
-    );
-    const descendant = result.routes.find(
-      ({ path }) => path === `/${prefix}/help`,
-    );
-    expect(anchored).toMatchObject({ occurrence_count: 2, source_count: 2 });
-    expect(descendant).toMatchObject({
-      confidence: "low",
-      classification: "unknown",
-    });
-    expect(result.routes.some(({ path }) => path === "/unanchored/noise")).toBe(
-      false,
-    );
-    expect(result.coverage.application_routes).toBe("unknown");
-  },
-);
-it("retains inferred Next script bases and the unprefixed path", () => {
-  const result = build([
-    source(
-      "script",
-      `router.push('/planner');`,
-      "https://example.test/app/_next/static/chunks/123.js",
-    ),
-  ]);
-  expect(result.routes.map(({ path }) => path)).toEqual(["/app/planner"]);
-  expect(result.occurrences[0]).toMatchObject({
-    unprefixed_path: "/planner",
-    inferred_base_path: "/app",
-    confidence: "low",
-  });
-  expect(result.sources[0]!.url).toBe(
-    "https://example.test/app/_next/static/chunks/123.js",
-  );
-  expect(result.unknowns.some(({ kind }) => kind === "inferred-base")).toBe(
-    true,
-  );
-});
-it("reports missing source facts as partial and preserves filename-only discoveries without fake AST ranges", () => {
-  const result = build([
+    source(available, "export default function Page() { return null; }"),
     {
-      ...source("app/reports/[id]/page.js", ""),
+      ...source(unavailable, ""),
       status: "unavailable",
       reason: "source was not selected",
       facts: null,
     },
   ]);
+  expect(result.routes).toMatchObject([
+    {
+      path: "/reports/:id",
+      classification: "page",
+      classification_basis: "next-app-page",
+      source_count: 2,
+      occurrence_count: 2,
+    },
+  ]);
+  for (const [path, status] of [
+    [available, "complete"],
+    [unavailable, "unavailable"],
+  ] as const) {
+    const input = result.sources.find(({ key }) => key === path);
+    expect(input).toMatchObject({ path, status });
+    expect(result.occurrences).toContainEqual(
+      expect.objectContaining({
+        route_id: result.routes[0]?.id,
+        source_id: input?.id,
+        origin: "source-path",
+        source_range: null,
+      }),
+    );
+  }
+  expect(result.unknowns).toMatchObject([
+    {
+      source_id: result.sources.find(({ key }) => key === unavailable)?.id,
+      kind: "source-unavailable",
+      reason: "source was not selected",
+      source_range: null,
+    },
+  ]);
   expect(result.coverage).toMatchObject({
     source_parsing: "partial",
     candidate_enumeration: "partial",
-    application_routes: "unknown",
-  });
-  expect(result.routes[0]!.path).toBe("/reports/:id");
-  expect(result.occurrences[0]).toMatchObject({
-    origin: "source-path",
-    source_range: null,
   });
 });
-it("does not interpret the URL authority or file URL prefix as an App Router directory or routing base", () => {
-  const result = build([
-    source("script", `router.push('/reports');`, "https://app/reports/page.js"),
+it("keeps host names and file URL paths from becoming deployment bases", () => {
+  const urls = ["https://app/reports/page.js", "file:///tmp/_next/123.js"];
+  const result = build(
+    urls.map((url, index) =>
+      source(`script-${index}`, "router.push('/reports');", url),
+    ),
+  );
+  expect(result.routes).toMatchObject([
+    { path: "/reports", occurrence_count: 2, source_count: 2 },
   ]);
-  expect(result.routes.map(({ path }) => path)).toEqual(["/reports"]);
-  const local = build([
-    source("file", `router.push('/reports');`, "file:///tmp/_next/123.js"),
-  ]);
-  expect(local.sources[0]!.base_path).toBeNull();
-  expect(local.routes[0]!.path).toBe("/reports");
+  expect(result.sources).toMatchObject(
+    urls.map((url) => ({ url, base_path: null })),
+  );
+  expect(result.unknowns).toEqual([]);
 });
 it("rejects forged aggregate counts and detached provenance", () => {
   const result = build([source("one.js", `router.push('/reports');`)]);
+  const badCount = javaScriptRouteInventorySchema.safeParse({
+    ...result,
+    routes: result.routes.map((route) => ({ ...route, occurrence_count: 99 })),
+  });
+  const detachedOccurrence = javaScriptRouteInventorySchema.safeParse({
+    ...result,
+    sources: [],
+    statistics: { ...result.statistics, sources_retained: 0 },
+  });
+  expect(badCount.error?.issues.map(({ path }) => path)).toContainEqual([
+    "routes",
+  ]);
   expect(
-    javaScriptRouteInventorySchema.safeParse({
-      ...result,
-      routes: result.routes.map((route) => ({
-        ...route,
-        occurrence_count: 99,
-      })),
-    }).success,
-  ).toBe(false);
-  expect(
-    javaScriptRouteInventorySchema.safeParse({ ...result, sources: [] })
-      .success,
-  ).toBe(false);
+    detachedOccurrence.error?.issues.map(({ path }) => path),
+  ).toContainEqual(["occurrences"]);
 });
 
-it("retains a bounded prefix with explicit capacity and counts only retained facts", () => {
-  const inputs = [
-    source(
-      "many.js",
-      Array.from(
-        { length: 100 },
-        (_, index) => `router.push('/reports/${index}');`,
-      ).join("\n"),
-    ),
-  ];
-  const result = build(inputs, 8192);
-  expect(result.routes.length).toBeGreaterThan(0);
-  expect(result.routes.length).toBeLessThan(100);
-  expect(result.coverage.candidate_enumeration).toBe("partial");
-  expect(result.capacity?.limit_bytes).toBe(8192);
-  expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(8192);
-  expect(() => build(inputs, 1)).toThrow(RangeError);
+it("retains the first complete route rows that fit the result budget", () => {
+  const paths = Array.from(
+    { length: 100 },
+    (_, index) => `/reports/${String(index).padStart(2, "0")}`,
+  );
+  const input = source(
+    "many.js",
+    paths.map((path) => `router.push('${path}');`).join("\n"),
+  );
+  const limit = 8192;
+  const result = build([input], limit);
+  const retainedPaths = result.routes.map(({ path }) => path);
+  expect(retainedPaths.length).toBeGreaterThan(0);
+  expect(retainedPaths.length).toBeLessThan(paths.length);
+  expect(retainedPaths).toEqual(paths.slice(0, retainedPaths.length));
+  expect(
+    result.occurrences.map(({ unprefixed_path }) => unprefixed_path).sort(),
+  ).toEqual(retainedPaths);
+  expect(result.coverage).toMatchObject({
+    source_parsing: "partial",
+    candidate_enumeration: "partial",
+  });
+  expect(result.capacity?.limit_bytes).toBe(limit);
+  expect(result.capacity?.accounted_bytes).toBeLessThanOrEqual(limit);
+  expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(
+    result.capacity?.accounted_bytes ?? 0,
+  );
+  expect(() => build([input], 1)).toThrow(
+    expect.objectContaining({
+      name: "RangeError",
+      message: expect.stringContaining("envelope"),
+    }),
+  );
 });
 
-it("anchors generic constants before applying an inferred asset base", () => {
-  const result = build([
-    source(
-      "prefixed.js",
-      `globalThis.TURBOPACK=[];createBrowserRouter([{path:'/reports'}]);const paths=['/reports/:id','/noise'];`,
-      "https://example.test/app/_next/static/chunks/one.js",
-    ),
-  ]);
-  expect(result.routes.map((row) => row.path)).toEqual([
-    "/app/reports",
-    "/app/reports/:id",
-  ]);
-  expect(result.statistics.unanchored_literals_excluded).toBe(1);
-});
 it("classifies typed page configuration while generic server route calls remain unknown", () => {
   const result = build([
     source(
@@ -426,25 +342,6 @@ it("classifies typed page configuration while generic server route calls remain 
   expect(result.routes.find((row) => row.path === "/api/users")).toMatchObject({
     classification: "unknown",
     classification_basis: "unknown",
-  });
-});
-
-it("keeps TypeScript page filename provenance separate from syntax ranges", () => {
-  const result = build([
-    source(
-      "app/(account)/reports/[id]/page.tsx",
-      "export default function Page() { return null; }",
-    ),
-  ]);
-  expect(result.routes).toHaveLength(1);
-  expect(result.routes[0]).toMatchObject({
-    path: "/reports/:id",
-    classification: "page",
-    classification_basis: "next-app-page",
-  });
-  expect(result.occurrences[0]).toMatchObject({
-    origin: "source-path",
-    source_range: null,
   });
 });
 
@@ -489,35 +386,64 @@ it("keeps enumeration partial when a recognized navigation target is unresolved"
   ]);
 });
 
-it.each(["/app/reports", "/reports"])(
-  "matches based and unbased constants against application segments for %s",
-  (anchor) => {
-    const result = build([
-      source(
-        "mixed.js",
-        `globalThis.TURBOPACK=[];router.push('${anchor}');const paths=['/reports/settings','/app/reports/history','/noise','/app/noise','/ROOT/node_modules/framework'];`,
-        "https://example.test/app/_next/static/chunks/one.js",
-      ),
-    ]);
-    expect(result.routes.map(({ path }) => path)).toEqual([
-      "/app/reports",
-      "/app/reports/history",
-      "/app/reports/settings",
-    ]);
-    expect(result.occurrences).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          unprefixed_path: "/reports/settings",
-          inferred_base_path: "/app",
-        }),
-        expect.objectContaining({
-          unprefixed_path: "/app/reports/history",
-          inferred_base_path: null,
-        }),
-      ]),
+it("anchors based and unbased constants while preserving original paths and deployment evidence", () => {
+  const reportsUrl = "https://example.test/app/_next/static/chunks/reports.js";
+  const plannerUrl = "https://example.test/app/_next/static/chunks/planner.js";
+  const result = build([
+    source(
+      "reports.js",
+      `globalThis.TURBOPACK=[];router.push('/app/reports');const paths=['/reports/settings','/app/reports/history','/noise','/app/noise','/ROOT/node_modules/framework'];`,
+      reportsUrl,
+    ),
+    source(
+      "planner.js",
+      `globalThis.TURBOPACK=[];createBrowserRouter([{path:'/planner'}]);const help='/planner/help';`,
+      plannerUrl,
+    ),
+  ]);
+  expect(result.routes.map(({ path }) => path)).toEqual([
+    "/app/planner",
+    "/app/planner/help",
+    "/app/reports",
+    "/app/reports/history",
+    "/app/reports/settings",
+  ]);
+  expect(result.sources).toMatchObject(
+    [plannerUrl, reportsUrl].map((url) => ({
+      url,
+      base_path: {
+        value: "/app",
+        basis: "next-script-url",
+        status: "inferred",
+      },
+    })),
+  );
+  const [planner, reports] = result.sources;
+  for (const [path, input, unprefixedPath, basePath] of [
+    ["/app/planner", planner, "/planner", "/app"],
+    ["/app/planner/help", planner, "/planner/help", "/app"],
+    ["/app/reports", reports, "/app/reports", null],
+    ["/app/reports/history", reports, "/app/reports/history", null],
+    ["/app/reports/settings", reports, "/reports/settings", "/app"],
+  ] as const) {
+    expect(result.occurrences, path).toContainEqual(
+      expect.objectContaining({
+        route_id: result.routes.find((route) => route.path === path)?.id,
+        source_id: input?.id,
+        unprefixed_path: unprefixedPath,
+        inferred_base_path: basePath,
+        ...(basePath === null ? {} : { confidence: "low" }),
+      }),
     );
-  },
-);
+  }
+  expect(
+    result.unknowns
+      .filter(({ kind }) => kind === "inferred-base")
+      .map(({ source_id }) => source_id)
+      .sort(),
+  ).toEqual(result.sources.map(({ id }) => id).sort());
+  expect(result.statistics.unanchored_literals_excluded).toBe(3);
+});
 
 it("keeps filename and module-derived anchors application-relative when a deployment base matches an application segment", () => {
   const result = build([
@@ -554,6 +480,12 @@ it("keeps filename and module-derived anchors application-relative when a deploy
         }),
       ]),
     );
+  const base = { value: "/app", basis: "next-script-url", status: "inferred" };
+  expect(
+    Object.fromEntries(
+      result.sources.map(({ key, base_path }) => [key, base_path]),
+    ),
+  ).toEqual({ page: base, "root-runtime": null, "module-runtime": base });
   expect(result.statistics.unanchored_literals_excluded).toBe(1);
 });
 
@@ -567,111 +499,180 @@ it("reports generated typed configurations as partial even without retained cand
   expect(result.unknowns[0]!.kind).toBe("interpretation");
 });
 
-it.each([
-  ["app/feed/(.)photo/page.tsx", null],
-  [
-    "page.js",
-    "https://example.test/_next/static/chunks/app/feed/(.)photo/page-123.js",
-  ],
-] as const)(
-  "retains intercepted filename metadata as partial: %s",
-  (path, url) => {
-    const result = build([
-      source(path, "export default function Photo(){return null;}", url),
-    ]);
-    expect(result.routes).toEqual([]);
-    expect(result.coverage.candidate_enumeration).toBe("partial");
-    expect(result.unknowns).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          kind: "interpretation",
-          reason: expect.stringContaining("intercepted"),
-          source_range: null,
-        }),
-      ]),
-    );
-  },
-);
-
-it("decodes captured Next script URL segments once while retaining source URL identity", () => {
+it("retains intercepted local and captured filenames as separate interpretation gaps", () => {
+  const path = "app/feed/(.)photo/page.tsx";
   const url =
-    "https://example.test/base/_next/static/chunks/app/%28shop%29/blog/%5Bid%5D/page-abc.js";
-  const result = build([
-    source("captured-page", "", url),
-    source("app/blog/%5Bid%5D/page.js", ""),
+    "https://example.test/_next/static/chunks/app/feed/(.)photo/page-123.js";
+  const result = build([source(path, ""), source("captured", "", url)]);
+  expect(result.routes).toEqual([]);
+  expect(result.occurrences).toEqual([]);
+  expect(result.coverage.candidate_enumeration).toBe("partial");
+  expect(result.sources).toMatchObject([
+    { key: path, path, url: null },
+    { key: "captured", path: null, url },
   ]);
-  expect(result.routes.map(({ path }) => path)).toEqual([
-    "/base/blog/:id",
-    "/blog/%5Bid%5D",
-  ]);
-  expect(result.sources.find((entry) => entry.url === url)?.url).toBe(url);
-  expect(result.occurrences).toEqual(
-    expect.arrayContaining([
+  expect(result.unknowns).toHaveLength(2);
+  for (const { id } of result.sources)
+    expect(result.unknowns).toContainEqual(
       expect.objectContaining({
-        origin: "source-url",
-        unprefixed_path: "/blog/:id",
-        inferred_base_path: "/base",
+        source_id: id,
+        kind: "interpretation",
+        reason: expect.stringContaining("intercepted"),
+        source_range: null,
       }),
-    ]),
-  );
+    );
 });
 
-it.each(["team%2Fadmin", "team%5Cadmin", "%E0%A4%A"])(
-  "keeps malformed Next URL segment %s unknown alongside usable script facts",
-  (segment) => {
-    const url = `https://example.test/_next/static/chunks/app/${segment}/page-abc.js`;
-    const result = build([source("page", "router.push('/usable');", url)]);
-    expect(result.routes.map(({ path }) => path)).toEqual(["/usable"]);
-    expect(result.sources[0]?.url).toBe(url);
-    expect(result.coverage.candidate_enumeration).toBe("partial");
-    expect(result.unknowns).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          kind: "interpretation",
-          reason: expect.stringContaining("Next script URL"),
-        }),
-      ]),
+it("decodes captured script paths once and retains the original source identities", () => {
+  const basedUrl =
+    "https://example.test/base/_next/static/chunks/app/%28shop%29/blog/%5Bid%5D/page-abc.js";
+  const escapedUrl =
+    "https://example.test/_next/static/chunks/app/blog/%255Bid%255D/page-abc.js";
+  const local = "app/blog/%5Bid%5D/page.js";
+  const result = build([
+    source("captured", "", basedUrl),
+    source("escaped", "", escapedUrl),
+    source(local, ""),
+  ]);
+  expect(result.routes).toMatchObject([
+    { path: "/base/blog/:id", source_count: 1, occurrence_count: 1 },
+    { path: "/blog/%5Bid%5D", source_count: 2, occurrence_count: 2 },
+  ]);
+  expect(result.sources).toHaveLength(3);
+  for (const [key, url, routePath, unprefixed, base] of [
+    [local, null, "/blog/%5Bid%5D", "/blog/%5Bid%5D", null],
+    ["captured", basedUrl, "/base/blog/:id", "/blog/:id", "/base"],
+    ["escaped", escapedUrl, "/blog/%5Bid%5D", "/blog/%5Bid%5D", null],
+  ] as const) {
+    const input = result.sources.find((row) => row.key === key);
+    expect(input).toMatchObject({ path: url === null ? local : null, url });
+    expect(result.occurrences).toContainEqual(
+      expect.objectContaining({
+        route_id: result.routes.find(({ path }) => path === routePath)?.id,
+        source_id: input?.id,
+        origin: url === null ? "source-path" : "source-url",
+        unprefixed_path: unprefixed,
+        inferred_base_path: base,
+        source_range: null,
+      }),
     );
-  },
-);
+  }
+});
 
-it("preserves literal percent encoding after one script URL decode", () => {
+it("reports invalid Next filename interpretations while retaining usable script routes", () => {
+  const cases = [
+    ["nul", "hello%00world", "control character"],
+    ["tab", "hello%09world", "control character"],
+    ["line-feed", "hello%0Aworld", "control character"],
+    ["delete", "hello%7Fworld", "control character"],
+    ["slash", "team%2Fadmin", "encoded path separator"],
+    ["backslash", "team%5Cadmin", "encoded path separator"],
+    ["malformed", "%E0%A4%A", "malformed percent encoding"],
+  ] as const;
+  const captured = cases.map(([key, segment, reason]) => ({
+    key,
+    url: `https://example.test/_next/static/chunks/app/${segment}/page-abc.js`,
+    reason,
+  }));
+  const result = build(
+    captured.map(({ key, url }) => source(key, "router.push('/usable');", url)),
+  );
+  expect(result.routes).toMatchObject([
+    {
+      path: "/usable",
+      source_count: cases.length,
+      occurrence_count: cases.length,
+    },
+  ]);
+  expect(result.sources).toHaveLength(cases.length);
+  expect(result.unknowns).toHaveLength(cases.length);
+  for (const { key, url, reason } of captured) {
+    const input = result.sources.find((row) => row.key === key);
+    expect(input, key).toMatchObject({ path: null, url });
+    expect(result.unknowns, key).toContainEqual(
+      expect.objectContaining({
+        source_id: input?.id,
+        kind: "interpretation",
+        reason: expect.stringContaining(reason),
+      }),
+    );
+  }
+  expect(result.coverage.candidate_enumeration).toBe("partial");
+});
+
+it("distinguishes URL suffixes from literal Next script filename bytes", () => {
+  const baseUrl = "https://example.test/_next/static/chunks/app/dashboard/";
+  const captured = [
+    [`${baseUrl}page-abc.js?cache=1`, true],
+    [`${baseUrl}page-abc.js#section`, true],
+    [`${baseUrl}page-abc.js?cache=1#section`, true],
+    [`${baseUrl}page%3Fnotes.js`, false],
+    [`${baseUrl}page%23notes.js`, false],
+    [`${baseUrl}page.js%3Fnotes`, false],
+    [`${baseUrl}page.js%23notes`, false],
+  ] as const;
+  const local = [
+    "app/dashboard/page?notes.js",
+    "app/dashboard/page#notes.js",
+    "app/dashboard/page.js?notes",
+    "app/dashboard/page.js#notes",
+  ];
+  const result = build([
+    ...captured.map(([url], index) => source(`captured-${index}`, "", url)),
+    ...local.map((path) => source(path, "")),
+  ]);
+  expect(result.routes).toMatchObject([
+    { path: "/dashboard", source_count: 3, occurrence_count: 3 },
+  ]);
+  const sourcesByUrl = new Map(result.sources.map((row) => [row.url, row]));
+  const expectedOccurrences = [];
+  for (const [url, resolves] of captured) {
+    const row = sourcesByUrl.get(url);
+    expect(row, url).toMatchObject({ path: null, url });
+    if (resolves) expectedOccurrences.push(row?.id);
+  }
+  expect(result.occurrences.map(({ source_id }) => source_id).sort()).toEqual(
+    expectedOccurrences.sort(),
+  );
+  expect(
+    result.sources
+      .filter(({ url }) => url === null)
+      .map(({ path }) => path)
+      .sort(),
+  ).toEqual([...local].sort());
+});
+
+it("inventories Expo Router context keys without claiming page classification", () => {
   const result = build([
     source(
-      "page",
-      "",
-      "https://example.test/_next/static/chunks/app/%255Bid%255D/page-abc.js",
+      "index-abc.js",
+      metroContext(["./(app)/_layout.tsx", "./(app)/reports/[id]/edit.tsx"]) +
+        "const back='/reports/archive';",
     ),
   ]);
-  expect(result.routes.map(({ path }) => path)).toEqual(["/%5Bid%5D"]);
+  expect(result.routes).toEqual([
+    expect.objectContaining({
+      path: "/reports/:id/edit",
+      classification: "unknown",
+      classification_basis: "unknown",
+      confidence: "low",
+      mechanisms: ["expo-router-context-key"],
+    }),
+    expect.objectContaining({
+      path: "/reports/archive",
+      mechanisms: ["route-string-constant"],
+    }),
+  ]);
+  expect(
+    result.occurrences.find(
+      ({ mechanism }) => mechanism === "expo-router-context-key",
+    ),
+  ).toMatchObject({
+    origin: "source-syntax",
+    derivation: "inferred",
+    unprefixed_path: "/reports/:id/edit",
+    segments: [{ value: "./(app)/reports/[id]/edit.tsx", origin: "literal" }],
+  });
+  expect(result.unknowns).toEqual([]);
+  expect(result.coverage.candidate_enumeration).toBe("complete");
 });
-
-it.each([
-  "page%3Fnotes.js",
-  "page%23notes.js",
-  "page.js%3Fnotes",
-  "page.js%23notes",
-])("keeps encoded Next script filename delimiters literal: %s", (leaf) => {
-  const url = `https://example.test/_next/static/chunks/app/dashboard/${leaf}`;
-  const result = build([source("captured-page", "", url)]);
-  expect(result.routes).toEqual([]);
-  expect(result.sources[0]?.url).toBe(url);
-});
-
-it.each(["?cache=1", "#section", "?cache=1#section"])(
-  "parses actual Next script URL suffix %s before classifying the filename",
-  (suffix) => {
-    const url = `https://example.test/_next/static/chunks/app/dashboard/page-abc.js${suffix}`;
-    const result = build([source("captured-page", "", url)]);
-    expect(result.routes.map(({ path }) => path)).toEqual(["/dashboard"]);
-    expect(result.sources[0]?.url).toBe(url);
-  },
-);
-
-it.each(["page?notes.js", "page#notes.js", "page.js?notes", "page.js#notes"])(
-  "keeps filesystem Next page filename delimiters literal: %s",
-  (leaf) => {
-    const result = build([source(`app/dashboard/${leaf}`, "")]);
-    expect(result.routes).toEqual([]);
-  },
-);

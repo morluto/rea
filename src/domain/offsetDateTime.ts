@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { trimTrailing } from "../kernel/trimEdges.js";
+
+const isZeroDigit = (character: string): boolean => character === "0";
 
 export interface OffsetDateTimeInstant {
   readonly epochSecond: number;
@@ -51,7 +54,10 @@ export const parseOffsetDateTimeInstant = (
     );
   return {
     epochSecond: wholeSecondMilliseconds / 1000,
-    fraction: fractionalDigits?.replace(/0+$/u, "") ?? "",
+    fraction:
+      fractionalDigits === undefined
+        ? ""
+        : trimTrailing(fractionalDigits, isZeroDigit),
   };
 };
 
@@ -66,7 +72,7 @@ export interface RecordedDateTimeReading {
 }
 
 /** Distinguish invalid supported spellings from formats this reader does not interpret. */
-export const inspectRecordedDateTime = (
+const inspectRecordedDateTime = (
   value: string,
 ):
   | { readonly kind: "valid"; readonly reading: RecordedDateTimeReading }
@@ -203,7 +209,10 @@ export const addOffsetDateTimeMilliseconds = (
   }
   const epochSecond = wholeSeconds + carry;
   return Number.isSafeInteger(epochSecond)
-    ? { epochSecond, fraction: digits.reverse().join("").replace(/0+$/u, "") }
+    ? {
+        epochSecond,
+        fraction: trimTrailing(digits.reverse().join(""), isZeroDigit),
+      }
     : undefined;
 };
 

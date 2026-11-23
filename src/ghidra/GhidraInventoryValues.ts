@@ -26,12 +26,13 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { projectBinaryOverview } from "../domain/native/nativeSegments.js";
+import { outputContractDiagnostics } from "../domain/native/nativeProviderOutput.js";
 import {
   availableFunctionBodySchema,
   functionBodyEntryAgrees,
 } from "../domain/native/functionBody.js";
 import { procedureIdentitySchema } from "../domain/native/procedureInfo.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 
@@ -391,7 +392,7 @@ export function parseGhidraInventoryResult(
     const parsed = resultSchemas.inspect_native_load_image.safeParse(value);
     return parsed.success
       ? ok({ value: normalizeNativeLoadImageObservation(parsed.data) })
-      : err(inventoryOutputFailure(operation, parsed.error));
+      : err(inventoryOutputFailure(operation, parsed.error, value));
   }
   if (operation === "set_address_name" || operation === "set_addresses_names") {
     return parseGhidraAddressNameResult(operation, value, namingRequest);
@@ -399,22 +400,25 @@ export function parseGhidraInventoryResult(
   const parsed = resultSchemas[operation].safeParse(value);
   return parsed.success
     ? ok({
-        value: jsonValueSchema.parse(parsed.data),
+        // `value` was already admitted as JsonValue and `resultSchemas[operation]`
+        // outputs fresh plain objects/arrays whose fields are all JSON-safe.
+        value: parsed.data as JsonValue,
         // The overview omits detailed segment permissions, sections and provenance.
         // Load-image observations above undergo separate local attestation.
         ...(operation === "read_binary_inventory_summary"
           ? { rawResult: value }
           : {}),
       })
-    : err(inventoryOutputFailure(operation, parsed.error));
+    : err(inventoryOutputFailure(operation, parsed.error, value));
 }
 
 const inventoryOutputFailure = (
   operation: GhidraInventoryOperation,
-  cause: unknown,
+  cause: z.ZodError,
+  value: JsonValue,
 ): AnalysisOutputError =>
   new AnalysisOutputError(
     operation,
     "Ghidra bridge output did not match the inventory contract",
-    { cause },
+    { cause, diagnostics: outputContractDiagnostics(cause, value) },
   );

@@ -12,7 +12,7 @@ const formats = [
 ] as const;
 
 it.each(formats)(
-  "retains exact raw segment facts (wide=$wide, littleEndian=$littleEndian)",
+  "retains exact raw segment facts and bounds (wide=$wide, littleEndian=$littleEndian)",
   ({ wide, littleEndian, headerSize }) => {
     const backing = Buffer.alloc(headerSize + 19, 0xa5);
     const bytes = backing.subarray(7, 7 + headerSize);
@@ -34,7 +34,7 @@ it.each(formats)(
       else view.setUint32(24 + index * 4, Number(value), littleEndian);
     });
     const protections = wide ? 56 : 40;
-    [0x80000001, 0xfedcba98, 0xffffffff].forEach((value, index) =>
+    [0x80000001, 0xfedcba98, 0xffffffff, 0x80000010].forEach((value, index) =>
       view.setUint32(protections + index * 4, value, littleEndian),
     );
     const before = Buffer.from(backing);
@@ -44,28 +44,7 @@ it.each(formats)(
       wide,
       littleEndian,
     );
-    expect(backing.equals(before)).toBe(true);
-    if (!parsed.ok) throw new Error(parsed.error.message);
-    backing.fill(0);
-    const { nameBytes, ...facts } = parsed.value;
-    expect(nameBytes.equals(names)).toBe(true);
-    expect(facts).toEqual({
-      headerSize,
-      address: values[0],
-      memorySize: values[1],
-      fileOffset: values[2],
-      fileSize: values[3],
-      maxProtection: 0x80000001,
-      protection: 0xfedcba98,
-      sectionCount: 0xffffffff,
-    });
-  },
-);
-
-it.each(formats)(
-  "refuses every incomplete fixed segment record (wide=$wide, littleEndian=$littleEndian)",
-  ({ wide, littleEndian, headerSize }) => {
-    const backing = Buffer.alloc(headerSize + 7, 0xff);
+    const exact = readMachoSegmentHeader(bytes, wide, littleEndian);
     for (let length = 0; length < headerSize; length++)
       expect(
         readMachoSegmentHeader(
@@ -80,6 +59,23 @@ it.each(formats)(
           message: expect.stringContaining("truncated"),
         },
       });
+    expect(backing.equals(before)).toBe(true);
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    backing.fill(0);
+    expect(exact).toEqual(parsed);
+    const { nameBytes, ...facts } = parsed.value;
+    expect(nameBytes.equals(names)).toBe(true);
+    expect(facts).toEqual({
+      headerSize,
+      address: values[0],
+      memorySize: values[1],
+      fileOffset: values[2],
+      fileSize: values[3],
+      maxProtection: 0x80000001,
+      protection: 0xfedcba98,
+      sectionCount: 0xffffffff,
+      flags: 0x80000010,
+    });
   },
 );
 
@@ -92,10 +88,14 @@ it("admits a segment's VM sizes, section table and file range", () => {
     protection: 1,
     headerSize: 72,
     sectionCount: 1,
+    flags: 0,
   };
   const admit = (facts: typeof segment, commandBytes = 152, image = 24) =>
     admitMachoSegmentCommand(facts, commandBytes, 64, image);
-  expect(admit(segment)).toEqual({ ok: true, value: { unmapped: false } });
+  expect(admit(segment)).toMatchObject({
+    ok: true,
+    value: { unmapped: false },
+  });
   expect(admit({ ...segment, memorySize: 15n }).ok).toBe(false);
   expect(admit(segment, 151).ok).toBe(false);
   expect(admit(segment, 152, 23).ok).toBe(false);

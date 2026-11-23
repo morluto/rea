@@ -1,13 +1,11 @@
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  PROCESS_OUTPUT_TOKEN_CONTEXT_BYTES,
-  ProcessOutputTokenScanner,
-} from "./ProcessOutputTokenScanner.js";
+import { ProcessOutputTokenScanner } from "./ProcessOutputTokenScanner.js";
 import { ProviderProcessSupervisor } from "./ProviderProcess.js";
 
 const MARKER = "java.lang.OutOfMemoryError";
+const EXPECTED_CONTEXT_BYTES = 1024;
 const OOME_LINE =
   "ERROR Abort due to Headless analyzer error: Java heap space (HeadlessAnalyzer) java.lang.OutOfMemoryError: Java heap space";
 
@@ -16,7 +14,10 @@ afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
 });
 
-const supervised = (maxDiagnosticBytes = 64) => {
+const supervised = (
+  maxDiagnosticBytes = 64,
+  outputToken: string | null = MARKER,
+) => {
   const producer = Object.assign(new EventEmitter(), {
     stdout: new PassThrough(),
     stderr: new PassThrough(),
@@ -26,7 +27,10 @@ const supervised = (maxDiagnosticBytes = 64) => {
   });
   const supervisor = new ProviderProcessSupervisor(
     { process: producer, ownsProcessLifetime: false },
-    { maxDiagnosticBytes, outputToken: MARKER },
+    {
+      maxDiagnosticBytes,
+      ...(outputToken === null ? {} : { outputToken }),
+    },
   );
   cleanups.push(() => {
     supervisor.dispose();
@@ -37,56 +41,45 @@ const supervised = (maxDiagnosticBytes = 64) => {
 };
 
 describe("ProviderProcessSupervisor output marker", () => {
-  it("observes a marker printed after the retention budget is exhausted", () => {
+  it("keeps token offsets and context on both streams after capture fills", () => {
     const { producer, supervisor } = supervised();
     const checkpoint = supervisor.checkpointOutput();
-    producer.stdout.write("x".repeat(200));
+    const progress = `${"x".repeat(200)}\n`;
+    producer.stdout.write(progress);
+    const split = OOME_LINE.indexOf(MARKER) + 7;
+    producer.stdout.write(OOME_LINE.slice(0, 20));
+    producer.stdout.write(OOME_LINE.slice(20, split));
+    producer.stdout.write(`${OOME_LINE.slice(split)}\nnext\n`);
     producer.stderr.write(`${OOME_LINE}\n\tat frame\n`);
+
     const scoped = supervisor.snapshotOutputSince(checkpoint);
     expect(scoped.complete).toBe(false);
     expect(scoped.snapshot.stderr.text).toBe("");
+    const offset = OOME_LINE.indexOf(MARKER);
     expect(scoped.markers).toEqual([
       {
-        stream: "stderr",
-        offset: OOME_LINE.indexOf(MARKER),
-        line: OOME_LINE,
-        truncated: false,
-      },
-    ]);
-  });
-
-  it("detects a marker and its line split across chunks", () => {
-    const { producer, supervisor } = supervised(0);
-    const checkpoint = supervisor.checkpointOutput();
-    producer.stdout.write("progress\n");
-    const text = `${OOME_LINE}\nnext\n`;
-    const split = text.indexOf(MARKER) + 7;
-    producer.stdout.write(text.slice(0, 20));
-    producer.stdout.write(text.slice(20, split));
-    producer.stdout.write(text.slice(split, split + 10));
-    producer.stdout.write(text.slice(split + 10));
-    expect(supervisor.snapshotOutputSince(checkpoint).markers).toEqual([
-      {
         stream: "stdout",
-        offset: "progress\n".length + OOME_LINE.indexOf(MARKER),
+        offset: progress.length + offset,
         line: OOME_LINE,
         truncated: false,
       },
+      { stream: "stderr", offset, line: OOME_LINE, truncated: false },
     ]);
   });
 
-  it("does not attribute a marker from before the checkpoint", () => {
-    const { producer, supervisor } = supervised(0);
-    producer.stderr.write(`${OOME_LINE}\n`);
-    const checkpoint = supervisor.checkpointOutput();
-    producer.stderr.write("later unrelated failure\n");
-    expect(supervisor.snapshotOutputSince(checkpoint).markers).toBeUndefined();
-  });
-
-  it("forgets markers on reset and for checkpoints from another epoch", () => {
+  it("excludes earlier markers, including a split marker crossing the checkpoint, and forgets them on reset", () => {
     const { producer, supervisor } = supervised(0);
     const stale = supervisor.checkpointOutput();
     producer.stderr.write(`${OOME_LINE}\n`);
+    const afterOld = supervisor.checkpointOutput();
+    producer.stderr.write("unrelated failure\n");
+    expect(supervisor.snapshotOutputSince(afterOld).markers).toBeUndefined();
+
+    producer.stderr.write(MARKER.slice(0, 10));
+    const afterPrefix = supervisor.checkpointOutput();
+    producer.stderr.write(`${MARKER.slice(10)}: Java heap space\n`);
+    expect(supervisor.snapshotOutputSince(afterPrefix).markers).toBeUndefined();
+
     supervisor.resetOutput();
     expect(supervisor.snapshotOutputSince(stale).markers).toBeUndefined();
     const current = supervisor.checkpointOutput();
@@ -95,18 +88,7 @@ describe("ProviderProcessSupervisor output marker", () => {
   });
 
   it("does not scan when no marker is configured", () => {
-    const producer = Object.assign(new EventEmitter(), {
-      stdout: new PassThrough(),
-      stderr: new PassThrough(),
-      exitCode: null,
-      signalCode: null,
-      kill: () => false,
-    });
-    const supervisor = new ProviderProcessSupervisor({
-      process: producer,
-      ownsProcessLifetime: false,
-    });
-    cleanups.push(() => supervisor.dispose());
+    const { producer, supervisor } = supervised(0, null);
     const checkpoint = supervisor.checkpointOutput();
     producer.stderr.write(`${OOME_LINE}\n`);
     expect(supervisor.snapshotOutputSince(checkpoint).markers).toBeUndefined();
@@ -116,8 +98,8 @@ describe("ProviderProcessSupervisor output marker", () => {
 describe("ProcessOutputTokenScanner", () => {
   it("bounds the retained line and omits a prefix it could not keep whole", () => {
     const scanner = new ProcessOutputTokenScanner(MARKER);
-    const prefix = "p".repeat(PROCESS_OUTPUT_TOKEN_CONTEXT_BYTES * 3);
-    const suffix = `: ${"s".repeat(PROCESS_OUTPUT_TOKEN_CONTEXT_BYTES * 3)}`;
+    const prefix = "p".repeat(EXPECTED_CONTEXT_BYTES * 3);
+    const suffix = `: ${"s".repeat(EXPECTED_CONTEXT_BYTES * 3)}`;
     scanner.scan(Buffer.from(prefix.slice(0, 1000)), 0);
     scanner.scan(Buffer.from(prefix.slice(1000)), 1000);
     scanner.scan(Buffer.from(`${MARKER}${suffix.slice(0, 50)}`), prefix.length);
@@ -128,31 +110,53 @@ describe("ProcessOutputTokenScanner", () => {
     const observed = scanner.latestWithin(0, Number.MAX_SAFE_INTEGER);
     expect(observed).toEqual({
       offset: prefix.length,
-      line: `${MARKER}${suffix.slice(0, PROCESS_OUTPUT_TOKEN_CONTEXT_BYTES)}`,
+      line: `${MARKER}${suffix.slice(0, EXPECTED_CONTEXT_BYTES)}`,
       truncated: true,
       trailingContextIncomplete: true,
     });
   });
 
-  it("keeps the latest of several markers", () => {
+  it.each([
+    { label: "a newline exactly at the limit", extra: 0, ending: "\n" },
+    { label: "a newline past the limit", extra: 1, ending: "\n" },
+    { label: "EOF past the limit", extra: 1, ending: "" },
+  ])("reports suffix completeness with $label", ({ extra, ending }) => {
+    const prefix = "x";
+    const suffix = `:${"s".repeat(EXPECTED_CONTEXT_BYTES - 1 + extra)}`;
     const scanner = new ProcessOutputTokenScanner(MARKER);
-    const text = `first ${MARKER}\nsecond ${MARKER}: Metaspace\n`;
-    scanner.scan(Buffer.from(text), 0);
-    expect(scanner.latestWithin(0, text.length)).toEqual({
-      offset: text.lastIndexOf(MARKER),
-      line: `second ${MARKER}: Metaspace`,
-      truncated: false,
-    });
+    const lastChunk = Buffer.from(`${MARKER}${suffix}${ending}`);
+    scanner.scan(Buffer.from(prefix), 0);
+    scanner.scan(lastChunk, prefix.length);
+    const expected = {
+      offset: prefix.length,
+      line: `${prefix}${MARKER}${suffix.slice(0, EXPECTED_CONTEXT_BYTES)}`,
+      truncated: extra > 0,
+      ...(extra > 0 ? { trailingContextIncomplete: true } : {}),
+    };
+    expect(scanner.latestWithin(0, prefix.length + lastChunk.length)).toEqual(
+      expected,
+    );
+    scanner.finish();
+    expect(scanner.latestWithin(0, prefix.length + lastChunk.length)).toEqual(
+      expected,
+    );
   });
 
-  it("does not re-record a marker carried in the line tail", () => {
+  it("keeps the latest confirmed marker as its line arrives in fragments", () => {
     const scanner = new ProcessOutputTokenScanner(MARKER);
-    scanner.scan(Buffer.from(`detail ${MARKER}`), 0);
-    scanner.scan(Buffer.from(": Java heap space"), `detail ${MARKER}`.length);
-    scanner.scan(Buffer.from("\n"), `detail ${MARKER}: Java heap space`.length);
-    expect(scanner.latestWithin(0, 100)).toEqual({
-      offset: "detail ".length,
-      line: `detail ${MARKER}: Java heap space`,
+    const first = `old ${MARKER}\nnewer ${MARKER}\nlatest ${MARKER}`;
+    const suffix = ": Metaspace";
+    scanner.scan(Buffer.from(first), 0);
+    expect(scanner.latestWithin(0, first.length)).toEqual({
+      offset: first.indexOf(MARKER, first.indexOf("\n")),
+      line: `newer ${MARKER}`,
+      truncated: false,
+    });
+    scanner.scan(Buffer.from(suffix), first.length);
+    scanner.scan(Buffer.from("\n"), first.length + suffix.length);
+    expect(scanner.latestWithin(0, first.length + suffix.length + 1)).toEqual({
+      offset: first.lastIndexOf(MARKER),
+      line: `latest ${MARKER}${suffix}`,
       truncated: false,
     });
   });
@@ -189,37 +193,26 @@ it("omits line context owned by an earlier operation even when the token starts 
   ]);
 });
 
-it("confirms a terminal bare token only at actual stream EOF", async () => {
-  const { producer, supervisor } = supervised(0);
-  const checkpoint = supervisor.checkpointOutput();
-  producer.stderr.write(MARKER);
-  expect(supervisor.snapshotOutputSince(checkpoint).markers).toBeUndefined();
-  const ended = new Promise<void>((resolve) =>
-    producer.stderr.once("end", resolve),
-  );
-  producer.stderr.end();
-  await ended;
-  expect(supervisor.snapshotOutputSince(checkpoint).markers).toMatchObject([
-    { line: MARKER },
-  ]);
-});
+it.each(["end", "close"] as const)(
+  "confirms a terminal bare token at EOF, with stderr %s",
+  async (event) => {
+    const { producer, supervisor } = supervised(0);
+    const checkpoint = supervisor.checkpointOutput();
+    producer.stderr.write(MARKER);
+    expect(supervisor.snapshotOutputSince(checkpoint).markers).toBeUndefined();
 
-it("does not promote a pending token when the stream closes without EOF", () => {
-  const { producer, supervisor } = supervised(0);
-  const checkpoint = supervisor.checkpointOutput();
-  producer.stderr.write(MARKER);
-  producer.stderr.destroy();
-  producer.emit("close", 1, null);
-  expect(supervisor.snapshotOutputSince(checkpoint).markers).toBeUndefined();
-});
-
-it("excludes a token whose prefix belongs to the earlier checkpoint range", () => {
-  const { producer, supervisor } = supervised(0);
-  producer.stderr.write(MARKER.slice(0, 10));
-  const checkpoint = supervisor.checkpointOutput();
-  producer.stderr.write(`${MARKER.slice(10)}: Java heap space\n`);
-  expect(supervisor.snapshotOutputSince(checkpoint).markers).toBeUndefined();
-});
+    const observed = once(producer.stderr, event);
+    if (event === "end") producer.stderr.end();
+    else producer.stderr.destroy();
+    await observed;
+    if (event === "close") producer.emit("close", 1, null);
+    expect(supervisor.snapshotOutputSince(checkpoint).markers).toEqual(
+      event === "end"
+        ? [{ stream: "stderr", offset: 0, line: MARKER, truncated: false }]
+        : undefined,
+    );
+  },
+);
 
 it("preserves invalid UTF-8 uncertainty in bounded token context", () => {
   const scanner = new ProcessOutputTokenScanner(MARKER);

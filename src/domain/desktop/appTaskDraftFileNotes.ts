@@ -40,6 +40,7 @@ export const generatedReferenceNotes = (
           file,
           message:
             "Some array values refer to newly generated record IDs and cannot be checked exactly across runs; review the relationship manually.",
+          // sample-cap: example pointers; the file's change lists every pointer
           pointers: pointers.slice(0, MAX_LISTED),
         },
       ];
@@ -85,6 +86,7 @@ const factNotes = (file: string, facts: NamedFacts): FileNote[] => {
   const home = `~/${file}`;
   const notes: FileNote[] = [];
   if (facts.positional > 0 || facts.changes === 0) {
+    // sample-cap: example elements; the file's change lists every pointer
     const elements = facts.positionalTags.slice(0, MAX_LISTED);
     notes.push({
       code: "by_position",
@@ -103,13 +105,14 @@ const factNotes = (file: string, facts: NamedFacts): FileNote[] => {
       message: `Every change in ${home} is view state, a renumbered id, a volatile value or a time the app stamps, not an edit: ${facts.flagged.length === 0 ? "no check is suggested" : "the suggested checks are those, kept so the draft is not empty"}. Save the edit the task is about, then capture again.`,
       ...(facts.flagged.length === 0
         ? {}
-        : { pointers: facts.flagged.slice(0, MAX_LISTED) }),
+        : { pointers: facts.flagged.slice(0, MAX_LISTED) }), // sample-cap: example pointers; the file's change lists every pointer
     });
   if (facts.long.length > 0)
     notes.push({
       code: "long_text",
       file,
-      message: `${String(facts.long.length)} value(s) in ${home} exceed the 2,000-character check limit, so whole-value checks were omitted; use a smaller check where supported.`,
+      message: `${String(facts.long.length)} value(s) in ${home} exceed the 2,000-character check limit. The draft omits those checks. Use a smaller check where supported.`,
+      // sample-cap: example pointers; the note states the full count
       pointers: facts.long.slice(0, MAX_LISTED),
     });
   return notes;
