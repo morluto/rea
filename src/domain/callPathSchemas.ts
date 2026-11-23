@@ -68,7 +68,7 @@ const searchScope = {
 };
 
 /** Evidence-cited directed call-path result containing every shortest path. */
-export const callPathResultSchema = z.union([
+export const callPathResultSchema = z.discriminatedUnion("status", [
   z.object({
     ...resultContextShape,
     status: z.literal("found"),
@@ -96,7 +96,7 @@ export const callPathResultSchema = z.union([
     ...resultContextShape,
     status: z.literal("unknown"),
     shortest_hops: z.null(),
-    search_scope: z.union([
+    search_scope: z.discriminatedUnion("observed_status", [
       z.object({
         ...searchScope,
         exhaustive: z.literal(false),

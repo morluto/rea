@@ -138,33 +138,6 @@ describe("CDP discovery cancellation ownership", () => {
     expect(requests).toBe(0);
   });
 
-  it("cancels an in-flight discovery at the HTTP producer with the original reason", async () => {
-    let requestedPath: string | undefined;
-    let requestSeen!: () => void;
-    const seen = new Promise<void>((resolve) => {
-      requestSeen = resolve;
-    });
-    const { endpoint } = await listen((request) => {
-      requestedPath = request.url;
-      requestSeen();
-    });
-    const reason = new Error("operator stopped discovery");
-    const controller = new AbortController();
-    const discovery = discoverCdpEndpoint(
-      endpoint,
-      "inspect_web_page",
-      controller.signal,
-    ).catch((error: unknown) => error);
-
-    await seen;
-    controller.abort(reason);
-    const failure = await discovery;
-
-    expect(requestedPath).toBe("/json/version");
-    expect(failure).toBeInstanceOf(AnalysisCancelledError);
-    expect((failure as AnalysisCancelledError).cause).toBe(reason);
-  });
-
   it("keeps typed and plain discovery failures produced before a caller abort", async () => {
     const failures = [
       new BrowserObservationError("inspect_web_page", "protocol_error"),

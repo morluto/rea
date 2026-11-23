@@ -74,8 +74,13 @@ export class OwnedMcpStdioTransport implements Transport {
     [this.runId],
   );
   #starting: Promise<void> | undefined;
-  /** Preparation cleanup owners a failed launch transferred and that closed. */
-  readonly #releasedPreparations = new Set<unknown>();
+  #preparations:
+    | readonly {
+        readonly failure: ProcessInspectionCleanupFailure;
+        readonly resource: string;
+        readonly lease: AnalysisCleanupLease;
+      }[]
+    | undefined;
   /** Ends a launch still resolving or spawning when the transport closes. */
   readonly #acquisition = new AbortController();
   #failure: OwnedMcpTransportFailure | undefined;
@@ -297,46 +302,58 @@ export class OwnedMcpStdioTransport implements Transport {
       new AnalysisCleanupLeaseGroup(failure, [this.#cleanup]);
       throw failure;
     }
-    for (const preparation of processInspectionCleanupFailures(startFailure))
-      await this.#releasePreparation(preparation);
+    await this.#releasePreparations(startFailure);
   }
 
-  /**
-   * Close one transferred preparation owner. Until it closes (or when the
-   * launch reported a failure without an owner) the close fails and a later
-   * close retries it.
-   */
-  async #releasePreparation(
-    preparation: ProcessInspectionCleanupFailure,
-  ): Promise<void> {
-    const darwin = preparation instanceof DarwinProcessOwnershipInspectionError;
-    const owner = darwin ? preparation.cleanupOwner : preparation.owner;
-    if (owner !== undefined && this.#releasedPreparations.has(owner)) return;
-    let reason = preparation.message;
-    if (owner !== undefined)
+  /** A refused close retains its lease while independent owners still get a turn. */
+  async #releasePreparations(startFailure: unknown): Promise<void> {
+    this.#preparations ??= processInspectionCleanupFailures(startFailure).map(
+      (failure) => {
+        const darwin = failure instanceof DarwinProcessOwnershipInspectionError;
+        const owner = darwin ? failure.cleanupOwner : failure.owner;
+        const resource = darwin ? "process ownership inspection" : failure.path;
+        return {
+          failure,
+          resource,
+          lease: new AnalysisCleanupLease(async () => {
+            if (owner === undefined) throw failure;
+            await owner.close();
+          }, [resource]),
+        };
+      },
+    );
+    const pending = [];
+    for (const preparation of this.#preparations) {
       try {
-        await owner.close();
-        this.#releasedPreparations.add(owner);
-        return;
+        await preparation.lease.release();
       } catch (cause: unknown) {
-        reason = errorMessage(cause);
+        pending.push({ ...preparation, reason: errorMessage(cause) });
       }
+    }
+    const first = pending[0];
+    if (first === undefined) return;
     const failure = new ProviderCleanupError(
       this.settings.provider,
-      [darwin ? "process ownership inspection" : preparation.path],
-      { reason },
+      pending.map(({ resource }) => resource),
       {
-        cause: preparation,
+        reason:
+          pending.length === 1
+            ? first.reason
+            : pending
+                .map(({ resource, reason }) => `${resource}: ${reason}`)
+                .join("\n"),
+      },
+      {
+        cause: pending.length === 1 ? first.failure : startFailure,
         ...(this.settings.operation === undefined
           ? {}
           : { operation: this.settings.operation }),
       },
     );
-    // The transport's close retries the owner; the failure keeps naming the
-    // preparation resource rather than the process run.
-    new AnalysisCleanupLeaseGroup(failure, [this.#cleanup], {
-      preserveResourceAttribution: true,
-    });
+    new AnalysisCleanupLeaseGroup(
+      failure,
+      pending.map(({ lease }) => lease),
+    );
     throw failure;
   }
 
@@ -390,6 +407,13 @@ export class OwnedMcpStdioTransport implements Transport {
             `${this.settings.label} MCP frame exceeds ${this.settings.maxFrameBytes} bytes`,
           );
           return;
+        }
+        if (this.#frameLength === 0 && newline !== -1) {
+          // Preserve a leading BOM so the JSON-RPC parser can reject it.
+          const line = decodeStrictUtf8(fragment, "preserve");
+          this.onmessage?.(deserializeMessage(line));
+          offset = newline + 1;
+          continue;
         }
         this.#appendFrame(fragment, frameBytes);
         if (newline === -1) return;

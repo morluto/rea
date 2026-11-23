@@ -38,6 +38,41 @@ function inlineFacts(tokens) {
   return { parts, wording };
 }
 
+export function canonicalGitHubReleaseUrl(href) {
+  const url = URL.parse(href ?? "");
+  return url?.origin === "https://github.com" &&
+    url.username === "" &&
+    url.password === "" &&
+    url.search === "" &&
+    url.hash === ""
+    ? url
+    : undefined;
+}
+
+/** A link names its repository and target regardless of its display text. */
+export function githubReleaseReference(href) {
+  const url = canonicalGitHubReleaseUrl(href);
+  if (url === undefined) return undefined;
+  const match = /^\/([\w.-]+\/[\w.-]+)\/(pull|issues|commit)\/([^/]+)$/u.exec(
+    url.pathname,
+  );
+  if (match === null) return undefined;
+  const [, repository, route, target] = match;
+  if (route === "commit")
+    return /^[a-f0-9]{7,40}$/iu.test(target)
+      ? { repository: repository.toLowerCase(), commit: target.toLowerCase() }
+      : undefined;
+  return /^\d+$/u.test(target)
+    ? { repository: repository.toLowerCase(), number: Number(target) }
+    : undefined;
+}
+
+export function plainReleaseNumbers(prose) {
+  return Array.from(prose.matchAll(/(?<![\w/])#(\d+)\b/gu), (match) =>
+    Number(match[1]),
+  );
+}
+
 const breakingFooter = /^BREAKING(?: CHANGE|-CHANGE):[ \t]*(.*)$/u;
 const otherTrailer = /^[A-Za-z][A-Za-z0-9-]*(?::[ \t]| #)/u;
 

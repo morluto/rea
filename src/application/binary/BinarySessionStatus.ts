@@ -5,7 +5,10 @@ import { targetApplicabilityRefusal } from "../../domain/targetApplicability.js"
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { ResolvedAppBundleResourceRoot } from "../../domain/apple/bundleResourceRoot.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
-import { jsonObjectSchema, type JsonValue } from "../../domain/jsonValue.js";
+import {
+  ownedJsonObjectSchema,
+  type JsonValue,
+} from "../../domain/jsonValue.js";
 import type { ProviderOperationHealth } from "../../domain/providerOperationHealth.js";
 import type {
   CapabilityDescriptor,
@@ -245,10 +248,10 @@ export const restrictAdvertisedCapabilities = (
   status: unknown,
   isOperationAdvertised: (operation: string) => boolean,
 ): Readonly<Record<string, JsonValue>> => {
-  const object = jsonObjectSchema.parse(status);
+  const object = ownedJsonObjectSchema.parse(status);
   const { capabilities, analysis_provider_candidates } =
     advertisedCapabilitySurfaces.parse(object);
-  return jsonObjectSchema.parse({
+  return ownedJsonObjectSchema.parse({
     ...object,
     capabilities: restrictCapabilitySets(capabilities, isOperationAdvertised),
     analysis_provider_candidates: analysis_provider_candidates.map(

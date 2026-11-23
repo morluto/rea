@@ -398,6 +398,28 @@ describe("admitServedState", () => {
   });
 });
 
+it("reorders collections by their first remaining entity after removal", () => {
+  const type = "/api/folders";
+  const source = state.entities.find((entity) => entity.type === type)!;
+  const left = "/api/folders/a";
+  const right = "/api/folders/b";
+  const first = { ...source, collection: left, id: "1" };
+  const second = { ...source, collection: right, id: "1" };
+  const third = { ...source, collection: left, id: "2" };
+  const store = new EnvironmentStateStore({
+    ...state,
+    entities: [first, second, third],
+  });
+  const earlier = store.collectionsOf(type);
+  expect(earlier).toEqual([left, right]);
+
+  store.remove(first);
+
+  expect(store.collectionsOf(type)).toEqual([right, left]);
+  expect(earlier).toEqual([left, right]);
+  expect(store.inCollection(type, left).map(({ id }) => id)).toEqual(["2"]);
+});
+
 describe("EnvironmentStateStore", () => {
   it("reports its state as rea-state/v1, accepts that report back and resets to the initial state", () => {
     const store = new EnvironmentStateStore(state);

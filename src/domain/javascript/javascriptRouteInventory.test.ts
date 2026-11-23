@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { metroContext } from "../../../tests/fixtures/javascriptMetroContext.js";
 import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import {
@@ -639,4 +640,39 @@ it("distinguishes URL suffixes from literal Next script filename bytes", () => {
       .map(({ path }) => path)
       .sort(),
   ).toEqual([...local].sort());
+});
+
+it("inventories Expo Router context keys without claiming page classification", () => {
+  const result = build([
+    source(
+      "index-abc.js",
+      metroContext(["./(app)/_layout.tsx", "./(app)/reports/[id]/edit.tsx"]) +
+        "const back='/reports/archive';",
+    ),
+  ]);
+  expect(result.routes).toEqual([
+    expect.objectContaining({
+      path: "/reports/:id/edit",
+      classification: "unknown",
+      classification_basis: "unknown",
+      confidence: "low",
+      mechanisms: ["expo-router-context-key"],
+    }),
+    expect.objectContaining({
+      path: "/reports/archive",
+      mechanisms: ["route-string-constant"],
+    }),
+  ]);
+  expect(
+    result.occurrences.find(
+      ({ mechanism }) => mechanism === "expo-router-context-key",
+    ),
+  ).toMatchObject({
+    origin: "source-syntax",
+    derivation: "inferred",
+    unprefixed_path: "/reports/:id/edit",
+    segments: [{ value: "./(app)/reports/[id]/edit.tsx", origin: "literal" }],
+  });
+  expect(result.unknowns).toEqual([]);
+  expect(result.coverage.candidate_enumeration).toBe("complete");
 });

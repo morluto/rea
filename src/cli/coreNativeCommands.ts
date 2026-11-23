@@ -6,7 +6,7 @@ import {
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { cliCommandFor } from "../contracts/cliCommandNames.js";
 import type { Logger } from "pino";
-import { nativeTarget } from "./options.js";
+import { nativeTarget } from "./nativeTargetOption.js";
 import type { CliInstance } from "./types.js";
 import { contractNamed } from "./contractCliDescription.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
@@ -37,7 +37,8 @@ export const registerCoreNativeCommands = (
     logger,
     contractNamed(OFFICIAL_TOOL_CONTRACTS, "annotate_native_function"),
     {
-      description: "Edit function annotations and return refreshed analysis",
+      description:
+        "Edit function annotations and return refreshed analysis. In Ghidra ephemeral mode the edit is discarded when this command exits. REA_GHIDRA_CHECKPOINT_DIR keeps edits only for stock ELF/PE/Mach-O imports on Linux/macOS without analysis overrides; otherwise use one MCP session for dependent edits and reads",
       sessionTarget: executable,
       positionals: ["procedure"],
       fields: {

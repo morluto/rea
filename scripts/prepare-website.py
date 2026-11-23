@@ -42,8 +42,8 @@ def prepare_sitemap(site):
     print(f"Prepared sitemap.xml ({len(sitemap)} indexable pages).")
 
 
-def prepare_sharing_image(site):
-    """Rasterize the maintained SVG for clients that need a PNG preview."""
+def prepare_images(site):
+    """Render social previews and the conventional browser icon from their sources."""
     try:
         import cairosvg
     except (ImportError, OSError) as error:
@@ -58,6 +58,9 @@ def prepare_sharing_image(site):
         png = cairosvg.svg2png(url=str(source), output_width=width)
         with Image.open(BytesIO(png)) as image:
             return image.convert("RGBA")
+
+    favicon = render(site / "assets/favicon.svg", 192)
+    favicon.save(site / "favicon.ico", sizes=[(n, n) for n in (16, 32, 48, 64, 192)])
 
     with Image.open(artwork / "rea-social-preview.png") as original:
         default = ImageOps.fit(original.convert("RGB"), (1200, 630), method=Image.Resampling.LANCZOS)
@@ -148,7 +151,7 @@ def prepare_assets(site):
     stylesheet.write_text(cssmin(stylesheet.read_text(encoding="utf-8")), encoding="utf-8")
     prepare_search_images(site)
     prepare_redirects(site)
-    prepare_sharing_image(site)
+    prepare_images(site)
     prepare_sitemap(site)
     prepare_notes_example(site)
     prepare_discovery(Path(__file__).resolve().parent.parent, site)

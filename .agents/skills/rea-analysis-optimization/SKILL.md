@@ -50,7 +50,9 @@ Use the evidence to choose the smallest structural correction:
 
 | Observed cost                     | Candidate correction                                       | Condition to establish                                                               |
 | --------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Repeated scans of validated facts | Reuse existing order or lookup structure                   | The owner establishes ordering and identity; every matching alternative survives     |
+| Repeated scans of validated facts | Reuse existing order, `Map`/`Set` index, or single pass    | The owner establishes ordering and identity; every matching alternative survives     |
+| Full-tree re-parse / deep-clone   | Validate once with `ownedJson*` or envelope-only parse     | Payload is exclusively owned or already validated by the owning decoder boundary     |
+| Unnecessary secondary pass/spawn  | Derive a tiny pass-1 existence summary / pruning index     | The summary is exact for the primary stream so skipping preserves identical answers  |
 | Repeated equivalent engine work   | Share a validated result or in-flight producer             | Inputs, freshness, lifetime, and per-caller outcomes remain explicit                 |
 | Full reports for selected facts   | Push selection or projection to the earliest capable owner | Required facts and evidence remain reachable; examined coverage is reported          |
 | Large temporary transport buffers | Decode incrementally or use bounded source reads           | Validate the whole admitted document; retained facts and copies still consume memory |

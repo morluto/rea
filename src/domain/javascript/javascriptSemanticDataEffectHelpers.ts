@@ -27,6 +27,7 @@ import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
 import {
   semanticBindingAtRead,
   semanticTopLevelEffectFollowsCapture,
+  semanticScopeExitEffect,
 } from "./javascriptSemanticMutationInitializers.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
 import { bindingMemberEffectMayPrecedeReads } from "./javascriptSemanticEffectLog.js";
@@ -201,6 +202,27 @@ export const builtinDataEffectIdentity = (
   return candidate === null
     ? null
     : { path: candidate, builtinAuthority: "candidate" };
+};
+
+/** Recover the default HTTP agent protocol only while its shared slot is intact. */
+export const semanticDefaultHttpProtocol = (
+  callee: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): "http:" | "https:" | undefined => {
+  for (const family of ["http", "https"] as const) {
+    const identity = builtinDataEffectIdentity(callee, state, [
+      family,
+      `node:${family}`,
+    ]);
+    if (
+      identity?.builtinAuthority === undefined &&
+      identity?.path.length === 1 &&
+      (identity.path[0] === "request" || identity.path[0] === "get") &&
+      !requiredModuleChanged(family, ["globalAgent", "protocol"], callee, state)
+    )
+      return family === "http" ? "http:" : "https:";
+  }
+  return undefined;
 };
 
 const builtinDataEffectCallablePathWithAuthority = (
@@ -1028,7 +1050,7 @@ const fsDelegates: Readonly<Record<string, readonly string[]>> = {
   writeFile: ["open", "write", "fsync", "close"],
   writeFileSync: ["openSync", "writeSync", "fsyncSync", "closeSync"],
   exists: ["access"],
-  readFileSync: ["openSync", "closeSync"],
+  readFileSync: ["openSync", "readSync", "closeSync"],
   realpath: ["lstat", "stat", "readlink"],
   truncate: ["open", "close"],
   truncateSync: ["openSync", "ftruncateSync", "closeSync"],
@@ -1079,7 +1101,10 @@ export const recordSemanticFsDelegateCalls = (
           state.parentsByNode,
         )
       )
-        record(invocation, source.loaderAuthority ?? write.loaderAuthority);
+        record(
+          semanticScopeExitEffect(invocation),
+          source.loaderAuthority ?? write.loaderAuthority,
+        );
   }
 };
 

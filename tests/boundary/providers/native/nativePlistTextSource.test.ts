@@ -167,6 +167,37 @@ it.for<TextSourceCase>([
     ],
     conversions: [{ format: "json", output: '{"name":"\\u0001"}' }],
   },
+  {
+    // `file -b` reports `data` for this XML, as it does for some shipped
+    // macOS plists such as NeptuneOneWallpaper.appex's Info.plist.
+    name: "XML control character that file calls data",
+    bytes: Buffer.from(
+      '<?xml version="1.0"?><plist><dict><key>name</key><string>\u0003</string></dict></plist>',
+    ),
+    description: "data",
+    format: "xml",
+    value: { name: "\u0003" },
+    limitations: [
+      "REA's XML reader refused the source (XML is not well-formed: 1:58: disallowed character.), but plutil read it, so the value comes from plutil's conversion rather than the original text.",
+    ],
+    conversions: [{ format: "json", output: '{"name":"\\u0003"}' }],
+  },
+  {
+    name: "well-formed XML that file calls data",
+    bytes: Buffer.from(xml),
+    description: "data",
+    format: "xml",
+    value: xmlValue,
+    conversions: [],
+  },
+  {
+    name: "OpenStep control character that file calls data",
+    bytes: Buffer.from('{ name = "\u0003"; }'),
+    description: "data",
+    format: "unknown",
+    value: { name: "\u0003" },
+    conversions: [{ format: "json", output: '{"name":"\\u0003"}' }],
+  },
 ])("owns $name interpretation before optional conversion", async (fixture) => {
   const root = await createTestTempDirectory("rea-plist-text-source-");
   const path = join(root, "selected.plist");

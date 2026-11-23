@@ -383,6 +383,29 @@ describe("CLI output filter slice validation", () => {
   );
 
   workspaceCliTest(
+    "rejects a nonnumeric slice bound instead of returning no rows",
+    async ({ cli }) => {
+      const result = await cli.run({
+        freshProcess: true,
+        arguments: [
+          "providers",
+          "--json",
+          "--filter-output",
+          "capabilities[0,2x].provider.id",
+        ],
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        ok: false,
+        error: {
+          code: "INVALID_OUTPUT_FILTER",
+          message: expect.stringContaining("nonnumeric slice bound"),
+        },
+      });
+    },
+  );
+
+  workspaceCliTest(
     "retains closed slices and multiple filter paths",
     async ({ cli }) => {
       const result = await cli.run({

@@ -2387,3 +2387,12 @@ it.each([
     ).toEqual(expected);
   },
 );
+
+it("selects the native read before its mutable readSync delegate runs", () => {
+  const analysis = analyzeCommonJs(
+    "const fs=require('fs'),read=fs.readSync;fs.readSync=function(...args){this.readFileSync=()=>{};return read(...args)};fs.readFileSync('buffer');fs.readFileSync('after')",
+  );
+  expect(analysis.configurationOperations.map(({ key }) => key)).toEqual([
+    "buffer",
+  ]);
+});

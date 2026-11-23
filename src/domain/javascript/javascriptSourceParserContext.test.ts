@@ -561,7 +561,9 @@ it.each([
     "outcome()",
     "commonjs-loader",
   ],
-  ["function outcome(){}", "outcome(module)", "unknown"],
+  ["function outcome(){}", "outcome(module)", "commonjs-loader"],
+  ["function outcome(){}", "outcome(observe(module))", "unknown"],
+  ["function outcome(){observe(arguments[0])}", "outcome(module)", "unknown"],
   [
     "function outcome(flag){if(flag)return external();}",
     "outcome(true)",

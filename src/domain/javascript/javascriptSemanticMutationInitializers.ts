@@ -292,6 +292,8 @@ export const semanticTopLevelEffectFollowsCapture = (
   effect: t.Node | undefined,
   parents: WeakMap<t.Node, t.Node>,
 ): boolean => {
+  if (effect !== undefined && scopeEffectOwners.has(effect))
+    return semanticEffectFollowsReference(capture, effect, parents);
   const earlier = effectAncestry(capture, parents);
   const later = effectAncestry(effect, parents);
   if (earlier === null || later === null) return false;
@@ -2110,24 +2112,31 @@ export const semanticBindingAtRead = (
   }
   // Coverage and latest-value selection are independent. A preceding write
   // can cover entry even when another write's order remains unknown.
+  const initializerCoversRead = (
+    entry: Parameters<typeof initializerPosition>[0],
+    isReference: boolean,
+  ): boolean => {
+    const source = initializerInBody(
+      entry,
+      parents,
+      position?.owner.body,
+      isReference,
+    );
+    return (
+      source !== null &&
+      position !== null &&
+      positionPrecedes(source, position) &&
+      !initializerMayRetainEntry(entry, binding, parents)
+    );
+  };
   const hasDefiniteInitializer =
     position !== null &&
-    [
-      ...binding.initializers,
-      ...binding.referenceInitializers.filter(({ assignment }) => assignment),
-    ].some((initializer) => {
-      const source = initializerInBody(
-        initializer,
-        parents,
-        position?.owner.body,
-        binding.referenceInitializers.includes(initializer),
-      );
-      return (
-        source !== null &&
-        positionPrecedes(source, position) &&
-        !initializerMayRetainEntry(initializer, binding, parents)
-      );
-    });
+    (binding.initializers.some((entry) =>
+      initializerCoversRead(entry, false),
+    ) ||
+      binding.referenceInitializers.some(
+        (entry) => entry.assignment && initializerCoversRead(entry, true),
+      ));
   if (
     !repeatingLoop &&
     origin !== undefined &&
@@ -2617,6 +2626,7 @@ export const semanticBindingHasPriorValueWrite = (
 ): boolean => {
   if (binding.definitions.some(({ kind }) => kind === "function")) return true;
   const writes = state.bindingWrites.get(binding.bindingId) ?? [];
+  const writeSet = new Set(writes);
   const read = semanticBindingAtRead(binding, site, state);
   const retained =
     read.status === "ordered"
@@ -2632,7 +2642,7 @@ export const semanticBindingHasPriorValueWrite = (
     ...binding.referenceInitializers,
   ]) {
     let owner: t.Node | undefined = source.node;
-    while (owner !== undefined && !writes.includes(owner))
+    while (owner !== undefined && !writeSet.has(owner))
       owner = state.parentsByNode.get(owner);
     if (owner !== undefined) {
       representedWrites.add(owner);

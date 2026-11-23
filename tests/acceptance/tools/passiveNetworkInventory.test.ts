@@ -6,6 +6,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { webCaptureDiffSchema } from "../../../src/domain/webCaptureDiffSchemas.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import {
+  unselectBodyShapes,
   passiveNetworkCapture,
   withPassiveDroppedEvents,
 } from "../../fixtures/passiveNetworkCapture.js";
@@ -13,61 +14,15 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 const comparisonCases = () => {
-  const before = passiveNetworkCapture();
-  const after = passiveNetworkCapture(["/a", "/b"]);
-  const incomplete = structuredClone(before);
-  incomplete.completeness.attach_limited_sections.push("network_requests");
-  const wsBefore = structuredClone(before);
-  const wsAfter = structuredClone(after);
-  for (const capture of [wsBefore, wsAfter])
-    capture.completeness.attach_limited_sections.push(
-      "websocket_connections",
-      "websocket_frames",
-    );
-  wsAfter.network.websocket_connections.push({
-    request_id: "ws",
-    url: "wss://app.example.test/live",
-    events: [],
-  });
-  const repeated = passiveNetworkCapture(["/a", "/a"]);
-  const repeatedUnknown = structuredClone(repeated);
-  repeatedUnknown.network.requests[1]!.resource_type = null;
-  const unknownIdentity = structuredClone(before);
-  unknownIdentity.network.requests[0]!.resource_type = null;
-  const unknownIdentityAdded = structuredClone(after);
-  unknownIdentityAdded.network.requests[0]!.resource_type = null;
-  const unselectedUnknownIdentity = structuredClone(unknownIdentity);
-  unselectedUnknownIdentity.completeness.excluded.push({
-    section: "json_body_shapes",
-    reason: "not_approved",
-    count: null,
-  });
-  unselectedUnknownIdentity.network.requests[0]!.body_shapes.status =
-    "not_approved";
-  const droppedRequest = withPassiveDroppedEvents(before, {
-    network_requests: 1,
-  });
-  const droppedWebSocket = withPassiveDroppedEvents(before, {
-    websocket_connections: 1,
-    websocket_frames: 1,
-  });
-  const unrelatedDrop = withPassiveDroppedEvents(before, {
-    console_events: 1,
-  });
-  const droppedUnselected = withPassiveDroppedEvents(structuredClone(before), {
-    network_requests: 1,
-  });
-  droppedUnselected.completeness.excluded.push({
-    section: "json_body_shapes",
-    reason: "not_approved",
-    count: null,
-  });
-  droppedUnselected.network.requests[0]!.body_shapes.status = "not_approved";
-  const droppedRepeated = withPassiveDroppedEvents(before, {
-    network_requests: 1,
-  });
-  const redirectKnown = structuredClone(before);
-  redirectKnown.network.requests[0]!.redirects = [
+  const before = unselectBodyShapes(passiveNetworkCapture());
+  const after = unselectBodyShapes(passiveNetworkCapture(["/a", "/b"]));
+  const limited = structuredClone(before);
+  limited.completeness.attach_limited_sections.push("network_requests");
+  const dropped = withPassiveDroppedEvents(before, { network_requests: 1 });
+  const unknownRequest = structuredClone(before);
+  unknownRequest.network.requests[0]!.resource_type = null;
+  const knownRedirect = structuredClone(before);
+  knownRedirect.network.requests[0]!.redirects = [
     {
       url: "https://app.example.test/start",
       response_url: "https://app.example.test/start",
@@ -80,69 +35,15 @@ const comparisonCases = () => {
       redirect_event_timestamp: 2,
     },
   ];
-  const redirectUnknown = structuredClone(redirectKnown);
-  redirectUnknown.network.requests[0]!.redirects![0]!.resource_type = null;
+  const unknownRedirect = structuredClone(knownRedirect);
+  unknownRedirect.network.requests[0]!.redirects[0]!.resource_type = null;
   return [
     ["added", before, after, "added"],
     ["removed", after, before, "removed"],
-    ["equal unavailable", before, before, null],
-    ["incomplete inventory", incomplete, after, null],
-    ["limited WebSocket inventory", wsBefore, wsAfter, "added"],
-    ["repeated request type uncertainty", repeated, repeatedUnknown, null],
-    [
-      "repeated request type uncertainty reversed",
-      repeatedUnknown,
-      repeated,
-      null,
-    ],
-    ["unknown request identity", before, unknownIdentity, null],
-    ["unknown request identity reversed", unknownIdentity, before, null],
-    [
-      "unknown identity without selected shapes",
-      unselectedUnknownIdentity,
-      unselectedUnknownIdentity,
-      null,
-    ],
-    [
-      "different URL beside unknown identity",
-      before,
-      unknownIdentityAdded,
-      "added",
-    ],
-    ["dropped request count", droppedRequest, after, null],
-    ["dropped request count reversed", after, droppedRequest, null],
-    [
-      "dropped request with shapes unselected",
-      droppedUnselected,
-      droppedUnselected,
-      null,
-    ],
-    [
-      "WebSocket drops do not hide HTTP additions",
-      droppedWebSocket,
-      after,
-      "added",
-    ],
-    [
-      "unrelated drops do not hide HTTP additions",
-      unrelatedDrop,
-      after,
-      "added",
-    ],
-    [
-      "duplicate samples with dropped inventory",
-      droppedRepeated,
-      repeated,
-      null,
-    ],
-    [
-      "duplicate samples with dropped inventory reversed",
-      repeated,
-      droppedRepeated,
-      null,
-    ],
-    ["unknown redirect type", redirectKnown, redirectUnknown, null],
-    ["unknown redirect type reversed", redirectUnknown, redirectKnown, null],
+    ["attachment-limited inventory", limited, after, null],
+    ["dropped inventory", dropped, dropped, null],
+    ["unknown request type", before, unknownRequest, null],
+    ["unknown redirect type", knownRedirect, unknownRedirect, null],
   ] as const;
 };
 

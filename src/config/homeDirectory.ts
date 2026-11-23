@@ -1,29 +1,42 @@
 import { userInfo } from "node:os";
 
-const firstNonempty = (...values: readonly (string | undefined)[]) =>
-  values.find(
-    (value): value is string => value !== undefined && value.length > 0,
-  );
+/** Resolve selected home values in precedence order, reading only what is needed. */
+export const selectedHomeDirectory = (
+  platform: NodeJS.Platform,
+  read: (name: string) => string | undefined,
+): string | undefined => {
+  const nonempty = (name: string): string | undefined => {
+    const value = read(name);
+    return value === "" ? undefined : value;
+  };
+  if (platform !== "win32") return nonempty("HOME") ?? nonempty("USERPROFILE");
+  const profile = nonempty("USERPROFILE");
+  if (profile !== undefined) return profile;
+  const drive = nonempty("HOMEDRIVE");
+  if (drive !== undefined) {
+    const path = nonempty("HOMEPATH");
+    if (path !== undefined) return `${drive}${path}`;
+  }
+  return nonempty("HOME");
+};
+
+/** Settings consulted before selecting a home, including omitted values. */
+export const selectedHomeDirectorySettings = (
+  platform: NodeJS.Platform,
+  environment: Readonly<NodeJS.ProcessEnv>,
+): readonly string[] => {
+  const names: string[] = [];
+  selectedHomeDirectory(platform, (name) => {
+    names.push(name);
+    return environment[name];
+  });
+  return names;
+};
 
 /** Resolve the caller's selected home before consulting the host account. */
 export const homeDirectoryFromEnvironment = (
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,
-): string => {
-  const windowsDriveHome =
-    environment.HOMEDRIVE !== undefined &&
-    environment.HOMEDRIVE.length > 0 &&
-    environment.HOMEPATH !== undefined &&
-    environment.HOMEPATH.length > 0
-      ? `${environment.HOMEDRIVE}${environment.HOMEPATH}`
-      : undefined;
-  const selected =
-    platform === "win32"
-      ? firstNonempty(
-          environment.USERPROFILE,
-          windowsDriveHome,
-          environment.HOME,
-        )
-      : firstNonempty(environment.HOME, environment.USERPROFILE);
-  return selected ?? userInfo().homedir;
-};
+): string =>
+  selectedHomeDirectory(platform, (name) => environment[name]) ??
+  userInfo().homedir;

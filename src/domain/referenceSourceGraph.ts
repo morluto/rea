@@ -50,7 +50,7 @@ const sourceFileBaseShape = {
   language: z.string().min(1).nullable(),
 };
 
-const sourceFileSchema = z.union([
+const sourceFileSchema = z.discriminatedUnion("content_state", [
   z.strictObject({
     ...sourceFileBaseShape,
     sha256: digestSchema,
@@ -93,7 +93,7 @@ const symlinkTargetSchema = z
     "Expected a normalized POSIX symlink target",
   );
 
-const sourceSymlinkSchema = z.union([
+const sourceSymlinkSchema = z.discriminatedUnion("target_state", [
   z.strictObject({
     ...entryBaseShape,
     kind: z.literal("symlink"),
@@ -108,7 +108,7 @@ const sourceSymlinkSchema = z.union([
   }),
 ]);
 
-const sourceEntrySchema = z.union([
+const sourceEntrySchema = z.discriminatedUnion("kind", [
   sourceFileSchema,
   sourceDirectorySchema,
   sourceSymlinkSchema,

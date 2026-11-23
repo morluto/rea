@@ -24,7 +24,13 @@ import {
   zipEntryPath,
   zipListingCoverage,
 } from "../resources/index.js";
-import { parseXmlDocument } from "../domain/xmlDocument.js";
+import {
+  isXmlElement,
+  parseXmlDocument,
+  xmlChildElements,
+  xmlChildrenNamed,
+  xmlFirstChildNamed,
+} from "../domain/xmlDocument.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 import { hasZipSignature } from "../domain/zipPackageFormat.js";
 import {
@@ -55,37 +61,6 @@ const BASE_LIMITATIONS = [
   "Dependency version ranges are recorded as spelled in the .nuspec; restore results are unknown.",
   "Directory ZIP markers are omitted from contents; only file members are listed.",
 ] as const;
-
-const isElement = (node: Node | null): node is Element =>
-  node !== null && node.nodeType === 1;
-
-const childElements = (element: Element): Element[] => {
-  const children: Element[] = [];
-  for (
-    let child = element.firstChild;
-    child !== null;
-    child = child.nextSibling
-  )
-    if (isElement(child)) children.push(child);
-  return children;
-};
-
-const childrenNamed = (
-  element: Element,
-  local: string,
-  namespace?: string,
-): Element[] =>
-  childElements(element).filter(
-    (child) =>
-      child.localName === local &&
-      (namespace === undefined || (child.namespaceURI ?? "") === namespace),
-  );
-
-const firstNamed = (
-  element: Element,
-  local: string,
-  namespace?: string,
-): Element | undefined => childrenNamed(element, local, namespace)[0];
 
 const nonempty = (value: string | null | undefined): string | null => {
   if (value === null || value === undefined) return null;
@@ -119,10 +94,10 @@ const indexedMetadataText = (
   metadata: Element,
   name: string,
 ): string | null => {
-  for (const child of childElements(metadata)) {
+  for (const child of xmlChildElements(metadata)) {
     if (
       child.localName?.toLowerCase() !== name ||
-      childElements(child).length > 0
+      xmlChildElements(child).length > 0
     )
       continue;
     const text = child.textContent ?? "";
@@ -138,7 +113,7 @@ const indexedMetadataText = (
       return null;
     for (
       let scope: Node | null = child;
-      isElement(scope);
+      isXmlElement(scope);
       scope = scope.parentNode
     ) {
       const space = scope.getAttribute("xml:space");
@@ -277,7 +252,7 @@ const opcManifestTargets = (
   }
   const root = parsed.value.documentElement;
   if (
-    !isElement(root) ||
+    !isXmlElement(root) ||
     root.localName !== "Relationships" ||
     root.namespaceURI !== OPC_RELATIONSHIP_NAMESPACE
   ) {
@@ -287,7 +262,7 @@ const opcManifestTargets = (
     return [];
   }
   const targets = new Map<string, OpcManifestTarget>();
-  for (const relationship of childrenNamed(root, "Relationship")) {
+  for (const relationship of xmlChildrenNamed(root, "Relationship")) {
     if (relationship.namespaceURI !== OPC_RELATIONSHIP_NAMESPACE) continue;
     const type = attribute(relationship, "Type");
     if (type !== NUGET_MANIFEST_RELATIONSHIP) continue;
@@ -342,12 +317,12 @@ const parseDependencies = (
 ): NugetNupkg["dependency_groups"] => {
   // NuspecReader walks every <dependencies> element, with one decision about
   // groups across all of them.
-  const containers = childrenNamed(metadata, "dependencies", namespace);
+  const containers = xmlChildrenNamed(metadata, "dependencies", namespace);
   const groups = containers.flatMap((container) =>
-    childrenNamed(container, "group", namespace),
+    xmlChildrenNamed(container, "group", namespace),
   );
   const ungrouped = containers.flatMap((container) =>
-    childrenNamed(container, "dependency", namespace),
+    xmlChildrenNamed(container, "dependency", namespace),
   );
   const readDependency = (
     element: Element,
@@ -364,7 +339,7 @@ const parseDependencies = (
     element: Element,
   ): NugetNupkg["dependency_groups"][number] => ({
     target_framework: attribute(element, "targetFramework"),
-    dependencies: childrenNamed(element, "dependency", namespace).map(
+    dependencies: xmlChildrenNamed(element, "dependency", namespace).map(
       readDependency,
     ),
   });
@@ -414,11 +389,11 @@ const parseNuspecDocument = (
     return empty;
   }
   const root = parsed.value.documentElement;
-  if (!isElement(root) || root.localName !== "package") {
+  if (!isXmlElement(root) || root.localName !== "package") {
     limitations.push("The selected .nuspec root element is not package.");
     return empty;
   }
-  const metadata = firstNamed(root, "metadata");
+  const metadata = xmlFirstChildNamed(root, "metadata");
   if (metadata === undefined) {
     limitations.push("The selected .nuspec has no metadata element.");
     return empty;
@@ -427,14 +402,18 @@ const parseNuspecDocument = (
   // Authors and description come from its local-name metadata index.
   const metadataNamespace = metadata.lookupNamespaceURI("") ?? "";
   const metadataText = (local: string): string | null => {
-    const element = firstNamed(metadata, local, metadataNamespace);
+    const element = xmlFirstChildNamed(metadata, local, metadataNamespace);
     return element === undefined ? null : elementText(element);
   };
-  const licenseElement = firstNamed(metadata, "license", metadataNamespace);
+  const licenseElement = xmlFirstChildNamed(
+    metadata,
+    "license",
+    metadataNamespace,
+  );
   const licenseType = licenseElement
     ? attribute(licenseElement, "type")?.toLowerCase()
     : undefined;
-  const repositoryElement = firstNamed(
+  const repositoryElement = xmlFirstChildNamed(
     metadata,
     "repository",
     metadataNamespace,
@@ -473,24 +452,6 @@ const parseNuspecDocument = (
   };
 };
 
-/**
- * Collect the distinct members the manifest targets resolve to, stopping at
- * the second. Many package-controlled targets can each hit one large
- * case-folded bucket, so the matches are never materialized together.
- */
-export const distinctTargetMatches = <T>(
-  targets: readonly string[],
-  match: (target: string) => readonly T[],
-): T[] => {
-  const found = new Set<T>();
-  for (const target of targets)
-    for (const member of match(target)) {
-      found.add(member);
-      if (found.size > 1) return [...found];
-    }
-  return [...found];
-};
-
 /** OPC part-name equivalence folds ASCII case only. */
 const opcPartNameKey = (name: string): string =>
   name.replace(/[A-Z]/gu, (letter) => letter.toLowerCase());
@@ -505,32 +466,29 @@ const findNuspec = (
     | undefined;
   readonly source: "opc-relationship" | "root-nuspec" | undefined;
 } => {
-  // Keep every ZIP occurrence in its OPC equivalence bucket. An exact
-  // spelling cannot resolve two occurrences with equivalent part names.
-  // Index once: every target is then a constant-time lookup, however many
-  // relationships the package declares.
-  const partNames = new Map<string, (typeof files)[number][]>();
-  for (const file of files) {
-    const key = opcPartNameKey(file.name);
-    const members = partNames.get(key);
-    if (members === undefined) partNames.set(key, [file]);
-    else members.push(file);
-  }
   if (relsXml !== undefined) {
     const targets = opcManifestTargets(relsXml, limitations);
-    const resolved = distinctTargetMatches(
-      targets.map((target) => target.lookup),
-      (target) => partNames.get(opcPartNameKey(target)) ?? [],
+    const targetKeys = new Set(
+      targets.map(({ lookup }) => opcPartNameKey(lookup)),
     );
-    if (resolved.length > 1) {
-      limitations.push(
-        "OPC manifest relationships resolve to more than one .nuspec ZIP member; identity was not decoded.",
-      );
-      return { member: undefined, source: undefined };
+    let member: (typeof files)[number] | undefined;
+    if (targetKeys.size > 0) {
+      // Visit each physical occurrence once. Aliases of one part agree, but
+      // even an exact target cannot choose between two equivalent members.
+      for (const file of files) {
+        if (!targetKeys.has(opcPartNameKey(file.name))) continue;
+        if (member !== undefined) {
+          limitations.push(
+            "OPC manifest relationships resolve to more than one .nuspec ZIP member; identity was not decoded.",
+          );
+          return { member: undefined, source: undefined };
+        }
+        member = file;
+      }
     }
-    if (resolved.length === 1) {
-      const member = resolved[0]!;
-      if (!targets.some((target) => target.lookup === member.name))
+    if (member !== undefined) {
+      const name = member.name;
+      if (!targets.some((target) => target.lookup === name))
         limitations.push(
           "The OPC manifest relationship matched a .nuspec member by case-insensitive ZIP name.",
         );

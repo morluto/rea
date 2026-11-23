@@ -73,11 +73,13 @@ it("keeps observed query order distinct from calls supplying only selected field
     `?q=hit&${ignored}&${ignored}`,
   ])
     expect(
-      selectReplayExchange(tool, exchanges, args, observed)?.exact,
+      selectReplayExchange(tool, exchanges, args, { observedQuery: observed })
+        ?.exact,
       observed,
     ).toBe(false);
   expect(
-    selectReplayExchange(tool, exchanges, args, `?${ignored}&${ignored}&q=hit`)
-      ?.exact,
+    selectReplayExchange(tool, exchanges, args, {
+      observedQuery: `?${ignored}&${ignored}&q=hit`,
+    })?.exact,
   ).toBe(true);
 });
