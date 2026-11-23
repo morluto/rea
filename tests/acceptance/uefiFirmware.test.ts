@@ -194,6 +194,7 @@ it("maps a flash image end to end through CLI inspection and MCP session invento
     path: imagePath,
     output_directory: join(root, "extracted"),
     target: { kind: "ffs-file", offset: sourceLocation.offset },
+    detail: "complete",
   });
   expect(extractedSession.isError, JSON.stringify(extractedSession)).not.toBe(
     true,
@@ -407,6 +408,7 @@ it("retains an opaque volume and reports only the unparsed ranges in the selecte
             path,
             output_directory: join(root, name),
             ...(target === undefined ? {} : { target }),
+            detail: "complete",
           })
         ).structuredContent,
       ).normalized_result,
@@ -535,6 +537,7 @@ cliTest(
         max_volumes: 513,
         max_files: maxFiles,
         target: { kind: "ffs-file", offset, source_stream: null },
+        detail: "complete",
       });
     const extractCli = (maxFiles: number) =>
       command.run({

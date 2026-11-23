@@ -83,6 +83,11 @@ export const registerUefiCommands = (
         "Extract selected UEFI firmware bytes with provenance and decode gaps",
       positionals: ["path", "output_directory"],
       callerPaths: ["path", "output_directory"],
+      omit: {
+        detail:
+          "The one-shot command returns complete Evidence; summaries are retained by MCP sessions.",
+        view: "Views page Evidence retained by MCP sessions.",
+      },
       fields: {
         path: FLASH_PATH,
         output_directory: {
