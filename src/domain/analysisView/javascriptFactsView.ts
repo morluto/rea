@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { canonicalJson } from "../comparisonSemantics.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import {
   applicationNodeSchema,
@@ -74,8 +75,31 @@ export const javascriptFactRowSchema = applicationNodeSchema
     available_property_keys: z.array(propertyKeySchema).exactOptional(),
   });
 
+/** Distinct retained property-value combinations, counted without materializing rows. */
+export const javascriptFactGroupsViewRequestSchema = z.strictObject({
+  kind: z.literal("javascript-fact-groups"),
+  where: javascriptFactsWhereSchema,
+  group_by: z
+    .array(propertyKeySchema)
+    .min(1)
+    .describe(
+      'Exact retained property names whose value combinations form groups, e.g. ["operation", "channel"]. A missing key is omitted from the group, distinct from retained null. Rows are ordered by the canonical JSON of their values. Read matching observations with javascript-facts and the same where plus where.properties.',
+    ),
+  offset: z.number().int().nonnegative().default(0),
+  limit: z.number().int().positive().default(256),
+});
+
+/** One distinct combination; rows are ordered by the canonical JSON of their group_by values. */
+export const javascriptFactGroupRowSchema = z.strictObject({
+  properties: applicationNodeObservationSchema.shape.properties,
+  observation_count: z.int().positive(),
+  node_count: z.int().positive(),
+});
+
 type FactRequest = z.infer<typeof javascriptFactsViewRequestSchema>;
+type FactGroupsRequest = z.infer<typeof javascriptFactGroupsViewRequestSchema>;
 type FactRow = z.infer<typeof javascriptFactRowSchema>;
+type FactGroupRow = z.infer<typeof javascriptFactGroupRowSchema>;
 type FactWhere = FactRequest["where"];
 
 const observationPath = (
@@ -544,4 +568,62 @@ export const projectJavaScriptFacts = (
     }
   }
   return { rows, total };
+};
+
+/** Count distinct selected property combinations over every matching observation. */
+export const projectJavaScriptFactGroups = (
+  nodes: readonly ApplicationNode[],
+  view: FactGroupsRequest,
+  cacheOwner?: object,
+): { readonly rows: FactGroupRow[]; readonly total: number } => {
+  const keys = [...new Set(view.group_by)];
+  const groups = new Map<
+    string,
+    {
+      readonly properties: FactGroupRow["properties"];
+      observations: number;
+      readonly nodes: Set<string>;
+    }
+  >();
+  forEachMatchingFact(
+    nodes,
+    view.where,
+    cacheOwner,
+    ({ node, observation }) => {
+      const properties = Object.fromEntries(
+        keys.flatMap((key) =>
+          Object.hasOwn(observation.properties, key)
+            ? [[key, observation.properties[key]!] as const]
+            : [],
+        ),
+      );
+      // Key order follows group_by, so canonical JSON identifies the combination.
+      const identity = canonicalJson(
+        keys.map((key) =>
+          Object.hasOwn(properties, key) ? [properties[key]] : [],
+        ),
+        "JavaScript fact group",
+      );
+      const existing = groups.get(identity);
+      if (existing === undefined)
+        groups.set(identity, {
+          properties,
+          observations: 1,
+          nodes: new Set([node.node_id]),
+        });
+      else {
+        existing.observations += 1;
+        existing.nodes.add(node.node_id);
+      }
+    },
+  );
+  const rows = [...groups]
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .slice(view.offset, view.offset + view.limit)
+    .map(([, group]) => ({
+      properties: group.properties,
+      observation_count: group.observations,
+      node_count: group.nodes.size,
+    }));
+  return { rows, total: groups.size };
 };

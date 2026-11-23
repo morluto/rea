@@ -174,6 +174,23 @@ export const ANALYSIS_VIEW_TOOL_CONTRACTS = [
       },
       {
         title:
+          "Count distinct IPC channels per operation in one retained source",
+        input: {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: RETAINED_EXAMPLE_ID,
+          },
+          view: {
+            kind: "javascript-fact-groups",
+            where: { paths: ["preload.js"], kinds: ["ipc-channel"] },
+            group_by: ["operation", "channel"],
+            offset: 0,
+            limit: 256,
+          },
+        },
+      },
+      {
+        title:
           "Read typed module reference facts from retained application Evidence",
         input: {
           source: {
