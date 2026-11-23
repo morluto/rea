@@ -83,6 +83,7 @@ export class RustBinaryProvider implements RustBinaryPort {
     input: InspectRustBinaryInput,
     options?: ExecutionOptions,
   ): Promise<Result<RustBinary, AnalysisError>> {
+    let completed: RustBinary | undefined;
     let snapshot:
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
@@ -103,7 +104,7 @@ export class RustBinaryProvider implements RustBinaryPort {
     const limits = resolveRustProducerLimits(selectedLimits.data);
     try {
       return await this.#resources.run(async () => {
-        const parsedData = await withStableArtifactHandle(
+        const parsedData = await withStableArtifactHandle<RustBinary>(
           input.path,
           limits.input_bytes,
           {
@@ -112,6 +113,9 @@ export class RustBinaryProvider implements RustBinaryPort {
             retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
             onIdentity: (observed) => {
               snapshot = observed;
+            },
+            onVerifiedResult: (report) => {
+              completed = report;
             },
           },
           async (handle) => {
@@ -179,7 +183,7 @@ export class RustBinaryProvider implements RustBinaryPort {
         return ok(parsedData);
       });
     } catch (cause: unknown) {
-      return err(failureFor(cause, input.path, limits, snapshot));
+      return err(failureFor(cause, input.path, limits, snapshot, completed));
     }
   }
 }
@@ -378,7 +382,8 @@ const failureFor = (
   cause: unknown,
   path: string,
   limits: RustProducerLimits,
-  snapshot?: { readonly sha256: string; readonly bytes: number },
+  snapshot: { readonly sha256: string; readonly bytes: number } | undefined,
+  completed: RustBinary | undefined,
 ): AnalysisError => {
   const facts = artifactFilePrimaryFacts(cause);
   const primary = classifyProviderFailure(
@@ -468,6 +473,7 @@ const failureFor = (
         }),
     }),
   );
+  if (completed !== undefined) primary.retainPartialObservation(completed);
   return projectStableArtifactFailure(
     cause,
     primary,

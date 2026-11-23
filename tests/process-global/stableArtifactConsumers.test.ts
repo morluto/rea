@@ -79,6 +79,7 @@ import {
   resolvedAnalysisError,
 } from "../../src/domain/analysisErrorBase.js";
 import { createEvidence, parseEvidence } from "../../src/domain/evidence.js";
+import { retainedEvidenceReferenceSchema } from "../../src/domain/evidenceReference.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { ParseFailureError } from "../../src/domain/parseFailure.js";
 import {
@@ -157,7 +158,11 @@ import { inspectPeResourcesInputSchema } from "../../src/domain/native/peResourc
 import { peResourceFixture } from "../../src/domain/pe/peResources.fixture.js";
 import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
-import { createRustImage } from "../fixtures/rust/image.js";
+import {
+  createRustImage,
+  RUSTC_HASH,
+  rustDependencyPayload,
+} from "../fixtures/rust/image.js";
 import { createIl2cppMetadataFixture } from "../fixtures/il2cpp/metadata.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
@@ -303,20 +308,16 @@ it.each(
 );
 
 it.each(
-  ["Rust service", "selected producer input", "source map"].flatMap(
-    (consumer) =>
-      ["close failure", "close cancellation", "physical failure"].map(
-        (outcome) => ({ consumer, outcome }),
-      ),
+  ["selected producer input", "source map"].flatMap((consumer) =>
+    ["close failure", "close cancellation", "physical failure"].map(
+      (outcome) => ({ consumer, outcome }),
+    ),
   ),
 )(
   "retains completed caller input for $consumer through $outcome",
   async ({ consumer, outcome }) => {
     const path = await selectedImage();
-    const bytes =
-      consumer === "Rust service"
-        ? Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00])
-        : Buffer.from("selected completed input");
+    const bytes = Buffer.from("selected completed input");
     await writeFile(path, bytes);
     const controller = new AbortController();
     const reason = { source: "caller input finalization" };
@@ -327,7 +328,6 @@ it.each(
       fault.onClose = () => controller.abort(reason);
     if (outcome === "physical failure") fault.readFailure = { cause: physical };
     const { sourceMap: _sourceMap, ...script } = webSourceLocationFixture();
-    const rust = new RustBinaryService(new RustBinaryProvider());
     const web = new LocalWebSourceLocationArtifacts({
       load: () => Promise.resolve(ok(script)),
     });
@@ -339,34 +339,28 @@ it.each(
       { message: "busy", details: {} },
     );
     const close = () =>
-      consumer === "Rust service"
-        ? rust.close()
-        : consumer === "source map"
-          ? web.close()
-          : resources.close();
+      consumer === "source map" ? web.close() : resources.close();
     try {
       const result =
-        consumer === "Rust service"
-          ? await rust.inspect({ path }, { signal: controller.signal })
-          : consumer === "source map"
-            ? await web.load(
-                {
-                  ...webSourceLocationArgs,
-                  source_map: { ...webSourceLocationArgs.source_map, path },
-                },
-                { signal: controller.signal },
-              )
-            : await resources.run(async () =>
-                ok(
-                  await resources.readSelectedArtifact({
-                    path,
-                    maximumBytes: 1024,
-                    allowanceName: "fixture input",
-                    observedOutput: undefined,
-                    signal: controller.signal,
-                  }),
-                ),
-              );
+        consumer === "source map"
+          ? await web.load(
+              {
+                ...webSourceLocationArgs,
+                source_map: { ...webSourceLocationArgs.source_map, path },
+              },
+              { signal: controller.signal },
+            )
+          : await resources.run(async () =>
+              ok(
+                await resources.readSelectedArtifact({
+                  path,
+                  maximumBytes: 1024,
+                  allowanceName: "fixture input",
+                  observedOutput: undefined,
+                  signal: controller.signal,
+                }),
+              ),
+            );
       if (result.ok)
         throw new Error("Expected descriptor finalization failure");
       expect(result.error.cleanupIncomplete).toBe(true);
@@ -511,14 +505,16 @@ const descriptorOutcomes = [
 
 it.each(
   staticProviders.flatMap(([name, makeProvider]) =>
-    descriptorOutcomes.map(([outcome, blocked, failure, expected]) => ({
-      name,
-      makeProvider,
-      outcome,
-      blocked,
-      failure,
-      expected,
-    })),
+    descriptorOutcomes
+      .filter(([outcome]) => name !== "Rust" || outcome !== "completed read")
+      .map(([outcome, blocked, failure, expected]) => ({
+        name,
+        makeProvider,
+        outcome,
+        blocked,
+        failure,
+        expected,
+      })),
   ),
 )(
   "preserves the $name $outcome through close cancellation (blocked: $blocked)",
@@ -616,10 +612,10 @@ afterEach(async () => {
   for (const handle of fault.handles) if (handle.fd >= 0) await handle.close();
 });
 
-const selectedImage = async () => {
+const selectedImage = async (bytes = createRustImage({ format: "elf" })) => {
   const root = await createTestTempDirectory("rea-rust-artifact-owner-");
   const path = join(root, "image.elf");
-  await writeFile(path, createRustImage({ format: "elf" }));
+  await writeFile(path, bytes);
   fault.path = path;
   return path;
 };
@@ -855,7 +851,8 @@ it("retains earlier GGUF rows and physical failure while retrying failed descrip
 mcpTest(
   "retains Rust descriptor cleanup and recovers in the same MCP connection",
   async ({ mcp }) => {
-    const path = await selectedImage();
+    const bytes = createRustImage({ format: "elf" });
+    const path = await selectedImage(bytes);
     const service = new RustBinaryService(new RustBinaryProvider());
     const failures: AnalysisError[] = [];
     const inspect = service.inspect.bind(service);
@@ -879,10 +876,35 @@ mcpTest(
           arguments: { path },
         });
         expect(response.isError).toBe(true);
-        expect(parseMcpToolError(response).error).toMatchObject({
+        const { error } = parseMcpToolError(response);
+        expect(error).toMatchObject({
           code: "cleanup_incomplete",
           details: { resources: [path] },
         });
+        if (attempt === 0) {
+          const reference = retainedEvidenceReferenceSchema.parse(
+            error.details?.partial_observation,
+          );
+          const view = await client.callTool({
+            name: "inspect_analysis_view",
+            arguments: {
+              source: reference,
+              view: { kind: "rust", collection: "packages", fields: ["name"] },
+            },
+          });
+          expect(view.isError, JSON.stringify(view.content)).not.toBe(true);
+          expect(
+            parseEvidence(view.structuredContent).normalized_result,
+          ).toMatchObject({
+            parent_evidence_id: reference.evidence_id,
+            page: {
+              rows: [
+                { index: 0, name: "itoa" },
+                { index: 1, name: "sample" },
+              ],
+            },
+          });
+        }
       }
       expect(fault.handles).toHaveLength(1);
       expect(fault.handles[0]?.fd).toBeGreaterThanOrEqual(0);
@@ -1000,37 +1022,125 @@ mcpTest(
   },
 );
 
-it("preserves the caller's cancellation cause when descriptor close also fails", async () => {
-  const path = await selectedImage();
-  const provider = new RustBinaryProvider();
-  const controller = new AbortController();
-  const reason = new Error("cancel during Rust descriptor close");
-  fault.onClose = () => controller.abort(reason);
-  try {
-    const result = await provider.inspect(
-      { path },
-      { signal: controller.signal },
-    );
-    if (result.ok)
-      throw new Error("Expected cancellation with retained cleanup");
-    expect(result.error.cleanupIncomplete).toBe(true);
-    const aggregate = result.error.cause;
-    if (!(aggregate instanceof AggregateError))
-      throw new Error("Missing primary/cleanup aggregate");
-    const [primary] = aggregate.errors;
-    expect(primary).toBeInstanceOf(AnalysisCancelledError);
-    expect((primary as AnalysisCancelledError).cause).toBe(reason);
-    fault.blockNew = false;
-    fault.blocked.clear();
-    await provider.close();
-    expect(result.error.cleanupIncomplete).toBe(false);
-  } finally {
-    fault.blockNew = false;
-    fault.blocked.clear();
-    await provider.close();
-    fault.onClose = undefined;
-  }
-});
+it.each([
+  "close denial",
+  "late cancellation",
+  "both",
+  "physical failure",
+  "output refusal",
+] as const)(
+  "preserves Rust acquisition through %s and releases the same descriptor",
+  async (outcome) => {
+    const bytes = createRustImage({ format: "elf" });
+    const path = await selectedImage(bytes);
+    const service = new RustBinaryService(new RustBinaryProvider());
+    const controller = new AbortController();
+    const reason = { request: "cancel during Rust close" };
+    const physical = Object.assign(new Error("Rust input stat denied"), {
+      code: "EACCES",
+    });
+    const pending = outcome !== "late cancellation";
+    fault.blockNew = pending;
+    if (outcome !== "close denial")
+      fault.onClose = () => controller.abort(reason);
+    if (outcome === "physical failure") fault.readFailure = { cause: physical };
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const parameters = {
+      path,
+      max_rustc_hashes: 10,
+      producer_limits: {
+        input_bytes: bytes.length + 64,
+        ...(outcome === "output refusal" ? { output_bytes: 16 } : {}),
+      },
+    };
+    try {
+      const result = await service.inspect(parameters, {
+        signal: controller.signal,
+      });
+      if (result.ok) throw new Error("Expected Rust finalization failure");
+      const { error } = result;
+      const primary = error.cleanupPrimary ?? error;
+      expect(error.cleanupIncomplete).toBe(pending);
+      if (outcome !== "close denial")
+        expect(controller.signal.reason).toBe(reason);
+      expect(fault.handles).toHaveLength(1);
+      const handle = fault.handles[0]!;
+      if (pending) expect(handle.fd).toBeGreaterThanOrEqual(0);
+      else expect(handle.fd).toBe(-1);
+      if (outcome === "physical failure") {
+        expect(primary).toBeInstanceOf(AnalysisAccessDeniedError);
+        expect(primary.cause).toBe(physical);
+        expect(error.partialObservation).toBeUndefined();
+      } else if (outcome === "output refusal") {
+        expect(primary).toBeInstanceOf(AnalysisResourceConstraintError);
+        expect(primary).toMatchObject({ resource: "transport" });
+        expect(error.partialObservation).toEqual({
+          kind: "file-snapshot-hash",
+          path,
+          sha256,
+          bytes: bytes.length,
+        });
+      } else {
+        const evidence = parseEvidence(error.partialObservation);
+        const dependencyStart = 1024;
+        const dependencyBytes = rustDependencyPayload().length;
+        expect(evidence).toMatchObject({
+          operation: "inspect_rust_binary",
+          subject: { identity: { format: "elf", sha256 }, local_path: path },
+          locations: [
+            { kind: "artifact-path", path },
+            {
+              kind: "file-offset-range",
+              start: dependencyStart,
+              end: dependencyStart + dependencyBytes,
+            },
+          ],
+          normalized_result: {
+            artifact: { path, sha256, bytes: bytes.length },
+            auditable_metadata: {
+              file_offset: dependencyStart,
+              section_bytes: dependencyBytes,
+              root_package_index: 1,
+            },
+            rustc_commit: {
+              evidence_kind: "inferred",
+              hashes: [{ hash: RUSTC_HASH, file_offset: 2048 }],
+            },
+          },
+        });
+        expect(evidence.parameters).toEqual(parameters);
+        expect(primary.partialObservation).toBe(error.partialObservation);
+        if (outcome !== "close denial") {
+          expect(primary).toBeInstanceOf(AnalysisCancelledError);
+          expect(primary.cause).toBe(reason);
+        }
+        if (outcome === "both") {
+          expect(error.cause).toBeInstanceOf(AggregateError);
+          expect((error.cause as AggregateError).errors[0]).toBe(primary);
+        }
+      }
+      const observed = projectAnalysisError(error).details?.partial_observation;
+      expect(observed).toEqual(error.partialObservation);
+      if (pending) {
+        await expect(service.close()).rejects.toBeInstanceOf(AnalysisError);
+        expect(error.cleanupIncomplete).toBe(true);
+      }
+      fault.blocked.clear();
+      await service.close();
+      expect(error.cleanupIncomplete).toBe(false);
+      expect(handle.fd).toBe(-1);
+      expect(fault.handles).toEqual([handle]);
+      expect(
+        projectAnalysisError(resolvedAnalysisError(error)).details
+          ?.partial_observation,
+      ).toEqual(observed);
+    } finally {
+      fault.onClose = undefined;
+      fault.blocked.clear();
+      await service.close();
+    }
+  },
+);
 
 it("preserves upstream resource-bound facts through an unconfirmed descriptor close", async () => {
   const path = await selectedImage();
