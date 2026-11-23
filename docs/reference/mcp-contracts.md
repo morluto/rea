@@ -937,7 +937,13 @@ defaulting to 0 and 64. For occurrences, optional `logical_paths` matches exact
 recorded strings: omission selects all available records; `[]` selects none.
 Optional `entry_kinds` and `artifact_kinds` match exact recorded kinds with the
 same omission and `[]` rules, for example `artifact_kinds: ["native-addon"]`;
-all supplied selectors intersect. Unrecognized bytes keep kind `unknown`.
+Optional `path_globs` match whole recorded paths, any glob sufficing: `*` and
+`?` stay within one segment, and a `**` segment spans zero or more segments, or
+every path below when last, so `lib/*/*.so` selects native libraries one ABI
+directory deep, `*` selects root entries, and `assets/**` selects everything
+under `assets/`. Other characters are literal and case-sensitive; `.` names the
+container itself and never matches. All supplied selectors intersect.
+Unrecognized bytes keep kind `unknown`.
 These selectors do not reopen the artifact or resolve filesystem paths.
 `source_complete` records whether the available inventory passes the complete
 graph checks. Exhausting a page from a partial source does not establish that

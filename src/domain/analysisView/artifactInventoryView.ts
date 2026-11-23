@@ -41,6 +41,10 @@ import {
 } from "./analysisViewCoverage.js";
 import { analysisViewResultInputError } from "./analysisViewParent.js";
 import { ARTIFACT_INVENTORY_VIEW_CAVEATS } from "./artifactInventoryViewCaveats.js";
+import {
+  compileInventoryPathGlob,
+  inventoryPathGlobSchema,
+} from "./inventoryPathGlob.js";
 import { androidOtaPayloadSummaryMetadataSchema } from "./androidOtaPayloadSummary.js";
 import {
   espFlashImageSummaryMetadataSchema,
@@ -70,6 +74,12 @@ export const artifactInventoryViewRequestSchema = z.discriminatedUnion(
         .optional()
         .describe(
           'Exact recognized artifact kinds, e.g. ["native-addon"]; [] matches none. Unrecognized bytes keep kind unknown.',
+        ),
+      path_globs: z
+        .array(inventoryPathGlobSchema)
+        .optional()
+        .describe(
+          'Whole-path globs over recorded logical paths, any of which may match: * and ? stay within one segment, a ** segment spans segments, e.g. ["lib/*/*.so"], ["META-INF/*"], ["*"] for root entries, ["assets/**"] for everything below; [] matches none. "." names the container itself and never matches.',
         ),
       fields: z.array(artifactOccurrenceSchema.keyof()).optional(),
     }),
@@ -425,8 +435,8 @@ export const projectArtifactInventoryView = (
 };
 
 const occurrencePage = (source: InventorySource, view: OccurrenceView) => {
-  const indices = occurrenceIndices(source, view);
   const rows = source.inventory.occurrences;
+  const indices = occurrenceIndices(source, view);
   const total = indices?.length ?? rows.length;
   const items = [];
   for (
@@ -495,40 +505,58 @@ const occurrenceIndices = (
   source: InventorySource,
   view: OccurrenceView,
 ): number[] | undefined => {
-  if (
-    view.occurrence_ids === undefined &&
-    view.logical_paths === undefined &&
-    view.entry_kinds === undefined &&
-    view.artifact_kinds === undefined
-  )
-    return undefined;
-  if (
-    view.occurrence_ids?.length === 0 ||
-    view.logical_paths?.length === 0 ||
-    view.entry_kinds?.length === 0 ||
-    view.artifact_kinds?.length === 0
-  )
-    return [];
+  const selectors = [
+    view.occurrence_ids,
+    view.logical_paths,
+    view.entry_kinds,
+    view.artifact_kinds,
+    view.path_globs,
+  ];
+  if (selectors.every((selector) => selector === undefined)) return undefined;
+  if (selectors.some((selector) => selector?.length === 0)) return [];
+  const rows = source.inventory.occurrences;
+  const paths =
+    view.logical_paths === undefined ? undefined : new Set(view.logical_paths);
+  const kinds =
+    view.entry_kinds === undefined ? undefined : new Set(view.entry_kinds);
   const artifactKinds =
     view.artifact_kinds === undefined
       ? undefined
       : new Set(view.artifact_kinds);
-  const matchesArtifactKind = (index: number) =>
-    artifactKinds === undefined ||
-    artifactKinds.has(source.inventory.occurrences[index]!.artifact_kind);
+  const globs = view.path_globs?.map(compileInventoryPathGlob);
+  const matches = (index: number) => {
+    const row = rows[index]!;
+    return (
+      (paths === undefined || paths.has(row.logical_path)) &&
+      (kinds === undefined || kinds.has(row.entry_kind)) &&
+      (artifactKinds === undefined || artifactKinds.has(row.artifact_kind)) &&
+      (globs === undefined ||
+        (row.logical_path !== "." &&
+          globs.some((glob) => glob.test(row.logical_path))))
+    );
+  };
+  return exactCandidates(source, view)
+    .filter(matches)
+    .sort((left, right) => left - right);
+};
+
+/** Narrow by the most selective exact index; remaining selectors filter. */
+const exactCandidates = (
+  source: InventorySource,
+  view: OccurrenceView,
+): number[] => {
+  const rows = source.inventory.occurrences;
   if (
     view.occurrence_ids === undefined &&
     view.logical_paths === undefined &&
     view.entry_kinds === undefined
   )
-    return source.inventory.occurrences.flatMap((_, index) =>
-      matchesArtifactKind(index) ? [index] : [],
-    );
+    return rows.map((_, index) => index);
   if (source.index === undefined) {
     const byId = new Map<string, number>();
     const byPath = new Map<string, number[]>();
     const byKind = new Map<ArtifactOccurrence["entry_kind"], number[]>();
-    for (const [index, row] of source.inventory.occurrences.entries()) {
+    for (const [index, row] of rows.entries()) {
       byId.set(row.occurrence_id, index);
       const existing = byPath.get(row.logical_path);
       if (existing === undefined) byPath.set(row.logical_path, [index]);
@@ -540,33 +568,18 @@ const occurrenceIndices = (
     source.index = { byId, byPath, byKind };
   }
   const lookup = source.index;
-  const paths =
-    view.logical_paths === undefined ? undefined : new Set(view.logical_paths);
-  const selected =
-    view.occurrence_ids === undefined
-      ? paths === undefined
-        ? [...new Set(view.entry_kinds)].flatMap(
-            (kind) => lookup.byKind.get(kind) ?? [],
-          )
-        : [...paths].flatMap((path) => lookup.byPath.get(path) ?? [])
-      : [...new Set(view.occurrence_ids)].flatMap((id) => {
-          const index = lookup.byId.get(id);
-          return index === undefined ||
-            (paths !== undefined &&
-              !paths.has(source.inventory.occurrences[index]!.logical_path))
-            ? []
-            : [index];
-        });
-  const kinds =
-    view.entry_kinds === undefined ? undefined : new Set(view.entry_kinds);
-  return selected
-    .filter(
-      (index) =>
-        (kinds === undefined ||
-          kinds.has(source.inventory.occurrences[index]!.entry_kind)) &&
-        matchesArtifactKind(index),
-    )
-    .sort((left, right) => left - right);
+  if (view.occurrence_ids !== undefined)
+    return [...new Set(view.occurrence_ids)].flatMap((id) => {
+      const index = lookup.byId.get(id);
+      return index === undefined ? [] : [index];
+    });
+  if (view.logical_paths !== undefined)
+    return [...new Set(view.logical_paths)].flatMap(
+      (path) => lookup.byPath.get(path) ?? [],
+    );
+  return [...new Set(view.entry_kinds)].flatMap(
+    (kind) => lookup.byKind.get(kind) ?? [],
+  );
 };
 
 const nodeIndices = (
