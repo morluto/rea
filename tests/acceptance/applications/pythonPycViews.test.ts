@@ -4,14 +4,23 @@ import { expect } from "vitest";
 import { z } from "zod";
 import { readEvidenceBundle } from "../../../src/application/EvidenceBundleFiles.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { evidenceSchema } from "../../../src/domain/evidence.js";
-import { pythonPycSchema } from "../../../src/domain/python/pythonPyc.js";
+import {
+  createEvidence,
+  evidenceSchema,
+  type Evidence,
+} from "../../../src/domain/evidence.js";
+import {
+  pythonPycSchema,
+  type PythonPyc,
+} from "../../../src/domain/python/pythonPyc.js";
 import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import {
   marshalCode,
   pythonPycHeader,
 } from "../../../src/python/PythonPyc.fixture.js";
+import { fileSubjectTarget } from "../../fixtures/evidenceSubject.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type SharedMcpCall } from "../../support/cli/cliFixture.js";
 
@@ -65,6 +74,59 @@ const assertSparseSelectors = async (
       viewContract.outputSchema.parse(result.structuredContent)
         .normalized_result,
     ).toHaveProperty("items", items);
+  }
+};
+
+const assertImpossibleMarshalCounts = async (
+  call: SharedMcpCall,
+  parent: Pick<
+    Evidence,
+    | "subject"
+    | "provider"
+    | "operation"
+    | "parameters"
+    | "confidence"
+    | "locations"
+    | "limitations"
+  >,
+  completeReport: PythonPyc,
+): Promise<void> => {
+  const target = fileSubjectTarget(parent.subject);
+  const invalidCounts = [
+    { objects: 2, view: { kind: "summary" } },
+    {
+      objects: completeReport.coverage.marshal_bytes + 1,
+      view: { kind: "python-pyc", collection: "code_objects" },
+    },
+  ];
+  for (const { objects, view: request } of invalidCounts) {
+    const evidence = createEvidence(target, parent.provider, {
+      operation: parent.operation,
+      parameters: parent.parameters,
+      confidence: parent.confidence,
+      locations: parent.locations,
+      limitations: parent.limitations,
+      result: {
+        ...completeReport,
+        coverage: { ...completeReport.coverage, objects },
+      },
+    });
+    const response = await call("inspect_analysis_view", {
+      source: { kind: "inline", evidence },
+      view: request,
+    });
+    expect(response.isError).toBe(true);
+    expect(parseMcpToolError(response).error).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["source", "normalized_result", "coverage", "objects"],
+            reason: "invalid_value",
+          },
+        ],
+      },
+    });
   }
 };
 
@@ -214,6 +276,8 @@ cliTest(
     expect(offline.exitCode, offline.stderr).toBe(0);
     expect(viewContract.outputSchema.parse(offline.json)).toEqual(page);
     await assertSparseSelectors(call, source);
+
+    await assertImpossibleMarshalCounts(call, parent, completeReport);
   },
 );
 

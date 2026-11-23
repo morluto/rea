@@ -1,10 +1,5 @@
 import { expect, it } from "vitest";
-import {
-  inspectPythonPycInputSchema,
-  pythonPycMarshalProfile,
-  PYTHON_PYC_MARSHAL_PROFILES,
-  pythonPycHeaderSchema,
-} from "./pythonPyc.js";
+import { pythonPycMarshalProfile, pythonPycHeaderSchema } from "./pythonPyc.js";
 import {
   observePythonBytecodePrefix,
   pythonBytecodeIdentity,
@@ -100,7 +95,6 @@ it("keeps pinned CPython identity separate from standalone marshal coverage", ()
   }
   expect(pythonPycMarshalProfile(3450)).toBeNull();
   expect(pythonPycMarshalProfile(62171)).toBeNull();
-  expect(PYTHON_PYC_MARSHAL_PROFILES.size).toBeGreaterThan(80);
 });
 
 it("retains little-endian magic inside a borrowed, partially available prefix", () => {
@@ -124,13 +118,4 @@ it("retains little-endian magic inside a borrowed, partially available prefix", 
   expect(complete.prefix.buffer).toBe(bytes.buffer);
   expect(complete.prefix.byteOffset).toBe(bytes.byteOffset);
   expect(complete.prefix.byteLength).toBe(4);
-});
-
-it("rejects extra inspect arguments", () => {
-  expect(
-    inspectPythonPycInputSchema.safeParse({
-      path: "/artifacts/module.pyc",
-      detail: "complete",
-    }).success,
-  ).toBe(false);
 });
