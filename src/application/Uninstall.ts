@@ -93,13 +93,6 @@ import {
   type MsixPackageView,
 } from "./MsixPackageStorage.js";
 
-export type {
-  ManagedPathStats,
-  UninstallAction,
-  UninstallFileSystem,
-  UninstallItem,
-} from "./UninstallShared.js";
-
 const systemFileSystem = (
   resources: ArtifactResourceScope,
 ): UninstallFileSystem => ({

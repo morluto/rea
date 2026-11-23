@@ -296,7 +296,11 @@ export const ENTRY_FILES = Object.freeze(
       ],
       flutter: ["FlutterBuildProvider.ts", "FlutterProviderIdentity.ts"],
       frida: ["FridaInstrumentationManager.ts", "FridaProviderIdentity.ts"],
-      gdb: ["GdbProviderIdentity.ts", "GdbSessionManager.ts"],
+      gdb: [
+        "GdbCommandClassification.ts",
+        "GdbProviderIdentity.ts",
+        "GdbSessionManager.ts",
+      ],
       ghidra: [
         "GhidraDoctor.ts",
         "GhidraProvider.ts",

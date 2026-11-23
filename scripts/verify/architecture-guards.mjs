@@ -694,6 +694,24 @@ checkCounted(
   ["src/config/runtimeAnalysisSettings.ts"],
 );
 
+// A re-export leaves a second import path for a symbol, so moved code keeps a
+// shim and consumers never learn its owner. Import from the owning module.
+// The resource-scope entrypoint and the lazily loaded CLI bundle entries are
+// the only declared re-export boundaries.
+checkCounted(
+  "re-export from another module (import the symbol from its owning module)",
+  "module-re-export",
+  files.filter(({ path }) => path.startsWith("src/")),
+  /^export\s+(?:type\s+)?(?:\*|\{[^}]*\})\s+from\s+["']/gmu,
+  [
+    "src/resources/index.ts",
+    // Loaded by src/cli/cliLoader.ts through a dynamic import.
+    "src/cli.ts",
+    // Loaded by src/cliOneShot.ts through a dynamic import.
+    "src/cli/cliResultOutput.ts",
+  ],
+);
+
 // Byte-format parsers read untrusted input. Bounds, truncation and failure
 // kind belong to BinaryReader (src/domain/binaryContainer.ts) and
 // the ParseFailure algebra (src/domain/parseFailure.ts), not to each parser.

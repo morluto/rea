@@ -20,9 +20,6 @@ import {
   type VersionReportHost,
 } from "./domain/versionReport.js";
 
-// The launcher and compiled CLI drivers share this lightweight entrypoint.
-export { cliConfigurationError } from "./cliConfiguration.js";
-
 const UNSUPPORTED_OUTPUT_COMBINATION_MESSAGE =
   "Token windows cannot preserve structured output. Remove --token-limit/--token-offset and use --filter-output or command pagination.";
 
