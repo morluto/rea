@@ -835,6 +835,56 @@ describe("call path evidence admission", () => {
     );
   });
 
+  it("joins M-profile loads with one base, however each chose its entry", () => {
+    const load = (
+      base: string,
+      entry: string,
+      basis: "caller" | "vector-table",
+    ): EvidenceSubjectTarget => ({
+      path: "/tmp/firmware.bin",
+      sha256: "a".repeat(64),
+      format: "raw-binary",
+      architecture: "arm",
+      selection: {
+        kind: "entry-point",
+        entry_point: entry,
+        raw_load: {
+          version: 1,
+          base_address: base,
+          architecture_variant: "armv7-m",
+          ...(basis === "vector-table" ? { vector_table_address: base } : {}),
+          entries: [
+            {
+              address: entry,
+              isa_mode: "thumb",
+              role: basis === "vector-table" ? "reset" : "entry",
+              basis,
+            },
+          ],
+        },
+      },
+    });
+    const start = observe("0x1000", ["0x4000"], "rea-workflow", {
+      target: load("0x0", "0x1c4", "vector-table"),
+    });
+    expect(
+      run([
+        start,
+        observe("0x4000", [], "rea-workflow", {
+          target: load("0x0", "0x200", "caller"),
+        }),
+      ]).status,
+    ).toBe("found");
+    expect(() =>
+      run([
+        start,
+        observe("0x4000", [], "rea-workflow", {
+          target: load("0x100000", "0x1001c4", "vector-table"),
+        }),
+      ]),
+    ).toThrow(AnalysisInputError);
+  });
+
   it("requires an observed start function", () => {
     expect(() => run([observe("0x2000", [])])).toThrow(AnalysisInputError);
   });

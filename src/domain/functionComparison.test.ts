@@ -1131,6 +1131,81 @@ describe("function comparison normalization and provenance", () => {
   });
 });
 
+describe("function comparison raw-load coordinates", () => {
+  it("matches M-profile loads by base, however each chose its entry", () => {
+    const load = (
+      base: string,
+      entry: {
+        address: string;
+        role: "entry" | "reset";
+        basis: "caller" | "vector-table";
+      },
+    ): EvidenceSubjectTarget => ({
+      path: "/tmp/firmware.bin",
+      sha256: "9".repeat(64),
+      format: "raw-binary",
+      architecture: "arm",
+      selection: {
+        kind: "entry-point",
+        entry_point: entry.address,
+        raw_load: {
+          version: 1,
+          base_address: base,
+          architecture_variant: "armv7-m",
+          ...(entry.basis === "vector-table"
+            ? { vector_table_address: base }
+            : {}),
+          entries: [{ ...entry, isa_mode: "thumb" }],
+        },
+      },
+    });
+    const at = (target: EvidenceSubjectTarget, body: string) =>
+      functionSnapshotFixture(
+        observe(
+          "9",
+          dossier(body, "0x1000"),
+          "rea-workflow",
+          undefined,
+          target,
+        ),
+      );
+    const reset = load("0x8000000", {
+      address: "0x80001c4",
+      role: "reset",
+      basis: "vector-table",
+    });
+    const left = at(reset, "return 0;\n");
+    // Reset read from the vector table and an entry the caller named load the
+    // same bytes at the same base, so their addresses agree.
+    expect(
+      compareFunctions(
+        left,
+        at(
+          load("0x8000000", {
+            address: "0x8000200",
+            role: "entry",
+            basis: "caller",
+          }),
+          "return 1;\n",
+        ),
+      ).function_match,
+    ).toMatchObject({ status: "matched", method: "same-entry" });
+    expect(
+      compareFunctions(
+        left,
+        at(
+          load("0x8100000", {
+            address: "0x81001c4",
+            role: "reset",
+            basis: "vector-table",
+          }),
+          "return 1;\n",
+        ),
+      ).function_match.method,
+    ).not.toBe("same-entry");
+  });
+});
+
 describe("function comparison identity and malformed CFG", () => {
   it("does not promote address-derived names through equal signatures", () => {
     const autoDossier = (base: "0x1000" | "0x2000") =>

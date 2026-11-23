@@ -296,3 +296,44 @@ export const sameTargetIdentity = (
   left: TargetIdentity,
   right: TargetIdentity,
 ): boolean => targetIdentityKey(left) === targetIdentityKey(right);
+
+/**
+ * The facts of an identity that place addresses. A raw load that is not
+ * legacy-equivalent maps file offset 0 at its base, so its entry's address,
+ * instruction set, role and basis, and the vector table it was read from,
+ * choose where analysis starts and move no coordinates; its base and variant
+ * remain. Every other identity, a legacy raw load included (it maps offset 0
+ * at its entry), places addresses by all of its facts. The provider's function
+ * coordinate context commits the rest. Sessions, snapshots and Evidence
+ * subjects keep the full identity.
+ */
+const coordinateKey = (identity: TargetIdentity): string => {
+  const load =
+    identity.kind === "file" && identity.selection?.kind === "entry-point"
+      ? identity.selection.raw_load
+      : undefined;
+  if (identity.kind !== "file" || load === undefined)
+    return targetIdentityKey(identity);
+  const encoded = canonicalize({
+    kind: "raw-load-coordinates",
+    sha256: identity.sha256,
+    format: identity.format,
+    architecture: identity.architecture,
+    version: load.version,
+    base_address: load.base_address,
+    architecture_variant: load.architecture_variant ?? null,
+  });
+  if (encoded === undefined)
+    throw new TypeError("RFC 8785 canonicalization rejected a target identity");
+  return `coordinates_${sha256Hex(encoded)}`;
+};
+
+/**
+ * Whether two identities place the same bytes at the same addresses, so that
+ * comparison workflows can relate their functions by address. Narrower than
+ * {@link sameTargetIdentity}: it ignores how a raw load chose its entry.
+ */
+export const sameTargetCoordinates = (
+  left: TargetIdentity,
+  right: TargetIdentity,
+): boolean => coordinateKey(left) === coordinateKey(right);
