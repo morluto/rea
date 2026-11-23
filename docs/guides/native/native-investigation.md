@@ -1733,6 +1733,16 @@ Exact-name xref lookup reports distinct candidate addresses as an input ambiguit
 inventory order cannot select one silently. Duplicate rows at one address remain
 a singular match, and a missing name remains an unresolved observation.
 
+On `find_xrefs_to_name`, `limit` and the zero-based `offset` slice the
+addresses in provider order after reference lookup. Omitting both returns
+the available provider list. A page reports `observed_xrefs` before slicing
+and `total_xrefs` only when the provider confirms it did not cap the read.
+`provider_truncated` is null when the provider did not report a cap status.
+`truncated` is true when the page or provider omitted rows, false when the
+provider confirms an uncapped read and the page includes every row, and null
+when completeness remains unknown. Advancing the offset can retrieve other
+observed rows, within the available provider list.
+
 Hopper procedure names must identify a procedure entry. A non-entry symbol returns
 an input diagnostic with its coordinate and containing procedure; an explicit
 numeric address still selects its containing procedure. Use
