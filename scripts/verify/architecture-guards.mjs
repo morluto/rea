@@ -709,7 +709,7 @@ checkCounted(
       : 0,
   [
     "src/resources/index.ts",
-    // Loaded by src/cli/cliLoader.ts through a dynamic import.
+    // Loaded by src/cliLoader.ts through a dynamic import.
     "src/cli.ts",
     // Loaded by src/cliOneShot.ts through a dynamic import.
     "src/cli/cliResultOutput.ts",

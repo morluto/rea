@@ -11,7 +11,7 @@ import {
   renderCliOutputArgumentError,
   renderEmptyFilteredCliOutput,
   renderVersionReport,
-} from "./cliOutput.js";
+} from "./cli/cliOutput.js";
 import { cliConfigurationError } from "./cliConfiguration.js";
 import { HOST_PLATFORM } from "./platform/HostPlatform.js";
 import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
@@ -163,7 +163,7 @@ export const runOneShotCli = async (
   }
 
   // Loaded only now: the documents above answer without the command catalog.
-  const { loadCliRuntime } = await import("./cli/cliLoader.js");
+  const { loadCliRuntime } = await import("./cliLoader.js");
   const runtime = await loadCliRuntime(global, environment, savedDefaults);
   host.ownCliResources(runtime.closeCliResources);
   const { createCliResultOutput, cliOutputCancellationStatus } =

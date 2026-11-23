@@ -223,7 +223,7 @@ it.each([
   ["scripts/fixtures/browser-request-site.mjs", "browser"],
   ["scripts/lib/browser-nested-source-map-e2e.mjs", "web_source_map"],
   ["scripts/lib/browser-runtime-fixture-lifecycle.mjs", "web_source_map"],
-  ["src/cliBrowserScenarioCommands.ts", "browser"],
+  ["src/cli/browserScenarioCommands.ts", "browser"],
   ["src/application/BrowserScenarioCaptureService.ts", "browser"],
   ["src/composition/browserScenario.ts", "browser"],
   ["src/cli/environmentCommands.ts", "browser"],

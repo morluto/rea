@@ -17,7 +17,6 @@ import type { NativeByteSource } from "../domain/native/nativeSectionDirectory.j
 import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
 import {
   readBinaryContainer,
-  readBinaryContainerCooperative,
   readBinaryContainerFromReader,
 } from "../domain/native/readBinaryContainer.js";
 import {
@@ -73,18 +72,6 @@ export const readGoBinaryImage = (
     bytes,
     options,
     readBinaryContainer(bytes, "inspect_go_binary"),
-  );
-
-/** Same image as {@link readGoBinaryImage}. ELF section names yield through `pause`. */
-export const readGoBinaryImageCooperative = async (
-  bytes: Buffer,
-  options: ReadGoBinaryImageOptions | undefined,
-  pause: ZstandardFramePause,
-): Promise<GoBinaryImage> =>
-  finishGoBinaryImage(
-    bytes,
-    options,
-    await readBinaryContainerCooperative(bytes, "inspect_go_binary", pause),
   );
 
 /** Stream Go build-info and optional string-literal inspection over a bounded FileHandle. */

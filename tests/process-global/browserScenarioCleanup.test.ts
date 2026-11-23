@@ -12,7 +12,7 @@ import type {
 import { PlaywrightBrowserScenarioProvider } from "../../src/browser/PlaywrightBrowserScenarioProvider.js";
 import { PlaywrightScenarioSession } from "../../src/browser/PlaywrightScenarioSession.js";
 import { PlaywrightScenarioBrowserCleanupOwner } from "../../src/browser/PlaywrightScenarioBrowser.js";
-import { registerBrowserScenarioCommands } from "../../src/cliBrowserScenarioCommands.js";
+import { registerBrowserScenarioCommands } from "../../src/cli/browserScenarioCommands.js";
 import { sanitizeBrowserUrl } from "../../src/domain/browserObservation.js";
 import {
   browserScenarioSchema,

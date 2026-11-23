@@ -2,7 +2,7 @@ import { mcpRegistrationOptionsSchema } from "../contracts/mcpRegistration.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 
 import type { CliGlobalArguments } from "../cliBuiltinArguments.js";
-import { readCliOutputArguments, renderCliDocument } from "../cliOutput.js";
+import { readCliOutputArguments, renderCliDocument } from "./cliOutput.js";
 import { jsonLinesErrorRecord } from "./jsonLines.js";
 import { renderFailure } from "./outputEnvelope.js";
 import { suggestCommand } from "./commandSuggestion.js";

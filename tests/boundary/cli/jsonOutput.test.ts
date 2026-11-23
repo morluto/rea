@@ -13,7 +13,7 @@ import { parse as parseYaml } from "yaml";
 import { describe, expect, it } from "vitest";
 
 import { writeJsonOutput } from "../../../src/cli/jsonOutput.js";
-import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
 import { registerManagedCommands } from "../../../src/cli/managedCommands.js";

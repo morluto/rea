@@ -18,7 +18,6 @@ import {
 } from "../elfSymbol.js";
 import {
   readElfDirectoryFromBuffer,
-  readElfDirectoryFromBufferCooperative,
   readElfDirectoryFromReader,
   type NativeByteSource,
   type NativeSection,
@@ -546,27 +545,6 @@ export const parseNativeExports = (
   bytes: Buffer,
   artifact: Artifact,
 ): NativeExports => finishExports(parseNativeExportsSteps(bytes, artifact));
-
-/** Yield during ELF section-name decoding and bounded export inventory work. */
-export const parseNativeExportsCooperative = async (
-  bytes: Buffer,
-  artifact: Artifact,
-  pause: ZstandardFramePause,
-): Promise<NativeExports> => {
-  if (!hasElfMagic(bytes)) return parseNativeExports(bytes, artifact);
-  const directory = await readElfDirectoryFromBufferCooperative(
-    bytes,
-    pause,
-    OPERATION,
-  );
-  const steps = parseElfExportsFromDirectorySteps(bytes, artifact, directory);
-  let step = steps.next();
-  while (!step.done) {
-    await pause();
-    step = steps.next();
-  }
-  return step.value;
-};
 
 const finishExports = (
   steps: Generator<void, NativeExports>,
