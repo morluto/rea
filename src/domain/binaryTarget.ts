@@ -953,6 +953,120 @@ export const inspectPeCodeViewFromBuffer = (
     : ok(undefined);
 };
 
+/**
+ * Inspect PE CodeView records from a random-access reader without buffering
+ * the whole PE image into memory.
+ */
+export const inspectPeCodeViewFromReader = async (
+  source: {
+    readonly size: number;
+    readonly readRange: (offset: number, length: number) => Promise<Buffer>;
+  },
+  peOffset: number,
+): Promise<
+  Result<
+    PeCodeViewRecord | undefined,
+    { readonly kind: "incomplete"; readonly message: string }
+  >
+> => {
+  const incomplete = (message: string) =>
+    err({ kind: "incomplete" as const, message });
+  if (source.size < peOffset + 24) return incomplete("Truncated PE header.");
+  const coffHeader = await source.readRange(peOffset + 4, 20);
+  const coff = readPeCoffHeader(coffHeader);
+  if (!coff.ok) return incomplete(coff.error.message);
+  const { sectionCount: numberOfSections, optionalHeaderSize } = coff.value;
+  if (
+    optionalHeaderSize > 4096 ||
+    source.size < peOffset + 24 + optionalHeaderSize
+  )
+    return incomplete(
+      "PE optional header is truncated or exceeds the parsing allowance.",
+    );
+  const optionalHeader =
+    optionalHeaderSize === 0
+      ? Buffer.alloc(0)
+      : await source.readRange(peOffset + 24, optionalHeaderSize);
+  const fixed = readPeOptionalHeaderFixedFields(optionalHeader);
+  if (!fixed.ok) return incomplete(fixed.error.message);
+  const observed = readPeOptionalHeaderDirectory(
+    optionalHeader,
+    fixed.value,
+    6,
+  );
+  if (observed.state === "absent") return ok(undefined);
+  if (observed.state !== "present")
+    return incomplete("Truncated PE debug directory declaration.");
+  const { address: debugRva, size: debugSize } = observed.directory;
+  if (debugRva === 0 && debugSize === 0) return ok(undefined);
+  if (debugRva === 0 || debugSize < 28 || debugSize % 28 !== 0)
+    return incomplete("Invalid PE debug directory declaration.");
+  const debugDir = {
+    debugRva,
+    debugSize,
+    sizeOfHeaders: fixed.value.sizeOfHeaders,
+  };
+  const sectionTableOffset = peOffset + 24 + optionalHeaderSize;
+  const sectionTableSize = numberOfSections * 40;
+  if (source.size < sectionTableOffset + sectionTableSize)
+    return incomplete("Truncated PE section table.");
+  const sectionTable =
+    sectionTableSize === 0
+      ? Buffer.alloc(0)
+      : await source.readRange(sectionTableOffset, sectionTableSize);
+  const debugFileOffset = peRvaToFileOffset(
+    debugDir.debugRva,
+    sectionTable,
+    numberOfSections,
+    debugDir.sizeOfHeaders,
+    Math.min(debugDir.debugSize, 4096),
+  );
+  if (
+    debugFileOffset === undefined ||
+    source.size < debugFileOffset + debugDir.debugSize
+  )
+    return incomplete("PE debug directory is unmapped or truncated.");
+  const maxDebugBytes = Math.min(
+    debugDir.debugSize,
+    source.size - debugFileOffset,
+  );
+  const directory =
+    maxDebugBytes === 0
+      ? Buffer.alloc(0)
+      : await source.readRange(debugFileOffset, maxDebugBytes);
+  let sawCodeView = false;
+  for (const {
+    fileOffset: pointerToRawData,
+    declaredSize: sizeOfData,
+  } of peCodeViewDirectoryEntries(
+    directory,
+    sectionTable,
+    numberOfSections,
+    debugDir.sizeOfHeaders,
+  )) {
+    sawCodeView = true;
+    if (
+      pointerToRawData === undefined ||
+      source.size < pointerToRawData + Math.min(sizeOfData, 24)
+    )
+      continue;
+    const readBytes = Math.min(
+      sizeOfData,
+      PE_CODEVIEW_PREFIX_BYTES,
+      source.size - pointerToRawData,
+    );
+    const codeViewData =
+      readBytes <= 0
+        ? Buffer.alloc(0)
+        : await source.readRange(pointerToRawData, readBytes);
+    const parsed = parseCodeViewData(codeViewData, sizeOfData);
+    if (parsed !== undefined) return ok(parsed);
+  }
+  return sawCodeView
+    ? incomplete("PE CodeView records could not be decoded completely.")
+    : ok(undefined);
+};
+
 /** CPU family a Mach-O cpu type names, or undefined when it names none here. */
 export const machoBinaryArchitecture = (
   cpu: number,
