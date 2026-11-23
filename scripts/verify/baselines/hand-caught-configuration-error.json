@@ -1,4 +1,5 @@
 {
+  "src/application/KiloClientLocation.ts": 1,
   "src/application/McpClientRegistration.ts": 1,
   "src/application/McpRegistrationCatalog.ts": 1,
   "src/application/McpRegistrationGit.ts": 1,
