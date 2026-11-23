@@ -21,8 +21,8 @@ import {
   executeRetainedSummaryOperation,
   inspectAnalysisView,
   summarizeRetainedAnalysis,
-  type AnalysisViewRetention,
 } from "../application/analysisView/AnalysisViewService.js";
+import type { AnalysisViewRetention } from "../application/analysisView/AnalysisViewRetention.js";
 import { z } from "zod";
 import { analysisViewSourceSchema } from "../domain/analysisView/analysisViewRequest.js";
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
