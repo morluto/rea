@@ -3,6 +3,7 @@ import { managedMemberInspectionSchema } from "../managed/managedArtifact.js";
 import { unresolvedDefinitionSchema } from "../managed/managedUnresolvedDefinitions.js";
 
 const member = managedMemberInspectionSchema.shape;
+const accessor = member.accessors.unwrap().unwrap();
 
 const rows = {
   types: member.types.element,
@@ -14,6 +15,7 @@ const rows = {
   field_accesses: member.field_accesses.element,
   user_strings: member.user_strings.unwrap().shape.literals.element,
   unresolved_definitions: unresolvedDefinitionSchema,
+  accessors: accessor.shape.declarations.element,
 };
 const pageRequest = {
   kind: z.literal("managed-members"),
@@ -26,7 +28,7 @@ const namedRequest = {
     .array(z.string())
     .exactOptional()
     .describe(
-      "Exact name, called-method target_name or accessed field_name; empty matches nothing.",
+      "Exact name, called-method target_name, accessed field_name, or accessor association_name; empty matches nothing.",
     ),
 };
 const declaredRequest = {
@@ -35,7 +37,7 @@ const declaredRequest = {
     .array(z.string())
     .exactOptional()
     .describe(
-      "Exact defining type (fields/methods), parent type (member_refs), or target type (call_edges/field_accesses). Filters intersect.",
+      "Exact defining type (fields/methods), parent type (member_refs), target type (call_edges/field_accesses), or accessor method_declaring_type. Filters intersect.",
     ),
 };
 
@@ -95,6 +97,11 @@ export const managedMembersViewRequestSchema = z.discriminatedUnion(
       ...pageRequest,
       collection: z.literal("unresolved_definitions"),
     }),
+    z.strictObject({
+      ...declaredRequest,
+      collection: z.literal("accessors"),
+      fields: fieldsOf(rows.accessors.keyof()),
+    }),
   ],
 );
 
@@ -113,6 +120,15 @@ const rowsOf = <C extends string, S extends z.ZodObject>(
   });
 
 export const managedMembersViewPageSchema = z.discriminatedUnion("collection", [
+  rowsOf(
+    "accessors",
+    rows.accessors.partial().required({
+      token: true,
+      row_offset: true,
+      method_token: true,
+      association_raw: true,
+    }),
+  ),
   rowsOf(
     "types",
     rows.types.partial().required({ token: true, row_offset: true }),
@@ -184,6 +200,13 @@ export const managedMemberSummarySchema = z.strictObject({
   method_rows: member.method_rows,
   unresolved_method_names_examined: z.boolean().exactOptional(),
   coverage: member.coverage,
+  accessors: z
+    .strictObject({
+      state: accessor.shape.state,
+      issues: accessor.shape.issues,
+    })
+    .nullable()
+    .exactOptional(),
   user_strings: z
     .strictObject({
       state: member.user_strings.unwrap().shape.state,
@@ -201,6 +224,7 @@ export const managedMemberSummarySchema = z.strictObject({
     field_accesses: z.int().nonnegative(),
     user_strings: nullableCount,
     unresolved_definitions: z.int().nonnegative().exactOptional(),
+    accessors: nullableCount.exactOptional(),
   }),
 });
 

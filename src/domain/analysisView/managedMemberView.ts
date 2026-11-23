@@ -98,6 +98,18 @@ const collectionPage = (
 ) => {
   const { collection } = view;
   switch (collection) {
+    case "accessors":
+      return selectRows(
+        {
+          collection,
+          rows: report.accessors?.declarations,
+          identity: ["token", "row_offset", "method_token", "association_raw"],
+          name: "association_name",
+          declaringType: "method_declaring_type",
+          cacheOwner: report,
+        },
+        view,
+      );
     case "types":
       return selectRows(
         {
@@ -382,10 +394,19 @@ const summarizeMembers = (
     field_accesses,
     user_strings,
     unresolved_definitions,
+    accessors,
     ...identity
   } = report;
   return {
     ...identity,
+    ...(accessors === undefined
+      ? {}
+      : {
+          accessors:
+            accessors === null
+              ? null
+              : { state: accessors.state, issues: accessors.issues },
+        }),
     ...(unresolved_definitions === undefined
       ? {}
       : {
@@ -408,6 +429,9 @@ const summarizeMembers = (
       ...(unresolved_definitions === undefined
         ? {}
         : { unresolved_definitions: unresolved_definitions.rows.length }),
+      ...(accessors === undefined
+        ? {}
+        : { accessors: accessors?.declarations.length ?? null }),
     },
   };
 };
@@ -455,6 +479,11 @@ export const projectManagedMemberView = (
     limitations: uniqueSorted([...parent.limitations, ...report.limitations]),
     unknowns: [
       "Collection counts and pages cover producer-returned rows; member completeness remains the original coverage, not an absence claim about unreturned rows.",
+      ...(view.kind === "managed-members" && view.collection === "accessors"
+        ? [
+            "Accessor declarations cover only returned MethodDef rows. Their declaring-type filter refers to the method; association names and flags do not establish Property/Event ownership, signature agreement, or runtime behavior.",
+          ]
+        : []),
       ...(report.selection === null
         ? []
         : [MANAGED_MEMBER_SCOPE_GUIDANCE.selectedNominalRows]),
@@ -533,12 +562,14 @@ export const projectManagedMemberView = (
           unresolved_module_name: report.metadata.unresolved_module_name,
         }),
     source_coverage:
-      view.collection === "user_strings" && report.user_strings !== null
-        ? {
-            state: report.user_strings.state,
-            issues: report.user_strings.issues,
-          }
-        : report.coverage,
+      view.collection === "accessors" && report.accessors != null
+        ? { state: report.accessors.state, issues: report.accessors.issues }
+        : view.collection === "user_strings" && report.user_strings !== null
+          ? {
+              state: report.user_strings.state,
+              issues: report.user_strings.issues,
+            }
+          : report.coverage,
     coverage: pageViewCoverage(view.offset, page.rows.length, total),
   });
 };

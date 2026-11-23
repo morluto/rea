@@ -76,6 +76,43 @@ names, flags and signatures; it does not compare constant defaults.
 
 The encoding follows [ECMA-335, Partition II, sections 22.9 and 23.1.16](https://ecma-international.org/publications-and-standards/standards/ecma-335/).
 
+### Property and event accessor declarations
+
+`inspect_managed_members` returns `accessors` with the `MethodSemantics` rows
+that refer to its returned MethodDef rows. Each declaration preserves its table
+token and file offset, raw `semantics_flags`, recognized roles, physical method
+token/name/declaring type, and raw `HasSemantics` association coordinate. A
+readable associated Property or Event retains its token, row offset, name and
+flags. The relationship comes from metadata, even when method names do not use
+`get_`, `set_`, `add_` or `remove_` prefixes. Duplicate declarations remain in
+source order.
+
+Roles are `getter`, `setter`, `other`, `adder`, `remover` and `raiser`. Unknown
+flag bits, invalid coordinates and unreadable names remain explicit in the
+facet's own `state` and `issues`; they do not discard independent methods,
+fields or strings. This is a declared relationship, not a validation of
+Property/Event ownership, matching signatures, CLI conformance or runtime
+binding. Properties/events without an association to a returned method are not
+inventoried, and member comparison does not compare these declarations.
+
+Summary detail retains the rows and returns their count and coverage. Request
+`inspect_analysis_view` with `kind: "managed-members"` and
+`collection: "accessors"` to page them. `names` matches `association_name`;
+`declaring_types` matches the **method's** declaring type. Projecting columns
+keeps the MethodSemantics token/offset, method token and raw association
+coordinate. Pages keep their original source indexes and accessor coverage.
+
+The facet follows the selected declaring types and MethodDef page. It is read
+after existing member and literal facts under the same
+`max_metadata_representation_bytes` budget. An overflow preserves those facts
+and reports accessor capacity separately; `accessors: null` means there was not
+enough capacity to examine the facet. Historical Evidence omits the field and
+cannot establish absence. A complete empty `declarations` list means no
+relationships were observed for the returned methods.
+
+The roles follow [MethodSemanticsAttributes](https://learn.microsoft.com/en-us/dotnet/api/system.reflection.methodsemanticsattributes)
+and ECMA-335 Partition II, section 22.28.
+
 ### Metadata overview and retained rows
 
 The existing CLI and omitted/complete MCP detail return complete metadata
@@ -189,10 +226,11 @@ rows with view kind `managed-members`:
 ```
 
 Collections are `types`, `exported_types`, `fields`, `methods`, `member_refs`,
-`call_edges`, `field_accesses` and `user_strings` (the literals). Each page names
+`call_edges`, `field_accesses`, `user_strings` (the literals), and `accessors`
+(the declared method relationships). Each page names
 its collection, retains original rows, order, tokens, signatures and body facts,
 and carries the source selection and coverage; `user_strings` pages carry the
-literal pool's own coverage. Evidence whose member decoding exceeded capacity
+literal pool's own coverage and `accessors` pages carry accessor coverage. Evidence whose member decoding exceeded capacity
 never examined exported types or user strings; it reports a null count and
 refuses those pages rather than returning an empty one.
 
