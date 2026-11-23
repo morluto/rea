@@ -9,6 +9,7 @@ import {
 } from "./advertisedDialect.js";
 import { compactAdvertisedInputSchema } from "./compactInputSchema.js";
 import {
+  pruneSchemaBeyondDepth,
   schemaDepth,
   inlineWithinBudget,
   jsonValueSchema,
@@ -250,6 +251,57 @@ describe("compact advertised input schema", () => {
     expect(validate({ query: "abc" })).toBe(true);
     expect(validate({ query: "abcdef" })).toBe(false);
   });
+});
+
+it("prunes deep branches without breaking closed objects, not, oneOf, or fitting enums", () => {
+  const nest = (
+    leaf: Record<string, unknown>,
+    levels: number,
+  ): Record<string, unknown> =>
+    levels === 0
+      ? leaf
+      : {
+          type: "object",
+          properties: { child: nest(leaf, levels - 1) },
+          required: ["child"],
+          additionalProperties: false,
+        };
+  // Closed chain: a pruned node must not require a property it now forbids.
+  const closed = {
+    type: "object",
+    properties: { a: nest({ type: "string" }, 6) },
+    required: ["a"],
+    additionalProperties: false,
+  };
+  const prunedClosed = pruneSchemaBeyondDepth(closed);
+  expect(prunedClosed).not.toBeUndefined();
+  const validateClosed = new Ajv2020({ strict: false }).compile(prunedClosed!);
+  expect(
+    validateClosed({ a: { child: { child: { child: { child: "x" } } } } }),
+  ).toBe(true);
+  // Widening under `not` or `oneOf` can reject valid values: no pruning there.
+  expect(
+    pruneSchemaBeyondDepth({
+      type: "object",
+      properties: { deep: { not: nest({ type: "string" }, 8) } },
+    }),
+  ).toBeUndefined();
+  expect(
+    pruneSchemaBeyondDepth({
+      type: "object",
+      properties: { deep: { oneOf: [nest({ type: "string" }, 8)] } },
+    }),
+  ).toBeUndefined();
+  // A branch that already fits keeps its rules when a sibling is pruned.
+  const withEnum = {
+    type: "object",
+    properties: {
+      mode: nest({ type: "string", enum: ["a", "b"] }, 3),
+      deep: nest({ type: "string" }, 9),
+    },
+  };
+  const prunedEnum = pruneSchemaBeyondDepth(withEnum);
+  expect(JSON.stringify(prunedEnum)).toContain('"enum":["a","b"]');
 });
 
 it("keeps pattern-admitted property names open in deep schemas", () => {

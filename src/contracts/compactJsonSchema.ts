@@ -398,58 +398,88 @@ class BudgetedSchemaSerializer {
   }
 }
 
-// Placeholder heads stay within three levels, so pruning at this depth keeps
-// the whole schema inside COMPACT_SCHEMA_MAX_DEPTH.
-const DEPTH_PRUNE_START = COMPACT_SCHEMA_MAX_DEPTH - 3;
-
 const depthPlaceholder = (
   node: Record<string, unknown>,
-): Record<string, unknown> => {
+  depth: number,
+): Record<string, unknown> | undefined => {
   const rawType = node.type;
-  const types = (
+  const types =
     typeof rawType === "string"
       ? [rawType]
       : Array.isArray(rawType)
         ? rawType.filter((type): type is string => typeof type === "string")
-        : []
-  ).filter((type) => jsonValueTypes.includes(type));
-  const arrayBranch = { type: "array", items: jsonValueSchema() };
+        : [];
+  // Declared types are preserved verbatim (integer included); widening an
+  // integer to number would also be sound, dropping it would not.
+  const deep = depth > COMPACT_SCHEMA_MAX_DEPTH - 3;
+  const arrayBranch = deep
+    ? { type: "array", items: {} }
+    : { type: "array", items: jsonValueSchema() };
+  let placeholder: Record<string, unknown> | undefined;
   if (types.length === 1)
-    return types[0] === "array" ? arrayBranch : { type: types[0] };
-  if (types.length > 1)
-    return {
+    placeholder = types[0] === "array" ? arrayBranch : { type: types[0] };
+  else if (types.length > 1 && !deep)
+    placeholder = {
       anyOf: types.map((type) => (type === "array" ? arrayBranch : { type })),
     };
-  if (isSchemaObject(node.properties)) return { type: "object" };
-  if (node.items !== undefined) return arrayBranch;
-  return {};
+  else if (types.length === 0) {
+    if (isSchemaObject(node.properties)) placeholder = { type: "object" };
+    else if (node.items !== undefined) placeholder = arrayBranch;
+    else placeholder = {};
+  }
+  return placeholder !== undefined &&
+    depth + schemaDepth(placeholder) <= COMPACT_SCHEMA_MAX_DEPTH
+    ? placeholder
+    : undefined;
 };
 
 /**
  * Replace only the sub-schemas that push past the advertised depth limit with
- * type-preserving placeholders, instead of reducing the whole schema. Every
- * replacement widens acceptance, so canonical validation is unaffected.
+ * type-preserving placeholders, instead of reducing the whole schema. The walk
+ * follows schema positions only (literal data such as `enum`, `const` and
+ * `required` stays opaque), keeps branches that already fit, and returns
+ * `undefined` when an over-depth branch sits under `not` or `oneOf`, where
+ * widening a child can make its parent reject valid values — the caller then
+ * keeps the whole-schema reduction. Every replacement widens acceptance, so
+ * canonical validation is unaffected.
  */
 export const pruneSchemaBeyondDepth = (
   schema: Record<string, unknown>,
-): Record<string, unknown> => {
-  const prune = (node: unknown, depth: number): unknown => {
-    if (Array.isArray(node))
-      return node.map((child) => prune(child, depth + 1));
+): Record<string, unknown> | undefined => {
+  let unsafe = false;
+  const prune = (
+    node: unknown,
+    depth: number,
+    unsafeContext: boolean,
+  ): unknown => {
     if (!isSchemaObject(node)) return node;
-    const hasSchemaChild = Object.values(node).some(
-      (child) => isSchemaObject(child) || Array.isArray(child),
+    if (depth + schemaDepth(node) <= COMPACT_SCHEMA_MAX_DEPTH) return node;
+    if (unsafeContext) {
+      unsafe = true;
+      return node;
+    }
+    // Only deep nodes are replaced. Shallow nodes recurse first so fitting
+    // branches and unsafe combinators below them are observed.
+    if (depth >= COMPACT_SCHEMA_MAX_DEPTH - 3) {
+      const placeholder = depthPlaceholder(node, depth);
+      if (placeholder !== undefined) return placeholder;
+    }
+    const mapped = mapSchemaChildren(node, (child, keyword) =>
+      prune(
+        child,
+        depth + (schemaChildren.has(keyword) ? 1 : 2),
+        unsafeContext || keyword === "not" || keyword === "oneOf",
+      ),
     );
-    if (depth >= DEPTH_PRUNE_START && hasSchemaChild)
-      return depthPlaceholder(node);
-    return Object.fromEntries(
-      Object.entries(node).map(([key, child]) => [
-        key,
-        prune(child, depth + 1),
-      ]),
-    );
+    if (unsafe) return node;
+    if (depth + schemaDepth(mapped) <= COMPACT_SCHEMA_MAX_DEPTH) return mapped;
+    const placeholder = depthPlaceholder(node, depth);
+    if (placeholder !== undefined) return placeholder;
+    unsafe = true;
+    return node;
   };
-  return prune(schema, 0) as Record<string, unknown>;
+  const pruned = prune(schema, 0, false);
+  return unsafe ? undefined : (pruned as Record<string, unknown>);
 };
 
 /** Stop serialization at the budget before allocating an expanded schema. */

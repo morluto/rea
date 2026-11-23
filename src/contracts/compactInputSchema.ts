@@ -101,6 +101,7 @@ export const compactAdvertisedInputSchema = (
     // validation structure stays advertised instead of a whole reduction.
     const pruned = pruneSchemaBeyondDepth(inline.schema);
     if (
+      pruned !== undefined &&
       serializedBytes(pruned) <= budgetBytes &&
       schemaDepth(pruned) <= COMPACT_SCHEMA_MAX_DEPTH &&
       !hasAdvertisedInputDialectViolation(pruned, {

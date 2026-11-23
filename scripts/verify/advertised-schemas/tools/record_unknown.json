@@ -1,10 +1,9 @@
 {
   "schemas": {
     "input compact": "685294c0ddc0e020",
-    "output compact": "b6c38344e60e3118"
+    "output compact": "9cda19dfa1310afa"
   },
   "patterns": {
-    "input": ["^ev_[0-9a-f]{64}$", "^unk_[0-9a-f]{64}$"],
-    "output": ["^[0-9a-f]{64}$", "^ev_[0-9a-f]{64}$", "^unk_[0-9a-f]{64}$"]
+    "input": ["^ev_[0-9a-f]{64}$", "^unk_[0-9a-f]{64}$"]
   }
 }

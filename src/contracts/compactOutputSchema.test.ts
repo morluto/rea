@@ -49,6 +49,32 @@ const referencedSchema = {
 } as const;
 
 describe("compact advertised output schema", () => {
+  it("keeps nullable integers valid when a deep sibling triggers pruning", () => {
+    const nest = (
+      leaf: Record<string, unknown>,
+      levels: number,
+    ): Record<string, unknown> =>
+      levels === 0
+        ? leaf
+        : { type: "object", properties: { child: nest(leaf, levels - 1) } };
+    const { schema, presentation } = compactAdvertisedOutputSchema(
+      {
+        type: "object",
+        properties: {
+          count: { type: ["integer", "null"] },
+          deep: nest({ type: "string" }, 9),
+        },
+        required: ["count", "deep"],
+      },
+      100_000,
+    );
+    expect(presentation).toBe("inline");
+    const validate = new Ajv2020({ strict: false }).compile(schema);
+    expect(validate({ count: 5, deep: {} })).toBe(true);
+    expect(validate({ count: null, deep: {} })).toBe(true);
+    expect(serializedBytes(schema)).toBeLessThanOrEqual(100_000);
+  });
+
   it("drops nested annotation prose while keeping the root guidance and validation", () => {
     const { schema, presentation } = compactAdvertisedOutputSchema(
       structuredClone(annotatedSchema),

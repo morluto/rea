@@ -66,7 +66,11 @@ export const compactAdvertisedOutputSchema = (
     };
   if (inline !== undefined) {
     const pruned = pruneSchemaBeyondDepth(inline);
-    if (schemaDepth(pruned) <= COMPACT_SCHEMA_MAX_DEPTH)
+    if (
+      pruned !== undefined &&
+      schemaDepth(pruned) <= COMPACT_SCHEMA_MAX_DEPTH &&
+      serializedBytes(pruned) <= budgetBytes
+    )
       return {
         schema: withoutContentBoundIdentity(pruned),
         presentation: "inline",
