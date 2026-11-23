@@ -76,6 +76,11 @@ const cases = [
   {
     name: "ELF notes",
     fixture: elfNoteFixture,
+    report: {
+      entries: expect.arrayContaining([
+        expect.objectContaining({ type_name: "gnu_build_id" }),
+      ]),
+    },
     make: () => {
       const provider = new ElfNotesProvider();
       return {
@@ -119,6 +124,11 @@ const cases = [
   {
     name: "ELF dependencies",
     fixture: elfDependencyFixture,
+    report: {
+      needed: expect.arrayContaining([
+        expect.objectContaining({ name: "libc.so.6" }),
+      ]),
+    },
     make: () => {
       const provider = new ElfDependenciesProvider();
       return {
@@ -221,16 +231,22 @@ it.each(cases.flatMap((entry) => modes.map((mode) => ({ ...entry, mode }))))(
     try {
       const result = await provider.inspect(path, controller.signal);
       if (result.ok) throw new Error("Expected finalization failure");
-      const acquired = {
-        kind: "file-snapshot-hash",
+      const artifact = {
         path,
         sha256: createHash("sha256").update(bytes).digest("hex"),
         bytes: bytes.length,
       };
-      expect(result.error.partialObservation).toEqual(acquired);
+      const observation = result.error.partialObservation;
+      if ("report" in entry)
+        expect(observation).toMatchObject({ artifact, ...entry.report });
+      else
+        expect(observation).toEqual({
+          kind: "file-snapshot-hash",
+          ...artifact,
+        });
       expect(
         projectAnalysisError(result.error).details?.partial_observation,
-      ).toEqual(acquired);
+      ).toEqual(observation);
       const failedClose = mode === "close-failure" || mode === "close-both";
       expect(result.error.cleanupIncomplete).toBe(failedClose);
       if (failedClose) expect(owner?.handle.fd).toBeGreaterThanOrEqual(0);
