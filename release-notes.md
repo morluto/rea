@@ -189,6 +189,7 @@
 * **javascript:** share widened reference-store propagation ([#12990](https://github.com/morluto/rea/issues/12990)) ([fba5e44](https://github.com/morluto/rea/commit/fba5e44bf5f393dcd6bd3269d88d7101f1586ff0))
 * **javascript:** track shared ESM HTTP agent mutations ([d500638](https://github.com/morluto/rea/commit/d500638d5d4b666cf0b255085ce4d75a29cbc35e))
 * **javascript:** verify Expo context getter ownership ([#13803](https://github.com/morluto/rea/issues/13803)) ([8c16d7d](https://github.com/morluto/rea/commit/8c16d7d18f71c0057240db4122c5df9a8b907a95))
+* **macho:** preserve legacy bind stream bounds and target scope ([#13874](https://github.com/morluto/rea/issues/13874)) ([a8ccf8b](https://github.com/morluto/rea/commit/a8ccf8b5b883f5df3394c7753d7edc0caaffa524))
 * **managed:** isolate invalid string loads from member coverage ([#13588](https://github.com/morluto/rea/issues/13588)) ([4d507e8](https://github.com/morluto/rea/commit/4d507e861282e8ffa5f0e2e09fc523e40a5dd6e7))
 * **maven:** preserve property value spelling ([#13442](https://github.com/morluto/rea/issues/13442)) ([b43084c](https://github.com/morluto/rea/commit/b43084c7fd892524bce20982719ef08df3310687))
 * **mcp:** accept discover_tools in exact-name discovery batches ([#13288](https://github.com/morluto/rea/issues/13288)) ([fd40fd9](https://github.com/morluto/rea/commit/fd40fd9ab2a0238529e2c2bc55264af778b439a3))
