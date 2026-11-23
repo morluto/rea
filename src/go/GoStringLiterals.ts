@@ -20,6 +20,8 @@ import {
 } from "../domain/binaryContainer.js";
 
 const STREAM_CHUNK_BYTES = 64 * 1024;
+const TARGET_PAGE_BYTES = 4096;
+const TARGET_CACHE_PAGES = 8;
 const MAX_REJECTED_SLICE_CACHE = 4096;
 const PE_MEM_READ = 0x40000000;
 const PE_MEM_EXECUTE = 0x20000000;
@@ -46,7 +48,7 @@ interface HeaderScanSpan {
 type StringScanRead = {
   readonly offset: number;
   readonly length: number;
-  readonly label: string;
+  readonly kind: "header" | "target";
 };
 
 /**
@@ -86,9 +88,15 @@ export const recoverGoStringLiteralsFromReader = async (
     budgets,
     checkActive,
   );
-  let step = steps.next();
-  while (!step.done) {
-    const { offset, length, label } = step.value;
+  const pages = new Map<number, Buffer>();
+  let previousPage: number | undefined;
+  let consecutiveTargets = 0;
+  let readAheadCredit = 0;
+  const read = async (
+    offset: number,
+    length: number,
+    label: string,
+  ): Promise<Buffer> => {
     const bytes =
       source.prefix !== undefined && offset + length <= source.prefix.length
         ? source.prefix.subarray(offset, offset + length)
@@ -99,7 +107,55 @@ export const recoverGoStringLiteralsFromReader = async (
         `${label} range is outside the file`,
         { format: container.format, offset },
       );
-    step = steps.next(bytes);
+    return bytes;
+  };
+  const readTarget = async ({
+    offset,
+    length,
+  }: StringScanRead): Promise<Buffer> => {
+    const pageOffset = offset - (offset % TARGET_PAGE_BYTES);
+    consecutiveTargets =
+      pageOffset === previousPage ? consecutiveTargets + 1 : 1;
+    previousPage = pageOffset;
+    const relative = offset - pageOffset;
+    const pageLength = Math.min(TARGET_PAGE_BYTES, source.size - pageOffset);
+    if (relative + length <= pageLength) {
+      const cached = pages.get(pageOffset);
+      if (cached !== undefined) {
+        pages.delete(pageOffset);
+        pages.set(pageOffset, cached);
+        return cached.subarray(relative, relative + length);
+      }
+      // Admit extra I/O only after observing locality. The total extra bytes
+      // can never exceed the header bytes read, even if every page is evicted.
+      const extra = pageLength - length;
+      if (consecutiveTargets >= 3 && readAheadCredit >= extra) {
+        readAheadCredit -= extra;
+        const bytes = await read(pageOffset, pageLength, "Go string literal");
+        if (pages.size === TARGET_CACHE_PAGES) {
+          const oldest = pages.keys().next();
+          if (!oldest.done) pages.delete(oldest.value);
+        }
+        pages.set(pageOffset, bytes);
+        return bytes.subarray(relative, relative + length);
+      }
+    }
+    return read(offset, length, "Go string literal");
+  };
+  let step = steps.next();
+  while (!step.done) {
+    const request = step.value;
+    if (request.kind === "header") {
+      const chunk = await read(
+        request.offset,
+        request.length,
+        "Go string header span",
+      );
+      readAheadCredit += chunk.length;
+      step = steps.next(chunk);
+    } else {
+      step = steps.next(await readTarget(request));
+    }
   }
   return step.value;
 };
@@ -184,7 +240,7 @@ function* recoverGoStringLiteralSteps(
       const chunk = yield {
         offset: cursor,
         length: chunkLen,
-        label: "Go string header span",
+        kind: "header",
       };
       const chunkReader = new BinaryReader(chunk, little, container.format);
       let rel = 0;
@@ -248,7 +304,7 @@ function* recoverGoStringLiteralSteps(
         const slice = yield {
           offset: sliceOffset,
           length: byteLen,
-          label: "Go string literal",
+          kind: "target",
         };
         if (!isPrintableGoUtf8(slice)) {
           if (rejected.size >= MAX_REJECTED_SLICE_CACHE) rejected.clear();
@@ -295,7 +351,7 @@ function* recoverGoStringLiteralSteps(
     const slice = yield {
       offset: candidate.offset,
       length: candidate.bytes,
-      label: "Go string literal",
+      kind: "target",
     };
     items.push({
       value: slice.toString("utf8"),
