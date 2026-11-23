@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import {
+  jsonValueExceedsDepth,
+  MAX_JSON_DEPTH,
+  ownedJsonValueSchema,
+  type JsonValue,
+} from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { safeParseJson } from "../domain/safeJson.js";
 
@@ -42,7 +47,10 @@ export const decodeMcpJsonText = (
 ): Result<JsonValue, McpMalformedJsonText> => {
   const parsed = safeParseJson(text);
   if (!parsed.ok) return err({ reason: "malformed_json", cause: parsed.cause });
-  // A parsed JSON value must satisfy the same admission rules as structured
-  // evidence; a validation failure is not a reason to treat it as text.
-  return ok(ownedJsonValueSchema.parse(parsed.value));
+  // JSON.parse guarantees plain objects, dense arrays, and finite numbers;
+  // only nesting depth can violate JSON admission rules.
+  const value = parsed.value as JsonValue;
+  if (jsonValueExceedsDepth(value, MAX_JSON_DEPTH))
+    return ok(ownedJsonValueSchema.parse(value));
+  return ok(value);
 };
