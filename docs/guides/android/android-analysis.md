@@ -258,6 +258,16 @@ a paged slice reports `coverage: "partial"`. Class/method operations use `class_
 }
 ```
 
+For class searches, `offset` is the zero-based index among matches, and
+`limit` is the maximum number of matches to return. Pass `--offset` and
+`--limit` on the CLI or `offset` and `limit` in an MCP request. Omitting
+both returns every match. Omitting `limit` with an offset returns the matching
+suffix. Keep the same APK and query when advancing the offset by each page's
+length. A page reports `partial` when it omits matching rows, including earlier
+pages. A short or empty page ends forward paging. If the last page was full,
+request the next offset to check for more. `duplicate_names` counts occurrences
+within the returned page.
+
 Use `inspect_android_class` to choose an overload. REA rejects an ambiguous
 method request rather than silently selecting the first match. Method reference
 queries accept the same `overload_index`; the bridge resolves the selected

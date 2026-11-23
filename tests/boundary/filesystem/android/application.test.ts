@@ -18,7 +18,7 @@ import {
   requireSuccessfulProjection,
 } from "../../../support/applicationSessionFixture.js";
 
-import { projectAndroidApplicationEvidence } from "../../../../src/application/android/AndroidApplicationService.js";
+import { projectAndroidApplicationEvidence } from "../../../../src/application/InventoryProjectionEvidence.js";
 import { androidApplicationProjectionResultSchema } from "../../../../src/domain/android/androidApplication.js";
 import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";

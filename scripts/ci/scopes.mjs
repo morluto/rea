@@ -91,7 +91,7 @@ const PATH_SCOPES = {
     "src/rizin/**",
     "src/contracts/*ToolContracts.ts",
     "src/server/externalMutationAdmission.ts",
-    "src/server/providerEnvironment.ts",
+    "src/server/createServer.ts",
     "src/process/ExecFileOutput.ts",
     "src/process/ExecFileOutput.test.ts",
     "tests/composition/analysis-sessions/binarySession.test.ts",

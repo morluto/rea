@@ -86,6 +86,10 @@ ADB package, process, directory, feature, and service listings apply `limit`
 and `offset` after capturing the listing. The [ADB guide](../guides/android/adb-device-analysis.md#interpret-the-result)
 describes coverage and how to continue.
 
+Frida process discovery applies `limit` and `offset` after enumerating the
+selected device. It reports `total_processes` and `truncated`. Moving to another
+page runs a fresh discovery on that device.
+
 Graph tools accept per-call traversal bounds (`max_depth` and `max_nodes` on
 `get_call_graph` and `trace_call_path`).
 

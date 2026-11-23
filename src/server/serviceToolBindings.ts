@@ -116,10 +116,12 @@ import {
   settledExecution,
   sourceToBundleComparisonExecution,
 } from "../application/ApplicationToolExecutions.js";
-import { projectAndroidApplicationEvidence } from "../application/android/AndroidApplicationService.js";
+import {
+  projectAndroidApplicationEvidence,
+  projectAppleApplicationEvidence,
+  projectHarmonyApplicationEvidence,
+} from "../application/InventoryProjectionEvidence.js";
 import { inspectApiContractEvidence } from "../application/apiContract/ApiContractService.js";
-import { projectAppleApplicationEvidence } from "../application/apple/AppleApplicationService.js";
-import { projectHarmonyApplicationEvidence } from "../application/harmony/HarmonyApplicationService.js";
 import type { EvidenceWorkflowExecution } from "../application/investigation/EvidenceWorkflowExecution.js";
 import type { InvestigationWorkflowExecution } from "../application/investigation/InvestigationWorkflows.js";
 import { traceApplicationFeatureEvidence } from "../application/javascript/JavaScriptApplicationWorkflowService.js";
@@ -1755,7 +1757,10 @@ const SERVICE_TOOL_BINDINGS = {
       admission: "sdk",
       value: async (input) =>
         jsonValueResult(
-          await service.listProcesses(fridaDeviceSelection(input)),
+          await service.listProcesses(fridaDeviceSelection(input), {
+            limit: input.limit,
+            offset: input.offset,
+          }),
         ),
     },
     start_frida_session: {
