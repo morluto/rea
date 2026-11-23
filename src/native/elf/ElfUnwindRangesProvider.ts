@@ -10,8 +10,7 @@ import {
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
   ArtifactReaderFailure,
-  readStableArtifact,
-  type StableArtifactSnapshot,
+  withStableArtifactHandle,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   ArtifactResourceScope,
@@ -36,10 +35,11 @@ import {
 import {
   ELF_UNWIND_FORMAT,
   ELF_UNWIND_RECORD_LIMIT,
-  parseElfUnwindRangesCooperative,
+  parseElfUnwindRangesFromHandle,
 } from "./ElfUnwindTables.js";
 
 const OPERATION = "inspect_elf_unwind_ranges";
+const HEADER_PREFIX_BYTES = 4096;
 
 /** Portable parser over one bounded, identity-checked regular file. */
 export class ElfUnwindRangesProvider implements ElfUnwindRangesPort {
@@ -63,21 +63,35 @@ export class ElfUnwindRangesProvider implements ElfUnwindRangesPort {
     options?: ExecutionOptions,
   ) {
     const signal = options?.signal;
-    let snapshot: StableArtifactSnapshot | undefined;
+    let snapshot:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
       return await this.#resources.run(async () => {
-        snapshot = await readStableArtifact(
+        const report = await withStableArtifactHandle(
           input.path,
           input.max_file_bytes,
-          signal,
-          undefined,
-          this.#resources,
+          {
+            signal,
+            resourceScope: this.#resources,
+            retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
+            onIdentity: (identity) => {
+              snapshot = identity;
+            },
+          },
+          (handle) =>
+            parseElfUnwindRangesFromHandle(
+              {
+                size: handle.size,
+                prefix: handle.prefix,
+                readRange: (offset, length) => handle.readRange(offset, length),
+              },
+              { path: input.path, sha256: handle.sha256, bytes: handle.size },
+              input,
+              signal,
+            ),
         );
-        const { bytes, sha256 } = snapshot;
-        const artifact = { path: input.path, sha256, bytes: bytes.length };
-        return ok(
-          await parseElfUnwindRangesCooperative(bytes, artifact, input, signal),
-        );
+        return ok(report);
       });
     } catch (cause) {
       return err(elfUnwindFailure(cause, input, snapshot));
@@ -178,7 +192,7 @@ const elfUnwindFailurePrimary = (
 const elfUnwindFailure = (
   cause: unknown,
   input: InspectElfUnwindRangesInput,
-  snapshot?: StableArtifactSnapshot,
+  snapshot?: { readonly sha256: string; readonly bytes: number },
 ) => {
   const primary = elfUnwindFailurePrimary(
     artifactFilePrimaryFacts(cause),
