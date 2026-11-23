@@ -189,16 +189,13 @@ mcpTest(
       });
       expect(rejected.isError).toBe(true);
       expect(parseMcpToolError(rejected).error).toMatchObject({
-        code: "invalid_request",
-        category: "invalid_input",
+        code: "unsupported_target",
+        category: "unsupported_target",
         details: {
-          issues: [
-            expect.objectContaining({
-              path: ["path"],
-              reason: "invalid_format",
-              message: "ELF section table is missing",
-            }),
-          ],
+          operation: "inspect_elf_notes",
+          path,
+          format_failure: "malformed",
+          format: "elf",
         },
       });
       expect((await readFile(path)).equals(bytes)).toBe(true);
