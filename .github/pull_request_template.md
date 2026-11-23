@@ -27,8 +27,8 @@ Unresolved scope, authority, side effects, or required verification block
 integration. Link the required maintainer scope decision for new providers or
 capabilities involving target execution, injection, mutation, or protection
 recovery; ordinary fixes within existing boundaries may state "not applicable".
-Draft PRs may leave the scope decision pending and the readiness and merge checklists
-unchecked. Maintainers can help resolve open questions.
+Draft PRs may leave the scope decision pending and the Author readiness and
+Author checklist unchecked. Maintainers can help resolve open questions.
 
 ## Contract and boundary impact
 
@@ -116,10 +116,11 @@ Human owner: <!-- @GitHub-handle -->
 - [ ] I checked the evidence above, confirmed it supports the current change, and recorded meaningful validation gaps.
 - [ ] I declare this PR ready for initial maintainer review.
 
-## Before merge
+## Author checklist (completed by the PR author before requesting review)
 
-<!-- Draft PRs may leave pending items unchecked. Resolve material scope and
-authority questions before integration. -->
+<!-- The PR author completes this checklist before requesting review. Draft PRs
+may leave pending items unchecked. The author resolves material scope and
+authority questions before requesting integration. -->
 
 - [ ] This PR addresses a concrete problem or an agreed enhancement.
 - [ ] Material scope and authority questions are resolved, and any required maintainer scope decision covers the final diff.
