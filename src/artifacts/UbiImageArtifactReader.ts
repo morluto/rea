@@ -288,7 +288,7 @@ export class UbiImageArtifactReader implements ArtifactReader {
       passedOver: readonly UbiPassedOverCandidate[],
     ): Promise<UbiPebCandidateVerdict> => {
       const measured = ubiGeometry(first.value, candidate, size, null);
-      if (!measured.ok) return { state: "reject", error: measured.error };
+      if (!measured.ok) return { state: "retry", error: measured.error };
       const pebs: UbiPeb[] = [];
       let pebError: UbiImageParseError | null = null;
       for (let index = 0; index < measured.value.pebCount; index += 1) {
@@ -454,11 +454,12 @@ export class UbiImageArtifactReader implements ArtifactReader {
       if (!measured.ok) return measured.error;
       throw formatFailure("UBI image eraseblock size could not be determined");
     };
-    // Keep dividing candidates provisional until the volume table, LEB, and
-    // passed-over boundary constraints agree. Non-dividing mapped second PEBs
-    // also stay provisional as passed-over boundaries: a later dividing
-    // candidate may accept only if it places every passed-over header inside
-    // mapped non-layout LEB data; otherwise the first failure stands.
+    // Keep dividing candidates provisional until their PEB count, volume
+    // table, LEB, and passed-over boundary constraints agree. Non-dividing
+    // mapped second PEBs also stay provisional as passed-over boundaries: a
+    // later dividing candidate may accept only if it places every passed-over
+    // header inside mapped non-layout LEB data; otherwise the first failure
+    // stands.
     let accepted: UbiImage | null = null;
     let anyNext: number | null = null;
     let firstFailure: PendingFailure | null = null;

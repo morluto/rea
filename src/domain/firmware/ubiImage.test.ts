@@ -96,7 +96,7 @@ const evaluateCandidate = (
   passedOver: readonly UbiPassedOverCandidate[],
 ): UbiPebCandidateVerdict => {
   const measured = ubiGeometry(first, candidate, bytes.length, null);
-  if (!measured.ok) return { state: "reject", error: measured.error };
+  if (!measured.ok) return { state: "retry", error: measured.error };
   const { pebSize, pebCount, headerReadBytes, dataOffset } = measured.value;
   const pebs: UbiPeb[] = [];
   let pebError: UbiImageParseError | null = null;
@@ -1944,15 +1944,36 @@ describe("passed-over candidate boundaries", () => {
   it.each([
     [
       "layout-first (header inside PEB 0 layout volume)",
-      [layout0!, { kind: "free" }, layout1!, { kind: "free" }, rootfs, { kind: "free" }],
+      [
+        layout0!,
+        { kind: "free" },
+        layout1!,
+        { kind: "free" },
+        rootfs,
+        { kind: "free" },
+      ],
     ],
     [
       "rootfs-first (later header on retried grid inside layout volume)",
-      [rootfs, { kind: "free" }, layout0!, { kind: "free" }, layout1!, { kind: "free" }],
+      [
+        rootfs,
+        { kind: "free" },
+        layout0!,
+        { kind: "free" },
+        layout1!,
+        { kind: "free" },
+      ],
     ],
     [
       "free-first (header inside PEB 0 free block)",
-      [{ kind: "free" }, { kind: "free" }, layout0!, { kind: "free" }, layout1!, { kind: "free" }],
+      [
+        { kind: "free" },
+        { kind: "free" },
+        layout0!,
+        { kind: "free" },
+        layout1!,
+        { kind: "free" },
+      ],
     ],
   ] as const)(
     "refuses a 128 KiB retry when passed-over 64 KiB headers lie outside mapped non-layout LEBs (%s)",
@@ -1972,8 +1993,20 @@ describe("passed-over candidate boundaries", () => {
     const lebBytes = wide.pebSize - wide.dataOffset;
     const nested = ubiImage(
       [
-        { kind: "leb", volId: 0, lnum: 0, data: Buffer.alloc(100, 1), sqnum: 1n },
-        { kind: "leb", volId: 0, lnum: 1, data: Buffer.alloc(100, 2), sqnum: 2n },
+        {
+          kind: "leb",
+          volId: 0,
+          lnum: 0,
+          data: Buffer.alloc(100, 1),
+          sqnum: 1n,
+        },
+        {
+          kind: "leb",
+          volId: 0,
+          lnum: 1,
+          data: Buffer.alloc(100, 2),
+          sqnum: 2n,
+        },
       ],
       { pebSize: 32 * 1024, dataOffset: 4096 },
     );
@@ -1992,13 +2025,16 @@ describe("passed-over candidate boundaries", () => {
       wide,
     );
     const parsed = image(bytes);
-    expect(parsed.geometry).toMatchObject({ pebSize: wide.pebSize, pebCount: 4 });
+    expect(parsed.geometry).toMatchObject({
+      pebSize: wide.pebSize,
+      pebCount: 4,
+    });
     expect(parsed.volumes).toMatchObject([
       { name: "rootfs", dataBytes: 2 * lebBytes, extractRefusal: null },
     ]);
-    expect(reassemble(bytes, "rootfs").equals(Buffer.concat([first, second]))).toBe(
-      true,
-    );
+    expect(
+      reassemble(bytes, "rootfs").equals(Buffer.concat([first, second])),
+    ).toBe(true);
   });
 
   it("keeps refusing a truncated dump when the later dividing candidate puts the mapped boundary inside a layout PEB", () => {
