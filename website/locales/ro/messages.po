@@ -2791,15 +2791,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr ""
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1114
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr ""
-
 #: website/public/contributors/index.html:1119
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -5176,7 +5167,7 @@ msgstr ""
 #: website/public/get-started/index.html:1111
 msgctxt "page:get-started/index.html"
 msgid ""
-"Install a 64-bit JDK 21 or newer, including the Java compiler. Choose the "
+"Install a 64-bit JDK 25 or newer, including the Java compiler. Choose the "
 "package matching your computer's architecture."
 msgstr ""
 
@@ -5185,7 +5176,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
-"Download Ghidra 12.1.4 from the release's Assets list and extract the {ph0} "
+"Download Ghidra 12.2 from the release's Assets list and extract the {ph0} "
 "archive. Choose the release archive, not “Source code”."
 msgstr ""
 
@@ -5200,16 +5191,16 @@ msgid ""
 "{ph2}."
 msgstr ""
 
-#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=21" >
+#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=25" >
 #. {ph1}: </a >
 #. {ph2}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.1.4_build"
+#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.2_build"
 #. >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:1127
 #, python-brace-format
 msgctxt "page:get-started/index.html"
-msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.1.4{ph3}"
+msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.2{ph3}"
 msgstr ""
 
 #. {ph0}: <code>java.home</code>
@@ -5232,7 +5223,7 @@ msgctxt "page:get-started/index.html"
 msgid ""
 "Windows x64 has experimental, read-only support for native x86 and x64 PE "
 "applications and DLLs on fixed local NTFS/ReFS drives. Use an existing "
-"Ghidra 12.1.x installation and a 64-bit JDK 21 or newer:"
+"Ghidra 12.2 installation and a 64-bit JDK 25 or newer:"
 msgstr ""
 
 #: website/public/get-started/index.html:1182
@@ -5285,7 +5276,7 @@ msgid "{ph0}macOS · Apple Silicon{ph1}"
 msgstr ""
 
 #. {ph0}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/GhidraDocs/GettingStarted.md#building-
+#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.2_build/GhidraDocs/GettingStarted.md#building-
 #. native-components" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1228
@@ -7330,7 +7321,7 @@ msgstr ""
 msgctxt "page:guides/native/index.html"
 msgid ""
 "{ph0}Ghidra{ph1} (macOS or Linux; experimental on Windows): free, but needs "
-"an existing Ghidra 12.1.x installation and a 64-bit JDK 21 or newer."
+"an existing Ghidra 12.2 installation and a 64-bit JDK 25 or newer."
 msgstr ""
 
 #. {ph0}: <a href="../../get-started/#native">
@@ -7935,6 +7926,11 @@ msgstr ""
 msgctxt "page:index.html"
 msgid "Name the operands and check both operator paths."
 msgstr ""
+
+#: website/public/index.html:524
+msgctxt "page:index.html"
+msgid "An analyst thinking at a computer"
+msgstr "Un analist se gândește în fața calculatorului"
 
 #: website/public/index.html:520 website/public/index.html:447
 msgctxt "page:index.html"
@@ -13161,6 +13157,50 @@ msgctxt "page:guides/index.html"
 msgid "Build an RL environment"
 msgstr "Ghid pentru construirea unui mediu"
 
+#. {ph0}: <a href="#desktop">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:228
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid "{ph0}Build a desktop app environment{ph1}"
+msgstr "{ph0}Construiește un mediu pentru o aplicație desktop{ph1}"
+
+#: website/public/guides/rl-environments/index.html:492
+msgctxt "page:guides/rl-environments/index.html"
+msgid "Build a desktop app environment"
+msgstr "Construiește un mediu pentru o aplicație desktop"
+
+#: website/public/guides/rl-environments/index.html:493
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"For a Linux desktop app, describe the task you want an agent to practice. "
+"For example, ask it to build a Gnote environment where the agent adds olive "
+"oil to a shopping list. The agent installs the app on a local build "
+"computer, writes the task, exports the environment, and checks it on a fresh"
+" computer using screenshots, the mouse, and the keyboard."
+msgstr ""
+"Descrie sarcina pe care vrei să o exerseze agentul într-o aplicație desktop "
+"Linux. De exemplu, cere-i să creeze un mediu Gnote în care să adauge ulei de"
+" măsline pe lista de cumpărături. Agentul instalează aplicația pe un "
+"calculator local de compilare, scrie sarcina, exportă mediul și îl verifică "
+"pe un calculator curat folosind capturi de ecran, mouse-ul și tastatura."
+
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
+#. build-
+#. computer.md#set-up-a-build-host">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:501
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"The build host needs Linux on amd64 or arm64, Docker, and the pinned "
+"AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
+"installation and readiness checks."
+msgstr ""
+"Calculatorul de compilare necesită Linux pe amd64 sau arm64, Docker și "
+"versiunea specificată de AgentEnv. Urmează {ph0}ghidul de configurare a "
+"calculatorului de compilare{ph1} pentru instalare și verificări."
+
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Skip to content"
@@ -13765,46 +13805,24 @@ msgctxt "page:index.html"
 msgid "Methods and reconstruction notes."
 msgstr ""
 
-#: website/public/blog/index.html:83 website/public/blog/index.html:96
-#: website/public/blog/reverse-engineering-models/index.html:83
-#: website/public/blog/reverse-engineering-models/index.html:96
-#: website/public/blog/touhou-reconstruction/index.html:83
-#: website/public/blog/touhou-reconstruction/index.html:96
-#: website/public/contributors/index.html:83
-#: website/public/contributors/index.html:96
-#: website/public/examples/dino-lab/index.html:83
-#: website/public/examples/dino-lab/index.html:96
-#: website/public/faq/index.html:83 website/public/faq/index.html:96
-#: website/public/first-investigation/index.html:83
-#: website/public/first-investigation/index.html:96
-#: website/public/get-started/index.html:83
-#: website/public/get-started/index.html:96
-#: website/public/guides/browser/index.html:83
-#: website/public/guides/browser/index.html:96
-#: website/public/guides/index.html:83 website/public/guides/index.html:96
-#: website/public/guides/javascript/index.html:83
-#: website/public/guides/javascript/index.html:96
-#: website/public/guides/native/index.html:83
-#: website/public/guides/native/index.html:96
-#: website/public/guides/rl-environments/index.html:83
-#: website/public/guides/rl-environments/index.html:96
-#: website/public/index.html:83 website/public/index.html:96
-#: website/public/showcase/aegis/index.html:83
-#: website/public/showcase/aegis/index.html:96
-#: website/public/showcase/ctf/index.html:83
-#: website/public/showcase/ctf/index.html:96
-#: website/public/showcase/dx-ball/index.html:83
-#: website/public/showcase/dx-ball/index.html:96
-#: website/public/showcase/index.html:83 website/public/showcase/index.html:96
-#: website/public/showcase/notion/index.html:83
-#: website/public/showcase/notion/index.html:96
-#: website/public/showcase/th04/index.html:83
-#: website/public/showcase/th04/index.html:96
+#: website/public/blog/index.html:105 website/public/blog/index.html:118
+#: website/public/blog/reverse-engineering-models/index.html:105
+#: website/public/blog/reverse-engineering-models/index.html:118
+#: website/public/contributors/index.html:105
+#: website/public/contributors/index.html:118
+#: website/public/examples/dino-lab/index.html:105
+#: website/public/examples/dino-lab/index.html:118
+#: website/public/faq/index.html:105 website/public/faq/index.html:118
+#: website/public/first-investigation/index.html:105
+#: website/public/first-investigation/index.html:118
+#: website/public/get-started/index.html:105
+#: website/public/get-started/index.html:118 website/public/index.html:105
+#: website/public/index.html:118
 msgctxt "shared"
-msgid ""
-"REA: Find out how software works. Reverse engineering with your coding "
-"agent."
+msgid "Blue REA lettering beside disassembly, hex data and an agent workflow."
 msgstr ""
+"Sigla REA cu albastru, lângă cod dezasamblat, date hexazecimale și fluxul de"
+" lucru al unui agent."
 
 #: website/public/index.html:357
 msgctxt "page:index.html"
@@ -14126,4 +14144,15 @@ msgstr ""
 #~ "Windows x64 has experimental, read-only support for native x86 and x64 PE "
 #~ "applications and DLLs on fixed local NTFS drives. Use an existing Ghidra "
 #~ "12.1.x installation and a 64-bit JDK 21 or newer:"
+#~ msgstr ""
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
+#~ msgstr ""
+
+#~ msgctxt "shared"
+#~ msgid ""
+#~ "REA: Find out how software works. Reverse engineering with your coding "
+#~ "agent."
 #~ msgstr ""

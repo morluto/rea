@@ -18,7 +18,10 @@ it("rejects malformed catalogs and the wrong decoder identity", () => {
     "Supported protocol decoders:\n  malformed",
   ]) {
     expect(() =>
-      parseDecoderDiscovery(text, inspectSignalDecodersInputSchema.parse({})),
+      parseDecoderDiscovery(
+        text,
+        inspectSignalDecodersInputSchema.parse({ limit: 1 }),
+      ),
     ).toThrow();
   }
   expect(() =>
@@ -47,6 +50,24 @@ it("keeps help line ordinals, blank lines and literal special characters through
 });
 
 it("bounds line expansion before constructing help records", () => {
+  const input = inspectSignalDecodersInputSchema.parse({
+    decoder: "uart",
+    offset: 65534,
+    limit: 1,
+  });
+  expect(parseDecoderDiscovery("ID: uart" + "\n".repeat(65535), input)).toEqual(
+    {
+      decoders: [],
+      help_lines: [{ line_number: 65535, text: "" }],
+      output_window: {
+        unit: "help-lines",
+        examined: 65535,
+        matching: 65535,
+        returned: 1,
+        has_more: false,
+      },
+    },
+  );
   let thrown: unknown;
   try {
     parseDecoderDiscovery(

@@ -2,14 +2,80 @@ import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createKernelModuleService } from "../../../src/composition/binaryDiagnostics.js";
+import { createKernelModuleService } from "../../../src/composition/binaryDiagnostics/kernelModule.js";
 import {
   compressedKernelModuleContainer,
   kernelModuleFixture,
+  moduleSignatureTrailer,
 } from "../../../src/native/elf/KernelModule.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("kernel module stable filesystem boundary", () => {
+  it("retains trailer fields but withholds an empty PKCS#7 range", async () => {
+    const root = await createTestTempDirectory("rea-kernel-module-empty-sig-");
+    const path = join(root, "demo.ko");
+    await writeFile(
+      path,
+      kernelModuleFixture({
+        signature: moduleSignatureTrailer(Buffer.alloc(0)),
+      }),
+    );
+    const service = createKernelModuleService();
+    try {
+      const result = await service.inspect({ path });
+      if (!result.ok) throw result.error;
+      expect(result.value.normalized_result).toMatchObject({
+        coverage: { status: "partial" },
+        modinfo: {
+          entries: expect.arrayContaining([
+            expect.objectContaining({ key: "license", value: "GPL" }),
+          ]),
+        },
+        signature: {
+          status: "malformed",
+          reason: "signature_length_inconsistent",
+          magic: { bytes: 28 },
+          info: { sig_len: 0, id_type: 2 },
+          pkcs7: null,
+        },
+      });
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("reads module metadata and signature beyond the retained prefix", async () => {
+    const root = await createTestTempDirectory("rea-kernel-module-positional-");
+    const path = join(root, "demo.ko");
+    // Enough section headers to place .modinfo and the signature beyond 4 KiB.
+    const bytes = kernelModuleFixture({
+      sharedNameSections: { name: ".padding", count: 70 },
+    });
+    const firstSection = Number(bytes.readBigUInt64LE(40)) + 64;
+    const modinfoOffset = Number(bytes.readBigUInt64LE(firstSection + 24));
+    expect(modinfoOffset).toBeGreaterThan(4096);
+    await writeFile(path, bytes);
+    const service = createKernelModuleService();
+    try {
+      const result = await service.inspect({ path });
+      if (!result.ok) throw result.error;
+      expect(result.value.normalized_result).toMatchObject({
+        modinfo: {
+          entries: expect.arrayContaining([
+            expect.objectContaining({
+              key: "license",
+              value: "GPL",
+              location: { offset: modinfoOffset, bytes: expect.any(Number) },
+            }),
+          ]),
+        },
+        signature: { status: "present" },
+      });
+    } finally {
+      await service.close();
+    }
+  });
+
   it("reports non-file and malformed ELF selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-kernel-module-files-");
     const path = join(root, "demo.ko");
@@ -69,23 +135,26 @@ describe("kernel module stable filesystem boundary", () => {
     }
   });
 
-  it("reports a gzip container as unsupported without treating it as a module", async () => {
-    const root = await createTestTempDirectory("rea-kernel-module-gzip-");
-    const path = join(root, "demo.ko.gz");
-    await writeFile(path, compressedKernelModuleContainer("gzip"));
-    const service = createKernelModuleService();
-    try {
-      const result = await service.inspect({ path });
-      if (!result.ok) throw result.error;
-      expect(fileIdentity(result.value.subject).format).toBe("file");
-      expect(result.value.normalized_result).toMatchObject({
-        applicability: "unsupported",
-        compression: { codec: "gzip", status: "unsupported" },
-        next_probe: { operation: "external_decompression" },
-        modinfo: null,
-      });
-    } finally {
-      await service.close();
-    }
-  });
+  it.each(["gzip", "xz", "zstd"] as const)(
+    "reports a %s container as unsupported without treating it as a module",
+    async (codec) => {
+      const root = await createTestTempDirectory(`rea-kernel-module-${codec}-`);
+      const path = join(root, `demo.ko.${codec === "gzip" ? "gz" : codec}`);
+      await writeFile(path, compressedKernelModuleContainer(codec));
+      const service = createKernelModuleService();
+      try {
+        const result = await service.inspect({ path });
+        if (!result.ok) throw result.error;
+        expect(fileIdentity(result.value.subject).format).toBe("file");
+        expect(result.value.normalized_result).toMatchObject({
+          applicability: "unsupported",
+          compression: { codec, status: "unsupported" },
+          next_probe: { operation: "external_decompression" },
+          modinfo: null,
+        });
+      } finally {
+        await service.close();
+      }
+    },
+  );
 });

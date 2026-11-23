@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 
-import { ApktoolResourceAnalysisService } from "../dist/application/apktool/ApktoolResourceAnalysisService.js";
+import { createApktoolResourceAnalysisService } from "../dist/application/ProviderOperationServices.js";
 import { createApktoolResourceAnalysisProvider } from "../dist/composition/apktool.js";
 
 const options = parseArguments(process.argv.slice(2));
@@ -16,7 +16,7 @@ if (options.help) {
 }
 
 const provider = createApktoolResourceAnalysisProvider(process.env);
-const service = new ApktoolResourceAnalysisService(provider);
+const service = createApktoolResourceAnalysisService(provider);
 let failures = 0;
 const check = (name, condition, detail = "") => {
   const mark = condition ? "ok" : "FAIL";

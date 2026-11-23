@@ -127,7 +127,7 @@ export const projectHarmonyInventory = (
         ]
       : []),
     "Manifest, module, resource, and signing semantics require a dedicated HarmonyOS provider; this projection reports exact inventory paths and hashes only.",
-    "The packaging model is a path-presence heuristic: a Stage model is claimed only from module.json and a FA model only from config.json; both can coexist with unusual layouts.",
+    "The packaging model is a path-presence heuristic: root module.json indicates Stage and root config.json indicates FA. Both declarations can coexist in unusual layouts.",
     "Runtime families are inferred from inventory formats and paths; filename suffixes do not establish valid Ark bytecode.",
     "The signing component lists META-INF certificate-entry suffixes only; signatures applied by the packaging tool live in the ZIP signing block rather than archive entries, so an empty signing list does not mean the package is unsigned.",
     "Bridge candidates are path-based hypotheses, not decoded N-API declarations or observed runtime calls.",
@@ -200,48 +200,66 @@ const harmonyRootFormat = (
 };
 
 /**
- * ZIP manifest names are case-sensitive. Classify each file path once for
- * both consumers; its model hint survives an unavailable content identity.
+ * Recognize exact ZIP root manifest names. The path hint survives an
+ * unavailable content identity.
  */
 const classifyManifests = (entries: readonly ProjectedInventoryEntry[]) => {
   const components: Component[] = [];
   let packagingModel: HarmonyApplicationProjectionResult["packaging_model"] =
     "unknown";
-  for (const { path, component } of entries) {
-    const name = /(?:^|\/)(module\.json|config\.json|pack\.info)$/u.exec(
-      path,
-    )?.[1];
-    if (name === undefined || isResourcePath(path)) continue;
+  for (const { path, sourcePath, component } of entries) {
+    if ((sourcePath ?? path) !== path) continue;
+    if (
+      path !== "module.json" &&
+      path !== "config.json" &&
+      path !== "pack.info"
+    )
+      continue;
     if (component !== undefined) components.push(component);
-    if (name === "module.json") packagingModel = "stage";
-    else if (name === "config.json" && packagingModel === "unknown")
+    if (path === "module.json") packagingModel = "stage";
+    else if (path === "config.json" && packagingModel === "unknown")
       packagingModel = "fa";
   }
   return { components, packagingModel };
 };
 
-const classify = (all: readonly Component[], manifests: Component[]) => ({
-  manifests,
-  bytecode: all.filter(({ path }) => /\.(?:abc|pa)$/iu.test(path)),
-  resources: all.filter(({ path }) => isResourcePath(path)),
-  native_libraries: all.filter(
-    ({ path, format }) =>
-      format === "elf" || /(?:^|\/)libs\/[^/]+\/[^/]+\.so$/iu.test(path),
-  ),
-  javascript: all.filter(
-    ({ path, format }) =>
-      format === "javascript-bundle" || /\.(?:m?js|cjs)$/iu.test(path),
-  ),
-  signing: all.filter(({ path }) =>
-    /^META-INF\/[^/]+\.(?:p7b|sig|cer|crt|pem|provision|rsa|dsa|ec)$/iu.test(
-      path,
-    ),
-  ),
-});
+const HARMONY_BYTECODE_RE = /\.(?:abc|pa)$/iu;
+const HARMONY_NATIVE_LIB_RE = /(?:^|\/)libs\/[^/]+\/[^/]+\.so$/iu;
+const HARMONY_JS_RE = /\.(?:m?js|cjs)$/iu;
+const HARMONY_SIGNING_RE =
+  /^META-INF\/[^/]+\.(?:p7b|sig|cer|crt|pem|provision|rsa|dsa|ec)$/iu;
+const HARMONY_RESOURCES_INDEX_RE = /(?:^|\/)resources\.index$/iu;
+const HARMONY_RESOURCES_DIR_RE =
+  /^(?:resources\/|assets\/[^/]+\/resources\/)/iu;
+
+const classify = (all: readonly Component[], manifests: Component[]) => {
+  const bytecode: Component[] = [];
+  const resources: Component[] = [];
+  const native_libraries: Component[] = [];
+  const javascript: Component[] = [];
+  const signing: Component[] = [];
+  for (const component of all) {
+    const { path, format } = component;
+    if (HARMONY_BYTECODE_RE.test(path)) bytecode.push(component);
+    if (isResourcePath(path)) resources.push(component);
+    if (format === "elf" || HARMONY_NATIVE_LIB_RE.test(path))
+      native_libraries.push(component);
+    if (format === "javascript-bundle" || HARMONY_JS_RE.test(path))
+      javascript.push(component);
+    if (HARMONY_SIGNING_RE.test(path)) signing.push(component);
+  }
+  return {
+    manifests,
+    bytecode,
+    resources,
+    native_libraries,
+    javascript,
+    signing,
+  };
+};
 
 const isResourcePath = (path: string): boolean =>
-  /(?:^|\/)resources\.index$/iu.test(path) ||
-  /^(?:resources\/|assets\/[^/]+\/resources\/)/iu.test(path);
+  HARMONY_RESOURCES_INDEX_RE.test(path) || HARMONY_RESOURCES_DIR_RE.test(path);
 
 const runtimeFamilies = (
   all: readonly Component[],
@@ -251,9 +269,9 @@ const runtimeFamilies = (
     HarmonyApplicationProjectionResult["runtime_families"][number]
   >();
   if (components.bytecode.length > 0) families.add("ark");
-  if (all.some(({ format }) => format === "elf")) families.add("native");
   if (components.javascript.length > 0) families.add("javascript");
-  for (const { path } of all) {
+  for (const { path, format } of all) {
+    if (format === "elf") families.add("native");
     const convention = nativeRuntimeConvention(path);
     if (convention !== null) families.add(convention);
   }

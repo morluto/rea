@@ -21,17 +21,29 @@ import {
   plainIkcfgStringFixture,
   truncatedKernelConfigFixture,
 } from "../../native/elf/KernelBuildConfig.fixture.js";
-import { parseKernelBuildConfig } from "../../native/elf/KernelBuildConfig.js";
+import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
+import { parseKernelBuildConfigFromHandle } from "../../native/elf/KernelBuildConfig.js";
 
 const identity = KERNEL_BUILD_CONFIG_PROVIDER;
 const path = "/artifacts/vmlinux";
+
+const bufferSource = (bytes: Buffer): NativeByteSource => ({
+  size: bytes.length,
+  prefix: bytes,
+  readRange: (offset, length) =>
+    Promise.resolve(
+      offset < 0 || length <= 0 || offset >= bytes.length
+        ? Buffer.alloc(0)
+        : bytes.subarray(offset, Math.min(bytes.length, offset + length)),
+    ),
+});
 
 const reportOf = (
   bytes: Buffer,
   extra: object = {},
 ): Promise<KernelBuildConfig> =>
-  parseKernelBuildConfig(
-    bytes,
+  parseKernelBuildConfigFromHandle(
+    bufferSource(bytes),
     { path, sha256: "a".repeat(64), bytes: bytes.length },
     inspectKernelBuildConfigInputSchema.parse({ path, ...extra }),
   );

@@ -1,6 +1,6 @@
 import type { ArtifactResourceScope } from "../resources/index.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { clientConfigurationRecordSchema } from "./ClientConfigurationDocument.js";
+import { clientConfigurationRecordSchema } from "./ClientConfigurationValues.js";
 import {
   readConfigurationText,
   type ClientConfigurationFileError,

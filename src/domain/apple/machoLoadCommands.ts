@@ -1,9 +1,28 @@
+import { BinaryReader } from "../binaryContainer.js";
 import { LC } from "./machoLoadCommandCodes.js";
 import { err, ok, type Result } from "../result.js";
 import {
   machoLoadCommandAlignment,
   readMachoHeaderPrefixFacts,
 } from "./machoContainer.js";
+
+/** Fixed fields present in both thin header widths, before the 64-bit reserved word. */
+export const MACHO_COMMON_HEADER_BYTES = 28;
+
+const MACHO_LOAD_COMMAND_HEADER_BYTES = 8;
+
+/** Read numeric fields from exactly the supplied Mach-O view. */
+export const machoWordReader = (
+  bytes: Uint8Array,
+  littleEndian: boolean,
+): BinaryReader =>
+  new BinaryReader(
+    Buffer.isBuffer(bytes)
+      ? bytes
+      : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    littleEndian,
+    "macho",
+  );
 
 /** Header commitments needed to walk commands without retaining their payloads. */
 export interface MachoLoadCommandTableHeader {
@@ -31,20 +50,20 @@ export const readMachoHeaderDeclarations = (
   const prefix = readMachoHeaderPrefixFacts(bytes);
   if (prefix.format === null) return ok(null);
   const { wide, headerSize, littleEndian } = prefix.format;
-  if (bytes.byteLength < 28 || prefix.identity === null)
+  if (bytes.byteLength < MACHO_COMMON_HEADER_BYTES || prefix.identity === null)
     return err(
       `truncated Mach-O header: a ${wide ? 64 : 32}-bit header needs ${headerSize} bytes; the file has ${fileSize}`,
     );
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const commandBytes = view.getUint32(20, littleEndian);
+  const reader = machoWordReader(bytes, littleEndian);
+  const commandBytes = reader.u32(20);
   return ok({
     headerSize,
     wide,
     littleEndian,
-    commandCount: view.getUint32(16, littleEndian),
+    commandCount: reader.u32(16),
     commandBytes,
-    fileType: view.getUint32(12, littleEndian),
-    flags: view.getUint32(MACHO_HEADER_FLAGS_OFFSET, littleEndian),
+    fileType: reader.u32(12),
+    flags: reader.u32(MACHO_HEADER_FLAGS_OFFSET),
     identity: prefix.identity,
   });
 };
@@ -64,6 +83,31 @@ export const readMachoLoadCommandDeclarations = (
   return parsed;
 };
 
+/** The file span and minimum count framing must fit before payloads are read. */
+export const machoCommandTableIssue = (
+  {
+    commandBytes,
+    commandCount,
+    headerSize,
+  }: Pick<
+    MachoLoadCommandTableHeader,
+    "commandBytes" | "commandCount" | "headerSize"
+  >,
+  fileSize: number,
+): { readonly kind: "extent" | "count"; readonly message: string } | null => {
+  if (commandBytes > fileSize - headerSize)
+    return {
+      kind: "extent",
+      message: `truncated Mach-O load commands: the header declares ${commandBytes} bytes after its ${headerSize}-byte header; the file has ${fileSize}`,
+    };
+  if (commandCount * MACHO_LOAD_COMMAND_HEADER_BYTES > commandBytes)
+    return {
+      kind: "count",
+      message: `Mach-O load command count ${commandCount} cannot fit in its ${commandBytes}-byte command table`,
+    };
+  return null;
+};
+
 /** Admit the declared command table within the complete file's extent. */
 export const readMachoLoadCommandTableHeader = (
   bytes: Uint8Array,
@@ -71,12 +115,8 @@ export const readMachoLoadCommandTableHeader = (
 ): Result<MachoHeaderDeclarations | null, string> => {
   const parsed = readMachoLoadCommandDeclarations(bytes, fileSize);
   if (!parsed.ok || parsed.value === null) return parsed;
-  const { commandBytes, headerSize } = parsed.value;
-  if (commandBytes > fileSize - headerSize)
-    return err(
-      `truncated Mach-O load commands: the header declares ${commandBytes} bytes after its ${headerSize}-byte header; the file has ${fileSize}`,
-    );
-  return parsed;
+  const issue = machoCommandTableIssue(parsed.value, fileSize);
+  return issue === null ? parsed : err(issue.message);
 };
 
 /** One owner's count, alignment and extent proof for a sequential command walk. */
@@ -107,12 +147,15 @@ export class MachoLoadCommandCursor {
     string
   > {
     const { commandBytes, littleEndian, wide } = this.table;
-    if (this.#offset + 8 > commandBytes || bytes.byteLength < 8)
-      return err(`load command ${this.#index} starts beyond sizeofcmds`);
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const size = view.getUint32(4, littleEndian);
     if (
-      size < 8 ||
+      this.#offset + MACHO_LOAD_COMMAND_HEADER_BYTES > commandBytes ||
+      bytes.byteLength < MACHO_LOAD_COMMAND_HEADER_BYTES
+    )
+      return err(`load command ${this.#index} starts beyond sizeofcmds`);
+    const reader = machoWordReader(bytes, littleEndian);
+    const size = reader.u32(4);
+    if (
+      size < MACHO_LOAD_COMMAND_HEADER_BYTES ||
       size % machoLoadCommandAlignment(wide) !== 0 ||
       size > commandBytes - this.#offset
     )
@@ -122,7 +165,7 @@ export class MachoLoadCommandCursor {
     const frame = {
       index: this.#index,
       offset: this.#offset,
-      command: view.getUint32(0, littleEndian),
+      command: reader.u32(0),
       size,
     };
     this.#index += 1;
@@ -143,7 +186,23 @@ export class MachoLoadCommandCursor {
 
 // Fields with fixed uint32 layouts in mach-o/loader.h. This table is the single
 // owner of those layouts; consumers read decoded fields rather than offsets.
-const FIXED_WORD_FIELDS: ReadonlyMap<number, readonly string[]> = new Map([
+const DYLD_INFO_WORD_FIELDS = [
+  "rebase_off",
+  "rebase_size",
+  "bind_off",
+  "bind_size",
+  "weak_bind_off",
+  "weak_bind_size",
+  "lazy_bind_off",
+  "lazy_bind_size",
+  "export_off",
+  "export_size",
+] as const;
+
+const FIXED_WORD_FIELDS: ReadonlyMap<number, readonly string[]> = new Map<
+  number,
+  readonly string[]
+>([
   [LC.SYMTAB, ["symoff", "nsyms", "stroff", "strsize"]],
   [LC.SYMSEG, ["offset", "size"]],
   [
@@ -174,36 +233,8 @@ const FIXED_WORD_FIELDS: ReadonlyMap<number, readonly string[]> = new Map([
   [LC.CODE_SIGNATURE, ["dataoff", "datasize"]],
   [LC.SEGMENT_SPLIT_INFO, ["dataoff", "datasize"]],
   [LC.ENCRYPTION_INFO, ["cryptoff", "cryptsize", "cryptid"]],
-  [
-    LC.DYLD_INFO,
-    [
-      "rebase_off",
-      "rebase_size",
-      "bind_off",
-      "bind_size",
-      "weak_bind_off",
-      "weak_bind_size",
-      "lazy_bind_off",
-      "lazy_bind_size",
-      "export_off",
-      "export_size",
-    ],
-  ],
-  [
-    LC.DYLD_INFO_ONLY,
-    [
-      "rebase_off",
-      "rebase_size",
-      "bind_off",
-      "bind_size",
-      "weak_bind_off",
-      "weak_bind_size",
-      "lazy_bind_off",
-      "lazy_bind_size",
-      "export_off",
-      "export_size",
-    ],
-  ],
+  [LC.DYLD_INFO, DYLD_INFO_WORD_FIELDS],
+  [LC.DYLD_INFO_ONLY, DYLD_INFO_WORD_FIELDS],
   [LC.FUNCTION_STARTS, ["dataoff", "datasize"]],
   [LC.DATA_IN_CODE, ["dataoff", "datasize"]],
   [LC.DYLIB_CODE_SIGN_DRS, ["dataoff", "datasize"]],
@@ -214,6 +245,7 @@ const FIXED_WORD_FIELDS: ReadonlyMap<number, readonly string[]> = new Map([
   [LC.ATOM_INFO, ["dataoff", "datasize"]],
   [LC.FUNCTION_VARIANTS, ["dataoff", "datasize"]],
   [LC.FUNCTION_VARIANT_FIXUPS, ["dataoff", "datasize"]],
+  [LC.LAZY_LOAD_DYLIB_INFO, ["dataoff", "datasize"]],
 ]);
 
 /** Names of a command's fixed uint32 fields, or undefined for other layouts. */
@@ -231,28 +263,42 @@ export const decodeMachoFixedWordFields = (
   littleEndian: boolean,
 ): Readonly<Record<string, number>> | null | undefined => {
   const names = FIXED_WORD_FIELDS.get(command);
-  if (names === undefined) return undefined;
-  if (fieldBytes.byteLength < names.length * 4) return null;
-  const view = new DataView(
-    fieldBytes.buffer,
-    fieldBytes.byteOffset,
-    fieldBytes.byteLength,
-  );
-  return Object.fromEntries(
-    names.map((name, index) => [name, view.getUint32(index * 4, littleEndian)]),
-  );
+  return names === undefined
+    ? undefined
+    : decodeMachoWordFields(names, fieldBytes, littleEndian);
 };
+
+const decodeMachoWordFields = <Field extends string>(
+  names: readonly Field[],
+  fieldBytes: Uint8Array,
+  littleEndian: boolean,
+): Readonly<Record<Field, number>> | null => {
+  if (fieldBytes.byteLength < names.length * 4) return null;
+  const reader = machoWordReader(fieldBytes, littleEndian);
+  return Object.fromEntries(
+    names.map((name, index) => [name, reader.u32(index * 4)]),
+  ) as Readonly<Record<Field, number>>;
+};
+
+/** Typed `dyld_info_command` facts from a framed command, including its header. */
+export const readMachoDyldInfoCommand = (
+  body: Uint8Array,
+  littleEndian: boolean,
+) =>
+  decodeMachoWordFields(DYLD_INFO_WORD_FIELDS, body.subarray(8), littleEndian);
+
+interface MachoSymtabDeclaration {
+  readonly symoff: number;
+  readonly nsyms: number;
+  readonly stroff: number;
+  readonly strsize: number;
+}
 
 /** `symtab_command` fields from an admitted command body. Null when truncated. */
 export const readMachoSymtabCommand = (
   body: Uint8Array,
   littleEndian: boolean,
-): {
-  readonly symoff: number;
-  readonly nsyms: number;
-  readonly stroff: number;
-  readonly strsize: number;
-} | null => {
+): MachoSymtabDeclaration | null => {
   const fields = decodeMachoFixedWordFields(
     LC.SYMTAB,
     body.subarray(8),
@@ -268,6 +314,24 @@ export const readMachoSymtabCommand = (
   )
     return null;
   return { symoff, nsyms, stroff, strsize };
+};
+
+/** Admit slice-relative LC_SYMTAB ranges before applying a consumer's scan allowance. */
+export const admitMachoSymtabRanges = (
+  { symoff, nsyms, stroff, strsize }: MachoSymtabDeclaration,
+  wide: boolean,
+  sliceSize: number,
+): {
+  readonly width: 12 | 16;
+  readonly symbolsEnd: number;
+  readonly stringsEnd: number;
+} | null => {
+  const width = wide ? 16 : 12;
+  const symbolsEnd = symoff + nsyms * width;
+  const stringsEnd = stroff + strsize;
+  return symbolsEnd <= sliceSize && stringsEnd <= sliceSize
+    ? { width, symbolsEnd, stringsEnd }
+    : null;
 };
 
 /**
@@ -315,8 +379,8 @@ export const readMachoCommandStringBytes = (
       _tag: "InvalidMachoCommandString",
       reason: "truncated-offset",
     });
-  const view = new DataView(body.buffer, body.byteOffset, body.byteLength);
-  const offset = view.getUint32(8, littleEndian);
+  const reader = machoWordReader(body, littleEndian);
+  const offset = reader.u32(8);
   if (offset < minimumOffset || offset >= body.byteLength)
     return err({
       _tag: "InvalidMachoCommandString",

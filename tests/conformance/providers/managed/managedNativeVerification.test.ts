@@ -982,8 +982,8 @@ describe("managed/native verification result algebra", () => {
       readFixtureSource(exampleInput()),
     );
     const verification = result.pinvoke_imports[0];
-    expect(verification).toBeDefined();
-    if (verification === undefined) return;
+    if (verification === undefined)
+      throw new Error("Expected a P/Invoke verification");
 
     expect(
       pinvokeVerificationSchema.safeParse({
@@ -1020,17 +1020,19 @@ describe("managed/native verification result algebra", () => {
         pinvoke_imports: [unresolved],
       }).success,
     ).toBe(false);
-    // Removed legacy fields are rejected by the strict coverage contract.
-    expect(
-      managedNativeVerificationResultSchema.safeParse({
-        ...result,
-        coverage: {
-          status: "complete-within-inputs",
-          omitted_native_observations: 0,
-          omitted_candidates: 1,
-        },
-      }).success,
-    ).toBe(false);
+    const extraCoverage = managedNativeVerificationResultSchema.safeParse({
+      ...result,
+      coverage: { ...result.coverage, unsupported_detail: true },
+    });
+    if (extraCoverage.success)
+      throw new Error("Expected an unknown coverage field to be rejected");
+    expect(extraCoverage.error.issues).toEqual([
+      expect.objectContaining({
+        code: "unrecognized_keys",
+        keys: ["unsupported_detail"],
+        path: ["coverage"],
+      }),
+    ]);
   });
 });
 

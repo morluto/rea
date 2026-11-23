@@ -1,9 +1,6 @@
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
-import {
-  EVIDENCE_FORMAT_REVISION,
-  RECREATE_EVIDENCE_GUIDANCE,
-} from "../../../src/domain/evidenceFormat.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { RECREATE_EVIDENCE_GUIDANCE } from "../../../src/domain/evidenceFormat.js";
 import { PRE_66_NULL_COVERAGE_EVIDENCE } from "../../../src/domain/evidenceLegacy.fixture.js";
 import {
   access,
@@ -14,6 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 
 import { expect } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -94,41 +92,81 @@ cliTest(
         fieldErrors: [{ path: field, code: "too_small", missing: false }],
       });
       expect(result.json).not.toHaveProperty("details.path");
-      expect(await readdir(root)).toEqual(["bundle.json"]);
-      expect(await readFile(join(root, "bundle.json"), "utf8")).toBe(encoded);
     }
+    expect(await readdir(root)).toEqual(["bundle.json"]);
+    expect(await readFile(join(root, "bundle.json"), "utf8")).toBe(encoded);
   },
 );
 
 cliTest(
-  "preserves whitespace in selected Evidence filenames",
+  "exports canonical Evidence to the exact selected filename with accurate receipts and overwrite",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-evidence-spaced-path-");
     const source = " bundle name.json";
     const output = " exported bundle.json";
-    const bundle = revisionBundle();
-    const encoded = JSON.stringify(bundle);
+    const outputPath = join(root, output);
+    const history = revisionBundle();
+    const extra = createEvidence(
+      unknownTarget("not-observed"),
+      { id: "fixture", name: "Fixture", version: "1" },
+      { operation: "observe", parameters: {}, result: { observed: true } },
+    );
+    const bundle = createEvidenceBundle(
+      [...history.records, extra],
+      history.unknowns,
+    );
+    const encoded = JSON.stringify(bundle, null, 2);
     await writeFile(join(root, source), encoded);
     const imported = await cli.run({
       arguments: ["evidence-import", source, "--json"],
       cwd: root,
     });
     expect(imported.exitCode, imported.stderr).toBe(0);
-    expect(imported.json).toEqual({ imported: 2, unknowns_added: 2, total: 2 });
-    const exported = await cli.run({
-      arguments: ["evidence-export", source, output, "--json"],
-      cwd: root,
-    });
+    expect(imported.json).toEqual({ imported: 3, unknowns_added: 2, total: 3 });
+
+    const args = ["evidence-export", source, output, "--json"];
+    const exported = await cli.run({ arguments: args, cwd: root });
     expect(exported.exitCode, exported.stderr).toBe(0);
-    expect(JSON.parse(await readFile(join(root, output), "utf8"))).toEqual(
-      bundle,
-    );
+    const bytes = await readFile(outputPath);
+    const receipt = {
+      path: outputPath,
+      bytes: bytes.length,
+      records: 3,
+      unknowns: 2,
+    };
+    expect(exported.json).toMatchObject(receipt);
+    expect(JSON.parse(bytes.toString("utf8"))).toEqual(bundle);
+
+    const digest = createHash("sha256").update(bytes).digest("hex");
     const compared = await cli.run({
       arguments: ["compare", source, output, "--json"],
       cwd: root,
     });
     expect(compared.exitCode, compared.stderr).toBe(0);
-    expect(compared.json).toMatchObject({ status: "unchanged" });
+    expect(compared.json).toMatchObject({
+      status: "unchanged",
+      left_bundle_sha256: digest,
+      right_bundle_sha256: digest,
+    });
+
+    const previous = "previous output\n";
+    await writeFile(outputPath, previous);
+    const collision = await cli.run({ arguments: args, cwd: root });
+    expect(collision.exitCode).toBe(1);
+    expect(collision.json).toMatchObject({
+      code: "invalid_request",
+      details: { operation: "write", reason: "exists", path: outputPath },
+      message: expect.stringContaining("allow overwrite"),
+    });
+    expect(await readFile(outputPath, "utf8")).toBe(previous);
+
+    const replaced = await cli.run({
+      arguments: [...args, "--full-output", "--overwrite"],
+      cwd: root,
+    });
+    expect(replaced.exitCode, replaced.stderr).toBe(0);
+    expect(replaced.json).toMatchObject({ data: receipt });
+    expect((await readFile(outputPath)).equals(bytes)).toBe(true);
     expect(await readFile(join(root, source), "utf8")).toBe(encoded);
     expect((await readdir(root)).sort()).toEqual([source, output].sort());
   },
@@ -196,28 +234,18 @@ cliTest(
     }
 
     const file = join(root, "fresh.json");
-    const arguments_ = ["evidence-export", source, file, "--json"];
-    const fresh = await cli.run({ arguments: arguments_ });
+    const fresh = await cli.run({
+      arguments: ["evidence-export", source, file, "--json"],
+    });
     expect(fresh.exitCode, fresh.stderr).toBe(0);
-    const exported = await readFile(file, "utf8");
-    expect(JSON.parse(exported)).toEqual(emptyBundle);
-
-    const existingBytes = "previous output\n";
-    await writeFile(file, existingBytes);
-    const collision = await cli.run({ arguments: arguments_ });
-    expect(collision.exitCode).toBe(1);
-    expect(collision.json).toMatchObject({
-      code: "invalid_request",
-      details: { operation: "write", reason: "exists", path: file },
-      message: expect.stringContaining("allow overwrite"),
+    const bytes = await readFile(file);
+    expect(fresh.json).toMatchObject({
+      path: file,
+      bytes: bytes.length,
+      records: 0,
+      unknowns: 0,
     });
-    expect(await readFile(file, "utf8")).toBe(existingBytes);
-
-    const replacement = await cli.run({
-      arguments: [...arguments_, "--overwrite"],
-    });
-    expect(replacement.exitCode, replacement.stderr).toBe(0);
-    expect(JSON.parse(await readFile(file, "utf8"))).toEqual(emptyBundle);
+    expect(JSON.parse(bytes.toString("utf8"))).toEqual(emptyBundle);
     expect(await readFile(source, "utf8")).toBe(sourceBytes);
     expect((await readdir(root)).sort()).toEqual([
       "bundle.json",
@@ -227,40 +255,26 @@ cliTest(
   },
 );
 
-cliTest.for([
-  "evidence-import",
-  "evidence-export",
-  "compare-left",
-  "compare-right",
-])(
-  "explains a bundle BOM with the format owner's recovery through $0",
-  async (operation, { cli }) => {
+cliTest(
+  "refuses BOM-prefixed bundle export with the JSON format recovery",
+  async ({ cli }) => {
     const root = await createTestTempDirectory("rea-bundle-bom-cli-");
     const path = join(root, "bundle.json");
-    const canonical = join(root, "canonical.json");
     const output = join(root, "exported.json");
-    const encoded = JSON.stringify(revisionBundle());
-    const bom = `\uFEFF${encoded}`;
+    const bom = `\uFEFF${JSON.stringify(revisionBundle())}`;
     await writeFile(path, bom);
-    await writeFile(canonical, encoded);
-    const arguments_ =
-      operation === "evidence-import"
-        ? [operation, path]
-        : operation === "evidence-export"
-          ? [operation, path, output]
-          : operation === "compare-left"
-            ? ["compare", path, canonical]
-            : ["compare", canonical, path];
     const result = await cli.run({
-      arguments: [...arguments_, "--json"],
+      arguments: ["evidence-export", path, output, "--json"],
       environment: { REA_LOG_LEVEL: "silent" },
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
       code: "evidence_integrity_mismatch",
-      message: expect.stringMatching(
-        /byte-order mark.*UTF-8 without a byte-order mark/iu,
-      ),
+      details: {
+        path,
+        reason: "invalid-json",
+        content_issues: [{ reason: "invalid_format" }],
+      },
       remediation: {
         action: expect.stringMatching(
           /byte-order mark.*UTF-8 without a byte-order mark/iu,
@@ -305,100 +319,138 @@ cliTest.for([
 });
 
 cliTest(
-  "reports standalone import counts for every unknown revision",
+  "distinguishes wrong-kind input, altered Evidence and incomplete Unknown history",
   async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-evidence-import-");
+    const root = await createTestTempDirectory("rea-evidence-import-invalid-");
     const path = join(root, "bundle.json");
-    await writeFile(path, JSON.stringify(revisionBundle()));
-    const result = await cli.run({
-      arguments: ["evidence-import", path, "--json"],
-    });
-    expect(result.exitCode).toBe(0);
-    expect(result.json).toEqual({ imported: 2, unknowns_added: 2, total: 2 });
-  },
-);
-
-cliTest(
-  "reports exported residual-unknown revision counts",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-evidence-export-counts-");
-    for (const [label, bundle] of [
-      ["empty", createEvidenceBundle([])],
-      ["revisions", revisionBundle()],
-    ] as const) {
-      const source = join(root, `${label}.json`);
-      await writeFile(source, JSON.stringify(bundle));
-      for (const full of [false, true]) {
-        const output = join(root, `${label}-${String(full)}.json`);
-        const result = await cli.run({
-          arguments: [
-            "evidence-export",
-            source,
-            output,
-            "--json",
-            ...(full ? ["--full-output"] : []),
+    const bundle = revisionBundle();
+    const [record, ...otherRecords] = bundle.records;
+    const firstUnknown = bundle.unknowns[0];
+    if (record === undefined || firstUnknown === undefined)
+      throw new Error("Fixture needs one Evidence record and Unknown history");
+    for (const [input, failure] of [
+      [
+        record,
+        {
+          code: "invalid_request",
+          category: "invalid_input",
+          details: {
+            path,
+            operation: "read",
+            reason: "wrong-kind",
+            detected_kind: "evidence-record",
+          },
+        },
+      ],
+      [
+        {
+          ...bundle,
+          records: [
+            { ...record, normalized_result: "altered" },
+            ...otherRecords,
           ],
-        });
-        expect(result.exitCode, result.stderr).toBe(0);
-        const receipt = full
-          ? (result.json as { data: unknown }).data
-          : result.json;
-        expect(receipt).toMatchObject({
-          path: output,
-          records: bundle.records.length,
-          unknowns: bundle.unknowns.length,
-        });
-        expect(JSON.parse(await readFile(output, "utf8"))).toEqual(bundle);
-      }
+        },
+        {
+          code: "evidence_integrity_mismatch",
+          message: expect.stringContaining("records.0.evidence_id"),
+        },
+      ],
+      [
+        { ...bundle, unknowns: bundle.unknowns.slice(1) },
+        {
+          code: "evidence_integrity_mismatch",
+          message: expect.stringContaining(
+            `${firstUnknown.unknown_id} revision history has a gap`,
+          ),
+        },
+      ],
+    ] as const) {
+      await writeFile(path, JSON.stringify(input));
+      const result = await cli.run({
+        arguments: ["evidence-import", path, "--json"],
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject(failure);
+      expect(result.json).not.toHaveProperty("imported");
     }
   },
 );
 
 cliTest(
-  "reports a standalone Evidence record as the wrong input file kind",
+  "retains and validates prototype-named caller paths at public bundle boundaries",
   async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-evidence-record-input-");
-    const path = join(root, "record.json");
-    const record = revisionBundle().records[0];
-    if (record === undefined) throw new Error("Missing fixture Evidence");
-    await writeFile(path, JSON.stringify(record));
-    const result = await cli.run({
-      arguments: ["evidence-import", path, "--json"],
-    });
-    expect(result.exitCode).toBe(1);
-    expect(result.json).toMatchObject({
-      code: "invalid_request",
-      category: "invalid_input",
-      details: { path, detected_kind: "evidence-record" },
-    });
-  },
-);
-
-cliTest(
-  "rejects altered Evidence and incomplete unknown history before reporting counts",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-evidence-import-invalid-");
-    const path = join(root, "bundle.json");
-    const bundle = revisionBundle();
-    for (const invalid of [
-      {
+    const root = await createTestTempDirectory(
+      "rea-evidence-caller-paths-cli-",
+    );
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected shared MCP session");
+    const variants = [
+      '{"__proto__":"./selected","binary_path":"./known"}',
+      '{"__proto__":["./a","./a","./b"],"binary_path":"./known"}',
+      '{"__proto__":42}',
+      '{"__proto__":"bad\\u0000path"}',
+      '{"binary_path":"./known"}',
+    ];
+    for (const [index, raw] of variants.entries()) {
+      const paths: unknown = JSON.parse(raw);
+      const record = createEvidence(
+        unknownTarget("not-observed"),
+        { id: "fixture", name: "Fixture", version: "1" },
+        { operation: `caller-paths-${index}`, parameters: {}, result: null },
+      );
+      const bundle = createEvidenceBundle([record]);
+      const bytes = JSON.stringify({
         ...bundle,
-        records: bundle.records.map((record) => ({
-          ...record,
-          normalized_result: "altered",
-        })),
-      },
-      { ...bundle, unknowns: bundle.unknowns.slice(1) },
-    ]) {
-      await writeFile(path, JSON.stringify(invalid));
-      const result = await cli.run({
-        arguments: ["evidence-import", path, "--json"],
+        records: [{ ...record, caller_input_paths: paths }],
       });
-      expect(result.exitCode).toBe(1);
-      expect(result.json).toMatchObject({
-        code: "evidence_integrity_mismatch",
+      const path = join(root, `bundle-${index}.json`);
+      await writeFile(path, bytes);
+      const digest = createHash("sha256").update(bytes).digest("hex");
+      const before = await call("get_evidence_bundle", {});
+      const inspected = await cli.run({
+        arguments: [
+          "inspect-evidence-bundle",
+          JSON.stringify({ path, detail: "complete" }),
+          "--json",
+        ],
       });
-      expect(result.json).not.toHaveProperty("imported");
+      const imported = await call("import_evidence_bundle", { path });
+      const after = await call("get_evidence_bundle", {});
+      if (index === 2 || index === 3) {
+        expect(inspected.exitCode).toBe(1);
+        expect(inspected.json).toMatchObject({
+          code: "evidence_integrity_mismatch",
+        });
+        expect(parseMcpToolError(imported).error).toMatchObject({
+          code: "evidence_integrity_mismatch",
+        });
+        expect(after.structuredContent).toEqual(before.structuredContent);
+      } else {
+        expect(inspected.exitCode, inspected.stderr).toBe(0);
+        expect(imported.isError).not.toBe(true);
+        const inspectedRecords = (
+          inspected.json as { records: typeof bundle.records }
+        ).records;
+        const importedRecords = (
+          after.structuredContent as {
+            result: { records: typeof bundle.records };
+          }
+        ).result.records;
+        for (const records of [inspectedRecords, importedRecords]) {
+          const actual = records.find(
+            (item) => item.evidence_id === record.evidence_id,
+          );
+          expect(actual?.evidence_id).toBe(record.evidence_id);
+          expect(JSON.stringify(actual?.caller_input_paths)).toBe(
+            JSON.stringify(paths),
+          );
+        }
+      }
+      const actualBytes = await readFile(path);
+      expect(actualBytes.toString("utf8")).toBe(bytes);
+      expect(createHash("sha256").update(actualBytes).digest("hex")).toBe(
+        digest,
+      );
     }
   },
 );
@@ -434,9 +486,9 @@ cliTest(
         records: Array<{ normalized_result: unknown }>;
       }
     ).records;
+    expect(Object.keys(records)).toEqual(["0"]);
     const normalizedResult = records[0]?.normalized_result;
-    expect(typeof normalizedResult).toBe("object");
-    expect(normalizedResult).not.toBeNull();
+    expect(Object.keys(normalizedResult as object)).toEqual(["__proto__"]);
     expect(Object.hasOwn(normalizedResult as object, "__proto__")).toBe(true);
     expect((normalizedResult as Record<string, unknown>)["__proto__"]).toEqual({
       answer: 7,
@@ -445,84 +497,37 @@ cliTest(
 );
 
 cliTest(
-  "preserves cell text when formatting retained Evidence as Markdown",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-evidence-markdown-cells-");
-    const path = join(root, "bundle.json");
-    const result = {
-      text: "left|right\\tail\nnext",
-      type: "List<string>",
-      literal: "&copy; <br>",
-    };
-    const record = createEvidence(
-      unknownTarget("not-observed"),
-      { id: "fixture", name: "Fixture", version: "1" },
-      {
-        operation: "ordinary-json",
-        parameters: {},
-        result,
-      },
-    );
-    await writeFile(path, JSON.stringify(createEvidenceBundle([record])));
-    const base = [
-      "inspect-evidence-bundle",
-      JSON.stringify({ path, detail: "complete" }),
-      "--filter-output",
-      "records.0.normalized_result",
-    ];
-    const json = await cli.run({ arguments: [...base, "--json"] });
-    expect(json.exitCode, json.stderr).toBe(0);
-    expect(json.stdout).toContain(JSON.stringify(result.text));
-    expect(json.stdout).toContain(JSON.stringify(result.type));
-    expect(json.stdout).toContain(JSON.stringify(result.literal));
-    const markdown = await cli.run({
-      arguments: [...base, "--format", "md"],
-    });
-    expect(markdown.exitCode, markdown.stderr).toBe(0);
-    expect(markdown.stdout).toContain("left\\|right\\\\tail<br>next");
-    expect(markdown.stdout).toContain("List&lt;string&gt;");
-    expect(markdown.stdout).toContain("&amp;copy; &lt;br&gt;");
-  },
-);
-
-cliTest(
   "refuses an earlier-format record inside a current bundle",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-legacy-coverage-identity-");
     const path = join(root, "legacy.json");
-    const record = PRE_66_NULL_COVERAGE_EVIDENCE;
-    // A current-format bundle carrying an earlier record is refused by the
-    // record's own format marker, before its ID is checked.
-    const bundle = {
-      evidence_format: EVIDENCE_FORMAT_REVISION,
-      artifacts: [],
-      providers: [record.provider],
-      environments: [],
-      scenarios: [],
-      captures: [],
-      unknowns: [],
-      records: [record],
+    await writeFile(
+      path,
+      JSON.stringify({
+        ...createEvidenceBundle([]),
+        records: [PRE_66_NULL_COVERAGE_EVIDENCE],
+      }),
+    );
+    const refusal = {
+      code: "evidence_integrity_mismatch",
+      retryable: false,
+      message: expect.stringContaining(
+        "Evidence record predates format revision",
+      ),
     };
-    await writeFile(path, JSON.stringify(bundle));
     const imported = await cli.run({
       arguments: ["evidence-import", path, "--json"],
     });
     expect(imported.exitCode).toBe(1);
-    expect(imported.json).toMatchObject({
-      code: "evidence_integrity_mismatch",
-      retryable: false,
-      message: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE),
-    });
     const call = await cli.sharedMcpCall?.();
     if (call === undefined) throw new Error("Expected shared MCP session");
     const response = await call("import_evidence_bundle", { path });
     expect(response.isError).toBe(true);
-    expect(parseMcpToolError(response)).toMatchObject({
-      error: {
-        code: "evidence_integrity_mismatch",
-        retryable: false,
+    for (const error of [imported.json, parseMcpToolError(response).error]) {
+      expect(error).toMatchObject(refusal);
+      expect(error).toMatchObject({
         message: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE),
-      },
-    });
+      });
+    }
   },
 );

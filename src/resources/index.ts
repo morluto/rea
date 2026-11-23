@@ -29,6 +29,7 @@ export { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 export {
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
+  ArtifactFileFailureGroup,
   artifactFileCancellationCause,
   artifactFileCompletion,
   artifactFilePrimaryFacts,
@@ -37,6 +38,7 @@ export {
   artifactReadCancelledBy,
   artifactSelectedPathErrno,
   assertArtifactReadActive,
+  yieldArtifactRead,
   bindArtifactFileCleanup,
   mapArtifactFileFailure,
   withArtifactFileHandle,
@@ -109,11 +111,15 @@ export {
   completedStableArtifactStream,
   readStableArtifact,
   streamStableArtifact,
+  withStableArtifactHandle,
 } from "./readStableArtifact.js";
 export type {
   StableArtifactFileSystem,
+  StableArtifactHandle,
+  StableArtifactHandleOptions,
   StableArtifactSnapshot,
   StableArtifactStream,
+  StableArtifactStreamOptions,
 } from "./readStableArtifact.js";
 export {
   ArtifactPathRegistry,
@@ -147,5 +153,8 @@ export {
   ZIP_READER_OPTIONS,
   ZipArtifactReader,
   decodeZipEntryText,
+  zipEntryNameLimitations,
   zipEntryPath,
+  zipListingCoverage,
+  typedZipFailure,
 } from "./ZipArtifactReader.js";

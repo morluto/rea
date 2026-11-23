@@ -6,8 +6,13 @@ import {
   MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
 } from "../../domain/native/elfDependencies.js";
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import { readElfDependencies } from "../../domain/desktop/elfDependencies.js";
+import { readElfHardening } from "../hardening/ElfHardening.js";
 import { elfDependencyFixture, elfHash } from "./ElfDependencies.fixture.js";
-import { readElfDependenciesSteps } from "./ElfDependencyParser.js";
+import {
+  parseElfDependenciesFromHandle,
+  readElfDependenciesSteps,
+} from "./ElfDependencyParser.js";
 
 const parseElfDependencies = (
   ...arguments_: Parameters<typeof readElfDependenciesSteps>
@@ -43,6 +48,184 @@ const parse = (
   );
 
 const defaultNeeded = ["libstdc++.so.6", "libm.so.6", "libc.so.6"];
+
+it.each([
+  { bits: 32, little: false },
+  { bits: 64, little: true },
+] as const)(
+  "reports a partial PT_DYNAMIC row in ELF$bits without discarding earlier dependencies",
+  async ({ bits, little }) => {
+    const width = bits === 64 ? 16 : 8;
+    for (const extra of [width, 1, 1 - width]) {
+      const bytes = elfDependencyFixture({
+        bits,
+        little,
+        stripped: true,
+        interpreter: null,
+        dynamicTailBytes: extra,
+      });
+      const report = parse(bytes);
+      expect(report.needed.map(({ name }) => name)).toEqual(defaultNeeded);
+      const desktop = await readElfDependencies(
+        async (offset, size) => bytes.subarray(offset, offset + size),
+        bytes.length,
+      );
+      if (extra === width) {
+        expect(report.coverage.status).toBe("complete");
+        expect(desktop).toMatchObject({
+          ok: true,
+          value: { needed: defaultNeeded },
+        });
+        expect(readElfHardening(bytes).format).toBe("elf");
+      } else {
+        expect(report.coverage.status).toBe("partial");
+        expect(report.issues).toContainEqual({
+          code: "malformed_entry",
+          // PT_DYNAMIC is the final payload of the stripped fixture.
+          location: `0x${(bytes.length - 1).toString(16)}`,
+          message: "ELF PT_DYNAMIC size is not a whole number of entries",
+        });
+        expect(desktop).toMatchObject({
+          ok: false,
+          error: {
+            kind: "unreadable",
+            reason: "ELF PT_DYNAMIC size is not a whole number of entries",
+          },
+        });
+        expect(() => readElfHardening(bytes)).toThrow(
+          "ELF PT_DYNAMIC size is not a whole number of entries",
+        );
+      }
+    }
+  },
+);
+
+const elf64ProgramHeaders = (original: Buffer) => {
+  const phoff = Number(original.readBigUInt64LE(32));
+  const phentsize = original.readUInt16LE(54);
+  const phnum = original.readUInt16LE(56);
+  const programHeaders = Array.from(
+    { length: phnum },
+    (_, index) => phoff + index * phentsize,
+  );
+  return { phoff, phentsize, phnum, programHeaders };
+};
+
+const elf64DynamicTags = (original: Buffer, headers: readonly number[]) => {
+  const dynamic = headers.find((offset) => original.readUInt32LE(offset) === 2);
+  if (dynamic === undefined) throw new Error("Expected PT_DYNAMIC");
+  const start = Number(original.readBigUInt64LE(dynamic + 8));
+  const count = Number(original.readBigUInt64LE(dynamic + 32)) / 16;
+  return new Map(
+    Array.from({ length: count }, (_, index) => {
+      const offset = start + index * 16;
+      return [
+        original.readBigInt64LE(offset),
+        original.readBigUInt64LE(offset + 8),
+      ];
+    }),
+  );
+};
+
+const shortenElf64IdentityLoad = (
+  original: Buffer,
+  bytes: Buffer,
+  { phoff, programHeaders }: ReturnType<typeof elf64ProgramHeaders>,
+  end: bigint,
+) => {
+  const load = programHeaders.find(
+    (offset) => original.readUInt32LE(offset) === 1,
+  );
+  if (load === undefined) throw new Error("Expected PT_LOAD");
+  const movedLoad = original.length + load - phoff;
+  bytes.writeBigUInt64LE(end, movedLoad + 32);
+  bytes.writeBigUInt64LE(end, movedLoad + 40);
+};
+
+const appendElf64ZeroFill = (
+  original: Buffer,
+  { phoff, phentsize, phnum }: ReturnType<typeof elf64ProgramHeaders>,
+) => {
+  const bytes = Buffer.concat([
+    original,
+    Buffer.alloc((phnum + 1) * phentsize),
+  ]);
+  original.copy(bytes, original.length, phoff, phoff + phnum * phentsize);
+  bytes.writeBigUInt64LE(BigInt(original.length), 32);
+  bytes.writeUInt16LE(phnum + 1, 56);
+  const alias = original.length + phnum * phentsize;
+  bytes.writeUInt32LE(1, alias);
+  bytes.writeUInt32LE(4, alias + 4);
+  bytes.writeBigUInt64LE(1n, alias + 40);
+  bytes.writeBigUInt64LE(1n, alias + 48);
+  return { bytes, alias };
+};
+
+it.each([
+  { stripped: true, unmappedTail: false },
+  { stripped: false, unmappedTail: false },
+  { stripped: false, unmappedTail: true },
+])(
+  "leaves dynamic strings unknown on a zero-fill overlap (stripped: $stripped, unmapped tail: $unmappedTail)",
+  ({ stripped, unmappedTail }) => {
+    const original = elfDependencyFixture({ bits: 64, little: true, stripped });
+    const headers = elf64ProgramHeaders(original);
+    const tags = elf64DynamicTags(original, headers.programHeaders);
+    const stringAddress = tags.get(5n);
+    const stringSize = tags.get(10n);
+    if (stringAddress === undefined || stringSize === undefined)
+      throw new Error("Expected DT_STRTAB and DT_STRSZ");
+    const { bytes, alias } = appendElf64ZeroFill(original, headers);
+    if (unmappedTail)
+      // The table starts in the identity mapping, but its section alone describes the tail.
+      shortenElf64IdentityLoad(original, bytes, headers, stringAddress + 2n);
+    bytes.writeBigUInt64LE(stringAddress + stringSize, alias + 16);
+    expect(parse(bytes).needed.map(({ name }) => name)).toEqual(defaultNeeded);
+
+    // The initial NUL byte still maps uniquely; a later string byte does not.
+    bytes.writeBigUInt64LE(stringAddress + 1n, alias + 16);
+    const report = parse(bytes);
+    expect(report.needed.map(({ name }) => name)).toEqual([null, null, null]);
+    expect(report.coverage.status).toBe("partial");
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        code: "table_unavailable",
+        message: "ELF dynamic string table has ambiguous file mappings",
+      }),
+    );
+  },
+);
+
+it.each([false, true])(
+  "keeps independent dependency names when dynamic symbol bytes disagree (string table gap: %s)",
+  (stringGap) => {
+    const original = elfDependencyFixture();
+    const headers = elf64ProgramHeaders(original);
+    const tags = elf64DynamicTags(original, headers.programHeaders);
+    const symtab = tags.get(6n);
+    const strtab = tags.get(5n);
+    if (symtab === undefined || strtab === undefined)
+      throw new Error("Expected DT_SYMTAB and DT_STRTAB");
+    const { bytes, alias } = appendElf64ZeroFill(original, headers);
+    if (stringGap)
+      shortenElf64IdentityLoad(original, bytes, headers, strtab + 2n);
+    bytes.writeBigUInt64LE(BigInt(original.length), alias + 16);
+    expect(parse(bytes).imports.map(({ name }) => name)).toEqual([
+      "printf",
+      "memcpy",
+      "_ZSt4cout",
+      "abort",
+      "_exit",
+    ]);
+
+    // The symbol table start stays mapped; a later symbol occupies both kinds of storage.
+    bytes.writeBigUInt64LE(symtab + 24n, alias + 16);
+    const report = parse(bytes);
+    expect(report.needed.map(({ name }) => name)).toEqual(defaultNeeded);
+    expect(report.imports).toEqual([]);
+    expect(report.coverage.status).toBe("partial");
+  },
+);
 
 /** The version_unresolved issue a GNU version table reports at its own offset. */
 const versionTableIssue = (table: {
@@ -257,7 +440,82 @@ it("falls back to PT_DYNAMIC and DT_* virtual addresses when section headers are
     "_exit",
   ]);
   expect(report.version_requirements.files[0]?.file).toBe("libc.so.6");
+
+  const blocked = parse(
+    elfDependencyFixture({ stripped: true, versymZeroFillOffset: 1 }),
+  );
+  expect(blocked.imports).toEqual(
+    report.imports.map((entry) => ({ ...entry, version: null })),
+  );
+  expect(blocked.coverage.status).toBe("partial");
+  expect(blocked.issues).toContainEqual(
+    expect.objectContaining({
+      code: "table_unavailable",
+      message:
+        "GNU versym table could not be located from section headers or DT_VERSYM",
+    }),
+  );
 });
+
+it.each([
+  { table: "version_requirements", tag: 0x6ffffffen, leading: 48 },
+  { table: "version_definitions", tag: 0x6ffffffcn, leading: 28 },
+] as const)(
+  "keeps only the mapped $table prefix when a later load translates differently",
+  ({ table, tag, leading }) => {
+    const original = elfDependencyFixture({
+      stripped: true,
+      verdef: [
+        { name: "libdemo.so.1", index: 1, flags: 1 },
+        { name: "DEMO_1.0", index: 5 },
+      ],
+    });
+    const headers = elf64ProgramHeaders(original);
+    const start = elf64DynamicTags(original, headers.programHeaders).get(tag);
+    if (start === undefined)
+      throw new Error("Expected the selected dynamic version table");
+    const { bytes, alias } = appendElf64ZeroFill(original, headers);
+    const boundary = start + BigInt(leading);
+    for (const field of [16, 24])
+      bytes.writeBigUInt64LE(boundary, alias + field);
+    bytes.writeBigUInt64LE(1n, alias + 32);
+    bytes.writeBigUInt64LE(boundary, alias + 8);
+    const intact = parse(bytes);
+    expect(intact.coverage.status).toBe("complete");
+
+    // Readable bytes in the original file no longer establish this virtual address.
+    bytes.writeBigUInt64LE(0n, alias + 8);
+    const blocked = parse(bytes);
+    const expectedTable = intact[table];
+    expect(blocked[table]).toMatchObject({
+      status: "unreadable",
+      location: { offset: Number(start), bytes: leading },
+      ...("files" in expectedTable
+        ? { files: expectedTable.files.slice(0, 1) }
+        : { names: expectedTable.names.slice(0, 1) }),
+    });
+    expect(blocked.coverage.status).toBe("partial");
+    expect(blocked.needed).toEqual(intact.needed);
+    expect(blocked.imports).toEqual(
+      table === "version_definitions"
+        ? intact.imports
+        : intact.imports.map((row) =>
+            row.name === "_ZSt4cout"
+              ? {
+                  ...row,
+                  version: {
+                    index: 4,
+                    hidden: false,
+                    name: null,
+                    file: null,
+                    status: "unknown",
+                  },
+                }
+              : row,
+          ),
+    );
+  },
+);
 
 it("reads a stripped DT_HASH that crosses two adjacent PT_LOAD mappings", () => {
   const report = parse(
@@ -271,6 +529,36 @@ it("reads a stripped DT_HASH that crosses two adjacent PT_LOAD mappings", () => 
     "abort",
     "_exit",
   ]);
+});
+
+it("keeps the symbol section when the dynamic hash count is only file-backed", () => {
+  const base = elfDependencyFixture({ splitLoadAtHash: true });
+  const { programHeaders } = elf64ProgramHeaders(base);
+  const tags = elf64DynamicTags(base, programHeaders);
+  const hash = tags.get(4n);
+  const dynsym = tags.get(6n);
+  const tail = programHeaders.filter(
+    (header) => base.readUInt32LE(header) === 1,
+  )[1];
+  if (hash === undefined || dynsym === undefined || tail === undefined)
+    throw new Error("Expected hash and symbol tables in two loads");
+  const original = parse(base);
+  for (const start of [hash + 12n, dynsym]) {
+    const bytes = Buffer.from(base);
+    // The header maps, but the body has a gap either before or at its last word.
+    const skipped = start - bytes.readBigUInt64LE(tail + 8);
+    for (const field of [8, 16, 24])
+      bytes.writeBigUInt64LE(start, tail + field);
+    const remaining = bytes.readBigUInt64LE(tail + 32) - skipped;
+    for (const field of [32, 40])
+      bytes.writeBigUInt64LE(remaining, tail + field);
+    bytes.writeUInt32LE(2, Number(hash) + 4);
+    const report = parse(bytes);
+    expect(report.imports, `post-gap load at 0x${start.toString(16)}`).toEqual(
+      original.imports,
+    );
+    expect(report.coverage.status).toBe("complete");
+  }
 });
 
 it("counts stripped dynsym rows from DT_GNU_HASH when DT_HASH is absent", () => {
@@ -642,28 +930,154 @@ it("takes the symbol count from GNU hash when .hash is past the file end", () =>
   );
 });
 
+it("falls back to DT_GNU_HASH when SHT_GNU_HASH is truncated", () => {
+  const intact = parse(
+    elfDependencyFixture({
+      omitHash: true,
+      gnuHash: true,
+      gnuHashSection: true,
+    }),
+  );
+  const report = parse(
+    elfDependencyFixture({
+      omitHash: true,
+      gnuHash: true,
+      gnuHashSection: true,
+      oversizedSection: ".dynsym",
+      sectionSizes: { ".gnu.hash": 16 },
+    }),
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(report.imports).toEqual(intact.imports);
+  expect(
+    report.issues.some((issue) => issue.code === "table_unavailable"),
+  ).toBe(false);
+});
+
+it("reports .gnu.hash past EOF and falls back to DT_GNU_HASH", () => {
+  const intact = parse(
+    elfDependencyFixture({
+      omitHash: true,
+      gnuHash: true,
+      gnuHashSection: true,
+    }),
+  );
+  const withDynamic = parse(
+    elfDependencyFixture({
+      omitHash: true,
+      gnuHash: true,
+      gnuHashSection: true,
+      oversizedSection: ".dynsym",
+      sectionSizes: { ".gnu.hash": 100_000 },
+    }),
+  );
+  expect(withDynamic.coverage.status).toBe("partial");
+  expect(withDynamic.imports).toEqual(intact.imports);
+  expect(withDynamic.issues).toContainEqual(
+    expect.objectContaining({
+      code: "malformed_entry",
+      message:
+        ".gnu.hash section header declares bytes past the end of the file",
+    }),
+  );
+
+  const withoutDynamic = parse(
+    elfDependencyFixture({
+      omitHash: true,
+      gnuHash: true,
+      gnuHashSection: true,
+      oversizedSection: ".dynsym",
+      displacedSection: ".gnu.hash",
+      omitGnuHashTag: true,
+    }),
+  );
+  expect(withoutDynamic.coverage.status).toBe("partial");
+  expect(withoutDynamic.imports).toEqual([]);
+  expect(withoutDynamic.issues).toContainEqual(
+    expect.objectContaining({
+      code: "malformed_entry",
+      message:
+        ".gnu.hash section header declares bytes past the end of the file",
+    }),
+  );
+  expect(withoutDynamic.issues).toContainEqual(
+    expect.objectContaining({
+      code: "table_unavailable",
+      message: expect.stringContaining("Dynamic symbol count"),
+    }),
+  );
+});
+
+it("reads symbol count from an in-file SHT_GNU_HASH section when DT_GNU_HASH is absent", () => {
+  const intact = parse(
+    elfDependencyFixture({
+      omitHash: true,
+      gnuHash: true,
+      gnuHashSection: true,
+    }),
+  );
+  const report = parse(
+    elfDependencyFixture({
+      omitHash: true,
+      gnuHash: true,
+      gnuHashSection: true,
+      omitGnuHashTag: true,
+      oversizedSection: ".dynsym",
+    }),
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(report.imports).toEqual(intact.imports);
+  expect(
+    report.issues.some((issue) => issue.message.includes(".gnu.hash")),
+  ).toBe(false);
+});
+
 it.each([32, 64] as const)(
-  "keeps ELF%i imports inside a .dynsym section shorter than the hash count",
+  "keeps ELF%i imports inside aligned and unaligned short dynamic symbol sections",
   (bits) => {
-    // Three whole symbols and one stray byte: the size is not a multiple of
-    // the entry size, so the count falls back to the hash table's six symbols.
-    const sectionBytes = 3 * (bits === 64 ? 24 : 16) + 1;
-    const report = parse(
-      elfDependencyFixture({ bits, sectionSizes: { ".dynsym": sectionBytes } }),
-    );
-    expect(report.coverage.status).toBe("partial");
-    expect(report.imports.map((row) => row.name)).toEqual(["printf", "memcpy"]);
-    expect(report.imports).toEqual(
-      parse(elfDependencyFixture({ bits })).imports.slice(0, 2),
-    );
-    expect(report.issues).toContainEqual(
-      expect.objectContaining({
-        code: "malformed_entry",
-        message: expect.stringContaining("dynamic symbol count"),
-      }),
-    );
+    const prefix = parse(elfDependencyFixture({ bits })).imports.slice(0, 2);
+    for (const tail of [0, 1]) {
+      const sectionBytes = 3 * (bits === 64 ? 24 : 16) + tail;
+      const report = parse(
+        elfDependencyFixture({
+          bits,
+          sectionSizes: { ".dynsym": sectionBytes },
+        }),
+      );
+      expect(report.coverage.status, `trailing bytes: ${tail}`).toBe("partial");
+      expect(report.imports).toEqual(prefix);
+      expect(report.issues).toContainEqual(
+        expect.objectContaining({
+          code: "malformed_entry",
+          message: expect.stringContaining("dynamic symbol count"),
+        }),
+      );
+    }
   },
 );
+
+it("keeps DT_HASH authoritative over an aligned extra symbol row", () => {
+  const inspect = (symbols: number) => {
+    const bytes = elfDependencyFixture({
+      sectionSizes: { ".dynsym": symbols * 24 },
+    });
+    const { programHeaders } = elf64ProgramHeaders(bytes);
+    const strings = elf64DynamicTags(bytes, programHeaders).get(5n);
+    if (strings === undefined) throw new Error("Expected DT_STRTAB");
+    // The bytes after .dynsym would look like an undefined symbol if trusted.
+    bytes.writeUInt16LE(0, Number(strings) + 6);
+    return parse(bytes);
+  };
+  const report = inspect(7);
+  expect(report.imports).toEqual(inspect(6).imports);
+  expect(report.coverage.status).toBe("partial");
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({
+      code: "malformed_entry",
+      message: expect.stringContaining("past the DT_HASH dynamic symbol count"),
+    }),
+  );
+});
 
 it.each([32, 64] as const)(
   "strides ELF%i symbols by the class width when .dynsym sh_entsize disagrees",
@@ -763,48 +1177,33 @@ it("keeps readable results when an ELF64 name offset exceeds 32 bits", () => {
   );
 });
 
+it("distinguishes SONAME termination at the scan boundary from a bare table end", () => {
+  const base = { runpath: null, imports: [], verneed: [], verdef: [] };
+  const terminated = parse(
+    elfDependencyFixture({ ...base, soname: "s".repeat(65535) }),
+  );
+  expect(terminated.dynamic.soname?.name).toHaveLength(65535);
+  expect(terminated.coverage.status).toBe("complete");
+  const unterminated = parse(
+    elfDependencyFixture({
+      ...base,
+      soname: "s".repeat(65536),
+      truncateDynstr: true,
+    }),
+  );
+  expect(unterminated.dynamic.soname?.name).toBeNull();
+  expect(unterminated.coverage.status).toBe("partial");
+  expect(unterminated.issues).toContainEqual({
+    location: "DT_SONAME",
+    code: "name_unreadable",
+    message: "DT_SONAME string is unterminated in the dynamic string table",
+  });
+});
+
 it("rejects duplicate unique dynamic tags", () => {
   expect(() => parse(elfDependencyFixture({ duplicateSoname: true }))).toThrow(
     /Duplicate dynamic tag/u,
   );
-});
-
-it("fails when DT_NEEDED entries exceed the caller-selected budget", () => {
-  try {
-    parse(elfDependencyFixture(), { max_needed: 2 });
-    throw new Error("Expected DT_NEEDED budget failure");
-  } catch (cause) {
-    expect(cause).toBeInstanceOf(ParseFailureError);
-    if (cause instanceof ParseFailureError) {
-      expect(cause.failure).toMatchObject({
-        kind: "limit",
-        limit: { name: "max_needed", maximum: 2, required: 3 },
-      });
-      expect(cause.message).toContain("DT_NEEDED");
-    }
-  }
-});
-
-it("fails when GNU version records exceed the caller-selected budget", () => {
-  try {
-    parse(elfDependencyFixture(), { max_versions: 2 });
-    throw new Error("Expected version budget failure");
-  } catch (cause) {
-    expect(cause).toBeInstanceOf(ParseFailureError);
-    if (cause instanceof ParseFailureError)
-      expect(cause.message).toContain("GNU version records");
-  }
-});
-
-it("fails when undefined symbols exceed the caller-selected import budget", () => {
-  try {
-    parse(elfDependencyFixture(), { max_imports: 2 });
-    throw new Error("Expected import budget failure");
-  } catch (cause) {
-    expect(cause).toBeInstanceOf(ParseFailureError);
-    if (cause instanceof ParseFailureError)
-      expect(cause.message).toContain("Undefined dynamic symbols");
-  }
 });
 
 it.each([
@@ -825,24 +1224,6 @@ it.each([
     );
   },
 );
-
-it("reports a fixed ceiling when dynamic symbols pass it under default budgets", () => {
-  const imports = Array.from({ length: 262145 }, (_, index) => ({
-    name: `s${String(index)}`,
-  }));
-  expect(() => parse(elfDependencyFixture({ imports }))).toThrow(
-    expect.objectContaining({
-      failure: expect.objectContaining({
-        kind: "limit",
-        format: "elf-dependencies",
-        limit: expect.objectContaining({
-          name: "dynamic_symbols",
-          maximum: 262144,
-        }),
-      }),
-    }),
-  );
-});
 
 it("keeps ELF64 flag bits above the low 32", () => {
   const report = parse(
@@ -869,6 +1250,98 @@ const elf64ProgramHeader = (bytes: Buffer, type: number): number => {
   }
   throw new Error(`Fixture has no program header of type ${type}`);
 };
+
+const readFromSource = (
+  bytes: Buffer,
+  readRange: (offset: number, length: number) => Promise<Buffer> = async (
+    offset,
+    length,
+  ) => bytes.subarray(offset, offset + length),
+) =>
+  parseElfDependenciesFromHandle(
+    { size: bytes.length, prefix: bytes.subarray(0, 64), readRange },
+    { path: artifactPath, sha256: "ab".repeat(32), bytes: bytes.length },
+    inspectElfDependenciesInputSchema.parse({ path: artifactPath }),
+    async () => {},
+  );
+
+it("validates a declared ELF header larger than the fixed prefix against the file", async () => {
+  const original = elfDependencyFixture({
+    bits: 64,
+    little: true,
+    stripped: true,
+  });
+  const tableOffset = Number(original.readBigUInt64LE(32));
+  const tableBytes = original.readUInt16LE(54) * original.readUInt16LE(56);
+  const bytes = Buffer.concat([
+    original,
+    original.subarray(tableOffset, tableOffset + tableBytes),
+  ]);
+  bytes.fill(0, 64, 128);
+  bytes.writeUInt16LE(128, 52);
+  bytes.writeBigUInt64LE(BigInt(original.length), 32);
+  const report = await readFromSource(bytes);
+  expect(report.needed.map(({ name }) => name)).toEqual(defaultNeeded);
+  expect(report).toEqual(parse(bytes));
+});
+
+it("reuses the cached string window for adjacent short names", async () => {
+  const needed = Array.from(
+    { length: 320 },
+    (_, index) => `libsample-${String(index)}.so`,
+  );
+  const bytes = elfDependencyFixture({
+    bits: 64,
+    little: true,
+    stripped: true,
+    needed,
+    interpreter: null,
+  });
+  const dynamic = Number(
+    bytes.readBigUInt64LE(elf64ProgramHeader(bytes, 2) + 8),
+  );
+  let tableAt = 0;
+  let tableSize = 0;
+  for (let entry = dynamic; bytes.readBigUInt64LE(entry) !== 0n; entry += 16) {
+    const tag = bytes.readBigUInt64LE(entry);
+    if (tag === 5n) tableAt = Number(bytes.readBigUInt64LE(entry + 8));
+    if (tag === 10n) tableSize = Number(bytes.readBigUInt64LE(entry + 8));
+  }
+  expect(tableSize).toBeGreaterThan(4096);
+  let tableReads = 0;
+  const report = await readFromSource(bytes, async (offset, length) => {
+    if (offset >= tableAt && offset < tableAt + tableSize) tableReads++;
+    return bytes.subarray(offset, offset + length);
+  });
+  expect(report.needed.map(({ name }) => name)).toEqual(needed);
+  expect(report).toEqual(parse(bytes));
+  expect(tableReads).toBeGreaterThan(0);
+  expect(tableReads).toBeLessThanOrEqual(4);
+});
+
+it("bounds reads of large dynamic string and interpreter extents", async () => {
+  const longName = "x".repeat(2 * 65536);
+  const bytes = elfDependencyFixture({
+    bits: 64,
+    little: true,
+    stripped: true,
+    needed: ["libshort.so", longName],
+    interpreter: longName,
+  });
+  const reads: number[] = [];
+  const report = await readFromSource(bytes, async (offset, length) => {
+    expect(length).toBeLessThanOrEqual(65536);
+    reads.push(length);
+    return bytes.subarray(offset, offset + length);
+  });
+  expect(report).toEqual(parse(bytes));
+  expect(reads).toContain(65536);
+  expect(report.needed.map(({ name }) => name)).toEqual(["libshort.so", null]);
+  expect(report.interpreter).toMatchObject({
+    status: "unreadable",
+    location: { bytes: longName.length + 1 },
+  });
+});
 
 it.each([0x1_0000_0000n, 0x1_0000_0001n])(
   "does not match ELF64 tag %s against a known 32-bit tag",
@@ -975,27 +1448,72 @@ it("marks an empty PT_INTERP path unreadable with partial coverage", () => {
   );
 });
 
-it("keeps imports unresolved when two verneed entries share a version index", () => {
+it("joins import versions only with one complete owning library and name", () => {
   const report = parse(
     elfDependencyFixture({
       verneed: [
-        { file: "liba.so.1", versions: [{ name: "A_1.0", index: 2 }] },
-        { file: "libb.so.1", versions: [{ name: "B_1.0", index: 2 }] },
+        {
+          file: "liba.so.1",
+          versions: [
+            { name: "A_1.0", index: 2 },
+            { name: "", index: 4 },
+            { name: "A_5.0", index: 5 },
+          ],
+        },
+        {
+          file: "",
+          versions: [
+            { name: "B_3.0", index: 3 },
+            { name: "", index: 6 },
+          ],
+        },
+        {
+          file: "libc.so.1",
+          versions: [
+            { name: "C_5.0", index: 5 },
+            { name: "C_6.0", index: 6 },
+          ],
+        },
       ],
-      imports: [{ name: "shared", version: 2 }],
+      imports: [2, 3, 4, 5, 6].map((version) => ({
+        name: `sym_${version}`,
+        version,
+      })),
     }),
   );
   expect(report.coverage.status).toBe("partial");
-  expect(report.version_requirements.files).toHaveLength(2);
-  expect(report.imports[0]?.version).toEqual({
-    index: 2,
-    hidden: false,
-    name: null,
+  expect(report.imports.map(({ version }) => version)).toEqual(
+    [
+      [2, "A_1.0", "liba.so.1", "resolved"],
+      [3, "B_3.0", null, "unknown"],
+      [4, null, "liba.so.1", "unknown"],
+      [5, null, null, "unknown"],
+      [6, null, null, "unknown"],
+    ].map(([index, name, file, status]) => ({
+      index,
+      name,
+      file,
+      status,
+      hidden: false,
+    })),
+  );
+  expect(report.version_requirements.files[1]).toMatchObject({
     file: null,
-    status: "unknown",
+    versions: [
+      { index: 3, name: "B_3.0" },
+      { index: 6, name: null },
+    ],
   });
-  expect(report.issues).toContainEqual(
-    expect.objectContaining({ code: "version_unresolved" }),
+  expect(
+    report.issues.filter(({ code }) => code === "version_unresolved"),
+  ).toEqual(
+    [5, 6].map((index) =>
+      expect.objectContaining({
+        message: expect.stringContaining(
+          `assign version index ${index} more than once`,
+        ),
+      }),
+    ),
   );
 });
 
@@ -1180,4 +1698,51 @@ it("reports the fixed GNU hash allowance before traversing an over-limit table",
       }),
     }),
   );
+});
+
+it.each([
+  [2, 32],
+  [18, 32],
+  [43, 64],
+] as const)(
+  "does not count SPARC register declarations as imports on machine %s",
+  (machine, bits) => {
+    // JNA's sunos-sparcv9 libjnidispatch.so declares %g2 and %g3 this way:
+    // undefined STT_SPARC_REGISTER (type 13) entries with empty names.
+    const report = parse(
+      elfDependencyFixture({
+        bits,
+        little: false,
+        machine,
+        imports: [
+          { name: "printf", version: 1 },
+          { name: "", type: 13, version: 0 },
+        ],
+      }),
+    );
+    expect(report.imports.map(({ name }) => name)).toEqual(["printf"]);
+    expect(report.coverage).toMatchObject({
+      status: "complete",
+      examined_imports: 1,
+    });
+    expect(report.issues).toEqual([]);
+  },
+);
+
+it("keeps processor-specific symbol type 13 as an import outside SPARC", () => {
+  const report = parse(
+    elfDependencyFixture({
+      bits: 64,
+      little: true,
+      imports: [
+        { name: "printf", version: 1 },
+        { name: "", type: 13, version: 0 },
+      ],
+    }),
+  );
+  expect(report.imports.map(({ name, type }) => [name, type])).toEqual([
+    ["printf", "function"],
+    [null, "other"],
+  ]);
+  expect(report.coverage.status).toBe("partial");
 });

@@ -29,11 +29,11 @@ import {
   type ContractCommandContext,
 } from "./contractCommand.js";
 import type { ReverseEngineeringService } from "../application/reverse/ReverseEngineeringService.js";
-import { gdbOneShotCommandMayInvalidateDetachProof } from "../gdb/GdbSessionManager.js";
 import {
   createGdbSessionManager,
   createRizinDebugSessionManager,
 } from "../composition/debuggerSessions.js";
+import { gdbOneShotCommandMayInvalidateDetachProof } from "../gdb/GdbCommandClassification.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   retainedDebuggerDiagnostics,
@@ -43,6 +43,8 @@ import {
 import {
   analysisEvidenceDeliveryOptions,
   cliEvidenceDeliveryInputError,
+} from "./analysisEvidenceDeliveryOptions.js";
+import {
   deliverCliAnalysisEvidence,
   publishCliAnalysisEvidence,
 } from "./analysisEvidenceDelivery.js";

@@ -70,6 +70,7 @@ export interface PeLoadConfigFixtureOptions {
   /** In-section callbacks when `callbacks` is present. Defaults to the rich trio. */
   readonly callbackCount?: number;
   readonly zeroFillCallback?: boolean;
+  readonly textVirtualSize?: number;
   readonly rawDataRange?: readonly [number, number];
   readonly securityCookie?: "mapped" | "zero";
   readonly directoryCount?: number;
@@ -107,7 +108,9 @@ export const peLoadConfigImage = (
   bytes.writeUInt32LE(layout.dataFile, optional + 60);
   bytes.writeUInt32LE(directoryCount, optional + directoriesAt - 4);
   const section = optional + optionalSize;
-  const textVirtual = options.zeroFillCallback ? 0x400 : layout.textBytes;
+  const textVirtual =
+    options.textVirtualSize ??
+    (options.zeroFillCallback ? 0x400 : layout.textBytes);
   writeSection(bytes, section, ".data", {
     virtualSize: layout.dataBytes,
     virtualAddress: layout.dataRva,

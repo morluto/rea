@@ -1,29 +1,29 @@
+import type { RequestAnalysisPort } from "../ports/AnalysisProvider.js";
+import type { AdbRequest } from "../domain/adb/adbDeviceAnalysis.js";
 import { z } from "zod";
 import type { Logger } from "pino";
 
 import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
-import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
 import { createAdbDeviceAnalysisProvider } from "../composition/adb.js";
 import { ADB_TOOL_CONTRACTS } from "../contracts/adb/adbToolContracts.js";
 import { cliCommandFor } from "../contracts/cliCommandNames.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
+  activityExtraCliEntrySchema,
   MAX_ADB_ACTIVITY_EXTRAS,
   type AdbOperation,
 } from "../domain/adb/adbDeviceAnalysis.js";
-import { err, ok, type Result } from "../domain/result.js";
+import { publishArgvInput } from "./options.js";
 import type { CliInstance } from "./types.js";
-import {
-  contractNamed,
-  type CliContractProjection,
-  type ContractField,
-} from "./contractCliDescription.js";
+import { contractNamed } from "./contractCliDescription.js";
+import type {
+  CliContractProjection,
+  ContractField,
+} from "./contractCliDescriptionTypes.js";
+import { registerContractCommand } from "./contractCommand.js";
 import {
   analyzeWithService,
-  registerContractCommand,
   type EvidenceInspectionService,
-} from "./contractCommand.js";
+} from "./contractCommandRunners.js";
 
 type AdbContract<Name extends AdbOperation> = Extract<
   (typeof ADB_TOOL_CONTRACTS)[number],
@@ -243,52 +243,12 @@ const ADB_COMMANDS: {
   ],
 };
 
-type ActivityExtraType = "string" | "boolean" | "int" | "long" | "float";
-
-/**
- * Split each `--extra type:key:value` at its first two colons, so a value may
- * contain colons. The contract then admits each extra's type, key and value.
- */
-const activityExtras = (
-  entries: readonly string[],
-): Result<
-  {
-    readonly type: ActivityExtraType;
-    readonly key: string;
-    readonly value: string;
-  }[],
-  AnalysisInputError
-> => {
-  const extras = [];
-  for (const [index, entry] of entries.entries()) {
-    const first = entry.indexOf(":");
-    const second = entry.indexOf(":", first + 1);
-    if (first === -1 || second === -1)
-      return err(
-        new AnalysisInputError("start_adb_activity", undefined, [
-          {
-            path: ["extras", index],
-            reason: "invalid_format",
-            message: "Expected --extra in type:key:value form.",
-            expected: "type:key:value",
-          },
-        ]),
-      );
-    extras.push({
-      type: entry.slice(0, first) as ActivityExtraType,
-      key: entry.slice(first + 1, second),
-      value: entry.slice(second + 1),
-    });
-  }
-  return ok(extras);
-};
-
 /** Expose the same explicit ADB requests through one-shot CLI commands. */
 export const registerAdbCommands = (
   cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
-  provider: AdbDeviceAnalysisPort = createAdbDeviceAnalysisProvider(
+  provider: RequestAnalysisPort<AdbRequest> = createAdbDeviceAnalysisProvider(
     environment,
   ),
 ): void => {
@@ -323,20 +283,18 @@ export const registerAdbCommands = (
         extras: "Each extra is a repeatable --extra type:key:value option",
       },
       cliOptions: {
-        extra: z
-          .array(z.string().min(1))
-          .max(MAX_ADB_ACTIVITY_EXTRAS)
-          .default([])
-          .describe(
-            "Typed extra as type:key:value (string, boolean, int, long, float), repeatable",
-          ),
+        extra: publishArgvInput(
+          z
+            .array(activityExtraCliEntrySchema)
+            .max(MAX_ADB_ACTIVITY_EXTRAS)
+            .default([])
+            .describe(
+              "Typed extra as type:key:value (string, boolean, int, long, float), repeatable",
+            ),
+        ),
       },
     },
-    (input, context) => {
-      const extras = activityExtras(context.cliOptions.extra);
-      if (!extras.ok)
-        return Promise.resolve(projectAnalysisError(extras.error));
-      return startActivity({ ...input, extras: extras.value }, context);
-    },
+    (input, context) =>
+      startActivity({ ...input, extras: context.cliOptions.extra }, context),
   );
 };

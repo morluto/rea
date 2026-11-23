@@ -1,4 +1,4 @@
-import { deflateSync } from "node:zlib";
+import { crc32, deflateSync } from "node:zlib";
 import { afterEach, expect, it, vi } from "vitest";
 
 const zlib = vi.hoisted(() => ({ inflated: 0 }));
@@ -19,15 +19,16 @@ import {
   inspectElfDebugLinkInputSchema,
 } from "../../domain/native/elfDebugLink.js";
 import {
-  gnuDebuglinkCrc32,
-  parseElfDebugLink,
+  parseElfDebugLinkFromHandle,
   verifyElfDebugCandidate,
 } from "./ElfDebugLink.js";
 import {
   elfDebugCandidateFixture,
+  elfDebugLinkByteSource,
   elfDebugLinkFixture,
 } from "./ElfDebugLink.fixture.js";
-import { ParseFailureError } from "../../domain/parseFailure.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import type { ElfNoteByteSource } from "./ElfNoteParser.js";
 
 const SHF_COMPRESSED = 0x800n;
 const DECODED_NAME_BYTES = 1024 * 1024;
@@ -90,63 +91,142 @@ const inputFor = (maxFileBytes: number) =>
     max_file_bytes: maxFileBytes,
   });
 
-it("refuses compressed image names above the selected budget before inflating them", () => {
-  const image = withCompressedNames(elfDebugLinkFixture());
-  expect(() =>
-    parseElfDebugLink(
-      image,
-      { path: "/artifacts/prog", sha256: "ab".repeat(32), bytes: image.length },
-      inputFor(image.length + 1),
-    ),
-  ).toThrow(ParseFailureError);
-  expect(zlib.inflated).toBe(0);
-});
-
-it("leaves compressed candidate names above the selected budget undecoded", () => {
-  const candidate = withCompressedNames(elfDebugCandidateFixture());
-  const image = elfDebugLinkFixture();
-  const input = inputFor(image.length + 1);
-  const report = parseElfDebugLink(
-    image,
-    { path: "/artifacts/prog", sha256: "ab".repeat(32), bytes: image.length },
+const parseImage = (
+  image: Buffer,
+  input: ReturnType<typeof inputFor>,
+  readRange?: ElfNoteByteSource["readRange"],
+) =>
+  parseElfDebugLinkFromHandle(
+    elfDebugLinkByteSource(image, readRange),
+    { path: input.path, sha256: "ab".repeat(32), bytes: image.length },
     input,
   );
-  const verified = verifyElfDebugCandidate(
+
+const compareCandidate = (
+  report: Awaited<ReturnType<typeof parseImage>>,
+  candidate: Buffer,
+  input: ReturnType<typeof inputFor>,
+) =>
+  verifyElfDebugCandidate(
     report,
     {
       path: "/artifacts/prog.debug",
       sha256: "cd".repeat(32),
       bytes: candidate.length,
-      crc32: gnuDebuglinkCrc32(candidate),
+      crc32: crc32(candidate),
       prefix: candidate,
     },
     input,
   );
-  expect(zlib.inflated).toBe(0);
-  expect(verified.candidate).toMatchObject({
-    debug_info: "unknown",
-    symtab: "unknown",
-  });
-});
 
-it("still decodes compressed names that fit the selected budget", () => {
-  const image = withCompressedNames(elfDebugLinkFixture());
-  const report = parseElfDebugLink(
+it("reuses compressed section names beyond the retained prefix for build IDs", async () => {
+  const template = withCompressedNames(elfDebugLinkFixture());
+  const shoff = Number(template.readBigUInt64LE(40));
+  const header = shoff + (template.readUInt16LE(60) - 1) * 64;
+  const previousOffset = Number(template.readBigUInt64LE(header + 24));
+  const table = template.subarray(previousOffset);
+  const namesOffset = 8192;
+  const image = Buffer.concat([
+    template.subarray(0, previousOffset),
+    Buffer.alloc(namesOffset - previousOffset),
+    table,
+  ]);
+  image.writeBigUInt64LE(BigInt(namesOffset), header + 24);
+  let tableReads = 0;
+  const report = await parseImage(
     image,
-    { path: "/artifacts/prog", sha256: "ab".repeat(32), bytes: image.length },
     inputFor(image.length + DECODED_NAME_BYTES),
+    async (offset, length) => {
+      if (offset === namesOffset && length === table.length) tableReads++;
+      return Buffer.from(image.subarray(offset, offset + length));
+    },
   );
-  expect(zlib.inflated).toBeGreaterThan(0);
   expect(report.debuglink.status).toBe("present");
+  expect(report.build_id.status).toBe("observed");
+  expect(tableReads).toBe(1);
+  expect(zlib.inflated).toBe(1);
 });
 
-it("keeps the build-id of an image whose names use an unsupported compression above the budget", () => {
+it.each(["direct", "extended"] as const)(
+  "checks the decoded image-name budget with a %s section count",
+  async (encoding) => {
+    const compressed = withCompressedNames(elfDebugLinkFixture());
+    const image =
+      encoding === "extended"
+        ? withExtendedSectionCount(compressed)
+        : compressed;
+    const required = image.length + DECODED_NAME_BYTES;
+    await expect(
+      parseImage(image, inputFor(required - 1)),
+    ).rejects.toMatchObject({
+      failure: {
+        kind: "limit",
+        limit: {
+          name: "max_file_bytes",
+          maximum: required - 1,
+          required: BigInt(required),
+        },
+      },
+    });
+    expect(zlib.inflated).toBe(0);
+  },
+);
+
+it.each(["unbacked", "wrong type"] as const)(
+  "validates a %s section-name table before charging its declared decoded size",
+  async (fault) => {
+    const image = withCompressedNames(elfDebugLinkFixture());
+    const sectionTable = Number(image.readBigUInt64LE(40));
+    const namesHeader = sectionTable + (image.readUInt16LE(60) - 1) * 64;
+    if (fault === "unbacked")
+      image.writeBigUInt64LE(
+        image.readBigUInt64LE(namesHeader + 32) + 1n,
+        namesHeader + 32,
+      );
+    else image.writeUInt32LE(1, namesHeader + 4);
+
+    await expect(
+      parseImage(image, inputFor(image.length + 1)),
+    ).rejects.toBeInstanceOf(BinaryFormatFailure);
+    expect(zlib.inflated).toBe(0);
+  },
+);
+
+it.each(["direct", "extended"] as const)(
+  "leaves over-budget candidate names undecoded with a %s section count",
+  async (encoding) => {
+    const compressed = withCompressedNames(elfDebugCandidateFixture());
+    const candidate =
+      encoding === "extended"
+        ? withExtendedSectionCount(compressed)
+        : compressed;
+    const image = elfDebugLinkFixture();
+    const input = inputFor(Math.max(image.length, candidate.length));
+    const report = await parseImage(image, input);
+    const verified = compareCandidate(report, candidate, input);
+    expect(zlib.inflated).toBe(0);
+    expect(verified).toMatchObject({
+      candidate: {
+        bytes: candidate.length,
+        debug_info: "unknown",
+        symtab: "unknown",
+      },
+      verification: {
+        build_id: {
+          status: "unavailable",
+          reason: "candidate_build_id_unknown",
+        },
+      },
+    });
+    expect(verified.limitations).toContain(
+      ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
+    );
+  },
+);
+
+it("keeps the build-id of an image whose names use an unsupported compression above the budget", async () => {
   const image = withCompressedNames(elfDebugLinkFixture(), 0x7fff);
-  const report = parseElfDebugLink(
-    image,
-    { path: "/artifacts/prog", sha256: "ab".repeat(32), bytes: image.length },
-    inputFor(image.length + 1),
-  );
+  const report = await parseImage(image, inputFor(image.length + 1));
   expect(zlib.inflated).toBe(0);
   expect(report.build_id.status).toBe("observed");
   expect(report.limitations.join("\n")).toContain(
@@ -154,74 +234,18 @@ it("keeps the build-id of an image whose names use an unsupported compression ab
   );
 });
 
-it("keeps the build-id of a candidate whose names use an unsupported compression above the budget", () => {
+it("keeps the build-id of a candidate whose names use an unsupported compression above the budget", async () => {
   const candidate = withCompressedNames(elfDebugCandidateFixture(), 0x7fff);
   const image = elfDebugLinkFixture();
-  const input = inputFor(image.length + 1);
-  const report = parseElfDebugLink(
-    image,
-    { path: "/artifacts/prog", sha256: "ab".repeat(32), bytes: image.length },
-    input,
-  );
-  const verified = verifyElfDebugCandidate(
-    report,
-    {
-      path: "/artifacts/prog.debug",
-      sha256: "cd".repeat(32),
-      bytes: candidate.length,
-      crc32: gnuDebuglinkCrc32(candidate),
-      prefix: candidate,
-    },
-    input,
-  );
+  const input = inputFor(Math.max(image.length, candidate.length));
+  const report = await parseImage(image, input);
+  const verified = compareCandidate(report, candidate, input);
   expect(zlib.inflated).toBe(0);
   expect(report.build_id.hex).not.toBeNull();
   expect(verified.verification?.build_id.candidate_hex).toBe(
     report.build_id.hex,
   );
   expect(verified.limitations).not.toContain(
-    ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
-  );
-});
-
-it("refuses compressed image names above the budget when only section zero declares the count", () => {
-  const image = withExtendedSectionCount(
-    withCompressedNames(elfDebugLinkFixture()),
-  );
-  expect(() =>
-    parseElfDebugLink(
-      image,
-      { path: "/artifacts/prog", sha256: "ab".repeat(32), bytes: image.length },
-      inputFor(image.length + 1),
-    ),
-  ).toThrow(ParseFailureError);
-  expect(zlib.inflated).toBe(0);
-});
-
-it("leaves compressed candidate names undecoded when only section zero declares the count", () => {
-  const candidate = withExtendedSectionCount(
-    withCompressedNames(elfDebugCandidateFixture()),
-  );
-  const image = elfDebugLinkFixture();
-  const input = inputFor(candidate.length + 1);
-  const report = parseElfDebugLink(
-    image,
-    { path: "/artifacts/prog", sha256: "ab".repeat(32), bytes: image.length },
-    input,
-  );
-  const verified = verifyElfDebugCandidate(
-    report,
-    {
-      path: "/artifacts/prog.debug",
-      sha256: "cd".repeat(32),
-      bytes: candidate.length,
-      crc32: gnuDebuglinkCrc32(candidate),
-      prefix: candidate,
-    },
-    input,
-  );
-  expect(zlib.inflated).toBe(0);
-  expect(verified.limitations).toContain(
     ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
   );
 });

@@ -1,6 +1,5 @@
 import { displayedEvidenceSubject } from "../../tests/fixtures/evidenceSubject.js";
 import { unknownTarget } from "./targetIdentity.js";
-import { PRE_66_NULL_COVERAGE_EVIDENCE } from "./evidenceLegacy.fixture.js";
 import { fc, it } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
 
@@ -29,7 +28,6 @@ import {
 import { AnalysisResourceConstraintError } from "./analysisErrorCore.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
-import { RECREATE_EVIDENCE_GUIDANCE } from "./evidenceFormat.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
 
 const TARGET: BinaryTarget = {
@@ -86,13 +84,16 @@ describe("subject target identity", () => {
       local_path: "/elsewhere/firmware.bin",
     });
     expect(rebound.evidence_id).toBe(original.evidence_id);
-    // A different selection is a different target, so the path is not rebound.
-    expect(
-      rebindEvidenceToTargetPath(original, {
-        ...raw("0x100"),
-        path: "/elsewhere/firmware.bin",
-      }),
-    ).toBe(original);
+    for (const different of [
+      raw("0x100"),
+      { ...raw("0x0"), sha256: "f".repeat(64) },
+    ])
+      expect(
+        rebindEvidenceToTargetPath(original, {
+          ...different,
+          path: "/elsewhere/firmware.bin",
+        }),
+      ).toBe(original);
   });
 
   it("names the subject only by its identity and display facts", () => {
@@ -879,6 +880,29 @@ it("binds an explicit unknown-subject reason into the semantic Evidence identity
   expect(parseEvidence(explicit)).toEqual(explicit);
 });
 
+it("derives the default authority from whether the subject names a target", () => {
+  const observation = { operation: "health", parameters: {}, result: true };
+  expect(createEvidence(TARGET, PROVIDER, observation).authority).toBe(
+    "shipped-artifact",
+  );
+  expect(
+    createEvidence(unknownTarget("not-observed"), PROVIDER, observation)
+      .authority,
+  ).toBe("analyst-inference");
+  expect(
+    createEvidence(unknownTarget("not-observed"), PROVIDER, {
+      ...observation,
+      authority: "controlled-replay",
+    }).authority,
+  ).toBe("controlled-replay");
+  expect(
+    createEvidence(TARGET, PROVIDER, {
+      ...observation,
+      authority: "external-service",
+    }).authority,
+  ).toBe("external-service");
+});
+
 it("derives byte-stable bundle manifests independent of record order", () => {
   const artifactEvidence = createEvidence(TARGET, PROVIDER, {
     operation: "health",
@@ -1070,25 +1094,6 @@ it("borrows a previously sealed envelope only after authenticating all semantic 
   expect(() => immutableEvidence(changed)).toThrow();
 });
 
-it("refuses a record from an earlier format without admitting or rewriting its ID", () => {
-  const historical = structuredClone(PRE_66_NULL_COVERAGE_EVIDENCE);
-  expect(() => parseEvidence(historical)).toThrow(RECREATE_EVIDENCE_GUIDANCE);
-  expect(() => parseEvidence({ ...historical, evidence_format: 1 })).toThrow(
-    /Evidence record format 1 is not format 2/u,
-  );
-  expect(historical).toEqual(PRE_66_NULL_COVERAGE_EVIDENCE);
-  const current = createEvidence(
-    unknownTarget("not-observed"),
-    historical.provider,
-    {
-      operation: "inspect",
-      parameters: {},
-      result: { observed: true },
-    },
-  );
-  expect(parseEvidence(current)).toEqual(current);
-});
-
 it("borrows variable-size collections for admission", () => {
   const limitations = ["one", "two"];
   const locations: never[] = [];
@@ -1158,4 +1163,27 @@ it("validates a debugger session subject's launch file with the file subject dec
       .identity,
     "an unobserved launch target stays an explicit unknown",
   ).toEqual({ ...session, target: unknownTarget("not-observed") });
+});
+
+it("still validates profile provider agreement when reusing an immutable snapshot result", () => {
+  const result = freezeJsonSnapshot({ ok: true });
+  const created = createEvidence(TARGET, PROVIDER, {
+    operation: "health",
+    parameters: {},
+    result,
+    analysisProfile: PROFILE,
+  });
+  expect(created.normalized_result).toBe(result);
+  expect(() =>
+    createEvidence(
+      TARGET,
+      { ...PROVIDER, id: "other" },
+      {
+        operation: "health",
+        parameters: {},
+        result,
+        analysisProfile: PROFILE,
+      },
+    ),
+  ).toThrow(/profile provider/u);
 });

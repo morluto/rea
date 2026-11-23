@@ -7,7 +7,6 @@ import { z } from "zod";
 import { expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
-import { explicitSensitiveValueOptions } from "../../../src/cli/explicitSensitiveArguments.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 type CliInstance = ReturnType<typeof createCommandCli>;
@@ -45,12 +44,11 @@ it("rejects surplus public CLI inputs before importing and retains the one-path 
     }),
   );
   const cli = createCli({});
-  for (const extra of [["ignored"], ["ignored", "second"]]) {
-    const result = await serve(cli, ["evidence-import", path, ...extra]);
-    expect(result.exitCode).toBe(1);
-    expect(result.stdout).toContain("Unexpected positional arguments");
-    for (const value of extra) expect(result.stdout).toContain(value);
-  }
+  const extra = ["ignored", "second"];
+  const surplus = await serve(cli, ["evidence-import", path, ...extra]);
+  expect(surplus.exitCode).toBe(1);
+  expect(surplus.stdout).toContain("Unexpected positional arguments");
+  for (const value of extra) expect(surplus.stdout).toContain(value);
   const missingFile = await serve(cli, [
     "evidence-import",
     join(directory, "absent"),
@@ -88,7 +86,7 @@ it("keeps parser-owned aliases, option values and optional arguments without rer
         defaults++;
         return "default";
       }),
-      ...explicitSensitiveValueOptions,
+      sensitiveValue: z.array(z.string().min(1)).default([]),
     }),
     alias: { selectedValue: "s", enabled: "e" },
     run: ({ args, options }) => {

@@ -1,9 +1,4 @@
-import { expect } from "vitest";
-import { z } from "zod";
-import {
-  TOOL_CONTRACTS,
-  toolContract,
-} from "../../../src/contracts/toolContracts.js";
+import { expect, expectTypeOf, vi } from "vitest";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -25,141 +20,164 @@ const evidenceServer = () =>
   );
 
 mcpTest(
-  "application summary admission preserves nested caller omissions",
+  "reports a failed optional provider before admission, execution or recording",
   async ({ mcp }) => {
-    const received: unknown[] = [];
-    const contract = {
-      ...toolContract("inspect_elf_dependencies"),
-      name: "inspect_nested_fixture",
-      inputSchema: z.strictObject({
-        path: z.string(),
-        policy: z.strictObject({
-          count: z.int().default(12),
-          mode: z.string().default("full"),
-        }),
-        detail: z.enum(["complete", "summary"]).default("complete"),
-      }),
-    };
     const server = evidenceServer();
+    const unavailable = async () => {
+      throw new Error("A failed provider must not do this work");
+    };
+    const withAdmittedAnalysis = vi.fn(unavailable);
+    const run = vi.fn(unavailable);
+    const recordEvidence = vi.fn(() => ok("added" as const));
     registerContractTools(
       server,
       {
-        inspect_nested_fixture: {
-          admission: "application",
-          summary: (input: unknown) => {
-            received.push(input);
-            return Promise.resolve(
-              err(new AnalysisInputError("inspect_nested_fixture")),
-            );
+        inspect_web_page: {
+          admission: "sdk",
+          unavailable: {
+            providerId: "browser",
+            reason: "controlled provider load failure",
           },
+          run,
         },
-      } as ContractToolBindings,
-      { logger: silentLogger },
-      [contract],
+      },
+      { logger: silentLogger, withAdmittedAnalysis, recordEvidence },
     );
     const client = await mcp.connect(server);
-    const request = { path: "/fixture", policy: { count: 2 } };
-    const reply = await client.callTool({
-      name: contract.name,
-      arguments: request,
+    const result = await client.callTool({
+      name: "inspect_web_page",
+      arguments: {
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "fixture",
+      },
     });
-    expect(reply.isError).toBe(true);
-    expect(received).toEqual([request]);
+    expect(parseMcpToolError(result).error).toMatchObject({
+      code: "capability_unavailable",
+      details: { operation: "inspect_web_page" },
+    });
+    expect(JSON.stringify(result.content)).toContain(
+      "controlled provider load failure",
+    );
+    expect(result._meta).toEqual({
+      provenance: { untrusted_content: true, source: "analysis_target" },
+    });
+    expect(withAdmittedAnalysis).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+    expect(recordEvidence).not.toHaveBeenCalled();
   },
 );
 
-for (const admission of ["sdk", "application"] as const)
-  mcpTest(
-    `${admission} summary admission preserves its input-default ownership`,
-    async ({ mcp }) => {
-      const received: unknown[] = [];
-      const inspect = (input: unknown) => {
-        received.push(input);
-        return Promise.resolve(
-          err(new AnalysisInputError("inspect_elf_dependencies")),
-        );
-      };
-      const server = evidenceServer();
-      registerContractTools(
-        server,
-        { inspect_elf_dependencies: { admission, summary: inspect } },
-        { logger: silentLogger },
-        [toolContract("inspect_elf_dependencies")],
-      );
-      const client = await mcp.connect(server);
-      for (const selected of [undefined, 1024, 2]) {
-        const request = {
-          path: "/fixture",
-          ...(selected === undefined ? {} : { max_needed: selected }),
-        };
-        const reply = await client.callTool({
-          name: "inspect_elf_dependencies",
-          arguments: { ...request, detail: "complete" },
-        });
-        expect(reply.isError).toBe(true);
-        const source = received.at(-1);
-        if (admission === "application") expect(source).toEqual(request);
-        else
-          expect(source).toMatchObject({
-            path: request.path,
-            max_needed: selected ?? 1024,
-            max_file_bytes: 67108864,
-          });
-        expect(source).not.toHaveProperty("detail");
-      }
-    },
-  );
-
 mcpTest(
-  "registers a contract added to the registry from its binding alone",
+  "preserves partial nested limits through the application-admitted source-map binding",
   async ({ mcp }) => {
-    const synthetic = {
-      ...toolContract("inspect_pe_imports"),
-      name: "inspect_synthetic_fixture",
-      title: "Inspect synthetic fixture",
-    };
-    const received: unknown[] = [];
+    const received = vi.fn(async (_input: unknown) =>
+      err(new AnalysisInputError("trace_web_source_location")),
+    );
     const server = evidenceServer();
     registerContractTools(
       server,
       {
-        inspect_synthetic_fixture: {
+        trace_web_source_location: {
           admission: "application",
-          run: (input: unknown) => {
-            received.push(input);
-            return Promise.resolve(
-              err(
-                new AnalysisInputError("inspect_synthetic_fixture", undefined, [
-                  {
-                    path: ["path"],
-                    reason: "invalid_value",
-                    message: "fixture refusal",
-                  },
-                ]),
-              ),
-            );
-          },
+          summary: received,
         },
-      } as ContractToolBindings,
+      },
       { logger: silentLogger },
-      [...TOOL_CONTRACTS, synthetic],
     );
     const client = await mcp.connect(server);
-
-    expect((await client.listTools()).tools.map(({ name }) => name)).toEqual([
-      "inspect_synthetic_fixture",
-    ]);
-    const reply = await client.callTool({
-      name: "inspect_synthetic_fixture",
-      arguments: { path: "/fixture" },
-    });
-    expect(parseMcpToolError(reply)).toMatchObject({
-      error: {
-        code: "invalid_request",
-        details: { operation: "inspect_synthetic_fixture" },
+    const request = {
+      manifest_path: "/analysis/scripts/manifest.json",
+      script_index: 0,
+      source_map: {
+        path: "/analysis/app.js.map",
+        url: "https://example.test/app.js.map",
       },
+      generated_position: { line: 1, column: 25 },
+      source_map_limits: { decoded_records: 12 },
+    };
+    const reply = await client.callTool({
+      name: "trace_web_source_location",
+      arguments: { ...request, detail: "complete" },
     });
-    expect(received).toEqual([{ path: "/fixture" }]);
+    expect(reply.isError).toBe(true);
+    expect(received).toHaveBeenCalledExactlyOnceWith(
+      request,
+      expect.any(Object),
+    );
+  },
+);
+
+mcpTest(
+  "keeps SDK defaults and caller selections at their named retained-summary boundaries",
+  async ({ mcp }) => {
+    const inspectEntropy = vi.fn(async (_input: unknown) =>
+      err(new AnalysisInputError("inspect_byte_entropy")),
+    );
+    const inspectDependencies = vi.fn(async (_input: unknown) =>
+      err(new AnalysisInputError("inspect_elf_dependencies")),
+    );
+    const server = evidenceServer();
+    registerContractTools(
+      server,
+      {
+        inspect_byte_entropy: { admission: "sdk", summary: inspectEntropy },
+        inspect_elf_dependencies: {
+          admission: "application",
+          summary: inspectDependencies,
+        },
+      },
+      { logger: silentLogger },
+    );
+    const client = await mcp.connect(server);
+    expect(
+      (await client.listTools()).tools.map(({ name }) => name).sort(),
+    ).toEqual(["inspect_byte_entropy", "inspect_elf_dependencies"]);
+    const path = "/fixture";
+    const call = async (name: string, input: Record<string, unknown>) => {
+      const reply = await client.callTool({
+        name,
+        arguments: { ...input, path, detail: "complete" },
+      });
+      expect(reply.isError).toBe(true);
+    };
+    await call("inspect_byte_entropy", {});
+    await call("inspect_byte_entropy", { block_size: 256 });
+    await call("inspect_elf_dependencies", {});
+    await call("inspect_elf_dependencies", { max_needed: 1024 });
+
+    expect(inspectEntropy.mock.calls.map(([input]) => input)).toEqual([
+      { path, block_size: 4096, offset: 0 },
+      { path, block_size: 256, offset: 0 },
+    ]);
+    expect(inspectDependencies.mock.calls.map(([input]) => input)).toEqual([
+      { path },
+      { path, max_needed: 1024 },
+    ]);
+
+    // The named binding type must accept a summary only for a detail-aware
+    // contract and must make handler variants mutually exclusive.
+    type Operation = () => Promise<never>;
+    type Devicetree = NonNullable<ContractToolBindings["inspect_devicetree"]>;
+    type PeImports = NonNullable<ContractToolBindings["inspect_pe_imports"]>;
+    expectTypeOf<{
+      admission: "application";
+      summary: Operation;
+    }>().toExtend<Devicetree>();
+    expectTypeOf<{
+      admission: "application";
+      run: Operation;
+      summary: Operation;
+    }>().not.toExtend<Devicetree>();
+    expectTypeOf<{
+      admission: "sdk";
+      summary: Operation;
+    }>().not.toExtend<PeImports>();
+    expectTypeOf<{
+      admission: "sdk";
+      session: never;
+      derive: () => never;
+      run: Operation;
+    }>().not.toExtend<PeImports>();
   },
 );
 
@@ -278,55 +296,6 @@ mcpTest(
   },
 );
 
-type Operation = () => Promise<never>;
-type DevicetreeBinding = NonNullable<
-  ContractToolBindings["inspect_devicetree"]
->;
-type PeImportsBinding = NonNullable<ContractToolBindings["inspect_pe_imports"]>;
-
-mcpTest(
-  "binds exactly one handler, and a retained summary only to a contract that selects detail",
-  () => {
-    // Type-level checks hold under every supported TypeScript checker,
-    // whichever line it reports an excess-property error on.
-    const summaryAccepted: {
-      readonly admission: "application";
-      readonly summary: Operation;
-    } extends DevicetreeBinding
-      ? true
-      : false = true;
-    const bothRefused: {
-      readonly admission: "application";
-      readonly run: Operation;
-      readonly summary: Operation;
-    } extends DevicetreeBinding
-      ? false
-      : true = true;
-    const summaryWithoutDetailRefused: {
-      readonly admission: "sdk";
-      readonly summary: Operation;
-    } extends PeImportsBinding
-      ? false
-      : true = true;
-    // A session-derived workflow is its own handler kind, never combined
-    // with a run or value handler.
-    const deriveWithRunRefused: {
-      readonly admission: "sdk";
-      readonly session: never;
-      readonly derive: () => never;
-      readonly run: Operation;
-    } extends PeImportsBinding
-      ? false
-      : true = true;
-    expect([
-      summaryAccepted,
-      bothRefused,
-      summaryWithoutDetailRefused,
-      deriveWithRunRefused,
-    ]).toEqual([true, true, true, true]);
-  },
-);
-
 mcpTest(
   "binds a provider operation only to the contract of the same name",
   () => {
@@ -337,13 +306,12 @@ mcpTest(
         provider: { operation: "extract_artifact", activeTarget: undefined },
       },
     };
-    const notProvider: ContractToolBindings = {
-      inspect_pe_imports: {
-        admission: "sdk",
-        // @ts-expect-error A tool that is no provider operation binds no provider.
-        provider: { operation: "xrefs", activeTarget: undefined },
-      },
-    };
+    expectTypeOf<{
+      admission: "sdk";
+      provider: { operation: "xrefs"; activeTarget: undefined };
+    }>().not.toExtend<
+      NonNullable<ContractToolBindings["inspect_pe_imports"]>
+    >();
     expect(() =>
       registerContractTools(evidenceServer(), mismatched, {
         logger: silentLogger,
@@ -352,6 +320,5 @@ mcpTest(
         },
       }),
     ).toThrow("MCP tool xrefs binds provider operation extract_artifact");
-    expect(notProvider).toBeDefined();
   },
 );

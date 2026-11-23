@@ -9,8 +9,9 @@ import {
   parseCliGlobalArguments,
   type CliGlobalArguments,
 } from "../cliBuiltinArguments.js";
-import { CLI_OUTPUT_FORMATS, readCliOutputArguments } from "../cliOutput.js";
+import { CLI_OUTPUT_FORMATS, readCliOutputArguments } from "./cliOutput.js";
 import {
+  bashCompletionInput,
   completeWords,
   completionScript,
   formatCompletions,
@@ -20,7 +21,7 @@ import { cliCommands } from "./commandRegistry.js";
 import { COMPLETIONS_DESCRIPTION, MCP_GROUP_DESCRIPTION } from "./discovery.js";
 import { MCP_SUBCOMMANDS } from "./mcpBuiltinCommands.js";
 import type { CliInstance } from "./types.js";
-import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "../mcpDoctorOptions.js";
+import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "./mcpDoctorOptions.js";
 
 type ServeOptions = NonNullable<Parameters<CliInstance["serve"]>[1]>;
 const ROOT_FLAGS = new Set(["--mcp", "--update", "--version"]);
@@ -144,25 +145,47 @@ export const createCliCompletions = (
     const index = Number(environment._COMPLETE_INDEX ?? words.length - 1);
     if (!Number.isSafeInteger(index) || index < 0 || index > words.length)
       return true;
+    const bashLine = environment._COMPLETE_BASH_LINE;
+    const bashFragment = environment._COMPLETE_BASH_FRAGMENT;
+    const bash =
+      shell === "bash" && bashLine && bashFragment !== undefined
+        ? bashCompletionInput(words, index, bashLine, bashFragment)
+        : undefined;
     // Consume global option values before scope resolution. A value named
     // 'mcp' is still data; retain an unfinished flag for enum hints.
-    const before = parseCliGlobalArguments(words.slice(1, index)).command;
+    const before = parseCliGlobalArguments(
+      bash?.before ?? words.slice(1, index),
+    ).command;
     if (before.includes("--")) return true;
-    const input = [cli.name, ...before, words[index] ?? ""];
+    const current = bash?.current ?? words[index] ?? "";
+    const previous = before.at(-1);
+    // A flag-shaped token can still be the preceding output option's value.
+    const inlineOutputValue =
+      current.startsWith("--") &&
+      current.includes("=") &&
+      previous !== undefined &&
+      VALUED_OUTPUT_FLAGS.has(previous);
+    const input = [cli.name, ...before, current];
     const doctor = before[0] === "mcp" && before[1] === "doctor";
-    const candidates = completeWords(
-      completionCommands(cli),
-      input,
-      input.length - 1,
-      {
-        schema: doctor
-          ? // The launcher consumes this global before doctor parses options.
-            MCP_DOCTOR_OPTIONS.extend({ timings: z.boolean().optional() })
-          : standardGlobals(before.length === 0),
-        alias: doctor ? MCP_DOCTOR_ALIAS : { help: "h" },
-      },
+    const candidates = inlineOutputValue
+      ? []
+      : completeWords(completionCommands(cli), input, input.length - 1, {
+          schema: doctor
+            ? // The launcher consumes this global before doctor parses options.
+              MCP_DOCTOR_OPTIONS.extend({ timings: z.boolean().optional() })
+            : standardGlobals(before.length === 0),
+          alias: doctor ? MCP_DOCTOR_ALIAS : { help: "h" },
+        });
+    const prefixLength = bash?.replacementPrefix.length ?? 0;
+    const result = formatCompletions(
+      shell,
+      prefixLength === 0
+        ? candidates
+        : candidates.map((candidate) => ({
+            ...candidate,
+            value: candidate.value.slice(prefixLength),
+          })),
     );
-    const result = formatCompletions(shell, candidates);
     if (result !== "") write(result);
     return true;
   };

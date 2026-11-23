@@ -78,7 +78,10 @@ import { AdbProvider } from "./AdbProvider.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseEvidence } from "../domain/evidence.js";
-import type { AdbRequest } from "../domain/adb/adbDeviceAnalysis.js";
+import {
+  adbInputSchemas,
+  type AdbRequest,
+} from "../domain/adb/adbDeviceAnalysis.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { waitFor } from "../../tests/support/testWait.js";
 
@@ -482,6 +485,77 @@ printf 'unexpected arguments: %s\\n' "$@"
 exit 1`;
 };
 
+it("pages package, process and directory listings after parsing the provider output", async () => {
+  const { binary } = await writeAdbStub(
+    shellStub({
+      "pm:list:packages":
+        "package:/data/app/a/base.apk=com.a\npackage:/data/app/b/base.apk=com.b\n",
+      ps: "USER PID PPID VSZ RSS WCHAN ADDR S NAME\nroot 11 1 12 3 0 0 S first\nroot 12 1 12 3 0 0 S second\n",
+      sh: ["first", "second"]
+        .map(
+          (name) =>
+            `-rw-r--r--|root|root|0|2026-01-02 11:00:00 +0000\0${name}\0\0`,
+        )
+        .join(""),
+    }),
+  );
+  const provider = providerOver(binary);
+  onTestFinished(() => provider.close());
+  const serial = "test-device";
+  const packages = await provider.execute({
+    operation: "list_adb_packages",
+    input: adbInputSchemas.list_adb_packages.parse({
+      serial,
+      offset: 1,
+      limit: 20_000,
+    }),
+  });
+  if (!packages.ok) throw packages.error;
+  expect(packages.value.result).toMatchObject({
+    packages: [{ package_name: "com.b" }],
+    coverage: "partial",
+  });
+  expect(packages.value.limitations).toHaveLength(2);
+
+  const processes = await provider.execute({
+    operation: "list_adb_processes",
+    input: { serial, limit: 1 },
+  });
+  if (!processes.ok) throw processes.error;
+  expect(processes.value.result).toMatchObject({
+    processes: [{ pid: 11, name: "first" }],
+    coverage: "partial",
+  });
+  expect(processes.value.limitations).toHaveLength(1);
+
+  const directory = await provider.execute({
+    operation: "list_adb_directory",
+    input: { serial, device_path: "/data/local/tmp", offset: 1 },
+  });
+  if (!directory.ok) throw directory.error;
+  expect(directory.value.result).toMatchObject({
+    entries: [{ name: "second" }],
+    coverage: "partial",
+  });
+  expect(directory.value.limitations).toHaveLength(2);
+});
+
+it("keeps an empty package listing complete with a positive offset", async () => {
+  const { binary } = await writeAdbStub(shellStub({ "pm:list:packages": "" }));
+  const provider = providerOver(binary);
+  onTestFinished(() => provider.close());
+  const result = await provider.execute({
+    operation: "list_adb_packages",
+    input: { serial: "test-device", scope: "all", offset: 1 },
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.result).toMatchObject({
+    packages: [],
+    coverage: "complete",
+  });
+  expect(result.value.limitations).toHaveLength(1);
+});
+
 it("pulls a complete split set with digests into a new package directory", async () => {
   const { binary, root } = await writeAdbStub(() =>
     pullStub(
@@ -871,42 +945,30 @@ ${shellStub({
   });
 });
 
-it("reports UTF-8 byte counts in total_bytes for non-ASCII logcat output", async () => {
-  const { binary } = await writeAdbStub(
-    shellStub({
-      logcat:
-        "08-10 13:00:00.000 I/Tag( 1): 中文\n08-10 13:00:00.000 I/Tag( 1): 😀\n",
-    }),
-  );
-  const result = await evidenceResult(providerOver(binary), {
-    operation: "read_adb_logcat",
-    input: { serial: "emulator-5554", count: 500, buffer: "main" },
-  });
-  expect(result.lines).toEqual([
-    "08-10 13:00:00.000 I/Tag( 1): 中文",
-    "08-10 13:00:00.000 I/Tag( 1): 😀",
+it("counts the captured logcat bytes while retaining decoded Unicode lines", async () => {
+  const prefix = "08-10 13:00:00.000 I/Tag( 1): ";
+  const capture = Buffer.concat([
+    Buffer.from(`${prefix}中文\n${prefix}😀\n${prefix}A`),
+    Buffer.from([0xff]),
+    Buffer.from("B\n"),
   ]);
-  // 30-byte prefix + 6-byte CJK + LF = 37; 30-byte prefix + 4-byte emoji + LF = 35.
-  expect(result.total_bytes).toBe(72);
-});
-
-it("counts raw captured bytes in total_bytes for malformed UTF-8 logcat output", async () => {
-  const { binary } = await writeAdbStub(
-    () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
-if [ "$1" = "-s" ] && [ "$3" = "shell" ]; then
-  printf '%b' '08-10 13:00:00.000 I/Tag( 1): A\\377B\\n'
-  exit 0
+  const { binary, root } = await writeAdbStub(
+    (root) => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$1" = "-s" ] && [ "$3" = "shell" ] && [ "$4" = "logcat" ]; then
+  exec cat '${join(root, "logcat.bin")}'
 fi
-printf 'unexpected arguments: %s\\n' "$@"
 exit 1`,
   );
+  await writeFile(join(root, "logcat.bin"), capture);
   const result = await evidenceResult(providerOver(binary), {
     operation: "read_adb_logcat",
     input: { serial: "emulator-5554", count: 500, buffer: "main" },
   });
-  // 30-byte prefix + "A" + one raw 0xff byte + "B" + LF = 34 captured bytes.
-  // Re-encoding the decoded U+FFFD replacement would report 36.
-  expect(result.total_bytes).toBe(34);
+  expect(result).toMatchObject({
+    lines: [`${prefix}中文`, `${prefix}😀`, `${prefix}A�B`],
+    total_bytes: capture.byteLength,
+    coverage: "complete",
+  });
 });
 
 it("marks coverage partial when `pkg=null` leaves permissions unknown", async () => {
@@ -1703,6 +1765,9 @@ exit 1`,
   const evidence = parseEvidence(result.error.partialObservation);
   expect(evidence).toMatchObject({
     operation: "push_adb_file",
+    // The retained receipt names the service authority, not the subject-derived
+    // default a partial observation would otherwise fall back to.
+    authority: "external-service",
     normalized_result: {
       local_path: localFile,
       device_path: "/data/local/tmp/payload.bin",
@@ -1876,7 +1941,9 @@ it("lists processes, features, and services through fixed commands", async () =>
         "Found 2 services:\n  1 package: [android.content.pm.IPackageManager]\n  2 activity: [android.app.IActivityManager]\n",
     }),
   );
-  const processes = await evidenceResult(providerOver(binary), {
+  const provider = providerOver(binary);
+  onTestFinished(() => provider.close());
+  const processes = await evidenceResult(provider, {
     operation: "list_adb_processes",
     input: { serial: "emulator-5554" },
   });
@@ -1890,7 +1957,7 @@ it("lists processes, features, and services through fixed commands", async () =>
       name: "com.example.app",
     },
   ]);
-  const features = await evidenceResult(providerOver(binary), {
+  const features = await evidenceResult(provider, {
     operation: "list_adb_features",
     input: { serial: "emulator-5554" },
   });
@@ -1898,13 +1965,39 @@ it("lists processes, features, and services through fixed commands", async () =>
     { name: "android.hardware.camera", version: null },
     { name: "android.hardware.nfc", version: 1 },
   ]);
-  const services = await evidenceResult(providerOver(binary), {
+  const pagedFeatures = await provider.execute({
+    operation: "list_adb_features",
+    input: { serial: "emulator-5554", limit: 1, offset: 1 },
+  });
+  if (!pagedFeatures.ok) throw pagedFeatures.error;
+  expect(pagedFeatures.value.result).toMatchObject({
+    features: [{ name: "android.hardware.nfc", version: 1 }],
+    coverage: "partial",
+  });
+  expect(pagedFeatures.value.limitations).toEqual([
+    expect.stringMatching(/1 of 2 features.*offset 1, limit 1/u),
+  ]);
+  const services = await evidenceResult(provider, {
     operation: "list_adb_services",
     input: { serial: "emulator-5554" },
   });
   expect(services.services).toEqual([
     { name: "package", interface: "android.content.pm.IPackageManager" },
     { name: "activity", interface: "android.app.IActivityManager" },
+  ]);
+  const pagedServices = await provider.execute({
+    operation: "list_adb_services",
+    input: { serial: "emulator-5554", limit: 1, offset: 0 },
+  });
+  if (!pagedServices.ok) throw pagedServices.error;
+  expect(pagedServices.value.result).toMatchObject({
+    services: [
+      { name: "package", interface: "android.content.pm.IPackageManager" },
+    ],
+    coverage: "partial",
+  });
+  expect(pagedServices.value.limitations).toEqual([
+    expect.stringMatching(/1 of 2 services.*offset 0, limit 1/u),
   ]);
 });
 
@@ -1977,37 +2070,13 @@ it.each(["complete", "truncated"] as const)(
   },
 );
 
-it("inspects the display and window focus", async () => {
-  const { binary } = await writeAdbStub(
-    shellStub({
-      "wm:size": "Physical size: 1080x2340\n",
-      "wm:density": "Physical density: 420\n",
-      "dumpsys:window":
-        "  mCurrentFocus=Window{abcdef u0 com.example.app/com.example.app.MainActivity}\n",
-    }),
-  );
-  const display = await evidenceResult(providerOver(binary), {
-    operation: "inspect_adb_display",
-    input: { serial: "emulator-5554" },
-  });
-  expect(display.physical_size).toEqual({ width: 1080, height: 2340 });
-  expect(display.physical_density).toBe(420);
-  const window = await evidenceResult(providerOver(binary), {
-    operation: "inspect_adb_window",
-    input: { serial: "emulator-5554" },
-  });
-  expect(window.focused_window).toBe(
-    "Window{abcdef u0 com.example.app/com.example.app.MainActivity}",
-  );
-});
-
-// Older builds print `wm density` as a bare number; the display projection
-// must keep it as the physical density (morluto/rea#3942).
-it("keeps a bare numeric wm density as the physical density", async () => {
+it("inspects display and window focus with a bare physical density", async () => {
   const { binary } = await writeAdbStub(
     shellStub({
       "wm:size": "Physical size: 1080x2340\n",
       "wm:density": "420\n",
+      "dumpsys:window":
+        "  mCurrentFocus=Window{abcdef u0 com.example.app/com.example.app.MainActivity}\n",
     }),
   );
   const display = await evidenceResult(providerOver(binary), {
@@ -2019,6 +2088,13 @@ it("keeps a bare numeric wm density as the physical density", async () => {
     physical_density: 420,
     override_density: null,
   });
+  const window = await evidenceResult(providerOver(binary), {
+    operation: "inspect_adb_window",
+    input: { serial: "emulator-5554" },
+  });
+  expect(window.focused_window).toBe(
+    "Window{abcdef u0 com.example.app/com.example.app.MainActivity}",
+  );
 });
 
 it("reads Android 16 focus declarations from displays when windows omits them", async () => {
@@ -2698,7 +2774,12 @@ exit 1`,
     code: "resource_constraint",
     details: { operation: "push_adb_file" },
   });
-  expect(result.error.partialObservation).toBeDefined();
+  // The retained receipt names the service authority, not the subject-derived
+  // default a partial observation would otherwise fall back to.
+  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+    operation: "push_adb_file",
+    authority: "external-service",
+  });
 });
 
 it("attributes version capture failures to the public operation and retains the prerequisite", async () => {
@@ -2727,7 +2808,8 @@ it("refuses a device file name the selected Windows host cannot store before pul
 exit 0`,
   );
   const provider = new AdbProvider({
-    environment: { REA_ADB_PATH: binary },
+    // A double leading slash gives Win32 a UNC root and still opens the POSIX fixture.
+    environment: { REA_ADB_PATH: `/${binary}` },
     platform: "win32",
   });
   const result = await provider.execute({

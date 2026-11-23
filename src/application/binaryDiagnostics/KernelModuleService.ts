@@ -2,7 +2,6 @@ import { insideArtifact } from "./artifactRange.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { KernelModulePort } from "../../ports/binaryDiagnostics/KernelModulePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
@@ -17,9 +16,8 @@ import {
   type InspectKernelModuleInput,
 } from "../../domain/native/kernelModule.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
-import { err, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import type { Result } from "../../domain/result.js";
+import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_kernel_module";
 
@@ -33,61 +31,54 @@ export class KernelModuleService {
     return this.provider.close?.() ?? Promise.resolve();
   }
 
-  async inspect(
+  inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    const input = parseAnalysisInput(
-      OPERATION,
-      rawInput,
-      inspectKernelModuleInputSchema,
-      options?.signal,
-    );
-    if (!input.ok) return input;
-    const result = await this.provider.inspect(input.value, options);
-    if (!result.ok) return result;
-    const report = kernelModuleSchema.safeParse(result.value);
-    if (
-      !report.success ||
-      report.data.artifact.path !== input.value.path ||
-      !validReport(report.data, input.value)
-    )
-      return err(
-        new AnalysisOutputError(
-          OPERATION,
+    return executeArtifactInspection(
+      {
+        operation: OPERATION,
+        inputSchema: inspectKernelModuleInputSchema,
+        outputSchema: kernelModuleSchema,
+        provider: this.provider,
+        invalidOutputMessage:
           "Kernel module provider returned malformed output or changed artifact identity.",
-        ),
-      );
-    const value = report.data;
-    const architecture =
-      value.machine === null ? undefined : elfArchitecture(value.machine);
-    const locations = [
-      { kind: "artifact-path" as const, path: value.artifact.path },
-      ...rangesOf(value).map((range) => ({
-        kind: "file-offset-range" as const,
-        start: range.offset,
-        end: range.offset + range.bytes,
-      })),
-    ];
-    return completeProviderEvidence(
-      createEvidence(
-        {
-          path: value.artifact.path,
-          format: value.applicability === "unsupported" ? "file" : "elf",
-          sha256: value.artifact.sha256,
-          ...(architecture === undefined ? {} : { architecture }),
+        toParameters: (input) => input,
+        validateReport: (report, parameters) =>
+          report.artifact.path === parameters.path &&
+          validReport(report, parameters),
+        buildEvidence: (value, identity, parameters) => {
+          const architecture =
+            value.machine === null ? undefined : elfArchitecture(value.machine);
+          const locations = [
+            { kind: "artifact-path" as const, path: value.artifact.path },
+            ...rangesOf(value).map((range) => ({
+              kind: "file-offset-range" as const,
+              start: range.offset,
+              end: range.offset + range.bytes,
+            })),
+          ];
+          return createEvidence(
+            {
+              path: value.artifact.path,
+              format: value.applicability === "unsupported" ? "file" : "elf",
+              sha256: value.artifact.sha256,
+              ...(architecture === undefined ? {} : { architecture }),
+            },
+            identity,
+            {
+              operation: OPERATION,
+              parameters,
+              result: value,
+              confidence: "observed",
+              limitations: value.limitations,
+              locations,
+            },
+          );
         },
-        this.provider.identity,
-        {
-          operation: OPERATION,
-          parameters: input.value,
-          result: value,
-          confidence: "observed",
-          limitations: value.limitations,
-          locations,
-        },
-      ),
-      options?.signal,
+      },
+      rawInput,
+      options,
     );
   }
 }

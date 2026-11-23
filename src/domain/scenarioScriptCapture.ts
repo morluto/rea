@@ -1,6 +1,6 @@
 import type { BrowserScenarioCapture } from "./browserScenarioCapture.js";
 import type { BrowserScenarioEvent } from "./browserScenarioCaptureValues.js";
-import type { BrowserNetworkBody } from "./browserNetworkEvidence.js";
+import { retainedNetworkMediaType } from "./browserNetworkMediaType.js";
 import type { CapturedWebScript } from "./webScriptExport.js";
 import {
   indexBrowserScenarioTransactions,
@@ -8,6 +8,7 @@ import {
 } from "./browserScenarioTransactions.js";
 
 type RequestEvent = Extract<BrowserScenarioEvent, { kind: "request" }>;
+type ContentEvent = Extract<BrowserScenarioEvent, { kind: "network-content" }>;
 
 /** Join script response bytes only through explicit transaction and event identity. */
 export const scenarioScripts = (
@@ -34,7 +35,7 @@ const projectRequest = (
       : (index.contents.get(response.sequence) ?? []).filter(
           ({ phase }) => phase === "response",
         );
-  const body = bodies.length === 1 ? bodies[0]?.body : undefined;
+  const content = bodies.length === 1 ? bodies[0] : undefined;
   const ambiguous =
     index.requestCounts.get(id) !== 1 ||
     matches.length > 1 ||
@@ -48,7 +49,7 @@ const projectRequest = (
       status: ambiguous ? null : (response?.status ?? null),
     },
     url: request.url.url,
-    content: projectBody(body, ambiguous),
+    content: projectBody(content, ambiguous),
   };
 };
 
@@ -58,7 +59,7 @@ const unavailable = (
 ): CapturedWebScript["content"] => ({ state: "unavailable", reason, message });
 
 const projectBody = (
-  body: BrowserNetworkBody | undefined,
+  content: ContentEvent | undefined,
   ambiguous: boolean,
 ): CapturedWebScript["content"] => {
   if (ambiguous)
@@ -66,11 +67,12 @@ const projectBody = (
       "ambiguous-transaction",
       "The capture does not identify one request, response, and content record for this transaction.",
     );
-  if (body === undefined)
+  if (content === undefined)
     return unavailable(
       "response-content-not-retained",
       "No selected, completed script response bytes were retained for this request.",
     );
+  const { body, headers } = content;
   if (body.state === "unavailable")
     return unavailable(body.reason, body.message);
   if (body.state !== "captured")
@@ -90,7 +92,7 @@ const projectBody = (
     state: "captured",
     bytes: Buffer.from(body.content, "base64"),
     sha256: body.sha256,
-    media_type: body.media_type,
+    media_type: retainedNetworkMediaType(body, headers) ?? null,
     redacted: body.redacted,
     representation: body.representation,
   };
