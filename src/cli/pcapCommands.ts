@@ -1,7 +1,8 @@
+import type { RequestAnalysisPort } from "../ports/AnalysisProvider.js";
+import type { PcapRequest } from "../domain/pcap/pcapAnalysis.js";
 import type { Logger } from "pino";
 
 import { PcapAnalysisService } from "../application/pcap/PcapAnalysisService.js";
-import type { PcapAnalysisPort } from "../application/pcap/PcapAnalysisPort.js";
 import { createPcapAnalysisProvider } from "../composition/pcap.js";
 import { PCAP_TOOL_CONTRACTS } from "../contracts/pcap/pcapToolContracts.js";
 import type { PcapOperation } from "../domain/pcap/pcapAnalysis.js";
@@ -19,7 +20,9 @@ export const registerPcapCommands = (
   cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
-  provider: PcapAnalysisPort = createPcapAnalysisProvider(environment),
+  provider: RequestAnalysisPort<PcapRequest> = createPcapAnalysisProvider(
+    environment,
+  ),
 ): void => {
   const pcap = new PcapAnalysisService(provider);
   // Each command releases the shared provider's tools when it finishes.

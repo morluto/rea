@@ -53,6 +53,7 @@ export const executeProviderOperation = async <
   schema: z.ZodType<TRequest>,
   provider: ProviderOperationPort<TRequest>,
   confidence: "observed" | "derived",
+  buildEvidence?: (request: TRequest, execution: AnalysisExecution) => Evidence,
 ): Promise<Result<Evidence, AnalysisError>> => {
   if (options?.signal?.aborted)
     return err(cancelledBy(operation, options.signal));
@@ -68,12 +69,15 @@ export const executeProviderOperation = async <
     );
   const executed = await provider.execute(request.data, options);
   if (!executed.ok) return executed;
-  const evidence = createAnalysisExecutionEvidence(
-    operation,
-    request.data.input,
-    executed.value,
-    confidence,
-  );
+  const evidence =
+    buildEvidence !== undefined
+      ? buildEvidence(request.data, executed.value)
+      : createAnalysisExecutionEvidence(
+          operation,
+          request.data.input,
+          executed.value,
+          confidence,
+        );
   return completeProviderEvidence(evidence, options?.signal);
 };
 

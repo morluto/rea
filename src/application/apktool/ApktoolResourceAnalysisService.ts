@@ -1,4 +1,5 @@
-import type { ApktoolResourceAnalysisPort } from "./ApktoolResourceAnalysisPort.js";
+import type { RequestAnalysisPort } from "../../ports/AnalysisProvider.js";
+import type { ApktoolRequest } from "../../domain/apktool/apktoolResourceAnalysis.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   apktoolRequestSchema,
@@ -11,7 +12,7 @@ import { executeProviderOperation } from "../ProviderOperationExecution.js";
 
 /** Shared CLI/MCP admission, execution, and Evidence composition for Apktool. */
 export class ApktoolResourceAnalysisService {
-  constructor(readonly provider: ApktoolResourceAnalysisPort) {}
+  constructor(readonly provider: RequestAnalysisPort<ApktoolRequest>) {}
 
   /** Run one caller-selected Apktool request and retain target identity inline. */
   async execute(

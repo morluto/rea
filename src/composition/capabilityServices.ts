@@ -1,3 +1,8 @@
+import type { RequestAnalysisPort } from "../ports/AnalysisProvider.js";
+import type { ApktoolRequest } from "../domain/apktool/apktoolResourceAnalysis.js";
+import type { FlutterRequest } from "../domain/flutter/flutterBuildAnalysis.js";
+import type { PcapRequest } from "../domain/pcap/pcapAnalysis.js";
+import type { AdbRequest } from "../domain/adb/adbDeviceAnalysis.js";
 import { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
 import type { UefiAnalysisPort } from "../ports/uefi/UefiAnalysisPort.js";
 import { createUefiAnalysisProvider } from "./uefi.js";
@@ -124,11 +129,7 @@ import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureS
 import type { JavaScriptRecoveryPort } from "../ports/javascript/JavaScriptRecoveryPort.js";
 import type { FirmwareAnalysisPort } from "../ports/firmware/FirmwareAnalysisPort.js";
 import type { AndroidAnalysisPort } from "../ports/android/AndroidAnalysisPort.js";
-import type { ApktoolResourceAnalysisPort } from "../application/apktool/ApktoolResourceAnalysisPort.js";
-import type { PcapAnalysisPort } from "../application/pcap/PcapAnalysisPort.js";
-import type { FlutterBuildAnalysisPort } from "../application/flutter/FlutterBuildAnalysisPort.js";
 import type { JebAnalysisPort } from "../ports/jeb/JebAnalysisPort.js";
-import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
 import type { BuildSettle } from "../application/desktop/DesktopBuildSettle.js";
 import type { BuildComputerDefaults } from "../desktop/BuildComputerEnvironment.js";
 import type { ComputerStartTiming } from "../desktop/AgentEnvComputer.js";
@@ -160,11 +161,11 @@ export interface CapabilityServiceOptions {
   readonly webRuntime?: WebRuntimeService;
   readonly webNetworkCapture?: WebNetworkCaptureService;
   readonly androidAnalysis?: AndroidAnalysisPort;
-  readonly apktoolAnalysis?: ApktoolResourceAnalysisPort;
-  readonly pcapAnalysis?: PcapAnalysisPort;
-  readonly flutterAnalysis?: FlutterBuildAnalysisPort;
+  readonly apktoolAnalysis?: RequestAnalysisPort<ApktoolRequest>;
+  readonly pcapAnalysis?: RequestAnalysisPort<PcapRequest>;
+  readonly flutterAnalysis?: RequestAnalysisPort<FlutterRequest>;
   readonly jebAnalysis?: JebAnalysisPort;
-  readonly adbDeviceAnalysis?: AdbDeviceAnalysisPort;
+  readonly adbDeviceAnalysis?: RequestAnalysisPort<AdbRequest>;
   readonly browserObservation?: BrowserObservationPort;
   readonly browserScenarioCapture?: BrowserScenarioCapturePort;
   readonly electronObservation?: ElectronObservationPort;

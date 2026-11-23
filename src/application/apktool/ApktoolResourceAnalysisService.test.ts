@@ -1,7 +1,8 @@
+import type { RequestAnalysisPort } from "../../ports/AnalysisProvider.js";
+import type { ApktoolRequest } from "../../domain/apktool/apktoolResourceAnalysis.js";
 import { expect, it } from "vitest";
 
 import { ApktoolResourceAnalysisService } from "./ApktoolResourceAnalysisService.js";
-import type { ApktoolResourceAnalysisPort } from "./ApktoolResourceAnalysisPort.js";
 import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { parseEvidence } from "../../domain/evidence.js";
@@ -20,7 +21,7 @@ const execution = createAnalysisExecution(
   identity,
 );
 
-const refusedPort: ApktoolResourceAnalysisPort = {
+const refusedPort: RequestAnalysisPort<ApktoolRequest> = {
   async inspectAvailability() {
     throw new Error("must not probe");
   },
@@ -51,7 +52,7 @@ it.each([
 });
 
 it("admits valid batched locales and forwards them to provider", async () => {
-  const port: ApktoolResourceAnalysisPort = {
+  const port: RequestAnalysisPort<ApktoolRequest> = {
     async inspectAvailability() {
       return { status: "available", code: null, reason: null, diagnostics: {} };
     },
@@ -86,7 +87,7 @@ it("admits valid batched locales and forwards them to provider", async () => {
 });
 
 it("composes observed Evidence with the caller parameters inline", async () => {
-  const port: ApktoolResourceAnalysisPort = {
+  const port: RequestAnalysisPort<ApktoolRequest> = {
     async inspectAvailability() {
       return { status: "available", code: null, reason: null, diagnostics: {} };
     },
@@ -130,7 +131,7 @@ it("preserves cancellation before execution", async () => {
 
 it("preserves a cancellation that races a completed observation", async () => {
   const controller = new AbortController();
-  const racingPort: ApktoolResourceAnalysisPort = {
+  const racingPort: RequestAnalysisPort<ApktoolRequest> = {
     async inspectAvailability() {
       return { status: "available", code: null, reason: null, diagnostics: {} };
     },
