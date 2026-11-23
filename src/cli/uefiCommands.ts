@@ -1,7 +1,7 @@
 import type { Logger } from "pino";
 import { z } from "zod";
 
-import { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
+import { createUefiAnalysisService } from "../application/ProviderOperationServices.js";
 import { createUefiAnalysisProvider } from "../composition/uefi.js";
 import { UEFI_TOOL_CONTRACTS } from "../contracts/uefi/uefiToolContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
@@ -29,7 +29,7 @@ export const registerUefiCommands = (
   cli: CliInstance,
   logger: Logger,
 ): void => {
-  const service = new UefiAnalysisService(createUefiAnalysisProvider());
+  const service = createUefiAnalysisService(createUefiAnalysisProvider());
   const run = (operation: UefiOperation) =>
     inspectWithService(
       () => ({

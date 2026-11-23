@@ -1,4 +1,4 @@
-import type { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
+import type { UefiAnalysisService } from "../application/ProviderOperationServices.js";
 import type { MavenGradleMetadataService } from "../application/java/MavenGradleMetadataService.js";
 
 import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
@@ -38,7 +38,7 @@ import {
 import { z } from "zod";
 import { analysisViewSourceSchema } from "../domain/analysisView/analysisViewRequest.js";
 import type { ApkSignatureService } from "../application/apkSignature/ApkSignatureService.js";
-import type { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
+import type { ApktoolResourceAnalysisService } from "../application/ProviderOperationServices.js";
 import type { DesktopApplicationService } from "../application/artifacts/DesktopApplicationService.js";
 import type { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsService.js";
 import type { BinaryHardeningService } from "../application/binaryDiagnostics/BinaryHardeningService.js";
@@ -61,7 +61,7 @@ import type { PacketCaptureService } from "../application/captures/PacketCapture
 import type { BeamService } from "../application/erlang/BeamService.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import type { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
-import type { FlutterBuildAnalysisService } from "../application/flutter/FlutterBuildAnalysisService.js";
+import type { FlutterBuildAnalysisService } from "../application/ProviderOperationServices.js";
 import type { GoBinaryService } from "../application/go/GoBinaryService.js";
 import type { GpuCodeObjectsService } from "../application/gpu/GpuCodeObjectsService.js";
 import type { Il2cppMetadataService } from "../application/il2cpp/Il2cppMetadataService.js";
@@ -70,9 +70,9 @@ import {
   recordEvidenceSources,
 } from "../application/investigation/recordEvidenceSources.js";
 import type { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
-import type { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
+import type { JebAnalysisService } from "../application/ProviderOperationServices.js";
 import type { ModelArtifactService } from "../application/model/ModelArtifactService.js";
-import type { PcapAnalysisService } from "../application/pcap/PcapAnalysisService.js";
+import type { PcapAnalysisService } from "../application/ProviderOperationServices.js";
 import type { PythonPycService } from "../application/python/PythonPycService.js";
 import type { ReleaseExposureService } from "../application/releaseExposure/ReleaseExposureService.js";
 import type { RustBinaryService } from "../application/rust/RustBinaryService.js";

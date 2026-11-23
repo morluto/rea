@@ -1,4 +1,4 @@
-import { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
+import { createJebAnalysisService } from "../application/ProviderOperationServices.js";
 import type { JebAnalysisPort } from "../ports/jeb/JebAnalysisPort.js";
 import { createJebAnalysisProvider } from "../composition/jeb.js";
 import { JEB_TOOL_CONTRACTS } from "../contracts/jeb/jebToolContracts.js";
@@ -21,7 +21,7 @@ export const registerJebCommands = (
   environment: Readonly<Record<string, string | undefined>>,
   provider: JebAnalysisPort = createJebAnalysisProvider(environment),
 ): void => {
-  const service = new JebAnalysisService(provider);
+  const service = createJebAnalysisService(provider);
   const run = (operation: JebOperation) => (): EvidenceInspectionService => ({
     inspect: (input, { signal }) =>
       service.execute(operation, input, { signal }),
