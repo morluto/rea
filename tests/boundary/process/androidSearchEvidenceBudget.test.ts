@@ -215,18 +215,45 @@ test("delivers bounded search_android_classes Evidence while retaining the compl
     },
   ]);
 
-  const page = await search("", { offset: 1, limit: 2 });
+  const page = await search("Class", { offset: 1, limit: 2 });
   expect(page.normalized_result).toMatchObject({
-    matches: ["fixture.Class0", "fixture.Class1"],
+    matches: ["fixture.Class1", "fixture.Class2"],
     coverage: "partial",
   });
-  expect(listClassCalls(page.raw_result)).toHaveLength(1);
+  expect(listClassCalls(page.raw_result).map(responsePage)).toMatchObject([
+    { limit: 4, next_offset: 5, items_omitted: 4 },
+  ]);
+
+  const boundaryPage = await search("", { limit: 4096 });
+  expect(boundaryPage.normalized_result).toMatchObject({ coverage: "partial" });
+  expect(
+    listClassCalls(boundaryPage.raw_result).map(responsePage),
+  ).toMatchObject([
+    { limit: 4096, next_offset: 4096 },
+    { limit: 1, next_offset: 4097 },
+  ]);
 
   const largePage = await search("Class7094", { limit: 20_000 });
   expect(largePage.normalized_result).toMatchObject({
     matches: ["fixture.Class7094"],
     coverage: "complete",
   });
+
+  const suffix = await search("Class709", { offset: 4 });
+  expect(suffix.normalized_result).toMatchObject({
+    matches: ["fixture.Class7093", "fixture.Class7094"],
+    coverage: "partial",
+  });
+  const exhausted = await search("Target", { offset: 1, limit: 1 });
+  expect(exhausted.normalized_result).toMatchObject({
+    matches: [],
+    coverage: "partial",
+  });
+  const rejected = await client.callTool({
+    name: "search_android_classes",
+    arguments: { path: apk, query: "", limit: 0, offset: -1 },
+  });
+  expect(rejected.isError).toBe(true);
 
   const emptyPage = await search("fixture.Missing", { offset: 1 });
   expect(emptyPage.normalized_result).toMatchObject({

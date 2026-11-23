@@ -302,9 +302,13 @@ const searchClasses = async (
   const stopAfter =
     matchLimit === undefined ? undefined : matchOffset + matchLimit;
   const matches: string[] = [];
-  const pageSize = 4096;
+  const maximumPageSize = 4096;
   let offset = 0;
   do {
+    const pageSize =
+      stopAfter === undefined
+        ? maximumPageSize
+        : Math.min(maximumPageSize, stopAfter - matches.length + 1);
     const page = await tools.listClasses({
       query: request.input.query,
       offset,
