@@ -52,6 +52,7 @@ import type { ZstandardFramePause } from "../../domain/compression/zstandardExac
 import {
   sharedElfSectionNameDecoder,
   type CooperativeElfSectionNameDecoder,
+  type ElfSectionNameDecodeRequest,
 } from "../../domain/native/elfSectionNameTable.js";
 
 import { err, ok, type Result } from "../../domain/result.js";
@@ -1038,19 +1039,33 @@ export const parseElfDebugLinkFromHandle = async (
 ): Promise<Report> => {
   const pause = debugLinkPause(signal);
   const decode = sharedElfSectionNameDecoder(pause);
+  let sectionNames: ElfSectionNameDecodeRequest | undefined;
   const image = await readElfImageFromReader(
     source,
     ELF_DEBUG_LINK_OPERATION,
     pause,
     input.max_file_bytes,
-    decode,
+    (request) => {
+      sectionNames = request;
+      return decode(request);
+    },
   );
+  // Both readers borrow the same stable file. Reuse only the exact extent
+  // admitted by the image reader so the decoder can share its result.
+  const noteSource: ElfNoteByteSource = {
+    size: source.size,
+    prefix: source.prefix,
+    readRange: (offset, length) =>
+      sectionNames?.fileOffset === offset && sectionNames.raw.length === length
+        ? Promise.resolve(sectionNames.raw)
+        : source.readRange(offset, length),
+  };
   let notes: PreparedNotes;
   assertArtifactReadActive(signal);
   try {
     notes = ok(
       await readElfBuildIdsFromHandle(
-        source,
+        noteSource,
         input,
         MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES,
         decode,
