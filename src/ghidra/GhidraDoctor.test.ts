@@ -1,8 +1,11 @@
 import { createInspectionResources } from "../../tests/fixtures/inspectionResources.js";
 
 import { missingJavaProbe } from "./GhidraInstallation.fixture.js";
-import { ok as javaProbeOk } from "../domain/result.js";
-import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
+import { err, ok as javaProbeOk } from "../domain/result.js";
+import type {
+  GhidraJavaObservation,
+  GhidraJavaProbeFailure,
+} from "./GhidraJavaProbe.js";
 import {
   afterEach,
   beforeEach,
@@ -210,6 +213,265 @@ describe("Ghidra doctor integration", async () => {
   });
 });
 
+const PASSING_GHIDRA_CHECKS = [
+  "configuration",
+  "platform",
+  "architecture",
+  "installation",
+  "version",
+  "headless",
+  "native_decompiler",
+  "java",
+] as const;
+
+const unavailableJavaProbe = err<GhidraJavaProbeFailure>({
+  _tag: "GhidraJavaProbeFailure",
+  code: "runtime_unavailable",
+  detail: "Java command could not be executed",
+});
+
+const javaObservation = (
+  osArch: string,
+  osName: string,
+): GhidraJavaObservation => ({
+  osArch,
+  osName,
+  version: `${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}.0.1`,
+  major: SUPPORTED_GHIDRA_JAVA_MAJOR,
+  home: `/usr/lib/jvm/jdk-${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}`,
+  bits: 64,
+  runtime: "jdk",
+});
+
+const classifiedChecks = (
+  checks: readonly {
+    readonly name: string;
+    readonly ok: boolean;
+    readonly code: string | null;
+    readonly remediation: string | null;
+    readonly classification: string;
+  }[],
+) =>
+  checks.map(({ name, ok, code, remediation, classification }) => ({
+    name,
+    ok,
+    code,
+    remediation,
+    classification,
+  }));
+
+const failureClassificationCases = async () =>
+  [
+    [
+      "an unsupported platform",
+      await inspection({ installDir: INSTALL, platform: "freebsd" }),
+      {
+        platform: "unsupported_host",
+        architecture: "unsupported_host",
+        native_decompiler: "config_drift",
+      },
+    ],
+    [
+      "an unsupported architecture",
+      await inspection({ installDir: INSTALL, architecture: "arm" }),
+      {
+        architecture: "unsupported_host",
+        native_decompiler: "config_drift",
+      },
+    ],
+    [
+      "a missing Java runtime",
+      await inspection(
+        { installDir: INSTALL },
+        { probeJava: () => missingJavaProbe },
+      ),
+      { java: "missing_dependency" },
+    ],
+    [
+      "an unavailable Java runtime",
+      await inspection(
+        { installDir: INSTALL },
+        { probeJava: () => unavailableJavaProbe },
+      ),
+      { java: "runtime_failure" },
+    ],
+    [
+      "a Java release outside the declared range",
+      await inspection(
+        { installDir: INSTALL },
+        {
+          probeJava: () =>
+            javaProbeOk<GhidraJavaObservation>({
+              ...javaObservation("amd64", "Linux"),
+              version: "17.0.12",
+              major: 17,
+              home: "/usr/lib/jvm/jdk-17",
+            }),
+        },
+      ),
+      { java: "config_drift" },
+    ],
+    [
+      "an unreadable Java requirement",
+      await inspection(
+        { installDir: INSTALL },
+        {
+          readText: () => `application.version=${SUPPORTED_GHIDRA_VERSION}\n`,
+        },
+      ),
+      { java: "config_drift" },
+    ],
+    [
+      "a rejected Ghidra release",
+      await inspection(
+        { installDir: INSTALL },
+        {
+          readText: () => "application.version=11.4\napplication.java.min=21\n",
+        },
+      ),
+      { version: "config_drift" },
+    ],
+    [
+      "a missing headless launcher",
+      await inspection({ installDir: INSTALL }, { executable: () => false }),
+      { headless: "config_drift", native_decompiler: "config_drift" },
+    ],
+    [
+      "an installation without application properties",
+      await inspection({ installDir: INSTALL }, { readText: () => undefined }),
+      { installation: "config_drift", java: "config_drift" },
+    ],
+    [
+      "a relative installation path",
+      await inspection({ installDir: "ghidra" }),
+      { configuration: "config_drift" },
+    ],
+    [
+      "no installation",
+      await inspection({}),
+      { configuration: "missing_analysis_engine" },
+    ],
+  ] as const;
+
+const expectFailureClassifications = (
+  ghidra: GhidraInstallationInspection,
+  failed: Readonly<Record<string, string>>,
+) => {
+  const projected = projectGhidraDoctorInspection(ghidra);
+  const observed = Object.fromEntries(
+    projected.checks.map((check) => [
+      check.name,
+      check.ok
+        ? (["healthy", true, check.code, check.remediation] as const)
+        : ([
+            check.classification,
+            false,
+            check.code !== null,
+            typeof check.remediation === "string",
+          ] as const),
+    ]),
+  );
+  const expected = Object.fromEntries(
+    projected.checks.map((check) => {
+      const failure = failed[check.name];
+      return [
+        check.name,
+        failure === undefined
+          ? (["healthy", true, null, null] as const)
+          : ([failure, false, true, true] as const),
+      ];
+    }),
+  );
+  expect(observed).toEqual(expected);
+  expect(
+    projected.checks
+      .filter((check) => !check.ok)
+      .map(({ name }) => name)
+      .sort(),
+  ).toEqual(Object.keys(failed).sort());
+};
+
+describe("Ghidra provider inspection classification", async () => {
+  it.each([
+    {
+      host: "linux x64",
+      platform: "linux" as const,
+      architecture: "x64" as const,
+      osArch: "amd64",
+      osName: "Linux",
+    },
+    {
+      host: "darwin arm64",
+      platform: "darwin" as const,
+      architecture: "arm64" as const,
+      osArch: "aarch64",
+      osName: "Mac OS X",
+    },
+  ])(
+    "classifies every passing installation check as healthy on $host",
+    async ({ platform, architecture, osArch, osName }) => {
+      const projected = projectGhidraDoctorInspection(
+        await inspection(
+          { installDir: INSTALL, platform, architecture },
+          {
+            probeJava: () => javaProbeOk(javaObservation(osArch, osName)),
+          },
+        ),
+      );
+
+      expect(projected.available).toBe(true);
+      expect(classifiedChecks(projected.checks)).toEqual(
+        PASSING_GHIDRA_CHECKS.map((name) => ({
+          name,
+          ok: true,
+          code: null,
+          remediation: null,
+          classification: "healthy",
+        })),
+      );
+    },
+  );
+
+  it("reports the same healthy classification on the doctor checks", async () => {
+    const result = await runDoctor(undefined, doctorHost(await inspection()));
+    const providerChecks = result.providerInspections?.[0]?.checks ?? [];
+
+    expect(classifiedChecks(providerChecks)).toEqual(
+      PASSING_GHIDRA_CHECKS.map((name) => ({
+        name,
+        ok: true,
+        code: null,
+        remediation: null,
+        classification: "healthy",
+      })),
+    );
+    expect(
+      PASSING_GHIDRA_CHECKS.map((name) =>
+        result.checks.find(
+          ({ name: checkName }) =>
+            checkName ===
+            (name === "configuration" ? "ghidra" : `ghidra-${name}`),
+        ),
+      ),
+    ).toEqual(
+      PASSING_GHIDRA_CHECKS.map((name) =>
+        expect.objectContaining({
+          name: name === "configuration" ? "ghidra" : `ghidra-${name}`,
+          ok: true,
+          classification: "healthy",
+        }),
+      ),
+    );
+  });
+
+  it.each(await failureClassificationCases())(
+    "keeps failure classifications for %s",
+    (_label, ghidra, failed) => {
+      expectFailureClassifications(ghidra, failed);
+    },
+  );
+});
+
 describe("Windows Ghidra doctor authority", () => {
   beforeEach(() => {
     vi.spyOn(nativeLoader, "systemWindowsNativeAuthority").mockReturnValue({
@@ -303,6 +565,9 @@ describe("Windows Ghidra doctor authority", () => {
       expect.objectContaining({
         name: "native_authority",
         ok: true,
+        code: null,
+        remediation: null,
+        classification: "healthy",
         detail: expect.stringContaining("local NTFS/ReFS only"),
       }),
     );
@@ -526,6 +791,9 @@ describe("Windows Ghidra temporary directory check", () => {
       expect.objectContaining({
         name: "temp_directory",
         ok: true,
+        code: null,
+        remediation: null,
+        classification: "healthy",
         detail: expect.stringContaining(
           "does not test writes by Ghidra's child JVM",
         ),
@@ -572,7 +840,11 @@ it.each([
       ({ name }) => name === "existing_project",
     );
     if ("REA_GHIDRA_PROJECT_PATH" in environment)
-      expect(check).toMatchObject({ ok: false, code: "unsupported_host" });
+      expect(check).toMatchObject({
+        ok: false,
+        code: "unsupported_host",
+        classification: "unsupported_host",
+      });
     else expect(check).toBeUndefined();
   },
 );

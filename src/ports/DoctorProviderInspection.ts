@@ -25,7 +25,7 @@ export interface DoctorProviderCheck {
   readonly code: string | null;
   readonly detail: string;
   readonly remediation: string | null;
-  readonly classification: Exclude<DoctorCheck["classification"], "healthy">;
+  readonly classification: DoctorCheck["classification"];
   readonly details?: Readonly<Record<string, JsonValue>>;
 }
 
