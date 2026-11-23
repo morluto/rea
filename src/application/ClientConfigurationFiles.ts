@@ -18,7 +18,7 @@ import {
   clientRegistrationEnvironment,
 } from "./ClientRegistrationEnvironment.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
-import type { ConfigurationError } from "../domain/configurationErrors.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { isRecord } from "../kernel/isRecord.js";
@@ -354,23 +354,25 @@ export const clientWriteDialect = (
 export const clientConfigurationForWrite = (
   parsed: ClientConfigurationDocument,
   sources: readonly ClientConfigurationDocument[],
-): ClientConfigurationDocument => {
+): Result<ClientConfigurationDocument, ConfigurationError> => {
   if (
     parsed.dialect !== "opencode" ||
     clientWriteDialect(parsed.dialect, sources) !== "opencode_v2"
   )
-    return parsed;
+    return ok(parsed);
   if (Object.hasOwn(parsed.servers, "servers"))
-    throw new TypeError(
-      "A legacy OpenCode server named servers conflicts with the effective native server table; repair this ambiguity before setup",
+    return err(
+      new ConfigurationError(
+        "A legacy OpenCode server named servers conflicts with the effective native server table. Repair this ambiguity before rerunning setup.",
+      ),
     );
-  return {
+  return ok({
     ...parsed,
     dialect: "opencode_v2",
     serversPath: ["mcp", "servers"],
     servers: {},
     legacyServers: parsed.servers,
-  };
+  });
 };
 
 /** Project a client's effective user registration without modifying its source files. */

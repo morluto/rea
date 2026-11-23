@@ -204,7 +204,17 @@ const configureClientDocument = async (
     format,
   );
   if (!document.ok) return { status: "failed", reason: "readback" };
-  const parsed = clientConfigurationForWrite(document.value, files.value);
+  const writeDocument = clientConfigurationForWrite(
+    document.value,
+    files.value,
+  );
+  if (!writeDocument.ok)
+    return {
+      status: "failed",
+      reason: "invalid_configuration",
+      detail: configurationRemediation(writeDocument.error),
+    };
+  const parsed = writeDocument.value;
   const ownershipBlocker = registrationOwnershipBlocker(
     client,
     parsed,
@@ -585,10 +595,17 @@ const readClientRefresh = async (
       path: client.configPath,
       detail: document.error.detail,
     });
-  const parsed =
+  const writeDocument =
     document === undefined
       ? undefined
       : clientConfigurationForWrite(document.value, files.value);
+  if (writeDocument?.ok === false)
+    return err({
+      kind: "malformed",
+      path: client.configPath,
+      detail: configurationRemediation(writeDocument.error),
+    });
+  const parsed = writeDocument?.value;
   const desiredResult = await clientConfigurationDesired(
     client,
     providerEnvironment,
@@ -992,7 +1009,16 @@ const inspectClientDocument = async (
             ? configurationRemediation(document.error.cause)
             : "The existing configuration is malformed. Repair it before setup applies any other changes.",
       };
-    const parsed = clientConfigurationForWrite(document.value, files.value);
+    const writeDocument = clientConfigurationForWrite(
+      document.value,
+      files.value,
+    );
+    if (!writeDocument.ok)
+      return {
+        status: "invalid",
+        remediation: configurationRemediation(writeDocument.error),
+      };
+    const parsed = writeDocument.value;
     const ownershipBlocker = writeTargetOwnershipBlocker(
       client,
       files.value,

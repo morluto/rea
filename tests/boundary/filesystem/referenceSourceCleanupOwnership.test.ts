@@ -374,6 +374,7 @@ it.each([
   [true, true, "reader"],
   [true, false, "import"],
   [true, true, "import"],
+  ["file-close", false, "reader"],
 ] as const)(
   "preserves directory EIO through close (late cancellation=%s, close fails=%s, surface=%s)",
   async (lateCancellation, closeFails, surface) => {
@@ -396,6 +397,18 @@ it.each([
     let readCalls = 0;
     let closeCalls = 0;
 
+    if (lateCancellation === "file-close")
+      openMock.mockImplementation(async (...args) => {
+        const handle = await actual.open(...args);
+        if (String(args[0]) === file) {
+          const close = handle.close.bind(handle);
+          vi.spyOn(handle, "close").mockImplementation(async () => {
+            controller.abort(reason);
+            await close();
+          });
+        }
+        return handle;
+      });
     opendirMock.mockImplementation(async (...args) => {
       const directory = await actual.opendir(...args);
       const operations: DirectoryOperations = directory;
@@ -407,7 +420,7 @@ it.each([
       const close = operations.close.bind(directory);
       vi.spyOn(operations, "close").mockImplementation(async () => {
         closeCalls += 1;
-        if (lateCancellation) controller.abort(reason);
+        if (lateCancellation === true) controller.abort(reason);
         await close();
         if (closeFails) throw closeFailure;
       });

@@ -112,7 +112,9 @@ export const prepareRegistration = async (
   );
   if (!read.ok) return configurationLayerFailure(read.error);
   const layers = read.value;
-  const parsed = clientConfigurationForWrite(target.value, layers);
+  const writeDocument = clientConfigurationForWrite(target.value, layers);
+  if (!writeDocument.ok) return writeDocument;
+  const parsed = writeDocument.value;
   const targetIndex = layers.findLastIndex(
     ({ sourcePath }) => sourcePath === client.configPath,
   );

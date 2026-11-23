@@ -270,8 +270,13 @@ export const readIdaConfiguration = (
         cause instanceof RegularFileCleanupFailure
           ? completedRegistrationRejection(cause.outcome)
           : undefined;
+      const cancellation = regularFileCancellation(cause);
       if (cause instanceof RegularFileCancelled && rejection !== undefined)
-        return err(rejection);
+        return err(
+          rejection.retainSecondaryFailure(
+            cancelledBy("ida:registration", carriedReason(cause.reason)),
+          ),
+        );
       if (cause instanceof NonRegularFileReadError)
         return err(
           idaConfigurationError(
@@ -280,9 +285,7 @@ export const readIdaConfiguration = (
           ),
         );
       if (cause instanceof AnalysisCancelledError) throw cause;
-      const cancellation =
-        rejection === undefined ? regularFileCancellation(cause) : undefined;
-      if (cancellation !== undefined) {
+      if (cancellation !== undefined && rejection === undefined) {
         if (cause instanceof RegularFileCleanupFailure) {
           const error = cancelledBy(
             "ida:registration",
@@ -330,6 +333,10 @@ export const readIdaConfiguration = (
             },
           ],
         });
+        if (cancellation !== undefined)
+          error.retainSecondaryFailure(
+            cancelledBy("ida:registration", carriedReason(cancellation.reason)),
+          );
         closeLease?.bindCleanupError(error);
         return err(error);
       }

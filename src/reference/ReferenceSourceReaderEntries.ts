@@ -188,13 +188,12 @@ export const traverseDirectory = async (
         : ((await state.beforeDirectory?.(
             pathFromRoot(state.root, current.path),
           )) ?? ok(undefined));
-      while (result.ok) {
-        // The admission callback can cancel enumeration while it is awaited.
-        if (isAborted(state.signal)) {
-          result = err(cancelled(state.signal));
-          break;
-        }
-        while (!listingComplete && listed.length < OBSERVATION_WINDOW) {
+      while (result.ok && !isAborted(state.signal)) {
+        while (
+          !listingComplete &&
+          listed.length < OBSERVATION_WINDOW &&
+          !isAborted(state.signal)
+        ) {
           let child: Dirent | null;
           try {
             child = await handle.read();
@@ -240,7 +239,12 @@ export const traverseDirectory = async (
           directories,
         );
       }
-      if (result.ok && listingFailure !== undefined) {
+      if (
+        listingFailure !== undefined &&
+        (result.ok || result.error.code === "cancelled")
+      ) {
+        // A later cancellation cannot replace a completed directory read failure.
+        result = ok(undefined);
         readFailureCause = listingFailure.cause;
         if (current.path === state.root && readFailureCause !== undefined)
           state.rootFailureCause = readFailureCause;
