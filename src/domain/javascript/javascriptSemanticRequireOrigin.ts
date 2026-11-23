@@ -1035,19 +1035,24 @@ type ModuleObjectSource = {
     | undefined;
 };
 
-/** Both loader queries retain the same read and shallow-copy selection owner. */
-const loaderSourceContextKey = (source: ModuleObjectSource): string =>
-  JSON.stringify([
-    source.eligibility,
-    source.readAt?.start,
-    source.readAt?.end,
-    source.capturedSelections?.map(({ at, depth, ownEnumerable }) => [
-      at.start,
-      at.end,
-      depth,
-      ownEnumerable,
-    ]),
-  ]);
+/** A source position, with null and absent positions sharing one key. */
+const positionKey = (position: number | null | undefined): string =>
+  position === null || position === undefined ? "-" : String(position);
+
+/**
+ * Both loader queries retain the same read and shallow-copy selection owner.
+ * Absent captures differ from an empty capture list. This hot key is built
+ * without JSON serialization.
+ */
+const loaderSourceContextKey = (source: ModuleObjectSource): string => {
+  let key = `${source.eligibility === true ? "e" : "-"}|${positionKey(source.readAt?.start)}|${positionKey(source.readAt?.end)}|`;
+  const captures = source.capturedSelections;
+  if (captures === undefined) return `${key}-`;
+  key += "[";
+  for (const { at, depth, ownEnumerable } of captures)
+    key += `${positionKey(at.start)},${positionKey(at.end)},${String(depth)},${ownEnumerable === true ? "o" : "-"};`;
+  return key;
+};
 
 const inheritLoaderSourceContext = (
   current: ModuleObjectSource,
@@ -1289,7 +1294,7 @@ const walkCommonJsModuleSource = (
     const byMode =
       contexts.get(value) ??
       new Map<string, { readonly identities: Map<string, object> }>();
-    const modeKey = JSON.stringify([awaitDepths, loaderSourceContextKey(next)]);
+    const modeKey = `${awaitDepths.join(",")}#${loaderSourceContextKey(next)}`;
     let context = byMode.get(modeKey);
     if (context === undefined) {
       context = { identities: new Map() };
