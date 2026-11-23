@@ -66,11 +66,10 @@ export const discoverObjcProtocols = (
   names: readonly AddressedName[],
 ): JsonValue => {
   const protocols = uniqueByName(
-    names.filter(
-      ({ name }) =>
-        OBJC_PROTOCOL_SYMBOL.test(objcSymbolLeaf(name)) ||
-        classifySwiftSymbol(name)?.protocolIdentity === true,
-    ),
+    names,
+    (name) =>
+      OBJC_PROTOCOL_SYMBOL.test(objcSymbolLeaf(name)) ||
+      classifySwiftSymbol(name)?.protocolIdentity === true,
   );
   return {
     count: protocols.length,
@@ -112,26 +111,37 @@ export const categorizeSwiftTypes = (
 
   for (const entry of procedures) {
     if (seen.has(entry.name)) continue;
-    const mangledNames = [
-      ...new Set([
-        ...(isSwiftSymbolName(entry.name) ? [entry.name] : []),
-        ...(aliases.get(entry.address) ?? []),
-      ]),
-    ];
-    if (mangledNames.length === 0) continue;
+    const addressAliases = aliases.get(entry.address);
+    const hasMangledName = isSwiftSymbolName(entry.name);
+    if (!hasMangledName && addressAliases === undefined) continue;
     if (
       pattern !== undefined &&
-      ![entry.name, ...mangledNames].some((name) => name.includes(pattern))
+      !entry.name.includes(pattern) &&
+      addressAliases?.some((name) => name.includes(pattern)) !== true
     )
       continue;
-    // Only decoded categories vote. A Swift-looking alias whose category is
-    // not decoded remains evidence without erasing a decoded category.
-    const kinds = new Set<SwiftTypeCategory>();
+    const mangledNames =
+      addressAliases === undefined
+        ? [entry.name]
+        : [
+            ...new Set(
+              hasMangledName ? [entry.name, ...addressAliases] : addressAliases,
+            ),
+          ];
+    // Aliases remain evidence after two distinct decoded categories establish
+    // a conflict. Undecoded aliases do not decide the category.
+    let category: SwiftTypeCategory | null = null;
+    let conflictingCategories = false;
     for (const name of mangledNames) {
       const decoded = classifySwiftSymbol(name)?.category;
-      if (decoded !== undefined && decoded !== null) kinds.add(decoded);
+      if (decoded === undefined || decoded === null) continue;
+      if (category !== null && category !== decoded) {
+        conflictingCategories = true;
+        category = null;
+        break;
+      }
+      category = decoded;
     }
-    const category = kinds.size === 1 ? ([...kinds][0] ?? null) : null;
     const item = {
       address: entry.address,
       name: entry.name,
@@ -141,8 +151,9 @@ export const categorizeSwiftTypes = (
       unclassifiedNames.add(entry.name);
       unclassified.push({
         ...item,
-        reason:
-          kinds.size > 1 ? "conflicting_categories" : "category_not_decoded",
+        reason: conflictingCategories
+          ? "conflicting_categories"
+          : "category_not_decoded",
       });
     }
     const bucket = category ?? "other";
@@ -184,10 +195,13 @@ const swiftAliasesByAddress = (symbols: readonly AddressedName[]) => {
   return aliases;
 };
 
-const uniqueByName = (entries: readonly AddressedName[]): AddressedName[] => {
+const uniqueByName = (
+  entries: readonly AddressedName[],
+  matches: (name: string) => boolean,
+): AddressedName[] => {
   const seen = new Set<string>();
   return entries.filter(({ name }) => {
-    if (seen.has(name)) return false;
+    if (seen.has(name) || !matches(name)) return false;
     seen.add(name);
     return true;
   });
