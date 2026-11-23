@@ -342,6 +342,7 @@
 * **elf:** stream ELF debug-link inspection over FileHandle ([#13928](https://github.com/morluto/rea/issues/13928)) ([8e1e4c3](https://github.com/morluto/rea/commit/8e1e4c3966c3fc7803c8f8a468b3bbaa8feafbf9))
 * **elf:** stream ELF dependency inspection over FileHandle ([#13915](https://github.com/morluto/rea/issues/13915)) ([2c38fd1](https://github.com/morluto/rea/commit/2c38fd16287085867848ce152ae2e57bf68d2015))
 * **elf:** stream ELF note inspection over FileHandle ([#13904](https://github.com/morluto/rea/issues/13904)) ([37c37e3](https://github.com/morluto/rea/commit/37c37e32e7989fe8d5fc0944c9d1d47495071359))
+* **elf:** stream ELF unwind-range inspection over FileHandle ([#13931](https://github.com/morluto/rea/issues/13931)) ([b5c7937](https://github.com/morluto/rea/commit/b5c79379fc6896fb6757ba3a3aab25c53766d02e))
 * **elf:** stream kernel module inspection over FileHandle ([#13917](https://github.com/morluto/rea/issues/13917)) ([9291cd6](https://github.com/morluto/rea/commit/9291cd62197eadb5306f4d1939ead32f4d136ddc))
 * **entropy:** count bytes by index into an integer table ([5d3276d](https://github.com/morluto/rea/commit/5d3276d14c162b559a500189096a733692212bfc))
 * **entropy:** count bytes through one shared loop ([d777c3c](https://github.com/morluto/rea/commit/d777c3c55f90421a35a7a032336c6f4f1c21dd17))
