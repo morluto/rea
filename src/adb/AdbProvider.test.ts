@@ -1963,6 +1963,14 @@ it("lists processes, features, and services through fixed commands", async () =>
     { name: "android.hardware.camera", version: null },
     { name: "android.hardware.nfc", version: 1 },
   ]);
+  const pagedFeatures = await evidenceResult(providerOver(binary), {
+    operation: "list_adb_features",
+    input: { serial: "emulator-5554", limit: 1, offset: 1 },
+  });
+  expect(pagedFeatures.features).toEqual([
+    { name: "android.hardware.nfc", version: 1 },
+  ]);
+  expect(pagedFeatures.coverage).toBe("partial");
   const services = await evidenceResult(providerOver(binary), {
     operation: "list_adb_services",
     input: { serial: "emulator-5554" },
@@ -1971,6 +1979,14 @@ it("lists processes, features, and services through fixed commands", async () =>
     { name: "package", interface: "android.content.pm.IPackageManager" },
     { name: "activity", interface: "android.app.IActivityManager" },
   ]);
+  const pagedServices = await evidenceResult(providerOver(binary), {
+    operation: "list_adb_services",
+    input: { serial: "emulator-5554", limit: 1, offset: 0 },
+  });
+  expect(pagedServices.services).toEqual([
+    { name: "package", interface: "android.content.pm.IPackageManager" },
+  ]);
+  expect(pagedServices.coverage).toBe("partial");
 });
 
 it.each(["complete", "truncated"] as const)(

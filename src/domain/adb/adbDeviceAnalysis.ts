@@ -336,11 +336,13 @@ export const adbInputSchemas = {
     serial: deviceSerialSchema.describe(
       "Device serial exactly as `adb devices` reports it",
     ),
+    ...listingPagingFields,
   }),
   list_adb_services: z.strictObject({
     serial: deviceSerialSchema.describe(
       "Device serial exactly as `adb devices` reports it",
     ),
+    ...listingPagingFields,
   }),
   inspect_adb_display: z.strictObject({
     serial: deviceSerialSchema.describe(
