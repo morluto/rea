@@ -90,6 +90,7 @@ import {
   isUnmodifiedGlobalReference,
   isUnmodifiedImportMetaUrl,
 } from "./javascriptSemanticGlobalReference.js";
+import { semanticConsumerMemo } from "./javascriptSemanticConsumer.js";
 
 const possibleCommonJsDelegateWriteStates =
   new WeakSet<JavaScriptSemanticAnalysisState>();
@@ -447,7 +448,7 @@ const selectedRequireSourcesAt = (
     paths.add(key);
     seen.set(node, paths);
     if (++count > state.precision.alias_selections) {
-      state.valueResourceLimits.add("alias-selections");
+      state.observations.valueResourceLimits.add("alias-selections");
       return { loader: "unknown", sourceRelative: false };
     }
     if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
@@ -1007,17 +1008,14 @@ const isWrapperRequireInitializerCall = (
 };
 
 type ModuleSourceMatch = "possible" | "no-match" | "incomplete";
-const moduleRequireWrites = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  readonly t.Node[]
->();
-const moduleReturnedReferences = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  Map<
-    "direct-call" | "awaited-call",
-    ReturnType<typeof createSemanticReturnedReferences>
-  >
->();
+const moduleRequireWrites = semanticConsumerMemo<readonly t.Node[]>();
+const moduleReturnedReferences =
+  semanticConsumerMemo<
+    Map<
+      "direct-call" | "awaited-call",
+      ReturnType<typeof createSemanticReturnedReferences>
+    >
+  >();
 
 /** Reuse one result-reference owner for loader values and module receivers. */
 const returnedLoaderReferences = (
@@ -1342,10 +1340,11 @@ const hasCommonJsModuleSource = (
   const key = `${target}:${String(includeUnknown)}`;
   const cached = byOptions.get(key);
   if (cached !== undefined) {
-    for (const limit of cached.limits) state.valueResourceLimits.add(limit);
+    for (const limit of cached.limits)
+      state.observations.valueResourceLimits.add(limit);
     return cached.match;
   }
-  const before = new Set(state.valueResourceLimits);
+  const before = new Set(state.observations.valueResourceLimits);
   const match = walkCommonJsModuleSource(
     node,
     state,
@@ -1358,7 +1357,7 @@ const hasCommonJsModuleSource = (
   if (semanticModuleSourceQueries<ModuleSourceMatch>(state, node) === queries)
     byOptions.set(key, {
       match,
-      limits: [...state.valueResourceLimits].filter(
+      limits: [...state.observations.valueResourceLimits].filter(
         (limit) => !before.has(limit),
       ),
     });
@@ -1379,7 +1378,7 @@ const walkCommonJsModuleSource = (
   const pending: Work[] = [{ node, path: [], readAt, awaitDepths: [] }];
   // Keep depths separate and join finite key alternatives at each source read.
   const selections = new SemanticAliasSelections(() => {
-    state.valueResourceLimits.add("alias-selections");
+    state.observations.valueResourceLimits.add("alias-selections");
   }, state.precision.alias_selections);
   const contexts = new WeakMap<
     t.Node,
@@ -1441,7 +1440,7 @@ const walkCommonJsModuleSource = (
         (byMode.size > 1 || context.identities.size > 0) &&
         ++additionalStates > state.precision.alias_selections
       ) {
-        state.valueResourceLimits.add("alias-selections");
+        state.observations.valueResourceLimits.add("alias-selections");
         if (includeUnknown) return "possible";
         exhausted = true;
       }
@@ -1926,10 +1925,8 @@ export const semanticOriginalGlobalProcessAt = (
   !ambientPathMayObserveAt(state, node, ["global", "process"]) &&
   !ambientBindingMayObserveWriteAt(state, node, "process");
 
-const globalProcessReaders = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  (site: t.Node) => GlobalReferenceRead
->();
+const globalProcessReaders =
+  semanticConsumerMemo<(site: t.Node) => GlobalReferenceRead>();
 
 /**
  * Whether a write or escape through the global process object at this source

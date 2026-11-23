@@ -187,7 +187,7 @@ const localPropertyMethods = (
     paths.add(key);
     examined.set(node, paths);
     if (++selections > state.precision.alias_selections) {
-      state.valueResourceLimits.add("alias-selections");
+      state.observations.valueResourceLimits.add("alias-selections");
       return undefined;
     }
     if (
@@ -585,7 +585,7 @@ export function* collectSemanticMemberMutationsSteps(
       if (examined.has(identity)) continue;
       examined.add(identity);
       if (examined.size > state.precision.alias_selections) {
-        state.valueResourceLimits.add("alias-selections");
+        state.observations.valueResourceLimits.add("alias-selections");
         return [{ node: root, path: [] }];
       }
       const receiver = selected.slice(0, -1);
@@ -1029,7 +1029,7 @@ export function* collectSemanticMemberMutationsSteps(
           ++additionalAlternatives > state.precision.alias_selections
         ) {
           projectionsWidened = true;
-          state.valueResourceLimits.add("alias-selections");
+          state.observations.valueResourceLimits.add("alias-selections");
           exactProjections.clear();
         } else {
           exact.add(selection);
