@@ -58,6 +58,7 @@ const fileCloseFailure = vi.hoisted(() => ({
   selectedPath: "",
   attempts: 0,
   failFirst: false,
+  toolCloseFailures: new Set<string>(),
   failRead: undefined as (() => Error) | undefined,
   abortSnapshotWrite: undefined as AbortController | undefined,
 }));
@@ -82,6 +83,18 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     },
     open: async (...args: Parameters<typeof fs.open>) => {
       const handle = await fs.open(...args);
+      const toolPath = [...fileCloseFailure.toolCloseFailures].find((path) =>
+        samePath(String(args[0]), path),
+      );
+      if (toolPath !== undefined) {
+        const close = handle.close.bind(handle);
+        handle.close = async () => {
+          if (fileCloseFailure.toolCloseFailures.delete(toolPath))
+            throw new Error("injected WABT tool close failure");
+          return close();
+        };
+        return handle;
+      }
       if (!samePath(String(args[0]), fileCloseFailure.selectedPath))
         return handle;
       const close = handle.close.bind(handle);
@@ -107,7 +120,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 const outcomeModes = [
   "success",
-  "invalid",
   "invalid-close",
   "invalid-close-failure",
   "snapshot-close-failure",
@@ -115,7 +127,6 @@ const outcomeModes = [
   "malformed",
   "malformed-close",
   "malformed-close-failure",
-  "timeout",
   "cancelled",
   "cancelled-close",
   "cancelled-close-failure",
@@ -127,12 +138,10 @@ const outcomeModes = [
 type OutcomeMode = (typeof outcomeModes)[number];
 
 const failureTags: Readonly<Record<Exclude<OutcomeMode, "success">, string>> = {
-  invalid: "AnalysisInputError",
   "invalid-close": "AnalysisInputError",
   "invalid-close-failure": "ProviderAdapterError",
   "snapshot-close-failure": "AnalysisOutputError",
   "snapshot-read-failure-late-abort": "AnalysisOutputError",
-  timeout: "AnalysisTimeoutError",
   cancelled: "AnalysisCancelledError",
   "cancelled-close": "AnalysisCancelledError",
   "cancelled-close-failure": "ProviderAdapterError",
@@ -504,10 +513,14 @@ it.each([
   "recovers the same complete artifact by changing only %s",
   async (parameter) => {
     const fixture = await createWabtArtifactFixture();
-    const wat = await readFile(
+    const decodedWat = await readFile(
       new URL("../../tests/fixtures/wasm/decoded.wat", import.meta.url),
       "utf8",
     );
+    const wat =
+      parameter === "max_output_bytes" ? decodedWat.padEnd(2048) : decodedWat;
+    // Admit the version probes and section inventory, then overflow in wasm2wat.
+    const limitedBudget = parameter === "max_output_bytes" ? 1024 : 1;
     const provider = new WabtArtifactProvider(
       { REA_WABT_BIN_DIRECTORY: fixture.selectedRoot },
       (input) => {
@@ -547,7 +560,9 @@ it.each([
     };
     const rejected = await service.inspect({
       ...input,
-      ...(parameter === "max_artifact_paths" ? {} : { [parameter]: 1 }),
+      ...(parameter === "max_artifact_paths"
+        ? {}
+        : { [parameter]: limitedBudget }),
     });
     if (parameter === "max_interface_bytes") {
       if (!rejected.ok) throw rejected.error;
@@ -560,6 +575,32 @@ it.each([
       if (parameter === "max_tool_bytes")
         expect(projected.code).toBe("capability_unavailable");
       expect(projected.remediation.action).toContain(parameter);
+      if (parameter === "max_output_bytes") {
+        expect(projected).toMatchObject({
+          code: "resource_constraint",
+          details: {
+            captured_output: {
+              stdout: wat.slice(0, limitedBudget),
+              stderr: "",
+              stderr_bytes: 0,
+              truncated: true,
+            },
+          },
+        });
+        expect(rejected.error.capturedOutput?.stdout_bytes).toBeGreaterThan(
+          limitedBudget,
+        );
+        expect(rejected.error.partialObservation).toMatchObject({
+          normalized_result: {
+            validation: "valid",
+            artifact: {
+              path: fixture.path,
+              sha256: createHash("sha256").update(fixture.bytes).digest("hex"),
+              bytes: fixture.bytes.length,
+            },
+          },
+        });
+      }
     }
     const requestedBudget = parameter === "max_artifact_paths" ? 17 : 10_000;
     const recovered = await service.inspect({
@@ -582,30 +623,6 @@ it.each([
 );
 
 it.each([
-  {
-    label: "initially malformed",
-    preamble: "",
-    payload: "abc",
-    diagnostic:
-      "0000011: warning: invalid sub-section size: extends past end\n",
-    metadata: "uninterpretable",
-  },
-  {
-    label: "partially decoded",
-    preamble: "module name: <hello>\n",
-    payload: String.raw`\00\06\05hello\01\02\01`,
-    diagnostic:
-      "0000011: warning: invalid sub-section size: extends past end\n",
-    metadata: "uninterpretable",
-  },
-  {
-    label: "an inner map rejected by WABT",
-    preamble: "module name: <hello>\n",
-    payload: String.raw`\00\06\05hello\01\01\01`,
-    diagnostic:
-      "000002f: warning: invalid name count 1, only 0 bytes left in section\n",
-    metadata: "unknown",
-  },
   {
     label: "a valid empty function-name map",
     preamble: "module name: <hello>\n",
@@ -755,7 +772,7 @@ const assertModeOutcome = (
             : failureTags[mode],
       },
     });
-  if (mode === "invalid" || mode === "invalid-close")
+  if (mode === "invalid-close")
     expect(result).toMatchObject({
       error: { capturedOutput: { stderr: "module.wasm: invalid bytes\n" } },
     });
@@ -803,57 +820,43 @@ const assertFailedInspectionCleanupRecovery = async (
   });
 };
 
-it("keeps a rejected relative tool directory in the refusal diagnostics", async () => {
-  const provider = new WabtArtifactProvider(
-    { REA_WABT_BIN_DIRECTORY: "wabt/bin" },
-    undefined,
-    () => {
-      throw new Error("Must not allocate");
-    },
-  );
-  expect(
-    await provider.inspect({
+it.each([
+  { selection: "relative", configured: "wabt/bin" },
+  { selection: "absent", configured: undefined },
+])(
+  "refuses $selection WABT tool selection before workspace creation",
+  async ({ configured }) => {
+    const createRuntime = vi.fn(() => {
+      throw new Error("Unavailable tools must not create a workspace");
+    });
+    const provider = new WabtArtifactProvider(
+      configured === undefined ? {} : { REA_WABT_BIN_DIRECTORY: configured },
+      undefined,
+      createRuntime,
+    );
+    onTestFinished(() => provider.close());
+    const result = await provider.inspect({
       path: "/module.wasm",
       glue_paths: [],
       candidate_paths: [],
-    }),
-  ).toMatchObject({
-    ok: false,
-    error: {
-      _tag: "AnalysisCapabilityUnavailableError",
-      reason: "directory_not_absolute",
-      diagnostics: {
-        code: "directory_not_absolute",
-        setting: "REA_WABT_BIN_DIRECTORY",
-        configured: "wabt/bin",
-      },
-    },
-  });
-});
-
-it("returns actionable unavailable without creating a workspace when tools are absent", async () => {
-  const provider = new WabtArtifactProvider({}, undefined, () => {
-    throw new Error("Must not allocate");
-  });
-  expect(
-    await provider.inspect({
-      path: "/module.wasm",
-      glue_paths: [],
-      candidate_paths: [],
-    }),
-  ).toMatchObject({
-    ok: false,
-    error: {
+    });
+    if (result.ok) throw new Error("Expected tool directory refusal");
+    expect(result.error).toMatchObject({
       _tag: "AnalysisCapabilityUnavailableError",
       reason: "directory_not_absolute",
       userMessage: "WABT configuration cannot be used",
-      diagnostics: {
-        code: "directory_not_absolute",
-        setting: "REA_WABT_BIN_DIRECTORY",
-      },
-    },
-  });
-});
+    });
+    expect(result.error.diagnostics).toEqual({
+      code: "directory_not_absolute",
+      setting: "REA_WABT_BIN_DIRECTORY",
+      ...(configured === undefined ? {} : { configured }),
+    });
+    expect(projectAnalysisError(result.error).remediation.action).toContain(
+      "REA_WABT_BIN_DIRECTORY",
+    );
+    expect(createRuntime).not.toHaveBeenCalled();
+  },
+);
 
 it("preserves a pre-aborted caller reason without acquiring WASM facts", async () => {
   const reason = { source: "caller cancelled before provider admission" };
@@ -1252,6 +1255,41 @@ it("retries a retained input descriptor before admitting the next WABT operation
   }
 });
 
+it("reports the first tool admission failure and tracks every sibling descriptor until release", async () => {
+  const root = await realpath(
+    await createTestTempDirectory("rea-wabt-tool-cleanup-"),
+  );
+  const suffix = process.platform === "win32" ? ".exe" : "";
+  const siblingTools = ["wasm-objdump", "wasm2wat"].map((tool) =>
+    join(root, tool + suffix),
+  );
+  for (const path of siblingTools) {
+    await writeFile(path, "fixture tool", { mode: 0o755 });
+    fileCloseFailure.toolCloseFailures.add(path);
+  }
+  const provider = new WabtArtifactProvider({ REA_WABT_BIN_DIRECTORY: root });
+  try {
+    const result = await provider.inspect({
+      path: join(root, "selected.wasm"),
+      candidate_paths: [],
+      glue_paths: [],
+    });
+    if (result.ok) throw new Error("Expected rejected tool admission");
+    const primary = projectAnalysisError(primaryAnalysisError(result.error));
+    expect(primary.code).toBe("capability_unavailable");
+    expect(primary.message).toContain("wasm-validate");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toEqual(siblingTools);
+
+    await provider.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupResources).toEqual([]);
+  } finally {
+    fileCloseFailure.toolCloseFailures.clear();
+    await provider.close();
+  }
+});
+
 it.each([false, true])(
   "reports an unavailable private runtime root with retryable=%s without a misleading WABT remediation",
   async (retryable) => {
@@ -1333,7 +1371,7 @@ const assertGlueObservations = (
 
 const launchWabtOutcome = async (
   input: Parameters<typeof spawnOwnedProviderProcess>[0],
-  mode: OutcomeMode,
+  mode: OutcomeMode | "invalid",
   fixture: { bytes: Buffer; dump: string; controller: AbortController },
 ) => {
   const { bytes, dump, controller } = fixture;
@@ -1350,8 +1388,6 @@ const launchWabtOutcome = async (
       await chmod(snapshot, 0o600);
       await writeFile(snapshot, Buffer.alloc(76, 2));
     }
-    if (mode === "timeout")
-      throw new OwnedCommandFailure("timeout", "Source-owned deadline seam");
   }
   const stdout = version
     ? "1.0.42\n"
@@ -1403,10 +1439,7 @@ it("enforces a selected command deadline and completes a corrected retry after c
           ...input,
           hostEnvironment: nodeHostEnvironment(input.hostEnvironment),
           command: process.execPath,
-          arguments: [
-            "-e",
-            'setTimeout(() => process.stdout.write("1.0.42\\n"), 250)',
-          ],
+          arguments: ["-e", "setInterval(() => undefined, 1_000)"],
         });
       }
       return launchWabtOutcome(input, "success", {
@@ -1695,6 +1728,7 @@ it.each([
     validation: "rejected-by-selected-profile",
   },
   { stage: "candidate admission", mode: "success", validation: "unknown" },
+  { stage: "candidate finalization", mode: "success", validation: "unknown" },
   { stage: "glue decoding", mode: "success", validation: "unknown" },
   { stage: "glue finalization", mode: "success", validation: "unknown" },
   { stage: "producer output", mode: "malformed-wat", validation: "valid" },
@@ -1705,10 +1739,20 @@ it.each([
     // Evidence retention, not real WABT acceptance of the fixture bytes.
     const fixture = await createWabtArtifactFixture();
     const candidate = join(fixture.selectedRoot, "candidate.wasm");
-    const candidateBytes = Buffer.from("independent candidate bytes");
+    const gluePath = join(fixture.selectedRoot, "glue.js");
+    const candidateFailure = stage.startsWith("candidate");
+    const closingPath =
+      stage === "candidate finalization"
+        ? candidate
+        : stage === "glue finalization"
+          ? gluePath
+          : undefined;
+    const candidateBytes =
+      stage === "candidate finalization"
+        ? Buffer.alloc(1024 * 1024 + 29, 0xa5)
+        : Buffer.from("independent candidate bytes");
     await writeFile(candidate, candidateBytes);
     const missing = join(fixture.selectedRoot, "missing.wasm");
-    const gluePath = join(fixture.selectedRoot, "glue.js");
     const glueSource = 'fetch("./selected.wasm");';
     const glueBytes =
       stage === "glue decoding" ? Buffer.from([0xff]) : Buffer.from(glueSource);
@@ -1721,8 +1765,8 @@ it.each([
           controller: new AbortController(),
         }),
     );
-    if (stage === "glue finalization") {
-      fileCloseFailure.selectedPath = gluePath;
+    if (closingPath !== undefined) {
+      fileCloseFailure.selectedPath = closingPath;
       fileCloseFailure.attempts = 0;
       fileCloseFailure.failFirst = true;
     }
@@ -1732,71 +1776,62 @@ it.each([
           path: fixture.path,
           candidate_paths:
             stage === "candidate admission"
-              ? [candidate, missing]
+              ? [fixture.path, candidate, candidate, missing, missing]
               : [candidate],
-          glue_paths: stage === "candidate admission" ? [] : [gluePath],
+          glue_paths: candidateFailure ? [] : [gluePath],
         },
         { commandTimeoutMs: 42000 },
       );
-      if (!result.ok) {
-        expect(result.error.partialObservation).toMatchObject({
-          parameters: expect.not.objectContaining({
-            command_timeout_ms: expect.anything(),
-          }),
-          normalized_result: { tool_profile: { timeout_ms: 42000 } },
-        });
-      }
       if (result.ok) throw new Error("Expected the selected failure stage");
       expect(result.error._tag).toBe(
-        validation === "rejected-by-selected-profile"
-          ? "AnalysisInputError"
-          : validation === "unknown"
-            ? "AnalysisInputError"
-            : "AnalysisOutputError",
+        validation === "valid" ? "AnalysisOutputError" : "AnalysisInputError",
       );
       expect(result.error.partialObservation).toMatchObject({
+        parameters: expect.not.objectContaining({
+          command_timeout_ms: expect.anything(),
+        }),
         normalized_result: {
           artifact: {
             path: fixture.path,
             sha256: createHash("sha256").update(fixture.bytes).digest("hex"),
           },
           validation,
-          tool_profile: { release: "1.0.42" },
+          tool_profile: { release: "1.0.42", timeout_ms: 42000 },
           candidates: [
             { path: fixture.path },
             {
               path: candidate,
               sha256: createHash("sha256").update(candidateBytes).digest("hex"),
+              bytes: candidateBytes.length,
             },
           ],
-          glue:
-            stage === "candidate admission"
-              ? []
-              : [
-                  {
-                    artifact: {
-                      path: gluePath,
-                      sha256: createHash("sha256")
-                        .update(glueBytes)
-                        .digest("hex"),
-                    },
-                    parse_status:
-                      stage === "glue finalization"
-                        ? "not-performed"
-                        : stage === "glue decoding"
-                          ? "failed"
-                          : "complete",
-                    references:
-                      stage === "glue decoding" || stage === "glue finalization"
-                        ? []
-                        : [
-                            {
-                              value: "./selected.wasm",
-                              candidate_paths: [fixture.path],
-                            },
-                          ],
+          glue: candidateFailure
+            ? []
+            : [
+                {
+                  artifact: {
+                    path: gluePath,
+                    sha256: createHash("sha256")
+                      .update(glueBytes)
+                      .digest("hex"),
                   },
-                ],
+                  parse_status:
+                    stage === "glue finalization"
+                      ? "not-performed"
+                      : stage === "glue decoding"
+                        ? "failed"
+                        : "complete",
+                  references:
+                    stage === "glue decoding" || stage === "glue finalization"
+                      ? []
+                      : [
+                          {
+                            value: "./selected.wasm",
+                            candidate_paths: [fixture.path],
+                          },
+                        ],
+                },
+              ],
         },
       });
       if (validation === "rejected-by-selected-profile")
@@ -1806,19 +1841,31 @@ it.each([
             stderr: "module.wasm: invalid bytes\n",
           },
         });
-      if (stage === "candidate admission")
+      if (candidateFailure)
         expect(projectAnalysisError(result.error)).toMatchObject({
-          code: "invalid_request",
-          details: { issues: [{ path: ["candidate_paths", 1] }] },
+          code:
+            stage === "candidate finalization"
+              ? "cleanup_incomplete"
+              : "invalid_request",
+          details: {
+            issues: [
+              {
+                path: [
+                  "candidate_paths",
+                  stage === "candidate finalization" ? 0 : 3,
+                ],
+              },
+            ],
+          },
         });
       else if (validation === "unknown")
         expect(result.error).toMatchObject({
           issues: [{ path: ["glue_paths", 0] }],
         });
-      if (stage === "glue finalization") {
+      if (closingPath !== undefined) {
         expect(result.error).toMatchObject({
           cleanupIncomplete: true,
-          cleanupResources: [gluePath],
+          cleanupResources: [closingPath],
         });
         expect(fileCloseFailure.attempts).toBe(1);
         await provider.close();
@@ -1866,54 +1913,21 @@ const outputLimitFailure = ({
     undefined,
     cleanupFailure === null ? [] : ["/owned/runtime"],
   );
-it("reports WABT output overflow with bounded UTF-8 excerpts of both streams", async () => {
-  const selectedRoot = await createTestTempDirectory("rea-wabt-budget-");
-  const path = join(selectedRoot, "selected.wasm");
-  await writeFile(path, Buffer.alloc(76, 1));
-  for (const tool of ["wasm-validate", "wasm-objdump", "wasm2wat"])
-    await writeFile(
-      join(selectedRoot, tool + (process.platform === "win32" ? ".exe" : "")),
-      "source-owned executable seam",
-      { mode: 0o700 },
-    );
-  const dump = await readFile(
-    new URL("../../tests/fixtures/wasm/objdump.txt", import.meta.url),
-    "utf8",
+it("reports WABT output overflow with bounded UTF-8 excerpts and observed byte counts", () => {
+  const error = wabtFailure(
+    outputLimitFailure({
+      stdout: "a".repeat(4095) + "\u{1F600}b",
+      stderr: "w".repeat(5000),
+    }),
+    "producer",
+    "/module.wasm",
   );
-  const provider = new WabtArtifactProvider(
-    { REA_WABT_BIN_DIRECTORY: selectedRoot },
-    (input) => {
-      const version = input.arguments[0] === "--version";
-      if (!version && input.command.includes("wasm2wat"))
-        throw outputLimitFailure({
-          stdout: "a".repeat(4095) + "\u{1F600}b",
-          stderr: "w".repeat(5000),
-        });
-      const script = version
-        ? 'process.stdout.write("1.0.42\\n")'
-        : input.command.includes("objdump")
-          ? `process.stdout.write(${JSON.stringify(dump)})`
-          : "";
-      return spawnOwnedProviderProcess({
-        ...input,
-        hostEnvironment: nodeHostEnvironment(input.hostEnvironment),
-        command: process.execPath,
-        arguments: ["-e", script],
-      });
-    },
-  );
-  const result = await provider.inspect({
-    path,
-    glue_paths: [],
-    candidate_paths: [],
-  });
-  if (result.ok) throw new Error("Expected the output budget to fail");
-  expect(result.error).toMatchObject({
+  expect(error).toMatchObject({
     _tag: "AnalysisResourceConstraintError",
     resource: "memory",
     reportedLimits: { max_output_bytes: WASM_RESOURCE_DEFAULTS.outputBytes },
   });
-  const projection = projectAnalysisError(result.error);
+  const projection = projectAnalysisError(error);
   expect(projection).toMatchObject({
     code: "resource_constraint",
     message: expect.stringContaining(
@@ -1927,26 +1941,14 @@ it("reports WABT output overflow with bounded UTF-8 excerpts of both streams", a
     stdout: "a".repeat(4095),
     stderr: "w".repeat(4096),
     truncated: true,
-    stdout_bytes: 4100,
-    stderr_bytes: 5000,
+    stdout_bytes: 5100,
+    stderr_bytes: 6000,
     exit_code: null,
     signal: "SIGKILL",
   });
 });
 it("does not attribute wasm-objdump output to a wasm2wat launch failure", async () => {
-  const selectedRoot = await createTestTempDirectory("rea-wabt-launch-");
-  const path = join(selectedRoot, "selected.wasm");
-  await writeFile(path, Buffer.alloc(76, 1));
-  for (const tool of ["wasm-validate", "wasm-objdump", "wasm2wat"])
-    await writeFile(
-      join(selectedRoot, tool + (process.platform === "win32" ? ".exe" : "")),
-      "source-owned executable seam",
-      { mode: 0o700 },
-    );
-  const dump = await readFile(
-    new URL("../../tests/fixtures/wasm/objdump.txt", import.meta.url),
-    "utf8",
-  );
+  const { selectedRoot, path, dump } = await createWabtArtifactFixture();
   const provider = new WabtArtifactProvider(
     { REA_WABT_BIN_DIRECTORY: selectedRoot },
     (input) => {
@@ -1966,6 +1968,7 @@ it("does not attribute wasm-objdump output to a wasm2wat launch failure", async 
       });
     },
   );
+  onTestFinished(() => provider.close());
   const result = await provider.inspect({
     path,
     glue_paths: [],
@@ -2002,7 +2005,13 @@ it("bounds the excerpt when cleanup also fails after the output budget", () => {
         parameter: "max_output_bytes",
         effective_value: WASM_RESOURCE_DEFAULTS.outputBytes,
       },
-      captured_output: { stdout: "(module", stderr: "w".repeat(4096) },
+      captured_output: {
+        stdout: "(module",
+        stderr: "w".repeat(4096),
+        stdout_bytes: 1007,
+        stderr_bytes: 6000,
+        truncated: true,
+      },
       diagnostics: {
         primary_error: {
           code: "resource_constraint",

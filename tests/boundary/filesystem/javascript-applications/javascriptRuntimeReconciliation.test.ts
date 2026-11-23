@@ -176,11 +176,8 @@ it("matches renderer, frame, script bytes, and worker without claiming execution
     }).error?.issues,
   ).toMatchObject([
     {
-      path: ["reconciliations", 0],
-      code: "invalid_union",
-      errors: expect.arrayContaining([
-        [expect.objectContaining({ path: ["static_node_id"] })],
-      ]),
+      path: ["reconciliations", 0, "static_node_id"],
+      code: "invalid_type",
     },
   ]);
   expect(result.static_load_states).toEqual(

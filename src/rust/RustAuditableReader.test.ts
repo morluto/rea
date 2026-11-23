@@ -3,22 +3,31 @@ import { expect, it } from "vitest";
 import { rustAuditableMetadataSchema } from "../domain/rust/rustBinary.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
 
-import { readAuditableSection } from "./RustAuditableReader.js";
+import { readAuditableSectionFromReader } from "./RustAuditableReader.js";
 
 // Explicit 1 MiB input boundary, independent of the reader implementation.
 const RUST_SECTION_BYTES = 1024 * 1024;
 
-const section = (document: unknown) =>
-  readAuditableSection(
+const sectionOffset = 19;
+const readSection = (
+  bytes: Buffer,
+  options?: Parameters<typeof readAuditableSectionFromReader>[4],
+) =>
+  readAuditableSectionFromReader(
     ".dep-v0",
-    0,
-    deflateSync(Buffer.from(JSON.stringify(document))),
+    { offset: sectionOffset, size: bytes.length },
+    async (at, length) =>
+      bytes.subarray(at - sectionOffset, at - sectionOffset + length),
+    async () => {},
+    options,
   );
-const sectionJson = (document: string) =>
-  readAuditableSection(".dep-v0", 0, deflateSync(Buffer.from(document)));
 
-it("preserves package order, omitted kind, and the root index", () => {
-  const parsed = section({
+const sectionJson = (document: string) =>
+  readSection(deflateSync(Buffer.from(document)));
+const section = (document: unknown) => sectionJson(JSON.stringify(document));
+
+it("preserves package order, omitted kind, and the root index", async () => {
+  const parsed = await section({
     packages: [
       { name: "itoa", version: "1.0.18", source: "crates.io" },
       {
@@ -34,6 +43,7 @@ it("preserves package order, omitted kind, and the root index", () => {
   });
   expect(parsed).toMatchObject({
     section_name: ".dep-v0",
+    file_offset: sectionOffset,
     format_version: 1,
     root_package_index: 1,
     compressed_bytes: parsed.section_bytes,
@@ -60,8 +70,8 @@ it("preserves package order, omitted kind, and the root index", () => {
   expect(parsed.uncompressed_bytes).toBeGreaterThan(parsed.compressed_bytes);
 });
 
-it("preserves historical cargo-auditable feature lists and rejects bad values", () => {
-  const parsed = section({
+it("preserves historical cargo-auditable feature lists and rejects bad values", async () => {
+  const parsed = await section({
     format: 0,
     packages: [
       {
@@ -83,10 +93,10 @@ it("preserves historical cargo-auditable feature lists and rejects bad values", 
       root: false,
     },
   ]);
-  const omitted = section({
+  const omitted = await section({
     packages: [{ name: "no_features", version: "1", source: "crates.io" }],
   });
-  const explicitEmpty = section({
+  const explicitEmpty = await section({
     packages: [
       {
         name: "no_features",
@@ -98,7 +108,7 @@ it("preserves historical cargo-auditable feature lists and rejects bad values", 
   });
   expect(omitted.packages[0]?.features).toBeNull();
   expect(explicitEmpty.packages[0]?.features).toEqual([]);
-  expect(() =>
+  await expect(
     section({
       packages: [
         {
@@ -109,12 +119,12 @@ it("preserves historical cargo-auditable feature lists and rejects bad values", 
         },
       ],
     }),
-  ).toThrow(ParseFailureError);
+  ).rejects.toThrow(ParseFailureError);
 });
 
-it("reports only cyclic packages and preserves omitted root and version", () => {
+it("reports only cyclic packages and preserves omitted root and version", async () => {
   // A multi-package component, a self-cycle, and a leaf reachable from a cycle.
-  const parsed = section({
+  const parsed = await section({
     packages: [[1, 2, 4], [0], [1], [3], []].map((dependencies, index) => ({
       name: `package-${String(index)}`,
       version: "1",
@@ -127,9 +137,9 @@ it("reports only cyclic packages and preserves omitted root and version", () => 
   expect(parsed.root_package_index).toBeNull();
 });
 
-it("finishes a long acyclic dependency chain", () => {
+it("finishes a long acyclic dependency chain", async () => {
   const count = 20_000;
-  const parsed = section({
+  const parsed = await section({
     packages: Array.from({ length: count }, (_, index) => ({
       name: `p${index.toString(36)}`,
       version: "1",
@@ -141,71 +151,87 @@ it("finishes a long acyclic dependency chain", () => {
   expect(parsed.cyclic_dependency_indices).toEqual([]);
 });
 
-it("rejects out-of-range indices, multiple roots, and schema drift", () => {
-  expect(() =>
+it("rejects out-of-range indices, multiple roots, and schema drift", async () => {
+  await expect(
     section({
       packages: [
         { name: "a", version: "1", source: "local", dependencies: [2] },
       ],
     }),
-  ).toThrow(ParseFailureError);
-  expect(() =>
+  ).rejects.toThrow(ParseFailureError);
+  await expect(
     section({
       packages: [
         { name: "a", version: "1", source: "local", root: true },
         { name: "b", version: "1", source: "local", root: true },
       ],
     }),
-  ).toThrow(/more than one root/);
-  expect(() =>
+  ).rejects.toThrow(/more than one root/);
+  await expect(
     section({
       packages: [{ name: "a", version: "1", source: "local" }],
       extra: true,
     }),
-  ).toThrow(/package schema/);
+  ).rejects.toThrow(/package schema/);
 });
 
-it("rejects invalid JSON, trailing zlib bytes, and an empty section", () => {
-  expect(() =>
-    readAuditableSection(".dep-v0", 0, deflateSync(Buffer.from("{"))),
-  ).toThrow(/JSON is invalid/);
+it("rejects invalid JSON, trailing zlib bytes, and an empty section", async () => {
+  await expect(readSection(deflateSync(Buffer.from("{")))).rejects.toThrow(
+    /JSON is invalid/,
+  );
   const trailed = Buffer.concat([
     deflateSync(Buffer.from('{"packages":[]}')),
     Buffer.from([0]),
   ]);
-  expect(() => readAuditableSection(".dep-v0", 0, trailed)).toThrow(
-    /zlib stream/,
+  await expect(readSection(trailed)).rejects.toThrow(/zlib stream/);
+  await expect(readSection(Buffer.alloc(0))).rejects.toThrow(/empty/);
+  await expect(readSection(Buffer.from([1, 2, 3]))).rejects.toThrow(
+    ParseFailureError,
   );
-  expect(() => readAuditableSection(".dep-v0", 0, Buffer.alloc(0))).toThrow(
-    /empty/,
-  );
-  expect(() =>
-    readAuditableSection(".dep-v0", 0, Buffer.from([1, 2, 3])),
-  ).toThrow(ParseFailureError);
 });
 
-it("rejects duplicate decoded JSON fields before object conversion", () => {
+it("reports the absolute end of a short dependency read", async () => {
+  const bytes = deflateSync(Buffer.from('{"packages":[]}'));
+  await expect(
+    readAuditableSectionFromReader(
+      ".dep-v0",
+      { offset: sectionOffset, size: bytes.length },
+      async (_offset, length) => bytes.subarray(0, length - 1),
+      async () => {},
+    ),
+  ).rejects.toMatchObject({
+    failure: {
+      kind: "truncated",
+      format: "rust-auditable",
+      offset: sectionOffset + bytes.length - 1,
+    },
+  });
+});
+
+it("rejects duplicate decoded JSON fields before object conversion", async () => {
   for (const document of [
     '{"packages":[],"packages":[]}',
     '{"packages":[{"name":"alpha","name":"beta","version":"1","source":"local"}]}',
     '{"packages":[{"name":"alpha","version":"1","source":"local","dependencies":[0],"dependencies":[]}]}',
     '{"packages":[],"meta":{"name":"alpha","na\\u006de":"beta"}}',
   ])
-    expect(() => sectionJson(document)).toThrow(
+    await expect(sectionJson(document)).rejects.toThrow(
       /duplicate field "(?:packages|name|dependencies)"/u,
     );
   expect(
-    sectionJson(
-      '{"packages":[{"name":"alpha","version":"1","source":"local"}]}',
+    (
+      await sectionJson(
+        '{"packages":[{"name":"alpha","version":"1","source":"local"}]}',
+      )
     ).packages,
   ).toHaveLength(1);
 });
 
-it("stops an inflate that exceeds the section ratio", () => {
+it("stops an inflate that exceeds the section ratio", async () => {
   const raw = Buffer.alloc(8000);
   const compressed = deflateSync(raw);
   expect(compressed.length * 64).toBeLessThan(raw.length);
-  expect(() => readAuditableSection(".dep-v0", 0, compressed)).toThrow(
+  await expect(readSection(compressed)).rejects.toThrow(
     expect.objectContaining({
       failure: expect.objectContaining({
         kind: "limit",
@@ -216,39 +242,12 @@ it("stops an inflate that exceeds the section ratio", () => {
       }),
     }),
   );
-  expect(() =>
-    readAuditableSection(".dep-v0", 0, Buffer.alloc(RUST_SECTION_BYTES + 1)),
-  ).toThrow(/1 MiB/);
+  await expect(
+    readSection(Buffer.alloc(RUST_SECTION_BYTES + 1)),
+  ).rejects.toThrow(/1 MiB/);
 });
 
-it("retains the compressed-stream limit for a PE section with padding", () => {
-  const compressed = deflateSync(Buffer.alloc(RUST_SECTION_BYTES), {
-    level: 0,
-  });
-  expect(compressed.length).toBeGreaterThan(RUST_SECTION_BYTES);
-  const fileAlignment = 512;
-  const stored = Buffer.alloc(
-    Math.ceil(compressed.length / fileAlignment) * fileAlignment,
-  );
-  compressed.copy(stored);
-  expect(() =>
-    readAuditableSection(".dep-v0", 0, stored, {
-      peFileAlignment: fileAlignment,
-    }),
-  ).toThrow(
-    expect.objectContaining({
-      failure: expect.objectContaining({
-        kind: "limit",
-        limit: expect.objectContaining({
-          name: "compressed dependency bytes",
-          maximum: RUST_SECTION_BYTES,
-        }),
-      }),
-    }),
-  );
-});
-
-it("names the padded-storage basis when a padded section overflows inflate allocation", () => {
+it("names the padded-storage basis when a padded section overflows inflate allocation", async () => {
   // A short stream padded to FileAlignment: the stream-based limit is unknown
   // when inflate stops, so the enforced bound comes from the storage size.
   const document = Buffer.concat([
@@ -260,11 +259,11 @@ it("names the padded-storage basis when a padded section overflows inflate alloc
   expect(compressed.length).toBeLessThan(fileAlignment);
   const stored = Buffer.alloc(fileAlignment);
   compressed.copy(stored);
-  expect(() =>
-    readAuditableSection(".dep-v0", 0, stored, {
+  await expect(
+    readSection(stored, {
       peFileAlignment: fileAlignment,
     }),
-  ).toThrow(
+  ).rejects.toThrow(
     expect.objectContaining({
       failure: expect.objectContaining({
         kind: "limit",
@@ -278,21 +277,23 @@ it("names the padded-storage basis when a padded section overflows inflate alloc
     }),
   );
   // Without padding the reported limit is still the plain size limit.
-  expect(() => readAuditableSection(".dep-v0", 0, compressed)).toThrow(
+  await expect(readSection(compressed)).rejects.toThrow(
     "Inflated dependency JSON exceeds the size limit",
   );
 });
 
-it("names the fixed cap when it bounds a large padded section's inflate allocation", () => {
+it("names the fixed cap when it bounds a large padded section's inflate allocation", async () => {
   // Storage above 128 KiB derives more than the fixed 8 MiB cap, so the cap,
   // not the padded storage size, is the enforced bound.
-  const compressed = deflateSync(Buffer.alloc(9 * 1024 * 1024, 0x20));
+  const compressed = deflateSync(Buffer.alloc(9 * 1024 * 1024, 0x20), {
+    level: 1,
+  });
   const fileAlignment = 512;
   const stored = Buffer.alloc(132 * 1024);
   compressed.copy(stored);
   let failure: unknown;
   try {
-    readAuditableSection(".dep-v0", 0, stored, {
+    await readSection(stored, {
       peFileAlignment: fileAlignment,
     });
   } catch (cause: unknown) {
@@ -312,8 +313,8 @@ it("names the fixed cap when it bounds a large padded section's inflate allocati
 
 it.each([0, 4, 8, 0xffff_ffff])(
   "preserves cargo-auditable revision %i through metadata validation",
-  (format) => {
-    const parsed = section({
+  async (format) => {
+    const parsed = await section({
       format,
       packages: [
         { name: "sample", version: "0.1.0", source: "local", root: true },
@@ -327,21 +328,21 @@ it.each([0, 4, 8, 0xffff_ffff])(
   },
 );
 
-it("rejects unknown package fields even for a forward-compatible revision", () => {
-  expect(() =>
+it("rejects unknown package fields even for a forward-compatible revision", async () => {
+  await expect(
     section({
       format: 99,
       packages: [
         { name: "sample", version: "0.1.0", source: "local", future: true },
       ],
     }),
-  ).toThrow(/package schema/);
+  ).rejects.toThrow(/package schema/);
 });
 
 it.each([-1, 1.5, 0x1_0000_0000])(
   "rejects invalid cargo-auditable format value %s",
-  (format) => {
-    expect(() => section({ format, packages: [] })).toThrow(
+  async (format) => {
+    await expect(section({ format, packages: [] })).rejects.toThrow(
       expect.objectContaining({
         name: "ParseFailureError",
         failure: expect.objectContaining({
@@ -353,34 +354,48 @@ it.each([-1, 1.5, 0x1_0000_0000])(
   },
 );
 
-it("rejects the first malformed package before schema issues accumulate", () => {
-  const stored = (document: unknown) =>
-    deflateSync(Buffer.from(JSON.stringify(document)), { level: 0 });
-  const emptyPackages = stored({
-    format: 1,
-    packages: Array.from({ length: 80_000 }, () => ({})),
-  });
-  expect(emptyPackages.length).toBeLessThan(RUST_SECTION_BYTES);
-  expect(() => readAuditableSection(".dep-v0", 0, emptyPackages)).toThrow(
-    /Dependency package 0 does not match the package schema/,
-  );
-  const invalidDependencies = stored({
-    format: 1,
-    packages: [
-      {
-        name: "a",
-        version: "1",
-        source: "local",
-        dependencies: Array.from({ length: 1_000 }, () => null),
-      },
-    ],
-  });
-  expect(() => readAuditableSection(".dep-v0", 0, invalidDependencies)).toThrow(
-    /Dependency package 0 does not match the package schema/,
-  );
+it("identifies the first malformed package after a valid one", async () => {
+  const valid = { name: "valid", version: "1", source: "local" };
+  for (const invalid of [{}, { ...valid, dependencies: [null] }]) {
+    await expect(section({ packages: [valid, invalid, null] })).rejects.toThrow(
+      /Dependency package 1 does not match the package schema/u,
+    );
+  }
 });
 
-it("admits dependency expansion before allocating normalized or reverse edges", () => {
+it("admits an explicit empty feature list at its exact normalized graph size", async () => {
+  const pkg = {
+    name: "a",
+    version: "1",
+    source: "s",
+    features: [],
+    root: true,
+  };
+  const expected = { ...pkg, kind: null, dependencies: [] };
+  const maxOutputBytes = Buffer.byteLength(JSON.stringify(expected));
+  const payload = deflateSync(
+    Buffer.from(JSON.stringify({ format: 0, packages: [pkg] })),
+  );
+  expect((await readSection(payload, { maxOutputBytes })).packages).toEqual([
+    expected,
+  ]);
+  await expect(
+    readSection(payload, {
+      maxOutputBytes: maxOutputBytes - 1,
+    }),
+  ).rejects.toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: expect.objectContaining({
+          name: "dependency graph output bytes",
+          maximum: maxOutputBytes - 1,
+        }),
+      }),
+    }),
+  );
+});
+it("admits dependency expansion before allocating normalized or reverse edges", async () => {
   const document = {
     packages: [
       {
@@ -397,7 +412,7 @@ it("admits dependency expansion before allocating normalized or reverse edges", 
     level: 0,
   });
   expect(payload.length).toBeLessThan(RUST_SECTION_BYTES);
-  expect(() => readAuditableSection(".dep-v0", 0, payload)).toThrow(
+  await expect(readSection(payload)).rejects.toThrow(
     expect.objectContaining({
       failure: expect.objectContaining({
         kind: "limit",

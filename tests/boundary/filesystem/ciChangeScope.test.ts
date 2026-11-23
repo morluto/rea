@@ -1,4 +1,5 @@
 import {
+  access,
   chmod,
   cp,
   mkdir,
@@ -223,7 +224,7 @@ it.each([
   ["scripts/fixtures/browser-request-site.mjs", "browser"],
   ["scripts/lib/browser-nested-source-map-e2e.mjs", "web_source_map"],
   ["scripts/lib/browser-runtime-fixture-lifecycle.mjs", "web_source_map"],
-  ["src/cliBrowserScenarioCommands.ts", "browser"],
+  ["src/cli/browserScenarioCommands.ts", "browser"],
   ["src/application/BrowserScenarioCaptureService.ts", "browser"],
   ["src/composition/browserScenario.ts", "browser"],
   ["src/cli/environmentCommands.ts", "browser"],
@@ -259,6 +260,8 @@ it.each([
   ["src/ports/apkSignature/ApkSignaturePort.ts", "apk_signature"],
   ["src/ports/javascript/JavaScriptRecoveryPort.ts", "javascript_recovery"],
   ["src/ports/WebRuntimePort.ts", "web_runtime"],
+  ["src/server/browserToolBindings.ts", "browser"],
+  ["src/server/browserToolBindings.ts", "web_runtime"],
   ["src/go/GoBinaryProvider.ts", "go_binary"],
   ["scripts/verify-go-binary.mjs", "go_binary"],
   ["bridge/android/ReaJadxBridge.java", "android_metadata"],
@@ -581,7 +584,7 @@ it("routes license inventories to docs checks and keeps blame-ignore edits forma
   for (const staticOnly of [
     "scripts/lib/module-layers.baseline.json",
     "scripts/verify/architecture-guards.mjs",
-    "scripts/verify/baselines/raw-buffer-read.json",
+    "scripts/verify/baselines/cleanup-dependency-binding.json",
     "tsconfig.scripts.json",
   ]) {
     expect(await classifyPaths([staticOnly]), staticOnly).toMatchObject({
@@ -594,6 +597,8 @@ it("routes license inventories to docs checks and keeps blame-ignore edits forma
   for (const docsAndCode of [
     "scripts/check-doc-facts.mjs",
     "scripts/lib/product-catalog.mjs",
+    "scripts/generate-completion-ledger.mjs",
+    "scripts/lib/completion-ledger-generation.mts",
   ]) {
     expect(await classifyPaths([docsAndCode]), docsAndCode).toMatchObject({
       code: true,
@@ -611,6 +616,17 @@ it("routes license inventories to docs checks and keeps blame-ignore edits forma
     runtime: true,
     package: false,
   });
+});
+
+it("checks README locale links when the website language inventory changes", async () => {
+  expect(await classifyPaths(["website/locales/languages.json"])).toMatchObject(
+    {
+      docs: true,
+      website: true,
+      runtime: false,
+      package: false,
+    },
+  );
 });
 
 it("passes the workflow environment through the entrypoint unchanged", async () => {
@@ -696,14 +712,20 @@ it.each([
   },
 );
 
-const reverseToolsVitestConfig = await readFile(
-  new URL("../../../vitest.reverse-tools.config.ts", import.meta.url),
-  "utf8",
-);
-const reverseToolsVitestInputs = [
-  ...reverseToolsVitestConfig.matchAll(/"((?:\.\/)?(?:src|tests)\/[^"]+)"/gu),
-].flatMap((match) =>
-  match[1] === undefined ? [] : [match[1].replace(/^\.\//u, "")],
+const reverseToolsVitestInputs = (
+  await Promise.all(
+    [
+      "vitest.reverse-tools.config.ts",
+      "vitest.reverse-tools-semantics.config.ts",
+    ].map((name) =>
+      readFile(new URL(`../../../${name}`, import.meta.url), "utf8"),
+    ),
+  )
+).flatMap((source) =>
+  Array.from(
+    source.matchAll(/"((?:\.\/)?(?:src|tests)\/[^"]+)"/gu),
+    ([, path]) => path!.replace(/^\.\//u, ""),
+  ),
 );
 const reverseToolsMutationConfig = JSON.parse(
   await readFile(
@@ -721,8 +743,9 @@ const reverseToolsInputs = [
 ];
 
 it.each(reverseToolsInputs)(
-  "selects the reverse-tool quality gate for configured input %s",
+  "keeps configured reverse-tool input %s on disk and in the quality gate",
   async (path) => {
+    await access(new URL(`../../../${path}`, import.meta.url));
     expect(await classifyPaths([path])).toMatchObject({
       code: true,
       reverse_tools: true,

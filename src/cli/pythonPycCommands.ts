@@ -3,10 +3,8 @@ import type { Logger } from "pino";
 import { createPythonPycService } from "../composition/pythonPyc.js";
 import { PYTHON_PYC_TOOL_CONTRACTS } from "../contracts/python/pythonPycToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  deliverWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { deliverWithService } from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 /** Inspect operator-selected pyc files through the same shared workflow as MCP. */

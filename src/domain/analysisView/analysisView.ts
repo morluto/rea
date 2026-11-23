@@ -11,6 +11,8 @@ import { projectRecordedArrayView } from "./recordedArrayView.js";
 import { projectNativeInstructionReferencesView } from "./nativeInstructionReferencesView.js";
 import { projectNativeValueTraceView } from "./nativeValueTraceView.js";
 import { projectDevicetreeView } from "./devicetreeView.js";
+import { projectUefiExtractionView } from "./uefiExtractionView.js";
+import { projectUefiFirmwareView } from "./uefiFirmwareView.js";
 import { projectApkSignatureView } from "./apkSignatureView.js";
 import { byteEntropySchema } from "../native/byteEntropy.js";
 import { projectErlangBeamView } from "./erlangBeamView.js";
@@ -20,8 +22,7 @@ import { projectNativeExportsView } from "./nativeExportsView.js";
 import { projectElfDependenciesView } from "./elfDependenciesView.js";
 import { projectByteEntropyView } from "./byteEntropyView.js";
 import {
-  parseAnalysisViewResult,
-  analysisViewResultInputError,
+  createAnalysisViewResultReader,
   parentArtifactPath,
 } from "./analysisViewParent.js";
 import { projectJavaScriptRoutesView } from "./javascriptRoutesView.js";
@@ -122,21 +123,34 @@ export const sealAnalysisView = (
 
 const parentEvidenceIdSchema = prefixedDigestSchema("ev");
 
-const parseJavaScriptParent = (
+const safeParseJavaScriptParent = (
   input: unknown,
-): Result<JavaScriptApplicationAnalysisResult, AnalysisError> => {
+): z.ZodSafeParseResult<JavaScriptApplicationAnalysisResult> => {
   try {
     // The format owner authenticates imported results completely before reuse;
     // mutable or merely frozen inputs still receive canonical validation.
     const steps = parseOwnedJavaScriptApplicationAnalysisSteps(input);
     let step = steps.next();
     while (!step.done) step = steps.next();
-    return ok(step.value);
+    return { success: true, data: step.value };
   } catch (cause: unknown) {
     if (!(cause instanceof z.ZodError)) throw cause;
-    return err(analysisViewResultInputError(input, cause));
+    return {
+      success: false,
+      error: cause as z.ZodError<JavaScriptApplicationAnalysisResult>,
+    };
   }
 };
+const readJavaScriptParent = createAnalysisViewResultReader({
+  safeParse: safeParseJavaScriptParent,
+});
+const readByteEntropyParent = createAnalysisViewResultReader(byteEntropySchema);
+const readBinaryLayoutParent = createAnalysisViewResultReader({
+  safeParse: safeParseOwnedBinaryLayout,
+});
+const readFunctionDossierParent = createAnalysisViewResultReader(
+  functionDossierSchema,
+);
 
 const unsupportedParent = (
   parent: AnalysisViewParent,
@@ -180,6 +194,8 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("trace_native_values", projectNativeValueTraceView),
   retain("inspect_erlang_beam", projectErlangBeamView),
   retain("inspect_devicetree", projectDevicetreeView),
+  retain("inspect_uefi_firmware", projectUefiFirmwareView),
+  retain("extract_uefi_firmware", projectUefiExtractionView),
   retain("inspect_native_exports", projectNativeExportsView),
   retain("inspect_elf_dependencies", projectElfDependenciesView),
   retain("inspect_native_load_image", projectNativeLoadImageView),
@@ -368,22 +384,19 @@ export const projectAnalysisView = (
     return sealProjected(projected);
   }
   if (parent.operation === "inspect_byte_entropy") {
-    const report = parseAnalysisViewResult(byteEntropySchema, parent);
+    const report = readByteEntropyParent(parent);
     if (!report.ok) return report;
     const projected = projectByteEntropyView(parent, report.value, view);
     return sealProjected(projected);
   }
   if (parent.operation === "inspect_binary_layout") {
-    const layout = parseAnalysisViewResult(
-      { safeParse: safeParseOwnedBinaryLayout },
-      parent,
-    );
+    const layout = readBinaryLayoutParent(parent);
     if (!layout.ok) return layout;
     const projected = projectBinaryLayoutView(parent, layout.value, view);
     return sealProjected(projected);
   }
   if (parent.operation === "analyze_javascript_application") {
-    const analysis = parseJavaScriptParent(parent.normalizedResult);
+    const analysis = readJavaScriptParent(parent);
     if (!analysis.ok) return analysis;
     const projected = projectJavaScriptApplicationView(
       parent,
@@ -393,7 +406,7 @@ export const projectAnalysisView = (
     return sealProjected(projected);
   }
   if (parent.operation === "analyze_function") {
-    const native = parseAnalysisViewResult(functionDossierSchema, parent);
+    const native = readFunctionDossierParent(parent);
     if (!native.ok) return native;
     const projected = projectNativeFunctionView(parent, native.value, view);
     return sealProjected(projected);

@@ -16,7 +16,6 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
-  clientConfigurationValuesEqual,
   effectiveClientServer,
   clientServerListedDisabled,
   clientServerPath,
@@ -31,7 +30,9 @@ import {
   type ClientInlineConfiguration,
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
+import { clientConfigurationValuesEqual } from "./ClientConfigurationValues.js";
 import { DISCOVERED_REGISTRATION_SETTINGS } from "./SetupRegistrationEnvironment.js";
+import { registrationEnvironmentProposal } from "./UserConfigurationLocation.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { dshDocument, DshCordisDocument } from "./DshCordisPatch.js";
 import { mkdir } from "node:fs/promises";
@@ -114,6 +115,7 @@ export const configureClientConfiguration = async (
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
   // Setup writes the running host's client files unless its host selects one.
   platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  launcherEnvironment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): Promise<ClientConfigurationResult> => {
   if (command.length === 0)
     return {
@@ -132,7 +134,7 @@ export const configureClientConfiguration = async (
   try {
     return await withClientConfigurationTransaction(transactionPath, () =>
       configureClientDocument(
-        { client, transactionPath, platform },
+        { client, transactionPath, platform, launcherEnvironment },
         environment,
         command,
         resolveProviderRequestBudget,
@@ -154,10 +156,12 @@ const configureClientDocument = async (
     client,
     transactionPath,
     platform,
+    launcherEnvironment,
   }: {
     readonly client: SetupClient;
     readonly transactionPath: string;
     readonly platform: NodeJS.Platform;
+    readonly launcherEnvironment: Readonly<NodeJS.ProcessEnv>;
   },
   environment: SetupProviderEnvironment,
   command: readonly string[],
@@ -232,6 +236,7 @@ const configureClientDocument = async (
         parsed,
         files.value,
         platform,
+        launcherEnvironment,
         resolveProviderRequestBudget,
       ),
     );
@@ -269,6 +274,7 @@ const configureClientDocument = async (
     },
     files.value,
     platform,
+    launcherEnvironment,
     resolveProviderRequestBudget,
   );
   // The settings written now can differ from the ones inspection admitted,
@@ -546,10 +552,12 @@ const readClientRefresh = async (
     resolveProviderRequestBudget,
     resources,
     currentCommandPath,
+    launcherEnvironment,
   }: {
     readonly platform: NodeJS.Platform;
     readonly resolveProviderRequestBudget?: ProviderRequestBudgetResolver;
     readonly resources?: ArtifactResourceScope;
+    readonly launcherEnvironment: Readonly<NodeJS.ProcessEnv>;
     /** The entry point whose registrations setup owns; update names the new one. */
     readonly currentCommandPath?: string;
   },
@@ -587,6 +595,7 @@ const readClientRefresh = async (
     parsed,
     files.value,
     platform,
+    launcherEnvironment,
     resolveProviderRequestBudget,
   );
   const target =
@@ -655,6 +664,7 @@ export const clientConfigurationAligned = async (
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
   // Setup reads the running host's client files unless its host selects one.
   platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  launcherEnvironment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): Promise<boolean> => {
   if (client.configPathError !== undefined) return false;
   try {
@@ -663,8 +673,8 @@ export const clientConfigurationAligned = async (
       providerEnvironment,
       command,
       resolveProviderRequestBudget === undefined
-        ? { platform }
-        : { platform, resolveProviderRequestBudget },
+        ? { platform, launcherEnvironment }
+        : { platform, launcherEnvironment, resolveProviderRequestBudget },
     );
     return (
       refresh.ok &&
@@ -708,8 +718,10 @@ export const clientRefreshRefusal = async (
     platform,
     currentCommandPath,
     resources,
+    launcherEnvironment = process.env,
   }: {
     readonly platform: NodeJS.Platform;
+    readonly launcherEnvironment?: Readonly<NodeJS.ProcessEnv>;
     /** The entry point the refreshing setup runs from. */
     readonly currentCommandPath: string;
     readonly resources?: ArtifactResourceScope;
@@ -729,6 +741,7 @@ export const clientRefreshRefusal = async (
       {
         platform,
         currentCommandPath,
+        launcherEnvironment,
         ...(resources === undefined ? {} : { resources }),
       },
     );
@@ -741,6 +754,7 @@ export const clientRefreshRefusal = async (
       command,
       refresh.value,
       platform,
+      launcherEnvironment,
     );
     if (discovered !== undefined)
       return {
@@ -777,6 +791,7 @@ const discoveredInlineSettings = async (
   command: readonly string[],
   refresh: ClientRefresh,
   platform: NodeJS.Platform,
+  launcherEnvironment: Readonly<NodeJS.ProcessEnv>,
 ): Promise<
   | {
       readonly origin: ClientInlineConfiguration["origin"];
@@ -813,6 +828,7 @@ const discoveredInlineSettings = async (
     refresh.parsed,
     refresh.sources,
     platform,
+    launcherEnvironment,
   );
   return inlineRegistrationOverride(
     client,
@@ -832,6 +848,7 @@ export const inspectClientConfiguration = async (
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
   // Setup reads the running host's client files unless its host selects one.
   platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  launcherEnvironment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): Promise<ClientConfigurationInspection> => {
   let inspection: ClientConfigurationInspection;
   try {
@@ -840,6 +857,7 @@ export const inspectClientConfiguration = async (
       providerEnvironment,
       command,
       platform,
+      launcherEnvironment,
       resolveProviderRequestBudget,
     );
   } catch (cause: unknown) {
@@ -863,6 +881,7 @@ const inspectClientDocument = async (
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
   platform: NodeJS.Platform,
+  launcherEnvironment: Readonly<NodeJS.ProcessEnv>,
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
 ): Promise<ClientConfigurationInspection> => {
   if (client.configPathError !== undefined)
@@ -915,6 +934,7 @@ const inspectClientDocument = async (
         undefined,
         files.value,
         platform,
+        launcherEnvironment,
         resolveProviderRequestBudget,
       );
       const override = inlineOverrideBlocker(
@@ -970,6 +990,7 @@ const inspectClientDocument = async (
       parsed,
       files.value,
       platform,
+      launcherEnvironment,
       resolveProviderRequestBudget,
     );
     const override = inlineOverrideBlocker(
@@ -1333,6 +1354,7 @@ const clientConfigurationDesired = async (
   parsed: ClientConfigurationDocument | undefined,
   sources: readonly ClientConfigurationSource[],
   platform: NodeJS.Platform,
+  launcherEnvironment: Readonly<NodeJS.ProcessEnv>,
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
 ): Promise<unknown> => {
   const effective = effectiveClientConfiguration(
@@ -1383,6 +1405,12 @@ const clientConfigurationDesired = async (
     platform,
   );
   if (!validated.ok) throw validated.error;
+  // Decide the fallback from the effective layers, then edit only the target.
+  // A lower layer's locator still applies when the target has no value of its own.
+  const writeEnvironment =
+    validated.value.configHomeFallbackApplied === true
+      ? providerEnvironment
+      : registrationEnvironmentProposal(providerEnvironment).overrides;
   // Preserve explicitly configured server settings, never the ambient process
   // environment. The effective layered view validates precedence and supplies
   // timeout facts; the target file's fragment remains the value being written.
@@ -1390,7 +1418,7 @@ const clientConfigurationDesired = async (
     parsed,
     client,
     platform,
-    providerEnvironment,
+    writeEnvironment,
     "fragment",
   );
   if (!environment.ok) throw environment.error;
@@ -1403,6 +1431,8 @@ const clientConfigurationDesired = async (
       ? undefined
       : effectiveClientServer(parsed, PRODUCT_IDENTITY.mcpServerKey),
     validated.value.timeoutInputs,
+    launcherEnvironment,
+    platform,
   );
   if (!registration.ok) throw registration.error;
   return withInheritedGooseSettings(
@@ -1412,7 +1442,7 @@ const clientConfigurationDesired = async (
     parsed,
     sources,
     effective,
-    providerEnvironment,
+    writeEnvironment,
     platform,
   );
 };

@@ -54,7 +54,7 @@ import { inspectNativeDispatch } from "./native/NativeDispatchMetadataInspection
 import { traceNativeValues } from "./native/NativeValueTrace.js";
 import { traceNativeUiAction } from "./native/NativeUiActionTrace.js";
 import { decompileAll } from "./decompileDirectory/decompileAll.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
   nativeDispatchMetadataResultSchema,
   MAX_DISPATCH_METADATA_RECORDS,
@@ -208,7 +208,7 @@ export class EnhancedTools {
       case "analyze_swift_types":
         return this.#analyzeSwiftTypes(call.input, signal);
       case "find_xrefs_to_name":
-        return this.#findXrefs(call.input.name, signal);
+        return this.#findXrefs(call.input, signal);
       case "binary_overview":
         return this.#binaryOverview(signal);
       case "analyze_function":
@@ -250,7 +250,9 @@ export class EnhancedTools {
     if (!result.ok) return result;
     const parsed = parseFunctionDossier(result.value);
     if (!parsed.ok) return parsed;
-    return ok(jsonValueSchema.parse(projectNativeApiInspection(parsed.value)));
+    return ok(
+      ownedJsonValueSchema.parse(projectNativeApiInspection(parsed.value)),
+    );
   }
 
   async #objcClasses(pattern: string, signal?: AbortSignal): EnhancedResult {
@@ -526,6 +528,8 @@ export class EnhancedTools {
     input: {
       readonly address: string;
       readonly direction: CallRelationshipDirection;
+      readonly max_depth?: number | undefined;
+      readonly max_nodes?: number | undefined;
     },
     signal?: AbortSignal,
   ): EnhancedResult {
@@ -546,13 +550,23 @@ export class EnhancedTools {
       { address: startAddress, depth: 0 },
     ];
     let queueIndex = 0;
+    let expandedNodes = 0;
+    let depthLimitRecorded = false;
     const graph: Record<string, JsonValue[]> = {};
     const sortedLimitations = () =>
       [...limitations].sort(compareUnicodeCodePoints);
 
     while (queueIndex < queue.length) {
+      if (input.max_nodes !== undefined && expandedNodes >= input.max_nodes) {
+        const remaining = queue.length - queueIndex;
+        limitations.add(
+          `Call graph traversal stopped at caller-selected max_nodes ${String(input.max_nodes)} with ${String(remaining)} queued procedure(s) unexpanded. Raise or omit max_nodes to inspect further.`,
+        );
+        break;
+      }
       const current = queue[queueIndex++];
       if (current === undefined) continue;
+      expandedNodes += 1;
       const read = await readCallRelationships(
         this.#observe.bind(this),
         input.direction,
@@ -616,6 +630,18 @@ export class EnhancedTools {
       } satisfies NativeCallGraph["graph"][string][number]);
       for (const address of related) {
         if (!discovered.has(address)) {
+          if (
+            input.max_depth !== undefined &&
+            current.depth >= input.max_depth
+          ) {
+            if (!depthLimitRecorded) {
+              limitations.add(
+                `Call graph traversal stopped at caller-selected max_depth ${String(input.max_depth)}; deeper call relationships were not expanded. Raise or omit max_depth to inspect further.`,
+              );
+              depthLimitRecorded = true;
+            }
+            continue;
+          }
           discovered.add(address);
           queue.push({ address, depth: current.depth + 1 });
         }
@@ -652,7 +678,15 @@ export class EnhancedTools {
     );
   }
 
-  async #findXrefs(name: string, signal?: AbortSignal): EnhancedResult {
+  async #findXrefs(
+    input: {
+      readonly name: string;
+      readonly limit?: number | undefined;
+      readonly offset?: number | undefined;
+    },
+    signal?: AbortSignal,
+  ): EnhancedResult {
+    const { name, limit, offset } = input;
     const resolved = await resolveXrefsName(
       this.analysis,
       name,
@@ -663,27 +697,39 @@ export class EnhancedTools {
     if (resolved.value === null)
       return ok({ status: "unresolved", name, reason: "name_not_found" });
 
-    const xrefs = await this.#call(
+    const observed = await this.#observe(
       "xrefs",
       { address: resolved.value },
       signal,
     );
-    if (!xrefs.ok) return xrefs;
-    if (
-      !Array.isArray(xrefs.value) ||
-      xrefs.value.some((xref) => typeof xref !== "string")
-    )
+    if (!observed.ok) return observed;
+    const { result: xrefs, referencesTruncated } = observed.value;
+    if (!Array.isArray(xrefs) || xrefs.some((xref) => typeof xref !== "string"))
       return err(
         new AnalysisOutputError(
           "xrefs",
           "provider returned an invalid address list",
         ),
       );
+    const hasPaging = limit !== undefined || offset !== undefined;
+    const start = offset ?? 0;
+    const page = hasPaging
+      ? xrefs.slice(start, limit === undefined ? undefined : start + limit)
+      : xrefs;
     return ok({
       status: "resolved",
       name,
       address: resolved.value,
-      xrefs: xrefs.value,
+      xrefs: page,
+      ...(hasPaging
+        ? {
+            observed_xrefs: xrefs.length,
+            total_xrefs: referencesTruncated === false ? xrefs.length : null,
+            provider_truncated: referencesTruncated ?? null,
+            truncated:
+              page.length < xrefs.length ? true : (referencesTruncated ?? null),
+          }
+        : {}),
     });
   }
 

@@ -31,7 +31,7 @@ import {
   isClientConfigurationCleanupFailure,
   retryClientConfigurationCleanup,
 } from "./ClientConfigurationCleanup.js";
-import { clientConfigurationValuesEqual } from "./ClientConfigurationDocument.js";
+import { clientConfigurationValuesEqual } from "./ClientConfigurationValues.js";
 import { ClientConfigurationPublication } from "./ClientConfigurationPublication.js";
 import { withClientConfigurationTransaction } from "./ClientConfigurationTransaction.js";
 import {
@@ -255,7 +255,11 @@ const registrationFailure = async (
   },
 ): Promise<ConfigurationError> => {
   const { backupPath, configured } = progress;
-  if (cause instanceof ConfigurationError) return cause;
+  if (cause instanceof ConfigurationError) {
+    if (backupPath !== undefined)
+      cause.retainPrimaryDiagnostics({ backup_path: backupPath });
+    return cause;
+  }
   const cleanup = isClientConfigurationCleanupFailure(cause)
     ? await retryClientConfigurationCleanup(cause, resources)
     : undefined;

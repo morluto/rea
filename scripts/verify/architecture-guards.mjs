@@ -11,6 +11,7 @@ import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
+import { completedAbortReclassificationCount } from "./completed-abort-guard.mjs";
 import { countDefaultValidationClients } from "./mcp-client-validation.mjs";
 import {
   isComparisonOrCountFile,
@@ -18,6 +19,7 @@ import {
 } from "./optional-fact-default-guard.mjs";
 import { unmarkedMatchCount } from "./reason-marker.mjs";
 import { blankComments } from "./source-tokens.mjs";
+import { moduleReExportCount } from "./module-re-export-guard.mjs";
 import {
   cliTextGuardSelects,
   cliTextOutsideCliCount,
@@ -635,7 +637,7 @@ checkCounted(
   "completed result reclassified by a hand-read abort signal (finalize through runOwned in src/providers/runOwned)",
   "completed-abort-reclassification",
   files,
-  /\.ok\s*&&\s*(?:isAborted\(|[\w.?]*signal\??\.aborted)/gu,
+  completedAbortReclassificationCount,
   ["src/providers/runOwned.ts"],
 );
 
@@ -691,6 +693,27 @@ checkCounted(
   files,
   /\bcause instanceof ConfigurationError\b/gu,
   ["src/config/runtimeAnalysisSettings.ts"],
+);
+
+// A re-export leaves a second import path for a symbol, so moved code keeps a
+// shim and consumers never learn its owner. Import from the owning module.
+// The resource-scope entrypoint and the lazily loaded CLI bundle entries are
+// the only declared re-export boundaries.
+checkCounted(
+  "re-export from another module (import the symbol from its owning module)",
+  "module-re-export",
+  files.filter(({ path }) => path.startsWith("src/")),
+  (content, { source }) =>
+    /\bexport\s*(?:type\s*)?[*{]/u.test(content)
+      ? moduleReExportCount(source)
+      : 0,
+  [
+    "src/resources/index.ts",
+    // Loaded by src/cliLoader.ts through a dynamic import.
+    "src/cli.ts",
+    // Loaded by src/cliOneShot.ts through a dynamic import.
+    "src/cli/cliResultOutput.ts",
+  ],
 );
 
 // Byte-format parsers read untrusted input. Bounds, truncation and failure

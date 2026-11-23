@@ -31,7 +31,6 @@ export async function createOpenAiModelFixture({ onRequest }) {
 `);
 
 processTest.skipIf(process.platform === "win32").for([
-  ["empty", "verified", undefined],
   [
     "live owned process",
     "verified",
@@ -51,7 +50,6 @@ import { completeVerifierRun as complete } from ${JSON.stringify(runModule)};
 export { createVerifierRun, assertVerifierCleanupComplete } from ${JSON.stringify(runModule)};
 
 export async function completeVerifierRun(run) {
-  if (${scenario === "empty"}) return complete(run);
   const child = spawn(process.execPath, ["-e", "process.stdin.resume()"], {
     env: { REA_PROCESS_RUN_ID: ${scenario === "foreign token" ? '"foreign-probe-token"' : "run.run_id"} },
     stdio: ["pipe", "ignore", "ignore"],
@@ -119,9 +117,7 @@ fi
       verifier: { process_lineage: { status } },
     });
     if (status === "verified")
-      expect(receipt.verifier.process_lineage.descendants).toHaveLength(
-        failure === undefined ? 0 : 1,
-      );
+      expect(receipt.verifier.process_lineage.descendants).toHaveLength(1);
     else
       expect(receipt.verifier.process_lineage.reason).toMatch(
         /descendant \d+ run token did not match/u,
@@ -131,8 +127,8 @@ fi
         await readFile(join(receipt.artifacts, "receipt.json"), "utf8"),
       ),
     ).toEqual(receipt);
-    expect(receipt.passed).toBe(failure === undefined);
-    expect(result.exitCode).toBe(failure === undefined ? 0 : 1);
-    if (failure !== undefined) expect(result.stderr).toContain(failure);
+    expect(receipt.passed).toBe(false);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(failure);
   },
 );

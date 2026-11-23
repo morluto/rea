@@ -1,6 +1,9 @@
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import { readMachoContainer } from "../../domain/apple/machoLoadCommandReader.js";
-import { readUniversalMachoSlice } from "../../domain/apple/machoImageSelection.js";
+import {
+  readMachoHeaderPrefixFacts,
+  validateFatSlice,
+} from "../../domain/apple/machoContainer.js";
 import {
   readMachoLoadCommandTableHeader,
   MachoLoadCommandCursor,
@@ -9,6 +12,7 @@ import {
   readMachoSegmentHeader,
   admitMachoSegmentCommand,
 } from "../../domain/apple/machoSegmentHeader.js";
+import type { StableArtifactHandle } from "../../resources/index.js";
 import { FieldReader } from "./AppleIpsFieldReader.js";
 import {
   machoArchitectureFamily,
@@ -50,11 +54,12 @@ type SliceParse =
   | { readonly kind: "slices"; readonly slices: readonly SliceIdentity[] }
   | { readonly kind: "unreadable"; readonly reason: string };
 
-const readSliceIdentities = async (bytes: Buffer): Promise<SliceParse> => {
-  const container = await readMachoContainer(
-    async (offset, length) => bytes.subarray(offset, offset + length),
-    bytes.length,
-  );
+const MACHO_HEADER_PREFIX_BYTES = 32;
+
+const readSliceIdentities = async (
+  handle: Pick<StableArtifactHandle, "size" | "readRange">,
+): Promise<SliceParse> => {
+  const container = await readMachoContainer(handle.readRange, handle.size);
   if (container.kind === "issue")
     return { kind: "unreadable", reason: container.reason };
   if (container.kind === "not-mach-o")
@@ -63,7 +68,7 @@ const readSliceIdentities = async (bytes: Buffer): Promise<SliceParse> => {
       reason: "Selected join is not a Mach-O image",
     };
   if (container.kind === "thin") {
-    const slice = sliceAt(bytes, 0n, 0);
+    const slice = await sliceAt(handle.readRange, 0, handle.size, 0);
     return slice === null
       ? {
           kind: "unreadable",
@@ -86,13 +91,23 @@ const readSliceIdentities = async (bytes: Buffer): Promise<SliceParse> => {
     return { kind: "unreadable", reason: "Join slice allowance exceeded" };
   const slices: SliceIdentity[] = [];
   for (const declaration of declarations) {
-    const selected = readUniversalMachoSlice(bytes, header, declaration);
-    if (!selected.ok)
-      return { kind: "unreadable", reason: selected.error.message };
-    const slice = sliceAt(
-      selected.value,
-      BigInt(declaration.offset),
+    const prefixLength = Math.min(declaration.size, MACHO_HEADER_PREFIX_BYTES);
+    const prefix =
+      prefixLength === 0
+        ? Buffer.alloc(0)
+        : await handle.readRange(declaration.offset, prefixLength);
+    const identity = readMachoHeaderPrefixFacts(prefix).identity;
+    const message =
+      identity === null
+        ? `FAT architecture ${declaration.index} has a truncated Mach-O identity`
+        : validateFatSlice(declaration, handle.size, header.tableEnd, identity);
+    if (message !== null) return { kind: "unreadable", reason: message };
+    const slice = await sliceAt(
+      handle.readRange,
+      declaration.offset,
+      declaration.size,
       declaration.index,
+      prefix,
     );
     if (slice === null)
       return {
@@ -104,14 +119,28 @@ const readSliceIdentities = async (bytes: Buffer): Promise<SliceParse> => {
   return { kind: "slices", slices };
 };
 
-const sliceAt = (
-  bytes: Buffer,
-  offset: bigint,
+const sliceAt = async (
+  readRange: StableArtifactHandle["readRange"],
+  sliceOffset: number,
+  sliceSize: number,
   index: number,
-): SliceIdentity | null => {
-  const parsed = readMachoLoadCommandTableHeader(bytes, bytes.length);
+  prefetchedHeader?: Buffer,
+): Promise<SliceIdentity | null> => {
+  const headerPrefix =
+    prefetchedHeader ??
+    (sliceSize === 0
+      ? Buffer.alloc(0)
+      : await readRange(
+          sliceOffset,
+          Math.min(sliceSize, MACHO_HEADER_PREFIX_BYTES),
+        ));
+  const parsed = readMachoLoadCommandTableHeader(headerPrefix, sliceSize);
   if (!parsed.ok || parsed.value === null) return null;
   const header = parsed.value;
+  const tableBytes =
+    header.commandBytes === 0
+      ? Buffer.alloc(0)
+      : await readRange(sliceOffset + header.headerSize, header.commandBytes);
   const cursor = new MachoLoadCommandCursor(header);
   let uuid: string | null = null;
   let uuidSeen = false;
@@ -119,7 +148,7 @@ const sliceAt = (
   for (;;) {
     const next = cursor.nextOffset;
     if (next === null) break;
-    const command = bytes.subarray(header.headerSize + next);
+    const command = tableBytes.subarray(next);
     const frame = cursor.read(command);
     if (!frame.ok) return null;
     const payload = command.subarray(0, frame.value.size);
@@ -145,7 +174,7 @@ const sliceAt = (
           segment.value,
           payload.length,
           wide ? 64 : 32,
-          bytes.length,
+          sliceSize,
         ).ok
       )
         return null;
@@ -162,7 +191,7 @@ const sliceAt = (
   const { cpuType, cpuSubtype } = header.identity;
   return {
     index,
-    offset,
+    offset: BigInt(sliceOffset),
     cpuType,
     cpuSubtype,
     arch: machoArchitectureName(cpuType, cpuSubtype),
@@ -237,24 +266,22 @@ const architectureRelation = (
       : "mismatch";
 };
 
-/** Resolve every report image and frame against the selected artifact. */
+/** Resolve every report image and frame against the selected artifact handle. */
 export const resolveAppleIpsJoin = async (
   report: AppleIps,
-  artifact: {
+  artifact: Pick<StableArtifactHandle, "sha256" | "size" | "readRange"> & {
     readonly path: string;
-    readonly sha256: string;
-    readonly bytes: Buffer;
   },
   input: { readonly path: string; readonly max_join_bytes: number },
   read: FieldReader,
 ): Promise<AppleIpsJoin> => {
-  const parsed = await readSliceIdentities(artifact.bytes);
+  const parsed = await readSliceIdentities(artifact);
   if (parsed.kind === "unreadable")
     return {
       status: "unreadable",
       path: input.path,
       sha256: artifact.sha256,
-      bytes: artifact.bytes.length,
+      bytes: artifact.size,
       reason: parsed.reason,
     };
   const matches: AppleIpsJoinDigest[] = [];
@@ -346,7 +373,7 @@ export const resolveAppleIpsJoin = async (
     status: "selected",
     path: input.path,
     sha256: artifact.sha256,
-    bytes: artifact.bytes.length,
+    bytes: artifact.size,
     slices: parsed.slices.map((slice) => ({
       index: slice.index,
       offset: read.decimalText64(slice.offset),

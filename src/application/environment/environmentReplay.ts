@@ -178,18 +178,31 @@ const outranks = (score: MatchScore, best: MatchScore): boolean =>
         ? score.queryMatches > best.queryMatches
         : score.observedOrderMatches > best.observedOrderMatches;
 
-/** Choose the record whose path segments, then verbatim spellings, then query values best match the call; ties keep manifest order. */
+/** The selected recording and whether the call identifies its request exactly. */
+export interface ReplaySelection {
+  readonly exchange: RecordedExchange;
+  readonly exact: boolean;
+}
+
+/**
+ * Choose the record whose path segments, then verbatim spellings, then query values best match the call.
+ * When only some ordinals can supply a response, all cited recordings still inform query-order ambiguity.
+ */
 export const selectReplayExchange = (
   tool: EnvironmentManifestTool,
   exchanges: ReadonlyMap<number, RecordedExchange>,
   args: ReplayArguments,
-  observedQuery?: ObservedQuery,
-):
-  | { readonly exchange: RecordedExchange; readonly exact: boolean }
-  | undefined => {
+  options: {
+    readonly observedQuery?: ObservedQuery | undefined;
+    readonly eligibleOrdinals?: ReadonlySet<number>;
+  } = {},
+): ReplaySelection | undefined => {
+  const { observedQuery, eligibleOrdinals } = options;
   let best: { exchange: RecordedExchange; score: MatchScore } | undefined;
   const argumentsMap = environmentToolArguments(tool);
   for (const ordinal of tool.record_ordinals) {
+    if (eligibleOrdinals !== undefined && !eligibleOrdinals.has(ordinal))
+      continue;
     const exchange = exchanges.get(ordinal);
     if (exchange === undefined) continue;
     const score = scoreExchange(
@@ -209,54 +222,46 @@ export const selectReplayExchange = (
       ownMember(args, argument) === undefined ? [] : [name],
     ),
   );
-  const queryWasSupplied = suppliedQueryNames.size > 0;
-  const canInspectQuery = observedQuery !== undefined || queryWasSupplied;
-  const bestPairs = canInspectQuery
-    ? [
-        ...iterateUrlQueryParameters(
-          best.exchange.query ?? "",
-          suppliedQueryNames,
-        ),
-      ]
-    : [];
-  const orderAmbiguous =
-    observedQuery === undefined &&
-    queryWasSupplied &&
-    best.score.exact &&
-    tool.record_ordinals.some((ordinal) => {
-      const candidate = exchanges.get(ordinal);
-      if (
-        candidate === undefined ||
-        candidate.ordinal === best.exchange.ordinal
+  if (
+    observedQuery !== undefined ||
+    suppliedQueryNames.size === 0 ||
+    !best.score.exact
+  )
+    return { exchange: best.exchange, exact: best.score.exact };
+  const bestPairs = [
+    ...iterateUrlQueryParameters(best.exchange.query ?? "", suppliedQueryNames),
+  ];
+  const orderAmbiguous = tool.record_ordinals.some((ordinal) => {
+    const candidate = exchanges.get(ordinal);
+    if (candidate === undefined || candidate.ordinal === best.exchange.ordinal)
+      return false;
+    const score = scoreExchange(
+      tool,
+      argumentsMap.path,
+      argumentsMap.query,
+      candidate,
+      args,
+    );
+    if (
+      score.pathMatches !== best.score.pathMatches ||
+      score.verbatimMatches !== best.score.verbatimMatches ||
+      !score.exact
+    )
+      return false;
+    const pairs = [
+      ...iterateUrlQueryParameters(candidate.query ?? "", suppliedQueryNames),
+    ];
+    return (
+      pairs.length !== bestPairs.length ||
+      pairs.some(
+        ([name, value], index) =>
+          bestPairs[index]?.[0] !== name || bestPairs[index]?.[1] !== value,
       )
-        return false;
-      const score = scoreExchange(
-        tool,
-        argumentsMap.path,
-        argumentsMap.query,
-        candidate,
-        args,
-      );
-      if (
-        score.pathMatches !== best.score.pathMatches ||
-        score.verbatimMatches !== best.score.verbatimMatches ||
-        !score.exact
-      )
-        return false;
-      const pairs = [
-        ...iterateUrlQueryParameters(candidate.query ?? "", suppliedQueryNames),
-      ];
-      return (
-        pairs.length !== bestPairs.length ||
-        pairs.some(
-          ([name, value], index) =>
-            bestPairs[index]?.[0] !== name || bestPairs[index]?.[1] !== value,
-        )
-      );
-    });
+    );
+  });
   return {
     exchange: best.exchange,
-    exact: best.score.exact && !orderAmbiguous,
+    exact: !orderAmbiguous,
   };
 };
 
@@ -351,12 +356,9 @@ export const replayEnvironmentTool = (
   args: ReplayArguments,
   observedQuery?: ObservedQuery,
 ): Result<ReplayResult, AnalysisError> => {
-  const selected = selectReplayExchange(
-    tool,
-    source.exchanges,
-    args,
+  const selected = selectReplayExchange(tool, source.exchanges, args, {
     observedQuery,
-  );
+  });
   if (selected === undefined)
     return err(
       new AnalysisInputError(

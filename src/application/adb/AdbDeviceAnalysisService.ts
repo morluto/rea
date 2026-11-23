@@ -1,4 +1,5 @@
-import type { AdbDeviceAnalysisPort } from "./AdbDeviceAnalysisPort.js";
+import type { RequestAnalysisPort } from "../../ports/AnalysisProvider.js";
+import type { AdbRequest } from "../../domain/adb/adbDeviceAnalysis.js";
 import type {
   AnalysisExecution,
   ExecutionOptions,
@@ -18,7 +19,7 @@ import { executeProviderOperation } from "../ProviderOperationExecution.js";
 
 /** Shared CLI/MCP admission, execution, and Evidence composition for ADB. */
 export class AdbDeviceAnalysisService {
-  constructor(readonly provider: AdbDeviceAnalysisPort) {}
+  constructor(readonly provider: RequestAnalysisPort<AdbRequest>) {}
 
   /** Run one caller-selected ADB request and retain device provenance inline. */
   async execute(

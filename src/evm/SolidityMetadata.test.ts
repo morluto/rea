@@ -206,3 +206,49 @@ it.each(["", "60006000f3", "000000", "00010001"])(
       entries: [],
     }),
 );
+
+it("keeps distinct scalar key types separate and validates large ASCII/UTF-8 metadata maps", () => {
+  // Map keys: text "1" (6131), uint 1 (01), bytes h'31' (4131), true (f5), false (f4), null (f6)
+  const distinct = inspectSolidityMetadata(
+    bytecode("a66131010102413103f504f405f606"),
+  );
+  expect(distinct.status).toBe("decoded");
+  expect(distinct.entries.map(({ key }) => key)).toEqual([
+    { kind: "text", value: "1" },
+    { kind: "integer", value: "1" },
+    { kind: "bytes", value: "31" },
+    { kind: "boolean", value: true },
+    { kind: "boolean", value: false },
+    { kind: "null" },
+  ]);
+
+  // Repeated scalar keys of each kind must still fail with repeated_map_key.
+  for (const hex of ["a2f501f502", "a2f601f602", "a201010102"]) {
+    expect(inspectSolidityMetadata(bytecode(hex))).toMatchObject({
+      status: "not-decoded",
+      diagnostic: "repeated_map_key",
+      admission: { code: "repeated_map_key" },
+    });
+  }
+
+  // Valid non-ASCII UTF-8 text (e.g. 2-byte é) alongside ASCII + solc + bytes.
+  const utf8Hex = "a364736f6c634300081e62c3a962c3a9636b657944deadbeef";
+  expect(inspectSolidityMetadata(bytecode(utf8Hex))).toMatchObject({
+    status: "decoded",
+    compiler_version: { representation: "release-bytes", value: "0.8.30" },
+    entries: [
+      {
+        key: { kind: "text", value: "solc" },
+        value: { kind: "bytes", value: "00081e" },
+      },
+      {
+        key: { kind: "text", value: "é" },
+        value: { kind: "text", value: "é" },
+      },
+      {
+        key: { kind: "text", value: "key" },
+        value: { kind: "bytes", value: "deadbeef" },
+      },
+    ],
+  });
+});

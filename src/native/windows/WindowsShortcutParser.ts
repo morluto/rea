@@ -1448,7 +1448,7 @@ export const parseWindowsShortcut = async (
   const signatures = new Set(extraData.blocks.map((block) => block.signature));
   const unseenBlocks = LINK_FLAGS.flatMap(([bit, flagName, signature]) =>
     signature !== undefined && (flags & bit) !== 0 && !signatures.has(signature)
-      ? [{ flagName, blockName: EXTRA_SIGNATURE_NAMES[signature] }]
+      ? [{ signature, flagName, blockName: EXTRA_SIGNATURE_NAMES[signature] }]
       : [],
   );
   // Only a TerminalBlock proves the whole section was read. Without one an
@@ -1461,8 +1461,13 @@ export const parseWindowsShortcut = async (
         extraData.terminal_offset,
         `${flagName} is set and ${blockName} is absent`,
       );
-  } else if (unseenBlocks.length > 0 && walk.issues.length === 0)
-    note(walk, "truncated", walk.offset, "ExtraData TerminalBlock is absent");
+  } else {
+    walk.pathUncertainty.environment ||= unseenBlocks.some(
+      ({ signature }) => signature === ENVIRONMENT_TARGET_SIGNATURE,
+    );
+    if (unseenBlocks.length > 0 && walk.issues.length === 0)
+      note(walk, "truncated", walk.offset, "ExtraData TerminalBlock is absent");
+  }
   const reportBase = {
     artifact,
     header,

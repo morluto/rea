@@ -1,19 +1,22 @@
-import { validateRegistrationEnvironment } from "./RegistrationEnvironmentValidation.js";
+import {
+  validateRegistrationEnvironment,
+  type ValidatedRegistrationEnvironment,
+} from "./RegistrationEnvironmentValidation.js";
 import {
   isAlias,
   isMap,
   isNode,
+  isScalar,
   isSeq,
   type Node,
   type YAMLMap,
   type YAMLSeq,
 } from "yaml";
-import type { Environment } from "../config/environment.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ClientConfigurationDocument } from "./ClientConfigurationDocument.js";
 import { CordisExpression, DshCordisYaml } from "./DshCordisYaml.js";
-import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
+import { mergeRegistrationEnvironment } from "./UserConfigurationLocation.js";
 import { isRecord } from "../kernel/isRecord.js";
 
 export const DSH_ENTRY_ID = "rea-mcp";
@@ -35,6 +38,12 @@ interface OwnedInsertion {
   readonly list: YAMLSeq<unknown>;
   readonly ownedRows: ReadonlyMap<number, YAMLMap<unknown, unknown>>;
   readonly groups: ReadonlyMap<number, OwnedInsertion>;
+}
+
+interface InsertionInspection {
+  readonly insertion: OwnedInsertion | undefined;
+  readonly unknownStructure: boolean;
+  readonly malformedStructure: boolean;
 }
 
 /** One interpretation of identity, ordered patch applicability and source nodes. */
@@ -70,9 +79,12 @@ export class DshCordisDocument {
       const inserted = this.#yaml.resolve(insertionSource);
       const targetId = this.#id(map);
       const direct = !isSeq(inserted) && targetId === DSH_ENTRY_ID;
-      const insertion = isSeq(inserted)
+      const inspected = isSeq(inserted)
         ? this.#inspectInsertion(inserted, insertionSource)
         : undefined;
+      const insertion = inspected?.insertion;
+      this.#unknownStructure ||= inspected?.unknownStructure === true;
+      this.#malformedStructure ||= inspected?.malformedStructure === true;
       const insertedValue = this.#yaml.value(inserted);
       if (insertedValue instanceof CordisExpression)
         this.#unknownStructure = true;
@@ -146,15 +158,17 @@ export class DshCordisDocument {
   #inspectInsertion(
     list: YAMLSeq<unknown>,
     source: unknown,
-  ): OwnedInsertion | undefined {
+  ): InsertionInspection {
+    let unknownStructure = false;
+    let malformedStructure = false;
     const ownedRows = new Map<number, YAMLMap<unknown, unknown>>();
     const groups = new Map<number, OwnedInsertion>();
     for (const [index, source] of list.items.entries()) {
       const row = this.#map(source);
       if (row === undefined) {
         if (this.#yaml.value(source) instanceof CordisExpression)
-          this.#unknownStructure = true;
-        else this.#malformedStructure = true;
+          unknownStructure = true;
+        else malformedStructure = true;
         continue;
       }
       if (this.#id(row) === DSH_ENTRY_ID) {
@@ -162,16 +176,37 @@ export class DshCordisDocument {
         continue;
       }
       // Only a Cordis group gives its config list entry identity.
-      if (this.#yaml.value(this.#yaml.field(row, "group")) !== true) continue;
+      const group = this.#yaml.value(this.#yaml.field(row, "group"));
+      if (group !== true && !(group instanceof CordisExpression)) continue;
       const configSource = this.#yaml.field(row, "config");
       const config = this.#yaml.resolve(configSource);
-      if (!isSeq(config)) continue;
+      if (!isSeq(config)) {
+        if (
+          isScalar(config) &&
+          this.#yaml.value(config) instanceof CordisExpression
+        )
+          unknownStructure = true;
+        continue;
+      }
       const nested = this.#inspectInsertion(config, configSource);
-      if (nested !== undefined) groups.set(index, nested);
+      unknownStructure ||= nested.unknownStructure;
+      if (group === true) {
+        malformedStructure ||= nested.malformedStructure;
+        if (nested.insertion !== undefined) groups.set(index, nested.insertion);
+      } else {
+        // A conditional group only obscures ownership if its list can
+        // carry a REA row. Unrelated literal rows remain untouched.
+        unknownStructure ||= nested.insertion !== undefined;
+      }
     }
-    return ownedRows.size > 0 || groups.size > 0
-      ? { source, list, ownedRows, groups }
-      : undefined;
+    return {
+      insertion:
+        ownedRows.size > 0 || groups.size > 0
+          ? { source, list, ownedRows, groups }
+          : undefined,
+      unknownStructure,
+      malformedStructure,
+    };
   }
 
   #id(map: YAMLMap | undefined): unknown {
@@ -222,10 +257,9 @@ export class DshCordisDocument {
     validation: "fragment" | "effective",
     platform: NodeJS.Platform,
   ): Result<
-    {
+    ValidatedRegistrationEnvironment & {
       readonly values: Readonly<Record<string, string>>;
-      readonly configuration: Environment;
-      readonly unresolvedSettings: ReadonlySet<string>;
+      readonly sourceValues: Readonly<Record<string, unknown>>;
     },
     ConfigurationError
   > {
@@ -263,9 +297,12 @@ export class DshCordisDocument {
       );
     const literals: Record<string, string> = Object.create(null);
     const unresolvedSettings = new Set<string>();
-    for (const [key, value] of Object.entries(
-      mergeEnvironmentOverrides<unknown>(raw ?? {}, overrides, platform),
-    )) {
+    const { values: sourceValues } = mergeRegistrationEnvironment(
+      raw ?? {},
+      overrides,
+      platform,
+    );
+    for (const [key, value] of Object.entries(sourceValues)) {
       if (value instanceof CordisExpression) {
         unresolvedSettings.add(key);
         continue;
@@ -291,7 +328,7 @@ export class DshCordisDocument {
       platform,
     );
     return validated.ok
-      ? ok({ values: literals, ...validated.value })
+      ? ok({ values: literals, sourceValues, ...validated.value })
       : validated;
   }
 
@@ -305,11 +342,7 @@ export class DshCordisDocument {
       return err(this.#editabilityError);
     const environment = this.environment(overrides, "effective", platform);
     if (!environment.ok) return environment;
-    const env = mergeEnvironmentOverrides<unknown>(
-      isPatchRecord(this.config?.env) ? this.config.env : {},
-      overrides,
-      platform,
-    );
+    const env = environment.value.sourceValues;
     const desired = { ...this.config, ...dshClientRegistrationEntry(command) };
     delete desired.env;
     if (Object.keys(env).length > 0) desired.env = env;
