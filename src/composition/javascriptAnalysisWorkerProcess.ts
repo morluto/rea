@@ -83,6 +83,9 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
   }
   const resultBudgetBytes = await callbacks.checkpoint(facts);
   if (facts.parse_status === "failed") return null;
+  // Structure-only keeps the full static facts and skips semantic analysis;
+  // no semantic result budget is consumed.
+  if (purpose === "structure-only") return null;
   if (resultBudgetBytes === 0)
     throw new AnalysisResourceConstraintError(
       "analyze_javascript_application",

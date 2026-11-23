@@ -93,6 +93,42 @@ it("does not let a known-absent optional import erase another application's page
   ).toHaveLength(1);
 });
 
+it("returns static and application facts without semantic analysis in structure-only mode", async () => {
+  const root = await createTestTempDirectory("rea-structure-only-");
+  await writeFixtureFiles(root, {
+    "package.json": JSON.stringify({ main: "main.cjs" }),
+    "main.cjs":
+      'const {BrowserWindow} = require("electron"); const w = new BrowserWindow(); w.loadFile("index.html");',
+    "index.html": "valid page",
+  });
+  const result = await reconstructJavaScriptArtifact({
+    input_path: root,
+    format: "directory",
+    semantic_analysis: "structure-only",
+  });
+  // Application structure is still derived from static facts.
+  expect(
+    result.graph.nodes.some(({ kind }) => kind === "electron-renderer"),
+  ).toBe(true);
+  expect(result.statistics.parse_failures).toBe(0);
+  // No semantic content beyond module scaffolding, and the omission is stated.
+  expect(
+    result.semantic_graph.nodes.every(({ kind }) => kind === "module"),
+  ).toBe(true);
+  expect(result.semantic_graph.edges ?? []).toEqual([]);
+  expect(
+    result.limitations.some((text) => text.includes("structure-only")),
+  ).toBe(true);
+  const complete = await reconstructJavaScriptArtifact({
+    input_path: root,
+    format: "directory",
+  });
+  expect(complete.semantic_graph.nodes.length).toBeGreaterThan(0);
+  expect(
+    complete.limitations.some((text) => text.includes("structure-only")),
+  ).toBe(false);
+});
+
 it.each([
   "unselected",
   "unavailable",

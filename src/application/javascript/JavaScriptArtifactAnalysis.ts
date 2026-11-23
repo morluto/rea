@@ -84,6 +84,8 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
   preloadPaths: ReadonlySet<string> = new Set(),
   /** Discovery gaps that may leave a declared preload in its package scope. */
   preloadLimitations: readonly string[] = [],
+  /** Return static and application facts without semantic analysis. */
+  structureOnly: boolean = false,
 ): Promise<{
   readonly analysis: JavaScriptArtifactAnalysis;
   readonly interruption: AnalysisError | null;
@@ -130,6 +132,7 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
           posix.extname(file.path) === ".js"
           ? "commonjs"
           : packageTypeFor(file),
+        structureOnly ? "structure-only" : "analysis",
       );
       const facts = result.ok ? result.value : result.error;
       for (const revoked of facts.revokedStaticProjections ?? []) {
@@ -308,7 +311,11 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
   }
   restoreInventoryOrder(fileSet.files, state.files);
   return {
-    analysis: finalizeArtifactAnalysis(state, preloadLimitations),
+    analysis: finalizeArtifactAnalysis(
+      state,
+      preloadLimitations,
+      structureOnly,
+    ),
     interruption,
   };
 };
@@ -352,6 +359,7 @@ const restoreInventoryOrder = (
 const finalizeArtifactAnalysis = (
   state: MutableArtifactAnalysis,
   preloadLimitations: readonly string[],
+  structureOnly: boolean = false,
 ): JavaScriptArtifactAnalysis => {
   return {
     jsonDocuments: state.jsonDocuments,
@@ -374,6 +382,11 @@ const finalizeArtifactAnalysis = (
     limitations: [
       "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
       "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
+      ...(structureOnly
+        ? [
+            "Semantic analysis was not requested (semantic_analysis: structure-only): no semantic IR, semantic graph or semantic traces were produced. Request semantic_analysis: complete for selected sources to obtain them.",
+          ]
+        : []),
       ...state.htmlInlineScripts.map(htmlInlineScriptLimitation),
       ...state.files.flatMap(
         ({ analysis_failure, application_projection_failure }) =>

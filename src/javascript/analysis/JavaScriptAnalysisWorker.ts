@@ -333,7 +333,7 @@ export class JavaScriptAnalysisWorker {
     signal?: AbortSignal,
     onPhase?: (phase: string) => Promise<void>,
     packageType: JavaScriptPackageType = "unknown",
-    purpose: "analysis" | "preload-discovery" = "analysis",
+    purpose: "analysis" | "preload-discovery" | "structure-only" = "analysis",
   ): Promise<
     Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>
   > {
