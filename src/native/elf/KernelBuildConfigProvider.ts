@@ -121,6 +121,8 @@ const parserBudgetRemediation = ({
         maximum,
         "inflated IKCFG gzip budget",
       );
+    case "compressed_candidate_bytes":
+      return "Select an image with a smaller compressed IKCFG member. Increasing max_config_bytes can raise the compressed candidate allowance when the inflated-config budget is below its maximum.";
     case "max_payload_bytes":
       return ceiling(
         name,
@@ -154,14 +156,19 @@ const kernelBuildConfigFailurePrimary = (
     cause instanceof KernelBuildConfigBudgetFailure
   ) {
     const { limit } = cause.failure;
-    return parseLimitConstraint(OPERATION, "capacity", cause, {
-      reportedLimitContext: {
-        ...reportedBudgetContext(input),
-        [limit.name]: limit.maximum,
+    return parseLimitConstraint(
+      OPERATION,
+      limit.name === "compressed_candidate_bytes" ? "memory" : "capacity",
+      cause,
+      {
+        reportedLimitContext: {
+          ...reportedBudgetContext(input),
+          [limit.name]: limit.maximum,
+        },
+        retryable: false,
+        remediationAction: parserBudgetRemediation(limit),
       },
-      retryable: false,
-      remediationAction: parserBudgetRemediation(limit),
-    });
+    );
   }
   if (
     origin === "owned-or-classified" &&

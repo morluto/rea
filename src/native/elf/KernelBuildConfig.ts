@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { crc32, inflateRaw } from "node:zlib";
 
-import { assertArtifactReadActive } from "../../resources/index.js";
+import {
+  ArtifactReaderFailure,
+  assertArtifactReadActive,
+} from "../../resources/index.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
 import {
   KERNEL_BUILD_CONFIG_CODECS,
@@ -34,13 +37,19 @@ const bufferSpan = (bytes: Buffer): ByteSpan => ({
 
 const sourceSpan = (source: NativeByteSource): ByteSpan => ({
   size: source.size,
-  readRange: (offset, length) => {
+  readRange: async (offset, length) => {
     if (offset < 0 || length <= 0 || offset >= source.size)
-      return Promise.resolve(Buffer.alloc(0));
+      return Buffer.alloc(0);
     const clamped = Math.min(length, source.size - offset);
     if (source.prefix !== undefined && offset + clamped <= source.prefix.length)
-      return Promise.resolve(source.prefix.subarray(offset, offset + clamped));
-    return source.readRange(offset, clamped);
+      return source.prefix.subarray(offset, offset + clamped);
+    const bytes = await source.readRange(offset, clamped);
+    if (bytes.length !== clamped)
+      throw new ArtifactReaderFailure(
+        "format",
+        "Kernel image ended before the admitted file range.",
+      );
+    return bytes;
   },
 });
 
@@ -52,7 +61,8 @@ type Reason = NonNullable<Report["config"]["reason"]>;
 type KernelBuildConfigBudgetKnob =
   | "max_entries"
   | "max_config_bytes"
-  | "max_payload_bytes";
+  | "max_payload_bytes"
+  | "compressed_candidate_bytes";
 
 const IKCFG_ST = Buffer.from("IKCFG_ST");
 const IKCFG_ED = Buffer.from("IKCFG_ED");
@@ -80,29 +90,40 @@ const yieldTurn = async (signal: AbortSignal | undefined): Promise<void> => {
   assertArtifactReadActive(signal);
 };
 
-/**
- * Offset of the next `needle` at or after `from`, or -1. Overlapping
- * TURN_STRIDE windows are searched with a turn after each one that holds no
- * match, so a search that finds nothing still yields once per MiB.
- */
-const findNext = async (
+/** Search successive windows while retaining bytes for nearby hits and probes. */
+const markerScanner = (
   span: ByteSpan,
   needle: Buffer,
-  from: number,
   signal: AbortSignal | undefined,
-): Promise<number> => {
-  for (let start = from; start < span.size;) {
-    const end = Math.min(span.size, start + TURN_STRIDE + needle.length - 1);
-    const chunk = await span.readRange(start, end - start);
-    const hit = chunk.indexOf(needle);
-    if (hit >= 0) return start + hit;
-    if (end >= span.size) return -1;
-    // The next window repeats the last needle.length - 1 bytes, so a match
-    // across the boundary is still found.
-    start = end - needle.length + 1;
-    await yieldTurn(signal);
-  }
-  return -1;
+) => {
+  let offset = 0;
+  let bytes = Buffer.alloc(0) as Buffer;
+  return {
+    async find(from: number): Promise<number> {
+      for (let start = from; start < span.size;) {
+        if (
+          start < offset ||
+          start >= offset + bytes.length - needle.length + 1
+        ) {
+          offset = start;
+          bytes = await span.readRange(start, TURN_STRIDE + needle.length - 1);
+        }
+        const hit = bytes.indexOf(needle, start - offset);
+        if (hit >= 0) return offset + hit;
+        const end = offset + bytes.length;
+        if (end >= span.size) return -1;
+        start = end - needle.length + 1;
+        await yieldTurn(signal);
+      }
+      return -1;
+    },
+    probe(start: number, length: number): Promise<Buffer> {
+      const end = Math.min(span.size, start + length);
+      return start >= offset && end <= offset + bytes.length
+        ? Promise.resolve(bytes.subarray(start - offset, end - offset))
+        : span.readRange(start, length);
+    },
+  };
 };
 
 /** SHA-256 hashed one TURN_STRIDE window per event-loop turn. */
@@ -458,12 +479,15 @@ const findConfig = async (
   let candidates = 0;
   let remaining = maxOutput * CONFIG_SEARCH_BUDGET_FACTOR;
   let oversized = false;
+  let compressedLimit: number | undefined;
+  const openingMarkers = markerScanner(span, IKCFG_ST, signal);
+  const closingMarkers = markerScanner(span, IKCFG_ED, signal);
   // Next IKCFG_ED at or after the current candidate; -1 once none remains.
   let closing: number | null = null;
   let turnAt = TURN_STRIDE;
   for (;;) {
     assertArtifactReadActive(signal);
-    const marker = await findNext(span, IKCFG_ST, from, signal);
+    const marker = await openingMarkers.find(from);
     if (marker < 0) break;
     if (marker >= turnAt) {
       turnAt = marker + TURN_STRIDE;
@@ -471,10 +495,10 @@ const findConfig = async (
     }
     from = marker + 1;
     const gzipAt = marker + IKCFG_ST.length;
-    const magicProbe = await span.readRange(gzipAt, 16);
+    const magicProbe = await openingMarkers.probe(gzipAt, 16);
     if (codecAt(magicProbe, 0) !== "gzip") continue;
     if (closing === null || (closing >= 0 && closing < gzipAt))
-      closing = await findNext(span, IKCFG_ED, gzipAt, signal);
+      closing = await closingMarkers.find(gzipAt);
     // Without a closing marker nothing later can be framed; one truncated
     // member is enough to report the search incomplete.
     if (closing < 0 && truncated) break;
@@ -504,6 +528,14 @@ const findConfig = async (
     if (member.kind === "corrupt") remaining -= member.inflated;
     if (member.kind === "truncated" || member.kind === "invalid") {
       remaining -= member.spent;
+      if (
+        member.kind === "truncated" &&
+        candidateLen < span.size - gzipAt &&
+        (closing < 0 || closing >= gzipAt + candidateLen)
+      ) {
+        compressedLimit ??= maxCandidateBytes;
+        continue;
+      }
       if (closing < 0) {
         if (member.kind === "truncated") truncated = true;
         continue;
@@ -557,6 +589,8 @@ const findConfig = async (
           : "config_text_invalid",
     };
   }
+  if (compressedLimit !== undefined)
+    budget("compressed_candidate_bytes", compressedLimit);
   if (oversized) budget("max_config_bytes", maxOutput);
   return malformed ?? (truncated ? "truncated" : "absent");
 };
@@ -661,6 +695,7 @@ const findBanner = async (
   signal: AbortSignal | undefined,
 ): Promise<Report["banner"]> => {
   let from = 0;
+  const markers = markerScanner(span, BANNER_PREFIX, signal);
   let turnAt = TURN_STRIDE;
   let placeholder: {
     readonly banner: Report["banner"];
@@ -668,13 +703,13 @@ const findBanner = async (
   } | null = null;
   for (;;) {
     assertArtifactReadActive(signal);
-    const at = await findNext(span, BANNER_PREFIX, from, signal);
+    const at = await markers.find(from);
     if (at < 0) return placeholder?.banner ?? absentBanner("absent");
     let end = at + BANNER_PREFIX.length;
     let terminatorByte: number | undefined;
     while (end < span.size) {
       const chunkLen = Math.min(BANNER_SCAN_CHUNK_BYTES, span.size - end);
-      const chunk = await span.readRange(end, chunkLen);
+      const chunk = await markers.probe(end, chunkLen);
       let stopped = false;
       for (let i = 0; i < chunk.length; i += 1) {
         const byte = chunk[i] ?? 0;
