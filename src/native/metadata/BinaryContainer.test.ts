@@ -385,7 +385,9 @@ it("types the refusal for bytes that match no native format, and only for those"
   // A zero-count FAT header is recognized, so its refusal is not this type.
   const fat = Buffer.alloc(8);
   fat.writeUInt32BE(0xcafebabe);
-  expect(() => readBinaryContainer(fat, "elf-directory")).toThrow(BinaryFormatFailure);
+  expect(() => readBinaryContainer(fat, "elf-directory")).toThrow(
+    BinaryFormatFailure,
+  );
   try {
     readBinaryContainer(fat, "elf-directory");
   } catch (cause) {
