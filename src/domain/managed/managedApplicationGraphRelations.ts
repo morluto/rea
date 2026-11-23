@@ -85,18 +85,27 @@ export const addMemberRelations = (
   };
   const calls = new Map<string, AggregatedRelation>();
   for (const edge of members.call_edges) {
+    let targetToken = edge.target_token;
     if (edge.target_kind !== "method-def") {
-      callSites[
-        edge.target_kind === "unknown" ? "unknown-target" : edge.target_kind
-      ]++;
-      continue;
+      if (
+        edge.target_kind === "method-spec" &&
+        edge.target_row_resolved &&
+        edge.generic_method_token?.startsWith("0x06") === true
+      ) {
+        targetToken = edge.generic_method_token;
+      } else {
+        callSites[
+          edge.target_kind === "unknown" ? "unknown-target" : edge.target_kind
+        ]++;
+        continue;
+      }
     }
     if (!CALL_OPCODES.has(edge.opcode)) {
       callSites["method-reference"]++;
       continue;
     }
     const caller = state.methodNodes.get(edge.caller_token);
-    const target = state.methodNodes.get(edge.target_token);
+    const target = state.methodNodes.get(targetToken);
     if (caller === undefined || target === undefined) {
       callSites["absent-node"]++;
       continue;

@@ -112,6 +112,8 @@ export interface MemberCore {
   readonly identitySha256?: string | null;
   /** Parsed TypeSpec owner and member signature establish a local row, not a nominal name. */
   readonly rowResolved?: boolean;
+  /** Validated MethodSpec base row; the operand token still names the instantiation. */
+  readonly genericMethodToken?: string;
 }
 
 export const memberTargetIdentity = (

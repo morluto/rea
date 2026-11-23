@@ -900,6 +900,7 @@ export const edges = (
               opcode: anchor.opcode,
               target_token: operand,
               target_kind: targetKind(instruction.reference.table),
+              generic_method_token: target?.genericMethodToken ?? null,
               target_name: target?.name ?? null,
               target_declaring_type: target?.declaringType ?? null,
             },

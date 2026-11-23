@@ -689,6 +689,7 @@ describe("managed member inspection", () => {
         opcode: "call",
         target_token: "0x0a000001",
         target_kind: "member-ref",
+        generic_method_token: null,
         target_name: ".ctor",
         target_declaring_type:
           "System.Runtime.Versioning.TargetFrameworkAttribute",
@@ -2052,6 +2053,7 @@ describe("managed derived caller names", () => {
       opcode: "call",
       target_token: "0x0a000001",
       target_kind: "member-ref",
+      generic_method_token: null,
       target_name: null,
       target_declaring_type: null,
     };

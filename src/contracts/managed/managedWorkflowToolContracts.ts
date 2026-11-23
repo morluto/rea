@@ -105,7 +105,7 @@ export const MANAGED_WORKFLOW_TOOL_CONTRACTS = [
       evidenceEffects,
     ),
     description:
-      "Project authenticated managed artifact, member, and native-boundary Evidence, supplied inline or by exact retained reference, into the provider-neutral application graph without executing managed code, loading assemblies, or translating managed metadata tokens to native addresses. The graph preserves managed static observations as managed-specific nodes linked to source Evidence, with in-module calls and field-access edges; other call and field-access sites are counted in limitations.",
+      "Project authenticated managed artifact, member, and native-boundary Evidence, supplied inline or by exact retained reference, into the provider-neutral application graph without executing managed code, loading assemblies, or translating managed metadata tokens to native addresses. The graph preserves managed static observations as managed-specific nodes linked to source Evidence, with in-module calls (including validated generic MethodDef instantiations) and field-access edges; other call and field-access sites are counted in limitations.",
     kind: "application",
     inputSchema: managedApplicationGraphReferenceInputSchema,
     outputSchema: managedApplicationGraphOutputSchema,
