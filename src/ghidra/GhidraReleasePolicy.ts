@@ -110,6 +110,13 @@ export type GhidraKnownProviderDefect =
   | typeof GHIDRA_CLANG_O0_SWITCH_DEFECT
   | typeof GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT;
 
+const formatKnownProviderDefect = (
+  defect: GhidraKnownProviderDefect,
+): string =>
+  defect.id === "ghidra-9996"
+    ? formatClosedSwitchDefect(defect)
+    : formatOpenSwitchDefect(defect);
+
 const formatClosedSwitchDefect = (
   defect: typeof GHIDRA_CLANG_O0_SWITCH_DEFECT,
 ): string =>
@@ -120,15 +127,70 @@ const formatOpenSwitchDefect = (
 ): string =>
   `Known provider defect ${defect.id} (${defect.effect}): Ghidra ${defect.release} leaves an ${defect.scope.architecture} ${defect.scope.construct} unrecovered when it is a ${defect.scope.table} bounded by ${defect.scope.bound}. The function body stops at the indirect branch. Upstream issue ${defect.upstream_issue} is ${defect.status} and names a Swift ${defect.scope.optimization} ${defect.scope.source} switch; it has no fix commit and no milestone. REA reproduced the unrecovered jump table on the exact ${defect.release} build with an AArch64 ELF object of that instruction shape. A compare-bounded byte table still recovers. This record stays on every admitted build until a release is known to clear it.`;
 
-/** Session and decompile limitations for the observed Ghidra build. */
+/** Version-catalog limitation text, before Program language and operation scope. */
 export const ghidraKnownProviderDefectLimitations = (
   providerVersion: string,
 ): readonly string[] =>
-  ghidraKnownProviderDefects(providerVersion).map((defect) =>
-    defect.id === "ghidra-9996"
-      ? formatClosedSwitchDefect(defect)
-      : formatOpenSwitchDefect(defect),
+  ghidraKnownProviderDefects(providerVersion).map(formatKnownProviderDefect);
+
+/**
+ * Operations whose output depends on recovered jump-table flow: decompilation,
+ * function dossiers (including their value traces), and reference results.
+ */
+const GHIDRA_SWITCH_FLOW_OPERATIONS: ReadonlySet<string> = new Set([
+  "analyze_function",
+  "procedure_pseudo_code",
+  "procedure_references",
+  "xrefs",
+]);
+
+/** Defect-record architecture named by one opened Program language id. */
+export const ghidraProgramDefectArchitecture = (
+  languageId: string | undefined,
+): GhidraKnownProviderDefect["scope"]["architecture"] | undefined => {
+  if (languageId === undefined) return undefined;
+  const [processor, , size] = languageId.split(":");
+  // A language id is processor:endian:size:variant. Size distinguishes x86-64
+  // from 32-bit and 16-bit x86. Any AARCH64 language is the AArch64 ISA.
+  if (processor === undefined || size === undefined || size.length === 0)
+    return undefined;
+  if (processor === "x86" && size === "64") return "x86-64";
+  if (processor === "AARCH64") return "aarch64";
+  return undefined;
+};
+
+/**
+ * Defects that can apply to this Program and operation. Architecture must
+ * match the declared scope. Stripped targets usually leave the original
+ * compiler unknown, so an x86-64 Program keeps the clang -O0 record without
+ * a compiler match. Switch defects attach only to flow-dependent operations.
+ */
+export const ghidraApplicableKnownProviderDefects = (
+  providerVersion: string,
+  languageId: string | undefined,
+  operation: string,
+): readonly GhidraKnownProviderDefect[] => {
+  const architecture = ghidraProgramDefectArchitecture(languageId);
+  if (architecture === undefined) return [];
+  return ghidraKnownProviderDefects(providerVersion).filter(
+    (defect) =>
+      defect.scope.architecture === architecture &&
+      (defect.scope.construct !== "switch" ||
+        GHIDRA_SWITCH_FLOW_OPERATIONS.has(operation)),
   );
+};
+
+/** Limitation text for defects that apply to this Program and operation. */
+export const ghidraApplicableKnownProviderDefectLimitations = (
+  providerVersion: string,
+  languageId: string | undefined,
+  operation: string,
+): readonly string[] =>
+  ghidraApplicableKnownProviderDefects(
+    providerVersion,
+    languageId,
+    operation,
+  ).map(formatKnownProviderDefect);
 
 /**
  * Limitation recorded when a session runs a compatible build other than the

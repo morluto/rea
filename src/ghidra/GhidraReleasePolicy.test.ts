@@ -9,8 +9,11 @@ import {
   ghidraReleaseLine,
   GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT,
   GHIDRA_CLANG_O0_SWITCH_DEFECT,
+  ghidraApplicableKnownProviderDefects,
+  ghidraApplicableKnownProviderDefectLimitations,
   ghidraKnownProviderDefects,
   ghidraKnownProviderDefectLimitations,
+  ghidraProgramDefectArchitecture,
   ghidraVersionDetail,
   unverifiedGhidraBuildLimitation,
 } from "./GhidraReleasePolicy.js";
@@ -121,5 +124,134 @@ describe("Ghidra release admission", () => {
     expect(ghidraVersionDetail("latest")).toBe("latest");
     expect(ghidraKnownProviderDefects("latest")).toEqual([]);
     expect(ghidraKnownProviderDefectLimitations("latest")).toEqual([]);
+  });
+});
+
+describe("Ghidra known-defect architecture scope", () => {
+  const flowOperations = [
+    "analyze_function",
+    "procedure_pseudo_code",
+    "procedure_references",
+    "xrefs",
+  ] as const;
+  const otherOperations = [
+    "health",
+    "read_bytes",
+    "search_bytes",
+    "search_strings",
+    "search_procedures",
+    "list_procedures",
+    "inspect_native_data_type",
+    "inspect_native_instruction",
+  ] as const;
+
+  it("reads architecture from the Program language id", () => {
+    expect(ghidraProgramDefectArchitecture("x86:LE:64:default")).toBe("x86-64");
+    expect(ghidraProgramDefectArchitecture("x86:LE:64:gcc")).toBe("x86-64");
+    expect(ghidraProgramDefectArchitecture("AARCH64:LE:64:v8A")).toBe(
+      "aarch64",
+    );
+    expect(ghidraProgramDefectArchitecture("AARCH64:LE:64:AppleSilicon")).toBe(
+      "aarch64",
+    );
+    expect(ghidraProgramDefectArchitecture("AARCH64:BE:64:v8A")).toBe(
+      "aarch64",
+    );
+    expect(ghidraProgramDefectArchitecture("AARCH64:LE:32:ilp32")).toBe(
+      "aarch64",
+    );
+    for (const languageId of [
+      undefined,
+      "x86:LE",
+      "x86:LE:",
+      "x86:LE:32:default",
+      "x86:LE:16:Real Mode",
+      "ARM:LE:32:v7",
+      "ARM:LE:32:v8",
+      "RISCV:LE:64:default",
+      "MIPS:LE:32:default",
+      "6502:LE:16:default",
+    ])
+      expect(ghidraProgramDefectArchitecture(languageId)).toBeUndefined();
+  });
+
+  it("attaches a switch defect only for a matching architecture and a flow-dependent operation", () => {
+    const x64 = "x86:LE:64:default";
+    const arm64 = "AARCH64:LE:64:v8A";
+    for (const operation of flowOperations) {
+      expect(
+        ghidraApplicableKnownProviderDefects("12.2", x64, operation),
+      ).toEqual([GHIDRA_CLANG_O0_SWITCH_DEFECT]);
+      expect(
+        ghidraApplicableKnownProviderDefects("12.2", arm64, operation),
+      ).toEqual([GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT]);
+    }
+    for (const operation of otherOperations) {
+      expect(
+        ghidraApplicableKnownProviderDefects("12.2", x64, operation),
+      ).toEqual([]);
+      expect(
+        ghidraApplicableKnownProviderDefects("12.2", arm64, operation),
+      ).toEqual([]);
+    }
+    expect(
+      ghidraApplicableKnownProviderDefects(
+        "12.2",
+        "x86:LE:32:default",
+        "analyze_function",
+      ),
+    ).toEqual([]);
+    expect(
+      ghidraApplicableKnownProviderDefects("12.2", "ARM:LE:32:v8", "xrefs"),
+    ).toEqual([]);
+    expect(
+      ghidraApplicableKnownProviderDefects(
+        "12.2",
+        undefined,
+        "analyze_function",
+      ),
+    ).toEqual([]);
+    expect(
+      ghidraApplicableKnownProviderDefects(
+        "12.2.1",
+        x64,
+        "procedure_pseudo_code",
+      ),
+    ).toEqual([]);
+    expect(
+      ghidraApplicableKnownProviderDefects(
+        "12.2.1",
+        arm64,
+        "procedure_pseudo_code",
+      ),
+    ).toEqual([GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT]);
+    expect(
+      ghidraApplicableKnownProviderDefects("12.1", arm64, "analyze_function"),
+    ).toEqual([]);
+  });
+
+  it("keeps the clang -O0 x86-64 limitation when the Program is x86-64", () => {
+    const limitations = ghidraApplicableKnownProviderDefectLimitations(
+      "12.2",
+      "x86:LE:64:default",
+      "procedure_pseudo_code",
+    );
+    expect(limitations).toHaveLength(1);
+    expect(limitations[0]).toEqual(
+      expect.stringContaining(GHIDRA_CLANG_O0_SWITCH_DEFECT.id),
+    );
+    expect(limitations[0]).toEqual(
+      expect.stringContaining(GHIDRA_CLANG_O0_SWITCH_DEFECT.scope.compiler),
+    );
+    expect(limitations[0]).not.toContain(
+      GHIDRA_AARCH64_MASKED_BYTE_SWITCH_DEFECT.id,
+    );
+    expect(
+      ghidraApplicableKnownProviderDefectLimitations(
+        "12.2",
+        "x86:LE:64:default",
+        "read_bytes",
+      ),
+    ).toEqual([]);
   });
 });

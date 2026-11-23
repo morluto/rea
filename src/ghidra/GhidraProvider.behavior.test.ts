@@ -1565,9 +1565,8 @@ describe("Ghidra client projection", () => {
     expect(result.value.limitations).not.toContainEqual(
       expect.stringContaining("The bridge is verified against"),
     );
-    expect(result.value.limitations).toEqual(
-      expect.arrayContaining([...ghidraKnownProviderDefectLimitations("12.2")]),
-    );
+    expect(result.value.limitations.join("\n")).not.toContain("ghidra-9996");
+    expect(result.value.limitations.join("\n")).not.toContain("ghidra-10154");
     expect(startCount).toBe(1);
   });
 });
@@ -4732,17 +4731,125 @@ describe("compatible Ghidra builds", () => {
     const openDefects = ghidraKnownProviderDefectLimitations("12.3");
     expect(unverified).toBeTypeOf("string");
     expect(openDefects).toHaveLength(1);
+    expect(openDefects[0]).toContain("ghidra-10154");
     expect(health.ok && health.value.limitations).toEqual(
-      expect.arrayContaining([unverified, ...openDefects]),
+      expect.arrayContaining([unverified]),
+    );
+    expect(health.ok && health.value.limitations).not.toEqual(
+      expect.arrayContaining([...openDefects]),
     );
     expect(health.ok && health.value.limitations?.join("\n")).not.toContain(
       "ghidra-9996",
     );
     expect(procedures.ok && procedures.value.limitations).toEqual(
-      expect.arrayContaining([unverified, ...openDefects]),
+      expect.arrayContaining([unverified]),
+    );
+    expect(procedures.ok && procedures.value.limitations).not.toEqual(
+      expect.arrayContaining([...openDefects]),
     );
     expect(procedures.ok && procedures.value.provider.version).toBe("12.3");
   });
+});
+
+describe("Ghidra known-defect limitations follow the Program language", () => {
+  const defectIds = (limitations: readonly string[]): string[] =>
+    ["ghidra-9996", "ghidra-10154"].filter((id) =>
+      limitations.some((limitation) => limitation.includes(id)),
+    );
+  const opened = async (languageId: string, compilerSpecId: string) => {
+    const ghidra = provider(installationHost(), () => ({
+      start: () =>
+        Promise.resolve(
+          ok({
+            ...sessionInfo(),
+            target: {
+              ...sessionInfo().target,
+              language_id: languageId,
+              compiler_spec_id: compilerSpecId,
+            },
+          }),
+        ),
+      callTool: (operation) => {
+        if (operation === "read_bytes")
+          return Promise.resolve(
+            ok({
+              address: "0x1000",
+              requested_bytes: 8,
+              returned_bytes: 8,
+              bytes_hex: "0011223344556677",
+              complete: true,
+            }),
+          );
+        if (operation === "search_procedures") return Promise.resolve(ok([]));
+        if (operation === "procedure_pseudo_code")
+          return Promise.resolve(ok({ value: "return;", limitations: [] }));
+        if (operation === "xrefs") return Promise.resolve(ok([]));
+        return Promise.resolve(ok(null));
+      },
+      close: () => Promise.resolve(ok(null)),
+    }));
+    return createElfClient(ghidra);
+  };
+
+  it("keeps the x86-64 switch record off byte reads and searches, including when the compiler spec is not clang", async () => {
+    const client = await opened("x86:LE:64:default", "windows");
+    try {
+      const bytes = await client.execute("read_bytes", {
+        address: "0x1000",
+        length: 8,
+      });
+      const search = await client.execute("search_procedures", {
+        pattern: "main",
+      });
+      const decompile = await client.execute("procedure_pseudo_code", {
+        procedure: "main",
+      });
+      const references = await client.execute("xrefs", { address: "0x1000" });
+      if (!bytes.ok || !search.ok || !decompile.ok || !references.ok)
+        throw new Error("expected admitted Ghidra results");
+      expect(defectIds(bytes.value.limitations)).toEqual([]);
+      expect(defectIds(search.value.limitations)).toEqual([]);
+      expect(defectIds(decompile.value.limitations)).toEqual(["ghidra-9996"]);
+      expect(defectIds(references.value.limitations)).toEqual(["ghidra-9996"]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("uses the opened Program language rather than the file header", async () => {
+    const client = await opened("AARCH64:LE:64:v8A", "default");
+    try {
+      const bytes = await client.execute("read_bytes", {
+        address: "0x1000",
+        length: 8,
+      });
+      const decompile = await client.execute("procedure_pseudo_code", {
+        procedure: "main",
+      });
+      if (!bytes.ok || !decompile.ok)
+        throw new Error("expected admitted Ghidra results");
+      expect(defectIds(bytes.value.limitations)).toEqual([]);
+      expect(defectIds(decompile.value.limitations)).toEqual(["ghidra-10154"]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it.each(["x86:LE:32:default", "x86:LE:16:Real Mode", "ARM:LE:32:v7"])(
+    "attaches neither switch defect for %s",
+    async (languageId) => {
+      const client = await opened(languageId, "gcc");
+      try {
+        const decompile = await client.execute("procedure_pseudo_code", {
+          procedure: "main",
+        });
+        if (!decompile.ok) throw decompile.error;
+        expect(defectIds(decompile.value.limitations)).toEqual([]);
+      } finally {
+        await client.close();
+      }
+    },
+  );
 });
 
 it("projects Ghidra startup failure and its incomplete cleanup together", async () => {

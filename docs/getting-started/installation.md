@@ -1227,7 +1227,15 @@ zero can lose jump-table flow references and yield incorrect decompiler output.
 closed by `c93917a622211349998f641de54cfdbe0e0e5bee` and milestoned for 12.2.1,
 which is not yet released. The limitation clears on parsed `12.2.1` and is
 absent from later patches and later minors. REA's switch verifier compiles with `-O2`, so it does not
-detect this shape. Every admitted session also records `ghidra-10154`.
+detect this shape. REA attaches the limitation only when the opened Program
+language is 64-bit x86 (`x86` with size `64`) and the result is decompilation,
+a function dossier, or references (`procedure_pseudo_code`, `analyze_function`,
+`procedure_references`, `xrefs`). Stripped targets usually leave the original
+compiler unknown, and the Ghidra compiler specification does not establish it,
+so an x86-64 Program keeps this record. Byte reads and string or byte searches
+omit it.
+An admitted build records `ghidra-10154` on those same operations when the
+Program language processor is `AARCH64`.
 [Ghidra #10154](https://github.com/NationalSecurityAgency/ghidra/issues/10154)
 is open: an AArch64 byte-offset switch bounded only by `and #0xff` loses its
 jump table and the function body stops at the indirect branch. The report's

@@ -109,7 +109,7 @@ import {
 } from "./GhidraRiscvProfile.js";
 import { ghidraPePdbLimitations } from "./GhidraPeProfile.js";
 import {
-  ghidraKnownProviderDefectLimitations,
+  ghidraApplicableKnownProviderDefectLimitations,
   unverifiedGhidraBuildLimitation,
 } from "./GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
@@ -830,10 +830,14 @@ export const createGhidraProviderClient = (input: {
     };
   };
   let projectHistory: Evidence | undefined;
+  // The opened Program language, recorded from the handshake. Unknown until
+  // then, so a defect whose architecture cannot be matched is not attached.
+  let programLanguageId: string | undefined;
   const checkSessionObservations = async (
     operation: AnalysisOperation,
     info: GhidraSessionInfo,
   ): Promise<AnalysisError | undefined> => {
+    programLanguageId = info.target.language_id;
     if (target.format === "pe") {
       pdbLimitations.splice(
         0,
@@ -940,10 +944,9 @@ export const createGhidraProviderClient = (input: {
   const releaseLimitation = unverifiedGhidraBuildLimitation(
     prerequisites.value.providerVersion,
   );
-  const knownDefectLimitations = ghidraKnownProviderDefectLimitations(
-    prerequisites.value.providerVersion,
-  );
-  const sessionLimitations = (): readonly string[] => {
+  const sessionLimitations = (
+    operation: AnalysisOperation,
+  ): readonly string[] => {
     const restored = client.checkpointRestore?.();
     return [
       ...(restored === undefined
@@ -965,7 +968,11 @@ export const createGhidraProviderClient = (input: {
       ...disabledAnalyzerLimitations,
       ...pdbLimitations,
       ...(releaseLimitation === undefined ? [] : [releaseLimitation]),
-      ...knownDefectLimitations,
+      ...ghidraApplicableKnownProviderDefectLimitations(
+        prerequisites.value.providerVersion,
+        programLanguageId,
+        operation,
+      ),
     ];
   };
   const nativeAotOwner =
@@ -1003,7 +1010,7 @@ export const createGhidraProviderClient = (input: {
       limitations: [
         ...limitationsFor(operation, projection.source),
         ...(observation.limitations ?? []),
-        ...sessionLimitations(),
+        ...sessionLimitations(operation),
       ],
     });
   };
@@ -1100,7 +1107,7 @@ export const createGhidraProviderClient = (input: {
             analysisProfile: committedProfile,
             limitations: [
               ...ghidraHealthLimitations(projection.source),
-              ...sessionLimitations(),
+              ...sessionLimitations(operation),
             ],
           }),
         );
