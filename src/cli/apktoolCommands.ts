@@ -1,6 +1,6 @@
 import type { RequestAnalysisPort } from "../ports/AnalysisProvider.js";
 import type { ApktoolRequest } from "../domain/apktool/apktoolResourceAnalysis.js";
-import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
+import { createApktoolResourceAnalysisService } from "../application/ProviderOperationServices.js";
 import { createApktoolResourceAnalysisProvider } from "../composition/apktool.js";
 import { APKTOOL_TOOL_CONTRACTS } from "../contracts/apktool/apktoolToolContracts.js";
 import type { ApktoolOperation } from "../domain/apktool/apktoolResourceAnalysis.js";
@@ -24,7 +24,7 @@ export const registerApktoolCommands = (
     environment,
   ),
 ): void => {
-  const service = new ApktoolResourceAnalysisService(provider);
+  const service = createApktoolResourceAnalysisService(provider);
   const run =
     (operation: ApktoolOperation) => (): EvidenceInspectionService => ({
       inspect: (input, { signal }) =>
