@@ -23,10 +23,12 @@ import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
 import { ELECTRON_TOOL_CONTRACTS } from "../contracts/javascript/electronToolContracts.js";
 import {
   registerContractCommand,
-  registerRoutedCommand,
   runDirectOnTarget,
-  commandRoute,
 } from "./contractCommand.js";
+import {
+  commandRoute,
+  registerRoutedCommand,
+} from "./routedContractCommand.js";
 
 const decompileSelectorGuidance = `${addressOrProcedureGuidance} Alternatively, use --file-offset alone.`;
 const namedAddressGuidance = requiredSelectorGuidance(
