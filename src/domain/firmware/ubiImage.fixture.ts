@@ -263,3 +263,24 @@ export const twoVolumeUbiImage = (): Buffer => {
     { kind: "erased" },
   ]);
 };
+
+/** Three 32 KiB PEBs with a matching EC/VID pair at offset 36864. */
+export const ubiImageWithEmbeddedPebHeaders = (): Buffer => {
+  const geometry = { pebSize: 32_768, dataOffset: 4_096 };
+  const [layout0, layout1] = ubiLayoutPebs(
+    [{ id: 0, name: "rootfs", type: "dynamic", reservedPebs: 1 }],
+    geometry,
+  );
+  const rootfs = {
+    kind: "leb" as const,
+    volId: 0,
+    lnum: 0,
+    data: Buffer.from("ROOTFS"),
+    sqnum: 2n,
+  };
+  const embeddedHeaders = ubiImage([rootfs], geometry).subarray(0, 128);
+  return ubiImage(
+    [layout0!, { ...rootfs, data: embeddedHeaders }, layout1!],
+    geometry,
+  );
+};

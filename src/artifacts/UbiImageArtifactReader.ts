@@ -31,9 +31,10 @@ import {
   assembleUbiImage,
   checkUbiPebs,
   classifyUbiPeb,
-  findUbiEcHeader,
   ubiCandidateGridOffsets,
-  ubiFirstPebMinSize,
+  ubiVidMinPebSize,
+  ubiHasMappedSecondPeb,
+  ubiPebSizeCandidates,
   ubiFirstVidHeaderOffset,
   findUbiSpacingConflict,
   parseUbiFirstEcHeader,
@@ -209,7 +210,7 @@ export class UbiImageArtifactReader implements ArtifactReader {
     const minPebSize =
       vidHeaderOffset === null
         ? 0
-        : ubiFirstPebMinSize(
+        : ubiVidMinPebSize(
             await readArtifactFileBytes(
               handle,
               vidHeaderOffset,
@@ -220,9 +221,7 @@ export class UbiImageArtifactReader implements ArtifactReader {
             first.value,
           );
     const scanEnd = Math.min(size, UBI_MAX_PEB_BYTES + UBI_HEADER_BYTES);
-    // A header at an offset that does not divide the file size is payload;
-    // the first header of any offset is kept only to name the refusal when
-    // no eraseblock size fits.
+    // A mapped PEB can establish the grid even when the dump ends mid-block.
     let next: number | null = null;
     let anyNext: number | null = null;
     for (
@@ -238,8 +237,34 @@ export class UbiImageArtifactReader implements ArtifactReader {
         size,
         signal,
       );
-      anyNext ??= findUbiEcHeader(chunk, offset, first.value, minPebSize);
-      next = findUbiEcHeader(chunk, offset, first.value, minPebSize, size);
+      for (const { offset: candidate, header } of ubiPebSizeCandidates(
+        chunk,
+        offset,
+        first.value,
+        minPebSize,
+      )) {
+        anyNext ??= candidate;
+        const candidateVid = candidate + first.value.vidHeaderOffset;
+        if (
+          size % candidate === 0 ||
+          (candidateVid + UBI_HEADER_BYTES <= size &&
+            ubiHasMappedSecondPeb(
+              await readArtifactFileBytes(
+                handle,
+                candidateVid,
+                UBI_HEADER_BYTES,
+                size,
+                signal,
+              ),
+              first.value,
+              header,
+              candidate,
+            ))
+        ) {
+          next = candidate;
+          break;
+        }
+      }
     }
     next ??= anyNext;
     // Skipped eraseblocks before the second header would multiply the size;

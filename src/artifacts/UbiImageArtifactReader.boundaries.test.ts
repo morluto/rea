@@ -10,6 +10,7 @@ import { UbiImageArtifactReader } from "./UbiImageArtifactReader.js";
 import {
   twoVolumeUbiImage,
   ubiImage,
+  ubiImageWithEmbeddedPebHeaders,
   ubiLayoutPebs,
 } from "../domain/firmware/ubiImage.fixture.js";
 import {
@@ -43,6 +44,21 @@ it("refuses a PEB size that does not divide the file as a format failure", async
     await expect(entries(reader)).rejects.toMatchObject({
       reason: "format",
       message: expect.stringContaining("is not a multiple"),
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
+it("refuses to expose rootfs from a truncated dump with embedded PEB headers", async () => {
+  const image = ubiImageWithEmbeddedPebHeaders();
+  const reader = new UbiImageArtifactReader(
+    await fixture(image.subarray(0, 73_728)),
+  );
+  try {
+    await expect(entries(reader)).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringContaining("32768-byte eraseblock size"),
     });
   } finally {
     await reader.close();

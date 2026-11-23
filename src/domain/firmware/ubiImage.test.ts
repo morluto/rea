@@ -6,9 +6,10 @@ import {
   assembleUbiImage,
   checkUbiPebs,
   classifyUbiPeb,
-  findUbiEcHeader,
   ubiCandidateGridOffsets,
-  ubiFirstPebMinSize,
+  ubiVidMinPebSize,
+  ubiHasMappedSecondPeb,
+  ubiPebSizeCandidates,
   ubiFirstVidHeaderOffset,
   findUbiSpacingConflict,
   parseUbiFirstEcHeader,
@@ -39,6 +40,7 @@ import {
 } from "./ubiImage.js";
 import {
   twoVolumeUbiImage,
+  ubiImageWithEmbeddedPebHeaders,
   ubiImage,
   ubiLayoutPebs,
   ubiLebData,
@@ -53,9 +55,7 @@ import type { Result } from "../result.js";
 /** The first PEB's minimum size, read from its VID header alone. */
 const firstPebMinSize = (bytes: Buffer, first: UbiEcHeader): number => {
   const at = ubiFirstVidHeaderOffset(first, bytes.length);
-  return at === null
-    ? 0
-    : ubiFirstPebMinSize(bytes.subarray(at, at + 64), first);
+  return at === null ? 0 : ubiVidMinPebSize(bytes.subarray(at, at + 64), first);
 };
 
 /** The reader's pipeline over an in-memory image. */
@@ -64,14 +64,30 @@ const parse = (bytes: Buffer): Result<UbiImage, UbiImageParseError> => {
   if (!first.ok) return first;
   const start = ubiPebSearchStart(first.value);
   const minPebSize = firstPebMinSize(bytes, first.value);
-  const next =
-    findUbiEcHeader(
-      bytes.subarray(start),
-      start,
-      first.value,
-      minPebSize,
-      bytes.length,
-    ) ?? findUbiEcHeader(bytes.subarray(start), start, first.value, minPebSize);
+  let next: number | null = null;
+  let anyNext: number | null = null;
+  for (const { offset: candidate, header } of ubiPebSizeCandidates(
+    bytes.subarray(start, UBI_MAX_PEB_BYTES + 64),
+    start,
+    first.value,
+    minPebSize,
+  )) {
+    anyNext ??= candidate;
+    const candidateVid = candidate + first.value.vidHeaderOffset;
+    if (
+      bytes.length % candidate === 0 ||
+      ubiHasMappedSecondPeb(
+        bytes.subarray(candidateVid, candidateVid + 64),
+        first.value,
+        header,
+        candidate,
+      )
+    ) {
+      next = candidate;
+      break;
+    }
+  }
+  next ??= anyNext;
   const spacing =
     next === null ? null : ubiSpacingCheckRange(next, bytes.length);
   const spacingConflict = (candidates: ReadonlySet<number>) =>
@@ -1078,6 +1094,18 @@ it("refuses an eraseblock size that also fits with erased eraseblocks between", 
   );
   expect(image(full).geometry).toMatchObject({ pebSize: 65536, pebCount: 3 });
   expect(image(full).volumes[0]).toMatchObject({ dataBytes: 65408 });
+});
+
+it("refuses a truncated image when embedded headers suggest a larger eraseblock", () => {
+  const bytes = ubiImageWithEmbeddedPebHeaders();
+  expect(image(bytes).geometry.pebSize).toBe(32_768);
+  expect(parse(bytes.subarray(0, 73_728))).toMatchObject({
+    ok: false,
+    error: {
+      kind: "malformed",
+      message: expect.stringContaining("32768-byte eraseblock size"),
+    },
+  });
 });
 
 it("refuses an image whose next erase-counter header disagrees with the first", () => {

@@ -234,13 +234,12 @@ export const ubiPebSearchStart = (first: UbiEcHeader): number =>
 const imageSeqsAgree = (left: number, right: number): boolean =>
   left === 0 || right === 0 || left === right;
 
-const findEcHeaderWhere = (
+function* ubiEcHeaderOffsets(
   chunk: Uint8Array,
   chunkOffset: number,
-  first: UbiEcHeader,
+  start: number,
   admit: (offset: number) => boolean,
-): number | null => {
-  const start = ubiPebSearchStart(first);
+): Generator<{ offset: number; header: UbiEcHeader }, void> {
   const aligned =
     Math.ceil(Math.max(chunkOffset, start) / UBI_PEB_ALIGNMENT) *
     UBI_PEB_ALIGNMENT;
@@ -252,37 +251,45 @@ const findEcHeaderWhere = (
     const at = offset - chunkOffset;
     if (!admit(offset) || !hasMagic(chunk, at, UBI_EC_MAGIC)) continue;
     const read = readEcHeader(chunk.subarray(at, at + UBI_HEADER_BYTES));
-    if (read.state === "valid") return offset;
+    if (read.state === "valid") yield { offset, header: read.header };
   }
-  return null;
-};
+}
 
-/**
- * The first aligned offset in `chunk` (read at `chunkOffset`) holding a valid
- * erase-counter header, or null. A header whose layout or image_seq disagrees
- * with the first PEB's still begins an eraseblock: skipping it would measure a
- * multiple of the real size, so `classifyUbiPeb` and `checkUbiPebs` refuse it
- * instead. A header before `minPebSize` (from `ubiFirstPebMinSize`) lies
- * inside the data the first PEB's own VID header declares, so it is payload,
- * such as a nested UBI image, and cannot begin the second eraseblock. With
- * `fileSize`, a header at an offset that does not divide it is skipped too:
- * no eraseblock size could put it there, so it is payload as well.
- */
-export const findUbiEcHeader = (
+/** Aligned EC headers outside the data declared by the first PEB's VID. */
+export const ubiPebSizeCandidates = (
   chunk: Uint8Array,
   chunkOffset: number,
   first: UbiEcHeader,
-  minPebSize = 0,
-  fileSize?: number,
-): number | null =>
-  findEcHeaderWhere(
+  minPebSize: number,
+): Generator<{ offset: number; header: UbiEcHeader }, void> =>
+  ubiEcHeaderOffsets(
     chunk,
     chunkOffset,
-    first,
-    (offset) =>
-      offset >= minPebSize &&
-      (fileSize === undefined || fileSize % offset === 0),
+    Math.max(minPebSize, ubiPebSearchStart(first)),
+    () => true,
   );
+
+/**
+ * A candidate that leaves a partial final PEB can still be the real size.
+ * A matching EC and mapped VID whose declared data fits the candidate LEB
+ * establish a block boundary before any later file-size match.
+ */
+export const ubiHasMappedSecondPeb = (
+  vidBytes: Uint8Array,
+  first: UbiEcHeader,
+  header: UbiEcHeader,
+  pebSize: number,
+): boolean => {
+  if (
+    header.version !== UBI_VERSION ||
+    header.vidHeaderOffset !== first.vidHeaderOffset ||
+    header.dataOffset !== first.dataOffset ||
+    !imageSeqsAgree(first.imageSeq, header.imageSeq)
+  )
+    return false;
+  const minSize = ubiVidMinPebSize(vidBytes, first);
+  return minSize > 0 && minSize <= pebSize;
+};
 
 /**
  * Offsets inside one `pebSize` eraseblock where an eraseblock of a smaller
@@ -326,9 +333,9 @@ export const findUbiSpacingConflict = (
   pebSize: number,
   candidates: ReadonlySet<number>,
 ): number | null =>
-  findEcHeaderWhere(chunk, chunkOffset, first, (offset) =>
+  ubiEcHeaderOffsets(chunk, chunkOffset, ubiPebSearchStart(first), (offset) =>
     candidates.has(offset % pebSize),
-  );
+  ).next().value?.offset ?? null;
 
 /** The file range searched by `findUbiSpacingConflict` for a measured size. */
 export const ubiSpacingCheckRange = (
@@ -486,8 +493,12 @@ export const findUbiSmallerGridHeader = (
   geometry: UbiGeometry,
   smallerGridOffsets: ReadonlySet<number>,
 ): number | null =>
-  findEcHeaderWhere(chunk, chunkOffset, first, (offset) =>
-    smallerGridOffsets.has(offset % geometry.pebSize),
+  findUbiSpacingConflict(
+    chunk,
+    chunkOffset,
+    first,
+    geometry.pebSize,
+    smallerGridOffsets,
   );
 
 /**
@@ -662,20 +673,18 @@ export const ubiFirstVidHeaderOffset = (
     : null;
 
 /**
- * The smallest eraseblock size the first PEB's own VID header fits, read from
- * the 64 bytes at `ubiFirstVidHeaderOffset`, or 0 when they hold no valid VID
- * header. As `classifyUbiPeb` requires, the LEB must hold data_pad plus
- * data_size and more than data_pad, so a valid EC header nearer than this
- * lies inside the first PEB's declared data, not at the next eraseblock.
+ * The smallest eraseblock size that fits the VID header, or 0 when the
+ * header is invalid. As `classifyUbiPeb` requires, the LEB must hold data_pad
+ * plus data_size and more than data_pad.
  */
-export const ubiFirstPebMinSize = (
+export const ubiVidMinPebSize = (
   vidBytes: Uint8Array,
-  first: UbiEcHeader,
+  ec: UbiEcHeader,
 ): number => {
   const read = readVidHeader(vidBytes.subarray(0, UBI_HEADER_BYTES));
   if (read.state === "invalid" || !isVolumeType(read.vid.volType)) return 0;
   const { dataPad, dataSize } = read.vid;
-  return first.dataOffset + dataPad + Math.max(dataSize, 1);
+  return ec.dataOffset + dataPad + Math.max(dataSize, 1);
 };
 
 /**
