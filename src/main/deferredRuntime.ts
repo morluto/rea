@@ -51,7 +51,7 @@ const initializeRuntime = async (
   server.ownRuntimeCleanup(async () => {
     if (shutdown !== undefined) return shutdown();
     const results = await Promise.allSettled([
-      server.closePartialRuntime(),
+      server.closeRuntimeHooks(),
       (async () => {
         if (!sessionClosed && closeSession !== undefined) {
           await closeSession();
@@ -102,14 +102,14 @@ const initializeRuntime = async (
           startedAt,
         });
       },
+      closeServer: () => server.closeRuntimeHooks(),
       serve: (factory) => {
-        let close: (() => Promise<void>) | undefined;
         server.materialize(() => {
-          const configured = factory(context);
-          if (configured !== server) throw new Error(SERVER_START_FAILED);
-          close = configured.close.bind(configured);
+          if (factory(context) !== server) throw new Error(SERVER_START_FAILED);
         });
-        return { close: () => close?.() ?? Promise.resolve() };
+        // The outer SDK closes the protocol. The eager registry owns only the
+        // materialized server's hooks through closeServer.
+        return { close: async () => {} };
       },
     },
     config,
@@ -227,11 +227,7 @@ export const runDeferred = async (
               server.enableProgressiveCatalog();
             return server;
           });
-          const previous = server.server.onclose;
-          server.server.onclose = () => {
-            previous?.();
-            requestClose();
-          };
+          server.registerTransportCloseHook(requestClose);
           return server;
         },
         {

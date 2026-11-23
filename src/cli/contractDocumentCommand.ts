@@ -13,7 +13,7 @@ import { jsonInputArgument } from "./jsonInputArgument.js";
 import {
   describeContractDocumentCommand,
   type CliDocumentProjection,
-} from "./contractCliDescription.js";
+} from "./contractCliDocumentDescription.js";
 import type {
   DocumentContract,
   CliEvidenceDeliveryChoice,

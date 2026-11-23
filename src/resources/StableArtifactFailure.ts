@@ -11,7 +11,10 @@ import {
   bindArtifactFileCleanup,
   type ArtifactFilePrimaryFacts,
 } from "./ArtifactFileOperation.js";
-import { completedStableArtifactObservation } from "./StableArtifactObservation.js";
+import {
+  completedStableArtifactObservation,
+  type CompletedStableArtifact,
+} from "./StableArtifactObservation.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import {
   AnalysisAccessDeniedError,
@@ -194,7 +197,7 @@ export const projectStableArtifactFailure = (
   path: string,
   providerId: string,
   operation: string,
-  snapshot?: StableArtifactSnapshot,
+  snapshot?: CompletedStableArtifact,
 ): AnalysisError => {
   const observation = completedStableArtifactObservation(cause, path, snapshot);
   if (observation !== undefined) primary.retainPartialObservation(observation);

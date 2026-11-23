@@ -620,6 +620,68 @@ export const readElfDirectoryFromBufferCooperative = async (
   }
 };
 
+/** Random-access byte source for positional native directory inspection. */
+export interface NativeByteSource {
+  readonly size: number;
+  readonly prefix?: Buffer;
+  readRange(offset: number, length: number): Promise<Buffer>;
+}
+
+const driveElfDirectoryFromSource = async (
+  source: NativeByteSource,
+  decode: CooperativeElfSectionNameDecoder,
+  maximumSourceAndDecodedNamesBytes?: number,
+): Promise<ElfSectionDirectory> => {
+  const steps = readElfSectionDirectory(
+    source.size,
+    maximumSourceAndDecodedNamesBytes,
+  );
+  let next = steps.next();
+  while (!next.done) {
+    const step = next.value;
+    if (
+      step.sectionNames !== undefined &&
+      step.fulfillSectionNames !== undefined
+    ) {
+      step.fulfillSectionNames(await decode(step.sectionNames));
+      next = steps.next(Buffer.alloc(0));
+      continue;
+    }
+    const slice =
+      step.size === 0
+        ? Buffer.alloc(0)
+        : source.prefix !== undefined &&
+            step.offset + step.size <= source.prefix.length
+          ? source.prefix.subarray(step.offset, step.offset + step.size)
+          : await source.readRange(step.offset, step.size);
+    next = steps.next(slice);
+  }
+  return next.value;
+};
+
+/**
+ * Same directory as {@link readElfDirectoryFromBufferCooperative}, reading only
+ * the header, program/section tables, and section-name table from `source`.
+ */
+export const readElfDirectoryFromReader = async (
+  source: NativeByteSource,
+  pause: ZstandardFramePause,
+  operation: string,
+  maximumSourceAndDecodedNamesBytes?: number,
+  decode: CooperativeElfSectionNameDecoder = (request) =>
+    decodeElfSectionNameRequestCooperative(request, pause),
+): Promise<ElfSectionDirectory> => {
+  try {
+    return await driveElfDirectoryFromSource(
+      source,
+      decode,
+      maximumSourceAndDecodedNamesBytes,
+    );
+  } catch (cause) {
+    return projectDirectoryFrameAllowance(operation, cause);
+  }
+};
+
 /** Reject a program or section payload the declared tables place outside these bytes. */
 export const assertElfDeclaredRangesFromBuffer = (bytes: Buffer): void => {
   const checked = driveFromBuffer(

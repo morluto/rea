@@ -1,7 +1,7 @@
 import type { z } from "zod";
 
 import { cliCommandFor } from "../contracts/cliCommandNames.js";
-import type { ContractCliDocumentDescription } from "./contractCliDescription.js";
+import type { ContractCliDocumentDescription } from "./contractCliDocumentDescription.js";
 import type { ContractCliDescription } from "./contractCliDescriptionTypes.js";
 import type { CliInstance } from "./types.js";
 import { optionFlagName } from "./optionFields.js";
