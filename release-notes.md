@@ -617,6 +617,7 @@
 * **filesystem/artifacts:** share createCachedPrefixReader and ELF/MZ magic helpers ([baed75f](https://github.com/morluto/rea/commit/baed75fc2b3a723144d46fdfb206b50bd03c6698))
 * **firmware:** use one cooperative OTA reconstruction path ([#13375](https://github.com/morluto/rea/issues/13375)) ([1f2805e](https://github.com/morluto/rea/commit/1f2805e6c859760205f8cab9309f7ee31944d9b3))
 * **frida:** extract FridaMessageCapture from FridaInstrumentationManager ([#13787](https://github.com/morluto/rea/issues/13787)) ([76d04df](https://github.com/morluto/rea/commit/76d04df49a7bce160e7a9f802254f5f74073610e))
+* **frida:** make inspectStatus async and load the view service lazily ([#14108](https://github.com/morluto/rea/issues/14108)) ([fae1cc2](https://github.com/morluto/rea/commit/fae1cc260d61733c88de9c6da7dc91c2ad825583))
 * **gdb:** extract inferior verification and command classification ([#13801](https://github.com/morluto/rea/issues/13801)) ([d6eb439](https://github.com/morluto/rea/commit/d6eb439de864f9a876f6022bf8003c9db2d3d030))
 * **ghidra:** extract GhidraSessionErrorProjection from GhidraProviderClient ([#13722](https://github.com/morluto/rea/issues/13722)) ([7af2896](https://github.com/morluto/rea/commit/7af28969ed36d1875a08b9800ff304dac6484d6a))
 * **ghidra:** require an owned committed project copy ([#13363](https://github.com/morluto/rea/issues/13363)) ([fb6e0dc](https://github.com/morluto/rea/commit/fb6e0dc6e8558fea2931cdfb7280854c0cfbca6c))
