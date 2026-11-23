@@ -339,6 +339,7 @@
 * **elf:** fuse dynamic symbol hardening predicates into single-pass scan with __ prefix pre-filter ([#13513](https://github.com/morluto/rea/issues/13513)) ([8da89da](https://github.com/morluto/rea/commit/8da89da5e4e1959cd83c0c6ffbf9ce5380d80b10))
 * **elf:** fuse initializer section scans into one pass and eliminate symbol-map cloning ([#13475](https://github.com/morluto/rea/issues/13475)) ([366dbc2](https://github.com/morluto/rea/commit/366dbc20bf9e4dd02282c19939cee6c16a6a62f0))
 * **elf:** fuse initializer section scans into one pass and eliminate symbol-map cloning ([#13476](https://github.com/morluto/rea/issues/13476)) ([366dbc2](https://github.com/morluto/rea/commit/366dbc20bf9e4dd02282c19939cee6c16a6a62f0))
+* **elf:** stream ELF dependency inspection over FileHandle ([#13915](https://github.com/morluto/rea/issues/13915)) ([2c38fd1](https://github.com/morluto/rea/commit/2c38fd16287085867848ce152ae2e57bf68d2015))
 * **elf:** stream ELF note inspection over FileHandle ([#13904](https://github.com/morluto/rea/issues/13904)) ([37c37e3](https://github.com/morluto/rea/commit/37c37e32e7989fe8d5fc0944c9d1d47495071359))
 * **elf:** stream kernel module inspection over FileHandle ([#13917](https://github.com/morluto/rea/issues/13917)) ([9291cd6](https://github.com/morluto/rea/commit/9291cd62197eadb5306f4d1939ead32f4d136ddc))
 * **entropy:** count bytes by index into an integer table ([5d3276d](https://github.com/morluto/rea/commit/5d3276d14c162b559a500189096a733692212bfc))
