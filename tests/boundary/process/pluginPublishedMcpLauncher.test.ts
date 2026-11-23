@@ -830,6 +830,80 @@ writeFileSync(
 );
 
 it.skipIf(process.platform === "win32")(
+  "admits a TMPDIR that reaches the cache parent through symlink-then-..",
+  async () => {
+    // path.join(parent, ".") and JS realpathSync collapse alias/../tmp to a
+    // lexical sibling before the filesystem resolves the symlink; native
+    // admission must keep the unnormalized spelling (PrivateRuntimeRoot).
+    const version = "6.8.0-published-traversal-tmpdir";
+    const root = await createTestTempDirectory(
+      "rea-published-traversal-tmpdir-",
+    );
+    const physical = join(root, "physical");
+    const temporaryRoot = join(physical, "tmp");
+    await mkdir(join(physical, "child"), { recursive: true, mode: 0o700 });
+    await mkdir(temporaryRoot, { recursive: true, mode: 0o700 });
+    await mkdir(join(root, "outside"), { recursive: true, mode: 0o700 });
+    await symlink(join(physical, "child"), join(root, "outside", "alias"));
+    const selectedRoot = `${root}/outside/alias/../tmp`;
+    expect(await realpath(selectedRoot)).toBe(await realpath(temporaryRoot));
+
+    await seedPublishedRuntime(
+      version,
+      `
+      process.stderr.write(JSON.stringify({
+        cwd: process.cwd(),
+        entry: process.argv[1],
+      }));
+      process.exit(0);
+    `,
+      temporaryRoot,
+    );
+
+    const bin = join(root, "bin");
+    await mkdir(bin);
+    const npmEntry = join(bin, "npm-cli.cjs");
+    await writeFile(
+      npmEntry,
+      `#!/usr/bin/env node
+process.stderr.write("controlled npm install failure\\n");
+process.exit(1);
+`,
+    );
+
+    const { child, closed } = start(
+      [version],
+      {
+        ...process.env,
+        TMPDIR: selectedRoot,
+        TEMP: selectedRoot,
+        TMP: selectedRoot,
+        PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+        npm_execpath: npmEntry,
+      },
+      temporaryRoot,
+    );
+    child.stdin.end();
+    const result = await closed;
+    expect(result).toMatchObject({ code: 0, signal: null, stdout: "" });
+    const reported = JSON.parse(result.stderr) as {
+      cwd: string;
+      entry: string;
+    };
+    expect(reported.cwd).toBe(temporaryRoot);
+    expect(reported.entry).toBe(
+      join(
+        installPrefix(version, temporaryRoot),
+        "node_modules",
+        "rea-agents",
+        "scripts",
+        "rea.mjs",
+      ),
+    );
+  },
+);
+
+it.skipIf(process.platform === "win32")(
   "selects one lease socket root for short and long TMPDIR aliases",
   async () => {
     const version = "6.8.0-published-alias-socket-root";

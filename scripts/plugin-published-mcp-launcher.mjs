@@ -349,11 +349,12 @@ const verifyOwnedCachePath = (path, kind) => {
 /**
  * Physical spelling of a temporary root. Symlink-equivalent TMPDIR values must
  * share cache lock and lease-socket identity; keep the selected spelling when
- * the host cannot resolve it.
+ * the host cannot resolve it. Use native realpath so a symlink-then-`..`
+ * spelling is not collapsed lexically before the filesystem resolves it.
  */
 const resolvedTemporaryRoot = (temporaryRoot = tmpdir()) => {
   try {
-    return realpathSync(temporaryRoot);
+    return realpathSync.native(temporaryRoot);
   } catch {
     return temporaryRoot;
   }
@@ -363,8 +364,9 @@ const ensurePrivateCacheRoot = () => {
   const parent = cacheParentRoot();
   // Admit the selected parent before canonicalizing so symlink-equivalent
   // TMPDIR/LOCALAPPDATA spellings share one physical cache and lease identity
-  // (PrivateRuntimeRoot physical-path boundary).
-  statSync(parent === "" ? parent : join(parent, "."));
+  // (PrivateRuntimeRoot physical-path boundary). `${parent}/.` keeps a POSIX
+  // symlink-then-`..` TMPDIR unnormalized; path.join would collapse it first.
+  statSync(parent === "" ? parent : `${parent}/.`);
   cacheRoot = join(resolvedTemporaryRoot(parent), cacheDirectoryName);
   mkdirSync(cacheRoot, { recursive: true, mode: 0o700 });
   // verifyOwnedCachePath lstats before any icacls/chmod so a planted
