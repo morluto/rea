@@ -863,28 +863,24 @@ const observeAcquisitionCancel = (onCancel) => {
 };
 
 /**
- * Own the cold-start installer until it exits. Cancel handlers stay attached
- * only for this acquisition stage; the in-process runtime registers its own.
+ * Own the cold-start installer until it exits. Caller retains cancel ownership
+ * through staging cleanup and lock release; release only before the in-process
+ * runtime registers its own handlers (or before exiting after finalization).
+ *
+ * @param {{
+ *   command: string,
+ *   arguments: string[],
+ * }} invocation
+ * @param {{
+ *   child: import("node:child_process").ChildProcess | undefined,
+ *   forceTimer: ReturnType<typeof setTimeout> | undefined,
+ *   shutdown: { signal?: string, capacityExceeded?: boolean } | undefined,
+ * }} installer Mutable installer supervision state shared with the cancel observer.
  */
-const runOwnedInstaller = (invocation) => {
-  let child;
-  let forceTimer;
-  /** @type {{ signal?: string } | undefined} */
-  let shutdown;
-  const cancel = observeAcquisitionCancel((requested) => {
-    shutdown = requested;
-    if (child === undefined) return;
-    const signal = requested.signal ?? "SIGTERM";
-    signalInstaller(child, signal);
-    forceTimer = setTimeout(() => {
-      if (child !== undefined) signalInstaller(child, "SIGKILL");
-    }, 1_000);
-    forceTimer.unref?.();
-  });
-
-  return new Promise((resolve, reject) => {
+const runOwnedInstaller = (invocation, installer) =>
+  new Promise((resolve, reject) => {
     try {
-      child = spawn(invocation.command, invocation.arguments, {
+      installer.child = spawn(invocation.command, invocation.arguments, {
         // Keep install away from the plugin checkout package.json.
         cwd: tmpdir(),
         env: process.env,
@@ -896,35 +892,36 @@ const runOwnedInstaller = (invocation) => {
         detached: process.platform !== "win32",
       });
     } catch (cause) {
-      cancel.release();
       reject(cause);
       return;
     }
 
-    if (shutdown !== undefined) {
-      const signal = shutdown.signal ?? "SIGTERM";
+    const child = installer.child;
+    if (installer.shutdown !== undefined) {
+      const signal = installer.shutdown.signal ?? "SIGTERM";
       signalInstaller(child, signal);
-      forceTimer = setTimeout(() => {
-        if (child !== undefined) signalInstaller(child, "SIGKILL");
+      installer.forceTimer = setTimeout(() => {
+        if (installer.child !== undefined)
+          signalInstaller(installer.child, "SIGKILL");
       }, 1_000);
-      forceTimer.unref?.();
+      installer.forceTimer.unref?.();
     }
 
     child.once("error", (cause) => {
-      if (forceTimer !== undefined) clearTimeout(forceTimer);
-      cancel.release();
+      if (installer.forceTimer !== undefined)
+        clearTimeout(installer.forceTimer);
       reject(cause);
     });
     child.once("exit", (status, signal) => {
-      if (forceTimer !== undefined) clearTimeout(forceTimer);
-      cancel.release();
-      if (shutdown !== undefined) {
+      if (installer.forceTimer !== undefined)
+        clearTimeout(installer.forceTimer);
+      if (installer.shutdown !== undefined) {
         // npm is gone; make sure nothing it started outlives staging cleanup.
         signalInstaller(child, "SIGKILL");
         resolve({
           cancelled: true,
-          signal: shutdown.signal,
-          capacityExceeded: shutdown.capacityExceeded === true,
+          signal: installer.shutdown.signal,
+          capacityExceeded: installer.shutdown.capacityExceeded === true,
           status,
           childSignal: signal,
         });
@@ -937,7 +934,6 @@ const runOwnedInstaller = (invocation) => {
       });
     });
   });
-};
 
 const waitForReadyOrLock = async (prefix, lockPath) => {
   /** @type {(() => void) | undefined} */
@@ -1112,6 +1108,29 @@ if (process.exitCode === 1) {
     }
 
     if (process.exitCode !== 1 && entry === undefined && holdLock) {
+      /** @type {{
+       *   child: import("node:child_process").ChildProcess | undefined,
+       *   forceTimer: ReturnType<typeof setTimeout> | undefined,
+       *   shutdown: { signal?: string, capacityExceeded?: boolean } | undefined,
+       * }} */
+      const installer = {
+        child: undefined,
+        forceTimer: undefined,
+        shutdown: undefined,
+      };
+      // Keep cancel owned through staging cleanup and lock release so a signal
+      // during finalization is deferred instead of abandoning an unmarked tree.
+      const cancel = observeAcquisitionCancel((requested) => {
+        installer.shutdown = requested;
+        if (installer.child === undefined) return;
+        const signal = requested.signal ?? "SIGTERM";
+        signalInstaller(installer.child, signal);
+        installer.forceTimer = setTimeout(() => {
+          if (installer.child !== undefined)
+            signalInstaller(installer.child, "SIGKILL");
+        }, 1_000);
+        installer.forceTimer.unref?.();
+      });
       try {
         removeStaging(staging);
         mkdirSync(staging, { recursive: true, mode: 0o700 });
@@ -1140,7 +1159,7 @@ if (process.exitCode === 1) {
         }
 
         if (process.exitCode !== 1) {
-          const install = await runOwnedInstaller(invocation);
+          const install = await runOwnedInstaller(invocation, installer);
           if (install.cancelled) {
             applyAcquisitionCancel(install);
           } else if (install.status !== 0) {
@@ -1189,6 +1208,13 @@ if (process.exitCode === 1) {
         } finally {
           releaseInstallLock(lockPath, lockServer);
           lockServer = undefined;
+          // A signal during finalization was only recorded; apply it after
+          // cleanup and lock release so exit status matches the client request.
+          if (cancel.cancelled !== undefined) {
+            applyAcquisitionCancel(cancel.cancelled);
+            entry = undefined;
+          }
+          cancel.release();
         }
       }
     }

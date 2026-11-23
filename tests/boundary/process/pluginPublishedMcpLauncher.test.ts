@@ -7,6 +7,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rm,
@@ -2088,6 +2089,62 @@ it("resolves Windows helpers to absolute System32 paths with a neutral cwd", asy
 });
 
 describe.skipIf(process.platform === "win32")("installer cancellation", () => {
+  it("defers SIGTERM through failed-install staging cleanup and lock release", async () => {
+    const version = "6.8.0-published-cleanup-finalization-sigterm";
+    const temp = await createLauncherTemp();
+    const prefix = installPrefix(version, temp.temporaryRoot);
+    const lockPath = lockPathFor(version, temp.temporaryRoot);
+    await rm(prefix, { recursive: true, force: true });
+    const workspace = await createTestTempDirectory(
+      "rea-published-cleanup-finalization-",
+    );
+    const bin = join(workspace, "bin");
+    await mkdir(bin);
+    const npmEntry = join(bin, "npm-cli.cjs");
+    const failedPath = join(workspace, "install-failed");
+    // Enough partial-install files that real rmSync stays in finalization long
+    // enough for SIGTERM to arrive before staging and the lock are released.
+    const partialFiles = 2_000;
+    await writeFile(
+      npmEntry,
+      `#!/usr/bin/env node
+const { mkdirSync, writeFileSync } = require("node:fs");
+const { join } = require("node:path");
+const staging = process.argv[process.argv.indexOf("--prefix") + 1];
+for (let index = 0; index < ${String(partialFiles)}; index += 1) {
+  const dir = join(staging, "partial", String(index % 50));
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  writeFileSync(join(dir, "f" + String(index)), "x", { mode: 0o600 });
+}
+writeFileSync(${JSON.stringify(failedPath)}, staging, { mode: 0o600 });
+process.exit(1);
+`,
+    );
+    const { child, closed } = start([version], {
+      ...process.env,
+      ...temp.env,
+      PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+      npm_execpath: npmEntry,
+    });
+    const stagingPrefix = (await waitForFile(failedPath)).trim();
+    expect(basename(stagingPrefix)).toMatch(stagingNamePattern(version));
+    // Staging still holds the failed tree; signal during the owned cleanup that
+    // follows installer exit rather than during the install itself.
+    await access(join(stagingPrefix, "partial"));
+    child.kill("SIGTERM");
+    const result = await closed;
+    expect(result.code).toBe(143);
+    expect(result.stdout).toBe("");
+    await expect(access(stagingPrefix)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(access(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    const leftover = (await readdir(temp.cacheRoot).catch(() => [])).filter(
+      (name) => stagingNamePattern(version).test(name),
+    );
+    expect(leftover).toEqual([]);
+  });
+
   it.each([
     ["terminates an in-flight npm install and its child on SIGTERM", false],
     ["force-stops an npm install and its child that ignore SIGTERM", true],
