@@ -230,7 +230,7 @@ const parsePeLoadConfigCore = async (
     locate,
     rvaOf,
     sectionAt,
-    lookup: { offset: (address, size) => getLookup().offset(address, size) },
+    lookup: getLookup,
     templateFileOffset: (address, size) =>
       optionalFileOffset(() =>
         mappedFileOffset(
@@ -341,7 +341,7 @@ const readTls = async ({
   readonly locate: (va: bigint) => PeLoadConfigLocated;
   readonly rvaOf: (va: bigint) => number | null;
   readonly sectionAt: (rva: number) => SectionSegment | null;
-  readonly lookup: { offset(address: bigint, size: number): number };
+  readonly lookup: () => FileMappingIndex;
   readonly templateFileOffset: (address: bigint, size: number) => number | null;
   readonly maxCallbacks: number;
   readonly signal: AbortSignal | undefined;
@@ -397,21 +397,41 @@ const readTls = async ({
   const callbacks: PeLoadConfigLocated[] = [];
   const callbackArrayLocations: { offset: number; bytes: number }[] = [];
   if (callbacksVa !== 0n) {
+    const mapping = lookup();
     let slot = callbacksVa;
     let entries = 0;
+    let window = new BinaryReader(Buffer.alloc(0), true, "pe");
+    let windowOffset = 0;
+    let cursor = 0;
     for (;;) {
       entries += 1;
       if (entries % ENTRIES_PER_YIELD === 0) {
         await setImmediate();
         assertArtifactReadActive(signal);
       }
-      const slotOffset = lookup.offset(slot, pointerWidth);
-      const slotReader = new BinaryReader(
-        await readBytes(slotOffset, pointerWidth),
-        true,
-        "pe",
-      );
-      const value = slotReader.word(0, bits);
+      if (cursor >= window.bytes.length) {
+        const slots = Math.min(
+          ENTRIES_PER_YIELD - (entries % ENTRIES_PER_YIELD),
+          maxCallbacks - callbacks.length + 1,
+        );
+        const prefix = mapping.prefix(slot, slots * pointerWidth);
+        const wholeSlots = Math.floor((prefix?.size ?? 0) / pointerWidth);
+        // A window never crosses an unmapped or ambiguous range. Resolve the
+        // first unavailable slot exactly so its failure retains precedence.
+        windowOffset =
+          prefix !== null && wholeSlots > 0
+            ? prefix.offset
+            : mapping.offset(slot, pointerWidth);
+        window = new BinaryReader(
+          await readBytes(windowOffset, Math.max(1, wholeSlots) * pointerWidth),
+          true,
+          "pe",
+        );
+        cursor = 0;
+      }
+      const slotOffset = windowOffset + cursor;
+      const value = window.word(cursor, bits);
+      cursor += pointerWidth;
       consume(callbackArrayLocations, slotOffset, pointerWidth);
       if (value === 0n) break;
       if (callbacks.length >= maxCallbacks)

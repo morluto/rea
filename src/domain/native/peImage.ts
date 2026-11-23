@@ -24,6 +24,8 @@ const requireFileRange = (
   size: bigint,
   label: string,
 ): { readonly offset: number; readonly size: number } => {
+  if (size === 0n && offset >= 0n && offset <= BigInt(fileSize))
+    return { offset: Number(offset), size: 0 };
   const range = declaredFileRange(fileSize, offset, size);
   if (!range.file_backed)
     throw new BinaryFormatFailure(
