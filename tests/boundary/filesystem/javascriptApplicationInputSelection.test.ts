@@ -130,6 +130,54 @@ describe("JavaScript application input selection", () => {
     });
   });
 
+  it("refuses a directory whose complete inventory has no JavaScript application inputs", async () => {
+    const { root } = await application();
+    const build = join(root, "build");
+    await mkdir(join(build, "CMakeFiles"), { recursive: true });
+    const pe = Buffer.alloc(128);
+    pe.write("MZ", 0, "latin1");
+    pe.writeUInt32LE(64, 0x3c);
+    pe.write("PE\0\0", 64, "latin1");
+    await writeFile(join(build, "tool.exe"), pe);
+    await writeFile(join(build, "ctest.json"), '{"tests":[]}');
+    await writeFile(join(build, "CMakeFiles", "cache.txt"), "x\n");
+
+    const projected = await analyzeFailure({ input_path: build });
+    expect(projected).toMatchObject({
+      code: "unsupported_target",
+      details: {
+        operation: "analyze_javascript_application",
+        related_operations: [
+          "inspect_desktop_application",
+          "audit_release_exposure",
+          "inspect_artifact",
+          "open_binary",
+        ],
+      },
+    });
+    expect(projected.remediation.action).toContain(
+      "inspect_desktop_application",
+    );
+  });
+
+  it.each([
+    ["an HTML page", "index.html", "<!doctype html><p>x</p>\n"],
+    ["a package manifest", "package.json", '{"name":"app"}'],
+    ["a source map", "app.js.map", '{"version":3,"sources":[],"mappings":""}'],
+  ])(
+    "analyzes a directory whose only application input is %s",
+    async (_label, name, text) => {
+      const { root } = await application();
+      const directory = join(root, "only");
+      await mkdir(directory);
+      await writeFile(join(directory, name), text);
+      await writeFile(join(directory, "data.json"), "{}");
+      expect(
+        (await analyzeJavaScriptApplication({ input_path: directory })).ok,
+      ).toBe(true);
+    },
+  );
+
   it.each([
     ["a directory", "directory", "asar"],
     ["an .asar file", "asar", "directory"],

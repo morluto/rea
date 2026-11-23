@@ -30,6 +30,10 @@ import { createJavaScriptArtifactReader as createReader } from "../../artifacts/
 import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type { JavaScriptSourceSelection } from "../../domain/javascript/javascriptSourceSelection.js";
+import type {
+  JavaScriptArtifactFileKind,
+  JavaScriptArtifactFileSet,
+} from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   parseOwnedJavaScriptApplicationAnalysisSteps,
   type AnalyzeJavaScriptApplicationInput,
@@ -170,6 +174,24 @@ export const reconstructJavaScriptArtifact = async (
           kind: "artifact-inventory",
           inventory: snapshot,
         });
+      if (lacksJavaScriptApplicationInputs(files, snapshot))
+        throw new AnalysisUnsupportedTargetError(
+          OPERATION,
+          path,
+          "the complete inventory has no JavaScript, HTML, package.json, source map, or nested ASAR inputs",
+          {
+            remediationAction:
+              "For a native build or installation directory, call inspect_desktop_application or audit_release_exposure with the directory, or select one member file with inspect_artifact or open_binary.",
+            related: {
+              operations: [
+                "inspect_desktop_application",
+                "audit_release_exposure",
+                "inspect_artifact",
+                "open_binary",
+              ],
+            },
+          },
+        );
       await reportPhase(
         "parse_javascript_sources",
         `Processing ${String(files.files.length - (files.source_selection?.unselected_files ?? 0))} selected application files`,
@@ -481,6 +503,26 @@ export const reconstructJavaScriptArtifact = async (
   });
 
 const OPERATION = "analyze_javascript_application";
+
+/** Relevant file kinds that make a target a JavaScript application input. */
+const APPLICATION_INPUT_KINDS: ReadonlySet<JavaScriptArtifactFileKind> =
+  new Set(["javascript", "html", "package-json", "source-map"]);
+
+/**
+ * Whether complete inventory coverage proves the target holds nothing this
+ * lane analyzes. Incomplete coverage or an unavailable file of unknown kind
+ * stays unknown and the analysis proceeds with its coverage limitations.
+ */
+const lacksJavaScriptApplicationInputs = (
+  files: JavaScriptArtifactFileSet,
+  snapshot: ArtifactInventorySnapshot,
+): boolean =>
+  snapshot.coverage.status === "complete" &&
+  files.containers.length === 0 &&
+  files.files.every(({ kind }) => !APPLICATION_INPUT_KINDS.has(kind)) &&
+  files.unavailable_relevant_files.every(
+    ({ kind }) => kind !== undefined && !APPLICATION_INPUT_KINDS.has(kind),
+  );
 
 /**
  * Resolve the caller-selected input. A missing, looping, overlong, or

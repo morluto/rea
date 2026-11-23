@@ -75,3 +75,60 @@ cliTest(
     });
   },
 );
+
+cliTest(
+  "refuses a native build directory without JavaScript inputs and names the directory-capable operations",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-analyze-native-dir-");
+    const build = join(root, "build");
+    await mkdir(join(build, "CMakeFiles"), { recursive: true });
+    // Minimal PE-shaped headers; no JavaScript, HTML, package.json or ASAR.
+    const pe = Buffer.alloc(128);
+    pe.write("MZ", 0, "latin1");
+    pe.writeUInt32LE(64, 0x3c);
+    pe.write("PE\0\0", 64, "latin1");
+    pe.writeUInt16LE(0x8664, 68);
+    await writeFile(join(build, "tool.exe"), pe);
+    await writeFile(join(build, "runtime.dll"), pe);
+    await writeFile(join(build, "ctest.json"), '{"tests":[]}');
+    await writeFile(join(build, "CMakeFiles", "cmake.check_cache"), "x\n");
+    const result = await cli.run({
+      arguments: ["analyze", build, "--json"],
+      cwd: root,
+      environment,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "unsupported_target",
+      details: {
+        operation: "analyze_javascript_application",
+        related_operations: [
+          "inspect_desktop_application",
+          "audit_release_exposure",
+          "inspect_artifact",
+          "open_binary",
+        ],
+      },
+    });
+  },
+);
+
+cliTest(
+  "keeps analyzing a directory whose only application input is an HTML page",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-analyze-html-dir-");
+    const site = join(root, "site");
+    await mkdir(site);
+    await writeFile(join(site, "index.html"), "<!doctype html><p>x</p>\n");
+    await writeFile(join(site, "data.json"), "{}");
+    const result = await cli.run({
+      arguments: ["analyze", site, "--json"],
+      cwd: root,
+      environment,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.json).toMatchObject({
+      operation: "analyze_javascript_application",
+    });
+  },
+);
