@@ -35,9 +35,9 @@ import {
 import { buildIntervalIndex } from "./ElfIntervalIndex.js";
 import {
   ELF_PT_GNU_EH_FRAME,
-  readElfDirectoryFromBuffer,
   readElfDirectoryFromReader,
   type ElfProgramDeclaration,
+  type ElfSectionDirectory,
   type NativeByteSource,
   type NativeSection,
 } from "../../domain/native/nativeSectionDirectory.js";
@@ -264,34 +264,7 @@ function* readSlice(
   return yield { offset, length };
 }
 
-/** Read .eh_frame/.eh_frame_hdr function ranges. Truncation stays incomplete. */
-export const parseElfUnwindRanges = (
-  bytes: Buffer,
-  artifact: ElfUnwindRanges["artifact"],
-  input: InspectElfUnwindRangesInput,
-  signal?: AbortSignal,
-): ElfUnwindRanges => {
-  assertArtifactReadActive(signal);
-  const directory = readElfDirectoryFromBuffer(bytes, OPERATION);
-  const steps = elfUnwindRangesSteps(
-    bytes.length,
-    artifact,
-    input,
-    directory,
-    signal,
-  );
-  let next = steps.next();
-  while (!next.done) {
-    const { offset, length } = next.value;
-    const end = Math.min(bytes.length, offset + length);
-    next = steps.next(
-      offset >= bytes.length ? Buffer.alloc(0) : bytes.subarray(offset, end),
-    );
-  }
-  return next.value;
-};
-
-/** Read the same unwind facts over a bounded FileHandle without buffering the full image. */
+/** Read unwind ranges over a bounded file handle. Truncation stays incomplete. */
 export const parseElfUnwindRangesFromHandle = async (
   source: NativeByteSource,
   artifact: ElfUnwindRanges["artifact"],
@@ -347,7 +320,7 @@ function* elfUnwindRangesSteps(
   fileBytes: number,
   artifact: ElfUnwindRanges["artifact"],
   input: InspectElfUnwindRangesInput,
-  directory: ReturnType<typeof readElfDirectoryFromBuffer>,
+  directory: ElfSectionDirectory,
   signal?: AbortSignal,
 ): Generator<ReadStep, ElfUnwindRanges, Buffer> {
   assertArtifactReadActive(signal);
@@ -1316,7 +1289,7 @@ const fileRange = (section: NativeSection): FileRange | null => {
  */
 function* resolveGotBase(
   fileBytes: number,
-  directory: ReturnType<typeof readElfDirectoryFromBuffer>,
+  directory: ElfSectionDirectory,
 ): Generator<
   ReadStep,
   { readonly address: bigint; readonly source: string } | null,
@@ -2013,7 +1986,7 @@ interface MatchedSymbol {
  * and each name retains only its location and length until page selection.
  */
 function* scanSymbols(
-  directory: ReturnType<typeof readElfDirectoryFromBuffer>,
+  directory: ElfSectionDirectory,
   wanted: ReadonlySet<bigint>,
   signal: AbortSignal | undefined,
   report: {
