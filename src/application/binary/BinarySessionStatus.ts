@@ -251,9 +251,12 @@ export const restrictAdvertisedCapabilities = (
   const object = ownedJsonObjectSchema.parse(status);
   const { capabilities, analysis_provider_candidates } =
     advertisedCapabilitySurfaces.parse(object);
-  return ownedJsonObjectSchema.parse({
+  return {
     ...object,
-    capabilities: restrictCapabilitySets(capabilities, isOperationAdvertised),
+    capabilities: restrictCapabilitySets(
+      capabilities,
+      isOperationAdvertised,
+    ) as unknown as JsonValue,
     analysis_provider_candidates: analysis_provider_candidates.map(
       (candidate) => ({
         ...candidate,
@@ -266,8 +269,8 @@ export const restrictAdvertisedCapabilities = (
             }
           : {}),
       }),
-    ),
-  });
+    ) as unknown as JsonValue,
+  };
 };
 
 const restrictCapabilitySets = (
