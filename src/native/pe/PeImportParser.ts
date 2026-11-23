@@ -196,8 +196,6 @@ export const parsePeImports = async (
   let examinedFunctions = 0;
   let entries = 0;
   const checkpoint = async (): Promise<void> => {
-    entries += 1;
-    if (entries % ENTRIES_PER_YIELD !== 0) return;
     await setImmediate();
     assertArtifactReadActive(signal);
   };
@@ -252,7 +250,7 @@ export const parsePeImports = async (
     const ordinalFlag = bits === 64 ? ORDINAL_FLAG64 : ORDINAL_FLAG32;
     const functions: PeImportFunction[] = [];
     for (let index = 0; ; index++) {
-      await checkpoint();
+      if (++entries % ENTRIES_PER_YIELD === 0) await checkpoint();
       const nameRva = nameTableRva + index * thunkWidth;
       const iatRva = addressTableRva + index * thunkWidth;
       if (!admitRva(nameRva, thunkWidth, "Import lookup table")) break;
@@ -383,7 +381,7 @@ export const parsePeImports = async (
   if (importDirectory !== undefined && importDirectory.address !== 0) {
     const spans: { offset: number; bytes: number }[] = [];
     for (let index = 0; ; index++) {
-      await checkpoint();
+      if (++entries % ENTRIES_PER_YIELD === 0) await checkpoint();
       const descriptorRva =
         importDirectory.address + index * IMPORT_DESCRIPTOR_BYTES;
       if (
@@ -469,7 +467,7 @@ export const parsePeImports = async (
   if (delayDirectory !== undefined && delayDirectory.address !== 0) {
     const spans: { offset: number; bytes: number }[] = [];
     for (let index = 0; ; index++) {
-      await checkpoint();
+      if (++entries % ENTRIES_PER_YIELD === 0) await checkpoint();
       const descriptorRva =
         delayDirectory.address + index * DELAY_DESCRIPTOR_BYTES;
       if (

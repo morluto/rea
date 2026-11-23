@@ -691,6 +691,152 @@ it("keeps CRLF separators inside a body after LF-only HTTP headers", async () =>
   expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
 });
 
+it("splits mixed CRLF and bare LF SAZ headers so transport credentials are redacted", async () => {
+  const reqBody = Buffer.from("req-body-1");
+  const respBody = Buffer.from("resp-body-1");
+  const bytes = await archive([
+    [
+      "raw/1_c.txt",
+      Buffer.concat([
+        Buffer.from(
+          "GET /api/me HTTP/1.1\r\nHost: example.test\r\nX-Trace: 1\nAuthorization: Bearer fake-bearer-token-fixture\r\nX-After: req-ok\r\n\r\n",
+        ),
+        reqBody,
+      ]),
+    ],
+    [
+      "raw/1_s.txt",
+      Buffer.concat([
+        Buffer.from(
+          "HTTP/1.1 200 OK\r\nContent-Type: text/plain\nSet-Cookie: session=fake-session-cookie-fixture\r\nX-Folded: first\n second\r\n\r\n",
+        ),
+        respBody,
+      ]),
+    ],
+  ]);
+  const path = await fixture(bytes);
+  const evidence = await cli(path);
+  const capture = webNetworkCaptureSchema.parse(evidence.normalized_result);
+
+  expect(capture.records[0]?.reported).toMatchObject({
+    request: {
+      method: "GET",
+      url: "/api/me",
+      headers: [
+        { name: "Host", value: " example.test" },
+        { name: "X-Trace", value: " 1" },
+        { name: "Authorization", value: null },
+        { name: "X-After", value: " req-ok" },
+      ],
+      body: reqBody.toString("utf8"),
+    },
+    response: {
+      status: "200",
+      reason: "OK",
+      headers: [
+        { name: "Content-Type", value: " text/plain" },
+        { name: "Set-Cookie", value: null },
+        { name: "X-Folded", value: " first\n second" },
+      ],
+      body: respBody.toString("utf8"),
+    },
+  });
+  expect(capture.records[0]?.redactions).toEqual([
+    { pointer: "/request/headers/2/value", reason: "transport-credential" },
+    { pointer: "/response/headers/1/value", reason: "transport-credential" },
+  ]);
+  const serialized = JSON.stringify(evidence);
+  for (const secret of [
+    "fake-bearer-token-fixture",
+    "fake-session-cookie-fixture",
+  ])
+    expect(serialized).not.toContain(secret);
+  expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+});
+
+it("recognizes mixed CRLF and LF SAZ header/body boundaries without altering body bytes", async () => {
+  const respBody1 = Buffer.from("resp-body-1\r\n\r\nrest");
+  const reqBody2 = Buffer.from("\r\nreq-body-2");
+  const respBody2 = Buffer.from("resp-body-2");
+  const bytes = await archive([
+    [
+      "raw/1_s.txt",
+      Buffer.concat([
+        Buffer.from("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\n"),
+        respBody1,
+      ]),
+    ],
+    [
+      "raw/2_c.txt",
+      Buffer.concat([
+        Buffer.from(
+          "POST /mixed-end HTTP/1.1\nHost: example.test\r\nCookie: sid=fake-request-cookie-fixture\nX-Tail: tail-ok\n\r\n",
+        ),
+        reqBody2,
+      ]),
+    ],
+    [
+      "raw/2_s.txt",
+      Buffer.concat([
+        Buffer.from("HTTP/1.1 200 OK\r\nX-One: a\r\n\n"),
+        respBody2,
+      ]),
+    ],
+  ]);
+  const path = await fixture(bytes);
+  const evidence = await cli(path, ["--record", "0", "--record", "1"]);
+  const capture = webNetworkCaptureSchema.parse(evidence.normalized_result);
+
+  expect(capture.records[0]?.reported).toMatchObject({
+    response: {
+      status: "200",
+      reason: "OK",
+      headers: [{ name: "Content-Type", value: " text/plain" }],
+      body: respBody1.toString("utf8"),
+    },
+  });
+  expect(capture.records[0]?.binary_fields).toContainEqual({
+    pointer: "/response/body",
+    representation: "producer-bytes",
+    state: "retained",
+    content_base64: respBody1.toString("base64"),
+    bytes: respBody1.length,
+    sha256: createHash("sha256").update(respBody1).digest("hex"),
+  });
+
+  expect(capture.records[1]?.reported).toMatchObject({
+    request: {
+      method: "POST",
+      url: "/mixed-end",
+      headers: [
+        { name: "Host", value: " example.test" },
+        { name: "Cookie", value: null },
+        { name: "X-Tail", value: " tail-ok" },
+      ],
+      body: reqBody2.toString("utf8"),
+    },
+    response: {
+      status: "200",
+      reason: "OK",
+      headers: [{ name: "X-One", value: " a" }],
+      body: respBody2.toString("utf8"),
+    },
+  });
+  expect(capture.records[1]?.redactions).toEqual([
+    { pointer: "/request/headers/1/value", reason: "transport-credential" },
+  ]);
+  expect(capture.records[1]?.binary_fields).toContainEqual({
+    pointer: "/request/body",
+    representation: "producer-bytes",
+    state: "retained",
+    content_base64: reqBody2.toString("base64"),
+    bytes: reqBody2.length,
+    sha256: createHash("sha256").update(reqBody2).digest("hex"),
+  });
+  expect(JSON.stringify(evidence)).not.toContain("fake-request-cookie-fixture");
+  expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+});
+
 it("reports zero-byte SAZ HTTP members as null instead of rejecting the archive", async () => {
   const bytes = await archive([
     ["raw/1_c.txt", Buffer.from("GET https://example.test/ HTTP/1.1\r\n\r\n")],

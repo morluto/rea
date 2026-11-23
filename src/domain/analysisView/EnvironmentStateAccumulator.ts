@@ -40,6 +40,7 @@ import {
   ENTRY_BYTES,
   RECORD_SCRATCH_BYTES,
   type RecordedRequestLine,
+  type RequestLineExclusion,
   textBytes,
 } from "./webNetworkRouteTemplates.js";
 
@@ -79,6 +80,39 @@ const durationSchema = z.object({ time: z.number().nonnegative() });
 const unlocatedWriteSchema = z.object({
   request: z.object({ method: z.string() }),
 });
+type UnlocatedWriteLine = Omit<
+  Extract<RecordedRequestLine, { kind: "line" }>,
+  "kind" | "origin"
+> & {
+  readonly origin: null;
+  readonly targetExclusion: "url-redacted" | "url-unparseable";
+};
+
+/** Only a possible write without a usable target can bound the state timeline. */
+const unlocatedWriteLine = (
+  reported: unknown,
+  reason: RequestLineExclusion,
+): UnlocatedWriteLine | undefined => {
+  if (
+    reason !== "url-redacted" &&
+    reason !== "url-unparseable" &&
+    reason !== "request-unavailable"
+  )
+    return undefined;
+  const request = unlocatedWriteSchema.safeParse(reported);
+  if (!request.success) return undefined;
+  const line: UnlocatedWriteLine = {
+    method: request.data.request.method,
+    path: "",
+    query: undefined,
+    status: readRecordedResponseDeclaration(reported)?.status ?? null,
+    origin: null,
+    rawMime: "",
+    targetExclusion: reason === "url-redacted" ? reason : "url-unparseable",
+  };
+  return isStateWrite(line) ? line : undefined;
+};
+
 interface RecordEntry {
   readonly facts: StateRecordFacts;
   /** Null for a write without a usable URL: its unknown target bounds every type. */
@@ -130,6 +164,11 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
     record: WebNetworkCaptureRecord,
     line: RecordedRequestLine,
   ): Result<() => void, AnalysisError> {
+    const target =
+      line.kind === "line"
+        ? line
+        : unlocatedWriteLine(record.reported, line.reason);
+    if (target === undefined) return ok(() => undefined);
     const started = startSchema.safeParse(record.reported);
     const duration = durationSchema.safeParse(record.reported);
     // Admit normalization and fraction parsing before materializing their strings.
@@ -189,29 +228,17 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
       (endInstant !== undefined && endInstant !== startInstant
         ? ENTRY_BYTES + textBytes(endInstant.fraction.length)
         : 0);
-    if (line.kind === "excluded")
-      return line.reason === "url-redacted" ||
-        line.reason === "url-unparseable" ||
-        line.reason === "request-unavailable"
-        ? this.#unlocatedWrite(
-            record,
-            line.reason === "url-redacted" ? "url-redacted" : "url-unparseable",
-            timing,
-            instantBytes,
-            reading?.interpretation,
-          )
-        : ok(() => undefined);
-    // The entry keeps the line's strings and a reference to the already admitted record.
+    // The entry keeps the admitted request facts and the borrowed record.
     if (
       !this.retain(
         ENTRY_BYTES * 8 +
           instantBytes +
           textBytes(
-            line.method.length +
-              line.origin.length +
-              line.path.length +
-              (line.query?.length ?? 0) +
-              line.rawMime.length,
+            target.method.length +
+              (target.origin?.length ?? 0) +
+              target.path.length +
+              (target.query?.length ?? 0) +
+              target.rawMime.length,
           ),
       )
     )
@@ -220,54 +247,18 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
       this.#entries.set(record.ordinal, {
         facts: {
           ordinal: record.ordinal,
-          method: line.method,
-          path: line.path,
-          query: line.query === "" ? undefined : line.query,
-          status: line.status,
+          method: target.method,
+          path: target.path,
+          query: target.query === "" ? undefined : target.query,
+          status: target.status,
           timing,
         },
-        origin: line.origin,
-        contentType: line.rawMime,
+        origin: target.origin,
+        ...("targetExclusion" in target
+          ? { targetExclusion: target.targetExclusion }
+          : {}),
+        contentType: target.rawMime,
         startInterpretation: reading?.interpretation,
-        record,
-      });
-    });
-  }
-
-  /** Prepare a successful write with unknown target, whose empty root relates to every type. */
-  #unlocatedWrite(
-    record: WebNetworkCaptureRecord,
-    reason: "url-redacted" | "url-unparseable",
-    timing: StateRecordFacts["timing"],
-    instantBytes: number,
-    startInterpretation: RecordEntry["startInterpretation"],
-  ): Result<() => void, AnalysisError> {
-    const parsed = unlocatedWriteSchema.safeParse(record.reported);
-    if (!parsed.success) return ok(() => undefined);
-    const status =
-      readRecordedResponseDeclaration(record.reported)?.status ?? null;
-    const facts: StateRecordFacts = {
-      ordinal: record.ordinal,
-      method: parsed.data.request.method,
-      path: "",
-      query: undefined,
-      status,
-      timing,
-    };
-    if (!isStateWrite(facts)) return ok(() => undefined);
-    if (
-      !this.retain(
-        ENTRY_BYTES * 8 + textBytes(facts.method.length) + instantBytes,
-      )
-    )
-      return this.overBudget();
-    return ok(() => {
-      this.#entries.set(record.ordinal, {
-        facts,
-        origin: null,
-        targetExclusion: reason,
-        contentType: "",
-        startInterpretation,
         record,
       });
     });

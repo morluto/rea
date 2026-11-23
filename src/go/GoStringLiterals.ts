@@ -97,6 +97,7 @@ export const recoverGoStringLiterals = (
   const lastTarget = targets[targets.length - 1] as FileMapping;
   const minTargetAddr = firstTarget.address;
   const maxTargetEnd = lastTarget.address + BigInt(lastTarget.size);
+  const targetEnds = targets.map((t) => t.address + BigInt(t.size));
 
   const accepted = new Map<string, CandidateLiteral>();
   const rejected = new Set<string>();
@@ -136,7 +137,7 @@ export const recoverGoStringLiterals = (
       const targetIndex = lastSpanAtOrBelow(targets, ptr);
       if (targetIndex < 0) continue;
       const target = targets[targetIndex] as FileMapping;
-      if (ptr + rawLen > target.address + BigInt(target.size)) continue;
+      if (ptr + rawLen > targetEnds[targetIndex]!) continue;
 
       const byteLen = Number(rawLen);
       const sliceOffset = target.offset + Number(ptr - target.address);
@@ -234,7 +235,8 @@ export const recoverGoStringLiterals = (
 
 const isPrintableGoUtf8 = (slice: Buffer): boolean => {
   let hasNonAscii = false;
-  for (const byte of slice) {
+  for (let i = 0; i < slice.length; i += 1) {
+    const byte = slice[i]!;
     if (byte >= 0x80) {
       hasNonAscii = true;
       continue;

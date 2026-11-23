@@ -294,13 +294,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "src/application/binaryDiagnostics/ByteEntropyService.test.ts",
-        "keeps whole-file identity and entropy while selecting unaligned blocks and a partial tail",
+        "keeps %i-byte blocks relative to an unaligned window across short physical reads",
       ),
     ),
     covered(
       test(
         "src/application/binaryDiagnostics/ByteEntropyService.test.ts",
-        "honors cancellation before and during streaming",
+        "honors cancellation %s and closes any admitted descriptor",
       ),
     ),
   ),
@@ -1325,7 +1325,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/elfNotesCli.test.ts",
-        "resolves section note names from zlib and Zstandard string tables through the CLI",
+        "resolves section note names from a compressed string table through the CLI",
       ),
     ),
     typedFailures("tests/boundary/filesystem/elfNotes.test.ts"),

@@ -55,20 +55,19 @@ export const lzmaReplySchema = z.discriminatedUnion("ok", [
 
 export type UefiLzmaReply = z.infer<typeof lzmaReplySchema>;
 
-/** Encode `[u32BE jsonBytes][u32BE bodyBytes][jsonUtf8][body]` for framed stdio IPC. */
-export const encodeLzmaFrame = (
+/**
+ * Encode `[u32BE jsonBytes][u32BE bodyBytes][jsonUtf8]` for framed stdio IPC.
+ * Callers write any non-empty `body` directly after the header to avoid
+ * copying up to 128 MiB payloads into a combined frame buffer.
+ */
+export const encodeLzmaFrameHeader = (
   headerJson: string,
-  body: Buffer = Buffer.alloc(0),
+  bodyLength: number,
 ): Buffer => {
   const jsonBuf = Buffer.from(headerJson, "utf8");
-  const frame = Buffer.allocUnsafe(
-    LZMA_FRAME_HEADER_BYTES + jsonBuf.length + body.length,
-  );
-  frame.writeUInt32BE(jsonBuf.length, 0);
-  frame.writeUInt32BE(body.length, 4);
-  jsonBuf.copy(frame, LZMA_FRAME_HEADER_BYTES);
-  if (body.length > 0) {
-    body.copy(frame, LZMA_FRAME_HEADER_BYTES + jsonBuf.length);
-  }
-  return frame;
+  const header = Buffer.allocUnsafe(LZMA_FRAME_HEADER_BYTES + jsonBuf.length);
+  header.writeUInt32BE(jsonBuf.length, 0);
+  header.writeUInt32BE(bodyLength, 4);
+  jsonBuf.copy(header, LZMA_FRAME_HEADER_BYTES);
+  return header;
 };
