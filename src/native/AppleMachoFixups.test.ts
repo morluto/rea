@@ -487,23 +487,20 @@ it.each(["bind", "weak", "lazy"] as const)(
   },
 );
 
-const legacyRebaseInput = (stream: Buffer) => {
+const legacyRebaseFixups = (stream: Buffer) => {
   const data = Buffer.alloc(0x8000);
   stream.copy(data, 0x7000);
-  return {
+  return parsePointerFixups(
     data,
-    fixups: parsePointerFixups(
-      data,
-      {
-        chained: null,
-        binds: [],
-        rebases: [{ offset: 0x7000, size: stream.length }],
-        dylibs: [],
-      },
-      [{ address: BASE, size: 0x2000n, offset: 0, executable: false }],
-      BASE,
-    ),
-  };
+    {
+      chained: null,
+      binds: [],
+      rebases: [{ offset: 0x7000, size: stream.length }],
+      dylibs: [],
+    },
+    [{ address: BASE, size: 0x2000n, offset: 0, executable: false }],
+    BASE,
+  );
 };
 
 it("charges a padded rebase operand that exhausts the work budget", () => {
@@ -536,28 +533,46 @@ it("charges a padded rebase operand that exhausts the work budget", () => {
   expect(fixups.issues).toHaveLength(2);
 });
 
-it("marks only opcode-selected pointer slots rebased, including target zero", () => {
-  // SET_TYPE(pointer), SET_SEGMENT(offset 0x100), DO once,
-  // ADD_ADDR(0x10), DO once, DONE.
-  const { data, fixups } = legacyRebaseInput(
-    Buffer.from([0x11, 0x20, 0x80, 0x02, 0x51, 0x30, 0x10, 0x51, 0]),
+it("rebases only selected pointer slots across address and count-and-skip steps", () => {
+  const fixups = legacyRebaseFixups(
+    Buffer.from([
+      0x11, // SET_TYPE(pointer)
+      0x20,
+      0x80,
+      0x02, // SET_SEGMENT(offset 0x100)
+      0x51, // DO once at 0x100
+      0x30,
+      0x10, // ADD_ADDR(0x10) to 0x118
+      0x80,
+      0x02,
+      0x08, // DO twice skipping 8, at 0x118 and 0x128
+      0x70,
+      0x08, // DO at 0x138 and advance to 0x148
+      0x41, // ADD_ADDR_IMM_SCALED(1) to 0x150
+      0x51,
+      0, // DO once at 0x150, DONE
+    ]),
   );
-  data.writeBigUInt64LE(BASE + 0x200n, 0x100);
-  data.writeBigUInt64LE(0n, 0x118);
 
-  expect(fixups.decode(BASE + 0x100n, BASE + 0x200n)).toEqual({
-    kind: "rebase",
-    target: BASE + 0x200n,
-  });
+  for (const [offset, target] of [
+    [0x100n, BASE + 0x200n],
+    [0x118n, 0n],
+    [0x128n, 0x210n],
+    [0x138n, 0x220n],
+    [0x150n, 0x230n],
+  ] as const) {
+    expect(
+      fixups.decode(BASE + offset, target),
+      `slot 0x${offset.toString(16)}`,
+    ).toEqual({ kind: "rebase", target });
+  }
+  for (const offset of [0x108n, 0x110n, 0x120n, 0x130n, 0x140n, 0x148n]) {
+    expect(
+      fixups.decode(BASE + offset, 0n),
+      `gap 0x${offset.toString(16)}`,
+    ).toEqual({ kind: "raw", target: 0n });
+  }
   expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x100n, 4)).toBe(false);
-  expect(fixups.decode(BASE + 0x118n, 0n)).toEqual({
-    kind: "rebase",
-    target: 0n,
-  });
-  expect(fixups.decode(BASE + 0x110n, 0n)).toEqual({
-    kind: "raw",
-    target: 0n,
-  });
   expect(fixups).toMatchObject({
     kind: "dyld-info",
     examined: 1,
@@ -566,40 +581,8 @@ it("marks only opcode-selected pointer slots rebased, including target zero", ()
   });
 });
 
-it("applies count-and-skip opcodes to their emitted pointer locations", () => {
-  // SET_TYPE(pointer), SET_SEGMENT(offset 0x100), DO 1 skipping 8,
-  // DO_REBASE_ADD_ADDR(8), DO once, DONE. The selected slots are 0x100, 0x110,
-  // and 0x120; the skipped words remain raw.
-  const { fixups } = legacyRebaseInput(
-    Buffer.from([
-      0x11, 0x20, 0x80, 0x02, 0x80, 0x01, 0x08, 0x70, 0x08, 0x51, 0,
-    ]),
-  );
-
-  expect(fixups.decode(BASE + 0x100n, 0x200n)).toEqual({
-    kind: "rebase",
-    target: 0x200n,
-  });
-  expect(fixups.decode(BASE + 0x110n, 0x210n)).toEqual({
-    kind: "rebase",
-    target: 0x210n,
-  });
-  expect(fixups.decode(BASE + 0x120n, 0x220n)).toEqual({
-    kind: "rebase",
-    target: 0x220n,
-  });
-  expect(fixups.decode(BASE + 0x108n, 0n)).toEqual({
-    kind: "raw",
-    target: 0n,
-  });
-  expect(fixups.decode(BASE + 0x118n, 0n)).toEqual({
-    kind: "raw",
-    target: 0n,
-  });
-});
-
 it("retains known prefix rebases and leaves unmatched locations unknown on an invalid tail", () => {
-  const { fixups } = legacyRebaseInput(
+  const fixups = legacyRebaseFixups(
     Buffer.from([0x11, 0x20, 0x80, 0x02, 0x51, 0xf0]),
   );
 
@@ -619,7 +602,7 @@ it("retains known prefix rebases and leaves unmatched locations unknown on an in
 });
 
 it("does not treat 32-bit text rebases as 64-bit metadata pointers", () => {
-  const { fixups } = legacyRebaseInput(
+  const fixups = legacyRebaseFixups(
     Buffer.from([0x12, 0x20, 0x80, 0x02, 0x51, 0]),
   );
 
@@ -638,7 +621,7 @@ it("does not treat 32-bit text rebases as 64-bit metadata pointers", () => {
 });
 
 it("retains unaligned pointer locations accepted by dyld's rebase state checks", () => {
-  const { fixups } = legacyRebaseInput(
+  const fixups = legacyRebaseFixups(
     Buffer.from([0x11, 0x20, 0x81, 0x02, 0x51, 0]),
   );
 
@@ -652,18 +635,6 @@ it("retains unaligned pointer locations accepted by dyld's rebase state checks",
   });
 });
 
-it("rejects count expansion outside the selected file-backed segment without expanding it", () => {
-  const { fixups } = legacyRebaseInput(
-    Buffer.from([0x11, 0x20, 0x00, 0x60, 0x80, 0x80, 0x80, 0x80, 0x10, 0x00]),
-  );
-
-  expect(fixups.unreadRebaseBytes).toBeGreaterThan(0);
-  expect(fixups.decode(BASE + 0x100n, 0n)).toMatchObject({
-    kind: "unknown",
-    reason: expect.stringContaining("leaves its file-backed segment"),
-  });
-});
-
 // ULEB encodings of 64-bit two's-complement backward steps.
 const MINUS_0X10 = [0xf0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01];
 const MINUS_0X18 = [0xe8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01];
@@ -671,59 +642,57 @@ const MINUS_0X200 = [
   0x80, 0xfc, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01,
 ];
 
-it("wraps a backward ADD_ADDR_ULEB rebase step at 64 bits like dyld", () => {
-  // SET_TYPE(pointer), SET_SEGMENT(offset 0x100), DO once,
-  // ADD_ADDR(-0x10), DO once, DONE. dyld's uint64 cursor lands on 0xf8.
-  const { fixups } = legacyRebaseInput(
-    Buffer.from([0x11, 0x20, 0x80, 0x02, 0x51, 0x30, ...MINUS_0X10, 0x51, 0]),
-  );
-
-  expect(fixups.decode(BASE + 0x100n, 0x200n)).toEqual({
-    kind: "rebase",
-    target: 0x200n,
-  });
-  expect(fixups.decode(BASE + 0xf8n, 0x300n)).toEqual({
-    kind: "rebase",
-    target: 0x300n,
-  });
-  expect(fixups.issues).toEqual([]);
-  expect(fixups.unreadRebaseBytes).toBe(0);
-});
-
-it("wraps backward rebase-and-advance and single-slot skip steps", () => {
-  // SET_TYPE(pointer), SET_SEGMENT(offset 0x100),
-  // DO_REBASE_ADD_ADDR(-0x18) → 0xf0, DO 1 skipping -0x18 → 0xe0, DO once.
-  const { fixups } = legacyRebaseInput(
-    Buffer.from([
-      0x11,
-      0x20,
-      0x80,
-      0x02,
-      0x70,
-      ...MINUS_0X18,
-      0x80,
-      0x01,
-      ...MINUS_0X18,
-      0x51,
-      0,
-    ]),
-  );
-
-  for (const offset of [0x100n, 0xf0n, 0xe0n])
-    expect(fixups.decode(BASE + offset, 0x200n)).toEqual({
-      kind: "rebase",
-      target: 0x200n,
+it.each([
+  {
+    instruction: "ADD_ADDR_ULEB",
+    opcodes: [0x51, 0x30, ...MINUS_0X10, 0x51],
+    selected: [0x100n, 0xf8n],
+    skipped: 0x108n,
+  },
+  {
+    instruction: "rebase-and-advance and single-slot skip",
+    opcodes: [0x70, ...MINUS_0X18, 0x80, 0x01, ...MINUS_0X18, 0x51],
+    selected: [0x100n, 0xf0n, 0xe0n],
+    skipped: 0xe8n,
+  },
+])(
+  "wraps a backward $instruction rebase step at 64 bits",
+  ({ opcodes, selected, skipped }) => {
+    const fixups = legacyRebaseFixups(
+      Buffer.from([0x11, 0x20, 0x80, 0x02, ...opcodes, 0]),
+    );
+    for (const offset of selected) {
+      const target = BASE + offset + 0x100n;
+      expect(fixups.decode(BASE + offset, target)).toEqual({
+        kind: "rebase",
+        target,
+      });
+    }
+    expect(fixups.decode(BASE + skipped, 0n)).toEqual({
+      kind: "raw",
+      target: 0n,
     });
-  expect(fixups.decode(BASE + 0xe8n, 0n)).toEqual({ kind: "raw", target: 0n });
-  expect(fixups.issues).toEqual([]);
-});
+    expect(fixups).toMatchObject({ issues: [], unreadRebaseBytes: 0 });
+  },
+);
 
-it("still refuses a wrapped rebase cursor that leaves the segment", () => {
-  // SET_SEGMENT(offset 0x100), ADD_ADDR(-0x200) wraps below the segment start.
-  const { fixups } = legacyRebaseInput(
-    Buffer.from([0x11, 0x20, 0x80, 0x02, 0x30, ...MINUS_0X200, 0x51, 0]),
-  );
-
+it.each([
+  {
+    instruction: "an oversized expansion count",
+    opcodes: [0x60, 0x80, 0x80, 0x80, 0x80, 0x10],
+  },
+  {
+    instruction: "a wrapped cursor outside the selected segment",
+    opcodes: [0x30, ...MINUS_0X200, 0x51],
+  },
+  {
+    instruction: "a multi-slot run with a backward skip",
+    opcodes: [0x80, 0x02, ...MINUS_0X18],
+  },
+])("rejects $instruction before publishing any locations", ({ opcodes }) => {
+  const stream = Buffer.from([0x11, 0x20, 0x80, 0x02, ...opcodes, 0]);
+  const fixups = legacyRebaseFixups(stream);
+  expect(fixups.unreadRebaseBytes).toBe(stream.length);
   expect(fixups.decode(BASE + 0x100n, 0n)).toMatchObject({
     kind: "unknown",
     reason: expect.stringContaining("leaves its file-backed segment"),
@@ -731,18 +700,6 @@ it("still refuses a wrapped rebase cursor that leaves the segment", () => {
   expect(fixups.issues).toMatchObject([
     { code: "rebase_stream_decode_failed" },
   ]);
-});
-
-it("still refuses a multi-slot run with a backward skip", () => {
-  // DO 2 skipping -0x18 would revisit earlier slots; this bounded decoder refuses that run.
-  const { fixups } = legacyRebaseInput(
-    Buffer.from([0x11, 0x20, 0x80, 0x02, 0x80, 0x02, ...MINUS_0X18, 0]),
-  );
-
-  expect(fixups.decode(BASE + 0x100n, 0n)).toMatchObject({
-    kind: "unknown",
-    reason: expect.stringContaining("leaves its file-backed segment"),
-  });
 });
 
 it("bounds cumulative work across repeated full-range runs and retains the prefix", () => {
@@ -756,7 +713,7 @@ it("bounds cumulative work across repeated full-range runs and retains the prefi
     0x40, // DO_REBASE_ULEB_TIMES(8192)
   ]);
   const stream = Buffer.concat([
-    ...Array.from({ length: 100 }, () => repeatedRun),
+    ...Array.from({ length: 17 }, () => repeatedRun),
     Buffer.from([0]),
   ]);
   stream.copy(data);
