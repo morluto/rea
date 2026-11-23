@@ -137,6 +137,81 @@ describe("compiled Apple asset catalog projection", () => {
   });
 });
 
+it("keeps exact matches from outside a cross-catalog page", () => {
+  const catalog = (path: string, sha256: string, records: unknown[]) => ({
+    path,
+    sha256,
+    records: parseAppleAssetCatalogRecords(records),
+  });
+  const catalogs = [
+    catalog("A/Assets.car", "a".repeat(64), [
+      { Name: "Toolbar", RenditionName: "first.png" },
+      { Name: "Middle", RenditionName: "middle.png" },
+    ]),
+    catalog("Empty/Assets.car", "c".repeat(64), []),
+    catalog("B/Assets.car", "b".repeat(64), [
+      { RenditionName: "unnamed.png" },
+      { Name: "Toolbar" },
+      { Name: "toolbar", RenditionName: "different-case.png" },
+    ]),
+  ];
+  const input = {
+    targetSha256: "c".repeat(64),
+    catalogs,
+    resourceReferences: ["Toolbar", "Toolbar", "Missing"].map((key, index) => ({
+      sourceNodeId: `ib:Main.nib:object:${index + 1}`,
+      sourcePath: "Main.nib",
+      sourceArchiveSha256: "d".repeat(64),
+      field: "imageName",
+      key,
+    })),
+  };
+  const page = projectAppleAssetCatalogPage({
+    ...input,
+    offset: 1,
+    limit: 2,
+  });
+  expect(page.total_records).toBe(5);
+  expect(page.next_offset).toBe(3);
+  expect(
+    page.records.map(({ catalog_path, index }) => [catalog_path, index]),
+  ).toEqual([
+    ["A/Assets.car", 1],
+    ["B/Assets.car", 0],
+  ]);
+  const renditions = [
+    {
+      catalog_path: "A/Assets.car",
+      catalog_sha256: "a".repeat(64),
+      record_index: 0,
+      rendition_name: "first.png",
+    },
+    {
+      catalog_path: "B/Assets.car",
+      catalog_sha256: "b".repeat(64),
+      record_index: 1,
+      rendition_name: null,
+    },
+  ];
+  expect(
+    page.resource_key_matches.map(({ status, renditions }) => ({
+      status,
+      renditions,
+    })),
+  ).toEqual([
+    { status: "ambiguous", renditions },
+    { status: "ambiguous", renditions },
+    { status: "unmatched", renditions: [] },
+  ]);
+  const exhausted = projectAppleAssetCatalogPage({
+    ...input,
+    offset: 5,
+    limit: 1,
+  });
+  expect(exhausted.records).toEqual([]);
+  expect(exhausted.resource_key_matches).toEqual(page.resource_key_matches);
+});
+
 it("reports truncation only when a nonempty inventory has omitted records", () => {
   const empty = [{ path: "Assets.car", sha256: "a".repeat(64), records: [] }];
   for (const offset of [0, 1, 5]) {

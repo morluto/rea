@@ -104,6 +104,9 @@ export const appleAssetCatalogResultSchema = bundleResourceBoundResultSchema(
 );
 
 export type AppleAssetCatalogRecord = z.infer<typeof recordSchema>;
+type AssetRenditionMatch = z.infer<
+  typeof resourceKeyMatchSchema.shape.renditions.element
+>;
 
 /** Parse assetutil JSON records without discarding format-specific metadata. */
 export const parseAppleAssetCatalogRecords = (
@@ -152,35 +155,58 @@ export const projectAppleAssetCatalogPage = (input: {
     readonly key: string;
   }[];
 }) => {
-  const all = input.catalogs.flatMap((catalog) =>
-    catalog.records.map((metadata, index): AppleAssetCatalogRecord => ({
-      catalog_path: catalog.path,
-      catalog_sha256: catalog.sha256,
-      index,
-      kind:
-        typeof metadata.RenditionName === "string" ||
-        typeof metadata.Name === "string"
-          ? "rendition"
-          : "catalog",
-      asset_name: typeof metadata.Name === "string" ? metadata.Name : null,
-      rendition_name:
+  const references = input.resourceReferences ?? [];
+  const matchesByKey = new Map<string, AssetRenditionMatch[]>();
+  for (const { key } of references) matchesByKey.set(key, []);
+  const records: AppleAssetCatalogRecord[] = [];
+  let totalRecords = 0;
+  for (const catalog of input.catalogs) {
+    const start = Math.max(0, input.offset - totalRecords);
+    const end = Math.min(
+      catalog.records.length,
+      start + input.limit - records.length,
+    );
+    for (let index = start; index < end; index += 1) {
+      const metadata = catalog.records[index]!;
+      const assetName =
+        typeof metadata.Name === "string" ? metadata.Name : null;
+      const renditionName =
         typeof metadata.RenditionName === "string"
           ? metadata.RenditionName
-          : null,
-      metadata,
-    })),
-  );
-  const records = all.slice(input.offset, input.offset + input.limit);
-  const next = input.offset + records.length;
-  const recordsByAssetName = new Map<string, typeof all>();
-  for (const record of all) {
-    if (record.kind !== "rendition" || record.asset_name === null) continue;
-    const matches = recordsByAssetName.get(record.asset_name) ?? [];
-    matches.push(record);
-    recordsByAssetName.set(record.asset_name, matches);
+          : null;
+      records.push({
+        catalog_path: catalog.path,
+        catalog_sha256: catalog.sha256,
+        index,
+        kind:
+          assetName !== null || renditionName !== null
+            ? "rendition"
+            : "catalog",
+        asset_name: assetName,
+        rendition_name: renditionName,
+        metadata,
+      });
+    }
+    totalRecords += catalog.records.length;
+
+    // Joins still examine off-page renditions, but only retain requested keys.
+    if (matchesByKey.size === 0) continue;
+    for (const [index, metadata] of catalog.records.entries()) {
+      if (typeof metadata.Name !== "string") continue;
+      matchesByKey.get(metadata.Name)?.push({
+        catalog_path: catalog.path,
+        catalog_sha256: catalog.sha256,
+        record_index: index,
+        rendition_name:
+          typeof metadata.RenditionName === "string"
+            ? metadata.RenditionName
+            : null,
+      });
+    }
   }
-  const resourceKeyMatches = (input.resourceReferences ?? []).map((source) => {
-    const matches = recordsByAssetName.get(source.key) ?? [];
+  const next = input.offset + records.length;
+  const resourceKeyMatches = references.map((source) => {
+    const matches = matchesByKey.get(source.key)!;
     return {
       source_node_id: source.sourceNodeId,
       source_path: source.sourcePath,
@@ -193,12 +219,7 @@ export const projectAppleAssetCatalogPage = (input: {
           : matches.length === 1
             ? ("matched" as const)
             : ("ambiguous" as const),
-      renditions: matches.map((record) => ({
-        catalog_path: record.catalog_path,
-        catalog_sha256: record.catalog_sha256,
-        record_index: record.index,
-        rendition_name: record.rendition_name,
-      })),
+      renditions: matches,
     };
   });
   return appleAssetCatalogResultSchema.parse({
@@ -225,13 +246,13 @@ export const projectAppleAssetCatalogPage = (input: {
         record_count: catalogRecords.length,
       }),
     ),
-    total_records: all.length,
+    total_records: totalRecords,
     offset: input.offset,
     limit: input.limit,
     records,
     resource_key_matches: resourceKeyMatches,
-    next_offset: next < all.length ? next : null,
-    truncated: records.length !== all.length,
+    next_offset: next < totalRecords ? next : null,
+    truncated: records.length !== totalRecords,
     limitations: [
       "Rendition metadata is reported as emitted by the installed assetutil version; private fields and platform-specific interpretations are not normalized.",
       "Asset catalog inspection does not decode or extract rendition image bytes.",
