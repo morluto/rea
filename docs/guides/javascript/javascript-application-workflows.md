@@ -145,6 +145,11 @@ shared content remain separate rows with the same canonical node identity.
 These rows select application-graph observations. Semantic relationships and
 semantic unknown records remain in complete parent Evidence and trace tools.
 
+`where.properties` additionally selects exact retained property values, such as
+`[{"key": "operation", "values": ["send"]}]`. Every listed key must be retained
+with one of its JSON scalar values; a missing key or non-scalar value never
+matches, and `values: []` matches none.
+
 Rows follow retained node/observation order. The default offset/limit is 0/64;
 follow `coverage.next_offset`. Page totals count matching retained observations,
 while `source_coverage` preserves caller selection and application/semantic
