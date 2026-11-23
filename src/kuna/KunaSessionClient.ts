@@ -93,10 +93,6 @@ import {
 } from "./KunaProjectFiles.js";
 import {
   KUNA_LAYOUT_NOT_APPLICABLE,
-  kunaDataEntriesMessage,
-  kunaDataEntriesRemediation,
-  kunaDataEntryMessage,
-  kunaDataEntryRemediation,
   kunaDataNameLimitation,
   type KunaDataPlacement,
   kunaEntryLimitations,
@@ -104,11 +100,16 @@ import {
   kunaInventoryLimitations,
   MACHO_LOAD_COMMAND_PREFIX,
   placeKunaEntry,
-  placeKunaInventory,
   readKunaMachoLayout,
   type KunaInventoryLayout,
-  type KunaSelectedPlacement,
 } from "./KunaInventoryPlacement.js";
+import {
+  buildKunaInventoryIndex,
+  isKunaDataAddress,
+  resolveKunaInventoryEntry,
+  type KunaInventoryIndex,
+  type KunaResolvedEntry,
+} from "./KunaInventoryIndex.js";
 import {
   isKunaOperation,
   KUNA_RELATIONSHIP_LIMITATION,
@@ -123,13 +124,6 @@ import { KunaReferenceQueries } from "./KunaReferenceQueries.js";
 import { KunaQueryWork } from "./KunaQueryWork.js";
 import { KunaStringQueries } from "./KunaStringQueries.js";
 import { normalizeKunaAddress } from "./KunaAddress.js";
-import {
-  ambiguousKunaNameMessage,
-  KUNA_PROCEDURE_MISSING_ADDRESS_REMEDIATION,
-  KUNA_PROCEDURE_MISSING_NAME_REMEDIATION,
-  KUNA_XREF_MISSING_NAME_REMEDIATION,
-  missingKunaXrefNameMessage,
-} from "./KunaSelectorGuidance.js";
 import type { RegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
 import type { RegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "./KunaLimits.js";
@@ -151,78 +145,6 @@ const WAIT_PROGRESS_INTERVAL_MS = 10_000;
 type AnswerSource =
   | { readonly kind: "project-export"; readonly project: KunaProject }
   | { readonly kind: "single-function" };
-
-/**
- * Lookups over one inventory as the target's layout classifies it. Every
- * entry stays addressable for names and references; procedure operations
- * refuse the entries the layout places in data.
- */
-interface InventoryIndex {
-  readonly inventory: readonly KunaInventoryFunction[];
-  readonly layout: KunaInventoryLayout;
-  /** The data placement of each entry the layout places in data. */
-  readonly data: ReadonlyMap<KunaInventoryFunction, KunaDataPlacement>;
-  readonly unplaced: ReadonlySet<KunaInventoryFunction>;
-  readonly byAddress: ReadonlyMap<string, KunaInventoryFunction>;
-  readonly byName: ReadonlyMap<string, readonly KunaInventoryFunction[]>;
-}
-
-const addIndexedName = (
-  byName: Map<string, KunaInventoryFunction[]>,
-  name: string,
-  entry: KunaInventoryFunction,
-): void => {
-  const named = byName.get(name);
-  if (named === undefined) byName.set(name, [entry]);
-  else named.push(entry);
-};
-
-const indexInventoryEntryNames = (
-  byName: Map<string, KunaInventoryFunction[]>,
-  entry: KunaInventoryFunction,
-): void => {
-  addIndexedName(byName, entry.name, entry);
-  const { aliases } = entry;
-  if (aliases.length === 0) return;
-  if (aliases.length === 1) {
-    const alias = aliases[0]!;
-    if (alias !== entry.name) addIndexedName(byName, alias, entry);
-    return;
-  }
-  if (aliases.length <= 8) {
-    for (let i = 0; i < aliases.length; i += 1) {
-      const alias = aliases[i]!;
-      if (alias === entry.name) continue;
-      let duplicate = false;
-      for (let j = 0; j < i; j += 1) {
-        if (aliases[j] === alias) {
-          duplicate = true;
-          break;
-        }
-      }
-      if (!duplicate) addIndexedName(byName, alias, entry);
-    }
-    return;
-  }
-  const seen = new Set<string>([entry.name]);
-  for (let i = 0; i < aliases.length; i += 1) {
-    const alias = aliases[i]!;
-    if (!seen.has(alias)) {
-      seen.add(alias);
-      addIndexedName(byName, alias, entry);
-    }
-  }
-};
-
-/**
- * One inventory entry a procedure request selected, with its placement and
- * the classification caveats every answer about it carries.
- */
-interface ResolvedEntry {
-  readonly entry: KunaInventoryFunction;
-  readonly placement: KunaSelectedPlacement;
-  readonly limitations: readonly string[];
-}
 
 /** A queued single-function request found the export finished first. */
 const EXPORT_READY = Symbol("kuna-export-ready");
@@ -414,7 +336,6 @@ const kunaVerificationLimitations = (
       ];
 
 /** Kuna names a procedure by its inventory entry or by an exact entry address. */
-const procedureSelectorSchema = z.string().min(1);
 
 /**
  * One Kuna analysis session for one target.
@@ -479,7 +400,7 @@ export class KunaSessionClient implements AnalysisClient {
     | Promise<readonly KunaInventoryFunction[] | undefined>
     | undefined;
   #reader: KunaProjectReader | undefined;
-  #inventoryIndex: InventoryIndex | undefined;
+  #inventoryIndex: KunaInventoryIndex | undefined;
   #status: KunaExportStatus | undefined;
   #key: string | undefined;
   #exportFailure: string | undefined;
@@ -957,7 +878,7 @@ export class KunaSessionClient implements AnalysisClient {
       // could still own.
       if (
         selectedAddress === undefined ||
-        this.#isDataAddress(index.value, selectedAddress)
+        isKunaDataAddress(index.value, selectedAddress)
       )
         return entry;
       const graph = await this.#references.functionAt(
@@ -1070,7 +991,7 @@ export class KunaSessionClient implements AnalysisClient {
 
   async #callDestinationPseudocode(
     raw: unknown,
-    index: InventoryIndex,
+    index: KunaInventoryIndex,
     installation: KunaInstallation,
     options: ExecutionOptions,
   ): Promise<Result<Answer, AnalysisError>> {
@@ -1520,144 +1441,21 @@ export class KunaSessionClient implements AnalysisClient {
   #resolve(
     operation: string,
     raw: unknown,
-    index: InventoryIndex,
+    index: KunaInventoryIndex,
     field: "procedure" | "address" = "procedure",
-  ): Result<ResolvedEntry, AnalysisError> {
-    const parsed = procedureSelectorSchema.safeParse(raw);
-    if (!parsed.success)
-      return err(
-        new AnalysisInputError(
-          operation,
-          { userMessage: `${field} is required.` },
-          [{ path: [field], reason: "missing_argument" }],
-        ),
-      );
-    const selector = parsed.data;
-    const address = normalizeKunaAddress(selector);
-    const refused = (entry: KunaInventoryFunction) =>
-      field === "procedure" && index.data.has(entry);
-    const dataRefusal = (entry: KunaInventoryFunction) => {
-      const placement = index.data.get(entry)!;
-      return err(
-        new AnalysisInputError(operation, {
-          userMessage: kunaDataEntryMessage(entry, placement),
-          conformsToInputContract: true,
-          remediationAction: kunaDataEntryRemediation(placement),
-        }),
-      );
-    };
-    const selected = (entry: KunaInventoryFunction) => {
-      const placement = placeKunaEntry(index.layout, entry);
-      return ok({
-        entry,
-        placement,
-        limitations:
-          field === "procedure"
-            ? kunaEntryLimitations(index.layout, placement)
-            : [],
-      });
-    };
-    if (address !== undefined) {
-      const entry = index.byAddress.get(address);
-      if (entry === undefined)
-        return err(
-          new AnalysisInputError(
-            operation,
-            {
-              userMessage: `${address} is not a procedure entry Kuna found; list_procedures shows the entries it found.`,
-              remediationAction:
-                operation === "procedure_pseudo_code" &&
-                this.#target.architecture === "arm64" &&
-                kunaExecutableInstructionRegion(index.layout, address) !==
-                  undefined
-                  ? "Use xrefs for the exact address. If Kuna reports a direct call from a discovered procedure, retry procedure_pseudo_code with analysis: call_destination."
-                  : KUNA_PROCEDURE_MISSING_ADDRESS_REMEDIATION,
-              conformsToInputContract: true,
-            },
-            [
-              {
-                path: [field],
-                reason: "invalid_value",
-                message:
-                  "The address was not found in Kuna's procedure inventory.",
-                observed: { [field]: selector },
-              },
-            ],
-          ),
-        );
-      return refused(entry) ? dataRefusal(entry) : selected(entry);
-    }
-    const named = index.byName.get(selector) ?? [];
-    const matches = named.filter((entry) => !refused(entry));
-    if (matches.length === 1 && matches[0] !== undefined)
-      return selected(matches[0]);
-    if (matches.length === 0 && named.length === 1 && named[0] !== undefined)
-      return dataRefusal(named[0]);
-    const missing = named.length === 0;
-    const ambiguous = matches.length > 1;
-    // Read only when every named entry was refused, so each has a data placement.
-    const dataEntries = () =>
-      named.map((entry) => ({ entry, placement: index.data.get(entry)! }));
-    const procedureLookupFailure =
-      field === "procedure" && (missing || ambiguous);
-    const message = missing
-      ? field === "address"
-        ? missingKunaXrefNameMessage(selector)
-        : `Kuna found no procedure named ${selector}; search_procedures finds similar names.`
-      : matches.length === 0
-        ? kunaDataEntriesMessage(selector, dataEntries())
-        : ambiguousKunaNameMessage(
-            selector,
-            matches.map(({ address }) => address),
-          );
-    // An ambiguous name is a typed selector refusal; its recovery is derived.
-    const remediationAction = ambiguous
-      ? undefined
-      : field === "address"
-        ? missing
-          ? KUNA_XREF_MISSING_NAME_REMEDIATION
-          : "Select one of the reported addresses and call xrefs again."
-        : procedureLookupFailure
-          ? KUNA_PROCEDURE_MISSING_NAME_REMEDIATION
-          : matches.length === 0
-            ? kunaDataEntriesRemediation(
-                dataEntries().map(({ placement }) => placement),
-              )
-            : undefined;
-    return err(
-      new AnalysisInputError(
-        operation,
-        {
-          userMessage: message,
-          ...(remediationAction === undefined
-            ? {}
-            : { remediationAction, conformsToInputContract: true }),
-          ...(ambiguous
-            ? {
-                ambiguousSelector: {
-                  field: [field],
-                  candidates: matches.map(({ address }) => address),
-                },
-              }
-            : {}),
-        },
-        procedureLookupFailure
-          ? [
-              {
-                path: [field],
-                reason: "invalid_value",
-                message: "The selector did not identify one procedure entry.",
-                observed: { procedure: selector },
-              },
-            ]
-          : undefined,
-      ),
+  ): Result<KunaResolvedEntry, AnalysisError> {
+    return resolveKunaInventoryEntry(
+      operation,
+      raw,
+      index,
+      this.#target.architecture,
+      field,
     );
   }
 
   async #addressName(
     parameters: Readonly<Record<string, JsonValue>>,
-    index: InventoryIndex,
+    index: KunaInventoryIndex,
     installation: KunaInstallation,
     options: ExecutionOptions,
   ): Promise<Result<Answer, AnalysisError>> {
@@ -2013,7 +1811,7 @@ export class KunaSessionClient implements AnalysisClient {
 
   async #dossier(
     operation: string,
-    { entry, limitations: classification }: ResolvedEntry,
+    { entry, limitations: classification }: KunaResolvedEntry,
     reader: KunaProjectReader,
     installation: KunaInstallation,
     signal: AbortSignal | undefined,
@@ -2158,38 +1956,18 @@ export class KunaSessionClient implements AnalysisClient {
   #index(
     inventory: readonly KunaInventoryFunction[],
     layout: KunaInventoryLayout,
-  ): InventoryIndex {
+  ): KunaInventoryIndex {
     const kept = this.#inventoryIndex;
     if (kept?.inventory === inventory && kept.layout === layout) return kept;
-    const { data, unplaced } = placeKunaInventory(inventory, layout);
-    const byAddress = new Map<string, KunaInventoryFunction>();
-    const byName = new Map<string, KunaInventoryFunction[]>();
-    for (const entry of inventory) {
-      byAddress.set(entry.address, entry);
-      indexInventoryEntryNames(byName, entry);
-    }
-    this.#inventoryIndex = {
-      inventory,
-      layout,
-      data,
-      unplaced,
-      byAddress,
-      byName,
-    };
+    this.#inventoryIndex = buildKunaInventoryIndex(inventory, layout);
     return this.#inventoryIndex;
-  }
-
-  /** Whether the layout places the inventory entry at an address in data. */
-  #isDataAddress(index: InventoryIndex, address: string): boolean {
-    const entry = index.byAddress.get(address);
-    return entry !== undefined && index.data.has(entry);
   }
 
   /** The inventory, classified by the target's layout when it has one. */
   async #ensureIndex(
     installation: KunaInstallation,
     options: ExecutionOptions,
-  ): Promise<Result<InventoryIndex, AnalysisError>> {
+  ): Promise<Result<KunaInventoryIndex, AnalysisError>> {
     const inventory = await this.#ensureInventory(installation, options);
     if (!inventory.ok) return inventory;
     const layout = await this.#ensureLayout(options);
