@@ -5,10 +5,15 @@
 ## [6.11.0](https://github.com/morluto/rea/compare/rea-agents-6.10.1...rea-agents-6.11.0) (2026-11-23)
 
 
+### ⚠ BREAKING CHANGES
+
+* **uefi:** MCP callers that need every volume, file and section inline must pass detail: "complete" to inspect_uefi_firmware.
+
 ### Features
 
 * **adb:** add optional limit and offset paging to list_adb_features and list_adb_services ([#13873](https://github.com/morluto/rea/issues/13873)) ([11a7a34](https://github.com/morluto/rea/commit/11a7a34dfc7748b7cf7efcdc6e6c80b7ba123783))
 * **adb:** add optional limit and offset paging to list_adb_packages, list_adb_processes, and list_adb_directory ([#13843](https://github.com/morluto/rea/issues/13843)) ([dbd6057](https://github.com/morluto/rea/commit/dbd60574541fd57bdc4a9f6952dc740d77a65de5))
+* **analysis-view:** page retained UEFI firmware maps ([fc4c453](https://github.com/morluto/rea/commit/fc4c453683213991d2338b25c6752f24236a3052))
 * **android:** add optional limit and offset paging to search_android_classes ([#13846](https://github.com/morluto/rea/issues/13846)) ([f47dbd9](https://github.com/morluto/rea/commit/f47dbd9351ac8624c409d4e37ea630c1cc35edd9))
 * **android:** pin jadx-headless-mcp 0.8.0 ([3ca89d8](https://github.com/morluto/rea/commit/3ca89d8272b3d8e49580ed261753ad6780df2839))
 * **browser:** accept mitmproxy 12.3.1 for native capture decode ([#8088](https://github.com/morluto/rea/issues/8088)) ([4f43d74](https://github.com/morluto/rea/commit/4f43d7422f5b4666a12570105ff5e25a6df7ec6c))
@@ -340,6 +345,7 @@
 * **elf:** fuse dynamic symbol hardening predicates into single-pass scan with __ prefix pre-filter ([#13513](https://github.com/morluto/rea/issues/13513)) ([8da89da](https://github.com/morluto/rea/commit/8da89da5e4e1959cd83c0c6ffbf9ce5380d80b10))
 * **elf:** fuse initializer section scans into one pass and eliminate symbol-map cloning ([#13475](https://github.com/morluto/rea/issues/13475)) ([366dbc2](https://github.com/morluto/rea/commit/366dbc20bf9e4dd02282c19939cee6c16a6a62f0))
 * **elf:** fuse initializer section scans into one pass and eliminate symbol-map cloning ([#13476](https://github.com/morluto/rea/issues/13476)) ([366dbc2](https://github.com/morluto/rea/commit/366dbc20bf9e4dd02282c19939cee6c16a6a62f0))
+* **elf:** read only needed debug-link section bytes ([#13980](https://github.com/morluto/rea/issues/13980)) ([b7d29e4](https://github.com/morluto/rea/commit/b7d29e45cd33fb909ded9d51b7e5d2e08d26c1c6))
 * **elf:** stream ELF debug-link inspection over FileHandle ([#13928](https://github.com/morluto/rea/issues/13928)) ([8e1e4c3](https://github.com/morluto/rea/commit/8e1e4c3966c3fc7803c8f8a468b3bbaa8feafbf9))
 * **elf:** stream ELF dependency inspection over FileHandle ([#13915](https://github.com/morluto/rea/issues/13915)) ([2c38fd1](https://github.com/morluto/rea/commit/2c38fd16287085867848ce152ae2e57bf68d2015))
 * **elf:** stream ELF note inspection over FileHandle ([#13904](https://github.com/morluto/rea/issues/13904)) ([37c37e3](https://github.com/morluto/rea/commit/37c37e32e7989fe8d5fc0944c9d1d47495071359))
@@ -481,6 +487,7 @@
 * **sqlite:** reuse stateless TextDecoder codecs and skip redundant truncation scan on short pages ([#13274](https://github.com/morluto/rea/issues/13274)) ([264c398](https://github.com/morluto/rea/commit/264c398c0d3299bb4de5a58e23e7f92637a08cdf))
 * **swift:** streamline symbol inventory classification ([#13902](https://github.com/morluto/rea/issues/13902)) ([78756a5](https://github.com/morluto/rea/commit/78756a52b4949125fd181dc9e0d68e7550a0714b))
 * **uefi:** pool framed LZMA worker and fuse single-pass publication ([#13338](https://github.com/morluto/rea/issues/13338)) ([6a20a88](https://github.com/morluto/rea/commit/6a20a88e8149ffe2cd03cd5c1da195defbae652f))
+* **uefi:** summarize firmware inspection by default over MCP ([11ac37a](https://github.com/morluto/rea/commit/11ac37a42ffd9f4036d422f66a369302c7154a60))
 * **uefi:** write LZMA frame headers and bodies separately ([#13768](https://github.com/morluto/rea/issues/13768)) ([6a7767b](https://github.com/morluto/rea/commit/6a7767b609bba770ef43d0b0c574b6d083724888))
 * **v8:** stream V8 code cache inspection over FileHandle ([#13907](https://github.com/morluto/rea/issues/13907)) ([836cb8a](https://github.com/morluto/rea/commit/836cb8a01e1610844a710373e5a495864b476b2e))
 * **views/env:** WeakMap lookup indexes, lazy entityIds, and avoid hot-loop JSON.stringify ([#13747](https://github.com/morluto/rea/issues/13747)) ([fd96dca](https://github.com/morluto/rea/commit/fd96dca95a3b9862f0fe3077e1fadc6d6e6a5948))
@@ -566,6 +573,7 @@
 * **providers:** adopt offlineArtifactFailureDialect in BinaryHardeningProvider and PeBinaryFailure ([#13970](https://github.com/morluto/rea/issues/13970)) ([aaf5acd](https://github.com/morluto/rea/commit/aaf5acd015a58e3a58f774c79e2dfa91d6937f02))
 * **providers:** adopt offlineArtifactFailureDialect in DwarfUnitsProvider ([#13977](https://github.com/morluto/rea/issues/13977)) ([1d6ab40](https://github.com/morluto/rea/commit/1d6ab40c5c7e9d14bcc1ff3606d89619f13ae2ba))
 * **providers:** adopt offlineArtifactFailureDialect in KernelBuildConfigProvider ([#13973](https://github.com/morluto/rea/issues/13973)) ([15f3855](https://github.com/morluto/rea/commit/15f3855a4092ae5ccae0e2ad7fdd9ad6367c95ef))
+* **providers:** adopt offlineArtifactFailureDialect in NativeExportsProvider ([#13982](https://github.com/morluto/rea/issues/13982)) ([352c9ce](https://github.com/morluto/rea/commit/352c9cea1ae947ee4feeddab90ed1c5fa9e4feb5))
 * **providers:** adopt offlineArtifactFailureDialect in NativeInitializers, Go, Rust, and ElfUnwind providers ([#13966](https://github.com/morluto/rea/issues/13966)) ([8e5b041](https://github.com/morluto/rea/commit/8e5b041cb4e13d8641073494c0461ad7ee603a60))
 * **providers:** adopt offlineArtifactFailureDialect in PE, ELF, and Apple IPS providers ([#13954](https://github.com/morluto/rea/issues/13954)) ([fc23eb6](https://github.com/morluto/rea/commit/fc23eb65aaf65532e3a4f6377a92b7e1765f4f6e))
 * **providers:** share offlineArtifactFailureDialect across offline providers ([#13921](https://github.com/morluto/rea/issues/13921)) ([68803f0](https://github.com/morluto/rea/commit/68803f0082055a51a283351d77cff4001a2813f1))
@@ -599,6 +607,7 @@
 * **dev:** clarify how to review duplicate ownership ([fb691dc](https://github.com/morluto/rea/commit/fb691dc98b7384fa9e6dd93f4a459b50c700400c))
 * **development:** document streaming, reader/queue reuse, and O(limit) view hot-path patterns ([#13778](https://github.com/morluto/rea/issues/13778)) ([0f2437c](https://github.com/morluto/rea/commit/0f2437cca384d174a4791d1c0b69bfeee027049e))
 * document per-call pagination, call-graph bounds, and streaming NuGet inspection ([#13851](https://github.com/morluto/rea/issues/13851)) ([46d41e4](https://github.com/morluto/rea/commit/46d41e4b79302539222dc6eeac9e8c36466491a4)), closes [#13850](https://github.com/morluto/rea/issues/13850)
+* **firmware:** describe UEFI summaries and views ([89fc51b](https://github.com/morluto/rea/commit/89fc51ba975e630743f2718d7cac3d4d817cc22c))
 * **ghidra:** link the native build steps for Linux arm64 ([dc10161](https://github.com/morluto/rea/commit/dc10161a9e0663c005fffb038e697306ca224482)), closes [#7018](https://github.com/morluto/rea/issues/7018)
 * **ida:** name the database supervisor's deadlines for long analyses ([6b7b09f](https://github.com/morluto/rea/commit/6b7b09f00808431ac948e2c4eae8222e3b107afd)), closes [#13286](https://github.com/morluto/rea/issues/13286)
 * **install:** describe setup's direct-launch MCP registrations ([c0af3e2](https://github.com/morluto/rea/commit/c0af3e293cd85bfdece21a4e2ce2f7d25ab8e684)), closes [#10252](https://github.com/morluto/rea/issues/10252)
