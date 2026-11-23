@@ -1,3 +1,4 @@
+import { WindowsChangeTimeConfigurationError } from "../config/windowsChangeTimeSettle.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
@@ -16,6 +17,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import {
   withOwnedRegularFile,
   regularFileCancellation,
+  RegularFileCancelled,
   RegularFileCleanupFailure,
   type RegularFileOperationOutcome,
 } from "../filesystem/OwnedRegularFile.js";
@@ -261,6 +263,20 @@ export const readIdaConfiguration = (
         ),
       );
     } catch (cause: unknown) {
+      if (cause instanceof WindowsChangeTimeConfigurationError)
+        return err(cause);
+      const rejection =
+        cause instanceof RegularFileCancelled ||
+        cause instanceof RegularFileCleanupFailure
+          ? completedRegistrationRejection(cause.outcome)
+          : undefined;
+      const cancellation = regularFileCancellation(cause);
+      if (cause instanceof RegularFileCancelled && rejection !== undefined)
+        return err(
+          rejection.retainSecondaryFailure(
+            cancelledBy("ida:registration", carriedReason(cause.reason)),
+          ),
+        );
       if (cause instanceof NonRegularFileReadError)
         return err(
           idaConfigurationError(
@@ -269,8 +285,7 @@ export const readIdaConfiguration = (
           ),
         );
       if (cause instanceof AnalysisCancelledError) throw cause;
-      const cancellation = regularFileCancellation(cause);
-      if (cancellation !== undefined) {
+      if (cancellation !== undefined && rejection === undefined) {
         if (cause instanceof RegularFileCleanupFailure) {
           const error = cancelledBy(
             "ida:registration",
@@ -296,8 +311,7 @@ export const readIdaConfiguration = (
         const primary =
           cause.outcome.kind === "failed"
             ? cause.outcome.cause
-            : (completedRegistrationRejection(cause.outcome) ??
-              cause.cleanupCause);
+            : (rejection ?? cause.cleanupCause);
         const primaryMessage =
           primary instanceof ConfigurationError
             ? primary.message
@@ -319,6 +333,10 @@ export const readIdaConfiguration = (
             },
           ],
         });
+        if (cancellation !== undefined)
+          error.retainSecondaryFailure(
+            cancelledBy("ida:registration", carriedReason(cancellation.reason)),
+          );
         closeLease?.bindCleanupError(error);
         return err(error);
       }

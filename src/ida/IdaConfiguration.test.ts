@@ -125,9 +125,14 @@ it("rejects registration growth beyond the byte limit after descriptor admission
   }
 });
 
-it.each(["admission", "growth"] as const)(
-  "keeps the 64 KiB rejection when the %s size check meets a denied close",
-  async (branch) => {
+it.each([
+  ["admission", "denied"],
+  ["growth", "denied"],
+  ["admission", "cancelled"],
+  ["admission", "cancelled-and-denied"],
+] as const)(
+  "keeps the 64 KiB rejection from the %s size check through a %s close",
+  async (branch, closeOutcome) => {
     const root = await createTestTempDirectory("rea-ida-config-");
     const path = join(root, "mcp.json");
     await writeFile(
@@ -152,33 +157,47 @@ it.each(["admission", "growth"] as const)(
               return source;
             })
         : undefined;
+    const controller = new AbortController();
+    const reason = new Error("cancel while closing the oversized registration");
     const close = OwnedFileHandle.prototype.close;
-    let denied = false;
     const denial = new Error("descriptor close denied");
     const closeSpy = vi
       .spyOn(OwnedFileHandle.prototype, "close")
-      .mockImplementation(function (this: OwnedFileHandle) {
-        if (!denied) {
-          denied = true;
-          return Promise.reject(denial);
-        }
-        return close.call(this);
+      .mockImplementationOnce(function (this: OwnedFileHandle) {
+        if (closeOutcome !== "denied") controller.abort(reason);
+        return closeOutcome === "cancelled"
+          ? close.call(this)
+          : Promise.reject(denial);
       });
     try {
       const result = await readIdaConfiguration(path, {
         resourceScope: owner,
+        signal: controller.signal,
       });
       if (result.ok) throw new Error("expected the size rejection");
       expect(result.error.message).toContain("64 KiB");
-      expect(result.error.cleanup).toMatchObject({
-        reason: expect.stringContaining("descriptor close denied"),
-        resources: [path],
-      });
-      expect(result.error.cleanupIncomplete).toBe(true);
-      expect(retained).toHaveLength(1);
-      await rm(path);
-      await retained[0]!.close();
-      expect(result.error.cleanupIncomplete).toBe(false);
+      if (closeOutcome !== "denied") {
+        expect(result.error.secondaryFailures).toEqual([
+          expect.objectContaining({
+            _tag: "AnalysisCancelledError",
+            cause: reason,
+          }),
+        ]);
+      }
+      if (closeOutcome === "cancelled") {
+        expect(result.error.cleanupIncomplete).toBe(false);
+        expect(retained).toHaveLength(0);
+      } else {
+        expect(result.error.cleanup).toMatchObject({
+          reason: expect.stringContaining("descriptor close denied"),
+          resources: [path],
+        });
+        expect(result.error.cleanupIncomplete).toBe(true);
+        expect(retained).toHaveLength(1);
+        await rm(path);
+        await retained[0]!.close();
+        expect(result.error.cleanupIncomplete).toBe(false);
+      }
     } finally {
       admission?.mockRestore();
       closeSpy.mockRestore();

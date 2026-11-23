@@ -1,9 +1,7 @@
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
-import {
-  requireAnalysisViewRetention,
-  summarizeRetainedAnalysis,
-} from "../application/analysisView/AnalysisViewService.js";
+import { summarizeRetainedAnalysis } from "../application/analysisView/AnalysisViewService.js";
+import { requireAnalysisViewRetention } from "../application/analysisView/AnalysisViewRetention.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ok } from "../domain/result.js";

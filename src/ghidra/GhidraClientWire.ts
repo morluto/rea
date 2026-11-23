@@ -93,7 +93,9 @@ export class GhidraWire {
   }
 
   #refused(cause: ConfigurationError): GhidraSessionError {
-    return this.#options.failure("admission", cause.message, cause);
+    return this.#options.failure("admission", cause.message, cause, {
+      configurationFailure: cause,
+    });
   }
 
   /** Write one authenticated request and return its correlated reply. */
