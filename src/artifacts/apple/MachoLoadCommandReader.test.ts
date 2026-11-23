@@ -940,67 +940,42 @@ describe("Mach-O load command reader: decodes thin-image load commands", () => {
     });
   });
 
-  it("keeps marker-shaped timestamps on legacy lazy dylib commands", async () => {
-    const facts = await read(
-      machoImage({
-        commands: [
-          dylibUseCommand(LC.LAZY_LOAD_DYLIB, "@rpath/libLazy.dylib", 0x09),
-        ],
-      }),
-    );
-    if (facts.status !== "parsed") throw new Error(facts.status);
-    expect(facts.slices[0]?.dependencies[0]).toMatchObject({
-      command: "LC_LAZY_LOAD_DYLIB",
-      encoding: "dylib_command",
-      install_name: "@rpath/libLazy.dylib",
-      weak: false,
-      delayed_init: false,
+  it("decodes modern flags while retaining the classic lazy dependency", async () => {
+    const image = machoImage({
+      commands: [
+        dylibUseCommand(LC.LOAD_DYLIB, "@rpath/delay", 0x8),
+        dylibUseCommand(LC.LOAD_DYLIB, "@rpath/weakup", 0x1 | 0x4),
+        dylibUseCommand(LC.LOAD_DYLIB, "@rpath/reexport", 0x2),
+        dylibUseCommand(LC.LAZY_LOAD_DYLIB, "@rpath/lazy", 0x09),
+      ],
     });
-  });
-
-  it("decodes dylib_use_command flags", async () => {
-    const facts = await read(
-      machoImage({
-        commands: [
-          dylibUseCommand(LC.LOAD_DYLIB, "@rpath/libdelay.dylib", 0x8),
-          dylibUseCommand(LC.LOAD_DYLIB, "@rpath/libweakup.dylib", 0x1 | 0x4),
-          dylibUseCommand(LC.LOAD_DYLIB, "@rpath/libre.dylib", 0x2),
-        ],
-      }),
-    );
+    const facts = await read(image);
     if (facts.status !== "parsed") throw new Error(facts.status);
+    const dependencies = facts.slices[0]?.dependencies;
     expect(
-      facts.slices[0]?.dependencies.map(
-        ({ encoding, weak, upward, reexport, delayed_init: delayed }) => ({
-          encoding,
-          weak,
-          upward,
-          reexport,
-          delayed,
-        }),
-      ),
+      dependencies?.map(({ command, install_name, encoding }) => [
+        command,
+        install_name,
+        encoding,
+      ]),
     ).toEqual([
-      {
-        encoding: "dylib_use_command",
-        weak: false,
-        upward: false,
-        reexport: false,
-        delayed: true,
-      },
-      {
-        encoding: "dylib_use_command",
-        weak: true,
-        upward: true,
-        reexport: false,
-        delayed: false,
-      },
-      {
-        encoding: "dylib_use_command",
-        weak: false,
-        upward: false,
-        reexport: true,
-        delayed: false,
-      },
+      ["LC_LOAD_DYLIB", "@rpath/delay", "dylib_use_command"],
+      ["LC_LOAD_DYLIB", "@rpath/weakup", "dylib_use_command"],
+      ["LC_LOAD_DYLIB", "@rpath/reexport", "dylib_use_command"],
+      ["LC_LAZY_LOAD_DYLIB", "@rpath/lazy", "dylib_command"],
+    ]);
+    expect(
+      dependencies?.map(({ weak, upward, reexport, delayed_init }) => [
+        weak,
+        upward,
+        reexport,
+        delayed_init,
+      ]),
+    ).toEqual([
+      [false, false, false, true],
+      [true, true, false, false],
+      [false, false, true, false],
+      [false, false, false, false],
     ]);
   });
 });
