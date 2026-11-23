@@ -128,6 +128,7 @@ import {
 } from "./AdbShellOutput.js";
 import {
   clientIdentityResult,
+  pageListingItems,
   parsedListingExecution,
   type AdbClientResult,
   type AdbProviderIdentity,
@@ -808,19 +809,22 @@ export class AdbProvider {
         const { packages, unparsedLines } = parsePackageListOutput(
           ran.value.stdout,
         );
+        const page = pageListingItems(packages, "packages", request.input);
         return ok(
           parsedListingExecution(
             {
               client,
               serial: request.input.serial,
               scope: request.input.scope,
-              packages,
+              packages: page.items,
             },
             unparsedLines,
             provider,
             [
               "base_apk_device_path is a device filesystem path, not a host-local path",
+              ...page.limitations,
             ],
+            page.truncated,
           ),
         );
       }
@@ -975,11 +979,19 @@ export class AdbProvider {
         const { columns, processes, unparsedLines } = parseProcessListOutput(
           ran.value.stdout,
         );
+        const page = pageListingItems(processes, "processes", request.input);
         return ok(
           parsedListingExecution(
-            { client, serial: request.input.serial, columns, processes },
+            {
+              client,
+              serial: request.input.serial,
+              columns,
+              processes: page.items,
+            },
             unparsedLines,
             provider,
+            page.limitations,
+            page.truncated,
           ),
         );
       }
@@ -1008,19 +1020,26 @@ export class AdbProvider {
         const { entries, unparsedLines } = parseAdbDirectoryListing(
           ran.value.stdout,
         );
+        const page = pageListingItems(
+          entries,
+          "directory entries",
+          request.input,
+        );
         return ok(
           parsedListingExecution(
             {
               client,
               serial: request.input.serial,
               device_path: request.input.device_path,
-              entries,
+              entries: page.items,
             },
             unparsedLines,
             provider,
             [
               "Entry kinds derive from stat permission mode; directory contents and link targets may change during capture",
+              ...page.limitations,
             ],
+            page.truncated,
           ),
         );
       }

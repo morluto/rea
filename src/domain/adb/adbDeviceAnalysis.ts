@@ -205,6 +205,19 @@ export const activityExtraCliEntrySchema = z
  * every operation addresses devices the caller already connected, through the
  * adb binary the caller selected.
  */
+const listingPagingFields = {
+  limit: z
+    .int()
+    .positive()
+    .optional()
+    .describe("Maximum number of entries to return; omit to return all"),
+  offset: z
+    .int()
+    .nonnegative()
+    .optional()
+    .describe("Zero-based starting entry index; defaults to 0"),
+} as const;
+
 export const adbInputSchemas = {
   inspect_adb_client: z.strictObject({}),
   list_adb_devices: z.strictObject({}),
@@ -223,6 +236,7 @@ export const adbInputSchemas = {
       .describe(
         "Package scope: all packages, third-party only (-3), or system only (-s)",
       ),
+    ...listingPagingFields,
   }),
   pull_adb_package: z.strictObject({
     serial: deviceSerialSchema.describe(
@@ -303,6 +317,7 @@ export const adbInputSchemas = {
     serial: deviceSerialSchema.describe(
       "Device serial exactly as `adb devices` reports it",
     ),
+    ...listingPagingFields,
   }),
   list_adb_directory: z.strictObject({
     serial: deviceSerialSchema.describe(
@@ -315,6 +330,7 @@ export const adbInputSchemas = {
       .describe(
         "Absolute device directory path to list, including hidden children",
       ),
+    ...listingPagingFields,
   }),
   list_adb_features: z.strictObject({
     serial: deviceSerialSchema.describe(
