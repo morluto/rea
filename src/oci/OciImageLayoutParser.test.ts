@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   mkdir,
@@ -2247,6 +2248,41 @@ it("keeps unknown coverage when the reader omits a non-file blob entry", async (
     await reader.close();
   }
 });
+
+it.skipIf(process.platform === "win32")(
+  "counts omitted FIFO entries in entries_examined with a plain DirectoryArtifactReader",
+  async () => {
+    const root = await createTestTempDirectory("rea-oci-fifo-examined-");
+    await writeOciImageLayoutFixture(root);
+    execFileSync("mkfifo", [join(root, "blobs", "sha256", "pipe")]);
+
+    const yielded: string[] = [];
+    const reader = new DirectoryArtifactReader(root);
+    try {
+      for await (const entry of reader.entries(undefined, {
+        descendInto: (path) => path === "blobs" || path.startsWith("blobs/"),
+      }))
+        yielded.push(entry.path);
+
+      const report = ociImageLayoutSchema.parse(
+        await parseOciImageLayout(
+          reader,
+          inspectOciImageLayoutInputSchema.parse({ path: root }),
+        ),
+      );
+      expect(yielded).not.toContain("blobs/sha256/pipe");
+      expect(report.coverage.status).toBe("unknown");
+      expect(report.coverage.entries_examined).toBe(yielded.length + 1);
+      expect(
+        report.limitations.some((limitation) =>
+          limitation.includes("blobs/sha256/pipe (fifo)"),
+        ),
+      ).toBe(true);
+    } finally {
+      await reader.close();
+    }
+  },
+);
 
 it("classifies referenced blobs reported via onOmission as non-regular entries rather than missing", async () => {
   const root = await createTestTempDirectory("rea-oci-omitted-referenced-");

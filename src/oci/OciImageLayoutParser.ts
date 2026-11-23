@@ -995,10 +995,14 @@ const inventoryOciImageLayout = async (
   // Directories outside blobs/ are skipped on purpose; any other omission is
   // an entry the inventory cannot account for.
   const omitted: ArtifactTraversalOmission[] = [];
+  let admittedEntries = 0;
   try {
     for await (const entry of reader.entries(signal, {
       maximumEntries: input.max_entries,
       descendInto: (path) => path === "blobs" || path.startsWith("blobs/"),
+      admitExaminedEntry: () => {
+        admittedEntries += 1;
+      },
       onCoverage: (coverage) => {
         traversal.current = coverage;
       },
@@ -2455,7 +2459,9 @@ const inventoryOciImageLayout = async (
     findings,
     coverage: {
       status: coverageStatus,
-      entries_examined: traversal.current.examinedEntries ?? entries.length,
+      entries_examined:
+        traversal.current.examinedEntries ??
+        Math.max(admittedEntries, entries.length),
       blobs_hashed: blobsHashed,
       json_bytes_read: jsonBytesRead,
     },
