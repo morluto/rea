@@ -10,7 +10,11 @@ import {
   optionalBrowserDeadlineMs,
   selectedBrowserDeadlineMs,
 } from "./browserDeadline.js";
-import { jsonValueSchema, MAX_JSON_DEPTH, ownedJsonValueSchema } from "./jsonValue.js";
+import {
+  jsonValueSchema,
+  MAX_JSON_DEPTH,
+  ownedJsonValueSchema,
+} from "./jsonValue.js";
 import { absoluteLocalPathStringSchema } from "./localPath.js";
 import {
   protobufDecodingSchema,
@@ -443,7 +447,9 @@ export const safeParseOwnedWebNetworkCapture = (
   }
   const normalized = ownedJsonValueSchema.safeParse(parsed.data);
   if (!normalized.success) return parsed;
-  const sealed = freezeOwnedJsonTreeSnapshot(normalized.data) as WebNetworkCapture;
+  const sealed = freezeOwnedJsonTreeSnapshot(
+    normalized.data,
+  ) as WebNetworkCapture;
   validatedImmutableCaptures.set(input, sealed);
   return { success: true, data: sealed };
 };
