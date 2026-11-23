@@ -224,10 +224,16 @@ const ghidraJavaAlternatives = async (
     choices === ""
       ? ""
       : `Installed JDKs within the declared version bounds: ${choices}. Set JAVA_HOME to a candidate and rerun doctor to verify it.`;
-  const limitation = discovery.truncated
-    ? "Installed JDK discovery reached its scan or suggestion limit. Set JAVA_HOME directly to the JDK you want to check and rerun doctor."
-    : "";
-  return [suggestions, limitation].filter(Boolean).join(" ") || undefined;
+  const limitations = discovery.limits.map((limit) =>
+    limit.kind === "location-scan"
+      ? `Installed JDK discovery reached the scan limit of ${limit.limit} JDK homes at ${JSON.stringify(limit.root)}.`
+      : `Installed JDK discovery reached the suggestion limit of ${limit.limit} JDKs.`,
+  );
+  if (limitations.length > 0)
+    limitations.push(
+      "Set JAVA_HOME directly to the JDK you want to check and rerun doctor.",
+    );
+  return [suggestions, ...limitations].filter(Boolean).join(" ") || undefined;
 };
 
 const selectedChecks = (

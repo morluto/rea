@@ -142,7 +142,10 @@ describe("Ghidra doctor JDK alternatives", () => {
     const discover = vi
       .spyOn(installedJdks, "findGhidraInstalledJdks")
       .mockResolvedValue({
-        truncated: true,
+        limits: [
+          { kind: "location-scan", root: "/opt/homebrew/opt", limit: 128 },
+          { kind: "suggestions", limit: 5 },
+        ],
         candidates: [
           {
             home: "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home",
@@ -177,9 +180,16 @@ describe("Ghidra doctor JDK alternatives", () => {
         'JDK 27.0.1 at "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home"',
       ),
     });
-    expect(
-      result.checks.find(({ name }) => name === "java")?.remediation,
-    ).toContain("Set JAVA_HOME directly to the JDK you want to check");
+    const remediation = result.checks.find(
+      ({ name }) => name === "java",
+    )?.remediation;
+    expect(remediation).toContain(
+      'scan limit of 128 JDK homes at "/opt/homebrew/opt"',
+    );
+    expect(remediation).toContain("suggestion limit of 5 JDKs");
+    expect(remediation).toContain(
+      "Set JAVA_HOME directly to the JDK you want to check",
+    );
   });
 
   it("reads candidate versions from files and excludes out-of-range JDKs and runtime-only homes", async () => {
@@ -208,7 +218,7 @@ describe("Ghidra doctor JDK alternatives", () => {
     );
     expect(matches).toEqual({
       candidates: [{ home: join(root, "wrong-name-21"), version: "27.0.1" }],
-      truncated: false,
+      limits: [],
     });
   });
 });

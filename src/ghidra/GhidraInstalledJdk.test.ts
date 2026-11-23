@@ -19,7 +19,7 @@ const directories = vi.hoisted(
       string,
       {
         readonly names?: readonly string[];
-        readonly closeFailure?: Error;
+        readonly closeFault?: () => never;
       }
     >(),
 );
@@ -46,7 +46,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const directory = await actual.opendir(...args);
       const fault = directories.get(String(args[0]));
       if (fault === undefined) return directory;
-      const { names, closeFailure } = fault;
+      const { names, closeFault } = fault;
       if (names !== undefined) {
         const entries = names.values();
         Object.assign(directory, {
@@ -62,12 +62,12 @@ vi.mock("node:fs/promises", async (importOriginal) => {
           },
         });
       }
-      if (closeFailure !== undefined) {
+      if (closeFault !== undefined) {
         const close = directory.close.bind(directory);
         Object.assign(directory, {
           close: async () => {
             await close();
-            throw closeFailure;
+            closeFault();
           },
         });
       }
@@ -98,9 +98,9 @@ const installJdk = async (home: string): Promise<void> => {
     await writeFile(join(home, "bin", binary), "", { mode: 0o755 });
 };
 
-it.each([false, true])(
-  "counts matching names, with extra JDK candidates = %s",
-  async (extraJdks) => {
+it.each([128, 129])(
+  "counts only matching names when a location has %i JDK homes",
+  async (matchingHomes) => {
     const { root, location, resourceOwner } = await fixture();
     const home = join(root, "openjdk@27");
     await installJdk(home);
@@ -108,12 +108,10 @@ it.each([false, true])(
       names: [
         ...Array.from({ length: 130 }, (_, index) => `other-${String(index)}`),
         "openjdk@27",
-        ...(extraJdks
-          ? Array.from(
-              { length: 128 },
-              (_, index) => `openjdk@jdk-${String(index)}`,
-            )
-          : []),
+        ...Array.from(
+          { length: matchingHomes - 1 },
+          (_, index) => `openjdk@jdk-${String(index)}`,
+        ),
       ],
     });
     await expect(
@@ -122,16 +120,41 @@ it.each([false, true])(
       }),
     ).resolves.toEqual({
       candidates: [{ home, version: "27.0.1" }],
-      truncated: extraJdks,
+      limits:
+        matchingHomes > 128
+          ? [{ kind: "location-scan", root, limit: 128 }]
+          : [],
     });
     expect(resourceOwner.retain).not.toHaveBeenCalled();
   },
 );
 
+it("reports both limits when a capped location yields five suggestions", async () => {
+  const { root, location, resourceOwner } = await fixture();
+  const names = Array.from({ length: 129 }, (_, index) => `openjdk-${index}`);
+  const homes = names.slice(0, 6).map((name) => join(root, name));
+  for (const home of homes) await installJdk(home);
+  directories.set(root, { names });
+
+  await expect(
+    findGhidraInstalledJdks([location], requirement, null, { resourceOwner }),
+  ).resolves.toEqual({
+    candidates: homes.slice(0, 5).map((home) => ({ home, version: "27.0.1" })),
+    limits: [
+      { kind: "location-scan", root, limit: 128 },
+      { kind: "suggestions", limit: 5 },
+    ],
+  });
+});
+
 it("retains directory cleanup when the native close outcome is uncertain", async () => {
   const { root, location, resourceOwner } = await fixture();
   const closeFailure = new Error("directory close failed");
-  directories.set(root, { closeFailure });
+  directories.set(root, {
+    closeFault: () => {
+      throw closeFailure;
+    },
+  });
   await expect(
     findGhidraInstalledJdks([location], requirement, null, {
       resourceOwner,
@@ -148,65 +171,82 @@ it("retains directory cleanup when the native close outcome is uncertain", async
   );
 });
 
-it("reports the caller's cancellation and retains a failed release-file close through doctor", async () => {
-  const { root, location } = await fixture();
-  const home = join(root, "openjdk@27");
-  await installJdk(home);
-  const releasePath = posix.join(home, "release");
-  const controller = new AbortController();
-  const reason = new Error("caller stopped during release-file close");
-  const physicalCloseFailure = new Error("release descriptor close failed");
-  const resources = createInspectionResources();
-  const inspected = await installation.inspectGhidraInstallation(
-    {
-      platform: "linux",
-      installDir: "/opt/ghidra",
-      environment: {},
-      resourceOwner: resources.owner,
-    },
-    { ...ghidraProfileInstallationHost, probeJava: () => missingJavaProbe },
-  );
-  const inspect = vi
-    .spyOn(installation, "inspectGhidraInstallation")
-    .mockResolvedValue(inspected);
-  const locations = vi
-    .spyOn(installedJdks, "ghidraJdkLocations")
-    .mockReturnValue([location]);
-  onTestFinished(() => {
-    inspect.mockRestore();
-    locations.mockRestore();
-  });
-  fileCloseFaults.set(normalize(releasePath), () => {
-    controller.abort(reason);
-    throw physicalCloseFailure;
-  });
-
-  try {
-    await inspectSystemGhidraProvider({}, resources.owner, controller.signal);
-    throw new Error("Expected doctor to report a release-file cleanup failure");
-  } catch (failure: unknown) {
-    expect(failure).toMatchObject({
-      cleanupIncomplete: true,
-      cleanupResources: [releasePath],
-      cleanup: {
-        reason: expect.stringContaining(physicalCloseFailure.message),
+it.each(["directory", "release-file"] as const)(
+  "reports the caller's cancellation and retains a failed %s close through doctor",
+  async (kind) => {
+    const { root, location } = await fixture();
+    const home = join(root, "openjdk@27");
+    await installJdk(home);
+    const releasePath = posix.join(home, "release");
+    const failedPath = kind === "directory" ? root : releasePath;
+    const controller = new AbortController();
+    const reason = new Error(`caller stopped during ${kind} close`);
+    const physicalCloseFailure = new Error(`${kind} close failed`);
+    const resources = createInspectionResources();
+    const inspected = await installation.inspectGhidraInstallation(
+      {
+        platform: "linux",
+        installDir: "/opt/ghidra",
+        environment: {},
+        resourceOwner: resources.owner,
       },
-      cleanupPrimary: expect.any(AnalysisCancelledError),
-      diagnostics: { java_probe_failure: { code: "runtime_missing" } },
-    });
-    if (!(failure instanceof Error && "cleanupPrimary" in failure))
-      throw failure;
-    const { cleanupPrimary } = failure;
-    expect(cleanupPrimary instanceof Error && cleanupPrimary.cause).toBe(
-      reason,
+      { ...ghidraProfileInstallationHost, probeJava: () => missingJavaProbe },
     );
-    await resources.close();
-    expect(failure).toMatchObject({
-      cleanupIncomplete: false,
-      cleanupResources: [],
+    const inspect = vi
+      .spyOn(installation, "inspectGhidraInstallation")
+      .mockResolvedValue(inspected);
+    const locations = vi
+      .spyOn(installedJdks, "ghidraJdkLocations")
+      .mockReturnValue([location]);
+    onTestFinished(() => {
+      inspect.mockRestore();
+      locations.mockRestore();
     });
-  } finally {
-    fileCloseFaults.delete(normalize(releasePath));
-    await resources.close();
-  }
-});
+    const closeFault = () => {
+      controller.abort(reason);
+      throw physicalCloseFailure;
+    };
+    if (kind === "directory") directories.set(root, { closeFault });
+    else fileCloseFaults.set(normalize(releasePath), closeFault);
+
+    try {
+      await inspectSystemGhidraProvider({}, resources.owner, controller.signal);
+      throw new Error(`Expected doctor to report a ${kind} cleanup failure`);
+    } catch (failure: unknown) {
+      expect(failure).toMatchObject({
+        cleanupIncomplete: true,
+        cleanupResources: [failedPath],
+        cleanup: {
+          reason: expect.stringContaining(physicalCloseFailure.message),
+        },
+        cleanupPrimary: expect.any(AnalysisCancelledError),
+        diagnostics: { java_probe_failure: { code: "runtime_missing" } },
+      });
+      if (!(failure instanceof Error && "cleanupPrimary" in failure))
+        throw failure;
+      const { cleanupPrimary } = failure;
+      expect(cleanupPrimary instanceof Error && cleanupPrimary.cause).toBe(
+        reason,
+      );
+      if (kind === "directory") {
+        await expect(resources.close()).rejects.toMatchObject({
+          cleanup: { resources: [root] },
+        });
+        expect(failure).toMatchObject({
+          cleanupIncomplete: true,
+          cleanupResources: [root],
+        });
+      } else {
+        await resources.close();
+        expect(failure).toMatchObject({
+          cleanupIncomplete: false,
+          cleanupResources: [],
+        });
+      }
+    } finally {
+      directories.delete(root);
+      fileCloseFaults.delete(normalize(releasePath));
+      if (kind === "release-file") await resources.close();
+    }
+  },
+);

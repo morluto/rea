@@ -1,7 +1,10 @@
 import { constants } from "node:fs";
 import { access, opendir, realpath, stat } from "node:fs/promises";
 import { posix } from "node:path";
-import { cancelledBy } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
@@ -13,6 +16,7 @@ import {
   withArtifactRegularFile,
 } from "../resources/index.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { ghidraFileDialect } from "./GhidraFileArtifacts.js";
 import type { GhidraInstallationFileOptions } from "./GhidraInstallationProperties.js";
 import {
@@ -75,6 +79,16 @@ export const ghidraJdkLocations = (
   ];
 };
 
+type JdkLocationScanLimit = {
+  readonly kind: "location-scan";
+  readonly root: string;
+  readonly limit: number;
+};
+
+type JdkDiscoveryLimit =
+  | JdkLocationScanLimit
+  | { readonly kind: "suggestions"; readonly limit: number };
+
 /** Doctor hints based on installed files. Candidate JVMs are never started. */
 export const findGhidraInstalledJdks = async (
   locations: readonly JdkLocation[],
@@ -83,10 +97,9 @@ export const findGhidraInstalledJdks = async (
   options: GhidraInstallationFileOptions,
 ): Promise<{
   readonly candidates: readonly JdkCandidate[];
-  readonly truncated: boolean;
+  readonly limits: readonly JdkDiscoveryLimit[];
 }> => {
-  if (requirement.unresolved !== null)
-    return { candidates: [], truncated: false };
+  if (requirement.unresolved !== null) return { candidates: [], limits: [] };
   const selected =
     selectedHome !== null && posix.isAbsolute(selectedHome)
       ? await realpath(selectedHome).catch(() => undefined)
@@ -94,12 +107,12 @@ export const findGhidraInstalledJdks = async (
   const seen = new Set<string>();
   if (selected !== undefined) seen.add(selected);
   const candidates: JdkCandidate[] = [];
-  let truncated = false;
+  const limits: JdkDiscoveryLimit[] = [];
   for (const location of locations) {
     const listed = await options.resourceOwner.run(() =>
       listJdkHomes(location, options),
     );
-    truncated ||= listed.truncated;
+    if (listed.limit !== undefined) limits.push(listed.limit);
     for (const home of listed.homes) {
       assertDiscoveryActive(options.signal);
       const candidate = await readJdkCandidate(
@@ -110,11 +123,13 @@ export const findGhidraInstalledJdks = async (
       );
       if (candidate === undefined) continue;
       candidates.push(candidate);
-      if (candidates.length >= MAX_SUGGESTIONS)
-        return { candidates, truncated: true };
+      if (candidates.length === MAX_SUGGESTIONS) {
+        limits.push({ kind: "suggestions", limit: MAX_SUGGESTIONS });
+        return { candidates, limits };
+      }
     }
   }
-  return { candidates, truncated };
+  return { candidates, limits };
 };
 
 const assertDiscoveryActive = (signal: AbortSignal | undefined): void => {
@@ -126,15 +141,15 @@ const listJdkHomes = async (
   { signal, resourceOwner }: GhidraInstallationFileOptions,
 ): Promise<{
   readonly homes: readonly string[];
-  readonly truncated: boolean;
+  readonly limit?: JdkLocationScanLimit;
 }> => {
   assertDiscoveryActive(signal);
   const handle = await opendir(root).catch(() => undefined);
-  if (handle === undefined) return { homes: [], truncated: false };
+  if (handle === undefined) return { homes: [] };
   const directory = new OwnedDirectoryHandle(handle);
   const resources = new ArtifactResourceScope();
   const homes: string[] = [];
-  let truncated = false;
+  let limit: JdkLocationScanLimit | undefined;
   let outcome: { kind: "completed" } | { kind: "failed"; cause: unknown };
   try {
     for (;;) {
@@ -145,7 +160,7 @@ const listJdkHomes = async (
       const home = javaHome(entry.name);
       if (home === undefined) continue;
       if (homes.length === MAX_LOCATION_CANDIDATES) {
-        truncated = true;
+        limit = { kind: "location-scan", root, limit: MAX_LOCATION_CANDIDATES };
         break;
       }
       homes.push(home);
@@ -159,13 +174,25 @@ const listJdkHomes = async (
     resource: root,
     handle: directory,
   });
+  // A completed scan can still be cancelled while its directory is closing.
+  if (outcome.kind === "completed" && signal?.aborted)
+    outcome = { kind: "failed", cause: cancelledBy("ghidra:doctor", signal) };
   if (close.kind === "failed") {
     resourceOwner.retain(resources, root);
-    throw resources.cleanupFailure(outcome, [close]);
+    const cleanup = resources.cleanupFailure(outcome, [close]);
+    if (
+      outcome.kind === "failed" &&
+      outcome.cause instanceof AnalysisCancelledError
+    )
+      throw analysisErrorWithCleanupDependencies(
+        outcome.cause,
+        analysisClientFailureForOperation(cleanup, "ghidra", "doctor"),
+        "doctor",
+      );
+    throw cleanup;
   }
   if (outcome.kind === "failed") throw outcome.cause;
-  assertDiscoveryActive(signal);
-  return { homes, truncated };
+  return { homes, ...(limit === undefined ? {} : { limit }) };
 };
 
 interface JdkCandidate {
