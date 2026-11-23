@@ -17,6 +17,7 @@ import {
 import {
   twoVolumeUbiImage,
   ubiImageWithEmbeddedPebHeaders,
+  ubiImageWithStaticGeometryEvidence,
   ubiImage,
   ubiLayoutPebs,
   ubiLebData,
@@ -1789,6 +1790,45 @@ it.each([
     expect(
       firstRootfs.equals(await reassemble(trailingLebImage, "rootfs")),
     ).toBe(true);
+  },
+);
+
+it("reads both volumes when a full static LEB verifies a wider geometry past an earlier sequence conflict", async () => {
+  const { bytes, wide, rootfsData, kernelData } =
+    ubiImageWithStaticGeometryEvidence(7);
+  const parsed = await image(bytes);
+  expect(parsed.geometry).toMatchObject({ pebSize: wide.pebSize, pebCount: 4 });
+  expect(parsed.volumes).toMatchObject([
+    { name: "rootfs", dataBytes: 126_976 },
+    { name: "kernel", dataBytes: 126_976 },
+  ]);
+  expect((await reassemble(bytes, "rootfs")).equals(rootfsData)).toBe(true);
+  expect((await reassemble(bytes, "kernel")).equals(kernelData)).toBe(true);
+});
+
+it.each(["static CRC mismatch", "extra header in a layout PEB"] as const)(
+  "keeps a sequence conflict fatal with %s",
+  async (failure) => {
+    const { bytes, wide } = ubiImageWithStaticGeometryEvidence(7);
+    if (failure === "static CRC mismatch") {
+      // Change payload beyond the narrower boundary without touching the VID.
+      bytes[2 * wide.pebSize - 1] = 0;
+    } else {
+      // Put a second conflicting EC header beyond the layout table.
+      bytes.copy(
+        bytes,
+        2 * wide.pebSize + 64 * 1024,
+        64 * 1024,
+        64 * 1024 + 64,
+      );
+    }
+    expect(await parse(bytes)).toMatchObject({
+      ok: false,
+      error: {
+        kind: "malformed",
+        message: expect.stringContaining("eraseblock 1 declares image_seq 7"),
+      },
+    });
   },
 );
 

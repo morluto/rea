@@ -284,3 +284,39 @@ export const ubiImageWithEmbeddedPebHeaders = (): Buffer => {
     geometry,
   );
 };
+
+/** A full static LEB establishes the outer geometry of a nested EC header. */
+export const ubiImageWithStaticGeometryEvidence = (
+  imageSeq: number = DEFAULT_GEOMETRY.imageSeq,
+) => {
+  const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
+  const lebBytes = wide.pebSize - wide.dataOffset;
+  const rootfsData = Buffer.alloc(lebBytes, 0x52);
+  ubiImage([{ kind: "free" }], { ...wide, imageSeq })
+    .subarray(0, 64)
+    .copy(rootfsData, 64 * 1024 - wide.dataOffset);
+  const kernelData = Buffer.alloc(lebBytes, 0x53);
+  const bytes = ubiImage(
+    [
+      { kind: "leb", volId: 0, lnum: 0, data: rootfsData, sqnum: 2n },
+      {
+        kind: "leb",
+        volId: 1,
+        lnum: 0,
+        data: kernelData,
+        sqnum: 3n,
+        volType: "static",
+        usedEbs: 1,
+      },
+      ...ubiLayoutPebs(
+        [
+          { id: 0, name: "rootfs", type: "dynamic", reservedPebs: 1 },
+          { id: 1, name: "kernel", type: "static", reservedPebs: 1 },
+        ],
+        wide,
+      ),
+    ],
+    wide,
+  );
+  return { bytes, wide, rootfsData, kernelData };
+};

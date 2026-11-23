@@ -677,6 +677,8 @@ export type UbiPeb =
        * data_size fit, when they do not fit this geometry's LEB.
        */
       readonly vidMinPebSize?: number;
+      /** A static VID whose declared payload crosses this PEB's boundary. */
+      readonly spanningStaticVid?: UbiVidHeader;
     }
   | {
       readonly state: "mapped";
@@ -801,6 +803,11 @@ export const classifyUbiPeb = (
             vidMinPebSize:
               geometry.dataOffset + vid.dataPad + Math.max(vid.dataSize, 1),
           }
+        : {}),
+      ...(vid.volType === VOLUME_TYPE_STATIC &&
+      vid.volId !== UBI_LAYOUT_VOLUME_ID &&
+      vid.dataSize > geometry.lebSize
+        ? { spanningStaticVid: vid }
         : {}),
     });
   return ok({ state: "mapped", eraseCounter, imageSeq, vid });
@@ -1070,7 +1077,7 @@ interface WinningLeb {
 /**
  * Mapped PEBs whose copy_flag marks a wear-leveling copy of a LEB that has
  * another copy. Their data CRC decides which copy wins, so the caller reads
- * `vid.dataSize` bytes at their data offset and checks `ubiCopyDataMatches`.
+ * `vid.dataSize` bytes at their data offset and checks `ubiLebDataMatches`.
  */
 const ubiCopiesToVerify = (pebs: readonly UbiPeb[]): number[] => {
   const copies = new Map<string, number>();
@@ -1091,8 +1098,8 @@ const ubiCopiesToVerify = (pebs: readonly UbiPeb[]): number[] => {
   return indices;
 };
 
-/** Whether a copied LEB's data, `vid.dataSize` bytes, matches its data CRC. */
-const ubiCopyDataMatches = (data: Uint8Array, vid: UbiVidHeader): boolean =>
+/** Whether a LEB's full declared payload matches its data CRC. */
+const ubiLebDataMatches = (data: Uint8Array, vid: UbiVidHeader): boolean =>
   data.length === vid.dataSize && ubiCrc(data) === vid.dataCrc;
 
 /**
@@ -1424,20 +1431,24 @@ interface UbiPebCandidateCheck {
  * passed-over candidate grid lies outside every mapped non-layout LEB's data
  * area; it stays retryable so the caller keeps the first failure unless a
  * later geometry explains every passed-over header. With a valid table, a
- * PEB error stays fatal unless its header lies in the continuation of an
- * undersized LEB, within the minimum span required by its CRC-valid VID
- * header. An undersized LEB in an otherwise valid candidate also allows a
- * retry, with the candidate image kept as a fallback.
+ * PEB error allows a retry when its header lies in the minimum span of an
+ * undersized LEB's continuation, or a static LEB's payload crosses the
+ * candidate boundary and verifies against its data CRC. The later geometry
+ * still has to account for passed-over headers. An undersized LEB in an
+ * otherwise valid candidate allows a retry with the image kept as a fallback.
  */
-const judgeUbiPebCandidate = ({
-  geometry,
-  pebs,
-  tableCopies,
-  verifiedCopies,
-  pebError,
-  smallerGridError,
-  passedOverHeaderOffset = null,
-}: UbiPebCandidateCheck): UbiPebCandidateVerdict => {
+const judgeUbiPebCandidate = async (
+  ctx: UbiParseContext,
+  {
+    geometry,
+    pebs,
+    tableCopies,
+    verifiedCopies,
+    pebError,
+    smallerGridError,
+    passedOverHeaderOffset = null,
+  }: UbiPebCandidateCheck,
+): Promise<UbiPebCandidateVerdict> => {
   if (smallerGridError !== null)
     return { state: "reject", error: smallerGridError };
   const table = parseUbiVolumeTable(tableCopies, geometry);
@@ -1455,8 +1466,24 @@ const judgeUbiPebCandidate = ({
     const distance = errorOffset - index * geometry.pebSize;
     return distance >= geometry.pebSize && distance < peb.vidMinPebSize;
   });
-  if (pebError !== null)
-    return { state: undersized !== -1 ? "retry" : "reject", error: pebError };
+  if (pebError !== null) {
+    if (undersized !== -1) return { state: "retry", error: pebError };
+    for (const [index, peb] of pebs.entries()) {
+      if (peb.state !== "corrupt" || peb.spanningStaticVid === undefined)
+        continue;
+      const vid = peb.spanningStaticVid;
+      const offset = index * geometry.pebSize + geometry.dataOffset;
+      if (
+        geometry.dataOffset + vid.dataSize + vid.dataPad > UBI_MAX_PEB_BYTES ||
+        offset + vid.dataSize > ctx.fileSize
+      )
+        continue;
+      await ctx.checkpoint?.(true);
+      if (ubiLebDataMatches(await ctx.read(offset, vid.dataSize), vid))
+        return { state: "retry", error: pebError };
+    }
+    return { state: "reject", error: pebError };
+  }
   if (passedOverHeaderOffset !== null)
     return {
       state: "retry",
@@ -1627,7 +1654,7 @@ const readVerifiedUbiTableCopies = async (
       index * geometry.pebSize + geometry.dataOffset,
       peb.vid.dataSize,
     );
-    if (ubiCopyDataMatches(data, peb.vid)) verifiedCopies.add(index);
+    if (ubiLebDataMatches(data, peb.vid)) verifiedCopies.add(index);
   }
   const tableBytes = ubiVolumeTableBytes(geometry);
   const copies: (Uint8Array | null)[] = [];
@@ -1696,7 +1723,7 @@ const evaluateUbiPebCandidate = async (
     passedOver.length > 0
       ? await findPassedOverBoundary(ctx, geometry, pebs, passedOver)
       : null;
-  return judgeUbiPebCandidate({
+  return judgeUbiPebCandidate(ctx, {
     geometry,
     pebs,
     tableCopies,

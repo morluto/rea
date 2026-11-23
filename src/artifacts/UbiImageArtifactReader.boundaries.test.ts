@@ -11,6 +11,7 @@ import {
   twoVolumeUbiImage,
   ubiImage,
   ubiImageWithEmbeddedPebHeaders,
+  ubiImageWithStaticGeometryEvidence,
   ubiLayoutPebs,
 } from "../domain/firmware/ubiImage.fixture.js";
 import {
@@ -559,57 +560,34 @@ it("retries past a dividing 64 KiB EC header in a dynamic first LEB when the vol
   }
 });
 
-it("retries past a dividing 64 KiB EC header when a CRC-valid static VID needs 128 KiB eraseblocks", async () => {
-  const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
-  const lebBytes = wide.pebSize - wide.dataOffset;
-  const rootfsData = Buffer.alloc(lebBytes, 0x52);
-  ubiImage([{ kind: "free" }], wide)
-    .subarray(0, 64)
-    .copy(rootfsData, 64 * 1024 - wide.dataOffset);
-  const kernelData = Buffer.alloc(lebBytes, 0x53);
-  const bytes = ubiImage(
-    [
-      { kind: "leb", volId: 0, lnum: 0, data: rootfsData, sqnum: 2n },
-      {
-        kind: "leb",
-        volId: 1,
-        lnum: 0,
-        data: kernelData,
-        sqnum: 3n,
-        volType: "static",
-        usedEbs: 1,
-      },
-      ...ubiLayoutPebs(
-        [
-          { id: 0, name: "rootfs", type: "dynamic", reservedPebs: 1 },
-          { id: 1, name: "kernel", type: "static", reservedPebs: 1 },
-        ],
-        wide,
-      ),
-    ],
-    wide,
-  );
-  expect(bytes.length).toBe(4 * wide.pebSize);
-  const reader = new UbiImageArtifactReader(await fixture(bytes));
-  try {
-    const volumes = await entries(reader);
-    expect(reader.formatMetadata()).toMatchObject({
-      peb_size: 131_072,
-      peb_count: 4,
-      corrupt_peb_count: 0,
-    });
-    expect(volumes).toMatchObject([
-      { path: "volumes/rootfs", declaredSize: lebBytes },
-      { path: "volumes/kernel", declaredSize: lebBytes },
-    ]);
-    const rootfs = await buffer(await reader.open(volumes[0]!));
-    expect(rootfs.equals(rootfsData)).toBe(true);
-    const kernel = await buffer(await reader.open(volumes[1]!));
-    expect(kernel.equals(kernelData)).toBe(true);
-  } finally {
-    await reader.close();
-  }
-});
+it.each([undefined, 7])(
+  "reads both volumes past a nested 64 KiB EC header with image_seq override %s",
+  async (imageSeq) => {
+    const { bytes, wide, rootfsData, kernelData } =
+      ubiImageWithStaticGeometryEvidence(imageSeq);
+    const lebBytes = wide.pebSize - wide.dataOffset;
+    expect(bytes.length).toBe(4 * wide.pebSize);
+    const reader = new UbiImageArtifactReader(await fixture(bytes));
+    try {
+      const volumes = await entries(reader);
+      expect(reader.formatMetadata()).toMatchObject({
+        peb_size: 131_072,
+        peb_count: 4,
+        corrupt_peb_count: 0,
+      });
+      expect(volumes).toMatchObject([
+        { path: "volumes/rootfs", declaredSize: lebBytes },
+        { path: "volumes/kernel", declaredSize: lebBytes },
+      ]);
+      const rootfs = await buffer(await reader.open(volumes[0]!));
+      expect(rootfs.equals(rootfsData)).toBe(true);
+      const kernel = await buffer(await reader.open(volumes[1]!));
+      expect(kernel.equals(kernelData)).toBe(true);
+    } finally {
+      await reader.close();
+    }
+  },
+);
 
 it("refuses a retry that would swallow neighboring eraseblock boundaries inside layout PEBs", async () => {
   const g = { pebSize: 64 * 1024, dataOffset: 4096 };
