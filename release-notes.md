@@ -348,6 +348,7 @@
 * **elf:** fuse initializer section scans into one pass and eliminate symbol-map cloning ([#13475](https://github.com/morluto/rea/issues/13475)) ([366dbc2](https://github.com/morluto/rea/commit/366dbc20bf9e4dd02282c19939cee6c16a6a62f0))
 * **elf:** fuse initializer section scans into one pass and eliminate symbol-map cloning ([#13476](https://github.com/morluto/rea/issues/13476)) ([366dbc2](https://github.com/morluto/rea/commit/366dbc20bf9e4dd02282c19939cee6c16a6a62f0))
 * **elf:** read only needed debug-link section bytes ([#13980](https://github.com/morluto/rea/issues/13980)) ([b7d29e4](https://github.com/morluto/rea/commit/b7d29e45cd33fb909ded9d51b7e5d2e08d26c1c6))
+* **elf:** reuse proven symbol suffixes in unwind lookup ([#14014](https://github.com/morluto/rea/issues/14014)) ([33b4563](https://github.com/morluto/rea/commit/33b4563a3e49e27296fb16fa324cb252878e04c4))
 * **elf:** stream ELF debug-link inspection over FileHandle ([#13928](https://github.com/morluto/rea/issues/13928)) ([8e1e4c3](https://github.com/morluto/rea/commit/8e1e4c3966c3fc7803c8f8a468b3bbaa8feafbf9))
 * **elf:** stream ELF dependency inspection over FileHandle ([#13915](https://github.com/morluto/rea/issues/13915)) ([2c38fd1](https://github.com/morluto/rea/commit/2c38fd16287085867848ce152ae2e57bf68d2015))
 * **elf:** stream ELF note inspection over FileHandle ([#13904](https://github.com/morluto/rea/issues/13904)) ([37c37e3](https://github.com/morluto/rea/commit/37c37e32e7989fe8d5fc0944c9d1d47495071359))
