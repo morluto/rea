@@ -198,15 +198,14 @@ export const readRustWasmSectionsFromReader = async (
           "WebAssembly custom section name extends past its section",
           { offset: payloadStart, field: "custom section name" },
         );
-      const name = await readSlice(nameStart, nameLen.value);
-      if (!isUtf8(name))
-        throw malformedInput(
-          WASM_FORMAT,
-          "WebAssembly custom section name is not valid UTF-8",
-          { offset: nameStart, field: "custom section name" },
-        );
+      const matches = await isDependencyName(
+        readSlice,
+        nameStart,
+        nameLen.value,
+        pause,
+      );
       const payload = nameStart + nameLen.value;
-      if (name.equals(DEPENDENCY_SECTION)) {
+      if (matches) {
         dependencies.push({ offset: payload, size: end - payload });
         if (dependencies.length === 2) break;
       }
@@ -222,6 +221,57 @@ export const readRustWasmSectionsFromReader = async (
     cursor = end;
   }
   return { dependency_sections: dependencies, data_section: data };
+};
+
+const WASM_NAME_CHUNK_BYTES = 64 * 1024;
+
+const invalidNameUtf8 = (offset: number) =>
+  malformedInput(
+    WASM_FORMAT,
+    "WebAssembly custom section name is not valid UTF-8",
+    {
+      offset,
+      field: "custom section name",
+    },
+  );
+
+/** Validate opaque names without retaining their text or losing a split code point. */
+const isDependencyName = async (
+  readRange: (offset: number, length: number) => Promise<Buffer>,
+  offset: number,
+  size: number,
+  pause: ZstandardFramePause | undefined,
+): Promise<boolean> => {
+  if (size <= WASM_NAME_CHUNK_BYTES) {
+    const bytes = await readRange(offset, size);
+    if (bytes.length !== size)
+      throw truncatedInput(
+        WASM_FORMAT,
+        "WebAssembly custom section name read ended early",
+        { offset, field: "custom section name" },
+      );
+    if (!isUtf8(bytes)) throw invalidNameUtf8(offset);
+    return bytes.equals(DEPENDENCY_SECTION);
+  }
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  for (let at = 0; at < size; at += WASM_NAME_CHUNK_BYTES) {
+    if (at > 0) await pause?.();
+    const length = Math.min(WASM_NAME_CHUNK_BYTES, size - at);
+    const bytes = await readRange(offset + at, length);
+    if (bytes.length !== length)
+      throw truncatedInput(
+        WASM_FORMAT,
+        "WebAssembly custom section name read ended early",
+        { offset: offset + at, field: "custom section name" },
+      );
+    try {
+      decoder.decode(bytes, { stream: at + length < size });
+    } catch (cause) {
+      if (!(cause instanceof TypeError)) throw cause;
+      throw invalidNameUtf8(offset);
+    }
+  }
+  return false;
 };
 
 /** Decode a custom section's UTF-8 name and locate the payload that follows it. */
@@ -242,12 +292,7 @@ const customSection = (
     );
   const payload = length.end + length.value;
   const name = bytes.subarray(length.end, payload);
-  if (!isUtf8(name))
-    throw malformedInput(
-      WASM_FORMAT,
-      "WebAssembly custom section name is not valid UTF-8",
-      { offset: length.end, field: "custom section name" },
-    );
+  if (!isUtf8(name)) throw invalidNameUtf8(length.end);
   return { name, payload };
 };
 

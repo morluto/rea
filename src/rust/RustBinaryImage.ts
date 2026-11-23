@@ -20,8 +20,8 @@ import {
 } from "../domain/rust/rustBinary.js";
 import { RUST_PRODUCER_DEFAULTS } from "../domain/rust/rustResourceLimits.js";
 import {
-  assertAuditableSectionSize,
   readAuditableSection,
+  readAuditableSectionFromReader,
   RUST_AUDITABLE_FORMAT,
 } from "./RustAuditableReader.js";
 import {
@@ -139,24 +139,19 @@ export const readRustBinaryImageFromHandle = async (
         ),
       );
   const { section_name, dependency, compiler_strings, ...identity } = layout;
-  let auditable_metadata: RustAuditableMetadata | null = null;
-  if (dependency !== null) {
-    assertAuditableSectionSize(dependency.size, dependency.peFileAlignment);
-    const depBytes = await readSlice(
-      source,
-      dependency.offset,
-      dependency.size,
-    );
-    auditable_metadata = readAuditableSection(
-      section_name,
-      dependency.offset,
-      depBytes,
-      {
-        maxOutputBytes: effectiveMaxOutputBytes,
-        peFileAlignment: dependency.peFileAlignment,
-      },
-    );
-  }
+  const auditable_metadata =
+    dependency === null
+      ? null
+      : await readAuditableSectionFromReader(
+          section_name,
+          dependency,
+          (offset, length) => readSlice(source, offset, length),
+          pause,
+          {
+            maxOutputBytes: effectiveMaxOutputBytes,
+            peFileAlignment: dependency.peFileAlignment,
+          },
+        );
   const rustc_commit = await rustcCommitFromReader(
     source,
     compiler_strings,
