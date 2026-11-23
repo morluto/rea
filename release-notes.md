@@ -14,9 +14,12 @@
 
 * **adb:** add optional limit and offset paging to list_adb_features and list_adb_services ([#13873](https://github.com/morluto/rea/issues/13873)) ([11a7a34](https://github.com/morluto/rea/commit/11a7a34dfc7748b7cf7efcdc6e6c80b7ba123783))
 * **adb:** add optional limit and offset paging to list_adb_packages, list_adb_processes, and list_adb_directory ([#13843](https://github.com/morluto/rea/issues/13843)) ([dbd6057](https://github.com/morluto/rea/commit/dbd60574541fd57bdc4a9f6952dc740d77a65de5))
+* **analysis-view:** count distinct retained JavaScript fact values ([e19dbcf](https://github.com/morluto/rea/commit/e19dbcf857e98f402b61b1ef793dd62d9929426a))
 * **analysis-view:** filter native exports and ELF dependencies by name prefix ([a148da5](https://github.com/morluto/rea/commit/a148da56ccfb370e7a638832c2a1290fb208ca63))
 * **analysis-view:** page retained UEFI extraction manifests ([5e8388a](https://github.com/morluto/rea/commit/5e8388a655e2eae83c31e6e21a611c2fc9910156))
 * **analysis-view:** page retained UEFI firmware maps ([fc4c453](https://github.com/morluto/rea/commit/fc4c453683213991d2338b25c6752f24236a3052))
+* **analysis-view:** select inventory occurrences by artifact kind ([e128a69](https://github.com/morluto/rea/commit/e128a69c2fd2bd51125eb36d479d7e573d07267b))
+* **analysis-view:** select retained JavaScript facts by property value ([25e93a8](https://github.com/morluto/rea/commit/25e93a8139abf3ad398d0366d84c53c75fcd0d82))
 * **android:** add optional limit and offset paging to search_android_classes ([#13846](https://github.com/morluto/rea/issues/13846)) ([f47dbd9](https://github.com/morluto/rea/commit/f47dbd9351ac8624c409d4e37ea630c1cc35edd9))
 * **android:** pin jadx-headless-mcp 0.8.0 ([3ca89d8](https://github.com/morluto/rea/commit/3ca89d8272b3d8e49580ed261753ad6780df2839))
 * **browser:** accept mitmproxy 12.3.1 for native capture decode ([#8088](https://github.com/morluto/rea/issues/8088)) ([4f43d74](https://github.com/morluto/rea/commit/4f43d7422f5b4666a12570105ff5e25a6df7ec6c))
@@ -673,6 +676,7 @@
 
 ### Documentation
 
+* **analysis-view:** qualify javascript-fact-groups readback to scalar values ([1dc1c20](https://github.com/morluto/rea/commit/1dc1c20cd614d38a8bfe8ef23d0cea4e391fc561))
 * **artifacts:** explain the per-file verification cost of extraction ([#12745](https://github.com/morluto/rea/issues/12745)) ([6878c17](https://github.com/morluto/rea/commit/6878c17a833e6a595d4f80e47e98c256d60ca9c0))
 * **cli:** explain Ghidra annotation lifetime in command help ([f8192bd](https://github.com/morluto/rea/commit/f8192bd39d233ccf6e3dd8fd06b1e21082316ddf)), closes [#8242](https://github.com/morluto/rea/issues/8242)
 * **cli:** list the desktop_build doctor scope in provider selection ([4bd9327](https://github.com/morluto/rea/commit/4bd9327325b75a4632a3a50f0500ae2bfbd00718)), closes [#10251](https://github.com/morluto/rea/issues/10251)
