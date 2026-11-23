@@ -103,7 +103,7 @@ Coordinate expensive checks across agents. If a test unexpectedly consumes heavy
 
 ## Tool and Test Changes
 
-For tool design, follow [docs/development/tool-design.md](docs/development/tool-design.md): start from the analyst question, reuse existing contracts, preserve caller choices, and return useful evidence inline. Limits must follow real format, protocol, authority, or resource constraints. Account for representation expansion before allocation; derive completeness from examined coverage.
+For tool design, follow [docs/development/tool-design.md](docs/development/tool-design.md): start from the analyst question, reuse existing contracts, preserve caller choices, and return useful evidence inline. Admission limits, which refuse or stop work, must follow real format, protocol, authority, or resource constraints; delivery budgets size inline output for the consumer, never refuse, and keep the complete result retrievable. Account for representation expansion before allocation; derive completeness from examined coverage.
 
 Choose the scope of a new limit from [analysis settings, limits, and recovery](docs/reference/limits-and-recovery.md).
 A registered runtime setting may have an optional launch seed. Per-call and

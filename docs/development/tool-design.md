@@ -337,8 +337,9 @@ entry points. Trace where it is established, which consumers rely on it,
 and where fallback, retry, or cleanup can change the outcome. Search for
 other code that derives the same fact or claims the same responsibility.
 Different implementations can still make the same decision independently.
-Sibling readers of one format share its header parser and its admission rules.
-A second, stricter copy rejects inputs the other readers accept.
+Sibling readers of one format share its header parser and the structural checks
+for the fields they read. Each operation keeps its own required fields and
+admission policy; don't duplicate parsing to enforce those differences.
 
 Have the owner carry the result, its source and scope, and any uncertainty.
 Each consumer applies its own policy to those shared facts. Keep proof of
