@@ -25,31 +25,14 @@ import {
   createVerifierRun,
 } from "./lib/verifier-run.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
+import {
+  hasDeepSeekFinalEvent,
+  hasDeepSeekSkillBody,
+} from "./verify/clients/deepseek-evidence.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const expectedFinal = "REA_CLIENT_COMPATIBILITY_OK";
-
-// The headless --json producer emits newline-delimited events and ends
-// the projection with exactly one final event carrying the full answer.
-function hasExpectedHeadlessFinal(stdout) {
-  let start = 0;
-  while (start < stdout.length) {
-    const end = stdout.indexOf("\n", start);
-    if (end === -1) return false;
-    let event;
-    try {
-      event = JSON.parse(stdout.slice(start, end));
-    } catch {
-      return false;
-    }
-    if (typeof event?.type !== "string") return false;
-    if (event.type === "final")
-      return end + 1 === stdout.length && event.text === expectedFinal;
-    start = end + 1;
-  }
-  return false;
-}
 
 const mode = process.argv[2] ?? "call";
 assert(["chat", "call"].includes(mode), "Select chat or call.");
@@ -202,34 +185,13 @@ await withVerifierCleanup(async () => {
         const toolMessages = (body.messages ?? []).filter(
           (message) => message.role === "tool",
         );
-        skillLoaded ||= toolMessages.some((message) => {
-          if (
-            typeof message.content !== "string" ||
-            expectedSkillBody === undefined
-          )
-            return false;
-          const open =
-            '<skill_content name="reverse-engineer-anything">\n<skill_resources>\n';
-          const start = message.content.indexOf(open);
-          if (start < 0) return false;
-          const resourcesStart = start + open.length;
-          const instructions = `\n</skill_resources>\n\n<skill_instructions>\n${expectedSkillBody}\n</skill_instructions>\n</skill_content>`;
-          const resourcesEnd = message.content.indexOf(
-            instructions,
-            resourcesStart,
+        skillLoaded ||=
+          expectedSkillBody !== undefined &&
+          hasDeepSeekSkillBody(
+            toolMessages,
+            dirname(skillPath),
+            expectedSkillBody,
           );
-          if (resourcesEnd < 0) return false;
-          const expectedPath = dirname(skillPath)
-            .replaceAll("&", "&amp;")
-            .replaceAll("<", "&lt;")
-            .replaceAll(">", "&gt;");
-          const resources = message.content.slice(resourcesStart, resourcesEnd);
-          return (
-            !resources.includes("</skill_content>") &&
-            !resources.includes("</skill_resources>") &&
-            resources.includes(expectedPath)
-          );
-        });
         for (const message of toolMessages) {
           const found = findClientResult(
             message.content,
@@ -385,10 +347,13 @@ await withVerifierCleanup(async () => {
           .catch((cause) => {
             const stdout = cause?.snapshot?.stdout;
             if (stdout !== undefined && stdout.bytes === stdout.observedBytes)
-              clientFinalSeen = hasExpectedHeadlessFinal(stdout.text);
+              clientFinalSeen = hasDeepSeekFinalEvent(
+                stdout.text,
+                expectedFinal,
+              );
             throw cause;
           });
-        clientFinalSeen = hasExpectedHeadlessFinal(result.stdout);
+        clientFinalSeen = hasDeepSeekFinalEvent(result.stdout, expectedFinal);
         return result;
       },
       {

@@ -145,6 +145,33 @@ shared content remain separate rows with the same canonical node identity.
 These rows select application-graph observations. Semantic relationships and
 semantic unknown records remain in complete parent Evidence and trace tools.
 
+`where.properties` additionally selects exact retained property values, such as
+`[{"key": "operation", "values": ["send"]}]`. Every listed key must be retained
+with one of its JSON scalar values; a missing key or non-scalar value never
+matches, and `values: []` matches none.
+
+To count distinct values instead of paging observations, use
+`javascript-fact-groups` with the same `where` and the property names to group
+by:
+
+```json
+{
+  "kind": "javascript-fact-groups",
+  "where": { "paths": ["preload.js"], "kinds": ["ipc-channel"] },
+  "group_by": ["operation", "channel"]
+}
+```
+
+Each row reports one distinct combination with its `observation_count` and
+`node_count`. A missing key is omitted from the combination, distinct from a
+retained null such as an unresolved dynamic channel. Rows are ordered by the
+canonical JSON of their values; the default offset/limit is 0/256 and the page
+total counts distinct combinations. When every grouped value is a present JSON
+scalar, read that group's observations, with provenance, through
+`javascript-facts` and the same `where` plus matching `where.properties`.
+`where.properties` cannot select array, object or missing values, so read
+such groups by paging `javascript-facts` with the same `where`.
+
 Rows follow retained node/observation order. The default offset/limit is 0/64;
 follow `coverage.next_offset`. Page totals count matching retained observations,
 while `source_coverage` preserves caller selection and application/semantic
@@ -244,6 +271,10 @@ remain opt-in through `include_ambiguous_dynamic_edges`.
 
 Destructuring retains dependencies from the source slots proved at the time
 of the read. A later write does not replace an earlier proved dependency.
+After a nested pattern is proved to receive a nullish value and throw, later
+bindings in that pattern retain candidate paths with no proven initializer.
+If the selected slot is known to be undefined, the proof includes the nested
+pattern's default initializer.
 A numeric key in an object pattern selects a named property directly.
 Nested array patterns can preserve dependencies for later bindings when
 element selection is known and iterator closing cannot invoke a return hook.

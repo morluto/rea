@@ -173,3 +173,49 @@ it.each([
     );
   },
 );
+
+it.each([false, true])(
+  "reuses the caller prefix and fills a firmware image directly (short file: %s)",
+  async (shortFile) => {
+    const { probeUefiFlashImage } = await import("./UefiFormatProbe.js");
+    const probeBytes = 1024 * 1024;
+    const volume = buildFv({ files: [] }).buffer;
+    const volumeAt = probeBytes - 128;
+    const physicalLength = shortFile ? probeBytes + 128 : probeBytes + 8192;
+    const image = Buffer.alloc(physicalLength);
+    volume.copy(image, volumeAt);
+
+    const reads: { position: number; storage: ArrayBufferLike }[] = [];
+    const handle = {
+      async read(
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) {
+        reads.push({ position, storage: buffer.buffer });
+        const end = Math.min(
+          position + length,
+          position + 512 * 1024,
+          image.length,
+        );
+        return { bytesRead: image.copy(buffer, offset, position, end), buffer };
+      },
+    } as import("node:fs/promises").FileHandle;
+    const retained = image.subarray(0, 64);
+    await expect(
+      probeUefiFlashImage(handle, undefined, {
+        fileSize: probeBytes + 8192,
+        prefix: retained,
+      }),
+    ).resolves.toBe(!shortFile);
+
+    expect(reads.map(({ position }) => position)).toEqual(
+      shortFile
+        ? [64, 64 + 512 * 1024, probeBytes, physicalLength]
+        : [64, 64 + 512 * 1024, probeBytes],
+    );
+    expect(reads[0]?.storage).toBe(reads[1]?.storage);
+    expect(reads[2]?.storage.byteLength).toBe(probeBytes + 8192);
+  },
+);

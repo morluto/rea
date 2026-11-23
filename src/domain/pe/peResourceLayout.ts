@@ -1,3 +1,4 @@
+import { indexPeSectionRvas } from "./peSectionRvaIndex.js";
 import {
   PE_RESOURCE_DATA_ENTRY_BYTES,
   PE_RESOURCE_DIRECTORY_BYTES,
@@ -38,26 +39,20 @@ interface Section {
 const virtualExtent = (section: Section): number =>
   section.virtualSize === 0 ? section.size : section.virtualSize;
 
-// Intersection normalized with those ownership rules: a section without
-// virtual extent owns no byte and never conflicts, while an empty resource
-// owns exactly its start point, so a positive-extent section starting there
-// conflicts with header-backed ownership of the same RVA.
-const intersectsResource = (
-  section: Section,
-  rva: number,
-  size: number,
-): boolean => {
-  const extent = virtualExtent(section);
-  return (
-    extent > 0 &&
-    section.rva < rva + Math.max(size, 1) &&
-    rva < section.rva + extent
-  );
-};
-
 /** Header admission and unambiguous file-backed RVA mapping, independent of section names. */
 export const readPeResourceLayout = (bytes: Buffer) =>
   mapPeResourceLayout(readPeImageHeaders(bytes), bytes.length);
+
+/** Header admission and unambiguous file-backed RVA mapping from bounded positional reads. */
+export const readPeResourceLayoutAt = async (
+  prefix: Buffer,
+  fileSize: number,
+  read: PeRangeReader,
+) =>
+  mapPeResourceLayout(
+    await readPeImageHeadersAt(prefix, fileSize, read),
+    fileSize,
+  );
 
 const mapPeResourceLayout = (
   headers: ReturnType<typeof readPeImageHeaders>,
@@ -109,48 +104,44 @@ const mapPeResourceLayout = (
     )
       peFailure("PE sections have overlapping raw file ranges.");
   }
+  const ranges = sections.map((section) => ({
+    start: section.rva,
+    end: section.rva + virtualExtent(section),
+    section,
+  }));
+  const lookup = indexPeSectionRvas(ranges);
+  const sectionEnds = new Map<number, Section | null>();
+  for (const { start, end, section } of ranges) {
+    if (start < end)
+      sectionEnds.set(end, sectionEnds.has(end) ? null : section);
+  }
   const map = (rva: number, size: number): number => {
     if (rva + size > 0x100000000) peFailure("Resource RVA range overflows.");
-    const containing = sections.filter(
-      (section) =>
-        rva >= section.rva && rva - section.rva < virtualExtent(section),
-    );
-    // An empty interval reads no bytes, so the Windows resource loader also
-    // resolves it exactly at a section's virtual end. A section starting at
-    // that RVA still owns it.
-    const candidates =
-      size === 0 && containing.length === 0
-        ? sections.filter(
-            (section) =>
-              virtualExtent(section) > 0 &&
-              rva - section.rva === virtualExtent(section),
-          )
-        : containing;
+    const { section: owned, overlaps, nextStart } = lookup(rva);
     if (rva < headerSize) {
       if (
-        sections.some((section) => intersectsResource(section, rva, size)) ||
+        owned !== undefined ||
+        nextStart < rva + size ||
         size > headerSize - rva
       )
         peFailure("Ambiguous resource header RVA mapping.");
       requirePeExtent(fileSize, rva, size);
       return rva;
     }
-    if (candidates.length !== 1)
-      peFailure("Resource RVA has missing or overlapping section mappings.");
-    const section = candidates[0];
-    if (section === undefined) return peFailure("Missing resource section.");
+    // An empty resource can start exactly at a unique section end, provided
+    // no nonempty section owns that point.
+    const section =
+      owned?.section ?? (size === 0 ? sectionEnds.get(rva) : undefined);
+    if (section === undefined || section === null || overlaps)
+      return peFailure(
+        "Resource RVA has missing or overlapping section mappings.",
+      );
     const within = rva - section.rva;
     if (size > virtualExtent(section) - within)
       peFailure("Resource range leaves its section's virtual size.");
     if (within > section.size || size > section.size - within)
       peFailure("Resource range is not entirely file-backed in one section.");
-    // A second section with virtual extent inside the requested interval is
-    // ambiguous too; a zero-extent section owns no byte there.
-    if (
-      sections.some(
-        (other) => other !== section && intersectsResource(other, rva, size),
-      )
-    )
+    if (nextStart < rva + size)
       peFailure("Resource interval intersects overlapping virtual sections.");
     const offset = section.offset + within;
     requirePeExtent(fileSize, offset, size);

@@ -70,9 +70,9 @@ export const createAnalysisViewResultReader = <Value>(parser: {
     }
     const normalized = ownedJsonValueSchema.safeParse(parsed.value);
     if (!normalized.success) return parsed;
-    freezeOwnedJsonTreeSnapshot(normalized.data);
-    checked.set(source, parsed.value);
-    return parsed;
+    const frozen = freezeOwnedJsonTreeSnapshot(normalized.data) as Value;
+    checked.set(source, frozen);
+    return ok(frozen);
   };
 };
 

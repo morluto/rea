@@ -1,10 +1,11 @@
-import { expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { FileMapping } from "../virtualFileMapping.js";
 import {
   ElfPointerRelocationFailure,
   elfAbsoluteRelocationType,
   elfCopyRelocationType,
   elfRelocationWidth,
+  elfRelocationWidthLookup,
   readElfRelocationWritesSteps,
   readElfPointerValuesSteps,
   readElfPointerRelocationsSteps,
@@ -751,6 +752,12 @@ it("admits fitting pointer workspace and preserves its complete values", () => {
   ).toEqual([0x1234n, 0x1334n, 0x1434n]);
 });
 
+it("exposes clipped, coalesced loader-write intervals from the value-only overlay", () => {
+  const facts = pointerValues(relativeValues(), 6144);
+  expect(facts.writeIntervalsIn(0x304n, 16)).toEqual([{ start: 0, end: 16 }]);
+  expect(facts.writeIntervalsIn(0x318n, 8)).toEqual([]);
+});
+
 it("charges repeated virtual destinations once within the pointer workspace", () => {
   const facts = pointerValues(relativeValues(true), 2048);
   expect(facts.unsignedAt(0x300n, 8)).toBe(0x1234n);
@@ -870,4 +877,27 @@ it.each([32, 64] as const)(
 it("does not apply a machine's pointer rules to a different ELF class", () => {
   expect(elfAbsoluteRelocationType(183, 32)).toBeUndefined();
   expect(elfAbsoluteRelocationType(40, 64)).toBeUndefined();
+});
+
+describe("elfRelocationWidthLookup", () => {
+  it("matches elfRelocationWidth across supported and unsupported targets", () => {
+    for (const [machine, bits, sampleType] of [
+      [183, 64, 257],
+      [62, 64, 1],
+      [40, 32, 2],
+      [3, 32, 1],
+      [243, 32, 1],
+      [243, 64, 2],
+    ] as const) {
+      const widths = elfRelocationWidthLookup(machine, bits);
+      expect(widths).toBeDefined();
+      expect(widths?.get(sampleType)).toBe(
+        elfRelocationWidth(machine, sampleType, bits),
+      );
+      expect(widths?.get(0)).toBeUndefined();
+      expect(elfRelocationWidth(machine, 0, bits)).toBe(0);
+    }
+    expect(elfRelocationWidthLookup(183, 32)).toBeUndefined();
+    expect(elfRelocationWidthLookup(999, 64)).toBeUndefined();
+  });
 });

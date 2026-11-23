@@ -430,7 +430,8 @@ document load failure that occurs inside the window. A buffered event without a
 comparable timestamp may remain as contextual evidence with `timestamp: null`,
 accompanied by a limitation stating that it does not establish activity in the
 selected window. Main-frame scope enforcement still applies to contextual
-navigation events.
+navigation events. Commit details include the browser-reported navigation kind,
+such as `backforwardcacherestore`. A missing kind remains unknown.
 
 Network redirect events retain their paired prior-hop response context when the
 timestamped next-request event falls inside the window. Every redirect row, and only a redirect row, has a

@@ -317,28 +317,41 @@ export const environmentManifestCaptureFixture = (
 export const environmentStateCaptureFixture = () =>
   environmentManifestCaptureFixture(environmentStateHar().log.entries);
 
-/** One synthetic exchange: method, path, JSON response body (a string is recorded as written), status, JSON request body and duration in milliseconds. */
+/** One synthetic exchange. A string response body is recorded as written. */
 export type TimedCaptureRow = readonly [
   method: string,
   path: string,
   body?: JsonValue,
   status?: number,
   request?: JsonValue | undefined,
-  time?: number,
+  durationMs?: number,
+  startOffsetSeconds?: number | undefined,
 ];
 
-/** Capture Evidence of HAR entries one second apart on one origin, as the environment-state view orders them. */
+/** Capture Evidence of HAR entries on one origin, one second apart by default. */
 export const timedCaptureEvidence = (
   rows: readonly TimedCaptureRow[],
 ): Evidence =>
   analysisViewCaptureEvidence(
     environmentManifestCaptureFixture(
       rows.map(
-        ([method, path, body = null, status = 200, sent, time = 5], index) => ({
+        (
+          [
+            method,
+            path,
+            body = null,
+            status = 200,
+            sent,
+            durationMs = 5,
+            startOffsetSeconds,
+          ],
+          index,
+        ) => ({
           startedDateTime: new Date(
-            Date.parse("2026-10-17T18:00:00.000Z") + index * 1000,
+            Date.parse("2026-10-17T18:00:00.000Z") +
+              (startOffsetSeconds ?? index) * 1000,
           ).toISOString(),
-          time,
+          time: durationMs,
           request: {
             method,
             url: `http://app.example${path}`,

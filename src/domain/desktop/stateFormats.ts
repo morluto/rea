@@ -298,13 +298,15 @@ export const textSyntaxFormat = (
   return "text";
 };
 
+const LATIN1_DECODER = new TextDecoder("latin1");
+
 /** Pick the reader for one retained file from its leading bytes and name. */
 export const detectStateFormat = (
   path: string,
   bytes: Uint8Array,
   policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): DesktopStateFormat => {
-  const header = new TextDecoder("latin1").decode(bytes.subarray(0, 16));
+  const header = LATIN1_DECODER.decode(bytes.subarray(0, 16));
   if (header === SQLITE_HEADER) return "sqlite";
   if (header.startsWith(GVDB_HEADER)) return "dconf";
   if (
@@ -370,12 +372,23 @@ export const textView = (
   text: string,
   policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): JsonValue => {
-  const lines = text.split(desktopLineBreak);
-  if (lines.at(-1) === "") lines.pop();
+  const lines: string[] = [];
+  let lineCount = 0;
+  let start = 0;
+  for (const delimiter of text.matchAll(desktopLineBreak)) {
+    if (lines.length < policy.text_lines)
+      lines.push(text.slice(start, delimiter.index));
+    lineCount += 1;
+    start = delimiter.index + delimiter[0].length;
+  }
+  if (start < text.length) {
+    if (lines.length < policy.text_lines) lines.push(text.slice(start));
+    lineCount += 1;
+  }
   return {
-    lines: lines.slice(0, policy.text_lines),
-    line_count: lines.length,
-    truncated: lines.length > policy.text_lines,
+    lines,
+    line_count: lineCount,
+    truncated: lineCount > policy.text_lines,
   };
 };
 

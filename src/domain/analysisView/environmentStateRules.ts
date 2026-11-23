@@ -441,7 +441,9 @@ export const changesState = (method: string, path: string): boolean =>
   WRITE_METHODS.has(method) && !isQueryPost(method, path);
 
 /** Whether a record may change state: a successful or unanswered request that `changesState` names. */
-export const isStateWrite = (record: StateRecordFacts): boolean =>
+export const isStateWrite = (
+  record: Pick<StateRecordFacts, "method" | "path" | "status">,
+): boolean =>
   changesState(record.method, record.path) &&
   (record.status === null || (record.status >= 200 && record.status < 400));
 
@@ -724,12 +726,15 @@ export const listItems = (
 /** An observed item count, retaining the original value separately for rendering. */
 export const recordedItemCount = (
   value: JsonValue | undefined,
-): number | undefined =>
-  typeof value === "number"
-    ? value
-    : typeof value === "string" && /^\d+$/u.test(value)
-      ? Number(value)
-      : undefined;
+): number | undefined => {
+  if (typeof value === "number")
+    return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+  if (typeof value === "string" && /^\d+$/u.test(value)) {
+    const number = Number(value);
+    return Number.isSafeInteger(number) ? number : undefined;
+  }
+  return undefined;
+};
 
 /** Spell a changed count with the recorded numeric/string type and digit width. */
 export const formatItemCount = (

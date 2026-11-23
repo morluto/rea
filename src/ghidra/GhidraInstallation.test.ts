@@ -665,6 +665,60 @@ describe("Ghidra installation rejection diagnostics", () => {
   });
 });
 
+describe("Ghidra native decompiler remediation", () => {
+  it.each([
+    [
+      "darwin",
+      "x64",
+      "https://github.com/morluto/rea/blob/main/docs/getting-started/installation.md#missing-macos-native-decompiler",
+    ],
+    [
+      "darwin",
+      "arm64",
+      "https://github.com/morluto/rea/blob/main/docs/getting-started/installation.md#macos-arm64-native-decompiler",
+    ],
+    [
+      "linux",
+      "arm64",
+      "https://github.com/morluto/rea/blob/main/docs/getting-started/installation.md#ghidra",
+    ],
+    ["linux", "x64", undefined],
+  ] as const)(
+    "points a missing %s/%s decompiler to how to build it",
+    async (platform, architecture, instructions) => {
+      const result = await inspectGhidraInstallation(
+        {
+          resourceOwner: inspectionResources.owner,
+          installDir: INSTALL,
+          platform,
+          architecture,
+          environment: {},
+        },
+        host({
+          executable: (path) => path === HEADLESS,
+          probeJava: () =>
+            javaProbeOk<GhidraJavaObservation>({
+              ...JAVA,
+              osArch: architecture === "arm64" ? "aarch64" : "amd64",
+              osName: platform === "darwin" ? "Mac OS X" : "Linux",
+            }),
+        }),
+      );
+      const check = result.checks.find(
+        (candidate) =>
+          candidate.name === "native_decompiler" &&
+          candidate.status === "failed",
+      );
+      expect(check).toMatchObject({ code: "executable_missing" });
+      if (check?.status !== "failed")
+        throw new Error("Expected a failed native_decompiler check");
+      if (instructions === undefined)
+        expect(check.remediation).not.toContain("Official Ghidra release");
+      else expect(check.remediation).toContain(instructions);
+    },
+  );
+});
+
 describe("Ghidra configuration directory identity", () => {
   it.each([
     [

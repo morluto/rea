@@ -172,10 +172,14 @@ describe("replayEnvironmentTool selection", () => {
     ]);
     const args = { query: ["a", "c"], type: "b" };
     expect(
-      selectReplayExchange(search, exchanges, args, "?query=a&type=b&query=c"),
+      selectReplayExchange(search, exchanges, args, {
+        observedQuery: "?query=a&type=b&query=c",
+      }),
     ).toMatchObject({ exchange: { ordinal: first }, exact: true });
     expect(
-      selectReplayExchange(search, exchanges, args, "?query=a&query=c&type=b"),
+      selectReplayExchange(search, exchanges, args, {
+        observedQuery: "?query=a&query=c&type=b",
+      }),
     ).toMatchObject({ exchange: { ordinal: second }, exact: true });
     expect(selectReplayExchange(search, exchanges, args)).toMatchObject({
       exchange: { ordinal: first },
@@ -195,7 +199,7 @@ describe("replayEnvironmentTool selection", () => {
         search,
         translated,
         { query: ["seed", "c"], type: "b" },
-        "?query=live&type=b&query=c",
+        { observedQuery: "?query=live&type=b&query=c" },
       ),
     ).toMatchObject({ exchange: { ordinal: first }, exact: true });
   });

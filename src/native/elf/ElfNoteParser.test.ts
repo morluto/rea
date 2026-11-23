@@ -1,10 +1,10 @@
-import { ParseFailureError } from "../../domain/parseFailure.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
+  decodeElfSectionNameRequest,
   decodeElfSectionNameTable,
   elfSectionNameBudget,
 } from "../../domain/native/elfSectionNameTable.js";
@@ -18,6 +18,7 @@ import {
   corePrpsinfoDescriptor,
   corePrpsinfoNote,
   coreSiginfoNote,
+  elf32ProcessIdentityFixture,
   elfNote,
   elfNoteFixture,
   elfNoteTablePastEnd,
@@ -25,23 +26,38 @@ import {
   gnuAbiTagNote,
   gnuBuildIdNote,
   gnuPropertyNote,
+  withElf64DirectSectionCount,
 } from "./ElfNotes.fixture.js";
-import { parseElfNotes } from "./ElfNoteParser.js";
+import {
+  parseElfNotesFromHandle,
+  readElfBuildIds,
+  readElfBuildIdsFromHandle,
+} from "./ElfNoteParser.js";
+import { bufferByteSource } from "../../domain/byteSource.js";
 
 const defaults = inspectElfNotesInputSchema.parse({
   path: "/artifacts/app",
 });
 
 const parse = (bytes: Buffer, input: typeof defaults = defaults) =>
-  parseElfNotes(
-    bytes,
+  parseElfNotesFromHandle(
+    bufferByteSource(bytes, 4096),
     {
       path: input.path,
       sha256: createHash("sha256").update(bytes).digest("hex"),
       bytes: bytes.length,
     },
     input,
+    async () => {},
   );
+
+const noteTextLimit = (maximum: number) => ({
+  failure: {
+    kind: "limit",
+    format: "elf-notes",
+    limit: { name: "note_text_bytes", maximum },
+  },
+});
 
 const elf64 = (
   fields: {
@@ -72,44 +88,48 @@ const elf64 = (
   return tail === undefined ? header : Buffer.concat([header, tail]);
 };
 
-it("reads GNU build-id and ABI-tag notes from ELF32 and ELF64", () => {
-  for (const bits of [32, 64] as const) {
-    const bytes = elfNoteFixture({ bits, ownership: "program" });
-    const report = parse(bytes);
-    expect(report.format).toBe(bits === 64 ? "elf64" : "elf32");
-    expect(report.byte_order).toBe("little");
-    expect(report.tables).toHaveLength(1);
-    expect(report.tables[0]?.kind).toBe("program");
-    const buildId = report.entries.find(
-      (entry) => entry.type_name === "gnu_build_id",
+it("retains GNU build ID and ABI from program or section notes", async () => {
+  for (const [bits, little, ownership, machine] of [
+    [32, true, "program", 3],
+    [32, false, "program", 20],
+    [64, true, "program", 62],
+    [64, true, "section", 62],
+  ] as const) {
+    const report = await parse(
+      elfNoteFixture({ bits, little, ownership, machine }),
     );
-    const abi = report.entries.find(
-      (entry) => entry.type_name === "gnu_abi_tag",
-    );
-    expect(buildId?.gnu?.build_id_hex).toBe(
-      "0123456789abcdef0123456789abcdef01234567",
-    );
-    expect(abi?.gnu?.abi_tag).toMatchObject({
-      os: 0,
-      os_name: "linux",
-      major: 3,
-      minor: 2,
-      subminor: 0,
+    expect(report).toMatchObject({
+      format: bits === 64 ? "elf64" : "elf32",
+      byte_order: little ? "little" : "big",
+      machine,
+      tables: [
+        {
+          kind: ownership,
+          name: ownership === "section" ? ".note.gnu.build-id" : null,
+        },
+      ],
+      entries: [
+        {
+          table_kind: ownership,
+          type_name: "gnu_build_id",
+          gnu: { build_id_hex: "0123456789abcdef0123456789abcdef01234567" },
+        },
+        {
+          table_kind: ownership,
+          type_name: "gnu_abi_tag",
+          gnu: {
+            abi_tag: {
+              os: 0,
+              os_name: "linux",
+              major: 3,
+              minor: 2,
+              subminor: 0,
+            },
+          },
+        },
+      ],
     });
   }
-});
-
-it("reads the same notes from an SHT_NOTE section including its name", () => {
-  const report = parse(elfNoteFixture({ ownership: "section" }));
-  expect(report.tables).toEqual([
-    expect.objectContaining({
-      kind: "section",
-      name: ".note.gnu.build-id",
-    }),
-  ]);
-  expect(
-    report.entries.some((entry) => entry.type_name === "gnu_build_id"),
-  ).toBe(true);
 });
 
 it.each([
@@ -119,11 +139,11 @@ it.each([
   [64, false],
 ] as const)(
   "refuses compressed ELF%i %s-endian note storage without parsing its compression header",
-  (bits, little) => {
+  async (bits, little) => {
     for (const ownership of ["section", "both"] as const) {
-      expect(() =>
+      await expect(
         parse(compressedElfNoteSectionFixture(bits, little, ownership)),
-      ).toThrow(
+      ).rejects.toThrow(
         expect.objectContaining({
           kind: "unsupported",
           message: expect.stringMatching(/compressed.*note/iu),
@@ -133,7 +153,7 @@ it.each([
   },
 );
 
-it("still checks an independent PT_NOTE beside an exact compressed-note alias", () => {
+it("still checks an independent PT_NOTE beside an exact compressed-note alias", async () => {
   const original = compressedElfNoteSectionFixture(64, true, "both");
   const alias = original.subarray(64, 120);
   const withDisjointNotes = (notes: Buffer): Buffer => {
@@ -147,7 +167,7 @@ it("still checks an independent PT_NOTE beside an exact compressed-note alias", 
     image.writeUInt16LE(2, 56);
     return image;
   };
-  expect(() => parse(withDisjointNotes(Buffer.from([1])))).toThrow(
+  await expect(parse(withDisjointNotes(Buffer.from([1])))).rejects.toThrow(
     expect.objectContaining({
       reason: "format",
       message: "ELF note table has trailing non-zero bytes.",
@@ -156,39 +176,56 @@ it("still checks an independent PT_NOTE beside an exact compressed-note alias", 
   const framed = withDisjointNotes(
     Buffer.concat([gnuBuildIdNote(), gnuAbiTagNote()]),
   );
-  expect(() => parse(framed, { ...defaults, max_entries: 1 })).toThrow(
+  await expect(parse(framed, { ...defaults, max_entries: 1 })).rejects.toThrow(
     expect.objectContaining({
       failure: expect.objectContaining({
         limit: { name: "max_entries", maximum: 1, required: 2 },
       }),
     }),
   );
-  expect(() => parse(framed)).toThrow(
+  await expect(parse(framed)).rejects.toThrow(
     expect.objectContaining({ kind: "unsupported" }),
   );
+  const programs = Number(framed.readBigUInt64LE(32));
+  framed.writeBigUInt64LE(BigInt(framed.length), programs + 32);
+  await expect(parse(framed)).rejects.toThrow(/leaves the artifact/u);
 });
 
-it("does not allocate the declared decoded note size, but still validates stored ranges", () => {
+it("does not allocate the declared decoded note size, but still validates stored ranges", async () => {
   const bytes = compressedElfNoteSectionFixture();
   const noteSection = 64 + 64;
   const storedOffset = Number(bytes.readBigUInt64LE(noteSection + 24));
   bytes.writeBigUInt64LE(0xffffffffffffffffn, storedOffset + 8);
-  expect(() => parse(bytes)).toThrow(
+  await expect(parse(bytes)).rejects.toThrow(
     expect.objectContaining({ kind: "unsupported" }),
   );
   bytes.writeBigUInt64LE(0n, noteSection + 32);
-  expect(() => parse(bytes)).toThrow(
+  await expect(parse(bytes)).rejects.toThrow(
     expect.objectContaining({ kind: "unsupported" }),
   );
   bytes.writeBigUInt64LE(BigInt(bytes.length), noteSection + 32);
-  expect(() => parse(bytes)).toThrow(ArtifactReaderFailure);
+  await expect(parse(bytes)).rejects.toThrow(ArtifactReaderFailure);
 });
 
-it("preserves unknown ELF64 section flag bits without treating them as file sizes", () => {
+it("does not decode an earlier raw section overlapping compressed storage", async () => {
+  const bytes = withElf64DirectSectionCount(
+    compressedElfNoteSectionFixture(),
+    4,
+  );
+  const alias = Number(bytes.readBigUInt64LE(40)) + 64;
+  bytes.copy(bytes, alias + 128, alias, alias + 64);
+  bytes.writeBigUInt64LE(0n, alias + 8);
+  bytes.writeBigUInt64LE(bytes.readBigUInt64LE(alias + 24) + 4n, alias + 24);
+  await expect(parse(bytes)).rejects.toThrow(
+    expect.objectContaining({ kind: "unsupported" }),
+  );
+});
+
+it("preserves unknown ELF64 section flag bits without treating them as file sizes", async () => {
   const bytes = elfNoteFixture({ ownership: "section" });
   bytes.writeBigUInt64LE(0x8000000000000000n, 64 + 64 + 8);
   bytes.writeBigUInt64LE(0x8000000000000000n, 64 + 2 * 64 + 8);
-  expect(parse(bytes).entries[0]?.gnu?.build_id_hex).toBe(
+  expect((await parse(bytes)).entries[0]?.gnu?.build_id_hex).toBe(
     "0123456789abcdef0123456789abcdef01234567",
   );
 });
@@ -204,8 +241,8 @@ it.each([
   [64, false, 2],
 ] as const)(
   "decompresses an ELF%i little-endian=%s section-name table using algorithm %i",
-  (bits, little, compressionType) => {
-    const report = parse(
+  async (bits, little, compressionType) => {
+    const report = await parse(
       compressedElfNoteFixture(bits, little, compressionType),
     );
     expect(report.tables).toEqual([
@@ -219,18 +256,18 @@ it.each([
 
 it.each([1, 2])(
   "admits a decoded section name larger than algorithm %i storage",
-  (compressionType) => {
+  async (compressionType) => {
     const name = "n".repeat(512);
     const bytes = compressedElfNoteFixture(64, true, compressionType, name);
     expect(bytes.length).toBeLessThan(name.length);
-    const report = parse(bytes);
+    const report = await parse(bytes);
     expect(report.tables[0]?.name).toBe(name);
   },
 );
 
 it.each([1, 2])(
   "rejects malformed algorithm %i section-name storage",
-  (compressionType) => {
+  async (compressionType) => {
     for (const damage of ["corrupt", "truncated", "too-large", "too-small"]) {
       const bytes = compressedElfNoteFixture(64, true, compressionType);
       const sectionOffset = Number(bytes.readBigUInt64LE(40));
@@ -248,7 +285,7 @@ it.each([1, 2])(
             (damage === "too-large" ? 1n : -1n),
           namesOffset + 8,
         );
-      expect(() => parse(bytes), damage).toThrow(
+      await expect(parse(bytes), damage).rejects.toThrow(
         /compressed section-name table/u,
       );
     }
@@ -275,8 +312,8 @@ it("refuses a Zstandard frame requiring more than the decoder window allowance",
   });
 });
 
-it("keeps note facts but marks section names unavailable for unknown compression", () => {
-  const report = parse(compressedElfNoteFixture(64, true, 3));
+it("keeps note facts but marks section names unavailable for unknown compression", async () => {
+  const report = await parse(compressedElfNoteFixture(64, true, 3));
   expect(report.tables[0]?.name).toBeNull();
   expect(report.entries[0]?.gnu?.build_id_hex).toBe(
     "0123456789abcdef0123456789abcdef01234567",
@@ -290,7 +327,7 @@ it("keeps note facts but marks section names unavailable for unknown compression
 
 it.each([1, 2])(
   "admits algorithm %i section names when max_file_bytes includes expansion",
-  (compressionType) => {
+  async (compressionType) => {
     const bytes = compressedElfNoteFixture(64, true, compressionType);
     const sectionOffset = Number(bytes.readBigUInt64LE(40));
     const nameHeader = sectionOffset + bytes.readUInt16LE(62) * 64;
@@ -303,7 +340,7 @@ it.each([1, 2])(
     });
     let failure: unknown;
     try {
-      parse(bytes, input);
+      await parse(bytes, input);
     } catch (cause) {
       failure = cause;
     }
@@ -312,7 +349,7 @@ it.each([1, 2])(
       selected: bytes.length + 1,
     });
 
-    const admitted = parse(
+    const admitted = await parse(
       bytes,
       inspectElfNotesInputSchema.parse({
         path: defaults.path,
@@ -323,8 +360,8 @@ it.each([1, 2])(
   },
 );
 
-it("reports independent PT_NOTE and SHT_NOTE declarations of the same bytes", () => {
-  const report = parse(elfNoteFixture({ ownership: "both" }));
+it("reports independent PT_NOTE and SHT_NOTE declarations of the same bytes", async () => {
+  const report = await parse(elfNoteFixture({ ownership: "both" }));
   expect(report.tables.map((table) => table.kind).sort()).toEqual([
     "program",
     "section",
@@ -336,7 +373,7 @@ it("reports independent PT_NOTE and SHT_NOTE declarations of the same bytes", ()
 
 it.each([true, false])(
   "decodes FDO package and dlopen notes (little endian: %s)",
-  (little) => {
+  async (little) => {
     const packaging = {
       type: "rpm",
       name: "café",
@@ -350,7 +387,9 @@ it.each([true, false])(
       elfNote("FDO", 0x407c0c0a, dlopenBytes, little),
       elfNote("FDO", 99, Buffer.from("opaque"), little),
     ]);
-    const report = parse(elfNoteFixture({ ownership: "both", notes, little }));
+    const report = await parse(
+      elfNoteFixture({ ownership: "both", notes, little }),
+    );
     const expected = [
       ["fdo_packaging_metadata", { metadata: packaging, issue: null }],
       ["fdo_dlopen_metadata", { metadata: dlopen, issue: null }],
@@ -369,56 +408,69 @@ it.each([true, false])(
   },
 );
 
-it.each([
-  ["missing terminator", 0xcafe1a7e, Buffer.from("{}"), /not NUL-terminated/u],
-  ["trailing data", 0xcafe1a7e, Buffer.from("{}\0x"), /non-NUL bytes/u],
-  ["invalid UTF-8", 0xcafe1a7e, Buffer.from([0xc3, 0]), /valid UTF-8/u],
-  ["invalid JSON", 0xcafe1a7e, Buffer.from("{\0"), /exact JSON/u],
-  [
-    "inexact number",
-    0xcafe1a7e,
-    Buffer.from('{"id":9007199254740993}\0'),
-    /exact JSON/u,
-  ],
-  [
-    "duplicate name",
-    0xcafe1a7e,
-    Buffer.from('{"name":"one","name":"two"}\0'),
-    /repeats/u,
-  ],
-  ["package array", 0xcafe1a7e, Buffer.from("[]\0"), /must be a JSON object/u],
-  ["dlopen scalar", 0x407c0c0a, Buffer.from("[1]\0"), /array of objects/u],
-  [
-    "Evidence nesting",
-    0xcafe1a7e,
-    Buffer.from('{"deep":' + "[".repeat(996) + "0" + "]".repeat(996) + "}\0"),
-    /nesting allowance/u,
-  ],
-] as const)(
-  "retains descriptor evidence when FDO metadata has %s",
-  (_case, type, descriptor, issue) => {
-    const report = parse(
-      elfNoteFixture({
-        ownership: "program",
-        notes: elfNote("FDO", type, descriptor),
-      }),
-    );
-    expect(report.entries[0]).toMatchObject({
+it("retains raw descriptors across malformed FDO metadata in one note table", async () => {
+  const cases = [
+    [
+      "missing terminator",
+      0xcafe1a7e,
+      Buffer.from("{}"),
+      /not NUL-terminated/u,
+    ],
+    ["trailing data", 0xcafe1a7e, Buffer.from("{}\0x"), /non-NUL bytes/u],
+    ["invalid UTF-8", 0xcafe1a7e, Buffer.from([0xc3, 0]), /valid UTF-8/u],
+    ["invalid JSON", 0xcafe1a7e, Buffer.from("{\0"), /exact JSON/u],
+    [
+      "inexact number",
+      0xcafe1a7e,
+      Buffer.from('{"id":9007199254740993}\0'),
+      /exact JSON/u,
+    ],
+    [
+      "duplicate name",
+      0xcafe1a7e,
+      Buffer.from('{"name":"one","name":"two"}\0'),
+      /repeats/u,
+    ],
+    [
+      "package array",
+      0xcafe1a7e,
+      Buffer.from("[]\0"),
+      /must be a JSON object/u,
+    ],
+    ["dlopen scalar", 0x407c0c0a, Buffer.from("[1]\0"), /array of objects/u],
+    [
+      "Evidence nesting",
+      0xcafe1a7e,
+      Buffer.from('{"deep":' + "[".repeat(996) + "0" + "]".repeat(996) + "}\0"),
+      /nesting allowance/u,
+    ],
+  ] as const;
+  const notes = Buffer.concat(
+    cases.map(([, type, descriptor]) => elfNote("FDO", type, descriptor)),
+  );
+  const report = await parse(elfNoteFixture({ ownership: "program", notes }));
+  expect(report.coverage).toEqual({
+    status: "complete",
+    examined_entries: cases.length,
+    examined_tables: 1,
+  });
+  for (const [index, [name, , descriptor, issue]] of cases.entries())
+    expect(report.entries[index], name).toMatchObject({
       descriptor: {
         bytes: descriptor.length,
         sha256: createHash("sha256").update(descriptor).digest("hex"),
       },
       fdo: { metadata: null, issue: expect.stringMatching(issue) },
     });
-    expect(report.coverage.status).toBe("complete");
-  },
-);
+});
 
-it("bounds distinct FDO decoding and each emitted copy independently", () => {
+it("bounds distinct FDO decoding and each emitted copy independently", async () => {
   const metadata = { name: "x".repeat(33_000) };
   const descriptor = Buffer.from(JSON.stringify(metadata) + "\0");
   const note = elfNote("FDO", 0xcafe1a7e, descriptor);
-  const repeated = parse(elfNoteFixture({ ownership: "both", notes: note }));
+  const repeated = await parse(
+    elfNoteFixture({ ownership: "both", notes: note }),
+  );
   expect(repeated.entries.map(({ fdo }) => fdo)).toEqual([
     { metadata, issue: null },
     {
@@ -429,7 +481,7 @@ it("bounds distinct FDO decoding and each emitted copy independently", () => {
   expect(repeated.entries[0]?.descriptor).toEqual(
     repeated.entries[1]?.descriptor,
   );
-  const distinct = parse(
+  const distinct = await parse(
     elfNoteFixture({
       ownership: "program",
       notes: Buffer.concat([note, note, gnuBuildIdNote()]),
@@ -443,25 +495,20 @@ it("bounds distinct FDO decoding and each emitted copy independently", () => {
     },
     null,
   ]);
-  expect(distinct.entries[2]?.gnu?.build_id_hex).toBeTruthy();
+  expect(distinct.entries[2]?.gnu?.build_id_hex).toBe(
+    "0123456789abcdef0123456789abcdef01234567",
+  );
   expect(distinct.coverage.status).toBe("complete");
 });
 
-it("reports missing note tables without claiming notes never existed", () => {
-  const report = parse(elfNoteFixture({ ownership: "none" }));
+it("reports missing note tables without claiming notes never existed", async () => {
+  const report = await parse(elfNoteFixture({ ownership: "none" }));
   expect(report.tables).toEqual([]);
   expect(report.entries).toEqual([]);
   expect(report.limitations[0]).toMatch(/No PT_NOTE/u);
 });
 
-it("fails a truncated note payload without partial success", () => {
-  const notes = gnuBuildIdNote();
-  notes.writeUInt32LE(64, 0);
-  const bytes = elfNoteFixture({ ownership: "program", notes });
-  expect(() => parse(bytes)).toThrow(ArtifactReaderFailure);
-});
-
-it("diagnoses incomplete note framing at the entry limit", () => {
+it("diagnoses incomplete note framing at the entry limit", async () => {
   const note = elfNote("REA", 9, Buffer.from([1]));
   const truncatedName = Buffer.from(note);
   truncatedName.writeUInt32LE(16);
@@ -478,7 +525,7 @@ it("diagnoses incomplete note framing at the entry limit", () => {
       ownership: "program",
       notes: Buffer.concat([note, truncated]),
     });
-    expect(() => parse(image, input)).toThrow(
+    await expect(parse(image, input)).rejects.toThrow(
       expect.objectContaining({
         reason: "format",
       }),
@@ -486,10 +533,10 @@ it("diagnoses incomplete note framing at the entry limit", () => {
   }
 });
 
-it("keeps non-GNU owners as unknown types with descriptor hashes", () => {
+it("keeps non-GNU owners as unknown types with descriptor hashes", async () => {
   const payload = Buffer.from("hello");
   const notes = elfNote("CORE", 1, payload);
-  const report = parse(elfNoteFixture({ ownership: "program", notes }));
+  const report = await parse(elfNoteFixture({ ownership: "program", notes }));
   expect(report.entries[0]).toMatchObject({
     owner: "CORE",
     type_name: "unknown",
@@ -502,70 +549,54 @@ it("keeps non-GNU owners as unknown types with descriptor hashes", () => {
   );
 });
 
-it("reads a big-endian ELF32 GNU build-id", () => {
-  const notes = gnuBuildIdNote(undefined, false);
-  const report = parse(
-    elfNoteFixture({
-      bits: 32,
-      little: false,
-      machine: 20,
-      ownership: "program",
-      notes,
-    }),
-  );
-  expect(report.byte_order).toBe("big");
-  expect(report.machine).toBe(20);
-  expect(report.entries[0]?.gnu?.build_id_hex).toBe(
-    "0123456789abcdef0123456789abcdef01234567",
-  );
-});
-
-it("reads an 8-aligned GNU property note from a PT_NOTE program header", () => {
-  const notes = gnuPropertyNote();
-  expect(notes.length).toBe(48);
-  const report = parse(
-    elfNoteFixture({ ownership: "program", notes, alignment: 8 }),
-  );
-  expect(report.tables).toEqual([
-    expect.objectContaining({ kind: "program", alignment: 8 }),
-  ]);
-  expect(report.entries).toHaveLength(1);
-  expect(report.entries[0]).toMatchObject({
-    owner: "GNU",
-    type: 5,
-    type_name: "gnu_property",
-    namesz: 4,
-    descsz: 32,
-  });
-  expect(report.entries[0]?.descriptor.location.offset).toBe(
-    (report.entries[0]?.location.offset ?? 0) + 16,
-  );
-});
-
-it("reads an 8-aligned GNU property note from an SHT_NOTE section", () => {
-  const report = parse(
-    elfNoteFixture({
-      ownership: "section",
-      notes: gnuPropertyNote(),
-      alignment: 8,
-      sectionName: ".note.gnu.property",
-    }),
-  );
-  expect(report.tables).toEqual([
-    expect.objectContaining({
-      kind: "section",
-      name: ".note.gnu.property",
-      alignment: 8,
-    }),
-  ]);
-  expect(report.entries[0]?.type_name).toBe("gnu_property");
-  expect(report.entries[0]?.descriptor.bytes).toBe(32);
-});
+it.each(["program", "section"] as const)(
+  "keeps the 8-byte stride and physical descriptor for a GNU property note in a %s table",
+  async (ownership) => {
+    const notes = Buffer.concat([
+      elfNote("GNU", 3, Buffer.alloc(20, 1), true, 8),
+      gnuPropertyNote(),
+    ]);
+    const report = await parse(
+      elfNoteFixture({
+        ownership,
+        notes,
+        alignment: 8,
+        sectionName: ".note.gnu.property",
+      }),
+    );
+    const offset = ownership === "program" ? 120 : 256;
+    expect(report.tables).toMatchObject([
+      {
+        kind: ownership,
+        name: ownership === "section" ? ".note.gnu.property" : null,
+        alignment: 8,
+        location: { offset, bytes: 88 },
+      },
+    ]);
+    expect(report.entries).toMatchObject([
+      { type_name: "gnu_build_id", location: { offset, bytes: 40 } },
+      {
+        owner: "GNU",
+        type: 5,
+        type_name: "gnu_property",
+        namesz: 4,
+        descsz: 32,
+        location: { offset: offset + 40, bytes: 48 },
+        descriptor: {
+          bytes: 32,
+          location: { offset: offset + 56, bytes: 32 },
+        },
+      },
+    ]);
+  },
+);
 
 it.each([0, 1] as const)(
   "treats declared note alignment %i as 4-byte padding",
-  (alignment) => {
-    const report = parse(elfNoteFixture({ ownership: "program", alignment }));
+  async (alignment) => {
+    const report = await parse(
+      elfNoteFixture({ ownership: "program", alignment }),
+    );
     expect(report.tables[0]?.alignment).toBe(4);
     expect(
       report.entries.some((entry) => entry.type_name === "gnu_build_id"),
@@ -600,8 +631,8 @@ const hostElf = [
 
 it.skipIf(hostElf === null)(
   "parses a host ELF without requiring it to contain notes",
-  () => {
-    const report = parse(hostElf!);
+  async () => {
+    const report = await parse(hostElf!);
     expect(report.coverage.status).toBe("complete");
     const buildId = report.entries.find(
       (entry) => entry.type_name === "gnu_build_id",
@@ -651,11 +682,11 @@ it.each([
   { offset: 4, name: null, state: "unavailable" },
 ])(
   "retains ELF section-name offset $offset consistently across consumers",
-  ({ offset, name, state }) => {
+  async ({ offset, name, state }) => {
     const bytes = unterminatedNoteSections(1, 4);
     bytes.set([0x41, 0x42, 0xe9, 0], bytes.length - 4);
     bytes.writeUInt32LE(offset, 64 + 2 * 64);
-    const notes = parse(bytes);
+    const notes = await parse(bytes);
     const directory = readElfDirectoryFromBuffer(bytes, "elf-directory");
     expect(notes.tables[0]?.name).toBe(name);
     expect(directory.sections[2]).toMatchObject({ name, name_state: state });
@@ -673,11 +704,11 @@ it.each([
 
 it.each([65535, 65536])(
   "preserves consumer-specific section-name windows for NUL at byte %i",
-  (terminatorOffset) => {
+  async (terminatorOffset) => {
     const bytes = unterminatedNoteSections(1, terminatorOffset + 1);
     bytes[bytes.length - 1] = 0;
     const name = "A".repeat(terminatorOffset);
-    const notes = parse(bytes);
+    const notes = await parse(bytes);
     const directory = readElfDirectoryFromBuffer(bytes, "elf-directory");
     expect(notes.tables[0]?.name).toBe(name);
     expect(notes.coverage.status).toBe("complete");
@@ -693,8 +724,8 @@ it.each([65535, 65536])(
   },
 );
 
-it("bounds repeated scans of an unterminated section name", () => {
-  const report = parse(unterminatedNoteSections(2, 64));
+it("bounds repeated scans of an unterminated section name", async () => {
+  const report = await parse(unterminatedNoteSections(2, 64));
   expect(report.tables.map(({ name }) => name)).toEqual([null, null]);
   expect(report.coverage.status).toBe("complete");
   const nameWarnings = report.limitations.filter((value) =>
@@ -704,27 +735,13 @@ it("bounds repeated scans of an unterminated section name", () => {
   expect(nameWarnings[0]).toMatch(
     /section names.*incomplete.*not NUL-terminated/iu,
   );
-  let failure: unknown;
-  try {
-    parse(unterminatedNoteSections(3, 400));
-  } catch (cause) {
-    failure = cause;
-  }
-  expect(failure).toBeInstanceOf(ParseFailureError);
-  expect(failure).toMatchObject({
-    failure: {
-      kind: "limit",
-      format: "elf-notes",
-      limit: { name: "note_text_bytes" },
-    },
-  });
-  expect(failure).toHaveProperty(
-    "message",
-    expect.stringMatching(/byte budget/u),
+  const crowded = unterminatedNoteSections(3, 400);
+  await expect(parse(crowded)).rejects.toMatchObject(
+    noteTextLimit(crowded.length),
   );
 });
 
-it("rejects note text that repeats beyond the shared byte budget", () => {
+it("rejects note text that repeats beyond the shared byte budget", async () => {
   const notes = elfNote("A".repeat(40), 1, Buffer.alloc(0));
   const once = elfNoteFixture({ ownership: "program", notes });
   const twice = elfNoteFixture({ ownership: "both", notes });
@@ -732,41 +749,40 @@ it("rejects note text that repeats beyond the shared byte budget", () => {
     path: defaults.path,
     max_file_bytes: 200,
   });
-  expect(parse(once, input).entries).toHaveLength(1);
-  expect(() => parse(twice, input)).toThrow(ParseFailureError);
-  expect(() => parse(twice, input)).toThrow(/byte budget/u);
+  expect((await parse(once, input)).entries).toHaveLength(1);
+  await expect(parse(twice, input)).rejects.toMatchObject(noteTextLimit(200));
 });
 
-it("rejects program and section header tables that do not fit", () => {
-  expect(() =>
+it("rejects program and section header tables that do not fit", async () => {
+  await expect(
     parse(elf64({ phoff: 64, phnum: 1 }, Buffer.from([1, 0, 0, 0]))),
-  ).toThrow(/leaves the artifact/u);
-  expect(() =>
+  ).rejects.toThrow(/leaves the artifact/u);
+  await expect(
     parse(
       elf64({ shoff: 64, shnum: 1, shentsize: 64 }, Buffer.from([0, 0, 0, 0])),
     ),
-  ).toThrow(/leaves the artifact/u);
+  ).rejects.toThrow(/leaves the artifact/u);
 });
 
-it("rejects an extended section count stored in section zero", () => {
-  expect(() => parse(elf64({ shoff: 64, shnum: 0 }))).toThrow(
+it("rejects an extended section count stored in section zero", async () => {
+  await expect(parse(elf64({ shoff: 64, shnum: 0 }))).rejects.toThrow(
     /extended numbering/u,
   );
 });
 
-it("checks direct section count encoding in notes and the native directory", () => {
+it("checks direct section count encoding in notes and the native directory", async () => {
   const bytes = elfExtendedSectionCountFixture();
   const sectionZero = Number(bytes.readBigUInt64LE(40));
   bytes.writeBigUInt64LE(0n, sectionZero + 32);
   bytes.writeUInt16LE(0xfeff, 60);
-  expect(parse(bytes).tables[0]?.name).toBe(".note.gnu.build-id");
+  expect((await parse(bytes)).tables[0]?.name).toBe(".note.gnu.build-id");
   expect(
     readElfDirectoryFromBuffer(bytes, "elf-directory").sections[1]?.name,
   ).toBe(".note.gnu.build-id");
 
   bytes.writeUInt16LE(0xff00, 60);
   const reason = /e_shnum uses a reserved direct section count/u;
-  expect(() => parse(bytes)).toThrow(reason);
+  await expect(parse(bytes)).rejects.toThrow(reason);
   expect(() => readElfDirectoryFromBuffer(bytes, "elf-directory")).toThrow(
     reason,
   );
@@ -785,14 +801,118 @@ const repeatedNotes = (count: number, notes: Buffer): Buffer => {
   return Buffer.concat([elf64({ phoff: 64, phnum: count }), headers, notes]);
 };
 
-it("reuses one descriptor hash and GNU NUL scan across note headers", () => {
+it("checks extended ELF header size using the whole file for note and build-ID readers", async () => {
+  const bytes = repeatedNotes(1, gnuBuildIdNote());
+  const extended = Buffer.concat([
+    bytes.subarray(0, 64),
+    Buffer.alloc(64),
+    bytes.subarray(64),
+  ]);
+  extended.writeUInt16LE(128, 52);
+  extended.writeBigUInt64LE(128n, 32);
+  extended.writeBigUInt64LE(bytes.readBigUInt64LE(72) + 64n, 136);
+  const artifact = {
+    path: defaults.path,
+    bytes: extended.length,
+    sha256: createHash("sha256").update(extended).digest("hex"),
+  };
+  const source = {
+    size: extended.length,
+    prefix: extended.subarray(0, 64),
+    readRange: async (offset: number, length: number) =>
+      extended.subarray(offset, offset + length),
+  };
+  const hex = "0123456789abcdef0123456789abcdef01234567";
+  const note = { offset: 184, bytes: 36 };
+  const descriptor = { offset: 200, bytes: 20 };
+  const report = await parseElfNotesFromHandle(
+    source,
+    artifact,
+    defaults,
+    async () => {},
+  );
+  expect(report.entries).toMatchObject([
+    {
+      location: note,
+      descriptor: { location: descriptor },
+      gnu: { build_id_hex: hex },
+    },
+  ]);
+  const expected = [
+    { hex, note, descriptor, table_kind: "program", table_index: 0 },
+  ];
+  expect(readElfBuildIds(extended, defaults, 64).sources).toEqual(expected);
+  const positional = await readElfBuildIdsFromHandle(
+    source,
+    defaults,
+    64,
+    async (request) => decodeElfSectionNameRequest(request),
+  );
+  expect(positional.sources).toEqual(expected);
+});
+
+it("reads aliased note tables once and retains each program header's evidence", async () => {
+  const count = 32;
+  const descriptor = Buffer.alloc(8192, 0xa5);
+  const table = elfNote("", 0xffff, descriptor);
+  const bytes = repeatedNotes(count, table);
+  const reads: Array<{ offset: number; length: number }> = [];
+  const artifact = {
+    path: defaults.path,
+    bytes: bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+  const report = await parseElfNotesFromHandle(
+    {
+      size: bytes.length,
+      prefix: bytes.subarray(0, 64),
+      readRange: async (offset, length) => {
+        reads.push({ offset, length });
+        return bytes.subarray(offset, offset + length);
+      },
+    },
+    artifact,
+    defaults,
+    async () => {},
+  );
+  const tableOffset = 64 + 56 * count;
+  const location = { offset: tableOffset, bytes: table.length };
+  const sha256 = createHash("sha256").update(descriptor).digest("hex");
+  const indices = Array.from({ length: count }, (_, index) => index);
+  expect(report.tables).toEqual(
+    indices.map((index) => ({
+      kind: "program",
+      index,
+      name: null,
+      location,
+      alignment: 4,
+    })),
+  );
+  expect(report.entries).toMatchObject(
+    indices.map((index) => ({
+      index,
+      table_kind: "program",
+      table_index: index,
+      location,
+      descriptor: {
+        location: { offset: tableOffset + 16, bytes: descriptor.length },
+        sha256,
+      },
+    })),
+  );
+  expect(reads.filter(({ length }) => length === table.length)).toEqual([
+    { offset: tableOffset, length: table.length },
+  ]);
+});
+
+it("reuses one descriptor hash and GNU NUL scan across note headers", async () => {
   const payload = Buffer.alloc(400);
-  const hashed = parse(repeatedNotes(6, elfNote("X", 1, payload)));
+  const hashed = await parse(repeatedNotes(6, elfNote("X", 1, payload)));
   expect(hashed.entries).toHaveLength(6);
   expect(
     new Set(hashed.entries.map((entry) => entry.descriptor.sha256)).size,
   ).toBe(1);
-  const gold = parse(repeatedNotes(6, elfNote("GNU", 4, payload)));
+  const gold = await parse(repeatedNotes(6, elfNote("GNU", 4, payload)));
   expect(gold.entries).toHaveLength(6);
   expect(gold.entries.every((entry) => entry.gnu?.gold_version === "")).toBe(
     true,
@@ -801,7 +921,7 @@ it("reuses one descriptor hash and GNU NUL scan across note headers", () => {
     elfNote("X", 1, payload),
     elfNote("X", 1, Buffer.alloc(400, 1)),
   ]);
-  expect(() =>
+  await expect(
     parse(
       elfNoteFixture({ ownership: "program", notes: distinct }),
       inspectElfNotesInputSchema.parse({
@@ -809,58 +929,47 @@ it("reuses one descriptor hash and GNU NUL scan across note headers", () => {
         max_file_bytes: payload.length + 160,
       }),
     ),
-  ).toThrow(/byte budget/u);
+  ).rejects.toThrow(/byte budget/u);
 });
 
-it("decodes a GNU gold version by scanning trailing NULs", () => {
-  const trailing = elfNote("GNU", 4, Buffer.from("gold\0\0x\0", "latin1"));
-  expect(
-    parse(elfNoteFixture({ ownership: "program", notes: trailing })).entries[0]
-      ?.gnu?.gold_version,
-  ).toBe("gold\0\0x");
-  const descriptor = Buffer.concat([Buffer.alloc(131_072), Buffer.from("x")]);
-  const started = Date.now();
-  const report = parse(
-    elfNoteFixture({
-      ownership: "program",
-      notes: elfNote("GNU", 4, descriptor),
-    }),
-  );
-  expect(Date.now() - started).toBeLessThan(1_000);
-  expect(report.entries[0]?.gnu?.gold_version).toBe(`${"\0".repeat(131_072)}x`);
+it("preserves interior NULs in GNU gold alongside a bounded trailing scan", async () => {
+  const interior = `\0`.repeat(131_072) + "x";
+  const notes = Buffer.concat([
+    elfNote("GNU", 4, Buffer.from("gold\0\0x\0", "latin1")),
+    elfNote("GNU", 4, Buffer.from(interior, "latin1")),
+  ]);
+  const image = elfNoteFixture({ ownership: "program", notes });
+  const started = process.cpuUsage();
+  const report = await parse(image);
+  const { user, system } = process.cpuUsage(started);
+  // The nonzero tail exposes quadratic NUL trimming. Measure CPU to avoid
+  // charging scheduler delays against the parser on loaded runners.
+  expect(user + system).toBeLessThan(1_000_000);
+  expect(report.entries.map(({ gnu }) => gnu?.gold_version)).toEqual([
+    "gold\0\0x",
+    interior,
+  ]);
 });
 
-it("rejects a declared note table that extends past the file", () => {
+it("rejects a declared note table that extends past the file", async () => {
   const truncated = elfNoteTablePastEnd();
-  expect(truncated.length).toBe(137);
-  expect(() => parse(truncated)).toThrow(ArtifactReaderFailure);
-  expect(() => parse(truncated)).toThrow(/leaves the artifact/u);
-  const present = Buffer.concat([truncated, Buffer.alloc(3)]);
-  expect(parse(present).entries).toHaveLength(1);
-  expect(parse(present).tables[0]?.location).toEqual({
-    offset: 120,
-    bytes: 20,
+  await expect(parse(truncated)).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/leaves the artifact/u),
   });
+  const report = await parse(Buffer.concat([truncated, Buffer.alloc(3)]));
+  expect(report.entries).toHaveLength(1);
+  expect(report.tables[0]?.location).toEqual({ offset: 120, bytes: 20 });
 });
 
-it("fails when the entry budget is exhausted", () => {
+it("fails when the entry budget is exhausted", async () => {
   const notes = Buffer.concat([
     gnuBuildIdNote(),
     gnuAbiTagNote(),
     elfNote("GNU", 4, Buffer.from("gold")),
   ]);
   const bytes = elfNoteFixture({ ownership: "program", notes });
-  expect(() =>
-    parseElfNotes(
-      bytes,
-      {
-        path: defaults.path,
-        sha256: createHash("sha256").update(bytes).digest("hex"),
-        bytes: bytes.length,
-      },
-      inspectElfNotesInputSchema.parse({ path: defaults.path, max_entries: 1 }),
-    ),
-  ).toThrow(
+  await expect(parse(bytes, { ...defaults, max_entries: 1 })).rejects.toThrow(
     expect.objectContaining({
       failure: expect.objectContaining({
         kind: "limit",
@@ -868,20 +977,22 @@ it("fails when the entry budget is exhausted", () => {
       }),
     }),
   );
-  expect(parse(bytes, { ...defaults, max_entries: 3 }).coverage).toEqual({
+  expect(
+    (await parse(bytes, { ...defaults, max_entries: 3 })).coverage,
+  ).toEqual({
     status: "complete",
     examined_tables: 1,
     examined_entries: 3,
   });
 });
 
-it("reads a glibc-sized note table with the default entry budget", () => {
+it("reads a glibc-sized note table with the default entry budget", async () => {
   // Ubuntu's libc.so.6 has 79 SystemTap probe notes beside its build-id, ABI
   // tag and GNU property notes; this table has the first two and the probes.
   const probes = Array.from({ length: 79 }, () =>
     elfNote("stapsdt", 3, Buffer.alloc(40)),
   );
-  const report = parse(
+  const report = await parse(
     elfNoteFixture({
       ownership: "section",
       notes: Buffer.concat([gnuBuildIdNote(), gnuAbiTagNote(), ...probes]),
@@ -890,31 +1001,31 @@ it("reads a glibc-sized note table with the default entry budget", () => {
   expect(report.entries).toHaveLength(81);
 });
 
-it("keeps unsafe table offsets ahead of unsupported extended numbering", () => {
+it("keeps unsafe table offsets ahead of unsupported extended numbering", async () => {
   const bytes = elfExtendedSectionCountFixture();
   bytes.writeBigUInt64LE(0xffffffffffffffffn, 32);
-  expect(() => parse(bytes)).toThrow(
+  await expect(parse(bytes)).rejects.toThrow(
     "ELF offset or size exceeds a safe integer.",
   );
 });
 
-it("does not apply note precision admission to unrelated program records", () => {
+it("does not apply note precision admission to unrelated program records", async () => {
   const bytes = elf64({ phoff: 64, phnum: 1 }, Buffer.alloc(56));
   bytes.writeUInt32LE(0x70000001, 64);
   for (const relative of [8, 16, 24, 32, 40, 48])
     bytes.writeBigUInt64LE(0xffffffffffffffffn, 64 + relative);
-  expect(parse(bytes).tables).toEqual([]);
+  expect((await parse(bytes)).tables).toEqual([]);
   bytes.writeUInt32LE(4, 64);
-  expect(() => parse(bytes)).toThrow(
+  await expect(parse(bytes)).rejects.toThrow(
     "ELF offset or size exceeds a safe integer.",
   );
 });
 
-it("keeps compressed-note refusal ahead of alignment precision admission", () => {
+it("keeps compressed-note refusal ahead of alignment precision admission", async () => {
   const bytes = compressedElfNoteSectionFixture();
   const sectionTable = Number(bytes.readBigUInt64LE(40));
   bytes.writeBigUInt64LE(0xffffffffffffffffn, sectionTable + 64 + 48);
-  expect(() => parse(bytes)).toThrow(/compressed.*note/iu);
+  await expect(parse(bytes)).rejects.toThrow(/compressed.*note/iu);
 });
 
 it.each([
@@ -924,178 +1035,24 @@ it.each([
   { bits: 64, little: false },
 ] as const)(
   "rejects dangling section names with and without notes (ELF$bits $little)",
-  ({ bits, little }) => {
+  async ({ bits, little }) => {
     for (const ownership of ["program", "none"] as const) {
       const bytes = elfNoteFixture({ bits, little, ownership });
-      const before = parse(bytes);
+      const before = await parse(bytes);
       const nameOffset = bits === 64 ? 62 : 50;
       if (little) bytes.writeUInt16LE(5, nameOffset);
       else bytes.writeUInt16BE(5, nameOffset);
-      expect(() => parse(bytes)).toThrow("ELF section table is missing");
+      await expect(parse(bytes)).rejects.toThrow(
+        "ELF section table is missing",
+      );
       if (little) bytes.writeUInt16LE(0, nameOffset);
       else bytes.writeUInt16BE(0, nameOffset);
-      expect(parse(bytes)).toEqual(before);
+      expect(await parse(bytes)).toEqual(before);
     }
   },
 );
 
-it("decodes Linux core dump notes (NT_PRPSINFO, NT_FILE, NT_SIGINFO, NT_AUXV) for 64-bit little-endian", () => {
-  const notes = Buffer.concat([
-    corePrpsinfoNote({
-      bits: 64,
-      little: true,
-      state: 0,
-      sname: "R",
-      pid: 4242,
-      ppid: 1,
-      pgrp: 4242,
-      sid: 4242,
-      uid: 1001,
-      gid: 1002,
-      fname: "test-proc",
-      psargs: "/usr/bin/test-proc --daemon -v",
-    }),
-    coreFileNote(
-      [
-        {
-          start: 0x400000n,
-          end: 0x405000n,
-          file_ofs: 0n,
-          path: "/usr/bin/test-proc",
-        },
-        {
-          start: 0x7fff0000n,
-          end: 0x7fff2000n,
-          file_ofs: 10n,
-          path: "/lib/x86_64-linux-gnu/libc.so.6",
-        },
-      ],
-      4096,
-      64,
-      true,
-    ),
-    coreSiginfoNote(11, 1, 0, true), // SIGSEGV, SEGV_MAPERR
-    coreAuxvNote(
-      [
-        [6, 4096n], // AT_PAGESZ
-        [3, 0x400040n], // AT_PHDR
-        [9, 0x401000n], // AT_ENTRY
-        [999, 0x1234n], // Unknown auxv tag
-      ],
-      64,
-      true,
-    ),
-  ]);
-
-  const bytes = elfNoteFixture({
-    bits: 64,
-    little: true,
-    type: 4, // ET_CORE
-    ownership: "program",
-    notes,
-  });
-
-  const report = parse(bytes);
-  expect(report.entries).toHaveLength(4);
-
-  // 1. NT_PRPSINFO
-  expect(report.entries[0]).toMatchObject({
-    owner: "CORE",
-    type: 3,
-    type_name: "core_prpsinfo",
-    gnu: null,
-    core: {
-      prpsinfo: {
-        state: 0,
-        pid: 4242,
-        ppid: 1,
-        pgrp: 4242,
-        sid: 4242,
-        uid: 1001,
-        gid: 1002,
-        filename: "test-proc",
-        psargs: "/usr/bin/test-proc --daemon -v",
-      },
-      file: null,
-      siginfo: null,
-      auxv: null,
-    },
-  });
-
-  // 2. NT_FILE
-  expect(report.entries[1]).toMatchObject({
-    owner: "CORE",
-    type: 0x46494c45,
-    type_name: "core_file",
-    gnu: null,
-    core: {
-      prpsinfo: null,
-      file: {
-        count: 2,
-        page_size: 4096,
-        mappings: [
-          {
-            start_address: "0x400000",
-            end_address: "0x405000",
-            file_offset_pages: "0x0",
-            path: "/usr/bin/test-proc",
-            path_hex: Buffer.from("/usr/bin/test-proc").toString("hex"),
-          },
-          {
-            start_address: "0x7fff0000",
-            end_address: "0x7fff2000",
-            file_offset_pages: "0xa",
-            path: "/lib/x86_64-linux-gnu/libc.so.6",
-            path_hex: Buffer.from("/lib/x86_64-linux-gnu/libc.so.6").toString(
-              "hex",
-            ),
-          },
-        ],
-      },
-      siginfo: null,
-      auxv: null,
-    },
-  });
-
-  // 3. NT_SIGINFO
-  expect(report.entries[2]).toMatchObject({
-    owner: "CORE",
-    type: 0x53494749,
-    type_name: "core_siginfo",
-    gnu: null,
-    core: {
-      prpsinfo: null,
-      file: null,
-      siginfo: {
-        signo: 11,
-        errno: 0,
-        code: 1,
-      },
-      auxv: null,
-    },
-  });
-
-  // 4. NT_AUXV
-  expect(report.entries[3]).toMatchObject({
-    owner: "CORE",
-    type: 6,
-    type_name: "core_auxv",
-    gnu: null,
-    core: {
-      prpsinfo: null,
-      file: null,
-      siginfo: null,
-      auxv: [
-        { type: 6, type_name: "AT_PAGESZ", value: "0x1000" },
-        { type: 3, type_name: "AT_PHDR", value: "0x400040" },
-        { type: 9, type_name: "AT_ENTRY", value: "0x401000" },
-        { type: 999, type_name: null, value: "0x1234" },
-      ],
-    },
-  });
-});
-
-it("decodes Linux core dump notes for 32-bit big-endian", () => {
+it("decodes Linux core dump notes for 32-bit big-endian", async () => {
   const notes = Buffer.concat([
     corePrpsinfoNote({
       bits: 32,
@@ -1142,7 +1099,7 @@ it("decodes Linux core dump notes for 32-bit big-endian", () => {
     notes,
   });
 
-  const report = parse(bytes);
+  const report = await parse(bytes);
   expect(report.entries).toHaveLength(3);
   expect(report.entries[0]?.core?.prpsinfo).toMatchObject({
     state: 1,
@@ -1171,14 +1128,77 @@ it("decodes Linux core dump notes for 32-bit big-endian", () => {
   ]);
 });
 
+const elf32ProcessLayouts: readonly [
+  name: string,
+  machine: number,
+  little: boolean,
+  idWidth: 2 | 4,
+  flags?: number,
+][] = [
+  ["MIPS little", 8, true, 4],
+  ["MIPS big", 8, false, 4],
+  ["PowerPC big", 20, false, 4],
+  ["RISC-V little", 243, true, 4],
+  ["Hexagon V4 little", 164, true, 4, 3],
+  ["PA-RISC big", 15, false, 4],
+  ["OpenRISC big", 92, false, 4],
+  ["OpenRISC Linux big", 0x8472, false, 4],
+  ["ARC compact little", 93, true, 4],
+  ["ARCv2 big", 195, false, 4],
+  ["Xtensa little", 94, true, 4],
+  ["MicroBlaze big", 189, false, 4],
+  ["C-SKY little", 252, true, 4],
+  ["C-SKY big", 252, false, 4],
+  ["Blackfin little", 106, true, 4],
+  ["UniCore little", 110, true, 4],
+  ["Nios II little", 113, true, 4],
+  ["C6x little", 140, true, 4],
+  ["C6x big", 140, false, 4],
+  ["NDS32 little", 167, true, 4],
+  ["NDS32 big", 167, false, 4],
+  ["Meta little", 174, true, 4],
+  ["TILEPro little", 188, true, 4],
+  ["TILE-Gx m32 little", 191, true, 4],
+  ["SuperH little", 42, true, 2],
+  ["SuperH big", 42, false, 2],
+];
+
+it.each(elf32ProcessLayouts)(
+  "decodes the Linux ELF32 process record for %s",
+  async (_name, machine, little, idWidth, flags) => {
+    const { bytes, shortened, expected } = elf32ProcessIdentityFixture(
+      machine,
+      little,
+      idWidth,
+      flags,
+    );
+    const report = await parse(bytes);
+    expect(report).toMatchObject({
+      format: "elf32",
+      byte_order: little ? "little" : "big",
+      machine,
+      coverage: { status: "complete", examined_entries: 2 },
+    });
+    expect(report.entries[0]?.core?.prpsinfo).toEqual(expected);
+    expect(report.entries[1]).toMatchObject({
+      type_name: "core_prpsinfo",
+      descriptor: {
+        bytes: shortened.length,
+        sha256: createHash("sha256").update(shortened).digest("hex"),
+      },
+      core: null,
+    });
+  },
+);
+
 it.each([
   { name: "i386", machine: 3, little: true },
   { name: "s390 compat", machine: 22, little: false },
   { name: "x86 x32 compat", machine: 62, little: true },
 ])(
   "decodes the 124-byte prpsinfo with 16-bit IDs for $name",
-  ({ machine, little }) => {
-    const report = parse(
+  async ({ machine, little }) => {
+    const report = await parse(
       elfNoteFixture({
         bits: 32,
         machine,
@@ -1226,9 +1246,9 @@ it.each([
     machine: 0xffff,
     idWidth: 4 as const,
   },
-])("keeps raw prpsinfo evidence for $name", ({ machine, idWidth }) => {
+])("keeps raw prpsinfo evidence for $name", async ({ machine, idWidth }) => {
   const descriptor = corePrpsinfoDescriptor({ bits: 32, idWidth });
-  const report = parse(
+  const report = await parse(
     elfNoteFixture({
       bits: 32,
       machine,
@@ -1256,7 +1276,7 @@ it.each([
   { bits: 64 as const, little: false, address: 0xf123456789abcdefn },
 ])(
   "keeps unsigned ELF$bits file and auxiliary words exact",
-  ({ bits, little, address }) => {
+  async ({ bits, little, address }) => {
     const mapping = {
       start: address,
       end: address + 1n,
@@ -1267,7 +1287,7 @@ it.each([
       coreFileNote([mapping], 4096, bits, little),
       coreAuxvNote([[9, address]], bits, little),
     ]);
-    const { entries } = parse(
+    const { entries } = await parse(
       elfNoteFixture({ bits, little, type: 4, ownership: "program", notes }),
     );
     const expected = `0x${address.toString(16)}`;
@@ -1278,7 +1298,23 @@ it.each([
   },
 );
 
-it("tolerates malformed core notes by returning null without throwing", () => {
+it.each([
+  [10, "AT_NOTELF"],
+  [24, "AT_BASE_PLATFORM"],
+  [27, "AT_RSEQ_FEATURE_SIZE"],
+  [28, "AT_RSEQ_ALIGN"],
+  [29, "AT_HWCAP3"],
+  [30, "AT_HWCAP4"],
+  [51, "AT_MINSIGSTKSZ"],
+])("names auxv type %i as %s", async (type, name) => {
+  const notes = coreAuxvNote([[type, 1]]);
+  const { entries } = await parse(
+    elfNoteFixture({ ownership: "program", notes }),
+  );
+  expect(entries[0]?.core?.auxv?.[0]?.type_name).toBe(name);
+});
+
+it("tolerates malformed core notes by returning null without throwing", async () => {
   const truncatedPrpsinfo = elfNote("CORE", 3, Buffer.alloc(20)); // requires 136 for 64-bit
   const truncatedFile = elfNote(
     "CORE",
@@ -1306,7 +1342,7 @@ it("tolerates malformed core notes by returning null without throwing", () => {
     notes,
   });
 
-  const report = parse(bytes);
+  const report = await parse(bytes);
   expect(report.entries).toHaveLength(5);
   expect(report.entries[0]?.core).toBeNull();
   expect(report.entries[0]?.type_name).toBe("core_prpsinfo");
@@ -1318,7 +1354,7 @@ it("tolerates malformed core notes by returning null without throwing", () => {
   expect(report.entries[3]?.type_name).toBe("core_auxv");
   expect(report.entries[4]?.core).toBeNull();
   expect(report.entries[4]?.type_name).toBe("core_auxv");
-  const valid = parse(
+  const valid = await parse(
     elfNoteFixture({
       bits: 64,
       ownership: "program",
@@ -1338,7 +1374,7 @@ it("tolerates malformed core notes by returning null without throwing", () => {
   });
 });
 
-it("decodes siginfo using target ABI for MIPS machines", () => {
+it("decodes siginfo using target ABI for MIPS machines", async () => {
   const desc = Buffer.alloc(128);
   desc.writeInt32LE(11, 0); // signo = SIGSEGV
   desc.writeInt32LE(1, 4); // code = SEGV_MAPERR (offset 4 on MIPS)
@@ -1350,7 +1386,7 @@ it("decodes siginfo using target ABI for MIPS machines", () => {
     ownership: "program",
     notes: mipsSiginfo,
   });
-  const report = parse(bytes);
+  const report = await parse(bytes);
   expect(report.entries[0]?.core?.siginfo).toEqual({
     signo: 11,
     code: 1,
@@ -1358,7 +1394,7 @@ it("decodes siginfo using target ABI for MIPS machines", () => {
   });
 });
 
-it("preserves negative process IDs and signal numbers without rewriting to zero", () => {
+it("preserves negative process IDs and signal numbers without rewriting to zero", async () => {
   const prps = corePrpsinfoNote({
     pid: -1,
     ppid: -1,
@@ -1371,7 +1407,7 @@ it("preserves negative process IDs and signal numbers without rewriting to zero"
     ownership: "program",
     notes: Buffer.concat([prps, sig]),
   });
-  const report = parse(bytes);
+  const report = await parse(bytes);
   expect(report.entries[0]?.core?.prpsinfo).toMatchObject({
     pid: -1,
     ppid: -1,
@@ -1385,7 +1421,7 @@ it("preserves negative process IDs and signal numbers without rewriting to zero"
   });
 });
 
-it("rejects 64-bit auxv tags and out-of-range page sizes with core: null without schema error", () => {
+it("rejects 64-bit auxv tags and out-of-range page sizes with core: null without schema error", async () => {
   const validAuxv = coreAuxvNote([[6, 4096n]], 64, true);
   const wideTagAuxv = Buffer.from(validAuxv);
   wideTagAuxv.writeBigUInt64LE(0x100000000n, 20);
@@ -1411,14 +1447,14 @@ it("rejects 64-bit auxv tags and out-of-range page sizes with core: null without
     ownership: "program",
     notes: Buffer.concat([wideTagAuxv, widePageSizeFile]),
   });
-  const report = parse(bytes);
+  const report = await parse(bytes);
   expect(report.entries[0]?.core).toBeNull();
   expect(report.entries[1]?.core).toBeNull();
 });
 
 it.each([32, 64] as const)(
   "leaves ELF%d NT_FILE mappings unknown when the descriptor contains a surplus pathname",
-  (bits) => {
+  async (bits) => {
     const little = bits === 64;
     const file = coreFileNote(
       [{ start: 0x1000, end: 0x2000, file_ofs: 2, path: "/bin/app" }],
@@ -1444,8 +1480,8 @@ it.each([32, 64] as const)(
         }),
       );
     };
-    const exact = inspect(Buffer.alloc(0));
-    const padded = inspect(Buffer.alloc(3));
+    const exact = await inspect(Buffer.alloc(0));
+    const padded = await inspect(Buffer.alloc(3));
     expect(exact.entries).toHaveLength(2);
     expect(padded.entries.map(({ core }) => core)).toEqual(
       exact.entries.map(({ core }) => core),
@@ -1459,7 +1495,7 @@ it.each([32, 64] as const)(
       });
 
     const tail = Buffer.from("/lib/extra.so\0");
-    const malformed = inspect(tail);
+    const malformed = await inspect(tail);
     expect(malformed.coverage).toEqual(exact.coverage);
     expect(malformed.entries).toHaveLength(2);
     const payload = Buffer.concat([descriptor, tail]);
@@ -1473,21 +1509,18 @@ it.each([32, 64] as const)(
   },
 );
 
-it("does not spend text budget on malformed or discarded NT_FILE paths", () => {
+it("does not spend text budget on malformed or discarded NT_FILE paths", async () => {
   const header = Buffer.alloc(16);
-  header.writeBigUInt64LE(2n, 0); // count = 2
+  header.writeBigUInt64LE(32n, 0);
   header.writeBigUInt64LE(4096n, 8); // page_size = 4096
-  const mappings = Buffer.alloc(48); // 2 mappings * 24 bytes
+  const mappings = Buffer.alloc(32 * 24);
   const paths = Buffer.from(
     "/bin/app\0unterminated_path_without_null",
     "latin1",
   );
-  const badFileNote = elfNote(
-    "CORE",
-    0x46494c45,
-    Buffer.concat([header, mappings, paths]),
-  );
-  const path = "p".repeat(128);
+  const malformed = Buffer.concat([header, mappings, paths]);
+  const badFileNote = elfNote("CORE", 0x46494c45, malformed);
+  const path = "p".repeat(512);
   const valid = coreFileNote([
     { start: 0x1000, end: 0x2000, file_ofs: 0, path },
   ]);
@@ -1498,11 +1531,18 @@ it("does not spend text budget on malformed or discarded NT_FILE paths", () => {
   });
   // Two CORE owners use 14 bytes each; one ELF64 mapping uses 54, and
   // the retained Latin-1 path plus its hex spelling uses 3 bytes per byte.
-  const budget = 2 * 14 + 54 + 128 * 3;
+  const budget = 2 * 14 + 54 + path.length * 3;
   expect(image.length).toBeLessThanOrEqual(budget);
   const bytes = Buffer.concat([image, Buffer.alloc(budget - image.length)]);
-  const report = parse(bytes);
-  expect(report.entries[0]?.core).toBeNull();
+  const report = await parse(bytes);
+  expect(report.entries[0]).toMatchObject({
+    type_name: "core_file",
+    core: null,
+    descriptor: {
+      bytes: malformed.length,
+      sha256: createHash("sha256").update(malformed).digest("hex"),
+    },
+  });
   expect(report.entries[1]?.core?.file?.mappings).toEqual([
     {
       start_address: "0x1000",
@@ -1512,7 +1552,7 @@ it("does not spend text budget on malformed or discarded NT_FILE paths", () => {
       path_hex: Buffer.from(path).toString("hex"),
     },
   ]);
-  expect(() => parse(bytes.subarray(0, bytes.length - 1))).toThrow(
+  await expect(parse(bytes.subarray(0, bytes.length - 1))).rejects.toThrow(
     expect.objectContaining({
       failure: expect.objectContaining({
         kind: "limit",
@@ -1529,7 +1569,7 @@ it.each([
   { bits: 64, little: false, machine: 21 },
 ] as const)(
   "decodes Android .note.android.ident 132-byte, 152-byte, and legacy 4-byte descriptors (ELF$bits little=$little machine=$machine)",
-  ({ bits, little, machine }) => {
+  async ({ bits, little, machine }) => {
     const extendedTail = Buffer.alloc(20, 0xaa);
     const notes = Buffer.concat([
       androidIdentNote({
@@ -1561,108 +1601,75 @@ it.each([
       sectionName: ".note.android.ident",
       notes,
     });
-    const report = parse(bytes);
+    const report = await parse(bytes);
     expect(report.tables[0]?.name).toBe(".note.android.ident");
-    expect(report.entries).toHaveLength(4);
-
-    expect(report.entries[0]).toMatchObject({
+    const ident = {
       owner: "Android",
       type: 1,
       type_name: "android_ident",
-      descsz: 132,
       gnu: null,
       core: null,
-      android: {
-        android_api: 24,
-        ndk_version: "r27c",
-        ndk_build_number: "12297006",
+    };
+    expect(report.entries).toMatchObject([
+      {
+        ...ident,
+        descsz: 132,
+        android: {
+          android_api: 24,
+          ndk_version: "r27c",
+          ndk_build_number: "12297006",
+        },
       },
-    });
-    expect(report.entries[1]).toMatchObject({
-      owner: "Android",
-      type: 1,
-      type_name: "android_ident",
-      descsz: 152,
-      gnu: null,
-      core: null,
-      android: {
-        android_api: 35,
-        ndk_version: "r28",
-        ndk_build_number: "12479018",
+      {
+        ...ident,
+        descsz: 152,
+        android: {
+          android_api: 35,
+          ndk_version: "r28",
+          ndk_build_number: "12479018",
+        },
       },
-    });
-    expect(report.entries[2]).toMatchObject({
-      owner: "Android",
-      type: 1,
-      type_name: "android_ident",
-      descsz: 4,
-      gnu: null,
-      core: null,
-      descriptor: {
-        bytes: 4,
-        hex: little ? "15000000" : "00000015",
+      {
+        ...ident,
+        descsz: 4,
+        descriptor: { bytes: 4, hex: little ? "15000000" : "00000015" },
+        android: { android_api: 21, ndk_version: null, ndk_build_number: null },
       },
-      android: {
-        android_api: 21,
-        ndk_version: null,
-        ndk_build_number: null,
+      {
+        owner: "Android",
+        type: 2,
+        type_name: "unknown",
+        gnu: null,
+        core: null,
+        android: null,
+        descriptor: { bytes: 4, hex: "01020304" },
       },
-    });
-    expect(report.entries[3]).toMatchObject({
-      owner: "Android",
-      type: 2,
-      type_name: "unknown",
-      gnu: null,
-      core: null,
-      android: null,
-      descriptor: {
-        bytes: 4,
-        hex: "01020304",
-      },
-    });
+    ]);
   },
 );
 
-it("degrades truncated, unterminated, or non-printable Android ident notes to null while preserving descriptors", () => {
-  const truncated2 = Buffer.from([0x15, 0x00]);
-  const truncated68 = Buffer.alloc(68);
-  truncated68.writeUInt32LE(24, 0);
-  truncated68.write("r27c\0", 4, "latin1");
-
-  const unterminatedVersion = Buffer.alloc(132);
-  unterminatedVersion.writeUInt32LE(24, 0);
-  unterminatedVersion.fill(0x72, 4, 68);
-  unterminatedVersion.write("12297006\0", 68, "latin1");
-
-  const unterminatedBuild = Buffer.alloc(132);
-  unterminatedBuild.writeUInt32LE(24, 0);
-  unterminatedBuild.write("r27c\0", 4, "latin1");
-  unterminatedBuild.fill(0x39, 68, 132);
-
-  const controlByteSlot = Buffer.alloc(132);
-  controlByteSlot.writeUInt32LE(24, 0);
-  controlByteSlot.set([0x72, 0x07, 0x00], 4);
-  controlByteSlot.write("12297006\0", 68, "latin1");
-
-  const nonZeroPaddingSlot = Buffer.alloc(132);
-  nonZeroPaddingSlot.writeUInt32LE(24, 0);
-  nonZeroPaddingSlot.write("r27c\0", 4, "latin1");
-  nonZeroPaddingSlot[20] = 0x58;
-  nonZeroPaddingSlot.write("12297006\0", 68, "latin1");
-
+it("degrades truncated, unterminated, or non-printable Android ident notes to null while preserving descriptors", async () => {
+  const descriptor = Buffer.alloc(132);
+  descriptor.writeUInt32LE(24, 0);
+  descriptor.write("r27c\0", 4);
+  descriptor.write("12297006\0", 68);
+  const controlByte = Buffer.from(descriptor);
+  controlByte[5] = 0x07;
+  const nonZeroPadding = Buffer.from(descriptor);
+  nonZeroPadding[20] = 0x58;
   const descriptors = [
     Buffer.alloc(0),
-    truncated2,
-    truncated68,
-    unterminatedVersion,
-    unterminatedBuild,
-    controlByteSlot,
-    nonZeroPaddingSlot,
+    Buffer.of(0x15, 0),
+    descriptor.subarray(0, 68),
+    Buffer.from(descriptor).fill(0x72, 4, 68),
+    Buffer.from(descriptor).fill(0x39, 68, 132),
+    controlByte,
+    nonZeroPadding,
   ];
   const notes = Buffer.concat(
     descriptors.map((desc) => elfNote("Android", 1, desc)),
   );
-  const report = parse(elfNoteFixture({ ownership: "program", notes }));
+  const report = await parse(elfNoteFixture({ ownership: "program", notes }));
   expect(report.entries).toHaveLength(descriptors.length);
   for (const [index, desc] of descriptors.entries()) {
     expect(report.entries[index]).toMatchObject({
@@ -1681,7 +1688,7 @@ it("degrades truncated, unterminated, or non-printable Android ident notes to nu
   }
 });
 
-it("charges TextBudget for scanned and retained Android ident strings", () => {
+it("charges TextBudget for scanned and retained Android ident strings", async () => {
   // 6 aliased headers over a 552-byte file: 128 scanned once <= 552, and
   // 6 * (23 owner + 12 retained) = 210 <= 552 (un-cached 6 * 128 = 768 > 552).
   const typicalIdent = androidIdentNote({
@@ -1689,7 +1696,7 @@ it("charges TextBudget for scanned and retained Android ident strings", () => {
     ndkVersion: "r27c",
     ndkBuildNumber: "12297006",
   });
-  const aliased6 = parse(repeatedNotes(6, typicalIdent));
+  const aliased6 = await parse(repeatedNotes(6, typicalIdent));
   expect(aliased6.entries).toHaveLength(6);
   expect(
     aliased6.entries.every(
@@ -1705,21 +1712,10 @@ it("charges TextBudget for scanned and retained Android ident strings", () => {
     ndkVersion: "v".repeat(63),
     ndkBuildNumber: "b".repeat(63),
   });
-  let retainedFailure: unknown;
-  try {
-    parse(repeatedNotes(6, maxStrings));
-  } catch (cause) {
-    retainedFailure = cause;
-  }
-  expect(retainedFailure).toBeInstanceOf(ParseFailureError);
-  expect(retainedFailure).toMatchObject({
-    failure: {
-      kind: "limit",
-      format: "elf-notes",
-      limit: { name: "note_text_bytes" },
-    },
-    message: expect.stringMatching(/byte budget/u),
-  });
+  const retained = repeatedNotes(6, maxStrings);
+  await expect(parse(retained)).rejects.toMatchObject(
+    noteTextLimit(retained.length),
+  );
 
   // Share one 132-byte descriptor range across a GNU gold-version header
   // (namesz=24) and a nested Android ident header (namesz=8 at +16) so
@@ -1755,7 +1751,7 @@ it("charges TextBudget for scanned and retained Android ident strings", () => {
     sharedPayload,
   ]);
 
-  const withinScanBudget = parse(
+  const withinScanBudget = await parse(
     sharedScanImage,
     inspectElfNotesInputSchema.parse({
       path: defaults.path,
@@ -1768,25 +1764,7 @@ it("charges TextBudget for scanned and retained Android ident strings", () => {
     ndk_build_number: "1",
   });
 
-  let scanFailure: unknown;
-  try {
-    parse(
-      sharedScanImage,
-      inspectElfNotesInputSchema.parse({
-        path: defaults.path,
-        max_file_bytes: 259,
-      }),
-    );
-  } catch (cause) {
-    scanFailure = cause;
-  }
-  expect(scanFailure).toBeInstanceOf(ParseFailureError);
-  expect(scanFailure).toMatchObject({
-    failure: {
-      kind: "limit",
-      format: "elf-notes",
-      limit: { name: "note_text_bytes" },
-    },
-    message: expect.stringMatching(/259-byte budget/u),
-  });
+  await expect(
+    parse(sharedScanImage, { ...defaults, max_file_bytes: 259 }),
+  ).rejects.toMatchObject(noteTextLimit(259));
 });

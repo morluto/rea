@@ -421,7 +421,7 @@ class TimelineCapture {
   }
 
   #navigationCommitted(
-    { facts, url: observation, transitionType }: CdpFrameEvent,
+    { facts, url: observation, navigationType }: CdpFrameEvent,
     contextOnly: boolean,
   ): void {
     const identity = selectCdpFrameIdentity(facts, this.#mainFrameId);
@@ -451,7 +451,7 @@ class TimelineCapture {
       destinationScope:
         destination.scope === "unknown" ? null : destination.scope,
       requestId: null,
-      detail: safeDetail(transitionType),
+      detail: safeDetail(navigationType),
     });
     if (observation.kind !== "observed") this.invalidateFinalUrl();
     if (this.#stopIfOutOfScope(destination)) return;

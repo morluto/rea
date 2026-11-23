@@ -466,6 +466,12 @@ while locally shadowed receivers can still contribute network endpoint
 candidates. A template recovered with a parser error and no cooked value stays
 dynamic; its raw spelling is not treated as a valid JavaScript string.
 
+Method-first `request` calls, as in superagent, needle, and Angular
+`HttpClient`, pass a standard HTTP method, in any letter case, before the
+target. In both `analyze_javascript_application` and `analyze_web_bundle`,
+`request("get", "/api/users")` contributes `/api/users` as the network endpoint
+candidate. When the target is computed, the method token remains the candidate.
+
 RPC client syntax also contributes network endpoint candidates, in both
 `analyze_javascript_application` and `analyze_web_bundle`, distinguished by
 `mechanism`:
@@ -877,6 +883,23 @@ remain unknown. Wrapper limitations name visits and depth separately so a
 caller can change the resource actually exhausted. Finite inline literal object
 spreads use iterative syntax traversal and no longer inherit a duplicate
 semantic-depth cut.
+
+`semantic_analysis` selects how much of each source is examined. The default,
+`complete`, parses, static-analyzes and semantic-analyzes every selected
+source. `structure-only` returns the static and application-graph facts —
+package and Electron roles, preload and renderer structure, IPC and route
+structure — without building semantic IR, semantic graph content, semantic
+traces, or the application-graph source-module and export-binding nodes those
+facts feed. Each file's semantic coverage is recorded as not examined with
+that reason. The application graph's `coverage` is `partial`, with
+`truncated: false`, `omitted_count: null` and no extra limits: the number of
+omitted module and export nodes is not known, so a comparison reports those
+nodes as unknown rather than removed or added. The result states the omission
+once in `limitations`.
+Use it for a first pass over a large application when the structural surface
+is the question; request `complete` analysis afterwards, narrowed with
+`source_paths`, for semantic detail. The selection stays in Evidence
+parameters. The CLI accepts `--semantic-analysis structure-only`.
 
 Member-mutation analysis also has a work allowance of 524,288 alias states
 per source, selected by the `javascript.member_mutation_alias_states` setting

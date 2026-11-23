@@ -5,7 +5,7 @@ import {
   declaredFileRange,
 } from "../../domain/binaryContainer.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
+import { hasDosMzMagic, parseMzHeaderEvidence } from "../../domain/dosMz.js";
 import {
   observePeCoffFrame,
   PE_COFF_FRAME_BYTES,
@@ -730,7 +730,7 @@ const peClaims = async (
 ): Promise<readonly SectionWindow[]> => {
   const { handle, fileSize, signal } = source;
   const dos = await tryRead(handle, 0, 64, fileSize, signal);
-  if (dos === null || dos[0] !== 0x4d || dos[1] !== 0x5a) return [];
+  if (dos === null || !hasDosMzMagic(dos)) return [];
   const probe = observePeCoffFrame(
     dos,
     fileSize,

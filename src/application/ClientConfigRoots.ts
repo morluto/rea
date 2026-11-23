@@ -1,6 +1,7 @@
 import { isAbsolute, join, posix, resolve, win32 } from "node:path";
 
 import { err, ok, type Result } from "../domain/result.js";
+import { isQualifiedCallerPath } from "../filesystem/callerPath.js";
 import { windowsAppDataRoots } from "./MsixPackageStorage.js";
 
 /**
@@ -118,10 +119,10 @@ export const clientPathDependence = (
   path: string,
   platform: NodeJS.Platform,
 ): "relative" | "driveless" | undefined => {
-  if (platform !== "win32")
-    return posix.isAbsolute(path) ? undefined : "relative";
-  if (!win32.isAbsolute(path)) return "relative";
-  return /^[\\/](?![\\/])/u.test(path) ? "driveless" : undefined;
+  if (isQualifiedCallerPath(path, platform)) return undefined;
+  return platform === "win32" && win32.isAbsolute(path)
+    ? "driveless"
+    : "relative";
 };
 
 /**

@@ -399,15 +399,15 @@ A scoped report has `scope.mode: "explicit"`. Its `scope_checks` determine
 `environment_healthy` summarizes the full audit. `--target` adds a target check,
 but the report remains audit-wide unless a scope option is also supplied.
 
-With one selected client, Ghidra, IDA, JADX and Kuna provider checks use the
-client's recorded environment over the terminal it inherits. If that registration
-cannot be read or a setting a provider needs cannot be resolved, its available
-value is `null` and its check is `unknown`; its configured value is also `null`
-when the configuration setting itself is unknown. Doctor does not infer
-readiness from the terminal. A missing registration still uses terminal settings
-for setup. Other checks, including Hopper, use the terminal running doctor. A
-client-started server may receive a different environment, and doctor cannot
-observe it. When an available
+With one selected client, the Hopper, ilspycmd, Ghidra, IDA, JADX and Kuna
+checks use its recorded environment over the terminal it inherits. If Doctor cannot read the registration or resolve
+a setting a provider needs, the affected check reports `unknown`. For Ghidra,
+IDA, JADX and Kuna, the provider's available value is also `null`; its configured
+value is `null` when the configuration setting itself is unknown. A missing
+registration still uses terminal settings for setup. Doctor validates
+`REA_HOPPER_STARTUP_TIMEOUT_MS` independently of launcher discovery and reports
+an unresolved value in the selected registration as `unknown`. A client-started
+server may receive a different environment, which doctor cannot observe. When an available
 provider relies on a setting that a registration's file does not record, or
 records with other text, doctor adds a non-blocking
 `registration_environment:<client>` check with `classification: "unknown"`. The
@@ -470,7 +470,9 @@ rea uninstall --purge-data
 ```
 
 Uninstall preserves Hopper, Node.js, Evidence files, captures, unrelated skills
-and other MCP servers. Purging removes REA's legacy cache and state under
+and other MCP servers. Uninstall and `--purge-data` leave the saved provider
+settings file `rea.json` in place and can run when it is malformed. Purging
+removes REA's legacy cache and state under
 `~/.rea`, the default Kuna cache (`~/Library/Caches/rea/kuna` on macOS or
 `${XDG_CACHE_HOME:-~/.cache}/rea/kuna` on Linux), and Linux Hopper release
 archives under `${XDG_CACHE_HOME:-~/.cache}/rea/hopper-releases`. Other cache
@@ -1237,8 +1239,10 @@ until a release is known to clear it.
 
 Each installation must include the native decompiler for the host
 architecture in `Ghidra/Features/Decompiler/os/<platform>/` or the corresponding
-`build/os/<platform>/` directory. Linux ARM64 uses `linux_arm_64`; official
-release archives may require you to build that native component separately.
+`build/os/<platform>/` directory. Linux ARM64 uses `linux_arm_64`. Official
+release archives ship native binaries only for Windows and Linux x64, so on
+Linux ARM64 build them with the release's
+[native component instructions](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.2_build/GhidraDocs/GettingStarted.md#building-native-components).
 REA checks the executable prerequisite by inspecting the file's own executable
 header, so a native component built for another platform or architecture is
 reported as incompatible instead of being admitted from its directory name, and
@@ -1846,7 +1850,7 @@ Each line is `address<TAB>kind[<TAB>name]`, where kind is `function`, `code` or 
 
 Label seeds can name mapped uninitialized storage such as `.bss`; function and code seeds require initialized bytes.
 
-When Ghidra has no function for a requested procedure, the error's remediation names this seed recovery. A `resolve_containing_procedure` result of `not_in_procedure` carries it as a limitation. Neither establishes that the address holds code. Seeds apply only to a fresh import, so a session with `REA_GHIDRA_PROJECT_PATH` or `REA_GHIDRA_CHECKPOINT_DIR` names the setting to unset first.
+When Ghidra has no function for a requested procedure, the error's remediation names this seed recovery. A `resolve_containing_procedure` result of `not_in_procedure` carries it as a limitation, and an `inspect_native_instruction` result with status `not-in-listing` carries the `code` seed variant. None of these establishes that the address holds code. Seeds apply only to a fresh import, so a session with `REA_GHIDRA_PROJECT_PATH` or `REA_GHIDRA_CHECKPOINT_DIR` names the setting to unset first.
 
 To skip a named Ghidra auto-analyzer (for example, when default auto-analysis
 stalls in one analyzer on a Swift/Objective-C arm64 Mach-O):
