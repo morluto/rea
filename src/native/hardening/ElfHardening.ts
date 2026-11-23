@@ -55,15 +55,12 @@ import {
 import { MAX_INSPECT_ELF_NOTE_ENTRIES } from "../../domain/native/elfNotes.js";
 import {
   elfStringTableText,
-  observeElfStringTableEntry,
+  observeElfStringTableWindow,
 } from "../../domain/elfStringTable.js";
 import {
   type ElfNoteTableWalk,
-  type ElfWalkedNote,
   type GnuPropertyWord,
-  readGnuPropertyWords,
-  walkElfNoteTables,
-  walkElfNoteTablesFromReader,
+  readGnuPropertyWordsSteps,
 } from "../elf/ElfNoteParser.js";
 import {
   BinaryFormatFailure,
@@ -194,16 +191,12 @@ const isSpan = (program: ElfProgramDeclaration): program is SpanProgram =>
 
 const STREAM_WINDOW_BYTES = 65536;
 
-type HardeningStep =
-  | { readonly kind: "read"; readonly offset: number; readonly length: number }
-  | {
-      readonly kind: "notes";
-      readonly little: boolean;
-      readonly tables: readonly ElfNoteTableWalk[];
-      readonly maxEntries: number;
-    };
-
-type HardeningStepResult = Buffer | readonly ElfWalkedNote[];
+type HardeningStep = {
+  readonly kind: "read";
+  readonly offset: number;
+  readonly length: number;
+};
+type HardeningStepResult = Buffer;
 
 function* readSlice(
   offset: number,
@@ -225,28 +218,8 @@ export const readElfHardening = (
   let next = steps.next();
   while (!next.done) {
     const step = next.value;
-    if (step.kind === "read") {
-      const end = Math.min(bytes.length, step.offset + step.length);
-      next = steps.next(
-        step.offset >= bytes.length
-          ? Buffer.alloc(0)
-          : bytes.subarray(step.offset, end),
-      );
-    } else {
-      try {
-        next = steps.next(
-          walkElfNoteTables(
-            bytes,
-            step.little,
-            step.tables,
-            step.maxEntries,
-            signal,
-          ),
-        );
-      } catch (cause) {
-        next = steps.throw(cause);
-      }
-    }
+    const end = Math.min(bytes.length, step.offset + step.length);
+    next = steps.next(bytes.subarray(step.offset, end));
   }
   return next.value;
 };
@@ -274,24 +247,7 @@ export const readElfHardeningFromHandle = async (
   while (!next.done) {
     assertArtifactReadActive(signal);
     const step = next.value;
-    if (step.kind === "read") {
-      next = steps.next(await readRange(step.offset, step.length));
-    } else {
-      try {
-        next = steps.next(
-          await walkElfNoteTablesFromReader(
-            readRange,
-            source.size,
-            step.little,
-            step.tables,
-            step.maxEntries,
-            signal,
-          ),
-        );
-      } catch (cause) {
-        next = steps.throw(cause);
-      }
-    }
+    next = steps.next(await readRange(step.offset, step.length));
   }
   return next.value;
 };
@@ -776,27 +732,37 @@ function* readSymbolNames(
     if (nameOffset < 0 || nameOffset >= stringSize)
       malformed("ELF dynamic symbol name offset is outside the string table");
     const absPos = stringFileOffset + nameOffset;
-    const needed = Math.min(
-      MAX_BINARY_HARDENING_SYMBOL_NAME_BYTES,
-      stringEnd - absPos,
-    );
-    const inWindow =
-      absPos >= strWinStart &&
-      absPos + needed <= strWinStart + strWinBuf.length;
-    if (!inWindow) {
+    const remaining = stringEnd - absPos;
+    const maximum = MAX_BINARY_HARDENING_SYMBOL_NAME_BYTES;
+    const observe = () =>
+      observeElfStringTableWindow(
+        strWinBuf.subarray(
+          absPos - strWinStart,
+          absPos - strWinStart + maximum,
+        ),
+        remaining,
+      );
+    const cached =
+      absPos >= strWinStart && absPos < strWinStart + strWinBuf.length
+        ? observe()
+        : null;
+    let observed = cached;
+    if (
+      cached === null ||
+      (cached.state === "truncated" &&
+        cached.scanLimited &&
+        cached.examinedBytes < maximum)
+    ) {
       const readLen = Math.min(
-        Math.max(STREAM_WINDOW_BYTES, needed),
-        stringEnd - absPos,
+        Math.max(STREAM_WINDOW_BYTES, maximum),
+        remaining,
       );
       strWinBuf = yield* readSlice(absPos, readLen);
       strWinStart = absPos;
+      observed = observe();
     }
-    const localOffset = absPos - strWinStart;
-    const observed = observeElfStringTableEntry(
-      strWinBuf,
-      localOffset,
-      MAX_BINARY_HARDENING_SYMBOL_NAME_BYTES,
-    );
+    if (observed === null || observed.state === "outside")
+      malformed("ELF dynamic symbol name offset is outside the string table");
     scanned += observed.examinedBytes;
     if (scanned > MAX_BINARY_HARDENING_SYMBOL_SCAN_BYTES)
       return {
@@ -805,8 +771,6 @@ function* readSymbolNames(
         stackProtector,
         fortify,
       };
-    if (observed.state === "outside")
-      malformed("ELF dynamic symbol name offset is outside the string table");
     // A name past the window is unresolved. Later symbols can still carry the sign.
     if (observed.state === "truncated") {
       unterminated = true;
@@ -816,8 +780,8 @@ function* readSymbolNames(
     if (
       (stackProtector === undefined || fortify === undefined) &&
       observed.contentBytes >= 5 &&
-      strWinBuf[localOffset] === 0x5f &&
-      strWinBuf[localOffset + 1] === 0x5f
+      observed.bytes[0] === 0x5f &&
+      observed.bytes[1] === 0x5f
     ) {
       const name = elfStringTableText(observed) ?? "";
       if (stackProtector === undefined && isStackProtectorSymbol(name))
@@ -1195,14 +1159,16 @@ function* readFeatureNotes(
     unresolvedOverlap,
   );
   try {
-    const walked = (yield {
-      kind: "notes",
+    const words = yield* readGnuPropertyWordsSteps(
+      fileSize,
       little,
       tables,
-      maxEntries: MAX_INSPECT_ELF_NOTE_ENTRIES,
-    }) as readonly ElfWalkedNote[];
+      MAX_INSPECT_ELF_NOTE_ENTRIES,
+      propertyAlign,
+      signal,
+    );
     return {
-      words: readGnuPropertyWords(walked, little, propertyAlign),
+      words,
       searched,
       incomplete,
     };

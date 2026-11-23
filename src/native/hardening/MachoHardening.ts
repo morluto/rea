@@ -23,7 +23,7 @@ import { machoBinaryArchitecture } from "../../domain/binaryTarget.js";
 import { decodeMachoFixedName } from "../../domain/apple/appleMachoNames.js";
 import {
   elfStringTableText,
-  observeElfStringTableEntry,
+  observeElfStringTableWindow,
 } from "../../domain/elfStringTable.js";
 import {
   type BinaryHardeningImage,
@@ -706,32 +706,40 @@ const stackRow = async (
     if (nameOffset >= stringSize)
       malformed("Mach-O symbol name offset is outside the string table");
     const absPos = stringAt + nameOffset;
-    const needed = Math.min(
-      MAX_BINARY_HARDENING_SYMBOL_NAME_BYTES,
-      stringEnd - absPos,
-    );
-    const inWindow =
-      absPos >= strWinStart &&
-      absPos + needed <= strWinStart + strWinBuf.length;
-    if (!inWindow) {
+    const remaining = stringEnd - absPos;
+    const maximum = MAX_BINARY_HARDENING_SYMBOL_NAME_BYTES;
+    const observe = () =>
+      observeElfStringTableWindow(
+        strWinBuf.subarray(
+          absPos - strWinStart,
+          absPos - strWinStart + maximum,
+        ),
+        remaining,
+      );
+    const cached =
+      absPos >= strWinStart && absPos < strWinStart + strWinBuf.length
+        ? observe()
+        : null;
+    let observed = cached;
+    if (
+      cached === null ||
+      (cached.state === "truncated" &&
+        cached.scanLimited &&
+        cached.examinedBytes < maximum)
+    ) {
       const readLen = Math.min(
-        Math.max(STREAM_WINDOW_BYTES, needed),
-        stringEnd - absPos,
+        Math.max(STREAM_WINDOW_BYTES, maximum),
+        remaining,
       );
       strWinBuf = asBuffer(await readAt(absPos, readLen));
       strWinStart = absPos;
+      observed = observe();
     }
-    const localOffset = absPos - strWinStart;
-    const observed = observeElfStringTableEntry(
-      strWinBuf,
-      localOffset,
-      MAX_BINARY_HARDENING_SYMBOL_NAME_BYTES,
-    );
+    if (observed === null || observed.state === "outside")
+      malformed("Mach-O symbol name offset is outside the string table");
     scanned += observed.examinedBytes;
     if (scanned > MAX_BINARY_HARDENING_SYMBOL_SCAN_BYTES)
       return unknownStackBudget();
-    if (observed.state === "outside")
-      malformed("Mach-O symbol name offset is outside the string table");
     // A name past the window is unresolved. Later symbols can still carry the sign.
     if (observed.state === "truncated") {
       unterminated = true;
@@ -739,8 +747,8 @@ const stackRow = async (
     }
     if (
       (observed.contentBytes !== 16 && observed.contentBytes !== 17) ||
-      strWinBuf[localOffset] !== 0x5f ||
-      strWinBuf[localOffset + 1] !== 0x5f
+      observed.bytes[0] !== 0x5f ||
+      observed.bytes[1] !== 0x5f
     )
       continue;
     const name = elfStringTableText(observed) ?? "";
