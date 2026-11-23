@@ -1960,9 +1960,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 );
               }
             } else {
+              const DISASSEMBLER_SHUTDOWN_GRACE_MS = 5_000;
               const timeLeftForDisasm =
                 remainingTimeMs !== undefined
-                  ? Math.floor(remainingTimeMs() - PUBLICATION_RESERVE_MS)
+                  ? Math.floor(
+                      remainingTimeMs() -
+                        PUBLICATION_RESERVE_MS -
+                        DISASSEMBLER_SHUTDOWN_GRACE_MS,
+                    )
                   : 15_000;
               if (timeLeftForDisasm <= 0) {
                 disassemblyStatus = "omitted";
@@ -2011,7 +2016,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   llvmErrorMsg = errorMessage(err);
                   const remainingForObjdump =
                     remainingTimeMs !== undefined
-                      ? Math.floor(remainingTimeMs() - PUBLICATION_RESERVE_MS)
+                      ? Math.floor(
+                          remainingTimeMs() -
+                            PUBLICATION_RESERVE_MS -
+                            DISASSEMBLER_SHUTDOWN_GRACE_MS,
+                        )
                       : 15_000;
                   if (remainingForObjdump > 0) {
                     const objdumpTimeout = Math.floor(
@@ -2167,9 +2176,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               if (ghidraOutC && existsSync(ghidraOutC)) {
                 const candidateC = await readFile(ghidraOutC, "utf8");
                 const candidateCBytes = Buffer.byteLength(candidateC, "utf8");
+                const remainingModulesCount =
+                  modulesToProcess.length - moduleSeq;
+                const reservedScaffoldBytes = remainingModulesCount * 1024;
                 if (
                   candidateCBytes > 0 &&
-                  totalStagedCBytes + candidateCBytes <=
+                  totalStagedCBytes + candidateCBytes + reservedScaffoldBytes <=
                     MAX_DECOMPILE_TOTAL_BYTES
                 ) {
                   cContent = candidateC;
@@ -2195,10 +2207,37 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
                 );
               }
-            } else if (ghidraOutC && existsSync(ghidraOutC)) {
+            } else if (exporterOutcome?.status === "failed") {
+              isCoveragePartial = true;
+              const errDetail = exporterOutcome.error
+                ? sanitizeDiag(exporterOutcome.error)
+                : "export failed";
+              const failedMsg = `Ghidra C decompilation for ${safeLimitationModName} failed: ${errDetail}`;
+              if (recordedGhidraFailures < MAX_GHIDRA_FAILURE_DIAGNOSTICS) {
+                effectiveLimitations.push(failedMsg);
+                recordedGhidraFailures++;
+              } else if (
+                !effectiveLimitations.includes(
+                  "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
+                )
+              ) {
+                effectiveLimitations.push(
+                  "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
+                );
+              }
+            } else if (
+              (exporterOutcome == null ||
+                exporterOutcome.status === "success") &&
+              ghidraOutC &&
+              existsSync(ghidraOutC)
+            ) {
               const cStat = await stat(ghidraOutC);
+              const remainingModulesCount = modulesToProcess.length - moduleSeq;
+              const reservedScaffoldBytes = remainingModulesCount * 1024;
               const remainingCBytes =
-                MAX_DECOMPILE_TOTAL_BYTES - totalStagedCBytes;
+                MAX_DECOMPILE_TOTAL_BYTES -
+                totalStagedCBytes -
+                reservedScaffoldBytes;
               if (cStat.size > remainingCBytes) {
                 isCoveragePartial = true;
                 if (
@@ -2223,7 +2262,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 const candidateC = await readFile(ghidraOutC, "utf8");
                 const candidateCBytes = Buffer.byteLength(candidateC, "utf8");
                 if (
-                  totalStagedCBytes + candidateCBytes <=
+                  totalStagedCBytes + candidateCBytes + reservedScaffoldBytes <=
                   MAX_DECOMPILE_TOTAL_BYTES
                 ) {
                   cContent = candidateC;
@@ -2279,7 +2318,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           }
 
           if (cContent === null) {
-            cContent = [
+            let candidateScaffold = [
               "/**",
               ` * Reconstructed Entry Scaffolding: ${safeRawName}`,
               ` * Phase: ${mod.phase}${safeTypeName ? ` | Type: ${safeTypeName}` : ""}`,
@@ -2294,8 +2333,25 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               scaffold.functionDefinition,
               "",
             ].join("\n");
-            totalStagedCBytes += Buffer.byteLength(cContent, "utf8");
+            let scaffoldBytes = Buffer.byteLength(candidateScaffold, "utf8");
+            if (totalStagedCBytes + scaffoldBytes > MAX_DECOMPILE_TOTAL_BYTES) {
+              isCoveragePartial = true;
+              if (
+                !effectiveLimitations.includes(
+                  "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                )
+              ) {
+                effectiveLimitations.push(
+                  "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                );
+              }
+              candidateScaffold = `/* Decompiled C output omitted: reached 64 MiB aggregate staging budget */\n`;
+              scaffoldBytes = Buffer.byteLength(candidateScaffold, "utf8");
+            }
+            cContent = candidateScaffold;
+            totalStagedCBytes += scaffoldBytes;
           }
+
           const cBytes = Buffer.from(cContent, "utf8");
           const cSha256 = sha256Hex(cBytes);
           publicationEntries.push({
@@ -3016,12 +3072,16 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 identityRelPath: "firmware_manifest.json#source_coverage",
                 reason: "unknown_source_coverage",
               });
-            } else if (typeof rawSourceCov === "string") {
+            } else if (rawSourceCov !== undefined) {
               isCoveragePartial = true;
               hasUnknownCoverage = true;
+              const formattedVal =
+                typeof rawSourceCov === "string"
+                  ? rawSourceCov
+                  : (JSON.stringify(rawSourceCov) ?? String(rawSourceCov));
               if (limitations.length < 50) {
                 limitations.push(
-                  `Manifest firmware_manifest.json declares unrecognized source coverage "${formatMarkdownCodeSpan(ellipsisExcerpt(rawSourceCov, 32))}".`,
+                  `Manifest firmware_manifest.json declares unrecognized source coverage "${formatMarkdownCodeSpan(ellipsisExcerpt(formattedVal, 32))}".`,
                 );
               }
               omittedCandidates.push({
@@ -3535,6 +3595,21 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           }
         }
 
+        let typeName = fromManifest?.type;
+        const typePhase = phaseFromFfsTypeName(typeName);
+        if (manifestPhase && typePhase !== undefined && typePhase !== phase) {
+          isCoveragePartial = true;
+          const safeEntryName = formatMarkdownCodeSpan(
+            ellipsisExcerpt(entryName.replace(/[\r\n]+/g, " "), 64),
+          );
+          if (limitations.length < 50) {
+            limitations.push(
+              `Manifest row for ${safeEntryName} declares conflicting phase "${manifestPhase}" and type "${typeName}"; neutralized type metadata to preserve ABI consistency with declared phase.`,
+            );
+          }
+          typeName = undefined;
+        }
+
         let guid: string | null = fallbackGuid;
         if (
           fromManifest !== undefined &&
@@ -3569,7 +3644,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           name: entryName,
           size,
           phase,
-          typeName: fromManifest?.type,
+          typeName,
           guid,
           rawName,
           cleanName,
