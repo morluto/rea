@@ -85,7 +85,11 @@ export const registerUserConfigCommands = (
                   await import("../hopperPaths/HopperLauncherDiscovery.js")
                 ).selectedHopperLauncherPath(undefined, platform, environment)
               : null;
-          return { setting: options.get, value, source: "auto-detect" };
+          return {
+            setting: options.get,
+            value,
+            source: value === null ? "none" : "auto-detect",
+          };
         }
         if (options.set.length > 0 || options.unset.length > 0) {
           const settings: Partial<Record<PersistedSetting, string>> = {};
