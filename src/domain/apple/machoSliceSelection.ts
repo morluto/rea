@@ -277,43 +277,37 @@ const selectArchitectureSlice = (
           kind: "architecture_not_present",
           message: `${field} ${spelled(architecture)} was selected, but the file is not a universal Mach-O; omit ${field}.`,
         });
-  const available = fat.slices
-    .map(({ cpuType, cpuSubtype }) => cpuName(cpuType, cpuSubtype))
-    .join(", ");
+  const available = () =>
+    fat.slices
+      .map(({ cpuType, cpuSubtype }) => cpuName(cpuType, cpuSubtype))
+      .join(", ");
   if (architecture === undefined)
     return err({
       kind: "ambiguous_architecture",
-      message: `Universal Mach-O holds ${available}; select one architecture.`,
+      message: `Universal Mach-O holds ${available()}; select one architecture.`,
     });
   const sameFamily = fat.slices.filter(
     ({ cpuType }) =>
       cpuType === MACHO_CPU_TYPES[machoSliceFamily(architecture)],
   );
-  // Selectors are advertised only for slices whose header agrees with their
-  // FAT declaration; an unverified declaration is not a working choice.
-  const identityIssues = new Map(
-    sameFamily.map((declared) => {
-      const read = readUniversalMachoSlice(bytes, fat, declared);
-      return [declared, read.ok ? undefined : read.error.message] as const;
-    }),
-  );
-  const verifiedSliceFor = (value: MachoSliceArchitecture) => {
-    const addressed = addressedSlices(sameFamily, value);
-    return addressed.length === 1 &&
-      addressed[0] !== undefined &&
-      identityIssues.get(addressed[0]) === undefined
-      ? addressed[0]
-      : undefined;
-  };
   const matches = addressedSlices(sameFamily, architecture);
   const [slice] = matches;
+  // A selector must be unambiguous in the declared table before its slice
+  // header can establish whether the choice works.
+  const alternatives = familyValues(architecture).flatMap((value) => {
+    if (value === architecture || input.spelling[value] === undefined)
+      return [];
+    const [declared, competing] = addressedSlices(sameFamily, value);
+    return declared === undefined || competing !== undefined
+      ? []
+      : [{ value, declared }];
+  });
   if (slice === undefined || matches.length > 1) {
-    const choices = familyValues(architecture).filter(
-      (value) =>
-        value !== architecture &&
-        input.spelling[value] !== undefined &&
-        verifiedSliceFor(value) !== undefined,
-    );
+    const choices = alternatives
+      .filter(
+        ({ declared }) => readUniversalMachoSlice(bytes, fat, declared).ok,
+      )
+      .map(({ value }) => value);
     const select =
       choices.length === 0
         ? ""
@@ -325,26 +319,30 @@ const selectArchitectureSlice = (
           : "architecture_not_present",
       message:
         sameFamily.length === 0
-          ? `Universal Mach-O holds ${available}, not ${spelled(architecture)}.${select}`
+          ? `Universal Mach-O holds ${available()}, not ${spelled(architecture)}.${select}`
           : matches.length === 0 && namesSubtype(architecture)
-            ? `Universal Mach-O holds ${available}; no slice has the ${spelled(architecture)} subtype.${select}`
-            : `Universal Mach-O holds several ${spelled(architecture)} slices (${available}); no slice was selected.${select}`,
+            ? `Universal Mach-O holds ${available()}; no slice has the ${spelled(architecture)} subtype.${select}`
+            : `Universal Mach-O holds several ${spelled(architecture)} slices (${available()}); no slice was selected.${select}`,
     });
   }
-  const unread = sameFamily
-    .filter((other) => other !== slice)
-    .map((other) => {
-      const place = `${cpuName(other.cpuType, other.cpuSubtype)} at file offset ${String(other.offset)}`;
-      const issue = identityIssues.get(other);
-      if (issue !== undefined)
-        return `${place} (unverified: ${issue}; no ${field} value reads it)`;
-      const selector = familyValues(architecture).find(
-        (value) =>
-          input.spelling[value] !== undefined &&
-          verifiedSliceFor(value) === other,
+  const unread: string[] = [];
+  for (const other of sameFamily) {
+    if (other === slice) continue;
+    const place = `${cpuName(other.cpuType, other.cpuSubtype)} at file offset ${String(other.offset)}`;
+    const read = readUniversalMachoSlice(bytes, fat, other);
+    if (!read.ok) {
+      unread.push(
+        `${place} (unverified: ${read.error.message}; no ${field} value reads it)`,
       );
-      return `${place} (${selector === undefined ? `no ${field} value selects it` : `${field} ${spelled(selector)} selects it`})`;
-    });
+      continue;
+    }
+    const selector = alternatives.find(
+      ({ declared }) => declared === other,
+    )?.value;
+    unread.push(
+      `${place} (${selector === undefined ? `no ${field} value selects it` : `${field} ${spelled(selector)} selects it`})`,
+    );
+  }
   return selectedFatImage(
     bytes,
     fat,

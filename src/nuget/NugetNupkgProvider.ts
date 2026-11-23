@@ -8,10 +8,9 @@ import {
   projectOwnedArtifactInputFailure,
   projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
-  readStableArtifact,
   translateArtifactFailure,
+  withStableArtifactHandle,
   type ArtifactFilePrimaryFacts,
-  type StableArtifactSnapshot,
 } from "../resources/index.js";
 import {
   isParseLimit,
@@ -134,7 +133,7 @@ const nupkgFailurePrimary = (
 const nupkgFailure = (
   cause: unknown,
   input: InspectNugetNupkgInput,
-  snapshot?: StableArtifactSnapshot,
+  identity?: { readonly sha256: string; readonly bytes: number },
 ) =>
   projectStableArtifactFailure(
     cause,
@@ -142,7 +141,7 @@ const nupkgFailure = (
     input.path,
     NUGET_NUPKG_PROVIDER_IDENTITY.id,
     OPERATION,
-    snapshot,
+    identity,
   );
 
 /** Portable parser over one bounded, identity-checked regular file. */
@@ -166,31 +165,35 @@ export class NugetNupkgProvider {
     input: InspectNugetNupkgInput,
     options?: { readonly signal?: AbortSignal },
   ) {
-    let snapshot: StableArtifactSnapshot | undefined;
+    let identity:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
-      return await this.#resources.run(async () => {
-        snapshot = await readStableArtifact(
+      return await this.#resources.run(async () =>
+        withStableArtifactHandle(
           input.path,
           input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        return ok(
-          await parseNugetNupkg(
-            snapshot.bytes,
-            {
-              path: input.path,
-              sha256: snapshot.sha256,
-              bytes: snapshot.bytes.length,
+          {
+            retainBytes: () => 4,
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            onIdentity: (verified) => {
+              identity = verified;
             },
-            input,
-            options?.signal,
-          ),
-        );
-      });
+          },
+          async ({ prefix, size, sha256, readRange }) =>
+            ok(
+              await parseNugetNupkg(
+                { prefix, size, readRange },
+                { path: input.path, sha256, bytes: size },
+                input,
+                options?.signal,
+              ),
+            ),
+        ),
+      );
     } catch (cause) {
-      return err(nupkgFailure(cause, input, snapshot));
+      return err(nupkgFailure(cause, input, identity));
     }
   }
 }

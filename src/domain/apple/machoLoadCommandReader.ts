@@ -10,6 +10,7 @@ import {
 } from "./machoDylibCommand.js";
 import { readMachoSegmentHeader } from "./machoSegmentHeader.js";
 import {
+  MACHO_COMMON_HEADER_BYTES,
   MachoLoadCommandCursor,
   machoCommandTableIssue,
   machoWordReader,
@@ -407,7 +408,9 @@ export const readSliceCommandTable = async (
   base: number,
   length: number,
 ): Promise<MachoSliceCommandTable> => {
-  const headerBytes = await readAt(base, 28);
+  if (length < MACHO_COMMON_HEADER_BYTES)
+    return failed("malformed", "Mach-O header is truncated", null);
+  const headerBytes = await readAt(base, MACHO_COMMON_HEADER_BYTES);
   const parsed = readMachoHeaderDeclarations(headerBytes, length);
   if (!parsed.ok)
     return failed("malformed", "Mach-O header is truncated", null);

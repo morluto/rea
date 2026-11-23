@@ -6,6 +6,7 @@ import {
   unsupportedInput,
 } from "../domain/parseFailure.js";
 import {
+  Reader,
   Uint8ArrayReader,
   Uint8ArrayWriter,
   ZipReader,
@@ -513,24 +514,75 @@ const findNuspec = (
   return { member: undefined, source: undefined };
 };
 
+/** Random-access source over one verified .nupkg descriptor. */
+export interface NugetNupkgRandomAccessSource {
+  readonly prefix: Uint8Array;
+  readonly size: number;
+  readonly readRange: (offset: number, length: number) => Promise<Uint8Array>;
+}
+
+class RandomAccessZipReader extends Reader<undefined> {
+  readonly #source: NugetNupkgRandomAccessSource;
+  readonly #path: string;
+
+  constructor(source: NugetNupkgRandomAccessSource, path: string) {
+    super(undefined);
+    this.#source = source;
+    this.#path = path;
+    this.size = source.size;
+  }
+
+  override async readUint8Array(
+    index: number,
+    length: number,
+  ): Promise<Uint8Array> {
+    const readBytes = Math.min(length, this.size - index);
+    if (readBytes < 0)
+      throw new ArtifactReaderFailure(
+        "format",
+        `ZIP archive is malformed: read at ${String(index)} extends beyond the ${String(this.size)}-byte archive`,
+      );
+    const bytes = await this.#source.readRange(index, readBytes);
+    if (bytes.length !== readBytes)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `ZIP source ended before its admitted extent: ${this.#path}`,
+        { integrityCheck: "read-coverage" },
+      );
+    return bytes;
+  }
+}
+
 /** Decode one bounded NuGet .nupkg without restore, execution, or network. */
 export const parseNugetNupkg = async (
-  bytes: Uint8Array,
+  source: Uint8Array | NugetNupkgRandomAccessSource,
   artifact: { path: string; sha256: string; bytes: number },
   input: InspectNugetNupkgInput,
   signal?: AbortSignal,
 ): Promise<NugetNupkg> => {
-  if (bytes.length !== artifact.bytes)
+  const isBuffer = source instanceof Uint8Array;
+  const sourceLength = isBuffer ? source.length : source.size;
+  if (sourceLength !== artifact.bytes)
     throw malformedInput(
       NUGET_NUPKG_FORMAT,
       "Selected artifact length disagrees with the retained bytes.",
     );
-  if (!hasZipSignature(bytes))
+  const signatureBytes = isBuffer ? source : source.prefix;
+  if (!hasZipSignature(signatureBytes))
     throw malformedInput(
       NUGET_NUPKG_FORMAT,
       "Selected file is not a ZIP archive (NuGet .nupkg).",
     );
-  const reader = new ZipReader(new Uint8ArrayReader(bytes), ZIP_READER_OPTIONS);
+  const reader = new ZipReader(
+    isBuffer
+      ? new Uint8ArrayReader(source)
+      : new RandomAccessZipReader(source, artifact.path),
+    ZIP_READER_OPTIONS,
+  );
+  const readLocalRange: (at: number, length: number) => Promise<Uint8Array> =
+    isBuffer
+      ? (at, length) => Promise.resolve(source.subarray(at, at + length))
+      : (at, length) => source.readRange(at, length);
   const limitations: string[] = [...BASE_LIMITATIONS];
   const zipAbort = signal === undefined ? undefined : new AbortController();
   const zipSignal = zipAbort?.signal;
@@ -587,7 +639,7 @@ export const parseNugetNupkg = async (
               dataDescriptor: entry.bitFlag?.dataDescriptor ?? false,
             })),
             directoryOffset,
-            (at, length) => Promise.resolve(bytes.subarray(at, at + length)),
+            readLocalRange,
           ),
     );
     limitations.push(...listing.limitations);

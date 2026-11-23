@@ -1,4 +1,4 @@
-import type { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
+import type { UefiAnalysisService } from "../application/ProviderOperationServices.js";
 import type { MavenGradleMetadataService } from "../application/java/MavenGradleMetadataService.js";
 
 import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
@@ -38,7 +38,7 @@ import {
 import { z } from "zod";
 import { analysisViewSourceSchema } from "../domain/analysisView/analysisViewRequest.js";
 import type { ApkSignatureService } from "../application/apkSignature/ApkSignatureService.js";
-import type { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
+import type { ApktoolResourceAnalysisService } from "../application/ProviderOperationServices.js";
 import type { DesktopApplicationService } from "../application/artifacts/DesktopApplicationService.js";
 import type { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsService.js";
 import type { BinaryHardeningService } from "../application/binaryDiagnostics/BinaryHardeningService.js";
@@ -61,7 +61,7 @@ import type { PacketCaptureService } from "../application/captures/PacketCapture
 import type { BeamService } from "../application/erlang/BeamService.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import type { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
-import type { FlutterBuildAnalysisService } from "../application/flutter/FlutterBuildAnalysisService.js";
+import type { FlutterBuildAnalysisService } from "../application/ProviderOperationServices.js";
 import type { GoBinaryService } from "../application/go/GoBinaryService.js";
 import type { GpuCodeObjectsService } from "../application/gpu/GpuCodeObjectsService.js";
 import type { Il2cppMetadataService } from "../application/il2cpp/Il2cppMetadataService.js";
@@ -70,9 +70,9 @@ import {
   recordEvidenceSources,
 } from "../application/investigation/recordEvidenceSources.js";
 import type { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
-import type { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
+import type { JebAnalysisService } from "../application/ProviderOperationServices.js";
 import type { ModelArtifactService } from "../application/model/ModelArtifactService.js";
-import type { PcapAnalysisService } from "../application/pcap/PcapAnalysisService.js";
+import type { PcapAnalysisService } from "../application/ProviderOperationServices.js";
 import type { PythonPycService } from "../application/python/PythonPycService.js";
 import type { ReleaseExposureService } from "../application/releaseExposure/ReleaseExposureService.js";
 import type { RustBinaryService } from "../application/rust/RustBinaryService.js";
@@ -116,10 +116,12 @@ import {
   settledExecution,
   sourceToBundleComparisonExecution,
 } from "../application/ApplicationToolExecutions.js";
-import { projectAndroidApplicationEvidence } from "../application/android/AndroidApplicationService.js";
+import {
+  projectAndroidApplicationEvidence,
+  projectAppleApplicationEvidence,
+  projectHarmonyApplicationEvidence,
+} from "../application/InventoryProjectionEvidence.js";
 import { inspectApiContractEvidence } from "../application/apiContract/ApiContractService.js";
-import { projectAppleApplicationEvidence } from "../application/apple/AppleApplicationService.js";
-import { projectHarmonyApplicationEvidence } from "../application/harmony/HarmonyApplicationService.js";
 import type { EvidenceWorkflowExecution } from "../application/investigation/EvidenceWorkflowExecution.js";
 import type { InvestigationWorkflowExecution } from "../application/investigation/InvestigationWorkflows.js";
 import { traceApplicationFeatureEvidence } from "../application/javascript/JavaScriptApplicationWorkflowService.js";
@@ -142,24 +144,25 @@ import {
   readGuidanceSection,
   searchGuidance,
 } from "../application/GuidanceAccess.js";
-import type { CutterBridgeService } from "../cutter/CutterBridgeService.js";
 import { captureSensitiveValues } from "../domain/webNetworkCapture.js";
 import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
 import type { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
-import type { GdbSessionManager } from "../gdb/GdbSessionManager.js";
-import type { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
 import {
   resolveRizinCommandRequest,
   type ReverseEngineeringService,
 } from "../application/reverse/ReverseEngineeringService.js";
-import {
-  GDB_SESSION_TOOLS,
-  RIZIN_DEBUG_SESSION_TOOLS,
-  unknownDebuggerSessionError,
-} from "../domain/debuggerSessionErrors.js";
 import type { ExternalMutationAdmission } from "./externalMutationAdmission.js";
 import type { EvidenceCommand } from "./externalMutationToolHandler.js";
+import {
+  bindCutterTools,
+  bindFridaTools,
+  bindGdbTools,
+  bindRizinDebugTools,
+  type CutterToolOptions,
+  type GdbToolOptions,
+  type RizinDebugToolOptions,
+} from "./debuggerToolBindings.js";
 import {
   optionalProviderUnavailable,
   type OptionalProviderLoadFailure,
@@ -188,33 +191,16 @@ import {
   listBrowserTargets,
   observeWebSession,
 } from "../application/BrowserObservationService.js";
-import {
-  fridaDeviceSelection,
-  fridaRemoteConnection,
-  instrumentWithFrida,
-  loadFridaScript,
-  startFridaSession,
-} from "../application/frida/fridaContractRequests.js";
 import type { WebRuntimeService } from "../application/WebRuntimeService.js";
 import { exportWebScriptsValidated } from "../application/WebScriptExportService.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
 import {
   CommittedValue,
   DetailedFailure,
-  ForwardedValue,
   ReducibleValue,
-  type ValueOutcome,
-  type ValueToolRequest,
 } from "./contractToolHandler.js";
-import type { CallToolResult } from "@modelcontextprotocol/server";
-import type { ForwardedResult } from "../application/desktop/DesktopBuildComputers.js";
-import { DesktopBuildSteps } from "../application/desktop/DesktopBuildSteps.js";
-import type { ProgressReporter } from "../ports/ProgressReporter.js";
-import {
-  redactedResult,
-  withHeartbeat,
-  type DesktopBuildToolComputers,
-} from "./desktopBuildDelivery.js";
+import type { DesktopBuildToolComputers } from "./desktopBuildDelivery.js";
+import { bindDesktopBuildTools } from "./desktopBuildToolBindings.js";
 import {
   getNavigationContext,
   inspectAddressContext,
@@ -300,15 +286,6 @@ const committedUnknown = (
       )
     : result;
 
-/** Rizin debugger sessions a manager owns and the session they may change. */
-export interface RizinDebugToolOptions {
-  readonly manager: Pick<
-    RizinDebugSessionManager,
-    "start" | "execute" | "status" | "close" | "retryCleanupFailures"
-  >;
-  readonly session: ExternalMutationAdmission | undefined;
-}
-
 /** objdump and Rizin commands, and the session a Rizin command may change. */
 export interface ReverseEngineeringToolOptions {
   readonly service: Pick<
@@ -333,24 +310,6 @@ const prepareRizinCommand =
       service.executeRizinCommandValidated(request.value, { signal }),
     );
   };
-
-/** GDB sessions a manager owns and the session their commands may change. */
-export interface GdbToolOptions {
-  readonly manager: Pick<
-    GdbSessionManager,
-    "start" | "execute" | "status" | "close" | "retryCleanupFailures"
-  >;
-  readonly session: ExternalMutationAdmission | undefined;
-}
-
-/** The Cutter bridge and the session its commands may change. */
-export interface CutterToolOptions {
-  readonly service: Pick<
-    CutterBridgeService,
-    "listSessions" | "execute" | "retryCleanup"
-  >;
-  readonly session: ExternalMutationAdmission | undefined;
-}
 
 /** The browser observation provider, or why it failed to load. */
 export interface BrowserObservationToolOptions {
@@ -399,19 +358,6 @@ export interface JavaScriptRuntimeToolOptions {
 export interface ProviderOperationToolOptions extends ProviderOperationOptions {
   readonly contracts: readonly ToolContract<ProviderOperation>[];
 }
-
-/** The tools that drive build computers. */
-type DesktopBuildTool =
-  | "start_build_computer"
-  | "act_on_build_computer"
-  | "start_build_capture"
-  | "mark_build_checkpoint"
-  | "stop_build_capture"
-  | "export_build_environment"
-  | "check_build_task"
-  | "measure_build_task"
-  | "record_build_consent"
-  | "close_build_computer";
 
 /** The artifact resource scope application workflows read caller-named files under. */
 export interface ApplicationWorkflowToolOptions {
@@ -929,26 +875,7 @@ const SERVICE_TOOL_BINDINGS = {
   })) satisfies Bind<ArtifactResourceScope>,
   // Cutter discovery reads only; an arbitrary command may change the bound
   // artifact, so it runs under external-mutation admission.
-  cutter: (({ service, session }) => ({
-    list_cutter_sessions: {
-      admission: "sdk",
-      value: async (_input, { signal }) => {
-        const listed = await service.listSessions({ signal });
-        return listed.ok
-          ? ok({ ...listed.value, sessions: [...listed.value.sessions] })
-          : listed;
-      },
-    },
-    cutter_command: {
-      admission: "sdk",
-      session,
-      mutation: {
-        kind: "evidence",
-        retryCleanup: () => service.retryCleanup(),
-        run: (input, signal) => service.execute(input, { signal }),
-      },
-    },
-  })) satisfies Bind<CutterToolOptions>,
+  cutter: bindCutterTools satisfies Bind<CutterToolOptions>,
   // Runtime settings remain usable without an active target or healthy
   // provider, so they run outside analysis admission.
   analysisSettings: (({ settings, delivery }) => ({
@@ -1476,133 +1403,11 @@ const SERVICE_TOOL_BINDINGS = {
   })) satisfies Bind<ReverseEngineeringToolOptions>,
   // Rizin debugger sessions may change the bound artifact; each command
   // runs under external-mutation admission and keeps a failed cleanup owned.
-  rizinDebug: (({ manager, session }) => {
-    const retryCleanup = () => manager.retryCleanupFailures();
-    return {
-      start_rizin_debug_session: {
-        admission: "sdk",
-        session,
-        mutation: {
-          kind: "value",
-          retryCleanup,
-          run: async (input, signal) => {
-            const started = await manager.start(
-              {
-                path: input.path,
-                inferior_tty: input.inferior_tty,
-                ...(input.backend === undefined
-                  ? {}
-                  : { backend: input.backend }),
-              },
-              signal,
-            );
-            return started.ok
-              ? ok({
-                  value: started.value,
-                  retained: { session_id: started.value.session_id },
-                })
-              : started;
-          },
-        },
-      },
-      rizin_debug_command: {
-        admission: "sdk",
-        session,
-        mutation: {
-          kind: "evidence",
-          retryCleanup,
-          run: async (input, signal) => {
-            const executed = await manager.execute(
-              input.session_id,
-              input.command,
-              signal,
-            );
-            return executed.ok ? ok(executed.value.evidence) : executed;
-          },
-        },
-      },
-      rizin_debug_session_status: {
-        admission: "sdk",
-        value: async (input) => {
-          const status = manager.status(input.session_id);
-          return status === undefined
-            ? err(
-                unknownDebuggerSessionError(
-                  RIZIN_DEBUG_SESSION_TOOLS,
-                  "rizin_debug_session_status",
-                ),
-              )
-            : ok({ ...status, recent_output: [...status.recent_output] });
-        },
-      },
-      close_rizin_debug_session: {
-        admission: "sdk",
-        session,
-        mutation: {
-          kind: "owned-cleanup",
-          resource: (input) => input.session_id,
-          run: (input) => manager.close(input.session_id),
-        },
-      },
-    };
-  }) satisfies Bind<RizinDebugToolOptions>,
+  rizinDebug: bindRizinDebugTools satisfies Bind<RizinDebugToolOptions>,
   // Starting GDB may load a selected file without running it, outside mutation admission; a console
   // command may change the bound artifact and runs under external-mutation
   // admission, keeping a failed cleanup owned for the next retry.
-  gdb: (({ manager, session }) => ({
-    start_gdb_session: {
-      admission: "sdk",
-      value: (input, { signal }) =>
-        manager.start(signal, {
-          ...(input.inferior_tty === undefined
-            ? {}
-            : { inferiorTty: input.inferior_tty }),
-          ...(input.executable === undefined
-            ? {}
-            : { executable: input.executable }),
-        }),
-    },
-    gdb_console: {
-      admission: "sdk",
-      session,
-      mutation: {
-        kind: "evidence",
-        detail: "delivery",
-        retryCleanup: () => manager.retryCleanupFailures(),
-        run: async (input, signal) => {
-          const executed = await manager.execute(
-            input.session_id,
-            input.command,
-            signal,
-          );
-          return executed.ok ? ok(executed.value.evidence) : executed;
-        },
-      },
-    },
-    gdb_session_status: {
-      admission: "sdk",
-      value: async (input) => {
-        const status = manager.status(input.session_id);
-        return status === undefined
-          ? err(
-              unknownDebuggerSessionError(
-                GDB_SESSION_TOOLS,
-                "gdb_session_status",
-              ),
-            )
-          : ok({ ...status, recent_mi_records: [...status.recent_mi_records] });
-      },
-    },
-    close_gdb_session: {
-      admission: "sdk",
-      session,
-      mutation: {
-        kind: "owned-cleanup",
-        resource: (input) => input.session_id,
-        run: (input) => manager.close(input.session_id),
-      },
-    },
-  })) satisfies Bind<GdbToolOptions>,
+  gdb: bindGdbTools satisfies Bind<GdbToolOptions>,
   // Browser observation runs through an optional provider; when it failed
   // to load, every call reports it unavailable before admission.
   browserObservation: (({ browser, loadFailure }, retention) => {
@@ -1743,67 +1548,7 @@ const SERVICE_TOOL_BINDINGS = {
   })) satisfies Bind<JavaScriptApplicationToolOptions>,
   // Frida sessions instrument a live process the caller selects, not the
   // session's target; compose them without analysis admission.
-  frida: ((service, retention) => ({
-    list_frida_devices: {
-      admission: "sdk",
-      value: async (input) =>
-        jsonValueResult(
-          await service.listDevices(fridaRemoteConnection(input.remote)),
-        ),
-    },
-    list_frida_processes: {
-      admission: "sdk",
-      value: async (input) =>
-        jsonValueResult(
-          await service.listProcesses(fridaDeviceSelection(input)),
-        ),
-    },
-    start_frida_session: {
-      admission: "sdk",
-      value: async (input, { signal }) =>
-        jsonValueResult(await startFridaSession(service, input, signal)),
-    },
-    load_frida_script: {
-      admission: "sdk",
-      run: (input, { signal }) => loadFridaScript(service, input, signal),
-    },
-    resume_frida_session: {
-      admission: "sdk",
-      value: async (input, { signal }) => {
-        const resumed = await service.resumeSession(input.session_id, signal);
-        return resumed.ok ? ok({ state: "running" }) : resumed;
-      },
-    },
-    unload_frida_script: {
-      admission: "sdk",
-      value: async (input, { signal }) => {
-        const unloaded = await service.unloadScript(
-          input.session_id,
-          input.script_id,
-          signal,
-        );
-        return unloaded.ok ? ok({ unloaded: true }) : unloaded;
-      },
-    },
-    frida_session_status: {
-      admission: "sdk",
-      run: async (input) => service.inspectStatus(input, retention),
-    },
-    close_frida_session: {
-      admission: "sdk",
-      value: async (input) => {
-        const closed = await service.closeSession(input.session_id);
-        return closed.ok ? ok({ target_state: "unknown" }) : closed;
-      },
-    },
-    instrument_with_frida: {
-      admission: "sdk",
-      run: async (input, { signal }) => {
-        const instrumented = await instrumentWithFrida(service, input, signal);
-        return instrumented.ok ? ok(instrumented.value.evidence) : instrumented;
-      },
-    },
-  })) satisfies Bind<FridaInstrumentationService>,
+  frida: bindFridaTools satisfies Bind<FridaInstrumentationService>,
   // Opening a target orders itself in the session, so it runs outside
   // analysis admission; a failed open reports the selection at failure.
   binaryTarget: ((session) => ({
@@ -2074,120 +1819,7 @@ const SERVICE_TOOL_BINDINGS = {
   // its own request so a refusal names the field; long steps report a
   // heartbeat so a client's request timeout can reset; no response, refusals
   // included, shows a typed secret's value.
-  desktopBuild: ((computers) => {
-    const steps = new DesktopBuildSteps(computers);
-    const presentResult = (result: CallToolResult) =>
-      redactedResult(result, computers.redaction);
-    const tool = <Schema extends z.ZodType>(
-      contract: { readonly name: string; readonly inputSchema: Schema },
-      run: (
-        input: z.output<Schema>,
-        request: ValueToolRequest,
-      ) => Promise<ValueOutcome>,
-    ) => {
-      return {
-        admission: "application" as const,
-        presentResult,
-        value: async (raw: unknown, request: ValueToolRequest) => {
-          const parsed = z.safeParse(contract.inputSchema, raw);
-          return parsed.success
-            ? run(parsed.data, request)
-            : err(
-                analysisInputErrorFromIssues(
-                  contract.name,
-                  parsed.error.issues,
-                  raw,
-                  { cause: parsed.error },
-                ),
-              );
-        },
-      };
-    };
-    const heartbeat = <Value>(
-      { progress }: ValueToolRequest,
-      phase: DesktopBuildTool,
-      run: (progress: ProgressReporter) => Promise<Value>,
-    ) => withHeartbeat(progress, phase, computers.progressMs, run);
-    // A forwarded driver answer, such as a screenshot, follows REA's JSON.
-    const forwarded = (
-      result: Result<ForwardedResult<JsonValue>, AnalysisError>,
-    ): ValueOutcome =>
-      result.ok
-        ? ok(new ForwardedValue(result.value.value, result.value.content))
-        : result;
-    return {
-      start_build_computer: tool(
-        toolContract("start_build_computer"),
-        async (input, { signal, progress }) =>
-          forwarded(await computers.start(input, signal, progress)),
-      ),
-      // An action can wait for the call before it on its computer, and a
-      // reset for the relaunched app, which can take minutes.
-      act_on_build_computer: tool(
-        toolContract("act_on_build_computer"),
-        async (input, request) =>
-          forwarded(
-            await heartbeat(request, "act_on_build_computer", () =>
-              computers.act(input, request.signal),
-            ),
-          ),
-      ),
-      start_build_capture: tool(
-        toolContract("start_build_capture"),
-        async (input, request) =>
-          forwarded(
-            await heartbeat(request, "start_build_capture", () =>
-              steps.startCapture(input, request.signal),
-            ),
-          ),
-      ),
-      mark_build_checkpoint: tool(
-        toolContract("mark_build_checkpoint"),
-        (input, request) =>
-          heartbeat(request, "mark_build_checkpoint", () =>
-            steps.markCheckpoint(input, request.signal),
-          ),
-      ),
-      stop_build_capture: tool(
-        toolContract("stop_build_capture"),
-        (input, request) =>
-          heartbeat(request, "stop_build_capture", () =>
-            steps.stopCapture(input, request.signal),
-          ),
-      ),
-      export_build_environment: tool(
-        toolContract("export_build_environment"),
-        (input, request) =>
-          heartbeat(request, "export_build_environment", () =>
-            steps.exportEnvironment(input, request.signal),
-          ),
-      ),
-      check_build_task: tool(
-        toolContract("check_build_task"),
-        (input, request) =>
-          heartbeat(request, "check_build_task", (progress) =>
-            steps.checkTask(input, request.signal, progress),
-          ),
-      ),
-      // Solves run one at a time for minutes each, so progress keeps the
-      // client waiting.
-      measure_build_task: tool(
-        toolContract("measure_build_task"),
-        (input, request) =>
-          heartbeat(request, "measure_build_task", (progress) =>
-            computers.measure(input, request.signal, progress),
-          ),
-      ),
-      record_build_consent: tool(
-        toolContract("record_build_consent"),
-        (input, { signal }) => steps.recordConsent(input, signal),
-      ),
-      close_build_computer: tool(
-        toolContract("close_build_computer"),
-        (input) => computers.close(input.computer_id),
-      ),
-    };
-  }) satisfies Bind<DesktopBuildToolComputers>,
+  desktopBuild: bindDesktopBuildTools satisfies Bind<DesktopBuildToolComputers>,
   // Provider-free access to the guided prompts this server advertises.
   guidedWorkflows: ((prompts) => ({
     guided_workflows: {

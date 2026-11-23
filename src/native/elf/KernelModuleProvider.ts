@@ -9,8 +9,7 @@ import {
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
   ArtifactReaderFailure,
-  type StableArtifactSnapshot,
-  readStableArtifact,
+  withStableArtifactHandle,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   ArtifactResourceScope,
@@ -32,9 +31,10 @@ import {
   BinaryResourceFailure,
   binaryResourceCeiling,
 } from "../../domain/binaryContainer.js";
-import { parseKernelModuleCooperative } from "./KernelModuleParser.js";
+import { parseKernelModuleFromHandle } from "./KernelModuleParser.js";
 
 const OPERATION = "inspect_kernel_module";
+const HEADER_PREFIX_BYTES = 4096;
 
 /** Portable parser over one bounded, identity-checked regular file. */
 export class KernelModuleProvider implements KernelModulePort {
@@ -54,31 +54,42 @@ export class KernelModuleProvider implements KernelModulePort {
   }
 
   async inspect(input: InspectKernelModuleInput, options?: ExecutionOptions) {
-    let snapshot: StableArtifactSnapshot | undefined;
+    let observed:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
       return await this.#resources.run(async () => {
-        snapshot = await readStableArtifact(
+        const result = await withStableArtifactHandle(
           input.path,
           input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        return ok(
-          await parseKernelModuleCooperative(
-            snapshot.bytes,
-            {
-              path: input.path,
-              sha256: snapshot.sha256,
-              bytes: snapshot.bytes.length,
+          {
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
+            onIdentity: (identity) => {
+              observed = identity;
             },
-            input,
-            options?.signal,
-          ),
+          },
+          (handle) =>
+            parseKernelModuleFromHandle(
+              {
+                size: handle.size,
+                prefix: handle.prefix,
+                readRange: (offset, length) => handle.readRange(offset, length),
+              },
+              {
+                path: input.path,
+                sha256: handle.sha256,
+                bytes: handle.size,
+              },
+              input,
+              options?.signal,
+            ),
         );
+        return ok(result);
       });
     } catch (cause) {
-      return err(kernelModuleFailure(cause, input, snapshot));
+      return err(kernelModuleFailure(cause, input, observed));
     }
   }
 }
@@ -182,7 +193,7 @@ const kernelModuleFailurePrimary = (
 const kernelModuleFailure = (
   cause: unknown,
   input: InspectKernelModuleInput,
-  snapshot?: StableArtifactSnapshot,
+  observed?: { readonly sha256: string; readonly bytes: number },
 ) => {
   const primary = kernelModuleFailurePrimary(
     artifactFilePrimaryFacts(cause),
@@ -194,6 +205,6 @@ const kernelModuleFailure = (
     input.path,
     KERNEL_MODULE_PROVIDER.id,
     OPERATION,
-    snapshot,
+    observed,
   );
 };

@@ -5,10 +5,8 @@ import { wasmArtifactModule } from "../composition/wasm.js";
 import { COMPARE_WASM_INTERFACES_CONTRACT } from "../contracts/wasm/wasmComparisonContracts.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import {
-  inspectWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { inspectWithService } from "./contractCommandRunners.js";
 import {
   evidenceBundleOption,
   runEvidenceInputCommand,

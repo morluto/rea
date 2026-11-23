@@ -40,18 +40,30 @@ export const readMachoSegmentHeader = (
   });
 };
 
+interface MachoSegmentMemoryFields {
+  readonly address: bigint;
+  readonly memorySize: bigint;
+  readonly fileSize: bigint;
+  readonly flags: number;
+}
+
+/** VM address of a segment's first file byte after its extents are admitted. */
+export const machoSegmentFileAddress = ({
+  address,
+  memorySize,
+  fileSize,
+  flags,
+}: MachoSegmentMemoryFields): bigint =>
+  fileSize > 0n && fileSize < memorySize && (flags & SG_HIGHVM) !== 0
+    ? address + (memorySize - fileSize)
+    : address;
+
 /** Admit VM extents and locate the file-backed and zero-filled spans. */
 export const admitMachoSegmentMapping = (
-  segment: {
-    readonly address: bigint;
-    readonly memorySize: bigint;
-    readonly fileSize: bigint;
-    readonly protection: number;
-    readonly flags: number;
-  },
+  segment: MachoSegmentMemoryFields & { readonly protection: number },
   bits: 32 | 64,
 ) => {
-  const { address, memorySize, fileSize, protection, flags } = segment;
+  const { address, memorySize, fileSize, protection } = segment;
   const unmapped = memorySize === 0n && protection === 0;
   if (
     (!unmapped && fileSize > memorySize) ||
@@ -62,16 +74,14 @@ export const admitMachoSegmentMapping = (
       message: "Mach-O segment addresses or sizes are invalid",
     });
   const zeroFillSize = memorySize - fileSize;
-  // SG_HIGHVM places the file bytes above, rather than below, the zero-fill.
-  const leadingZeroFill =
-    fileSize > 0n && zeroFillSize > 0n && (flags & SG_HIGHVM) !== 0;
+  const fileAddress = machoSegmentFileAddress(segment);
   return ok({
     unmapped,
-    fileAddress: leadingZeroFill ? address + zeroFillSize : address,
+    fileAddress,
     zeroFill:
       zeroFillSize > 0n
         ? {
-            address: leadingZeroFill ? address : address + fileSize,
+            address: fileAddress === address ? address + fileSize : address,
             size: zeroFillSize,
           }
         : null,
