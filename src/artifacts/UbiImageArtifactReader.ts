@@ -34,6 +34,8 @@ import {
   ubiCandidateGridOffsets,
   ubiVidMinPebSize,
   ubiHasMappedSecondPeb,
+  ubiHasValidEcHeader,
+  ubiPassedOverBoundaryProbes,
   ubiPebSizeCandidates,
   ubiFirstVidHeaderOffset,
   findUbiSpacingConflict,
@@ -56,9 +58,11 @@ import {
   UBI_HEADER_BYTES,
   UBI_MAX_PEB_BYTES,
   UBI_PEB_SIZE_LIMIT,
+  type UbiGeometry,
   type UbiImage,
   type UbiImageParseError,
   type UbiLebRange,
+  type UbiPassedOverCandidate,
   type UbiPeb,
   type UbiPebCandidateVerdict,
   type UbiVolume,
@@ -250,8 +254,38 @@ export class UbiImageArtifactReader implements ArtifactReader {
       }
       return found;
     };
+    const findPassedOverBoundary = async (
+      geometry: UbiGeometry,
+      pebs: readonly UbiPeb[],
+      passedOver: readonly UbiPassedOverCandidate[],
+    ): Promise<number | null> => {
+      let probes = 0;
+      for (const candidate of passedOver) {
+        for (const probe of ubiPassedOverBoundaryProbes(
+          candidate,
+          geometry,
+          pebs,
+          size,
+        )) {
+          if (probe.knownHeader) return probe.offset;
+          if (probes % 256 === 0) await setImmediate();
+          probes += 1;
+          this.#assertOpen(signal);
+          const bytes = await readArtifactFileBytes(
+            handle,
+            probe.offset,
+            UBI_HEADER_BYTES,
+            size,
+            signal,
+          );
+          if (ubiHasValidEcHeader(bytes)) return probe.offset;
+        }
+      }
+      return null;
+    };
     const evaluateCandidate = async (
       candidate: number,
+      passedOver: readonly UbiPassedOverCandidate[],
     ): Promise<UbiPebCandidateVerdict> => {
       const measured = ubiGeometry(first.value, candidate, size, null);
       if (!measured.ok) return { state: "reject", error: measured.error };
@@ -383,6 +417,13 @@ export class UbiImageArtifactReader implements ArtifactReader {
             break;
           }
         }
+      const passedOverHeaderOffset =
+        smallerGridError === null &&
+        pebError === null &&
+        (tableCopies[0] !== null || tableCopies[1] !== null) &&
+        passedOver.length > 0
+          ? await findPassedOverBoundary(geometry, pebs, passedOver)
+          : null;
       return judgeUbiPebCandidate({
         geometry,
         pebs,
@@ -390,14 +431,38 @@ export class UbiImageArtifactReader implements ArtifactReader {
         verifiedCopies,
         pebError,
         smallerGridError,
+        passedOverHeaderOffset,
       });
     };
-    // Keep dividing candidates provisional until the volume table and LEB
-    // constraints agree. A mapped second PEB still establishes the grid even
-    // when the dump ends mid-block.
+    type PendingFailure =
+      | { readonly kind: "error"; readonly error: UbiImageParseError }
+      | { readonly kind: "non-dividing"; readonly candidate: number };
+    const resolveFailure = async (
+      failure: PendingFailure,
+    ): Promise<UbiImageParseError> => {
+      if (failure.kind === "error") return failure.error;
+      const conflict = await spacingConflict(
+        failure.candidate,
+        ubiCandidateGridOffsets(failure.candidate, first.value.dataOffset),
+      );
+      const measured = ubiGeometry(
+        first.value,
+        failure.candidate,
+        size,
+        conflict,
+      );
+      if (!measured.ok) return measured.error;
+      throw formatFailure("UBI image eraseblock size could not be determined");
+    };
+    // Keep dividing candidates provisional until the volume table, LEB, and
+    // passed-over boundary constraints agree. Non-dividing mapped second PEBs
+    // also stay provisional as passed-over boundaries: a later dividing
+    // candidate may accept only if it places every passed-over header inside
+    // mapped non-layout LEB data; otherwise the first failure stands.
     let accepted: UbiImage | null = null;
     let anyNext: number | null = null;
-    let firstFailure: UbiImageParseError | null = null;
+    let firstFailure: PendingFailure | null = null;
+    const passedOver: UbiPassedOverCandidate[] = [];
     let lastCandidate = 0;
     for (
       let offset = ubiPebSearchStart(first.value);
@@ -422,14 +487,19 @@ export class UbiImageArtifactReader implements ArtifactReader {
         lastCandidate = candidate;
         anyNext ??= candidate;
         if (size % candidate === 0) {
-          const verdict = await evaluateCandidate(candidate);
+          const verdict = await evaluateCandidate(candidate, passedOver);
           if (verdict.state === "accept") {
             accepted = verdict.image;
             break;
           }
           if (verdict.state === "reject")
-            throw parseFailure(firstFailure ?? verdict.error);
-          firstFailure ??= verdict.error;
+            throw parseFailure(
+              firstFailure === null
+                ? verdict.error
+                : await resolveFailure(firstFailure),
+            );
+          firstFailure ??= { kind: "error", error: verdict.error };
+          passedOver.push({ offset: candidate, dividing: true });
           continue;
         }
         const candidateVid = candidate + first.value.vidHeaderOffset;
@@ -448,18 +518,14 @@ export class UbiImageArtifactReader implements ArtifactReader {
             candidate,
           )
         ) {
-          if (firstFailure !== null) throw parseFailure(firstFailure);
-          const conflict = await spacingConflict(
-            candidate,
-            ubiCandidateGridOffsets(candidate, first.value.dataOffset),
-          );
-          const measured = ubiGeometry(first.value, candidate, size, conflict);
-          if (!measured.ok) throw parseFailure(measured.error);
+          firstFailure ??= { kind: "non-dividing", candidate };
+          passedOver.push({ offset: candidate, dividing: false });
         }
       }
     }
     if (accepted === null) {
-      if (firstFailure !== null) throw parseFailure(firstFailure);
+      if (firstFailure !== null)
+        throw parseFailure(await resolveFailure(firstFailure));
       const conflict =
         anyNext === null
           ? null

@@ -257,9 +257,9 @@ function* ubiEcHeaderOffsets(
 
 /**
  * Aligned EC headers outside the data declared by the first PEB's VID.
- * A candidate that divides the file stays provisional until its volume table
- * and LEB constraints agree; a candidate that yields no valid volume table
- * lets the caller retry the next candidate.
+ * A candidate that divides the file stays provisional until its volume table,
+ * LEB constraints, and any passed-over candidate boundaries agree; a candidate
+ * that yields no valid volume table lets the caller retry the next candidate.
  */
 export const ubiPebSizeCandidates = (
   chunk: Uint8Array,
@@ -277,7 +277,8 @@ export const ubiPebSizeCandidates = (
 /**
  * A candidate that leaves a partial final PEB can still be the real size.
  * A matching EC and mapped VID whose declared data fits the candidate LEB
- * establish a block boundary before any later file-size match.
+ * establish a block boundary unless a later dividing candidate is accepted and
+ * places that header inside a mapped non-layout LEB's data area.
  */
 export const ubiHasMappedSecondPeb = (
   vidBytes: Uint8Array,
@@ -295,6 +296,67 @@ export const ubiHasMappedSecondPeb = (
   const minSize = ubiVidMinPebSize(vidBytes, first);
   return minSize > 0 && minSize <= pebSize;
 };
+
+/** Whether `bytes` begin with a CRC-valid UBI erase-counter header. */
+export const ubiHasValidEcHeader = (bytes: Uint8Array): boolean =>
+  readEcHeader(bytes).state === "valid";
+
+/**
+ * Whether `headerOffset` lies inside the usable data area of a mapped
+ * non-layout LEB under `(geometry, pebs)`. A valid EC header inside a
+ * layout-volume PEB (which holds only the volume table), a free, erased, or
+ * corrupt PEB, or header/padding bytes cannot be volume payload and remains an
+ * established eraseblock boundary.
+ */
+export const ubiOffsetInMappedLebData = (
+  headerOffset: number,
+  geometry: UbiGeometry,
+  pebs: readonly UbiPeb[],
+): boolean => {
+  const pebIndex = Math.floor(headerOffset / geometry.pebSize);
+  const inPeb = headerOffset % geometry.pebSize;
+  if (inPeb < geometry.dataOffset) return false;
+  const peb = pebs[pebIndex];
+  if (peb?.state !== "mapped" || peb.vid.volId === UBI_LAYOUT_VOLUME_ID)
+    return false;
+  const dataEnd =
+    peb.vid.volType === VOLUME_TYPE_STATIC
+      ? geometry.dataOffset + peb.vid.dataSize
+      : geometry.pebSize - peb.vid.dataPad;
+  return inPeb + UBI_HEADER_BYTES <= dataEnd;
+};
+
+/** A passed-over PEB-size candidate retained so later candidates check its grid. */
+export interface UbiPassedOverCandidate {
+  readonly offset: number;
+  readonly dividing: boolean;
+}
+
+/**
+ * File offsets on a passed-over candidate's grid that lie outside both
+ * `geometry`'s eraseblock grid and every mapped non-layout LEB's data area.
+ * `knownHeader` is true at `candidate.offset`, which the search already
+ * validated as an EC header; later multiples need an EC header check.
+ */
+export function* ubiPassedOverBoundaryProbes(
+  candidate: UbiPassedOverCandidate,
+  geometry: UbiGeometry,
+  pebs: readonly UbiPeb[],
+  fileSize: number,
+): Generator<{ readonly offset: number; readonly knownHeader: boolean }, void> {
+  const limit = candidate.dividing
+    ? fileSize
+    : Math.min(fileSize, (UBI_SPACING_CHECK_PEBS + 1) * candidate.offset);
+  for (
+    let offset = candidate.offset;
+    offset + UBI_HEADER_BYTES <= limit;
+    offset += candidate.offset
+  ) {
+    if (offset % geometry.pebSize === 0) continue;
+    if (ubiOffsetInMappedLebData(offset, geometry, pebs)) continue;
+    yield { offset, knownHeader: offset === candidate.offset };
+  }
+}
 
 /**
  * Offsets inside one `pebSize` eraseblock where an eraseblock of a smaller
@@ -1348,6 +1410,12 @@ export interface UbiPebCandidateCheck {
   readonly verifiedCopies: ReadonlySet<number>;
   readonly pebError: UbiImageParseError | null;
   readonly smallerGridError: UbiImageParseError | null;
+  /**
+   * Offset of a valid EC header on a passed-over candidate's grid that
+   * `geometry` places outside every mapped non-layout LEB's data area, or null
+   * when every passed-over header lies inside mapped non-layout LEB data.
+   */
+  readonly passedOverHeaderOffset?: number | null;
 }
 
 /**
@@ -1357,7 +1425,11 @@ export interface UbiPebCandidateCheck {
  * A smaller-grid conflict or erased-grid ambiguity always rejects because a
  * smaller geometry still fits. Otherwise a candidate with no valid volume
  * table stays provisional so the caller can try the next candidate while
- * keeping the first failure in case no later candidate succeeds.
+ * keeping the first failure in case no later candidate succeeds. A candidate
+ * whose table validates still cannot be accepted when a valid EC header on a
+ * passed-over candidate grid lies outside every mapped non-layout LEB's data
+ * area; it stays retryable so the caller keeps the first failure unless a
+ * later geometry explains every passed-over header.
  */
 export const judgeUbiPebCandidate = ({
   geometry,
@@ -1366,12 +1438,18 @@ export const judgeUbiPebCandidate = ({
   verifiedCopies,
   pebError,
   smallerGridError,
+  passedOverHeaderOffset = null,
 }: UbiPebCandidateCheck): UbiPebCandidateVerdict => {
   if (smallerGridError !== null)
     return { state: "reject", error: smallerGridError };
   const table = parseUbiVolumeTable(tableCopies, geometry);
   if (!table.ok) return { state: "retry", error: pebError ?? table.error };
   if (pebError !== null) return { state: "reject", error: pebError };
+  if (passedOverHeaderOffset !== null)
+    return {
+      state: "retry",
+      error: ubiSpacingConflict(geometry.pebSize, passedOverHeaderOffset),
+    };
   return {
     state: "accept",
     image: assembleUbiImage(geometry, pebs, table.value, verifiedCopies),

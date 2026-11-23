@@ -558,3 +558,90 @@ it("retries past a dividing 64 KiB EC header in a dynamic first LEB when the vol
     await reader.close();
   }
 });
+
+it("refuses a retry that would swallow neighboring eraseblock boundaries inside layout PEBs", async () => {
+  const g = { pebSize: 64 * 1024, dataOffset: 4096 };
+  const records = [
+    {
+      id: 0,
+      name: "rootfs",
+      type: "dynamic" as const,
+      reservedPebs: 1,
+      alignment: 10_240,
+      dataPad: 4_096,
+    },
+  ];
+  const [layout0, layout1] = ubiLayoutPebs(records, g);
+  const bytes = ubiImage(
+    [
+      layout0!,
+      { kind: "free" },
+      layout1!,
+      { kind: "free" },
+      {
+        kind: "leb",
+        volId: 0,
+        lnum: 0,
+        data: Buffer.alloc(g.pebSize - g.dataOffset - 4096, 0x52),
+        sqnum: 2n,
+        dataPad: 4096,
+      },
+      { kind: "free" },
+    ],
+    g,
+  );
+  const reader = new UbiImageArtifactReader(await fixture(bytes));
+  try {
+    await expect(entries(reader)).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringContaining("no valid volume table"),
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
+it("reads a dynamic first LEB holding a nested mapped image with matching headers", async () => {
+  const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
+  const lebBytes = wide.pebSize - wide.dataOffset;
+  const records = [
+    { id: 0, name: "rootfs", type: "dynamic" as const, reservedPebs: 2 },
+  ];
+  const narrow = { pebSize: 32 * 1024, dataOffset: 4096 };
+  const nested = ubiImage(
+    [
+      { kind: "leb", volId: 0, lnum: 0, data: Buffer.alloc(100, 1), sqnum: 1n },
+      { kind: "leb", volId: 0, lnum: 1, data: Buffer.alloc(100, 2), sqnum: 2n },
+    ],
+    narrow,
+  );
+  const first = Buffer.alloc(lebBytes, 0x52);
+  nested.copy(first, 0);
+  const second = Buffer.alloc(lebBytes, 0x53);
+  const bytes = ubiImage(
+    [
+      { kind: "leb", volId: 0, lnum: 0, data: first, sqnum: 2n },
+      ...ubiLayoutPebs(records, wide),
+      { kind: "leb", volId: 0, lnum: 1, data: second, sqnum: 3n },
+    ],
+    wide,
+  );
+  const reader = new UbiImageArtifactReader(await fixture(bytes));
+  try {
+    const volumes = await entries(reader);
+    expect(reader.formatMetadata()).toMatchObject({
+      peb_size: wide.pebSize,
+      peb_count: 4,
+    });
+    expect(volumes).toMatchObject([
+      { path: "volumes/rootfs", declaredSize: 2 * lebBytes },
+    ]);
+    expect(
+      (await buffer(await reader.open(volumes[0]!))).equals(
+        Buffer.concat([first, second]),
+      ),
+    ).toBe(true);
+  } finally {
+    await reader.close();
+  }
+});

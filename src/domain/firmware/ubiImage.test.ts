@@ -9,6 +9,8 @@ import {
   ubiCandidateGridOffsets,
   ubiVidMinPebSize,
   ubiHasMappedSecondPeb,
+  ubiHasValidEcHeader,
+  ubiPassedOverBoundaryProbes,
   ubiPebSizeCandidates,
   ubiFirstVidHeaderOffset,
   findUbiSpacingConflict,
@@ -28,12 +30,15 @@ import {
   ubiSmallerPebSizes,
   ubiSpacingCheckRange,
   ubiVolumeTableBytes,
+  UBI_HEADER_BYTES,
   UBI_IMAGE_LIMITATIONS,
   UBI_LAYOUT_VOLUME_ID,
   UBI_MAX_PEB_BYTES,
+  type UbiGeometry,
   type UbiImage,
   type UbiImageParseError,
   type UbiEcHeader,
+  type UbiPassedOverCandidate,
   type UbiPeb,
   type UbiPebCandidateVerdict,
 } from "./ubiImage.js";
@@ -57,11 +62,38 @@ const firstPebMinSize = (bytes: Buffer, first: UbiEcHeader): number => {
   return at === null ? 0 : ubiVidMinPebSize(bytes.subarray(at, at + 64), first);
 };
 
+/** Find the first passed-over boundary EC header outside mapped non-layout LEB data. */
+const findPassedOverBoundary = (
+  bytes: Buffer,
+  geometry: UbiGeometry,
+  pebs: readonly UbiPeb[],
+  passedOver: readonly UbiPassedOverCandidate[],
+): number | null => {
+  for (const candidate of passedOver) {
+    for (const probe of ubiPassedOverBoundaryProbes(
+      candidate,
+      geometry,
+      pebs,
+      bytes.length,
+    )) {
+      if (
+        probe.knownHeader ||
+        ubiHasValidEcHeader(
+          bytes.subarray(probe.offset, probe.offset + UBI_HEADER_BYTES),
+        )
+      )
+        return probe.offset;
+    }
+  }
+  return null;
+};
+
 /** Evaluate one dividing PEB size candidate over an in-memory image. */
 const evaluateCandidate = (
   bytes: Buffer,
   first: UbiEcHeader,
   candidate: number,
+  passedOver: readonly UbiPassedOverCandidate[],
 ): UbiPebCandidateVerdict => {
   const measured = ubiGeometry(first, candidate, bytes.length, null);
   if (!measured.ok) return { state: "reject", error: measured.error };
@@ -138,6 +170,13 @@ const evaluateCandidate = (
         break;
       }
     }
+  const passedOverHeaderOffset =
+    smallerGridError === null &&
+    pebError === null &&
+    (tableCopies[0] !== null || tableCopies[1] !== null) &&
+    passedOver.length > 0
+      ? findPassedOverBoundary(bytes, geometry, pebs, passedOver)
+      : null;
   return judgeUbiPebCandidate({
     geometry,
     pebs,
@@ -145,6 +184,7 @@ const evaluateCandidate = (
     verifiedCopies,
     pebError,
     smallerGridError,
+    passedOverHeaderOffset,
   });
 };
 
@@ -167,8 +207,27 @@ const parse = (bytes: Buffer): Result<UbiImage, UbiImageParseError> => {
       candidates,
     );
   };
+  type PendingFailure =
+    | { readonly kind: "error"; readonly error: UbiImageParseError }
+    | { readonly kind: "non-dividing"; readonly candidate: number };
+  const resolveFailure = (failure: PendingFailure): UbiImageParseError => {
+    if (failure.kind === "error") return failure.error;
+    const conflict = spacingConflict(
+      failure.candidate,
+      ubiCandidateGridOffsets(failure.candidate, first.value.dataOffset),
+    );
+    const measured = ubiGeometry(
+      first.value,
+      failure.candidate,
+      bytes.length,
+      conflict,
+    );
+    if (!measured.ok) return measured.error;
+    throw new Error("unreachable");
+  };
   let anyNext: number | null = null;
-  let firstFailure: UbiImageParseError | null = null;
+  let firstFailure: PendingFailure | null = null;
+  const passedOver: UbiPassedOverCandidate[] = [];
   for (const { offset: candidate, header } of ubiPebSizeCandidates(
     bytes.subarray(start, UBI_MAX_PEB_BYTES + 64),
     start,
@@ -177,11 +236,23 @@ const parse = (bytes: Buffer): Result<UbiImage, UbiImageParseError> => {
   )) {
     anyNext ??= candidate;
     if (bytes.length % candidate === 0) {
-      const verdict = evaluateCandidate(bytes, first.value, candidate);
+      const verdict = evaluateCandidate(
+        bytes,
+        first.value,
+        candidate,
+        passedOver,
+      );
       if (verdict.state === "accept") return { ok: true, value: verdict.image };
       if (verdict.state === "reject")
-        return { ok: false, error: firstFailure ?? verdict.error };
-      firstFailure ??= verdict.error;
+        return {
+          ok: false,
+          error:
+            firstFailure === null
+              ? verdict.error
+              : resolveFailure(firstFailure),
+        };
+      firstFailure ??= { kind: "error", error: verdict.error };
+      passedOver.push({ offset: candidate, dividing: true });
       continue;
     }
     const candidateVid = candidate + first.value.vidHeaderOffset;
@@ -193,21 +264,12 @@ const parse = (bytes: Buffer): Result<UbiImage, UbiImageParseError> => {
         candidate,
       )
     ) {
-      if (firstFailure !== null) return { ok: false, error: firstFailure };
-      const conflict = spacingConflict(
-        candidate,
-        ubiCandidateGridOffsets(candidate, first.value.dataOffset),
-      );
-      const measured = ubiGeometry(
-        first.value,
-        candidate,
-        bytes.length,
-        conflict,
-      );
-      if (!measured.ok) return measured;
+      firstFailure ??= { kind: "non-dividing", candidate };
+      passedOver.push({ offset: candidate, dividing: false });
     }
   }
-  if (firstFailure !== null) return { ok: false, error: firstFailure };
+  if (firstFailure !== null)
+    return { ok: false, error: resolveFailure(firstFailure) };
   const conflict =
     anyNext === null
       ? null
@@ -1855,6 +1917,101 @@ it.each([
     ).toBe(true);
   },
 );
+
+describe("passed-over candidate boundaries", () => {
+  const narrow = { pebSize: 64 * 1024, dataOffset: 4096 };
+  const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
+  const records: UbiFixtureVolumeRecord[] = [
+    {
+      id: 0,
+      name: "rootfs",
+      type: "dynamic",
+      reservedPebs: 1,
+      alignment: 10_240,
+      dataPad: 4_096,
+    },
+  ];
+  const [layout0, layout1] = ubiLayoutPebs(records, narrow);
+  const rootfs: UbiFixturePeb = {
+    kind: "leb",
+    volId: 0,
+    lnum: 0,
+    data: Buffer.alloc(narrow.pebSize - narrow.dataOffset - 4096, 0x52),
+    sqnum: 2n,
+    dataPad: 4096,
+  };
+
+  it.each([
+    [
+      "layout-first (header inside PEB 0 layout volume)",
+      [layout0!, { kind: "free" }, layout1!, { kind: "free" }, rootfs, { kind: "free" }],
+    ],
+    [
+      "rootfs-first (later header on retried grid inside layout volume)",
+      [rootfs, { kind: "free" }, layout0!, { kind: "free" }, layout1!, { kind: "free" }],
+    ],
+    [
+      "free-first (header inside PEB 0 free block)",
+      [{ kind: "free" }, { kind: "free" }, layout0!, { kind: "free" }, layout1!, { kind: "free" }],
+    ],
+  ] as const)(
+    "refuses a 128 KiB retry when passed-over 64 KiB headers lie outside mapped non-layout LEBs (%s)",
+    (_case, pebs) => {
+      const parsed = parse(ubiImage(pebs, narrow));
+      expect(parsed).toMatchObject({
+        ok: false,
+        error: {
+          kind: "malformed",
+          message: expect.stringContaining("no valid volume table"),
+        },
+      });
+    },
+  );
+
+  it("accepts a later dividing candidate that places a non-dividing mapped nested header inside mapped non-layout LEB data", () => {
+    const lebBytes = wide.pebSize - wide.dataOffset;
+    const nested = ubiImage(
+      [
+        { kind: "leb", volId: 0, lnum: 0, data: Buffer.alloc(100, 1), sqnum: 1n },
+        { kind: "leb", volId: 0, lnum: 1, data: Buffer.alloc(100, 2), sqnum: 2n },
+      ],
+      { pebSize: 32 * 1024, dataOffset: 4096 },
+    );
+    const first = Buffer.alloc(lebBytes, 0x52);
+    nested.copy(first, 0);
+    const second = Buffer.alloc(lebBytes, 0x53);
+    const bytes = ubiImage(
+      [
+        { kind: "leb", volId: 0, lnum: 0, data: first, sqnum: 2n },
+        ...ubiLayoutPebs(
+          [{ id: 0, name: "rootfs", type: "dynamic", reservedPebs: 2 }],
+          wide,
+        ),
+        { kind: "leb", volId: 0, lnum: 1, data: second, sqnum: 3n },
+      ],
+      wide,
+    );
+    const parsed = image(bytes);
+    expect(parsed.geometry).toMatchObject({ pebSize: wide.pebSize, pebCount: 4 });
+    expect(parsed.volumes).toMatchObject([
+      { name: "rootfs", dataBytes: 2 * lebBytes, extractRefusal: null },
+    ]);
+    expect(reassemble(bytes, "rootfs").equals(Buffer.concat([first, second]))).toBe(
+      true,
+    );
+  });
+
+  it("keeps refusing a truncated dump when the later dividing candidate puts the mapped boundary inside a layout PEB", () => {
+    const truncated = ubiImageWithEmbeddedPebHeaders().subarray(0, 73_728);
+    expect(parse(truncated)).toMatchObject({
+      ok: false,
+      error: {
+        kind: "malformed",
+        message: expect.stringContaining("32768-byte eraseblock size"),
+      },
+    });
+  });
+});
 
 it("keeps erase-counter facts of an eraseblock whose VID header is corrupt", () => {
   const bytes = ubiImage([
