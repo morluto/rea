@@ -1079,7 +1079,7 @@ it("accepts zero integer lexemes with negative exponents", () => {
   );
   const decoded = decodeHarCapture(text, []);
   expect(decoded.records[0]?.reported).toMatchObject({
-    request: { bodySize: 0 },
+    response: { bodySize: 0 },
   });
 });
 
