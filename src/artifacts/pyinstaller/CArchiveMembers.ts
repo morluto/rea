@@ -19,7 +19,7 @@ import {
   pyzEntryMetadata,
   pyzEntryEncrypted,
 } from "./PyInstallerMetadata.js";
-import type { PyInstallerEntryMetadata } from "../../domain/artifactFormatMetadata.js";
+import type { PyInstallerEntryMetadata } from "../../domain/formatMetadata/packageAndGameMetadata.js";
 
 const CRYPTO_KEY_NAME = "pyimod00_crypto_key";
 

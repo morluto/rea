@@ -9,7 +9,7 @@ import { parseFragment, type DefaultTreeAdapterTypes } from "parse5";
 import {
   parseCliOutputArguments,
   renderCliDocument,
-} from "../../../src/cliOutput.js";
+} from "../../../src/cli/cliOutput.js";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";

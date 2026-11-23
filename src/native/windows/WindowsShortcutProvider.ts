@@ -1,12 +1,7 @@
 import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
-import {
-  parseFailureAnalysisError,
-  parseLimitConstraint,
-} from "../../domain/parseFailureAnalysisError.js";
+import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import { lstat, open } from "node:fs/promises";
 import {
-  projectSelectedArtifactFileFailure,
-  projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
   ArtifactReaderFailure,
@@ -14,7 +9,6 @@ import {
   type StableArtifactFileSystem,
   type StableArtifactSnapshot,
   artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
   ArtifactResourceScope,
 } from "../../resources/index.js";
@@ -36,6 +30,8 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { WINDOWS_SHORTCUT_PROVIDER } from "../../domain/investigationProviders.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import {
   WindowsShortcutResourceFailure,
   type WindowsShortcutSelectedBoundary,
@@ -273,71 +269,60 @@ const budgetRemediation = ({
   return `Effective ${argument} is ${String(selected)} ${unit}. ${recovery}`;
 };
 
-const windowsShortcutFailurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
-  input: InspectWindowsShortcutInput,
-): AnalysisError => {
-  const { cause, origin } = facts;
-  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
-    return cause;
-  const identityFailure = projectOwnedArtifactIdentityFailure(
-    facts,
-    OPERATION,
-    input.path,
-  );
-  if (identityFailure !== undefined) return identityFailure;
-  if (cause instanceof WindowsShortcutResourceFailure)
-    return parseLimitConstraint(OPERATION, "capacity", cause, {
-      path: input.path,
-      retryable: false,
-      remediationAction: budgetRemediation(cause.failure.limit),
-    });
-  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
-  if (formatFailure !== undefined) return formatFailure;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        cause.message,
-        { max_file_bytes: input.max_file_bytes },
-        {
-          cause,
-          retryable: false,
-          remediationAction: fileSizeRemediation(input),
-        },
-      );
-    if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        { path: ["path"], reason: "invalid_format", message: cause.message },
-      ]);
-  }
-  const fileFailure = projectSelectedArtifactFileFailure(
-    cause,
-    OPERATION,
-    input.path,
-    "shortcut",
-  );
-  if (fileFailure !== undefined) return fileFailure;
-  return new ProviderAdapterError(WINDOWS_SHORTCUT_PROVIDER.id, OPERATION, {
-    cause,
-    diagnostics: {
-      path: input.path,
-      reason: errorMessage(cause),
-    },
-  });
-};
-
 const windowsShortcutFailure = (
   cause: unknown,
   input: InspectWindowsShortcutInput,
 ): AnalysisError => {
-  const primary = windowsShortcutFailurePrimary(
-    artifactFilePrimaryFacts(cause),
-    input,
+  const facts = artifactFilePrimaryFacts(cause);
+  const primary = classifyProviderFailure(
+    facts.cause,
+    offlineArtifactFailureDialect(facts, {
+      providerId: WINDOWS_SHORTCUT_PROVIDER.id,
+      operation: OPERATION,
+      path: input.path,
+      description: "shortcut",
+      recognise: (failure, origin) => {
+        if (failure instanceof WindowsShortcutResourceFailure)
+          return parseLimitConstraint(OPERATION, "capacity", failure, {
+            path: input.path,
+            retryable: false,
+            remediationAction: budgetRemediation(failure.failure.limit),
+          });
+        if (
+          origin === "owned-or-classified" &&
+          failure instanceof ArtifactReaderFailure &&
+          (failure.reason === "path" || failure.reason === "format")
+        )
+          return new AnalysisInputError(OPERATION, { cause: failure }, [
+            {
+              path: ["path"],
+              reason: "invalid_format",
+              message: failure.message,
+            },
+          ]);
+        return undefined;
+      },
+      fileSize: (failure) =>
+        new AnalysisResourceConstraintError(
+          OPERATION,
+          "file-size",
+          failure.message,
+          { max_file_bytes: input.max_file_bytes },
+          {
+            cause: failure,
+            retryable: false,
+            remediationAction: fileSizeRemediation(input),
+          },
+        ),
+      unclassified: (failure) =>
+        new ProviderAdapterError(WINDOWS_SHORTCUT_PROVIDER.id, OPERATION, {
+          cause: failure,
+          diagnostics: {
+            path: input.path,
+            reason: errorMessage(failure),
+          },
+        }),
+    }),
   );
   return projectStableArtifactFailure(
     cause,

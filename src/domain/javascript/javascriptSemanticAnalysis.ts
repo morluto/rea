@@ -228,10 +228,12 @@ export const analyzeParsedJavaScriptReferences = (
 const indexedAmbientWriteStates =
   new WeakSet<JavaScriptSemanticAnalysisState>();
 /** The ambient-write owner resolves the global roots a reference may alias. */
-const ambientRootPaths =
-  (state: JavaScriptSemanticAnalysisState): SemanticAmbientRootPaths =>
-  (root) =>
-    createAmbientPathResolver(state, false)(root).paths;
+const ambientRootPaths = (
+  state: JavaScriptSemanticAnalysisState,
+): SemanticAmbientRootPaths => {
+  const resolver = createAmbientPathResolver(state, false);
+  return (root) => resolver(root).paths;
+};
 
 function* indexSemanticAmbientWritesSteps(
   state: JavaScriptSemanticAnalysisState,
@@ -1650,7 +1652,7 @@ function* indexPrototypeUncertaintySteps(
         return;
       if (
         (t.isCallExpression(parent) || t.isOptionalCallExpression(parent)) &&
-        parent.arguments.includes(node as t.Expression)
+        parent.callee !== node
       )
         return;
       if (

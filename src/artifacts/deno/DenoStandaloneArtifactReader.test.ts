@@ -1256,6 +1256,61 @@ const intelTrailerRecord = (section: Buffer): Buffer => {
   ]);
 };
 
+// The search starts at EOF and walks in 1 MiB chunks.
+const intelTrailerChunkEdge = 2 * 1024 * 1024;
+const intelTrailerChunkSize = 1024 * 1024;
+
+it.each([
+  ["before the seam window", -25],
+  ["at the start of the seam window", -24],
+  ["with the length word split", -23],
+  ["with the sentinel ending at the chunk edge", -16],
+  ["with the sentinel split", -15],
+  ["with one sentinel byte in the older chunk", -1],
+  ["at the start of the newer chunk", 0],
+  ["inside the newer chunk", 1],
+])("recognizes the Intel trailer %s exactly once", async (_label, delta) => {
+  const image = denoMachO([], { architecture: "x64" });
+  const section = buildDenoSection();
+  const trailer = intelTrailerRecord(section);
+  const sentinelOffset = intelTrailerChunkEdge + delta;
+  const bytes = Buffer.alloc(intelTrailerChunkEdge + intelTrailerChunkSize);
+  image.copy(bytes);
+  trailer.copy(bytes, sentinelOffset);
+  // The valid trailer and 63 decoys use the entire candidate allowance.
+  const decoys = rejectedIntelSentinels(63);
+  decoys.copy(bytes, bytes.length - decoys.length);
+
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toEqual({
+    status: "present",
+    location: {
+      carrier: "mach-o",
+      embedding: "mach-o-intel-trailer",
+      offset: sentinelOffset + 24,
+      length: section.length,
+    },
+  });
+});
+
+it("counts the seam trailer before older candidates in the same chunk", async () => {
+  const image = denoMachO([], { architecture: "x64" });
+  const bytes = Buffer.alloc(intelTrailerChunkEdge + intelTrailerChunkSize);
+  image.copy(bytes);
+  const sentinelOffset = intelTrailerChunkEdge - 24;
+  const older = rejectedIntelSentinels(64);
+  older.copy(bytes, sentinelOffset - older.length);
+  intelTrailerRecord(buildDenoSection()).copy(bytes, sentinelOffset);
+
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: { reason: "limit", boundary: "capacity" },
+  });
+});
+
 const sideBySideIntelTrailers = (second: Buffer): Buffer =>
   Buffer.concat([
     denoIntelTrailer(intelApp("main.ts", Buffer.from("first\n"))),

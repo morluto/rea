@@ -4,7 +4,7 @@ import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import type {
   UImageEntryMetadata,
   UImageMetadata,
-} from "../domain/artifactFormatMetadata.js";
+} from "../domain/formatMetadata/firmwareMetadata.js";
 import { ArtifactReaderFailure } from "../resources/index.js";
 import {
   PositionalArtifactReader,

@@ -54,6 +54,7 @@ export const elfSectionNameBudget = (
 
 /** One section-name table a directory or note driver asks the owner to decode. */
 export interface ElfSectionNameDecodeRequest {
+  readonly fileOffset: number;
   readonly raw: Buffer;
   readonly flags: bigint;
   readonly bits: 32 | 64;

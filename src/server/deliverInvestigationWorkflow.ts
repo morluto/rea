@@ -6,8 +6,8 @@ import {
 } from "../application/investigation/recordEvidenceSources.js";
 import type { InvestigationWorkflowExecution } from "../application/investigation/InvestigationWorkflows.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
+import { ok } from "../domain/result.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
-import { recordDerivedEvidence } from "./recordDerivedEvidence.js";
 
 /** Retain workflow sources before delivering the derived Evidence or its failure. */
 export const deliverInvestigationWorkflow = (
@@ -34,9 +34,13 @@ export const deliverInvestigationWorkflow = (
     evidenceForAnalysis: session.evidenceForAnalysis.bind(session),
   });
   if (!retained.ok) return server.delivery.toCallToolResult(retained, contract);
+  const recorded =
+    unknown === undefined
+      ? session.recordEvidence(evidence)
+      : session.recordEvidenceWithUnknown(evidence, unknown);
   return server.delivery.toEvidenceToolResult(
     evidence,
     contract,
-    recordDerivedEvidence(session, evidence, unknown),
+    recorded.ok ? ok(evidence) : recorded,
   );
 };

@@ -7,7 +7,7 @@ import {
 import {
   readCliOutputArguments,
   renderCliOutputArgumentError,
-} from "../cliOutput.js";
+} from "./cliOutput.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import {

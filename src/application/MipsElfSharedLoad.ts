@@ -1,7 +1,8 @@
 import {
+  ELF_RELOCATION_TRUNCATED_MESSAGE,
   ELF_RELR_DYNAMIC_TAGS,
   isElfAndroidRelocationDynamicTag,
-  readElfRelocationEntry,
+  readElfRelocationEntryAt,
 } from "../domain/elfRelocation.js";
 import { readElfDynamicEntry } from "../domain/elfDynamicEntry.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
@@ -266,14 +267,15 @@ export const readMipsElfSharedLoad = async (
     if (!chunk.ok) return chunk;
     for (let position = 0; position < chunk.value.length; position += 8) {
       checkCancelled();
-      const parsedEntry = readElfRelocationEntry(
-        chunk.value.subarray(position, position + 8),
+      const parsedEntry = readElfRelocationEntryAt(
+        chunk.value,
+        position,
         32,
         little,
         "rel",
       );
-      if (!parsedEntry.ok) return err(parsedEntry.error.message);
-      const { type, symbolIndex, offset: rawAddress } = parsedEntry.value;
+      if (parsedEntry === null) return err(ELF_RELOCATION_TRUNCATED_MESSAGE);
+      const { type, symbolIndex, offset: rawAddress } = parsedEntry;
       const relocationAddress = Number(rawAddress);
       if (type === 3 && mapped(relocationAddress, 4, false) === undefined)
         return err(

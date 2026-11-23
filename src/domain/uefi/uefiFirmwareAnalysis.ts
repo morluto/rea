@@ -396,6 +396,14 @@ export const uefiNvramStoreRecordSchema = z.strictObject({
   trailing_padding: bytes.nullable(),
 });
 
+/** The mapped FFS file that owns an extracted payload. */
+export const uefiExtractedFileOwnerSchema = z.strictObject({
+  guid: guidSchema,
+  ui_string: z.string().nullable(),
+  type_name: ffsTypeNameSchema,
+  logical_path: z.string(),
+});
+
 /** Portable results retain observed boundaries, unknowns and integrity notes. */
 export const uefiResultSchemas = {
   inspect_uefi_firmware: z.strictObject({
@@ -470,6 +478,11 @@ export const uefiResultSchemas = {
           "compressed-passthrough",
         ]),
         parent_logical_path: z.string().nullable(),
+        ffs_file: uefiExtractedFileOwnerSchema
+          .nullable()
+          .describe(
+            "FFS file whose body or section produced these bytes; null for a stream outside any mapped file",
+          ),
       }),
     ),
     derivations: z.array(
