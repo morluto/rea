@@ -236,62 +236,6 @@ describe("readWasmModuleImage", () => {
     expect(failure(bytes)[0]).toBe("malformed");
   });
 
-  it("bounds data segment and slot counts", () => {
-    // Bodies long enough for the declared counts, so only the cap refuses them.
-    const dataCount = WASM_MODULE_LIMITS.dataSegments + 1;
-    // Complete records: a passive data segment is flag 1 and size 0.
-    const passiveData = Array.from({ length: dataCount }, () => [1, 0]).flat();
-    const tooManyData = module(
-      section(11, [...u32(dataCount), ...passiveData]),
-    );
-    expect(failure(tooManyData)[0]).toBe("limit");
-    // Complete records: a passive element segment is flag 1, kind 0, no slots.
-    const elementCount = WASM_MODULE_LIMITS.elementSegments + 1;
-    const passiveElements = Array.from({ length: elementCount }, () => [
-      1, 0, 0,
-    ]).flat();
-    const tooManyElements = module(
-      section(9, [...u32(elementCount), ...passiveElements]),
-    );
-    expect(failure(tooManyElements)[0]).toBe("limit");
-    // One byte per declared segment is too short for any segment encoding.
-    expect(
-      failure(
-        module(
-          section(11, [...u32(dataCount), ...Array<number>(dataCount).fill(0)]),
-        ),
-      )[0],
-    ).toBe("malformed");
-    expect(
-      failure(
-        module(
-          section(9, [
-            ...u32(elementCount),
-            ...Array<number>(2 * elementCount).fill(0),
-          ]),
-        ),
-      )[0],
-    ).toBe("malformed");
-    const slotCount = WASM_MODULE_LIMITS.tableSlots + 1;
-    const tooManySlots = module(
-      section(9, [
-        1,
-        0x00,
-        ...offset(0),
-        ...u32(slotCount),
-        ...Array<number>(slotCount).fill(0),
-      ]),
-    );
-    expect(failure(tooManySlots)[0]).toBe("limit");
-    // The same counts over bodies that cannot hold them are damaged sections.
-    expect(failure(module(section(11, u32(dataCount))))[0]).toBe("malformed");
-    expect(
-      failure(
-        module(section(9, [1, 0x00, ...offset(0), ...u32(slotCount)])),
-      )[0],
-    ).toBe("malformed");
-  });
-
   it("bounds input bytes before parsing", () => {
     const huge = { length: WASM_MODULE_LIMITS.inputBytes + 1 } as Buffer;
     huge.subarray = () => Buffer.alloc(2);
@@ -712,5 +656,63 @@ describe("zeroing the view", () => {
     expect(view[0]).toBe(1);
     expect(view[(1 << 21) + 8]).toBe(2);
     expect(view.subarray(1, 1 << 21).every((byte) => byte === 0)).toBe(true);
+  });
+});
+
+describe("segment count framing", () => {
+  it("bounds data segment and slot counts", () => {
+    // Bodies long enough for the declared counts, so only the cap refuses them.
+    const dataCount = WASM_MODULE_LIMITS.dataSegments + 1;
+    // Complete records: a passive data segment is flag 1 and size 0.
+    const passiveData = Array.from({ length: dataCount }, () => [1, 0]).flat();
+    const tooManyData = module(
+      section(11, [...u32(dataCount), ...passiveData]),
+    );
+    expect(failure(tooManyData)[0]).toBe("limit");
+    // Complete records: a passive element segment is flag 1, kind 0, no slots.
+    const elementCount = WASM_MODULE_LIMITS.elementSegments + 1;
+    const passiveElements = Array.from({ length: elementCount }, () => [
+      1, 0, 0,
+    ]).flat();
+    const tooManyElements = module(
+      section(9, [...u32(elementCount), ...passiveElements]),
+    );
+    expect(failure(tooManyElements)[0]).toBe("limit");
+    // One byte per declared segment is too short for any segment encoding.
+    expect(
+      failure(
+        module(
+          section(11, [...u32(dataCount), ...Array<number>(dataCount).fill(0)]),
+        ),
+      )[0],
+    ).toBe("malformed");
+    expect(
+      failure(
+        module(
+          section(9, [
+            ...u32(elementCount),
+            ...Array<number>(2 * elementCount).fill(0),
+          ]),
+        ),
+      )[0],
+    ).toBe("malformed");
+    const slotCount = WASM_MODULE_LIMITS.tableSlots + 1;
+    const tooManySlots = module(
+      section(9, [
+        1,
+        0x00,
+        ...offset(0),
+        ...u32(slotCount),
+        ...Array<number>(slotCount).fill(0),
+      ]),
+    );
+    expect(failure(tooManySlots)[0]).toBe("limit");
+    // The same counts over bodies that cannot hold them are damaged sections.
+    expect(failure(module(section(11, u32(dataCount))))[0]).toBe("malformed");
+    expect(
+      failure(
+        module(section(9, [1, 0x00, ...offset(0), ...u32(slotCount)])),
+      )[0],
+    ).toBe("malformed");
   });
 });
