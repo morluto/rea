@@ -4,6 +4,7 @@ import {
   type RegularFileState,
 } from "../filesystem/RegularFile.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import { withInheritedCleanupOwnership } from "../domain/analysisErrorCleanup.js";
 import type { Stats } from "node:fs";
 import {
   assertKunaProjectState,
@@ -101,7 +102,7 @@ export class KunaPublishedProjectCleanupError extends ProviderCleanupError {
           "The immutable project export is published and remains available. Retry only the retained staging cleanup with close_binary; do not rerun the export to recover it.",
       },
     );
-    this.bindCleanupDependencies([cleanup]);
+    withInheritedCleanupOwnership(this, cleanup);
   }
 }
 
