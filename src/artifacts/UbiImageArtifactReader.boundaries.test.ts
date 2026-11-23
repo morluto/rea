@@ -512,3 +512,49 @@ it("reads a first dynamic LEB holding a nested image", async () => {
     await reader.close();
   }
 });
+
+it("retries past a dividing 64 KiB EC header in a dynamic first LEB when the volume table rules out smaller sizes", async () => {
+  const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
+  const usableLebBytes = wide.pebSize - wide.dataOffset - 4096;
+  expect(usableLebBytes).toBe(122_880);
+  const records = [
+    {
+      id: 0,
+      name: "rootfs",
+      type: "dynamic" as const,
+      reservedPebs: 1,
+      alignment: 10_240,
+      dataPad: 4_096,
+    },
+  ];
+  const rootfsData = Buffer.alloc(usableLebBytes, 0x52);
+  ubiImage([{ kind: "free" }], wide)
+    .subarray(0, 64)
+    .copy(rootfsData, 64 * 1024 - wide.dataOffset);
+  const rootfsLeb = {
+    kind: "leb" as const,
+    volId: 0,
+    lnum: 0,
+    data: rootfsData,
+    sqnum: 2n,
+    dataPad: 4_096,
+  };
+  const bytes = ubiImage([rootfsLeb, ...ubiLayoutPebs(records, wide)], wide);
+  expect(bytes.length % (64 * 1024)).toBe(0);
+  const reader = new UbiImageArtifactReader(await fixture(bytes));
+  try {
+    const volumes = await entries(reader);
+    expect(reader.formatMetadata()).toMatchObject({
+      peb_size: 131_072,
+      peb_count: 3,
+    });
+    expect(volumes).toMatchObject([
+      { path: "volumes/rootfs", declaredSize: 122_880 },
+    ]);
+    const reconstructed = await buffer(await reader.open(volumes[0]!));
+    expect(reconstructed.length).toBe(122_880);
+    expect(reconstructed.equals(rootfsData)).toBe(true);
+  } finally {
+    await reader.close();
+  }
+});

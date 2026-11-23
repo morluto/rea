@@ -255,7 +255,12 @@ function* ubiEcHeaderOffsets(
   }
 }
 
-/** Aligned EC headers outside the data declared by the first PEB's VID. */
+/**
+ * Aligned EC headers outside the data declared by the first PEB's VID.
+ * A candidate that divides the file stays provisional until its volume table
+ * and LEB constraints agree; a candidate that yields no valid volume table
+ * lets the caller retry the next candidate.
+ */
 export const ubiPebSizeCandidates = (
   chunk: Uint8Array,
   chunkOffset: number,
@@ -1323,5 +1328,52 @@ export const assembleUbiImage = (
       ...(interrupted > 0 ? [UBI_IMAGE_LIMITATIONS.interruptedCopy] : []),
       ...new Set(volumes.flatMap((volume) => volume.limitations)),
     ],
+  };
+};
+
+/**
+ * Outcome of checking one dividing PEB size candidate against its PEBs,
+ * volume table, and smaller-grid constraints.
+ */
+export type UbiPebCandidateVerdict =
+  | { readonly state: "accept"; readonly image: UbiImage }
+  | { readonly state: "retry"; readonly error: UbiImageParseError }
+  | { readonly state: "reject"; readonly error: UbiImageParseError };
+
+/** Inputs collected while provisionally evaluating one dividing PEB size. */
+export interface UbiPebCandidateCheck {
+  readonly geometry: UbiGeometry;
+  readonly pebs: readonly UbiPeb[];
+  readonly tableCopies: readonly [Uint8Array | null, Uint8Array | null];
+  readonly verifiedCopies: ReadonlySet<number>;
+  readonly pebError: UbiImageParseError | null;
+  readonly smallerGridError: UbiImageParseError | null;
+}
+
+/**
+ * Decide whether a dividing PEB size candidate is accepted, definitively
+ * rejected, or provisional and retryable at the next candidate.
+ *
+ * A smaller-grid conflict or erased-grid ambiguity always rejects because a
+ * smaller geometry still fits. Otherwise a candidate with no valid volume
+ * table stays provisional so the caller can try the next candidate while
+ * keeping the first failure in case no later candidate succeeds.
+ */
+export const judgeUbiPebCandidate = ({
+  geometry,
+  pebs,
+  tableCopies,
+  verifiedCopies,
+  pebError,
+  smallerGridError,
+}: UbiPebCandidateCheck): UbiPebCandidateVerdict => {
+  if (smallerGridError !== null)
+    return { state: "reject", error: smallerGridError };
+  const table = parseUbiVolumeTable(tableCopies, geometry);
+  if (!table.ok) return { state: "retry", error: pebError ?? table.error };
+  if (pebError !== null) return { state: "reject", error: pebError };
+  return {
+    state: "accept",
+    image: assembleUbiImage(geometry, pebs, table.value, verifiedCopies),
   };
 };
