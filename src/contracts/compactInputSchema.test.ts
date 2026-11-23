@@ -224,9 +224,9 @@ describe("compact advertised input schema", () => {
       "result",
       [[null, true, 42, "nested"], { values: [[], [false]] }],
     ])
-      expect(validate({ normalized_result, json_value: normalized_result })).toBe(
-        true,
-      );
+      expect(
+        validate({ normalized_result, json_value: normalized_result }),
+      ).toBe(true);
   });
 
   it("preserves independent validation constraints on reference siblings", () => {
@@ -338,20 +338,22 @@ it.each([
     valid: [null, true, {}, ["ok"], 5, "ok"],
     invalid: [[4], ["x"]],
   },
-])("keeps $label inline with their constraints", ({ property, valid, invalid }) => {
-  const { schema, presentation } = compactAdvertisedInputSchema(
-    { type: "object", properties: { value: property } },
-    ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
-  );
-  expect(presentation).toBe("inline");
-  expect(
-    advertisedInputDialectViolations({ name: "probe", inputSchema: schema }),
-  ).toEqual([]);
-  const validate = new Ajv2020({ strict: false }).compile(schema);
-  for (const value of valid) expect(validate({ value })).toBe(true);
-  for (const value of invalid) expect(validate({ value })).toBe(false);
-});
-
+])(
+  "keeps $label inline with their constraints",
+  ({ property, valid, invalid }) => {
+    const { schema, presentation } = compactAdvertisedInputSchema(
+      { type: "object", properties: { value: property } },
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+    );
+    expect(presentation).toBe("inline");
+    expect(
+      advertisedInputDialectViolations({ name: "probe", inputSchema: schema }),
+    ).toEqual([]);
+    const validate = new Ajv2020({ strict: false }).compile(schema);
+    for (const value of valid) expect(validate({ value })).toBe(true);
+    for (const value of invalid) expect(validate({ value })).toBe(false);
+  },
+);
 
 describe("portable dialect unions", () => {
   it("types homogeneous union items and widens oneOf to anyOf", () => {
