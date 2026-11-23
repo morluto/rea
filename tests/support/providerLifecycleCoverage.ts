@@ -1243,7 +1243,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/devicetreeCli.test.ts",
-        "rejects ambiguous Devicetree node paths in correctly hashed Evidence",
+        "inspects a relative DTB and preserves the source",
       ),
     ),
     covered(
