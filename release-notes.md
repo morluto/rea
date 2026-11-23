@@ -566,6 +566,7 @@
 * **artifacts:** migrate NtfsMft, Fit, UImage onto PositionalArtifactReader ([#13650](https://github.com/morluto/rea/issues/13650)) ([af2dba0](https://github.com/morluto/rea/commit/af2dba0859f8b3f1c88b6b150c9d66139092c87c))
 * **artifacts:** reuse the positional reader for iNES prefixes ([#13481](https://github.com/morluto/rea/issues/13481)) ([b6ffec4](https://github.com/morluto/rea/commit/b6ffec43adeec2d7b57ef49b894425e8b0d36d0a))
 * **artifacts:** share cached prefix reader and ELF/MZ magic ([#13663](https://github.com/morluto/rea/issues/13663)) ([baed75f](https://github.com/morluto/rea/commit/baed75fc2b3a723144d46fdfb206b50bd03c6698))
+* centralize owned finalization and configuration failures ([#14071](https://github.com/morluto/rea/issues/14071)) ([4bbaf17](https://github.com/morluto/rea/commit/4bbaf175121f101b319cd8aa0b4d47d3f40d5862))
 * **cli/server:** break remaining module-layer cycles ([#14013](https://github.com/morluto/rea/issues/14013)) ([b565f78](https://github.com/morluto/rea/commit/b565f787cb4642a277f85d1a299acb8c49d7b409))
 * **cli:** extract contractCliDescriptionTypes from contractCliDescription ([#13729](https://github.com/morluto/rea/issues/13729)) ([f3ff526](https://github.com/morluto/rea/commit/f3ff526f28f3da36b5236e89d4350f5f2e7a7d9b))
 * **cli:** extract contractCliSchemaProjection and contractCliDocumentDescription ([#13871](https://github.com/morluto/rea/issues/13871)) ([35d72ad](https://github.com/morluto/rea/commit/35d72ad77f287313bcc5c89fe2ec278d48e8928a))
