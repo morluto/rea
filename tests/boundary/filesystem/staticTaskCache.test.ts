@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, it } from "vitest";
@@ -23,13 +23,18 @@ const dryRunSchema = z.object({
   tasks: z.array(z.object({ taskId: z.string(), hash: z.string() })),
 });
 
-const execute = (command: string, args: string[], cwd: string) =>
+const execute = (
+  command: string,
+  args: string[],
+  cwd: string,
+  env = process.env,
+) =>
   spawnSync(process.execPath, [command, ...args], {
     cwd,
     encoding: "utf8",
     timeout: 30_000,
     maxBuffer: 16 * 1024 * 1024,
-    env: process.env,
+    env,
   });
 
 const readRootConfig = async () =>
@@ -99,6 +104,7 @@ const runTurbo = (
   task: string,
   cacheDirectory: string,
   dryRun = false,
+  env = process.env,
 ) =>
   execute(
     turbo,
@@ -111,6 +117,7 @@ const runTurbo = (
       cacheDirectory,
     ],
     root,
+    env,
   );
 
 const taskHash = (root: string, task: string, cacheDirectory: string) => {
@@ -122,6 +129,48 @@ const taskHash = (root: string, task: string, cacheDirectory: string) => {
   if (entry === undefined) throw new Error(`Turbo omitted task ${task}`);
   return entry.hash;
 };
+
+it.skipIf(process.platform === "win32")(
+  "reruns the debt scan when the host Python tokenizer stops working",
+  async () => {
+    const root = await createTestTempDirectory("rea-static-todo-");
+    const host = await createTestTempDirectory("rea-static-todo-host-");
+    const cache = join(host, "cache");
+    const python = join(host, "python3");
+    const env = {
+      ...process.env,
+      PATH: [host, process.env.PATH ?? ""].join(delimiter),
+    };
+    await writeTaskFixture(root, ["scan:todos"], {
+      "scan:todos": "node scripts/scan-todos.mjs",
+    });
+    await mkdir(join(root, "scripts"));
+    await mkdir(join(root, "bridge"));
+    await symlink(
+      join(repository, "node_modules"),
+      join(root, "node_modules"),
+      "junction",
+    );
+    await writeFile(
+      join(root, "scripts/scan-todos.mjs"),
+      await readFile(join(repository, "scripts/scan-todos.mjs"), "utf8"),
+    );
+    await writeFile(
+      join(root, "bridge/sample.py"),
+      'sample = "TODO: example text"\n',
+    );
+    // Keep PATH and repository inputs fixed while the host interpreter changes.
+    await writeFile(python, "#!/bin/sh\nprintf '[]\\n'\n", { mode: 0o755 });
+    const warm = runTurbo(root, "scan:todos", cache, false, env);
+    expect(warm.status, warm.stdout + warm.stderr).toBe(0);
+
+    await writeFile(python, "#!/bin/sh\nexit 1\n");
+    const degraded = runTurbo(root, "scan:todos", cache, false, env);
+    const output = degraded.stdout + degraded.stderr;
+    expect(degraded.status, output).toBe(1);
+    expect(output).toContain("bridge/sample.py:1");
+  },
+);
 
 it("restores a real lint report across cold, warm, and fresh consumer checkouts", async () => {
   const producer = await createTestTempDirectory("rea-static-cache-producer-");
