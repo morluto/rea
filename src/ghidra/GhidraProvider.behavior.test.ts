@@ -99,11 +99,11 @@ import { elf, thinMach } from "../domain/binaryTarget.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import type { GhidraExtensionResult } from "./extensions/GhidraExtensions.js";
 import { GhidraClient, type GhidraTargetSnapshot } from "./GhidraClient.js";
+import type { GhidraProviderClientFactory } from "./GhidraProviderClient.js";
 import {
   ghidraMissingProgramGuidance,
   ghidraStartupTimeoutGuidance,
-  type GhidraProviderClientFactory,
-} from "./GhidraProviderClient.js";
+} from "./GhidraSessionErrorProjection.js";
 import { GhidraLaunchError, GhidraHeadlessLauncher } from "./GhidraLauncher.js";
 import { strippedMachoWithMain } from "./GhidraMachoEntryHint.fixture.js";
 import {

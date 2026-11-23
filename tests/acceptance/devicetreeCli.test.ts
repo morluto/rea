@@ -318,6 +318,57 @@ cliTest(
   },
 );
 cliTest(
+  "reports malformed linux,phandle and keeps references unresolved when paired with canonical phandle",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-dtb-cli-legacy-phandle-");
+    const path = join(root, "legacy-phandle.dtb");
+    await writeFile(
+      path,
+      devicetreeFixture({
+        name: "",
+        children: [
+          {
+            name: "target",
+            properties: { phandle: cells(3), "linux,phandle": cells(1, 2) },
+          },
+          {
+            name: "legacy_only",
+            properties: { "linux,phandle": Buffer.from([0, 0]) },
+          },
+          { name: "consumer", properties: { "interrupt-parent": cells(3) } },
+        ],
+      }),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-devicetree", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = toolContract("inspect_devicetree").outputSchema.parse(
+      result.json,
+    ).normalized_result;
+    if (!("references" in report)) throw new Error("Expected complete report");
+    expect(report.references).toMatchObject([
+      { source: "/consumer", phandle: 3, target: null },
+    ]);
+    expect(report.nodes[1]?.properties[1]).toMatchObject({
+      name: "linux,phandle",
+      bytes: 8,
+      hex: cells(1, 2).toString("hex"),
+      derived: { cells: null },
+    });
+    expect(report.limitations).toContainEqual(
+      expect.stringMatching(
+        /linux,phandle.*\/target.*not a single cell.*unresolved/iu,
+      ),
+    );
+    expect(report.limitations).toContainEqual(
+      expect.stringMatching(
+        /linux,phandle.*\/legacy_only.*not a single cell.*unresolved/iu,
+      ),
+    );
+  },
+);
+cliTest(
   "retains complete DTB Evidence when delivering a summary",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-dtb-cli-summary-");

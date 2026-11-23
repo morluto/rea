@@ -82,6 +82,7 @@ import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { FifoQueue } from "../kernel/FifoQueue.js";
 
 const CLEANUP_COMMAND_TIMEOUT_MS = 1_000;
 const STARTUP_TIMEOUT_MS = 30_000;
@@ -241,7 +242,7 @@ interface RizinDebugSession {
   readonly id: string;
   readonly launched: SpawnedOwnedProviderProcess;
   readonly supervisor: ProviderProcessSupervisor;
-  readonly frames: Array<{
+  readonly frames: FifoQueue<{
     readonly frame: RizinFrame;
     readonly queueChargeBytes: number;
   }>;
@@ -677,7 +678,7 @@ export class RizinDebugSessionManager {
           maxDiagnosticBytes: MAX_DIAGNOSTIC_BYTES,
         },
       ),
-      frames: [],
+      frames: new FifoQueue(),
       frameWaiters: [],
       history: [],
       queuedFrameBytes: 0,
@@ -1354,7 +1355,9 @@ export class RizinDebugSessionManager {
         continue;
       }
       if (piece.length > 0) {
-        session.frameChunks.push(Buffer.from(piece));
+        session.frameChunks.push(
+          piece.length === chunk.length ? chunk : Buffer.from(piece),
+        );
         session.bufferedFrameBytes += piece.length;
       }
       if (boundary < 0) return;
@@ -1429,7 +1432,7 @@ export class RizinDebugSessionManager {
       MIN_QUEUED_FRAME_CHARGE_BYTES,
     );
     if (
-      session.frames.length >= MAX_QUEUED_FRAMES ||
+      session.frames.size >= MAX_QUEUED_FRAMES ||
       session.queuedFrameBytes + queueChargeBytes > MAX_QUEUED_FRAME_BYTES
     ) {
       session.commandOutputDropped ||= session.commandCaptureActive;
@@ -1620,7 +1623,7 @@ export class RizinDebugSessionManager {
     // Admission remains closed. Only cleanup can recover correlation, and then
     // it still obtains a fresh ptrace inventory and validates identity/output.
     session.ready = false;
-    session.frames.length = 0;
+    session.frames.clear();
     session.queuedFrameBytes = 0;
     const marker = `__REA_CLEANUP_SYNC_${randomUUID().replaceAll("-", "")}__`;
     await new Promise<void>((resolve, reject) => {
@@ -1868,7 +1871,7 @@ export const assertRizinProcessStartTimeStable = (
 };
 
 const hasUnclaimedRizinFrames = (session: RizinDebugSession): boolean =>
-  session.frames.length > 0 ||
+  session.frames.size > 0 ||
   session.bufferedFrameBytes > 0 ||
   session.discardingOversizedFrame;
 
@@ -1975,10 +1978,8 @@ const waitForCommandFrames = async (
   // following it, and apply the same decoded UTF-8 budget as normal frames.
   const interrupted = () => {
     let markerSeen = false;
-    let consumed = 0;
-    while (consumed < session.frames.length) {
-      const queued = session.frames[consumed]!;
-      consumed += 1;
+    while (session.frames.size > 0) {
+      const queued = session.frames.shift()!;
       session.queuedFrameBytes -= queued.queueChargeBytes;
       frameCount += 1;
       if (frameCount > MAX_COMMAND_FRAMES) {
@@ -1988,7 +1989,6 @@ const waitForCommandFrames = async (
       markerSeen = append(queued.frame);
       if (markerSeen || outputTruncated) break;
     }
-    if (consumed > 0) session.frames.splice(0, consumed);
     if (!markerSeen && !outputTruncated && session.bufferedFrameBytes > 0)
       append(
         bufferedRizinFrame(session, session.discardingOversizedFrame).frame,

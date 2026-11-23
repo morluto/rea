@@ -7,7 +7,7 @@ import { parseProcessCaptureEvidence } from "../application/process/ProcessEvide
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import type { PromptCompletionKind } from "../contracts/promptContracts.js";
 import { listProceduresFact } from "../domain/native/nativeOperationFacts.js";
-import { currentMcpRequestSignal } from "./EvidenceMcpServerCore.js";
+import { currentMcpRequestSignal } from "./ErrorEvidenceTransport.js";
 import { parseArtifactInventoryEvidence } from "../domain/artifactInventoryEvidence.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import type { Evidence } from "../domain/evidence.js";

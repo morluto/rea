@@ -1,3 +1,7 @@
+import {
+  RELEASE_EXPOSURE_AUDIT_OPERATION as OPERATION,
+  releaseExposureFailure,
+} from "./releaseExposure/releaseExposureFailures.js";
 import { isUtf8 } from "node:buffer";
 import { createHash } from "node:crypto";
 import type { Dirent } from "node:fs";
@@ -25,17 +29,13 @@ import {
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
   type ArtifactResourceOwner,
-  artifactFileCancellationCause,
   artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
   readStableArtifact,
   projectArtifactCloseFailure,
-  projectStableArtifactFailure,
   readerIntegrityFailure,
   hashStableRootArtifactHandle,
   openRootArtifact,
   releaseRootArtifact,
-  asarHeaderAdmissionRecovery,
   createAsarHeaderSignatureProbe,
 } from "../resources/index.js";
 import {
@@ -43,58 +43,47 @@ import {
   decodeMemberText,
   declaresTextEncoding,
   getCachedTextDecoder,
-  hasNonUtf8Nul,
   type MemberText,
 } from "./releaseExposure/memberTextDecoding.js";
-import { nodeShebang } from "./releaseExposure/nodeShebang.js";
-import { hasElfMagic } from "../domain/binaryContainer.js";
 import {
-  InternalInvariantError,
-  invariantViolation,
-} from "../domain/internalInvariant.js";
+  asPackageFormat,
+  EXTRACTABLE,
+  hasCompanionName,
+  isJavaScriptSourceMapName,
+  isSourceMap,
+  isText,
+  NATIVE,
+  peHeaderState,
+  sniffNativeFormat,
+  targetKind,
+  type PackageFormat,
+  type PeHeaderState,
+} from "./releaseExposure/memberClassification.js";
+import { nodeShebang } from "./releaseExposure/nodeShebang.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
 } from "../config/asarHeaderAdmission.js";
-import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { ArtifactTraversalObservation } from "./ArtifactTraversalObservation.js";
 import { classifyEmbeddedExecutablePackage } from "./inventory/classify.js";
 import { inventoryArtifactInScope } from "./inventory/ArtifactInventory.js";
 import { createArtifactReader } from "./createArtifactReader.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
   AnalysisInputError,
-  AnalysisResourceConstraintError,
   cancelledBy,
-  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type {
   ArtifactInventoryResult,
   ArtifactOccurrence,
 } from "../domain/artifactGraph.js";
-import {
-  classifyFatContainerEvidence,
-  readFatContainerHeader,
-  readMachoHeaderPrefixFacts,
-} from "../domain/apple/machoContainer.js";
-import {
-  inspectPeCodeViewFromBuffer,
-  parsePeRecordStructure,
-} from "../domain/binaryTarget.js";
+import { inspectPeCodeViewFromBuffer } from "../domain/binaryTarget.js";
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
-import type {
-  ArtifactAdmissionLimit,
-  ArtifactIntegrityCheck,
-} from "../domain/artifactOperationError.js";
-import {
-  mzWindowsHeaderLayoutLimitation,
-  observeMzWindowsHeader,
-} from "../domain/dosMz.js";
+import type { ArtifactIntegrityCheck } from "../domain/artifactOperationError.js";
+import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import { evidenceSubjectFormatSchema } from "../domain/evidenceSubject.js";
 import { byteOrderMarkEncoding } from "../domain/textByteOrderMark.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { RELEASE_EXPOSURE_PROVIDER } from "../domain/investigationProviders.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
@@ -123,7 +112,6 @@ import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import {
-  isSelectedRegularFileError,
   RegularFileChangedError,
   sameRegularFileState,
   type StableRegularFileDescriptor,
@@ -143,32 +131,7 @@ import { htmlArtifactReferences } from "../domain/javascript/htmlArtifactReferen
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
 import { addSourceMapDirectives } from "../domain/javascript/javascriptStaticAnalysisCalls.js";
 import { createJavaScriptAnalysisAccumulator } from "../domain/javascript/javascriptStaticAnalysisState.js";
-import { errorMessage } from "../kernel/errorMessage.js";
 
-const OPERATION = "audit_release_exposure";
-type PackageFormat = Extract<
-  ArtifactOccurrence["artifact_format"],
-  | "asar"
-  | "bun-standalone"
-  | "deno-standalone"
-  | "dotnet-bundle"
-  | "node-sea"
-  | "pyinstaller"
->;
-const PACKAGE_FORMATS = [
-  "asar",
-  "bun-standalone",
-  "deno-standalone",
-  "dotnet-bundle",
-  "node-sea",
-  "pyinstaller",
-] as const satisfies readonly PackageFormat[];
-const EXTRACTABLE = new Set<string>(PACKAGE_FORMATS);
-const asPackageFormat = (format: string): PackageFormat | null =>
-  EXTRACTABLE.has(format) ? (format as PackageFormat) : null;
-const NATIVE = new Set(["elf", "mach-o", "mach-o-universal", "pe"]);
-const TEXT_EXTENSION =
-  /\.(?:cjs|css|cts|env|html|htm|ini|js|json|jsx|map|md|mjs|mts|pem|plist|toml|ts|tsx|txt|xml|yaml|yml)$/iu;
 const SIBLING_LIST_LIMIT = 4096;
 const CONTAINER_LIST_LIMIT = 4096;
 const OPEN_CONTAINER_LIMIT = 8;
@@ -2346,30 +2309,6 @@ const examinePackagedBinary = async (
   return image.kind !== "unread";
 };
 
-type PeHeaderState = "other" | "unexamined" | "malformed" | "pe";
-
-/** Judge a PE header by the same structural parser as inventory. */
-const peHeaderState = (bytes: Buffer, size: number | null): PeHeaderState => {
-  if (bytes.toString("latin1", 0, 2) !== "MZ") return "other";
-  const windows = observeMzWindowsHeader(bytes, size ?? bytes.length);
-  if (windows.state === "declared" && windows.signature === "PE") {
-    if (mzWindowsHeaderLayoutLimitation(windows) !== undefined)
-      return "malformed";
-    const record = parsePeRecordStructure(bytes.subarray(windows.offset));
-    if (record.ok) return "pe";
-    return record.error.kind === "incomplete" &&
-      (size === null || windows.offset + record.error.requiredBytes <= size)
-      ? "unexamined"
-      : "malformed";
-  }
-  if (
-    windows.state === "signature-needed" ||
-    (windows.state === "candidate" && windows.signature === "unobserved")
-  )
-    return "unexamined";
-  return "other";
-};
-
 const peHeaderOfRead = (
   member: MemberView,
   loaded: MemberRead,
@@ -3524,74 +3463,6 @@ const noteUnlistedEntry = (state: ScanState, entry: ArtifactEntry): void => {
   } else if (isText(entry.path, "file")) state.skippedText += 1;
 };
 
-const JAVASCRIPT_SOURCE_MAP = /\.(?:cjs|css|cts|js|jsx|mjs|mts|ts|tsx)\.map$/iu;
-
-const isJavaScriptSourceMapName = (logical: string): boolean =>
-  JAVASCRIPT_SOURCE_MAP.test(logical);
-
-const isSourceMap = (logical: string, kind: string): boolean =>
-  kind === "source-map" || logical.toLowerCase().endsWith(".map");
-
-const isDeclaredText = (kind: string): boolean =>
-  kind === "javascript" ||
-  kind === "source-map" ||
-  kind === "plist" ||
-  kind === "entitlements";
-
-const isText = (logical: string, kind: string): boolean =>
-  isDeclaredText(kind) || TEXT_EXTENSION.test(logical);
-
-const hasCompanionName = (logical: string): boolean => {
-  const lower = logical.toLowerCase();
-  return (
-    lower.endsWith(".pdb") ||
-    lower.endsWith(".debug") ||
-    lower.endsWith(".dsym")
-  );
-};
-
-/**
- * FAT identity from the container owner. A prefix can only rule a universal
- * image out against the member's real size: without one, or with slices past
- * the prefix, the image may be native and stays counted as one.
- */
-const sniffFatFormat = (
-  bytes: Buffer,
-  size: number | null,
-): "mach-o-universal" | null => {
-  const known = size !== null && size >= bytes.length;
-  const header = readFatContainerHeader(bytes, known ? size : bytes.length);
-  if (header.state !== "parsed") return null;
-  return known &&
-    classifyFatContainerEvidence(header, bytes).state === "not-mach-o"
-    ? null
-    : "mach-o-universal";
-};
-
-/** Header facts from the executable owners. A JVM class is not a FAT Mach-O. */
-const sniffNativeFormat = (
-  bytes: Buffer,
-  size: number | null = bytes.length,
-): NativeFormat | null => {
-  if (hasElfMagic(bytes)) return "elf";
-  if (readMachoHeaderPrefixFacts(bytes).format !== null) return "mach-o";
-  const universal = sniffFatFormat(bytes, size);
-  if (universal !== null) return universal;
-  return peHeaderState(bytes, size) === "pe" ? "pe" : null;
-};
-
-const targetKind = (
-  path: string,
-  format: string,
-  directory: boolean,
-): ReleaseExposureScan["target"]["kind"] => {
-  if (directory && basename(path).toLowerCase().endsWith(".app")) return "app";
-  if (directory || format === "directory") return "directory";
-  if (format === "asar") return "asar";
-  if (NATIVE.has(format) || EXTRACTABLE.has(format)) return "executable";
-  return "file";
-};
-
 const pushSample = (samples: string[], value: string): void => {
   if (
     value.length === 0 ||
@@ -3605,140 +3476,3 @@ const pushSample = (samples: string[], value: string): void => {
 const pushLimitation = (state: ScanState, message: string): void => {
   if (!state.limitations.retains(message)) state.limitations.push(message);
 };
-
-const fileSizeRecovery = (maxFileBytes: number) =>
-  maxFileBytes >= MAX_RELEASE_EXPOSURE_FILE_BYTES
-    ? fixedAllowanceOptions("The release exposure input allowance", "input", {
-        limit: MAX_RELEASE_EXPOSURE_FILE_BYTES,
-        unit: "bytes",
-      })
-    : {
-        retryable: false as const,
-        remediationAction: `Raise max_file_bytes above ${String(maxFileBytes)} bytes or select a smaller artifact. The ceiling is ${String(MAX_RELEASE_EXPOSURE_FILE_BYTES)} bytes.`,
-      };
-
-/**
- * The header admission is its own bound, not the selected-file ceiling, so
- * max_file_bytes cannot repair it. The recovery names the shared setting the
- * composition threaded into this reader.
- */
-const asarHeaderAdmissionFailure = (
-  cause: ArtifactReaderFailure,
-  admission: ArtifactAdmissionLimit,
-): AnalysisResourceConstraintError =>
-  new AnalysisResourceConstraintError(
-    OPERATION,
-    "capacity",
-    admission.requiredBytes === undefined
-      ? `An ASAR header/index exceeds ${String(admission.maximumBytes)} bytes.`
-      : `An ASAR header/index of ${String(admission.requiredBytes)} bytes exceeds ${String(admission.maximumBytes)} bytes.`,
-    {
-      asar_max_header_bytes: admission.maximumBytes,
-      ...(admission.requiredBytes === undefined
-        ? {}
-        : { required_header_bytes: admission.requiredBytes }),
-    },
-    {
-      cause,
-      retryable: false,
-      remediationAction: asarHeaderAdmissionRecovery(admission),
-      limit: {
-        ...analysisSettingLimit(
-          "asar.max_header_bytes",
-          admission.maximumBytes,
-          admission.source,
-        ),
-        ...(admission.requiredBytes === undefined
-          ? {}
-          : { required_value: admission.requiredBytes }),
-      },
-    },
-  );
-
-const releaseExposureLimitFailure = (
-  cause: ArtifactReaderFailure,
-  maxFileBytes: number,
-): AnalysisResourceConstraintError =>
-  cause.admission === undefined
-    ? new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        cause.message,
-        { max_file_bytes: maxFileBytes },
-        { cause, ...fileSizeRecovery(maxFileBytes) },
-      )
-    : asarHeaderAdmissionFailure(cause, cause.admission);
-
-const releaseExposureFailurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
-  path: string,
-  maxFileBytes: number,
-): AnalysisError => {
-  const { cause, origin } = facts;
-  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
-    return cause;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return readerIntegrityFailure(OPERATION, path, cause);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return cancelledBy(
-      OPERATION,
-      carriedReason(artifactFileCancellationCause(cause)),
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit")
-      return releaseExposureLimitFailure(cause, maxFileBytes);
-    if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        { path: ["path"], reason: "invalid_format", message: cause.message },
-      ]);
-  }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected artifact could not be read (${String(cause.code)}): ${path}.`,
-        },
-      ]);
-  }
-  return new ProviderAdapterError(RELEASE_EXPOSURE_PROVIDER.id, OPERATION, {
-    cause,
-    diagnostics: {
-      path,
-      reason: errorMessage(cause),
-    },
-  });
-};
-
-const releaseExposureFailure = (
-  cause: unknown,
-  path: string,
-  maxFileBytes: number,
-): AnalysisError =>
-  projectStableArtifactFailure(
-    cause,
-    releaseExposureFailurePrimary(
-      artifactFilePrimaryFacts(cause),
-      path,
-      maxFileBytes,
-    ),
-    path,
-    RELEASE_EXPOSURE_PROVIDER.id,
-    OPERATION,
-  );

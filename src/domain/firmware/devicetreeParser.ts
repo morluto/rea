@@ -275,18 +275,22 @@ export const parseDevicetree = (
     "Phandle references cover only single-cell interrupt-parent, remote-endpoint and msi-parent; binding-specific arrays and overlays are not resolved.",
   ];
   for (const node of nodes) {
-    const canonical = prop(node.path, "phandle");
-    const legacy = prop(node.path, "linux,phandle");
-    const malformedCanonical =
-      canonical !== undefined && canonical.derived.cells === null;
-    const declared = [canonical, legacy].flatMap((property) => {
+    const phandleProperties = [
+      prop(node.path, "phandle"),
+      prop(node.path, "linux,phandle"),
+    ];
+    const malformedPhandles = phandleProperties.filter(
+      (property): property is NonNullable<typeof property> =>
+        property !== undefined && property.derived.cells === null,
+    );
+    const declared = phandleProperties.flatMap((property) => {
       const handle = property?.derived.cells?.[0];
       return handle === undefined ? [] : [handle];
     });
-    if (malformedCanonical) {
+    for (const property of malformedPhandles) {
       admit(node.path.length * 2 + 256);
       limitations.push(
-        `phandle at ${node.path} is not a single cell; this node's reference identity remains unresolved.`,
+        `${property.name} at ${node.path} is not a single cell; this node's reference identity remains unresolved.`,
       );
     }
     // Disagreeing declarations leave both values ambiguous rather than choosing one.
@@ -297,7 +301,7 @@ export const parseDevicetree = (
         `phandle at ${node.path} conflicts with linux,phandle (0x${declared[0]?.toString(16)} vs 0x${declared[1]?.toString(16)}); references to either value are unresolved.`,
       );
     }
-    const unambiguous = !malformedCanonical && !conflict;
+    const unambiguous = malformedPhandles.length === 0 && !conflict;
     for (const handle of declared)
       if (handle !== 0 && handle !== 0xffffffff) {
         const existing = handles.get(handle);

@@ -16,7 +16,7 @@ import { CallerAbort, OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { InvestigationRecords } from "../application/investigation/InvestigationRecords.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
-import { forgetPendingMcpRequest } from "./EvidenceMcpServerCore.js";
+import { forgetPendingMcpRequest } from "./ErrorEvidenceTransport.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { createToolResultDelivery } from "./toolResult.js";

@@ -14,7 +14,6 @@ import {
   type PlaywrightTrace,
 } from "../playwrightTrace/playwrightTrace.js";
 import { playwrightTraceViewRequestSchema } from "../playwrightTrace/playwrightTraceQuery.js";
-import type { JsonValue } from "../jsonValue.js";
 import { err, ok } from "../result.js";
 import {
   createAnalysisViewResultReader,
@@ -32,7 +31,7 @@ import {
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
-import { selectViewRows } from "./selectViewRows.js";
+import { pickFields, selectViewRows } from "./selectViewRows.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 
 export const playwrightTraceViewContextSchema = playwrightTraceSchema
@@ -111,13 +110,8 @@ const allows = (
   selection: ReadonlySet<string> | undefined,
   value: string | null,
 ) => selection === undefined || (value !== null && selection.has(value));
-const fields = (row: object, selected: readonly string[]) =>
-  Object.fromEntries(
-    selected.map((key) => [key, (row as Record<string, JsonValue>)[key]!]),
-  );
 type View = z.output<typeof playwrightTraceViewRequestSchema>;
-const eventFields = (
-  row: PlaywrightTrace["events"][number],
+const createEventProjector = (
   view: Extract<View, { collection: "events" }>,
 ) => {
   const selected = view.fields?.filter((field) => field !== "text_preview") ?? [
@@ -132,25 +126,27 @@ const eventFields = (
   ];
   const preview =
     view.fields === undefined || view.fields.includes("text_preview");
-  let text_preview:
-    | (z.output<typeof analysisTextPageItemSchema> & {
-        coverage: z.output<typeof analysisViewCoverageSchema>;
-      })
-    | null = null;
-  if (preview && row.text !== null) {
-    const page = analysisTextPage(row.text, 0, 256, "Recorded event text");
-    if (!page.ok) throw page.error;
-    text_preview = { ...page.value.item, coverage: page.value.coverage };
-  }
-  return {
-    ...fields(row, selected),
-    ...(preview ? { text_preview } : {}),
-    event_id: row.event_id,
-    stream_id: row.stream_id,
-    ordinal: row.ordinal,
-    source: row.source,
-    kind: row.kind,
-    credential_redacted: row.credential_redacted,
+  return (row: PlaywrightTrace["events"][number]) => {
+    let text_preview:
+      | (z.output<typeof analysisTextPageItemSchema> & {
+          coverage: z.output<typeof analysisViewCoverageSchema>;
+        })
+      | null = null;
+    if (preview && row.text !== null) {
+      const page = analysisTextPage(row.text, 0, 256, "Recorded event text");
+      if (!page.ok) throw page.error;
+      text_preview = { ...page.value.item, coverage: page.value.coverage };
+    }
+    return {
+      ...pickFields(row, selected),
+      ...(preview ? { text_preview } : {}),
+      event_id: row.event_id,
+      stream_id: row.stream_id,
+      ordinal: row.ordinal,
+      source: row.source,
+      kind: row.kind,
+      credential_redacted: row.credential_redacted,
+    };
   };
 };
 
@@ -236,19 +232,18 @@ const selectRows = (
       streams = values(view.stream_ids),
       kinds = values(view.kinds),
       calls = values(view.call_ids);
+    const filtered =
+      ids !== undefined ||
+      streams !== undefined ||
+      kinds !== undefined ||
+      calls !== undefined;
     const matchEvent = (row: PlaywrightTrace["events"][number]): boolean =>
       allows(ids, row.event_id) &&
       allows(streams, row.stream_id) &&
       allows(kinds, row.kind) &&
       allows(calls, row.call_id);
-    const projectEvent = (row: PlaywrightTrace["events"][number]) =>
-      eventFields(row, view);
-    if (
-      ids !== undefined ||
-      streams !== undefined ||
-      kinds !== undefined ||
-      calls !== undefined
-    ) {
+    const projectEvent = createEventProjector(view);
+    if (filtered) {
       const candidates =
         ids !== undefined
           ? candidateIndices(report, report.events, "event_id", ids)
@@ -266,19 +261,22 @@ const selectRows = (
           projectEvent,
         );
       }
+      return selectViewRows(report.events, view, matchEvent, projectEvent);
     }
-    return selectViewRows(report.events, view, matchEvent, projectEvent);
+    return selectViewRows(report.events, view, undefined, projectEvent);
   }
   if (view.collection === "members") {
     const ids = values(view.member_ids),
       paths = values(view.paths);
+    const filtered = ids !== undefined || paths !== undefined;
     const matchMember = (row: PlaywrightTrace["members"][number]): boolean =>
       allows(ids, row.member_id) && allows(paths, row.path);
+    const memberFields = view.fields ?? [
+      "declared_bytes",
+      "declared_compressed_bytes",
+    ];
     const projectMember = (row: PlaywrightTrace["members"][number]) => ({
-      ...fields(
-        row,
-        view.fields ?? ["declared_bytes", "declared_compressed_bytes"],
-      ),
+      ...pickFields(row, memberFields),
       member_id: row.member_id,
       path: row.path,
       logical_path: row.logical_path,
@@ -287,7 +285,7 @@ const selectRows = (
       decoded: row.decoded,
       limitations: row.limitations,
     });
-    if (ids !== undefined || paths !== undefined) {
+    if (filtered) {
       const candidates =
         ids !== undefined
           ? candidateIndices(report, report.members, "member_id", ids)
@@ -301,15 +299,21 @@ const selectRows = (
           projectMember,
         );
       }
+      return selectViewRows(report.members, view, matchMember, projectMember);
     }
-    return selectViewRows(report.members, view, matchMember, projectMember);
+    return selectViewRows(report.members, view, undefined, projectMember);
   }
   if (view.collection === "streams") {
     const ids = values(view.stream_ids);
     const matchStream = (row: PlaywrightTrace["streams"][number]): boolean =>
       allows(ids, row.stream_id);
+    const streamFields = view.fields ?? [
+      "producer",
+      "lines",
+      "supported_events",
+    ];
     const projectStream = (row: PlaywrightTrace["streams"][number]) => ({
-      ...fields(row, view.fields ?? ["producer", "lines", "supported_events"]),
+      ...pickFields(row, streamFields),
       stream_id: row.stream_id,
       member_id: row.member_id,
       role: row.role,
@@ -331,15 +335,17 @@ const selectRows = (
           matchStream,
           projectStream,
         );
+      return selectViewRows(report.streams, view, matchStream, projectStream);
     }
-    return selectViewRows(report.streams, view, matchStream, projectStream);
+    return selectViewRows(report.streams, view, undefined, projectStream);
   }
   const codes = values(view.codes);
   const matchDiagnostic = (
     row: PlaywrightTrace["diagnostics"][number],
   ): boolean => allows(codes, row.code);
+  const diagnosticFields = view.fields ?? ["message"];
   const projectDiagnostic = (row: PlaywrightTrace["diagnostics"][number]) => ({
-    ...fields(row, view.fields ?? ["message"]),
+    ...pickFields(row, diagnosticFields),
     diagnostic_id: row.diagnostic_id,
     member_id: row.member_id,
     line: row.line,
@@ -360,19 +366,31 @@ const selectRows = (
         matchDiagnostic,
         projectDiagnostic,
       );
+    return selectViewRows(
+      report.diagnostics,
+      view,
+      matchDiagnostic,
+      projectDiagnostic,
+    );
   }
-  return selectViewRows(
-    report.diagnostics,
-    view,
-    matchDiagnostic,
-    projectDiagnostic,
-  );
+  return selectViewRows(report.diagnostics, view, undefined, projectDiagnostic);
 };
 const selectEventText = (
   report: PlaywrightTrace,
   view: Extract<View, { collection: "event-text" }>,
 ) => {
-  const event = report.events.find((row) => row.event_id === view.event_id);
+  const candidates = candidateIndices(
+    report,
+    report.events,
+    "event_id",
+    new Set([view.event_id]),
+  );
+  const event =
+    candidates !== undefined
+      ? candidates.length > 0
+        ? report.events[candidates[0]!]
+        : undefined
+      : report.events.find((row) => row.event_id === view.event_id);
   if (event === undefined || event.text === null)
     return err(
       analysisViewInputError([

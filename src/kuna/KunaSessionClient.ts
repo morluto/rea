@@ -81,10 +81,9 @@ import {
   inspectKunaInstallation,
   type KunaInstallation,
 } from "./KunaInstallation.js";
+import { kunaProjectKey, type KunaProject } from "./KunaCacheManifest.js";
 import {
-  kunaProjectKey,
   KunaPublishedProjectCleanupError,
-  type KunaProject,
   type KunaProjectCache,
 } from "./KunaProjectCache.js";
 import type { KunaExportStatus } from "./KunaProjectExport.js";

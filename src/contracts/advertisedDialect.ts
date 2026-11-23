@@ -45,7 +45,7 @@ export type AdvertisedDialectRule =
   // Each keyword outside the allowlist is rejected by at least one target.
   | "keyword"
   // Gemini, Moonshot and Ark reject type lists and untyped nodes (#7103,
-  // #3800); a value is nullable only as `anyOf` a typed branch and null.
+  // #3800); nested unions express alternatives through typed `anyOf` branches.
   | "type"
   // VS Code and OpenAI reject arrays without `items`; Gemini rejects `items`
   // beside a non-array type (#3576, #7103).
@@ -464,24 +464,16 @@ const isNullBranch = (branch: unknown): boolean =>
   branch.type === "null" &&
   Object.keys(branch).length === 1;
 
-/**
- * The dialect's one nullable form: `anyOf` a single typed branch and
- * `{"type": "null"}`, below the root. Every surveyed target accepts a nested
- * `anyOf` with typed branches, while type lists such as `[T, "null"]` are
- * rejected by Gemini's legacy schema (#7103) and rewritten differently by
- * Codex, Goose, VS Code and Gemini CLI. Dropping the null branch would refuse
- * a valid call such as `limit: null`. The union carries its type in its
- * branches, so it is not an untyped node.
- */
-const isNullableUnion = (node: Readonly<Record<string, unknown>>): boolean =>
+/** A nested union can state its types entirely in its branches. */
+const isTypedUnion = (node: Readonly<Record<string, unknown>>): boolean =>
   Array.isArray(node.anyOf) &&
-  node.anyOf.length === 2 &&
-  node.anyOf.some(isNullBranch) &&
-  node.anyOf.some(
+  node.anyOf.length >= 2 &&
+  node.anyOf.every(
     (branch) =>
-      isRecord(branch) &&
-      typeof branch.type === "string" &&
-      PRIMITIVE_TYPES.has(branch.type),
+      isNullBranch(branch) ||
+      (isRecord(branch) &&
+        typeof branch.type === "string" &&
+        PRIMITIVE_TYPES.has(branch.type)),
   );
 
 const hasDisallowedRootShape = (input: unknown): boolean =>
@@ -511,9 +503,9 @@ const scanNodeInputViolations = (
   if (Array.isArray(type)) {
     if (report("type", "type-list")) return true;
   } else if (type === undefined) {
-    if (!isNullableUnion(node) && report("type", "untyped")) return true;
+    if (!isTypedUnion(node) && report("type", "untyped")) return true;
   } else if (
-    // The null branch of a nullable union is typed by its own `type`.
+    // A bare null branch is typed by its own `type`.
     type === "null" &&
     keyword === "anyOf" &&
     Object.keys(node).length === 1

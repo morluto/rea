@@ -37,9 +37,10 @@ import {
 } from "../resources/index.js";
 import type { UefiDecodeFormat } from "./FfsSections.js";
 import { uefiFailureDialect } from "./UefiFailures.js";
-import type { UefiDecodeResult } from "./UefiImageScan.js";
+import type { UefiDecodeResult } from "./UefiScanContext.js";
+import { UefiLzmaByteQueue } from "./UefiLzmaByteQueue.js";
 import {
-  encodeLzmaFrame,
+  encodeLzmaFrameHeader,
   LZMA_FRAME_HEADER_BYTES,
   lzmaReplySchema,
 } from "./UefiLzmaProtocol.js";
@@ -71,8 +72,7 @@ const throwIfWorkerAborted = (
 };
 
 class ActiveWorkerReader {
-  #chunks: Buffer[] = [];
-  #buffered = 0;
+  readonly #queue = new UefiLzmaByteQueue();
   #ended = false;
   #error: Error | undefined;
   #waiter: (() => void) | undefined;
@@ -87,9 +87,7 @@ class ActiveWorkerReader {
   }
 
   readonly #onData = (chunk: Buffer): void => {
-    if (chunk.length === 0) return;
-    this.#chunks.push(chunk);
-    this.#buffered += chunk.length;
+    if (!this.#queue.append(chunk)) return;
     this.#wake();
   };
 
@@ -118,7 +116,7 @@ class ActiveWorkerReader {
 
   async readExact(length: number, signal: AbortSignal): Promise<Buffer> {
     if (length === 0) return Buffer.alloc(0);
-    while (this.#buffered < length) {
+    while (this.#queue.available < length) {
       throwIfWorkerAborted(signal, this.supervisor.snapshot());
       if (this.#error !== undefined) {
         throw new OwnedCommandFailure(
@@ -156,21 +154,7 @@ class ActiveWorkerReader {
         };
       });
     }
-    const out = Buffer.allocUnsafe(length);
-    let copied = 0;
-    while (copied < length) {
-      const head = this.#chunks[0]!;
-      const take = Math.min(head.length, length - copied);
-      head.copy(out, copied, 0, take);
-      copied += take;
-      this.#buffered -= take;
-      if (take === head.length) {
-        this.#chunks.shift();
-      } else {
-        this.#chunks[0] = head.subarray(take);
-      }
-    }
-    return out;
+    return this.#queue.read(length);
   }
 }
 
@@ -315,9 +299,11 @@ export class UefiLzmaSession {
         max_output_bytes: maxOutputBytes,
       });
       await active.stdinWriter.writeFrame(
-        encodeLzmaFrame(requestHeader, payload),
+        encodeLzmaFrameHeader(requestHeader, payload.length),
         signal,
       );
+      if (payload.length > 0)
+        await active.stdinWriter.writeFrame(payload, signal);
       const header = await active.reader.readExact(
         LZMA_FRAME_HEADER_BYTES,
         signal,
