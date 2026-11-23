@@ -12,7 +12,7 @@ import {
 } from "../unity/unityAddressables.js";
 import { err, ok, type Result } from "../result.js";
 import { evidenceFileTarget } from "../evidence.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { pageIndexedRows } from "./indexedRowPage.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
@@ -106,23 +106,21 @@ interface CheckedReport {
   readonly counts: z.infer<typeof countsSchema>;
 }
 
-// Authenticated, frozen parents own these facts; cache validation for their lifetime.
+const readCatalogReport = createAnalysisViewResultReader(
+  unityAddressablesSchema,
+);
+// The validated immutable report owns its derived counts for its lifetime.
 const checkedReports = new WeakMap<object, CheckedReport>();
 
 const parseCatalogReport = (
   parent: AnalysisViewParent,
 ): Result<CheckedReport, AnalysisError> => {
-  const key = parent.normalizedResult;
-  const reusable =
-    parent.sealedResult === true &&
-    typeof key === "object" &&
-    key !== null &&
-    isImmutableJsonSnapshot(key);
-  const cached = reusable ? checkedReports.get(key) : undefined;
-  if (cached !== undefined) return ok(cached);
-  const parsed = parseAnalysisViewResult(unityAddressablesSchema, parent);
+  const parsed = readCatalogReport(parent);
   if (!parsed.ok) return parsed;
-  const report = reusable ? (key as Report) : parsed.value;
+  const report = parsed.value;
+  const reusable = isImmutableJsonSnapshot(report);
+  const cached = reusable ? checkedReports.get(report) : undefined;
+  if (cached !== undefined) return ok(cached);
   let bundles = 0;
   let dependencyEdges = 0;
   for (const location of report.locations) {
@@ -139,7 +137,7 @@ const parseCatalogReport = (
       dependency_edges: dependencyEdges,
     },
   };
-  if (reusable) checkedReports.set(key, checked);
+  if (reusable) checkedReports.set(report, checked);
   return ok(checked);
 };
 
