@@ -159,6 +159,7 @@
 * **environment:** preserve document write replay match provenance ([#13604](https://github.com/morluto/rea/issues/13604)) ([5deee1a](https://github.com/morluto/rea/commit/5deee1acf1f0163a6a5d60568a841ade32811bf5))
 * **environment:** preserve state-backed read match provenance ([#13621](https://github.com/morluto/rea/issues/13621)) ([3c51cde](https://github.com/morluto/rea/commit/3c51cde2ef434c085343fb588fb6e1cfde991f9c))
 * **environment:** release terminal state response readers ([#13830](https://github.com/morluto/rea/issues/13830)) ([89ecf87](https://github.com/morluto/rea/commit/89ecf87810f2db473c0b3de443604cf350d56d75))
+* **erlang:** require complete positional BEAM reads ([#14045](https://github.com/morluto/rea/issues/14045)) ([2e47bc0](https://github.com/morluto/rea/commit/2e47bc09f357cf6e5bcc6c93f39e4972bd79192e))
 * **evidence:** bound omitted validation issue locations ([#13309](https://github.com/morluto/rea/issues/13309)) ([4485912](https://github.com/morluto/rea/commit/4485912fd83b64834cc88e5af9bcd7febe2baae8))
 * **evidence:** evaluate unchanged artifact members in correlation ([460d771](https://github.com/morluto/rea/commit/460d77176e9634a6e052e4993ddd03be1489bec9)), closes [#13211](https://github.com/morluto/rea/issues/13211)
 * **evidence:** keep unobserved correlation paths unknown without complete coverage ([94232d0](https://github.com/morluto/rea/commit/94232d0d5f1addb2b0a45477bc67bd681e3d9282)), closes [#13211](https://github.com/morluto/rea/issues/13211)
