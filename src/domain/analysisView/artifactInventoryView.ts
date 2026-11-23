@@ -562,7 +562,7 @@ const occurrenceIndices = (
       (artifactKinds === undefined || artifactKinds.has(row.artifact_kind)) &&
       (globs === undefined ||
         (row.logical_path !== "." &&
-          globs.some((glob) => glob.test(row.logical_path))))
+          globs.some((glob) => glob(row.logical_path))))
     );
   };
   return exactCandidates(source, view)
