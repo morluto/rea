@@ -68,7 +68,11 @@ Confirmed DOS-only MZ files and declared NE, LE, or LX signatures are outside
 this PE32/PE32+ workflow and return `unsupported_target` with target-selection
 recovery. A recognized non-PE signature does not need a PE COFF header to be
 classified. Unrecognized signatures and truncated PE headers remain malformed
-input. `inspect-pe-resources` uses the same header admission and classifications.
+input. A `SizeOfHeaders` value that ends before the section table or extends
+past the file is not itself a refusal; the section table is read from the
+optional-header size. A certificate table whose file offset falls inside the
+declared `SizeOfHeaders` is still refused. `inspect-pe-resources` uses the same
+header admission and classifications.
 
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most
 eight `WIN_CERTIFICATE` entries are examined by default. Malformed PE headers,

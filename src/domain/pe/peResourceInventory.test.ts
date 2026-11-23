@@ -9,6 +9,7 @@ import {
   hasPeResourceName,
   locatePeResourcePayloads,
   readPeResourceLayout,
+  readPeResourceLayoutAt,
 } from "./peResourceLayout.js";
 import {
   parsePeResources,
@@ -16,6 +17,7 @@ import {
   peResourceLimitBoundary,
 } from "./peResourceInventory.js";
 import { peResourceFixture } from "./peResources.fixture.js";
+import { readPeImage } from "../native/peImage.js";
 import { ParseFailureError } from "../parseFailure.js";
 
 const parse = (bytes: Buffer, maxEntries = 4096, signal?: AbortSignal) =>
@@ -1004,6 +1006,143 @@ it.each(["DOS", "NE", "LE", "LX"] as const)(
     await expect(payloadsOf(bytes)).resolves.toEqual([]);
   },
 );
+
+const SIZE_OF_HEADERS = 0x98 + 60;
+
+const resourceImage = () =>
+  peResourceFixture(false, [
+    { type: 10, name: 1, language: 1033, payload: Buffer.from("RSRC") },
+  ]);
+
+const sectionRaw = (bytes: Buffer, sectionAt: number) => ({
+  virtualSize: bytes.readUInt32LE(sectionAt + 8),
+  rva: bytes.readUInt32LE(sectionAt + 12),
+  rawSize: bytes.readUInt32LE(sectionAt + 16),
+  offset: bytes.readUInt32LE(sectionAt + 20),
+});
+
+describe("PE layout admission shared with the other static readers", () => {
+  it("reads a resource whose section raw bytes overlap the header span", async () => {
+    const fixture = resourceImage();
+    const { offset, rva } = sectionRaw(fixture.bytes, fixture.sectionAt);
+    const headerSize = fixture.bytes.length;
+    expect(offset).toBeLessThan(headerSize);
+    expect(rva).toBeGreaterThanOrEqual(headerSize);
+    fixture.bytes.writeUInt32LE(headerSize, SIZE_OF_HEADERS);
+
+    expect(() => readPeImage(fixture.bytes)).not.toThrow();
+    const result = peResourcesSchema.parse(await parse(fixture.bytes));
+    expect(result.coverage).toMatchObject({ status: "complete", resources: 1 });
+    const location = result.resources[0]?.payload.location;
+    expect(location?.offset).toBeLessThan(headerSize);
+    expect(
+      (location?.offset ?? 0) + (location?.bytes ?? 0),
+    ).toBeLessThanOrEqual(headerSize);
+  });
+
+  it("reads the same overlapping layout from bounded header reads", async () => {
+    const fixture = resourceImage();
+    fixture.bytes.writeUInt32LE(fixture.bytes.length, SIZE_OF_HEADERS);
+    const bytes = fixture.bytes;
+    const layout = await readPeResourceLayoutAt(
+      bytes.subarray(0, 64),
+      bytes.length,
+      async (offset, length) => bytes.subarray(offset, offset + length),
+    );
+    const rooted = readPeResourceLayout(bytes);
+    expect(layout.map(layout.rva, layout.size)).toBe(
+      rooted.map(rooted.rva, rooted.size),
+    );
+  });
+
+  it("reads a resource when SizeOfHeaders ends before the section table", async () => {
+    const fixture = resourceImage();
+    const before = peResourcesSchema.parse(await parse(fixture.bytes));
+    expect(fixture.sectionAt).toBeGreaterThan(0x2c);
+    fixture.bytes.writeUInt32LE(0x2c, SIZE_OF_HEADERS);
+
+    expect(() => readPeImage(fixture.bytes)).not.toThrow();
+    const result = peResourcesSchema.parse(await parse(fixture.bytes));
+    expect(result.resources[0]?.payload).toEqual(before.resources[0]?.payload);
+  });
+
+  it("reads a resource when SizeOfHeaders extends past the file", async () => {
+    const fixture = resourceImage();
+    const before = peResourcesSchema.parse(await parse(fixture.bytes));
+    fixture.bytes.writeUInt32LE(0xffffffff, SIZE_OF_HEADERS);
+
+    expect(() => readPeImage(fixture.bytes)).not.toThrow();
+    const result = peResourcesSchema.parse(await parse(fixture.bytes));
+    expect(result.resources[0]?.payload).toEqual(before.resources[0]?.payload);
+  });
+
+  it("reads a resource when another section reuses its raw bytes", async () => {
+    const fixture = resourceImage();
+    const first = sectionRaw(fixture.bytes, fixture.sectionAt);
+    expect(first.virtualSize).toBeGreaterThan(1);
+    expect(first.virtualSize).toBeLessThanOrEqual(0x1000);
+    fixture.bytes.writeUInt32LE(fixture.bytes.length, SIZE_OF_HEADERS);
+    fixture.bytes.writeUInt16LE(2, 0x86);
+    const second = fixture.sectionAt + 40;
+    fixture.bytes.writeUInt32LE(first.virtualSize, second + 8);
+    fixture.bytes.writeUInt32LE(first.rva + 0x1000, second + 12);
+    fixture.bytes.writeUInt32LE(first.rawSize, second + 16);
+    fixture.bytes.writeUInt32LE(first.offset, second + 20);
+
+    expect(() => readPeImage(fixture.bytes)).not.toThrow();
+    const result = peResourcesSchema.parse(await parse(fixture.bytes));
+    expect(result.coverage).toMatchObject({ status: "complete", resources: 1 });
+    expect(result.resources[0]?.payload.sha256).toBe(
+      createHash("sha256").update(Buffer.from("RSRC")).digest("hex"),
+    );
+  });
+
+  it("rejects a resource RVA owned by overlapping virtual sections", async () => {
+    const fixture = resourceImage();
+    const first = sectionRaw(fixture.bytes, fixture.sectionAt);
+    fixture.bytes.writeUInt16LE(2, 0x86);
+    const second = fixture.sectionAt + 40;
+    fixture.bytes.writeUInt32LE(first.virtualSize, second + 8);
+    fixture.bytes.writeUInt32LE(first.rva + 1, second + 12);
+    fixture.bytes.writeUInt32LE(first.rawSize, second + 16);
+    fixture.bytes.writeUInt32LE(first.offset, second + 20);
+
+    await expect(parse(fixture.bytes)).rejects.toMatchObject({
+      kind: "malformed",
+      message: expect.stringMatching(/overlapping/iu),
+    });
+  });
+
+  it("rejects a header RVA that a section maps to different file bytes", async () => {
+    const fixture = resourceImage();
+    const payload = fixture.dataOffsets[0];
+    if (payload === undefined)
+      throw new Error("Expected a resource data entry");
+    fixture.bytes.writeUInt32LE(0x100, payload);
+    fixture.bytes.writeUInt32LE(4, payload + 4);
+    fixture.bytes.writeUInt16LE(2, 0x86);
+    const second = fixture.sectionAt + 40;
+    fixture.bytes.writeUInt32LE(4, second + 8);
+    fixture.bytes.writeUInt32LE(0x100, second + 12);
+    fixture.bytes.writeUInt32LE(4, second + 16);
+    fixture.bytes.writeUInt32LE(0x200, second + 20);
+
+    await expect(parse(fixture.bytes)).rejects.toMatchObject({
+      kind: "malformed",
+      message: expect.stringMatching(/ambiguous.*header.*RVA/iu),
+    });
+  });
+
+  it("rejects a section raw range that leaves the file", async () => {
+    const fixture = resourceImage();
+    fixture.bytes.writeUInt32LE(fixture.bytes.length, fixture.sectionAt + 20);
+    expect(() => readPeImage(fixture.bytes)).toThrow(/section/iu);
+    await expect(parse(fixture.bytes)).rejects.toMatchObject({
+      kind: "malformed",
+      message: expect.stringMatching(/leaves the artifact/u),
+    });
+  });
+});
 
 it("preserves unsigned group-icon fields and rejects a partial entry", async () => {
   const group = Buffer.alloc(20);

@@ -882,6 +882,21 @@ it("rejects headers whose section table does not fit SizeOfHeaders", () => {
   expect(() => parse(bytes)).toThrow(ArtifactReaderFailure);
 });
 
+it("reads a certificate table when SizeOfHeaders ends before the section table", () => {
+  const bytes = peCertificateFixture();
+  bytes.writeUInt32LE(0x2c, 0x98 + 60);
+  expect(parse(bytes).coverage).toMatchObject({
+    status: "complete",
+    certificates: 1,
+  });
+});
+
+it("rejects a certificate table inside a SizeOfHeaders past the end of the file", () => {
+  const bytes = peCertificateFixture();
+  bytes.writeUInt32LE(0xffffffff, 0x98 + 60);
+  expect(() => parse(bytes)).toThrow(/overlaps headers/u);
+});
+
 it("decodes OBJECT IDENTIFIER arcs without truncation", () => {
   const algorithms = [
     [0x88, 0x37, 0x03],

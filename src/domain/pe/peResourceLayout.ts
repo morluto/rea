@@ -84,26 +84,17 @@ const mapPeResourceLayout = (
     };
     if (section.rva + virtualExtent(section) > 0x100000000)
       peFailure("PE section RVA range overflows.");
-    if (section.size > 0) {
+    // Raw bytes may overlap the header span or another section. The native
+    // image reader admits both; a resource fails only when its own range is
+    // unmapped, ambiguous, or outside the file.
+    if (section.size > 0)
       requirePeExtent(fileSize, section.offset, section.size);
-      if (section.offset < headerSize)
-        peFailure("PE section raw bytes overlap headers.");
-    }
     sections.push(section);
   }
-  const backed = sections
-    .filter(({ size }) => size > 0)
-    .sort((left, right) => left.offset - right.offset);
-  for (let index = 1; index < backed.length; index++) {
-    const previous = backed[index - 1];
-    const current = backed[index];
-    if (
-      previous !== undefined &&
-      current !== undefined &&
-      current.offset < previous.offset + previous.size
-    )
-      peFailure("PE sections have overlapping raw file ranges.");
-  }
+  // Header RVAs use the file-clipped SizeOfHeaders mapping. Section RVAs above
+  // that extent stay section-backed even when their raw bytes sit in the
+  // header.
+  const headerExtent = Math.min(headerSize, fileSize);
   const ranges = sections.map((section) => ({
     start: section.rva,
     end: section.rva + virtualExtent(section),
@@ -118,11 +109,11 @@ const mapPeResourceLayout = (
   const map = (rva: number, size: number): number => {
     if (rva + size > 0x100000000) peFailure("Resource RVA range overflows.");
     const { section: owned, overlaps, nextStart } = lookup(rva);
-    if (rva < headerSize) {
+    if (rva < headerExtent) {
       if (
         owned !== undefined ||
         nextStart < rva + size ||
-        size > headerSize - rva
+        size > headerExtent - rva
       )
         peFailure("Ambiguous resource header RVA mapping.");
       requirePeExtent(fileSize, rva, size);

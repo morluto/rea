@@ -122,21 +122,22 @@ function* peImageHeaderReads(
     directoryOffset,
     dataDirectories,
   } = parsed.value;
-  const { sectionTableOffset, sectionTableBytes, sizeOfHeadersState } =
-    observePeHeaderExtent({
-      optionalHeaderOffset,
-      optionalHeaderSize,
-      sectionCount,
-      sizeOfHeaders: headerSize,
-      fileSize,
-    });
-  const sectionRead = headerRead(
+  const { sectionTableOffset, sectionTableBytes } = observePeHeaderExtent({
+    optionalHeaderOffset,
+    optionalHeaderSize,
+    sectionCount,
+    sizeOfHeaders: headerSize,
+    fileSize,
+  });
+  // SizeOfHeaders is the loader's header mapping, not the section-table
+  // locator. A value that ends before the section table or past the file is
+  // still an admitted image; import, export and load-config reads locate the
+  // table from the optional-header size.
+  const sectionTable = yield headerRead(
     fileSize,
     sectionTableOffset,
     sectionTableBytes,
   );
-  if (sizeOfHeadersState !== "valid") peFailure("Invalid PE SizeOfHeaders.");
-  const sectionTable = yield sectionRead;
   return {
     machine,
     format,

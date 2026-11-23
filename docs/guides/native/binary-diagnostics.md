@@ -279,11 +279,16 @@ remain explicit. Encoded dimensions are preserved (zero denotes 256 pixels).
 This is static reference inspection; no image decoding, language fallback,
 resource loading or selected-file execution occurs.
 
-An absent resource data directory is a complete empty inventory. Malformed
-headers, truncated tables, cycles, duplicate sibling identities, unbacked or
-ambiguous RVA mappings, nonidentical overlapping ranges and unsupported tree
-shapes fail explicitly, rather than returning partial inventories. Exact shared
-payload ranges are supported. The supported tree has three levels: type, name,
+An absent resource data directory is a complete empty inventory. Section raw
+bytes may overlap the declared header span, and more than one section may name
+the same raw file range, when each resource RVA still has one file mapping.
+`SizeOfHeaders` may end before the section table or extend past the file; the
+section table is located from the optional-header size, and header RVAs use
+that value clipped to the file, as the import, export, and load-config readers
+do. Malformed headers, truncated tables, cycles, duplicate sibling identities,
+unbacked or ambiguous RVA mappings, nonidentical overlapping ranges and
+unsupported tree shapes fail explicitly, rather than returning partial
+inventories. Exact shared payload ranges are supported. The supported tree has three levels: type, name,
 and language. Other resource payload formats remain opaque.
 
 `max_file_bytes` defaults to 64 MiB (maximum 512 MiB); `max_entries` defaults to
