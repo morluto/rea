@@ -410,21 +410,45 @@ describe("scanCredentialNames empty text", () => {
 });
 
 describe("scanCredentialNames over structured form parameters", () => {
-  it.each([undefined, null])(
-    "scans each structured form parameter with absent text: %s",
-    (text) => {
+  const sampleParams = [
+    { name: "api_key", value: "secret" },
+    { name: "api_key", value: "" },
+    { name: "user", value: "a" },
+    { name: "token", value: "t" },
+  ];
+
+  it.each([
+    {
+      label: "undefined text",
+      mimeType: "multipart/form-data",
+      text: undefined,
+    },
+    { label: "null text", mimeType: "multipart/form-data", text: null },
+    {
+      label: "empty text with multipart mimeType",
+      mimeType: "multipart/form-data",
+      text: "",
+    },
+    {
+      label: "empty text with urlencoded mimeType",
+      mimeType: "application/x-www-form-urlencoded",
+      text: "",
+    },
+    {
+      label: "raw multipart text unreadable by scannableBody",
+      mimeType: "multipart/form-data; boundary=---b",
+      text: '-----b\r\nContent-Disposition: form-data; name="api_key"\r\n\r\nsecret\r\n-----b--',
+    },
+  ])(
+    "scans structured params when postData text is absent, empty, or unreadable ($label)",
+    ({ mimeType, text }) => {
       const structured = record(4, undefined, undefined);
       (
         structured.reported as { request: { postData?: unknown } }
       ).request.postData = {
-        mimeType: "multipart/form-data",
+        mimeType,
         text,
-        params: [
-          { name: "api_key", value: "secret" },
-          { name: "api_key", value: "" },
-          { name: "user", value: "a" },
-          { name: "token", value: "t" },
-        ],
+        params: sampleParams,
       };
       expect(scanCredentialNames([structured])).toEqual({
         count: 2,
@@ -433,6 +457,58 @@ describe("scanCredentialNames over structured form parameters", () => {
       });
     },
   );
+
+  it.each([
+    {
+      label: "urlencoded text",
+      mimeType: "application/x-www-form-urlencoded",
+      text: "api_key=secret&token=t",
+      expectedCount: 2,
+      expectedPointers: [
+        "record 5 request /api_key",
+        "record 5 request /token",
+      ],
+    },
+    {
+      label: "JSON text",
+      mimeType: "application/json",
+      text: '{"api_key":"secret"}',
+      expectedCount: 1,
+      expectedPointers: ["record 5 request /api_key"],
+    },
+  ])(
+    "scans only postData.text without double counting params when text is readable ($label)",
+    ({ mimeType, text, expectedCount, expectedPointers }) => {
+      const both = record(5, undefined, undefined);
+      (both.reported as { request: { postData?: unknown } }).request.postData =
+        {
+          mimeType,
+          text,
+          params: sampleParams,
+        };
+      expect(scanCredentialNames([both])).toEqual({
+        count: expectedCount,
+        pointers: expectedPointers,
+        skipped: NONE_SKIPPED,
+      });
+    },
+  );
+
+  it("keeps oversized postData.text skipped instead of falling back to params", () => {
+    const oversized = record(6, undefined, undefined);
+    (
+      oversized.reported as { request: { postData?: unknown } }
+    ).request.postData = {
+      mimeType: "multipart/form-data",
+      text: "x".repeat(4 * 1024 * 1024 + 1),
+      params: sampleParams,
+    };
+    expect(scanCredentialNames([oversized])).toEqual({
+      count: 0,
+      pointers: [],
+      skipped: { count: 1, pointers: ["record 6 request"] },
+    });
+  });
 });
 
 describe("scanScenarioCredentialNames", () => {
