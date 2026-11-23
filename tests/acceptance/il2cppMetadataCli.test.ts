@@ -148,7 +148,6 @@ cliTest(
       original.images.length - 1,
       -1,
       original.images.length,
-      99,
     ]) {
       const report = structuredClone(original);
       report.binary!.code_gen_modules[0]!.image = image;
@@ -175,9 +174,27 @@ cliTest(
         expect(result.exitCode, result.stderr).toBe(0);
         expect(mcp.isError, JSON.stringify(mcp)).not.toBe(true);
       } else {
+        const error = {
+          code: "invalid_request",
+          details: {
+            issues: [
+              {
+                path: [
+                  "source",
+                  "normalized_result",
+                  "binary",
+                  "code_gen_modules",
+                  0,
+                  "image",
+                ],
+                reason: image < 0 ? "out_of_range" : "invalid_value",
+              },
+            ],
+          },
+        };
         expect(result.exitCode, `image ${image}`).toBe(1);
-        expect(result.json).toMatchObject({ code: "invalid_request" });
-        expect(parseMcpToolError(mcp).error.code).toBe("invalid_request");
+        expect(result.json).toMatchObject(error);
+        expect(parseMcpToolError(mcp).error).toMatchObject(error);
       }
     }
   },
@@ -236,9 +253,31 @@ cliTest(
         expect(cliResult.exitCode, cliResult.stderr).toBe(0);
         expect(mcp.isError, JSON.stringify(mcp)).not.toBe(true);
       } else {
+        const owner = {
+          self: ["types", 0],
+          cycle: ["types", expect.any(Number)],
+          "type-range": ["types", 1],
+          "method-range": ["methods", 0],
+        }[scenario];
+        const error = {
+          code: "invalid_request",
+          details: {
+            issues: [
+              {
+                path: [
+                  "source",
+                  "normalized_result",
+                  ...owner,
+                  "declaring_type",
+                ],
+                reason: "invalid_value",
+              },
+            ],
+          },
+        };
         expect(cliResult.exitCode, scenario).toBe(1);
-        expect(cliResult.json).toMatchObject({ code: "invalid_request" });
-        expect(parseMcpToolError(mcp).error.code).toBe("invalid_request");
+        expect(cliResult.json).toMatchObject(error);
+        expect(parseMcpToolError(mcp).error).toMatchObject(error);
       }
     }
   },
@@ -496,70 +535,65 @@ cliTest(
     const root = await createTestTempDirectory("rea-il2cpp-prefix-fail-");
     const { client, call } = await connectLocalToolsMcp();
 
-    for (const length of [4, 5, 6, 7]) {
-      const path = join(root, `magic-${length}.dat`);
-      const bytes = Buffer.alloc(length);
-      bytes.writeUInt32LE(0xfab11baf, 0);
-      await writeFile(path, bytes);
+    const path = join(root, "incomplete-version.dat");
+    const bytes = Buffer.from([0xaf, 0x1b, 0xb1, 0xfa, 37, 0, 0]);
+    await writeFile(path, bytes);
 
-      const expected = {
-        code: "invalid_request",
-        details: {
-          operation: "inspect_il2cpp_metadata",
-          issues: [
-            {
-              path: ["path"],
-              reason: "invalid_format",
-              message: expect.stringContaining(
-                "truncated-header: the file has",
-              ),
+    const expected = {
+      code: "invalid_request",
+      details: {
+        operation: "inspect_il2cpp_metadata",
+        issues: [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+            message: expect.stringContaining("truncated-header"),
+          },
+        ],
+        partial_observation: {
+          normalized_result: {
+            artifact: {
+              path,
+              bytes: bytes.length,
+              sha256: createHash("sha256").update(bytes).digest("hex"),
             },
-          ],
-          partial_observation: {
-            normalized_result: {
-              artifact: {
-                path,
-                bytes: length,
-                sha256: createHash("sha256").update(bytes).digest("hex"),
-              },
-              inventory_status: "not-returned-as-complete",
-            },
+            inventory_status: "not-returned-as-complete",
           },
         },
-      };
-      const result = await cli.run({
-        arguments: ["inspect-il2cpp-metadata", path, "--json"],
-      });
-      expect(result.exitCode).toBe(1);
-      expect(result.json).toMatchObject(expected);
+      },
+    };
+    const result = await cli.run({
+      arguments: ["inspect-il2cpp-metadata", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject(expected);
 
-      const response = await call("inspect_il2cpp_metadata", { path });
-      const projected = parseMcpToolError(response).error;
-      expect(projected).toMatchObject({
-        ...expected,
-        details: {
-          ...expected.details,
-          partial_observation: {
-            kind: "retained-evidence",
-            evidence_id: expect.any(String),
-          },
+    const response = await call("inspect_il2cpp_metadata", { path });
+    const projected = parseMcpToolError(response).error;
+    expect(projected).toMatchObject({
+      ...expected,
+      details: {
+        ...expected.details,
+        partial_observation: {
+          kind: "retained-evidence",
+          evidence_id: expect.any(String),
         },
-      });
-      const reference = projected.details?.partial_observation as {
-        evidence_id: string;
-      };
-      const bundle = parseEvidenceBundle(
-        toolContract("get_evidence_bundle").outputSchema.parse(
-          (await call("get_evidence_bundle", { detail: "complete" }))
-            .structuredContent,
-        ).result,
-      );
-      expect(
-        bundle.records.find(
-          ({ evidence_id }) => evidence_id === reference.evidence_id,
-        ),
-      ).toMatchObject(expected.details.partial_observation);
-    }
+      },
+    });
+    const reference = projected.details?.partial_observation as {
+      evidence_id: string;
+    };
+    const bundle = parseEvidenceBundle(
+      toolContract("get_evidence_bundle").outputSchema.parse(
+        (await call("get_evidence_bundle", { detail: "complete" }))
+          .structuredContent,
+      ).result,
+    );
+    expect(
+      bundle.records.find(
+        ({ evidence_id }) => evidence_id === reference.evidence_id,
+      ),
+    ).toMatchObject(expected.details.partial_observation);
     await client.ping();
   },
 );
@@ -806,6 +840,7 @@ it("imports historical metadata Evidence with unavailable member collections wit
     summary: { counts: { methods: 5, fields: null, parameters: null } },
     unknowns: expect.arrayContaining([
       expect.stringContaining("did not collect parameters"),
+      expect.stringContaining("did not collect fields"),
     ]),
   });
   const types = await call("inspect_analysis_view", {

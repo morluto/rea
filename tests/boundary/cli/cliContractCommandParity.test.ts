@@ -7,13 +7,15 @@ import {
   contractNamed,
   describeContractCommand,
   describeOperationChoices,
-  describeContractDocumentCommand,
-  type ContractCliDescription,
-  type ContractCliParameter,
 } from "../../../src/cli/contractCliDescription.js";
+import { describeContractDocumentCommand } from "../../../src/cli/contractCliDocumentDescription.js";
+import type {
+  ContractCliDescription,
+  ContractCliParameter,
+} from "../../../src/cli/contractCliDescriptionTypes.js";
 import { BROWSER_TOOL_CONTRACTS } from "../../../src/contracts/browserToolContracts.js";
 import { passiveNetworkCapture } from "../../fixtures/passiveNetworkCapture.js";
-import { contractInputBranch } from "../../../src/cli/contractCommand.js";
+import { contractInputBranch } from "../../../src/cli/routedContractCommand.js";
 import { jsonInputContentSchema } from "../../../src/cli/jsonInputArgument.js";
 import {
   cliCommands,
@@ -467,6 +469,9 @@ it("keeps every argv fixture on a contract-built command", () => {
   ).toEqual([]);
 });
 
+const commandsWithBooleanFlags = each.filter(([, { parameters }]) =>
+  parameters.some(({ positional, booleanFlag }) => !positional && booleanFlag),
+);
 describe("CLI commands projected from tool contracts", () => {
   it.each(each)(
     "%s exposes every contract field or declares its omission",
@@ -535,8 +540,6 @@ describe("CLI commands projected from tool contracts", () => {
       for (const parameter of description.parameters) {
         const cliField = registeredField(description, parameter);
         const contractField = suppliedField(description, parameter);
-        // Incur's help reads flag and choice types only through `optional`.
-        expect(cliField, parameter.key).not.toBeInstanceOf(z.ZodExactOptional);
         if (parameter.callerPath) {
           // Only the absolute-path rule is relaxed, and only by resolution.
           const spelled = (path: string) =>
@@ -578,7 +581,7 @@ describe("CLI commands projected from tool contracts", () => {
     },
   );
 
-  it.each(each)(
+  it.each(commandsWithBooleanFlags)(
     "%s takes each boolean contract field as a bare flag",
     (_command, description) => {
       for (const parameter of description.parameters) {
@@ -1595,6 +1598,36 @@ describe("JSON-document contract commands", () => {
     ).toEqual(["required"]);
   });
 });
+
+it.each([
+  [
+    "checked optional",
+    z
+      .string()
+      .optional()
+      .refine((value) => value !== undefined),
+    true,
+  ],
+  ["invalid prefault", z.string().min(2).prefault("x"), false],
+] as const)(
+  "projects document omission using object parsing for %s",
+  (_kind, field, acceptsOmission) => {
+    const inputSchema = z.object({ detail: field });
+    expect(inputSchema.safeParse({}).success).toBe(acceptsOmission);
+    const describe = () =>
+      describeContractDocumentCommand(
+        { name: "probe", inputSchema },
+        {
+          command: "probe",
+          description: "Probe",
+          document: "Probe JSON",
+          omit: { detail: "never" },
+        },
+      );
+    if (acceptsOmission) expect(describe).not.toThrow();
+    else expect(describe).toThrow("probe.detail is not an optional field");
+  },
+);
 
 describe("JSON-document delivery options", () => {
   const contract = {

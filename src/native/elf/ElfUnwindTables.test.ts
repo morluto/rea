@@ -6,7 +6,10 @@ import {
   elfUnwindRangesSchema,
   inspectElfUnwindRangesInputSchema,
 } from "../../domain/native/elfUnwindRanges.js";
-import { parseElfUnwindRanges } from "./ElfUnwindTables.js";
+import {
+  parseElfUnwindRanges,
+  parseElfUnwindRangesFromHandle,
+} from "./ElfUnwindTables.js";
 import {
   UNWIND_FN_A,
   UNWIND_FN_A_SIZE,
@@ -167,6 +170,29 @@ const parse = (bytes: Buffer, raw: Readonly<Record<string, unknown>> = {}) => {
       },
       input,
     ),
+  );
+};
+
+const parseFromSource = (
+  bytes: Buffer,
+  raw: Readonly<Record<string, unknown>> = {},
+  readRange: (offset: number, length: number) => Promise<Buffer> = async (
+    offset,
+    length,
+  ) => bytes.subarray(offset, offset + length),
+) => {
+  const input = inspectElfUnwindRangesInputSchema.parse({
+    path: "/artifacts/unwind.elf",
+    ...raw,
+  });
+  return parseElfUnwindRangesFromHandle(
+    { size: bytes.length, readRange },
+    {
+      path: input.path,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.length,
+    },
+    input,
   );
 };
 
@@ -341,6 +367,25 @@ it("reports trailing bytes after the terminator as incomplete coverage", () => {
   expect(report.limitations).toContain(
     "Non-zero bytes follow the .eh_frame terminator.",
   );
+});
+
+it("rejects a short positional read of an admitted frame range", async () => {
+  const bytes = elfUnwindFixture({ header: "match" });
+  const { offset: frameOffset } = findSection(bytes, ".eh_frame");
+  let frameReads = 0;
+  await expect(
+    parseFromSource(bytes, {}, async (offset, length) => {
+      if (offset === frameOffset) {
+        frameReads++;
+        return Buffer.alloc(0);
+      }
+      return bytes.subarray(offset, offset + length);
+    }),
+  ).rejects.toMatchObject({
+    reason: "format",
+    message: "ELF unwind range ended before its admitted file extent.",
+  });
+  expect(frameReads).toBe(1);
 });
 
 it("reports a missing header without dropping decoded ranges", () => {
@@ -1212,6 +1257,36 @@ it("bounds the symbol-name text decoded for one page by its own allowance", () =
   );
 });
 
+it("reads only the selected symbol name when adjacent ranges share string bytes", async () => {
+  const bytes = elfUnwindFixture({ header: "absent", suffixNames: 2 });
+  const { offset } = findSection(bytes, ".strtab");
+  const reads: number[] = [];
+  const page = { offset: 2, limit: 1 };
+  const report = await parseFromSource(bytes, page, async (at, length) => {
+    if (at === offset + 1 || at === offset + 2) reads.push(length);
+    return bytes.subarray(at, at + length);
+  });
+  expect(report).toEqual(parse(bytes, page));
+  expect(report.ranges[0]?.symbol?.text).toHaveLength(65535);
+  expect(reads.filter((length) => length < 65536)).toEqual([65535]);
+});
+
+it("completes a CIE whose fields follow a NUL at the read window boundary", async () => {
+  const bytes = elfUnwindFixture({ header: "match", longAugmentation: 65522 });
+  const report = await parseFromSource(bytes);
+  expect(report).toEqual(parse(bytes));
+  expect(report.coverage).toMatchObject({
+    status: "complete",
+    total_ranges: 2,
+  });
+  expect(report.cies[0]).toMatchObject({
+    code_alignment: 1,
+    data_alignment: -4,
+    return_address_register: 16,
+    signal_frame: true,
+  });
+});
+
 it("reads a long CIE augmentation as one byte slice instead of building it per character", () => {
   const letters = 1 << 20;
   const bytes = elfUnwindFixture({
@@ -1312,6 +1387,35 @@ it("names a range from an STT_GNU_IFUNC resolver symbol at its exact start", () 
   expect(report.limitations).toContain(
     "A symbol name from an STT_GNU_IFUNC symbol names the resolver that starts at that address, not the implementation it selects at run time.",
   );
+});
+
+it("names an ARM Thumb range from a function symbol whose value sets bit 0", () => {
+  // AAELF32: a Thumb STT_FUNC value is the code address with bit 0 set, and
+  // an IFUNC resolver in Thumb code is marked the same way.
+  for (const variant of [
+    { symbolSource: "symtab" },
+    { symbolSource: "dynsym" },
+    { ifunc: true },
+  ] as const) {
+    const report = parse(
+      elfUnwindFixture({
+        bits: 32,
+        machine: 40,
+        header: "match",
+        thumb: true,
+        ...variant,
+      }),
+    );
+    expect(report.ranges[0]).toMatchObject({
+      start: address(UNWIND_FN_A),
+      symbol: { text: "alpha" },
+    });
+  }
+  // Another machine keeps the value as written, so bit 0 names no FDE start.
+  const x86 = parse(
+    elfUnwindFixture({ bits: 32, machine: 3, header: "match", thumb: true }),
+  );
+  expect(x86.ranges[0]?.symbol?.text).toBe("$t");
 });
 
 it("excludes load mappings whose file size exceeds memory size", () => {

@@ -1,4 +1,5 @@
 import { binaryMetadataArchitecture } from "../../domain/binaryMetadataArchitecture.js";
+import { hasDosMzMagic } from "../../domain/dosMz.js";
 import type { BinaryArchitecture } from "../../domain/binaryTargetTypes.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import {
@@ -22,12 +23,11 @@ import {
 } from "../../domain/native/elfCompressedSection.js";
 import type { ZstandardFramePause } from "../../domain/compression/zstandardExactFrame.js";
 import { ZstandardFrameAllowanceError } from "../../domain/compression/zstandardFrameAllowance.js";
-import { readMachoImage } from "../../domain/apple/machoImage.js";
+import { readMachoImageFromReader } from "../../domain/apple/machoImage.js";
 import {
-  readElfDirectoryFromBuffer,
-  readElfDirectoryFromBufferCooperative,
+  readElfDirectoryFromReader,
   readPeSectionDirectory,
-  type NativeSection,
+  type NativeByteSource,
   type NativeSectionDirectory,
 } from "../../domain/native/nativeSectionDirectory.js";
 
@@ -131,24 +131,98 @@ interface Candidate {
   readonly uncompressedSize: number;
 }
 
+const readSourceSlice = (
+  source: NativeByteSource,
+  offset: number,
+  length: number,
+): Promise<Buffer> => {
+  if (offset < 0 || length <= 0 || offset >= source.size)
+    return Promise.resolve(Buffer.alloc(0));
+  const clamped = Math.min(length, source.size - offset);
+  if (source.prefix !== undefined && offset + clamped <= source.prefix.length)
+    return Promise.resolve(source.prefix.subarray(offset, offset + clamped));
+  return source.readRange(offset, clamped);
+};
+
+// A positional source can allocate per read. Keep total retained raw bytes
+// within the original file extent and reuse previously retained backings.
+const storedDwarfSections = (source: NativeByteSource) => {
+  const admitted: { readonly offset: number; readonly bytes: Buffer }[] = [];
+  let retained = 0;
+  return async (offset: number, size: number): Promise<Buffer> => {
+    const cached = admitted.find(
+      ({ offset: start, bytes }) =>
+        offset >= start && offset + size <= start + bytes.length,
+    );
+    if (cached !== undefined) {
+      const start = offset - cached.offset;
+      return cached.bytes.subarray(start, start + size);
+    }
+    if (offset + size <= (source.prefix?.length ?? 0))
+      return readSourceSlice(source, offset, size);
+    if (size > source.size - retained)
+      throw new BinaryResourceFailure(
+        "structure",
+        source.size,
+        "Retained file-backed DWARF sections would exceed the admitted image size.",
+        "structure",
+        "bytes",
+      );
+    const bytes = await readSourceSlice(source, offset, size);
+    retained += bytes.length;
+    admitted.push({ offset, bytes });
+    return bytes;
+  };
+};
+
+const bufferByteSource = (bytes: Buffer): NativeByteSource => ({
+  size: bytes.length,
+  prefix: bytes,
+  readRange: (offset, length) =>
+    Promise.resolve(
+      offset < 0 || length <= 0 || offset >= bytes.length
+        ? Buffer.alloc(0)
+        : bytes.subarray(offset, Math.min(bytes.length, offset + length)),
+    ),
+});
+
 /** Select DWARF sections from one thin ELF, PE, or Mach-O image. */
 export const locateDwarfSections = async (
   bytes: Buffer,
   maximumDecodedBytes = MAX_DWARF_DECOMPRESSED_SECTION_BYTES,
   pause?: ZstandardFramePause,
+): Promise<LocatedDwarfImage> =>
+  locateDwarfSectionsFromHandle(
+    bufferByteSource(bytes),
+    maximumDecodedBytes,
+    pause,
+  );
+
+/** Same DWARF section selection over a random-access handle without buffering the full image. */
+export const locateDwarfSectionsFromHandle = async (
+  source: NativeByteSource,
+  maximumDecodedBytes = MAX_DWARF_DECOMPRESSED_SECTION_BYTES,
+  pause?: ZstandardFramePause,
 ): Promise<LocatedDwarfImage> => {
   const budget: InflateBudget = { allowance: maximumDecodedBytes, used: 0 };
-  const magic =
-    bytes.length >= 4 ? new BinaryReader(bytes, true, "dwarf").u32(0) : null;
-  if (magic === 0x464c457f)
-    return finish(await locateElf(bytes, budget, pause));
-  if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a)
-    return finish(locatePe(bytes, budget));
+  const magic = await readSourceSlice(source, 0, Math.min(4, source.size));
   if (
-    bytes.length >= 4 &&
-    isMachoMagic(new BinaryReader(bytes, false, "dwarf").u32(0))
+    magic.length >= 4 &&
+    magic[0] === 0x7f &&
+    magic[1] === 0x45 &&
+    magic[2] === 0x4c &&
+    magic[3] === 0x46
   )
-    return finish(locateMacho(bytes, budget));
+    return finish(await locateElf(source, budget, pause));
+  if (hasDosMzMagic(magic)) return finish(await locatePe(source, budget));
+  if (
+    magic.length >= 4 &&
+    isMachoMagic(
+      ((magic[0]! << 24) | (magic[1]! << 16) | (magic[2]! << 8) | magic[3]!) >>>
+        0,
+    )
+  )
+    return finish(await locateMacho(source, budget));
   throw new BinaryFormatFailure(
     "unsupported",
     "File is not an ELF, PE, or Mach-O image",
@@ -426,18 +500,15 @@ const finish = (image: ImageIdentity): LocatedDwarfImage => {
 };
 
 const locateElf = async (
-  bytes: Buffer,
+  source: NativeByteSource,
   budget: InflateBudget,
   pause?: ZstandardFramePause,
 ): Promise<ImageIdentity> => {
-  const directory =
-    pause === undefined
-      ? readElfDirectoryFromBuffer(bytes, "inspect_dwarf_units")
-      : await readElfDirectoryFromBufferCooperative(
-          bytes,
-          pause,
-          "inspect_dwarf_units",
-        );
+  const directory = await readElfDirectoryFromReader(
+    source,
+    pause ?? (() => Promise.resolve()),
+    "inspect_dwarf_units",
+  );
   if (directory.section_names_limitation !== undefined)
     throw new BinaryFormatFailure(
       "unsupported",
@@ -447,6 +518,7 @@ const locateElf = async (
   const candidates: Candidate[] = [];
   const relocations = new Set<string>();
   const satisfied = new Set<DwarfSectionRole>();
+  const readStored = storedDwarfSections(source);
   for (const section of directory.sections) {
     if (section.name_state !== "known" || section.name === null)
       throw new BinaryFormatFailure(
@@ -483,7 +555,7 @@ const locateElf = async (
       );
       continue;
     }
-    if (!fits(section.offset, section.size, bytes.length)) {
+    if (!fits(section.offset, section.size, source.size)) {
       candidates.push(outsideFile(name, role));
       continue;
     }
@@ -493,15 +565,16 @@ const locateElf = async (
     }
     const offset = asNumber(section.offset);
     const size = asNumber(section.size);
-    const stored = bytes.subarray(offset, offset + size);
     const gnuZlib = name.startsWith(".zdebug_");
     const compressed = (section.flags & SHF_COMPRESSED) !== 0n;
     if (!compressed && !gnuZlib) {
+      const stored = await readStored(offset, size);
       candidates.push(
         settle(storedCandidate(name, role, offset, size, stored), satisfied),
       );
       continue;
     }
+    const stored = await readSourceSlice(source, offset, size);
     const decoded = compressed
       ? pause === undefined
         ? decodeElfCompressedSection(
@@ -553,21 +626,24 @@ const locateElf = async (
   };
 };
 
-const adoptStored = (
+const adoptStored = async (
   name: string,
   role: DwarfSectionRole,
   offset: number,
   size: number,
-  stored: Buffer,
+  source: NativeByteSource,
+  readStored: ReturnType<typeof storedDwarfSections>,
   budget: InflateBudget,
   satisfied: Set<DwarfSectionRole>,
   subject: string,
-): Candidate => {
+): Promise<Candidate> => {
   if (satisfied.has(role))
     return unread(name, role, "duplicate", DUPLICATE_SECTION);
   if (!gnuZdebugName(name)) {
+    const stored = await readStored(offset, size);
     return settle(storedCandidate(name, role, offset, size, stored), satisfied);
   }
+  const stored = await readSourceSlice(source, offset, size);
   const candidate = admitDecoded(
     name,
     role,
@@ -580,29 +656,34 @@ const adoptStored = (
   return settle(candidate, satisfied);
 };
 
-const locatePe = (bytes: Buffer, budget: InflateBudget): ImageIdentity => {
-  const directory = readPeDirectory(bytes);
-  const names = peSectionNames(bytes, directory);
+const locatePe = async (
+  source: NativeByteSource,
+  budget: InflateBudget,
+): Promise<ImageIdentity> => {
+  const directory = await readPeDirectory(source);
+  const names = await peSectionNames(source, directory);
   const candidates: Candidate[] = [];
   const satisfied = new Set<DwarfSectionRole>();
+  const readStored = storedDwarfSections(source);
   for (const section of directory.sections) {
     const name = names.get(section.index);
     if (name === undefined) continue;
     const role = objectSectionRole(name);
     if (role === null) continue;
-    if (!fits(section.offset, section.size, bytes.length)) {
+    if (!fits(section.offset, section.size, source.size)) {
       candidates.push(outsideFile(name, role));
       continue;
     }
     const offset = asNumber(section.offset);
     const size = asNumber(section.size);
     candidates.push(
-      adoptStored(
+      await adoptStored(
         name,
         role,
         offset,
         size,
-        bytes.subarray(offset, offset + size),
+        source,
+        readStored,
         budget,
         satisfied,
         `PE ${name} section`,
@@ -625,21 +706,21 @@ const locatePe = (bytes: Buffer, budget: InflateBudget): ImageIdentity => {
   };
 };
 
-const readPeDirectory = (bytes: Buffer) => {
-  const steps = readPeSectionDirectory(bytes.length);
+const readPeDirectory = async (source: NativeByteSource) => {
+  const steps = readPeSectionDirectory(source.size);
   let next = steps.next();
   while (!next.done) {
     const { offset, size } = next.value;
-    next = steps.next(bytes.subarray(offset, offset + size));
+    next = steps.next(await readSourceSlice(source, offset, size));
   }
   return next.value;
 };
 
 /** Resolve COFF `/decimal` and GNU `//base64` names. Unresolved names hide `.debug_info`. */
-const peSectionNames = (
-  bytes: Buffer,
+const peSectionNames = async (
+  source: NativeByteSource,
   directory: NativeSectionDirectory,
-): ReadonlyMap<number, string> => {
+): Promise<ReadonlyMap<number, string>> => {
   const { sections } = directory;
   const names = new Map<number, string>();
   const decodedNames = new Map<number, string>();
@@ -656,24 +737,24 @@ const peSectionNames = (
       );
     const { offset: symbolOffset, count: symbolCount } =
       directory.pe_symbol_table;
+    // PE/COFF: PointerToSymbolTable == 0 means no COFF symbol or string table is present.
     const table =
-      symbolOffset > bytes.length ? null : symbolOffset + symbolCount * 18;
-    if (
-      table === null ||
-      symbolCount > bytes.length ||
-      table > bytes.length - 4
-    )
+      symbolOffset === 0 || symbolOffset > source.size
+        ? null
+        : symbolOffset + symbolCount * 18;
+    if (table === null || symbolCount > source.size || table > source.size - 4)
       throw new BinaryFormatFailure(
         "malformed",
         "PE long section name string table is unavailable",
       );
-    const tableSize = new BinaryReader(bytes, true, "pe").u32(table);
-    if (tableSize < 4 || tableSize > bytes.length - table)
+    const sizeHeader = await readSourceSlice(source, table, 4);
+    const tableSize = new BinaryReader(sizeHeader, true, "pe").u32(0);
+    if (tableSize < 4 || tableSize > source.size - table)
       throw new BinaryFormatFailure(
         "malformed",
         "PE long section name string table is truncated",
       );
-    strings = bytes.subarray(table, table + tableSize);
+    strings = await readSourceSlice(source, table, tableSize);
   }
   for (const section of sections) {
     const raw = section.name ?? "";
@@ -738,10 +819,14 @@ const peSectionNames = (
   return names;
 };
 
-const locateMacho = (bytes: Buffer, budget: InflateBudget): ImageIdentity => {
-  const image = readMachoImage(bytes);
+const locateMacho = async (
+  source: NativeByteSource,
+  budget: InflateBudget,
+): Promise<ImageIdentity> => {
+  const image = await readMachoImageFromReader(source);
   const candidates: Candidate[] = [];
   const satisfied = new Set<DwarfSectionRole>();
+  const readStored = storedDwarfSections(source);
   for (const section of image.sections) {
     if (section.format !== "macho") continue;
     if (!section.name.startsWith(MACHO_DWARF_SEGMENT)) continue;
@@ -754,19 +839,20 @@ const locateMacho = (bytes: Buffer, budget: InflateBudget): ImageIdentity => {
       );
       continue;
     }
-    if (!machoReadable(section, bytes.length)) {
+    if (!machoReadable(section, source.size)) {
       candidates.push(outsideFile(name, role));
       continue;
     }
     const offset = Number(section.declared_range.offset);
     const size = Number(section.declared_range.size);
     candidates.push(
-      adoptStored(
+      await adoptStored(
         name,
         role,
         offset,
         size,
-        bytes.subarray(offset, offset + size),
+        source,
+        readStored,
         budget,
         satisfied,
         `Mach-O ${name} section`,

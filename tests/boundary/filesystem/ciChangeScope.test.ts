@@ -259,6 +259,8 @@ it.each([
   ["src/ports/apkSignature/ApkSignaturePort.ts", "apk_signature"],
   ["src/ports/javascript/JavaScriptRecoveryPort.ts", "javascript_recovery"],
   ["src/ports/WebRuntimePort.ts", "web_runtime"],
+  ["src/server/browserToolBindings.ts", "browser"],
+  ["src/server/browserToolBindings.ts", "web_runtime"],
   ["src/go/GoBinaryProvider.ts", "go_binary"],
   ["scripts/verify-go-binary.mjs", "go_binary"],
   ["bridge/android/ReaJadxBridge.java", "android_metadata"],
@@ -581,7 +583,7 @@ it("routes license inventories to docs checks and keeps blame-ignore edits forma
   for (const staticOnly of [
     "scripts/lib/module-layers.baseline.json",
     "scripts/verify/architecture-guards.mjs",
-    "scripts/verify/baselines/raw-buffer-read.json",
+    "scripts/verify/baselines/cleanup-dependency-binding.json",
     "tsconfig.scripts.json",
   ]) {
     expect(await classifyPaths([staticOnly]), staticOnly).toMatchObject({
@@ -1476,6 +1478,10 @@ it.each([
   ],
   [
     "src/application/DshCordisYaml.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/desktop/AgentEnvBridgeSources.ts",
     { code: true, package: true, runtime: true, apple: false },
   ],
   [

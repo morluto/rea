@@ -93,12 +93,6 @@ describe("explaining a recorded line", () => {
     });
   });
 
-  it("searches the fields the term matched, ignoring case, and leaves out URLs that merely repeat it", () => {
-    expect(explainLine(line("?q=TIDE", [1, 3]))).toEqual({
-      q: { role: "search", fields: ["name"] },
-    });
-  });
-
   it("sorts by the field a value names, with a direction parameter, prefix or suffix", () => {
     expect(
       explainLine(line("?orderBy=name&orderDirection=desc", [3, 1, 2, 4])),
@@ -125,6 +119,13 @@ describe("explaining a recorded line", () => {
       "2",
       "4",
     ]);
+    // The collection has the sort field even when none of the matches do.
+    expect(
+      ids("?sort=url&shelf=b", {
+        sort: { role: "sort" },
+        shelf: { role: "filter", field: "shelf" },
+      }),
+    ).toEqual(["2"]);
   });
 
   it("pages by limit and offset, or by page number from the first page it explains", () => {
@@ -144,13 +145,16 @@ describe("explaining a recorded line", () => {
     ]);
   });
 
-  it("takes a parameter that changes nothing as inert, for its recorded values only", () => {
-    const explained = explainLine(line("?includeDeleted=true", [1, 2, 3, 4]));
-    expect(explained).toEqual({
-      includeDeleted: { role: "inert", values: ["true"] },
-    });
-    expect(ids("?includeDeleted=false", explained!)).toBeUndefined();
-  });
+  it.each(["includeDeleted", "active"])(
+    "treats %s as inert for its observed value when it excludes nothing",
+    (parameter) => {
+      const explained = explainLine(line(`?${parameter}=true`, [1, 2, 3, 4]));
+      expect(explained).toEqual({
+        [parameter]: { role: "inert", values: ["true"] },
+      });
+      expect(ids(`?${parameter}=false`, explained!)).toBeUndefined();
+    },
+  );
 
   it("leaves ambiguous page conventions unknown rather than preferring the first candidate", () => {
     expect(explainLine(line("?page=100&limit=1", []))).toBeUndefined();
@@ -187,12 +191,6 @@ describe("explaining a recorded line", () => {
     expect(explainLine(line("?offset=unknown", [1, 2, 3, 4]))).toBeUndefined();
   });
 
-  it("keeps a filter that excludes nothing inert, as a flag", () => {
-    expect(explainLine(line("?active=true", [1, 2, 3, 4]))).toEqual({
-      active: { role: "inert", values: ["true"] },
-    });
-  });
-
   it("explains nothing that the collection cannot reproduce", () => {
     expect(explainLine(line("?shelf=a", [3, 1]))).toBeUndefined();
   });
@@ -203,18 +201,21 @@ describe("learning a list's query", () => {
     const learned = learnQuery([
       line("?shelf=a", [1, 3], 10),
       line("?shelf=b", [2], 11),
-      line("?q=kelp", [4], 12),
+      line("?q=TIDE", [1, 3], 12),
       line("?q=oil", [2], 13),
+      line("?variant=green", [1, 2, 3, 4], 15),
+      line("?variant=blue", [1, 2, 3, 4], 14),
     ]);
     expect(learned).toEqual({
       parameters: {
         shelf: { role: "filter", field: "shelf" },
+        // The URL on Kelp also contains TIDE. Only the names explained the recording.
         q: { role: "search", fields: ["name"] },
+        variant: { role: "inert", values: ["blue", "green"] },
       },
-      record_ordinals: [10, 11, 12, 13],
+      record_ordinals: [10, 11, 12, 13, 15, 14],
     });
-    // A value no line recorded is evaluated the same way.
-    expect(ids("?q=TIDE&shelf=a", learned!.parameters)).toEqual(["1", "3"]);
+    expect(ids("?q=tidew&shelf=a", learned!.parameters)).toEqual(["3"]);
   });
 
   it("refuses a value a parameter cannot apply, or a parameter it never learned", () => {
@@ -231,8 +232,6 @@ describe("learning a list's query", () => {
       size: { role: "inert", values: ["2"] },
       limit: { role: "limit" },
     });
-    // Serving supplies a call's values in name order.
-    expect(ids("?limit=1&size=2", learned!.parameters)).toEqual(["1"]);
   });
 
   it("adopts a filter on a field named unlike its parameter only once lines with two values agree on it", () => {
@@ -273,50 +272,45 @@ describe("queries the state can always answer", () => {
       expect(queryTotalCount(value)).toBeUndefined();
     const view = {
       pointer: "/items",
-      counters: [],
-      query: { totals: ["total"] },
-    };
-    expect(renderQueryList(view, { items: [], total: "3" }, [], 2)).toEqual({
-      items: [],
-      total: "2",
-    });
-    expect(renderQueryList(view, { items: [], total: "03" }, [], 2)).toEqual({
-      items: [],
-      total: "03",
-    });
-  });
-
-  it("projects query totals only into envelopes that actually contain a known count", () => {
-    const view = {
-      pointer: "/items",
       counters: ["numberOfElements"],
       query: { totals: ["total"] },
     };
-    const selected = [{ id: 1 }];
-    expect(
-      renderQueryList(view, { items: [], numberOfElements: 0 }, selected, 7),
-    ).toEqual({ items: selected, numberOfElements: 1 });
-    expect(
-      renderQueryList(view, { items: [], total: null }, selected, 7),
-    ).toEqual({ items: selected, total: null });
-    expect(renderQueryList(view, { items: [], total: 3 }, selected, 7)).toEqual(
-      { items: selected, total: 7 },
-    );
+    const items = [{ id: 1 }];
+    for (const [recorded, rendered] of [
+      [{}, {}],
+      [{ total: null }, { total: null }],
+      [{ total: 3 }, { total: 7 }],
+      [{ total: "3" }, { total: "7" }],
+      [{ total: "03" }, { total: "03" }],
+    ] as const)
+      expect(
+        renderQueryList(
+          view,
+          { ...recorded, items: [], numberOfElements: 0 },
+          items,
+          7,
+        ),
+      ).toEqual({ ...rendered, items, numberOfElements: 1 });
   });
 
-  it("sorts case-only ties in state order, ignoring case", () => {
-    const named = [
-      entity({ id: 10, name: "alpha" }),
-      entity({ id: 11, name: "Alpha" }),
-    ];
-    const order = (entities: readonly StateEntity[]) =>
-      evaluateQuery(
-        { sort: { role: "sort" } },
-        singleQueryValues("?sort=name")!,
-        entities,
-      )?.page.map((entry) => entry.id);
-    expect(order(named)).toEqual(["10", "11"]);
-    expect(order([...named].reverse())).toEqual(["11", "10"]);
+  it("sorts names and preserves state order and positional evidence for case-only ties", () => {
+    const first = entity({ id: 10, name: "alpha" });
+    const second = entity({ id: 11, name: "Alpha" });
+    const later = entity({ id: 12, name: "Beta" });
+    for (const ties of [
+      [first, second],
+      [second, first],
+    ]) {
+      const input = [later, ...ties];
+      expect(
+        evaluateQuery(
+          { sort: { role: "sort" } },
+          singleQueryValues("?sort=name")!,
+          input,
+        ),
+      ).toEqual({ page: [...ties, later], total: 3, positional: ties });
+      expect(input).toEqual([later, ...ties]);
+    }
   });
 
   it("answers a sort of an emptied collection with no entities rather than giving up", () => {

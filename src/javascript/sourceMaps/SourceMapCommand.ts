@@ -17,6 +17,7 @@ import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  OwnerCancellation,
   cancelledBy,
   carriedReason,
 } from "../../domain/analysisErrorCore.js";
@@ -262,6 +263,7 @@ class OwnedCodec implements SourceMapCleanupOwner {
   #cleanupRelease: AnalysisCleanupRelease | undefined;
   #outcome: CodecOutcome | undefined;
   #drainStop: CodecPhysicalObservation | undefined;
+  readonly #wakeController = new AbortController();
   readonly #onInterruption: () => void;
   constructor(
     readonly path: string,
@@ -390,7 +392,11 @@ class OwnedCodec implements SourceMapCleanupOwner {
     const supervisor = this.#supervisor;
     if (supervisor === undefined)
       throw new Error("Codec process was not acquired");
-    while (!(await supervisor.waitForOutputClose(50))) {
+    const wakeSignal = AbortSignal.any([
+      this.deadline.signal,
+      this.#wakeController.signal,
+    ]);
+    while (!(await supervisor.waitForOutputClose(undefined, wakeSignal))) {
       const outcome = this.#outcome;
       if (
         outcome?.kind !== "physical" ||
@@ -476,6 +482,8 @@ class OwnedCodec implements SourceMapCleanupOwner {
       this.#outcome = { kind: "physical", observation };
     else if (observation.kind !== "exit" && this.#drainStop === undefined)
       this.#drainStop = observation;
+    if (observation.kind !== "exit" && !this.#wakeController.signal.aborted)
+      this.#wakeController.abort(OwnerCancellation.noLongerNeeded);
   }
 
   #physicalFailure(observation: CodecPhysicalObservation): AnalysisError {

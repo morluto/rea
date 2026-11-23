@@ -16,6 +16,10 @@ import {
 } from "../../fixtures/zipNames.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
+import {
+  unicodePathExtra,
+  zipArchive,
+} from "../../../src/domain/desktop/zipArchive.fixture.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { withArtifactClient } from "../../support/artifactClientScope.js";
 import {
@@ -130,15 +134,6 @@ for (const zip64 of [false, true]) {
       const bytes = Buffer.from(await writer.close());
       await writeFile(archive, bytes);
       const digest = createHash("sha256").update(bytes).digest("hex");
-      const inventory = await inventoryArtifact(archive);
-      expect(inventory.manifest).toMatchObject({
-        root_sha256: digest,
-        root_format: "zip",
-      });
-      expect(inventory.coverage).toEqual({
-        scope: "container-entries",
-        status: "complete",
-      });
       const inspected = await cli.run({
         arguments: ["inspect-artifact", archive, "--json"],
       });
@@ -152,6 +147,10 @@ for (const zip64 of [false, true]) {
       expect(retained.manifest).toMatchObject({
         root_sha256: digest,
         root_format: "zip",
+      });
+      expect(retained.coverage).toEqual({
+        scope: "container-entries",
+        status: "complete",
       });
       const extracted = await cli.run({
         arguments: ["extract-artifact", archive, "--json"],
@@ -308,19 +307,9 @@ it("preserves valid Info-ZIP Unicode Path overrides", async () => {
   const root = await createTestTempDirectory("rea-zip-unicode-path-");
   const path = join(root, "unicode-path.zip");
   const rawName = Buffer.from([0xc7, 0xd1, 0xb1, 0xdb, 0x2e, 0x74, 0x78, 0x74]);
-  const unicodeName = Buffer.from("café.txt", "utf8");
-  const field = Buffer.alloc(5 + unicodeName.length);
-  field[0] = 1;
-  field.writeUInt32LE(zipCrc32(rawName), 1);
-  unicodeName.copy(field, 5);
-  const writer = new ZipWriter(new Uint8ArrayWriter());
-  await writer.add("name.txt", new TextReader("unicode path"), {
-    extraField: new Map([[0x7075, field]]),
-  });
-  const archive = Buffer.from(await writer.close());
   await writeFile(
     path,
-    rewriteSingleEntryZipName(archive, "name.txt", rawName, false),
+    zipWithUnicodePath(rawName, unicodePathExtra(rawName, "café.txt")),
   );
 
   const inventory = await inventoryArtifact(path);
@@ -339,20 +328,9 @@ it("falls back to the stored name and reports bytes when a Unicode Path field CR
   );
   const path = join(root, "invalid-unicode-extra-crc.zip");
   const rawName = Buffer.from([0x82, 0x2e, 0x74, 0x78, 0x74]);
-  const unicodeName = Buffer.from("café.txt", "utf8");
-  const field = Buffer.alloc(5 + unicodeName.length);
-  field[0] = 1;
-  field.writeUInt32LE((zipCrc32(rawName) ^ 1) >>> 0, 1);
-  unicodeName.copy(field, 5);
-  const writer = new ZipWriter(new Uint8ArrayWriter());
-  await writer.add("x.txt", new TextReader("malformed extra"), {
-    extraField: new Map([[0x7075, field]]),
-  });
-  const archive = Buffer.from(await writer.close());
-  await writeFile(
-    path,
-    rewriteSingleEntryZipName(archive, "x.txt", rawName, false),
-  );
+  const field = unicodePathExtra(rawName, "café.txt");
+  field.writeUInt8(field.readUInt8(5) ^ 1, 5);
+  await writeFile(path, zipWithUnicodePath(rawName, field));
 
   const inventory = await inventoryArtifact(path);
   expect(inventory.occurrences).toContainEqual(
@@ -363,12 +341,13 @@ it("falls back to the stored name and reports bytes when a Unicode Path field CR
   );
 });
 
+const malformedName = Buffer.from([0xc3, 0x28, 0x2e, 0x74, 0x78]);
+
 it("rejects malformed UTF-8 in flagged ZIP member names", async () => {
   const root = await createTestTempDirectory("rea-zip-invalid-utf8-name-");
   const path = join(root, "invalid-utf8.zip");
   await writeSingleEntryZip(path, "x.txt");
   const archive = await readFile(path);
-  const malformedName = Buffer.from([0xc3, 0x28, 0x2e, 0x74, 0x78]);
   await writeFile(
     path,
     rewriteSingleEntryZipName(archive, "x.txt", malformedName, true),
@@ -385,19 +364,9 @@ it("rejects malformed UTF-8 in a CRC-valid Unicode Path extra field", async () =
   const root = await createTestTempDirectory("rea-zip-invalid-unicode-extra-");
   const path = join(root, "invalid-unicode-extra.zip");
   const rawName = Buffer.from("legacy.txt");
-  const malformedName = Buffer.from([0xc3, 0x28, 0x2e, 0x74, 0x78]);
-  const field = Buffer.alloc(5 + malformedName.length);
-  field[0] = 1;
-  field.writeUInt32LE(zipCrc32(rawName), 1);
-  malformedName.copy(field, 5);
-  const writer = new ZipWriter(new Uint8ArrayWriter());
-  await writer.add("legacy.txt", new TextReader("malformed extra"), {
-    extraField: new Map([[0x7075, field]]),
-  });
-  const archive = Buffer.from(await writer.close());
   await writeFile(
     path,
-    rewriteSingleEntryZipName(archive, "legacy.txt", rawName, false),
+    zipWithUnicodePath(rawName, unicodePathExtra(rawName, malformedName)),
   );
 
   await expect(inventoryArtifact(path)).rejects.toMatchObject({
@@ -760,13 +729,17 @@ it.each([0x04034b50, 0x06064b50])(
   },
 );
 
-it("reports an unsupported ZIP compression method as unavailable", async () => {
+it("reports a member with an unsupported compression method as unavailable and keeps its siblings", async () => {
   const root = await createTestTempDirectory("rea-zip-method-");
   const path = join(root, "lzma.zip");
   const writer = new ZipWriter(new Uint8ArrayWriter());
   await writer.add("data.txt", new TextReader("member bytes"), { level: 0 });
+  await writer.add("readme.txt", new TextReader("sibling bytes"), {
+    level: 0,
+  });
   const bytes = Buffer.from(await writer.close());
-  // Declare LZMA (14) in both headers; REA reads only stored and Deflate data.
+  // Declare LZMA (14) in the first member's headers; REA reads only stored,
+  // Deflate and Zstandard data. unzip and bsdtar still list both members.
   const localHeader = bytes.indexOf(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
   const centralHeader = bytes.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
   if (localHeader < 0 || centralHeader < 0)
@@ -775,11 +748,34 @@ it("reports an unsupported ZIP compression method as unavailable", async () => {
   bytes.writeUInt16LE(14, centralHeader + 10);
   await writeFile(path, bytes);
 
-  await expectInventoryFailure(
-    path,
-    "unavailable",
-    "ZIP archive uses an unsupported feature: Compression method not supported",
+  const inventory = await inventoryArtifact(path);
+  const limitation =
+    "ZIP member compression method 14 is unsupported; no content hash or child artifact was produced.";
+  expect(inventory.occurrences).toContainEqual(
+    expect.objectContaining({
+      logical_path: "data.txt",
+      artifact_id: null,
+      hash_status: "unavailable",
+      limitations: [limitation],
+    }),
   );
+  expect(inventory.occurrences).toContainEqual(
+    expect.objectContaining({
+      logical_path: "readme.txt",
+      hash_status: "verified",
+    }),
+  );
+  expect(inventory.nodes).toContainEqual(
+    expect.objectContaining({
+      sha256: createHash("sha256").update("sibling bytes").digest("hex"),
+    }),
+  );
+  // The central directory lists every entry; only one member's content is
+  // unreadable, so entry coverage stays complete, as for an encrypted member.
+  expect(inventory.coverage).toEqual({
+    scope: "container-entries",
+    status: "complete",
+  });
 });
 
 /** Inventory one archive through the provider and expect a typed failure. */
@@ -806,13 +802,15 @@ const writeSingleEntryZip = async (
   await writeFile(path, await createSingleEntryZip(name));
 };
 
-const zipCrc32 = (bytes: Uint8Array): number => {
-  let checksum = 0xffffffff;
-  for (const byte of bytes) {
-    checksum ^= byte;
-    for (let bit = 0; bit < 8; bit += 1)
-      checksum =
-        (checksum & 1) === 1 ? (checksum >>> 1) ^ 0xedb88320 : checksum >>> 1;
-  }
-  return (checksum ^ 0xffffffff) >>> 0;
+const zipWithUnicodePath = (
+  rawName: Buffer,
+  centralExtra: Uint8Array,
+): Buffer => {
+  const placeholder = "x".repeat(rawName.length);
+  return rewriteSingleEntryZipName(
+    zipArchive([{ name: placeholder, data: "member bytes", centralExtra }]),
+    placeholder,
+    rawName,
+    false,
+  );
 };

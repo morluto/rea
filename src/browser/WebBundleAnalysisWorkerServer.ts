@@ -18,7 +18,7 @@ import {
   ArtifactResourceScope,
   readStableArtifact,
 } from "../resources/index.js";
-import { jsonParts } from "../domain/jsonSerialization.js";
+import { bufferedJsonParts, jsonParts } from "../domain/jsonSerialization.js";
 import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
 import {
   webBundleScriptAnalysisSchema,
@@ -194,7 +194,7 @@ const analyzeJob = async (
       resources,
       undefined,
       async (handle) => {
-        for (const part of jsonParts(result)) {
+        for (const part of bufferedJsonParts(jsonParts(result))) {
           const chunk = Buffer.from(part);
           bytes += chunk.length;
           if (bytes > request.result_budget_bytes)

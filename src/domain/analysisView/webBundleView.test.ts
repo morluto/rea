@@ -223,6 +223,99 @@ it("filters endpoints by values, script_keys, mechanisms, and field projections"
   expect(item.location).toMatchObject({ script_key: "vendor.js" });
 });
 
+it("returns merged endpoint occurrences and script_keys on an unfiltered page", () => {
+  const parent = makeParent({
+    observations: {
+      ...sampleWebBundleAnalysis().observations,
+      endpoints: [
+        {
+          value: "/api/shared",
+          mechanism: "call:fetch",
+          location: { script_key: "app.js", line: 10, column: 2 },
+          occurrences: 2,
+          script_keys: ["app.js", "vendor.js"],
+        },
+        {
+          value: "/api/orders",
+          mechanism: "call:sendBeacon",
+          location: { script_key: "app.js", line: 85, column: 4 },
+        },
+      ],
+    },
+  });
+
+  const page = query(parent, {
+    kind: "web-bundle",
+    collection: "endpoints",
+  });
+  if (page.kind !== "web-bundle") throw new Error("Expected web-bundle page");
+  expect(page.items).toEqual([
+    {
+      source_index: 0,
+      value: "/api/shared",
+      mechanism: "call:fetch",
+      location: { script_key: "app.js", line: 10, column: 2 },
+      occurrences: 2,
+      script_keys: ["app.js", "vendor.js"],
+    },
+    {
+      source_index: 1,
+      value: "/api/orders",
+      mechanism: "call:sendBeacon",
+      location: { script_key: "app.js", line: 85, column: 4 },
+    },
+  ]);
+});
+
+it("matches a merged endpoint by any retained script key", () => {
+  const parent = makeParent({
+    observations: {
+      ...sampleWebBundleAnalysis().observations,
+      endpoints: [
+        {
+          value: "/api/shared",
+          mechanism: "call:fetch",
+          location: { script_key: "app.js", line: 10, column: 2 },
+          occurrences: 2,
+          script_keys: ["app.js", "vendor.js"],
+        },
+        {
+          value: "/api/orders",
+          mechanism: "call:sendBeacon",
+          location: { script_key: "vendor.js", line: 85, column: 4 },
+        },
+      ],
+    },
+  });
+
+  const bySecondScript = query(parent, {
+    kind: "web-bundle",
+    collection: "endpoints",
+    script_keys: ["vendor.js"],
+    fields: ["value"],
+  });
+  if (bySecondScript.kind !== "web-bundle")
+    throw new Error("Expected web-bundle page");
+  expect(bySecondScript.items).toEqual([
+    { source_index: 0, value: "/api/shared" },
+    { source_index: 1, value: "/api/orders" },
+  ]);
+
+  // The merged row also matches its first script; the unmerged row matches
+  // by its location script key.
+  const byFirstScript = query(parent, {
+    kind: "web-bundle",
+    collection: "endpoints",
+    script_keys: ["app.js"],
+    fields: ["value"],
+  });
+  if (byFirstScript.kind !== "web-bundle")
+    throw new Error("Expected web-bundle page");
+  expect(byFirstScript.items).toEqual([
+    { source_index: 0, value: "/api/shared" },
+  ]);
+});
+
 it("pages inference records and filters by kind (endpoint_candidate)", () => {
   const parent = makeParent();
   const candidatesOnly = query(parent, {

@@ -3,10 +3,8 @@ import type { Logger } from "pino";
 import { createNugetNupkgService } from "../composition/nugetNupkg.js";
 import { NUGET_NUPKG_TOOL_CONTRACTS } from "../contracts/nuget/nupkgToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  deliverWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { deliverWithService } from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 /** Inspect operator-selected NuGet packages through the same shared workflow as MCP. */

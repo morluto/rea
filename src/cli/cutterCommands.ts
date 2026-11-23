@@ -3,10 +3,8 @@ import type { Logger } from "pino";
 import { createCutterBridgeService } from "../composition/cutter.js";
 import { CUTTER_TOOL_CONTRACTS } from "../contracts/cutterToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  analyzeWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { analyzeWithService } from "./contractCommandRunners.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import type { CliInstance } from "./types.js";

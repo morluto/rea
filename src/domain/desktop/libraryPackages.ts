@@ -67,6 +67,8 @@ interface LoadedObject {
   readonly loader: LoadedObject | undefined;
 }
 
+const HOST_LOADER_TOKEN =
+  /\$(?:(?:LIB|PLATFORM)(?![A-Za-z0-9_])|\{(?:LIB|PLATFORM)\})/u;
 const ORIGIN_TOKEN = /\$(?:ORIGIN(?![A-Za-z0-9_])|\{ORIGIN\})/gu;
 
 /** Expand only the declaration: dollars in the owner's directory are literal data. */
@@ -240,8 +242,9 @@ export const libraryClosure = async (
       // is shared across the closure. Identical source spellings can name two files.
       const expandedRequest = expandOrigin(object.path, soname);
       const unsupported =
-        expandedRequest !== soname &&
-        soname.replace(ORIGIN_TOKEN, "").includes("$");
+        HOST_LOADER_TOKEN.test(soname) ||
+        (expandedRequest !== soname &&
+          soname.replace(ORIGIN_TOKEN, "").includes("$"));
       const direct = !unsupported && expandedRequest.startsWith("/");
       let directPath = direct
         ? resolvedLookups.get(expandedRequest)
@@ -274,7 +277,7 @@ export const libraryClosure = async (
       if (unsupported) {
         closure.unreadable.push({
           path: object.path,
-          reason: `DT_NEEDED ${JSON.stringify(soname)} contains an unsupported dynamic token or dollar expression alongside $ORIGIN`,
+          reason: `DT_NEEDED ${JSON.stringify(soname)} contains an unsupported dynamic token or dollar expression`,
         });
         continue;
       }

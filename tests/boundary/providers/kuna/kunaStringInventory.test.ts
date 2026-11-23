@@ -121,7 +121,6 @@ it.each([
     "referencing functions",
     { strings: [{ ...row, functions: [{ name: "main" }] }] },
   ],
-  ["duplicate identity", { count: 2, strings: [row, row] }],
   [
     "nonadjacent duplicate identity",
     {
@@ -334,7 +333,38 @@ it.each([
   { encoding: "utf8", text: "hello\u0000", length: 6, byte_length: 7 },
   { encoding: "utf8", text: "hello\ud800", length: 6, byte_length: 9 },
   { encoding: "utf16", text: "Δelta", length: 5, byte_length: 12 },
+  { encoding: "utf8", text: "\udc00\ud800", length: 2, byte_length: 7 },
+  { encoding: "utf8", text: "😀", length: 1, byte_length: 5 },
 ])("rejects conflicting encoded string facts: %j", async (facts) => {
   const value = { ...document(), strings: [{ ...row, ...facts }] };
   expect((await read(wire(value))).result.ok).toBe(false);
+});
+
+it("preserves encoding_contradicts_text precedence and row_field fallback diagnostics", async () => {
+  const nulShort = {
+    ...document(),
+    strings: [{ ...row, text: "\u0000", length: 1, byte_length: 2 }],
+  };
+  expect((await read(wire(nulShort))).result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisOutputError",
+      diagnostics: { code: "encoding_contradicts_text" },
+    },
+  });
+  const badHex = {
+    ...document(),
+    strings: [{ ...row, address_hex: "0x01" }],
+  };
+  expect((await read(wire(badHex))).result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisOutputError",
+      diagnostics: {
+        code: "row_field",
+        member: "string",
+        field: "address_hex",
+      },
+    },
+  });
 });

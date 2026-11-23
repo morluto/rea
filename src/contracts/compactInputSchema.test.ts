@@ -5,9 +5,15 @@ import { describe, expect, it } from "vitest";
 import {
   ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
   advertisedInputDialectViolations,
+  hasAdvertisedInputDialectViolation,
 } from "./advertisedDialect.js";
 import { compactAdvertisedInputSchema } from "./compactInputSchema.js";
-import { stripAnnotations } from "./compactJsonSchema.js";
+import {
+  inlineWithinBudget,
+  jsonValueSchema,
+  stripAnnotations,
+} from "./compactJsonSchema.js";
+import { JsonSchemaReferences } from "./jsonSchemaReferences.js";
 
 const serializedBytes = (value: unknown): number =>
   Buffer.byteLength(JSON.stringify(value), "utf8");
@@ -194,12 +200,20 @@ describe("compact advertised input schema", () => {
     const { schema, presentation } = compactAdvertisedInputSchema(
       {
         type: "object",
-        properties: { normalized_result: {}, literal: { const: {} } },
+        properties: {
+          normalized_result: {},
+          json_value: jsonValueSchema(),
+          literal: { const: {} },
+        },
       },
       ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
     );
     expect(presentation).toBe("reduced");
-    expect(schema.properties).toEqual({ normalized_result: {}, literal: {} });
+    expect(schema.properties).toEqual({
+      normalized_result: {},
+      json_value: expect.anything(),
+      literal: {},
+    });
     const validate = new Ajv2020({ strict: false }).compile(schema);
     for (const normalized_result of [
       null,
@@ -210,7 +224,9 @@ describe("compact advertised input schema", () => {
       "result",
       [[null, true, 42, "nested"], { values: [[], [false]] }],
     ])
-      expect(validate({ normalized_result })).toBe(true);
+      expect(
+        validate({ normalized_result, json_value: normalized_result }),
+      ).toBe(true);
   });
 
   it("preserves independent validation constraints on reference siblings", () => {
@@ -306,6 +322,39 @@ it("inlines the Kimi/Moonshot-rejected reference pattern from #9581", () => {
   }
 });
 
+it.each([
+  {
+    label: "non-null types",
+    property: { type: ["string", "number"], minLength: 2, minimum: 5 },
+    valid: ["ok", 5],
+    invalid: ["x", 4, true],
+  },
+  {
+    label: "JSON value types with typed array elements",
+    property: {
+      type: ["null", "boolean", "object", "array", "number", "string"],
+      items: { type: "string", minLength: 2 },
+    },
+    valid: [null, true, {}, ["ok"], 5, "ok"],
+    invalid: [[4], ["x"]],
+  },
+])(
+  "keeps $label inline with their constraints",
+  ({ property, valid, invalid }) => {
+    const { schema, presentation } = compactAdvertisedInputSchema(
+      { type: "object", properties: { value: property } },
+      ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+    );
+    expect(presentation).toBe("inline");
+    expect(
+      advertisedInputDialectViolations({ name: "probe", inputSchema: schema }),
+    ).toEqual([]);
+    const validate = new Ajv2020({ strict: false }).compile(schema);
+    for (const value of valid) expect(validate({ value })).toBe(true);
+    for (const value of invalid) expect(validate({ value })).toBe(false);
+  },
+);
+
 describe("portable dialect unions", () => {
   it("types homogeneous union items and widens oneOf to anyOf", () => {
     const original = {
@@ -322,8 +371,11 @@ describe("portable dialect unions", () => {
               },
               {
                 type: "object",
-                properties: { kind: { const: "type" } },
-                required: ["kind"],
+                properties: {
+                  kind: { const: "type" },
+                  text: { type: "string" },
+                },
+                required: ["kind", "text"],
               },
             ],
           },
@@ -349,8 +401,11 @@ describe("portable dialect unions", () => {
         },
         {
           type: "object",
-          properties: { kind: { type: "string", enum: ["type"] } },
-          required: ["kind"],
+          properties: {
+            kind: { type: "string", enum: ["type"] },
+            text: { type: "string" },
+          },
+          required: ["kind", "text"],
         },
       ],
     });
@@ -359,7 +414,7 @@ describe("portable dialect unions", () => {
     for (const value of [
       [],
       [{ kind: "click" }],
-      [{ kind: "type" }],
+      [{ kind: "type", text: "ok" }],
       [{ kind: "other" }],
     ])
       expect(advertised({ actions: value })).toBe(
@@ -367,7 +422,7 @@ describe("portable dialect unions", () => {
       );
   });
 
-  it("reduces mixed-type union items to typed branches instead of selecting one branch type", () => {
+  it("keeps mixed-type union items inline with typed branches", () => {
     const { schema, presentation } = compactAdvertisedInputSchema(
       {
         type: "object",
@@ -384,7 +439,7 @@ describe("portable dialect unions", () => {
       schema.properties as Record<string, Record<string, unknown>>
     ).values;
     if (values === undefined) throw new Error("Missing values property");
-    expect(presentation).toBe("reduced");
+    expect(presentation).toBe("inline");
     expect(values).toEqual({
       type: "array",
       items: { anyOf: [{ type: "string" }, { type: "object" }] },
@@ -1069,5 +1124,97 @@ describe("reduced array item presentation", () => {
     for (const input of [{}, { view: "x" }, { view: "y" }])
       if (canonicalValidate(input))
         expect(advertisedValidate(input)).toBe(true);
+  });
+});
+
+describe("on-the-fly annotation stripping parity", () => {
+  it("matches pre-stripped inlining for map keys, empty schemas, ref siblings, and stripped pointers", () => {
+    const cases: readonly Record<string, unknown>[] = [
+      {
+        type: "object",
+        description: "Root doc stays.",
+        default: { x: 1 },
+        properties: {
+          default: { type: "boolean", default: true, title: "Default flag" },
+          any: { description: "Becomes json value schema." },
+          forbid: { not: { description: "Empty negation." } },
+          aliased: { $ref: "#/$defs/leaf", description: "Sibling doc drops." },
+        },
+        $defs: {
+          leaf: { type: "string", description: "Def doc drops.", title: "L" },
+        },
+      },
+      {
+        $schema: "http://json-schema.org/draft-07/schema#",
+        type: "object",
+        definitions: { leaf: { type: "number", examples: [1] } },
+        properties: {
+          count: { $ref: "#/definitions/leaf", description: "Doc drops." },
+        },
+      },
+      {
+        type: "object",
+        $defs: {
+          node: { type: "string", default: "fallback" },
+        },
+        properties: {
+          bad: { $ref: "#/$defs/node/default" },
+        },
+      },
+      {
+        type: "object",
+        properties: {
+          bad: { $ref: "#/properties/x/description" },
+          x: { type: "string", description: "Stripped doc" },
+        },
+      },
+    ];
+    for (const schema of cases) {
+      const expected = inlineWithinBudget(stripAnnotations(schema), 16_384);
+      const actual = inlineWithinBudget(schema, 16_384, {
+        stripAnnotations: true,
+        references: new JsonSchemaReferences(schema),
+      });
+      expect(actual).toEqual(expected);
+    }
+  });
+});
+
+describe("hasAdvertisedInputDialectViolation", () => {
+  it("agrees with advertisedInputDialectViolations across synthetic and failing cases", () => {
+    const cases: Record<string, unknown>[] = [
+      { type: "object", properties: { name: { type: "string" } } },
+      { type: "string" },
+      { type: "object", oneOf: [{ type: "object" }] },
+      {
+        type: "object",
+        properties: { bad: { type: "string", pattern: "[a-" } },
+      },
+      { type: "object", properties: { bad: { type: "array" } } },
+      {
+        type: "object",
+        properties: { bad: { type: "string", enum: [] } },
+      },
+      {
+        type: "object",
+        properties: { "1bad": { type: "string" } },
+      },
+      {
+        type: "object",
+        properties: {
+          ok: {
+            anyOf: [{ type: "string" }, { type: "null" }],
+          },
+        },
+      },
+    ];
+    for (const schema of cases) {
+      const expected =
+        advertisedInputDialectViolations({
+          name: "tool_name",
+          inputSchema: schema,
+        }).length > 0;
+      expect(hasAdvertisedInputDialectViolation(schema)).toBe(expected);
+    }
   });
 });

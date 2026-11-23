@@ -174,3 +174,21 @@ it("does not treat a dangling registry owner as top-level authority", () => {
   expect(result.hierarchy).toEqual([]);
   expect(result.omitted).toBeGreaterThan(0);
 });
+
+it("ignores registry-shaped fields on non-NSIBObjectData objects", () => {
+  const result = projectFixture(
+    [
+      {
+        id: 1,
+        class_name: "UIView",
+        values: { NSRoot: { $nib_object_ref: 99 } },
+      },
+    ],
+    new Set([1]),
+    [],
+  );
+  expect(result).toEqual({
+    hierarchy: null,
+    omitted: 0,
+  });
+});

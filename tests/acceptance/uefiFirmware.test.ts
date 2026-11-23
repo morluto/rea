@@ -359,7 +359,8 @@ it("retains an opaque volume and reports only the unparsed ranges in the selecte
 
   const { call } = await connectLocalToolsMcp();
   const { normalized_result: inspection } = parseEvidence(
-    (await call("inspect_uefi_firmware", { path })).structuredContent,
+    (await call("inspect_uefi_firmware", { path, detail: "complete" }))
+      .structuredContent,
   );
   const inspected = uefiResultSchemas.inspect_uefi_firmware.parse(inspection);
   expect(inspected.coverage).toBe("partial");
@@ -516,6 +517,7 @@ cliTest(
       path,
       max_volumes: 513,
       max_files: 2,
+      detail: "complete",
     });
     expect(observed.isError, JSON.stringify(observed.content)).not.toBe(true);
     const inspection = uefiResultSchemas.inspect_uefi_firmware.parse(

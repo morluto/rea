@@ -201,6 +201,4 @@ Credential-name warnings point to values worth reviewing; they do not remove
 those values or establish that the recording contains no credentials.
 
 For direct MCP serving, replay behavior, state controls, and resource limits,
-see the [environment reference](agent-environments.md). The
-[implementation index](specs/agent-environments/README.md) links the contributing
-PRs and their verification records.
+see the [environment reference](agent-environments.md).

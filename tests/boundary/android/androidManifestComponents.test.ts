@@ -5,7 +5,6 @@ import { androidResultSchemas } from "../../../src/domain/android/androidAnalysi
 import {
   ANDROID_MANIFEST_LIMITS,
   parseAndroidManifestComponents,
-  resolveAndroidComponentName,
 } from "../../../src/android/AndroidManifestComponents.js";
 
 it.each([
@@ -213,7 +212,7 @@ const MANIFEST = `<?xml version="1.0" encoding="utf-8"?>
       android:name=".SyncService"
       android:permission="com.example.app.SYNC"
       android:foregroundServiceType="dataSync" />
-    <receiver android:name=".BootReceiver">
+    <receiver android:name="org.other.BootReceiver">
       <intent-filter>
         <action android:name="android.intent.action.BOOT_COMPLETED" />
       </intent-filter>
@@ -398,7 +397,7 @@ it("projects declared components with resolved names and export defaults", () =>
     ["activity", "com.example.app.HiddenActivity"],
     ["activity-alias", "com.example.app.AliasActivity"],
     ["service", "com.example.app.SyncService"],
-    ["receiver", "com.example.app.BootReceiver"],
+    ["receiver", "org.other.BootReceiver"],
     ["provider", "com.example.app.DataProvider"],
   ]);
   expect(inventory.items[0]).toMatchObject({
@@ -768,19 +767,6 @@ it("ignores same-local-name attributes from other namespaces", () => {
     exported: false,
     exported_default: false,
   });
-});
-
-it("resolves relative names against the manifest package", () => {
-  expect(resolveAndroidComponentName("com.example.app", ".Main")).toBe(
-    "com.example.app.Main",
-  );
-  expect(resolveAndroidComponentName("com.example.app", "Main")).toBe(
-    "com.example.app.Main",
-  );
-  expect(resolveAndroidComponentName("com.example.app", "org.other.Main")).toBe(
-    "org.other.Main",
-  );
-  expect(resolveAndroidComponentName(null, ".Main")).toBe(".Main");
 });
 
 it("keeps relative names unresolved when the manifest package is absent", () => {

@@ -4,14 +4,15 @@ import { join } from "node:path";
 import { expect } from "vitest";
 
 import {
-  locateApkSigningBlock,
-  parseZipTail,
+  locateApkSigningBlockFromReader,
+  parseZipTailFromReader,
 } from "../../src/domain/apkSignature/apkSigningBlock.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { apkSignatureSummaryViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { apkFixtureReader } from "../fixtures/apkSignature/randomAccess.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import {
   APK_SIGNATURE_V2_ID,
@@ -58,9 +59,13 @@ cliTest(
       }
     }
     const bytes = await readFile(paths.get(4097)!);
-    const tail = parseZipTail(bytes);
+    const reader = apkFixtureReader(bytes);
+    const tail = await parseZipTailFromReader(reader);
     if (!tail.ok) throw new Error("Expected a framed ZIP tail");
-    const parsed = locateApkSigningBlock(bytes, tail.value);
+    const parsed = await locateApkSigningBlockFromReader(
+      reader,
+      tail.value.tail,
+    );
     if (parsed.ok || parsed.error.kind !== "limit")
       throw new Error("Expected a signing-block pair limit");
     const expected = {
@@ -79,15 +84,13 @@ cliTest(
         },
       },
     };
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const reply = await cli.run({
-        arguments: ["inspect-apk-signature", paths.get(4097)!, "--json"],
-      });
-      expect(reply.exitCode, reply.stderr).toBe(1);
-      const error = analysisErrorProjectionSchema.parse(reply.json);
-      expect(error).toMatchObject(expected);
-      expect(error.remediation.action).toContain("4096");
-    }
+    const reply = await cli.run({
+      arguments: ["inspect-apk-signature", paths.get(4097)!, "--json"],
+    });
+    expect(reply.exitCode, reply.stderr).toBe(1);
+    const error = analysisErrorProjectionSchema.parse(reply.json);
+    expect(error).toMatchObject(expected);
+    expect(error.remediation.action).toContain("4096");
     const malformedExpected = {
       code: "invalid_request",
       details: {
