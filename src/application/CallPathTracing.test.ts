@@ -51,3 +51,84 @@ describe("call-path traversal cancellation ownership", () => {
     expect(result).toEqual(err(failure));
   });
 });
+
+describe("call-path traversal bounds", () => {
+  const edges: Readonly<Record<string, readonly string[]>> = {
+    "0x1000": ["0x2000", "0x2100"],
+    "0x2000": ["0x3000"],
+    "0x2100": ["0x3100"],
+    "0x3000": ["0x4000"],
+  };
+  const resolveAddress = async (
+    _op: string,
+    args: Readonly<Record<string, unknown>>,
+  ) => ok(String(args.procedure));
+  const observeEdges = async (
+    _op: string,
+    args: Readonly<Record<string, unknown>>,
+  ) =>
+    ok(
+      createAnalysisExecution(
+        [...(edges[String(args.procedure)] ?? [])],
+        provider,
+        {
+          relationshipCoverage: { status: "complete" },
+        },
+      ),
+    );
+
+  it("stops at max_depth and marks an unreached goal unknown with partial discovery", async () => {
+    const result = await traceCallPath(resolveAddress, observeEdges, {
+      start: "0x1000",
+      goal: "0x3000",
+      direction: "forward",
+      max_depth: 1,
+    });
+    if (!result.ok) throw new Error("Expected bounded trace result");
+    expect(result.value).toMatchObject({
+      goal_status: "unknown",
+      truncated: true,
+      search_scope: {
+        discovery: "partial",
+        observed_goal_status: "unknown",
+      },
+      traversal_path: [],
+    });
+    const residual = (result.value as { residual_unknowns: string[] })
+      .residual_unknowns;
+    expect(residual.some((line) => line.includes("max_depth 1"))).toBe(true);
+  });
+
+  it("reaches a goal within max_depth without marking the trace truncated", async () => {
+    const result = await traceCallPath(resolveAddress, observeEdges, {
+      start: "0x1000",
+      goal: "0x2000",
+      direction: "forward",
+      max_depth: 1,
+    });
+    if (!result.ok) throw new Error("Expected bounded trace result");
+    expect(result.value).toMatchObject({
+      goal_status: "reached",
+      truncated: false,
+      traversal_path: ["0x1000", "0x2000"],
+    });
+  });
+
+  it("stops at max_nodes and reports unexpanded queued procedures", async () => {
+    const result = await traceCallPath(resolveAddress, observeEdges, {
+      start: "0x1000",
+      goal: "0x4000",
+      direction: "forward",
+      max_nodes: 2,
+    });
+    if (!result.ok) throw new Error("Expected bounded trace result");
+    expect(result.value).toMatchObject({
+      goal_status: "unknown",
+      truncated: true,
+      search_scope: { discovery: "partial" },
+    });
+    const residual = (result.value as { residual_unknowns: string[] })
+      .residual_unknowns;
+    expect(residual.some((line) => line.includes("max_nodes 2"))).toBe(true);
+  });
+});

@@ -528,6 +528,8 @@ export class EnhancedTools {
     input: {
       readonly address: string;
       readonly direction: CallRelationshipDirection;
+      readonly max_depth?: number | undefined;
+      readonly max_nodes?: number | undefined;
     },
     signal?: AbortSignal,
   ): EnhancedResult {
@@ -548,13 +550,23 @@ export class EnhancedTools {
       { address: startAddress, depth: 0 },
     ];
     let queueIndex = 0;
+    let expandedNodes = 0;
+    let depthLimited = false;
     const graph: Record<string, JsonValue[]> = {};
     const sortedLimitations = () =>
       [...limitations].sort(compareUnicodeCodePoints);
 
     while (queueIndex < queue.length) {
+      if (input.max_nodes !== undefined && expandedNodes >= input.max_nodes) {
+        const remaining = queue.length - queueIndex;
+        limitations.add(
+          `Call graph traversal stopped at caller-selected max_nodes ${String(input.max_nodes)} with ${String(remaining)} queued procedure(s) unexpanded. Raise or omit max_nodes to inspect further.`,
+        );
+        break;
+      }
       const current = queue[queueIndex++];
       if (current === undefined) continue;
+      expandedNodes += 1;
       const read = await readCallRelationships(
         this.#observe.bind(this),
         input.direction,
@@ -618,10 +630,22 @@ export class EnhancedTools {
       } satisfies NativeCallGraph["graph"][string][number]);
       for (const address of related) {
         if (!discovered.has(address)) {
+          if (
+            input.max_depth !== undefined &&
+            current.depth >= input.max_depth
+          ) {
+            depthLimited = true;
+            continue;
+          }
           discovered.add(address);
           queue.push({ address, depth: current.depth + 1 });
         }
       }
+    }
+    if (depthLimited && input.max_depth !== undefined) {
+      limitations.add(
+        `Call graph traversal stopped at caller-selected max_depth ${String(input.max_depth)}; deeper call relationships were not expanded. Raise or omit max_depth to inspect further.`,
+      );
     }
     return ok({ graph, limitations: sortedLimitations() });
   }
