@@ -9,12 +9,12 @@ export const APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE = createAnalysisProfile(
   {
     id: NATIVE_MACOS_PROVIDER_IDENTITY.id,
     name: NATIVE_MACOS_PROVIDER_IDENTITY.name,
-    version: "apple-metadata-reader-4",
+    version: "apple-metadata-reader-5",
   },
   {
     operation: "inspect_native_dispatch_metadata",
     reader: "apple-dispatch-metadata",
-    revision: 4,
+    revision: 5,
   },
 );
 /** Operations whose target process can show UI, use the network and write files. */
