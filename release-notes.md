@@ -131,6 +131,7 @@
 * **desktop:** report JSON view depth after reviver stack exhaustion ([#12759](https://github.com/morluto/rea/issues/12759)) ([6a0a5e7](https://github.com/morluto/rea/commit/6a0a5e73790c8670631618878a5ca26b860fe758))
 * **desktop:** respect TryExec when selecting Linux launchers ([b185803](https://github.com/morluto/rea/commit/b185803bc8262e41adaa34943e278ba38924939e))
 * **desktop:** skip only ASCII whitespace before a desktop entry key ([#13126](https://github.com/morluto/rea/issues/13126)) ([a44e705](https://github.com/morluto/rea/commit/a44e705ad820d24e95577b4f61a3dc633ca4fcb8))
+* **devicetree:** validate retained report ranges and coverage ([#14066](https://github.com/morluto/rea/issues/14066)) ([a5f735c](https://github.com/morluto/rea/commit/a5f735c67b2226ec66913add6b5424a884ad5c11))
 * **docs:** align translated READMEs and verify catalog links ([d2a8b8d](https://github.com/morluto/rea/commit/d2a8b8d3d639827a9800fc4dea16fd772573b054))
 * **doctor:** report startup timeouts independently of launcher discovery ([#13420](https://github.com/morluto/rea/issues/13420)) ([255a585](https://github.com/morluto/rea/commit/255a585c0a06975d0855f169f5e80663b642658d))
 * **domain:** make partial count switches exhaustive for typed lint ([#14048](https://github.com/morluto/rea/issues/14048)) ([4298507](https://github.com/morluto/rea/commit/42985076ac43814d3cf60a8b97687240980304d0))
