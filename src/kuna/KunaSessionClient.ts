@@ -878,7 +878,7 @@ export class KunaSessionClient implements AnalysisClient {
       // could still own.
       if (
         selectedAddress === undefined ||
-        this.#isDataAddress(index.value, selectedAddress)
+        isKunaDataAddress(index.value, selectedAddress)
       )
         return entry;
       const graph = await this.#references.functionAt(
@@ -1961,11 +1961,6 @@ export class KunaSessionClient implements AnalysisClient {
     if (kept?.inventory === inventory && kept.layout === layout) return kept;
     this.#inventoryIndex = buildKunaInventoryIndex(inventory, layout);
     return this.#inventoryIndex;
-  }
-
-  /** Whether the layout places the inventory entry at an address in data. */
-  #isDataAddress(index: KunaInventoryIndex, address: string): boolean {
-    return isKunaDataAddress(index, address);
   }
 
   /** The inventory, classified by the target's layout when it has one. */
