@@ -8,6 +8,7 @@ import {
   projectArtifactCloseFailure,
   ArtifactReaderFailure,
   readStableArtifact,
+  withStableArtifactHandle,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
@@ -72,7 +73,10 @@ export class AppleIpsProvider implements AppleIpsPort {
     let completedReport: AppleIps | undefined;
     let activePath = input.path;
     let activeField: "path" | "join_path" = "path";
-    let completedSnapshot: StableArtifactSnapshot | undefined;
+    let completedSnapshot:
+      | StableArtifactSnapshot
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     const read = new FieldReader(input.max_integer_text_bytes);
     try {
       return await this.#resources.run(async () => {
@@ -98,30 +102,53 @@ export class AppleIpsProvider implements AppleIpsPort {
         completedReport = report;
         assertArtifactReadActive(options?.signal);
         if (input.join_path === undefined) return ok(report);
-        activePath = input.join_path;
+        const joinPath = input.join_path;
+        activePath = joinPath;
         activeField = "join_path";
         completedSnapshot = undefined;
-        const joinArtifact = await readStableArtifact(
-          input.join_path,
+        await withStableArtifactHandle(
+          joinPath,
           input.max_join_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        completedSnapshot = joinArtifact;
-        assertArtifactReadActive(options?.signal);
-        completedReport = {
-          ...report,
-          join: await resolveAppleIpsJoin(
-            report,
-            { ...joinArtifact, path: input.join_path },
-            {
-              path: input.join_path,
-              max_join_bytes: input.max_join_bytes,
+          {
+            retainBytes: (size) => Math.min(size, 4096),
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            onIdentity: (identity) => {
+              completedSnapshot = identity;
             },
-            read,
-          ),
-        };
+          },
+          async (joinHandle) => {
+            assertArtifactReadActive(options?.signal);
+            const readJoinRange: typeof joinHandle.readRange = (
+              offset,
+              length,
+            ) =>
+              offset >= 0 &&
+              length >= 0 &&
+              offset + length <= joinHandle.prefix.length
+                ? Promise.resolve(
+                    joinHandle.prefix.subarray(offset, offset + length),
+                  )
+                : joinHandle.readRange(offset, length);
+            completedReport = {
+              ...report,
+              join: await resolveAppleIpsJoin(
+                report,
+                {
+                  path: joinPath,
+                  sha256: joinHandle.sha256,
+                  size: joinHandle.size,
+                  readRange: readJoinRange,
+                },
+                {
+                  path: joinPath,
+                  max_join_bytes: input.max_join_bytes,
+                },
+                read,
+              ),
+            };
+          },
+        );
         assertArtifactReadActive(options?.signal);
         return ok(completedReport);
       });
