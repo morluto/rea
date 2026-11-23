@@ -4,6 +4,7 @@ import {
   rm,
   stat,
   symlink,
+  truncate,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -1339,22 +1340,33 @@ describe("decompile_all identity and recovery", () => {
 
   it("resumes after a torn final journal line and keeps the journal parseable", async () => {
     const first = harness();
-    expect((await run(first.tools, directory(), { limit: 1 })).ok).toBe(true);
+    const seeded = await run(first.tools, directory(), { limit: 1 });
+    if (!seeded.ok) throw seeded.error;
     const journalPath = join(directory(), DECOMPILE_DIRECTORY_JOURNAL_NAME);
+    const original = await readFile(journalPath, "utf8");
+    const record = decompileJournalLineSchema.parse(
+      JSON.parse(original.trimEnd().split("\n").at(-1)!),
+    );
+    if (record.kind !== "function") throw new Error("Expected a function record");
+    // Resume must decode a committed record even when it spans read windows.
+    const longRecord = JSON.stringify({ ...record, name: "é".repeat(40_000) });
     await writeFile(
       journalPath,
-      `${await readFile(journalPath, "utf8")}{"kind":"function","name":"é\u00e9`,
+      `${original}${longRecord}\n{"kind":"function","name":"éé`,
     );
+    // A sparse unfinished append crosses the former whole-file read cap
+    // without requiring the test to materialize the discarded bytes.
+    await truncate(journalPath, 129 * 1024 * 1024);
     const stray = join(directory(), ".tmp-0123456789abcdef.c");
     await writeFile(stray, "not owned by this run");
     const resumed = await run(harness().tools, directory(), { resume: true });
-    expect(resumed.ok).toBe(true);
-    if (!resumed.ok) return;
+    if (!resumed.ok) throw resumed.error;
     expect(resumed.value).toMatchObject({
       counts: { written: 2, skipped: 1, failed: 0 },
     });
     const text = await readFile(journalPath, "utf8");
     expect(text.endsWith("\n")).toBe(true);
+    expect(text).toContain(`${longRecord}\n`);
     for (const line of text.trimEnd().split("\n"))
       expect(
         decompileJournalLineSchema.safeParse(JSON.parse(line)).success,
