@@ -1,8 +1,10 @@
+import { isRecord } from "../kernel/isRecord.js";
 import {
   COMPACT_SCHEMA_MAX_DEPTH,
   inlineWithinBudget,
   isSchemaObject,
   jsonValueSchema,
+  pruneSchemaBeyondDepth,
   reduceToShallowProperties,
   schemaDepth,
   serializedBytes,
@@ -29,6 +31,97 @@ export interface CompactedOutputSchema {
 
 const OUTPUT_REDUCED_ANNOTATION =
   "Advertised in reduced form by the compact output schema profile; the server still validates complete canonical results.";
+
+const COMPOSITION_KEYWORDS = ["oneOf", "anyOf", "allOf"] as const;
+type CompositionKeyword = (typeof COMPOSITION_KEYWORDS)[number];
+
+/** A root union or intersection whose members are schemas, when it has one. */
+const compositionKeyword = (
+  schema: Record<string, unknown>,
+): CompositionKeyword | undefined =>
+  COMPOSITION_KEYWORDS.find((keyword) => {
+    const members = schema[keyword];
+    return (
+      Array.isArray(members) &&
+      members.length > 0 &&
+      members.every((member) => isSchemaObject(member))
+    );
+  });
+
+/**
+ * Follow one local `$ref`, the same hop SDK 2.4.0 uses when it decides a
+ * typeless union is an object. An unresolved reference stays unknown so the
+ * caller can keep a widening fallback.
+ */
+const resolvedCompositionMember = (
+  member: Record<string, unknown>,
+  references: JsonSchemaReferences,
+): Record<string, unknown> | undefined => {
+  if (typeof member.$ref !== "string") return member;
+  const target = references.resolve(references.rootScope, member.$ref);
+  return target.kind === "target" && isSchemaObject(target.value)
+    ? target.value
+    : undefined;
+};
+
+/**
+ * Shallow-reduce one alternative. Its own root guidance stays; the composition
+ * root carries the reduced-form notice once.
+ */
+const shallowCompositionMember = (
+  member: Record<string, unknown>,
+  references: JsonSchemaReferences,
+): Record<string, unknown> | undefined => {
+  const resolved = resolvedCompositionMember(member, references);
+  if (resolved === undefined) return undefined;
+  if (resolved.type !== "object" && !isSchemaObject(resolved.properties))
+    return jsonValueSchema();
+  const reduced = reduceToShallowProperties(
+    resolved,
+    OUTPUT_REDUCED_ANNOTATION,
+    references,
+  );
+  const own =
+    typeof resolved.description === "string" ? resolved.description : undefined;
+  const { description: _description, ...shape } = reduced;
+  return own === undefined ? shape : { ...shape, description: own };
+};
+
+/**
+ * SDK 2.4.0 stamps `type: "object"` on a root that is only a `$ref` union of
+ * objects. Reducing that root as a property bag drops the union and advertises
+ * an empty object. Keep each alternative's root shape instead. Widened
+ * `oneOf` branches can overlap, so they are advertised as `anyOf`; an exact
+ * `oneOf` would reject a canonical result that matches more than one widened
+ * branch.
+ */
+const reduceObjectComposition = (
+  schema: Record<string, unknown>,
+  keyword: CompositionKeyword,
+  references: JsonSchemaReferences,
+): Record<string, unknown> | undefined => {
+  const members = schema[keyword];
+  if (!Array.isArray(members)) return undefined;
+  const reduced: Record<string, unknown>[] = [];
+  for (const member of members) {
+    if (!isSchemaObject(member)) return undefined;
+    const shape = shallowCompositionMember(member, references);
+    if (shape === undefined) return undefined;
+    reduced.push(shape);
+  }
+  const description = [
+    typeof schema.description === "string" ? schema.description : undefined,
+    OUTPUT_REDUCED_ANNOTATION,
+  ]
+    .filter((text) => text !== undefined)
+    .join(" ");
+  return {
+    ...(typeof schema.$schema === "string" ? { $schema: schema.$schema } : {}),
+    ...(schema.type === "object" ? { type: "object" } : {}),
+    ...(description === "" ? {} : { description }),
+    [keyword === "allOf" ? "allOf" : "anyOf"]: reduced,
+  };
+};
 
 /**
  * Drop the canonical contract's content-bound `$id` and anchors. The compact
@@ -63,6 +156,41 @@ export const compactAdvertisedOutputSchema = (
       schema: withoutContentBoundIdentity(inline),
       presentation: "inline",
     };
+  // An inlined schema that only exceeds the depth limit keeps every fitting
+  // branch. Pruning returns nothing when widening a child under oneOf or not
+  // could reject a valid result.
+  if (inline !== undefined) {
+    const pruned = pruneSchemaBeyondDepth(inline);
+    if (
+      pruned !== undefined &&
+      schemaDepth(pruned) <= COMPACT_SCHEMA_MAX_DEPTH &&
+      serializedBytes(pruned) <= budgetBytes
+    )
+      return {
+        schema: withoutContentBoundIdentity(pruned),
+        presentation: "inline",
+      };
+  }
+  // SDK 2.4.0 stamps `type: "object"` on a `$ref` union before this projection
+  // sees it. That union has no root `properties`; keep each alternative's
+  // shape instead of the empty property bag. guided_workflows already
+  // declared the same object root.
+  const keyword =
+    schema.type === "object" && !isSchemaObject(schema.properties)
+      ? compositionKeyword(schema)
+      : undefined;
+  const composed =
+    keyword === undefined
+      ? undefined
+      : reduceObjectComposition(schema, keyword, references);
+  const composedSchema =
+    composed === undefined ? undefined : withoutContentBoundIdentity(composed);
+  if (
+    composedSchema !== undefined &&
+    serializedBytes(composedSchema) <= budgetBytes &&
+    schemaDepth(composedSchema) <= COMPACT_SCHEMA_MAX_DEPTH
+  )
+    return { schema: composedSchema, presentation: "reduced" };
   // Every REA output contract is an object at the root. A non-object root still
   // advertises an accepting shape rather than a projection that could reject
   // valid canonical output.
@@ -87,6 +215,64 @@ export const compactAdvertisedOutputSchema = (
     presentation: "reduced",
   };
 };
+
+const OBJECT_COMPOSITION_KEYS = ["oneOf", "anyOf", "allOf"] as const;
+const LOCAL_DEFINITION_REF = /^#\/(\$defs|definitions)\/([^/~%]+)$/;
+
+/**
+ * Whether a typeless JSON Schema root is an object or a composition of
+ * objects. This matches `@modelcontextprotocol/server` 2.4.0 `tools/list`,
+ * which is not exported: a typeless object-shaped output root is stamped
+ * `type: "object"`. A `$ref` is followed one hop into the root document's
+ * `$defs` or `definitions` when that entry is `type: "object"`.
+ */
+const isObjectShapedOutputRoot = (
+  schema: Record<string, unknown>,
+  root: Record<string, unknown> = schema,
+): boolean => {
+  if (
+    "properties" in schema ||
+    "patternProperties" in schema ||
+    "additionalProperties" in schema ||
+    "required" in schema
+  )
+    return true;
+  if (typeof schema.$ref === "string") {
+    const match = LOCAL_DEFINITION_REF.exec(schema.$ref);
+    const group = match?.[1];
+    const name = match?.[2];
+    const definitions = group === undefined ? undefined : root[group];
+    const target =
+      name !== undefined && isRecord(definitions)
+        ? definitions[name]
+        : undefined;
+    if (isRecord(target) && target.type === "object") return true;
+  }
+  for (const key of OBJECT_COMPOSITION_KEYS) {
+    const members = schema[key];
+    if (Array.isArray(members) && members.length > 0)
+      return members.every(
+        (member) =>
+          isRecord(member) &&
+          (member.type === "object" ||
+            isObjectShapedOutputRoot(member, "$id" in member ? {} : root)),
+      );
+  }
+  return false;
+};
+
+/**
+ * The output JSON Schema `tools/list` emits before REA compacts it.
+ * A schema that already has `type` is unchanged. A typeless root that is
+ * provably object-shaped gains `type: "object"`, which is what the SDK lists
+ * for a discriminated union of objects.
+ */
+export const listedOutputJsonSchema = (
+  schema: Record<string, unknown>,
+): Record<string, unknown> =>
+  schema.type !== undefined || !isObjectShapedOutputRoot(schema)
+    ? schema
+    : { type: "object", ...schema };
 
 /** Return the JSON schema clients receive for the selected output presentation. */
 export const presentAdvertisedOutputSchema = (

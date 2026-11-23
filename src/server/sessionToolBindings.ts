@@ -1,4 +1,4 @@
-import type { AnalysisViewRetention } from "../application/analysisView/AnalysisViewService.js";
+import type { AnalysisViewRetention } from "../application/analysisView/AnalysisViewRetention.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import {
   executeSessionFunctionAnalysis,

@@ -1,13 +1,13 @@
 import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
 import { readLeb128, ULEB32 } from "../domain/leb128.js";
 import { isStrictUtf8, strictUtf8Decoder } from "../domain/strictUtf8.js";
-import type { NativeByteSource } from "../domain/native/nativeSectionDirectory.js";
 import {
   decodeLimit,
   malformedInput,
   truncatedInput,
   unsupportedInput,
 } from "../domain/parseFailure.js";
+import type { ByteSource } from "../domain/byteSource.js";
 
 /** The ParseFailure format of WebAssembly section framing. */
 export const WASM_FORMAT = "wasm";
@@ -51,7 +51,7 @@ const WASM_YIELD_INTERVAL = 256;
 
 /** Stream WebAssembly core-module section framing over a range reader. */
 export const readRustWasmSectionsFromReader = async (
-  source: NativeByteSource,
+  source: ByteSource,
   pause?: ZstandardFramePause,
 ): Promise<RustWasmSections> => {
   const readSlice = (offset: number, length: number): Promise<Buffer> => {
@@ -113,8 +113,13 @@ export const readRustWasmSectionsFromReader = async (
         { offset: cursor },
       );
     if (id === CUSTOM_SECTION) {
+      // A name length cannot consume bytes from the next section.
       const nameHeaderLen = Math.min(5, end - payloadStart);
-      const nameHeader = await readSlice(payloadStart, nameHeaderLen);
+      const nameHeaderEnd = size.end + nameHeaderLen;
+      const nameHeader =
+        nameHeaderEnd <= probe.length
+          ? probe.subarray(size.end, nameHeaderEnd)
+          : await readSlice(payloadStart, nameHeaderLen);
       const nameLen = readU32(nameHeader, 0, nameHeader.length, {
         label: "custom section name length",
         boundary: "section",

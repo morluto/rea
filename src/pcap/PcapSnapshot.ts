@@ -14,6 +14,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { withSecondaryCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   assertRegularFileActive,
@@ -100,9 +101,7 @@ export class PcapSnapshot {
           resources: [this.path],
         },
       });
-      cancelled
-        .retainSecondaryFailure(cleanup)
-        .bindCleanupDependencies([cleanup]);
+      withSecondaryCleanupFailure(cancelled, cleanup);
       throw cancelled;
     }
   }

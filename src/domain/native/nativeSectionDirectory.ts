@@ -40,6 +40,7 @@ import {
   projectZstandardFrameAllowance,
   ZstandardFrameAllowanceError,
 } from "../compression/zstandardFrameAllowance.js";
+import type { ByteSource } from "../byteSource.js";
 
 /** A borrowed positional source. Drivers own admission, cancellation and file identity. */
 export interface NativeReadRequest {
@@ -622,15 +623,8 @@ export const readElfDirectoryFromBufferCooperative = async (
   }
 };
 
-/** Random-access byte source for positional native directory inspection. */
-export interface NativeByteSource {
-  readonly size: number;
-  readonly prefix?: Buffer;
-  readRange(offset: number, length: number): Promise<Buffer>;
-}
-
 const driveElfDirectoryFromSource = async (
-  source: NativeByteSource,
+  source: ByteSource,
   decode: CooperativeElfSectionNameDecoder,
   maximumSourceAndDecodedNamesBytes?: number,
 ): Promise<ElfSectionDirectory> => {
@@ -666,7 +660,7 @@ const driveElfDirectoryFromSource = async (
  * the header, program/section tables, and section-name table from `source`.
  */
 export const readElfDirectoryFromReader = async (
-  source: NativeByteSource,
+  source: ByteSource,
   pause: ZstandardFramePause,
   operation: string,
   maximumSourceAndDecodedNamesBytes?: number,
@@ -695,7 +689,7 @@ export const assertElfDeclaredRangesFromBuffer = (bytes: Buffer): void => {
 
 /** Same declared-range check over a random-access source without buffering the full image. */
 export const assertElfDeclaredRangesFromReader = async (
-  source: NativeByteSource,
+  source: ByteSource,
 ): Promise<void> => {
   const readSlice = async (offset: number, size: number): Promise<Buffer> => {
     if (size <= 0) return Buffer.alloc(0);

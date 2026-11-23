@@ -362,21 +362,15 @@ it("rejects unterminated reservations and unknown tokens", () => {
   token.writeUInt32BE(0x12345678, 72);
   expect(() => parse(token)).toThrow("Unknown FDT token");
 });
-it.each([16, 17] as const)(
-  "accepts an empty strings block at the reservation boundary in v%s",
-  (version) => {
-    const report = parse(emptyStringsAtReservationBoundaryFixture(version));
-    expect(report.nodes).toHaveLength(1);
-    expect(report.reservations).toEqual([]);
-  },
-);
 it.each([
   [16, 0],
   [16, 44],
+  [16, 56],
   [16, 60],
   [16, 72],
   [17, 0],
   [17, 44],
+  [17, 56],
   [17, 60],
   [17, 72],
 ] as const)(
@@ -385,6 +379,7 @@ it.each([
     const bytes = emptyStringsAtReservationBoundaryFixture(version);
     bytes.writeUInt32BE(offset, 12);
     expect(parse(bytes)).toMatchObject({
+      header: { off_dt_strings: offset, size_dt_strings: 0 },
       nodes: [{ path: "/" }],
       reservations: [],
     });

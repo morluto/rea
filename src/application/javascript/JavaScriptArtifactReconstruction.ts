@@ -262,6 +262,7 @@ export const reconstructJavaScriptArtifact = async (
           },
           preloads.paths,
           preloads.limitations,
+          input.semantic_analysis === "structure-only",
         );
       } catch (cause: unknown) {
         analysisFailure = { cause };

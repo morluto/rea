@@ -4,6 +4,7 @@ import {
   opaqueCodeMayRebindBinding,
 } from "./javascriptSemanticEffectLog.js";
 import * as t from "@babel/types";
+import { clearSemanticModuleSourceQueries } from "./javascriptSemanticModuleSourceCache.js";
 import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
 import { logicalRightOperand } from "./javascriptSymbolicControlFlow.js";
 
@@ -199,6 +200,7 @@ export const clearSemanticValueCaches = (
   capturedBindingValuesByState.delete(state);
   primitiveExpressionValuesByState.delete(state);
   callerIndependentBindingValuesByState.delete(state);
+  clearSemanticModuleSourceQueries(state);
 };
 
 const callerIndependentBindingValuesFor = (

@@ -13,10 +13,12 @@ import type {
 } from "../ports/AnalysisProvider.js";
 import {
   projectRetainedAnalysis,
-  requireAnalysisViewRetention,
   summarizeRetainedAnalysis,
-  type AnalysisViewRetention,
 } from "../application/analysisView/AnalysisViewService.js";
+import {
+  requireAnalysisViewRetention,
+  type AnalysisViewRetention,
+} from "../application/analysisView/AnalysisViewRetention.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";

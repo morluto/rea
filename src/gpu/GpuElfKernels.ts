@@ -280,7 +280,18 @@ const attachCudaResources = (
       "Conflicting CUDA shared memory declarations; shared byte count remains unknown",
     );
   }
-  return registerConflict || sharedConflict ? "partial" : "complete";
+  // With an unreadable section name a shared section cannot be ruled out, so the count is
+  // unknown for the same reason the inventory is partial: the kernel says which fact it
+  // could not establish instead of leaving a bare null.
+  const sharedUnknown = shared.length === 0 && !index.allNamesKnown;
+  if (sharedUnknown) {
+    kernel.limitations.push(
+      "CUDA section names are not all known, so a shared memory section cannot be ruled out; shared byte count remains unknown",
+    );
+  }
+  return registerConflict || sharedConflict || sharedUnknown
+    ? "partial"
+    : "complete";
 };
 
 const cudaKernels = async (
