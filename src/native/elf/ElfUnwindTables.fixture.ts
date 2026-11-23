@@ -1,11 +1,6 @@
-import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
+import type { ByteSource } from "../../domain/byteSource.js";
 
 /** In-memory carrier with the same retained prefix as the physical provider. */
-export const elfUnwindByteSource = (bytes: Buffer): NativeByteSource => ({
-  size: bytes.length,
-  prefix: bytes.subarray(0, 4096),
-  readRange: async (offset, length) => bytes.subarray(offset, offset + length),
-});
 
 /** Hand-assembled ELF images with .eh_frame CIE/FDE records and .eh_frame_hdr. */
 
