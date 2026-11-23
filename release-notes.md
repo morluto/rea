@@ -7,6 +7,7 @@
 
 ### Features
 
+* **adb:** add optional limit and offset paging to list_adb_features and list_adb_services ([#13873](https://github.com/morluto/rea/issues/13873)) ([11a7a34](https://github.com/morluto/rea/commit/11a7a34dfc7748b7cf7efcdc6e6c80b7ba123783))
 * **adb:** add optional limit and offset paging to list_adb_packages, list_adb_processes, and list_adb_directory ([#13843](https://github.com/morluto/rea/issues/13843)) ([dbd6057](https://github.com/morluto/rea/commit/dbd60574541fd57bdc4a9f6952dc740d77a65de5))
 * **android:** add optional limit and offset paging to search_android_classes ([#13846](https://github.com/morluto/rea/issues/13846)) ([f47dbd9](https://github.com/morluto/rea/commit/f47dbd9351ac8624c409d4e37ea630c1cc35edd9))
 * **android:** pin jadx-headless-mcp 0.8.0 ([3ca89d8](https://github.com/morluto/rea/commit/3ca89d8272b3d8e49580ed261753ad6780df2839))
@@ -118,6 +119,7 @@
 * **desktop:** skip only ASCII whitespace before a desktop entry key ([#13126](https://github.com/morluto/rea/issues/13126)) ([a44e705](https://github.com/morluto/rea/commit/a44e705ad820d24e95577b4f61a3dc633ca4fcb8))
 * **docs:** align translated READMEs and verify catalog links ([d2a8b8d](https://github.com/morluto/rea/commit/d2a8b8d3d639827a9800fc4dea16fd772573b054))
 * **doctor:** report startup timeouts independently of launcher discovery ([#13420](https://github.com/morluto/rea/issues/13420)) ([255a585](https://github.com/morluto/rea/commit/255a585c0a06975d0855f169f5e80663b642658d))
+* **dwarf:** reject PE long section names when PointerToSymbolTable is zero ([#13889](https://github.com/morluto/rea/issues/13889)) ([a46bc22](https://github.com/morluto/rea/commit/a46bc22117928c04e2aefee04d629597b3393378))
 * **electron:** preserve inspection frame identity and diagnostics ([#13232](https://github.com/morluto/rea/issues/13232)) ([04d399d](https://github.com/morluto/rea/commit/04d399d67539fa9fbf07a2ce6d93b058808c7101))
 * **electron:** preserve waits and cancellation through renderer shutdown ([#12972](https://github.com/morluto/rea/issues/12972)) ([2533a8b](https://github.com/morluto/rea/commit/2533a8b32bf2d8e4c052f6ea5c7e616a93660a9f))
 * **electron:** resolve exact local IPC channel values ([#13005](https://github.com/morluto/rea/issues/13005)) ([e66a27c](https://github.com/morluto/rea/commit/e66a27c2f2bb294a0506e6d2d6cf9d2f0125b9e2))
@@ -487,6 +489,7 @@
 * **artifacts:** reuse the positional reader for iNES prefixes ([#13481](https://github.com/morluto/rea/issues/13481)) ([b6ffec4](https://github.com/morluto/rea/commit/b6ffec43adeec2d7b57ef49b894425e8b0d36d0a))
 * **artifacts:** share cached prefix reader and ELF/MZ magic ([#13663](https://github.com/morluto/rea/issues/13663)) ([baed75f](https://github.com/morluto/rea/commit/baed75fc2b3a723144d46fdfb206b50bd03c6698))
 * **cli:** extract contractCliDescriptionTypes from contractCliDescription ([#13729](https://github.com/morluto/rea/issues/13729)) ([f3ff526](https://github.com/morluto/rea/commit/f3ff526f28f3da36b5236e89d4350f5f2e7a7d9b))
+* **cli:** extract contractCliSchemaProjection and contractCliDocumentDescription ([#13871](https://github.com/morluto/rea/issues/13871)) ([35d72ad](https://github.com/morluto/rea/commit/35d72ad77f287313bcc5c89fe2ec278d48e8928a))
 * **cli:** extract contractCommandRunners from contractCommand ([#13869](https://github.com/morluto/rea/issues/13869)) ([39ddf00](https://github.com/morluto/rea/commit/39ddf00236d0eecb452647a654db623a4f057c83))
 * **cli:** extract contractDocumentCommand from contractCommand ([#13782](https://github.com/morluto/rea/issues/13782)) ([3c5c652](https://github.com/morluto/rea/commit/3c5c6522b5d24aefd5fa3ba67c64adc2c18c2e63))
 * **cli:** extract routedContractCommand from contractCommand ([#13837](https://github.com/morluto/rea/issues/13837)) ([4707f45](https://github.com/morluto/rea/commit/4707f45ac240313e928c0ac304edcb33885c0ff2)), closes [#13836](https://github.com/morluto/rea/issues/13836)
