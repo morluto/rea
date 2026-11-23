@@ -19,6 +19,7 @@ import { PeCertificatesProvider } from "../../../src/native/pe/PeCertificatesPro
 import { PeImportsProvider } from "../../../src/native/pe/PeImportsProvider.js";
 import { elfNoteFixture } from "../../../src/native/elf/ElfNotes.fixture.js";
 import { ElfNotesProvider } from "../../../src/native/elf/ElfNotesProvider.js";
+import { kernelModuleFixture } from "../../../src/native/elf/KernelModule.fixture.js";
 import { KernelModuleProvider } from "../../../src/native/elf/KernelModuleProvider.js";
 import { ElfDependenciesProvider } from "../../../src/native/elf/ElfDependenciesProvider.js";
 import { NativeExportsProvider } from "../../../src/native/exports/NativeExportsProvider.js";
@@ -84,6 +85,7 @@ const cases = [
   },
   {
     name: "kernel modules",
+    fixture: kernelModuleFixture,
     make: () => {
       const provider = new KernelModuleProvider();
       return {
