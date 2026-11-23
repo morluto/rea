@@ -270,20 +270,35 @@ it("recovers two ELF64 ranges, an indirect personality, and a header mismatch", 
   );
 });
 
-it("agrees with a header whose search table names the same FDE starts", async () => {
-  const report = await parse(elfUnwindFixture({ header: "match" }));
-  expect(report.coverage.eh_frame_hdr_agreement).toBe("agree");
-  expect(report.coverage.status).toBe("complete");
-  expect(report.eh_frame_hdr).toMatchObject({
-    status: "present",
-    version: 1,
-    fde_count: 2,
-    table_entries: 2,
-    eh_frame_pointer: "0x401000",
-  });
-  expect(report.limitations).not.toContain(
-    "The .eh_frame_hdr binary search table does not match the decoded FDEs.",
-  );
+it("keeps separate symbol terminators in either order under an agreeing header", async () => {
+  const bytes = elfUnwindFixture({ header: "match" });
+  const { offset } = findSection(bytes, ".symtab");
+  const alpha = bytes.readUInt32LE(offset + 24);
+  const mid = bytes.readUInt32LE(offset + 48);
+  bytes.writeBigUInt64LE(BigInt(UNWIND_FN_B), offset + 48 + 8);
+  for (const [first, second, names] of [
+    [alpha, mid, ["alpha", "mid"]],
+    [mid, alpha, ["mid", "alpha"]],
+  ] as const) {
+    bytes.writeUInt32LE(first, offset + 24);
+    bytes.writeUInt32LE(second, offset + 48);
+    const report = await parse(bytes);
+    expect(report.ranges.map(({ symbol }) => symbol?.text)).toEqual(names);
+    expect(report.coverage).toMatchObject({
+      status: "complete",
+      eh_frame_hdr_agreement: "agree",
+    });
+    expect(report.eh_frame_hdr).toMatchObject({
+      status: "present",
+      version: 1,
+      fde_count: 2,
+      table_entries: 2,
+      eh_frame_pointer: "0x401000",
+    });
+    expect(report.limitations).not.toContain(
+      "The .eh_frame_hdr binary search table does not match the decoded FDEs.",
+    );
+  }
 });
 
 it.each([
@@ -1256,6 +1271,7 @@ it("reads only the selected symbol name when adjacent ranges share string bytes"
   const bytes = elfUnwindFixture({ header: "absent", suffixNames: 2 });
   const { offset } = findSection(bytes, ".strtab");
   const reads: { offset: number; length: number }[] = [];
+  stringTable.observed.length = 0;
   const page = { offset: 2, limit: 1 };
   const report = await parse(bytes, page, async (at, length) => {
     if (at === offset + 1 || at === offset + 2)
@@ -1273,6 +1289,28 @@ it("reads only the selected symbol name when adjacent ranges share string bytes"
   expect(reads.filter(({ length }) => length < 65536)).toEqual([
     { offset: offset + 1, length: 65535 },
   ]);
+  expect(stringTable.observed.filter((length) => length >= 65534)).toEqual([
+    65535,
+  ]);
+});
+
+it("refills a symbol window that ends before a different name's terminator", async () => {
+  const fixture = elfUnwindFixture({ header: "absent", suffixNames: 2 });
+  const { headerOffset } = findSection(fixture, ".strtab");
+  const { offset: symbols } = findSection(fixture, ".symtab");
+  const first = "a".repeat(32768);
+  const second = "b".repeat(32768);
+  const strings = Buffer.from(`\0${first}\0${second}\0`, "latin1");
+  const bytes = Buffer.concat([fixture, strings]);
+  bytes.writeBigUInt64LE(BigInt(fixture.length), headerOffset + 24);
+  bytes.writeBigUInt64LE(BigInt(strings.length), headerOffset + 32);
+  bytes.writeUInt32LE(first.length + 2, symbols + 48);
+  const report = await parse(bytes, { offset: 2, limit: 2 });
+  expect(report.ranges.map(({ symbol }) => symbol?.text)).toEqual([
+    first,
+    second,
+  ]);
+  expect(report.coverage.ranges_with_symbols).toBe(2);
 });
 
 it("completes a CIE whose fields follow a NUL at the read window boundary", async () => {
