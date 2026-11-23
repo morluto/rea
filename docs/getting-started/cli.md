@@ -1534,7 +1534,7 @@ before stdout receives the document. Large results use a private file in the
 system temporary directory until delivery finishes and need free space there.
 If closing or removing that stage fails, CLI shutdown retains and retries its
 cleanup in order. The reported cleanup failure preserves any original formatting
-or temporary-storage refusal. SIGINT/SIGTERM remain owned through staging,
+or temporary-storage refusal. SIGINT/SIGTERM/SIGBREAK remain owned through staging,
 delivery and cleanup: pending I/O settles before further writes stop and the
 stage is removed.
 A document can exceed the runtime's string limit when each encoded line fits.

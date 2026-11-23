@@ -818,15 +818,20 @@ const withProcessCancellation = async <Value>(
     controller.abort(CallerAbort.forProcessSignal("SIGINT"));
   const terminate = (): void =>
     controller.abort(CallerAbort.forProcessSignal("SIGTERM"));
+  const breakSignal = (): void =>
+    controller.abort(CallerAbort.forProcessSignal("SIGBREAK"));
   // Package runners can forward a terminal interrupt after REA already received
-  // it directly. Keep both guards installed until provider cleanup has settled.
+  // it directly. Keep the guards installed until provider cleanup has settled.
+  // SIGBREAK is how Windows delivers Ctrl+Break; the listener is inert elsewhere.
   process.on("SIGINT", interrupt);
   process.on("SIGTERM", terminate);
+  process.on("SIGBREAK", breakSignal);
   try {
     return await operation(controller.signal);
   } finally {
     process.off("SIGINT", interrupt);
     process.off("SIGTERM", terminate);
+    process.off("SIGBREAK", breakSignal);
   }
 };
 

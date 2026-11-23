@@ -10,6 +10,7 @@ import { CallerAbort } from "../../../src/domain/analysisErrorCore.js";
 it.each([
   ["SIGINT", 130, "interrupt"],
   ["SIGTERM", 143, "terminate"],
+  ["SIGBREAK", 149, "break"],
 ] as const)(
   "awaits cleanup after %s and removes its listeners",
   async (event, expectedExit, expectedKind) => {
@@ -38,6 +39,7 @@ it.each([
     expect(host.exitCode).toBe(expectedExit);
     expect(events.listenerCount("SIGINT")).toBe(0);
     expect(events.listenerCount("SIGTERM")).toBe(0);
+    expect(events.listenerCount("SIGBREAK")).toBe(0);
   },
 );
 
@@ -59,6 +61,7 @@ it("leaves the exit code alone on success and removes listeners when execution t
   ).rejects.toThrow("fixture failure");
   expect(events.listenerCount("SIGINT")).toBe(0);
   expect(events.listenerCount("SIGTERM")).toBe(0);
+  expect(events.listenerCount("SIGBREAK")).toBe(0);
 });
 
 it("retains signals after operation settlement until its resource close succeeds", () => {
@@ -82,4 +85,5 @@ it("retains signals after operation settlement until its resource close succeeds
   scope.close();
   expect(events.listenerCount("SIGINT")).toBe(0);
   expect(events.listenerCount("SIGTERM")).toBe(0);
+  expect(events.listenerCount("SIGBREAK")).toBe(0);
 });
