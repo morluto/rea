@@ -20,11 +20,14 @@ import {
 } from "../domain/parseFailureAnalysisError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
-  ArtifactReaderFailure,
   artifactFixedLimitFailure,
   readStableArtifact,
   translateArtifactFailure,
 } from "../resources/index.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
 import { LABVIEW_PROVIDER_IDENTITY } from "./LabviewProviderIdentity.js";
 import {
   findEmbeddedRsrcContainers,
@@ -39,7 +42,7 @@ const RSRC_MAGIC = "RSRC\r\n";
 /** Release-fixed input ceiling, stated so the refusal keeps its recovery. */
 const INPUT_ALLOWANCE = {
   kind: "input",
-  name: "The LabVIEW artifact input allowance",
+  name: "The 256 MiB LabVIEW artifact input allowance",
   limit: MAX_BYTES,
   unit: "bytes",
 } as const;
@@ -78,6 +81,32 @@ const limitCause = (
   error.failure.kind === "limit"
     ? (error as ParseFailureError<"limit">)
     : undefined;
+
+/**
+ * How this reader classifies a failed read: the shared classifier owns
+ * cancellation, cleanup retention, and path/format projection, and this
+ * dialect supplies only the LabVIEW-specific raw causes.
+ */
+export const labviewReadDialect = (path: string): ProviderFailureDialect => ({
+  providerId: LABVIEW_PROVIDER_IDENTITY.id,
+  operation: OPERATION,
+  file: {
+    path,
+    description: "LabVIEW artifact",
+    // Restate the release-fixed ceiling as an allowance with its recovery.
+    fileSize: (_failure, details) =>
+      translateArtifactFailure(
+        OPERATION,
+        artifactFixedLimitFailure(
+          INPUT_ALLOWANCE,
+          `The selected artifact exceeds the ${String(MAX_BYTES)}-byte LabVIEW input allowance: ${path}`,
+          "file-size",
+          details,
+        ),
+      ),
+  },
+  unclassified: (cause) => translateArtifactFailure(OPERATION, cause),
+});
 
 /** One parser or walk limit, with the fixed allowance that owns its recovery. */
 const limitFailure = (cause: ParseFailureError<"limit">) => {
@@ -138,24 +167,9 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
     } catch (cause) {
       // The stable read records its own cancellation and cleanup facts. Only
       // the release-fixed input ceiling needs this provider's own allowance.
-      if (
-        cause instanceof ArtifactReaderFailure &&
-        cause.reason === "limit" &&
-        cause.boundary === "file-size" &&
-        cause.fixedAllowance === undefined
-      )
-        return err(
-          translateArtifactFailure(
-            OPERATION,
-            artifactFixedLimitFailure(
-              INPUT_ALLOWANCE,
-              `The selected artifact exceeds the ${String(MAX_BYTES)}-byte LabVIEW input allowance: ${input.path}`,
-              "file-size",
-              { cause },
-            ),
-          ),
-        );
-      return err(translateArtifactFailure(OPERATION, cause));
+      return err(
+        classifyProviderFailure(cause, labviewReadDialect(input.path)),
+      );
     }
     const laterCancellation = cancellation();
     if (laterCancellation !== undefined) return err(laterCancellation);

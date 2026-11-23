@@ -4,7 +4,12 @@ import { describe, expect, it } from "vitest";
 
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseLabviewRsrc } from "./LabviewRsrc.js";
-import { LabviewArtifactProvider } from "./LabviewArtifactProvider.js";
+import {
+  LabviewArtifactProvider,
+  labviewReadDialect,
+} from "./LabviewArtifactProvider.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import {
   buildLabviewRsrc,
   labviewContainer,
@@ -55,6 +60,17 @@ describe("parseLabviewRsrc", () => {
       coding: "xor",
       decodedBytes: null,
     });
+  });
+
+  it("finds no version in a long digit-only section without rescanning", () => {
+    // The bounded single-pass scan must not backtrack over the digit run.
+    const parsed = parseLabviewRsrc(
+      buildLabviewRsrc([
+        { ident: "vers", sections: [Buffer.alloc(200_000, 0x30)] },
+      ]),
+    );
+    if (!parsed.ok) throw new Error(parsed.failure.message);
+    expect(parsed.value.labviewVersion).toBeNull();
   });
 
   it("fails a truncated or non-RSRC container instead of returning a partial inventory", () => {
@@ -116,6 +132,43 @@ describe("LabviewArtifactProvider", () => {
       expect(result.error.cause).toBe(reason);
     }
     await provider.close();
+  });
+
+  it("keeps failed cleanup with the input-size refusal", () => {
+    const path = "/artifact/fixture.vi";
+    const cause = new ArtifactReaderFailure(
+      "limit",
+      "Selected artifact exceeds the input allowance",
+      {
+        boundary: "file-size",
+        cleanup: { reason: "descriptor close failed", resources: [path] },
+      },
+    );
+    const projected = classifyProviderFailure(cause, labviewReadDialect(path));
+    expect(projected.cleanupIncomplete).toBe(true);
+    expect(projected.cleanupResources).toContain(path);
+    const publicView = projectAnalysisError(projected);
+    expect(publicView.details).toMatchObject({
+      boundary: "file-size",
+      truncated: true,
+    });
+  });
+
+  it("states the input allowance when the size refusal has no pending cleanup", () => {
+    const path = "/artifact/fixture.vi";
+    const cause = new ArtifactReaderFailure(
+      "limit",
+      "Selected artifact exceeds the input allowance",
+      {
+        boundary: "file-size",
+      },
+    );
+    const projected = classifyProviderFailure(cause, labviewReadDialect(path));
+    const publicView = projectAnalysisError(projected);
+    expect(publicView.details).toMatchObject({ boundary: "file-size" });
+    expect(publicView.remediation.action).toContain(
+      "256 MiB LabVIEW artifact input allowance",
+    );
   });
 
   it("reports heap presence as unknown when content was not examined", async () => {

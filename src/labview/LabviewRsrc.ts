@@ -135,12 +135,44 @@ const sectionName = (
   return reader.range(at + 1, length, "section name").toString("latin1");
 };
 
+/** Bytes of a `vers` section searched for a version; the value is at its start. */
+const MAX_VERSION_SCAN_BYTES = 64 * 1024;
+
+const isDecimalDigit = (code: number): boolean => code >= 0x30 && code <= 0x39;
+
+/**
+ * The first `major.minor` decimal pair in one bounded, single pass. A regex
+ * backtracks over a long digit run (quadratic on a digit-only section), so this
+ * scan advances once per byte and never revisits them.
+ */
+const firstVersion = (section: Uint8Array): string | null => {
+  const text = Buffer.from(
+    section.subarray(0, MAX_VERSION_SCAN_BYTES),
+  ).toString("latin1");
+  for (let index = 0; index < text.length; index += 1) {
+    if (!isDecimalDigit(text.charCodeAt(index))) continue;
+    let majorEnd = index;
+    while (majorEnd < text.length && isDecimalDigit(text.charCodeAt(majorEnd)))
+      majorEnd += 1;
+    if (text.charCodeAt(majorEnd) !== 0x2e) {
+      index = majorEnd - 1;
+      continue;
+    }
+    let minorEnd = majorEnd + 1;
+    const minorStart = minorEnd;
+    while (minorEnd < text.length && isDecimalDigit(text.charCodeAt(minorEnd)))
+      minorEnd += 1;
+    if (minorEnd > minorStart) return text.slice(index, minorEnd);
+    index = majorEnd;
+  }
+  return null;
+};
+
 /** The LabVIEW version recorded by a vers section, or null when none is legible. */
 const versionOf = (sections: readonly Uint8Array[]): string | null => {
   for (const section of sections) {
-    const text = Buffer.from(section).toString("latin1");
-    const match = /\d+\.\d+/u.exec(text);
-    if (match !== null) return match[0];
+    const version = firstVersion(section);
+    if (version !== null) return version;
   }
   return null;
 };
