@@ -7,6 +7,7 @@ import {
   uniqueKeyed,
 } from "../../domain/keyedCollection.js";
 import {
+  ArtifactReaderFailure,
   assertArtifactReadActive,
   yieldArtifactRead,
 } from "../../resources/index.js";
@@ -318,6 +319,11 @@ export const parseElfUnwindRangesFromHandle = async (
       source.prefix !== undefined && offset + length <= source.prefix.length
         ? source.prefix.subarray(offset, offset + length)
         : await source.readRange(offset, length);
+    if (slice.length !== length)
+      throw new ArtifactReaderFailure(
+        "format",
+        "ELF unwind range ended before its admitted file extent.",
+      );
     next = steps.next(slice);
   }
   return next.value;
@@ -1036,15 +1042,33 @@ function* elfUnwindRangesSteps(
         ) {
           yield* ensureFrameWindow(recordStart, recordEnd - recordStart);
         }
-        const cie = decodeCie({
+        const cie = yield* decodeCie({
           recordStart,
           recordEnd,
           body: body + idWidth,
           findNul: winAccess.findNul,
           subarray: winAccess.subarray,
-          readU8: winAccess.readU8,
-          readLeb: winAccess.readLeb,
-          readEncoded: winAccess.readEncoded,
+          *readU8(offset, end) {
+            if (offset >= end) return null;
+            yield* ensureFrameWindow(offset, 1);
+            return winAccess.readU8(offset, end);
+          },
+          *readLeb(offset, end, signed) {
+            if (offset >= end) return null;
+            yield* ensureFrameWindow(
+              offset,
+              Math.min(Math.ceil(ULEB64.bits / 7), end - offset),
+            );
+            return winAccess.readLeb(offset, end, signed);
+          },
+          *readEncoded(offset, end, encoding, bases) {
+            if (offset < end)
+              yield* ensureFrameWindow(
+                offset,
+                Math.min(MAX_ENCODED_POINTER_BYTES, end - offset),
+              );
+            return winAccess.readEncoded(offset, end, encoding, bases);
+          },
           safeInt,
           encodingOf,
           datarel: gotBase?.address ?? null,
@@ -1153,15 +1177,12 @@ function* elfUnwindRangesSteps(
     if (symbols.has(range.startValue)) withSymbols += 1;
   const decodeName = symbolNameDecoder();
   // Names and address strings are formatted only for the returned page.
-  const pageRows = (
-    input.offset >= ranges.length
-      ? []
-      : ranges.slice(input.offset, input.offset + input.limit)
-  ).map((range) => {
+  const pageRows: ElfUnwindRanges["ranges"] = [];
+  for (const range of ranges.slice(input.offset, input.offset + input.limit)) {
     const symbol = symbols.get(range.startValue)?.name;
     const section = containingSection?.(range.startValue) ?? null;
     const endValue = BigInt.asUintN(bits, range.startValue + range.sizeValue);
-    return {
+    pageRows.push({
       index: range.index,
       start: hex(range.startValue),
       end: hex(endValue),
@@ -1175,7 +1196,7 @@ function* elfUnwindRangesSteps(
       symbol:
         symbol === undefined
           ? null
-          : { text: decodeName(symbol), trust: "untrusted" as const },
+          : { text: yield* decodeName(symbol), trust: "untrusted" as const },
       cie_index: range.cie_index,
       lsda:
         range.lsda === null
@@ -1186,8 +1207,8 @@ function* elfUnwindRangesSteps(
             },
       personality: range.personality,
       location: range.location,
-    };
-  });
+    });
+  }
   const pageCieIndexes = new Set(pageRows.map((range) => range.cie_index));
   const pageCies = cies.filter((cie) => pageCieIndexes.has(cie.index));
   const agreement = headerAgreement(
@@ -1655,25 +1676,34 @@ const minimumEncodedBytes = (encoding: number, addressSize: 4 | 8): number => {
   }
 };
 
-const decodeCie = (args: {
+const decodeCie = function* (args: {
   readonly recordStart: number;
   readonly recordEnd: number;
   readonly body: number;
   readonly findNul: (start: number, end: number) => number;
   readonly subarray: (start: number, end: number) => Buffer;
-  readonly readU8: (offset: number, end: number) => number | null;
+  readonly readU8: (
+    offset: number,
+    end: number,
+  ) => Generator<ReadStep, number | null, Buffer>;
   readonly readLeb: (
     offset: number,
     end: number,
     signed: boolean,
-  ) => { readonly value: bigint; readonly next: number } | null;
-  readonly readEncoded: ReadEncoded;
+  ) => Generator<ReadStep, ReturnType<SliceAccessors["readLeb"]>, Buffer>;
+  readonly readEncoded: (
+    ...args: Parameters<ReadEncoded>
+  ) => Generator<ReadStep, ReturnType<ReadEncoded>, Buffer>;
   readonly safeInt: (value: bigint) => number | null;
   readonly encodingOf: (raw: number) => Encoding;
   readonly datarel: bigint | null;
   readonly textrel: bigint | null;
   readonly fail: (text: string) => void;
-}): Omit<CieRecord, "index"> | "unknown-augmentation" | null => {
+}): Generator<
+  ReadStep,
+  Omit<CieRecord, "index"> | "unknown-augmentation" | null,
+  Buffer
+> {
   const {
     recordStart,
     recordEnd,
@@ -1689,7 +1719,7 @@ const decodeCie = (args: {
     textrel,
     fail,
   } = args;
-  const version = readU8(body, recordEnd);
+  const version = yield* readU8(body, recordEnd);
   if (version === null) {
     fail("A CIE record is truncated.");
     return null;
@@ -1706,12 +1736,12 @@ const decodeCie = (args: {
     fail(`CIE version ${String(version)} is not decoded.`);
     return null;
   }
-  const code = readLeb(cursor, recordEnd, false);
+  const code = yield* readLeb(cursor, recordEnd, false);
   if (code === null) {
     fail("A CIE record is truncated.");
     return null;
   }
-  const data = readLeb(code.next, recordEnd, true);
+  const data = yield* readLeb(code.next, recordEnd, true);
   if (data === null) {
     fail("A CIE record is truncated.");
     return null;
@@ -1725,10 +1755,10 @@ const decodeCie = (args: {
   cursor = data.next;
   let returnAddress: number | null;
   if (version === 1) {
-    returnAddress = readU8(cursor, recordEnd);
+    returnAddress = yield* readU8(cursor, recordEnd);
     cursor += 1;
   } else {
-    const register = readLeb(cursor, recordEnd, false);
+    const register = yield* readLeb(cursor, recordEnd, false);
     if (register === null) {
       fail("A CIE record is truncated.");
       return null;
@@ -1743,7 +1773,7 @@ const decodeCie = (args: {
   const hasZ = augmentation[0] === AUG_Z;
   let augEnd = cursor;
   if (hasZ) {
-    const length = readLeb(cursor, recordEnd, false);
+    const length = yield* readLeb(cursor, recordEnd, false);
     if (length === null) {
       fail("A CIE augmentation length is truncated.");
       return null;
@@ -1768,7 +1798,7 @@ const decodeCie = (args: {
   const letters = hasZ ? augmentation.subarray(1) : augmentation;
   for (const letter of letters) {
     if (letter === AUG_L) {
-      const raw = readU8(cursor, hasZ ? augEnd : recordEnd);
+      const raw = yield* readU8(cursor, hasZ ? augEnd : recordEnd);
       if (raw === null) {
         fail("A CIE augmentation is truncated.");
         return null;
@@ -1776,17 +1806,22 @@ const decodeCie = (args: {
       lsda = encodingOf(raw);
       cursor += 1;
     } else if (letter === AUG_P) {
-      const raw = readU8(cursor, hasZ ? augEnd : recordEnd);
+      const raw = yield* readU8(cursor, hasZ ? augEnd : recordEnd);
       if (raw === null) {
         fail("A CIE augmentation is truncated.");
         return null;
       }
-      const encoded = readEncoded(cursor + 1, hasZ ? augEnd : recordEnd, raw, {
-        datarel,
-        textrel,
-        funcrel: null,
-        lengthOnly: false,
-      });
+      const encoded = yield* readEncoded(
+        cursor + 1,
+        hasZ ? augEnd : recordEnd,
+        raw,
+        {
+          datarel,
+          textrel,
+          funcrel: null,
+          lengthOnly: false,
+        },
+      );
       if (encoded === null || encoded === "omit") {
         fail("A CIE personality pointer could not be decoded.");
         return null;
@@ -1798,7 +1833,7 @@ const decodeCie = (args: {
       };
       cursor = encoded.next;
     } else if (letter === AUG_R) {
-      const raw = readU8(cursor, hasZ ? augEnd : recordEnd);
+      const raw = yield* readU8(cursor, hasZ ? augEnd : recordEnd);
       if (raw === null) {
         fail("A CIE augmentation is truncated.");
         return null;
@@ -1958,8 +1993,13 @@ const decodeFde = (args: {
   };
 };
 
-/** A readable, non-empty symbol name still held as string-table bytes. */
-type SymbolName = Extract<ElfStringTableObservation, { state: "terminated" }>;
+/** The source range of a validated NUL-terminated symbol name. */
+type SymbolName = Omit<
+  Extract<ElfStringTableObservation, { state: "terminated" }>,
+  "bytes"
+> & {
+  readonly offset: number;
+};
 
 interface MatchedSymbol {
   readonly name: SymbolName;
@@ -1970,7 +2010,7 @@ interface MatchedSymbol {
 /**
  * Exact-start symbol names for the FDE starts in `wanted`. Candidate records
  * are filtered on decoded symbol facts before reading names,
- * and each name stays a view of the string table decoded only for returned rows.
+ * and each name retains only its location and length until page selection.
  */
 function* scanSymbols(
   directory: ReturnType<typeof readElfDirectoryFromBuffer>,
@@ -2124,7 +2164,12 @@ function* scanSymbols(
         }
         name =
           observed.state === "terminated"
-            ? { ...observed, bytes: Buffer.from(observed.bytes) }
+            ? {
+                state: observed.state,
+                contentBytes: observed.contentBytes,
+                examinedBytes: observed.examinedBytes,
+                offset: strStart + nameOffset,
+              }
             : null;
         names.set(nameOffset, name);
       }
@@ -2160,10 +2205,12 @@ function* scanSymbols(
  * Decode returned symbol names once each, charging their text against a fixed
  * allowance before converting it.
  */
-const symbolNameDecoder = (): ((name: SymbolName) => string) => {
+const symbolNameDecoder = (): ((
+  name: SymbolName,
+) => Generator<ReadStep, string, Buffer>) => {
   const decoded = new Map<SymbolName, string>();
   let charged = 0;
-  return (name) => {
+  return function* (name) {
     const cached = decoded.get(name);
     if (cached !== undefined) return cached;
     charged += name.contentBytes;
@@ -2176,7 +2223,8 @@ const symbolNameDecoder = (): ((name: SymbolName) => string) => {
           maximum: MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES,
         },
       );
-    const text = elfStringTableText(name) ?? "";
+    const bytes = yield* readSlice(name.offset, name.contentBytes);
+    const text = elfStringTableText({ ...name, bytes });
     decoded.set(name, text);
     return text;
   };
