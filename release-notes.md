@@ -2,7 +2,7 @@
 ---
 
 
-## [6.11.0](https://github.com/morluto/rea/compare/rea-agents-6.10.1...rea-agents-6.11.0) (2026-11-22)
+## [6.11.0](https://github.com/morluto/rea/compare/rea-agents-6.10.1...rea-agents-6.11.0) (2026-11-23)
 
 
 ### Features
@@ -132,6 +132,7 @@
 * **evidence:** reject unknown fields in comparison record pairs ([#13523](https://github.com/morluto/rea/issues/13523)) ([0eaea65](https://github.com/morluto/rea/commit/0eaea650c0c91574c66e5383073397d652bb42eb))
 * **exports:** bind provider caveats to accepted observations ([#13430](https://github.com/morluto/rea/issues/13430)) ([ac3f83f](https://github.com/morluto/rea/commit/ac3f83f0f2172448c5a61872107ec4882d665360))
 * **firmware:** honor the final Android OTA timestamp record ([#13373](https://github.com/morluto/rea/issues/13373)) ([e84668c](https://github.com/morluto/rea/commit/e84668c76be4df40963dbd83f84803ec812f64c5))
+* **firmware:** report malformed linux,phandle and leave references unresolved ([#13734](https://github.com/morluto/rea/issues/13734)) ([b0216a0](https://github.com/morluto/rea/commit/b0216a0a7ae1c56a5a6d01dc08ca820b5ebdceb3))
 * **flutter:** distinguish Dart snapshot exports from local symbols ([#13576](https://github.com/morluto/rea/issues/13576)) ([3c74128](https://github.com/morluto/rea/commit/3c741283530bb400531540f96b85134d6a7bd029))
 * **flutter:** preserve build IDs beside invalid note extents ([#13577](https://github.com/morluto/rea/issues/13577)) ([7d6c771](https://github.com/morluto/rea/commit/7d6c77106260b086717ef98e695c31257539b0e4))
 * **frida:** explain refused ptrace seize during injection ([317f90e](https://github.com/morluto/rea/commit/317f90e023a96f18695790efbe903fb39a4e6b85)), closes [#9103](https://github.com/morluto/rea/issues/9103)
@@ -188,9 +189,11 @@
 * **native:** validate SHT_GNU_HASH bounds and fall back to DT_GNU_HASH ([#13713](https://github.com/morluto/rea/issues/13713)) ([e6b30f9](https://github.com/morluto/rea/commit/e6b30f945ec214e05ca13c36874e155737a6d4cb))
 * **pe:** exclude section padding from RVA metadata reads ([#12755](https://github.com/morluto/rea/issues/12755)) ([c5b5d9f](https://github.com/morluto/rea/commit/c5b5d9f7ea3f0f32a3ebf0834314ae3888ab4132))
 * **pe:** keep pefile's unrounded raw offset for a sub-page section ([985fa2f](https://github.com/morluto/rea/commit/985fa2fac939d0da5de31d59a4df055d90df1cd8))
+* **pe:** preserve TLS section ownership across named ranges ([#13743](https://github.com/morluto/rea/issues/13743)) ([9808545](https://github.com/morluto/rea/commit/9808545d6f57e3a3d4d0f87773f8111d4531ac6f))
 * **process:** name the fixed finalization delivery grace ([ab47c97](https://github.com/morluto/rea/commit/ab47c970a7bdbcda8df9e54242c05fce8b068d02))
 * **process:** record PTY session-leader SIGHUP limitation in Evidence ([95dfbae](https://github.com/morluto/rea/commit/95dfbae68e31a01901deab358db572c472866bcf))
 * **process:** retain proven file differences with partial coverage ([#13364](https://github.com/morluto/rea/issues/13364)) ([ec29a6d](https://github.com/morluto/rea/commit/ec29a6deae22ba82c5a88db092fbe65bd03b8bd4))
+* **process:** retain stdout collection failures through cleanup ([#13725](https://github.com/morluto/rea/issues/13725)) ([835ed06](https://github.com/morluto/rea/commit/835ed060dd9783d42eb815f33a83f6b3654b60ea))
 * **process:** retain synchronous command launch failures ([#13350](https://github.com/morluto/rea/issues/13350)) ([3a36311](https://github.com/morluto/rea/commit/3a3631100480109a7d2ef8b9ac8ff1f58df5904e))
 * **process:** verify nested worker exit after parent cleanup ([#13242](https://github.com/morluto/rea/issues/13242)) ([75a75a1](https://github.com/morluto/rea/commit/75a75a1bd14eeec233650623e8b839bdf26b793d))
 * **pwntools:** release each PLT emulator so CET binaries keep their PLT map ([#13213](https://github.com/morluto/rea/issues/13213)) ([6357f77](https://github.com/morluto/rea/commit/6357f775a01f623b96603cf6237951a5c57a0a93))
@@ -213,6 +216,7 @@
 * **setup:** recognize DSH registrations nested in Cordis groups ([#13037](https://github.com/morluto/rea/issues/13037)) ([9fd8c8d](https://github.com/morluto/rea/commit/9fd8c8d90331a16164a9849d56bf84ed8682b139))
 * **setup:** refuse Hermes profiles with an unreadable deletion marker ([#13296](https://github.com/morluto/rea/issues/13296)) ([625bd4b](https://github.com/morluto/rea/commit/625bd4b70aaf920623557e2639e8c2809604998a))
 * **setup:** register aube's bin shim instead of its versioned store path ([#5311](https://github.com/morluto/rea/issues/5311)) ([abba1f4](https://github.com/morluto/rea/commit/abba1f43bb08f71af584a1b4d26895f1e1ece90b))
+* **setup:** reject impossible Hopper archive lengths before download ([#13737](https://github.com/morluto/rea/issues/13737)) ([d7ccd30](https://github.com/morluto/rea/commit/d7ccd30985737470183a8876d9a9f8b87f953e5e))
 * **setup:** unify OpenCode layer resolution and alias ownership ([#13226](https://github.com/morluto/rea/issues/13226)) ([d6c4776](https://github.com/morluto/rea/commit/d6c4776e651474728b17f984346bdf4481d1b55e))
 * **setup:** use Windows launch settings for registration deadlines ([#13512](https://github.com/morluto/rea/issues/13512)) ([411f8a4](https://github.com/morluto/rea/commit/411f8a434275228a5ba735211773a7587f3dbcd1))
 * **setup:** verify restored files before reporting rollback ([#13491](https://github.com/morluto/rea/issues/13491)) ([a329ce6](https://github.com/morluto/rea/commit/a329ce621af3b4d25a8205c0d014aa17b706f746))
@@ -258,6 +262,7 @@
 * **analysis-view:** retain frozen snapshots across parent readers and index view lookups ([#13315](https://github.com/morluto/rea/issues/13315)) ([1854918](https://github.com/morluto/rea/commit/185491879816fccd925ec2f75cd1ed2146423845))
 * **android:** reuse stat-verified SHA-256 digests across JADX operations ([#13460](https://github.com/morluto/rea/issues/13460)) ([8601170](https://github.com/morluto/rea/commit/86011705e5c65b2436230ca550ec872dd5dedc85))
 * **apktool/nativeaot:** skip ApktoolDecodeResult deep-clone and index NativeAOT MethodTables by type path ([#13548](https://github.com/morluto/rea/issues/13548)) ([824a994](https://github.com/morluto/rea/commit/824a994ad7e902cd636d7a1b1fedbfaa65c1926e))
+* **app/contracts:** O(N) diff multiset, Set filters, and schema fast path ([#13718](https://github.com/morluto/rea/issues/13718)) ([8cb7b19](https://github.com/morluto/rea/commit/8cb7b1990502f5e5821697c3677df600c6be64bb))
 * **apple-application:** reuse exact bundle ancestor lookup ([#13682](https://github.com/morluto/rea/issues/13682)) ([ac5cdcb](https://github.com/morluto/rea/commit/ac5cdcbd18791c29f128078ed26b4f54c26df1e0))
 * **apple:** eliminate Mach-O multi-pass schema/export re-parses and fuse AppleDispatchCoverage scans ([#13550](https://github.com/morluto/rea/issues/13550)) ([69a691e](https://github.com/morluto/rea/commit/69a691e058e020fc327c0cdaa4709bede3bfe46b))
 * **apple:** parse Mach-O on single open during dylib root discovery and pipeline image SHA-256 hashing ([#13629](https://github.com/morluto/rea/issues/13629)) ([8699e69](https://github.com/morluto/rea/commit/8699e69c191bf1379af1df724e22a0abe87d0eea))
@@ -414,6 +419,7 @@
 * **web:** normalize each browser redaction marker once ([#13172](https://github.com/morluto/rea/issues/13172)) ([6818b01](https://github.com/morluto/rea/commit/6818b01d5aacfdcc119054fec8d985d7b9ccfb5f))
 * **web:** stop repeated accessibility reads after method refusal ([#13191](https://github.com/morluto/rea/issues/13191)) ([3130adb](https://github.com/morluto/rea/commit/3130adbb1bcc69d08eca38337d0baf1391a66961))
 * **windows/artifacts:** add lightweight NTFS MFT attribute accounting and pass cached digest in ReleaseExposureReader ([#13623](https://github.com/morluto/rea/issues/13623)) ([7c13e1c](https://github.com/morluto/rea/commit/7c13e1cb34fc1be3413d94217d4737e0848d63cf))
+* **workers/browser/cli:** buffer JSON writes, wake on signal, optimize queues ([#13698](https://github.com/morluto/rea/issues/13698)) ([cf97961](https://github.com/morluto/rea/commit/cf979613a3ff4586be7fe819545cba02e1b24311))
 
 
 ### Code Refactoring
@@ -431,6 +437,7 @@
 * **artifacts:** migrate NtfsMft, Fit, UImage onto PositionalArtifactReader ([#13650](https://github.com/morluto/rea/issues/13650)) ([af2dba0](https://github.com/morluto/rea/commit/af2dba0859f8b3f1c88b6b150c9d66139092c87c))
 * **artifacts:** reuse the positional reader for iNES prefixes ([#13481](https://github.com/morluto/rea/issues/13481)) ([b6ffec4](https://github.com/morluto/rea/commit/b6ffec43adeec2d7b57ef49b894425e8b0d36d0a))
 * **artifacts:** share cached prefix reader and ELF/MZ magic ([#13663](https://github.com/morluto/rea/issues/13663)) ([baed75f](https://github.com/morluto/rea/commit/baed75fc2b3a723144d46fdfb206b50bd03c6698))
+* **config:** extract ClientConfigurationToml from ClientConfigurationDocument ([#13724](https://github.com/morluto/rea/issues/13724)) ([b42f7c2](https://github.com/morluto/rea/commit/b42f7c24afd5b19c19312c8e893ac3ef62f3cc93))
 * **desktop:** read OpenPGP packet lengths through BinaryReader ([006581b](https://github.com/morluto/rea/commit/006581b838fe64cd2a1b5b22d508c525e92bdf2d)), closes [#11865](https://github.com/morluto/rea/issues/11865)
 * **desktop:** validate task pointer syntax at its shared owner ([7b856fa](https://github.com/morluto/rea/commit/7b856fa5a14d4a361d445c1efd4b1f9037994259))
 * **domain/pe:** unify Asn1BerFailure and PeBinaryFailure ([#13652](https://github.com/morluto/rea/issues/13652)) ([867dacc](https://github.com/morluto/rea/commit/867dacc94688e20a7ab9957c63cd529b5b9729d0))
@@ -443,6 +450,7 @@
 * **errors:** list distinct resources in providerCleanupErrorFromFailures ([13725d2](https://github.com/morluto/rea/commit/13725d2986dda6bb8b9a3ae449408da67da5c360)), closes [#11859](https://github.com/morluto/rea/issues/11859)
 * **filesystem/artifacts:** share createCachedPrefixReader and ELF/MZ magic helpers ([baed75f](https://github.com/morluto/rea/commit/baed75fc2b3a723144d46fdfb206b50bd03c6698))
 * **firmware:** use one cooperative OTA reconstruction path ([#13375](https://github.com/morluto/rea/issues/13375)) ([1f2805e](https://github.com/morluto/rea/commit/1f2805e6c859760205f8cab9309f7ee31944d9b3))
+* **ghidra:** extract GhidraSessionErrorProjection from GhidraProviderClient ([#13722](https://github.com/morluto/rea/issues/13722)) ([7af2896](https://github.com/morluto/rea/commit/7af28969ed36d1875a08b9800ff304dac6484d6a))
 * **ghidra:** require an owned committed project copy ([#13363](https://github.com/morluto/rea/issues/13363)) ([fb6e0dc](https://github.com/morluto/rea/commit/fb6e0dc6e8558fea2931cdfb7280854c0cfbca6c))
 * **hopper:** compose bridge image cleanup through the shared owner ([3ba20f0](https://github.com/morluto/rea/commit/3ba20f0eb8387c2eede14249a32c86ba15fef294)), closes [#11859](https://github.com/morluto/rea/issues/11859)
 * **inspector:** compose provider close failures through the shared owner ([a5f3689](https://github.com/morluto/rea/commit/a5f36891793f2a901326f7443d177ff9e277065d)), closes [#11859](https://github.com/morluto/rea/issues/11859)
@@ -453,6 +461,7 @@
 * **nuget:** select declared manifest occurrences in one pass ([#13402](https://github.com/morluto/rea/issues/13402)) ([4bb5c87](https://github.com/morluto/rea/commit/4bb5c87d2b1a06abcdf26ccf68dfd2551aebd9bd))
 * **pe:** decode certificate BMP and UTF-32 strings through BinaryReader ([6543a3c](https://github.com/morluto/rea/commit/6543a3c1a182aeeb797c3e9e27a3ec887e71d00f)), closes [#11865](https://github.com/morluto/rea/issues/11865)
 * **process:** compose analysis runtime cleanup through the shared owner ([2d36025](https://github.com/morluto/rea/commit/2d360253ddf8c2ab2c0c4a6a3186a8e981a8e090)), closes [#11859](https://github.com/morluto/rea/issues/11859)
+* **regex:** consolidate worker input and deadline proofs ([#13732](https://github.com/morluto/rea/issues/13732)) ([588b257](https://github.com/morluto/rea/commit/588b257e486a3cdb3a02c98681da20375434f02d))
 * **uefi/native:** cache UEFI BinaryReader and reuse hasDosMzMagic ([#13659](https://github.com/morluto/rea/issues/13659)) ([0fc591d](https://github.com/morluto/rea/commit/0fc591da7c2309f59a46933658de8591a4c90c41))
 * **uefi/native:** cache UEFI BinaryReader per buffer and reuse hasDosMzMagic ([0fc591d](https://github.com/morluto/rea/commit/0fc591da7c2309f59a46933658de8591a4c90c41))
 * **verify:** exclude negated .ok checks from the abort-reclassification guard ([a80dc68](https://github.com/morluto/rea/commit/a80dc68318d2b9e2abca08ae5d4eaf1206b83bde)), closes [#11920](https://github.com/morluto/rea/issues/11920)
