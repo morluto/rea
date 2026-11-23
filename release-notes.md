@@ -226,6 +226,7 @@
 * **javascript:** qualify response consumers with uncertain receivers ([a8d714f](https://github.com/morluto/rea/commit/a8d714f0e31f976df4efb2ed47bf9dfa90a86d0c))
 * **javascript:** read the target of method-first request(method, url) calls ([73bc6f4](https://github.com/morluto/rea/commit/73bc6f48c72d02069ef7a3e4f73869cbeeff11bc))
 * **javascript:** reject an http method token Node refuses at the call site ([adf186d](https://github.com/morluto/rea/commit/adf186d5ffb831fb674aa02e5323e579d8710e9c))
+* **javascript:** report no loader call in a program that names no CommonJS loader ([#14191](https://github.com/morluto/rea/issues/14191)) ([998512e](https://github.com/morluto/rea/commit/998512eeb86a682f104e6ac80217c61be292ee9f)), closes [#14190](https://github.com/morluto/rea/issues/14190)
 * **javascript:** resolve literal spreads and const aliases in kill signals ([4bcd0d8](https://github.com/morluto/rea/commit/4bcd0d864a82c89a15c1152516bf0c46fd224731))
 * **javascript:** share widened reference-store propagation ([#12990](https://github.com/morluto/rea/issues/12990)) ([fba5e44](https://github.com/morluto/rea/commit/fba5e44bf5f393dcd6bd3269d88d7101f1586ff0))
 * **javascript:** track shared ESM HTTP agent mutations ([d500638](https://github.com/morluto/rea/commit/d500638d5d4b666cf0b255085ce4d75a29cbc35e))
