@@ -988,7 +988,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           input,
           err(primary),
           cleanup.cleanupResources,
-          cleanup.cleanup?.reason ?? cleanup.message,
+          errorMessage(cleanup.cause),
           retainedOutput,
           cleanup.cause,
         ),
