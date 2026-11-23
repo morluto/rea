@@ -285,8 +285,7 @@ it("runs the published runtime in-process from the owner-private install prefix"
     temp.temporaryRoot,
   );
   const caller = await createTestTempDirectory("rea-published-caller-");
-  // Keep OS PATH so Windows cache admission can resolve powershell.exe;
-  // pin a failing npm entry so a missed ready marker cannot hit the registry.
+  // Pin a failing npm entry so a missed ready marker cannot hit the registry.
   const bin = await createTestTempDirectory("rea-published-missing-npm-");
   const npmEntry = join(bin, "npm-cli.cjs");
   await writeFile(
@@ -1640,8 +1639,7 @@ it.skipIf(process.platform !== "win32")(
       { encoding: "utf8", windowsHide: true },
     );
     expect(foreign.status, foreign.stderr || foreign.stdout).toBe(0);
-    // Keep OS PATH so inspectWindowsPrivateAcl can resolve powershell.exe;
-    // pin a failing npm entry so a missed refusal cannot hit the registry.
+    // Pin a failing npm entry so a missed refusal cannot hit the registry.
     const bin = await createTestTempDirectory("rea-published-foreign-sid-bin-");
     const npmEntry = join(bin, "npm-cli.cjs");
     await writeFile(
@@ -2033,8 +2031,45 @@ process.stdin.on("end", () => { process.exitCode = 0; });
 
 it("owns Windows installer cancellation through taskkill process trees", async () => {
   const source = await readFile(launcher, "utf8");
-  expect(source).toMatch(/taskkill[\s\S]*?\/PID[\s\S]*?\/T[\s\S]*?\/F/u);
-  expect(source).toMatch(/spawnSync\s*\(\s*["']taskkill["']/u);
+  expect(source).toMatch(
+    /windowsTaskkill\(\)[\s\S]*?\/PID[\s\S]*?\/T[\s\S]*?\/F/u,
+  );
+  expect(source).toMatch(/spawnSync\(windowsTaskkill\(\)/u);
+});
+
+it("resolves Windows helpers to absolute System32 paths with a neutral cwd", async () => {
+  const source = await readFile(launcher, "utf8");
+  // Bare-name CreateProcess would search the caller's CWD first; pin helpers
+  // under %SystemRoot%\System32 (WindowsExecutable / WindowsBatchCommand policy)
+  // and inherit the same neutral tmpdir cwd npm already receives.
+  expect(source).toMatch(
+    /process\.env\.SystemRoot\?\.trim\(\)\s*\|\|\s*process\.env\.windir\?\.trim\(\)\s*\|\|\s*"C:\\\\Windows"/u,
+  );
+  expect(source).toMatch(
+    /win32\.join\(windowsSystemRoot\(\), "System32", \.\.\.segments\)/u,
+  );
+  expect(source).toMatch(
+    /windowsSystem32Helper\("WindowsPowerShell", "v1\.0", "powershell\.exe"\)/u,
+  );
+  expect(source).toMatch(/windowsSystem32Helper\("icacls\.exe"\)/u);
+  expect(source).toMatch(/windowsSystem32Helper\("taskkill\.exe"\)/u);
+  expect(source).not.toMatch(
+    /spawnSync\(\s*["'](?:powershell\.exe|icacls|taskkill)["']/u,
+  );
+  const helperSpawns = [
+    source.match(
+      /const establishWindowsPrivateOwner =[\s\S]*?\n\};\n\n\/\*\*/u,
+    )?.[0],
+    source.match(/const applyWindowsPrivateAcl =[\s\S]*?\n\};\n\n\/\*\*/u)?.[0],
+    source.match(
+      /const inspectWindowsPrivateAcl =[\s\S]*?\n\};\n\nconst verifyWindowsOwnedCachePath/u,
+    )?.[0],
+    source.match(/const signalInstaller =[\s\S]*?\n\};\n\n\/\*\*/u)?.[0],
+  ];
+  for (const fragment of helperSpawns) {
+    expect(fragment).toBeDefined();
+    expect(fragment).toMatch(/cwd:\s*tmpdir\(\)/u);
+  }
 });
 
 describe.skipIf(process.platform === "win32")("installer cancellation", () => {

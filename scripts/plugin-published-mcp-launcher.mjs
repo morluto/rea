@@ -23,7 +23,7 @@ import {
 } from "node:fs";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { npmInvocation } from "./lib/npm-invocation.mjs";
@@ -128,6 +128,23 @@ const windowsCacheUser = () => {
 };
 
 /**
+ * Trusted Windows system root for absolute helper paths. Prefer SystemRoot /
+ * windir; fall back to C:\Windows when neither is set. Bare-name CreateProcess
+ * lookup would search the caller's CWD first (WindowsExecutable policy).
+ */
+const windowsSystemRoot = () =>
+  process.env.SystemRoot?.trim() || process.env.windir?.trim() || "C:\\Windows";
+
+/** Absolute System32 helper — never a bare name that restarts CWD lookup. */
+const windowsSystem32Helper = (...segments) =>
+  win32.join(windowsSystemRoot(), "System32", ...segments);
+
+const windowsIcacls = () => windowsSystem32Helper("icacls.exe");
+const windowsTaskkill = () => windowsSystem32Helper("taskkill.exe");
+const windowsPowerShell = () =>
+  windowsSystem32Helper("WindowsPowerShell", "v1.0", "powershell.exe");
+
+/**
  * Windows PowerShell environment for SID ACL observers. Drop a caller's
  * PSModulePath so pwsh module paths cannot break Windows PowerShell.
  */
@@ -156,9 +173,12 @@ const WINDOWS_SYSTEM_SID = "S-1-5-18";
  */
 const establishWindowsPrivateOwner = (path, kind) => {
   const user = windowsCacheUser();
-  const result = spawnSync("icacls", [path, "/setowner", user], {
+  const result = spawnSync(windowsIcacls(), [path, "/setowner", user], {
     encoding: "utf8",
     windowsHide: true,
+    // Neutral cwd: bare-name resolution is already avoided; still refuse to
+    // inherit an untrusted plugin checkout as the helper working directory.
+    cwd: tmpdir(),
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
@@ -182,9 +202,9 @@ const applyWindowsPrivateAcl = (path, kind) => {
       ? [`${user}:F`, "SYSTEM:F"]
       : [`${user}:(OI)(CI)F`, "SYSTEM:(OI)(CI)F"];
   const result = spawnSync(
-    "icacls",
+    windowsIcacls(),
     [path, "/inheritance:r", "/grant:r", grant[0], "/grant:r", grant[1]],
-    { encoding: "utf8", windowsHide: true },
+    { encoding: "utf8", windowsHide: true, cwd: tmpdir() },
   );
   if (result.error) throw result.error;
   if (result.status !== 0) {
@@ -248,11 +268,12 @@ if (-not ($sawUser -and $sawSystem)) {
 }
 `;
   const result = spawnSync(
-    "powershell.exe",
+    windowsPowerShell(),
     ["-NoProfile", "-NonInteractive", "-Command", observer],
     {
       encoding: "utf8",
       windowsHide: true,
+      cwd: tmpdir(),
       timeout: WINDOWS_PRIVATE_ACL_OBSERVER_TIMEOUT_MS,
       env: {
         ...windowsPowerShellEnvironment(),
@@ -700,9 +721,10 @@ const signalInstaller = (child, signal) => {
   if (process.platform === "win32") {
     if (child.pid === undefined) return;
     // taskkill /T waits for the tree; child.kill() would leave npm's children.
-    spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+    spawnSync(windowsTaskkill(), ["/PID", String(child.pid), "/T", "/F"], {
       windowsHide: true,
       stdio: "ignore",
+      cwd: tmpdir(),
     });
     return;
   }
