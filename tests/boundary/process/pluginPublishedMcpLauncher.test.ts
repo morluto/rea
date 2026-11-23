@@ -1870,10 +1870,19 @@ for (;;) {
 });
 
 it("cancels a cold-start lock wait when MCP stdin exceeds the stdio buffer capacity", async () => {
-  // Keep the launcher's bootstrap copy aligned with ownStdioStartupInput.
+  // Keep the launcher's bootstrap copy aligned with ownStdioStartupInput,
+  // including coalesced 64 KiB retained blocks so one-byte data events cannot
+  // exhaust the heap before the capacity guard fires.
   expect(STDIO_DEFAULT_MAX_BUFFER_SIZE).toBe(10 * 1024 * 1024);
-  expect(await readFile(launcher, "utf8")).toMatch(
+  const launcherSource = await readFile(launcher, "utf8");
+  expect(launcherSource).toMatch(
     /STDIO_DEFAULT_MAX_BUFFER_SIZE\s*=\s*10\s*\*\s*1024\s*\*\s*1024/u,
+  );
+  expect(launcherSource).toMatch(
+    /Buffer\.allocUnsafe\(\s*Math\.min\(64\s*\*\s*1024,\s*STDIO_DEFAULT_MAX_BUFFER_SIZE\s*-\s*retainedBytes\)/u,
+  );
+  expect(launcherSource).toMatch(
+    /if\s*\(\s*tail\s*!==\s*undefined\s*&&\s*tailBytes\s*>\s*0\s*\)\s*chunks\.push\(tail\.subarray\(0,\s*tailBytes\)\)/u,
   );
   const version = "6.8.0-published-stdin-capacity";
   const temp = await createLauncherTemp();
@@ -2012,7 +2021,13 @@ process.stdin.on("end", () => { process.exitCode = 0; });
   await waitForFile(startedPath);
   const handshake = '{"jsonrpc":"2.0","id":"handoff"}\n';
   const followUp = '{"jsonrpc":"2.0","id":"follow-up"}\n';
-  child.stdin.write(handshake);
+  // Fragmented writes exercise the coalescing tail flush on handoff; pipe
+  // delivery may coalesce, but the retained partial block must still replay.
+  for (const byte of Buffer.from(handshake)) {
+    const stdin = child.stdin;
+    if (!stdin.write(Buffer.from([byte])))
+      await new Promise<void>((resolve) => stdin.once("drain", resolve));
+  }
   await new Promise((resolve) => setTimeout(resolve, 50));
   await writeFile(releasePath, "go", { mode: 0o600 });
   // Runtime banner proves the entry started while stdin may still be paused.

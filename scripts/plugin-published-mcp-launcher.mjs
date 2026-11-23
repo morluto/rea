@@ -761,6 +761,9 @@ const observeAcquisitionCancel = (onCancel) => {
   /** @type {Buffer[]} */
   const chunks = [];
   let retainedBytes = 0;
+  /** @type {Buffer | undefined} */
+  let tail;
+  let tailBytes = 0;
   let cancelled;
   let released = false;
   const requestCancel = (signal, capacityExceeded = false) => {
@@ -787,8 +790,27 @@ const observeAcquisitionCancel = (onCancel) => {
       requestCancel(undefined, true);
       return;
     }
-    retainedBytes += incomingBytes;
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      // Bound chunk bookkeeping too, even when stdin delivers one byte per event.
+      tail ??= Buffer.allocUnsafe(
+        Math.min(64 * 1024, STDIO_DEFAULT_MAX_BUFFER_SIZE - retainedBytes),
+      );
+      const copied = Math.min(
+        tail.byteLength - tailBytes,
+        bytes.byteLength - offset,
+      );
+      bytes.copy(tail, tailBytes, offset, offset + copied);
+      offset += copied;
+      retainedBytes += copied;
+      tailBytes += copied;
+      if (tailBytes === tail.byteLength) {
+        chunks.push(tail);
+        tail = undefined;
+        tailBytes = 0;
+      }
+    }
   };
   for (const signal of Object.keys(signalExitCodes))
     process.on(signal, onSignal);
@@ -814,6 +836,8 @@ const observeAcquisitionCancel = (onCancel) => {
       // succeeds; discard only when the client already disconnected or the
       // stdio capacity refused further retention.
       if (cancelled === undefined) {
+        if (tail !== undefined && tailBytes > 0)
+          chunks.push(tail.subarray(0, tailBytes));
         for (let index = chunks.length - 1; index >= 0; index -= 1)
           process.stdin.unshift(chunks[index]);
         // Leave stdin paused until a later data listener owns it. Resuming
@@ -831,6 +855,8 @@ const observeAcquisitionCancel = (onCancel) => {
         process.stdin.on("newListener", resumeWhenOwned);
       }
       chunks.length = 0;
+      tail = undefined;
+      tailBytes = 0;
       retainedBytes = 0;
     },
   };
