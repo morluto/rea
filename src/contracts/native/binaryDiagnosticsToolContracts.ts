@@ -2,21 +2,20 @@ import {
   inspectDevicetreeInputSchema,
   devicetreeSchema,
 } from "../../domain/firmware/devicetree.js";
+import { binaryLayoutSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/binaryLayoutSummarySchema.js";
+import { devicetreeSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/devicetreeSummarySchema.js";
+import { elfDependenciesSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/elfDependenciesSummarySchema.js";
+import { nativeExportsSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/nativeExportsSummarySchema.js";
 import {
-  devicetreeSummaryViewResultSchema,
-  binaryLayoutSummaryViewResultSchema,
-  nativeExportsSummaryViewResultSchema,
-} from "../../domain/analysisView/analysisViewResult.js";
-import {
-  inspectPeLoadConfigInputSchema,
   peLoadConfigSchema,
+  inspectPeLoadConfigInputSchema,
 } from "../../domain/native/peLoadConfig.js";
 import {
   binaryHardeningSchema,
   inspectBinaryHardeningInputSchema,
 } from "../../domain/native/binaryHardening.js";
 import { inspectByteEntropyInputSchema } from "../../domain/native/byteEntropy.js";
-import { byteEntropyOutputSchema } from "../toolOutputSchemaGroups.js";
+import { byteEntropyOutputSchema } from "./byteEntropyOutputSchema.js";
 import {
   inspectRecordedCrashInputSchema,
   recordedCrashSchema,
@@ -57,6 +56,14 @@ import {
   elfNotesSchema,
 } from "../../domain/native/elfNotes.js";
 import {
+  inspectDwarfUnitsInputSchema,
+  dwarfUnitsSchema,
+} from "../../domain/native/dwarfUnits.js";
+import {
+  inspectElfDebugLinkInputSchema,
+  elfDebugLinkSchema,
+} from "../../domain/native/elfDebugLink.js";
+import {
   inspectNativeInitializersInputSchema,
   nativeInitializersSchema,
 } from "../../domain/native/nativeInitializers.js";
@@ -73,6 +80,10 @@ import {
   kernelModuleSchema,
 } from "../../domain/native/kernelModule.js";
 import {
+  inspectElfDependenciesInputSchema,
+  elfDependenciesSchema,
+} from "../../domain/native/elfDependencies.js";
+import {
   inspectKernelBuildConfigInputSchema,
   kernelBuildConfigSchema,
 } from "../../domain/native/kernelBuildConfig.js";
@@ -87,6 +98,9 @@ export const inspectBinaryLayoutRequestSchema =
 
 export const inspectNativeExportsRequestSchema =
   inspectNativeExportsInputSchema.extend({ detail: analysisDetailSchema });
+
+export const inspectElfDependenciesRequestSchema =
+  inspectElfDependenciesInputSchema.extend({ detail: analysisDetailSchema });
 
 /** Public byte-entropy input retains the producer schema's closed-object policy. */
 export const inspectByteEntropyRequestSchema =
@@ -176,13 +190,54 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_elf_notes", evidenceEffects),
     kind: "native-provider",
     description:
-      "Inspect one explicit local ELF32/ELF64 image's PT_NOTE program headers and SHT_NOTE sections without executing it or opening a disassembler. Returns note-table file ranges, owners, types, descriptor SHA-256 and hex previews, plus GNU build-id, ABI-tag and gold-version fields, Linux CORE process, mapping, signal, and auxv notes, and Android .note.android.ident API-level and NDK version/build fields when those descriptors match. A missing table is observed absence of those declarations, not proof the image never carried notes in another container. Reads a stable regular file; malformed ELF headers, truncated notes and exhausted budgets return no partial success. Portable on supported Node hosts; no debug package or catalog is required.",
+      "Inspect one explicit local ELF32/ELF64 image's PT_NOTE program headers and SHT_NOTE sections without executing it or opening a disassembler. Returns note-table file ranges, owners, types, descriptor SHA-256 and hex previews, plus GNU build-id, ABI-tag and gold-version fields, Linux CORE process, mapping, signal, and auxv notes, Android .note.android.ident API-level and NDK version/build fields, and unverified FDO packaging and dlopen declarations when those descriptors match. A missing table is observed absence of those declarations, not proof the image never carried notes in another container. Reads a stable regular file. Malformed ELF structure and exhausted table-walk budgets return no partial success. An invalid or over-budget FDO descriptor retains raw note evidence with a decoding issue. Portable on supported Node hosts; no debug package or catalog is required.",
     inputSchema: inspectElfNotesInputSchema,
     outputSchema: evidenceResultOf(elfNotesSchema),
     examples: [
       {
-        title: "Inspect ELF GNU build-id and ABI-tag notes",
+        title: "Inspect ELF note tables",
         input: { path: "/artifacts/program" },
+      },
+    ],
+  },
+  {
+    name: "inspect_dwarf_units",
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_dwarf_units", evidenceEffects),
+    kind: "native-provider",
+    description:
+      "Inspect DWARF 2 through 5 compile-unit headers and the unit DIE in one explicit local ELF, Mach-O, or PE image without executing the image or opening a disassembler. Reads .debug_info, .debug_abbrev, .debug_str, .debug_line_str, and .debug_str_offsets, including compressed ELF sections. Returns name, comp_dir, producer, language, and dwo_name with file offsets, paged by offset and limit. A unit that cannot be framed, or a declared .debug_info that was not read, gives partial coverage. Absent .debug_info applies to this file only and does not establish that a separate debug file is absent. Child DIEs, types, line tables, and location expressions are not read. A .dSYM bundle is not opened; pass the DWARF file inside it. Universal Mach-O requires architecture.",
+    inputSchema: inspectDwarfUnitsInputSchema,
+    outputSchema: evidenceResultOf(dwarfUnitsSchema),
+    examples: [
+      {
+        title: "Inspect DWARF compile units",
+        input: { path: "/artifacts/program" },
+      },
+    ],
+  },
+  {
+    name: "inspect_elf_debug_link",
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_elf_debug_link", evidenceEffects),
+    kind: "native-provider",
+    description:
+      "Inspect one explicit local ELF32/ELF64 image for separate debug-file linkage without executing it or opening a disassembler. Returns .gnu_debuglink file name and CRC32, .gnu_debugaltlink file name and build-id, the GNU build-id, conventional lookup path strings, and .gnu_debugdata presence, file offset, and size. An optional candidate_path verifies that one caller-selected file by debuglink CRC32 and build-id equality. The verdict is matches, does_not_match, or cannot_verify. Lookup paths are not opened. The xz MiniDebugInfo payload is not decoded. A missing section is observed absence only when section names are complete, not proof the image never carried that linkage. Reads stable regular files; malformed ELF headers and exhausted note budgets return no partial success. Portable on supported Node hosts.",
+    inputSchema: inspectElfDebugLinkInputSchema,
+    outputSchema: evidenceResultOf(elfDebugLinkSchema),
+    examples: [
+      {
+        title: "Inspect ELF separate debug-file linkage",
+        input: { path: "/artifacts/program" },
+      },
+      {
+        title: "Verify one caller-selected debug file",
+        input: {
+          path: "/artifacts/program",
+          candidate_path: "/artifacts/program.debug",
+        },
       },
     ],
   },
@@ -242,6 +297,26 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
         title:
           "Inspect Linux kernel module license, vermagic, and dependencies",
         input: { path: "/artifacts/demo.ko" },
+      },
+    ],
+  },
+  {
+    name: "inspect_elf_dependencies",
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_elf_dependencies", evidenceEffects),
+    kind: "native-provider",
+    description:
+      "Inspect one explicit local ELF32/ELF64 ET_EXEC or ET_DYN image's load-time dynamic dependencies without executing it, invoking the dynamic loader, or opening a disassembler. Returns ordered DT_NEEDED libraries (duplicates preserved), DT_SONAME, DT_RPATH and DT_RUNPATH as written including $ORIGIN/$LIB/$PLATFORM tokens, decoded DT_FLAGS and DT_FLAGS_1, PT_INTERP, GNU version requirements and definitions, derived per-namespace version maxima, and undefined .dynsym imports joined to library@version when known. A missing PT_DYNAMIC is an observed empty inventory. Relocatable objects use inspect_kernel_module; core dumps use inspect_recorded_crash. Reads a stable regular file; cyclic version chains and exhausted named budgets return no partial success. Unreadable strings or missing tables are reported as partial coverage with issues; complete coverage never retains issues. Omitted/complete detail preserves inline delivery. Select detail summary to retain complete Evidence and return identity, counts and source coverage. Query inspect_analysis_view kind elf-dependencies, collection needed, versions, definitions, maxima or imports, with exact names/original indices, fields and matching-row pagination; collection issues takes original indices and pagination only. Portable on supported Node hosts.",
+    inputSchema: inspectElfDependenciesRequestSchema,
+    outputSchema: analysisDetailOutputSchemaOf(
+      elfDependenciesSchema,
+      elfDependenciesSummaryViewResultSchema,
+    ),
+    examples: [
+      {
+        title: "Inspect ELF needed libraries and required symbol versions",
+        input: { path: "/artifacts/program" },
       },
     ],
   },
@@ -371,7 +446,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_native_exports", evidenceEffects),
     kind: "native-provider",
     description:
-      "Inspect PE/ELF exports without execution or an analysis engine; use inspect_macho for Mach-O. Returns named/ordinal/forwarded PE exports or defined ELF dynamic symbols with binding/type/version, preserving aliases, hidden versions and raw-name qualifications. Unreadable entries are partial; unavailable ELF section metadata can make enumeration unsupported. An empty complete inventory means no declared exports. detail summary retains full Evidence for inspect_analysis_view kind native-exports, collection exports/issues, with exact names/indices, fields and paging; source_index is parent-scoped.",
+      "Inspect PE/ELF exports without execution or an analysis engine; use inspect_macho for Mach-O. Returns named/ordinal/forwarded PE exports or defined ELF dynamic symbols with binding/type/version, preserving aliases, hidden versions and raw-name qualifications. Without SHT_DYNSYM, ELF uses PT_DYNAMIC with DT_HASH or DT_GNU_HASH; an indeterminate symbol count is unsupported. Readable fallback version indices and hidden flags are retained; unresolved version names or unreadable entries make coverage partial. An empty complete inventory means no declared exports. detail summary retains full Evidence for inspect_analysis_view kind native-exports, collection exports/issues, with exact names/indices, fields and paging; source_index is parent-scoped.",
     inputSchema: inspectNativeExportsRequestSchema,
     outputSchema: analysisDetailOutputSchemaOf(
       nativeExportsSchema,

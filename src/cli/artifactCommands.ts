@@ -1,9 +1,7 @@
 import { ARTIFACT_TOOL_CONTRACTS } from "../contracts/artifactToolContracts.js";
-import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/sessionToolContracts.js";
-import {
-  contractNamed,
-  type CliSessionTarget,
-} from "./contractCliDescription.js";
+import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/openBinaryToolContract.js";
+import { contractNamed } from "./contractCliDescription.js";
+import type { CliSessionTarget } from "./contractCliDescriptionTypes.js";
 import {
   registerContractCommand,
   runOnSessionTarget,

@@ -162,3 +162,30 @@ it("classifies an over-limit kernel symbol name as capacity", async () => {
     ]),
   });
 });
+
+it.each(["standalone", "embedded"] as const)(
+  "retains a valid %s PTX kernel before a malformed entry",
+  async (kind) => {
+    const ptx = Buffer.from(
+      ".version 8.8\n.target sm_80\n.entry good() { ret; }\n.entry broken(",
+    );
+    const bytes =
+      kind === "standalone"
+        ? ptx
+        : cudaFixture("none", [{ kind: 1, target: 75, bytes: ptx }]);
+    const inventory = new GpuInventory({
+      path: "/fixture",
+      analysis: "kernels",
+    });
+    await inventory.inspect(new GpuBufferSource(bytes, "fixture"));
+    expect(inventory.objects.find(({ kind }) => kind === "ptx")).toMatchObject({
+      inspection: "malformed",
+      payload_target: "sm_80",
+    });
+    expect(inventory.kernels.map(({ name }) => name)).toEqual(["good"]);
+    if (kind === "embedded")
+      expect(inventory.kernels[0]?.limitations).toContain(
+        "Conflicting target declarations: inventory sm_75; payload sm_80. Target agreement is not established.",
+      );
+  },
+);

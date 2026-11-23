@@ -8,17 +8,14 @@ import {
   describeContractCommand,
   describeOperationChoices,
   describeContractDocumentCommand,
-  type ContractCliDescription,
-  type ContractCliParameter,
 } from "../../../src/cli/contractCliDescription.js";
+import type {
+  ContractCliDescription,
+  ContractCliParameter,
+} from "../../../src/cli/contractCliDescriptionTypes.js";
 import { BROWSER_TOOL_CONTRACTS } from "../../../src/contracts/browserToolContracts.js";
 import { passiveNetworkCapture } from "../../fixtures/passiveNetworkCapture.js";
-import {
-  contractCommandDescriptions,
-  contractInputBranch,
-  contractDocumentCommandDescriptions,
-  routedCommandDescriptions,
-} from "../../../src/cli/contractCommand.js";
+import { contractInputBranch } from "../../../src/cli/contractCommand.js";
 import { jsonInputContentSchema } from "../../../src/cli/jsonInputArgument.js";
 import {
   cliCommands,
@@ -30,7 +27,16 @@ import {
   TOOL_CONTRACTS,
   toolContract,
 } from "../../../src/contracts/toolContracts.js";
+import { registeredContractDescriptions } from "../../support/cli/commandCli.js";
 
+/** Apply the same inline-option admission stage as registered commands. */
+const admitOptions = (
+  description: ContractCliDescription,
+  values: Readonly<Record<string, unknown>>,
+): ReturnType<ContractCliDescription["admit"]> => {
+  const options = description.admitDeliveryOptions(values);
+  return options.ok ? description.admit(options.value) : options;
+};
 const DECIMAL_TOKEN = /^[0-9]+$/u;
 
 const cli = createCli({});
@@ -38,11 +44,8 @@ const registered = new Map<string, CliCommandEntry["definition"]>();
 cliCommands(cli).forEach(({ definition: command, name: path }) => {
   registered.set(path, command);
 });
-// A routed command contributes one description per contract it runs.
-const descriptions = [
-  ...contractCommandDescriptions(cli),
-  ...routedCommandDescriptions(cli),
-];
+const { commands: descriptions, documents: documentDescriptions } =
+  registeredContractDescriptions(cli);
 
 const inputJsonSchema = (field: z.ZodType): Record<string, unknown> =>
   z.toJSONSchema(field, { io: "input", unrepresentable: "any" });
@@ -410,9 +413,7 @@ const each = descriptions.map(
 
 /** Every command the contract builders registered, from their registry. */
 const contractBuilt: ReadonlySet<string> = new Set(
-  [...descriptions, ...contractDocumentCommandDescriptions(cli)].map(
-    ({ command }) => command,
-  ),
+  [...descriptions, ...documentDescriptions].map(({ command }) => command),
 );
 
 /** Contract-built commands whose name differs from their contract's. */
@@ -468,6 +469,9 @@ it("keeps every argv fixture on a contract-built command", () => {
   ).toEqual([]);
 });
 
+const commandsWithBooleanFlags = each.filter(([, { parameters }]) =>
+  parameters.some(({ positional, booleanFlag }) => !positional && booleanFlag),
+);
 describe("CLI commands projected from tool contracts", () => {
   it.each(each)(
     "%s exposes every contract field or declares its omission",
@@ -536,8 +540,6 @@ describe("CLI commands projected from tool contracts", () => {
       for (const parameter of description.parameters) {
         const cliField = registeredField(description, parameter);
         const contractField = suppliedField(description, parameter);
-        // Incur's help reads flag and choice types only through `optional`.
-        expect(cliField, parameter.key).not.toBeInstanceOf(z.ZodExactOptional);
         if (parameter.callerPath) {
           // Only the absolute-path rule is relaxed, and only by resolution.
           const spelled = (path: string) =>
@@ -579,7 +581,7 @@ describe("CLI commands projected from tool contracts", () => {
     },
   );
 
-  it.each(each)(
+  it.each(commandsWithBooleanFlags)(
     "%s takes each boolean contract field as a bare flag",
     (_command, description) => {
       for (const parameter of description.parameters) {
@@ -798,7 +800,8 @@ describe("JSON decoded when contract commands run", () => {
         // there; the CLI tests cover that refusal.
         if (parameter.runtimeJson === undefined || parameter.jsonInput)
           continue;
-        const malformed = description.admit(
+        const malformed = admitOptions(
+          description,
           argvValues(description, {
             detail: "summary",
             evidence_output: "out.json",
@@ -861,7 +864,7 @@ describe("JSON decoded when contract commands run", () => {
                 ...(detail === undefined ? {} : { detail }),
                 ...supplied,
               }).success;
-            const admitted = description.admit(values).ok;
+            const admitted = admitOptions(description, values).ok;
             // A checked JSON input is admitted by its check, which the
             // command runs as soon as the input is read, and may be
             // stricter than the contract; the contract admits the rest.
@@ -1337,7 +1340,8 @@ describe("Evidence delivery of contract commands", () => {
         ...ARGV_SATISFYING_RULES[command],
         ...SUMMARY_SELECTIONS[command],
       };
-      const refused = description.admit(
+      const refused = admitOptions(
+        description,
         argvValues(description, { ...satisfying, detail: "summary" }),
       );
       expect(refused.ok).toBe(false);
@@ -1346,7 +1350,8 @@ describe("Evidence delivery of contract commands", () => {
           ["evidence_output"],
         ]);
       expect(
-        description.admit(
+        admitOptions(
+          description,
           argvValues(description, {
             ...satisfying,
             detail: "summary",
@@ -1391,7 +1396,9 @@ describe("Evidence delivery of contract commands", () => {
       { name: "probe", inputSchema },
       { command: "probe", description: "Probe" },
     ).parameters;
-    expect(format!.schema.parse(undefined)).toBe("json");
+    expect(format!.schema.parse(undefined)).toBeUndefined();
+    expect(inputJsonSchema(format!.schema).default).toBe("json");
+    expect(inputSchema.parse({})).toEqual({ format: "json" });
     expect(format!.schema.safeParse("graphql").success).toBe(true);
     expect(format!.schema.safeParse("xml").success).toBe(false);
   });
@@ -1451,7 +1458,7 @@ describe("Evidence delivery of contract commands", () => {
   });
 });
 
-const documents = contractDocumentCommandDescriptions(cli).map(
+const documents = documentDescriptions.map(
   (description) => [description.command, description] as const,
 );
 
@@ -1592,6 +1599,36 @@ describe("JSON-document contract commands", () => {
   });
 });
 
+it.each([
+  [
+    "checked optional",
+    z
+      .string()
+      .optional()
+      .refine((value) => value !== undefined),
+    true,
+  ],
+  ["invalid prefault", z.string().min(2).prefault("x"), false],
+] as const)(
+  "projects document omission using object parsing for %s",
+  (_kind, field, acceptsOmission) => {
+    const inputSchema = z.object({ detail: field });
+    expect(inputSchema.safeParse({}).success).toBe(acceptsOmission);
+    const describe = () =>
+      describeContractDocumentCommand(
+        { name: "probe", inputSchema },
+        {
+          command: "probe",
+          description: "Probe",
+          document: "Probe JSON",
+          omit: { detail: "never" },
+        },
+      );
+    if (acceptsOmission) expect(describe).not.toThrow();
+    else expect(describe).toThrow("probe.detail is not an optional field");
+  },
+);
+
 describe("JSON-document delivery options", () => {
   const contract = {
     name: "probe",
@@ -1690,6 +1727,40 @@ const selecting = each.flatMap(([command, description]) =>
   ),
 );
 
+describe("Selector agreement in registered commands", () => {
+  const xrefs = descriptions.find(({ command }) => command === "xrefs")!;
+
+  it.each([
+    ["ram%2f:0X0001A", "ram%2F:0x1a"],
+    ["0x20000000000001", "0x020000000000001"],
+  ])("preserves the named address when %s and %s agree", (left, right) => {
+    const result = xrefs.admit({
+      [xrefs.sessionTarget!.key]: "rel/app",
+      address: left,
+      "--address": right,
+    });
+    expect(result.ok && result.value.input.address).toBe(right);
+  });
+
+  it.each([
+    ["0x1", "ram:0x1"],
+    ["0x20000000000000", "0x20000000000001"],
+    ["0xinvalid", "0XINVALID"],
+  ])(
+    "refuses different or unrecognized coordinates %s and %s",
+    (left, right) => {
+      const result = xrefs.admit({
+        [xrefs.sessionTarget!.key]: "rel/app",
+        address: left,
+        "--address": right,
+      });
+      expect(result.ok ? [] : result.error.issues).toEqual([
+        expect.objectContaining({ path: ["address"], reason: "invalid_value" }),
+      ]);
+    },
+  );
+});
+
 describe("Positional selectors with a named option", () => {
   it.each(selecting)(
     "%s takes its selector positionally or by its named option",
@@ -1706,7 +1777,7 @@ describe("Positional selectors with a named option", () => {
       );
       const { required } = option;
       const admit = (values: Record<string, unknown>) =>
-        description.admit({
+        admitOptions(description, {
           [description.sessionTarget?.key ?? "path"]: "rel/app",
           ...values,
         });
@@ -1755,7 +1826,7 @@ describe("Positional selectors with a named option", () => {
     (_command, description, parameter, alternative) => {
       const option = parameter.selectorOption!;
       const admit = (values: Record<string, unknown>) =>
-        description.admit({
+        admitOptions(description, {
           [description.sessionTarget?.key ?? "path"]: "rel/app",
           ...values,
         });
@@ -1913,7 +1984,7 @@ describe("Contract command field groups", () => {
       "path",
       "query",
     ]);
-    const admitted = description.admit({
+    const admitted = admitOptions(description, {
       path: "/x",
       query: '{"name":"a","tags":["b"]}',
     });
@@ -1922,7 +1993,7 @@ describe("Contract command field groups", () => {
       name: "a",
       tags: ["b"],
     });
-    expect(description.admit({ path: "/x" }).ok).toBe(true);
+    expect(admitOptions(description, { path: "/x" }).ok).toBe(true);
   });
 
   it.each([
@@ -1930,7 +2001,7 @@ describe("Contract command field groups", () => {
     ['{"path":"/y"}', ["query", "path"], undefined],
     ['{"name":1}', ["name"], undefined],
   ])("refuses the group %s", (text, path, reason) => {
-    const admitted = grouped(["name", "tags"]).admit({
+    const admitted = admitOptions(grouped(["name", "tags"]), {
       path: "/x",
       query: text,
     });

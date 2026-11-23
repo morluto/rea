@@ -1,4 +1,8 @@
-import { ArtifactReaderFailure } from "../../resources/index.js";
+import {
+  ArtifactReaderFailure,
+  assertArtifactReadActive,
+  yieldArtifactRead,
+} from "../../resources/index.js";
 import { allKeyed, firstKeyed, keyedBy } from "../../domain/keyedCollection.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
@@ -13,11 +17,15 @@ import {
   type InspectKernelModuleInput,
 } from "../../domain/native/kernelModule.js";
 import type { AnalysisParameterLimit } from "../../domain/analysisSettings.js";
-import type {
-  ImageSection,
-  BinaryContainer,
+import {
+  BinaryReader,
+  type ImageSection,
+  type BinaryContainer,
 } from "../../domain/binaryContainer.js";
-import { readElfImage } from "../../domain/native/elfImage.js";
+import {
+  readElfImage,
+  readElfImageCooperative,
+} from "../../domain/native/elfImage.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
@@ -65,11 +73,6 @@ const inFile = (section: ElfSection, fileLength: number): boolean =>
 
 const rawHex = (bytes: Buffer): string | null =>
   bytes.length > MAX_KERNEL_MODULE_RAW_BYTES ? null : bytes.toString("hex");
-
-const compressionCodec = (bytes: Buffer): Report["compression"] => {
-  const codec = kernelCompressionCodecAt(bytes, 0, MODULE_CODECS);
-  return codec === null ? null : { codec, status: "unsupported" };
-};
 
 const baseLimitations = (): Limitations => [
   "This workflow does not execute the module, resolve imported symbols, or validate an appended signature.",
@@ -122,6 +125,17 @@ const unsupportedCompression = (
     "A compressed container is not proof the payload is a kernel module.",
   ],
 });
+
+/** A recognized outer container never enters the ELF image parser. */
+const moduleCompressionReport = (
+  bytes: Buffer,
+  artifact: Report["artifact"],
+): Report | null => {
+  const codec = kernelCompressionCodecAt(bytes, 0, MODULE_CODECS);
+  return codec === null
+    ? null
+    : unsupportedCompression(artifact, { codec, status: "unsupported" });
+};
 
 const notApplicable = (
   artifact: Report["artifact"],
@@ -323,18 +337,14 @@ const parseVersions = (
     };
   const nameBytes = bits === 64 ? 56 : 60;
   const crcBytes = bits === 64 ? 8 : 4;
+  const reader = new BinaryReader(stored, little, "elf");
   const count = stored.length / entryBytes;
   exceeds(examined.count + count, maxEntries);
   const entries: NonNullable<Report["versions"]>["entries"] = [];
   for (let index = 0; index < count; index += 1) {
     const start = index * entryBytes;
     const record = stored.subarray(start, start + entryBytes);
-    const crc =
-      bits === 64
-        ? little
-          ? record.readBigUInt64LE(0)
-          : record.readBigUInt64BE(0)
-        : BigInt(little ? record.readUInt32LE(0) : record.readUInt32BE(0));
+    const crc = reader.word(start, bits);
     const nameField = record.subarray(crcBytes, crcBytes + nameBytes);
     const end = nameField.indexOf(0);
     entries.push({
@@ -438,21 +448,23 @@ const parseSignature = (bytes: Buffer): Report["signature"] => {
       reason: "signature_trailer_truncated",
     };
   const infoOffset = magic.offset - MODULE_SIGNATURE_INFO_BYTES;
+  const footer = new BinaryReader(
+    bytes.subarray(infoOffset, magic.offset),
+    false,
+    "elf",
+  );
   const info = {
     location: { offset: infoOffset, bytes: MODULE_SIGNATURE_INFO_BYTES },
-    algo: bytes[infoOffset] ?? 0,
-    hash: bytes[infoOffset + 1] ?? 0,
-    id_type: bytes[infoOffset + 2] ?? 0,
-    signer_len: bytes[infoOffset + 3] ?? 0,
-    key_id_len: bytes[infoOffset + 4] ?? 0,
-    pad: [
-      bytes[infoOffset + 5] ?? 0,
-      bytes[infoOffset + 6] ?? 0,
-      bytes[infoOffset + 7] ?? 0,
-    ] as [number, number, number],
-    sig_len: bytes.readUInt32BE(infoOffset + 8),
+    algo: footer.u8(0),
+    hash: footer.u8(1),
+    id_type: footer.u8(2),
+    signer_len: footer.u8(3),
+    key_id_len: footer.u8(4),
+    pad: [footer.u8(5), footer.u8(6), footer.u8(7)] as [number, number, number],
+    sig_len: footer.u32(8),
   };
-  if (info.sig_len >= infoOffset)
+  const isPkcs7 = info.id_type === MODULE_SIGNATURE_PKCS7_ID_TYPE;
+  if (info.sig_len >= infoOffset || (isPkcs7 && info.sig_len === 0))
     return {
       status: "malformed",
       magic,
@@ -460,7 +472,7 @@ const parseSignature = (bytes: Buffer): Report["signature"] => {
       pkcs7: null,
       reason: "signature_length_inconsistent",
     };
-  if (info.id_type !== MODULE_SIGNATURE_PKCS7_ID_TYPE)
+  if (!isPkcs7)
     return {
       status: "unsupported",
       magic,
@@ -503,16 +515,13 @@ const signatureLimitation = (signature: Report["signature"]): string => {
   return "The appended signature trailer was not accepted as an unvalidated PKCS#7 range.";
 };
 
-/** Decode kernel-module metadata from one in-memory ET_REL image. */
-export const parseKernelModule = (
+/** Decode kernel-module metadata from an admitted in-memory ELF image. */
+const parseKernelModuleImage = (
   bytes: Buffer,
   artifact: Report["artifact"],
   input: InspectKernelModuleInput,
+  image: ReturnType<typeof readElfImage>,
 ): Report => {
-  const compression = compressionCodec(bytes);
-  if (compression !== null)
-    return unsupportedCompression(artifact, compression);
-  const image = readElfImage(bytes);
   const facts = headerFacts(image);
   if (facts.type !== 1) return notApplicable(artifact, facts);
   const sections = image.sections.filter(
@@ -659,4 +668,38 @@ export const parseKernelModule = (
     },
     limitations,
   };
+};
+
+export const parseKernelModule = (
+  bytes: Buffer,
+  artifact: Report["artifact"],
+  input: InspectKernelModuleInput,
+): Report =>
+  moduleCompressionReport(bytes, artifact) ??
+  parseKernelModuleImage(
+    bytes,
+    artifact,
+    input,
+    readElfImage(bytes, "inspect_kernel_module"),
+  );
+
+/** Same report as {@link parseKernelModule}. Section names yield for `signal`. */
+export const parseKernelModuleCooperative = async (
+  bytes: Buffer,
+  artifact: Report["artifact"],
+  input: InspectKernelModuleInput,
+  signal?: AbortSignal,
+): Promise<Report> => {
+  assertArtifactReadActive(signal);
+  return (
+    moduleCompressionReport(bytes, artifact) ??
+    parseKernelModuleImage(
+      bytes,
+      artifact,
+      input,
+      await readElfImageCooperative(bytes, "inspect_kernel_module", () =>
+        yieldArtifactRead(signal),
+      ),
+    )
+  );
 };

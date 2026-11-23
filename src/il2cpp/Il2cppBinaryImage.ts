@@ -10,13 +10,15 @@ import {
   BinaryReader,
   BinaryResourceFailure,
   createFileMappingIndex,
-  mappedFileOffset,
   isZeroFilledSpan,
   type BinaryContainer,
   type FileMappingIndex,
   UnrecognizedBinaryFailure,
 } from "../domain/binaryContainer.js";
-import { readBinaryContainer } from "../domain/native/readBinaryContainer.js";
+import {
+  readBinaryContainer,
+  readBinaryContainerCooperative,
+} from "../domain/native/readBinaryContainer.js";
 import {
   requireSelectedNativeImage,
   type SelectedNativeImage,
@@ -98,10 +100,13 @@ export const requireIl2cppBinaryImage = (
   );
 
 export interface NativeImage {
-  readonly bytes: Buffer;
+  /** Stored file coordinates only; virtual translation and fixups stay separate. */
+  readonly stored: BinaryReader;
   readonly container: BinaryContainer | WasmImageContainer;
   /** One image's immutable load mappings, shared by stored and loader-aware reads. */
   readonly fileMappings: FileMappingIndex;
+  /** Indexed executable load mappings for constant/log-time code ownership checks. */
+  readonly executableMappings: FileMappingIndex;
   readonly imageBase: bigint;
   /** Bytes per pointer slot: 8 for the 64-bit native images, 4 for wasm32. */
   readonly pointerSize: 4 | 8;
@@ -189,7 +194,7 @@ function* openWasmImageSteps(bytes: Buffer): Generator<void, NativeImage> {
       ? [{ address: end, size: initial - end }]
       : [];
   return {
-    bytes: memory.bytes,
+    stored: new BinaryReader(memory.bytes, true, "wasm"),
     container: {
       format: "wasm",
       architecture: "wasm32",
@@ -201,6 +206,8 @@ function* openWasmImageSteps(bytes: Buffer): Generator<void, NativeImage> {
       sections: [],
     },
     fileMappings: createFileMappingIndex(mappings, zero_fills),
+    // Code is not linear memory: wasm method pointers are table slots.
+    executableMappings: createFileMappingIndex([], []),
     imageBase: 0n,
     pointerSize: 4,
     wasmTable: {
@@ -214,34 +221,63 @@ function* openWasmImageSteps(bytes: Buffer): Generator<void, NativeImage> {
 export const IL2CPP_UNRECOGNIZED_BINARY =
   "Only ELF, PE, thin Mach-O, and uncompressed WebAssembly (wasm32) images are supported";
 
-/** Open one thin image; a universal Mach-O slice is selected before this. */
-export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
-  const head = image.subarray(0, 4);
-  if (head.equals(WASM_MAGIC) || head.subarray(0, 2).equals(GZIP_MAGIC))
-    return yield* openWasmImageSteps(image);
-  let container: BinaryContainer;
+/**
+ * Whether the binary is linked as a wasm32 module rather than read as a native
+ * container; a gzip-compressed module is routed here so it is refused by name.
+ */
+export const isWasmLinkInput = (bytes: Buffer): boolean =>
+  isWasmModule(bytes) || bytes.subarray(0, 2).equals(GZIP_MAGIC);
+
+const OPERATION = "inspect_il2cpp_metadata";
+
+const rejectContainer = (cause: unknown): never => {
+  if (cause instanceof BinaryResourceFailure)
+    throw new Il2cppBinaryFormatFailure(
+      "native-index-capacity",
+      cause.message,
+      cause.failure.limit.maximum,
+      "bytes",
+    );
+  if (cause instanceof BinaryFormatFailure)
+    throw new Il2cppBinaryFormatFailure(
+      cause.kind === "unsupported"
+        ? "unsupported-container"
+        : "malformed-container",
+      // The shared reader names native formats only; IL2CPP also links wasm32.
+      cause instanceof UnrecognizedBinaryFailure
+        ? IL2CPP_UNRECOGNIZED_BINARY
+        : cause.message,
+    );
+  throw cause;
+};
+
+const readContainer = (image: Buffer): BinaryContainer => {
   try {
-    container = readBinaryContainer(image);
+    return readBinaryContainer(image, OPERATION);
   } catch (cause) {
-    if (cause instanceof BinaryResourceFailure)
-      throw new Il2cppBinaryFormatFailure(
-        "native-index-capacity",
-        cause.message,
-        cause.failure.limit.maximum,
-        "bytes",
-      );
-    if (cause instanceof BinaryFormatFailure)
-      throw new Il2cppBinaryFormatFailure(
-        cause.kind === "unsupported"
-          ? "unsupported-container"
-          : "malformed-container",
-        // The shared reader names native formats only; IL2CPP also links wasm32.
-        cause instanceof UnrecognizedBinaryFailure
-          ? IL2CPP_UNRECOGNIZED_BINARY
-          : cause.message,
-      );
-    throw cause;
+    return rejectContainer(cause);
   }
+};
+
+export const readIl2cppBinaryContainerCooperative = async (
+  image: Buffer,
+  pause: () => Promise<void>,
+): Promise<BinaryContainer> => {
+  try {
+    return await readBinaryContainerCooperative(image, OPERATION, pause);
+  } catch (cause) {
+    return rejectContainer(cause);
+  }
+};
+
+/** Open one thin image; a universal Mach-O slice is selected before this. */
+export function* openImageSteps(
+  image: Buffer,
+  preparedContainer?: BinaryContainer,
+): Generator<void, NativeImage> {
+  if (preparedContainer === undefined && isWasmLinkInput(image))
+    return yield* openWasmImageSteps(image);
+  const container = preparedContainer ?? readContainer(image);
   // 32-bit coverage is the layout checked on a Unity armeabi-v7a build.
   const arm32 =
     container.format === "elf" &&
@@ -344,11 +380,15 @@ export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
     ) ??
     0n;
   return {
-    bytes: image,
+    stored: new BinaryReader(image, true, container.format),
     container,
     fileMappings: createFileMappingIndex(
       container.mappings,
       container.zero_fills,
+    ),
+    executableMappings: createFileMappingIndex(
+      container.executable_mappings ?? [],
+      [],
     ),
     imageBase,
     pointerSize: arm32 ? 4 : 8,
@@ -361,10 +401,7 @@ export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
 const readStoredWord = (image: NativeImage, address: bigint): bigint | null => {
   try {
     const offset = image.fileMappings.offset(address, image.pointerSize);
-    return new BinaryReader(image.bytes, true, image.container.format).word(
-      offset,
-      image.pointerSize === 8 ? 64 : 32,
-    );
+    return image.stored.word(offset, image.pointerSize === 8 ? 64 : 32);
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure) return null;
     throw cause;
@@ -383,7 +420,7 @@ export const readUInt32 = (
       const value = image.elfPointerOverlay.unsignedAt(address, 4);
       return value === undefined ? "unknown" : Number(value);
     }
-    return image.bytes.readUInt32LE(image.fileMappings.offset(address, 4));
+    return image.stored.u32(image.fileMappings.offset(address, 4));
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure) return null;
     throw cause;
@@ -463,10 +500,7 @@ export const hasPointerArrayCoverage = (
 export const isExecutable = (image: NativeImage, address: bigint): boolean => {
   try {
     const offset = image.fileMappings.offset(address, 1);
-    return (
-      offset ===
-      mappedFileOffset(image.container.executable_mappings ?? [], address, 1)
-    );
+    return offset === image.executableMappings.offset(address, 1);
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure) return false;
     throw cause;

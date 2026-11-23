@@ -103,6 +103,8 @@ export interface LinuxApplicationRequest {
 /** The inventory plus limitations found while building it. */
 export interface LinuxApplicationFacts {
   readonly inventory: DesktopApplicationInventory;
+  /** If wrapped by env, where a final environment assignment goes in inventory.argv. */
+  readonly envProgramIndex?: number;
   readonly limitations: readonly string[];
   /** Verified apt signing keys' bytes by sha256, for the capture to retain. */
   readonly signingKeys: ReadonlyMap<string, Buffer>;
@@ -143,6 +145,8 @@ export type CheckpointTrigger = "request" | "stop" | "exit";
 /** Everything the session loop needs from its caller. */
 export interface DesktopSessionPlan {
   readonly argv: readonly string[];
+  /** Where a final environment assignment goes when argv starts with env. */
+  readonly envProgramIndex?: number;
   readonly workingDirectory: string;
   readonly environment: NodeJS.ProcessEnv;
   readonly windows: DesktopWindowObserver;

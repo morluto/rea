@@ -1,18 +1,40 @@
 import {
   access,
+  chmod,
   mkdir,
+  readdir,
   readFile,
   realpath,
+  rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { userInfo } from "node:os";
 import { parse } from "yaml";
-import { expect } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../support/workspace/workspaceFixture.js";
+
+let sharedHome = "";
+
+beforeAll(async () => {
+  sharedHome = (await createTestWorkspace("rea-hermes-suite-")).root;
+});
+
+beforeEach(async () => {
+  for (const entry of await readdir(sharedHome))
+    await rm(join(sharedHome, entry), { recursive: true, force: true });
+});
+
+afterAll(async () => {
+  if (sharedHome !== "") await removeTestWorkspace(sharedHome);
+});
 
 for (const [version, keyStyle] of [
   ["1.1", "quoted"],
@@ -22,7 +44,7 @@ for (const [version, keyStyle] of [
   cliTest(
     `Hermes setup preserves string environment values under YAML ${version} with ${keyStyle} keys`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory("rea-hermes-yaml-strings-");
+      const home = sharedHome;
       const profile = join(home, "hermes");
       const config = join(profile, "config.yaml");
       const environment = {
@@ -112,7 +134,7 @@ for (const [version, keyStyle] of [
 cliTest(
   "Hermes setup preserves an existing tool allowlist and client-owned policy",
   async ({ cli }) => {
-    const home = await createTestTempDirectory("rea-hermes-tool-policy-");
+    const home = sharedHome;
     const profile = join(home, "hermes");
     const config = join(profile, "config.yaml");
     const original = [
@@ -203,7 +225,7 @@ cliTest(
 cliTest(
   "Hermes setup, doctor and uninstall use the expanded profile and its personal skill",
   async ({ cli }) => {
-    const home = await createTestTempDirectory("rea-hermes-cli-");
+    const home = sharedHome;
     const profile = join(home, "profile");
     const config = join(profile, "config.yaml");
     const skill = join(profile, "skills/reverse-engineer-anything/SKILL.md");
@@ -294,7 +316,7 @@ for (const selection of ["default", "custom", "suffix", "explicit"] as const) {
   cliTest(
     `Hermes ${selection} sticky-profile selection preserves the root configuration`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory("rea-hermes-sticky-");
+      const home = sharedHome;
       const suffix = selection === "suffix" ? "-dev" : "";
       const native =
         process.platform === "win32"
@@ -420,7 +442,7 @@ for (const selection of [
   cliTest(
     `Hermes nested homes use the native profile root: ${selection}`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory("rea-hermes-nested-");
+      const home = sharedHome;
       const native =
         process.platform === "win32"
           ? join(home, "AppData", "Local", "hermes")
@@ -530,9 +552,7 @@ for (const layout of ["symlinked-default", "escaping-prefix"] as const) {
   cliTest(
     `Hermes preview resolves existing ancestors for missing and existing overrides: ${layout}`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory(
-        "rea-hermes-missing-override-",
-      );
+      const home = sharedHome;
       const native =
         process.platform === "win32"
           ? join(home, "AppData", "Local", "hermes")
@@ -620,22 +640,21 @@ for (const name of ["missing", "deleted", "ghost", "../escape", "root"]) {
   cliTest(
     `Hermes rejects unusable sticky profile ${name} without writing a fallback home`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory("rea-hermes-invalid-profile-");
+      const home = sharedHome;
       const root = join(home, "hermes root");
       await mkdir(root);
       await writeFile(join(root, "active_profile"), name);
+      const config = join(root, "profiles", name, "config.yaml");
+      const deletionDirectory = join(root, "profiles", ".deleted");
+      const tombstone = join(deletionDirectory, name);
+      const original =
+        "model: custom\nmcp_servers: {rea: {command: rea, args: [mcp]}}\n";
       if (name === "deleted" || name === "ghost") {
         await mkdir(join(root, "profiles", name), { recursive: true });
         if (name === "deleted") {
-          await writeFile(
-            join(root, "profiles", name, "config.yaml"),
-            "model: custom\n",
-          );
-          await mkdir(join(root, "profiles", ".deleted"));
-          await writeFile(
-            join(root, "profiles", ".deleted", name),
-            "deleted\n",
-          );
+          await writeFile(config, original);
+          await mkdir(deletionDirectory);
+          await writeFile(tombstone, "deleted\n");
         }
       }
       const run = (args: readonly string[]) =>
@@ -644,13 +663,8 @@ for (const name of ["missing", "deleted", "ghost", "../escape", "root"]) {
           cwd: home,
           environment: { USERPROFILE: home, HERMES_HOME: root },
         });
-      const rejected = await run([
-        "setup",
-        "--client",
-        "hermes",
-        "--yes",
-        "--json",
-      ]);
+      const setup = ["setup", "--client", "hermes", "--yes", "--json"];
+      const rejected = await run(setup);
       expect(rejected.exitCode).not.toBe(0);
       expect(rejected.json).toMatchObject({
         status: "needs_human",
@@ -664,6 +678,49 @@ for (const name of ["missing", "deleted", "ghost", "../escape", "root"]) {
       await expect(access(join(root, "skills"))).rejects.toMatchObject({
         code: "ENOENT",
       });
+      if (
+        name === "deleted" &&
+        process.platform !== "win32" &&
+        process.getuid?.() !== 0
+      ) {
+        await chmod(deletionDirectory, 0o000);
+        try {
+          await expect(access(tombstone)).rejects.toMatchObject({
+            code: "EACCES",
+          });
+          const unavailable = await run(setup);
+          expect(await readFile(config, "utf8")).toBe(original);
+          await expect(access(`${config}.rea.backup`)).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+          expect(unavailable.exitCode).not.toBe(0);
+          expect(unavailable.json).toMatchObject({
+            status: "needs_human",
+            plannedActions: [],
+            appliedActions: [],
+            remediation: expect.stringContaining(tombstone),
+          });
+
+          const removal = await run(["uninstall", "--json"]);
+          expect(await readFile(config, "utf8")).toBe(original);
+          await expect(access(`${config}.rea.backup`)).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+          expect(removal.exitCode).not.toBe(0);
+          expect(removal.json).toMatchObject({
+            status: "failed",
+            items: expect.arrayContaining([
+              expect.objectContaining({
+                name: "hermes",
+                status: "failed",
+                configuration_path: tombstone,
+              }),
+            ]),
+          });
+        } finally {
+          await chmod(deletionDirectory, 0o700);
+        }
+      }
       if (name !== "missing") return;
       const doctor = await run(["doctor", "--client", "hermes", "--json"]);
       expect(doctor.exitCode).not.toBe(0);
@@ -695,17 +752,22 @@ for (const name of ["missing", "deleted", "ghost", "../escape", "root"]) {
 cliTest.skipIf(process.platform === "win32")(
   "Hermes named-user home aligns setup, doctor, skill and uninstall despite an isolated HOME",
   async ({ cli }) => {
-    const home = await createTestTempDirectory("rea-hermes-named-caller-");
     const account = userInfo();
+    const accountHome = await realpath(account.homedir);
+    // Keep the unexpanded tilde path inside the fixture even after its ".." segments.
+    const home = join(sharedHome, relative("/", accountHome));
+    await mkdir(home, { recursive: true });
     const temporary = await createTestTempDirectory(
       "rea-hermes-named-profile-",
     );
-    const suffix = relative(await realpath(account.homedir), temporary);
+    const suffix = relative(accountHome, temporary);
     // Exercise the real named-account lookup without requiring a writable
     // account home. Resolve parent traversal from its physical directory while
     // keeping the named home's expanded spelling, including parent segments.
     const profile = `${account.homedir.replace(/\/+$/u, "")}/${suffix}`;
     const override = `~${account.username}//${suffix}`;
+    const literalProfile = join(home, override);
+    expect(literalProfile).not.toBe(temporary);
     const config = `${profile}/config.yaml`;
     const skill = `${profile}/skills/reverse-engineer-anything/SKILL.md`;
     const original =
@@ -766,7 +828,7 @@ cliTest.skipIf(process.platform === "win32")(
     expect((await run(["uninstall", "--json"])).exitCode).toBe(0);
     expect(parse(await readFile(config, "utf8"))).toEqual(parse(original));
     await expect(access(skill)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(access(join(home, override))).rejects.toMatchObject({
+    await expect(access(literalProfile)).rejects.toMatchObject({
       code: "ENOENT",
     });
   },
@@ -775,7 +837,7 @@ cliTest.skipIf(process.platform === "win32")(
 cliTest(
   "Hermes unresolved named home refuses setup before writes and remains diagnostic in doctor",
   async ({ cli }) => {
-    const home = await createTestTempDirectory("rea-hermes-named-refusal-");
+    const home = sharedHome;
     const override = `~${userInfo().username}-other/profile`;
     const run = (arguments_: readonly string[]) =>
       cli.run({

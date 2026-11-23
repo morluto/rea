@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
 
 import {
   createJavaScriptApplicationEdge,
@@ -25,10 +25,8 @@ const sourceDigest = (name: string): string =>
 const buildGraph = (
   artifactSha: string,
   edges: readonly EdgeSpec[],
-  order: "forward" | "reverse" = "forward",
 ): JavaScriptApplicationGraph => {
-  const names = order === "forward" ? [...NAMES] : [...NAMES].reverse();
-  const nodes = names.map((name) =>
+  const nodes = NAMES.map((name) =>
     createJavaScriptApplicationNode({
       kind: "javascript-module",
       identity: {
@@ -55,12 +53,11 @@ const buildGraph = (
     if (node === undefined) throw new Error(`Missing fixture node ${name}`);
     return node.node_id;
   };
-  const ordered = order === "forward" ? [...edges] : [...edges].reverse();
   return createJavaScriptApplicationGraph({
     schema: "JavaScriptApplicationGraph",
     root_node_ids: [idOf("a")],
     nodes,
-    edges: ordered.map(([source, target, relation]) =>
+    edges: edges.map(([source, target, relation]) =>
       createJavaScriptApplicationEdge({
         source_node_id: idOf(source),
         target_node_id: idOf(target),
@@ -74,11 +71,11 @@ const buildGraph = (
   });
 };
 
-const relationshipChanges = (
+const compare = (
   left: JavaScriptApplicationGraph,
   right: JavaScriptApplicationGraph,
-): string[] => {
-  const result = compareJavaScriptApplicationVersions({
+) => {
+  return compareJavaScriptApplicationVersions({
     left: {
       evidenceId: `ev_${"1".repeat(64)}`,
       rootArtifactSha256: LEFT_SHA,
@@ -92,17 +89,6 @@ const relationshipChanges = (
     leftNativeEvidence: [],
     rightNativeEvidence: [],
   });
-  expect(result.summary.added + result.summary.removed).toBe(0);
-  return result.items
-    .filter(({ dimensions }) => dimensions.includes("relationships"))
-    .map(({ left_node_id: id }) => {
-      const node = left.nodes.find(({ node_id: nodeId }) => nodeId === id);
-      const label = node?.observations[0]?.label;
-      if (label === undefined || label === null)
-        throw new Error("Changed item has no node");
-      return label;
-    })
-    .sort();
 };
 
 const BASE_EDGES: readonly EdgeSpec[] = [
@@ -112,64 +98,93 @@ const BASE_EDGES: readonly EdgeSpec[] = [
   ["c", "b", "imports"],
 ];
 
-describe("application version relationship comparison", () => {
-  it("reports no relationship change for identical topology in any node or edge order", () => {
-    expect(
-      relationshipChanges(
-        buildGraph(LEFT_SHA, BASE_EDGES),
-        buildGraph(RIGHT_SHA, BASE_EDGES, "reverse"),
-      ),
-    ).toEqual([]);
-  });
+it("keeps paired relationships unchanged regardless of observation order", () => {
+  const left = buildGraph(LEFT_SHA, BASE_EDGES);
+  const right = buildGraph(RIGHT_SHA, BASE_EDGES);
+  const result = compare(left, right);
+  expect(result.items).toHaveLength(NAMES.length);
+  expect(result.items).toMatchObject(
+    Array.from(NAMES, () => ({
+      status: "unchanged",
+      dimensions: [],
+      limitations: [],
+      match: { basis: "exact-module-source-digest" },
+    })),
+  );
+  expect(
+    compare(left, {
+      ...right,
+      nodes: [...right.nodes].reverse(),
+      edges: [...right.edges].reverse(),
+    }),
+  ).toEqual(result);
+});
 
-  it("flags both endpoints when an edge relation changes", () => {
-    const changed: readonly EdgeSpec[] = [
+it.each<{
+  name: string;
+  before: readonly EdgeSpec[];
+  after: readonly EdgeSpec[];
+  changed: readonly ModuleName[];
+}>([
+  {
+    name: "relation kind",
+    before: BASE_EDGES,
+    after: [
       ["a", "b", "imports"],
       ["b", "c", "contains"],
       ["a", "c", "contains"],
       ["c", "b", "imports"],
-    ];
-    expect(
-      relationshipChanges(
-        buildGraph(LEFT_SHA, BASE_EDGES),
-        buildGraph(RIGHT_SHA, changed),
-      ),
-    ).toEqual(["b.js", "c.js"]);
-  });
-
-  it("flags a node whose only change is an incoming edge", () => {
-    const left: readonly EdgeSpec[] = [["a", "b", "imports"]];
-    const right: readonly EdgeSpec[] = [
+    ],
+    changed: ["b", "c"],
+  },
+  {
+    name: "new inbound edge",
+    before: [["a", "b", "imports"]],
+    after: [
       ["a", "b", "imports"],
       ["c", "b", "imports"],
-    ];
-    expect(
-      relationshipChanges(
-        buildGraph(LEFT_SHA, left),
-        buildGraph(RIGHT_SHA, right),
-      ),
-    ).toEqual(["b.js", "c.js"]);
-  });
-
-  it("flags a node when an edge is re-pointed at a different matched neighbour", () => {
-    const left: readonly EdgeSpec[] = [["a", "b", "imports"]];
-    const right: readonly EdgeSpec[] = [["a", "c", "imports"]];
-    expect(
-      relationshipChanges(
-        buildGraph(LEFT_SHA, left),
-        buildGraph(RIGHT_SHA, right),
-      ),
-    ).toEqual(["a.js", "b.js", "c.js"]);
-  });
-
-  it("distinguishes edge direction between the same pair", () => {
-    const left: readonly EdgeSpec[] = [["a", "b", "imports"]];
-    const right: readonly EdgeSpec[] = [["b", "a", "imports"]];
-    expect(
-      relationshipChanges(
-        buildGraph(LEFT_SHA, left),
-        buildGraph(RIGHT_SHA, right),
-      ),
-    ).toEqual(["a.js", "b.js"]);
-  });
-});
+    ],
+    changed: ["b", "c"],
+  },
+  {
+    name: "new matched target",
+    before: [["a", "b", "imports"]],
+    after: [["a", "c", "imports"]],
+    changed: ["a", "b", "c"],
+  },
+  {
+    name: "reversed edge",
+    before: [["a", "b", "imports"]],
+    after: [["b", "a", "imports"]],
+    changed: ["a", "b"],
+  },
+])(
+  "reports exact endpoint changes for a $name",
+  ({ before, after, changed }) => {
+    const left = buildGraph(LEFT_SHA, before);
+    const right = buildGraph(RIGHT_SHA, after);
+    const result = compare(left, right);
+    expect(result.items).toHaveLength(NAMES.length);
+    for (const name of NAMES) {
+      const path = `${name}.js`;
+      const oldNode = left.nodes.find(
+        ({ observations }) => observations[0]?.label === path,
+      );
+      const newNode = right.nodes.find(
+        ({ observations }) => observations[0]?.label === path,
+      );
+      const affected = changed.includes(name);
+      expect(
+        result.items.find(
+          ({ left_node_id }) => left_node_id === oldNode?.node_id,
+        ),
+        path,
+      ).toMatchObject({
+        right_node_id: newNode?.node_id,
+        status: affected ? "changed" : "unchanged",
+        dimensions: affected ? ["relationships"] : [],
+        match: { basis: "exact-module-source-digest" },
+      });
+    }
+  },
+);

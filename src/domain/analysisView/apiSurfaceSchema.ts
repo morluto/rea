@@ -11,8 +11,25 @@ export const apiSurfaceViewSchema = z.strictObject({
     .describe(
       "Include distinct observed query parameter names and their original record ordinals; names do not establish required parameters or a complete API schema.",
     ),
+  include_request_header_names: z
+    .boolean()
+    .optional()
+    .describe(
+      "Include the request, cookie and set-cookie header names recorded for each group, with the records that presented them. No header, cookie or set-cookie value is copied, and no name establishes authentication, session semantics or a complete header schema.",
+    ),
 });
 const ruleSchema = z.enum(ROUTE_RULES);
+const nameOrdinalsSchema = z.array(
+  z.strictObject({
+    name: z.string(),
+    record_ordinals: z.array(z.int().nonnegative()),
+  }),
+);
+const requestHeaderNamesSchema = z.strictObject({
+  request_headers: nameOrdinalsSchema,
+  cookie_names: nameOrdinalsSchema,
+  set_cookie_names: nameOrdinalsSchema,
+});
 const groupSchema = z.strictObject({
   method: z.string(),
   origin: z.string(),
@@ -28,14 +45,8 @@ const groupSchema = z.strictObject({
   record_ordinals: z.array(z.int().nonnegative()),
   statuses: z.array(z.number()),
   content_types: z.array(z.string()),
-  query_parameter_names: z
-    .array(
-      z.strictObject({
-        name: z.string(),
-        record_ordinals: z.array(z.int().nonnegative()),
-      }),
-    )
-    .optional(),
+  query_parameter_names: nameOrdinalsSchema.optional(),
+  request_header_names: requestHeaderNamesSchema.optional(),
   flags: z.array(
     z.enum(["single-sample", "mixed-statuses", "mixed-content-types"]),
   ),

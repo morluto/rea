@@ -1,3 +1,4 @@
+import { hasDosMzMagic } from "../../domain/dosMz.js";
 import {
   parseFailureAnalysisError,
   parseLimitConstraint,
@@ -35,7 +36,7 @@ import {
   BinaryResourceFailure,
   binaryResourceCeiling,
 } from "../../domain/binaryContainer.js";
-import { readElfHardening } from "./ElfHardening.js";
+import { readElfHardeningCooperative } from "./ElfHardening.js";
 import { readMachoHardening } from "./MachoHardening.js";
 import { readPeHardening } from "./PeHardening.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
@@ -109,10 +110,10 @@ export const readBinaryHardening = async (
     return {
       artifact,
       format: "elf",
-      images: [readElfHardening(bytes, signal)],
+      images: [await readElfHardeningCooperative(bytes, signal)],
       limitations: [...BINARY_HARDENING_LIMITATIONS],
     };
-  if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a)
+  if (hasDosMzMagic(bytes))
     return {
       artifact,
       format: "pe",

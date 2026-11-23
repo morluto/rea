@@ -82,6 +82,7 @@ import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { FifoQueue } from "../kernel/FifoQueue.js";
 
 const CLEANUP_COMMAND_TIMEOUT_MS = 1_000;
 const STARTUP_TIMEOUT_MS = 30_000;
@@ -142,6 +143,7 @@ const createRizinCommandEvidence = ({
       },
       result: { ...result },
       rawResult: { ...result },
+      authority: "controlled-replay",
       limitations: [
         RIZIN_SESSION_TARGET_LIMITATION,
         ...(launchTarget.unobservedReason === undefined
@@ -240,7 +242,7 @@ interface RizinDebugSession {
   readonly id: string;
   readonly launched: SpawnedOwnedProviderProcess;
   readonly supervisor: ProviderProcessSupervisor;
-  readonly frames: Array<{
+  readonly frames: FifoQueue<{
     readonly frame: RizinFrame;
     readonly queueChargeBytes: number;
   }>;
@@ -474,8 +476,19 @@ export class RizinDebugSessionManager {
           "Persistent Rizin debugger sessions require Linux /proc descriptor readback to verify inferior detachment and output routing.",
         ),
       );
-    if (input.inferior_tty === undefined || input.inferior_tty.length === 0)
-      return err(new AnalysisInputError("start_rizin_debug_session"));
+    if (
+      typeof input.inferior_tty !== "string" ||
+      input.inferior_tty.length === 0
+    )
+      return err(
+        new AnalysisInputError("start_rizin_debug_session", undefined, [
+          {
+            path: ["inferior_tty"],
+            reason: "invalid_value",
+            message: "An explicit non-empty inferior_tty path is required.",
+          },
+        ]),
+      );
     let ttyPath: string;
     let ttyDevice: number;
     let ttyInode: number;
@@ -665,7 +678,7 @@ export class RizinDebugSessionManager {
           maxDiagnosticBytes: MAX_DIAGNOSTIC_BYTES,
         },
       ),
-      frames: [],
+      frames: new FifoQueue(),
       frameWaiters: [],
       history: [],
       queuedFrameBytes: 0,
@@ -1335,8 +1348,16 @@ export class RizinDebugSessionManager {
         offset = nextOffset;
         continue;
       }
+      if (boundary >= 0 && session.frameChunks.length === 0) {
+        const captured = decodeRizinFrameBytes(session, piece, false);
+        this.#deliverFrame(session, captured.frame, captured.bytes);
+        offset = nextOffset;
+        continue;
+      }
       if (piece.length > 0) {
-        session.frameChunks.push(Buffer.from(piece));
+        session.frameChunks.push(
+          piece.length === chunk.length ? chunk : Buffer.from(piece),
+        );
         session.bufferedFrameBytes += piece.length;
       }
       if (boundary < 0) return;
@@ -1411,7 +1432,7 @@ export class RizinDebugSessionManager {
       MIN_QUEUED_FRAME_CHARGE_BYTES,
     );
     if (
-      session.frames.length >= MAX_QUEUED_FRAMES ||
+      session.frames.size >= MAX_QUEUED_FRAMES ||
       session.queuedFrameBytes + queueChargeBytes > MAX_QUEUED_FRAME_BYTES
     ) {
       session.commandOutputDropped ||= session.commandCaptureActive;
@@ -1510,12 +1531,7 @@ export class RizinDebugSessionManager {
     const after = parseRizinPtraceRows(
       await this.#runInternalCommand(session, "olj"),
     );
-    if (
-      after.some(
-        ([activeFd, activePid]) => activeFd === fd || activePid === pid,
-      ) ||
-      after.length !== 0
-    )
+    if (after.length !== 0)
       throw new Error(
         "Rizin did not confirm that the selected inferior FD was detached.",
       );
@@ -1607,7 +1623,7 @@ export class RizinDebugSessionManager {
     // Admission remains closed. Only cleanup can recover correlation, and then
     // it still obtains a fresh ptrace inventory and validates identity/output.
     session.ready = false;
-    session.frames.length = 0;
+    session.frames.clear();
     session.queuedFrameBytes = 0;
     const marker = `__REA_CLEANUP_SYNC_${randomUUID().replaceAll("-", "")}__`;
     await new Promise<void>((resolve, reject) => {
@@ -1855,19 +1871,30 @@ export const assertRizinProcessStartTimeStable = (
 };
 
 const hasUnclaimedRizinFrames = (session: RizinDebugSession): boolean =>
-  session.frames.length > 0 ||
+  session.frames.size > 0 ||
   session.bufferedFrameBytes > 0 ||
   session.discardingOversizedFrame;
 
-/** Parse the receiver's bounded bytes once for normal, startup and interrupted reads. */
-const bufferedRizinFrame = (session: RizinDebugSession, truncated: boolean) => {
-  const bytes = Buffer.concat(session.frameChunks, session.bufferedFrameBytes);
+const decodeRizinFrameBytes = (
+  session: RizinDebugSession,
+  bytes: Buffer,
+  truncated: boolean,
+) => {
   const invalidUtf8 = !isUtf8(bytes);
   session.invalidUtf8Observed ||= invalidUtf8;
   return {
     bytes: bytes.length,
     frame: { text: bytes.toString("utf8"), truncated, invalidUtf8 },
   };
+};
+
+/** Parse the receiver's bounded bytes once for normal, startup and interrupted reads. */
+const bufferedRizinFrame = (session: RizinDebugSession, truncated: boolean) => {
+  const bytes =
+    session.frameChunks.length === 1
+      ? session.frameChunks[0]!
+      : Buffer.concat(session.frameChunks, session.bufferedFrameBytes);
+  return decodeRizinFrameBytes(session, bytes, truncated);
 };
 
 const rizinCaptureStoppedSentence = (
@@ -1951,9 +1978,8 @@ const waitForCommandFrames = async (
   // following it, and apply the same decoded UTF-8 budget as normal frames.
   const interrupted = () => {
     let markerSeen = false;
-    for (;;) {
-      const queued = session.frames.shift();
-      if (queued === undefined) break;
+    while (session.frames.size > 0) {
+      const queued = session.frames.shift()!;
       session.queuedFrameBytes -= queued.queueChargeBytes;
       frameCount += 1;
       if (frameCount > MAX_COMMAND_FRAMES) {

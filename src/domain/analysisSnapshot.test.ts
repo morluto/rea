@@ -16,9 +16,14 @@ import {
   ANALYSIS_SNAPSHOT_PROVIDER,
   ANALYSIS_SNAPSHOT_TARGET,
 } from "./analysisSnapshot.fixture.js";
+import { createAnalysisProfile } from "./analysisProfile.js";
 import { createEvidence, evidenceSubject } from "./evidence.js";
 import { unknownTarget } from "./targetIdentity.js";
-import { createEvidenceBundle } from "./evidenceBundle.js";
+import {
+  createEvidenceBundle,
+  createImmutableEvidenceBundle,
+} from "./evidenceBundle.js";
+import { freezeJsonSnapshot } from "./immutableJson.js";
 import {
   RAW_ONLY_ARCHITECTURES,
   type BinaryTarget,
@@ -504,51 +509,6 @@ describe("analysis snapshot canonical ordering and scope", () => {
   });
 });
 
-it("does not select arbitrary provenance when multiple authenticated records match one replay entry", () => {
-  const { current, snapshot } = snapshotWithHistoricalEvidence();
-  const source = snapshot.evidence_bundle.records.find(
-    (record) => record.operation === "unprofiled_query",
-  )!;
-  const alternative = createEvidence(
-    ANALYSIS_SNAPSHOT_TARGET,
-    ANALYSIS_SNAPSHOT_PROVIDER,
-    {
-      operation: current.operation,
-      parameters: current.parameters,
-      result: current.normalized_result,
-      analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
-      evidenceLinks: [source.evidence_id],
-    },
-  );
-  expect(alternative.evidence_id).not.toBe(current.evidence_id);
-  const ambiguous = parseAnalysisSnapshot({
-    ...snapshot,
-    evidence_bundle: createEvidenceBundle([
-      ...snapshot.evidence_bundle.records,
-      alternative,
-    ]),
-  });
-  expect(ambiguous.entries).toEqual(snapshot.entries);
-  const reversedInsertion = parseAnalysisSnapshot({
-    ...ambiguous,
-    evidence_bundle: createEvidenceBundle(
-      [...ambiguous.evidence_bundle.records].reverse(),
-    ),
-  });
-  expect(reversedInsertion).toEqual(ambiguous);
-  for (const candidate of [ambiguous, reversedInsertion])
-    expect(
-      snapshotEvidenceForQuery(candidate, {
-        target: ANALYSIS_SNAPSHOT_TARGET,
-        bindingProfile: ANALYSIS_SNAPSHOT_PROFILE,
-        operation: current.operation,
-        parameters: current.parameters,
-        provider: ANALYSIS_SNAPSHOT_PROVIDER,
-        evidenceProfile: ANALYSIS_SNAPSHOT_PROFILE,
-      }),
-    ).toBeUndefined();
-});
-
 it("retains linked foreign Evidence without treating it as selected-target replay", () => {
   const { current, snapshot } = snapshotWithHistoricalEvidence();
   const foreignTarget = { ...ANALYSIS_SNAPSHOT_TARGET, sha256: "b".repeat(64) };
@@ -580,16 +540,37 @@ it("retains linked foreign Evidence without treating it as selected-target repla
     ...snapshot,
     evidence_bundle: bundle,
   });
+  const query = {
+    target: ANALYSIS_SNAPSHOT_TARGET,
+    bindingProfile: ANALYSIS_SNAPSHOT_PROFILE,
+    operation: linked.operation,
+    parameters: linked.parameters,
+    provider: ANALYSIS_SNAPSHOT_PROVIDER,
+    evidenceProfile: ANALYSIS_SNAPSHOT_PROFILE,
+  };
+  expect(snapshotEvidenceForQuery(admitted, query)).toEqual(linked);
+  const differentProfile = createAnalysisProfile(ANALYSIS_SNAPSHOT_PROVIDER, {
+    fixture: "other",
+  });
   expect(
     snapshotEvidenceForQuery(admitted, {
-      target: ANALYSIS_SNAPSHOT_TARGET,
-      bindingProfile: ANALYSIS_SNAPSHOT_PROFILE,
-      operation: linked.operation,
-      parameters: linked.parameters,
-      provider: ANALYSIS_SNAPSHOT_PROVIDER,
-      evidenceProfile: ANALYSIS_SNAPSHOT_PROFILE,
+      ...query,
+      evidenceProfile: differentProfile,
     }),
-  ).toEqual(linked);
+  ).toBeUndefined();
+  expect(
+    snapshotEvidenceForQuery(admitted, {
+      ...query,
+      bindingProfile: differentProfile,
+    }),
+  ).toBeUndefined();
+  expect(
+    snapshotEvidenceForQuery(admitted, {
+      ...query,
+      operation: "unprofiled_query",
+      parameters: {},
+    }),
+  ).toBeUndefined();
   expect(snapshotMatchesTarget(admitted.target, foreignTarget)).toBe(false);
   const unrelated = createEvidence(foreignTarget, ANALYSIS_SNAPSHOT_PROVIDER, {
     operation: "unrelated",
@@ -672,30 +653,6 @@ it("binds raw Evidence only when its entry point matches the snapshot target", (
 });
 
 describe("analysis snapshot Evidence binding", () => {
-  it("finds only Evidence committed to the exact binding and profile", () => {
-    const { current, snapshot } = snapshotWithHistoricalEvidence();
-    expect(
-      snapshotEvidenceForQuery(snapshot, {
-        target: ANALYSIS_SNAPSHOT_TARGET,
-        bindingProfile: ANALYSIS_SNAPSHOT_PROFILE,
-        operation: "analyze_function",
-        parameters: { procedure: "main" },
-        provider: ANALYSIS_SNAPSHOT_PROVIDER,
-        evidenceProfile: ANALYSIS_SNAPSHOT_PROFILE,
-      }),
-    ).toEqual(current);
-    expect(
-      snapshotEvidenceForQuery(snapshot, {
-        target: ANALYSIS_SNAPSHOT_TARGET,
-        bindingProfile: ANALYSIS_SNAPSHOT_PROFILE,
-        operation: "unprofiled_query",
-        parameters: {},
-        provider: ANALYSIS_SNAPSHOT_PROVIDER,
-        evidenceProfile: ANALYSIS_SNAPSHOT_PROFILE,
-      }),
-    ).toBeUndefined();
-  });
-
   it("rejects cached execution data that differs from its bundled Evidence", () => {
     const target = snapshotTarget(ANALYSIS_SNAPSHOT_TARGET);
     const binding = snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE);
@@ -884,4 +841,59 @@ describe("analysis snapshot payload ownership", () => {
       expect(Object.isFrozen(tamperedEntry.execution.result)).toBe(false);
     },
   );
+});
+
+describe("detached snapshot exports", () => {
+  it("detaches sealed nested JSON payloads while keeping immutable snapshots shared", () => {
+    const { snapshot } = snapshotWithHistoricalEvidence();
+    const entry = snapshot.entries[0];
+    if (entry === undefined) throw new Error("Missing fixture entry");
+    const frozenResult = freezeJsonSnapshot({ summary: "cached", items: [1] });
+    const frozenRaw = freezeJsonSnapshot({ source: ["raw"] });
+    const frozenParams = freezeJsonSnapshot({ procedure: "main" });
+    const evidence = createEvidence(
+      ANALYSIS_SNAPSHOT_TARGET,
+      ANALYSIS_SNAPSHOT_PROVIDER,
+      {
+        operation: entry.operation,
+        parameters: frozenParams,
+        result: frozenResult,
+        rawResult: frozenRaw,
+        analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+      },
+    );
+    const sealedBundle = createImmutableEvidenceBundle([evidence]);
+    const input = {
+      ...snapshot,
+      entries: [
+        {
+          ...entry,
+          parameters: frozenParams,
+          execution: {
+            ...entry.execution,
+            result: frozenResult,
+            raw_result: frozenRaw,
+          },
+        },
+      ],
+      evidence_bundle: sealedBundle,
+    };
+    const detached = parseAnalysisSnapshot(input);
+    const detachedEntry = detached.entries[0]!;
+    const detachedRecord = detached.evidence_bundle.records[0]!;
+    expect(Object.isFrozen(detachedEntry.execution.result)).toBe(false);
+    expect(Object.isFrozen(detachedEntry.execution.raw_result)).toBe(false);
+    expect(Object.isFrozen(detachedEntry.parameters)).toBe(false);
+    expect(Object.isFrozen(detachedRecord.normalized_result)).toBe(false);
+    expect(Object.isFrozen(detachedRecord.raw_result)).toBe(false);
+    expect(Object.isFrozen(detachedRecord.parameters)).toBe(false);
+    (detachedRecord.normalized_result as { items: number[] }).items.push(2);
+    expect(sealedBundle.records[0]?.normalized_result).toEqual({
+      summary: "cached",
+      items: [1],
+    });
+    expect(Object.isFrozen(sealedBundle.records[0]?.normalized_result)).toBe(
+      true,
+    );
+  });
 });

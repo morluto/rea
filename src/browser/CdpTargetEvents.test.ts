@@ -1,17 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import { fakeCdpEvents } from "../../tests/fixtures/fakeCdpEvents.js";
-import type { CdpEvent } from "./CdpConnection.js";
+import type { CdpEvent, CdpTransportEvent } from "./CdpConnection.js";
 import { onCdpTargetEvent } from "./CdpTargetEvents.js";
 
-const route = (
-  sessionId: string | undefined,
-  sent: readonly CdpEvent[],
-): (string | undefined)[] => {
+const route = (sessionId: string | undefined, sent: readonly CdpEvent[]) => {
   const events = fakeCdpEvents();
-  const received: (string | undefined)[] = [];
+  const received: CdpTransportEvent[] = [];
   const unsubscribe = onCdpTargetEvent(events, sessionId, (event) =>
-    received.push(event.registered?.method ?? event.domain),
+    received.push(event),
   );
   for (const event of sent) events.emit(event);
   unsubscribe();
@@ -40,12 +37,24 @@ describe("target event routing", () => {
         detached("other"),
         detached("mine"),
       ]),
-    ).toEqual(["Page.frameNavigated", "Target.detachedFromTarget"]);
+    ).toMatchObject([
+      { sessionId: "mine", registered: { method: "Page.frameNavigated" } },
+      {
+        registered: {
+          method: "Target.detachedFromTarget",
+          payload: { sessionId: "mine" },
+        },
+      },
+    ]);
   });
 
   it("delivers a page socket's unscoped events, never another session's", () => {
     expect(
-      route(undefined, [navigated(), navigated("other"), detached("other")]),
-    ).toEqual(["Page.frameNavigated"]);
+      route(undefined, [
+        navigated(),
+        navigated("other"),
+        detached("other"),
+      ]).map(({ sessionId, registered }) => [sessionId, registered?.method]),
+    ).toEqual([[undefined, "Page.frameNavigated"]]);
   });
 });

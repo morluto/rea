@@ -1034,6 +1034,7 @@ describe("capture read failure provenance", () => {
         new Error("physical capture read failed"),
         { code },
       );
+      const reason = sameReason ? physical : { request: "later cancellation" };
       const closeFailure = new Error("capture close failed");
       let handle: Awaited<ReturnType<typeof actualFs.open>> | undefined;
       let closeCalls = 0;
@@ -1042,9 +1043,7 @@ describe("capture read failure provenance", () => {
         if (String(args[0]) !== input.capture_path) return opened;
         handle = opened;
         vi.spyOn(opened, "read").mockImplementation(async () => {
-          controller.abort(
-            sameReason ? physical : { request: "later cancellation" },
-          );
+          controller.abort(reason);
           throw physical;
         });
         const close = opened.close.bind(opened);
@@ -1078,6 +1077,11 @@ describe("capture read failure provenance", () => {
           errors: [physical, closeFailure],
         });
       else expect(primary.cause).toBe(physical);
+      expect(primary.secondaryFailures).toHaveLength(1);
+      expect(primary.secondaryFailures[0]?.cause).toBe(reason);
+      expect(
+        projectAnalysisError(result.error).details?.secondary_failures,
+      ).toEqual([expect.objectContaining({ code: "cancelled" })]);
       await expect(access(input.output_directory)).rejects.toMatchObject({
         code: "ENOENT",
       });

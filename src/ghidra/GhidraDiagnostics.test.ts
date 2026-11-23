@@ -134,10 +134,11 @@ it.each([false, true])(
   },
 );
 
-it("retains bounded, redacted launcher failure lines before clipping output", () => {
+it("retains a redacted launcher refusal after clipping its raw output", () => {
   const line =
-    "java.io.FileNotFoundException: /tmp/secret-token/java_home.save (Access is denied)";
-  const text = `${line}\n${"later output\n".repeat(7000)}`;
+    "java.io.FileNotFoundException: C:\\Users\\a b\\secret-token\\java_home.save (ACCESS IS DENIED)";
+  const tail = "x".repeat(GHIDRA_DIAGNOSTIC_EXCERPT_BYTES);
+  const text = `${line}\n${tail}`;
   const stream = {
     text,
     bytes: Buffer.byteLength(text),
@@ -153,13 +154,14 @@ it("retains bounded, redacted launcher failure lines before clipping output", ()
     false,
   );
   expect(output).toMatchObject({
+    stderr: { text: tail },
     launcher_failures: {
       failures: [
         {
           kind: "java_home_save_denied",
           stream: "stderr",
-          line: "java.io.FileNotFoundException: /tmp/[REDACTED]/java_home.save (Access is denied)",
-          path: "/tmp/[REDACTED]/java_home.save",
+          line: "java.io.FileNotFoundException: C:\\Users\\a b\\[REDACTED]\\java_home.save (ACCESS IS DENIED)",
+          path: "C:\\Users\\a b\\[REDACTED]\\java_home.save",
         },
       ],
       truncated: false,
@@ -196,7 +198,8 @@ it.each([
 );
 
 it("carries only the latest launcher output in an error, with its byte counts", () => {
-  const retained = `${"early line\n".repeat(400_000)}last line: startup timed out\n`;
+  const latest = "last line: startup timed out\n";
+  const retained = `${"x".repeat(GHIDRA_DIAGNOSTIC_EXCERPT_BYTES)}${latest}`;
   const bytes = Buffer.byteLength(retained);
   const projected = ghidraDiagnosticStream(
     { text: retained, bytes, observedBytes: bytes + 1_000 },
@@ -207,14 +210,12 @@ it("carries only the latest launcher output in an error, with its byte counts", 
     retained_bytes: number;
     text_bytes: number;
   };
-  expect(projected.text.endsWith("last line: startup timed out\n")).toBe(true);
+  expect(projected.text.endsWith(latest)).toBe(true);
   expect(Buffer.byteLength(projected.text)).toBe(projected.text_bytes);
-  expect(projected.text_bytes).toBeLessThanOrEqual(
-    GHIDRA_DIAGNOSTIC_EXCERPT_BYTES,
-  );
   expect(projected).toMatchObject({
     bytes: bytes + 1_000,
     retained_bytes: bytes,
+    text_bytes: GHIDRA_DIAGNOSTIC_EXCERPT_BYTES,
   });
 });
 
@@ -228,17 +229,6 @@ it("keeps short launcher output whole", () => {
 });
 
 describe("Ghidra launcher failure lines", () => {
-  it("extracts the denied java_home.save path from JVM output", () => {
-    const line =
-      "java.io.FileNotFoundException: C:\\Users\\a b\\Temp\\rea-provider-1\\config\\ghidra\\ghidra_12.1.4_PUBLIC\\java_home.save (Access is denied)";
-    expect(ghidraLauncherFailure("stderr", line)).toEqual({
-      kind: "java_home_save_denied",
-      stream: "stderr",
-      line,
-      path: "C:\\Users\\a b\\Temp\\rea-provider-1\\config\\ghidra\\ghidra_12.1.4_PUBLIC\\java_home.save",
-    });
-  });
-
   it.each([
     [
       "another denied path",
@@ -252,36 +242,6 @@ describe("Ghidra launcher failure lines", () => {
     ["no output", ""],
   ])("does not classify %s", (_label, line) => {
     expect(ghidraLauncherFailure("stderr", line)).toBeUndefined();
-  });
-
-  it("keeps a differently cased denial that falls outside the delivered excerpt", () => {
-    const line =
-      "java.io.FileNotFoundException: C:\\x\\java_home.save (ACCESS IS DENIED)";
-    const text = `${line}\n${"later output\n".repeat(7000)}`;
-    const stream = {
-      text,
-      bytes: Buffer.byteLength(text),
-      observedBytes: Buffer.byteLength(text),
-    };
-    const empty = { text: "", bytes: 0, observedBytes: 0 };
-    const output = ghidraFailureOutput(
-      {
-        snapshot: { stdout: empty, stderr: stream, exitCode: 1, signal: null },
-        complete: true,
-      },
-      undefined,
-      false,
-    ) as {
-      stderr: { text: string };
-      launcher_failures: { failures: unknown[] };
-    };
-    expect(output.stderr.text).not.toContain("java_home.save");
-    expect(output.launcher_failures.failures).toEqual([
-      expect.objectContaining({
-        kind: "java_home_save_denied",
-        path: "C:\\x\\java_home.save",
-      }),
-    ]);
   });
 
   it("records the requested program list after Ghidra's refusal marker", () => {

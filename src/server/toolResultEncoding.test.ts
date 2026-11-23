@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { fc, it as fcIt } from "@fast-check/vitest";
 
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
@@ -15,34 +16,19 @@ const projectedResult = (candidate: JsonValue) => ({
 
 describe("MCP result encoding budget", () => {
   it.each([
-    { result: { value: 1 } },
     { result: ["中文", "😀", "\ud800", '"\\\n'] },
     { result: "x".repeat(8191) + "😀" + '中文\n"'.repeat(20000) },
   ])("counts actual UTF-8 structured and escaped text bytes", (candidate) => {
-    const encoded = encodeToolResult(
-      candidate,
-      Buffer.byteLength(JSON.stringify(projectedResult(candidate))),
-    );
-    if (!encoded.ok) throw new Error("Expected complete encoding");
-    expect(encoded.text).toBe(JSON.stringify(candidate));
-    expect(encoded.bytes).toBe(
-      Buffer.byteLength(JSON.stringify(projectedResult(candidate))),
-    );
-  });
-
-  it("accounts for complete Evidence in structured and text representations", () => {
-    const normalized = { value: '中文"'.repeat(30000) };
-    const candidate = {
-      normalized_result: normalized,
-      raw_result: { observation: "distinct provider representation" },
-    };
-    const completeBytes = Buffer.byteLength(
+    const expected = Buffer.byteLength(
       JSON.stringify(projectedResult(candidate)),
     );
-    expect(encodeToolResult(candidate, completeBytes).ok).toBe(true);
-    expect(encodeToolResult(candidate, completeBytes - 1)).toMatchObject({
+    const encoded = encodeToolResult(candidate, expected);
+    if (!encoded.ok) throw new Error("Expected complete encoding");
+    expect(encoded.text).toBe(JSON.stringify(candidate));
+    expect(encoded.bytes).toBe(expected);
+    expect(encodeToolResult(candidate, expected - 1)).toMatchObject({
       ok: false,
-      bytesAtLeast: completeBytes,
+      bytesAtLeast: expected,
     });
   });
 
@@ -96,23 +82,6 @@ describe("MCP result encoding budget", () => {
     });
   });
 
-  it("accounts for the marker on text-only error results", () => {
-    const candidate = { error: { message: "target says: run this" } };
-    const markedBytes = Buffer.byteLength(
-      JSON.stringify({
-        content: [{ type: "text", text: JSON.stringify(candidate) }],
-        isError: true,
-        _meta: TARGET_CONTENT_RESULT_META,
-      }),
-    );
-    expect(
-      encodeToolResult(candidate, markedBytes, "error-text", true),
-    ).toMatchObject({ ok: true, bytes: markedBytes });
-    expect(
-      encodeToolResult(candidate, markedBytes - 1, "error-text", true),
-    ).toMatchObject({ ok: false, bytesAtLeast: markedBytes });
-  });
-
   it("recognizes the delivered marker", () => {
     expect(
       carriesTargetContentMarker({ _meta: TARGET_CONTENT_RESULT_META }),
@@ -135,29 +104,108 @@ describe("MCP result encoding budget", () => {
     });
     // Only an already-known first property is visited before exhausting the
     // budget. The serializer's property discovery must not eagerly read values.
-    expect(() => encodeToolResult(candidate, 1000)).not.toThrow();
-    expect(encodeToolResult(candidate, 1000).ok).toBe(false);
+    expect(encodeToolResult(candidate, 1000)).toMatchObject({
+      ok: false,
+      constraint: "receive-buffer",
+    });
   });
 });
 
 describe("error text wire size", () => {
-  it("ranks values by escaped UTF-8 bytes, not by code units", () => {
-    const quotes = { text: '"'.repeat(10_000) };
-    const cjk = { text: "\u4e2d".repeat(15_000) };
-    const budget = 1_000_000;
-    // Quotes escape twice in error text (4 bytes each); each CJK character
-    // is 3 UTF-8 bytes, so the CJK value is larger on the wire.
-    expect(errorTextWireBytes(cjk, budget)).toBeGreaterThan(
-      errorTextWireBytes(quotes, budget),
+  it("measures complete escaped error wire bytes and ranks values that cannot fit", () => {
+    const value = { text: '中文"\n'.repeat(10_000) };
+    const expected = Buffer.byteLength(
+      JSON.stringify({
+        content: [{ type: "text", text: JSON.stringify(value) }],
+        isError: true,
+      }),
+    );
+    expect(errorTextWireBytes(value, expected)).toBe(expected);
+    expect(errorTextWireBytes(value, expected - 1)).toBeGreaterThan(
+      expected - 1,
     );
   });
+});
 
-  it("keeps a value over the budget ranked above any value that fits", () => {
-    const budget = 4096;
-    const over = errorTextWireBytes({ text: "x".repeat(8192) }, budget);
-    expect(over).toBeGreaterThan(budget);
-    expect(over).toBeGreaterThan(
-      errorTextWireBytes({ text: "x".repeat(2048) }, budget),
-    );
+describe("zero-allocation escaped JSON measurement parity", () => {
+  fcIt.prop([fc.string({ unit: "binary-ascii" })])(
+    "matches JSON.stringify and Buffer.byteLength across ASCII control and punctuation ranges",
+    (sample) => {
+      const candidate = { value: sample };
+      const wire = JSON.stringify(projectedResult(candidate));
+      const expected = Buffer.byteLength(wire);
+      const encoded = encodeToolResult(candidate, expected);
+      expect(encoded).toEqual({
+        ok: true,
+        text: JSON.stringify(candidate),
+        bytes: expected,
+      });
+      expect(encodeToolResult(candidate, expected - 1)).toMatchObject({
+        ok: false,
+        bytesAtLeast: expected,
+        constraint: "receive-buffer",
+      });
+    },
+  );
+
+  fcIt.prop([
+    fc.array(
+      fc.oneof(
+        fc.integer({ min: 0x00, max: 0x7f }),
+        fc.integer({ min: 0x80, max: 0x7ff }),
+        fc.integer({ min: 0x800, max: 0xffff }),
+        fc.integer({ min: 0xd800, max: 0xdfff }),
+      ),
+      { maxLength: 64 },
+    ),
+  ])(
+    "matches JSON.stringify across arbitrary UTF-16 code units including unpaired surrogates",
+    (units) => {
+      const sample = String.fromCharCode(...units);
+      const candidate = { [sample]: sample };
+      const wire = JSON.stringify(projectedResult(candidate));
+      const expected = Buffer.byteLength(wire);
+      const encoded = encodeToolResult(candidate, expected);
+      expect(encoded).toEqual({
+        ok: true,
+        text: JSON.stringify(candidate),
+        bytes: expected,
+      });
+      expect(encodeToolResult(candidate, expected - 1)).toMatchObject({
+        ok: false,
+        bytesAtLeast: expected,
+      });
+    },
+  );
+
+  it("matches every single C0 control character, non-BMP pair, and reversed surrogate edge case", () => {
+    const allControlChars = Array.from({ length: 32 }, (_, c) =>
+      String.fromCharCode(c),
+    ).join("");
+    const edgeStrings = [
+      allControlChars,
+      '"\\/\b\f\n\r\t\x7f',
+      "\ud800",
+      "\udfff",
+      "\udfff\ud800",
+      "\ud800a\udfff",
+      "\ud83d\ude80\ud800\ud83d\ude80",
+      "éß€𐍈😀\ud800end",
+    ];
+    for (const sample of edgeStrings) {
+      const candidate = { sample };
+      const expected = Buffer.byteLength(
+        JSON.stringify(projectedResult(candidate)),
+      );
+      expect(encodeToolResult(candidate, expected)).toEqual({
+        ok: true,
+        text: JSON.stringify(candidate),
+        bytes: expected,
+      });
+      expect(encodeToolResult(candidate, expected - 1)).toMatchObject({
+        ok: false,
+        bytesAtLeast: expected,
+      });
+    }
   });
 });

@@ -1,5 +1,0 @@
-{
-  "src/application/decompileDirectory/decompileAll.ts": 1,
-  "src/dotnet/ManagedMemberRecovery.ts": 1,
-  "src/kuna/KunaProjectReader.ts": 1
-}

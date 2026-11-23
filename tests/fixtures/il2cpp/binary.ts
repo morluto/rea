@@ -1,3 +1,5 @@
+import { aps2Relocations } from "../elfAndroidPacked.js";
+
 /**
  * Synthetic thin arm64 Mach-O holding the IL2CPP registration tables for the
  * metadata fixture: image names, code-generation modules, their method
@@ -485,12 +487,58 @@ export const createSplitPointerPeFixture = (zeroTail = true): Buffer => {
   return Buffer.concat([header, payload]);
 };
 
+const packElfFixture = ({
+  file,
+  rela,
+  tags,
+  dynamicOffset,
+  packing,
+}: {
+  readonly file: Buffer;
+  readonly rela: Buffer;
+  readonly tags: readonly (readonly [bigint, bigint])[];
+  readonly dynamicOffset: number;
+  readonly packing: "aps1" | "aps2";
+}): Buffer => {
+  const packed = aps2Relocations(
+    Array.from({ length: rela.length / 24 }, (_, index) => ({
+      offset: rela.readBigUInt64LE(index * 24),
+      info: rela.readBigUInt64LE(index * 24 + 8),
+      addend: rela.readBigInt64LE(index * 24 + 16),
+    })),
+    "rela",
+  );
+  if (packing === "aps1") packed.write("APS1");
+  // Replace the dead RELA bytes in place so file-backed ranges and any BSS
+  // pointers remain identical to the unpacked carrier.
+  if (packed.length > rela.length)
+    throw new Error(
+      "Packed relocations exceed the reserved RELA fixture range",
+    );
+  file.fill(0, SIZE, SIZE + rela.length);
+  packed.copy(file, SIZE);
+  tags.forEach(([tag], index) => {
+    const at = dynamicOffset + index * 16;
+    if (tag === 7n) {
+      file.writeBigUInt64LE(0x60000011n, at);
+    } else if (tag === 8n) {
+      file.writeBigUInt64LE(0x60000012n, at);
+      file.writeBigUInt64LE(BigInt(packed.length), at + 8);
+    } else if (tag === 9n) {
+      // A harmless ignored tag keeps the remaining directory positions stable.
+      file.writeBigUInt64LE(21n, at);
+      file.writeBigUInt64LE(0n, at + 8);
+    }
+  });
+  return file;
+};
+
 /** Android ELF relocation tables appended after the fixture image. */
 export interface ElfFixtureOptions {
   /** e_machine; 183 is AArch64. */
   readonly machine?: number;
-  /** Add DT_ANDROID_RELA, the packed APS2 encoding. */
-  readonly androidPacked?: boolean;
+  /** Replace RELA with a packed table; APS1 deliberately stays unsupported. */
+  readonly androidPacked?: "aps1" | "aps2";
   /** Omit PT_DYNAMIC. */
   readonly dynamic?: boolean;
   /** Give every relocation a symbol index, so none is RELATIVE-only. */
@@ -628,7 +676,6 @@ export const createElfFixture = (
   const tagCount =
     4 +
     (options.duplicateRela === true ? 1 : 0) +
-    (options.androidPacked === true ? 1 : 0) +
     symbolTableTags(symbols, 0n).length +
     (hash.length === 0 ? 0 : 1);
   const fileSize =
@@ -661,9 +708,6 @@ export const createElfFixture = (
       : []),
     [8n, options.relaSize ?? BigInt(rela.length)],
     [9n, options.relaEntry ?? 24n],
-    ...(options.androidPacked === true
-      ? [[0x60000011n, 0n] as [bigint, bigint]]
-      : []),
     ...symbolTableTags(
       symbols,
       FIXTURE_BINARY_BASE + BigInt(fileSize - symbols.length - hash.length),
@@ -718,7 +762,15 @@ export const createElfFixture = (
     file.writeBigUInt64LE(BigInt(dynamic.length), 152);
     file.writeBigUInt64LE(BigInt(dynamic.length), 160);
   }
-  return file;
+  return options.androidPacked === undefined
+    ? file
+    : packElfFixture({
+        file,
+        rela,
+        tags,
+        dynamicOffset: SIZE + rela.length,
+        packing: options.androidPacked,
+      });
 };
 
 /** A code-loaded type table plus isolated one-entry candidate runs in disjoint ELF mappings. */

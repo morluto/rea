@@ -61,7 +61,7 @@ import {
   type Il2cppMetadataRowCounts,
 } from "./Il2cppMetadataFile.js";
 import {
-  linkIl2cppBinarySteps,
+  linkIl2cppBinaryCooperative,
   type Il2cppBinaryLink,
 } from "./Il2cppBinaryFile.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -575,7 +575,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               input.binary_architecture,
             );
             sliceLimitations = selected.limitations;
-            const linking = linkIl2cppBinarySteps(
+            const linking = await linkIl2cppBinaryCooperative(
               selected.bytes,
               decoded,
               link,
@@ -583,15 +583,13 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
                 ...admission,
                 genericInstances: input.generic_instances === true,
               },
+              async () => {
+                await this.yieldControl();
+                assertArtifactReadActive(options?.signal);
+              },
             );
-            let linkStep = linking.next();
-            while (!linkStep.done) {
-              await this.yieldControl();
-              assertArtifactReadActive(options?.signal);
-              linkStep = linking.next();
-            }
-            linkedFormat = linkStep.value.format;
-            linked = binaryReport(linkStep.value, {
+            linkedFormat = linking.format;
+            linked = binaryReport(linking, {
               path: binaryPath,
               sha256: binary.sha256,
               bytes: binary.bytes.length,

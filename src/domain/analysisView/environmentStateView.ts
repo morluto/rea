@@ -341,7 +341,7 @@ const fieldRuleSchema = z.discriminatedUnion("rule", [
   z.strictObject({ ...ruled, rule: z.literal("set"), value: jsonValueSchema }),
   z.strictObject({ ...ruled, rule: z.literal("toggle") }),
 ]);
-const insertRuleSchema = z.union([
+const insertRuleSchema = z.discriminatedUnion("rule", [
   z.strictObject({ rule: z.enum(["first", "last"]) }),
   z.strictObject({
     rule: z.literal("sorted"),

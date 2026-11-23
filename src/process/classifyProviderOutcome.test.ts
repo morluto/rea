@@ -8,6 +8,7 @@ import {
   type ProviderDialectOutcome,
   type ProviderOutcomeContext,
 } from "./classifyProviderOutcome.js";
+import { capturedProviderOutput } from "./capturedProviderOutput.js";
 import type { ProviderProcessSnapshot } from "./ProviderProcess.js";
 
 const snapshot: ProviderProcessSnapshot = {
@@ -22,20 +23,19 @@ const context = (
 ): ProviderOutcomeContext => ({
   providerId: "example",
   operation: "inspect_target",
-  capturedOutput: (retained) => ({
-    stdout: retained.stdout.text,
-    stderr: retained.stderr.text,
-    truncated: false,
-  }),
+  capturedOutput: capturedProviderOutput,
   timeout: { ms: 1000 },
   outputLimit: { limits: null, recovery: {} },
   dialect,
 });
 
 /** A dialect that recognises nothing and reports its phase. */
-const unrecognised = context((_outcome, _details, unclassified) =>
-  unclassified({ diagnostics: { phase: "worker" } }),
-);
+const unrecognised = {
+  ...context((_outcome, _details, unclassified) =>
+    unclassified({ diagnostics: { phase: "worker" } }),
+  ),
+  details: { diagnostics: { receipt: "finalization failed" } },
+};
 
 describe("an outcome the provider dialect does not recognise", () => {
   const cases: readonly {
@@ -49,17 +49,24 @@ describe("an outcome the provider dialect does not recognise", () => {
         kind: "exited",
         cause: new Error("exited with 3"),
         message: "exited with 3",
-        output: { snapshot, truncated: true },
+        output: {
+          snapshot: {
+            ...snapshot,
+            diagnosticTruncated: true,
+            stderr: { ...snapshot.stderr, observedBytes: 4096 },
+          },
+          truncated: true,
+        },
         exitCode: 3,
         signal: null,
-        stopRequested: false,
+        stopRequested: true,
       },
       examined: {
         failure_kind: "exited",
         reason: "exited with 3",
         exit_code: 3,
         signal: null,
-        stop_requested: false,
+        stop_requested: true,
         output_truncated: true,
       },
     },
@@ -83,65 +90,36 @@ describe("an outcome the provider dialect does not recognise", () => {
     "reports $name with the examined outcome",
     ({ outcome, examined }) => {
       const failure = classifyProviderOutcome(outcome, unrecognised);
+      const diagnostics = {
+        receipt: "finalization failed",
+        phase: "worker",
+        ...examined,
+      };
+      const captured = {
+        stdout: "",
+        stderr: "unrecognised diagnostic",
+        stdout_bytes: 0,
+        stderr_bytes: outcome.kind === "exited" ? 4096 : 23,
+        exit_code: 3,
+        signal: null,
+        truncated: outcome.kind === "exited",
+      };
       expect(failure).toBeInstanceOf(UnclassifiedProviderFailure);
+      expect(failure.cause).toBe(outcome.cause);
       expect(failure).toMatchObject({
         _tag: "ProviderAdapterError",
         providerId: "example",
         operation: "inspect_target",
         examined,
-        diagnostics: { phase: "worker", ...examined },
-        cause: outcome.cause,
+        diagnostics,
+        capturedOutput: captured,
       });
       expect(projectAnalysisError(failure)).toMatchObject({
         code: "execution_failure",
-        details: { diagnostics: { phase: "worker", ...examined } },
+        details: { diagnostics, captured_output: captured },
       });
     },
   );
-
-  it("keeps the retained output beside the examined outcome by default", () => {
-    const failure = classifyProviderOutcome(
-      {
-        kind: "exited",
-        cause: new Error("exited with 3"),
-        message: "exited with 3",
-        output: { snapshot, truncated: false },
-        exitCode: 3,
-        signal: null,
-        stopRequested: true,
-      },
-      context((_outcome, _details, unclassified) => unclassified()),
-    );
-    expect(failure.capturedOutput).toMatchObject({
-      stderr: "unrecognised diagnostic",
-    });
-    expect(failure.diagnostics).toMatchObject({ stop_requested: true });
-  });
-
-  it("adds the provider's diagnostics to the context's diagnostics", () => {
-    const failure = classifyProviderOutcome(
-      {
-        kind: "exited",
-        cause: new Error("exited with 3"),
-        message: "exited with 3",
-        output: { snapshot, truncated: false },
-        exitCode: 3,
-        signal: null,
-        stopRequested: false,
-      },
-      {
-        ...context((_outcome, _details, unclassified) =>
-          unclassified({ diagnostics: { phase: "worker" } }),
-        ),
-        details: { diagnostics: { receipt: "finalization failed" } },
-      },
-    );
-    expect(failure.diagnostics).toMatchObject({
-      receipt: "finalization failed",
-      phase: "worker",
-      failure_kind: "exited",
-    });
-  });
 
   it("does not report an outcome the dialect classified", () => {
     const failure = classifyProviderOutcome(

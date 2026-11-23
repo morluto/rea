@@ -1,5 +1,0 @@
-{
-  "src/browser/WebSourceMapFetcher.ts": 1,
-  "src/domain/firmware/devicetreeParser.ts": 1,
-  "src/v8/V8CodeCache.errors.ts": 1
-}
