@@ -552,6 +552,26 @@ mcp_servers:
       { name: "other", command: "other-cmd" },
     ]);
   });
+
+  it("reports a malformed legacy file as a per-file failure on uninstall", async () => {
+    const { home } = await ggcodeClient();
+    const legacyPath = join(home, ".ggcode", "ggcode.yaml");
+    const malformed = `model: demo
+mcp_servers: "not-a-sequence"
+`;
+    await writeFile(legacyPath, malformed);
+    const host = systemUninstallHost(home);
+    const legacyClient = (await host.clients()).find(
+      (entry) => entry.name === "ggcode" && entry.configPath === legacyPath,
+    );
+    if (legacyClient === undefined)
+      throw new Error("missing legacy ggcode uninstall client");
+
+    // The failure is modeled as a per-file outcome, never a thrown error.
+    const removal = await host.removeClient(legacyClient);
+    expect(removal.status).toBe("failed");
+    expect(await readFile(legacyPath, "utf8")).toBe(malformed);
+  });
 });
 
 describe("ggcode legacy tool-family repair", () => {

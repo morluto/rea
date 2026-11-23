@@ -82,6 +82,7 @@ import {
   ArtifactReaderFailure,
   ArtifactResourceScope,
 } from "../resources/index.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 import {
   appDataRedirection,
   clientOwnershipEvidencePaths,
@@ -978,14 +979,31 @@ type ClientConfigurationRead =
 /**
  * Uninstall also targets ggcode's legacy in-main ggcode.yaml, whose mapping
  * root the strict standalone parser rejects; parse it as the legacy layout.
+ * The legacy parser throws, so model its expected failures as the same
+ * Result the strict parser returns: structure rejections are TypeErrors,
+ * anything else is malformed YAML syntax.
  */
 const parseUninstallConfiguration = (
   client: SetupClient,
   text: string,
-): Result<ClientConfigurationDocument, ClientConfigurationParseFailure> =>
-  client.format === "ggcode" && client.configPath === client.fallbackConfigPath
-    ? ok(parseGgcodeLegacyConfiguration(text))
-    : parseClientConfiguration(text, client.format);
+): Result<ClientConfigurationDocument, ClientConfigurationParseFailure> => {
+  if (
+    !(
+      client.format === "ggcode" &&
+      client.configPath === client.fallbackConfigPath
+    )
+  )
+    return parseClientConfiguration(text, client.format);
+  try {
+    return ok(parseGgcodeLegacyConfiguration(text));
+  } catch (cause: unknown) {
+    return err({
+      kind: cause instanceof TypeError ? "shape" : "syntax",
+      detail: errorMessage(cause),
+      cause,
+    });
+  }
+};
 
 /** The configuration text, or the outcome to report for a failed read. A
  * completed physical read is retained even when its handle fails to close:
