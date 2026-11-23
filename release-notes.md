@@ -508,6 +508,7 @@
 ### Code Refactoring
 
 * **adb:** extract AdbFileStaging module from AdbProvider ([#13705](https://github.com/morluto/rea/issues/13705)) ([5a163e8](https://github.com/morluto/rea/commit/5a163e8e7511a65ce5f804d64d30761d4fe78075))
+* **adb:** extract package and app lifecycle operations from AdbProvider ([#13988](https://github.com/morluto/rea/issues/13988)) ([ada3ea6](https://github.com/morluto/rea/commit/ada3ea6305d35bcdb04c506bbc2af611203094f0))
 * **adb:** extract read-only shell inspection operations from AdbProvider ([#13975](https://github.com/morluto/rea/issues/13975)) ([25e7a85](https://github.com/morluto/rea/commit/25e7a85687b8f875fcfc88d57762f58132043602))
 * **analysis-view:** unify 4 retained-summary wrappers into executeRetainedSummaryOperation ([#13810](https://github.com/morluto/rea/issues/13810)) ([55c4f56](https://github.com/morluto/rea/commit/55c4f5633c47411a0b2a2ed85c550d3d1af1adda))
 * **apple:** read dispatch relative displacements through the shared readers ([0ae58b4](https://github.com/morluto/rea/commit/0ae58b4a1fe1778f49def9920a214498a2ce084d)), closes [#11865](https://github.com/morluto/rea/issues/11865)
@@ -592,6 +593,7 @@
 * **server:** extract debugger and instrumentation tool bindings ([#13909](https://github.com/morluto/rea/issues/13909)) ([7f939d7](https://github.com/morluto/rea/commit/7f939d750855de9db3e54b2dea44d3874c5ac61f))
 * **server:** extract desktop build tool bindings ([#13891](https://github.com/morluto/rea/issues/13891)) ([841e5f8](https://github.com/morluto/rea/commit/841e5f84876485683643e91bd7bfab275f02cf90))
 * **server:** extract ErrorEvidenceTransport from EvidenceMcpServerCore ([#13761](https://github.com/morluto/rea/issues/13761)) ([6738853](https://github.com/morluto/rea/commit/67388539e0bfdf3d495363b82cb49f613dc146ca))
+* **server:** extract offline inspection tool bindings from serviceToolBindings ([#13984](https://github.com/morluto/rea/issues/13984)) ([880a2d5](https://github.com/morluto/rea/commit/880a2d5d51fbabef9d921da4af17982e106efee1))
 * **server:** extract session, investigation, and workflow tool bindings ([#13968](https://github.com/morluto/rea/issues/13968)) ([7c34d27](https://github.com/morluto/rea/commit/7c34d27991c98c4867e03d56a38f5bba33fa9a04))
 * **server:** replace server.close and onclose monkey-patching with lifecycle hooks ([#13882](https://github.com/morluto/rea/issues/13882)) ([a569ec5](https://github.com/morluto/rea/commit/a569ec5584ceef3ef2efa6cd1a7673839e9de443))
 * **server:** simplify contractToolBindings types and handler dispatch ([#13912](https://github.com/morluto/rea/issues/13912)) ([fdad60a](https://github.com/morluto/rea/commit/fdad60aea7ba8c090c367ad7315a0101b644ecc4))
