@@ -20,6 +20,7 @@ it.each([false, true])(
   "retains Windows cleanup authority for retry after cancellation=%s without PID signaling",
   async (cancel) => {
     const controller = new AbortController();
+    const reason = { origin: "caller" };
     const kill = vi.fn(() => true);
     const process: ProviderProcessHandle = Object.assign(new EventEmitter(), {
       pid: 4242,
@@ -53,7 +54,7 @@ it.each([false, true])(
         environment: {},
       }),
       spawnProcess: async () => {
-        if (cancel) controller.abort("fixture cancellation");
+        if (cancel) controller.abort(reason);
         return spawned;
       },
     });
@@ -74,15 +75,23 @@ it.each([false, true])(
         signal: controller.signal,
       },
     );
+    expect(result.ok).toBe(!cancel);
+    if (!result.ok) {
+      if (!(result.error instanceof GhidraLaunchError)) throw result.error;
+      expect(result.error).toMatchObject({
+        primaryFailure: { _tag: "AnalysisCancelledError" },
+        rollbackFailure: { kind: "incomplete" },
+      });
+      expect(result.error.primaryFailure?.cause).toBe(reason);
+    }
     const launch = result.ok
       ? result.value
       : result.error instanceof GhidraLaunchError
         ? result.error.partialLaunch
         : undefined;
-    expect(result.ok).toBe(!cancel);
-    expect(launch).toBeDefined();
     if (launch === undefined || !launch.ownsProcessLifetime)
       throw new Error("missing owner");
+    expect(launch.process).toBe(process);
     expect(await launch.cleanup?.()).toEqual({
       cleaned: false,
       reason: "Windows Ghidra process has no owned cleanup capability",

@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
@@ -9,8 +11,23 @@ import {
   planTestSelection,
   testShards,
 } from "../../scripts/ci/test-selection.mjs";
+import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
+const group = fileURLToPath(
+  new URL("../../scripts/ci/test-group.mjs", import.meta.url),
+);
+
+const selectedEnvironment = (...files: string[]) => ({
+  ...process.env,
+  CI_TEST_SELECTION: JSON.stringify({
+    version: 3,
+    mode: "selected",
+    reason: "Explicitly selected test files",
+    files,
+    shards: 1,
+  }),
+});
 
 const plan = (files: readonly string[], sources: Record<string, string>) =>
   planTestSelection({
@@ -46,6 +63,27 @@ it("follows test and verifier imports and directory scans, not production import
   expect(selectedFiles(plan(["scripts/verify-thing.mjs"], sources))).toEqual([
     "tests/boundary/filesystem/verifier.test.ts",
   ]);
+});
+
+it("selects a registry guard when a named test changes or moves", () => {
+  const registered =
+    "tests/boundary/providers/sampleRegistryProviderCatalog.test.ts";
+  const moved = "tests/boundary/providers/sampleRegistryMoved.test.ts";
+  const guard = "tests/evaluation/sampleRegistryGuard.test.ts";
+  const sources = {
+    "tests/support/lifecycleRegistry.ts": `export const paths = ["${registered}"];`,
+    "tests/support/lifecycleCoverage.ts":
+      'export { paths } from "./lifecycleRegistry.js";',
+    [guard]: 'import "../support/lifecycleCoverage.js";',
+    "tests/boundary/providers/sampleRegistryUnrelated.test.ts": "",
+  };
+  expect(
+    selectedFiles(plan([registered], { ...sources, [registered]: "" })),
+  ).toEqual([registered, guard]);
+  expect(selectedFiles(plan([registered], sources))).toEqual([guard]);
+  expect(
+    selectedFiles(plan([registered, moved], { ...sources, [moved]: "" })),
+  ).toEqual([moved, guard]);
 });
 
 it("selects a leaf adapter's tests by its name and directory across test projects", () => {
@@ -102,8 +140,8 @@ it("lets checker-only inputs and prose select nothing by themselves", () => {
   const sources = {
     "src/domain/Value.test.ts": "",
     "tests/boundary/filesystem/docs.test.ts": 'read("docs/guide.md");',
-    "tests/boundary/filesystem/mermaid.test.ts":
-      'read("docs/architecture/architecture.mermaid");',
+    "tests/boundary/filesystem/docsAsset.test.ts":
+      'read("docs/assets/example.png");',
     "tests/boundary/filesystem/licenses.test.ts":
       'read("licenses/npm-dependencies.txt"); read("LICENSE");',
     "tests/boundary/filesystem/issueTemplate.test.ts":
@@ -129,9 +167,9 @@ it("lets checker-only inputs and prose select nothing by themselves", () => {
   expect(selectedFiles(plan(["docs/guide.md"], sources))).toEqual([
     "tests/boundary/filesystem/docs.test.ts",
   ]);
-  expect(
-    selectedFiles(plan(["docs/architecture/architecture.mermaid"], sources)),
-  ).toEqual(["tests/boundary/filesystem/mermaid.test.ts"]);
+  expect(selectedFiles(plan(["docs/assets/example.png"], sources))).toEqual([
+    "tests/boundary/filesystem/docsAsset.test.ts",
+  ]);
   expect(
     selectedFiles(plan(["licenses/npm-dependencies.txt"], sources)),
   ).toEqual(["tests/boundary/filesystem/licenses.test.ts"]);
@@ -186,6 +224,24 @@ it("selects tests under shared-boundary directories and declared fixture owners,
     mode: "full",
     reason:
       "Missing test owner tests/boundary/cli/cliParityGoldens.test.ts for tests/fixtures/cli-parity/error-unknown-command.txt",
+  });
+});
+
+it("includes the declared integration test for managed pointer row changes", () => {
+  const changed = "src/domain/managed/managedMemberPointers.ts";
+  const direct = "src/dotnet/ManagedMemberPointerBudget.test.ts";
+  const owner = "src/dotnet/ManagedMemberPointers.test.ts";
+  const sources = {
+    [changed]: "",
+    [direct]: 'import "../domain/managed/managedMemberPointers.js";',
+  };
+  expect(selectedFiles(plan([changed], { ...sources, [owner]: "" }))).toEqual([
+    direct,
+    owner,
+  ]);
+  expect(plan([changed], sources)).toMatchObject({
+    mode: "full",
+    reason: `Missing test owner ${owner} for ${changed}`,
   });
 });
 
@@ -433,32 +489,98 @@ it("parses only well-formed plans and derives the selected shard count", () => {
 });
 
 it("runs only a shard the plan defines", async () => {
-  const group = fileURLToPath(
-    new URL("../../scripts/ci/test-group.mjs", import.meta.url),
+  const environment = selectedEnvironment(
+    "tests/evaluation/reasonMarker.test.ts",
+    "tests/evaluation/recordPredicateGuard.test.ts",
   );
-  const selection = JSON.stringify({
-    version: 3,
-    mode: "selected",
-    reason: "Affected tests: 1 changed",
-    files: ["src/a.test.ts"],
-    shards: 1,
-  });
-  for (const [shard, environment] of [
-    ["2/2", selection],
-    ["1/2", selection],
-    ["1/1", JSON.stringify({ version: 3, mode: "full", reason: "x" })],
-    ["1/1", ""],
+  for (const [shard, selection, diagnostic] of [
+    [
+      "1/2",
+      environment.CI_TEST_SELECTION,
+      "No selected test group 1/2 in this plan",
+    ],
+    [
+      "1/1",
+      JSON.stringify({ version: 3, mode: "full", reason: "x" }),
+      "No selected test group 1/1 in this plan",
+    ],
+    ["1/1", "", "Unexpected end of JSON input"],
   ] as const)
     await expect(
       execute(process.execPath, [group, "selected", shard], {
-        env: { ...process.env, CI_TEST_SELECTION: environment },
+        env: { ...environment, CI_TEST_SELECTION: selection },
       }),
-    ).rejects.toMatchObject({ code: 1 });
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(diagnostic),
+    });
   await expect(
     execute(process.execPath, [group, "selected", "1/1", "--shard=1/2"], {
-      env: { ...process.env, CI_TEST_SELECTION: selection },
+      env: environment,
     }),
   ).rejects.toMatchObject({
     stderr: expect.stringContaining("already sharded"),
+  });
+});
+
+it.each([
+  ["-t", "one case"],
+  ["-tX", "unused value"],
+  ["--testNamePattern=one case"],
+  ["--testNamePattern.only=one case"],
+  ["--test-name-pattern", "one case"],
+  ["--tagsFilter=long-running"],
+  ["--tags-filter", "long-running"],
+])("rejects a case filter in a selected shard: %j", async (...filter) => {
+  await expect(
+    execute(process.execPath, [group, "selected", "1/1", ...filter], {
+      env: selectedEnvironment("tests/evaluation/reasonMarker.test.ts"),
+    }),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining(
+      "Selected test groups cannot filter cases by name or tag",
+    ),
+  });
+});
+
+it("runs every selected case and still permits developer name and tag filters", async () => {
+  const exact = fileURLToPath(
+    new URL("../../scripts/run-exact-tests.mjs", import.meta.url),
+  );
+  const file = "tests/evaluation/reasonMarker.test.ts";
+  const root = await createTestTempDirectory("rea-selected-cases-");
+  const selectedReport = join(root, "selected.json");
+  await execute(
+    process.execPath,
+    [
+      group,
+      "selected",
+      "1/1",
+      "--reporter=json",
+      `--outputFile.json=${selectedReport}`,
+    ],
+    { env: selectedEnvironment(file) },
+  );
+  const selected = JSON.parse(await readFile(selectedReport, "utf8")) as {
+    numPassedTests: number;
+  };
+  expect(selected).toMatchObject({ numPendingTests: 0, numFailedTests: 0 });
+  expect(selected.numPassedTests).toBeGreaterThan(1);
+
+  const devReport = join(root, "developer.json");
+  await execute(process.execPath, [
+    exact,
+    "run",
+    "-t",
+    "counts an unmarked slice",
+    "--tagsFilter=!long-running",
+    "--reporter=json",
+    `--outputFile.json=${devReport}`,
+    file,
+  ]);
+  const dev: unknown = JSON.parse(await readFile(devReport, "utf8"));
+  expect(dev).toMatchObject({
+    numPassedTests: 1,
+    numPendingTests: selected.numPassedTests - 1,
   });
 });

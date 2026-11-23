@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
 
@@ -20,15 +21,14 @@ it.each([
 ] as const)(
   "requires overflow Evidence before reanalysis (%s, retained=%s)",
   async (collection, retained) => {
-    const directory = await mkdtemp(
-      join(tmpdir(), "rea-il2cpp-retention-oracle-"),
+    const directory = await createTestTempDirectory(
+      "rea-il2cpp-retention-oracle-",
     );
-    try {
-      // This recording qualifies the verifier's ordering oracle, not metadata
-      // decoding or transport conformance. A later analysis repairs retention.
-      await writeFile(
-        join(directory, "recording.mjs"),
-        `
+    // This recording qualifies the verifier's ordering oracle, not metadata
+    // decoding or transport conformance. A later analysis repairs retention.
+    await writeFile(
+      join(directory, "recording.mjs"),
+      `
 import {promisify} from 'node:util';
 const path=process.env.INPUT;
 const identity={sha256:'a'.repeat(64),bytes:1};
@@ -56,61 +56,58 @@ export const requireMcpOutput=response=>{if(response.isError)throw Error('Unexpe
 export const requireMcpToolError=response=>response.error;
 export const hashVerifierFile=async()=>identity;
 `,
-      );
-      await writeFile(
-        join(directory, "hook.mjs"),
-        `
+    );
+    await writeFile(
+      join(directory, "hook.mjs"),
+      `
 import {registerHooks} from 'node:module';import {pathToFileURL} from 'node:url';
 registerHooks({resolve(specifier,context,next){
  if(context.parentURL?.endsWith('/scripts/verify-il2cpp-metadata.mjs')&&['node:child_process','@modelcontextprotocol/client','@modelcontextprotocol/client/stdio','../dist/contracts/toolContracts.js','./lib/mcp-verifier-results.mjs','./lib/verifier-file-resources.mjs'].includes(specifier))return {shortCircuit:true,url:pathToFileURL(process.env.RECORDING).href};
  return next(specifier,context);
 }});
 `,
-      );
-      const result = execute(
-        process.execPath,
-        [
-          "--import",
-          join(directory, "hook.mjs"),
-          fileURLToPath(
-            new URL(
-              "../../../scripts/verify-il2cpp-metadata.mjs",
-              import.meta.url,
-            ),
+    );
+    const result = execute(
+      process.execPath,
+      [
+        "--import",
+        join(directory, "hook.mjs"),
+        fileURLToPath(
+          new URL(
+            "../../../scripts/verify-il2cpp-metadata.mjs",
+            import.meta.url,
           ),
-          "--metadata",
-          join(directory, "metadata.dat"),
-        ],
-        {
-          timeout: 10_000,
-          env: {
-            ...process.env,
-            RECORDING: join(directory, "recording.mjs"),
-            INPUT: join(directory, "metadata.dat"),
-            RETAINED: String(retained),
-            COLLECTION: collection,
-          },
+        ),
+        "--metadata",
+        join(directory, "metadata.dat"),
+      ],
+      {
+        timeout: 10_000,
+        env: {
+          ...process.env,
+          RECORDING: join(directory, "recording.mjs"),
+          INPUT: join(directory, "metadata.dat"),
+          RETAINED: String(retained),
+          COLLECTION: collection,
         },
+      },
+    );
+    if (retained) {
+      const { stdout } = await result;
+      expect(stdout).toContain(
+        "All asserted IL2CPP metadata CLI/MCP checks passed",
       );
-      if (retained) {
-        const { stdout } = await result;
-        expect(stdout).toContain(
-          "All asserted IL2CPP metadata CLI/MCP checks passed",
-        );
-        expect(
-          stdout.includes(
-            "empty queryable tables provide no nonempty row-content witness",
-          ),
-        ).toBe(collection === "empty");
-      } else {
-        await expect(result).rejects.toMatchObject({
-          stderr: expect.stringContaining(
-            "Failed delivery Evidence was not retained before reanalysis",
-          ),
-        });
-      }
-    } finally {
-      await rm(directory, { recursive: true, force: true });
+      expect(
+        stdout.includes(
+          "empty queryable tables provide no nonempty row-content witness",
+        ),
+      ).toBe(collection === "empty");
+    } else {
+      await expect(result).rejects.toMatchObject({
+        stderr: expect.stringContaining(
+          "Failed delivery Evidence was not retained before reanalysis",
+        ),
+      });
     }
   },
 );

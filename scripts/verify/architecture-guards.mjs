@@ -11,6 +11,7 @@ import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
+import { completedAbortReclassificationCount } from "./completed-abort-guard.mjs";
 import { countDefaultValidationClients } from "./mcp-client-validation.mjs";
 import {
   isComparisonOrCountFile,
@@ -93,7 +94,6 @@ check(
 
 check("NUL-joined list key (use compositeKey)", files, /\.join\(["']\\0["']\)/);
 
-// Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
 // Opaque-effect checks are private to javascriptSemanticEffectLog.ts, so the
 // compiler keeps readers on its questions, and only the log and its record
 // module read the recorded sites. A method read on an intrinsic
@@ -137,9 +137,8 @@ check(
 // prlimitCeilingArguments because PcapCommand appends the producer command.
 // Its CPU ceiling stays 300 seconds and it has no resident-input budget;
 // address space and file size use those shared fields.
-// selectEvmWorkerLimits stays a separate selector: Result failures, unit
-// checks, and a refusal when soft exceeds hard. It must not call
-// clampLinuxResourceLimits.
+// EVMole reads and validates inherited limits through the same foundation
+// reader. It still selects soft-only arguments as a separate launch policy.
 check(
   "inline paired prlimit ceilings (use prlimitArgumentVector from src/process/LinuxResourceLimits)",
   files,
@@ -291,9 +290,9 @@ check(
   ],
 );
 
-// Native inventory results parse once against their named fact contract
-// (docs/adr/native/typed-operation-facts.md). Hopper's reply table and the
-// advertised output schemas own their own protocol and catalog contracts.
+// Native inventory results parse once against their named fact contract.
+// Hopper's reply table and the advertised output schemas own their protocol
+// and catalog contracts.
 check(
   "native inventory rows parsed outside their fact contract (use executeFact or a contract from src/domain/native/nativeOperationFacts)",
   files,
@@ -397,7 +396,6 @@ checkCounted(
   ["src/process/capturedProviderOutput.ts"],
 );
 
-// Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
 // Recorded effects belong to the effect log. A reader that reads an effect
 // index itself decides on its own which effect kinds and proofs apply; readers
 // ask the log instead. Every reader has moved; the remaining counts are the
@@ -638,7 +636,7 @@ checkCounted(
   "completed result reclassified by a hand-read abort signal (finalize through runOwned in src/providers/runOwned)",
   "completed-abort-reclassification",
   files,
-  /\.ok\s*&&\s*(?:isAborted\(|[\w.?]*signal\??\.aborted)/gu,
+  completedAbortReclassificationCount,
   ["src/providers/runOwned.ts"],
 );
 

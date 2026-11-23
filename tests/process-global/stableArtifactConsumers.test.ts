@@ -80,6 +80,7 @@ import {
 } from "../../src/domain/analysisErrorBase.js";
 import { createEvidence, parseEvidence } from "../../src/domain/evidence.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
+import { ParseFailureError } from "../../src/domain/parseFailure.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
@@ -152,7 +153,7 @@ import { inspectWindowsShortcutInputSchema } from "../../src/domain/native/windo
 import { inspectNativeExportsInputSchema } from "../../src/domain/native/nativeExports.js";
 import { inspectErlangBeamInputSchema } from "../../src/domain/erlang/beam.js";
 import { ModelArtifactProvider } from "../../src/model/ModelArtifactProvider.js";
-import { ggufFixture } from "../fixtures/model/model.js";
+import { ggufFixture, safetensorsFixture } from "../fixtures/model/model.js";
 import { inspectPeResourcesInputSchema } from "../../src/domain/native/peResources.js";
 import { peResourceFixture } from "../../src/domain/pe/peResources.fixture.js";
 import { createServer } from "../../src/server/createServer.js";
@@ -760,6 +761,92 @@ it("preserves a model permission failure when cancellation arrives during close"
     await provider.close();
   }
 });
+
+it("keeps the model parser cause through failed close and retry", async () => {
+  const path = await selectedImage();
+  const fixture = (depth: number) => {
+    const nested = "[".repeat(depth) + "0" + "]".repeat(depth);
+    return safetensorsFixture(
+      `{"weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4],"note":${nested}}}`,
+      Buffer.alloc(4),
+    ).bytes;
+  };
+  const provider = new ModelArtifactProvider();
+  try {
+    fault.blockNew = false;
+    await writeFile(path, fixture(1));
+    const valid = await provider.inspect({ path, hash: "header" });
+    expect(valid).toMatchObject({
+      ok: true,
+      value: { tensors: [{ name: "weight" }] },
+    });
+
+    fault.blockNew = true;
+    await writeFile(path, fixture(33));
+    const result = await provider.inspect({ path, hash: "header" });
+    if (result.ok) throw new Error("Expected a model depth refusal");
+    const { error } = result;
+    const maximum = { maximum_json_depth: 32 };
+    expect(projectAnalysisError(error)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: { reported_limits: maximum },
+    });
+    expect(error.cleanupPrimary?.cause).toBeInstanceOf(ParseFailureError);
+    expect(error.cleanupPrimary?.cause).toMatchObject({
+      failure: {
+        format: "model",
+        kind: "limit",
+        limit: { name: "json-nesting", maximum: 32 },
+      },
+    });
+    const retained = fault.handles.at(-1);
+    expect(retained?.fd).toBeGreaterThanOrEqual(0);
+    fault.blocked.clear();
+    await provider.close();
+    expect(retained?.fd).toBe(-1);
+    expect(projectAnalysisError(error)).toMatchObject({
+      code: "resource_constraint",
+      details: { reported_limits: maximum },
+    });
+    expect(resolvedAnalysisError(error).cause).toBe(
+      error.cleanupPrimary?.cause,
+    );
+  } finally {
+    fault.blocked.clear();
+    await provider.close();
+  }
+});
+
+it.each(["model", "foreign-fixture"])(
+  "projects only a model-owned parser limit with its enforced maximum (%s)",
+  async (format) => {
+    const path = await selectedImage();
+    const injected = new ParseFailureError({
+      format,
+      kind: "limit",
+      detail: "fixture-owned parser limit",
+      limit: { name: "json-nesting", maximum: 17 },
+    });
+    fault.blockNew = false;
+    fault.laterReadFailure = { position: 0, cause: injected };
+    const provider = new ModelArtifactProvider();
+    try {
+      const result = await provider.inspect({ path, hash: "header" });
+      if (result.ok) throw new Error("Expected a read refusal");
+      expect(result.error.cause).toBe(injected);
+      const projected = projectAnalysisError(result.error);
+      if (format === "model")
+        expect(projected).toMatchObject({
+          code: "resource_constraint",
+          details: { reported_limits: { maximum_json_depth: 17 } },
+          remediation: { action: expect.stringContaining("17 levels") },
+        });
+      else expect(projected.code).toBe("execution_failure");
+    } finally {
+      await provider.close();
+    }
+  },
+);
 
 it("retains earlier GGUF rows and physical failure while retrying failed descriptor cleanup", async () => {
   const path = await selectedImage();

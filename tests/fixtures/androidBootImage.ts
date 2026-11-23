@@ -391,19 +391,6 @@ export const truncateImage = (image: Buffer): Buffer => {
   return Buffer.from(image.subarray(0, Math.max(0, end - 1)));
 };
 
-/**
- * Rewrite a v4 vendor table count. `entry_size` stays 108 and `table_size`
- * becomes `count * 108`.
- */
-export const declareVendorRamdiskCount = (
-  image: Buffer,
-  count: number,
-): Buffer => {
-  const copy = Buffer.from(image);
-  writeU32(copy, VENDOR_V3, count * VENDOR_ENTRY);
-  writeU32(copy, VENDOR_V3 + 4, count);
-  return copy;
-};
 /** Small byte-format refusals for the public artifact adapters. */
 export const androidBootImageRefusals = () => {
   const unsupportedBoot = buildBootImage({ version: 0 });

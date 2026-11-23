@@ -66,7 +66,7 @@ const failedOperation = async (
     {
       platform: process.platform,
       architecture: process.arch,
-      readText: () => "application.version=12.1.4\napplication.java.min=21\n",
+      readText: () => "application.version=12.2\napplication.java.min=25\n",
       executable: () => true,
       probeJava: () =>
         ok<GhidraJavaObservation>({
@@ -77,8 +77,8 @@ const failedOperation = async (
               : process.platform === "win32"
                 ? "Windows 11"
                 : "Linux",
-          version: "21.0.12",
-          major: 21,
+          version: "25.0.1",
+          major: 25,
           home: "/fixture/jdk",
           bits: 64,
           runtime: "jdk",

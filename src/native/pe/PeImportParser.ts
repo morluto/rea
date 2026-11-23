@@ -196,8 +196,6 @@ export const parsePeImports = async (
   let examinedFunctions = 0;
   let entries = 0;
   const checkpoint = async (): Promise<void> => {
-    entries += 1;
-    if (entries % ENTRIES_PER_YIELD !== 0) return;
     await setImmediate();
     assertArtifactReadActive(signal);
   };
@@ -252,7 +250,7 @@ export const parsePeImports = async (
     const ordinalFlag = bits === 64 ? ORDINAL_FLAG64 : ORDINAL_FLAG32;
     const functions: PeImportFunction[] = [];
     for (let index = 0; ; index++) {
-      await checkpoint();
+      if (++entries % ENTRIES_PER_YIELD === 0) await checkpoint();
       const nameRva = nameTableRva + index * thunkWidth;
       const iatRva = addressTableRva + index * thunkWidth;
       if (!admitRva(nameRva, thunkWidth, "Import lookup table")) break;
@@ -294,7 +292,9 @@ export const parsePeImports = async (
       }
       const hintNameRva = Number(thunk);
       try {
-        const hintAt = map(hintNameRva, 3);
+        // The two-byte hint and the separately mapped name may occupy adjacent
+        // RVA sections with different file translations.
+        const hintAt = map(hintNameRva, 2);
         const hint = reader.u16(hintAt);
         const name = cString(hintNameRva + 2);
         retain(name);
@@ -323,23 +323,30 @@ export const parsePeImports = async (
   let pefileThunkReads = 0;
   let pefileTruncatedDescriptor: number | null = null;
   const pefileTableWalk = (rva: number, entries: number | null): number => {
+    if (entries !== null) {
+      const remaining = PEFILE_MAX_IMPORT_SYMBOLS + 1 - pefileThunkReads;
+      if (remaining <= 0) return 0;
+      const steps = Math.min(entries + 1, remaining);
+      pefileThunkReads += steps;
+      return Math.min(entries, remaining);
+    }
     const width = bits === 64 ? 8 : 4;
     let processed = 0;
     for (let index = 0; ; index++) {
       if (pefileThunkReads > PEFILE_MAX_IMPORT_SYMBOLS) break;
       pefileThunkReads += 1;
-      if (entries !== null) {
-        if (index === entries) break;
-      } else {
-        let word: bigint;
-        try {
-          word = reader.word(map(rva + index * width, width), bits);
-        } catch (cause) {
-          if (!(cause instanceof BinaryFormatFailure)) throw cause;
-          break;
-        }
-        if (word === 0n) break;
+      let offset: number;
+      try {
+        offset = map(rva + index * width, width);
+      } catch (cause) {
+        if (!(cause instanceof BinaryFormatFailure)) throw cause;
+        break;
       }
+      const zero =
+        width === 4
+          ? reader.u32(offset) === 0
+          : reader.u32(offset) === 0 && reader.u32(offset + 4) === 0;
+      if (zero) break;
       processed += 1;
     }
     return processed;
@@ -374,7 +381,7 @@ export const parsePeImports = async (
   if (importDirectory !== undefined && importDirectory.address !== 0) {
     const spans: { offset: number; bytes: number }[] = [];
     for (let index = 0; ; index++) {
-      await checkpoint();
+      if (++entries % ENTRIES_PER_YIELD === 0) await checkpoint();
       const descriptorRva =
         importDirectory.address + index * IMPORT_DESCRIPTOR_BYTES;
       if (
@@ -460,7 +467,7 @@ export const parsePeImports = async (
   if (delayDirectory !== undefined && delayDirectory.address !== 0) {
     const spans: { offset: number; bytes: number }[] = [];
     for (let index = 0; ; index++) {
-      await checkpoint();
+      if (++entries % ENTRIES_PER_YIELD === 0) await checkpoint();
       const descriptorRva =
         delayDirectory.address + index * DELAY_DESCRIPTOR_BYTES;
       if (

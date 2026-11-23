@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { crc32 } from "node:zlib";
@@ -19,10 +20,17 @@ import {
 } from "../../../src/domain/desktop/zipArchive.fixture.js";
 import { zipEntryRefusal } from "../../../src/domain/desktop/zipView.js";
 import {
+  desktopViewPolicy,
+  pythonDesktopViewPolicy,
+  type DesktopViewPolicy,
+} from "../../../src/domain/desktop/desktopViewPolicy.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
   expectSameCheckResults,
   expectSameFileViews,
   exportedPython,
   pythonFileViews,
+  typescriptFileView,
   writeFiles,
 } from "../../support/desktopExportPython.js";
 import {
@@ -38,15 +46,16 @@ const FIXTURES = join(import.meta.dirname, "../../fixtures/freecad");
 const saved = (archives: readonly Buffer[]) =>
   archives.map((bytes) => ({ name: "plate.FCStd", bytes }));
 
-const expectSameViews = (archives: readonly Buffer[]) =>
-  expectSameFileViews(saved(archives));
+const expectSameViews = (
+  archives: readonly Buffer[],
+  policy?: DesktopViewPolicy,
+) => expectSameFileViews(saved(archives), policy);
 
 /** REA's view of an archive, once the exported module's is shown to be the same. */
-const sameView = async (archive: Buffer) => {
-  await expectSameViews([archive]);
-  const read = await readZipView(archive);
-  if (!read.ok) throw new Error(read.error);
-  return read.value;
+const sameView = async (archive: Buffer, policy?: DesktopViewPolicy) => {
+  const [file] = await expectSameViews([archive], policy);
+  if (file?.view == null) throw new Error(file?.error ?? "No ZIP view");
+  return file.view;
 };
 
 /** The exported module's zip view of an archive file, and the most memory reading it traced. */
@@ -55,16 +64,36 @@ const pythonPeak = async (archive: Buffer) =>
     exportedPython(
       `import tracemalloc
 tracemalloc.start()
-view = _view(Path(json.load(sys.stdin)[0]))["view"]
+file = _view(Path(json.load(sys.stdin)[0]))
 peak = tracemalloc.get_traced_memory()[1]
 tracemalloc.stop()
-print(json.dumps({"view": view, "peak": peak}))`,
+print(json.dumps({"file": file, "peak": peak}))`,
       await writeFiles(saved([archive])),
     ),
   ) as {
-    view: { entries: Record<string, JsonValue>[]; entry_count: number };
+    file: {
+      format: "zip";
+      truncated: boolean;
+      view: {
+        entries: Record<string, JsonValue>[];
+        entry_count: number;
+        truncated: boolean;
+      };
+    };
     peak: number;
   };
+
+const expectSameTrackedView = async (archive: Buffer) => {
+  const {
+    file: { truncated, ...file },
+    peak,
+  } = await pythonPeak(archive);
+  expect(file).toEqual(
+    await typescriptFileView({ name: "plate.FCStd", bytes: archive }),
+  );
+  expect(truncated).toBe(file.view.truncated);
+  return { file, peak };
+};
 
 const sqliteHeader = Buffer.concat([
   Buffer.from("SQLite format 3\0"),
@@ -183,6 +212,33 @@ it("refuses invalid UTF-8 in the selected Unicode claim while preserving an unre
   });
 });
 
+it("refuses a central extra field whose payload extends past the containing record's extra bytes", async () => {
+  const name = "report.txt";
+  const opaque = Buffer.from([0xfe, 0xca, 2, 0, 1]);
+  const unicode = unicodePathExtra(name, "renamed.txt");
+  unicode.writeUInt16LE(unicode.length - 3, 2);
+  const archives = [
+    zipArchive([{ name, data: "observed", centralExtra: opaque }]),
+    zipArchive([{ name, data: "observed", centralExtra: unicode }]),
+    zipArchive([
+      { name: "directory/", centralExtra: opaque },
+      { name, data: "observed" },
+    ]),
+  ];
+  const fromPython = await pythonFileViews(saved(archives));
+  for (const [index, archive] of archives.entries()) {
+    expect.soft(await readZipView(archive)).toEqual({
+      ok: false,
+      error: "not a readable zip archive",
+    });
+    expect.soft(fromPython[index]).toEqual({
+      format: "zip",
+      view: null,
+      error: "not a readable zip archive",
+    });
+  }
+});
+
 it("excludes a final Unicode directory without consuming a retained file slot", async () => {
   const name = "settings.json";
   const archive = zipArchive([
@@ -195,11 +251,13 @@ it("excludes a final Unicode directory without consuming a retained file slot", 
       ]),
     },
     { name: "control.json", data: '{"kept":true}' },
+    { name: "later.txt", data: "after the selected limit" },
   ]);
-  expect(await sameView(archive)).toMatchObject({
+  const policy = desktopViewPolicy({ zip_entries: 1 });
+  expect(await sameView(archive, policy)).toMatchObject({
     entries: [{ name: "control.json", view: { kept: true } }],
-    entry_count: 1,
-    truncated: false,
+    entry_count: 2,
+    truncated: true,
   });
 });
 
@@ -218,14 +276,9 @@ describe("zip views in the exported module", () => {
       { name: "big.json", data: '{"id": 9007199254740993}' },
     ];
 
-    await expectSameViews([zipArchive(members)]);
-    const read = await readZipView(zipArchive(members));
-    expect(read).toMatchObject({
-      ok: true,
-      value: { entry_count: 9, truncated: false },
-    });
-    if (!read.ok) return;
-    expect(read.value).toMatchObject({
+    expect(await sameView(zipArchive(members))).toMatchObject({
+      entry_count: 9,
+      truncated: false,
       entries: [
         { name: "settings.json", format: "json", view: { zoom: 1.5 } },
         { name: "app.ini", format: "keyfile" },
@@ -278,9 +331,8 @@ describe("zip views in the exported module", () => {
       Buffer.alloc(60, 7),
     ]);
 
-    await expectSameViews([archive, damaged]);
-    const read = await readZipView(archive);
-    expect(read.ok && read.value).toMatchObject({
+    const [read, refusal] = await expectSameViews([archive, damaged]);
+    expect(read?.view).toMatchObject({
       entries: [
         { view_error: "encrypted, so it is not read", sha256: null },
         {
@@ -298,30 +350,11 @@ describe("zip views in the exported module", () => {
         { format: "text", view_error: null },
       ],
     });
-    expect(await readZipView(damaged)).toEqual({
-      ok: false,
+    expect(refusal).toEqual({
+      format: "zip",
+      view: null,
       error: "not a readable zip archive",
     });
-  });
-
-  it("lists at most 1,000 entries and counts the rest", async () => {
-    const archive = zipArchive(
-      Array.from({ length: 1002 }, (_, index) => ({
-        name: `n/${String(index)}.txt`,
-        data: String(index),
-        method: 0,
-      })),
-    );
-
-    await expectSameViews([archive]);
-    const read = await readZipView(archive);
-    expect(read.ok && read.value).toMatchObject({
-      entry_count: 1002,
-      truncated: true,
-    });
-    expect(
-      read.ok && (read.value as { entries: unknown[] }).entries,
-    ).toHaveLength(1000);
   });
 
   it("stops reading an archive at 64 MiB of entries, as the exported reader does", () => {
@@ -359,6 +392,36 @@ print(json.dumps([_zip_refusal(SimpleNamespace(flag_bits=0, compress_type=8, fil
       null,
     ]);
     expect(theirs).toEqual(ours);
+  });
+});
+
+it("charges admitted bytes across the archive and still reads empty entries", async () => {
+  const archive = zipArchive([
+    { name: "over-entry.txt", data: "abc", method: 0 },
+    { name: "first.txt", data: "ab", method: 0 },
+    { name: "fills-budget.txt", data: "cd", method: 0 },
+    { name: "over-budget.txt", data: "e", method: 0 },
+    { name: "empty.txt", data: "", method: 0 },
+  ]);
+  const policy = desktopViewPolicy({ zip_bytes: 4, zip_entry_bytes: 2 });
+  expect(await sameView(archive, policy)).toMatchObject({
+    entry_count: 5,
+    truncated: false,
+    entries: [
+      {
+        name: "over-entry.txt",
+        sha256: null,
+        view_error: "larger than the 2 bytes an entry's view reads",
+      },
+      { name: "first.txt", view: { lines: ["ab"] }, view_error: null },
+      { name: "fills-budget.txt", view: { lines: ["cd"] }, view_error: null },
+      {
+        name: "over-budget.txt",
+        sha256: null,
+        view_error: "past the 4 bytes read from one archive",
+      },
+      { name: "empty.txt", size: 0, view_error: null },
+    ],
   });
 });
 
@@ -401,6 +464,190 @@ describe("zip directories in the exported module", () => {
       });
   });
 
+  it.each([false, true])(
+    "follows the Zip64 locator over a fixed-size signature in opaque extension bytes (%s)",
+    async (sentinels) => {
+      const extension = Buffer.alloc(6 + 56);
+      extension.writeUInt16LE(0xfffe, 0);
+      extension.writeUInt32LE(56, 2);
+      extension.writeUInt32LE(0x06064b50, 6);
+      const archive = withZip64End(
+        zipArchive([{ name: "notes.txt", data: "retained" }]),
+        sentinels,
+        extension,
+      );
+      const result = await sameView(archive);
+      expect(result).toMatchObject({
+        entry_count: 1,
+        entries: [{ name: "notes.txt", view: { lines: ["retained"] } }],
+        truncated: false,
+      });
+    },
+  );
+
+  it("retains the fixed Zip64 fallback when a prefix shifts its relative locator", async () => {
+    // Keep a recognized ZIP opening for desktop format detection. Only the
+    // real recorded local entry and central directory contribute to the view.
+    const prefix = Buffer.from("PK\x03\x04inert prefix");
+    const archive = Buffer.concat([
+      prefix,
+      withZip64End(zipArchive([{ name: "notes.txt", data: "retained" }])),
+    ]);
+    const result = await sameView(archive);
+    expect(result).toMatchObject({
+      entry_count: 1,
+      entries: [{ name: "notes.txt", view: { lines: ["retained"] } }],
+      truncated: false,
+    });
+  });
+});
+
+it("refuses inconsistent classic and Zip64 directory record counts", async () => {
+  const classic = zipArchive([
+    { name: "doc/", data: "" },
+    { name: "doc/settings.json", data: '{"zoom":2}' },
+  ]);
+  const zip64 = withZip64End(classic);
+  const classicDiskCount = Buffer.from(classic);
+  classicDiskCount.writeUInt16LE(1, classicDiskCount.length - 14);
+  const classicTotal = Buffer.from(classicDiskCount);
+  classicTotal.writeUInt16LE(1, classicTotal.length - 12);
+  const zip64DiskCount = Buffer.from(zip64);
+  zip64DiskCount.writeBigUInt64LE(1n, zip64DiskCount.length - 74);
+  const zip64Total = Buffer.from(zip64DiskCount);
+  zip64Total.writeBigUInt64LE(1n, zip64Total.length - 66);
+  const archives = [classicDiskCount, classicTotal, zip64DiskCount, zip64Total];
+
+  const python = await pythonFileViews(saved(archives));
+  expect(python).toEqual(
+    archives.map(() => ({
+      format: "zip",
+      view: null,
+      error: "not a readable zip archive",
+    })),
+  );
+  for (const archive of archives)
+    expect(await readZipView(archive)).toEqual({
+      ok: false,
+      error: "not a readable zip archive",
+    });
+
+  for (const archive of [classic, zip64])
+    expect(await sameView(archive)).toMatchObject({
+      entries: [{ name: "doc/settings.json" }],
+      entry_count: 1,
+    });
+});
+
+describe("ZIP directory counts and volume admission in the exported module", () => {
+  it("retains the selected ZIP count at and beyond the classic sentinel", async () => {
+    const path = join(
+      await createTestTempDirectory("rea-zip64-count-"),
+      "many.zip",
+    );
+    // An independent writer emits an original Zip64 archive, not a decoder-copy fixture.
+    execFileSync("python3", [
+      "-I",
+      "-B",
+      "-c",
+      `import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as archive:
+    for index in range(65536):
+        archive.writestr(f"entry-{index:05d}.bin", b"ab")
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    assert len(archive.infolist()) == 65536`,
+      path,
+    ]);
+    const bytes = await readFile(path);
+    for (const keep of [65_535, 65_536]) {
+      const policy = desktopViewPolicy({
+        zip_entries: keep,
+        zip_entry_bytes: 1,
+      });
+      const result = await readZipView(bytes, undefined, policy);
+      const host = result.ok
+        ? (result.value as {
+            entries: { name: string }[];
+            entry_count: number;
+            truncated: boolean;
+          })
+        : null;
+      const python: unknown = JSON.parse(
+        exportedPython(
+          `${pythonDesktopViewPolicy(policy)}
+result = _view(Path(json.load(sys.stdin)))
+view = result.get("view")
+print(json.dumps(None if view is None else {
+    "listed": len(view["entries"]), "count": view["entry_count"],
+    "truncated": view["truncated"], "last": view["entries"][-1]["name"]
+}))`,
+          path,
+        ),
+      );
+      expect([
+        host === null
+          ? null
+          : {
+              listed: host.entries.length,
+              count: host.entry_count,
+              truncated: host.truncated,
+              last: host.entries.at(-1)?.name,
+            },
+        python,
+      ]).toEqual(
+        Array.from({ length: 2 }, () => ({
+          listed: keep,
+          count: 65_536,
+          truncated: keep < 65_536,
+          last: `entry-${String(keep - 1).padStart(5, "0")}.bin`,
+        })),
+      );
+    }
+  });
+
+  it("refuses archives whose selected directory or Zip64 locator names another volume", async () => {
+    const classic = zipArchive([{ name: "settings.json", data: '{"zoom":2}' }]);
+    const zip64 = withZip64End(classic);
+    const variants = [
+      ["classic disk", classic, 22, 4, 1],
+      ["classic directory disk", classic, 22, 6, 1],
+      ["classic disk in Zip64", zip64, 22, 4, 1],
+      ["Zip64 record disk", zip64, 98, 16, 1],
+      ["Zip64 directory disk", zip64, 98, 20, 1],
+      ["Zip64 locator disk", zip64, 42, 4, 1],
+      ["Zip64 locator disk count", zip64, 42, 16, 2],
+    ] as const;
+    const archives = variants.map(([, bytes, end, field, value]) => {
+      const copy = Buffer.from(bytes);
+      copy.writeUInt16LE(value, copy.length - end + field);
+      return copy;
+    });
+    const python = await pythonFileViews(saved(archives));
+    for (const [index, [description]] of variants.entries()) {
+      expect(await readZipView(archives[index]!), description).toEqual({
+        ok: false,
+        error: "not a readable zip archive",
+      });
+      expect(python[index], description).toEqual({
+        format: "zip",
+        view: null,
+        error: "not a readable zip archive",
+      });
+    }
+  });
+
+  it("uses the Zip64 record when the classic disk numbers defer to it", async () => {
+    const archive = withZip64End(
+      zipArchive([{ name: "settings.json", data: '{"zoom":2}' }]),
+    );
+    archive.writeUInt16LE(0xffff, archive.length - 18);
+    archive.writeUInt16LE(0xffff, archive.length - 16);
+    expect(await sameView(archive)).toMatchObject({
+      entries: [{ name: "settings.json", view: { zoom: 2 } }],
+      entry_count: 1,
+    });
+  });
+
   it("keeps the classic values when bytes before the end record only look like a Zip64 locator", async () => {
     // The last name ends in a locator signature and 16 more bytes, which sit just before the end record.
     const name = `c-PK\u0006\u0007${"0".repeat(16)}`;
@@ -416,13 +663,14 @@ describe("zip directories in the exported module", () => {
   });
 
   it("lists the first 1,000 of 50,000 entries holding no more of the directory than those", async () => {
-    const archive = emptyEntriesArchive(50_000);
-    await expectSameViews([archive]);
+    const { file, peak } = await expectSameTrackedView(
+      emptyEntriesArchive(50_000),
+    );
 
-    const { view, peak } = await pythonPeak(archive);
-
-    expect(view.entries).toHaveLength(1000);
-    expect(view.entry_count).toBe(50_000);
+    expect(file.view).toMatchObject({ entry_count: 50_000, truncated: true });
+    expect(file.view.entries).toHaveLength(1000);
+    expect(file.view.entries[0]?.name).toBe("e/0");
+    expect(file.view.entries.at(-1)?.name).toBe("e/999");
     // Parsing every record before the listing limit applied traced about 25 MiB here.
     expect(peak).toBeLessThan(4 * MIB);
   });
@@ -439,11 +687,11 @@ describe("zip entries the exported module cannot fully read", () => {
         crc: 0,
       },
     ]);
-    await expectSameViews([archive]);
+    const { file, peak } = await expectSameTrackedView(archive);
 
-    const { view, peak } = await pythonPeak(archive);
-
-    expect(view.entries[0]?.view_error).toBe("its compressed data is damaged");
+    expect(file.view.entries[0]?.view_error).toBe(
+      "its compressed data is damaged",
+    );
     // Reading the stream whole before clipping it traced about 77 MiB here.
     expect(peak).toBeLessThan(4 * MIB);
   });

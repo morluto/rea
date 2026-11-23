@@ -1,3 +1,4 @@
+import { managedModuleRow } from "./managedModuleIdentity.js";
 import { joinCoverageStatus, type CoverageStatus } from "../coverage.js";
 import type {
   ManagedMemberComparisonResult,
@@ -11,7 +12,7 @@ import {
 interface ComparisonCoverageInput {
   readonly left: ManagedMemberInspection;
   readonly right: ManagedMemberInspection;
-  readonly selectionAgreement: SelectionAgreement;
+  readonly scope: ManagedComparisonScope;
 }
 
 type SelectionAgreement = "same" | "different" | "unknown";
@@ -19,7 +20,7 @@ type SelectionAgreement = "same" | "different" | "unknown";
 export const buildComparisonCoverage = ({
   left,
   right,
-  selectionAgreement,
+  scope,
 }: ComparisonCoverageInput): ManagedMemberComparisonResult["coverage"] => {
   // An unavailable side examined nothing, and an unknown selection agreement
   // cannot tell whether both sides cover the same types: either makes the
@@ -27,9 +28,12 @@ export const buildComparisonCoverage = ({
   const joined = joinCoverageStatus([
     managedInspectionCoverage(left.coverage.state),
     managedInspectionCoverage(right.coverage.state),
-    selectionAgreement === "unknown"
+    scope.left.hasEmptyDefinitionName || scope.right.hasEmptyDefinitionName
+      ? "partial"
+      : "complete",
+    scope.agreement === "unknown"
       ? "unknown"
-      : selectionAgreement === "different" || !sameMethodRows(left, right)
+      : scope.agreement === "different" || !sameMethodRows(left, right)
         ? "partial"
         : "complete",
   ]);
@@ -59,13 +63,62 @@ const sameMethodRows = (
     left.method_rows.count === right.method_rows.count &&
     left.method_rows.total === right.method_rows.total);
 
-/** One side's build-local TypeDef lookup and observed nominal selection. */
-const declaringTypeScope = (result: ManagedMemberInspection) => {
-  const names = new Map(
-    result.types.map((type) => [type.token, type.name_sha256]),
+/** An empty recorded name also invalidates digests framed by that enclosing name. */
+const unavailableTypeNames = (
+  types: ManagedMemberInspection["types"],
+): ReadonlySet<string> => {
+  const unavailable = new Set(
+    types.filter(({ name }) => name === "").map(({ token }) => token),
   );
+  if (unavailable.size === 0) return unavailable;
+  const children = new Map<string, string[]>();
+  for (const { token, enclosing_type_token: enclosing } of types) {
+    if (enclosing === null) continue;
+    const existing = children.get(enclosing);
+    if (existing === undefined) children.set(enclosing, [token]);
+    else existing.push(token);
+  }
+  // A Set visits appended entries and prevents cyclic historical links from
+  // revisiting a row. Follow only enclosing links retained in the report.
+  for (const token of unavailable)
+    for (const child of children.get(token) ?? []) unavailable.add(child);
+  return unavailable;
+};
+
+/** One side's nominal name availability and observed declaring-type selection. */
+const comparisonSideScope = (result: ManagedMemberInspection) => {
+  const unavailable = unavailableTypeNames(result.types);
+  const names = new Map(
+    result.types.map((type) => [
+      type.token,
+      unavailable.has(type.token) ? null : type.name_sha256,
+    ]),
+  );
+  // Historical Evidence may record invalid names with complete coverage.
+  const hasEmptyTypeName = unavailable.size > 0;
+  const emptyMemberNames = new Set<DeclaredMember>();
+  for (const definitions of [result.methods, result.fields])
+    for (const member of definitions)
+      if (member.name === "") emptyMemberNames.add(member);
+  const emptyFieldTokens = new Set(
+    result.fields
+      .filter((field) => emptyMemberNames.has(field))
+      .map(({ token }) => token),
+  );
+  // A selected method can reference a Field row outside the retained inventory.
+  for (const access of result.field_accesses)
+    if (access.field_name === "" && access.field_token.startsWith("0x04"))
+      emptyFieldTokens.add(access.field_token);
+  const hasEmptyDefinitionName =
+    hasEmptyTypeName || emptyMemberNames.size > 0 || emptyFieldTokens.size > 0;
+  const metadataComplete =
+    result.metadata.status === "complete" && !hasEmptyDefinitionName;
   return {
     names,
+    emptyMemberNames,
+    emptyFieldTokens,
+    hasEmptyDefinitionName,
+    metadataComplete,
     selected:
       result.selection === null
         ? null
@@ -73,19 +126,20 @@ const declaringTypeScope = (result: ManagedMemberInspection) => {
     complete:
       result.coverage.state === "complete" &&
       result.metadata.status === "complete" &&
+      !hasEmptyTypeName &&
       result.types.every(({ name_sha256 }) => name_sha256 !== null),
   };
 };
 
-type DeclaringTypeScope = ReturnType<typeof declaringTypeScope>;
+type ComparisonSideScope = ReturnType<typeof comparisonSideScope>;
 type DeclaredMember =
   | ManagedMemberInspection["methods"][number]
   | ManagedMemberInspection["fields"][number];
 
 /** Resolve tokens only in their own source, then test opposite nominal scope. */
 const observedBy = (
-  own: DeclaringTypeScope,
-  opposite: DeclaringTypeScope,
+  own: ComparisonSideScope,
+  opposite: ComparisonSideScope,
   member: DeclaredMember,
 ): boolean => {
   if (opposite.selected === null) return true;
@@ -95,8 +149,8 @@ const observedBy = (
 
 /** Compare the nominal types the owner retained, independently of request spelling. */
 const compareSelectedTypes = (
-  left: DeclaringTypeScope,
-  right: DeclaringTypeScope,
+  left: ComparisonSideScope,
+  right: ComparisonSideScope,
 ): SelectionAgreement => {
   const leftNames = left.selected;
   const rightNames = right.selected;
@@ -114,8 +168,8 @@ export const managedComparisonScope = (
   left: ManagedMemberInspection,
   right: ManagedMemberInspection,
 ) => {
-  const a = declaringTypeScope(left);
-  const b = declaringTypeScope(right);
+  const a = comparisonSideScope(left);
+  const b = comparisonSideScope(right);
   return {
     left: a,
     right: b,
@@ -147,53 +201,65 @@ const resourceLimits = (
 
 export const sideManifest = (
   side: ManagedMemberComparisonSide,
-): ManagedMemberComparisonResult["left"] => ({
-  evidence_id: side.evidenceId,
-  artifact_sha256: side.result.artifact.sha256,
-  mvid: side.result.module?.mvid ?? null,
-  module_name: side.result.module?.name ?? null,
-  metadata_status: side.result.metadata.status,
-  methods_total: side.result.methods.length,
-  fields_total: side.result.fields.length,
-  resource_limits: resourceLimits(side.result),
-});
+): ManagedMemberComparisonResult["left"] => {
+  const module = managedModuleRow(side.result);
+  return {
+    evidence_id: side.evidenceId,
+    artifact_sha256: side.result.artifact.sha256,
+    mvid: module?.mvid ?? null,
+    module_name: module?.name ?? null,
+    metadata_status: side.result.metadata.status,
+    methods_total: side.result.methods.length,
+    fields_total: side.result.fields.length,
+    resource_limits: resourceLimits(side.result),
+  };
+};
 
 export const buildComparisonSummary = (
   items: readonly (
     | ManagedMemberComparisonResult["methods"][number]
     | ManagedMemberComparisonResult["fields"][number]
   )[],
-): ManagedMemberComparisonResult["summary"] => ({
-  unchanged: items.filter(({ status }) => status === "unchanged").length,
-  changed: items.filter(({ status }) => status === "changed").length,
-  added: items.filter(({ status }) => status === "added").length,
-  removed: items.filter(({ status }) => status === "removed").length,
-  unknown: items.filter(({ status }) => status === "unknown").length,
-});
+): ManagedMemberComparisonResult["summary"] => {
+  const counts = {
+    unchanged: 0,
+    changed: 0,
+    added: 0,
+    removed: 0,
+    unknown: 0,
+  };
+  for (const { status } of items) counts[status] += 1;
+  return counts;
+};
 
 export const buildComparisonMatching = (
   methodItems: readonly ManagedMemberComparisonResult["methods"][number][],
   fieldItems: readonly ManagedMemberComparisonResult["fields"][number][],
-): ManagedMemberComparisonResult["matching"] => ({
-  exact_il_signature: methodItems.filter(
-    ({ match }) => match.basis === "exact-il-signature",
-  ).length,
-  exact_signature: [...methodItems, ...fieldItems].filter(
-    ({ match }) => match.basis === "exact-signature",
-  ).length,
-  structural_method_shape: methodItems.filter(
-    ({ match }) => match.basis === "structural-method-shape",
-  ).length,
-  field_signature: fieldItems.filter(
-    ({ match }) => match.basis === "field-signature",
-  ).length,
-  ambiguous:
-    methodItems.filter(({ match }) => match.status === "ambiguous").length +
-    fieldItems.filter(({ match }) => match.status === "ambiguous").length,
-  unmatched: [...methodItems, ...fieldItems].filter(
-    ({ match }) => match.status === "unmatched",
-  ).length,
-});
+): ManagedMemberComparisonResult["matching"] => {
+  const counts = {
+    exact_il_signature: 0,
+    exact_signature: 0,
+    structural_method_shape: 0,
+    field_signature: 0,
+    ambiguous: 0,
+    unmatched: 0,
+  };
+  for (const { match } of methodItems) {
+    if (match.basis === "exact-il-signature") counts.exact_il_signature += 1;
+    else if (match.basis === "exact-signature") counts.exact_signature += 1;
+    else if (match.basis === "structural-method-shape")
+      counts.structural_method_shape += 1;
+    if (match.status === "ambiguous") counts.ambiguous += 1;
+    else if (match.status === "unmatched") counts.unmatched += 1;
+  }
+  for (const { match } of fieldItems) {
+    if (match.basis === "exact-signature") counts.exact_signature += 1;
+    else if (match.basis === "field-signature") counts.field_signature += 1;
+    if (match.status === "ambiguous") counts.ambiguous += 1;
+    else if (match.status === "unmatched") counts.unmatched += 1;
+  }
+  return counts;
+};
 
 /** Carry each side's representation-budget diagnostic and its recovery. */
 const capacityLimitations = (
@@ -219,8 +285,7 @@ const capacityLimitations = (
 export const comparisonLimitations = (
   left: ManagedMemberInspection,
   right: ManagedMemberInspection,
-  selectionAgreement: SelectionAgreement = managedComparisonScope(left, right)
-    .agreement,
+  scope = managedComparisonScope(left, right),
 ): string[] => {
   const limitations: string[] = [
     "Metadata tokens are build-local coordinates; matched pairs are remaps, not persistent identities.",
@@ -252,12 +317,17 @@ export const comparisonLimitations = (
     );
   if (left.coverage.state !== "complete" || right.coverage.state !== "complete")
     limitations.push("At least one managed member observation is partial.");
-  limitations.push(...capacityLimitations(left, right));
-  if (selectionAgreement === "different")
+  if (scope.left.hasEmptyDefinitionName || scope.right.hasEmptyDefinitionName)
+    limitations.push(
+      "Recorded empty definition names leave nominal identities unresolved. The comparison has partial name coverage even if a source reported complete metadata.",
+    );
+  for (const limitation of capacityLimitations(left, right))
+    limitations.push(limitation);
+  if (scope.agreement === "different")
     limitations.push(
       "The observations select different declaring types; a member outside the other side's selection is unknown, not added or removed.",
     );
-  else if (selectionAgreement === "unknown")
+  else if (scope.agreement === "unknown")
     limitations.push(
       "Selected declaring-type scope agreement is unknown because at least one observation is incomplete or lacks resolved nominal type identities; matching request names do not establish the same observed scope.",
     );

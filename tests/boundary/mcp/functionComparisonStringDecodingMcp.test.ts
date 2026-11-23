@@ -121,6 +121,42 @@ beforeEach(async () => {
 const stringsNames = (result: Comparison) =>
   result.dimensions.find(({ dimension }) => dimension === "strings_names");
 
+it("keeps located membership changes when only that side has an unlocated reference", async () => {
+  const located = reference("known", { sourceAddress: "0x1004" });
+  const unlocated = reference("unplaced", { sourceAddress: "0x0fff" });
+  const mixed = evidence("mixed", [located, unlocated]);
+  const empty = evidence("empty", []);
+  const unknown = evidence("unknown", [unlocated]);
+
+  for (const [left, right, leftCount, rightCount] of [
+    [mixed, empty, 2, 0],
+    [empty, mixed, 0, 2],
+  ] as const) {
+    expect(stringsNames(await compare(left, right))).toMatchObject({
+      status: "changed",
+      left_count: leftCount,
+      right_count: rightCount,
+      evidence_links: [left.evidence_id, right.evidence_id],
+      limitations: [
+        "Referenced string source location could not be normalized.",
+      ],
+    });
+  }
+
+  for (const [left, right] of [
+    [mixed, unknown],
+    [unknown, mixed],
+  ] as const)
+    expect(stringsNames(await compare(left, right))).toMatchObject({
+      status: "unknown",
+      left_digest: null,
+      right_digest: null,
+      limitations: expect.arrayContaining([
+        "Referenced string membership at source offset 4 is ambiguous because another source location is unavailable.",
+      ]),
+    });
+});
+
 describe("compare_functions referenced string decoding", () => {
   const reason = "The native string bytes are unavailable";
   const undecodable = (id: string, display: string) =>
@@ -208,8 +244,7 @@ describe("compare_functions referenced string decoding", () => {
       termination:
         | "missing"
         | "present_or_not_required" = "present_or_not_required",
-      byteLength = 6,
-    ) => evidence(id, [reference("hello", { termination, byteLength })]);
+    ) => evidence(id, [reference("hello", { termination })]);
     const equal = await compare(decoded("5"), decoded("6"));
     expect(equal.status).toBe("unchanged");
     expect(stringsNames(equal)).toMatchObject({
@@ -222,7 +257,7 @@ describe("compare_functions referenced string decoding", () => {
       stringsNames(equal)?.left_digest,
     );
 
-    const different = await compare(decoded("7"), decoded("8", "missing", 5));
+    const different = await compare(decoded("7"), decoded("8", "missing"));
     expect(different.status).toBe("changed");
     expect(stringsNames(different)).toMatchObject({ status: "changed" });
   });

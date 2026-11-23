@@ -414,6 +414,13 @@ class SharedCliProcess implements CliCommandSession {
         this.#failTransport(started, error);
       }
     });
+    started.stdout.once("end", () => {
+      try {
+        reader.finish();
+      } catch (error) {
+        this.#failTransport(started, error);
+      }
+    });
     started.stderr.resume();
     started.stdin.on("error", (error) => {
       this.#failTransport(started, error);

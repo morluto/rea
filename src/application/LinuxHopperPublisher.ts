@@ -909,6 +909,7 @@ export class LinuxHopperPublisher {
           );
         const bytes = await readBoundedFileBytes(handle, stats.size, {
           signal,
+          expectedSize: stats.size,
         });
         if (bytes === undefined)
           throw new HopperReleaseError(

@@ -6,7 +6,7 @@ import {
   registerContractCommand,
   type runDirectOnTarget,
 } from "./contractCommand.js";
-import { nativeTarget } from "./options.js";
+import { nativeTarget } from "./nativeTargetOption.js";
 import type { CliInstance } from "./types.js";
 
 /** Register `rea decompile-all`, the directory export of provider pseudocode. */

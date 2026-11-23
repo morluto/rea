@@ -207,10 +207,9 @@ export const bulkWrite = (
     addressOf(requestJson(facts.requestBody(record.ordinal)), idField),
   );
   const [first] = forms;
-  if (
-    first === undefined ||
-    forms.some((form) => JSON.stringify(form) !== JSON.stringify(first))
-  )
+  if (first === undefined) return undefined;
+  const firstJson = JSON.stringify(first);
+  if (forms.some((form) => JSON.stringify(form) !== firstJson))
     return undefined;
   // An id array names entities only; an update needs members to apply.
   if (effect === "update" && first.by === "ids" && first.member === null)

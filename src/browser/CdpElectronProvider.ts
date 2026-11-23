@@ -42,7 +42,10 @@ import {
 
 import { CDP_ELECTRON_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupFailure,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   CdpTargetSessionOwner,
@@ -102,15 +105,12 @@ export class CdpElectronProvider implements ElectronObservationPort {
       const typed = mapped.filter(
         (failure): failure is AnalysisError => failure instanceof AnalysisError,
       );
-      throw new ProviderCleanupError(
+      throw providerCleanupErrorFromFailures(
         CDP_ELECTRON_PROVIDER_IDENTITY.id,
-        typed.flatMap((failure) => failure.cleanupResources),
-        { reason: "Electron transport and file cleanup remain incomplete" },
-        {
-          operation: "inspect_electron_page",
-          cause: new AggregateError(mapped),
-        },
-      ).bindCleanupDependencies(typed);
+        typed,
+        "Electron transport and file cleanup remain incomplete",
+        { operation: "inspect_electron_page", causes: mapped },
+      );
     }
   }
 
@@ -424,26 +424,27 @@ const authorizeTarget = async (
   asarHeaderAdmission: AsarHeaderAdmission,
   signal?: AbortSignal,
 ): Promise<CdpEndpointTarget> => {
-  throwIfElectronOperationCancelled(signal, "inspect_electron_page");
+  const operation = "inspect_electron_page";
+  throwIfElectronOperationCancelled(signal, operation);
   const target = selectCdpDiscoveryTarget(
     discovery.targets,
     targetId,
-    "inspect_electron_page",
+    operation,
     discovery.ambiguousTargetIds,
   );
   if (target === undefined)
-    throw new BrowserObservationError("inspect_web_page", "target_not_found");
+    throw new BrowserObservationError(operation, "target_not_found");
   if (target.type !== "page")
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+    throw new BrowserObservationError(operation, "target_not_allowed");
   const path = await authorizedElectronFile(
     target.url,
     signal,
-    "inspect_electron_page",
+    operation,
     asarHeaderAdmission,
   );
-  throwIfElectronOperationCancelled(signal, "inspect_electron_page");
+  throwIfElectronOperationCancelled(signal, operation);
   if (path === undefined)
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+    throw new BrowserObservationError(operation, "target_not_allowed");
   return target;
 };
 

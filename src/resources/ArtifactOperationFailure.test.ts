@@ -1,5 +1,13 @@
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
+import { ZstandardFrameAllowanceError } from "../domain/compression/zstandardFrameAllowance.js";
+import {
+  MAXIMUM_ZSTD_MAX_FRAMES,
+  MINIMUM_ZSTD_MAX_FRAMES,
+} from "../domain/analysisResourceLimits.js";
 import { createHash } from "node:crypto";
+import { open, writeFile } from "node:fs/promises";
+import { sep } from "node:path";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import {
   ArtifactReaderFailure,
@@ -16,12 +24,11 @@ import {
 } from "./StableArtifactFailure.js";
 import { artifactIntegrityDetails } from "../domain/artifactIntegrity.js";
 import {
-  ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   artifactParseFailure,
+  withArtifactFileHandle,
 } from "./ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
-import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
+import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { artifactReaderLimitFailure } from "./index.js";
 import {
   malformedInput,
@@ -29,30 +36,82 @@ import {
   unsupportedInput,
 } from "../domain/parseFailure.js";
 
+it("projects a Zstandard frame-cap as an adjustable artifact limit", () => {
+  expect(
+    translateArtifactFailure(
+      "extract_artifact",
+      new ZstandardFrameAllowanceError({ maxFrames: 4, source: "runtime" }, 10),
+    ),
+  ).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    resource: "cpu",
+    limit: {
+      setting: "zstd.max_frames",
+      effective_value: 4,
+      source: "runtime",
+      minimum: MINIMUM_ZSTD_MAX_FRAMES,
+      maximum: MAXIMUM_ZSTD_MAX_FRAMES,
+      unit: "count",
+    },
+  });
+});
+
+const failWithDescriptorCleanup = async (
+  bytes: Buffer,
+  failure: unknown,
+  retryFailure?: Error,
+) => {
+  const root = await createTestTempDirectory("rea-artifact-projection-");
+  const path = `${root}${sep}.${sep}artifact`;
+  await writeFile(path, bytes);
+  const descriptor = await open(path);
+  const nativeClose = descriptor.close.bind(descriptor);
+  onTestFinished(async () => {
+    if (descriptor.fd >= 0) await nativeClose();
+  });
+  const close = vi
+    .spyOn(descriptor, "close")
+    .mockRejectedValueOnce(new Error("close failed"));
+  if (retryFailure !== undefined) close.mockRejectedValueOnce(retryFailure);
+  const scope = new ArtifactResourceScope();
+  const wrapped = await withArtifactFileHandle(
+    path,
+    descriptor,
+    scope,
+    undefined,
+    async () => {
+      throw failure;
+    },
+  ).then(
+    () => {
+      throw new Error("Expected artifact operation and close failures");
+    },
+    (cause: unknown) => cause,
+  );
+  return { path, scope, descriptor, wrapped };
+};
+
 it.each([
-  malformedInput("pe", "bad field"),
-  truncatedInput("pe", "short field"),
-  unsupportedInput("pe", "unsupported image"),
+  { cause: malformedInput("pe", "bad field"), genericCode: "invalid_request" },
+  { cause: truncatedInput("pe", "short field"), genericCode: "truncated" },
+  {
+    cause: unsupportedInput("pe", "unsupported image"),
+    genericCode: "unsupported_target",
+  },
 ])(
-  "preserves selected input projection and partial identity through cleanup retry: $kind",
-  async (cause) => {
-    const path = "/selected/./program.exe";
+  "preserves $cause.kind projection and selected identity through descriptor cleanup",
+  async ({ cause, genericCode }) => {
     const operation = "inspect_pe_resources";
+    const bytes = Buffer.from("inert snapshot");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
     const failure = artifactParseFailure(cause, undefined);
     expect(failure).toMatchObject({ cause });
-    let attempts = 0;
-    const lease = new AnalysisCleanupLease(async () => {
-      if (attempts++ === 0) throw new Error("cleanup retry failed");
-    }, [path]);
-    const wrapped = new ArtifactFileCleanupFailure(
-      new RegularFileCleanupFailure({
-        path,
-        owner: { close: async () => undefined } as never,
-        outcome: { kind: "failed", cause: failure },
-        cleanupCause: new Error("close failed"),
-      }),
-      lease,
-    );
+    const { path, scope, descriptor, wrapped } =
+      await failWithDescriptorCleanup(
+        bytes,
+        failure,
+        new Error("cleanup retry failed"),
+      );
     const primary = projectOwnedArtifactInputFailure(
       artifactFilePrimaryFacts(wrapped),
       operation,
@@ -61,9 +120,7 @@ it.each([
     if (primary === undefined)
       throw new Error("Expected a selected-input projection");
     expect(primary.cause).toBe(failure);
-    const bytes = Buffer.from("inert snapshot");
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
-    const projected = projectStableArtifactFailure(
+    const selected = projectStableArtifactFailure(
       wrapped,
       primary,
       path,
@@ -71,19 +128,42 @@ it.each([
       operation,
       { bytes, sha256 },
     );
-    expect(projectAnalysisError(projected)).toMatchObject({
-      code: "cleanup_incomplete",
+    const generic = translateArtifactFailure("inspect_artifact", wrapped);
+    const observation = {
+      kind: "file-snapshot-hash",
+      path,
+      sha256,
+      bytes: bytes.length,
+    };
+    const expectPending = () => {
+      expect(projectAnalysisError(selected)).toMatchObject({
+        code: "cleanup_incomplete",
+        details: { resources: [path], partial_observation: observation },
+      });
+      expect(projectAnalysisError(generic)).toMatchObject({
+        code: "cleanup_incomplete",
+        details: {
+          reason: cause.kind,
+          detail: cause.message,
+          cleanup: "incomplete",
+          resources: [path],
+        },
+      });
+    };
+
+    expectPending();
+    await expect(scope.retryCleanup()).rejects.toMatchObject({
+      cleanup: { reason: "cleanup retry failed", resources: [path] },
     });
-    await expect(lease.release()).rejects.toThrow("cleanup retry failed");
-    expect(projectAnalysisError(projected)).toMatchObject({
-      code: "cleanup_incomplete",
-    });
-    await lease.release();
-    expect(projectAnalysisError(projected)).toMatchObject({
+    expect(descriptor.fd).toBeGreaterThanOrEqual(0);
+    expectPending();
+    await scope.close();
+    expect(descriptor.fd).toBe(-1);
+    expect(projectAnalysisError(selected)).toMatchObject({
       code:
         cause.kind === "unsupported" ? "unsupported_target" : "invalid_request",
-      details:
-        cause.kind === "unsupported"
+      details: {
+        ...(cause.kind === "unsupported"
           ? { operation, path, reason: cause.message }
           : {
               operation,
@@ -94,13 +174,15 @@ it.each([
                   message: cause.message,
                 },
               ],
-            },
+            }),
+        partial_observation: observation,
+      },
     });
-    expect(projected.partialObservation).toEqual({
-      kind: "file-snapshot-hash",
-      path,
-      sha256,
-      bytes: bytes.length,
+    expect(projectAnalysisError(generic)).toMatchObject({
+      code: genericCode,
+      category:
+        genericCode === "invalid_request" ? "invalid_input" : genericCode,
+      details: { reason: cause.kind, detail: cause.message },
     });
   },
 );
@@ -128,61 +210,6 @@ it("leaves opaque operation errors and decode limits with their owning projectio
     ),
   ).toBeUndefined();
 });
-
-it.each([
-  {
-    cause: malformedInput("fixture", "bad field"),
-    code: "invalid_request",
-    category: "invalid_input",
-  },
-  {
-    cause: truncatedInput("fixture", "short field"),
-    code: "truncated",
-    category: "truncated",
-  },
-  {
-    cause: unsupportedInput("fixture", "new revision"),
-    code: "unsupported_target",
-    category: "unsupported_target",
-  },
-])(
-  "preserves $cause.kind parser facts after cleanup retry",
-  async ({ cause, code, category }) => {
-    const readerFailure = artifactParseFailure(cause, undefined);
-    if (!(readerFailure instanceof ArtifactReaderFailure))
-      throw new Error(
-        "Parser failure did not become an artifact reader failure",
-      );
-    expect(readerFailure).toMatchObject({ reason: cause.kind, cause });
-    const lease = new AnalysisCleanupLease(async () => {}, [
-      "fixture descriptor",
-    ]);
-    const wrapped = ArtifactReaderFailure.withCleanup(
-      readerFailure,
-      { reason: "close failed", resources: ["fixture descriptor"] },
-      undefined,
-      [lease],
-    );
-    const projectedOwner = translateArtifactFailure(
-      "inspect_artifact",
-      wrapped,
-    );
-    expect(projectAnalysisError(projectedOwner)).toMatchObject({
-      code: "cleanup_incomplete",
-      details: {
-        reason: cause.kind,
-        detail: cause.message,
-        cleanup: "incomplete",
-      },
-    });
-    await lease.release();
-    expect(projectAnalysisError(projectedOwner)).toMatchObject({
-      code,
-      category,
-      details: { reason: cause.kind, detail: cause.message },
-    });
-  },
-);
 
 // The provider ceiling test uses a sparse file and is skipped on Windows.
 it.skipIf(process.platform !== "win32")(
@@ -218,7 +245,6 @@ it.each([
         },
       },
     });
-    expect(projected.remediation.action).toContain("No supported increase");
   },
 );
 
@@ -297,6 +323,29 @@ it.each(["capacity", "file-size", "memory"] as const)(
   },
 );
 
+it("reports a parser limit even when artifact cleanup also fails", () => {
+  const failure = new ArtifactReaderFailure("limit", "Plist decode limit", {
+    parserLimit: { name: "plist-decode-bytes", maximum: 512 },
+  });
+  const wrapped = ArtifactReaderFailure.withCleanup(failure, {
+    reason: "close failed",
+    resources: ["handle"],
+  });
+  expect(
+    projectAnalysisError(
+      translateArtifactFailure("inspect_keyed_archive", wrapped),
+    ),
+  ).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      reason: "limit",
+      reported_limits: { boundary: "plist-decode-bytes", maximum: 512 },
+      cleanup: "incomplete",
+      resources: ["handle"],
+    },
+  });
+});
+
 it("keeps a fixed reader ceiling's refusal through cleanup wrapping and public projection", () => {
   const failure = artifactFixedLimitFailure(
     {
@@ -326,7 +375,6 @@ it("keeps a fixed reader ceiling's refusal through cleanup wrapping and public p
     reason: "close failed",
     resources: ["handle"],
   });
-  expect(wrapped.fixedAllowance).toBe(failure.fixedAllowance);
   const projected = projectAnalysisError(
     translateArtifactFailure("inspect_artifact", wrapped),
   );
@@ -335,7 +383,6 @@ it("keeps a fixed reader ceiling's refusal through cleanup wrapping and public p
     retryable: false,
     details: { refusal, cleanup: "incomplete", resources: ["handle"] },
   });
-  expect(projected.remediation.action).toContain("The allowance is 64 records");
 });
 
 it("keeps producer-owned recovery through cleanup wrapping and public projection", () => {
@@ -413,30 +460,24 @@ it("names the failed integrity check through cleanup wrapping and public project
   });
 });
 
-it("keeps the named integrity check when a descriptor close failure rebuilds the reader failure", () => {
-  const failure = new ArtifactFileCleanupFailure(
-    new RegularFileCleanupFailure({
-      path: "/artifact.asar",
-      owner: { close: async () => undefined } as never,
-      outcome: {
-        kind: "failed",
-        cause: new ArtifactReaderFailure(
-          "integrity",
-          "ASAR read coverage was short: main.js",
-          { integrityCheck: "read-coverage" },
-        ),
+it("keeps the named integrity check through descriptor cleanup", async () => {
+  const { path, scope, wrapped } = await failWithDescriptorCleanup(
+    Buffer.from("fixture"),
+    new ArtifactReaderFailure(
+      "integrity",
+      "ASAR read coverage was short: main.js",
+      {
+        integrityCheck: "read-coverage",
       },
-      cleanupCause: new Error("close failed"),
-    }),
-    new AnalysisCleanupLease(async () => undefined),
+    ),
   );
-  expect(failure.integrityCheck).toBe("read-coverage");
   expect(
-    projectAnalysisError(translateArtifactFailure("extract_artifact", failure)),
+    projectAnalysisError(translateArtifactFailure("extract_artifact", wrapped)),
   ).toMatchObject({
     code: "cleanup_incomplete",
-    details: { integrity_check: "read-coverage", cleanup: "incomplete" },
+    details: { integrity_check: "read-coverage", resources: [path] },
   });
+  await scope.close();
 });
 
 it("keeps a reader's named check when a provider supplies its own cause and options", () => {

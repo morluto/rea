@@ -84,7 +84,13 @@ active-target native or archive workflows; target-free tools take their own
 explicit path or endpoint and do not need it.
 
 - ASAR or extracted JavaScript/Electron tree:
-  `analyze_javascript_application`.
+  `analyze_javascript_application`. To find a few files in a packaged
+  `app.asar`, open it with `open_binary`, start with `inspect_artifact`
+  using `detail: "summary"`, then analyze the selected files with
+  `source_paths`. When you intend to retain digest contradictions from
+  re-signed unpacked companions, pass `integrity_policy: "record-and-continue"`
+  starting with `inspect_artifact`. See the
+  [JavaScript applications reference](references/javascript-applications.md).
 - Archive/package member inventory (ZIP/APK/IPA/MSIX/AppX, DMG, or a PyInstaller
   executable): `open_binary` with the supplied local path; use `inspect_artifact`
   when its graph and findings help answer the question. A PyInstaller CArchive
@@ -111,10 +117,11 @@ explicit path or endpoint and do not need it.
   `inspect_android_package`, then focused Android tools when advertised.
   Archive member inventory still uses the archive route above.
 - Managed PE/CLI assembly: `inspect_managed_artifact`.
-- Firmware image: `inspect_firmware_regions` when advertised. Use
-  `extract_firmware` when extraction is requested, with a caller-selected new
-  absolute output directory. These tools use caller-supplied Binwalk/Unblob on
-  Linux; see the [firmware guide](https://github.com/morluto/rea/blob/main/docs/guides/firmware/firmware-analysis.md).
+- UEFI firmware volumes and NVAR stores: use bundled `inspect_artifact`.
+  For external firmware scanning or extraction on Linux, use
+  `inspect_firmware_regions` or `extract_firmware` with caller-supplied
+  Binwalk or Unblob. Extraction needs a caller-selected new absolute output
+  directory. See the [firmware guide](https://github.com/morluto/rea/blob/main/docs/guides/firmware/firmware-analysis.md).
 - ESP32-family app or bootloader image (`0xE9` magic): `inspect_artifact`
   without a provider; see the ESP section of `references/native-and-artifacts.md`.
 - .NET NativeAOT PE/ELF: native Ghidra analysis. Native code can yield pseudocode;
@@ -263,11 +270,12 @@ explicit path or endpoint and do not need it.
   placeholders in internal ids stay unresolved. See the
   [Addressables guide](https://github.com/morluto/rea/blob/main/docs/unity-addressables.md).
 - Embedded cargo-auditable Rust dependency metadata: `inspect_rust_binary`
-  with the explicit local ELF, PE, or thin Mach-O file. This built-in
-  target-free inspection requires no Rust installation or disassembler. Preserve
-  package order, dependency indices, and the section file range. A missing
-  `.dep-v0` section is null metadata, not proof the binary has no dependencies.
-  A rustc commit hash is an inference from a read-only `/rustc/<40-hex>/` path.
+  with the explicit local ELF, PE, thin Mach-O, or WebAssembly core-module
+  file. This built-in target-free inspection requires no Rust installation or
+  disassembler. Preserve package order, dependency indices, and the section file
+  range. A missing `.dep-v0` section is null metadata, not proof the binary has
+  no dependencies. A rustc commit hash is an inference from a
+  `/rustc/<40-hex>/` path in read-only data or a WebAssembly data section.
   For selected crates, use `view: {collection: "packages", names: [...],
   fields: ["name", "version", "source"]}` on the first call; explicitly include
   `dependencies` for direct index references. Use `detail: "summary"` for counts
@@ -465,10 +473,18 @@ explicit path or endpoint and do not need it.
   with an explicit path; portable, no active target or engine.
 - Native executable, library, or analysis database: `open_binary`, then
   use focused analysis tools directly; call `binary_overview` when metadata or
-  inventory context is useful and available from the selected provider.
+  inventory context is useful and available from the selected provider. If
+  automatic selection returns `capability_unavailable` with
+  `selection_reason: "ambiguous"`, several providers are usable for the
+  selected target. Choose one of the reported candidates and retry with its
+  `provider_id`. Without an active target, `binary_session({})` shows host
+  availability and leaves target support unknown.
 
 For an existing IDA MCP configuration, use `open_binary` with the original
-input binary and `provider_id: "ida"`; do not pass an `.idb` or `.i64` database.
+input binary and `provider_id: "ida"`. Only the Hex-Rays (`hexrays`) profile
+also admits an existing `.idb` or `.i64`: pass the database path to start from
+its saved annotations instead of a fresh auto-analysis. REA analyzes a private
+copy and never writes the selected database.
 The native attached profile binds the already-open GUI input by SHA-256 and
 leaves its database open. The modern headless profile creates and closes an
 owned private database without saving; it reuses

@@ -32,6 +32,7 @@ const KUNA_DOCUMENT_CODES = [
   "xref_function_hex",
   "xref_target",
   "span_short",
+  "invalid_utf8",
 ] as const;
 
 export type KunaDocumentCode = (typeof KUNA_DOCUMENT_CODES)[number];

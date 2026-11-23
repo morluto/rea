@@ -25,12 +25,11 @@ import {
 import { errorMessage } from "../kernel/errorMessage.js";
 import type { ComputerRelease } from "../domain/desktop/computerRelease.js";
 import { AGENTENV_PROVIDER } from "./AgentEnvProviderIdentity.js";
+import { AGENTENV_BRIDGE_SOURCES } from "./AgentEnvBridgeSources.js";
 
 const execFileAsync = promisify(execFile);
 
-const HELPER = fileURLToPath(
-  new URL("../../bridge/agentenv/computer.py", import.meta.url),
-);
+const HELPER = fileURLToPath(AGENTENV_BRIDGE_SOURCES.computer);
 const HANDSHAKE_BYTES = 64 * 1024;
 const STDERR_BYTES = 16 * 1024;
 const TEARDOWN_MS = 120_000;
@@ -267,7 +266,12 @@ export class ComputerHelper {
       if (first !== undefined) continue;
       first = line.ok
         ? parseHandshake(line.value)
-        : { error: "the helper's handshake line is too long" };
+        : {
+            error:
+              line.error._tag === "ControlLineMalformedUtf8"
+                ? "the helper's handshake is not valid UTF-8"
+                : "the helper's handshake line is too long",
+          };
       if ("sandbox_id" in first) {
         this.#sandboxId = first.sandbox_id;
         this.#token = first.control_token;

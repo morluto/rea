@@ -5,7 +5,7 @@ import {
 import type { ToolContract } from "../toolContractTypes.js";
 import { toolContractMetadata, evidenceEffects } from "../toolEffects.js";
 import { analysisDetailOutputSchemaOf } from "../analysisDetail.js";
-import { goBinarySummaryViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
+import { goBinarySummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/goBinarySummarySchema.js";
 
 /** Static Go metadata is independent of active native-analysis providers and host toolchains. */
 export const GO_TOOL_CONTRACTS = [

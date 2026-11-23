@@ -2,20 +2,26 @@ import {
   BinaryFormatFailure,
   BinaryReader,
   BinaryResourceFailure,
+  createFileMappingIndex,
+  hasElfMagic,
   isBinaryFormatOrStringLimitFailure,
   type BinaryStringReadLimit,
-  mappedFileOffset,
-  imageFileMappings,
-  readMappedCString,
 } from "../binaryContainer.js";
 import { architectureForElfMachine } from "./elfImage.js";
 import { readElfStringBytes } from "./elfStringBytes.js";
-import { readElfSymbol } from "../elfSymbol.js";
+import {
+  elfSymbolExportBinding,
+  elfSymbolExportVisibility,
+  elfSymbolSize,
+  readElfSymbol,
+} from "../elfSymbol.js";
 import {
   readElfDirectoryFromBuffer,
+  readElfDirectoryFromBufferCooperative,
   type NativeSection,
 } from "./nativeSectionDirectory.js";
-import { readPeImage } from "./peImage.js";
+import type { ZstandardFramePause } from "../compression/zstandardExactFrame.js";
+import { peDeclaredFileMappings, readPeImage } from "./peImage.js";
 import {
   allKeyed,
   keyedBy,
@@ -30,9 +36,14 @@ import {
   type NativeExports,
   type PeExport,
 } from "./nativeExports.js";
+import {
+  readElfDynamicExportTables,
+  type ElfExportTableSelection,
+} from "./elfDynamicExportTables.js";
 
 type Artifact = NativeExports["artifact"];
 
+const OPERATION = "inspect_native_exports";
 const SHT_STRTAB = 3;
 const SHT_DYNSYM = 11;
 const SHT_GNU_VERDEF = 0x6ffffffd;
@@ -185,17 +196,24 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
         ...PE_LIMITATIONS,
       ],
     };
+  if (directory.size < PE_EXPORT_DIRECTORY_BYTES)
+    throw new BinaryFormatFailure(
+      "malformed",
+      `PE export directory declares ${String(directory.size)} bytes, below the ${String(PE_EXPORT_DIRECTORY_BYTES)}-byte table`,
+    );
   const reader = new BinaryReader(bytes, true, "pe");
-  const mappings = imageFileMappings(image);
+  const mappingIndex = createFileMappingIndex(
+    peDeclaredFileMappings(image),
+    image.zero_fills,
+  );
   const map = (rva: number, size: number): number =>
-    mappedFileOffset(mappings, base + BigInt(rva), size, image.zero_fills);
+    mappingIndex.offset(base + BigInt(rva), size);
   const cStringBytes = (
     rva: number,
     maximumBytes = MAXIMUM_NAME_BYTES,
   ): Buffer => {
-    const value = readMappedCString(
+    const value = mappingIndex.readCString(
       bytes,
-      image,
       base + BigInt(rva),
       maximumBytes,
     );
@@ -332,16 +350,6 @@ const ELF_TYPES: Readonly<Record<number, ElfExport["type"]>> = {
   6: "tls",
   10: "ifunc",
 };
-const ELF_BINDINGS: Readonly<Record<number, ElfExport["binding"]>> = {
-  1: "global",
-  2: "weak",
-  10: "unique",
-};
-const ELF_VISIBILITIES: Readonly<Record<number, ElfExport["visibility"]>> = {
-  0: "default",
-  3: "protected",
-};
-
 const versionSectionData = (
   reader: BinaryReader,
   sections: readonly NativeSection[],
@@ -494,6 +502,32 @@ function* readVersionNames(
     namesByIndex.set(index, decoded);
     textBytes = nextTextBytes;
   };
+  const clearNames = (): void => {
+    namesByIndex.clear();
+    textBytes = 0;
+  };
+  const installName = (
+    index: number,
+    strings: Buffer,
+    offset: number,
+    location: bigint,
+    label: string,
+  ): void => {
+    let decoded: DecodedElfString | null;
+    try {
+      decoded = readName(strings, offset);
+    } catch (cause) {
+      if (!isBinaryFormatOrStringLimitFailure(cause)) throw cause;
+      issues.push({
+        code: "version_unresolved",
+        location: hex(location),
+        message: `${label}: ${cause.message}`,
+      });
+      decoded = null;
+    }
+    // This record owns the index even when its selected text is unreadable.
+    addName(index, decoded);
+  };
   const byType = keyedBy(sections, ({ type }) => type);
   const verneed = versionSection(
     byType,
@@ -540,16 +574,13 @@ function* readVersionNames(
           const auxAt = table.offset + auxiliary;
           const versionIndex = reader.u16(auxAt + 6) & 0x7fff;
           const auxiliaryNext = reader.u32(auxAt + 12);
-          try {
-            addName(versionIndex, readName(names, reader.u32(auxAt + 8)));
-          } catch (cause) {
-            if (cause instanceof ElfVersionWorkFailure) throw cause;
-            issues.push({
-              code: "version_unresolved",
-              location: hex(verneed.offset + BigInt(auxiliary)),
-              message: `Version requirement name: ${failureMessage(cause)}`,
-            });
-          }
+          installName(
+            versionIndex,
+            names,
+            reader.u32(auxAt + 8),
+            verneed.offset + BigInt(auxiliary),
+            "Version requirement name",
+          );
           if (item + 1 < auxiliaryCount) {
             if (auxiliaryNext < 16)
               throw new BinaryFormatFailure(
@@ -571,7 +602,7 @@ function* readVersionNames(
     } catch (cause) {
       // Unvisited records may redefine an index seen in the prefix. Do not
       // promote an interrupted name lookup to a complete version identity.
-      if (cause instanceof ElfVersionWorkFailure) namesByIndex.clear();
+      clearNames();
       issues.push({
         code: "version_unresolved",
         location: hex(verneed.offset),
@@ -587,7 +618,7 @@ function* readVersionNames(
     issues,
   );
   // Either repeated definition table may replace any requirement index.
-  if (verdef === null) namesByIndex.clear();
+  if (verdef === null) clearNames();
   // sh_info is the definition count. Zero definitions cannot replace a
   // requirement index, so compressed storage of that empty table is unread.
   if (verdef !== undefined && verdef !== null && verdef.info !== 0) {
@@ -612,33 +643,51 @@ function* readVersionNames(
         const aux = reader.u32(at + 12);
         const next = reader.u32(at + 16);
         const auxiliaryCount = reader.u16(at + 6);
-        if (auxiliaryCount === 0 || aux < 20 || offset + aux + 8 > table.size)
-          throw new BinaryFormatFailure(
-            "malformed",
-            "Version definition name entry leaves its section",
-          );
-        let auxiliary = offset + aux;
-        const versionName = readName(
-          names,
-          reader.u32(table.offset + auxiliary),
-        );
-        addName(versionIndex, versionName);
-        for (let item = 0; item < auxiliaryCount; item++) {
-          if (auxiliary + 8 > table.size)
+        try {
+          if (
+            auxiliaryCount === 0 ||
+            aux < 20 ||
+            offset + aux + 8 > table.size
+          ) {
+            addName(versionIndex, null);
             throw new BinaryFormatFailure(
               "malformed",
-              "Version definition auxiliary chain leaves its section",
+              "Version definition name entry leaves its section",
             );
-          if (visit()) yield;
-          if (item + 1 < auxiliaryCount) {
-            const auxiliaryNext = reader.u32(table.offset + auxiliary + 4);
-            if (auxiliaryNext < 8)
+          }
+          let auxiliary = offset + aux;
+          installName(
+            versionIndex,
+            names,
+            reader.u32(table.offset + auxiliary),
+            verdef.offset + BigInt(auxiliary),
+            "Version definition name",
+          );
+          for (let item = 0; item < auxiliaryCount; item++) {
+            if (auxiliary + 8 > table.size)
               throw new BinaryFormatFailure(
                 "malformed",
-                "Version definition auxiliary chain ends before its declared count",
+                "Version definition auxiliary chain leaves its section",
               );
-            auxiliary += auxiliaryNext;
+            if (visit()) yield;
+            if (item + 1 < auxiliaryCount) {
+              const auxiliaryNext = reader.u32(table.offset + auxiliary + 4);
+              if (auxiliaryNext < 8)
+                throw new BinaryFormatFailure(
+                  "malformed",
+                  "Version definition auxiliary chain ends before its declared count",
+                );
+              auxiliary += auxiliaryNext;
+            }
           }
+        } catch (cause) {
+          if (!(cause instanceof BinaryFormatFailure)) throw cause;
+          // Auxiliary records do not choose the next definition or its index.
+          issues.push({
+            code: "version_unresolved",
+            location: hex(verdef.offset + BigInt(offset)),
+            message: `Version definitions: ${cause.message}`,
+          });
         }
         if (index + 1 < verdef.info) {
           if (next < 20)
@@ -650,13 +699,8 @@ function* readVersionNames(
         }
       }
     } catch (cause) {
-      // An unread compressed definition table may replace any requirement
-      // index. Its absence cannot justify falling back to requirement names.
-      if (
-        cause instanceof ElfVersionWorkFailure ||
-        (cause instanceof BinaryFormatFailure && cause.kind === "unsupported")
-      )
-        namesByIndex.clear();
+      // Incomplete definitions may replace any earlier name.
+      clearNames();
       issues.push({
         code: "version_unresolved",
         location: hex(verdef.offset),
@@ -668,60 +712,15 @@ function* readVersionNames(
   return namesByIndex;
 }
 
-/** Read defined exported entries of `.dynsym` with their symbol versions. */
-function* parseElfExports(
-  bytes: Buffer,
-  artifact: Artifact,
-): Generator<void, NativeExports> {
-  const directory = readElfDirectoryFromBuffer(bytes);
-  const reader = new BinaryReader(bytes, directory.little, "elf");
-  const result = {
-    artifact,
-    format: "elf" as const,
-    architecture: architectureForElfMachine(directory.machine),
-    bits: directory.bits,
-    byte_order: directory.little ? ("little" as const) : ("big" as const),
-  };
+/** Select section-owned tables before the shared export projection. */
+const readElfSectionExportTables = (
+  reader: BinaryReader,
+  directory: ReturnType<typeof readElfDirectoryFromBuffer>,
+  dynsym: NativeSection,
+  byType: Keyed<NativeSection, number>,
+): ElfExportTableSelection => {
   const { sections } = directory;
-  const byType = keyedBy(sections, ({ type }) => type);
-  const selectedDynsym = uniqueKeyed(byType, SHT_DYNSYM);
-  if (!selectedDynsym.ok)
-    throw new BinaryFormatFailure(
-      "malformed",
-      "ELF image has more than one SHT_DYNSYM",
-    );
-  const dynsym = selectedDynsym.value;
-  if (
-    sections.length === 0 ||
-    (dynsym === undefined && directory.programs.some(({ type }) => type === 2))
-  )
-    return {
-      ...result,
-      exports: [],
-      coverage: {
-        status: "unsupported",
-        reason:
-          sections.length === 0
-            ? "The ELF has no section headers; enumerating dynamic symbols from the dynamic segment is not implemented"
-            : "The ELF declares a dynamic segment but has no dynamic symbol section; enumerating dynamic symbols from the dynamic segment is not implemented",
-        examined_entries: 0,
-        exports: 0,
-      },
-      issues: [],
-      limitations: ELF_LIMITATIONS,
-    };
-  if (dynsym === undefined)
-    return {
-      ...result,
-      exports: [],
-      coverage: coverage([], 0, 0),
-      issues: [],
-      limitations: [
-        "The ELF has no dynamic symbol table, so it exports no dynamic symbols.",
-        ...ELF_LIMITATIONS,
-      ],
-    };
-  const width = directory.bits === 64 ? 24 : 16;
+  const width = elfSymbolSize(directory.bits);
   const strings = sections[dynsym.link];
   const compressed = dynsym.compressed
     ? dynsym
@@ -731,14 +730,8 @@ function* parseElfExports(
   if (compressed !== null) {
     const reason = `The ELF ${compressed === dynsym ? "dynamic symbol table" : "dynamic string table"} is SHF_COMPRESSED and was not decompressed; export identities remain unknown`;
     return {
-      ...result,
-      exports: [],
-      coverage: {
-        status: "unsupported",
-        reason,
-        examined_entries: 0,
-        exports: 0,
-      },
+      state: "unavailable",
+      reason,
       issues: [
         {
           code: "table_unavailable",
@@ -746,7 +739,6 @@ function* parseElfExports(
           message: reason,
         },
       ],
-      limitations: ELF_LIMITATIONS,
     };
   }
   if (
@@ -760,28 +752,20 @@ function* parseElfExports(
       "malformed",
       "ELF dynamic symbol table entry size, length, null entry or string-table link is invalid",
     );
-  const count = Number(dynsym.size / BigInt(width));
-  rowBudget(count, "ELF dynamic symbol table");
-  const table = reader.table(
+  const { offset: table, size } = reader.fileRange(
     dynsym.offset,
-    count,
-    width,
+    dynsym.size,
     "ELF dynamic symbols",
   );
-  // Entry zero is skipped only after it is observed to be the undefined
-  // symbol. A stray st_name is recorded; any other nonzero field is refused.
-  const nullSymbolNote = reservedElfDynamicSymbolNote(
-    bytes.subarray(table, table + width),
-    directory.bits,
-    directory.little,
-    table,
-  );
+  const count = size / width;
+  // With a fixed 16- or 24-byte row, the inventory ceiling also bounds table bytes.
+  rowBudget(count, "ELF dynamic symbol table");
   const nameRange = reader.fileRange(
     strings.offset,
     strings.size,
     "ELF dynamic strings",
   );
-  const names = bytes.subarray(
+  const names = reader.bytes.subarray(
     nameRange.offset,
     nameRange.offset + nameRange.size,
   );
@@ -818,7 +802,90 @@ function* parseElfExports(
       });
     }
   }
-  const versionNames = yield* readVersionNames(reader, sections, issues);
+  return {
+    state: "tables",
+    tables: {
+      table,
+      count,
+      names,
+      versions,
+      versionsDeclared: versym !== undefined,
+      issues,
+    },
+  };
+};
+
+/** Read defined exports from section or dynamic declarations in one admitted directory. */
+export function* parseElfExportsFromDirectorySteps(
+  bytes: Buffer,
+  artifact: Artifact,
+  directory: ReturnType<typeof readElfDirectoryFromBuffer>,
+): Generator<void, Extract<NativeExports, { format: "elf" }>> {
+  const reader = new BinaryReader(bytes, directory.little, "elf");
+  const result = {
+    artifact,
+    format: "elf" as const,
+    architecture: architectureForElfMachine(directory.machine),
+    bits: directory.bits,
+    byte_order: directory.little ? ("little" as const) : ("big" as const),
+  };
+  const { sections } = directory;
+  const byType = keyedBy(sections, ({ type }) => type);
+  const selectedDynsym = uniqueKeyed(byType, SHT_DYNSYM);
+  if (!selectedDynsym.ok)
+    throw new BinaryFormatFailure(
+      "malformed",
+      "ELF image has more than one SHT_DYNSYM",
+    );
+  const dynsym = selectedDynsym.value;
+  if (
+    dynsym === undefined &&
+    sections.length > 0 &&
+    !directory.programs.some(({ type }) => type === 2)
+  )
+    return {
+      ...result,
+      exports: [],
+      coverage: coverage([], 0, 0),
+      issues: [],
+      limitations: [
+        "The ELF has no dynamic symbol table, so it exports no dynamic symbols.",
+        ...ELF_LIMITATIONS,
+      ],
+    };
+  const width = elfSymbolSize(directory.bits);
+  let selection: ElfExportTableSelection;
+  if (dynsym === undefined) {
+    selection = yield* readElfDynamicExportTables(bytes, directory);
+  } else {
+    selection = readElfSectionExportTables(reader, directory, dynsym, byType);
+  }
+  if (selection.state === "unavailable")
+    return {
+      ...result,
+      exports: [],
+      coverage: {
+        status: "unsupported",
+        reason: selection.reason,
+        examined_entries: 0,
+        exports: 0,
+      },
+      issues: selection.issues,
+      limitations: ELF_LIMITATIONS,
+    };
+  const { count, table, names, versions, versionsDeclared, issues } =
+    selection.tables;
+  // Both table sources share the reserved-slot policy before skipping entry zero.
+  const nullSymbolNote = reservedElfDynamicSymbolNote(
+    bytes.subarray(table, table + width),
+    directory.bits,
+    directory.little,
+    table,
+  );
+  const versionNames =
+    dynsym === undefined
+      ? new Map<number, DecodedElfString | null>()
+      : yield* readVersionNames(reader, sections, issues);
   const unresolvedVersions = new Set<number>();
   const retain = createRetention();
   const exports: ElfExport[] = [];
@@ -836,8 +903,8 @@ function* parseElfExports(
         parsedSymbol.error.message,
       );
     const symbol = parsedSymbol.value;
-    const binding = ELF_BINDINGS[symbol.binding];
-    const visibility = ELF_VISIBILITIES[symbol.other & 3];
+    const binding = elfSymbolExportBinding(symbol.binding);
+    const visibility = elfSymbolExportVisibility(symbol.other);
     // Undefined, local and hidden/internal symbols are not exports.
     if (
       binding === undefined ||
@@ -846,7 +913,7 @@ function* parseElfExports(
     )
       continue;
     let version: ElfExport["version"] = null;
-    if (versym !== undefined && versions === null) version = "unknown";
+    if (versionsDeclared && versions === null) version = "unknown";
     else if (versions !== null) {
       const raw = reader.u16(versions + index * 2);
       const versionIndex = raw & 0x7fff;
@@ -919,6 +986,11 @@ function* parseElfExports(
     issues,
     limitations: [
       ...ELF_LIMITATIONS,
+      ...(dynsym === undefined && versionsDeclared
+        ? [
+            "GNU version names declared through PT_DYNAMIC are not decoded; readable DT_VERSYM indices and hidden flags remain available and unresolved names make coverage partial.",
+          ]
+        : []),
       ...(nullSymbolNote === null ? [] : [nullSymbolNote]),
     ],
   };
@@ -930,8 +1002,12 @@ export function* parseNativeExportsSteps(
   artifact: Artifact,
 ): Generator<void, NativeExports> {
   yield;
-  if (bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
-    return yield* parseElfExports(bytes, artifact);
+  if (hasElfMagic(bytes))
+    return yield* parseElfExportsFromDirectorySteps(
+      bytes,
+      artifact,
+      readElfDirectoryFromBuffer(bytes, OPERATION),
+    );
   if (bytes.subarray(0, 2).equals(Buffer.from("MZ")))
     return parsePeExports(bytes, artifact);
   throw new BinaryFormatFailure(
@@ -944,8 +1020,32 @@ export function* parseNativeExportsSteps(
 export const parseNativeExports = (
   bytes: Buffer,
   artifact: Artifact,
+): NativeExports => finishExports(parseNativeExportsSteps(bytes, artifact));
+
+/** Yield during ELF section-name decoding and bounded export inventory work. */
+export const parseNativeExportsCooperative = async (
+  bytes: Buffer,
+  artifact: Artifact,
+  pause: ZstandardFramePause,
+): Promise<NativeExports> => {
+  if (!hasElfMagic(bytes)) return parseNativeExports(bytes, artifact);
+  const directory = await readElfDirectoryFromBufferCooperative(
+    bytes,
+    pause,
+    OPERATION,
+  );
+  const steps = parseElfExportsFromDirectorySteps(bytes, artifact, directory);
+  let step = steps.next();
+  while (!step.done) {
+    await pause();
+    step = steps.next();
+  }
+  return step.value;
+};
+
+const finishExports = (
+  steps: Generator<void, NativeExports>,
 ): NativeExports => {
-  const steps = parseNativeExportsSteps(bytes, artifact);
   let step = steps.next();
   while (!step.done) step = steps.next();
   return step.value;

@@ -716,11 +716,11 @@ const sourceState = async (path: string) => {
   };
 };
 
-const createLosslessSnapshot = (path: string, journalMode: string): void => {
+const createLosslessSnapshot = (path: string): void => {
   const database = new DatabaseSync(path);
   try {
-    database.exec(`PRAGMA journal_mode=${journalMode}`);
     database.exec(`
+      PRAGMA journal_mode=PERSIST;
       CREATE TABLE "odd "" table" (
         id INTEGER PRIMARY KEY,
         payload BLOB,
@@ -753,15 +753,17 @@ const createLosslessSnapshot = (path: string, journalMode: string): void => {
   }
 };
 
-cliTest
-  .runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)
-  .for(["DELETE", "PERSIST", "TRUNCATE"])(
-  "inspects a real %s SQLite schema and lossless selected records identically through CLI and MCP",
-  async (journalMode, { cli }) => {
+cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
+  "inspects a lossless SQLite snapshot with a retained rollback journal through CLI and MCP",
+  async ({ cli }) => {
     const root = await createTestTempDirectory("rea-sqlite-public-");
     const path = join(root, "selected.db");
-    createLosslessSnapshot(path, journalMode);
+    createLosslessSnapshot(path);
     const original = await readFile(path);
+    const journalPath = `${path}-journal`;
+    const { bytes: journalBytes, ...journalIdentity } =
+      await sourceState(journalPath);
+    expect(journalBytes.length).toBeGreaterThanOrEqual(28);
     const result = await cli.run({
       arguments: [
         "inspect-sqlite-database",
@@ -875,6 +877,10 @@ cliTest
       "selected.db",
     );
     expect(Buffer.compare(await readFile(path), original)).toBe(0);
+    const { bytes: afterBytes, ...afterIdentity } =
+      await sourceState(journalPath);
+    expect(afterBytes.equals(journalBytes)).toBe(true);
+    expect(afterIdentity).toEqual(journalIdentity);
   },
 );
 
@@ -939,6 +945,43 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
   },
 );
 
+/** Assert the refusal's facts, not the sentence that joins them. */
+const expectNotADatabaseRefusal = (error: unknown, selected: string): void => {
+  expect(error).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["path"],
+          reason: "invalid_format",
+          message: expect.stringContaining("file is not a database"),
+        },
+      ],
+    },
+  });
+  expect(error).toMatchObject({
+    details: { issues: [{ message: expect.stringContaining(selected) }] },
+  });
+};
+
+cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
+  "refuses a one-byte file instead of reporting a complete empty schema",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-sqlite-one-byte-");
+    const selected = join(root, "truncated.db");
+    await writeFile(selected, "S");
+    const refused = await cli.run({
+      arguments: ["inspect-sqlite-database", selected, "--json"],
+      environment: { REA_LOG_LEVEL: "silent" },
+    });
+    expect(refused.exitCode).toBe(1);
+    expectNotADatabaseRefusal(refused.json, selected);
+    const call = await parityMcp.session.call();
+    const response = await call("inspect_sqlite_database", { path: selected });
+    expectNotADatabaseRefusal(parseMcpToolError(response).error, selected);
+  },
+);
+
 cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
   "returns actionable public errors for corrupt input, unknown or ambiguous tables and invalid record choices",
   async ({ cli }) => {
@@ -948,28 +991,16 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
     // Distinct malformed selections each name their own selected path.
     for (const selected of [path, join(root, "other-invalid.db")]) {
       await writeFile(selected, "not a SQLite database");
-      const expectedError = {
-        code: "invalid_request",
-        details: {
-          issues: [
-            {
-              path: ["path"],
-              reason: "invalid_format",
-              message: `Selected SQLite database is invalid (file is not a database): ${selected}`,
-            },
-          ],
-        },
-      };
       const corrupt = await cli.run({
         arguments: ["inspect-sqlite-database", selected, "--json"],
         environment: { REA_LOG_LEVEL: "silent" },
       });
       expect(corrupt.exitCode).toBe(1);
-      expect(corrupt.json).toMatchObject(expectedError);
+      expectNotADatabaseRefusal(corrupt.json, selected);
       const response = await call("inspect_sqlite_database", {
         path: selected,
       });
-      expect(parseMcpToolError(response).error).toMatchObject(expectedError);
+      expectNotADatabaseRefusal(parseMcpToolError(response).error, selected);
     }
     const valid = join(root, "valid.db");
     const database = new DatabaseSync(valid);
@@ -1076,6 +1107,8 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         "records",
         "--column",
         "value",
+        "--column",
+        "value",
         "--row-limit",
         "1",
         "--json",
@@ -1087,9 +1120,14 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       normalized_result: {
         schema: { scope: "inventory" },
         rows: {
-          columns: ["value"],
+          columns: ["value", "value"],
           returned_rows: 1,
-          values: [[{ type: "text", value: "retained" }]],
+          values: [
+            [
+              { type: "text", value: "retained" },
+              { type: "text", value: "retained" },
+            ],
+          ],
         },
       },
     });

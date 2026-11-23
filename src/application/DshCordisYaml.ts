@@ -169,10 +169,24 @@ export class DshCordisYaml {
   copy(node: unknown, invalidated?: ReadonlySet<Node>): unknown {
     if (isAlias(node)) {
       const target = this.resolve(node);
-      return invalidated === undefined ||
-        (isNode(target) && invalidated.has(target))
-        ? this.copy(target)
-        : node.clone();
+      if (
+        invalidated !== undefined &&
+        (!isNode(target) || !invalidated.has(target))
+      )
+        return node.clone();
+      const materialized = this.copy(target);
+      if (isNode(materialized)) {
+        for (const name of ["commentBefore", "comment"] as const) {
+          const annotation = node[name];
+          if (annotation === undefined) continue;
+          const existing = materialized[name];
+          materialized[name] =
+            existing === undefined ? annotation : `${existing}\n${annotation}`;
+        }
+        if (node.spaceBefore !== undefined)
+          materialized.spaceBefore = node.spaceBefore;
+      }
+      return materialized;
     }
     if (!isNode(node)) return node;
     const copied = node.clone();
@@ -199,7 +213,7 @@ export class DshCordisYaml {
     if (isNode(copied))
       visit(copied, {
         Pair: (_key, pair) => {
-          if (isAlias(pair.key)) pair.key = this.copy(this.resolve(pair.key));
+          if (isAlias(pair.key)) pair.key = this.copy(pair.key);
         },
         Value: (_key, value) => {
           delete value.anchor;
