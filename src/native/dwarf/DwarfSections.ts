@@ -175,30 +175,7 @@ const storedDwarfSections = (source: NativeByteSource) => {
   };
 };
 
-const bufferByteSource = (bytes: Buffer): NativeByteSource => ({
-  size: bytes.length,
-  prefix: bytes,
-  readRange: (offset, length) =>
-    Promise.resolve(
-      offset < 0 || length <= 0 || offset >= bytes.length
-        ? Buffer.alloc(0)
-        : bytes.subarray(offset, Math.min(bytes.length, offset + length)),
-    ),
-});
-
-/** Select DWARF sections from one thin ELF, PE, or Mach-O image. */
-export const locateDwarfSections = async (
-  bytes: Buffer,
-  maximumDecodedBytes = MAX_DWARF_DECOMPRESSED_SECTION_BYTES,
-  pause?: ZstandardFramePause,
-): Promise<LocatedDwarfImage> =>
-  locateDwarfSectionsFromHandle(
-    bufferByteSource(bytes),
-    maximumDecodedBytes,
-    pause,
-  );
-
-/** Same DWARF section selection over a random-access handle without buffering the full image. */
+/** Select DWARF sections from one thin ELF, PE, or Mach-O image over a random-access handle without buffering the full image. */
 export const locateDwarfSectionsFromHandle = async (
   source: NativeByteSource,
   maximumDecodedBytes = MAX_DWARF_DECOMPRESSED_SECTION_BYTES,

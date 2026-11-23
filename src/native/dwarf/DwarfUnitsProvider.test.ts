@@ -22,8 +22,9 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import { DwarfUnitsProvider } from "./DwarfUnitsProvider.js";
 import {
   DwarfSectionAllowanceFailure,
-  locateDwarfSections,
+  locateDwarfSectionsFromHandle,
 } from "./DwarfSections.js";
+import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
 import {
   abbrevTable,
   compileUnit,
@@ -509,6 +510,17 @@ it("does not inflate a duplicate section and caps decompressed bytes across role
     expect(aggregate.error).toBeInstanceOf(AnalysisResourceConstraintError);
 });
 
+const bufferByteSource = (bytes: Buffer): NativeByteSource => ({
+  size: bytes.length,
+  prefix: bytes,
+  readRange: (offset, length) =>
+    Promise.resolve(
+      offset < 0 || length <= 0 || offset >= bytes.length
+        ? Buffer.alloc(0)
+        : bytes.subarray(offset, Math.min(bytes.length, offset + length)),
+    ),
+});
+
 it("charges failed decompression attempts against the shared allowance", async () => {
   const allowance = 1024 * 1024;
   const bytes = Buffer.alloc(allowance);
@@ -523,9 +535,9 @@ it("charges failed decompression attempts against the shared allowance", async (
         flags: gnu ? 0n : 0x800n,
       })),
     });
-    await expect(locateDwarfSections(image, allowance)).rejects.toThrow(
-      DwarfSectionAllowanceFailure,
-    );
+    await expect(
+      locateDwarfSectionsFromHandle(bufferByteSource(image), allowance),
+    ).rejects.toThrow(DwarfSectionAllowanceFailure);
   }
 });
 
@@ -547,9 +559,9 @@ it("charges valid empty streams against the shared allowance", async () => {
       flags: 0x800n,
     })),
   });
-  await expect(locateDwarfSections(image, payloadLength * 2)).rejects.toThrow(
-    DwarfSectionAllowanceFailure,
-  );
+  await expect(
+    locateDwarfSectionsFromHandle(bufferByteSource(image), payloadLength * 2),
+  ).rejects.toThrow(DwarfSectionAllowanceFailure);
 });
 
 it("charges zero-output streams with bad checksums against the shared allowance", async () => {
@@ -572,9 +584,9 @@ it("charges zero-output streams with bad checksums against the shared allowance"
       flags: 0x800n,
     })),
   });
-  await expect(locateDwarfSections(image, payloadLength * 2)).rejects.toThrow(
-    DwarfSectionAllowanceFailure,
-  );
+  await expect(
+    locateDwarfSectionsFromHandle(bufferByteSource(image), payloadLength * 2),
+  ).rejects.toThrow(DwarfSectionAllowanceFailure);
 });
 
 it("keeps the inflate allowance after a truncated optional section header", async () => {
