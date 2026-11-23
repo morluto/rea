@@ -7,7 +7,6 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect, it } from "vitest";
 
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../../src/contracts/reverseEngineeringToolContracts.js";
-import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
 import { rizinCommandLimitations } from "../../../src/rizin/RizinCommand.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createProviderEnvironmentMcpHarness } from "../../support/reverseDebuggerMcpTestHelpers.js";
@@ -190,22 +189,14 @@ it("passes Rizin decoder and map inputs as flags before the artifact", async () 
 
   const { tools } = await client.listTools();
   const listed = tools.find((tool) => tool.name === rizinContract.name);
-  expect(listed?.description).toBe(rizinContract.description);
-  // Rizin applies any width that shares a bit with a declared one, so the
-  // contract advertises the declared widths. The default compact listing may
-  // reduce this tool's schema to shallow property types, which keeps no enum,
-  // so the full advertisement carries them and the call below enforces them.
-  expect(listed?.inputSchema.properties?.asm_bits).toMatchObject({
-    type: "number",
-  });
-  expect(
-    (
-      advertisedInputJsonSchema(rizinContract).properties as Record<
-        string,
-        unknown
-      >
-    ).asm_bits,
-  ).toMatchObject({ enum: [4, 8, 16, 32, 64] });
+  // Rizin applies any width that shares a bit with a declared one, so REA
+  // admits only the declared widths. The portable dialect keeps no numeric
+  // enum and the compact listing strips property descriptions, so the listed
+  // tool description names them, and the call below enforces them.
+  expect(listed?.inputSchema.properties?.asm_bits).toEqual({ type: "number" });
+  expect(listed?.description).toBe(
+    `${rizinContract.description}\n\n\`asm_bits\` must be 4, 8, 16, 32 or 64.`,
+  );
   const undeclared = await client.callTool({
     name: "execute_rizin_command",
     arguments: { ...input, asm_bits: 17 },

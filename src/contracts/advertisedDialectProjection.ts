@@ -186,14 +186,20 @@ const scalarBounds = (source: Schema, out: Schema): void => {
   inclusiveBounds(source, out);
 };
 
-/** Only non-empty string enums are portable; other literals keep a type. */
-const literalKeywords = (source: Schema, out: Schema): void => {
+/**
+ * Only non-empty string enums are portable; other literals keep a type, and
+ * the literals the schema no longer carries are returned for guidance.
+ */
+const literalKeywords = (
+  source: Schema,
+  out: Schema,
+): readonly unknown[] | undefined => {
   const literals = Object.hasOwn(source, "const")
     ? [source.const]
     : Array.isArray(source.enum) && source.enum.length > 0
       ? source.enum
       : undefined;
-  if (literals === undefined) return;
+  if (literals === undefined) return undefined;
   const literal = literalsType(literals);
   if (
     literal === "string" &&
@@ -202,8 +208,17 @@ const literalKeywords = (source: Schema, out: Schema): void => {
   ) {
     out.type = "string";
     out.enum = [...new Set(literals)];
-  } else if (literal !== undefined && out.type === undefined)
-    out.type = literal;
+    return undefined;
+  }
+  if (literal !== undefined && out.type === undefined) out.type = literal;
+  return [...new Set(literals)];
+};
+
+/** `1`, `1 or 2`, `1, 2 or 3`. */
+const literalList = (values: readonly unknown[]): string => {
+  const shown = values.map((value) => JSON.stringify(value));
+  const last = shown.pop();
+  return shown.length === 0 ? `${last}` : `${shown.join(", ")} or ${last}`;
 };
 
 const isStringEnum = (branch: unknown): branch is Schema =>
@@ -362,7 +377,9 @@ class DialectProjection {
     this.objectKeywords(source, out, path);
     this.arrayKeywords(source, out, path);
     scalarBounds(source, out);
-    literalKeywords(source, out);
+    const dropped = literalKeywords(source, out);
+    if (dropped !== undefined)
+      this.note(`${label(path)} must be ${literalList(dropped)}.`);
     if (isRecord(source.not) && isStringList(source.not.enum))
       this.note(
         `${label(path)} must not be ${source.not.enum.map((item) => JSON.stringify(item)).join(" or ")}.`,

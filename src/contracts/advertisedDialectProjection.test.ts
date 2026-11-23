@@ -272,6 +272,36 @@ it("moves the root description and dropped cross-field constraints to tool guida
   ).toEqual([]);
 });
 
+it("names the literals of a dropped enum or const in tool guidance", () => {
+  const projection = project({
+    bits: { type: "number", enum: [4, 8, 16, 32, 64] },
+    level: { enum: [1, 2] },
+    confirm: { type: "boolean", const: true },
+    separator: { type: "string", enum: ["", ","] },
+    options: {
+      type: "object",
+      properties: { mode: { type: "integer", const: 0 } },
+    },
+    // A portable string enum stays in the schema and needs no sentence.
+    kind: { type: "string", enum: ["a", "b"] },
+  });
+  expect(projection.guidance).toEqual([
+    "`bits` must be 4, 8, 16, 32 or 64.",
+    "`level` must be 1 or 2.",
+    "`confirm` must be true.",
+    '`separator` must be "" or ",".',
+    "`options.mode` must be 0.",
+  ]);
+  expect(projection.schema.properties).toMatchObject({
+    bits: { type: "number" },
+    level: { type: "integer" },
+    kind: { type: "string", enum: ["a", "b"] },
+  });
+  expect(
+    (projection.schema.properties as Record<string, unknown>).bits,
+  ).not.toHaveProperty("enum");
+});
+
 it("bounds nested descriptions without splitting a surrogate pair", () => {
   const description = `${"x".repeat(1022)}😀tail`;
   const { schema } = project({ value: { type: "string", description } });
