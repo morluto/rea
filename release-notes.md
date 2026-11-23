@@ -553,6 +553,7 @@
 * **python:** extract PycReportProjection from PythonPycParser ([#13773](https://github.com/morluto/rea/issues/13773)) ([70045e6](https://github.com/morluto/rea/commit/70045e6ffddcdda03564ac8c783cba97a6809d1f))
 * **regex:** consolidate worker input and deadline proofs ([#13732](https://github.com/morluto/rea/issues/13732)) ([588b257](https://github.com/morluto/rea/commit/588b257e486a3cdb3a02c98681da20375434f02d))
 * **rizin:** extract RizinDebugEvidence from RizinDebugSessionManager ([#13823](https://github.com/morluto/rea/issues/13823)) ([e69c42d](https://github.com/morluto/rea/commit/e69c42deeb2ba74cbfa2287d9c27b1464451cb9d))
+* **server:** extract debugger and instrumentation tool bindings ([#13909](https://github.com/morluto/rea/issues/13909)) ([7f939d7](https://github.com/morluto/rea/commit/7f939d750855de9db3e54b2dea44d3874c5ac61f))
 * **server:** extract desktop build tool bindings ([#13891](https://github.com/morluto/rea/issues/13891)) ([841e5f8](https://github.com/morluto/rea/commit/841e5f84876485683643e91bd7bfab275f02cf90))
 * **server:** extract ErrorEvidenceTransport from EvidenceMcpServerCore ([#13761](https://github.com/morluto/rea/issues/13761)) ([6738853](https://github.com/morluto/rea/commit/67388539e0bfdf3d495363b82cb49f613dc146ca))
 * **server:** replace server.close and onclose monkey-patching with lifecycle hooks ([#13882](https://github.com/morluto/rea/issues/13882)) ([a569ec5](https://github.com/morluto/rea/commit/a569ec5584ceef3ef2efa6cd1a7673839e9de443))
