@@ -89,6 +89,9 @@ cliTest.skipIf(process.platform === "win32").for(outcomes)(
         expect.arrayContaining([...limitations]),
       );
     }
-    expect(definition?.description).toBe(contract.description);
+    // The listing names the widths that the portable dialect cannot carry.
+    expect(definition?.description).toBe(
+      `${contract.description}\n\n\`asm_bits\` must be 4, 8, 16, 32 or 64.`,
+    );
   },
 );
