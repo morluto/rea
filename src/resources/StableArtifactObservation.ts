@@ -4,32 +4,39 @@ import {
 } from "../domain/fileSnapshotObservation.js";
 import {
   type StableArtifactSnapshot,
-  completedStableArtifact,
+  completedStableArtifactIdentity,
 } from "./readStableArtifact.js";
 
-/** Identity facts of one completed stable read; they do not establish decoded content. */
-export const stableArtifactObservation = (
-  snapshot: StableArtifactSnapshot,
-  path: string,
-): FileSnapshotPartialObservation =>
-  fileSnapshotPartialObservationSchema.parse({
-    kind: "file-snapshot-hash",
-    path,
-    sha256: snapshot.sha256,
-    bytes: snapshot.bytes.length,
-  });
+/** Completed whole-file identity, with or without retained snapshot bytes. */
+export type CompletedStableArtifact =
+  | StableArtifactSnapshot
+  | { readonly sha256: string; readonly bytes: number };
 
 /**
  * Completed file identity survives finalization and later decoding failures;
- * `completed` is the snapshot a provider already holds when its parser fails.
+ * `completed` is the snapshot or identity a provider already holds when its parser fails.
  */
 export const completedStableArtifactObservation = (
   cause: unknown,
   path: string,
-  completedSnapshot?: StableArtifactSnapshot,
+  completedSnapshot?: CompletedStableArtifact,
 ): FileSnapshotPartialObservation | undefined => {
-  const snapshot = completedSnapshot ?? completedStableArtifact(cause);
-  return snapshot === undefined
+  const identity =
+    completedSnapshot === undefined
+      ? completedStableArtifactIdentity(cause)
+      : {
+          sha256: completedSnapshot.sha256,
+          bytes:
+            typeof completedSnapshot.bytes === "number"
+              ? completedSnapshot.bytes
+              : completedSnapshot.bytes.length,
+        };
+  return identity === undefined
     ? undefined
-    : stableArtifactObservation(snapshot, path);
+    : fileSnapshotPartialObservationSchema.parse({
+        kind: "file-snapshot-hash",
+        path,
+        sha256: identity.sha256,
+        bytes: identity.bytes,
+      });
 };

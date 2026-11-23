@@ -19,7 +19,7 @@ import {
   systemProcessOwnershipHost,
 } from "../process/ProcessOwnershipObservation.js";
 import { ApktoolWorkspace } from "./ApktoolWorkspace.js";
-import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
+import { createApktoolResourceAnalysisService } from "../application/ProviderOperationServices.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   apktoolRequestSchema,
@@ -183,7 +183,7 @@ it("recovers later string pages and an exhausted XML admission on the same APK",
   const apk = await apkFixture(root);
   const provider = providerOver(command);
   onTestFinished(() => provider.close());
-  const service = new ApktoolResourceAnalysisService(provider);
+  const service = createApktoolResourceAnalysisService(provider);
   const inspect = async (input: Record<string, unknown>) => {
     const outcome = await service.execute("decode_android_resources", {
       path: apk.path,
@@ -240,7 +240,7 @@ it("returns table-only facts for a single selected primary table", async () => {
   const apk = await apkFixture(root);
   const provider = providerOver(command);
   onTestFinished(() => provider.close());
-  const outcome = await new ApktoolResourceAnalysisService(provider).execute(
+  const outcome = await createApktoolResourceAnalysisService(provider).execute(
     "decode_android_resources",
     { path: apk.path, string_tables_only: true },
   );
@@ -291,7 +291,7 @@ sdkInfo:
   const original = await readFile(apk.path);
   const provider = providerOver(command);
   onTestFinished(() => provider.close());
-  const outcome = await new ApktoolResourceAnalysisService(provider).execute(
+  const outcome = await createApktoolResourceAnalysisService(provider).execute(
     "decode_android_resources",
     { path: apk.path },
   );
@@ -580,20 +580,53 @@ it.each([
   expect(result.error.message).toContain("apktool.yml");
 });
 
-it("preserves empty resource strings and reports markup omissions as partial", async () => {
+it("preserves primary strings and reports markup omissions in default and localized tables", async () => {
   const stringsXml =
     '<resources><string name="empty"/><string name="raw">  A &amp; B  </string><string name="styled">Hello <b>world</b></string></resources>';
-  const { command, root } = await writeApktoolStub(decodeStub({ stringsXml }));
+  const { command, root } = await writeApktoolStub((root) =>
+    decodeStub({ stringsXml, withGerman: false })(root).replace(
+      'if [ "$1" = "d" ]; then',
+      `if [ "$1" = "d" ]; then
+    mkdir -p "$5/res/values-de"
+    printf '<resources><string name="styled">Hallo <b>Welt</b></string></resources>' > "$5/res/values-de/strings.xml"`,
+    ),
+  );
   const apk = await apkFixture(root);
-  const result = await evidenceResult(providerOver(command), {
-    operation: "decode_android_resources",
-    input: { path: apk.path, include_strings: true },
+  const provider = providerOver(command);
+  onTestFinished(() => provider.close());
+  const observation = await createApktoolResourceAnalysisService(
+    provider,
+  ).execute("decode_android_resources", {
+    path: apk.path,
+    include_strings: true,
+    locales: ["de"],
   });
+  if (!observation.ok) throw observation.error;
+  const result = apktoolResultSchemas.decode_android_resources.parse(
+    observation.value.normalized_result,
+  );
   expect(result.strings).toEqual([
     { name: "empty", value: "" },
     { name: "raw", value: "  A &amp; B  " },
   ]);
   expect(result.coverage).toBe("partial");
+  expect(result.string_tables).toMatchObject([
+    {
+      locale: null,
+      status: "present",
+      total_count: 2,
+      unparsed_count: 1,
+      coverage: "partial",
+    },
+    {
+      locale: "de",
+      status: "present",
+      strings: [],
+      total_count: 0,
+      unparsed_count: 1,
+      coverage: "partial",
+    },
+  ]);
 });
 
 it("preserves literal U+FFFD in decoded XML with complete coverage", async () => {
@@ -805,7 +838,7 @@ it("uses an owned APK snapshot and framework cache and resolves regional locales
     ),
   );
   const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     providerOver(command),
   ).execute("decode_android_resources", {
     path: apk.path,
@@ -844,7 +877,7 @@ it("shares one decode across default and selected locale tables", async () => {
     ),
   );
   const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     providerOver(command),
   ).execute("decode_android_resources", {
     path: apk.path,
@@ -911,7 +944,7 @@ it("reuses normalized directory table for locale aliases without extra reads", a
     ),
   );
   const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     providerOver(command),
   ).execute("decode_android_resources", {
     path: apk.path,
@@ -974,7 +1007,7 @@ it.each([2000, 2001])(
     const apk = await apkFixture(root);
     const provider = providerOver(command);
     try {
-      const observation = await new ApktoolResourceAnalysisService(
+      const observation = await createApktoolResourceAnalysisService(
         provider,
       ).execute("decode_android_resources", {
         path: apk.path,
@@ -1017,7 +1050,7 @@ it("skips all string tables when include_strings is false despite locales reques
     ),
   );
   const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     providerOver(command),
   ).execute("decode_android_resources", {
     path: apk.path,
@@ -1030,38 +1063,6 @@ it("skips all string tables when include_strings is false despite locales reques
   );
   expect(result.string_tables).toEqual([]);
   expect(result.strings).toEqual([]);
-});
-
-it("marks table with styled markup present with partial coverage and unparsed count", async () => {
-  const { command, root } = await writeApktoolStub((root) =>
-    decodeStub({ withGerman: false })(root).replace(
-      'if [ "$1" = "d" ]; then',
-      `if [ "$1" = "d" ]; then
-    mkdir -p "$5/res/values-de"
-    printf '<resources><string name="styled">Hallo <b>Welt</b></string></resources>' > "$5/res/values-de/strings.xml"`,
-    ),
-  );
-  const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
-    providerOver(command),
-  ).execute("decode_android_resources", {
-    path: apk.path,
-    include_strings: true,
-    locales: ["de"],
-  });
-  if (!observation.ok) throw observation.error;
-  const result = apktoolResultSchemas.decode_android_resources.parse(
-    observation.value.normalized_result,
-  );
-  const deTable = result.string_tables?.find((t) => t.locale === "de");
-  expect(deTable).toEqual({
-    locale: "de",
-    status: "present",
-    strings: [],
-    total_count: 0,
-    unparsed_count: 1,
-    coverage: "partial",
-  });
 });
 
 it("skips remaining tables without reading or parsing once aggregate string budget is exhausted", async () => {
@@ -1082,7 +1083,7 @@ it("skips remaining tables without reading or parsing once aggregate string budg
   const bigStrings = `<resources>${Array.from({ length: 2000 }, (_, i) => `<string name="s_${String(i)}">val</string>`).join("")}</resources>`;
   await writeFile(join(root, "big-strings.xml"), bigStrings);
   const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     providerOver(command),
   ).execute("decode_android_resources", {
     path: apk.path,
@@ -1787,20 +1788,22 @@ it("reports the owned-process prerequisite as Apktool unavailability, not a prob
 
 it("matches the launcher variable by the selected host's environment rules", async () => {
   const stub = await writeApktoolStub(() => VERSION_BLOCK);
+  // A double leading slash gives Win32 a UNC root and still opens the POSIX fixture.
+  const command = `/${stub.command}`;
   // Windows environment names are case-insensitive; POSIX names are exact.
-  const environment = { rea_apktool_command: stub.command, PATH: "" };
+  const environment = { rea_apktool_command: command, PATH: "" };
   const windows = new ApktoolProvider({ environment, platform: "win32" });
   onTestFinished(() => windows.close());
   expect(await windows.inspectAvailability()).toMatchObject({
     status: "available",
     diagnostics: {
-      selected_command: stub.command,
+      selected_command: command,
       command_source: "environment",
     },
   });
   const posix = new ApktoolProvider({ environment, platform: "linux" });
   onTestFinished(() => posix.close());
   expect(await posix.inspectAvailability()).not.toMatchObject({
-    diagnostics: { selected_command: stub.command },
+    diagnostics: { selected_command: command },
   });
 });

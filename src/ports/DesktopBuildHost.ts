@@ -38,11 +38,7 @@ export type DesktopBuildRegistrationReader = (
   selectedClientIds?: readonly string[],
   providerSettings?: Readonly<Record<string, string>>,
   ownedProviderSetting?: OwnedProviderSetting,
-  observeProviderSetting?: (
-    client: string,
-    name: string,
-    value: string,
-  ) => void,
+  observeProbeSetting?: (client: string, name: string, value: string) => void,
 ) => Promise<readonly DesktopBuildRegistration[]>;
 
 /** How a build setting's program was found: set in the environment, or on PATH. */
@@ -75,7 +71,7 @@ export interface DesktopBuildFacts {
   readonly archive: {
     readonly path: string;
     readonly source: "environment" | "cache";
-    readonly status: "current" | "missing" | "stale" | "unknown";
+    readonly status: "current" | "missing" | "stale" | "invalid" | "unknown";
     readonly detail?: string;
   };
   /** Each considered client's registration, by setting names only. */
@@ -112,7 +108,8 @@ export interface DesktopBuildFactsInput {
     clientIds: readonly string[] | undefined,
     settings: Readonly<Record<string, string>>,
     owned?: undefined,
-    observe?: (client: string, name: string, value: string) => void,
+    /** Receives only settings admitted to probes by the registration reader. */
+    observeProbeSetting?: (client: string, name: string, value: string) => void,
   ) => Promise<readonly DesktopBuildRegistration[]>;
 }
 

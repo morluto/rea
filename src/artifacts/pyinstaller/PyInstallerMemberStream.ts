@@ -51,11 +51,22 @@ export const readPyInstallerMemberPrefix = async (
   return prefix.subarray(0, copied);
 };
 
+const declaredSizeMismatch = (): ArtifactReaderFailure =>
+  new ArtifactReaderFailure(
+    "integrity",
+    "PyInstaller member size disagrees with its declaration or previous observation",
+    { integrityCheck: "declared-size" },
+  );
+
 /** Backpressure bounds plaintext independently of the untrusted declared size. */
 export const pyInstallerMemberStream = (
   source: Readable,
   options: MemberStreamOptions,
 ): { readonly output: Readable; readonly completion: Promise<void> } => {
+  const plaintextBound = Math.min(
+    options.maxBytes,
+    options.expectedBytes ?? options.maxBytes,
+  );
   let bytes = 0;
   let headerSent = false;
   let completing = false;
@@ -70,11 +81,13 @@ export const pyInstallerMemberStream = (
       try {
         abortIfNeeded(options.signal);
         bytes += chunk.length;
-        if (bytes > options.maxBytes)
-          throw new ArtifactReaderFailure(
-            "limit",
-            "PyInstaller member exceeds its plaintext budget",
-          );
+        if (bytes > plaintextBound)
+          throw options.expectedBytes === plaintextBound
+            ? declaredSizeMismatch()
+            : new ArtifactReaderFailure(
+                "limit",
+                "PyInstaller member exceeds its plaintext budget",
+              );
         options.charge?.(chunk.length);
         prependHeader();
         callback(null, chunk);
@@ -99,11 +112,7 @@ export const pyInstallerMemberStream = (
           options.expectedBytes !== undefined &&
           bytes !== options.expectedBytes
         )
-          throw new ArtifactReaderFailure(
-            "integrity",
-            "PyInstaller member size disagrees with its declaration or previous observation",
-            { integrityCheck: "declared-size" },
-          );
+          throw declaredSizeMismatch();
         await options.complete?.(bytes);
         abortIfNeeded(options.signal);
         prependHeader();
@@ -129,7 +138,14 @@ export const pyInstallerMemberStream = (
   output.on("error", () => undefined);
   const onAbort = (): void => {
     // Verification and private-file cleanup own their accepted native I/O.
-    if (completing) return;
+    if (completing || output.destroyed) return;
+    // A producer can already own an error before its error event forwards it.
+    // Do not replace that established failure with a downstream cancellation.
+    if (
+      source.errored !== null ||
+      (inflate !== undefined && inflate.errored !== null)
+    )
+      return;
     // The descriptor source owns cancellation until its native read settles.
     // Retiring it downstream earlier would hide a native I/O rejection.
     if (!source.readableEnded && !source.destroyed) return;
@@ -142,6 +158,12 @@ export const pyInstallerMemberStream = (
     );
   };
   options.signal.addEventListener("abort", onAbort, { once: true });
+  const retired = new Promise<void>((resolve) => {
+    output.once("close", () => {
+      options.signal.removeEventListener("abort", onAbort);
+      resolve();
+    });
+  });
   const onSourceFailure = (cause: unknown): void => {
     failure ??=
       cause instanceof ArtifactReaderFailure
@@ -166,7 +188,7 @@ export const pyInstallerMemberStream = (
           );
     output.destroy(failure);
   });
-  const completion = (
+  const production = (
     inflate === undefined
       ? pipeline(source, output)
       : pipeline(source, inflate, output)
@@ -177,9 +199,17 @@ export const pyInstallerMemberStream = (
       throw failure ?? cause;
     })
     .finally(() => {
-      options.signal.removeEventListener("abort", onAbort);
       source.removeListener("error", onSourceFailure);
     });
+  // Production can finish with unread output. Both its cancellation listener
+  // and its owning reader operation survive until that readable side retires.
+  // Await both settlements even on failure before the reader operation settles.
+  const completion = Promise.allSettled([production, retired]).then(
+    ([produced]) => {
+      if (produced.status === "rejected") throw produced.reason;
+      if (output.errored !== null) throw output.errored;
+    },
+  );
   // Preserve rejection for the owning scope without an early unhandled promise.
   void completion.catch(() => undefined);
   if (options.signal.aborted) onAbort();

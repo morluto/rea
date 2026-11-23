@@ -1,3 +1,5 @@
+import type { RequestAnalysisPort } from "../../ports/AnalysisProvider.js";
+import type { AdbRequest } from "../../domain/adb/adbDeviceAnalysis.js";
 import { chmod, readFile } from "node:fs/promises";
 import { expect, it, onTestFinished } from "vitest";
 import {
@@ -7,7 +9,6 @@ import {
 import { AdbProvider } from "../../adb/AdbProvider.js";
 
 import { AdbDeviceAnalysisService } from "./AdbDeviceAnalysisService.js";
-import type { AdbDeviceAnalysisPort } from "./AdbDeviceAnalysisPort.js";
 import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
@@ -32,7 +33,7 @@ const execution = createAnalysisExecution(
   identity,
 );
 
-const refusedPort: AdbDeviceAnalysisPort = {
+const refusedPort: RequestAnalysisPort<AdbRequest> = {
   async inspectAvailability() {
     throw new Error("must not probe");
   },
@@ -104,7 +105,7 @@ it("rejects an unknown operation before any effect", async () => {
 });
 
 it("composes observed Evidence with the caller parameters inline", async () => {
-  const port: AdbDeviceAnalysisPort = {
+  const port: RequestAnalysisPort<AdbRequest> = {
     async inspectAvailability() {
       return { status: "available", code: null, reason: null, diagnostics: {} };
     },
@@ -127,6 +128,8 @@ it("composes observed Evidence with the caller parameters inline", async () => {
   expect(evidence.operation).toBe("list_adb_devices");
   expect(evidence.parameters).toEqual({});
   expect(evidence.confidence).toBe("observed");
+  // A device REA attaches to is not one it owns, so the observation names the service rather than a replay.
+  expect(evidence.authority).toBe("external-service");
 });
 
 it("preserves cancellation before execution", async () => {
@@ -167,7 +170,7 @@ it.skipIf(process.platform === "win32").each([false, true])(
     const provider = new AdbProvider({ environment: { REA_ADB_PATH: binary } });
     onTestFinished(() => provider.close());
     const controller = new AbortController();
-    const port: AdbDeviceAnalysisPort = {
+    const port: RequestAnalysisPort<AdbRequest> = {
       inspectAvailability: provider.inspectAvailability.bind(provider),
       close: provider.close.bind(provider),
       async execute(request, options) {

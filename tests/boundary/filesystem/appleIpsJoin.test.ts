@@ -7,7 +7,7 @@ import {
 import { join } from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { createAppleIpsService } from "../../../src/composition/binaryDiagnostics.js";
+import { createAppleIpsService } from "../../../src/composition/binaryDiagnostics/appleIps.js";
 import { appleIpsBytes } from "../../fixtures/binaryDiagnostics/appleIps.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 

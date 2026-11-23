@@ -78,7 +78,7 @@ const nativeUiScreenshotSchema = z
       .string()
       .min(4)
       .describe(
-        "Canonical base64 encoding of PNG bytes; the decoded bytes must have a PNG signature and IHDR chunk.",
+        "Canonical base64 encoding of PNG bytes; the decoded bytes must have a PNG signature and a valid IHDR chunk.",
       ),
     sha256: z
       .string()

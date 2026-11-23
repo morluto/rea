@@ -1,3 +1,4 @@
+import { managedModuleRow } from "./managedModuleIdentity.js";
 import { z } from "zod";
 
 import type { Evidence } from "../evidence.js";
@@ -230,22 +231,7 @@ export const projectManagedGraph = (
       managed_native_boundaries_evidence_id:
         parsed.boundaries?.evidence.evidence_id ?? null,
     },
-    summary: {
-      graph_nodes: graph.nodes.length,
-      graph_edges: graph.edges.length,
-      assemblies: countNodes(graph.nodes, "managed-assembly"),
-      modules: countNodes(graph.nodes, "managed-module"),
-      types: countNodes(graph.nodes, "managed-type"),
-      methods: countNodes(graph.nodes, "managed-method"),
-      fields: countNodes(graph.nodes, "managed-field"),
-      pinvoke_imports: countNodes(graph.nodes, "managed-pinvoke-import"),
-      native_implementations: countNodes(
-        graph.nodes,
-        "managed-native-implementation",
-      ),
-      calls: countEdges(graph.edges, "calls"),
-      field_accesses: countEdges(graph.edges, "accesses"),
-    },
+    summary: summarizeManagedGraph(graph),
     graph,
     coverage: managedGraphResultCoverage(omissions),
     evidence_links: evidenceLinks,
@@ -260,15 +246,62 @@ export const projectManagedGraph = (
   });
 };
 
-const countNodes = (
-  nodes: readonly ApplicationNode[],
-  kind: ApplicationNode["kind"],
-): number => nodes.filter((node) => node.kind === kind).length;
-
-const countEdges = (
-  edges: readonly ApplicationEdge[],
-  relation: ApplicationEdge["relation"],
-): number => edges.filter((edge) => edge.relation === relation).length;
+const summarizeManagedGraph = (graph: {
+  readonly nodes: readonly ApplicationNode[];
+  readonly edges: readonly ApplicationEdge[];
+}) => {
+  let assemblies = 0;
+  let modules = 0;
+  let types = 0;
+  let methods = 0;
+  let fields = 0;
+  let pinvoke_imports = 0;
+  let native_implementations = 0;
+  for (const node of graph.nodes) {
+    switch (node.kind) {
+      case "managed-assembly":
+        assemblies += 1;
+        break;
+      case "managed-module":
+        modules += 1;
+        break;
+      case "managed-type":
+        types += 1;
+        break;
+      case "managed-method":
+        methods += 1;
+        break;
+      case "managed-field":
+        fields += 1;
+        break;
+      case "managed-pinvoke-import":
+        pinvoke_imports += 1;
+        break;
+      case "managed-native-implementation":
+        native_implementations += 1;
+        break;
+    }
+  }
+  let calls = 0;
+  let field_accesses = 0;
+  for (const edge of graph.edges) {
+    if (edge.relation === "calls") calls += 1;
+    else if (edge.relation === "accesses") field_accesses += 1;
+  }
+  return {
+    graph_nodes: graph.nodes.length,
+    graph_edges: graph.edges.length,
+    assemblies,
+    modules,
+    types,
+    methods,
+    fields,
+    pinvoke_imports,
+    native_implementations,
+    calls,
+    field_accesses,
+  };
+};
 
 /** Authenticate each source once, then establish the shared projection identity. */
 export const readManagedGraphProjection = (
@@ -375,11 +408,15 @@ const artifactMismatch = (
 const moduleIdentityMismatch = (
   parsed: ParsedManagedGraphInput,
 ): string | null => {
+  const modules = [parsed.artifact, parsed.members, parsed.boundaries].flatMap(
+    (source) => {
+      const row = source === null ? null : managedModuleRow(source.result);
+      return row === null ? [] : [row];
+    },
+  );
   const mvidClaims = [
-    parsed.artifact?.result.module?.mvid,
-    parsed.members?.result.module?.mvid,
+    ...modules.map(({ mvid }) => mvid),
     parsed.members?.result.identity_scope.requires_mvid,
-    parsed.boundaries?.result.module?.mvid,
     parsed.boundaries?.result.identity_scope.requires_mvid,
   ]
     .filter((mvid): mvid is string => mvid !== undefined && mvid !== null)
@@ -387,16 +424,10 @@ const moduleIdentityMismatch = (
   if (new Set(mvidClaims).size > 1)
     return "Managed graph inputs report conflicting known module MVIDs or token scopes";
 
-  const modules = [
-    parsed.artifact?.result.module,
-    parsed.members?.result.module,
-    parsed.boundaries?.result.module,
-  ].filter(
-    (module): module is NonNullable<ManagedArtifactInspection["module"]> =>
-      module !== undefined && module !== null,
-  );
   for (const field of ["name", "generation", "token", "row_offset"] as const) {
-    const values = new Set(modules.map((module) => module[field]));
+    const values = new Set(
+      modules.map((module) => module[field]).filter((value) => value !== null),
+    );
     if (values.size > 1)
       return `Managed graph inputs report conflicting module ${field} values`;
   }

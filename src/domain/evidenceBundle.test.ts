@@ -52,30 +52,15 @@ describe("artifact manifest projection", () => {
 });
 
 describe("evidence bundle failure classification", () => {
-  it("tags valid-shaped bundles that fail canonical ordering", () => {
-    const records = ["first", "second"].map((label) =>
-      createEvidence(unknownTarget("not-observed"), provider, {
-        operation: "observe",
-        parameters: { label },
-        result: { label },
-      }),
-    );
-    const canonical = createEvidenceBundle(records);
-    const parsed = safeParseEvidenceBundle({
-      ...canonical,
-      records: [...canonical.records].reverse(),
-    });
-    expect(parsed.ok).toBe(false);
-    if (parsed.ok) return;
-    expect(parsed.error.kind).toBe("invalid-bundle");
-    expect(parsed.error.cause).toMatchObject({
-      name: "NonCanonicalEvidenceBundleError",
-      message: "Evidence bundle sections are not canonical: records",
-    });
-  });
-
   it.each([
     ["providers", (bundle: EvidenceBundle) => ({ ...bundle, providers: [] })],
+    [
+      "records",
+      (bundle: EvidenceBundle) => ({
+        ...bundle,
+        records: [...bundle.records].reverse(),
+      }),
+    ],
     [
       "providers, records",
       (bundle: EvidenceBundle) => ({
@@ -97,11 +82,15 @@ describe("evidence bundle failure classification", () => {
       const parsed = safeParseEvidenceBundle(
         change(createEvidenceBundle(records)),
       );
-      expect(parsed.ok).toBe(false);
-      if (parsed.ok) return;
-      expect(parsed.error.cause).toMatchObject({
-        name: "NonCanonicalEvidenceBundleError",
-        message: `Evidence bundle sections are not canonical: ${sections}`,
+      expect(parsed).toMatchObject({
+        ok: false,
+        error: {
+          kind: "invalid-bundle",
+          cause: {
+            name: "NonCanonicalEvidenceBundleError",
+            message: `Evidence bundle sections are not canonical: ${sections}`,
+          },
+        },
       });
     },
   );
@@ -112,18 +101,16 @@ describe("evidence bundle failure classification", () => {
       parameters: {},
       result: { observed: true },
     });
-    const single = safeParseEvidenceBundle(record);
-    expect(single.ok).toBe(false);
-    if (single.ok) return;
-    expect(single.error.kind).toBe("single-record");
-
-    const tampered = safeParseEvidenceBundle({
-      ...record,
-      normalized_result: { observed: false },
+    expect(safeParseEvidenceBundle(record)).toMatchObject({
+      ok: false,
+      error: { kind: "single-record" },
     });
-    expect(tampered.ok).toBe(false);
-    if (tampered.ok) return;
-    expect(tampered.error.kind).toBe("invalid-bundle");
+    expect(
+      safeParseEvidenceBundle({
+        ...record,
+        normalized_result: { observed: false },
+      }),
+    ).toMatchObject({ ok: false, error: { kind: "invalid-bundle" } });
   });
 });
 

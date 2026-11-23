@@ -1,6 +1,6 @@
 import { access } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
@@ -11,7 +11,10 @@ import {
   OwnedWorkerRuntimeCleanupError,
   type OwnedWorkerRuntimeOptions,
 } from "./OwnedWorkerRuntime.js";
-import { spawnOwnedProviderProcess } from "./ProviderProcess.js";
+import {
+  spawnOwnedProviderProcess,
+  type ProviderProcessSupervisor,
+} from "./ProviderProcess.js";
 
 const runtimeOptions = (
   overrides: Partial<OwnedWorkerRuntimeOptions> = {},
@@ -27,39 +30,30 @@ const startOptions = () => ({
   stdin: "pipe" as const,
 });
 
-const waitFor = async (predicate: () => boolean): Promise<void> => {
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (predicate()) return;
-    await new Promise<void>((resolve) => setTimeout(resolve, 5));
-  }
-  throw new Error("Timed out waiting for owned worker startup");
-};
-
 it("waits for an admitted late handshake before closing its process and root", async () => {
   const runtime = new OwnedWorkerRuntime(runtimeOptions());
-  const initialization = phaseGate();
-  let closeSettled = false;
-  const starting = runtime.start(startOptions(), async () => {
-    await initialization.hold();
-  });
+  const initialization = phaseGate<ProviderProcessSupervisor>();
+  const starting = runtime.start(startOptions(), initialization.hold);
   let closing: Promise<void> | undefined;
   await withVerifierCleanup(async () => {
-    await initialization.reached(starting, "worker initialization");
-    await waitFor(() => runtime.supervisor !== undefined);
+    const supervisor = await initialization.reached(
+      starting,
+      "worker initialization",
+    );
     const rootPath = runtime.rootPath;
-    expect(rootPath).toBeDefined();
-    closing = runtime.close().then(() => {
-      closeSettled = true;
-    });
+    if (rootPath === undefined) throw new Error("Worker root was not admitted");
+    const stop = vi.spyOn(supervisor, "stop");
+    closing = runtime.close();
     await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(closeSettled).toBe(false);
-    expect(runtime.supervisor).toBeDefined();
+    expect(stop).not.toHaveBeenCalled();
+    await access(rootPath);
     initialization.release();
     await expect(starting).rejects.toThrow("closing");
     await closing;
+    expect(stop).toHaveBeenCalledTimes(1);
     expect(runtime.supervisor).toBeUndefined();
     expect(runtime.rootPath).toBeUndefined();
-    await expect(access(rootPath as string)).rejects.toThrow();
+    await expect(access(rootPath)).rejects.toThrow();
   }, [
     initialization.release,
     async () => {

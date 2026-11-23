@@ -9,6 +9,7 @@ import {
 } from "./nativeObservationSchemas.js";
 import { nativeInstructionReferencesRequestSchema } from "./nativeInstructionReferencesView.js";
 import { devicetreeViewRequestSchema } from "./devicetreeView.js";
+import { uefiFirmwareViewRequestSchema } from "./uefiFirmwareView.js";
 import { apkSignatureViewRequestSchema } from "../apkSignature/apkSignatureQuery.js";
 import { erlangBeamViewRequestSchema } from "./erlangBeamView.js";
 import { pythonPycViewRequestSchema } from "./pythonPycView.js";
@@ -25,6 +26,7 @@ import { gpuCodeObjectsViewRequestSchema } from "./gpuCodeObjectsView.js";
 import { modelArtifactViewRequestSchema } from "../model/modelArtifactQuery.js";
 import { rustBinaryViewRequestSchema } from "../rust/rustBinaryQuery.js";
 import { goBinaryViewRequestSchema } from "./goBinaryView.js";
+import { cycloneDxViewRequestSchema } from "./cyclonedxView.js";
 import { nativeFunctionMatchingViewRequestSchema } from "./nativeFunctionMatchingView.js";
 import { protobufViewRequestSchema } from "./protobufCaptureView.js";
 import { nativeInventoryViewRequestSchema } from "./nativeInventoryView.js";
@@ -84,6 +86,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   nativeContextViewRequestSchema,
   recordedArrayViewSchema,
   devicetreeViewRequestSchema,
+  uefiFirmwareViewRequestSchema,
   erlangBeamViewRequestSchema,
   pythonPycViewRequestSchema,
   nativeExportsViewRequestSchema,
@@ -103,6 +106,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   webSourceLocationViewRequestSchema,
   goBinaryViewRequestSchema,
   rustBinaryViewRequestSchema,
+  cycloneDxViewRequestSchema,
   desktopViewRequestSchema,
   facetViewSchema,
   itemViewSchema,

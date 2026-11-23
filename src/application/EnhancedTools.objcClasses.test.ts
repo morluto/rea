@@ -7,8 +7,10 @@ import {
 } from "../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { EnhancedTools } from "./EnhancedTools.js";
-import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
-import { objcSwiftMetadataSchema } from "../domain/native/objcSwiftMetadata.js";
+import {
+  objcSwiftMetadataSchema,
+  type MachoImportBinding,
+} from "../domain/native/objcSwiftMetadata.js";
 import { err, ok } from "../domain/result.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -40,27 +42,28 @@ const subject = {
   architecture: "arm64" as const,
 };
 
+const classImport: MachoImportBinding = {
+  requested_address: "0x1000",
+  symbol: "_OBJC_CLASS_$_Document",
+  binding_source: "chained",
+  library_ordinal: 1,
+  library: "/System/Library/Frameworks/AppKit.framework/AppKit",
+  weak: false,
+  addend: "0",
+};
+
 const createPort = (
   nativeOverrides: Partial<{
     sha256: string;
-    architecture: BinaryArchitecture;
     names: Array<{ address: string; value: string }>;
     nameLimitations: string[];
     metadataFailure: AnalysisError;
-    bindings: Array<{
-      requested_address: string;
-      symbol: string;
-      binding_source: "chained" | "bind" | "weak" | "lazy";
-      library_ordinal: number;
-      library: string | null;
-      weak: boolean;
-      addend: string;
-    }>;
+    bindings: MachoImportBinding[];
     targetSelection: MachoTargetSelection | null;
     nameProfile: boolean;
   }> = {},
 ): AnalysisOperationPort => ({
-  execute: async (operation: AnalysisOperation, parameters) => {
+  execute: async (operation: AnalysisOperation) => {
     if (operation === "list_names")
       return ok(
         createAnalysisExecution(
@@ -87,35 +90,13 @@ const createPort = (
         ),
       );
 
-    expect(parameters).toMatchObject({
-      max_records: 20_000,
-      objc_class_import_addresses: [
-        ...new Set(
-          (
-            nativeOverrides.names ?? [
-              { address: "0x1000", value: "OBJC_CLASS_$_Document$GOT" },
-              { address: "0x1000", value: "OBJC_CLASS_$_Document" },
-            ]
-          ).map(({ address }) => address),
-        ),
-      ],
-      objc_class_import_addresses_complete: true,
-    });
     if (nativeOverrides.metadataFailure !== undefined)
       return err(nativeOverrides.metadataFailure);
     const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
     if (nativeOverrides.targetSelection !== null)
       result.target_selection = nativeOverrides.targetSelection ?? selection;
     result.objc_class_import_bindings = nativeOverrides.bindings ?? [
-      {
-        requested_address: "0x1000",
-        symbol: "_OBJC_CLASS_$_Document",
-        binding_source: "chained",
-        library_ordinal: 1,
-        library: "/System/Library/Frameworks/AppKit.framework/AppKit",
-        weak: false,
-        addend: "0",
-      },
+      classImport,
     ];
     result.objc_class_import_binding_coverage = {
       facet: "objc_class_import_bindings",
@@ -128,7 +109,7 @@ const createPort = (
       createAnalysisExecution(
         {
           target_sha256: nativeOverrides.sha256 ?? sha256,
-          target_architecture: nativeOverrides.architecture ?? "arm64",
+          target_architecture: subject.architecture,
           provider,
           analysis_profile_digest: null,
           result,
@@ -140,9 +121,6 @@ const createPort = (
             ...(nativeOverrides.sha256 === undefined
               ? {}
               : { sha256: nativeOverrides.sha256 }),
-            ...(nativeOverrides.architecture === undefined
-              ? {}
-              : { architecture: nativeOverrides.architecture }),
           },
         },
       ),
@@ -169,7 +147,12 @@ it.each([
         return ok(value);
       },
     });
-    await expect(tools.execute("get_objc_classes", {})).resolves.toMatchObject({
+    await expect(
+      tools.executeValidated({
+        name: "get_objc_classes",
+        input: { pattern: "" },
+      }),
+    ).resolves.toMatchObject({
       ok: true,
       value: {
         count: 2,
@@ -194,7 +177,12 @@ it("reports no applicable identity scan when names contain no owned class labels
     }).execute,
   );
   const tools = new EnhancedTools({ execute });
-  await expect(tools.execute("get_objc_classes", {})).resolves.toEqual({
+  await expect(
+    tools.executeValidated({
+      name: "get_objc_classes",
+      input: { pattern: "" },
+    }),
+  ).resolves.toEqual({
     ok: true,
     value: {
       count: 0,
@@ -208,11 +196,26 @@ it("reports no applicable identity scan when names contain no owned class labels
 
 describe("Objective-C class import identity composition", () => {
   it("joins only exact same-target bind slots and preserves literal filter selection", async () => {
-    const tools = new EnhancedTools(createPort());
-    await expect(tools.execute("get_objc_classes", {})).resolves.toMatchObject({
+    const execute = vi.fn(
+      createPort({
+        names: [
+          { address: "0x1000", value: "OBJC_CLASS_$_Document$GOT" },
+          { address: "0x1000", value: "OBJC_CLASS_$_Document" },
+          { address: "0x2000", value: "OBJC_CLASS_$_Other" },
+          { address: "0x3000", value: "PTR__OBJC_CLASS_$_Other$GOT" },
+        ],
+      }).execute,
+    );
+    const tools = new EnhancedTools({ execute });
+    await expect(
+      tools.executeValidated({
+        name: "get_objc_classes",
+        input: { pattern: "" },
+      }),
+    ).resolves.toMatchObject({
       ok: true,
       value: {
-        count: 1,
+        count: 2,
         classes: [
           {
             address: "0x1000",
@@ -222,12 +225,16 @@ describe("Objective-C class import identity composition", () => {
               slot_addresses: ["0x1000"],
             },
           },
+          { address: "0x2000", name: "OBJC_CLASS_$_Other" },
         ],
         identity_coverage: { status: "complete", reason: null },
       },
     });
     await expect(
-      tools.execute("get_objc_classes", { pattern: "$GOT" }),
+      tools.executeValidated({
+        name: "get_objc_classes",
+        input: { pattern: "$GOT" },
+      }),
     ).resolves.toMatchObject({
       ok: true,
       value: {
@@ -250,11 +257,32 @@ describe("Objective-C class import identity composition", () => {
         identity_coverage: { status: "complete", reason: null },
       },
     });
+    expect(
+      execute.mock.calls.flatMap(([operation, input]) =>
+        operation === "inspect_native_dispatch_metadata" ? [input] : [],
+      ),
+    ).toEqual([
+      {
+        max_records: 20_000,
+        objc_class_import_addresses: ["0x1000", "0x2000"],
+        objc_class_import_addresses_complete: true,
+      },
+      {
+        max_records: 20_000,
+        objc_class_import_addresses: ["0x1000"],
+        objc_class_import_addresses_complete: true,
+      },
+    ]);
   });
 
   it("keeps rows unjoined when the native observation has a different subject", async () => {
     const tools = new EnhancedTools(createPort({ sha256: "b".repeat(64) }));
-    await expect(tools.execute("get_objc_classes", {})).resolves.toMatchObject({
+    await expect(
+      tools.executeValidated({
+        name: "get_objc_classes",
+        input: { pattern: "" },
+      }),
+    ).resolves.toMatchObject({
       ok: true,
       value: {
         count: 2,
@@ -285,19 +313,29 @@ describe("Objective-C class import identity composition", () => {
     for (const overrides of cases) {
       const tools = new EnhancedTools(createPort(overrides));
       await expect(
-        tools.execute("get_objc_classes", {}),
+        tools.executeValidated({
+          name: "get_objc_classes",
+          input: { pattern: "" },
+        }),
       ).resolves.toMatchObject({
         ok: true,
         value: { count: 2, identity_coverage: { status: "unknown" } },
       });
     }
   });
+});
 
+describe("Objective-C class import coverage and failures", () => {
   it("marks identity coverage partial when the selected names inventory is limited", async () => {
     const tools = new EnhancedTools(
       createPort({ nameLimitations: ["provider capped the name inventory"] }),
     );
-    await expect(tools.execute("get_objc_classes", {})).resolves.toMatchObject({
+    await expect(
+      tools.executeValidated({
+        name: "get_objc_classes",
+        input: { pattern: "" },
+      }),
+    ).resolves.toMatchObject({
       ok: true,
       value: {
         count: 1,
@@ -325,7 +363,12 @@ describe("Objective-C class import identity composition", () => {
         ),
       }),
     );
-    await expect(tools.execute("get_objc_classes", {})).resolves.toMatchObject({
+    await expect(
+      tools.executeValidated({
+        name: "get_objc_classes",
+        input: { pattern: "" },
+      }),
+    ).resolves.toMatchObject({
       ok: true,
       value: {
         count: 3,
@@ -348,82 +391,55 @@ describe("Objective-C class import identity composition", () => {
       "fixture failed",
     );
     const tools = new EnhancedTools(createPort({ metadataFailure: failure }));
-    await expect(tools.execute("get_objc_classes", {})).resolves.toEqual({
+    await expect(
+      tools.executeValidated({
+        name: "get_objc_classes",
+        input: { pattern: "" },
+      }),
+    ).resolves.toEqual({
       ok: false,
       error: failure,
     });
   });
 });
 
-it("preserves same-named rows whose exact import slots have different identities", async () => {
-  const addresses = ["0x1000", "0x2000", "0x3000", "0x4000"];
+it("preserves same-named rows with different exact import identities", async () => {
   const name = "OBJC_CLASS_$_Document";
+  const bindings = [
+    classImport,
+    { ...classImport, requested_address: "0x2000", library: "/other/UI.dylib" },
+    { ...classImport, requested_address: "0x3000", weak: true },
+    { ...classImport, requested_address: "0x4000", addend: "1" },
+    {
+      ...classImport,
+      requested_address: "0x5000",
+      symbol: "_OBJC_CLASS_$_Other",
+    },
+  ];
+  const rows = bindings.map(({ requested_address }) => ({
+    address: requested_address,
+    value: name,
+  }));
   const tools = new EnhancedTools(
     createPort({
-      names: [
-        ...addresses.map((address) => ({ address, value: name })),
-        { address: "0x1000", value: name },
-      ],
-      bindings: [
-        {
-          requested_address: "0x1000",
-          symbol: "_OBJC_CLASS_$_Document",
-          binding_source: "chained",
-          library_ordinal: 1,
-          library: "/System/Library/Frameworks/AppKit.framework/AppKit",
-          weak: false,
-          addend: "0",
-        },
-        {
-          requested_address: "0x2000",
-          symbol: "_OBJC_CLASS_$_Document",
-          binding_source: "chained",
-          library_ordinal: 1,
-          library: "/System/Library/Frameworks/UIKit.framework/UIKit",
-          weak: false,
-          addend: "0",
-        },
-        {
-          requested_address: "0x3000",
-          symbol: "_OBJC_CLASS_$_Document",
-          binding_source: "chained",
-          library_ordinal: 1,
-          library: "/System/Library/Frameworks/AppKit.framework/AppKit",
-          weak: true,
-          addend: "0",
-        },
-        {
-          requested_address: "0x4000",
-          symbol: "_OBJC_CLASS_$_Document",
-          binding_source: "chained",
-          library_ordinal: 1,
-          library: "/System/Library/Frameworks/AppKit.framework/AppKit",
-          weak: false,
-          addend: "1",
-        },
-      ],
+      names: [...rows, { address: "0x1000", value: name }],
+      bindings,
     }),
   );
 
-  await expect(tools.execute("get_objc_classes", {})).resolves.toMatchObject({
+  await expect(
+    tools.executeValidated({
+      name: "get_objc_classes",
+      input: { pattern: "" },
+    }),
+  ).resolves.toMatchObject({
     ok: true,
     value: {
-      count: 4,
-      classes: addresses.map((address, index) => ({
-        address,
+      count: 5,
+      classes: bindings.map(({ requested_address, ...identity }) => ({
+        address: requested_address,
         name,
-        binding_identity: {
-          symbol: "_OBJC_CLASS_$_Document",
-          binding_source: "chained",
-          library_ordinal: 1,
-          library:
-            index === 1
-              ? "/System/Library/Frameworks/UIKit.framework/UIKit"
-              : "/System/Library/Frameworks/AppKit.framework/AppKit",
-          weak: index === 2,
-          addend: index === 3 ? "1" : "0",
-          slot_addresses: [address],
-        },
+        binding_identity: { ...identity, slot_addresses: [requested_address] },
       })),
       identity_coverage: { status: "complete", reason: null },
     },
@@ -438,9 +454,8 @@ describe("EnhancedTools cancellation ownership", () => {
     const execute = vi.fn(createPort().execute);
     const tools = new EnhancedTools({ execute });
 
-    const result = await tools.execute(
-      "get_objc_classes",
-      {},
+    const result = await tools.executeValidated(
+      { name: "get_objc_classes", input: { pattern: "" } },
       controller.signal,
     );
 
@@ -462,9 +477,8 @@ describe("EnhancedTools cancellation ownership", () => {
       },
     });
 
-    const cancelled = await successTools.execute(
-      "get_objc_classes",
-      {},
+    const cancelled = await successTools.executeValidated(
+      { name: "get_objc_classes", input: { pattern: "" } },
       controller.signal,
     );
     expect(cancelled.ok).toBe(false);
@@ -487,9 +501,8 @@ describe("EnhancedTools cancellation ownership", () => {
         return successfulPort.execute(...args);
       },
     });
-    const failed = await failureTools.execute(
-      "get_objc_classes",
-      {},
+    const failed = await failureTools.executeValidated(
+      { name: "get_objc_classes", input: { pattern: "" } },
       failingController.signal,
     );
     expect(failed).toEqual({ ok: false, error: physicalFailure });

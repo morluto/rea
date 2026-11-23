@@ -10,11 +10,12 @@ import {
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
 import { parseConfig } from "./config/parseConfig.js";
+import type { McpHttpCommand } from "./cliBuiltinArguments.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { RuntimeDependencies } from "./main/types.js";
 import { runDeferred } from "./main/deferredRuntime.js";
 import { RECORDED_MCP_CATALOG_SHA256 } from "./recordedMcpCatalog.js";
-import { SERVER_START_FAILED } from "./main/messages.js";
+import { SERVER_START_FAILED } from "./server/serverStartFailure.js";
 
 import {
   createExitStatus,
@@ -104,17 +105,17 @@ export const run = async (
   // default `off` profile; `compact` composes its bounded presentation.
   const recordedOutputCatalog =
     config.value.mcpOutputSchemaProfile !== "compact";
-  // The recorded catalog holds the complete inventory and its full-catalog
-  // identity, so only an unscoped registration can be served from it. A
-  // scoped one composes the canonical scope itself instead of advertising
-  // tools whose identity the runtime cannot verify.
-  const scopedToolFamilies = environment.REA_MCP_TOOL_FAMILIES !== undefined;
+  // Progressive discovery needs scoped identity before the first analysis.
+  // Ordinary tool listings can defer that identity to the canonical runtime.
+  const scopedProgressiveCatalog =
+    config.value.mcpToolFamilies !== undefined &&
+    config.value.mcpToolCatalogProfile === "hot-cold";
   if (
     RECORDED_MCP_CATALOG_SHA256 !== undefined &&
     dependencies.transport !== "http" &&
     config.value.hopperTargetPath === undefined &&
     recordedOutputCatalog &&
-    !scopedToolFamilies &&
+    !scopedProgressiveCatalog &&
     dependencies.createServer === undefined &&
     dependencies.loadOptionalProviders === undefined
   ) {
@@ -126,9 +127,26 @@ export const run = async (
   );
 };
 
+/** Only the production entrypoints read the account's configuration file. */
+const runWithUserConfiguration = async (
+  dependencies: RuntimeDependencies,
+): Promise<number> => {
+  const { loadUserConfiguration } =
+    await import("./application/UserConfigurationStore.js");
+  const configuration = await loadUserConfiguration(
+    snapshotEnvironment(dependencies.env, HOST_PLATFORM.platform),
+  );
+  if (!configuration.ok) {
+    dependencies.writeStderr(`${configuration.error.message}\n`);
+    return 1;
+  }
+  return run({ ...dependencies, env: configuration.value.environment });
+};
+
 /** Run the executable boundary without exposing an unexpected startup cause. */
 export const runEntrypoint = async (
-  start: () => Promise<number> = () => run(),
+  start: () => Promise<number> = () =>
+    runWithUserConfiguration(runtimeDependencies()),
   writeStderr: (text: string) => void = (text) => process.stderr.write(text),
   setExitCode: (code: number) => void = (code) => {
     process.exitCode = code;
@@ -160,14 +178,14 @@ const processIo: EntrypointIo = {
   },
 };
 
-/** Run `rea mcp --http`: parse its flags, resolve MCP_HOST/MCP_PORT, then serve over HTTP. */
+/** Validate the selected HTTP command, resolve MCP_HOST/MCP_PORT, then serve over HTTP. */
 export const runMcpHttpEntrypoint = async (
-  arguments_: readonly string[],
+  command: McpHttpCommand,
   io: EntrypointIo = processIo,
 ): Promise<void> => {
-  const { parseMcpHttpArguments, renderMcpHttpHelp } =
+  const { validateMcpHttpCommand, renderMcpHttpHelp } =
     await import("./main/mcpHttpArguments.js");
-  const parsed = parseMcpHttpArguments(arguments_);
+  const parsed = validateMcpHttpCommand(command);
   if (!parsed.ok) {
     if (parsed.help) {
       io.writeStdout(`${renderMcpHttpHelp()}\n`);
@@ -198,7 +216,10 @@ export const runMcpHttpEntrypoint = async (
   const exit = createExitStatus(io.setExitCode);
   try {
     await runEntrypoint(
-      () => run(httpRuntimeDependencies(endpoint.value, latch, exit)),
+      () =>
+        runWithUserConfiguration(
+          httpRuntimeDependencies(endpoint.value, latch, exit),
+        ),
       io.writeStderr,
       exit.set,
     );

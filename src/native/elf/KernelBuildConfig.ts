@@ -6,6 +6,7 @@ import {
   ArtifactReaderFailure,
   assertArtifactReadActive,
 } from "../../resources/index.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import {
   KERNEL_BUILD_CONFIG_CODECS,
   KERNEL_BUILD_CONFIG_NUMBER,
@@ -14,7 +15,43 @@ import {
   type KernelBuildConfigEntry,
 } from "../../domain/native/kernelBuildConfig.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
+import { BinaryReader } from "../../domain/binaryContainer.js";
+import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
+
+interface ByteSpan {
+  readonly size: number;
+  readonly readRange: (offset: number, length: number) => Promise<Buffer>;
+}
+
+const bufferSpan = (bytes: Buffer): ByteSpan => ({
+  size: bytes.length,
+  readRange: (offset, length) => {
+    if (offset < 0 || length <= 0 || offset >= bytes.length)
+      return Promise.resolve(Buffer.alloc(0));
+    return Promise.resolve(
+      bytes.subarray(offset, Math.min(bytes.length, offset + length)),
+    );
+  },
+});
+
+const sourceSpan = (source: NativeByteSource): ByteSpan => ({
+  size: source.size,
+  readRange: async (offset, length) => {
+    if (offset < 0 || length <= 0 || offset >= source.size)
+      return Buffer.alloc(0);
+    const clamped = Math.min(length, source.size - offset);
+    if (source.prefix !== undefined && offset + clamped <= source.prefix.length)
+      return source.prefix.subarray(offset, offset + clamped);
+    const bytes = await source.readRange(offset, clamped);
+    if (bytes.length !== clamped)
+      throw new ArtifactReaderFailure(
+        "format",
+        "Kernel image ended before the admitted file range.",
+      );
+    return bytes;
+  },
+});
 
 type Report = KernelBuildConfig;
 type Entry = KernelBuildConfigEntry;
@@ -24,7 +61,8 @@ type Reason = NonNullable<Report["config"]["reason"]>;
 type KernelBuildConfigBudgetKnob =
   | "max_entries"
   | "max_config_bytes"
-  | "max_payload_bytes";
+  | "max_payload_bytes"
+  | "compressed_candidate_bytes";
 
 const IKCFG_ST = Buffer.from("IKCFG_ST");
 const IKCFG_ED = Buffer.from("IKCFG_ED");
@@ -52,27 +90,40 @@ const yieldTurn = async (signal: AbortSignal | undefined): Promise<void> => {
   assertArtifactReadActive(signal);
 };
 
-/**
- * Offset of the next `needle` at or after `from`, or -1. Overlapping
- * TURN_STRIDE windows are searched with a turn after each one that holds no
- * match, so a search that finds nothing still yields once per MiB.
- */
-const findNext = async (
-  bytes: Buffer,
+/** Search successive windows while retaining bytes for nearby hits and probes. */
+const markerScanner = (
+  span: ByteSpan,
   needle: Buffer,
-  from: number,
   signal: AbortSignal | undefined,
-): Promise<number> => {
-  for (let start = from; ;) {
-    const end = Math.min(bytes.length, start + TURN_STRIDE + needle.length - 1);
-    const hit = bytes.subarray(0, end).indexOf(needle, start);
-    if (hit >= 0) return hit;
-    if (end >= bytes.length) return -1;
-    // The next window repeats the last needle.length - 1 bytes, so a match
-    // across the boundary is still found.
-    start = end - needle.length + 1;
-    await yieldTurn(signal);
-  }
+) => {
+  let offset = 0;
+  let bytes = Buffer.alloc(0) as Buffer;
+  return {
+    async find(from: number): Promise<number> {
+      for (let start = from; start < span.size;) {
+        if (
+          start < offset ||
+          start >= offset + bytes.length - needle.length + 1
+        ) {
+          offset = start;
+          bytes = await span.readRange(start, TURN_STRIDE + needle.length - 1);
+        }
+        const hit = bytes.indexOf(needle, start - offset);
+        if (hit >= 0) return offset + hit;
+        const end = offset + bytes.length;
+        if (end >= span.size) return -1;
+        start = end - needle.length + 1;
+        await yieldTurn(signal);
+      }
+      return -1;
+    },
+    probe(start: number, length: number): Promise<Buffer> {
+      const end = Math.min(span.size, start + length);
+      return start >= offset && end <= offset + bytes.length
+        ? Promise.resolve(bytes.subarray(start - offset, end - offset))
+        : span.readRange(start, length);
+    },
+  };
 };
 
 /** SHA-256 hashed one TURN_STRIDE window per event-loop turn. */
@@ -88,14 +139,18 @@ const sha256 = async (
   return hash.digest("hex");
 };
 
-/** A caller-selected budget refused the image; `knob` names it as a typed fact. */
-export class KernelBuildConfigBudgetFailure extends ArtifactReaderFailure {
-  constructor(
-    readonly knob: KernelBuildConfigBudgetKnob,
-    limit: number,
-  ) {
-    super("limit", `Kernel build config exceeds ${knob} (${String(limit)}).`, {
-      boundary: "capacity",
+/** A caller-selected parser budget refused the image. */
+export class KernelBuildConfigBudgetFailure extends ParseFailureError<"limit"> {
+  declare readonly failure: ParseFailureError<"limit">["failure"] & {
+    readonly limit: { readonly name: KernelBuildConfigBudgetKnob };
+  };
+
+  constructor(knob: KernelBuildConfigBudgetKnob, maximum: number) {
+    super({
+      kind: "limit",
+      format: "kernel-build-config",
+      detail: `Kernel build config exceeds ${knob} (${String(maximum)}).`,
+      limit: { name: knob, maximum },
     });
   }
 }
@@ -150,9 +205,10 @@ const FCOMMENT = 0x10;
  * `invalid` when it is not deflate, sets reserved flags, or fails its FHCRC.
  */
 const gzipHeaderEnd = (
-  bytes: Buffer,
+  reader: BinaryReader,
   start: number,
 ): number | "invalid" | null => {
+  const { bytes } = reader;
   if (start + 10 > bytes.length) return null;
   if (bytes[start + 2] !== CM_DEFLATE) return "invalid";
   const flags = bytes[start + 3] ?? 0;
@@ -160,7 +216,7 @@ const gzipHeaderEnd = (
   let cursor = start + 10;
   if ((flags & FEXTRA) !== 0) {
     if (cursor + 2 > bytes.length) return null;
-    cursor += 2 + bytes.readUInt16LE(cursor);
+    cursor += 2 + reader.u16(cursor);
   }
   for (const flag of [FNAME, FCOMMENT]) {
     if ((flags & flag) === 0) continue;
@@ -171,10 +227,7 @@ const gzipHeaderEnd = (
   if ((flags & FHCRC) === 0) return cursor > bytes.length ? null : cursor;
   if (cursor + 2 > bytes.length) return null;
   // FHCRC is the low 16 bits of the CRC-32 of every header byte before it.
-  if (
-    bytes.readUInt16LE(cursor) !==
-    (crc32(bytes.subarray(start, cursor)) & 0xffff)
-  )
+  if (reader.u16(cursor) !== (crc32(bytes.subarray(start, cursor)) & 0xffff))
     return "invalid";
   return cursor + 2;
 };
@@ -207,7 +260,8 @@ const inflateGzipMember = async (
   maxOutput: number,
   signal: AbortSignal | undefined,
 ): Promise<GzipMember> => {
-  const body = gzipHeaderEnd(bytes, start);
+  const reader = new BinaryReader(bytes, true, "gzip");
+  const body = gzipHeaderEnd(reader, start);
   if (body === null) return { kind: "truncated", spent: 0 };
   if (body === "invalid") return { kind: "invalid", spent: 0 };
   let output: Buffer;
@@ -230,8 +284,8 @@ const inflateGzipMember = async (
   if (trailer + 8 > bytes.length)
     return { kind: "truncated", spent: output.length };
   if (
-    bytes.readUInt32LE(trailer) !== crc32(output) ||
-    bytes.readUInt32LE(trailer + 4) !== output.length >>> 0
+    reader.u32(trailer) !== crc32(output) ||
+    reader.u32(trailer + 4) !== output.length >>> 0
   )
     return { kind: "corrupt", end: trailer + 8, inflated: output.length };
   return { kind: "member", output, end: trailer + 8 };
@@ -266,10 +320,6 @@ const decodeText = async (
 const QUOTE = 0x22;
 const BACKSLASH = 0x5c;
 
-/** Line terminators other than LF that a `.config` value may not contain. */
-const isLineBreak = (char: number): boolean =>
-  char === 0x0d || char === 0x2028 || char === 0x2029;
-
 /**
  * Decoded `"..."` value whose only escapes are `\"` and `\\`. The line is
  * validated in place first, yielding once per TURN_STRIDE characters, so the
@@ -290,7 +340,9 @@ const unquote = async (
       await yieldTurn(signal);
     }
     const char = raw.charCodeAt(index);
-    if (char === QUOTE || isLineBreak(char)) return null;
+    // Kconfig writes Unicode separators literally inside quoted strings.
+    // LF already frames records; CR remains disallowed in a value.
+    if (char === QUOTE || char === 0x0d) return null;
     if (char !== BACKSLASH) continue;
     const next = raw.charCodeAt(index + 1);
     if (index + 1 >= end || (next !== QUOTE && next !== BACKSLASH)) return null;
@@ -414,7 +466,7 @@ interface MalformedConfig extends ConfigBlob {
  * is `exhausted` rather than silently stopped.
  */
 const findConfig = async (
-  bytes: Buffer,
+  span: ByteSpan,
   maxOutput: number,
   maxEntries: number,
   signal: AbortSignal | undefined,
@@ -427,12 +479,15 @@ const findConfig = async (
   let candidates = 0;
   let remaining = maxOutput * CONFIG_SEARCH_BUDGET_FACTOR;
   let oversized = false;
+  let compressedLimit: number | undefined;
+  const openingMarkers = markerScanner(span, IKCFG_ST, signal);
+  const closingMarkers = markerScanner(span, IKCFG_ED, signal);
   // Next IKCFG_ED at or after the current candidate; -1 once none remains.
   let closing: number | null = null;
   let turnAt = TURN_STRIDE;
   for (;;) {
     assertArtifactReadActive(signal);
-    const marker = await findNext(bytes, IKCFG_ST, from, signal);
+    const marker = await openingMarkers.find(from);
     if (marker < 0) break;
     if (marker >= turnAt) {
       turnAt = marker + TURN_STRIDE;
@@ -440,9 +495,10 @@ const findConfig = async (
     }
     from = marker + 1;
     const gzipAt = marker + IKCFG_ST.length;
-    if (codecAt(bytes, gzipAt) !== "gzip") continue;
+    const magicProbe = await openingMarkers.probe(gzipAt, 16);
+    if (codecAt(magicProbe, 0) !== "gzip") continue;
     if (closing === null || (closing >= 0 && closing < gzipAt))
-      closing = await findNext(bytes, IKCFG_ED, gzipAt, signal);
+      closing = await closingMarkers.find(gzipAt);
     // Without a closing marker nothing later can be framed; one truncated
     // member is enough to report the search incomplete.
     if (closing < 0 && truncated) break;
@@ -450,8 +506,17 @@ const findConfig = async (
       return "exhausted";
     candidates += 1;
     const limit = Math.min(maxOutput, remaining);
-    const member = await inflateGzipMember(bytes, gzipAt, limit, signal);
+    const maxCandidateBytes = Math.max(limit * 2 + 65536, TURN_STRIDE);
+    const candidateLen = Math.min(span.size - gzipAt, maxCandidateBytes);
+    const candidateBytes = await span.readRange(gzipAt, candidateLen);
+    const member = await inflateGzipMember(candidateBytes, 0, limit, signal);
     if (member.kind === "limit") {
+      // Without an end marker, the stopped inflate cannot establish an
+      // oversized config. No later candidate can be framed either.
+      if (closing < 0) {
+        truncated = true;
+        break;
+      }
       if (limit < maxOutput) return "exhausted";
       // A member past max_config_bytes may be a decoy, so a later framed
       // config can still win; the budget failure is raised only if none does.
@@ -463,6 +528,14 @@ const findConfig = async (
     if (member.kind === "corrupt") remaining -= member.inflated;
     if (member.kind === "truncated" || member.kind === "invalid") {
       remaining -= member.spent;
+      if (
+        member.kind === "truncated" &&
+        candidateLen < span.size - gzipAt &&
+        (closing < 0 || closing >= gzipAt + candidateLen)
+      ) {
+        compressedLimit ??= maxCandidateBytes;
+        continue;
+      }
       if (closing < 0) {
         if (member.kind === "truncated") truncated = true;
         continue;
@@ -478,13 +551,15 @@ const findConfig = async (
       };
       continue;
     }
-    if (
-      !bytes.subarray(member.end, member.end + IKCFG_ED.length).equals(IKCFG_ED)
-    ) {
-      const suffix = bytes.subarray(member.end);
+    const afterEnd = gzipAt + member.end;
+    const trailerMarker =
+      member.end + IKCFG_ED.length <= candidateBytes.length
+        ? candidateBytes.subarray(member.end, member.end + IKCFG_ED.length)
+        : await span.readRange(afterEnd, IKCFG_ED.length);
+    if (!trailerMarker.equals(IKCFG_ED)) {
       if (
-        suffix.length < IKCFG_ED.length &&
-        IKCFG_ED.subarray(0, suffix.length).equals(suffix)
+        trailerMarker.length < IKCFG_ED.length &&
+        IKCFG_ED.subarray(0, trailerMarker.length).equals(trailerMarker)
       )
         truncated = true;
       continue;
@@ -492,7 +567,7 @@ const findConfig = async (
     const blob = {
       marker,
       gzipStart: gzipAt,
-      memberBytes: member.end - gzipAt,
+      memberBytes: member.end,
     };
     const entries =
       member.kind === "member"
@@ -514,6 +589,8 @@ const findConfig = async (
           : "config_text_invalid",
     };
   }
+  if (compressedLimit !== undefined)
+    budget("compressed_candidate_bytes", compressedLimit);
   if (oversized) budget("max_config_bytes", maxOutput);
   return malformed ?? (truncated ? "truncated" : "absent");
 };
@@ -581,28 +658,28 @@ const kbuildPlaceholderPrefix = (text: string): string | null => {
  * `end`. Only hits within BANNER_TEXT_BYTES of the terminator fit the window.
  */
 const bannerInRun = (
-  bytes: Buffer,
-  at: number,
-  end: number,
+  run: Buffer,
+  runStart: number,
 ): {
   readonly hit: number;
   readonly text: string;
   readonly parsed: NonNullable<ReturnType<typeof parseBannerText>>;
 } | null => {
-  const run = bytes.subarray(0, end);
   for (
-    let hit = run.indexOf(BANNER_PREFIX, Math.max(at, end - BANNER_TEXT_BYTES));
+    let hit = run.indexOf(BANNER_PREFIX, 0);
     hit >= 0;
     hit = run.indexOf(BANNER_PREFIX, hit + 1)
   ) {
-    const first = bytes[hit + BANNER_PREFIX.length] ?? 0;
+    const first = run[hit + BANNER_PREFIX.length] ?? 0;
     if (first < 0x30 || first > 0x39) continue;
-    const text = bytes.toString("latin1", hit, end);
+    const text = run.toString("latin1", hit);
     const parsed = parseBannerText(text);
-    if (parsed !== null) return { hit, text, parsed };
+    if (parsed !== null) return { hit: runStart + hit, text, parsed };
   }
   return null;
 };
+
+const BANNER_SCAN_CHUNK_BYTES = 65536;
 
 /**
  * First printable, NUL- or newline-terminated `Linux version <digit>...`
@@ -613,11 +690,12 @@ const bannerInRun = (
  * the search resumes after it: the scan is linear in the searched bytes.
  */
 const findBanner = async (
-  bytes: Buffer,
+  span: ByteSpan,
   space: Space,
   signal: AbortSignal | undefined,
 ): Promise<Report["banner"]> => {
   let from = 0;
+  const markers = markerScanner(span, BANNER_PREFIX, signal);
   let turnAt = TURN_STRIDE;
   let placeholder: {
     readonly banner: Report["banner"];
@@ -625,21 +703,40 @@ const findBanner = async (
   } | null = null;
   for (;;) {
     assertArtifactReadActive(signal);
-    const at = await findNext(bytes, BANNER_PREFIX, from, signal);
+    const at = await markers.find(from);
     if (at < 0) return placeholder?.banner ?? absentBanner("absent");
     let end = at + BANNER_PREFIX.length;
-    while (end < bytes.length && isPrintable(bytes[end] ?? 0)) {
-      end += 1;
-      if (end % TURN_STRIDE === 0) await yieldTurn(signal);
+    let terminatorByte: number | undefined;
+    while (end < span.size) {
+      const chunkLen = Math.min(BANNER_SCAN_CHUNK_BYTES, span.size - end);
+      const chunk = await markers.probe(end, chunkLen);
+      let stopped = false;
+      for (let i = 0; i < chunk.length; i += 1) {
+        const byte = chunk[i] ?? 0;
+        if (!isPrintable(byte)) {
+          end += i;
+          terminatorByte = byte;
+          stopped = true;
+          break;
+        }
+      }
+      if (stopped) break;
+      end += chunk.length;
+      if (end >= turnAt) {
+        turnAt = end + TURN_STRIDE;
+        await yieldTurn(signal);
+      }
     }
     if (end >= turnAt) {
       turnAt = end + TURN_STRIDE;
       await yieldTurn(signal);
     }
     from = end + 1;
-    if (end >= bytes.length || (bytes[end] !== 0 && bytes[end] !== 0x0a))
+    if (end >= span.size || (terminatorByte !== 0 && terminatorByte !== 0x0a))
       continue;
-    const found = bannerInRun(bytes, at, end);
+    const runStart = Math.max(at, end - BANNER_TEXT_BYTES);
+    const run = await span.readRange(runStart, end - runStart);
+    const found = bannerInRun(run, runStart);
     if (found === null) continue;
     const banner: Report["banner"] = {
       status: "present",
@@ -737,7 +834,7 @@ const acceptedConfig = (
 };
 
 interface SearchSpace {
-  readonly bytes: Buffer;
+  readonly span: ByteSpan;
   readonly space: Space;
   readonly payload: Report["payload"];
   readonly extraLimitations: readonly string[];
@@ -751,7 +848,7 @@ const reportFromSearch = async (
   signal: AbortSignal | undefined,
 ): Promise<Report> => {
   const found = await findConfig(
-    search.bytes,
+    search.span,
     input.max_config_bytes,
     input.max_entries,
     signal,
@@ -769,7 +866,7 @@ const reportFromSearch = async (
                 ...blobRanges(found, search.space),
               }
             : acceptedConfig(found, input, search.space);
-  const banner = await findBanner(search.bytes, search.space, signal);
+  const banner = await findBanner(search.span, search.space, signal);
   return {
     artifact,
     format,
@@ -786,7 +883,7 @@ const reportFromSearch = async (
             found === "truncated" || found === "exhausted"
             ? "partial"
             : "unknown",
-      examined_bytes: search.bytes.length,
+      examined_bytes: search.span.size,
       examined_entries: config.option_count,
     },
     limitations: [
@@ -820,24 +917,28 @@ interface BzImagePayload {
 
 /** x86 boot protocol: `HdrS` at 0x202, payload fields from version 2.08. */
 const readBzImage = (
-  bytes: Buffer,
+  prefix: Buffer,
+  fileSize: number,
 ):
   | { kind: "none" }
   | { kind: "unavailable" }
   | { kind: "truncated"; payload: BzImagePayload }
   | { kind: "payload"; payload: BzImagePayload } => {
-  if (bytes.length < 0x206 || bytes.toString("latin1", 0x202, 0x206) !== "HdrS")
+  if (
+    prefix.length < 0x206 ||
+    prefix.toString("latin1", 0x202, 0x206) !== "HdrS"
+  )
     return { kind: "none" };
-  if (bytes.length < 0x250 || bytes.readUInt16LE(0x206) < 0x0208)
+  const reader = new BinaryReader(prefix, true, "bzImage");
+  if (prefix.length < 0x250 || reader.u16(0x206) < 0x0208)
     return { kind: "unavailable" };
-  const setupSects = bytes[0x1f1] === 0 ? 4 : (bytes[0x1f1] ?? 4);
+  const setupSects = prefix[0x1f1] === 0 ? 4 : (prefix[0x1f1] ?? 4);
   const payload = {
-    offset: (setupSects + 1) * 512 + bytes.readUInt32LE(0x248),
-    bytes: bytes.readUInt32LE(0x24c),
+    offset: (setupSects + 1) * 512 + reader.u32(0x248),
+    bytes: reader.u32(0x24c),
   };
   if (payload.bytes === 0) return { kind: "unavailable" };
-  return payload.offset > bytes.length ||
-    payload.bytes > bytes.length - payload.offset
+  return payload.offset > fileSize || payload.bytes > fileSize - payload.offset
     ? { kind: "truncated", payload }
     : { kind: "payload", payload };
 };
@@ -876,7 +977,7 @@ const NOT_SEARCHED =
   "The banner and embedded config were not searched and are not reported as absent.";
 
 const bzImageReport = async (
-  bytes: Buffer,
+  span: ByteSpan,
   artifact: Report["artifact"],
   input: InspectKernelBuildConfigInput,
   header: Exclude<ReturnType<typeof readBzImage>, { kind: "none" }>,
@@ -917,9 +1018,12 @@ const bzImageReport = async (
       `The bzImage payload declared by the setup header extends past the file. ${NOT_SEARCHED}`,
     );
   const { payload } = header;
-  // Detection and inflation read only the declared payload range.
-  const body = bytes.subarray(payload.offset, payload.offset + payload.bytes);
-  const codec = codecAt(body, 0);
+  // Detection probes only the leading bytes; inflation reads only the declared payload range.
+  const codecProbe = await span.readRange(
+    payload.offset,
+    Math.min(payload.bytes, 16),
+  );
+  const codec = codecAt(codecProbe, 0);
   const base = {
     container: "bzimage" as const,
     offset: payload.offset,
@@ -940,6 +1044,7 @@ const bzImageReport = async (
   // Only the leading gzip member is inflated; its own ISIZE trailer carries
   // the length. Bytes after the member inside the payload are not read.
   assertArtifactReadActive(signal);
+  const body = await span.readRange(payload.offset, payload.bytes);
   const member = await inflateGzipMember(
     body,
     0,
@@ -972,7 +1077,7 @@ const bzImageReport = async (
     "file",
     input,
     {
-      bytes: member.output,
+      span: bufferSpan(member.output),
       space: "inflated_payload",
       payload: {
         ...base,
@@ -988,25 +1093,19 @@ const bzImageReport = async (
   );
 };
 
-/**
- * Read a kernel version banner and an embedded IKCFG build config.
- * The caller supplies the already bounded file bytes. Scans yield to the event
- * loop once per TURN_STRIDE bytes and inflation runs off it, so an abort raised
- * while parsing is honored at the next check. One inflate call runs to its
- * output bound once started.
- */
-export const parseKernelBuildConfig = async (
-  bytes: Buffer,
+const parseKernelBuildConfigCore = async (
+  span: ByteSpan,
   artifact: Report["artifact"],
   input: InspectKernelBuildConfigInput,
   signal?: AbortSignal,
 ): Promise<Report> => {
-  const elf = isElf(bytes);
+  const prefix = await span.readRange(0, Math.min(span.size, 0x250));
+  const elf = isElf(prefix);
   if (!elf) {
-    const header = readBzImage(bytes);
+    const header = readBzImage(prefix, span.size);
     if (header.kind !== "none")
-      return bzImageReport(bytes, artifact, input, header, signal);
-    const whole = codecAt(bytes, 0);
+      return bzImageReport(span, artifact, input, header, signal);
+    const whole = codecAt(prefix, 0);
     if (whole !== null)
       return closedReport(
         artifact,
@@ -1017,7 +1116,7 @@ export const parseKernelBuildConfig = async (
           codec: whole,
           status: "unsupported",
           offset: 0,
-          bytes: bytes.length,
+          bytes: span.size,
           inflated_bytes: null,
         },
         "payload_codec_unsupported",
@@ -1030,7 +1129,7 @@ export const parseKernelBuildConfig = async (
     elf ? "elf" : "file",
     input,
     {
-      bytes,
+      span,
       space: "file",
       payload: {
         container: "file",
@@ -1045,3 +1144,18 @@ export const parseKernelBuildConfig = async (
     signal,
   );
 };
+
+/**
+ * Read a kernel version banner and an embedded IKCFG build config over a
+ * bounded FileHandle without buffering the full kernel image. Scans yield to
+ * the event loop once per TURN_STRIDE bytes and inflation runs off it, so an
+ * abort raised while parsing is honored at the next check. One inflate call
+ * runs to its output bound once started.
+ */
+export const parseKernelBuildConfigFromHandle = async (
+  source: NativeByteSource,
+  artifact: Report["artifact"],
+  input: InspectKernelBuildConfigInput,
+  signal?: AbortSignal,
+): Promise<Report> =>
+  parseKernelBuildConfigCore(sourceSpan(source), artifact, input, signal);

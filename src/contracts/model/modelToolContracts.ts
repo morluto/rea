@@ -4,7 +4,7 @@ import { modelArtifactSchema } from "../../domain/model/modelArtifact.js";
 import {
   modelArtifactPageViewResultSchema,
   modelArtifactSummaryViewResultSchema,
-} from "../../domain/analysisView/analysisViewResult.js";
+} from "../../domain/analysisView/summarySchemas/modelArtifactSummarySchemas.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { toolContractMetadata, evidenceEffects } from "../toolEffects.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";

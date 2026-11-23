@@ -1,22 +1,21 @@
+import { createHash } from "node:crypto";
 import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import {
   currentClientRegistrationCommand,
   classifyClientRegistrationCommand,
 } from "../../../src/application/ClientRegistrationIdentity.js";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  findNodeAtLocation,
-  parse as parseJsonc,
-  parseTree,
-  type ParseError,
-} from "jsonc-parser";
+import { parse as parseJsonc, type ParseError } from "jsonc-parser";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
-import { systemUninstallHost } from "../../../src/application/Uninstall.js";
+import {
+  runUninstall,
+  systemUninstallHost,
+} from "../../../src/application/Uninstall.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import {
@@ -30,7 +29,10 @@ const command = currentClientRegistrationCommand();
 
 beforeEach(clearClientLocationEnvironment);
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
 
 const getClients = (home: string) =>
   supportedClients(home, HOST_PLATFORM.platform).filter(({ name }) =>
@@ -255,172 +257,98 @@ describe("OpenCode JSONC registration edits", () => {
   });
 });
 
-it.each([
-  {
-    name: "a sole registration without a trailing comma",
-    hasBeforeSibling: false,
-    hasAfterSibling: false,
-    hasGapComment: false,
-    afterRegistration: "",
-    expectedComment: undefined,
-  },
-  {
-    name: "a sole registration with a trailing comma",
-    hasBeforeSibling: false,
-    hasAfterSibling: false,
-    hasGapComment: false,
-    afterRegistration: ",",
-    expectedComment: undefined,
-  },
-  {
-    name: "a sole registration with a block comment before its trailing comma",
-    hasBeforeSibling: false,
-    hasAfterSibling: false,
-    hasGapComment: false,
-    afterRegistration: " /* Keep this note. */,",
-    expectedComment: "/* Keep this note. */",
-  },
-  {
-    name: "a sole registration with a line comment before its trailing comma",
-    hasBeforeSibling: false,
-    hasAfterSibling: false,
-    hasGapComment: false,
-    afterRegistration: " // Keep this note.\n  ,",
-    expectedComment: "// Keep this note.",
-  },
-  {
-    name: "a registration with a surviving sibling and block comment before its comma",
-    hasBeforeSibling: true,
-    hasAfterSibling: true,
-    hasGapComment: true,
-    afterRegistration:
-      ' /* Keep this note. */,\n    "after": { "command": "after" }',
-    expectedComment: "/* Keep this note. */",
-  },
-  {
-    name: "a registration with a surviving sibling and line comment before its comma",
-    hasBeforeSibling: true,
-    hasAfterSibling: true,
-    hasGapComment: true,
-    afterRegistration:
-      ' // Keep this note.\n  ,\n    "after": { "command": "after" }',
-    expectedComment: "// Keep this note.",
-  },
-  {
-    name: "a first registration with a surviving sibling and block comment before its comma",
-    hasBeforeSibling: false,
-    hasAfterSibling: true,
-    hasGapComment: false,
-    afterRegistration:
-      ' /* Keep this note. */ ,\n    "after": { "command": "after" }',
-    expectedComment: "/* Keep this note. */",
-  },
-] as const)(
-  "Cursor removes $name and preserves surrounding configuration",
-  async ({
-    hasBeforeSibling,
-    hasAfterSibling,
-    hasGapComment,
-    afterRegistration,
-    expectedComment,
-  }) => {
-    const home = await createTestTempDirectory("rea-cursor-jsonc-remove-");
-    const client = supportedClients(home, HOST_PLATFORM.platform).find(
-      ({ name }) => name === "cursor",
-    );
-    if (client === undefined) throw new Error("missing Cursor client");
-    await mkdir(client.markerPath ?? home, { recursive: true });
+const ownedCursorRow = '"rea": { "command": "rea", "args": ["mcp"] }';
+const cursorPeer = '"peer": { "command": "peer" }';
+const cursorFollowing = '"following": { "command": "following" }';
+const peer = { peer: { command: "peer" } };
+const following = { following: { command: "following" } };
 
-    const original = `{
-  // Keep unrelated client preferences.
-  "theme": "dark",
-  "mcpServers": {
-${hasBeforeSibling ? '    "before": { "command": "before" },\n' : ""}  }
-}\n`;
-    await writeFile(client.configPath, original);
-    expect(
-      await configureClientConfiguration(client, {}, command),
-    ).toMatchObject({
-      status: "configured",
-      backupPath: `${client.configPath}.rea.backup`,
+it.each<{
+  name: string;
+  body: string;
+  remaining: Record<string, unknown>;
+  comments?: readonly string[];
+  repeat?: true;
+}>([
+  { name: "only row", body: ownedCursorRow, remaining: {} },
+  {
+    name: "only row before a block comment and trailing comma",
+    body: `${ownedCursorRow} /* trailing block */,`,
+    remaining: {},
+    comments: ["/* trailing block */"],
+  },
+  {
+    name: "only row before a line comment and trailing comma",
+    body: `${ownedCursorRow} // trailing line\n,`,
+    remaining: {},
+    comments: ["// trailing line"],
+  },
+  {
+    name: "first row before a same-line sibling",
+    body: `${ownedCursorRow} /* before sibling */, ${cursorFollowing}`,
+    remaining: following,
+    comments: ["/* before sibling */"],
+  },
+  {
+    name: "middle row between block comments and a same-line sibling",
+    body: `${cursorPeer}, // peer's note\n/* before owned */ ${ownedCursorRow} /* after owned */, ${cursorFollowing}`,
+    remaining: { ...peer, ...following },
+    comments: ["// peer's note", "/* before owned */", "/* after owned */"],
+  },
+  {
+    name: "middle row before a line comment and separate comma",
+    body: `${cursorPeer},\n// before owned\n${ownedCursorRow} // after owned\n,\n${cursorFollowing}`,
+    remaining: { ...peer, ...following },
+    comments: ["// before owned", "// after owned"],
+  },
+  {
+    name: "last row before both same-line closing braces",
+    body: `${cursorPeer}, // peer's note\n${ownedCursorRow}`,
+    remaining: peer,
+    comments: ["// peer's note"],
+    repeat: true,
+  },
+])(
+  "uninstall removes Cursor's $name and preserves JSONC",
+  async ({ body, remaining, comments = [], repeat }) => {
+    const home = await createTestTempDirectory("rea-cursor-jsonc-remove-");
+    const configPath = join(home, ".cursor", "mcp.json");
+    await mkdir(join(home, ".cursor"));
+    const original = `{ // Client preferences\n"theme": "dark",\n"mcpServers": {\n${body}}}\n`;
+    const firstBackup = `${configPath}.rea.backup`;
+    const historical = '{"theme":"before setup"}\n';
+    await writeFile(configPath, original);
+    if (repeat) await writeFile(firstBackup, historical);
+    const uninstall = () => runUninstall(false, systemUninstallHost(home));
+    const removed = await uninstall();
+    expect(removed).toMatchObject({
+      status: "complete",
+      items: expect.arrayContaining([
+        expect.objectContaining({ name: "cursor", status: "removed" }),
+      ]),
     });
 
-    const configured = await readFile(client.configPath, "utf8");
-    let edited = configured;
-    if (hasGapComment) {
-      const root = parseTree(edited, [], { allowTrailingComma: true });
-      const registration =
-        root === undefined
-          ? undefined
-          : findNodeAtLocation(root, [
-              "mcpServers",
-              PRODUCT_IDENTITY.mcpServerKey,
-            ]);
-      const property = registration?.parent;
-      if (property === undefined)
-        throw new Error("configured Cursor registration property is missing");
-      edited =
-        edited.slice(0, property.offset) +
-        "// Keep the comment before the registration.\n    " +
-        edited.slice(property.offset);
-    }
-    const root = parseTree(edited, [], { allowTrailingComma: true });
-    const registration =
-      root === undefined
-        ? undefined
-        : findNodeAtLocation(root, [
-            "mcpServers",
-            PRODUCT_IDENTITY.mcpServerKey,
-          ]);
-    if (registration === undefined)
-      throw new Error("configured Cursor registration is missing");
-    const registrationEnd = registration.offset + registration.length;
-    edited =
-      edited.slice(0, registrationEnd) +
-      afterRegistration +
-      edited.slice(registrationEnd);
-    await writeFile(client.configPath, edited);
-
-    const backup = await readFile(`${client.configPath}.rea.backup`, "utf8");
-    const removed = await systemUninstallHost(home).removeClient(client);
-    expect(removed.status).toBe("removed");
-    const removedText = await readFile(client.configPath, "utf8");
+    const current = await readFile(configPath, "utf8");
     const errors: ParseError[] = [];
-    const document = parseJsonc(removedText, errors, {
-      allowTrailingComma: true,
-    }) as Record<string, unknown>;
+    expect(parseJsonc(current, errors, { allowTrailingComma: true })).toEqual({
+      theme: "dark",
+      mcpServers: remaining,
+    });
     expect(errors).toEqual([]);
-    expect(document.theme).toBe("dark");
-    expect(removedText).toContain("// Keep unrelated client preferences.");
-    if (expectedComment !== undefined)
-      expect(removedText).toContain(expectedComment);
-    if (hasGapComment)
-      expect(removedText).toContain(
-        "// Keep the comment before the registration.",
+    expect(current).toContain("// Client preferences");
+    for (const comment of comments) expect(current).toContain(comment);
+    const recovery = repeat
+      ? `${firstBackup}.${createHash("sha256").update(original).digest("hex")}.recovery`
+      : firstBackup;
+    expect(await readFile(recovery, "utf8")).toBe(original);
+    if (repeat) {
+      expect((await uninstall()).items).toContainEqual(
+        expect.objectContaining({ name: "cursor", status: "skipped" }),
       );
-    expect(
-      (document.mcpServers as Record<string, unknown>).rea,
-    ).toBeUndefined();
-    if (hasBeforeSibling)
-      expect(document.mcpServers).toMatchObject({
-        before: { command: "before" },
-      });
-    if (hasAfterSibling)
-      expect(document.mcpServers).toMatchObject({
-        after: { command: "after" },
-      });
-    if (!hasBeforeSibling && !hasAfterSibling)
-      expect(document.mcpServers).toEqual({});
-    expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
-      backup,
-    );
-
-    const repeated = await systemUninstallHost(home).removeClient(client);
-    expect(repeated.status).toBe("skipped");
-    expect(await readFile(client.configPath, "utf8")).toBe(removedText);
-    expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
-      backup,
-    );
+      expect(await readFile(configPath, "utf8")).toBe(current);
+      expect(await readFile(firstBackup, "utf8")).toBe(historical);
+      expect(await readFile(recovery, "utf8")).toBe(original);
+    }
   },
 );
 
@@ -557,33 +485,6 @@ describe("OpenCode V2 native server table", () => {
     });
   });
 
-  it("treats a V2 table holding a server named type as native", async () => {
-    const { home, client } = await openCodeClient("rea-opencode-type-server-");
-    const typeServer = { type: "local", command: ["node", "type.js"] };
-    await writeFile(
-      client.configPath,
-      `${JSON.stringify({ mcp: { servers: { type: typeServer, rea: { type: "local", command } } } })}\n`,
-    );
-
-    expect(await hostRegistrationStatuses(home)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          client: "opencode",
-          state: "aligned",
-          command,
-        }),
-      ]),
-    );
-    expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
-      "removed",
-    );
-    expect(
-      parseOpenCode(await readFile(client.configPath, "utf8")).mcp,
-    ).toEqual({
-      servers: { type: typeServer },
-    });
-  });
-
   it("keeps a V1 server named servers in the V1 table", async () => {
     const { client } = await openCodeClient("rea-opencode-v1-servers-");
     const servers = { type: "local", command: ["node", "servers.js"] };
@@ -601,6 +502,180 @@ describe("OpenCode V2 native server table", () => {
       servers,
       rea: { type: "local", command: [...command], enabled: true },
     });
+  });
+});
+
+it("removes an owned V2 array launcher despite obsolete args beside a server named type", async () => {
+  const { home, client } = await openCodeClient("rea-opencode-type-server-");
+  const typeServer = { type: "local", command: ["node", "type.js"] };
+  const original = JSON.stringify({
+    mcp: {
+      servers: {
+        type: typeServer,
+        rea: { type: "local", command, args: [1] },
+      },
+    },
+  });
+  await writeFile(client.configPath, original);
+  expect(await hostRegistrationStatuses(home)).toContainEqual(
+    expect.objectContaining({
+      client: "opencode",
+      config_path: client.configPath,
+      state: "aligned",
+      command_identity: "owned",
+      command,
+    }),
+  );
+  expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
+    "removed",
+  );
+  expect(parseOpenCode(await readFile(client.configPath, "utf8")).mcp).toEqual({
+    servers: { type: typeServer },
+  });
+  expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+    original,
+  );
+});
+
+describe("OpenCode project-scoped registration", () => {
+  it("discovers a project-only launcher and keeps it selected over a stale user launcher", async () => {
+    const home = await createTestTempDirectory("rea-opencode-project-home-");
+    const projectDir = await createTestTempDirectory(
+      "rea-opencode-project-cwd-",
+    );
+    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
+
+    const configuration = (argv: readonly string[]) => ({
+      mcp: {
+        servers: { rea: { type: "local", command: argv, disabled: false } },
+      },
+    });
+    const projectPath = join(projectDir, "opencode.json");
+    await writeFile(projectPath, JSON.stringify(configuration(command)));
+    const options = { platform: HOST_PLATFORM.platform, environment: {} };
+    const projectRegistration = {
+      client: "opencode",
+      state: "aligned",
+      scope: "project",
+      config_path: projectPath,
+      command,
+      remediation: null,
+    };
+    expect(
+      await readClientRegistrationStatuses(home, undefined, options),
+    ).toContainEqual(expect.objectContaining(projectRegistration));
+
+    const userClient = supportedClients(home, HOST_PLATFORM.platform, {}).find(
+      ({ name }) => name === "opencode",
+    );
+    if (userClient === undefined) throw new Error("missing OpenCode client");
+    const stale = ["npx", "-y", "rea-agents@1.0.0", "mcp"];
+    await mkdir(dirname(userClient.configPath), { recursive: true });
+    await writeFile(
+      userClient.configPath,
+      JSON.stringify({
+        mcp: { rea: { type: "local", command: stale, enabled: true } },
+      }),
+    );
+
+    expect(
+      await readClientRegistrationStatuses(home, undefined, {
+        ...options,
+        scope: "user",
+      }),
+    ).toContainEqual(
+      expect.objectContaining({
+        client: "opencode",
+        state: "stale",
+        config_path: userClient.configPath,
+        command: stale,
+      }),
+    );
+    expect(
+      await readClientRegistrationStatuses(home, undefined, options),
+    ).toContainEqual(expect.objectContaining(projectRegistration));
+  });
+
+  it("directs project launcher migration and activation repairs to the project file", async () => {
+    const home = await createTestTempDirectory("rea-opencode-stale-home-");
+    const projectDir = await createTestTempDirectory(
+      "rea-opencode-project-cwd-",
+    );
+    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
+
+    const alignedCommand = command;
+    const staleCommand = ["npx", "-y", "rea-agents@1.0.0", "mcp"];
+
+    const projectConfigPath = resolve(projectDir, "opencode.json");
+    await writeFile(
+      projectConfigPath,
+      JSON.stringify({
+        mcp: {
+          servers: {
+            rea: {
+              type: "local",
+              command: staleCommand,
+              enabled: true,
+            },
+          },
+        },
+      }),
+    );
+
+    const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
+      environment: {},
+    });
+    const status = statuses.find(({ client }) => client === "opencode");
+    expect(status).toMatchObject({
+      client: "opencode",
+      state: "stale",
+      scope: "project",
+      config_path: projectConfigPath,
+    });
+    expect(status?.remediation).toContain(
+      `Replace the launcher in ${projectConfigPath} with the installed JavaScript runtime and REA entry script`,
+    );
+    expect(status?.remediation).toContain(
+      "remove the project override and run rea setup --client opencode",
+    );
+
+    // Disabled project registration
+    await writeFile(
+      projectConfigPath,
+      JSON.stringify({
+        mcp: {
+          servers: {
+            rea: {
+              type: "local",
+              command: alignedCommand,
+              disabled: true,
+            },
+          },
+        },
+      }),
+    );
+    const disabledStatuses = await readClientRegistrationStatuses(
+      home,
+      undefined,
+      {
+        platform: HOST_PLATFORM.platform,
+        environment: {},
+      },
+    );
+    const disabledStatus = disabledStatuses.find(
+      ({ client }) => client === "opencode",
+    );
+    expect(disabledStatus).toMatchObject({
+      client: "opencode",
+      state: "stale",
+      scope: "project",
+      config_path: projectConfigPath,
+    });
+    expect(disabledStatus?.remediation).toContain(
+      `Update or remove the rea registration in ${projectConfigPath}`,
+    );
+    expect(disabledStatus?.remediation).not.toMatch(/\brun\s+rea\s+setup\b/iu);
   });
 });
 

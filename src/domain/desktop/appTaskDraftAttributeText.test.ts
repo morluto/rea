@@ -5,86 +5,79 @@ import { passing, pointerOf, xml, xmlDraft } from "./appTaskDraft.fixture.js";
 const FILE = "Documents/doc.xml";
 
 describe("draftTaskFiles for text an app keeps in an attribute", () => {
-  /** A flyer's frame as Scribus saves it: its text in `ITEXT` runs, one per run of formatting. */
-  const flyer = (...runs: string[]) =>
-    `<SCRIBUSUTF8NEW><DOCUMENT><PAGEOBJECT ANNAME="Headline" XPOS="10.5" ItemID="3"><StoryText><DefaultStyle/>${runs
+  const FRAME =
+    "/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Headline]";
+
+  const flyer = (runs: readonly string[], style?: string) =>
+    `<SCRIBUSUTF8NEW><DOCUMENT><PAGEOBJECT ANNAME="Headline">${style === undefined ? "" : "<Stories>"}<StoryText>${
+      style === undefined ? "<DefaultStyle/>" : `<DefaultStyle id="${style}"/>`
+    }${runs
       .map(
         (text, index) =>
           `<ITEXT FONT="${index === 0 ? "Regular" : "Bold"}" CH="${text}"/>`,
       )
-      .join(
-        "",
-      )}<para/></StoryText></PAGEOBJECT><PAGEOBJECT ANNAME="Details" XPOS="10.5" ItemID="4"><StoryText><ITEXT CH="Saturday at 7 PM"/></StoryText></PAGEOBJECT></DOCUMENT></SCRIBUSUTF8NEW>`;
-  const FRAME =
-    "/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Headline]";
+      .join("")}</StoryText>${
+      style === undefined
+        ? ""
+        : '<StoryText><DefaultStyle id="Empty continuation"/></StoryText></Stories>'
+    }</PAGEOBJECT><PAGEOBJECT ANNAME="Details"><StoryText><ITEXT CH="Saturday at 7 PM"/></StoryText></PAGEOBJECT></DOCUMENT></SCRIBUSUTF8NEW>`;
 
-  it("checks the frame's text read from its runs' CH, which holds however a later save splits them", () => {
-    const before = flyer("Spring ", "Fair");
-    const after = flyer("Summer ", "Fair");
-
-    const file = xmlDraft(before, after);
-
-    expect(file.suggested).toEqual([
-      {
-        kind: "text_equals",
-        file: FILE,
-        pointer: FRAME,
-        value: "Summer Fair",
-        text_attribute: "CH",
-      },
-    ]);
-    expect(
-      [
-        before,
-        after,
-        flyer("Summer Fair"),
-        flyer("Sum", "mer ", "Fair"),
-        flyer("Summer ", "Fete"),
-      ].map((text) => passing(FILE, xml(text), file.suggested)),
-    ).toEqual([[false], [true], [true], [true], [false]]);
-    const checks = [...file.suggested, ...file.guards];
-    expect(
-      file.guards.some(
-        (guard) =>
-          "matching" in guard && String(guard.matching).includes("ITEXT"),
-      ),
-    ).toBe(false);
-    expect(
-      passing(FILE, xml(flyer("Summer Fair")), checks).every(Boolean),
-    ).toBe(true);
-    expect(
-      passing(FILE, xml(flyer("Sum", "mer ", "Fair")), checks).every(Boolean),
-    ).toBe(true);
-  });
-
-  it("does not count formatting runs when the edit splits or merges them", () => {
-    for (const [before, after] of [
-      [flyer("Spring Fair"), flyer("Summer ", "Fair")],
-      [flyer("Spring ", "Fair"), flyer("Summer Fair")],
-    ] as const) {
-      const file = xmlDraft(before, after);
-      const checks = [...file.suggested, ...file.guards];
-      expect(
-        checks.some(
-          (check) =>
-            check.kind === "text_equals" && check.text_attribute === "CH",
-        ),
-      ).toBe(true);
-      expect(passing(FILE, xml(before), file.suggested).every(Boolean)).toBe(
-        false,
+  it.each([
+    {
+      edit: "keeps runs",
+      before: ["Spring ", "Fair"],
+      after: ["Summer ", "Fair"],
+    },
+    {
+      edit: "splits runs",
+      before: ["Spring Fair"],
+      after: ["Summer ", "Fair"],
+    },
+    {
+      edit: "merges runs",
+      before: ["Spring ", "Fair"],
+      after: ["Summer Fair"],
+    },
+    {
+      edit: "keeps a style with literal selector text",
+      before: ["Spring ", "Fair"],
+      after: ["Summer ", "Fair"],
+      style: "Headline[@draft=first",
+    },
+  ])(
+    "checks the frame's text when an edit $edit",
+    ({ before, after, style }) => {
+      const seed = flyer(before, style);
+      const saved = flyer(after, style);
+      const file = xmlDraft(seed, saved);
+      expect(file.suggested).toEqual([
+        {
+          kind: "text_equals",
+          file: FILE,
+          pointer: FRAME,
+          value: "Summer Fair",
+          text_attribute: "CH",
+        },
+      ]);
+      expect(file.guards).not.toContainEqual(
+        expect.objectContaining({
+          kind: "member_count",
+          matching: expect.stringContaining("ITEXT"),
+        }),
       );
-      expect(passing(FILE, xml(after), checks).every(Boolean)).toBe(true);
-      expect(
-        passing(FILE, xml(flyer("Summer Fair")), checks).every(Boolean),
-      ).toBe(true);
-      expect(
-        passing(FILE, xml(flyer("Sum", "mer ", "Fair")), checks).every(Boolean),
-      ).toBe(true);
-      expect(
-        passing(FILE, xml(flyer("Summer Fete")), file.suggested).every(Boolean),
-      ).toBe(false);
-    }
-  });
+      const restyled = style === undefined ? undefined : "Updated style";
+      const checks = [...file.suggested, ...file.guards];
+      for (const followUp of [
+        saved,
+        flyer(["Summer Fair"], restyled),
+        flyer(["Sum", "mer ", "Fair"], restyled),
+      ]) {
+        expect(passing(FILE, xml(followUp), checks)).not.toContain(false);
+      }
+      for (const wrong of [seed, flyer(["Summer Fete"], restyled)])
+        expect(passing(FILE, xml(wrong), file.suggested)).toEqual([false]);
+    },
+  );
 
   it("keeps a check of a run's formatting the text check does not read, beside it", () => {
     const styled = (first: string, font: string) =>

@@ -1,0 +1,66 @@
+{
+  "compiler": "g++ (Debian 14.2.0-19) 14.2.0",
+  "reference": "GNU readelf (GNU Binutils for Debian) 2.44",
+  "source_sha256": "a275de3d14c91a02f103df4aa6ee0b5416ead3d36efa67fb06fa243edc4c4eec",
+  "flags": ["-std=c++17", "-shared", "-fPIC", "-Wl,--build-id=none"],
+  "variants": [
+    {
+      "name": "gnu_unique",
+      "flags": [],
+      "os_abi": 3,
+      "symbols": [
+        {
+          "name": "process_value",
+          "value": "0x4010",
+          "size": "4",
+          "raw_info": "0xa1",
+          "type_code": 1,
+          "type": "object",
+          "binding_code": 10,
+          "binding": "unique",
+          "visibility": "default"
+        },
+        {
+          "name": "thread_value",
+          "value": "0x0",
+          "size": "4",
+          "raw_info": "0xa6",
+          "type_code": 6,
+          "type": "tls",
+          "binding_code": 10,
+          "binding": "unique",
+          "visibility": "default"
+        }
+      ]
+    },
+    {
+      "name": "weak",
+      "flags": ["-fno-gnu-unique"],
+      "os_abi": 0,
+      "symbols": [
+        {
+          "name": "process_value",
+          "value": "0x4010",
+          "size": "4",
+          "raw_info": "0x21",
+          "type_code": 1,
+          "type": "object",
+          "binding_code": 2,
+          "binding": "weak",
+          "visibility": "default"
+        },
+        {
+          "name": "thread_value",
+          "value": "0x0",
+          "size": "4",
+          "raw_info": "0x26",
+          "type_code": 6,
+          "type": "tls",
+          "binding_code": 2,
+          "binding": "weak",
+          "visibility": "default"
+        }
+      ]
+    }
+  ]
+}

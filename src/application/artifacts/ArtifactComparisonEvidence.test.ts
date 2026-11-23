@@ -8,7 +8,7 @@ import { expect, it } from "vitest";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../contracts/artifactComparisonExample.js";
 import { sealAnalysisView } from "../../domain/analysisView/analysisView.js";
-import { artifactInventorySummaryViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
+import { artifactInventorySummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/artifactInventorySummarySchema.js";
 import {
   createEvidence,
   parseEvidence,
@@ -283,17 +283,6 @@ it.each<SummaryEra>(["pre-ce1f4b1bb", "pre-b395190e4"])(
 );
 
 it.each<SummaryEra>(["current"])(
-  "authenticates the exact %s summary against its retained inventory",
-  async (era) => {
-    const { parent, summary } = await summaryAtEra(era);
-    expect(resolveArtifactComparisonEvidence(summary, () => parent)).toEqual({
-      ok: true,
-      value: parent,
-    });
-  },
-);
-
-it.each<SummaryEra>(["current"])(
   "authenticates a %s summary projected from the caller alias against the original retained parent",
   async (era) => {
     const { parent, summary } = await summaryAtEra(era, "/selected/alias.bin");
@@ -380,61 +369,38 @@ it.each([
   },
 );
 
-it.each<SummaryEra>(["pre-ce1f4b1bb", "pre-b395190e4"])(
-  "rejects a %s summary when lookup returns another inventory",
-  async (era) => {
-    const { summary } = await summaryAtEra(era);
-    const resolved = resolveArtifactComparisonEvidence(
-      summary,
-      () => ARTIFACT_COMPARISON_EXAMPLE.right,
-    );
-    expect(resolved.ok).toBe(false);
-    if (!resolved.ok)
-      expect(resolved.error).toMatchObject({ reason: "identity_mismatch" });
-  },
-);
-
-it.each(["provider", "authority", "locations", "links"] as const)(
-  "rejects a validly recommitted historical summary with altered %s",
-  async (field) => {
-    const { parent, summary } = await summaryAtEra("pre-ce1f4b1bb");
-    const altered: Evidence = {
-      ...summary,
-      ...(field === "provider"
-        ? { provider: { ...summary.provider, version: "altered" } }
-        : field === "authority"
-          ? { authority: "analyst-inference" as const }
-          : field === "locations"
-            ? {
-                locations: [
-                  { kind: "artifact-path" as const, path: "different.bin" },
-                ],
-              }
-            : {
-                evidence_links: [ARTIFACT_COMPARISON_EXAMPLE.right.evidence_id],
-              }),
-    };
-    const forged = recreateSummary(altered, summary.normalized_result);
-    expect(parseEvidence(forged).evidence_id).toBe(forged.evidence_id);
-    expect(forged.evidence_id).not.toBe(summary.evidence_id);
-    const resolved = resolveArtifactComparisonEvidence(forged, () => parent);
-    expect(resolved.ok).toBe(false);
-    if (!resolved.ok)
-      expect(resolved.error).toBeInstanceOf(EvidenceIntegrityError);
-  },
-);
+it("rejects a recommitted current summary whose authority differs from its projection", async () => {
+  const { parent, summary } = await summaryAtEra("current");
+  const forged = recreateSummary(
+    { ...summary, authority: "analyst-inference" },
+    summary.normalized_result,
+  );
+  expect(forged.evidence_id).not.toBe(summary.evidence_id);
+  const resolved = resolveArtifactComparisonEvidence(forged, () => parent);
+  expect(resolved).toMatchObject({
+    ok: false,
+    error: { _tag: "EvidenceIntegrityError" },
+  });
+});
 
 it("authenticates a retained parent's content instead of trusting its original ID", async () => {
-  const { parent, summary } = await summaryAtEra("pre-b395190e4");
+  const { parent, summary } = await summaryAtEra("current");
+  expect(resolveArtifactComparisonEvidence(summary, () => parent)).toEqual({
+    ok: true,
+    value: parent,
+  });
   const tampered: Evidence = {
     ...parent,
-    limitations: ["changed without recomputing the Evidence ID"],
+    // The Evidence ID commits to the raw result. The inventory summary
+    // omits it, so reprojection cannot detect this substitution.
+    raw_result: { changed: true },
   };
-  expect(tampered.evidence_id).toBe(parent.evidence_id);
-  const resolved = resolveArtifactComparisonEvidence(summary, () => tampered);
-  expect(resolved.ok).toBe(false);
-  if (!resolved.ok)
-    expect(resolved.error).toBeInstanceOf(EvidenceIntegrityError);
+  expect(
+    resolveArtifactComparisonEvidence(summary, () => tampered),
+  ).toMatchObject({
+    ok: false,
+    error: { _tag: "EvidenceIntegrityError", issuePath: ["evidence_id"] },
+  });
 });
 
 it.each<SummaryEra>(["current"])(

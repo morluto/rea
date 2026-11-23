@@ -1,12 +1,7 @@
 import { explicitValuesOccurIn } from "../domain/explicitSensitiveValues.js";
 import { recordCliEvidencePublication } from "./cliEvidencePublication.js";
 import { recordCliDeliveredEvidence } from "./cliResultControls.js";
-import {
-  analysisEvidenceSources,
-  undeliveredSourceClosure,
-} from "../application/AnalysisEvidenceSources.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
-import { z } from "zod";
 import {
   isImmutableEvidence,
   parseEvidence,
@@ -19,18 +14,8 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import {
-  createEvidenceBundle,
-  createImmutableEvidenceBundle,
-} from "../domain/evidenceBundle.js";
-import {
-  evidenceDeliveryCommitted,
-  publishEvidenceDelivery,
-} from "../application/EvidenceBundleCommands.js";
-import { inspectAnalysisViewValidated } from "../application/analysisView/AnalysisViewService.js";
-import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { cliEvidenceDeliveryInputError } from "./analysisEvidenceDeliveryOptions.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import {
   isObject,
@@ -38,18 +23,6 @@ import {
 } from "./projectCliAnalysisResult.js";
 import { bindCliEvidenceCallerPath } from "./cliEvidenceCallerPath.js";
 import type { AnalysisResultWithSources } from "../application/investigation/recordEvidenceSources.js";
-
-export const analysisEvidenceDeliveryOptions = {
-  detail: z
-    .enum(["complete", "summary"])
-    .default("complete")
-    .describe("Deliver complete Evidence, or a summary with --evidence_output"),
-  evidence_output: localPathStringSchema
-    .optional()
-    .describe(
-      "Save complete Evidence as a bundle; required for summary delivery. Never overwrites.",
-    ),
-};
 
 /** How one CLI invocation publishes its Evidence. */
 interface CliEvidencePublication {
@@ -72,39 +45,6 @@ interface CliEvidencePublication {
 interface CliEvidenceDelivery extends CliEvidencePublication {
   readonly providerId: string;
 }
-
-/**
- * Refuse a delivery that cannot keep complete source Evidence available: a
- * summary needs a bundle, and a selected page is cut from a retained summary.
- */
-export const cliEvidenceDeliveryInputError = (
-  input: Pick<
-    CliEvidencePublication,
-    "detail" | "evidenceOutput" | "operation"
-  > & {
-    readonly view?: AnalysisViewRequest | undefined;
-  },
-): AnalysisInputError | undefined => {
-  if (input.view !== undefined && input.detail !== "summary")
-    return new AnalysisInputError(input.operation, undefined, [
-      {
-        path: ["view"],
-        reason: "invalid_value",
-        message:
-          "A selected page requires --detail summary and --evidence_output.",
-      },
-    ]);
-  return input.detail === "summary" && input.evidenceOutput === undefined
-    ? new AnalysisInputError(input.operation, undefined, [
-        {
-          path: ["evidence_output"],
-          reason: "invalid_value",
-          message:
-            "Summary delivery requires --evidence_output so complete source Evidence remains available.",
-        },
-      ])
-    : undefined;
-};
 
 /** One-shot delivery owns report publication; analysis keeps its own cleanup owner. */
 export const deliverCliAnalysisEvidence = async (
@@ -171,13 +111,16 @@ export const deliverCliAnalysisEvidence = async (
  * A requested bundle that never committed cannot silently drop what a completed
  * observation cites. Absent delivery or observation leaves the failure untouched.
  */
-const withUndeliveredSourceClosure = (
+const withUndeliveredSourceClosure = async (
   failure: JsonValue,
   input: CliEvidencePublication,
-): JsonValue => {
+): Promise<JsonValue> => {
   if (input.evidenceOutput === undefined || !isObject(failure)) return failure;
   const { details } = failure;
-  if (!isObject(details)) return failure;
+  if (!isObject(details) || details.partial_observation === undefined)
+    return failure;
+  const { undeliveredSourceClosure } =
+    await import("../application/AnalysisEvidenceSources.js");
   const closure = undeliveredSourceClosure(
     details.partial_observation,
     input.sourceEvidence ?? [],
@@ -234,7 +177,7 @@ export const publishCliAnalysisEvidence = async (
   );
   if (!published.ok) {
     const failure = projectFailure(published.error.error);
-    return evidenceDeliveryCommitted(published.error.error)
+    return published.error.committed
       ? failure
       : withUndeliveredSourceClosure(failure, closureInput);
   }
@@ -260,6 +203,7 @@ const publishDeliveredEvidence = async (
     { readonly delivered: Evidence; readonly receipt: JsonValue },
     {
       readonly error: AnalysisError;
+      readonly committed: boolean;
       /** The projected view, once projection succeeded. */
       readonly delivered?: Evidence;
     }
@@ -267,13 +211,18 @@ const publishDeliveredEvidence = async (
 > => {
   const delivered =
     input.detail === "summary"
-      ? inspectAnalysisViewValidated({
+      ? (
+          await import("../application/analysisView/AnalysisViewService.js")
+        ).inspectAnalysisViewValidated({
           source: { kind: "inline", evidence: complete },
           view: input.view ?? { kind: "summary" },
         })
       : ok(complete);
   if (!delivered.ok)
-    return err({ error: delivered.error.retainPartialObservation(complete) });
+    return err({
+      error: delivered.error.retainPartialObservation(complete),
+      committed: false,
+    });
   // This projection answers the same direct invocation as its parent. Later
   // inspect_analysis_view calls own their own input and do not inherit it.
   const selected =
@@ -286,9 +235,22 @@ const publishDeliveredEvidence = async (
           complete.caller_input_paths,
         )
       : delivered.value;
+  const [
+    { analysisEvidenceSources },
+    { createEvidenceBundle, createImmutableEvidenceBundle },
+    { evidenceDeliveryCommitted, publishEvidenceDelivery },
+  ] = await Promise.all([
+    import("../application/AnalysisEvidenceSources.js"),
+    import("../domain/evidenceBundle.js"),
+    import("../application/EvidenceBundleCommands.js"),
+  ]);
   const inspectionSources = analysisEvidenceSources(complete);
   if (!inspectionSources.ok)
-    return err({ error: inspectionSources.error, delivered: selected });
+    return err({
+      error: inspectionSources.error,
+      committed: false,
+      delivered: selected,
+    });
   const records = [
     ...new Map(
       [...(input.sourceEvidence ?? []), ...inspectionSources.value].map(
@@ -310,7 +272,11 @@ const publishDeliveredEvidence = async (
     signal: input.signal,
   });
   if (!published.ok)
-    return err({ error: published.error, delivered: selected });
+    return err({
+      error: published.error,
+      committed: evidenceDeliveryCommitted(published.error),
+      delivered: selected,
+    });
   const { path, bytes } = published.value.evidenceBundle;
   const receipt = bundleReceipt(path, bytes, input);
   recordCliEvidencePublication(receipt);
@@ -397,7 +363,7 @@ const publishFailurePartialEvidence = async (
       published.error,
       input,
     );
-    return evidenceDeliveryCommitted(published.error.error)
+    return published.error.committed
       ? refusal
       : withUndeliveredSourceClosure(refusal, input);
   }

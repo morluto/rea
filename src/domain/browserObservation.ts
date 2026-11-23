@@ -15,6 +15,9 @@ import {
   type UrlTargetIdentity,
 } from "./targetIdentity.js";
 
+/** Retain observed three-digit statuses, including nonstandard values above 599. */
+export const browserResponseStatusSchema = z.int().min(100).max(999);
+
 const parseExactOrigin = (value: string): string | undefined => {
   let url: URL;
   try {
@@ -227,9 +230,9 @@ const inspectWebPageInputFacts = {
   include_storage_fingerprints: z.boolean().default(false),
 } as const;
 
-const inspectWebPageWithoutSourceSchema = z.strictObject({
+const inspectWebPageShapeSchema = z.strictObject({
   ...inspectWebPageInputFacts,
-  include_script_sources: z.literal(false).optional().default(false),
+  include_script_sources: z.boolean().default(false),
 });
 
 const inspectWebPageWithSourceShapeSchema = z.strictObject({
@@ -237,9 +240,7 @@ const inspectWebPageWithSourceShapeSchema = z.strictObject({
   include_script_sources: z.literal(true).default(true),
 });
 
-type InspectWebPageShape =
-  | z.output<typeof inspectWebPageWithoutSourceSchema>
-  | z.output<typeof inspectWebPageWithSourceShapeSchema>;
+type InspectWebPageShape = z.output<typeof inspectWebPageShapeSchema>;
 
 const refineInspectWebPageInput = (
   input: InspectWebPageShape,
@@ -258,16 +259,8 @@ export const inspectWebPageWithSourceInputSchema =
   inspectWebPageWithSourceShapeSchema.superRefine(refineInspectWebPageInput);
 
 /** Caller-visible schema for one passive inspection. */
-export const inspectWebPageInputSchema = z.discriminatedUnion(
-  "include_script_sources",
-  [
-    inspectWebPageWithoutSourceSchema.superRefine(refineInspectWebPageInput),
-    inspectWebPageWithSourceShapeSchema
-      .extend({
-        include_script_sources: z.literal(true),
-      })
-      .superRefine(refineInspectWebPageInput),
-  ],
+export const inspectWebPageInputSchema = inspectWebPageShapeSchema.superRefine(
+  refineInspectWebPageInput,
 );
 
 export type ListBrowserTargetsInput = z.infer<

@@ -12,7 +12,7 @@ const formats = [
 ] as const;
 
 it.each(formats)(
-  "preserves raw section facts (wide=$wide, littleEndian=$littleEndian)",
+  "preserves raw section facts and bounds (wide=$wide, littleEndian=$littleEndian)",
   ({ wide, littleEndian, headerSize }) => {
     const backing = Buffer.alloc(headerSize + 19, 0xa5);
     const bytes = backing.subarray(7, 7 + headerSize);
@@ -33,9 +33,14 @@ it.each(formats)(
       view.setUint32(36, Number(size), littleEndian);
     }
     view.setUint32(wide ? 48 : 40, 0xffffffff, littleEndian);
+    view.setUint32(wide ? 52 : 44, 0x10203040, littleEndian);
     view.setUint32(wide ? 56 : 48, 0x12345678, littleEndian);
     view.setUint32(wide ? 60 : 52, 0x9abcdef0, littleEndian);
     view.setUint32(wide ? 64 : 56, 0x89abcdef, littleEndian);
+    view.setUint32(wide ? 68 : 60, 0x10293847, littleEndian);
+    view.setUint32(wide ? 72 : 64, 0xfedcb012, littleEndian);
+    const reserved3 = littleEndian ? 0x40302010 : 0;
+    if (wide) view.setUint32(76, reserved3, littleEndian);
     const expectedSegmentName = Buffer.from(bytes.subarray(16, 32));
     const before = Buffer.from(backing);
     const parsed = readMachoSectionHeader(
@@ -43,27 +48,7 @@ it.each(formats)(
       wide,
       littleEndian,
     );
-    expect(backing.equals(before)).toBe(true);
-    if (!parsed.ok) throw new Error(parsed.error.message);
-    backing.fill(0);
-    const { nameBytes, segmentNameBytes, ...facts } = parsed.value;
-    expect(nameBytes.equals(names)).toBe(true);
-    expect(segmentNameBytes.equals(expectedSegmentName)).toBe(true);
-    expect(facts).toEqual({
-      address,
-      size,
-      offset: 0xffffffff,
-      relocationOffset: 0x12345678,
-      relocationCount: 0x9abcdef0,
-      flags: 0x89abcdef,
-    });
-  },
-);
-
-it.each(formats)(
-  "refuses each truncated fixed section record (wide=$wide, littleEndian=$littleEndian)",
-  ({ wide, littleEndian, headerSize }) => {
-    const backing = Buffer.alloc(headerSize + 7, 0xff);
+    const exact = readMachoSectionHeader(bytes, wide, littleEndian);
     for (let length = 0; length < headerSize; length++)
       expect(
         readMachoSectionHeader(
@@ -78,6 +63,25 @@ it.each(formats)(
           message: expect.stringContaining("truncated"),
         },
       });
+    expect(backing.equals(before)).toBe(true);
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    backing.fill(0);
+    expect(exact).toEqual(parsed);
+    const { nameBytes, segmentNameBytes, ...facts } = parsed.value;
+    expect(nameBytes.equals(names)).toBe(true);
+    expect(segmentNameBytes.equals(expectedSegmentName)).toBe(true);
+    expect(facts).toEqual({
+      address,
+      size,
+      offset: 0xffffffff,
+      alignmentExponent: 0x10203040,
+      relocationOffset: 0x12345678,
+      relocationCount: 0x9abcdef0,
+      flags: 0x89abcdef,
+      reserved1: 0x10293847,
+      reserved2: 0xfedcb012,
+      ...(wide ? { reserved3 } : {}),
+    });
   },
 );
 
@@ -89,6 +93,7 @@ it.each([
   ["huge", { size: 0xffffffffffffffffn, offset: 0, flags: 0 }, false],
   ["empty", { size: 0n, offset: 0xffffffff, flags: 0 }, true],
   ["zero-fill", { size: 99n, offset: 0xffffffff, flags: 1 }, true],
+  ["GB zero-fill", { size: 99n, offset: 0xffffffff, flags: 0xc }, true],
   ["thread-local zero-fill", { size: 99n, offset: 0, flags: 0x12 }, true],
 ] as const)(
   "admits a %s section payload against a 40-byte image",

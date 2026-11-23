@@ -36,11 +36,6 @@ cliTest(
       }),
     );
     const run = cli.run.bind(cli);
-    const complete = await run({
-      arguments: ["inspect-elf-dependencies", path, "--json"],
-    });
-    expect(complete.exitCode, complete.stderr).toBe(0);
-    const parent = dependenciesContract.outputSchema.parse(complete.json);
     const bundle = join(root, "complete.bundle.json");
     const summarized = await run({
       arguments: [
@@ -57,6 +52,16 @@ cliTest(
     const delivered = z
       .object({ summary: evidenceSchema })
       .parse(summarized.json).summary;
+    const loaded = await readEvidenceBundle(bundle);
+    if (!loaded.ok) throw loaded.error;
+    const [parent] = loaded.value.records;
+    expect(loaded.value.records).toHaveLength(1);
+    if (parent === undefined)
+      throw new Error("Missing retained dependency Evidence");
+    expect(parent).toMatchObject({
+      operation: "inspect_elf_dependencies",
+      parameters: { path },
+    });
     expect(delivered.operation).toBe("inspect_analysis_view");
     expect(delivered.normalized_result).toMatchObject({
       parent_evidence_id: parent.evidence_id,
@@ -66,9 +71,6 @@ cliTest(
         coverage: { status: "complete" },
       },
     });
-    const loaded = await readEvidenceBundle(bundle);
-    if (!loaded.ok) throw loaded.error;
-    expect(loaded.value.records).toEqual([parent]);
 
     const call =
       cli.sharedMcpCall === undefined

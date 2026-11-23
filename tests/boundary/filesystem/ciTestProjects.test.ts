@@ -45,6 +45,7 @@ const runOxlint = async (
         code?: string;
         severity: string;
         filename: string;
+        labels?: Array<{ span: { line: number } }>;
       }>;
     },
   };
@@ -101,58 +102,9 @@ describe("canonical test-project ownership", () => {
 });
 
 describe("Vitest project configuration", () => {
-  processTest(
-    "uses canonical test-project selectors in Vitest",
-    async ({ processes }) => {
-      const root = await createTestTempDirectory(
-        "rea-vitest-project-selectors-",
-      );
-      const script = join(root, "project-selectors.mjs");
-      await writeFile(
-        script,
-        `
-      const { default: config } = await import(process.argv[2]);
-      console.log(JSON.stringify(config.test.projects.map(({ test }) => ({
-        name: test.name,
-        include: test.include,
-        exclude: test.exclude ?? [],
-      }))));
-    `,
-      );
-      const result = await processes.run(
-        process.execPath,
-        [
-          "--import",
-          "tsx",
-          script,
-          pathToFileURL(join(repository, "vitest.config.ts")).href,
-        ],
-        {
-          cwd: repository,
-        },
-      );
-      expect(result.exitCode, result.stderr).toBe(0);
-      const selectors = JSON.parse(result.stdout) as Array<{
-        name: string;
-        include: string[];
-        exclude: string[];
-      }>;
-      const canonical = [...SOURCE_TEST_PROJECTS, ...BUILT_TEST_PROJECTS].map(
-        ({ name, include, exclude }) => ({
-          name,
-          include,
-          exclude: exclude ?? [],
-        }),
-      );
-      expect(selectors.sort((a, b) => a.name.localeCompare(b.name))).toEqual(
-        canonical.sort((a, b) => a.name.localeCompare(b.name)),
-      );
-    },
-  );
-
   processTest.for(
     [
-      { flags: [], timeout: 30_000, lines: 68 },
+      { flags: [], timeout: 30_000, lines: 68, alsoHosted: true },
       { flags: ["--coverage"], timeout: 60_000, lines: 68 },
       { flags: ["--coverage.enabled"], timeout: 60_000, lines: 68 },
       { flags: ["--coverage=false"], timeout: 30_000, lines: 68 },
@@ -170,19 +122,20 @@ describe("Vitest project configuration", () => {
         flags: ["--coverage.enabled", "--shard", "1/6"],
         timeout: 60_000,
         lines: 0,
+        alsoHosted: true,
       },
       {
         flags: ["--coverage.enabled=false", "--shard=1/6"],
         timeout: 30_000,
         lines: 0,
       },
-    ].flatMap((policy) =>
-      // Hosted CI owns a four-core runner: up to four workers, doubled deadlines.
-      [
-        { ...policy, hosted: false, workers: 2, scale: 1 },
-        { ...policy, hosted: true, workers: 4, scale: 2 },
-      ],
-    ),
+    ].flatMap(({ alsoHosted, ...policy }) => [
+      { ...policy, hosted: false, workers: 2, scale: 1 },
+      // Check hosted scaling with coverage both off and on.
+      ...(alsoHosted
+        ? [{ ...policy, hosted: true, workers: 4, scale: 2 }]
+        : []),
+    ]),
   )(
     "resolves worker resources from actual CLI options: $flags (hosted: $hosted)",
     async (
@@ -255,45 +208,40 @@ describe("test module isolation", () => {
   });
 
   processTest(
-    "uses canonical module isolation in the actual Vitest configuration",
+    "uses canonical project selectors and module isolation in Vitest",
     async ({ processes }) => {
-      const files = execFileSync("git", ["ls-files", "*.test.ts"], {
-        cwd: repository,
-        encoding: "utf8",
-      })
-        .trim()
-        .split("\n")
-        .filter(Boolean);
       const root = await createTestTempDirectory("rea-vitest-project-policy-");
-      const script = join(root, "project-isolation.mjs");
+      const script = join(root, "project-policy.mjs");
       await writeFile(
         script,
         `
       import config from ${JSON.stringify(pathToFileURL(join(repository, "vitest.config.ts")).href)};
-      console.log(JSON.stringify(Object.fromEntries(
-        config.test.projects.map(project => [project.test.name, project.test.isolate]),
-      )));
+      console.log(JSON.stringify(config.test.projects.map(({ test }) => ({
+        name: test.name,
+        include: test.include,
+        exclude: test.exclude ?? [],
+        isolate: test.isolate,
+      }))));
     `,
       );
       const result = await processes.run(
         process.execPath,
         ["--import", "tsx", script],
-        {
-          cwd: repository,
-        },
+        { cwd: repository },
       );
       expect(result.exitCode, result.stderr).toBe(0);
-      const isolated = JSON.parse(result.stdout) as Record<string, boolean>;
-      expect(files.length).toBeGreaterThan(0);
-      expect(
-        files.filter((file) => {
-          const project = projectForTest(file);
-          return isolated[project.name] !== (project.isolate !== false);
+      const canonical = [...SOURCE_TEST_PROJECTS, ...BUILT_TEST_PROJECTS].map(
+        ({ name, include, exclude, isolate }) => ({
+          name,
+          include,
+          exclude: exclude ?? [],
+          isolate: isolate !== false,
         }),
-      ).toEqual([]);
-
-      // Repository-wide rule execution belongs to the normal lint gate. The
-      // configured rule is exercised across every project by the probes below.
+      );
+      const configured = JSON.parse(result.stdout) as typeof canonical;
+      expect(configured.sort((a, b) => a.name.localeCompare(b.name))).toEqual(
+        canonical.sort((a, b) => a.name.localeCompare(b.name)),
+      );
     },
   );
 
@@ -319,47 +267,46 @@ describe("test module isolation", () => {
           return { path, isolated: project.isolate !== false };
         },
       );
-      for (const form of ["named", "namespace"] as const) {
-        for (const probe of probes) {
-          const path = join(root, probe.path);
-          await mkdir(dirname(path), { recursive: true });
-          const receiver = form === "named" ? "testing" : "testing.vi";
-          await writeFile(
-            path,
-            [
-              form === "named"
-                ? 'import { vi as testing } from "vitest";'
-                : 'import * as testing from "vitest";',
-              `${receiver}.mock("./dependency.js");`,
-              `${receiver}.doMock("./other.js");`,
-              'const local = { mock() {} }; local.mock("unrelated");',
-            ].join("\n"),
-          );
-        }
-        const { exitCode, report } = await runOxlint(
-          processes,
-          root,
-          config,
-          probes.map(({ path }) => path),
+      for (const probe of probes) {
+        const path = join(root, probe.path);
+        await mkdir(dirname(path), { recursive: true });
+        await writeFile(
+          path,
+          [
+            'import { vi, vi as testing } from "vitest";',
+            'import * as namespace from "vitest";',
+            'vi.mock("./dependency.js");',
+            'testing.doMock("./other.js");',
+            'namespace.vi.mock("./third.js");',
+            'namespace.vi.doMock("./fourth.js");',
+            'const local = { mock() {}, doMock() {} }; local.mock("unrelated"); local.doMock("unrelated");',
+          ].join("\n"),
         );
-        expect(exitCode).toBe(1);
-        const errors =
-          report.diagnostics?.filter(
-            ({ code, severity }) =>
-              code === "rea(no-shared-module-mock)" && severity === "error",
-          ) ?? [];
-        expect(errors).toHaveLength(
-          2 * probes.filter(({ isolated }) => !isolated).length,
-        );
-        for (const probe of probes) {
-          const selected = errors.filter(
+      }
+      const { exitCode, report } = await runOxlint(
+        processes,
+        root,
+        config,
+        probes.map(({ path }) => path),
+      );
+      expect(exitCode).toBe(1);
+      const errors =
+        report.diagnostics?.filter(
+          ({ code, severity }) =>
+            code === "rea(no-shared-module-mock)" && severity === "error",
+        ) ?? [];
+      expect(errors).toHaveLength(
+        4 * probes.filter(({ isolated }) => !isolated).length,
+      );
+      for (const probe of probes) {
+        const lines = errors
+          .filter(
             ({ filename }) =>
               resolve(root, filename) === resolve(root, probe.path),
-          );
-          expect(selected, `${form}: ${probe.path}`).toHaveLength(
-            probe.isolated ? 0 : 2,
-          );
-        }
+          )
+          .flatMap(({ labels }) => labels?.map(({ span }) => span.line) ?? [])
+          .sort((a, b) => a - b);
+        expect(lines, probe.path).toEqual(probe.isolated ? [] : [3, 4, 5, 6]);
       }
     },
   );

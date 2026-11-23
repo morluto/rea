@@ -38,9 +38,8 @@ The MCP tool `project_harmony_application_graph` takes the same
   resources, native libraries, JavaScript, signing)
 - `unclassified_components` with the same paths and content identities for
   authenticated files outside those categories and the App Pack child list
-- a packaging-model hint: Stage is claimed only from an exactly cased `module.json` entry
-  outside a classified resource path, FA only from `config.json` outside a
-  classified resource path, otherwise `unknown`
+- a packaging-model hint from the exact archive-root path `module.json` for
+  Stage or `config.json` for FA, otherwise `unknown`
 - FA resources under `assets/<module>/resources/` as well as Stage `resources/`
 - unavailable component paths with unknown IDs and hashes, including encrypted entries; these make projection coverage partial
 - App Pack child package paths without recursive inventory
@@ -49,7 +48,8 @@ The MCP tool `project_harmony_application_graph` takes the same
   libraries
 
 An unavailable manifest can still supply a path-based model hint; its content
-identity remains unknown. Manifest names follow case-sensitive ZIP member names.
+identity remains unknown. Manifest names follow exact, case-sensitive ZIP root
+paths, including `pack.info` for package metadata.
 
 File and slice occurrences supply component and child-package paths; directory
 trees and symlinks retain their identities in the source inventory without

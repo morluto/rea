@@ -6,8 +6,8 @@ import {
   type SourceMapLeaf,
 } from "./sourceMapFormat.js";
 
-/** Determine whether a leaf-local mapping falls before its enclosing boundary. */
-const isBeforeSourceMapLeafStop = (
+/** ECMA-426 permits equal-position mappings at a following section's start. */
+const isWithinSourceMapLeafStop = (
   leaf: SourceMapLeaf,
   line: number,
   column: number,
@@ -17,7 +17,7 @@ const isBeforeSourceMapLeafStop = (
   const generatedColumn = column + (line === 0 ? leaf.offset.column : 0);
   return (
     generatedLine < leaf.stop.line ||
-    (generatedLine === leaf.stop.line && generatedColumn < leaf.stop.column)
+    (generatedLine === leaf.stop.line && generatedColumn <= leaf.stop.column)
   );
 };
 
@@ -41,7 +41,7 @@ export const decodeValidatedSourceMapLeaves = (
         const generatedLine = leaf.offset.line + line;
         const generatedColumn =
           segment[0] + (line === 0 ? leaf.offset.column : 0);
-        if (!isBeforeSourceMapLeafStop(leaf, line, segment[0]))
+        if (!isWithinSourceMapLeafStop(leaf, line, segment[0]))
           throw sourceMapSectionOverlap(
             "Embedded source-map mappings overlap the following section boundary.",
           );

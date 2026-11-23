@@ -8,23 +8,14 @@ import { EVIDENCE_FORMAT_REVISION } from "../domain/evidenceFormat.js";
 import {
   featureTraceSummaryViewResultSchema,
   featureTraceViewResultSchema,
-  sourceToBundleSummaryViewResultSchema,
-  sourceToBundlePageViewResultSchema,
-  endpointComparisonSummaryViewResultSchema,
-  endpointComparisonPageViewResultSchema,
-} from "../domain/analysisView/analysisViewResult.js";
-import { staticObservedEndpointComparisonSchema } from "../domain/javascript/staticObservedEndpointSchemas.js";
-import { STATIC_OBSERVED_ENDPOINT_COMPARISON_EXAMPLE } from "./javascript/staticObservedEndpointExample.js";
+} from "../domain/analysisView/summarySchemas/featureTraceSummarySchemas.js";
 import { applicationVersionComparisonResultSchema } from "../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { applicationFeatureTraceResultSchema } from "../domain/javascript/javascriptFeatureTraceSchemas.js";
 import { javaScriptSemanticTraceResultSchema } from "../domain/javascript/javascriptSemanticTraceSchemas.js";
 import { javaScriptExportShapeComparisonResultSchema } from "../domain/javascript/javascriptExportShapeComparisonSchemas.js";
-import { sourceToBundleComparisonResultSchema } from "../domain/javascript/sourceToBundleComparisonSchemas.js";
 import {
   compareApplicationVersionsRequestSchema,
-  compareStaticObservedEndpointsRequestSchema,
   compareJavaScriptExportShapesRequestSchema,
-  compareSourceToBundleRequestSchema,
   traceApplicationFeatureToolRequestSchema,
   traceJavaScriptSemanticsRequestSchema,
 } from "./javascript/applicationWorkflowInputContracts.js";
@@ -49,15 +40,13 @@ import {
   searchGuidanceInputSchema,
   searchGuidanceOutputSchema,
 } from "./guidanceContracts.js";
-import {
-  guidedWorkflowsInputSchema,
-  guidedWorkflowsOutputSchema,
-} from "./guidedWorkflowSchemas.js";
+import { GUIDED_WORKFLOWS_TOOL_CONTRACT } from "./guidedWorkflowToolContract.js";
+import { COMPARE_SOURCE_TO_BUNDLE_TOOL_CONTRACT } from "./sourceToBundleToolContract.js";
+import { COMPARE_STATIC_AND_OBSERVED_ENDPOINTS_TOOL_CONTRACT } from "./staticObservedEndpointsToolContract.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import {
   JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
   JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
-  SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE,
 } from "./javascript/javascriptApplicationWorkflowExamples.js";
 import { JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE } from "./javascript/javascriptExportShapeComparisonExample.js";
 import {
@@ -79,13 +68,6 @@ const semanticTraceOutputSchema = evidenceResultOf(
 );
 const comparisonOutputSchema = evidenceResultOf(
   applicationVersionComparisonResultSchema,
-);
-const sourceToBundleOutputSchema = evidenceResultOf(
-  z.union([
-    sourceToBundleComparisonResultSchema,
-    sourceToBundleSummaryViewResultSchema,
-    sourceToBundlePageViewResultSchema,
-  ]),
 );
 const exportShapeComparisonOutputSchema = evidenceResultOf(
   javaScriptExportShapeComparisonResultSchema,
@@ -120,30 +102,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
       },
     ],
   },
-  {
-    name: "guided_workflows",
-    cli: true,
-    ...toolContractMetadata("guided_workflows", toolEffects()),
-    description:
-      "List or render REA's existing guided workflows. Rendering returns guidance only; it does not inspect targets, start analysis, or change session state.",
-    kind: "application",
-    inputSchema: guidedWorkflowsInputSchema,
-    outputSchema: guidedWorkflowsOutputSchema,
-    examples: [
-      {
-        title: "List the available guided workflows",
-        input: { action: "list" },
-      },
-      {
-        title: "Render feature investigation guidance",
-        input: {
-          action: "render",
-          workflow_id: "investigate_feature",
-          arguments: { feature: "offline search" },
-        },
-      },
-    ],
-  },
+  GUIDED_WORKFLOWS_TOOL_CONTRACT,
   {
     name: "read_guidance_section",
     ...toolContractMetadata("read_guidance_section", toolEffects()),
@@ -229,48 +188,8 @@ export const APPLICATION_TOOL_CONTRACTS = [
       },
     ],
   },
-  {
-    name: "compare_static_and_observed_endpoints",
-    cli: true,
-    ...toolContractMetadata(
-      "compare_static_and_observed_endpoints",
-      evidenceEffects,
-    ),
-    description:
-      "Compare static JavaScript endpoints with requests recorded in HAR Evidence, supplied inline or retained; acquires no files, targets or URLs. Returns exact or inferred template pairings and explicit unknowns; root-relative targets need a declared origin. Not-observed requires an exercised origin, all parent records retained and none excluded; it never means hidden, unused or inaccessible. Default summary retains the full comparison for inspect_analysis_view kind endpoint-comparison (static-endpoints, observed-groups, matches); a selected view overrides detail, and detail complete returns all facts. Copies no query strings, fragments, headers or bodies. Sensitive-declaration parents are refused; the 96 MiB representation budget covers source admission and derived state.",
-    kind: "application",
-    inputSchema: compareStaticObservedEndpointsRequestSchema,
-    outputSchema: evidenceResultOf(
-      z.union([
-        staticObservedEndpointComparisonSchema,
-        endpointComparisonSummaryViewResultSchema,
-        endpointComparisonPageViewResultSchema,
-      ]),
-    ),
-    examples: [
-      {
-        title: "Compare retained static endpoints with an offline HAR",
-        input: STATIC_OBSERVED_ENDPOINT_COMPARISON_EXAMPLE,
-      },
-    ],
-  },
-  {
-    name: "compare_source_to_bundle",
-    cli: true,
-    ...toolContractMetadata("compare_source_to_bundle", evidenceEffects),
-    description:
-      'Map committed historical source to an authenticated JavaScript Application Graph. Supply HistoricalSourceGraph inline or as {kind:"file",path:"/absolute/source.json"}, and graph Evidence inline or retained. Uses explicit digest, source-map and path signals to classify unchanged, modified, removed, split, merged, duplicated or unknown; incomplete coverage and ambiguous weak matches never establish absence or force pairing. Candidate signals are opt-in. Omitted view returns the full report; view {kind:"summary"} or {kind:"source-to-bundle",collection:"mappings"} retains it for later inspect_analysis_view pages. Filters intersect, empty filters select none, and page coverage never upgrades source coverage.',
-    kind: "application",
-    inputSchema: compareSourceToBundleRequestSchema,
-    outputSchema: sourceToBundleOutputSchema,
-    examples: [
-      {
-        title:
-          "Compare committed historical source with a shipped bundle graph",
-        input: SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE,
-      },
-    ],
-  },
+  COMPARE_STATIC_AND_OBSERVED_ENDPOINTS_TOOL_CONTRACT,
+  COMPARE_SOURCE_TO_BUNDLE_TOOL_CONTRACT,
   {
     name: "compare_javascript_export_shapes",
     cli: true,

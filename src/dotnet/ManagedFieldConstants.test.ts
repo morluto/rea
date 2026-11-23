@@ -3,8 +3,6 @@ import { buildManagedPeFixture } from "../../scripts/fixtures/managed/pe.mjs";
 import { managedPeFixtureTarget } from "./ManagedPe.fixture.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { managedMemberInspectionSchema } from "../domain/managed/managedArtifact.js";
-import { MANAGED_CODED_INDEXES } from "../domain/managed/managedMetadataLayout.js";
-import { decodeMetadataCodedIndex } from "../domain/managed/managedMetadataHeaps.js";
 
 const inspectConstant = (typeCode: number, hex: string) => {
   const bytes = buildManagedPeFixture({
@@ -33,6 +31,7 @@ it("retains an i4 field default with its Constant row and encoded bytes", () => 
   );
   expect(result.fields[0]).toMatchObject({
     name: "WMGraphNotify",
+    token: "0x04000001",
     constant: {
       state: "decoded",
       element_type: "i4",
@@ -40,9 +39,10 @@ it("retains an i4 field default with its Constant row and encoded bytes", () => 
       raw_hex: "865d0000",
       declarations: [
         {
-          row_offset: expect.any(Number),
+          row_offset: 0x3dc,
           type_code: 0x08,
-          blob_index: expect.any(Number),
+          padding: 0,
+          blob_index: 13,
         },
       ],
       limitation: null,
@@ -122,14 +122,6 @@ describe("unavailable field defaults retain independent facts", () => {
     },
     {
       flags: 0x8056,
-      constants: [1, 2].map(() => ({
-        typeCode: 8,
-        value: Buffer.from("01000000", "hex"),
-      })),
-      count: 2,
-    },
-    {
-      flags: 0x8056,
       constants: [
         { typeCode: 8, padding: 1, value: Buffer.from("01000000", "hex") },
       ],
@@ -154,37 +146,43 @@ describe("unavailable field defaults retain independent facts", () => {
     },
   );
 
-  it("keeps an ordinary field distinct from historical unexamined Evidence", () => {
-    const bytes = buildManagedPeFixture();
-    const result = inspectManagedMembersBytes(
-      bytes,
-      managedPeFixtureTarget(bytes),
-    );
-    expect(result.fields[0]?.constant).toBeNull();
-    expect(result.coverage.state).toBe("complete");
-  });
-
-  it("does not decode an excluded field's malformed default", () => {
+  it("decodes an admitted default without reading the excluded type's malformed blob", () => {
     const bytes = buildManagedPeFixture({
-      fields: [{ name: "Excluded", flags: 0x8056 }],
-      constants: [{ typeCode: 8, value: Buffer.from([1]) }],
+      secondType: { name: "Excluded", firstField: 2 },
+      fields: [
+        { name: "Selected", flags: 0x8056 },
+        { name: "Invalid", flags: 0x8056 },
+      ],
+      constants: [
+        { typeCode: 8, parentRaw: 4, value: Buffer.from("01000000", "hex") },
+        { typeCode: 8, parentRaw: 8, value: Buffer.from([1]) },
+      ],
     });
     const result = inspectManagedMembersBytes(
       bytes,
       managedPeFixtureTarget(bytes),
-      { typeNames: ["Missing"] },
+      { typeNames: ["Fixture.Program"] },
     );
-    expect(result.fields).toEqual([]);
-    expect(
-      result.coverage.issues.some(({ scope }) =>
-        scope.startsWith("metadata.Constant"),
-      ),
-    ).toBe(false);
+    expect(result.selection?.unmatched_type_names).toEqual([]);
+    expect(result.fields).toMatchObject([
+      {
+        token: "0x04000001",
+        name: "Selected",
+        constant: { state: "decoded", value: 1 },
+      },
+    ]);
+    expect(result.coverage).toMatchObject({ state: "complete", issues: [] });
   });
 });
 
-it("refuses member Evidence whose fields omit the constant inspection", () => {
-  const result = inspectConstant(8, "01000000");
+it("distinguishes an observed ordinary field from historical omitted inspection", () => {
+  const bytes = buildManagedPeFixture();
+  const result = inspectManagedMembersBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+  );
+  expect(result.fields[0]?.constant).toBeNull();
+  expect(result.coverage.state).toBe("complete");
   const fields = result.fields.map(
     ({ constant: _constant, ...field }) => field,
   );
@@ -206,21 +204,6 @@ it.each([
         { typeCode: 8, parentRaw, value: Buffer.from("01000000", "hex") },
       ],
     });
-    const definition = MANAGED_CODED_INDEXES.HasConstant;
-    const counts: number[] = [];
-    counts[4] = 1;
-    const parent = decodeMetadataCodedIndex(
-      parentRaw,
-      definition.bits,
-      definition.tables,
-      counts,
-    );
-    expect(parent).toMatchObject({
-      kind: "invalid",
-      row: parentRaw === 7 ? 1 : 2,
-    });
-    if (parent.kind !== "invalid")
-      throw new Error("Expected invalid fixture parent");
     const result = inspectManagedMembersBytes(
       bytes,
       managedPeFixtureTarget(bytes),
@@ -231,9 +214,62 @@ it.each([
         expect.objectContaining({
           code: "invalid-row",
           scope: "metadata.Constant",
+          offset: 0x3dc,
           detail: expect.stringContaining(reason),
         }),
       ]),
     );
   },
 );
+
+const i4Value = (n: number): Buffer => {
+  const buf = Buffer.alloc(4);
+  buf.writeInt32LE(n, 0);
+  return buf;
+};
+
+it("binds unique and duplicate defaults to their selected fields in a non-monotonic table", () => {
+  const bytes = buildManagedPeFixture({
+    fields: ["F1", "F2", "F3", "F4"].map((name) => ({ name, flags: 0x8056 })),
+    constants: (
+      [
+        [1, 100],
+        [3, 300],
+        [2, 200],
+        [3, 301],
+        [4, 400],
+      ] as const
+    ).map(([parent, value]) => ({
+      typeCode: 8,
+      parentRaw: parent << 2,
+      value: i4Value(value),
+    })),
+  });
+  const report = inspectManagedMembersBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+    {
+      typeNames: ["Fixture.Program"],
+    },
+  );
+
+  expect(report.fields[1]).toMatchObject({
+    token: "0x04000002",
+    name: "F2",
+    constant: { state: "decoded", value: 200, raw_hex: "c8000000" },
+  });
+  expect(report.fields[2]).toMatchObject({
+    token: "0x04000003",
+    name: "F3",
+    constant: {
+      state: "unavailable",
+      value: null,
+      raw_hex: null,
+      declarations: [{ blob_index: 27 }, { blob_index: 37 }],
+    },
+  });
+  expect(report.coverage).toMatchObject({
+    state: "partial",
+    issues: [{ code: "invalid-row", scope: "metadata.Constant:0x04000003" }],
+  });
+});

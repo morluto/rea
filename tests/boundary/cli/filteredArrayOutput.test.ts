@@ -4,12 +4,13 @@ import { Writable } from "node:stream";
 
 import { estimateTokenCount } from "tokenx";
 import { expect, it } from "vitest";
+import { parseAllDocuments } from "yaml";
 
 import { formatCliOutput } from "../../../src/cli/cliOutputFormatter.js";
 import {
   parseCliOutputArguments,
   renderCliDocument,
-} from "../../../src/cliOutput.js";
+} from "../../../src/cli/cliOutput.js";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 
 const source = [{ selected: 1 }, { other: 2 }, { selected: null }];
@@ -62,6 +63,20 @@ const runFilteredCli = async (
   expect(output.failed).toBe(false);
   return Buffer.concat(chunks).toString("utf8");
 };
+
+it.each(["yaml", "toon", "md"] as const)(
+  "emits a selected null as %s",
+  async (format) => {
+    const stdout = await runFilteredCli({ binding: null }, format, "binding");
+    if (format === "yaml") {
+      const documents = parseAllDocuments(stdout);
+      expect(documents).toHaveLength(1);
+      expect(documents[0]?.toJSON()).toBeNull();
+    } else {
+      expect(stdout).toBe("null\n");
+    }
+  },
+);
 
 it.each(["csv", "tsv"] as const)(
   "exports only explicitly selected %s fields and retains page metadata",
@@ -479,7 +494,7 @@ it("projects consecutive slices through nested root arrays and merges cell field
 it.each([
   ["rows[0,2][-2,-1]", { rows: [[1], [3]] }],
   ["rows[0,2][1,1]", { rows: [[], []] }],
-  ["rows[0,2][invalid,1]", { rows: [[1], [3]] }],
+  ["rows[0,2][,1]", { rows: [[1], [3]] }],
 ] as const)("retains parsed slice bounds for %s", async (filter, expected) => {
   const output = await runFilteredCli(
     {

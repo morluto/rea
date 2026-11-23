@@ -1,5 +1,9 @@
-import { expect, it } from "vitest";
-import { parseMftIndex, selectMftMetadata } from "./ntfsMft.js";
+import { expect, it, vi } from "vitest";
+import {
+  createMftDecoder,
+  parseMftIndex,
+  selectMftMetadata,
+} from "./ntfsMft.js";
 import {
   linkedMftFixture,
   mftFileNameAttribute,
@@ -356,4 +360,94 @@ it("shares the additional-record budget across a page and replenishes it for ano
     coverage: "complete",
     linkedFileNames: [{ name: "linked" }],
   });
+});
+
+const inspectStream = async (bytes: Buffer) => {
+  const decoder = createMftDecoder(bytes.length);
+  if (!decoder.ok) throw new Error(decoder.error.message);
+  expect(decoder.value.write(bytes).ok).toBe(true);
+  const readRange = vi.fn(async (offset: number, length: number) =>
+    bytes.subarray(offset, offset + length),
+  );
+  const result = await decoder.value.finish(readRange);
+  if (!result.ok) throw new Error(result.error.message);
+  expect(result.value.metadata).toEqual(inspect(bytes, 32).metadata);
+  return { metadata: result.value.metadata, reads: readRange.mock.calls };
+};
+
+it.each([1, 40])(
+  "resolves a nested list in slot %i pointing to an out-of-page record",
+  async (listSlot) => {
+    const nameSlot = 35;
+    const bytes = Buffer.concat(
+      Array.from({ length: 41 }, (_, slot) => {
+        if (slot === 0)
+          return mftFileRecord(0, 2, [
+            residentMftAttribute(0x20, 2, mftListEntry(0x20, 4, listSlot, 7)),
+          ]);
+        if (slot === listSlot)
+          return mftFileRecord(
+            slot,
+            7,
+            [residentMftAttribute(0x20, 4, mftListEntry(0x30, 3, nameSlot, 8))],
+            {
+              baseReference: 2n << 48n,
+            },
+          );
+        if (slot === nameSlot)
+          return mftFileRecord(slot, 8, [mftFileNameAttribute(3, "linked")], {
+            baseReference: 2n << 48n,
+          });
+        return mftFileRecord(slot, 1, []);
+      }),
+    );
+    const { metadata, reads } = await inspectStream(bytes);
+    expect(metadata.record_headers[0]?.attributeListResolution).toMatchObject({
+      coverage: "complete",
+      linkedFileNames: [{ name: "linked" }],
+    });
+    expect(reads.map(([offset]) => offset / 1024)).toEqual(
+      listSlot === 1 ? [35] : [40, 35],
+    );
+  },
+);
+
+it("stops requesting additional records once the shared detail budget is filled", async () => {
+  const options = { recordBytes: 4096 };
+  const targets = Array.from({ length: 32 }, (_, index) => index + 32);
+  const bytes = Buffer.concat([
+    mftFileRecord(
+      0,
+      2,
+      [
+        residentMftAttribute(
+          0x20,
+          2,
+          Buffer.concat(targets.map((slot) => mftListEntry(0x30, 3, slot, 7))),
+        ),
+      ],
+      options,
+    ),
+    mftFileRecord(
+      1,
+      3,
+      [residentMftAttribute(0x20, 2, mftListEntry(0x30, 3, 64, 7))],
+      options,
+    ),
+    ...Array.from({ length: 30 }, (_, index) =>
+      mftFileRecord(index + 2, 1, [], options),
+    ),
+    ...[...targets, 64].map((slot) =>
+      mftFileRecord(slot, 7, [mftFileNameAttribute(3, "linked")], {
+        ...options,
+        baseReference: slot === 64 ? (3n << 48n) | 1n : 2n << 48n,
+      }),
+    ),
+  ]);
+  const { metadata, reads } = await inspectStream(bytes);
+  expect(metadata.next_record_header_index).toBe(32);
+  expect(metadata.record_headers[1]?.attributeListResolution).toMatchObject({
+    references: [{ result: { kind: "unresolved", reason: "capacity" } }],
+  });
+  expect(reads.map(([offset]) => offset / 4096)).toEqual(targets);
 });

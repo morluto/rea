@@ -52,16 +52,21 @@ export const byteEntropySchema = z.strictObject({
 });
 export type ByteEntropy = z.infer<typeof byteEntropySchema>;
 
-/** Shannon entropy in bits per byte, rounded once at the reporting boundary. */
+/**
+ * Shannon entropy in bits per byte, rounded once at the reporting boundary.
+ * When counting a selected block, also add its bins to the whole-file census.
+ */
 export const entropyFromCounts = (
   counts: ArrayLike<number>,
   length: number,
+  fileCounts?: Float64Array,
 ): number => {
   if (length === 0) return 0;
   let entropy = 0;
   for (let i = 0; i < counts.length; i++) {
     const count = counts[i] ?? 0;
     if (count > 0) {
+      if (fileCounts !== undefined) fileCounts[i] = fileCounts[i]! + count;
       const probability = count / length;
       entropy -= probability * Math.log2(probability);
     }
@@ -69,10 +74,45 @@ export const entropyFromCounts = (
   return Math.round(entropy * 10000) / 10000;
 };
 
-export const computeBlockEntropy = (bytes: Uint8Array): number => {
-  const counts = new Float64Array(256);
-  for (const byte of bytes) counts[byte] = (counts[byte] ?? 0) + 1;
-  return entropyFromCounts(counts, bytes.length);
+/**
+ * Counter for a whole-file byte census.
+ *
+ * A file may be larger than 4 GiB and one byte value may occur at least 2^32 times,
+ * so the bin has to hold counts a `Uint32Array` would wrap. Indexed reads into a
+ * `Float64Array` measure the same as into an integer bin, so exactness is free here.
+ */
+export const wholeFileByteCounts = (): Float64Array => new Float64Array(256);
+
+/**
+ * Add a run of bytes to a census.
+ *
+ * The counter is a `Float64Array` because one value can occur more than 2^32 times in a
+ * whole-file census, and an integer bin would wrap. Indexed reads into a float counter measure the
+ * same as into an integer one, so the exactness costs nothing; the gain over `for...of` comes from
+ * the indexed reads, not from the bin.
+ *
+ * Both the per-block entropy and the service's whole-file census call this, so the loop exists
+ * once and a caller cannot pick a narrower counter without the signature rejecting it.
+ */
+export const countByteValues = (
+  bytes: Uint8Array,
+  counts: Float64Array,
+): void => {
+  const length = bytes.length;
+  for (let index = 0; index < length; index += 1) {
+    const key = bytes[index] as number;
+    counts[key] = counts[key]! + 1;
+  }
+};
+
+/** Reuse one block histogram and accumulate its counts into the file census. */
+export const createBlockEntropyCalculator = (fileCounts: Float64Array) => {
+  const counts = wholeFileByteCounts();
+  return (bytes: Uint8Array): number => {
+    counts.fill(0);
+    countByteValues(bytes, counts);
+    return entropyFromCounts(counts, bytes.length, fileCounts);
+  };
 };
 
 /** Merge only adjacent classified blocks, using the reported rounded entropy. */

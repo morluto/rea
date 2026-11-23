@@ -1,4 +1,6 @@
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
+import type { Hash } from "node:crypto";
+import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import {
   type ArtifactResourceScope,
@@ -20,7 +22,10 @@ import {
   AnalysisArtifactChangedError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
-import { RegularFileChangedError } from "../filesystem/RegularFile.js";
+import {
+  RegularFileChangedError,
+  sameRegularFileState,
+} from "../filesystem/RegularFile.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
@@ -55,6 +60,85 @@ export const writeGhidraProfileArtifact = async (
   const file = await open(path, "wx", 0o600);
   await withArtifactFileHandle(path, file, resources, signal, (handle) =>
     handle.writeFile(bytes),
+  );
+};
+
+const STREAM_COPY_BUFFER_BYTES = 256 * 1024;
+
+/** Single-pass regular-file copy with optional SHA-256 streaming and descriptor ownership. */
+export const copyGhidraRegularFile = async (
+  sourcePath: string,
+  destinationPath: string,
+  resources: ArtifactResourceScope,
+  options: {
+    readonly signal?: AbortSignal | undefined;
+    readonly buffer?: Buffer | undefined;
+    readonly hash?: Hash | undefined;
+    readonly sync?: boolean | undefined;
+    readonly onOpenedSource?: ((initialSize: number) => void) | undefined;
+  } = {},
+): Promise<void> => {
+  const { signal, hash, sync, onOpenedSource } = options;
+  const scratch =
+    options.buffer ?? Buffer.allocUnsafe(STREAM_COPY_BUFFER_BYTES);
+  await withArtifactRegularFile(
+    sourcePath,
+    resources,
+    signal,
+    async ({ handle: srcHandle, initial }) => {
+      onOpenedSource?.(initial.size);
+      assertArtifactReadActive(signal);
+      const destHandle = await open(
+        destinationPath,
+        constants.O_CREAT |
+          constants.O_EXCL |
+          constants.O_WRONLY |
+          (constants.O_NOFOLLOW ?? 0),
+        0o600,
+      );
+      await withArtifactFileHandle(
+        destinationPath,
+        destHandle,
+        resources,
+        signal,
+        async (dest) => {
+          for (let offset = 0; offset < initial.size;) {
+            assertArtifactReadActive(signal);
+            const { bytesRead } = await srcHandle.read(
+              scratch,
+              0,
+              Math.min(scratch.length, initial.size - offset),
+              offset,
+            );
+            if (bytesRead === 0) throw new RegularFileChangedError(sourcePath);
+            hash?.update(scratch.subarray(0, bytesRead));
+            for (let written = 0; written < bytesRead;) {
+              assertArtifactReadActive(signal);
+              const { bytesWritten } = await dest.write(
+                scratch,
+                written,
+                bytesRead - written,
+                offset + written,
+              );
+              if (bytesWritten === 0)
+                throw new Error(
+                  `Short write copying artifact to ${destinationPath}`,
+                );
+              written += bytesWritten;
+            }
+            offset += bytesRead;
+          }
+          assertArtifactReadActive(signal);
+          if (!sameRegularFileState(initial, await srcHandle.stat()))
+            throw new RegularFileChangedError(sourcePath);
+          if (sync) {
+            assertArtifactReadActive(signal);
+            await dest.sync();
+          }
+        },
+      );
+    },
+    "reject",
   );
 };
 

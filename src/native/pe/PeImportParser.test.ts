@@ -14,7 +14,7 @@ import {
   peImportNameAtRva,
   peWithoutImportTableFixture,
 } from "../../../tests/fixtures/binaryDiagnostics/peImports.js";
-import { parsePeImports } from "./PeImportParser.js";
+import { parsePeImports, parsePeImportsFromHandle } from "./PeImportParser.js";
 
 const input = inspectPeImportsInputSchema.parse({
   path: "/artifacts/app.exe",
@@ -66,7 +66,7 @@ it.each(["standard", "delay"] as const)(
     const descriptorBytes = kind === "standard" ? 20 : 32;
     bytes.writeUInt32LE(descriptorBytes, directoryAt + 4);
 
-    const report = await parse(bytes);
+    const report = await parseWithPositionalParity(bytes);
     const rows = kind === "standard" ? report.imports : report.delay_imports;
     const directory =
       kind === "standard"
@@ -87,6 +87,49 @@ it.each(["standard", "delay"] as const)(
 
 const parse = (bytes: Buffer) => parsePeImports(bytes, artifact(bytes), input);
 
+const parseFromSource = (
+  bytes: Buffer,
+  readRange: (offset: number, length: number) => Promise<Buffer> = async (
+    offset,
+    length,
+  ) => bytes.subarray(offset, offset + length),
+) =>
+  parsePeImportsFromHandle(
+    { size: bytes.length, prefix: bytes.subarray(0, 0x400), readRange },
+    artifact(bytes),
+    input,
+  );
+
+const parseWithPositionalParity = async (bytes: Buffer) => {
+  const report = await parseFromSource(bytes);
+  expect(report).toEqual(await parse(bytes));
+  return report;
+};
+
+it("reuses separate read windows for thunks and names", async () => {
+  const functions = Array.from({ length: 400 }, (_, index) => ({
+    name: `Function${String(index)}`,
+  }));
+  const bytes = peImportImage({
+    sectionBytes: 0x4000,
+    dlls: [{ name: "KERNEL32.dll", functions }],
+  });
+  const ilt = bytes.readUInt32LE(0x400);
+  const firstName = Number(bytes.readBigUInt64LE(peImportFixtureOffset(ilt)));
+  expect(firstName - ilt).toBeGreaterThan(4096);
+  let reads = 0;
+  const report = await parseFromSource(bytes, async (offset, length) => {
+    reads++;
+    expect(length).toBeLessThanOrEqual(4096);
+    return bytes.subarray(offset, offset + length);
+  });
+  expect(report).toEqual(await parse(bytes));
+  expect(report.imports[0]?.functions.map(({ name }) => name)).toEqual(
+    functions.map(({ name }) => name),
+  );
+  expect(reads).toBeLessThanOrEqual(10);
+});
+
 it.each([
   ["standard", 0],
   ["standard", 1],
@@ -95,7 +138,9 @@ it.each([
 ] as const)(
   "retains %s rows before a descriptor mapping gap after %s rows",
   async (kind, retained) => {
-    const report = await parse(peImportDirectoryMappingStops(kind, retained));
+    const report = await parseWithPositionalParity(
+      peImportDirectoryMappingStops(kind, retained),
+    );
     const directory =
       kind === "standard"
         ? report.import_directory
@@ -129,7 +174,9 @@ it.each([
 ] as const)(
   "stops the %s descriptor walk at RVA %s",
   async (kind, rva, retained, invalid) => {
-    const report = await parse(peImportDirectoryAtRva(kind, rva));
+    const report = await parseWithPositionalParity(
+      peImportDirectoryAtRva(kind, rva),
+    );
     const directory =
       kind === "standard"
         ? report.import_directory
@@ -155,7 +202,7 @@ it.each([4096, 4097])(
   "reports a %i-byte DLL name at the fixed read boundary",
   async (length) => {
     const name = "n".repeat(length);
-    const report = await parse(
+    const report = await parseWithPositionalParity(
       peImportImage({
         sectionBytes: 8192,
         dlls: [{ name, functions: [] }],
@@ -178,7 +225,7 @@ it.each([4096, 4097])(
 );
 
 it("retains later imports when a function name exceeds the read allowance", async () => {
-  const report = await parse(
+  const report = await parseWithPositionalParity(
     peImportImage({
       sectionBytes: 8192,
       dlls: [
@@ -258,6 +305,55 @@ it("withholds the hash beyond pefile's section parser capacity", async () => {
   expect(report.imphash.reason).toMatch(/mapping|compatibility/u);
 });
 
+it("hashes a sub-page-aligned section pefile reads at its unrounded offset", async () => {
+  // SectionAlignment == FileAlignment == 0x80 with .idata at RVA 0x300 == file offset 0x300:
+  // pefile 2024.8.26 keeps PointerToRawData unrounded when it equals VirtualAddress
+  // (LdrpWx86FormatVirtualImage), so both readers see the same bytes and the hash is provable.
+  const report = await parse(
+    peImportImage({
+      bits: 64,
+      layout: {
+        sectionRva: 0x300,
+        sectionOffset: 0x300,
+        headerBytes: 0x200,
+        sectionAlignment: 0x80,
+        fileAlignment: 0x80,
+      },
+    }),
+  );
+  expect(report.imports[0]?.functions.map((row) => row.name)).toEqual([
+    "GetProcAddress",
+    "ExitProcess",
+  ]);
+  expect(report.coverage.status).toBe("complete");
+  expect(report.issues).toEqual([]);
+  expect(report.imphash.reason).toBeNull();
+  expect(report.imphash.md5).toBe(
+    createHash("md5")
+      .update("kernel32.getprocaddress,kernel32.exitprocess", "utf8")
+      .digest("hex"),
+  );
+});
+
+it("still withholds the hash when a sub-page section rounds to a different offset", async () => {
+  // Same sub-page alignment, but PointerToRawData 0x380 differs from VirtualAddress 0x400, so
+  // pefile does round it and the native mapping is not the one pefile reads.
+  const report = await parse(
+    peImportImage({
+      bits: 64,
+      layout: {
+        sectionRva: 0x400,
+        sectionOffset: 0x380,
+        headerBytes: 0x200,
+        sectionAlignment: 0x80,
+        fileAlignment: 0x80,
+      },
+    }),
+  );
+  expect(report.coverage.status).toBe("complete");
+  expect(report.imphash.md5).toBeNull();
+  expect(report.imphash.reason).toMatch(/mapping|compatibility/u);
+});
 it.each([false, true])(
   "withholds the hash when pefile stops at an earlier section (suspicious: %s)",
   async (suspicious) => {
@@ -422,7 +518,9 @@ it("reports each discontiguous file span a descriptor array consumes", async () 
     { offset: 0x428, bytes: 64 },
   ]);
   // Second section bytes move to file offset 0x400 + 0x800 + 0x200.
-  const importSplit = await parse(peImportImage({ ...options, splitAt: 20 }));
+  const importSplit = await parseWithPositionalParity(
+    peImportImage({ ...options, splitAt: 20 }),
+  );
   expect(importSplit.import_directory?.locations).toEqual([
     { offset: 0x400, bytes: 20 },
     { offset: 0xe00, bytes: 20 },
@@ -430,7 +528,9 @@ it("reports each discontiguous file span a descriptor array consumes", async () 
   expect(importSplit.delay_import_directory?.locations).toEqual([
     { offset: 0xe14, bytes: 64 },
   ]);
-  const delaySplit = await parse(peImportImage({ ...options, splitAt: 72 }));
+  const delaySplit = await parseWithPositionalParity(
+    peImportImage({ ...options, splitAt: 72 }),
+  );
   expect(delaySplit.import_directory?.locations).toEqual([
     { offset: 0x400, bytes: 40 },
   ]);
@@ -784,7 +884,7 @@ it.each(["function", "DLL"])(
       splitAt: 0x1000,
       dlls: [{ name: "KERNEL32.dll", functions }],
     });
-    const report = await parse(bytes);
+    const report = await parseWithPositionalParity(bytes);
     expect(report.imports[0]?.name).toBe("KERNEL32.dll");
     expect(report.imports[0]?.functions.map((row) => row.name)).toEqual(
       functions.map((row) => row.name),

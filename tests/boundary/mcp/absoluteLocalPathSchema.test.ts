@@ -248,7 +248,7 @@ const inputCases = (
   ];
 };
 
-it("advertises full host-absolute path constraints after SDK schema conversion", async () => {
+it("advertises portable absolute-path constraints after SDK schema conversion", async () => {
   const firmwareCalls: string[] = [];
   const { client, close } = await createMcp(firmwareCalls, "compact");
   try {
@@ -290,7 +290,8 @@ it("advertises full host-absolute path constraints after SDK schema conversion",
     for (const { name, field, valid, invalid } of schemaCases) {
       if (!listed.tools.some((tool) => tool.name === name))
         throw new Error(`Missing advertised tool ${name}`);
-      // Path rules belong to the canonical input contract.
+      // The canonical projection keeps portable constraints; handlers enforce
+      // the executing host's stricter path rules.
       const validate = ajv.compile(canonicalInputSchema(name));
       expect(validate(invalid), `${name}.${field}`).toBe(false);
       expect(

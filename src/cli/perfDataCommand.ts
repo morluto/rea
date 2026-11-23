@@ -10,11 +10,11 @@ import {
   PERF_DATA_PROVIDER,
 } from "../domain/perfData/perfData.js";
 import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
 import {
   inspectWithService,
-  registerContractCommand,
   type EvidenceInspectionService,
-} from "./contractCommand.js";
+} from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 export const registerPerfDataCommand = (

@@ -26,8 +26,10 @@ import {
   prepareProcessOwnershipInspection,
   systemProcessOwnershipHost,
 } from "../../../src/process/ProcessOwnershipObservation.js";
+import { liveProcesses } from "../../../src/process/ProcessOwnershipProcessTree.js";
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
+import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 
 const command = (script: string) => ({
   command: process.execPath,
@@ -333,36 +335,78 @@ it("keeps cancellation primary when the owned child exits during cancellation cl
   expect(failure.cancellation?.reason).toBe(callerReason);
 });
 
-it("streams stdout beyond the diagnostic budget into a sink and returns after it finishes", async () => {
-  let received = 0;
-  let finished = false;
-  const sink = new Writable({
-    write(chunk: Buffer, _encoding, callback) {
-      received += chunk.byteLength;
-      callback();
-    },
-    final(callback) {
-      // A sink still parsing after output closes delays the result.
-      setTimeout(() => {
-        finished = true;
+it.each([
+  { outcome: "success", timeoutMs: 10_000, bytes: 256 * 1024 },
+  { outcome: "timeout", timeoutMs: 50, bytes: 1025 },
+] as const)(
+  "retains stdout beyond diagnostics and settles after sink finalization for $outcome",
+  async ({ outcome, timeoutMs, bytes }) => {
+    // Advance the monotonic clock after the subprocess and sink acknowledge.
+    if (outcome === "timeout") vi.useFakeTimers({ toFake: ["performance"] });
+    const controller = new AbortController();
+    const finalizing = phaseGate();
+    const closed = phaseArrival();
+    const observeCompleted = vi.fn();
+    let received = 0;
+    const sink = new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        received += chunk.byteLength;
         callback();
-      }, 50);
-    },
-  });
-  const result = await runOwnedCommand(
-    command(
-      'process.stdout.write("a".repeat(256 * 1024)); process.stderr.write("diagnostic")',
-    ),
-    { timeoutMs: 2_000, diagnosticBytes: 1024, stdout: sink },
-  );
-  expect(finished).toBe(true);
-  expect(received).toBe(256 * 1024);
-  expect(result).toMatchObject({
-    exitCode: 0,
-    stdout: { text: "", bytes: 0 },
-    stderr: { text: "diagnostic" },
-  });
-});
+      },
+      final(callback) {
+        void finalizing.hold().then(() => callback());
+      },
+    });
+    const pending = runOwnedCommand(
+      command(
+        `process.stdout.write("a".repeat(${String(bytes)})); process.stderr.write("diagnostic")`,
+      ),
+      { timeoutMs, diagnosticBytes: 1024, stdout: sink, observeCompleted },
+      {
+        signal: controller.signal,
+        launcher: async (input) => {
+          const launched = await spawnOwnedProviderProcess(input);
+          launched.process.once("close", () => closed.arrive());
+          return launched;
+        },
+      },
+    );
+    try {
+      await finalizing.reached(pending, "stdout sink finalization");
+      await closed.reached(pending, "process output close");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(observeCompleted).not.toHaveBeenCalled();
+      expect(received).toBe(bytes);
+
+      const snapshot = {
+        exitCode: 0,
+        stdout: { text: "", bytes: 0 },
+        stderr: { text: "diagnostic" },
+      };
+      if (outcome === "timeout") {
+        vi.advanceTimersByTime(timeoutMs);
+        await expect(pending).rejects.toMatchObject({
+          reason: "timeout",
+          snapshot,
+        });
+        expect(sink.destroyed).toBe(true);
+      } else {
+        finalizing.release();
+        await expect(pending).resolves.toMatchObject(snapshot);
+        expect(sink.writableFinished).toBe(true);
+        expect(observeCompleted).toHaveBeenCalledOnce();
+      }
+    } finally {
+      finalizing.release();
+      controller.abort();
+      try {
+        await pending.catch(() => undefined);
+      } finally {
+        if (outcome === "timeout") vi.useRealTimers();
+      }
+    }
+  },
+);
 
 it("collects exact stdout bytes within their limit", async () => {
   const stdout = new OwnedCommandStdoutBytes();
@@ -386,42 +430,32 @@ it("stops a command whose stdout exceeds its byte limit as an output-limit failu
   expect(stdout.bytes.toString()).toBe("aaaa");
 });
 
-it("destroys a sink still finishing when the command deadline elapses", async () => {
+it("preserves a failed stdout sink as the cause of a collection failure", async () => {
+  const writeError = Object.assign(new Error("fixture sink failure"), {
+    code: "EACCES",
+    syscall: "write",
+  });
   const sink = new Writable({
     write(_chunk, _encoding, callback) {
-      callback();
-    },
-    final(callback) {
-      setTimeout(callback, 5_000);
+      callback(writeError);
     },
   });
-  await expect(
-    runOwnedCommand(command('process.stdout.write("observed-output")'), {
-      timeoutMs: 300,
-      diagnosticBytes: 1024,
-      stdout: sink,
-    }),
-  ).rejects.toMatchObject({ reason: "timeout" });
-  expect(sink.destroyed).toBe(true);
-});
-
-it("reports a failed stdout sink as a collection failure", async () => {
-  const sink = new Writable({
-    write(_chunk, _encoding, callback) {
-      callback(new Error("fixture sink failure"));
-    },
-  });
-  await expect(
-    runOwnedCommand(command('process.stdout.write("observed-output")'), {
-      timeoutMs: 2_000,
-      diagnosticBytes: 1024,
-      stdout: sink,
-    }),
-  ).rejects.toMatchObject({
+  const failure = await runOwnedCommand(
+    command('process.stdout.write("observed-output")'),
+    { timeoutMs: 2_000, diagnosticBytes: 1024, stdout: sink },
+  ).catch((cause: unknown) => cause);
+  if (!(failure instanceof OwnedCommandFailure))
+    throw new Error("Expected stdout collection to fail", { cause: failure });
+  expect(failure).toMatchObject({
     reason: "process",
     collectionFailure: true,
-    message: "stdout stream failed: fixture sink failure",
+    message: expect.stringContaining("stdout stream failed"),
   });
+  expect(failure.message).toContain(writeError.message);
+  expect(failure.processError).toBeUndefined();
+  expect(failure.cause instanceof Error && failure.cause.cause).toBe(
+    writeError,
+  );
 });
 
 it("fails an accepted nonzero command when an output stream errors and cleans it up", async () => {
@@ -573,9 +607,10 @@ it.skipIf(process.platform === "win32")(
       let remainsLive = true;
       const deadline = Date.now() + 2_000;
       while (remainsLive && Date.now() < deadline) {
-        remainsLive = (await systemProcessOwnershipHost.listProcesses()).some(
-          ({ pid }) => pid === descendantPid,
-        );
+        // The product's live view: an unreaped zombie row has already exited.
+        remainsLive = liveProcesses(
+          await systemProcessOwnershipHost.listProcesses(),
+        ).some(({ pid }) => pid === descendantPid);
         if (remainsLive) await delay(25);
       }
       expect(remainsLive).toBe(false);

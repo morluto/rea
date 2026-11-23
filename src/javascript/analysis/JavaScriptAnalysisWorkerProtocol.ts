@@ -2,7 +2,7 @@ import { javaScriptMemberMutationAllowanceSchema } from "../../domain/javascript
 import { javaScriptSemanticPrecisionSchema } from "../../domain/javascript/javascriptSemanticPrecision.js";
 import { z } from "zod";
 import { ANALYSIS_RESOURCE_KINDS } from "../../domain/analysisErrorCore.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
+import { ownedJsonValueSchema } from "../../domain/jsonValue.js";
 import { digestSchema } from "../../domain/digests.js";
 import {
   JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS,
@@ -82,7 +82,7 @@ export const javaScriptWorkerMessageSchema = z.discriminatedUnion("kind", [
     ...identity,
     reason: z.enum(["resource", "output", "io"]),
     resource: z.enum(ANALYSIS_RESOURCE_KINDS).nullable(),
-    limits: z.record(z.string(), jsonValueSchema).nullable(),
+    limits: z.record(z.string(), ownedJsonValueSchema).nullable(),
     message: z.string(),
   }),
 ]);

@@ -1,7 +1,8 @@
+import type { RequestAnalysisPort } from "../../../src/ports/AnalysisProvider.js";
+import type { PcapRequest } from "../../../src/domain/pcap/pcapAnalysis.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 
-import type { PcapAnalysisPort } from "../../../src/application/pcap/PcapAnalysisPort.js";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { assertAdvertisedMcpContracts } from "./mcpContractHarness.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -29,7 +30,7 @@ const clientIdentity = {
 };
 
 it("advertises exact valid pcap schemas and records inline evidence through MCP", async () => {
-  const provider: PcapAnalysisPort = {
+  const provider: RequestAnalysisPort<PcapRequest> = {
     async inspectAvailability() {
       return { status: "available", code: null, reason: null, diagnostics: {} };
     },

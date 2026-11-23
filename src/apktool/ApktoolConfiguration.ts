@@ -18,7 +18,7 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { isAbsolute, win32 } from "node:path";
+import { isQualifiedCallerPath } from "../filesystem/callerPath.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { findWindowsExecutable } from "../process/WindowsExecutable.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
@@ -81,11 +81,7 @@ export const resolveApktoolCommand = async (
   const selectedEnvironment = snapshotEnvironment(environment, platform);
   const configured = selectedEnvironment[APKTOOL_COMMAND_ENV];
   if (configured !== undefined && configured.trim() !== "") {
-    if (
-      !(platform === "win32"
-        ? win32.isAbsolute(configured)
-        : isAbsolute(configured))
-    )
+    if (!isQualifiedCallerPath(configured, platform))
       throw new ApktoolConfigurationFailure(
         "not_absolute",
         `${APKTOOL_COMMAND_ENV} must be an absolute path to the apktool launcher`,
