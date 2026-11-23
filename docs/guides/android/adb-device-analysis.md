@@ -159,6 +159,14 @@ and during shutdown.
 
 ## Interpret the result
 
+Package, process, and directory listings accept an optional `limit` and a
+zero-based `offset` among parsed rows. Use `--limit` and `--offset` on the
+CLI. Omitting both returns the full parsed listing. Paging trims the returned
+rows after ADB captures the listing. Coverage is `partial` when rows are
+omitted or ADB output contains unparsed lines. Repeat the same operation with
+the next offset to continue. Each request captures a new listing, so rows may
+shift if device state changes between calls.
+
 - **Package numeric declarations retain failures.** `inspect_adb_package`
   admits the first valid `userId` or `appId` as `user_id`: a nonnegative safe
   integer, including zero. A null value means no valid declaration was found.
