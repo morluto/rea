@@ -53,6 +53,9 @@ export class KernelBuildConfigProvider implements KernelBuildConfigPort {
     input: InspectKernelBuildConfigInput,
     options?: ExecutionOptions,
   ) {
+    let identity:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
       return await this.#resources.run(async () => {
         const report = await withStableArtifactHandle(
@@ -62,6 +65,9 @@ export class KernelBuildConfigProvider implements KernelBuildConfigPort {
             signal: options?.signal,
             resourceScope: this.#resources,
             retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
+            onIdentity: (observed) => {
+              identity = observed;
+            },
           },
           (handle) =>
             parseKernelBuildConfigFromHandle(
@@ -82,7 +88,7 @@ export class KernelBuildConfigProvider implements KernelBuildConfigPort {
         return ok(report);
       });
     } catch (cause) {
-      return err(kernelBuildConfigFailure(cause, input));
+      return err(kernelBuildConfigFailure(cause, input, identity));
     }
   }
 }
@@ -220,6 +226,7 @@ const kernelBuildConfigFailurePrimary = (
 const kernelBuildConfigFailure = (
   cause: unknown,
   input: InspectKernelBuildConfigInput,
+  identity: { readonly sha256: string; readonly bytes: number } | undefined,
 ) => {
   const primary = kernelBuildConfigFailurePrimary(
     artifactFilePrimaryFacts(cause),
@@ -231,5 +238,6 @@ const kernelBuildConfigFailure = (
     input.path,
     KERNEL_BUILD_CONFIG_PROVIDER.id,
     OPERATION,
+    identity,
   );
 };

@@ -8,6 +8,9 @@ import { inspectPeResourcesInputSchema } from "../../../src/domain/native/peReso
 import { inspectPeCertificatesInputSchema } from "../../../src/domain/native/peCertificates.js";
 import { inspectPeImportsInputSchema } from "../../../src/domain/native/peImports.js";
 import { inspectElfNotesInputSchema } from "../../../src/domain/native/elfNotes.js";
+import { inspectKernelBuildConfigInputSchema } from "../../../src/domain/native/kernelBuildConfig.js";
+import { KernelBuildConfigProvider } from "../../../src/native/elf/KernelBuildConfigProvider.js";
+import { kernelBuildConfigFixture } from "../../../src/native/elf/KernelBuildConfig.fixture.js";
 import { inspectKernelModuleInputSchema } from "../../../src/domain/native/kernelModule.js";
 import { inspectElfDependenciesInputSchema } from "../../../src/domain/native/elfDependencies.js";
 import { inspectNativeExportsInputSchema } from "../../../src/domain/native/nativeExports.js";
@@ -80,6 +83,21 @@ const cases = [
           provider.inspect(inspectElfNotesInputSchema.parse({ path }), {
             signal,
           }),
+        close: () => provider.close(),
+      };
+    },
+  },
+  {
+    name: "kernel build config",
+    fixture: kernelBuildConfigFixture,
+    make: () => {
+      const provider = new KernelBuildConfigProvider();
+      return {
+        inspect: (path: string, signal: AbortSignal) =>
+          provider.inspect(
+            inspectKernelBuildConfigInputSchema.parse({ path }),
+            { signal },
+          ),
         close: () => provider.close(),
       };
     },
