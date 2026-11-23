@@ -208,6 +208,23 @@ does not establish another instance.
   An assumed agent budget is insufficient justification for a limit. Name the
   ceiling and its recovery as described in
   [admission limits and recovery](../reference/limits-and-recovery.md).
+- Give high-cardinality discovery (`list_*`, `search_*`, `find_xrefs_*`) and
+  graph-traversal (`get_call_graph`, `trace_call_path`) tools optional per-call
+  bounds (`limit`/`offset` or `max_depth`/`max_nodes`). Omitting them preserves
+  complete behavior; supplying them should stop producer work early where
+  possible, mark truncated coverage/discovery `partial`, and report explicit
+  continuation facts (`total_*`, `truncated`, `limitations`, or
+  `residual_unknowns`).
+- Keep input schemas flat for compact advertisement: avoid redundant root
+  unions (`z.discriminatedUnion` whose branches share identical properties
+  differing only by a boolean), which double schema size and introduce root
+  `anyOf` violations that force compact-profile reduction.
+- Keep application ownership flat: reuse shared runners
+  (`executeArtifactInspection`, `executeProviderOperation` /
+  `ProviderOperationService`, `executeRetainedSummaryOperation`) instead of
+  duplicating per-operation wrappers. When moving or extracting symbols, migrate
+  all callers directly rather than leaving re-export shims or pure barrel files
+  outside enforced module-boundary entrypoints (`src/resources/index.ts`).
 
 ### Compose declared Evidence inputs
 
