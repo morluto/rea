@@ -1,4 +1,5 @@
 import { nodeCodecResult } from "../kernel/nodeCodecResult.js";
+import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
 import { inflateSync } from "node:zlib";
 import { z } from "zod";
 import { RUST_PRODUCER_DEFAULTS } from "../domain/rust/rustResourceLimits.js";
@@ -12,12 +13,13 @@ import {
   decodeLimit,
   malformedInput,
   ParseFailureError,
+  truncatedInput,
 } from "../domain/parseFailure.js";
 import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 /** Compressed zlib stream limit. */
-const RUST_SECTION_BYTES = 1024 * 1024;
+export const RUST_SECTION_BYTES = 1024 * 1024;
 /** Inflated JSON may grow by at most this multiple of the compressed stream. */
 export const RUST_INFLATE_RATIO = 64;
 /** Absolute inflated JSON limit, applied together with the ratio. */
@@ -53,35 +55,99 @@ const malformedSection = (detail: string, cause: unknown) =>
 
 export const RUST_AUDITABLE_GRAPH_LIMIT = "dependency graph output bytes";
 
-const compressedSectionLimit = (required: number) =>
+const compressedSectionLimit = (required?: number) =>
   decodeLimit(
     RUST_AUDITABLE_FORMAT,
     "Dependency section exceeds the 1 MiB compressed limit",
     {
       name: "compressed dependency bytes",
       maximum: RUST_SECTION_BYTES,
-      required,
+      ...(required === undefined ? {} : { required }),
     },
   );
+
+const assertAuditableSectionSize = (
+  sectionBytes: number,
+  peFileAlignment?: number,
+): void => {
+  if (sectionBytes === 0)
+    throw malformedInput(RUST_AUDITABLE_FORMAT, "Dependency section is empty");
+  if (sectionBytes > RUST_SECTION_BYTES && peFileAlignment === undefined)
+    throw compressedSectionLimit(sectionBytes);
+};
+
+interface AuditableSectionOptions {
+  readonly peFileAlignment?: number | undefined;
+  readonly maxOutputBytes?: number | undefined;
+}
+
+type InflatedDependency = {
+  readonly bytes: Buffer;
+  readonly compressedBytes: number;
+};
 
 /** Parsed section payload. Cycles are listed and are not walked. */
 export const readAuditableSection = (
   sectionName: RustAuditableMetadata["section_name"],
   fileOffset: number,
   bytes: Buffer,
-  options: {
-    readonly peFileAlignment?: number | undefined;
-    readonly maxOutputBytes?: number | undefined;
-  } = {},
+  options: AuditableSectionOptions = {},
 ): RustAuditableMetadata => {
-  if (bytes.length === 0)
-    throw malformedInput(RUST_AUDITABLE_FORMAT, "Dependency section is empty");
-  if (
-    bytes.length > RUST_SECTION_BYTES &&
-    options.peFileAlignment === undefined
-  )
-    throw compressedSectionLimit(bytes.length);
-  const inflated = inflateSection(bytes, options.peFileAlignment);
+  assertAuditableSectionSize(bytes.length, options.peFileAlignment);
+  const inflated = inflateSectionPrefix(
+    bytes,
+    bytes.length,
+    options.peFileAlignment,
+  );
+  assertZeroPadding(bytes.subarray(inflated.compressedBytes));
+  return projectAuditableSection(
+    sectionName,
+    fileOffset,
+    bytes.length,
+    inflated,
+    options,
+  );
+};
+
+/** Decode a bounded zlib prefix and verify the remaining PE storage in chunks. */
+export const readAuditableSectionFromReader = async (
+  sectionName: RustAuditableMetadata["section_name"],
+  { offset, size }: { readonly offset: number; readonly size: number },
+  readRange: (offset: number, length: number) => Promise<Buffer>,
+  pause: ZstandardFramePause,
+  options: AuditableSectionOptions = {},
+): Promise<RustAuditableMetadata> => {
+  assertAuditableSectionSize(size, options.peFileAlignment);
+  const read = async (at: number, length: number): Promise<Buffer> => {
+    const bytes = await readRange(at, length);
+    if (bytes.length !== length)
+      throw truncatedInput(
+        RUST_AUDITABLE_FORMAT,
+        "Dependency section read ended early",
+        { offset: at + bytes.length },
+      );
+    return bytes;
+  };
+  const prefix = await read(offset, Math.min(size, RUST_SECTION_BYTES));
+  const inflated = inflateSectionPrefix(prefix, size, options.peFileAlignment);
+  assertZeroPadding(prefix.subarray(inflated.compressedBytes));
+  for (let checked = prefix.length; checked < size;) {
+    await pause();
+    const length = Math.min(64 * 1024, size - checked);
+    assertZeroPadding(await read(offset + checked, length));
+    checked += length;
+  }
+  return projectAuditableSection(sectionName, offset, size, inflated, options);
+};
+
+const projectAuditableSection = (
+  sectionName: RustAuditableMetadata["section_name"],
+  fileOffset: number,
+  storedBytes: number,
+  inflated: InflatedDependency,
+  options: AuditableSectionOptions,
+): RustAuditableMetadata => {
+  assertInflationRatio(inflated);
   const document = parseDocument(
     inflated.bytes,
     options.maxOutputBytes ?? RUST_PRODUCER_DEFAULTS.output_bytes,
@@ -91,7 +157,7 @@ export const readAuditableSection = (
   return {
     section_name: sectionName,
     file_offset: fileOffset,
-    section_bytes: bytes.length,
+    section_bytes: storedBytes,
     compressed_bytes: inflated.compressedBytes,
     uncompressed_bytes: inflated.bytes.length,
     format_version: document.format ?? null,
@@ -107,18 +173,16 @@ export const readAuditableSection = (
   };
 };
 
-const inflateSection = (
+const inflateSectionPrefix = (
   bytes: Buffer,
+  storedBytes: number,
   peFileAlignment: number | undefined,
-): {
-  readonly bytes: Buffer;
-  readonly compressedBytes: number;
-} => {
+): InflatedDependency => {
   // Keep inflate allocation bounded before consumed input is known. PE storage
   // can include zero alignment bytes, so the ratio is checked after decoding.
   const allocationMaximum = Math.min(
     RUST_UNCOMPRESSED_BYTES,
-    bytes.length * RUST_INFLATE_RATIO,
+    storedBytes * RUST_INFLATE_RATIO,
   );
   let result: ReturnType<typeof nodeCodecResult>;
   try {
@@ -129,6 +193,14 @@ const inflateSection = (
       }),
     );
   } catch (cause) {
+    if (
+      bytes.length === RUST_SECTION_BYTES &&
+      bytes.length < storedBytes &&
+      cause instanceof Error &&
+      "code" in cause &&
+      cause.code === "Z_BUF_ERROR"
+    )
+      throw compressedSectionLimit();
     // Only a padded section whose storage-derived allowance is below the fixed
     // cap is bounded by its storage size; otherwise the fixed cap applies.
     throw inflateFailure(
@@ -142,36 +214,42 @@ const inflateSection = (
   const compressedBytes = result.consumedBytes;
   if (compressedBytes > RUST_SECTION_BYTES)
     throw compressedSectionLimit(compressedBytes);
-  if (peFileAlignment !== undefined && peFileAlignment > 0) {
-    const padding = bytes.subarray(compressedBytes);
-    const alignedRawSize =
-      Math.ceil(compressedBytes / peFileAlignment) * peFileAlignment;
-    if (bytes.length !== alignedRawSize || padding.some((byte) => byte !== 0))
-      throw malformedInput(
-        RUST_AUDITABLE_FORMAT,
-        "Dependency section has bytes after the zlib stream",
-      );
-  } else if (compressedBytes !== bytes.length) {
-    throw malformedInput(
-      RUST_AUDITABLE_FORMAT,
-      "Dependency section has bytes after the zlib stream",
-    );
-  }
+  const expectedStoredBytes =
+    peFileAlignment !== undefined && peFileAlignment > 0
+      ? Math.ceil(compressedBytes / peFileAlignment) * peFileAlignment
+      : compressedBytes;
+  if (storedBytes !== expectedStoredBytes) throw unexpectedTrailingBytes();
+  return { bytes: result.buffer, compressedBytes };
+};
+
+const unexpectedTrailingBytes = () =>
+  malformedInput(
+    RUST_AUDITABLE_FORMAT,
+    "Dependency section has bytes after the zlib stream",
+  );
+
+const assertZeroPadding = (bytes: Buffer): void => {
+  if (bytes.some((byte) => byte !== 0)) throw unexpectedTrailingBytes();
+};
+
+const assertInflationRatio = ({
+  bytes,
+  compressedBytes,
+}: InflatedDependency): void => {
   const compressedMaximum = Math.min(
     RUST_UNCOMPRESSED_BYTES,
     compressedBytes * RUST_INFLATE_RATIO,
   );
-  if (result.buffer.length > compressedMaximum)
+  if (bytes.length > compressedMaximum)
     throw decodeLimit(
       RUST_AUDITABLE_FORMAT,
       "Inflated dependency JSON exceeds the size limit",
       {
         name: "inflated dependency JSON bytes",
         maximum: compressedMaximum,
-        required: result.buffer.length,
+        required: bytes.length,
       },
     );
-  return { bytes: result.buffer, compressedBytes };
 };
 
 const inflateFailure = (
