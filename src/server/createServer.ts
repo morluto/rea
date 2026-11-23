@@ -314,9 +314,7 @@ export const createServer = (
   } = createSessionRecorders(server, session);
   const analysisAdmission = withAdmittedAnalysis(source);
   server.withAdmittedAnalysis = analysisAdmission;
-  const previousOnclose = server.server.onclose;
-  server.server.onclose = () => {
-    previousOnclose?.();
+  server.registerTransportCloseHook(() => {
     void closeProviders().catch((cause: unknown) => {
       logger.error(
         {
@@ -326,17 +324,10 @@ export const createServer = (
         "Provider cleanup failed during server shutdown",
       );
     });
-  };
-  const closeServer = server.close.bind(server);
-  server.close = async () => {
-    const results = await Promise.allSettled([closeServer(), closeProviders()]);
-    const failures = results.flatMap((result) =>
-      result.status === "rejected" ? [result.reason as unknown] : [],
-    );
-    if (failures.length === 1) throw failures[0];
-    if (failures.length > 1)
-      throw new AggregateError(failures, "REA server cleanup failed");
-  };
+  });
+  server.registerCloseHook(closeProviders, {
+    failureMessage: "REA server cleanup failed",
+  });
   const contractTools = {
     logger: toolLogger,
     recordEvidence,
