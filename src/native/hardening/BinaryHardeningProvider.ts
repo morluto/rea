@@ -1,26 +1,20 @@
 import { hasDosMzMagic } from "../../domain/dosMz.js";
-import {
-  parseFailureAnalysisError,
-  parseLimitConstraint,
-} from "../../domain/parseFailureAnalysisError.js";
+import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import {
   imageFileSizeRemediation,
-  projectOwnedArtifactIdentityFailure,
-  projectSelectedArtifactFileFailure,
-  stableArtifactInputFailure,
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
-  ArtifactReaderFailure,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
   ArtifactResourceScope,
 } from "../../resources/index.js";
 import type { BinaryHardeningPort } from "../../ports/binaryDiagnostics/BinaryHardeningPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
-import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   BINARY_HARDENING_LIMITATIONS,
@@ -182,78 +176,61 @@ export const readBinaryHardening = async (
   };
 };
 
-const binaryHardeningFailurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
-  input: InspectBinaryHardeningInput,
-): AnalysisError => {
-  const { cause, origin } = facts;
-  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
-    return cause;
-  const identityFailure = projectOwnedArtifactIdentityFailure(
-    facts,
-    OPERATION,
-    input.path,
-  );
-  if (identityFailure !== undefined) return identityFailure;
-  if (cause instanceof BinaryResourceFailure)
-    return parseLimitConstraint(OPERATION, "capacity", cause, {
-      path: input.path,
-      ...fixedAllowanceOptions(
-        "The binary hardening structural allowance",
-        "parser",
-        binaryResourceCeiling(cause),
-      ),
-    });
-  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
-  if (formatFailure !== undefined) return formatFailure;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        cause.message,
-        { max_file_bytes: input.max_file_bytes },
-        {
-          cause,
-          retryable: false,
-          remediationAction: imageFileSizeRemediation(
-            input.max_file_bytes,
-            MAX_INSPECT_BINARY_HARDENING_FILE_BYTES,
-          ),
-        },
-      );
-    if (cause.reason === "path" || cause.reason === "format")
-      return stableArtifactInputFailure(cause, OPERATION);
-  }
-  const fileFailure = projectSelectedArtifactFileFailure(
-    cause,
-    OPERATION,
-    input.path,
-    "image",
-  );
-  if (fileFailure !== undefined) return fileFailure;
-  return new ProviderAdapterError(BINARY_HARDENING_PROVIDER.id, OPERATION, {
-    cause,
-    diagnostics: {
-      path: input.path,
-      reason: errorMessage(cause),
-    },
-  });
-};
-
 const binaryHardeningFailure = (
   cause: unknown,
   input: InspectBinaryHardeningInput,
   snapshot?: { readonly sha256: string; readonly bytes: number },
-): AnalysisError =>
-  projectStableArtifactFailure(
+): AnalysisError => {
+  const facts = artifactFilePrimaryFacts(cause);
+  const primary = classifyProviderFailure(
+    facts.cause,
+    offlineArtifactFailureDialect(facts, {
+      providerId: BINARY_HARDENING_PROVIDER.id,
+      operation: OPERATION,
+      path: input.path,
+      description: "image",
+      recognise: (failure) =>
+        failure instanceof BinaryResourceFailure
+          ? parseLimitConstraint(OPERATION, "capacity", failure, {
+              path: input.path,
+              ...fixedAllowanceOptions(
+                "The binary hardening structural allowance",
+                "parser",
+                binaryResourceCeiling(failure),
+              ),
+            })
+          : undefined,
+      fileSize: (failure) =>
+        new AnalysisResourceConstraintError(
+          OPERATION,
+          "file-size",
+          failure.message,
+          { max_file_bytes: input.max_file_bytes },
+          {
+            cause: failure,
+            retryable: false,
+            remediationAction: imageFileSizeRemediation(
+              input.max_file_bytes,
+              MAX_INSPECT_BINARY_HARDENING_FILE_BYTES,
+            ),
+          },
+        ),
+      unclassified: (failure) =>
+        new ProviderAdapterError(BINARY_HARDENING_PROVIDER.id, OPERATION, {
+          cause: failure,
+          diagnostics: {
+            path: input.path,
+            reason: errorMessage(failure),
+          },
+        }),
+    }),
+  );
+  return projectStableArtifactFailure(
     cause,
-    binaryHardeningFailurePrimary(artifactFilePrimaryFacts(cause), input),
+    primary,
     input.path,
     BINARY_HARDENING_PROVIDER.id,
     OPERATION,
     snapshot,
   );
+};

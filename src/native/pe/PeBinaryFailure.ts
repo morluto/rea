@@ -1,13 +1,10 @@
 import type { FixedCeilingFacts } from "../../domain/fixedAllowanceRemediation.js";
-import {
-  parseFailureAnalysisError,
-  parseLimitConstraint,
-} from "../../domain/parseFailureAnalysisError.js";
+import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import {
   projectStableArtifactFailure,
   artifactFilePrimaryFacts,
 } from "../../resources/index.js";
-import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisResourceConstraintError,
   type ResourceConstraintRecovery,
@@ -19,6 +16,7 @@ import {
   binaryResourceAllowance,
 } from "../../domain/binaryContainer.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
 
 interface PeBinaryInput {
@@ -46,23 +44,24 @@ export const projectPeBinaryFailure = <Limit extends string>(
   snapshot?: Parameters<typeof projectStableArtifactFailure>[5],
 ): AnalysisError => {
   const { operation, providerId } = options;
-  const { cause: primaryCause } = artifactFilePrimaryFacts(cause);
-  const primary = classifyProviderFailure(primaryCause, {
-    providerId,
-    operation,
-    recognise: (failure) => {
-      if (failure instanceof BinaryResourceFailure) {
-        const limit = binaryResourceAllowance(failure, options.limits);
-        return parseLimitConstraint(operation, "capacity", failure, {
-          path: input.path,
-          ...options.limitRecovery(limit, binaryResourceCeiling(failure)),
-        });
-      }
-      return parseFailureAnalysisError(operation, input.path, failure);
-    },
-    file: {
+  const facts = artifactFilePrimaryFacts(cause);
+  const primary = classifyProviderFailure(
+    facts.cause,
+    offlineArtifactFailureDialect(facts, {
+      providerId,
+      operation,
       path: input.path,
       description: "image",
+      recognise: (failure) => {
+        if (failure instanceof BinaryResourceFailure) {
+          const limit = binaryResourceAllowance(failure, options.limits);
+          return parseLimitConstraint(operation, "capacity", failure, {
+            path: input.path,
+            ...options.limitRecovery(limit, binaryResourceCeiling(failure)),
+          });
+        }
+        return undefined;
+      },
       fileSize: (failure) =>
         new AnalysisResourceConstraintError(
           operation,
@@ -75,16 +74,16 @@ export const projectPeBinaryFailure = <Limit extends string>(
             remediationAction: options.fileSizeRemediation(),
           },
         ),
-    },
-    unclassified: (failure) =>
-      new ProviderAdapterError(providerId, operation, {
-        cause: failure,
-        diagnostics: {
-          path: input.path,
-          reason: errorMessage(failure),
-        },
-      }),
-  });
+      unclassified: (failure) =>
+        new ProviderAdapterError(providerId, operation, {
+          cause: failure,
+          diagnostics: {
+            path: input.path,
+            reason: errorMessage(failure),
+          },
+        }),
+    }),
+  );
   return projectStableArtifactFailure(
     cause,
     primary,
