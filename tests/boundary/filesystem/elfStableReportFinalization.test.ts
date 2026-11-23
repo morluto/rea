@@ -5,6 +5,8 @@ import { expect, it, vi } from "vitest";
 import { createElfDependenciesService } from "../../../src/composition/binaryDiagnostics/elfDependencies.js";
 import { createElfNotesService } from "../../../src/composition/binaryDiagnostics/elfNotes.js";
 import { createElfUnwindRangesService } from "../../../src/composition/binaryDiagnostics/elfUnwindRanges.js";
+import { createKernelBuildConfigService } from "../../../src/composition/binaryDiagnostics/kernelBuildConfig.js";
+import { createKernelModuleService } from "../../../src/composition/binaryDiagnostics/kernelModule.js";
 import {
   primaryAnalysisError,
   resolvedAnalysisError,
@@ -13,6 +15,8 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { elfDependencyFixture } from "../../../src/native/elf/ElfDependencies.fixture.js";
 import { elfNoteFixture } from "../../../src/native/elf/ElfNotes.fixture.js";
 import { elfUnwindFixture } from "../../../src/native/elf/ElfUnwindTables.fixture.js";
+import { kernelBuildConfigFixture } from "../../../src/native/elf/KernelBuildConfig.fixture.js";
+import { kernelModuleFixture } from "../../../src/native/elf/KernelModule.fixture.js";
 import {
   expectRetainedDescriptor,
   withDescriptorCloseFailure,
@@ -55,6 +59,31 @@ it.each([
       ranges: expect.arrayContaining([
         expect.objectContaining({ start: "0x400100", end: "0x400120" }),
       ]),
+    },
+  },
+  {
+    operation: "inspect_kernel_build_config",
+    createService: createKernelBuildConfigService,
+    fixture: kernelBuildConfigFixture,
+    observed: {
+      banner: { version: "6.6.0" },
+      config: { status: "present", option_count: 9 },
+    },
+  },
+  {
+    operation: "inspect_kernel_module",
+    createService: createKernelModuleService,
+    fixture: kernelModuleFixture,
+    observed: {
+      versions: {
+        entries: expect.arrayContaining([
+          expect.objectContaining({
+            name: "printk",
+            crc_hex: "0000000012345678",
+          }),
+        ]),
+      },
+      signature: { status: "present" },
     },
   },
 ])(

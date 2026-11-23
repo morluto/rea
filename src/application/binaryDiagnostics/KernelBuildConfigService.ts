@@ -38,6 +38,7 @@ export class KernelBuildConfigService {
         inputSchema: inspectKernelBuildConfigInputSchema,
         outputSchema: kernelBuildConfigSchema,
         provider: this.provider,
+        retainCompletedReport: true,
         invalidOutputMessage:
           "Kernel build config provider returned malformed output or changed artifact identity.",
         toParameters: (input) => input,

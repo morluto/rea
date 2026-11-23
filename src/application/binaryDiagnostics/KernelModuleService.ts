@@ -41,6 +41,7 @@ export class KernelModuleService {
         inputSchema: inspectKernelModuleInputSchema,
         outputSchema: kernelModuleSchema,
         provider: this.provider,
+        retainCompletedReport: true,
         invalidOutputMessage:
           "Kernel module provider returned malformed output or changed artifact identity.",
         toParameters: (input) => input,
