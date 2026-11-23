@@ -1151,11 +1151,11 @@ it.each(["pt-note", "pt-gnu-property", "section"] as const)(
       carrier === "pt-gnu-property" ? 0x6474e553 : 4,
     );
     // This 12-byte alias exposes the compression header as invalid note framing.
+    const offsetField = carrier === "section" ? section + 64 + 24 : program + 8;
+    bytes.writeBigUInt64LE(alias, offsetField);
     if (carrier === "section") {
       bytes.writeUInt32LE(0, program);
-      bytes.writeBigUInt64LE(alias, section + 64 + 24);
     } else {
-      bytes.writeBigUInt64LE(alias, program + 8);
       bytes.writeBigUInt64LE(12n, program + 32);
       bytes.writeBigUInt64LE(12n, program + 40);
     }
@@ -1166,6 +1166,12 @@ it.each(["pt-note", "pt-gnu-property", "section"] as const)(
       state: "unknown",
       note: expect.stringContaining("compressed SHT_NOTE"),
     });
+    const header = bytes.subarray(Number(alias), Number(alias) + 12);
+    const disjoint = Buffer.concat([bytes, header]);
+    disjoint.writeBigUInt64LE(BigInt(bytes.length), offsetField);
+    expect(() => readElfHardening(disjoint)).toThrow(
+      /note entry exceeds its table/u,
+    );
   },
 );
 
