@@ -41,6 +41,7 @@ import {
 } from "./analysisViewCoverage.js";
 import { analysisViewResultInputError } from "./analysisViewParent.js";
 import { ARTIFACT_INVENTORY_VIEW_CAVEATS } from "./artifactInventoryViewCaveats.js";
+import { androidOtaPayloadSummaryMetadataSchema } from "./androidOtaPayloadSummary.js";
 import {
   espFlashImageSummaryMetadataSchema,
   summaryRootMetadata,
@@ -64,6 +65,12 @@ export const artifactInventoryViewRequestSchema = z.discriminatedUnion(
       entry_kinds: z
         .array(artifactOccurrenceSchema.shape.entry_kind)
         .optional(),
+      artifact_kinds: z
+        .array(artifactOccurrenceSchema.shape.artifact_kind)
+        .optional()
+        .describe(
+          'Exact recognized artifact kinds, e.g. ["native-addon"]; [] matches none. Unrecognized bytes keep kind unknown.',
+        ),
       fields: z.array(artifactOccurrenceSchema.keyof()).optional(),
     }),
     z.strictObject({
@@ -106,9 +113,16 @@ export const artifactInventorySummarySchema = z.strictObject({
     })
     .exactOptional(),
   manifest: artifactGraphManifestSchema,
-  /** An ESP flash layout's nested images appear as summaries here. */
+  /**
+   * An ESP flash layout's nested images appear as summaries here, and an
+   * Android OTA payload's partition, group and APEX arrays as counts.
+   */
   root_format_metadata: z
-    .union([artifactFormatMetadataSchema, espFlashImageSummaryMetadataSchema])
+    .union([
+      artifactFormatMetadataSchema,
+      espFlashImageSummaryMetadataSchema,
+      androidOtaPayloadSummaryMetadataSchema,
+    ])
     .exactOptional(),
   available_counts: z.strictObject({
     nodes: z.number().int().nonnegative(),
@@ -185,7 +199,7 @@ const parseSource = (
   if (cached !== undefined && cached.operation === parent.operation) {
     try {
       validateArtifactInventorySubject(
-        parent.subject ?? null,
+        parent.subject,
         cached.source.inventory.manifest,
       );
     } catch (cause: unknown) {
@@ -210,14 +224,14 @@ const parseSourceUncached = (
       return ok({
         inventory: parseArtifactInventoryResult(
           parent.normalizedResult,
-          parent.subject ?? null,
+          parent.subject,
         ),
         evidenceIds: [],
         inspection: null,
       });
     const parsed = parseArtifactInspectionInventoryResult(
       parent.normalizedResult,
-      parent.subject ?? null,
+      parent.subject,
     );
     return ok({
       inventory: parsed.inventory,
@@ -289,7 +303,8 @@ export const projectArtifactInventoryView = (
     inventory.manifest.root_format === "uf2" ||
     inventory.manifest.root_format === "dfuse" ||
     inventory.manifest.root_format === "esp-flash-image" ||
-    inventory.manifest.root_format === "fit";
+    inventory.manifest.root_format === "fit" ||
+    inventory.manifest.root_format === "android-ota-payload";
   const counts = inventoryCounts(source);
   const limitations = uniqueSorted([
     ...parent.limitations,
@@ -483,15 +498,32 @@ const occurrenceIndices = (
   if (
     view.occurrence_ids === undefined &&
     view.logical_paths === undefined &&
-    view.entry_kinds === undefined
+    view.entry_kinds === undefined &&
+    view.artifact_kinds === undefined
   )
     return undefined;
   if (
     view.occurrence_ids?.length === 0 ||
     view.logical_paths?.length === 0 ||
-    view.entry_kinds?.length === 0
+    view.entry_kinds?.length === 0 ||
+    view.artifact_kinds?.length === 0
   )
     return [];
+  const artifactKinds =
+    view.artifact_kinds === undefined
+      ? undefined
+      : new Set(view.artifact_kinds);
+  const matchesArtifactKind = (index: number) =>
+    artifactKinds === undefined ||
+    artifactKinds.has(source.inventory.occurrences[index]!.artifact_kind);
+  if (
+    view.occurrence_ids === undefined &&
+    view.logical_paths === undefined &&
+    view.entry_kinds === undefined
+  )
+    return source.inventory.occurrences.flatMap((_, index) =>
+      matchesArtifactKind(index) ? [index] : [],
+    );
   if (source.index === undefined) {
     const byId = new Map<string, number>();
     const byPath = new Map<string, number[]>();
@@ -530,8 +562,9 @@ const occurrenceIndices = (
   return selected
     .filter(
       (index) =>
-        kinds === undefined ||
-        kinds.has(source.inventory.occurrences[index]!.entry_kind),
+        (kinds === undefined ||
+          kinds.has(source.inventory.occurrences[index]!.entry_kind)) &&
+        matchesArtifactKind(index),
     )
     .sort((left, right) => left - right);
 };

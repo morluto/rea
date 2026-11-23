@@ -5,24 +5,26 @@ import { dirname, join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  phaseArrival,
+  phaseGate,
+  type PhaseGate,
+} from "../../support/lifecycleHarness.js";
 import { z } from "zod";
 
 import {
   createAnalysisExecution,
   type AnalysisProvider,
   type CapabilityDescriptor,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import type { DirectAnalysisDependencies } from "../../../src/application/DirectAnalysisDependencies.js";
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
-import {
-  createDeferred,
-  createTestBinarySession,
-} from "../../fixtures/binarySession.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
-import { createEvidence } from "../../../src/domain/evidence.js";
+import { createEvidence, type Evidence } from "../../../src/domain/evidence.js";
+import { displayedEvidenceSubject } from "../../fixtures/evidenceSubject.js";
 import { readAnalysisSnapshot } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
 import { ok } from "../../../src/domain/result.js";
 import {
@@ -33,6 +35,7 @@ import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { recordUnknownInputSchema } from "../../../src/domain/residualUnknown.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const identity = { id: "fixture", name: "Fixture", version: "1" } as const;
 const profile = createAnalysisProfile(identity, { fixture: true });
@@ -82,7 +85,7 @@ describe("MCP external command snapshot retirement", () => {
         arguments: { path: targetPath, command: "iI" },
       });
       let closeSettled = false;
-      const closeStarted = createDeferred<void>();
+      const snapshotClose = phaseArrival();
       let closeRequest: ReturnType<typeof mcp.callTool> | undefined;
       try {
         const readyDeadline = Date.now() + 5_000;
@@ -101,17 +104,13 @@ describe("MCP external command snapshot retirement", () => {
               name: "close_binary",
               arguments: { snapshot_path: snapshotPath },
             },
-            { onprogress: () => closeStarted.resolve() },
+            { onprogress: () => snapshotClose.arrive() },
           )
           .finally(() => {
             closeSettled = true;
           });
         // Close queues its transition before sending its first progress event.
-        await awaitAcknowledgement(
-          closeStarted.promise,
-          closeRequest,
-          "snapshot close progress",
-        );
+        await snapshotClose.reached(closeRequest, "snapshot close progress");
         expect(closeSettled).toBe(false);
         await expect(access(snapshotPath)).rejects.toMatchObject({
           code: "ENOENT",
@@ -186,15 +185,14 @@ describe("MCP composed workflow target admission", () => {
       throw new Error("Expected two workflow targets");
     const starts: string[] = [];
     const calls: string[] = [];
-    const entered = createDeferred<void>();
-    const release = createDeferred<void>();
+    const providerEntry = phaseGate();
     const session = createWorkflowSession(
-      makeProvider(starts, calls, undefined, { entered, release }),
+      makeProvider(starts, calls, undefined, providerEntry),
     );
     const { mcp } = await connectWorkflowMcp(session, "admitted-workflow");
-    const closeStarted = createDeferred<void>();
+    const workflowClose = phaseArrival();
     mcp.setNotificationHandler("notifications/progress", () => {
-      closeStarted.resolve();
+      workflowClose.arrive();
     });
     await openWorkflowTarget(mcp, firstPath);
 
@@ -205,27 +203,19 @@ describe("MCP composed workflow target admission", () => {
     let closeRequest: ReturnType<typeof mcp.callTool> | undefined;
     let openRequest: ReturnType<typeof mcp.callTool> | undefined;
     try {
-      await awaitAcknowledgement(
-        entered.promise,
-        analysisRequest,
-        "workflow provider entry",
-      );
+      await providerEntry.reached(analysisRequest, "workflow provider entry");
       closeRequest = mcp.callTool({
         name: "close_binary",
         arguments: { snapshot_path: snapshotPath },
         _meta: { progressToken: "close-race" },
       });
-      await awaitAcknowledgement(
-        closeStarted.promise,
-        closeRequest,
-        "workflow close progress",
-      );
+      await workflowClose.reached(closeRequest, "workflow close progress");
       openRequest = mcp.callTool({
         name: "open_binary",
         arguments: { path: secondPath },
       });
     } finally {
-      release.resolve();
+      providerEntry.release();
       await Promise.allSettled([
         analysisRequest,
         ...(closeRequest === undefined ? [] : [closeRequest]),
@@ -582,6 +572,21 @@ describe("MCP investigation history snapshot replay", () => {
   );
 });
 
+const expectSourceReplay = (
+  evidence: Evidence,
+  parentId: string,
+  sourceId: string,
+) => {
+  expect(evidence.evidence_links.toSorted()).toEqual(
+    [parentId, sourceId].toSorted(),
+  );
+  expect(evidence.limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining("did not re-run the provider"),
+    ]),
+  );
+};
+
 it("replays a source-bearing observation through an exported MCP snapshot", async () => {
   const { targetPaths, snapshotPath } = await createWorkflowFiles(
     "rea-mcp-source-replay-",
@@ -615,37 +620,66 @@ it("replays a source-bearing observation through an exported MCP snapshot", asyn
       };
     },
   };
-  const { mcp } = await connectWorkflowMcp(
-    createWorkflowSession(provider),
-    "source-replay",
-  );
+  const session = createWorkflowSession(provider);
+  const { mcp } = await connectWorkflowMcp(session, "source-replay");
   await openWorkflowTarget(mcp, targetPath);
-  const read = (client: Client) =>
-    client.callTool({
-      name: "list_strings",
-      arguments: { document: "fixture" },
-    });
-  const first = await read(mcp);
-  const firstEvidence = toolContract("list_strings").outputSchema.parse(
-    first.structuredContent,
-  );
+  const read = async (client: Client) =>
+    toolContract("list_strings").outputSchema.parse(
+      (
+        await client.callTool({
+          name: "list_strings",
+          arguments: { document: "fixture" },
+        })
+      ).structuredContent,
+    );
+  const firstEvidence = await read(mcp);
   expect(firstEvidence.evidence_links).toHaveLength(1);
-  const second = await read(mcp);
-  const secondEvidence = toolContract("list_strings").outputSchema.parse(
-    second.structuredContent,
+  const secondEvidence = await read(mcp);
+  const sourceId = firstEvidence.evidence_links[0]!;
+  expectSourceReplay(secondEvidence, firstEvidence.evidence_id, sourceId);
+  const original = await session.execute("list_strings", {
+    document: "fixture",
+  });
+  if (!original.ok) throw original.error;
+  const source = original.value.sourceEvidence?.find(
+    (record) => record.evidence_id === sourceId,
   );
-  expect(secondEvidence.evidence_links).toEqual(
-    expect.arrayContaining([
-      ...firstEvidence.evidence_links,
-      firstEvidence.evidence_id,
-    ]),
+  if (!source) throw new Error("Expected the cached source");
+  const relocatedPath = join(dirname(targetPath), "relocated-source.hop");
+  const sourcePath = join(dirname(snapshotPath), "display-update.json");
+  await writeFile(
+    sourcePath,
+    JSON.stringify(
+      createEvidenceBundle([
+        {
+          ...source,
+          subject: displayedEvidenceSubject(source.subject, {
+            local_path: relocatedPath,
+            name: "relocated-source.hop",
+          }),
+        },
+      ]),
+    ),
   );
-  expect(secondEvidence.evidence_links).toHaveLength(2);
-  expect(secondEvidence.limitations).toEqual(
-    expect.arrayContaining([
-      expect.stringContaining("did not re-run the provider"),
-    ]),
+  expect(
+    (
+      await mcp.callTool({
+        name: "import_evidence_bundle",
+        arguments: { path: sourcePath },
+      })
+    ).isError,
+  ).not.toBe(true);
+  const refreshed = await session.execute("list_strings", {
+    document: "fixture",
+  });
+  if (!refreshed.ok) throw refreshed.error;
+  expect(refreshed.value.sourceEvidence).toContainEqual(
+    expect.objectContaining({
+      evidence_id: sourceId,
+      subject: expect.objectContaining({ local_path: relocatedPath }),
+    }),
   );
+  expect(source.subject).toMatchObject({ local_path: targetPath });
   expect(
     calls.filter((operation) => operation === "list_strings"),
   ).toHaveLength(1);
@@ -669,21 +703,8 @@ it("replays a source-bearing observation through an exported MCP snapshot", asyn
       })
     ).isError,
   ).not.toBe(true);
-  const replayed = toolContract("list_strings").outputSchema.parse(
-    (await read(reopened)).structuredContent,
-  );
-  expect(replayed.evidence_links).toEqual(
-    expect.arrayContaining([
-      ...firstEvidence.evidence_links,
-      firstEvidence.evidence_id,
-    ]),
-  );
-  expect(replayed.evidence_links).toHaveLength(2);
-  expect(replayed.limitations).toEqual(
-    expect.arrayContaining([
-      expect.stringContaining("did not re-run the provider"),
-    ]),
-  );
+  const replayed = await read(reopened);
+  expectSourceReplay(replayed, firstEvidence.evidence_id, sourceId);
   expect(
     calls.filter((operation) => operation === "list_strings"),
   ).toHaveLength(1);
@@ -704,6 +725,7 @@ it("replays a source-bearing observation through an exported MCP snapshot", asyn
       {
         evidence_id: firstEvidence.evidence_links[0],
         normalized_result: "historical source",
+        subject: { local_path: relocatedPath },
       },
     ],
   });
@@ -771,15 +793,7 @@ const expectRestoredSourceReplay = async (
       record.evidence_links.includes(source.evidence_id),
   );
   if (parent === undefined) throw new Error("Expected original observation");
-  expect(replayed.evidence_links).toEqual(
-    expect.arrayContaining([source.evidence_id, parent.evidence_id]),
-  );
-  expect(replayed.evidence_links).toHaveLength(2);
-  expect(replayed.limitations).toEqual(
-    expect.arrayContaining([
-      expect.stringContaining("did not re-run the provider"),
-    ]),
-  );
+  expectSourceReplay(replayed, parent.evidence_id, source.evidence_id);
   expect(
     calls.filter((operation) => operation === "list_strings"),
   ).toHaveLength(1);
@@ -798,11 +812,13 @@ const expectSnapshotImportGuidance = async (mcp: Client, path: string) => {
       operation: "read",
       reason: "wrong-kind",
       detected_kind: "analysis-snapshot",
+      related_operations: ["open_binary", "export_evidence_bundle"],
     },
   });
   expect(error.remediation.action).toContain("open_binary");
+  expect(error.remediation.action).toContain("close_binary");
   expect(error.remediation.action).toContain("snapshot_path");
-  expect(error.remediation.action).toContain("--snapshot");
+  expect(error.remediation.action).not.toContain("--snapshot");
   expect((await readFile(path)).equals(before)).toBe(true);
 };
 
@@ -904,7 +920,10 @@ const connectWorkflowMcp = async (
       ...(providerEnvironment === undefined ? {} : { providerEnvironment }),
     },
   );
-  const mcp = new Client({ name: clientName, version: "1.0.0" });
+  const mcp = new Client(
+    { name: clientName, version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server);
@@ -925,10 +944,7 @@ const makeProvider = (
   starts: string[],
   calls: string[],
   liveOperation?: (typeof operations)[number],
-  pause?: {
-    readonly entered: ReturnType<typeof createDeferred<void>>;
-    readonly release: ReturnType<typeof createDeferred<void>>;
-  },
+  pause?: PhaseGate,
 ): AnalysisProvider => {
   const capabilities: CapabilityDescriptor[] = operations.map((operation) => ({
     operation,
@@ -957,8 +973,7 @@ const makeProvider = (
         execute: async (operation) => {
           calls.push(operation);
           if (operation === "list_documents" && pause !== undefined) {
-            pause.entered.resolve();
-            await pause.release.promise;
+            await pause.hold();
           }
           const result =
             operation === "health"

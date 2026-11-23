@@ -1,15 +1,16 @@
 import { createHash } from "node:crypto";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { open } from "node:fs/promises";
-import { extname, join } from "node:path";
+import { basename, extname, join } from "node:path";
 import {
   withArtifactRegularFile,
   withArtifactFileHandle,
   assertArtifactReadActive,
   mapArtifactFileFailure,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  readArtifactFileChunks,
+} from "../resources/index.js";
 import {
   NonRegularFileReadError,
   sameRegularFileState,
@@ -20,7 +21,6 @@ import {
   AnalysisArtifactChangedError,
   AnalysisAccessDeniedError,
 } from "../domain/analysisErrorCore.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   WindowsSnapshotCancelledError,
   windowsPrivateRuntime,
@@ -46,18 +46,11 @@ export const createGhidraTargetSnapshot = async (
 ): Promise<GhidraTargetSnapshot> => {
   if (!/^[a-f0-9]{64}$/u.test(expectedSha256))
     throw new TypeError("Ghidra target SHA-256 commitment is invalid");
-  const suffix = safeExtension(sourcePath);
-  const snapshotPath = join(
-    runtimeRoot,
-    `target-${expectedSha256.slice(0, 12)}${suffix}`,
-  );
+  const snapshotFileName = ghidraSnapshotFileName(sourcePath, expectedSha256);
+  const snapshotPath = join(runtimeRoot, snapshotFileName);
   if ((options.platform ?? HOST_PLATFORM.platform) === "win32") {
     const observed = await windowsPrivateRuntime(runtimeRoot)
-      .snapshot(
-        sourcePath,
-        `target-${expectedSha256.slice(0, 12)}${suffix}`,
-        options.signal,
-      )
+      .snapshot(sourcePath, snapshotFileName, options.signal)
       .catch((cause: unknown) => {
         if (cause instanceof WindowsSnapshotCancelledError)
           throw new ArtifactReaderFailure("cancelled", cause.message, {
@@ -167,6 +160,22 @@ const classifySnapshotFailure = (cause: unknown): unknown => {
     );
   return cause;
 };
+
+/**
+ * Filename Ghidra's loader receives for one immutable snapshot.
+ *
+ * ComLoader accepts a provider name only when it ends in `.com`. Node's
+ * `extname` treats a basename of `.com` as a dotfile with no extension, so
+ * that name is preserved explicitly. Selection uses this same filename.
+ */
+export const ghidraSnapshotFileName = (
+  sourcePath: string,
+  sha256: string,
+): string =>
+  `target-${sha256.slice(0, 12)}${ghidraSnapshotExtension(sourcePath)}`;
+
+const ghidraSnapshotExtension = (sourcePath: string): string =>
+  /^\.com$/iu.test(basename(sourcePath)) ? ".com" : safeExtension(sourcePath);
 
 const safeExtension = (path: string): string => {
   const extension = extname(path);

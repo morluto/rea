@@ -1,24 +1,10 @@
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
-import {
-  requireAnalysisViewRetention,
-  summarizeRetainedAnalysis,
-} from "../application/analysisView/AnalysisViewService.js";
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import { summarizeRetainedAnalysis } from "../application/analysisView/AnalysisViewService.js";
+import { requireAnalysisViewRetention } from "../application/analysisView/AnalysisViewRetention.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ok } from "../domain/result.js";
-import type { Logger } from "pino";
-import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
-
-/** Registration inputs shared by provider-backed Evidence tool families. */
-export interface EvidenceToolFamilyOptions {
-  readonly logger: Logger;
-  readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
-  readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
-  readonly evidenceById?: EvidenceLookup | undefined;
-  readonly withAdmittedAnalysis: WithAdmittedAnalysis;
-}
 
 type Parameters = Readonly<Record<string, JsonValue>>;
 
@@ -28,7 +14,10 @@ type Parameters = Readonly<Record<string, JsonValue>>;
  */
 export const retainedSummaryDelivery = (
   operation: string,
-  options: Pick<EvidenceToolFamilyOptions, "recordEvidence" | "evidenceById">,
+  options: {
+    readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
+    readonly evidenceById?: EvidenceLookup | undefined;
+  },
 ) => {
   const retention = {
     recordEvidence: options.recordEvidence,

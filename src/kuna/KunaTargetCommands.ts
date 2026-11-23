@@ -2,7 +2,11 @@ import {
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+  ArtifactResourceScope,
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import {
   retainProcessInspectionCleanup,
@@ -22,7 +26,10 @@ import {
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { prepareProcessOwnershipInspection } from "../process/ProcessOwnershipObservation.js";
@@ -37,17 +44,12 @@ import type { KunaDeadline } from "./KunaConfiguration.js";
 import type { KunaInstallation } from "./KunaInstallation.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
 import type { KunaRunRelease } from "./KunaRunSlots.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import {
-  AnalysisCleanupLease,
-  AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   classifyProviderFailure,
   type ProviderFailureDialect,
 } from "../providers/classifyProviderFailure.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 interface WorkspaceRoot {
   readonly root: PrivateRuntimeRoot;
@@ -319,7 +321,7 @@ export class KunaTargetCommands {
           const failure = new ProviderCleanupError(
             KUNA_PROVIDER_ID,
             [owned.root.path],
-            { reason: cause instanceof Error ? cause.message : String(cause) },
+            { reason: errorMessage(cause) },
             { cause },
           );
           owned.cleanup.bindCleanupError(failure);
@@ -329,23 +331,19 @@ export class KunaTargetCommands {
     return failures.length === 0
       ? ok(null)
       : err(
-          new ProviderCleanupError(
+          providerCleanupErrorFromFailures(
             KUNA_PROVIDER_ID,
-            failures.flatMap((failure) => failure.cleanupResources),
+            failures,
+            failures
+              .map((failure) =>
+                String(failure.diagnostics?.["reason"] ?? failure.message),
+              )
+              .join("; "),
             {
-              reason: failures
-                .map((failure) =>
-                  String(failure.diagnostics?.["reason"] ?? failure.message),
-                )
-                .join("; "),
+              operation: "close_binary",
+              message: "Kuna command cleanup remains incomplete",
             },
-            {
-              cause: new AggregateError(
-                failures,
-                "Kuna command cleanup remains incomplete",
-              ),
-            },
-          ).bindCleanupDependencies(failures),
+          ),
         );
   }
 
@@ -451,7 +449,7 @@ export class KunaTargetCommands {
           ? cause
           : new ProviderAdapterError(KUNA_PROVIDER_ID, "kuna:workspace", {
               cause,
-              userMessage: `Kuna workspace failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+              userMessage: `Kuna workspace failed: ${errorMessage(cause)}`,
             }),
         owned,
       );
@@ -472,15 +470,15 @@ export class KunaTargetCommands {
         const cleanup = new ProviderCleanupError(
           KUNA_PROVIDER_ID,
           [owned.root.path],
-          { reason: cause instanceof Error ? cause.message : String(cause) },
+          { reason: errorMessage(cause) },
           { cause, operation: "kuna:workspace" },
         );
         owned.cleanup.bindCleanupError(cleanup);
-        failure = analysisErrorWithCleanupFailure(
+        failure = analysisErrorWithCleanupDependencies(
           primary,
           cleanup,
           "kuna:workspace",
-        ).bindCleanupDependencies([primary, cleanup]);
+        );
       }
     }
     return err(

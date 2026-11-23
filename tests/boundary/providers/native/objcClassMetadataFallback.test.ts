@@ -1,18 +1,19 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
+
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 import type {
   AnalysisOperation,
   AnalysisOperationPort,
-} from "../../../../src/application/AnalysisProvider.js";
-import { createAnalysisExecution } from "../../../../src/application/AnalysisProvider.js";
+} from "../../../../src/ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../../src/ports/AnalysisProvider.js";
 import { EnhancedTools } from "../../../../src/application/EnhancedTools.js";
 import { layoutFor } from "../../../../src/native/AppleMachoSelection.fixture.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
-import { BinaryFormatFailure } from "../../../../src/native/metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../../../../src/domain/binaryContainer.js";
 import { NativeFixtureRunner } from "../../../fixtures/nativeCommands.js";
 import { ok } from "../../../../src/domain/result.js";
 
@@ -40,7 +41,7 @@ const inspect = async (
   bytes: Buffer,
   architecture: "x86" | "arm" | "x86_64",
 ) => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-objc-macho-fallback-"));
+  const directory = await createTestTempDirectory("rea-objc-macho-fallback-");
   const path = join(directory, "fixture");
   await writeFile(path, bytes);
   const sha256 = createHash("sha256").update(bytes).digest("hex");
@@ -72,7 +73,10 @@ const inspect = async (
         return nativeClient.execute(operation, parameters, options);
       },
     };
-    return await new EnhancedTools(analysis).execute("get_objc_classes", {});
+    return await new EnhancedTools(analysis).executeValidated({
+      name: "get_objc_classes",
+      input: { pattern: "" },
+    });
   } finally {
     let closeResult: Awaited<ReturnType<typeof nativeClient.close>> | undefined;
     let closeError: unknown;
@@ -81,7 +85,6 @@ const inspect = async (
     } catch (cause: unknown) {
       closeError = cause;
     }
-    await rm(directory, { recursive: true, force: true });
     if (closeError !== undefined) throw closeError;
     expect(closeResult).toMatchObject({ ok: true });
   }

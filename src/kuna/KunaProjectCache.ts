@@ -9,7 +9,7 @@ import {
   assertKunaProjectState,
   type KunaProjectFileStates,
 } from "./KunaProjectState.js";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
   mkdir,
   lstat,
@@ -23,15 +23,17 @@ import {
 } from "node:fs/promises";
 import { basename, join } from "node:path";
 
-import canonicalize from "canonicalize";
 import writeFileAtomic from "write-file-atomic";
-import { z } from "zod";
-import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  ArtifactResourceScope,
+  bindArtifactFileCleanup,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  withDelegatedCleanupOwner,
+} from "../domain/analysisErrorCleanup.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisResourceConstraintError,
@@ -55,7 +57,6 @@ import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { KunaInstallation } from "./KunaInstallation.js";
 import type { KunaDeadline } from "./KunaConfiguration.js";
 import {
-  kunaExportFileNames,
   exportKunaProject,
   KUNA_EXPORT_OPERATION,
   kunaExportFailureDialect,
@@ -65,144 +66,18 @@ import {
 } from "./KunaProjectExport.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import type { KunaProcessLauncher } from "./KunaCommand.js";
-import type {
-  KunaInventoryFunction,
-  KunaProjectFunction,
-} from "./KunaProjectFiles.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
-
-/** Bumped whenever the entry layout or manifest meaning changes. */
-const CACHE_LAYOUT = 3;
-
-/** A manifest names five files and their digests; anything larger is not ours. */
-const MANIFEST_MAX_BYTES = 64 * 1024;
-
-const KEY_PATTERN = /^[0-9a-f]{64}$/u;
-
-const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
-
-/** Inputs that determine an export's content. Each one is part of the cache key. */
-export interface KunaProjectKeyInputs {
-  readonly targetSha256: string;
-  readonly targetBasename: string;
-  readonly kunaSha256: string;
-  readonly kunaCommand: string;
-  readonly kunaExecutable: string;
-  readonly kunaVersion: string;
-  /**
-   * `--jobs 1` is Kuna's reference answer; more jobs decompile without
-   * callee-first prototypes and change some bodies.
-   */
-  readonly jobs: number;
-}
-
-/** Content address of one export: every input that can change its bytes. */
-export const kunaProjectKey = (inputs: KunaProjectKeyInputs): string =>
-  createHash("sha256")
-    .update(
-      canonicalize({
-        layout: CACHE_LAYOUT,
-        target_sha256: inputs.targetSha256,
-        target_basename: inputs.targetBasename,
-        kuna_sha256: inputs.kunaSha256,
-        kuna_command: inputs.kunaCommand,
-        kuna_executable: inputs.kunaExecutable,
-        kuna_version: inputs.kunaVersion,
-        export: { command: "decompile-project", jobs: inputs.jobs },
-      }) ?? "",
-    )
-    .digest("hex");
-
-const fileSchema = z.strictObject({
-  path: z.string().min(1),
-  bytes: z.int().nonnegative(),
-  sha256: z.string().regex(SHA256_PATTERN),
-});
-
-const manifestSchema = z
-  .strictObject({
-    layout: z.literal(CACHE_LAYOUT),
-    key: z.string().regex(KEY_PATTERN),
-    inputs: z.strictObject({
-      target_sha256: z.string().regex(SHA256_PATTERN),
-      target_basename: z.string().min(1),
-      kuna_sha256: z.string().regex(SHA256_PATTERN),
-      kuna_command: z.string(),
-      kuna_executable: z.string(),
-      kuna_version: z.string().min(1),
-      jobs: z.int().positive(),
-    }),
-    files: z.strictObject({
-      c: fileSchema,
-      h: fileSchema,
-      asm: fileSchema,
-      readme: fileSchema,
-      inventory: fileSchema,
-    }),
-    summary: z.strictObject({
-      decompiled: z.int().nonnegative(),
-      failed: z.int().nonnegative(),
-    }),
-    created_at: utcDateTimeSchema,
-  })
-  .superRefine(({ files, inputs, key }, context) => {
-    if (
-      key !==
-      kunaProjectKey({
-        targetSha256: inputs.target_sha256,
-        targetBasename: inputs.target_basename,
-        kunaSha256: inputs.kuna_sha256,
-        kunaCommand: inputs.kuna_command,
-        kunaExecutable: inputs.kuna_executable,
-        kunaVersion: inputs.kuna_version,
-        jobs: inputs.jobs,
-      })
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["key"],
-        message: "Export cache key does not match its producing inputs",
-      });
-    const stem = inputs.target_basename;
-    if (
-      stem.length === 0 ||
-      stem === "." ||
-      stem === ".." ||
-      stem.includes("\0") ||
-      basename(stem) !== stem
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["files", "c", "path"],
-        message: "Export source must use the target's native basename",
-      });
-      return;
-    }
-    const expected = kunaExportFileNames(stem);
-    for (const role of Object.keys(expected) as (keyof typeof expected)[])
-      if (files[role].path !== expected[role])
-        context.addIssue({
-          code: "custom",
-          path: ["files", role, "path"],
-          message: "Export file does not match its producer role and basename",
-        });
-  });
-
-/** Immutable description of one published export, written once at publish. */
-export type KunaProjectManifest = z.infer<typeof manifestSchema>;
-
-/** One verified, published export. */
-export interface KunaProject {
-  readonly fileStates: KunaProjectFileStates;
-  readonly key: string;
-  /** Directory holding the export's `.c`, `.h`, `.asm`, README and inventory. */
-  readonly directory: string;
-  readonly manifest: KunaProjectManifest;
-  /** Decompiled function blocks in `.c` order. */
-  readonly functions: readonly KunaProjectFunction[];
-  /** Every callable entry Kuna found, including imports it does not decompile. */
-  readonly inventory: readonly KunaInventoryFunction[];
-}
+import { releaseProducerIdentity } from "../filesystem/ProducerIdentity.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import {
+  KEY_PATTERN,
+  MANIFEST_MAX_BYTES,
+  kunaProjectKey,
+  manifestBytes,
+  parseManifest,
+  type KunaProject,
+  type KunaProjectManifest,
+} from "./KunaCacheManifest.js";
 
 /** Publication succeeded; only its stopped staging still needs cleanup. */
 export class KunaPublishedProjectCleanupError extends ProviderCleanupError {
@@ -229,7 +104,7 @@ export class KunaPublishedProjectCleanupError extends ProviderCleanupError {
           "The immutable project export is published and remains available. Retry only the retained staging cleanup with close_binary; do not rerun the export to recover it.",
       },
     );
-    this.bindCleanupDependencies([cleanup]);
+    withDelegatedCleanupOwner(this, cleanup);
   }
 }
 
@@ -327,18 +202,6 @@ const isPublishedByAnother = (cause: unknown): boolean =>
   cause instanceof Error &&
   "code" in cause &&
   (cause.code === "EEXIST" || cause.code === "ENOTEMPTY");
-
-const parseManifest = (text: string): KunaProjectManifest | undefined => {
-  try {
-    const parsed = manifestSchema.safeParse(JSON.parse(text));
-    return parsed.success ? parsed.data : undefined;
-  } catch {
-    return undefined;
-  }
-};
-
-const manifestBytes = (manifest: KunaProjectManifest): number =>
-  Object.values(manifest.files).reduce((sum, file) => sum + file.bytes, 0);
 
 /**
  * REA-owned on-disk cache of `kuna decompile-project` exports.
@@ -724,7 +587,7 @@ export class KunaProjectCache {
           const closeFailure = new ProviderCleanupError(
             KUNA_PROVIDER_ID,
             [retained.resource],
-            { reason: cause instanceof Error ? cause.message : String(cause) },
+            { reason: errorMessage(cause) },
             {
               operation: KUNA_EXPORT_OPERATION,
               cause:
@@ -897,7 +760,7 @@ export class KunaProjectCache {
         const failure = new ProviderCleanupError(
           KUNA_PROVIDER_ID,
           copying.resources.cleanupResources,
-          { reason: cause instanceof Error ? cause.message : String(cause) },
+          { reason: errorMessage(cause) },
           { cause, operation: KUNA_EXPORT_OPERATION },
         );
         bindArtifactFileCleanup(cause, failure);
@@ -1049,11 +912,11 @@ export class KunaProjectCache {
       return err(
         built.result.ok
           ? new KunaPublishedProjectCleanupError(built.result.value, retired)
-          : analysisErrorWithCleanupFailure(
+          : analysisErrorWithCleanupDependencies(
               built.result.error,
               retired,
               KUNA_EXPORT_OPERATION,
-            ).bindCleanupDependencies([built.result.error, retired]),
+            ),
       );
     if (built.result.ok)
       // The entry is published either way; a failed eviction retries on the next publish.
@@ -1125,7 +988,7 @@ export class KunaProjectCache {
     signal: AbortSignal,
   ): Promise<Result<KunaProject, AnalysisError>> {
     const manifest: KunaProjectManifest = {
-      layout: CACHE_LAYOUT,
+      producer: releaseProducerIdentity(),
       key,
       inputs: {
         target_sha256: request.targetSha256,
@@ -1376,7 +1239,7 @@ export class KunaProjectCache {
     const error = new ProviderCleanupError(
       KUNA_PROVIDER_ID,
       [path],
-      { reason: cause instanceof Error ? cause.message : String(cause) },
+      { reason: errorMessage(cause) },
       { operation: KUNA_EXPORT_OPERATION, cause },
     );
     const retained = {

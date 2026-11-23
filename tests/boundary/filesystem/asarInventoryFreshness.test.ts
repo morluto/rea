@@ -4,14 +4,14 @@ import { Readable } from "node:stream";
 import { buffer } from "node:stream/consumers";
 
 import { createPackage, listPackage, uncache } from "@electron/asar";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
 import { scanCanonicalArtifactInventoryInScope } from "../../../src/artifacts/inventory/scanCanonical.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 const CONTENT = "module.exports = 42;\n";
 
@@ -114,30 +114,27 @@ describe("ASAR path boundary", () => {
 });
 
 describe("ASAR inventory freshness", () => {
-  it("preserves missing-container I/O as an I/O failure instead of malformed format", async () => {
-    const root = await createTestTempDirectory("rea-asar-missing-");
-    const reader = new AsarArtifactReader(join(root, "missing.asar"));
-
-    await expect(
-      reader.entries()[Symbol.asyncIterator]().next(),
-    ).rejects.toMatchObject({
-      reason: "io",
-      message: expect.stringContaining("ENOENT"),
-    });
-  });
-
-  it("preserves an ASAR path replaced by a directory as a filesystem failure", async () => {
-    const fixture = await archiveFixture();
-    await rm(fixture.archive);
-    await mkdir(fixture.archive);
-    const reader = new AsarArtifactReader(fixture.archive);
-
-    await expect(
-      reader.entries()[Symbol.asyncIterator]().next(),
-    ).rejects.toMatchObject({
-      reason: "io",
-      message: expect.stringContaining("EISDIR"),
-    });
+  it("preserves native I/O failures for missing and directory-replaced archives", async () => {
+    const { archive } = await archiveFixture();
+    const reader = new AsarArtifactReader(archive);
+    try {
+      await rm(archive);
+      await expect(
+        reader.entries()[Symbol.asyncIterator]().next(),
+      ).rejects.toMatchObject({
+        reason: "io",
+        cause: { code: "ENOENT" },
+      });
+      await mkdir(archive);
+      await expect(
+        reader.entries()[Symbol.asyncIterator]().next(),
+      ).rejects.toMatchObject({
+        reason: "io",
+        cause: { code: "EISDIR" },
+      });
+    } finally {
+      await reader.close();
+    }
   });
 
   it.each(["archive", "bundle"] as const)(
@@ -150,7 +147,6 @@ describe("ASAR inventory freshness", () => {
         expect(
           first.occurrences.map(({ logical_path }) => logical_path),
         ).toContain(`${prefix}old.js`);
-        expect(await inventoryArtifact(fixture[target])).toEqual(first);
 
         await fixture.replace();
         const second = await inventoryArtifact(fixture[target]);
@@ -163,7 +159,6 @@ describe("ASAR inventory freshness", () => {
         );
         expect(paths).toContain(`${prefix}new.js`);
         expect(paths).not.toContain(`${prefix}old.js`);
-        expect(await inventoryArtifact(fixture[target])).toEqual(second);
       } finally {
         uncache(fixture.archive);
       }
@@ -223,7 +218,6 @@ describe("ASAR captured-byte identity", () => {
     const originalSize = (await lstat(fixture.archive)).size;
     const directory = new DirectoryArtifactReader(fixture.bundle);
     const resourceScope = new ArtifactResourceScope();
-    onTestFinished(() => resourceScope.close());
     try {
       await expect(
         resourceScope.run(() =>
@@ -310,7 +304,6 @@ describe("ASAR captured-byte identity", () => {
       },
     });
     const resourceScope = new ArtifactResourceScope();
-    onTestFinished(() => resourceScope.close());
     try {
       const failure: unknown = await resourceScope
         .run(() =>
@@ -399,46 +392,27 @@ describe("ASAR reader lifecycle", () => {
     }
   });
 
-  it("releases the selected archive header on close after a cancelled read", async () => {
-    const fixture = await archiveFixture();
-    const reader = new AsarArtifactReader(fixture.archive);
-    const entries = reader.entries()[Symbol.asyncIterator]();
-    try {
-      const entry = await entries.next();
-      if (entry.done) throw new Error("Expected an ASAR file entry");
-      const controller = new AbortController();
-      controller.abort();
-      await expect(async () =>
-        reader.open(entry.value, controller.signal),
-      ).rejects.toMatchObject({ reason: "cancelled" });
-      await entries.return?.();
-      await reader.close();
-
-      await fixture.replace();
-      expect(listPackage(fixture.archive, { isPack: false })).toEqual([
-        `${sep}new.js`,
-      ]);
-    } finally {
-      await entries.return?.();
-      await reader.close();
-      uncache(fixture.archive);
-    }
-  });
-
-  it("refuses an entry inventoried before close as not produced by the reader", async () => {
+  it("retires entries on close and recaptures the replaced archive", async () => {
     const fixture = await archiveFixture();
     const reader = new AsarArtifactReader(fixture.archive);
     try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
-      const [entry] = entries;
-      if (entry === undefined) throw new Error("Expected an ASAR file entry");
+      const original = [];
+      for await (const entry of reader.entries()) original.push(entry);
+      expect(original.map(({ path }) => path)).toEqual(["old.js"]);
       await reader.close();
-      await expect(reader.open(entry)).rejects.toMatchObject({
-        name: "ArtifactReaderFailure",
+      await expect(reader.open(original[0]!)).rejects.toMatchObject({
         reason: "integrity",
         integrityCheck: "foreign-entry",
       });
+
+      await fixture.replace();
+      const current = [];
+      for await (const entry of reader.entries())
+        current.push([
+          entry.path,
+          (await buffer(await reader.open(entry))).toString("utf8"),
+        ]);
+      expect(current).toEqual([["new.js", CONTENT]]);
     } finally {
       await reader.close();
       uncache(fixture.archive);

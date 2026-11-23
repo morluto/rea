@@ -3,7 +3,10 @@ import { webTextFacts } from "../../domain/webContentArtifact.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { sanitizeBrowserUrl } from "../../domain/browserObservation.js";
-import { jsonObjectSchema } from "../../domain/jsonValue.js";
+import {
+  ownedJsonObjectSchema,
+  type JsonValue,
+} from "../../domain/jsonValue.js";
 import type {
   WebRuntimeSource,
   webRuntimeLocationSchema,
@@ -16,7 +19,8 @@ import {
   cdpContextFrameClaim,
   selectCdpScriptFrame,
 } from "../CdpScriptContextFacts.js";
-import { assertRuntimeRetention } from "./CdpRuntimeRetention.js";
+import { RuntimeRetention } from "./CdpRuntimeRetention.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /** Source ownership is proven by execution context/frame metadata, independently of URL aliases. */
 export class CdpRuntimeSources {
@@ -31,10 +35,13 @@ export class CdpRuntimeSources {
   readonly #changed = new Set<string>();
   readonly #changedContexts = new Set<number>();
   readonly #sources = new Map<string, WebRuntimeSource>();
-  #retainedBytes = 0;
-  #sourceBytes = 0;
+  readonly #metadata: RuntimeRetention;
+  readonly #sourceText: RuntimeRetention;
   #failure: AnalysisError | undefined;
-  constructor(readonly session: CdpRuntimeSession) {}
+  constructor(readonly session: CdpRuntimeSession) {
+    this.#metadata = new RuntimeRetention(session.operation, "metadata");
+    this.#sourceText = new RuntimeRetention(session.operation, "sources");
+  }
 
   /** Subscribe before enabling Debugger; existing uncollected scripts are replayed by the producer. */
   ingest(event: CdpReceivedEvent, retainNewMetadata = true): void {
@@ -44,12 +51,7 @@ export class CdpRuntimeSources {
       if (registered?.method === "Runtime.executionContextCreated") {
         const bytes = registered.payload.declarationBytes;
         if (!bytes.ok) throw bytes.error;
-        this.#retainedBytes += bytes.value;
-        assertRuntimeRetention(
-          this.session.operation,
-          "metadata",
-          this.#retainedBytes,
-        );
+        this.#metadata.charge(bytes.value);
         const declaration = registered.payload.runtime;
         if (!declaration.success) throw declaration.error;
         const context = declaration.data.context;
@@ -66,12 +68,7 @@ export class CdpRuntimeSources {
       } else if (registered?.method === "Debugger.scriptParsed") {
         const bytes = registered.payload.declarationBytes;
         if (!bytes.ok) throw bytes.error;
-        this.#retainedBytes += bytes.value;
-        assertRuntimeRetention(
-          this.session.operation,
-          "metadata",
-          this.#retainedBytes,
-        );
+        this.#metadata.charge(bytes.value);
         const declaration = registered.payload.runtime;
         if (!declaration.success) throw declaration.error;
         const script = declaration.data;
@@ -92,7 +89,7 @@ export class CdpRuntimeSources {
           ? cause
           : new AnalysisOutputError(
               this.session.operation,
-              cause instanceof Error ? cause.message : String(cause),
+              errorMessage(cause),
             );
     }
   }
@@ -152,6 +149,7 @@ export class CdpRuntimeSources {
   /** Retain complete script text and compute a digest distinct from the producer hash. */
   async read(scriptIds: Iterable<string>): Promise<WebRuntimeSource[]> {
     this.check();
+    const validatedContexts = new WeakMap<object, Record<string, JsonValue>>();
     for (const scriptId of new Set(scriptIds)) {
       if (this.#sources.has(scriptId)) continue;
       const script = this.scripts.get(scriptId);
@@ -160,16 +158,24 @@ export class CdpRuntimeSources {
         script === undefined
           ? undefined
           : this.#contexts.get(script.executionContextId);
+      let reportedExecutionContext: Record<string, JsonValue> | null = null;
+      if (context !== undefined) {
+        const cached = validatedContexts.get(context);
+        if (cached !== undefined) reportedExecutionContext = cached;
+        else {
+          reportedExecutionContext = ownedJsonObjectSchema.parse(context);
+          validatedContexts.set(context, reportedExecutionContext);
+        }
+      }
       const item: WebRuntimeSource = {
         script_id: scriptId,
         url: this.sourceUrl(scriptId, script?.url ?? ""),
         execution_context_id: script?.executionContextId ?? null,
-        reported_execution_context:
-          context === undefined ? null : jsonObjectSchema.parse(context),
+        reported_execution_context: reportedExecutionContext,
         reported_script_context_aux_data:
           script?.executionContextAuxData === undefined
             ? null
-            : jsonObjectSchema.parse(script.executionContextAuxData),
+            : ownedJsonObjectSchema.parse(script.executionContextAuxData),
         frame_id: owned ? this.session.target.frame_id : null,
         producer_hash: script?.hash ?? null,
         source_map_url: script?.sourceMapURL ?? null,
@@ -266,12 +272,7 @@ export class CdpRuntimeSources {
         reason: cause.userMessage ?? cause.message,
       };
     }
-    this.#sourceBytes += Buffer.byteLength(text);
-    assertRuntimeRetention(
-      this.session.operation,
-      "sources",
-      this.#sourceBytes,
-    );
+    this.#sourceText.charge(Buffer.byteLength(text));
     const facts = webTextFacts(text);
     return {
       state: "captured",

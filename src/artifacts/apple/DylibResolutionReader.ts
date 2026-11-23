@@ -20,17 +20,17 @@ import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.
 import {
   ArtifactReaderFailure,
   type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
+  ArtifactResourceScope,
+  assertArtifactReadActive,
+  targetDigestChangedFailure,
+  DirectoryArtifactReader,
+} from "../../resources/index.js";
 import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
-import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
-import { targetDigestChangedFailure } from "../withArtifactTargetIdentity.js";
 import { consumeWithOrderedReads } from "../OrderedReads.js";
 import {
   DylibFileAccess,
   classifyDylibReadFailure,
 } from "./DylibFileAccess.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
-import { assertArtifactReadActive } from "../ArtifactFileOperation.js";
 
 const OPERATION = "trace_dylib_resolution";
 // Resolution reads paths on this host's filesystem.
@@ -79,6 +79,13 @@ class FilesystemTreeView implements DylibTreeView {
     const pending = this.#readImage(path);
     this.#images.set(path, pending);
     return pending;
+  }
+
+  /** Seed an already-verified Mach-O parse so follow-up resolution skips re-opening the file. */
+  seedImage(path: string, facts: MachoImageFacts, identity: BigIntStats): void {
+    if (this.#images.has(path)) return;
+    this.#images.set(path, Promise.resolve(facts));
+    this.#identities.set(path, identity);
   }
 
   /** Identity of the file whose header bytes `image()` parsed. */
@@ -272,12 +279,13 @@ const executableRoots = async (
           firstSymlink ??= entry.path;
         }
         return entry.kind === "file"
-          ? files.startsWithMachoMagic(entry)
+          ? files.readMachoIfMagic(entry)
           : undefined;
       },
-      async (entry, macho) => {
-        if (!macho) return;
-        const facts = await view.image(entry.path);
+      async (entry, observed) => {
+        if (observed === undefined) return;
+        view.seedImage(entry.path, observed.facts, observed.identity);
+        const { facts } = observed;
         if (facts.status === "malformed" || facts.status === "unsupported")
           unclassified.push(entry.path);
         else if (

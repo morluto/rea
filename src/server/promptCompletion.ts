@@ -2,12 +2,12 @@ import { z } from "zod";
 
 import { uniqueSorted } from "../domain/canonicalOrdering.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../ports/AnalysisProvider.js";
 import { parseProcessCaptureEvidence } from "../application/process/ProcessEvidence.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import type { PromptCompletionKind } from "../contracts/promptContracts.js";
 import { listProceduresFact } from "../domain/native/nativeOperationFacts.js";
-import { currentMcpRequestSignal } from "./EvidenceMcpServerCore.js";
+import { currentMcpRequestSignal } from "./ErrorEvidenceTransport.js";
 import { parseArtifactInventoryEvidence } from "../domain/artifactInventoryEvidence.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import type { Evidence } from "../domain/evidence.js";
@@ -45,10 +45,12 @@ export const createPromptCompletionSource = (
       context,
     );
     const prefix = normalize(value);
-    const nonEmpty = candidates.filter((candidate) => candidate.length > 0);
-    return uniqueSorted(nonEmpty).filter((candidate) =>
-      normalize(candidate).startsWith(prefix),
+    const matches = candidates.filter(
+      (candidate) =>
+        candidate.length > 0 &&
+        (prefix === "" || normalize(candidate).startsWith(prefix)),
     );
+    return uniqueSorted(matches);
   },
 });
 

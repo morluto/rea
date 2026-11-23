@@ -2,7 +2,7 @@ import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
+import { createReferenceSourceGitFixture } from "../../support/referenceSourceGitFixture.js";
 import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
 
 const importTree = async (root: string) => {
@@ -54,6 +54,7 @@ it("keeps unreadable scoped policy fatal after opening a readable directory", as
   const child = join(root, "child");
   await mkdir(join(child, ".gitignore"), { recursive: true });
   await writeFile(join(child, "unexamined.ts"), "export const value = 1;\n");
+  await writeFile(join(root, "observed.ts"), "export const observed = true;\n");
   const result = await importReferenceSource({
     root,
     caller: "scoped-policy-refusal-test",
@@ -62,25 +63,26 @@ it("keeps unreadable scoped policy fatal after opening a readable directory", as
   if (result.ok) throw new Error("Invalid scoped policy was ignored");
   expect(result.error.code).toBe("io");
   expect(result.error.message).toContain(join(child, ".gitignore"));
-  expect(result.error.partial?.entries).not.toContainEqual(
+  const entries = result.error.partial?.entries;
+  expect(entries).toContainEqual(
+    expect.objectContaining({ path: "observed.ts", status: "read" }),
+  );
+  expect(entries).not.toContainEqual(
     expect.objectContaining({ path: "child/unexamined.ts" }),
   );
 });
 
-it("scopes nested ignore rules and negations like Git while preserving mandatory exclusions", async () => {
-  const root = await createTestTempDirectory("rea-reference-scoped-policy-");
-  await execFileOutput("git", ["init", "--initial-branch=main", root]);
-  await execFileOutput("git", [
-    "-C",
-    root,
-    "config",
-    "core.ignorecase",
-    "false",
-  ]);
+it("scopes nested ignore rules and honors local Git case policy", async () => {
+  const fixture = await createTestTempDirectory("rea-reference-scoped-policy-");
+  const git = await createReferenceSourceGitFixture(fixture);
+  const root = join(fixture, "source");
+  await mkdir(root);
+  await git(root, "init", "--initial-branch=main");
+  await git(root, "config", "core.ignorecase", "false");
   await mkdir(join(root, "packages", "widget", "blocked"), { recursive: true });
   await mkdir(join(root, "packages", "widget", "node_modules"));
   await mkdir(join(root, "sibling"));
-  await writeFile(join(root, ".gitignore"), "*.tmp\nblocked/\n");
+  await writeFile(join(root, ".gitignore"), "*.tmp\n*.CASE\nblocked/\n");
   await writeFile(
     join(root, "packages", "widget", ".gitignore"),
     "/local.js\n!keep.tmp\n!node_modules/\n",
@@ -91,10 +93,12 @@ it("scopes nested ignore rules and negations like Git while preserving mandatory
   );
   const excluded = [
     "drop.tmp",
+    "upper.CASE",
     "packages/widget/local.js",
     "packages/widget/blocked/inside.js",
   ];
   const included = [
+    "lower.case",
     "packages/widget/keep.tmp",
     "packages/widget/main.js",
     "sibling/local.js",
@@ -105,14 +109,13 @@ it("scopes nested ignore rules and negations like Git while preserving mandatory
     "packages/widget/node_modules/dependency.js",
   ])
     await writeFile(join(root, path), "export const value = 1;\n");
-  const oracle = await execFileOutput("git", [
-    "-C",
+  const oracle = await git(
     root,
     "check-ignore",
     "--no-index",
     ...excluded,
     ...included,
-  ]);
+  );
   expect(oracle.stdout.trim().split(/\r?\n/u)).toEqual(excluded);
   const graph = await importTree(root);
   const files = graph.entries
@@ -139,43 +142,20 @@ it("scopes nested ignore rules and negations like Git while preserving mandatory
   expect(
     await readFile(join(root, "packages", "widget", "keep.tmp"), "utf8"),
   ).toBe("export const value = 1;\n");
+  await git(root, "config", "core.ignorecase", "true");
+  const folded = await git(root, "check-ignore", "--no-index", "lower.case");
+  expect(folded.stdout.trim()).toBe("lower.case");
+  const foldedGraph = await importTree(root);
+  expect(foldedGraph.exclusions).toContainEqual({
+    path: "lower.case",
+    entry_kind: "file",
+    reason: "project-ignored",
+    pattern: "*.CASE",
+  });
+  expect(foldedGraph.entries.some(({ path }) => path === "lower.case")).toBe(
+    false,
+  );
 });
-
-it.each([false, true])(
-  "honors local core.ignorecase=%s against Git's check-ignore oracle",
-  async (ignoreCase) => {
-    const root = await createTestTempDirectory("rea-reference-ignore-case-");
-    await execFileOutput("git", ["init", "--initial-branch=main", root]);
-    await execFileOutput("git", [
-      "-C",
-      root,
-      "config",
-      "core.ignorecase",
-      String(ignoreCase),
-    ]);
-    await writeFile(join(root, ".gitignore"), "*.TMP\n");
-    await writeFile(join(root, "upper.TMP"), "upper\n");
-    await writeFile(join(root, "lower.tmp"), "lower\n");
-    const oracle = await execFileOutput("git", [
-      "-C",
-      root,
-      "check-ignore",
-      "--no-index",
-      "upper.TMP",
-      "lower.tmp",
-    ]);
-    const expected = oracle.stdout.trim().split(/\r?\n/u);
-    const graph = await importTree(root);
-    expect(
-      graph.exclusions
-        .filter(({ reason }) => reason === "project-ignored")
-        .map(({ path }) => path),
-    ).toEqual([...expected].sort());
-    expect(graph.entries.some(({ path }) => path === "lower.tmp")).toBe(
-      !ignoreCase,
-    );
-  },
-);
 
 it.skipIf(process.platform === "win32")(
   "binds Git pointer/configuration reads to physical symlink-parent selection",

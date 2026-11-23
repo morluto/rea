@@ -1,13 +1,18 @@
-import { createHash } from "node:crypto";
-
 import { z } from "zod";
 
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { compareKunaAddresses } from "./KunaAddress.js";
+import {
+  compareKunaAddresses,
+  isCanonicalKunaHexAddress,
+  normalizeKunaAddress,
+} from "./KunaAddress.js";
 import { KunaDocumentError } from "./KunaDocumentError.js";
 import { parseKunaJson } from "./KunaJson.js";
 import { KunaJsonDocumentReader, parseKunaRow } from "./KunaJsonStream.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { isRecord } from "../kernel/isRecord.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** The raw xref budget also bounds its materialized rows. */
 export const KUNA_XREF_OUTPUT_BYTES = 16 * 1024 * 1024;
@@ -90,16 +95,84 @@ const GRAPH_DOCUMENT = {
   ]),
 };
 
+interface CallerEdgeState {
+  readonly targets: Set<string>;
+  /** Next expected sequential calleeOrder while orders arrive as 0, 1, 2, ... */
+  sequentialCount: number;
+  maxOrder: number;
+  /** Allocated only when calleeOrder arrives out of sequential 0..n-1 order. */
+  orders: Set<number> | undefined;
+}
+
+const isEdgeKind = (value: unknown): value is z.infer<typeof kind> =>
+  value === "call" ||
+  value === "jump" ||
+  value === "data" ||
+  value === "read" ||
+  value === "write";
+
+const parseGraphNodeFast = (
+  fields: Readonly<Record<string, unknown>>,
+): KunaGraphNode => {
+  const {
+    address: nodeAddress,
+    name,
+    kind: nodeKind,
+    hasIndirectCalls,
+    forwardsTo,
+    codeC,
+    assembly,
+    error,
+  } = fields;
+  if (
+    isCanonicalKunaHexAddress(nodeAddress) &&
+    typeof name === "string" &&
+    name.length >= 1 &&
+    typeof nodeKind === "string" &&
+    nodeKind.length >= 1 &&
+    typeof hasIndirectCalls === "boolean" &&
+    (forwardsTo === null || isCanonicalKunaHexAddress(forwardsTo)) &&
+    codeC === null &&
+    assembly === null &&
+    error === null
+  )
+    return {
+      address: nodeAddress,
+      name,
+      kind: nodeKind,
+      hasIndirectCalls,
+      forwardsTo,
+      codeC: null,
+      assembly: null,
+      error: null,
+    };
+  return parseKunaRow(graphNode, "graph function", fields);
+};
+
+const parseGraphEdgeFast = (
+  fields: Readonly<Record<string, unknown>>,
+): z.infer<typeof graphEdge> => {
+  const { callerAddress, calleeAddress, kind: edgeKind, calleeOrder } = fields;
+  if (
+    isCanonicalKunaHexAddress(callerAddress) &&
+    isCanonicalKunaHexAddress(calleeAddress) &&
+    isEdgeKind(edgeKind) &&
+    typeof calleeOrder === "number" &&
+    Number.isSafeInteger(calleeOrder) &&
+    calleeOrder >= 0
+  )
+    return fields as unknown as z.infer<typeof graphEdge>;
+  return parseKunaRow(graphEdge, "graph edge", fields);
+};
+
 /**
  * Validates `kuna decompile-graph --functions ''` as Kuna writes it and
  * retains only the facts call queries use.
  */
 export class KunaCallGraphReader extends KunaJsonDocumentReader<KunaCallGraph> {
   readonly #nodes = new Map<string, KunaGraphNode>();
-  /** Callees of every edge by caller, which also detects repeated edges. */
-  readonly #targets = new Map<string, Set<string>>();
-  /** Callee orders by caller; each caller's must be 0..n-1. */
-  readonly #orders = new Map<string, Set<number>>();
+  /** Per-caller edge targets and callee orders, cleared once validated. */
+  readonly #callerEdges = new Map<string, CallerEdgeState>();
   readonly #callers = new Map<string, string[]>();
   readonly #callees = new Map<string, string[]>();
   #edgeCount = 0;
@@ -123,9 +196,8 @@ export class KunaCallGraphReader extends KunaJsonDocumentReader<KunaCallGraph> {
     )
       return err(this.unusable("graph counts disagree with examined rows"));
     const invalid = this.#invalidEdges();
-    // These indexes only validate edges; queries never read them.
-    this.#targets.clear();
-    this.#orders.clear();
+    // This index only validates edges; queries never read it.
+    this.#callerEdges.clear();
     if (invalid !== undefined) return err(this.unusable(invalid));
     for (const index of [this.#callers, this.#callees])
       for (const list of index.values()) list.sort(compareKunaAddresses);
@@ -145,10 +217,10 @@ export class KunaCallGraphReader extends KunaJsonDocumentReader<KunaCallGraph> {
     fields: Readonly<Record<string, unknown>>,
   ): void {
     if (member === "edges") {
-      this.#index(parseKunaRow(graphEdge, "graph edge", fields));
+      this.#index(parseGraphEdgeFast(fields));
       return;
     }
-    const node = parseKunaRow(graphNode, "graph function", fields);
+    const node = parseGraphNodeFast(fields);
     if (this.#nodes.has(node.address))
       throw new KunaDocumentError("repeated_function");
     this.#nodes.set(node.address, node);
@@ -158,8 +230,7 @@ export class KunaCallGraphReader extends KunaJsonDocumentReader<KunaCallGraph> {
   protected override discardRows(): void {
     for (const index of [
       this.#nodes,
-      this.#targets,
-      this.#orders,
+      this.#callerEdges,
       this.#callers,
       this.#callees,
     ])
@@ -172,38 +243,73 @@ export class KunaCallGraphReader extends KunaJsonDocumentReader<KunaCallGraph> {
    * known.
    */
   #index(edge: z.infer<typeof graphEdge>): void {
-    const { callerAddress: caller, calleeAddress: callee } = edge;
+    const { callerAddress: caller, calleeAddress: callee, calleeOrder } = edge;
     this.#edgeCount += 1;
-    const targets = this.#targets.get(caller) ?? new Set<string>();
-    if (targets.has(callee)) throw new KunaDocumentError("repeated_edge");
-    targets.add(callee);
-    this.#targets.set(caller, targets);
-    const order = this.#orders.get(caller) ?? new Set<number>();
-    if (order.has(edge.calleeOrder))
-      throw new KunaDocumentError("repeated_callee_order");
-    order.add(edge.calleeOrder);
-    this.#orders.set(caller, order);
+    let state = this.#callerEdges.get(caller);
+    if (state === undefined) {
+      state = {
+        targets: new Set<string>(),
+        sequentialCount: 0,
+        maxOrder: -1,
+        orders: undefined,
+      };
+      this.#callerEdges.set(caller, state);
+    }
+    if (state.targets.has(callee)) throw new KunaDocumentError("repeated_edge");
+    state.targets.add(callee);
+    this.#recordOrder(state, calleeOrder);
     if (edge.kind !== "call") return;
-    const incoming = this.#callers.get(callee) ?? [];
+    let incoming = this.#callers.get(callee);
+    if (incoming === undefined) {
+      incoming = [];
+      this.#callers.set(callee, incoming);
+    }
     incoming.push(caller);
-    this.#callers.set(callee, incoming);
-    const outgoing = this.#callees.get(caller) ?? [];
+    let outgoing = this.#callees.get(caller);
+    if (outgoing === undefined) {
+      outgoing = [];
+      this.#callees.set(caller, outgoing);
+    }
     outgoing.push(callee);
-    this.#callees.set(caller, outgoing);
+  }
+
+  #recordOrder(state: CallerEdgeState, calleeOrder: number): void {
+    if (state.orders === undefined) {
+      if (calleeOrder === state.sequentialCount) {
+        state.sequentialCount += 1;
+        return;
+      }
+      if (calleeOrder < state.sequentialCount)
+        throw new KunaDocumentError("repeated_callee_order");
+      const orders = new Set<number>();
+      for (let i = 0; i < state.sequentialCount; i += 1) orders.add(i);
+      orders.add(calleeOrder);
+      state.orders = orders;
+      state.maxOrder = calleeOrder;
+      return;
+    }
+    if (state.orders.has(calleeOrder))
+      throw new KunaDocumentError("repeated_callee_order");
+    state.orders.add(calleeOrder);
+    if (calleeOrder > state.maxOrder) state.maxOrder = calleeOrder;
   }
 
   /** Why the edges contradict the nodes, if they do. */
   #invalidEdges(): string | undefined {
-    for (const [caller, targets] of this.#targets) {
+    let missingOrder = false;
+    for (const [caller, state] of this.#callerEdges) {
       if (!this.#nodes.has(caller)) return "graph edge has an unknown endpoint";
-      for (const callee of targets)
+      for (const callee of state.targets)
         if (!this.#nodes.has(callee))
           return "graph edge has an unknown endpoint";
+      // Distinct non-negative orders cover 0..n-1 iff maxOrder === size - 1.
+      if (
+        state.orders !== undefined &&
+        state.maxOrder !== state.orders.size - 1
+      )
+        missingOrder = true;
     }
-    for (const order of this.#orders.values())
-      for (let index = 0; index < order.size; index += 1)
-        if (!order.has(index)) return "graph callee orders are incomplete";
-    return undefined;
+    return missingOrder ? "graph callee orders are incomplete" : undefined;
   }
 }
 
@@ -267,7 +373,15 @@ const xrefsDocument = z.object({
   data_refs: z.array(xrefPointer).optional(),
 });
 
+interface KunaArm64DirectCall {
+  readonly from_address: string;
+  readonly caller_address: string;
+  readonly to_address: string;
+  readonly instruction: string;
+}
+
 export interface KunaIncomingReferences {
+  readonly arm64DirectCalls: readonly KunaArm64DirectCall[];
   readonly addresses: readonly string[];
   readonly sha256: string;
   readonly bytes: number;
@@ -289,6 +403,50 @@ export interface KunaIncomingReferenceError {
   readonly code: string;
   readonly field?: string;
 }
+
+const isValidXrefFunction = (
+  fn: unknown,
+): fn is z.infer<typeof xrefFunction> | null =>
+  fn === null ||
+  (isRecord(fn) &&
+    typeof fn.name === "string" &&
+    fn.name.length >= 1 &&
+    isCanonicalKunaHexAddress(fn.address) &&
+    (fn.address_hex === fn.address ||
+      isCanonicalKunaHexAddress(fn.address_hex)));
+
+const parseXrefRowFast = (raw: unknown): z.infer<typeof xrefRow> => {
+  if (isRecord(raw)) {
+    const {
+      address: rowAddress,
+      address_hex: rowAddressHex,
+      kind: rowKind,
+      from_address: fromAddress,
+      from_address_hex: fromAddressHex,
+      to_address: toAddress,
+      to_address_hex: toAddressHex,
+      from_function: fromFunction,
+      to_function: toFunction,
+      instruction,
+    } = raw;
+    if (
+      isCanonicalKunaHexAddress(rowAddress) &&
+      (rowAddressHex === rowAddress ||
+        isCanonicalKunaHexAddress(rowAddressHex)) &&
+      (fromAddress === rowAddress || isCanonicalKunaHexAddress(fromAddress)) &&
+      (fromAddressHex === rowAddress ||
+        isCanonicalKunaHexAddress(fromAddressHex)) &&
+      isCanonicalKunaHexAddress(toAddress) &&
+      (toAddressHex === toAddress || isCanonicalKunaHexAddress(toAddressHex)) &&
+      isEdgeKind(rowKind) &&
+      isValidXrefFunction(fromFunction) &&
+      isValidXrefFunction(toFunction) &&
+      typeof instruction === "string"
+    )
+      return raw as unknown as z.infer<typeof xrefRow>;
+  }
+  return xrefRow.parse(raw);
+};
 
 /** Native --to unifies forwarding aliases; REA xrefs asks for the exact address. */
 export const parseKunaIncomingReferences = (
@@ -327,23 +485,35 @@ export const parseKunaIncomingReferences = (
     for (const item of document.coverage?.unwalked ?? [])
       if (item.address !== item.address_hex)
         throw new KunaDocumentError("xref_endpoints");
-    for (const pointer of document.data_refs ?? []) {
-      if (
-        pointer.from_address !== pointer.from_address_hex ||
-        pointer.to_address !== pointer.to_address_hex
-      )
-        throw new KunaDocumentError("xref_endpoints");
-      if (!aliases.has(pointer.to_address))
-        throw new KunaDocumentError("xref_target");
-    }
     const addresses = new Set<string>();
     let excludedAliasRows = 0;
-    for (const pointer of document.data_refs ?? []) {
-      if (pointer.to_address === target) addresses.add(pointer.from_address);
-      else excludedAliasRows += 1;
+    const arm64DirectCalls: KunaArm64DirectCall[] = [];
+    let pointers: Array<
+      Omit<z.infer<typeof xrefPointer>, "from_address_hex" | "to_address_hex">
+    > | null = null;
+    if (document.data_refs !== undefined) {
+      pointers = new Array(document.data_refs.length);
+      for (let i = 0; i < document.data_refs.length; i += 1) {
+        const pointer = document.data_refs[i]!;
+        if (
+          pointer.from_address !== pointer.from_address_hex ||
+          pointer.to_address !== pointer.to_address_hex
+        )
+          throw new KunaDocumentError("xref_endpoints");
+        if (!aliases.has(pointer.to_address))
+          throw new KunaDocumentError("xref_target");
+        if (pointer.to_address === target) addresses.add(pointer.from_address);
+        else excludedAliasRows += 1;
+        const {
+          from_address_hex: _from,
+          to_address_hex: _to,
+          ...kept
+        } = pointer;
+        pointers[i] = kept;
+      }
     }
     for (const raw of document.xrefs) {
-      const row = xrefRow.parse(raw);
+      const row = parseXrefRowFast(raw);
       if (
         row.address !== row.address_hex ||
         row.address !== row.from_address ||
@@ -351,16 +521,49 @@ export const parseKunaIncomingReferences = (
         row.to_address !== row.to_address_hex
       )
         throw new KunaDocumentError("xref_endpoints");
-      for (const fn of [row.from_function, row.to_function])
-        if (fn !== null && fn.address !== fn.address_hex)
-          throw new KunaDocumentError("xref_function_hex");
+      if (
+        (row.from_function !== null &&
+          row.from_function.address !== row.from_function.address_hex) ||
+        (row.to_function !== null &&
+          row.to_function.address !== row.to_function.address_hex)
+      )
+        throw new KunaDocumentError("xref_function_hex");
       if (!aliases.has(row.to_address))
         throw new KunaDocumentError("xref_target");
-      if (row.to_address === target) addresses.add(row.from_address);
-      else excludedAliasRows += 1;
+      if (row.to_address !== target) {
+        excludedAliasRows += 1;
+        continue;
+      }
+      addresses.add(row.from_address);
+      // An exact incoming call row alone does not distinguish indirect forms.
+      // Accept only Kuna's arm64 BL with a literal matching the parsed target.
+      if (
+        row.kind !== "call" ||
+        row.from_function === null ||
+        row.instruction.length < 4 ||
+        row.instruction.length > "bl 0x0000000000000000".length
+      )
+        continue;
+      const c0 = row.instruction.charCodeAt(0);
+      const c1 = row.instruction.charCodeAt(1);
+      if ((c0 !== 98 && c0 !== 66) || (c1 !== 108 && c1 !== 76)) continue;
+      const operand = /^bl[ \t]+(0x[0-9a-f]{1,16})$/iu.exec(
+        row.instruction,
+      )?.[1];
+      if (
+        operand !== undefined &&
+        (operand === target || normalizeKunaAddress(operand) === target)
+      )
+        arm64DirectCalls.push({
+          from_address: row.from_address,
+          caller_address: row.from_function.address,
+          to_address: target,
+          instruction: row.instruction,
+        });
     }
     return ok({
       addresses: [...addresses].sort(compareKunaAddresses),
+      arm64DirectCalls,
       rows: document.xrefs.length + (document.data_refs?.length ?? 0),
       excludedAliasRows,
       targetAliases: document.target.aliases.map(({ name, address }) => ({
@@ -369,13 +572,9 @@ export const parseKunaIncomingReferences = (
       })),
       walkCoverage: document.coverage ?? null,
       pointerCoverage: document.data_refs_coverage ?? null,
-      pointers:
-        document.data_refs?.map(
-          ({ from_address_hex: _from, to_address_hex: _to, ...pointer }) =>
-            pointer,
-        ) ?? null,
+      pointers,
       bytes: Buffer.byteLength(text),
-      sha256: createHash("sha256").update(text).digest("hex"),
+      sha256: sha256Hex(text),
     });
   } catch (cause: unknown) {
     if (cause instanceof KunaDocumentError) {
@@ -387,7 +586,7 @@ export const parseKunaIncomingReferences = (
       );
     }
     return err({
-      code: cause instanceof Error ? cause.message : String(cause),
+      code: errorMessage(cause),
     });
   }
 };

@@ -1,6 +1,11 @@
 import { moduleResolutionModeForJavaScriptReference } from "../domain/javascript/javascriptModuleResolutionMode.js";
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
-import { analyzeParsedJavaScriptStaticSourceSteps } from "../domain/javascript/javascriptStaticAnalysis.js";
+import {
+  analyzeParsedJavaScriptStaticSourceSteps,
+  memberMutationRefusedJavaScriptStaticAnalysis,
+} from "../domain/javascript/javascriptStaticAnalysis.js";
+import type { JavaScriptStaticAnalysis } from "../domain/javascript/javascriptStaticAnalysisTypes.js";
+import { isJavaScriptMemberMutationRefusal } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { analyzeParsedJavaScriptSemanticsSteps } from "../domain/javascript/javascriptSemanticAnalysis.js";
 import { failedJavaScriptStaticAnalysis } from "../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import { projectJavaScriptModuleSemantics } from "../domain/javascript/javascriptModuleSemanticIr.js";
@@ -15,6 +20,7 @@ import {
   serveJavaScriptAnalysisWorker,
   type JavaScriptSourceWorkerAnalyzer,
 } from "../javascript/analysis/JavaScriptAnalysisWorkerServer.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const analyze: JavaScriptSourceWorkerAnalyzer = async (
   file,
@@ -23,6 +29,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
   packageType,
   purpose,
   precision,
+  memberMutationAllowance,
 ) => {
   if (!file.text.included)
     throw new TypeError("JavaScript worker requires decoded source text");
@@ -33,33 +40,18 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     return null;
   }
   await callbacks.phase("static");
-  const facts = await completeJavaScriptAnalysisSteps(
-    analyzeParsedJavaScriptStaticSourceSteps(
-      file.text.value,
-      parsed,
-      precision,
-    ),
+  const static_ = await staticCheckpoint(
+    file.text.value,
+    parsed,
+    callbacks,
+    purpose,
+    precision,
+    memberMutationAllowance,
   );
-  if (purpose === "preload-discovery") {
-    // Only declarations cross this preliminary pass. The normal pass owns
-    // full static/semantic facts and their result reservations.
-    const empty = failedJavaScriptStaticAnalysis();
-    await callbacks.checkpoint({
-      ...empty,
-      parse_status: facts.parse_status,
-      parse_error_count: facts.parse_error_count,
-      analysis_coverage: facts.analysis_coverage,
-      visited_ast_nodes: facts.visited_ast_nodes,
-      limitations: facts.limitations,
-      electron: {
-        ...empty.electron,
-        browser_windows: facts.electron.browser_windows,
-      },
-    });
-    return null;
-  }
-  const resultBudgetBytes = await callbacks.checkpoint(facts);
-  if (facts.parse_status === "failed") return null;
+  // Structure-only keeps the full static facts and skips semantic analysis;
+  // no semantic result budget is consumed.
+  if (static_ === null || purpose === "structure-only") return null;
+  const { resultBudgetBytes, callPaths } = static_;
   if (resultBudgetBytes === 0)
     throw new AnalysisResourceConstraintError(
       "analyze_javascript_application",
@@ -75,6 +67,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
       moduleResolutionModeForJavaScriptReference(file.path, "static-import"),
       capacity.nodes,
       precision,
+      memberMutationAllowance,
     ),
   );
   parsed = null;
@@ -96,21 +89,91 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     );
   await callbacks.phase("projection");
   const projection = await completeJavaScriptAnalysisSteps(
-    projectJavaScriptSemanticFileSteps(
-      file,
-      ir,
-      capacity,
-      facts.electron.call_paths,
-    ),
+    projectJavaScriptSemanticFileSteps(file, ir, capacity, callPaths),
   );
   return { module, projection };
+};
+
+/**
+ * Checkpoint static facts, reusing the ones preload discovery retained for
+ * this exact request. Null ends the job: discovery returns only declarations,
+ * and a failed parse has no semantic phase. The caller stops after this
+ * checkpoint for structure-only, so that pass reuses the same facts and
+ * still does not start semantic analysis.
+ */
+const staticCheckpoint = async (
+  source: string,
+  parsed: NonNullable<ReturnType<typeof parseJavaScriptSource>>,
+  callbacks: Parameters<JavaScriptSourceWorkerAnalyzer>[2],
+  purpose: Parameters<JavaScriptSourceWorkerAnalyzer>[4],
+  precision: Parameters<JavaScriptSourceWorkerAnalyzer>[5],
+  memberMutationAllowance: Parameters<JavaScriptSourceWorkerAnalyzer>[6],
+): Promise<{
+  readonly resultBudgetBytes: number;
+  readonly callPaths: JavaScriptStaticAnalysis["electron"]["call_paths"];
+} | null> => {
+  const reused =
+    purpose === "preload-discovery" ? undefined : callbacks.reusedStatic();
+  if (reused !== undefined) {
+    const resultBudgetBytes = await callbacks.checkpointReused(reused);
+    return reused.parse_status === "failed"
+      ? null
+      : { resultBudgetBytes, callPaths: reused.call_paths };
+  }
+  let facts: JavaScriptStaticAnalysis;
+  try {
+    facts = await completeJavaScriptAnalysisSteps(
+      analyzeParsedJavaScriptStaticSourceSteps(
+        source,
+        parsed,
+        precision,
+        memberMutationAllowance,
+      ),
+    );
+  } catch (cause: unknown) {
+    // The semantic phase indexes the same mutations under the same
+    // allowance, so it is not started; the syntax facts cross first.
+    // Structure-only has no later semantic phase, so the same refusal must
+    // still cross the syntax facts. Discovery leaves that report to the
+    // normal pass, which recomputes this source.
+    if (
+      purpose !== "preload-discovery" &&
+      isJavaScriptMemberMutationRefusal(cause)
+    )
+      await callbacks.checkpoint(
+        memberMutationRefusedJavaScriptStaticAnalysis(source, parsed, cause),
+      );
+    throw cause;
+  }
+  if (purpose === "preload-discovery") {
+    // Only declarations cross this preliminary pass. The normal pass owns
+    // full static/semantic facts and their result reservations; the worker
+    // keeps the complete checkpoint so that pass need not recompute it.
+    callbacks.retainStatic(facts);
+    const empty = failedJavaScriptStaticAnalysis();
+    await callbacks.checkpoint({
+      ...empty,
+      parse_status: facts.parse_status,
+      parse_error_count: facts.parse_error_count,
+      analysis_coverage: facts.analysis_coverage,
+      visited_ast_nodes: facts.visited_ast_nodes,
+      limitations: facts.limitations,
+      electron: {
+        ...empty.electron,
+        browser_windows: facts.electron.browser_windows,
+      },
+    });
+    return null;
+  }
+  const resultBudgetBytes = await callbacks.checkpoint(facts);
+  return facts.parse_status === "failed"
+    ? null
+    : { resultBudgetBytes, callPaths: facts.electron.call_paths };
 };
 
 try {
   await serveJavaScriptAnalysisWorker(analyze);
 } catch (cause: unknown) {
-  process.stderr.write(
-    `${cause instanceof Error ? cause.message : String(cause)}\n`,
-  );
+  process.stderr.write(`${errorMessage(cause)}\n`);
   process.exitCode = 1;
 }

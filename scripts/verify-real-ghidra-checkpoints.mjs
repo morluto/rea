@@ -3,7 +3,6 @@ import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { createVerifierMcpOwner } from "./lib/verifier-mcp-owner.mjs";
 
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   copyFile,
@@ -14,7 +13,6 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import {
@@ -36,8 +34,7 @@ if (process.platform === "win32")
   throw new Error(
     "Owned Ghidra checkpoints currently support Linux/macOS only.",
   );
-const run = createVerifierRun(),
-  exec = promisify(execFile);
+const run = createVerifierRun();
 // Ghidra children use the root as HOME and TMPDIR; a plain root admits them on every host.
 const workspace = await VerifierFixture.open({
   prefix: "rea-ghidra-checkpoints-",
@@ -100,21 +97,30 @@ async function phase(name, operation) {
   }
 }
 async function cli(procedure, flags = [], path = target) {
-  const { stdout } = await exec(
-    process.execPath,
-    [
-      entrypoint,
-      "decompile",
-      path,
-      procedure,
-      "--provider",
-      "ghidra",
-      "--json",
-      ...flags,
-    ],
-    { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
-  );
-  return JSON.parse(stdout);
+  try {
+    const { stdout } = await compilerCommands.exec(
+      process.execPath,
+      [
+        entrypoint,
+        "decompile",
+        path,
+        procedure,
+        "--provider",
+        "ghidra",
+        "--json",
+        ...flags,
+      ],
+      { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
+    );
+    return JSON.parse(stdout);
+  } catch (cause) {
+    // The checkpoint refusal helper reads the execFile-shaped stdout and stderr.
+    if (cause instanceof Error && cause.snapshot?.stdout?.text !== undefined) {
+      cause.stdout = cause.snapshot.stdout.text;
+      cause.stderr = cause.snapshot.stderr.text;
+    }
+    throw cause;
+  }
 }
 async function connect(environment = {}) {
   const owner = createVerifierMcpOwner();
@@ -151,15 +157,28 @@ __attribute__((noinline)) int rea_checkpoint_leaf(CheckpointRecord *record) { re
 int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf(&record); }
 `,
   );
+  // The name and type checks read the fixture's DWARF. A linked Mach-O keeps
+  // DWARF only in its objects or a dSYM beside it, and REA imports an
+  // immutable copy of the selected file alone, so on macOS the target is the
+  // object itself, which carries its DWARF.
   await compilerCommands.exec(
     "cc",
-    ["-O0", "-g", "-gdwarf-4", "-fno-inline", sourcePath, "-o", target],
+    [
+      "-O0",
+      "-g",
+      "-gdwarf-4",
+      "-fno-inline",
+      ...(process.platform === "darwin" ? ["-c"] : []),
+      sourcePath,
+      "-o",
+      target,
+    ],
     { timeout: 120_000, maxBuffer: 16 * 1024 * 1024 },
   );
   const targetDigest = await sha(target);
   report.target = {
     sha256: targetDigest,
-    source: "self-built C struct/function fixture; never executed",
+    source: `self-built C struct/function ${process.platform === "darwin" ? "object" : "executable"} fixture; never executed`,
     host: process.platform,
     architecture: process.arch,
   };
@@ -466,7 +485,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
 } finally {
   let cleanupVerified = false;
   try {
-    await compilerCommands.close();
+    await workspace.closeEarly([() => compilerCommands.close()]);
     report.run = await completeVerifierRun(run);
     assertVerifierCleanupComplete(report.run.process_lineage);
     cleanupVerified = true;
@@ -475,7 +494,7 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
     report.retained_workspace = root;
     process.exitCode = 1;
   }
-  if (cleanupVerified) {
+  if (cleanupVerified && report.status === "verified") {
     try {
       await workspace.release();
     } catch (cause) {
@@ -483,6 +502,8 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
       report.retained_workspace = root;
       process.exitCode = 1;
     }
+  } else if (report.retained_workspace === undefined) {
+    report.retained_workspace = root;
   }
   process.stdout.write(JSON.stringify(report, null, 2) + "\n");
 }

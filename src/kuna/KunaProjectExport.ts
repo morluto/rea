@@ -1,12 +1,11 @@
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+} from "../resources/index.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { RegularFileState } from "../filesystem/RegularFile.js";
-import { createHash } from "node:crypto";
 import {
   assertKunaProjectState,
   type KunaProjectFileStates,
@@ -27,13 +26,11 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
-  hashStableFile,
   observeStableFile,
   StableFileHashFailure,
 } from "../filesystem/StableFileHash.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { prepareProcessOwnershipInspection } from "../process/ProcessOwnershipObservation.js";
-import { assertArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import {
   copyAndHash,
@@ -41,12 +38,14 @@ import {
   KUNA_INVENTORY_OUTPUT_BYTES,
   kunaFileCleanupError,
   runKunaCommand,
+  verifyKunaExecutableDigest,
   type KunaProcessLauncher,
 } from "./KunaCommand.js";
 import type { KunaDeadline } from "./KunaConfiguration.js";
 import type { KunaInstallation } from "./KunaInstallation.js";
 import { KUNA_DIAGNOSTIC_BYTES } from "./KunaLimits.js";
 import {
+  createKunaProjectSourceScanner,
   parseKunaExportSummary,
   parseKunaInventory,
   scanKunaProjectSource,
@@ -59,6 +58,8 @@ import {
   RegularFileCleanupFailure,
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** Operation name every export and cache failure reports. */
 export const KUNA_EXPORT_OPERATION = "kuna:decompile-project";
@@ -153,9 +154,6 @@ export interface KunaExportRequest {
   readonly deadline: KunaDeadline;
 }
 
-const message = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
 const isMissing = (cause: unknown): boolean =>
   cause instanceof Error &&
   "code" in cause &&
@@ -164,7 +162,7 @@ const isMissing = (cause: unknown): boolean =>
 const projectCacheFailure = (cause: unknown) =>
   new ProviderAdapterError(KUNA_PROVIDER_ID, KUNA_EXPORT_OPERATION, {
     cause,
-    userMessage: `Kuna project cache failed: ${message(cause)}`,
+    userMessage: `Kuna project cache failed: ${errorMessage(cause)}`,
   });
 
 /** A project-cache read's own report, apart from its cleanup. */
@@ -212,11 +210,11 @@ export const kunaExportFailureDialect = (
     const { completion } = kunaCopyFailureFacts(read);
     if (completion !== undefined && completion.cancellation === undefined)
       return cleanup;
-    return analysisErrorWithCleanupFailure(
+    return analysisErrorWithCleanupDependencies(
       projectCacheReadFailure(read),
       cleanup,
       KUNA_EXPORT_OPERATION,
-    ).bindCleanupDependencies([cleanup]);
+    );
   },
   unclassified: (cause) => {
     if (cause instanceof ArtifactReaderFailure)
@@ -242,22 +240,19 @@ const verifyKunaExecutable = async (
   signal: AbortSignal,
   retainFailedFileClose: KunaExportRequest["retainFailedFileClose"],
 ): Promise<Result<null, ProviderAdapterError>> => {
-  const invocationPath = installation.configuration.command;
-  await assertArtifactCommandPath(
-    { invocationPath, resolvedPath: installation.executable },
-    KUNA_EXPORT_OPERATION,
-  );
-  const executable = await hashStableFile(invocationPath, {
+  const changed = await verifyKunaExecutableDigest(
+    installation,
     signal,
-    retainFailedClose: (owner) => retainFailedFileClose(owner, invocationPath),
-  });
-  if (executable.sha256 === installation.sha256) return ok(null);
+    KUNA_EXPORT_OPERATION,
+    retainFailedFileClose,
+  );
+  if (changed === undefined) return ok(null);
   return err(
     new ProviderAdapterError(KUNA_PROVIDER_ID, KUNA_EXPORT_OPERATION, {
       userMessage: `${installation.executable} changed after readiness inspection; reopen the target so REA probes the current Kuna executable.`,
       diagnostics: {
         expected_sha256: installation.sha256,
-        observed_sha256: executable.sha256,
+        observed_sha256: changed,
       },
     }),
   );
@@ -369,6 +364,7 @@ export const exportKunaProject = async (
   const fileStates: Partial<
     Record<keyof KunaProjectFileStates, RegularFileState>
   > = {};
+  const sourceScanner = createKunaProjectSourceScanner(summary);
   for (const [role, name] of Object.entries(names) as [
     keyof KunaExportFiles,
     string,
@@ -383,6 +379,13 @@ export const exportKunaProject = async (
     const observed = await observeStableFile(path, {
       signal,
       retainFailedClose: (owner) => request.retainFailedFileClose(owner, path),
+      ...(role === "c"
+        ? {
+            onChunk: (chunk) => {
+              sourceScanner.push(chunk);
+            },
+          }
+        : {}),
     });
     files[role] = {
       path: name,
@@ -393,20 +396,11 @@ export const exportKunaProject = async (
   }
   const complete = files as KunaExportFiles;
   const states = fileStates as KunaProjectFileStates;
-  if (
-    complete.inventory.sha256 !==
-    createHash("sha256").update(listed.snapshot.stdout.text).digest("hex")
-  )
+  if (complete.inventory.sha256 !== sha256Hex(listed.snapshot.stdout.text))
     return unusable("the retained inventory changed before export sealing");
   await assertKunaProjectState(request.output, complete, states, signal);
-  const functions = await readKunaExportSource(
-    request.output,
-    complete.c,
-    summary,
-    signal,
-  );
+  const functions = sourceScanner.finish();
   if (!functions.ok) return unusable(functions.error);
-  await assertKunaProjectState(request.output, complete, states, signal);
   const identity = await verifyKunaExecutable(
     installation,
     signal,

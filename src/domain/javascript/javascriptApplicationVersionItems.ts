@@ -1,7 +1,7 @@
 import { absenceClaimable, canonicalJson } from "../comparisonSemantics.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import type { Evidence } from "../evidence.js";
+import { evidenceFileTarget, type Evidence } from "../evidence.js";
 import type {
   ApplicationEdge,
   ApplicationNode,
@@ -492,13 +492,13 @@ const changedDimensions = (
     leftContent !== rightContent
   )
     dimensions.push("content");
-  if (
-    canonicalJson(locations(pair.left)) !== canonicalJson(locations(pair.right))
-  )
+  if (!sameStringList(locationKeys(pair.left), locationKeys(pair.right)))
     dimensions.push("location");
   if (
-    canonicalJson(properties(pair.left, sourceAnalysisUncertain)) !==
-    canonicalJson(properties(pair.right, sourceAnalysisUncertain))
+    !sameStringList(
+      propertyKeys(pair.left, sourceAnalysisUncertain),
+      propertyKeys(pair.right, sourceAnalysisUncertain),
+    )
   )
     dimensions.push("properties");
   if (relationships.different) dimensions.push("relationships");
@@ -518,14 +518,26 @@ const contentIdentity = (node: ApplicationNode): string | null => {
   return null;
 };
 
-const locations = (node: ApplicationNode) =>
+const sameStringList = (
+  left: readonly string[],
+  right: readonly string[],
+): boolean => {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1)
+    if (left[index] !== right[index]) return false;
+  return true;
+};
+
+const locationKeys = (node: ApplicationNode): string[] =>
   node.observations
     .map(({ evidence }) =>
-      evidence.location.available ? evidence.location.value : evidence.location,
+      canonicalJson(
+        evidence.location.available
+          ? evidence.location.value
+          : evidence.location,
+      ),
     )
-    .sort((left, right) =>
-      compareUnicodeCodePoints(canonicalJson(left), canonicalJson(right)),
-    );
+    .sort(compareUnicodeCodePoints);
 
 const SOURCE_FILE_KINDS = new Set([
   "javascript",
@@ -554,16 +566,30 @@ const hasUnexaminedSourceFile = (node: ApplicationNode): boolean =>
             values.parse_status === "partial"))),
   );
 
-const properties = (node: ApplicationNode, sourceAnalysisUncertain: boolean) =>
+const UNCERTAIN_SOURCE_OMITTED_KEYS = new Set([
+  "text_status",
+  "parse_status",
+  "analysis_coverage",
+  "vendor_markers",
+  "json_parse_status",
+  "package_parse_status",
+  "json_top_level_keys",
+  "omitted_json_top_level_keys",
+]);
+
+const propertyKeys = (
+  node: ApplicationNode,
+  sourceAnalysisUncertain: boolean,
+): string[] =>
   node.observations
-    .map(({ label, properties: values, source_map_reference }) => ({
-      label,
-      properties: comparisonPropertyValues(values, sourceAnalysisUncertain),
-      source_map_reference,
-    }))
-    .sort((left, right) =>
-      compareUnicodeCodePoints(canonicalJson(left), canonicalJson(right)),
-    );
+    .map(({ label, properties: values, source_map_reference }) =>
+      canonicalJson({
+        label,
+        properties: comparisonPropertyValues(values, sourceAnalysisUncertain),
+        source_map_reference,
+      }),
+    )
+    .sort(compareUnicodeCodePoints);
 
 const comparisonPropertyValues = (
   values: ApplicationNode["observations"][number]["properties"],
@@ -575,17 +601,7 @@ const comparisonPropertyValues = (
     SOURCE_FILE_KINDS.has(values.file_kind)
       ? Object.fromEntries(
           Object.entries(values).filter(
-            ([key]) =>
-              ![
-                "text_status",
-                "parse_status",
-                "analysis_coverage",
-                "vendor_markers",
-                "json_parse_status",
-                "package_parse_status",
-                "json_top_level_keys",
-                "omitted_json_top_level_keys",
-              ].includes(key),
+            ([key]) => !UNCERTAIN_SOURCE_OMITTED_KEYS.has(key),
           ),
         )
       : values;
@@ -773,8 +789,9 @@ const indexNativeEvidence = (
   evidence: readonly Evidence[],
 ): ReadonlyMap<string, readonly string[]> => {
   const evidenceByDigest = new Map<string, string[]>();
-  for (const { evidence_id: id, subject } of evidence) {
-    const digest = subject?.digest.sha256;
+  for (const record of evidence) {
+    const id = record.evidence_id;
+    const digest = evidenceFileTarget(record)?.sha256;
     if (digest === undefined) continue;
     const ids = evidenceByDigest.get(digest);
     if (ids === undefined) evidenceByDigest.set(digest, [id]);

@@ -1,4 +1,4 @@
-import type { EspImageMetadata } from "../domain/artifactFormatMetadata.js";
+import type { EspImageMetadata } from "../domain/formatMetadata/firmwareMetadata.js";
 import { espChipForId } from "../domain/firmware/espChips.js";
 import {
   espFlashDumpOrigin,
@@ -16,7 +16,7 @@ import {
   ESP_SIGNATURE_BLOCK_BYTES,
   offsetText,
 } from "../domain/firmware/espImageStructures.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import { readEspFlashRange } from "./EspFlashRegionReads.js";
 import {
   PositionalArtifactReader,

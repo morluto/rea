@@ -14,6 +14,8 @@ import type {
   SpawnedOwnedProviderProcess,
 } from "./ProviderProcess.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
+import { Budget } from "../domain/budget.js";
+import type { FixedAllowance } from "../domain/fixedAllowanceRemediation.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
@@ -28,7 +30,8 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/index.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Injectable acquisition seam; production owns a POSIX group or Windows job. */
 export type OwnedMcpLauncher = (
@@ -40,19 +43,17 @@ export type OwnedMcpTransportFailure =
   | { readonly kind: "process"; readonly cause: unknown }
   | { readonly kind: "exit" }
   | { readonly kind: "protocol"; readonly cause: Error }
+  | {
+      /**
+       * The protocol process exceeded a fixed frame or per-operation byte
+       * ceiling; the adapter attributes the refusal to its operation.
+       */
+      readonly kind: "output_limit";
+      readonly scope: "frame" | "operation";
+      readonly ceiling: FixedAllowance & { readonly limit: number };
+      readonly cause: Error;
+    }
   | { readonly kind: "interrupted"; readonly reason: unknown };
-
-/** A frame or per-operation byte budget the protocol process exceeded. */
-export class OwnedMcpOutputLimitError extends Error {
-  constructor(
-    readonly scope: "frame" | "operation",
-    readonly limitBytes: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "OwnedMcpOutputLimitError";
-  }
-}
 
 /** SDK-framed stdio with REA-owned process cleanup rather than an unowned child. */
 export class OwnedMcpStdioTransport implements Transport {
@@ -64,7 +65,8 @@ export class OwnedMcpStdioTransport implements Transport {
   #supervisor: ProviderProcessSupervisor | undefined;
   #frameBuffer = Buffer.alloc(0);
   #frameLength = 0;
-  #bytes = 0;
+  /** Output charged to the current operation; stays over once it is exceeded. */
+  readonly #bytes: Budget | undefined;
   #started = false;
   #closed = false;
   readonly #cleanup = new AnalysisCleanupLease(
@@ -72,8 +74,13 @@ export class OwnedMcpStdioTransport implements Transport {
     [this.runId],
   );
   #starting: Promise<void> | undefined;
-  /** Preparation cleanup owners a failed launch transferred and that closed. */
-  readonly #releasedPreparations = new Set<unknown>();
+  #preparations:
+    | readonly {
+        readonly failure: ProcessInspectionCleanupFailure;
+        readonly resource: string;
+        readonly lease: AnalysisCleanupLease;
+      }[]
+    | undefined;
   /** Ends a launch still resolving or spawning when the transport closes. */
   readonly #acquisition = new AbortController();
   #failure: OwnedMcpTransportFailure | undefined;
@@ -97,7 +104,10 @@ export class OwnedMcpStdioTransport implements Transport {
       readonly notifyOnExit?: boolean;
     },
     readonly launcher: OwnedMcpLauncher = spawnOwnedProviderProcess,
-  ) {}
+  ) {
+    if (settings.maxOperationBytes !== undefined)
+      this.#bytes = new Budget(settings.maxOperationBytes);
+  }
 
   /** Acquires exactly one protocol process after the SDK installs callbacks. */
   start(): Promise<void> {
@@ -226,7 +236,7 @@ export class OwnedMcpStdioTransport implements Transport {
 
   /** Scope both the byte budget and diagnostic retention to the next serialized request. */
   beginOperation(): void {
-    this.#bytes = 0;
+    this.#bytes?.restore(0);
     this.#supervisor?.resetOutput();
   }
 
@@ -292,46 +302,58 @@ export class OwnedMcpStdioTransport implements Transport {
       new AnalysisCleanupLeaseGroup(failure, [this.#cleanup]);
       throw failure;
     }
-    for (const preparation of processInspectionCleanupFailures(startFailure))
-      await this.#releasePreparation(preparation);
+    await this.#releasePreparations(startFailure);
   }
 
-  /**
-   * Close one transferred preparation owner. Until it closes (or when the
-   * launch reported a failure without an owner) the close fails and a later
-   * close retries it.
-   */
-  async #releasePreparation(
-    preparation: ProcessInspectionCleanupFailure,
-  ): Promise<void> {
-    const darwin = preparation instanceof DarwinProcessOwnershipInspectionError;
-    const owner = darwin ? preparation.cleanupOwner : preparation.owner;
-    if (owner !== undefined && this.#releasedPreparations.has(owner)) return;
-    let reason = preparation.message;
-    if (owner !== undefined)
+  /** A refused close retains its lease while independent owners still get a turn. */
+  async #releasePreparations(startFailure: unknown): Promise<void> {
+    this.#preparations ??= processInspectionCleanupFailures(startFailure).map(
+      (failure) => {
+        const darwin = failure instanceof DarwinProcessOwnershipInspectionError;
+        const owner = darwin ? failure.cleanupOwner : failure.owner;
+        const resource = darwin ? "process ownership inspection" : failure.path;
+        return {
+          failure,
+          resource,
+          lease: new AnalysisCleanupLease(async () => {
+            if (owner === undefined) throw failure;
+            await owner.close();
+          }, [resource]),
+        };
+      },
+    );
+    const pending = [];
+    for (const preparation of this.#preparations) {
       try {
-        await owner.close();
-        this.#releasedPreparations.add(owner);
-        return;
+        await preparation.lease.release();
       } catch (cause: unknown) {
-        reason = cause instanceof Error ? cause.message : String(cause);
+        pending.push({ ...preparation, reason: errorMessage(cause) });
       }
+    }
+    const first = pending[0];
+    if (first === undefined) return;
     const failure = new ProviderCleanupError(
       this.settings.provider,
-      [darwin ? "process ownership inspection" : preparation.path],
-      { reason },
+      pending.map(({ resource }) => resource),
       {
-        cause: preparation,
+        reason:
+          pending.length === 1
+            ? first.reason
+            : pending
+                .map(({ resource, reason }) => `${resource}: ${reason}`)
+                .join("\n"),
+      },
+      {
+        cause: pending.length === 1 ? first.failure : startFailure,
         ...(this.settings.operation === undefined
           ? {}
           : { operation: this.settings.operation }),
       },
     );
-    // The transport's close retries the owner; the failure keeps naming the
-    // preparation resource rather than the process run.
-    new AnalysisCleanupLeaseGroup(failure, [this.#cleanup], {
-      preserveResourceAttribution: true,
-    });
+    new AnalysisCleanupLeaseGroup(
+      failure,
+      pending.map(({ lease }) => lease),
+    );
     throw failure;
   }
 
@@ -355,16 +377,15 @@ export class OwnedMcpStdioTransport implements Transport {
   };
   /** Charge output to the operation budget; false once it is exceeded. */
   #countOperationBytes(bytes: number): boolean {
-    const limit = this.settings.maxOperationBytes;
-    if (limit === undefined) return true;
-    this.#bytes += bytes;
-    if (this.#bytes <= limit) return true;
-    this.#fail(
-      new OwnedMcpOutputLimitError(
-        "operation",
-        limit,
-        `${this.settings.label} operation output exceeds ${limit} bytes; no complete result is available`,
-      ),
+    const budget = this.#bytes;
+    if (budget === undefined) return true;
+    budget.chargeOverCommitting(bytes);
+    if (budget.overCommitted === 0) return true;
+    const limit = budget.maximum;
+    this.#failLimit(
+      "operation",
+      limit,
+      `${this.settings.label} operation output exceeds ${limit} bytes; no complete result is available`,
     );
     return false;
   }
@@ -379,12 +400,21 @@ export class OwnedMcpStdioTransport implements Transport {
         const end = newline === -1 ? bytes.length : newline;
         const fragment = bytes.subarray(offset, end);
         const frameBytes = this.#frameLength + fragment.length;
-        if (frameBytes > this.settings.maxFrameBytes)
-          throw new OwnedMcpOutputLimitError(
+        if (frameBytes > this.settings.maxFrameBytes) {
+          this.#failLimit(
             "frame",
             this.settings.maxFrameBytes,
             `${this.settings.label} MCP frame exceeds ${this.settings.maxFrameBytes} bytes`,
           );
+          return;
+        }
+        if (this.#frameLength === 0 && newline !== -1) {
+          // Preserve a leading BOM so the JSON-RPC parser can reject it.
+          const line = decodeStrictUtf8(fragment, "preserve");
+          this.onmessage?.(deserializeMessage(line));
+          offset = newline + 1;
+          continue;
+        }
         this.#appendFrame(fragment, frameBytes);
         if (newline === -1) return;
         // Preserve a leading BOM so the JSON-RPC parser can reject it.
@@ -417,5 +447,25 @@ export class OwnedMcpStdioTransport implements Transport {
   #fail(error: Error): void {
     this.#failure ??= { kind: "protocol", cause: error };
     this.#error(error);
+  }
+  /** Record a fixed output ceiling the process exceeded, then fail the session. */
+  #failLimit(
+    scope: "frame" | "operation",
+    limit: number,
+    message: string,
+  ): void {
+    const cause = new Error(message);
+    this.#failure ??= {
+      kind: "output_limit",
+      scope,
+      ceiling: {
+        name: `The ${this.settings.label} ${scope === "frame" ? "frame" : "operation output"} allowance of ${String(limit)} bytes`,
+        kind: "bytes",
+        limit,
+        unit: "bytes",
+      },
+      cause,
+    };
+    this.#error(cause);
   }
 }

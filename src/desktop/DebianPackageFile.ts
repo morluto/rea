@@ -1,8 +1,10 @@
 import { stat } from "node:fs/promises";
 import { basename } from "node:path";
 
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
+import {
+  AnalysisCleanupLease,
+  ArtifactFileCleanupFailure,
+} from "../resources/index.js";
 import {
   PACKAGE_FILE_FIELDS,
   packageFileMismatch,
@@ -24,7 +26,8 @@ import {
   hostFileKind,
   isRefusedRead,
 } from "./HostFileRead.js";
-import type { QueryRunner } from "./HostQuery.js";
+import { queryUtf8Text, type QueryRunner } from "./HostQuery.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type PackageFileFacts = Pick<
   DesktopPackage,
@@ -64,7 +67,7 @@ const hashPackageFile = async (
     const read = stableFileHashCause(cause);
     if (!(cause instanceof StableFileHashFailure) || !isRefusedRead(read))
       throw cause;
-    return `${path} could not be read: ${read instanceof Error ? read.message : String(read)}`;
+    return `${path} could not be read: ${errorMessage(read)}`;
   }
 };
 
@@ -100,18 +103,23 @@ export const inspectPackageFile = async (
   // dpkg-deb and the hash read the file apart; its identity must hold across both.
   const before = await stat(path).catch(() => undefined);
   if (before === undefined) return refused(`${path} could not be read`);
-  const outcome = await runQuery(
+  const outcome = await queryUtf8Text(
+    runQuery,
     "dpkg-deb",
     ["--field", path, ...PACKAGE_FILE_FIELDS],
     signal,
   );
-  if (outcome === "missing")
+  if (outcome.kind === "missing")
     return refused(
       `dpkg-deb is not installed, so the control fields of ${path} were not read`,
     );
-  if (outcome === "failed" || outcome.exitCode !== 0)
+  if (outcome.kind === "undecodable")
+    return refused(
+      `dpkg-deb returned invalid UTF-8 in the control fields of ${path}`,
+    );
+  if (outcome.kind !== "read")
     return refused(`dpkg-deb could not read ${path} as a Debian package`);
-  const fields = parseDpkgDebFields(outcome.stdout);
+  const fields = parseDpkgDebFields(outcome.text);
   if (fields === undefined)
     return refused(
       `dpkg-deb did not report the Package, Version and Architecture of ${path}`,

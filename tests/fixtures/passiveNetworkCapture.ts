@@ -59,6 +59,7 @@ export const passiveNetworkCapture = (paths: readonly string[] = ["/a"]) => {
         status: 200,
         mime_type: "text/html",
         encoded_data_length: 10,
+        redirects: [],
         initiator: { type: "parser", url: null, line: null, column: null },
         body_shapes: { status: "unavailable", request: null, response: null },
       })),
@@ -113,6 +114,20 @@ export const passiveNetworkCapture = (paths: readonly string[] = ["/a"]) => {
       "Synthetic normalized inventory for offline comparison tests; not recorded from a live browser.",
     ],
   });
+};
+
+/** Declare policy omission so missing body shapes do not limit comparison. */
+export const unselectBodyShapes = (
+  capture: WebPageInspection,
+): WebPageInspection => {
+  capture.completeness.excluded.push({
+    section: "json_body_shapes",
+    reason: "not_approved",
+    count: null,
+  });
+  for (const request of capture.network.requests)
+    request.body_shapes.status = "not_approved";
+  return capture;
 };
 
 /** Use the production completeness classifier without inventing section-list entries. */

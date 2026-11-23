@@ -1,19 +1,23 @@
-import { advertisedInputDialectViolations } from "./advertisedDialect.js";
+import {
+  ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+  hasAdvertisedInputDialectViolation,
+} from "./advertisedDialect.js";
 import { projectToAdvertisedDialect } from "./advertisedDialectProjection.js";
 import {
   COMPACT_SCHEMA_MAX_DEPTH,
   inlineWithinBudget,
   isSchemaObject,
+  pruneSchemaBeyondDepth,
   reduceToShallowProperties,
   schemaDepth,
   serializedBytes,
-  stripAnnotations,
 } from "./compactJsonSchema.js";
+import { JsonSchemaReferences } from "./jsonSchemaReferences.js";
 
-// The compact input presentation: every advertised input schema is self-contained
-// (clients such as Kimi expand references before sending tools to Moonshot),
-// inside the per-tool byte budget, and in the portable advertised dialect.
-// Canonical server-side validation remains unchanged.
+// The compact input presentation: every advertised input schema is
+// self-contained (the dialect admits no `$ref` or `$defs`), inside the
+// per-tool byte budget, and in the portable advertised dialect. Canonical
+// server-side validation remains unchanged.
 
 export type AdvertisedInputSchemaPresentation = "inline" | "reduced";
 
@@ -46,25 +50,21 @@ const retainRootPropertyGuidance = (
     !isSchemaObject(stripped.properties)
   )
     return stripped;
-  const properties = { ...stripped.properties };
+  let properties: Record<string, unknown> | undefined;
   for (const name of retainedRootPropertyDescriptions) {
     const source = schema.properties[name];
-    const kept = properties[name];
+    const kept = (properties ?? stripped.properties)[name];
     if (
       isSchemaObject(source) &&
       isSchemaObject(kept) &&
       typeof source.description === "string"
-    )
+    ) {
+      properties ??= { ...stripped.properties };
       properties[name] = { ...kept, description: source.description };
+    }
   }
-  return { ...stripped, properties };
+  return properties === undefined ? stripped : { ...stripped, properties };
 };
-
-const withinDialect = (schema: Record<string, unknown>): boolean =>
-  advertisedInputDialectViolations({
-    name: "input",
-    inputSchema: schema,
-  }).length === 0;
 
 /**
  * Render an advertised input schema within a per-schema byte budget for
@@ -76,7 +76,11 @@ export const compactAdvertisedInputSchema = (
   schema: Record<string, unknown>,
   budgetBytes: number,
 ): CompactedInputSchema => {
-  const expanded = inlineWithinBudget(stripAnnotations(schema), budgetBytes);
+  const references = new JsonSchemaReferences(schema);
+  const expanded = inlineWithinBudget(schema, budgetBytes, {
+    stripAnnotations: true,
+    references,
+  });
   const inline =
     expanded === undefined
       ? undefined
@@ -87,11 +91,31 @@ export const compactAdvertisedInputSchema = (
     inline !== undefined &&
     serializedBytes(inline.schema) <= budgetBytes &&
     schemaDepth(inline.schema) <= COMPACT_SCHEMA_MAX_DEPTH &&
-    withinDialect(inline.schema)
+    !hasAdvertisedInputDialectViolation(inline.schema, {
+      skipRootBounds: budgetBytes <= ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+    })
   )
     return { ...inline, presentation: "inline" };
+  if (inline !== undefined && serializedBytes(inline.schema) <= budgetBytes) {
+    // Only the branches past the depth limit are elided; the rest of the
+    // validation structure stays advertised instead of a whole reduction.
+    const pruned = pruneSchemaBeyondDepth(inline.schema);
+    if (
+      pruned !== undefined &&
+      serializedBytes(pruned) <= budgetBytes &&
+      schemaDepth(pruned) <= COMPACT_SCHEMA_MAX_DEPTH &&
+      !hasAdvertisedInputDialectViolation(pruned, {
+        skipRootBounds: budgetBytes <= ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+      })
+    )
+      return {
+        schema: pruned,
+        guidance: inline.guidance,
+        presentation: "inline",
+      };
+  }
   const reduced = projectToAdvertisedDialect(
-    reduceToShallowProperties(schema, INPUT_REDUCED_ANNOTATION),
+    reduceToShallowProperties(schema, INPUT_REDUCED_ANNOTATION, references),
   );
   if (serializedBytes(reduced.schema) <= budgetBytes)
     return { ...reduced, presentation: "reduced" };
@@ -109,7 +133,7 @@ export const compactAdvertisedInputSchema = (
 // read one projection of the same memoized canonical schema object.
 const compacted = new WeakMap<object, Map<number, CompactedInputSchema>>();
 
-/** The advertised input for the selected presentation, with its guidance. */
+/** The compact advertised input with its guidance; `advertisedTool.ts` composes the tool. */
 export const presentAdvertisedInput = (
   schema: Record<string, unknown>,
   compactPresentation: CompactInputSchemaPresentation,
@@ -125,30 +149,3 @@ export const presentAdvertisedInput = (
     );
   return presented;
 };
-
-/** Return the JSON schema clients receive for the selected input presentation. */
-export const presentAdvertisedInputSchema = (
-  schema: Record<string, unknown>,
-  compactPresentation: CompactInputSchemaPresentation,
-): Record<string, unknown> =>
-  presentAdvertisedInput(schema, compactPresentation).schema;
-
-/** The tool description followed by the input guidance its schema omits. */
-export function describeAdvertisedTool(
-  description: string,
-  guidance: readonly string[],
-): string;
-export function describeAdvertisedTool(
-  description: string | undefined,
-  guidance: readonly string[],
-): string | undefined;
-export function describeAdvertisedTool(
-  description: string | undefined,
-  guidance: readonly string[],
-): string | undefined {
-  if (guidance.length === 0) return description;
-  const input = guidance.join(" ");
-  return description === undefined || description === ""
-    ? input
-    : `${description}\n\n${input}`;
-}

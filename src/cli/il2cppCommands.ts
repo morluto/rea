@@ -1,7 +1,6 @@
-import { z } from "incur";
+import { z } from "zod";
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createIl2cppMetadataService } from "../composition/il2cpp.js";
 import { IL2CPP_TOOL_CONTRACTS } from "../contracts/il2cpp/il2cppToolContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
@@ -9,10 +8,8 @@ import { localPathStringSchema } from "../domain/localPath.js";
 import { err } from "../domain/result.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  deliverWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { deliverWithService } from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 /**
@@ -63,7 +60,6 @@ export const registerIl2cppCommands = (
     logger,
     contractNamed(IL2CPP_TOOL_CONTRACTS, "inspect_il2cpp_metadata"),
     {
-      command: CLI_COMMANDS.inspectIl2cppMetadata,
       description:
         "Inventory IL2CPP global-metadata.dat names, owners and string literals, optionally linking method addresses from the native binary",
       positionals: ["path"],

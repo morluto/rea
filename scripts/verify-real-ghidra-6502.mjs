@@ -1,6 +1,5 @@
 import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   mkdir,
@@ -12,7 +11,6 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -20,8 +18,14 @@ import { parseEvidence } from "../dist/domain/evidence.js";
 import {
   requireMcpOperationResult,
   requireMcpOutput,
+  requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import {
   VerifierFixture,
   withVerifierFixture,
@@ -33,25 +37,52 @@ if (process.env.GHIDRA_INSTALL_DIR === undefined)
   throw new Error(
     "Set GHIDRA_INSTALL_DIR to a bring-your-own Ghidra installation.",
   );
-const exec = promisify(execFile);
 const run = createVerifierRun();
 const root = fileURLToPath(new URL("..", import.meta.url));
 const ca65 = process.env.REA_CA65 ?? "ca65";
 const ld65 = process.env.REA_LD65 ?? "ld65";
 const toolchain = {};
-for (const [name, command] of Object.entries({ ca65, ld65 })) {
-  const version = await exec(command, ["--version"], { timeout: 10000 });
-  toolchain[name] = (version.stdout + version.stderr).trim();
+let workspaceFixture;
+// The same owner serves the pre-workspace probes. Its Windows launcher resolves
+// bare ca65/ld65 names; the shared owned-command runner requires a drive path.
+const commands = await createVerifierCommands();
+try {
+  for (const [name, command] of Object.entries({ ca65, ld65 })) {
+    const version = await commands.exec(command, ["--version"], {
+      timeout: 10000,
+    });
+    toolchain[name] = (version.stdout + version.stderr).trim();
+  }
+  await mkdir(join(root, "build"), { recursive: true });
+  workspaceFixture = await VerifierFixture.open({
+    prefix: "rea-6502-proof-",
+    parent: join(root, "build"),
+    private: false,
+  });
+  await mkdir(join(workspaceFixture.path, "runtime"));
+} catch (cause) {
+  const failures = [cause];
+  try {
+    await commands.close();
+  } catch (closeCause) {
+    failures.push(closeCause);
+  }
+  if (workspaceFixture !== undefined) {
+    try {
+      await workspaceFixture.release();
+    } catch (releaseCause) {
+      failures.push(releaseCause);
+    }
+  }
+  if (failures.length > 1)
+    throw new AggregateError(
+      failures,
+      "6502 toolchain probe and command cleanup both failed",
+    );
+  throw cause;
 }
-await mkdir(join(root, "build"), { recursive: true });
-const workspaceFixture = await VerifierFixture.open({
-  prefix: "rea-6502-proof-",
-  parent: join(root, "build"),
-  private: false,
-});
 const workspace = workspaceFixture.path;
 const runtime = join(workspace, "runtime");
-await mkdir(runtime);
 const path = join(workspace, "image.bin");
 const object = join(workspace, "image.o");
 const entrypoint = join(root, "scripts", "rea.mjs");
@@ -92,19 +123,19 @@ workspaceFixture.releaseAfter(async () => {
     "Owned Ghidra runtime survived close",
   );
   verifierRun = await completeVerifierRun(run);
-  if (process.platform !== "win32") {
-    assert.equal(verifierRun.process_lineage.status, "verified");
-    assert.deepEqual(verifierRun.process_lineage.descendants, []);
-  }
+  // Windows has no retained Job Object lease, so lineage observation is unavailable.
+  if (process.platform !== "win32")
+    assertVerifierCleanupComplete(verifierRun.process_lineage);
 });
 await withVerifierFixture(workspaceFixture, async () => {
+  let failure;
   try {
-    await exec(
+    await commands.exec(
       ca65,
       [join(root, "tests/conformance/ghidra/6502.s"), "-o", object],
       { timeout: 10000 },
     );
-    await exec(
+    await commands.exec(
       ld65,
       [
         "-C",
@@ -191,14 +222,23 @@ await withVerifierFixture(workspaceFixture, async () => {
         entry_point: "0xffff",
       },
     });
-    assert.equal(rejected.isError, true);
-    assert.match(JSON.stringify(rejected.content), /6502 address width/u);
+    // admitRawBinary rejects an image that does not fit the 6502 address width.
+    const rejectedError = requireMcpToolError(rejected);
+    assert.partialDeepStrictEqual(rejectedError, {
+      code: "invalid_request",
+      details: {
+        path,
+        reason:
+          "raw-binary mapping from 0xffff must fit in the 6502 address width",
+        constraint: "load_selection_rejected",
+      },
+    });
     const preserved = await call("binary_session");
     assert.equal(preserved.analysis_run.run_id, status.analysis_run.run_id);
     assert.equal(preserved.entry_point, "0x8001");
     await call("close_binary");
     await client.ping();
-    const { stdout } = await exec(
+    const { stdout } = await commands.exec(
       process.execPath,
       [
         entrypoint,
@@ -219,8 +259,8 @@ await withVerifierFixture(workspaceFixture, async () => {
     const cli = parseEvidence(JSON.parse(stdout));
     assert.deepEqual(cli.normalized_result, image.normalized_result);
     assert.equal(cli.analysis_profile.digest, image.analysis_profile.digest);
-    assert.equal(cli.subject.digest.sha256, sha256);
-    const fileCli = await exec(
+    assert.equal(cli.subject.identity.sha256, sha256);
+    const fileCli = await commands.exec(
       process.execPath,
       [
         entrypoint,
@@ -245,7 +285,7 @@ await withVerifierFixture(workspaceFixture, async () => {
       filePseudo.normalized_result,
     );
     assert.deepEqual(fileCliEvidence.locations, filePseudo.locations);
-    assert.equal(fileCliEvidence.subject.digest.sha256, sha256);
+    assert.equal(fileCliEvidence.subject.identity.sha256, sha256);
     assert.deepEqual(await readFile(path), bytes);
     assert.deepEqual(await readdir(runtime), []);
     const lowMemory = [];
@@ -256,7 +296,7 @@ await withVerifierFixture(workspaceFixture, async () => {
       [0, true],
     ]) {
       const lowPath = join(workspace, `low-${entry}.bin`);
-      await exec(
+      await commands.exec(
         ld65,
         [
           "-C",
@@ -333,7 +373,7 @@ await withVerifierFixture(workspaceFixture, async () => {
         ),
       );
       await call("close_binary");
-      const lowCli = await exec(
+      const lowCli = await commands.exec(
         process.execPath,
         [
           entrypoint,
@@ -400,10 +440,23 @@ await withVerifierFixture(workspaceFixture, async () => {
           { name: "inspect_native_load_image", arguments: {} },
           { timeout: 240000 },
         );
-        assert.equal(linkedImage.isError, true);
+        // Native Windows admission refuses the junction before Ghidra imports it.
+        const linkedError = requireMcpToolError(linkedImage);
+        assert.partialDeepStrictEqual(linkedError, {
+          code: "execution_failure",
+          details: {
+            provider_id: "ghidra",
+            operation: "inspect_native_load_image",
+            diagnostics: {
+              failure_kind: "start",
+              failure_message: "Ghidra target snapshot failed admission",
+              failure_cause: { code: "ERR_REA_WINDOWS_NATIVE" },
+            },
+          },
+        });
         assert.match(
-          JSON.stringify(linkedImage),
-          /Reparse path component is unsupported/u,
+          linkedError.details.diagnostics.failure_cause.message,
+          /^Reparse path component is unsupported \(tag \d+\) /u,
         );
         await call("close_binary");
         const snapshotPath = join(workspace, "direct-snapshot.json");
@@ -423,7 +476,7 @@ await withVerifierFixture(workspaceFixture, async () => {
           snapshotPath,
           "--json",
         ];
-        const saved = await exec(process.execPath, cliArgs(path), {
+        const saved = await commands.exec(process.execPath, cliArgs(path), {
           env,
           timeout: 240000,
           maxBuffer: 16 * 1024 * 1024,
@@ -441,16 +494,14 @@ await withVerifierFixture(workspaceFixture, async () => {
         assert.deepEqual(await readdir(runtime), []);
         // Replaying a matching snapshot must still reach native path admission.
         await assert.rejects(
-          exec(process.execPath, cliArgs(linkedPath), {
+          commands.exec(process.execPath, cliArgs(linkedPath), {
             env,
             timeout: 240000,
             maxBuffer: 16 * 1024 * 1024,
           }),
           (cause) => {
-            assert.match(
-              cause.stdout + cause.stderr,
-              /Reparse path component is unsupported/u,
-            );
+            const output = `${cause.snapshot?.stdout?.text ?? ""}${cause.snapshot?.stderr?.text ?? ""}`;
+            assert.match(output, /Reparse path component is unsupported/u);
             return true;
           },
         );
@@ -486,14 +537,30 @@ await withVerifierFixture(workspaceFixture, async () => {
     };
   } catch (cause) {
     if (stderr) process.stderr.write(stderr);
-    throw cause;
+    failure = cause;
+  } finally {
+    try {
+      await workspaceFixture.closeEarly([() => commands.close()]);
+    } catch (cause) {
+      failure =
+        failure === undefined
+          ? cause
+          : new AggregateError(
+              [failure, cause],
+              "6502 verification and command cleanup both failed",
+            );
+    }
+  }
+  if (failure !== undefined) {
+    workspaceFixture.retain(
+      `6502 verification failed; retained workspace: ${workspace}`,
+    );
+    throw failure;
   }
 });
 verifierRun = await completeVerifierRun(run);
-if (process.platform !== "win32") {
-  assert.equal(verifierRun.process_lineage.status, "verified");
-  assert.deepEqual(verifierRun.process_lineage.descendants, []);
-}
+if (process.platform !== "win32")
+  assertVerifierCleanupComplete(verifierRun.process_lineage);
 // Keep the workspace for diagnosis unless verification and cleanup both pass.
 process.stdout.write(
   JSON.stringify({ verifier_run: verifierRun, ...report }) + "\n",
@@ -511,8 +578,8 @@ async function call(name, args = {}) {
 
 function evidence(value, sha256) {
   const result = parseEvidence(value);
-  assert.equal(result.subject.digest.sha256, sha256);
-  assert.equal(result.subject.architecture, "6502");
-  assert.equal(result.subject.format, "raw-binary");
+  assert.equal(result.subject.identity.sha256, sha256);
+  assert.equal(result.subject.identity.architecture, "6502");
+  assert.equal(result.subject.identity.format, "raw-binary");
   return result;
 }

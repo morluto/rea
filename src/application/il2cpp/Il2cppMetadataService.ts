@@ -5,14 +5,13 @@ import type {
   Il2cppSeedOutput,
   Il2cppSeedWriterPort,
   Il2cppSeedReceipt,
-} from "./Il2cppSeedWriterPort.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+} from "../../ports/il2cpp/Il2cppSeedWriterPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   requireAnalysisViewRetention,
-  summarizeRetainedAnalysis,
   type AnalysisViewRetention,
-} from "../analysisView/AnalysisViewService.js";
-import type { Il2cppMetadataPort } from "./Il2cppMetadataPort.js";
+} from "../analysisView/AnalysisViewRetention.js";
+import type { Il2cppMetadataPort } from "../../ports/il2cpp/Il2cppMetadataPort.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
@@ -28,6 +27,7 @@ import {
   type Il2cppMetadataProviderInput,
 } from "../../domain/il2cpp/il2cppMetadata.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_il2cpp_metadata";
 const NO_RETENTION: AnalysisViewRetention = {
@@ -58,8 +58,7 @@ export class Il2cppMetadataService {
                 this.provider.identity.id,
                 [],
                 {
-                  reason:
-                    cause instanceof Error ? cause.message : String(cause),
+                  reason: errorMessage(cause),
                 },
                 { cause, operation: OPERATION },
               );
@@ -111,7 +110,7 @@ export class Il2cppMetadataService {
               path: ["ghidra_seeds"],
               reason: "invalid_value",
               message:
-                "--ghidra-seeds needs --binary to link method addresses.",
+                "Ghidra seed output links method addresses in binary_path.",
             },
           ]),
         );
@@ -169,9 +168,10 @@ export class Il2cppMetadataService {
       seedReceipt = written.value;
     }
     if (isAborted(options?.signal)) return cancelled(options.signal);
-    return detail === "summary"
-      ? summarizeRetainedAnalysis(evidence, retention)
-      : ok(evidence);
+    if (detail !== "summary") return ok(evidence);
+    const service = await import("../analysisView/AnalysisViewService.js");
+    if (options?.signal?.aborted) return cancelled(options.signal);
+    return service.summarizeRetainedAnalysis(evidence, retention);
   }
   #evidence(
     value: Il2cppMetadata,

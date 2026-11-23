@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
   STDIO_DEFAULT_MAX_BUFFER_SIZE,
@@ -9,24 +8,23 @@ import {
   type RecordedMcpCatalog,
 } from "../recordedMcpCatalog.js";
 import type { AppConfig } from "../config/types.js";
-import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../config/mcpInputSchemaProfile.js";
-import { RECORDED_CATALOG_DIGEST_PROFILES } from "../recordedCatalogDigests.js";
+import { RECORDED_CATALOG_DIGEST_PROFILES } from "../contracts/catalog/recordedCatalogDigests.js";
 import { DeferredEvidenceMcpServer } from "../server/DeferredEvidenceMcpServer.js";
 import { ToolResultDelivery } from "../server/ToolResultDelivery.js";
 import { createLogger } from "../logger.js";
 import { reportMcpShutdownFailure } from "./shutdown.js";
 import type { McpServerHandle, RuntimeDependencies } from "./types.js";
-import { SERVER_START_FAILED } from "./messages.js";
+import { SERVER_START_FAILED } from "../server/serverStartFailure.js";
 import { reportMcpTransportError } from "./reportMcpTransportError.js";
 import { OwnedMcpServers } from "./OwnedMcpServers.js";
+import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../contracts/mcpSchemaPresentation.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** Verify the build-owned artifact before trusting its exact typed projection. */
 const readCatalog = (): RecordedMcpCatalog => {
   const bytes = readFileSync(new URL("../mcp-catalog.json", import.meta.url));
-  if (
-    createHash("sha256").update(bytes).digest("hex") !==
-    RECORDED_MCP_CATALOG_SHA256
-  )
+  if (sha256Hex(bytes) !== RECORDED_MCP_CATALOG_SHA256)
     throw new Error(SERVER_START_FAILED);
   // The digest binds these bytes to the same compiled producer and SDK converter.
   const catalog: unknown = JSON.parse(bytes.toString("utf8"));
@@ -53,7 +51,7 @@ const initializeRuntime = async (
   server.ownRuntimeCleanup(async () => {
     if (shutdown !== undefined) return shutdown();
     const results = await Promise.allSettled([
-      server.closePartialRuntime(),
+      server.closeRuntimeHooks(),
       (async () => {
         if (!sessionClosed && closeSession !== undefined) {
           await closeSession();
@@ -104,14 +102,14 @@ const initializeRuntime = async (
           startedAt,
         });
       },
+      closeServer: () => server.closeRuntimeHooks(),
       serve: (factory) => {
-        let close: (() => Promise<void>) | undefined;
         server.materialize(() => {
-          const configured = factory(context);
-          if (configured !== server) throw new Error(SERVER_START_FAILED);
-          close = configured.close.bind(configured);
+          if (factory(context) !== server) throw new Error(SERVER_START_FAILED);
         });
-        return { close: () => close?.() ?? Promise.resolve() };
+        // The outer SDK closes the protocol. The eager registry owns only the
+        // materialized server's hooks through closeServer.
+        return { close: async () => {} };
       },
     },
     config,
@@ -129,8 +127,12 @@ export const runDeferred = async (
     layer: "server",
   });
   // `main.ts` defers only the default output profile, which omits output
-  // schemas from listings; the recorded catalog keeps them for validation.
+  // schemas from listings. Canonical result validation loads on first use.
   let firstCatalog: RecordedMcpCatalog | undefined = readCatalog();
+  const toolFamilies =
+    config.mcpToolFamilies === undefined
+      ? undefined
+      : new Set(config.mcpToolFamilies);
   const servers = new OwnedMcpServers<DeferredEvidenceMcpServer>();
   let handle: McpServerHandle | undefined;
   let attempt: Promise<void> | undefined;
@@ -212,6 +214,7 @@ export const runDeferred = async (
               {
                 maximumInputElements: config.mcpMaxInputElements,
                 compactPresentation: COMPACT_INPUT_SCHEMA_PRESENTATION,
+                toolFamilies,
                 identity: {
                   ...catalog.identity,
                   digests:
@@ -224,11 +227,7 @@ export const runDeferred = async (
               server.enableProgressiveCatalog();
             return server;
           });
-          const previous = server.server.onclose;
-          server.server.onclose = () => {
-            previous?.();
-            requestClose();
-          };
+          server.registerTransportCloseHook(requestClose);
           return server;
         },
         {
@@ -245,10 +244,7 @@ export const runDeferred = async (
     }
   } catch (cause) {
     finishServing();
-    serverLogger.error(
-      { error: cause instanceof Error ? cause.message : String(cause) },
-      SERVER_START_FAILED,
-    );
+    serverLogger.error({ error: errorMessage(cause) }, SERVER_START_FAILED);
     try {
       await close();
     } catch (cleanupCause) {

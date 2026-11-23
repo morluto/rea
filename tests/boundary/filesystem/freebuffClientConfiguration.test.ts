@@ -28,10 +28,12 @@ import {
 import {
   runUninstall,
   systemUninstallHost,
-  type UninstallFileSystem,
 } from "../../../src/application/Uninstall.js";
+import type { UninstallFileSystem } from "../../../src/application/UninstallShared.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
+
+import { jsonClientRegistrationContract } from "../../support/jsonClientRegistrationContract.js";
 
 /**
  * The registration command setup writes on the host running the tests. Windows
@@ -162,7 +164,18 @@ describe("FreeBuff configuration paths", () => {
   });
 });
 
-describe("FreeBuff JSON registration", () => {
+jsonClientRegistrationContract({
+  clientName: "freebuff",
+  displayName: "FreeBuff",
+  resolveLocation: (home) => ({
+    markerPath: join(home, ".config", "freebuff-desktop"),
+    configPath: join(home, ".agents", "mcp.json"),
+  }),
+  initialSettings: { agents: { discoverSkills: true } },
+  settingsWithoutServers: { agents: { discoverSkills: true } },
+});
+
+describe("FreeBuff shared-row activation", () => {
   const freebuffClient = async () => {
     const home = await createTestTempDirectory("rea-freebuff-");
     const client = freebuffPath(home, process.platform);
@@ -171,42 +184,6 @@ describe("FreeBuff JSON registration", () => {
     await mkdir(client.markerPath!, { recursive: true });
     return { home, client };
   };
-
-  it("upserts rea into mcpServers while preserving unrelated settings", async () => {
-    const { home, client } = await freebuffClient();
-    await writeFile(
-      client.configPath,
-      `{
-  "mcpServers": {
-    "other": { "command": "other-server" }
-  },
-  "agents": { "discoverSkills": true }
-}`,
-    );
-
-    expect(
-      (await configureClientConfiguration(client, {}, command)).status,
-    ).toBe("configured");
-    const parsed = JSON.parse(await readFile(client.configPath, "utf8"));
-    expect(parsed.mcpServers.other).toEqual({ command: "other-server" });
-    expect(parsed.agents).toEqual({ discoverSkills: true });
-    expect(parsed.mcpServers.rea).toEqual({
-      command: command[0],
-      args: command.slice(1),
-    });
-
-    expect(await configureClientConfiguration(client, {}, command)).toEqual({
-      status: "unchanged",
-    });
-    expect(
-      (
-        await readClientRegistrationStatuses(home, undefined, {
-          platform: process.platform,
-          environment: {},
-        })
-      ).find(({ client }) => client === "freebuff"),
-    ).toMatchObject({ state: "aligned", command });
-  });
 
   it("preserves a shared-row enable:false while repairing FreeBuff", async () => {
     // The shared file doubles as ZCode's fallback: its `enable: false` binds
@@ -264,56 +241,6 @@ describe("FreeBuff JSON registration", () => {
       state: "stale",
       manual_conflict: "shared_disabled_activation",
     });
-  });
-
-  it("creates the mcpServers table in an existing file without servers", async () => {
-    const { client } = await freebuffClient();
-    await writeFile(
-      client.configPath,
-      JSON.stringify({ agents: { discoverSkills: true } }, null, 2),
-    );
-    expect(
-      (await configureClientConfiguration(client, {}, command)).status,
-    ).toBe("configured");
-    const parsed = JSON.parse(await readFile(client.configPath, "utf8"));
-    expect(parsed.agents).toEqual({ discoverSkills: true });
-    expect(parsed.mcpServers.rea).toEqual({
-      command: command[0],
-      args: command.slice(1),
-    });
-  });
-
-  it("registers into an empty settings file", async () => {
-    const { client } = await freebuffClient();
-    await writeFile(client.configPath, "");
-    expect(
-      (await configureClientConfiguration(client, {}, command)).status,
-    ).toBe("configured");
-    const parsed = JSON.parse(await readFile(client.configPath, "utf8"));
-    expect(parsed.mcpServers.rea).toEqual({
-      command: command[0],
-      args: command.slice(1),
-    });
-  });
-
-  it("removes only the rea entry on uninstall", async () => {
-    const { home, client } = await freebuffClient();
-    await writeFile(
-      client.configPath,
-      JSON.stringify(
-        { mcpServers: { other: { command: "other-server" } } },
-        null,
-        2,
-      ),
-    );
-    await configureClientConfiguration(client, {}, command);
-
-    expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
-      "removed",
-    );
-    const parsed = JSON.parse(await readFile(client.configPath, "utf8"));
-    expect(parsed.mcpServers.other).toEqual({ command: "other-server" });
-    expect(parsed.mcpServers.rea).toBeUndefined();
   });
 });
 

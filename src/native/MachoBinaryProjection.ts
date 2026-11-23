@@ -4,7 +4,7 @@ import {
   LC,
   machoLoadCommandName,
 } from "../domain/apple/machoLoadCommandCodes.js";
-import type { MachoCommandNames } from "./MachoCommandNames.js";
+import type { MachoCommandNames } from "../domain/apple/machoCommandNames.js";
 
 const PLATFORM_NAMES = new Map<number, string>([
   [1, "MACOS"],
@@ -515,13 +515,13 @@ export const projectMachoBinary = (
       }
       if (kind === "LC_THREAD" || kind === "LC_UNIXTHREAD")
         entrypointLimitations.add("Thread-state entrypoints are not decoded.");
-      if (kind === "LC_LAZY_LOAD_DYLIB_INFO")
-        dependencyLimitations.add(
-          "The linkedit dependency payload is not decoded.",
-        );
       if (kind.startsWith("LC_VERSION_MIN_") || kind === "LC_BUILD_VERSION")
         buildLimitations.add(`The ${kind} payload is not decoded.`);
     }
+    if (kind === "LC_LAZY_LOAD_DYLIB_INFO")
+      dependencyLimitations.add(
+        "The linkedit dependency payload is not decoded.",
+      );
     commands.push({ index: row.index, kind, fields });
   }
   return {

@@ -1,5 +1,6 @@
+import { ARTIFACT_INTEGRITY_CHECKS } from "../artifactOperationError.js";
 import { coverageStatusSchema } from "../coverage.js";
-import { createHash } from "node:crypto";
+import { excludedValues } from "../schemaConstraints.js";
 import { z } from "zod";
 import {
   androidManifestSplitsSchema,
@@ -15,6 +16,7 @@ import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import { dexDescriptorSchema } from "./dexTypes.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const count = z.int().nonnegative();
 const digest = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -63,6 +65,25 @@ export const androidJniLibraryIdentitySchema = z.strictObject({
   declared_size: count.nullable(),
   compressed_size: count.nullable(),
 });
+/**
+ * Why one selected library has no facts. An `integrity` failure names the
+ * reader check it violated in `integrity_check`; no other kind carries one.
+ */
+const androidJniLibraryFailureSchema = z.union([
+  z.strictObject({
+    kind: z.literal("integrity"),
+    message: z.string(),
+    integrity_check: z.enum(ARTIFACT_INTEGRITY_CHECKS),
+  }),
+  z.strictObject({
+    kind: excludedValues(
+      z.string(),
+      ["integrity"],
+      "an integrity failure names its integrity_check",
+    ),
+    message: z.string(),
+  }),
+]);
 export const androidJniLibrarySchema = androidJniLibraryIdentitySchema.extend({
   abi_compatibility: z.enum(["consistent", "mismatch", "unknown"]),
   byte_order: z.enum(["little", "big"]).nullable(),
@@ -74,14 +95,12 @@ export const androidJniLibrarySchema = androidJniLibraryIdentitySchema.extend({
   table_count: count,
   table_entry_count: count,
   unknowns: z.array(z.string()),
-  failure: z.strictObject({ kind: z.string(), message: z.string() }).nullable(),
+  failure: androidJniLibraryFailureSchema.nullable(),
 });
 export const androidJniLibraryObservationSchema =
   androidJniLibraryIdentitySchema.extend({
     facts: androidJniLibraryFactsSchema.nullable(),
-    failure: z
-      .strictObject({ kind: z.string(), message: z.string() })
-      .nullable(),
+    failure: androidJniLibraryFailureSchema.nullable(),
   });
 export type AndroidJniLibraryObservation = z.infer<
   typeof androidJniLibraryObservationSchema
@@ -164,7 +183,7 @@ export const androidJniReportSchema = z.strictObject({
 export type AndroidJniReport = z.infer<typeof androidJniReportSchema>;
 export const ANDROID_JNI_REPORT_BYTES = 16 * 1024 * 1024;
 const id = (kind: string, parts: readonly unknown[]): string =>
-  `${kind}_${createHash("sha256").update(JSON.stringify(parts)).digest("hex")}`;
+  `${kind}_${sha256Hex(JSON.stringify(parts))}`;
 
 /** JNI escaping is over UTF-16 code units; it can fail for non-Java-source names. */
 export const expectedJniNames = (
@@ -458,38 +477,41 @@ export const projectAndroidJniBindings = (input: {
     else previous.push(library);
   }
   const abis = [...new Set(input.selection.abis ?? librariesByAbi.keys())];
+  const abiMeta = new Map(
+    abis.map((abi) => {
+      const abiLibraries = librariesByAbi.get(abi) ?? [];
+      const consistent: AndroidJniReport["libraries"][number][] = [];
+      let incomplete = libraryInventory.status !== "complete";
+      for (const library of abiLibraries) {
+        if (library.abi_compatibility === "consistent")
+          consistent.push(library);
+        else incomplete = true;
+        if (library.failure !== null || library.coverage?.status !== "complete")
+          incomplete = true;
+      }
+      return [abi, { consistent, incomplete }] as const;
+    }),
+  );
   const bindings: AndroidJniReport["bindings"] = [];
   for (const method of selectedMethods)
     for (const abi of abis) {
-      const abiLibraries = librariesByAbi.get(abi) ?? [];
-      const selected = abiLibraries
-        .filter((library) => library.abi_compatibility === "consistent")
-        .flatMap(
-          (library) =>
-            matches.get(
-              JSON.stringify([method.declaration_id, library.library_id]),
-            ) ?? [],
-        );
-      const physical = new Set(
-        selected.map((candidate) =>
-          JSON.stringify([candidate.library_id, candidate.address]),
-        ),
+      const { consistent, incomplete } = abiMeta.get(abi)!;
+      const selected = consistent.flatMap(
+        (library) =>
+          matches.get(
+            JSON.stringify([method.declaration_id, library.library_id]),
+          ) ?? [],
       );
-      const ambiguous = selected.some(
-        (candidate) => candidate.class_attribution === "ambiguous-native-pair",
-      );
-      const incomplete =
-        libraryInventory.status !== "complete" ||
-        abiLibraries.some(
-          (library) =>
-            library.failure !== null ||
-            library.coverage?.status !== "complete" ||
-            library.abi_compatibility !== "consistent",
-        );
-      const unknown = selected.some(
-        (candidate) =>
-          candidate.class_attribution === "unknown-native-inventory",
-      );
+      const physical = new Set<string>();
+      let ambiguous = false;
+      let unknown = false;
+      for (const candidate of selected) {
+        physical.add(JSON.stringify([candidate.library_id, candidate.address]));
+        if (candidate.class_attribution === "ambiguous-native-pair")
+          ambiguous = true;
+        else if (candidate.class_attribution === "unknown-native-inventory")
+          unknown = true;
+      }
       const binding: AndroidJniReport["bindings"][number] = {
         declaration_id: method.declaration_id,
         abi,

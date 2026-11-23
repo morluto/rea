@@ -10,12 +10,11 @@ import {
   DESKTOP_BUILD_PROVIDER_ID,
   isDesktopBuildCheck,
 } from "../domain/doctorProviderIds.js";
+import type { DoctorScope, DoctorSkillState } from "./Doctor.js";
 import type {
   DoctorCheck,
   DoctorProviderInspection,
-  DoctorScope,
-  DoctorSkillState,
-} from "./Doctor.js";
+} from "../ports/DoctorProviderInspection.js";
 
 /** Normalized readiness boundary included in every doctor response. */
 export interface DoctorScopeReport {
@@ -240,6 +239,9 @@ const selectedRegistrationCheck = (
           ok: true,
           classification: "healthy",
           detail: status.config_path,
+          ...(status.scope === undefined
+            ? {}
+            : { details: { scope: status.scope } }),
         }
       : registrationCheck(status);
 };
@@ -251,6 +253,7 @@ const registrationCheck = (
   ok: false,
   classification: status.state === "unknown" ? "unknown" : "config_drift",
   detail: status.config_path,
+  ...(status.scope === undefined ? {} : { details: { scope: status.scope } }),
   remediation: status.remediation,
 });
 

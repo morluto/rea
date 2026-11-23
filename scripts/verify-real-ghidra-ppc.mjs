@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
@@ -21,7 +19,13 @@ import { functionDossierSchema } from "../dist/domain/native/functionDossier.js"
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildPowerPcFixture } from "../tests/conformance/ghidra/ppc-fixture.mjs";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
 
@@ -45,7 +49,6 @@ if (installation.status !== "available")
   throw new Error(
     `Ghidra prerequisite unavailable: ${JSON.stringify(installation)}`,
   );
-const execute = promisify(execFile);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
 // Refuse a host without the fixture toolchain before allocating anything.
@@ -76,12 +79,13 @@ const env = {
 for (const setting of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"]) {
   if (process.env[setting] !== undefined) env[setting] = process.env[setting];
 }
+const commands = await createVerifierCommands();
 const reports = [];
 let primaryFailure;
 try {
   {
-    const fixture = await buildPowerPcFixture(workspace);
-    const independent = await inspectPowerPcReadelf(fixture.path);
+    const fixture = await buildPowerPcFixture(workspace, commands);
+    const independent = await inspectPowerPcReadelf(commands, fixture.path);
     const resolved = await parseBinaryTarget(fixture.path);
     if (!resolved.ok) throw resolved.error;
     assert.deepEqual(
@@ -234,14 +238,17 @@ try {
       const snapshot = parseAnalysisSnapshot(
         JSON.parse(await readFile(snapshotPath, "utf8")),
       );
-      assert.equal(snapshot.target.architecture, "powerpc");
+      assert.equal(snapshot.target.identity.architecture, "powerpc");
       assert.equal(
         snapshot.binding.analysis_profile.parameters.language_id,
         "PowerPC:BE:32:default",
       );
       assert.ok(snapshot.evidence_bundle.records.length > 0);
       for (const evidence of snapshot.evidence_bundle.records)
-        assert.equal(parseEvidence(evidence).subject?.architecture, "powerpc");
+        assert.equal(
+          parseEvidence(evidence).subject?.identity.architecture,
+          "powerpc",
+        );
       await call("open_binary", {
         path: fixture.path,
         provider_id: "ghidra",
@@ -251,7 +258,7 @@ try {
       await call("close_binary");
 
       // Same public operation through CLI, not a private injected provider.
-      const cli = await execute(
+      const cli = await commands.exec(
         process.execPath,
         [
           entrypoint,
@@ -265,8 +272,8 @@ try {
         { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
       );
       const evidence = parseEvidence(JSON.parse(cli.stdout));
-      assert.equal(evidence.subject?.architecture, "powerpc");
-      assert.equal(evidence.subject?.digest.sha256, fixture.sha256);
+      assert.equal(evidence.subject?.identity.architecture, "powerpc");
+      assert.equal(evidence.subject?.identity.sha256, fixture.sha256);
       const cliDossier = functionDossierSchema.parse(
         evidence.normalized_result,
       );
@@ -311,21 +318,22 @@ try {
 } catch (cause) {
   primaryFailure = cause;
 }
-const completed = await completeVerifierRun(run);
-if (
-  completed.process_lineage.status !== "verified" ||
-  completed.process_lineage.descendants.length !== 0
-)
-  throw retainWorkspace(
-    `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
-    { cause: primaryFailure },
-  );
-if (primaryFailure !== undefined)
+let completed;
+try {
+  await withVerifierCleanup(async () => {
+    if (primaryFailure !== undefined) throw primaryFailure;
+  }, [
+    async () => {
+      await workspaceFixture.closeEarly([() => commands.close()]);
+      completed = await completeVerifierRun(run);
+      assertVerifierCleanupComplete(completed.process_lineage);
+    },
+  ]);
+} catch (cause) {
   throw retainWorkspace(
     `PowerPC verification failed; retained workspace: ${workspace}`,
-    {
-      cause: primaryFailure,
-    },
+    { cause },
   );
+}
 await workspaceFixture.release();
 console.log(JSON.stringify({ ...completed, fixtures: reports }, null, 2));

@@ -135,8 +135,21 @@ describe("portable advertised dialect projection", () => {
     ],
     [
       "pattern-only allOf members",
-      { type: "string", allOf: [{ pattern: "^a" }, { pattern: "b$" }] },
-      { type: "string", pattern: "^a" },
+      {
+        type: "string",
+        allOf: [{ pattern: "^a[a-z]*$" }, { pattern: "^[a-z]*b$" }],
+      },
+      { type: "string", pattern: "^a[a-z]*$" },
+    ],
+    [
+      "pattern in its portable form",
+      { type: "string", pattern: "^\\d+$" },
+      { type: "string", pattern: "^[0-9]+$" },
+    ],
+    [
+      "pattern without a portable form",
+      { type: "string", pattern: "^😀$" },
+      { type: "string" },
     ],
     [
       "string literal union",
@@ -192,7 +205,13 @@ describe("portable advertised dialect projection", () => {
       view: {
         oneOf: [
           { type: "object", properties: { kind: { const: "a" } } },
-          { type: "object", properties: { kind: { const: "b" } } },
+          {
+            type: "object",
+            properties: {
+              kind: { const: "b" },
+              extra: { type: "string" },
+            },
+          },
         ],
       },
       limit: { type: ["integer", "null"], minimum: 1 },
@@ -207,7 +226,10 @@ describe("portable advertised dialect projection", () => {
           },
           {
             type: "object",
-            properties: { kind: { type: "string", enum: ["b"] } },
+            properties: {
+              kind: { type: "string", enum: ["b"] },
+              extra: { type: "string" },
+            },
           },
         ],
       },
@@ -218,43 +240,188 @@ describe("portable advertised dialect projection", () => {
       advertisedInputDialectViolations({ name: "probe", inputSchema: schema }),
     ).toEqual([]);
   });
+});
 
-  it("moves the root description and dropped cross-field constraints to tool guidance", () => {
-    const projection = project(
-      {
-        table: { type: "string" },
-        row_limit: { type: "integer" },
-        ids: { type: "array", items: { type: "string" }, uniqueItems: true },
-        name: { type: "string", not: { enum: ["reserved"] } },
+it("moves the root description and dropped cross-field constraints to tool guidance", () => {
+  const projection = project(
+    {
+      table: { type: "string" },
+      row_limit: { type: "integer" },
+      ids: { type: "array", items: { type: "string" }, uniqueItems: true },
+      name: { type: "string", not: { enum: ["reserved"] } },
+    },
+    {
+      description: "Root guidance.",
+      dependentRequired: { row_limit: ["table"] },
+      if: { required: ["table"] },
+      then: { required: ["row_limit"] },
+    },
+  );
+  expect(projection.guidance).toEqual([
+    "Root guidance.",
+    "When row_limit is provided, also provide table.",
+    "`ids` entries must be distinct.",
+    '`name` must not be "reserved".',
+  ]);
+  expect(projection.schema).not.toHaveProperty("description");
+  expect(
+    advertisedInputDialectViolations({
+      name: "probe",
+      inputSchema: projection.schema,
+    }),
+  ).toEqual([]);
+});
+
+it("bounds nested descriptions without splitting a surrogate pair", () => {
+  const description = `${"x".repeat(1022)}😀tail`;
+  const { schema } = project({ value: { type: "string", description } });
+  const value = (schema.properties as Record<string, Record<string, string>>)
+    .value!;
+  expect(value.description!.length).toBeLessThanOrEqual(1024);
+  expect(value.description!.endsWith("x…")).toBe(true);
+});
+
+describe("product-union factoring and safe-integer bounds", () => {
+  it("factors matching object union branches that differ only on one string enum", () => {
+    const { schema } = project({
+      target: {
+        anyOf: [
+          {
+            type: "object",
+            properties: { kind: { const: "whole" } },
+            required: ["kind"],
+            additionalProperties: false,
+          },
+          {
+            type: "object",
+            properties: {
+              kind: { const: "volume" },
+              offset: { type: "integer", minimum: 0 },
+            },
+            required: ["kind", "offset"],
+            additionalProperties: false,
+          },
+          {
+            type: "object",
+            properties: {
+              kind: { const: "section" },
+              offset: { type: "integer", minimum: 0 },
+            },
+            required: ["kind", "offset"],
+            additionalProperties: false,
+          },
+        ],
       },
-      {
-        description: "Root guidance.",
-        dependentRequired: { row_limit: ["table"] },
-        if: { required: ["table"] },
-        then: { required: ["row_limit"] },
+      collapsed: {
+        oneOf: [
+          {
+            type: "object",
+            properties: { mode: { const: "fast" }, limit: { type: "integer" } },
+            required: ["mode"],
+          },
+          {
+            type: "object",
+            properties: { mode: { const: "deep" }, limit: { type: "integer" } },
+            required: ["mode"],
+          },
+        ],
       },
-    );
-    expect(projection.guidance).toEqual([
-      "Root guidance.",
-      "When row_limit is provided, also provide table.",
-      "`ids` entries must be distinct.",
-      '`name` must not be "reserved".',
-    ]);
-    expect(projection.schema).not.toHaveProperty("description");
+    });
+    expect(schema.properties).toEqual({
+      target: {
+        type: "object",
+        anyOf: [
+          {
+            type: "object",
+            properties: { kind: { type: "string", enum: ["whole"] } },
+            required: ["kind"],
+            additionalProperties: false,
+          },
+          {
+            type: "object",
+            properties: {
+              kind: { type: "string", enum: ["volume", "section"] },
+              offset: { type: "integer", minimum: 0 },
+            },
+            required: ["kind", "offset"],
+            additionalProperties: false,
+          },
+        ],
+      },
+      collapsed: {
+        type: "object",
+        properties: {
+          mode: { type: "string", enum: ["fast", "deep"] },
+          limit: { type: "integer" },
+        },
+        required: ["mode"],
+      },
+    });
     expect(
-      advertisedInputDialectViolations({
-        name: "probe",
-        inputSchema: projection.schema,
-      }),
+      advertisedInputDialectViolations({ name: "probe", inputSchema: schema }),
     ).toEqual([]);
   });
 
-  it("bounds nested descriptions without splitting a surrogate pair", () => {
-    const description = `${"x".repeat(1022)}😀tail`;
-    const { schema } = project({ value: { type: "string", description } });
-    const value = (schema.properties as Record<string, Record<string, string>>)
-      .value!;
-    expect(value.description!.length).toBeLessThanOrEqual(1024);
-    expect(value.description!.endsWith("x…")).toBe(true);
+  it("keeps branches separate when required, closure, descriptions, or multiple fields differ", () => {
+    const { schema } = project({
+      kept_separate: {
+        anyOf: [
+          {
+            type: "object",
+            properties: {
+              a: { const: "x", description: "First" },
+              b: { const: "1" },
+            },
+            required: ["a", "b"],
+          },
+          {
+            type: "object",
+            properties: {
+              a: { const: "y", description: "Second" },
+              b: { const: "1" },
+            },
+            required: ["a", "b"],
+          },
+          {
+            type: "object",
+            properties: {
+              a: { const: "z", description: "First" },
+              b: { const: "2" },
+            },
+            required: ["a", "b"],
+          },
+        ],
+      },
+    });
+    const branches = (
+      (schema.properties as Record<string, Record<string, unknown>>)
+        .kept_separate!.anyOf as unknown[]
+    ).length;
+    expect(branches).toBe(3);
+  });
+
+  it("omits redundant JavaScript safe-integer bounds while keeping real bounds", () => {
+    const { schema } = project({
+      unbounded_int: {
+        type: "integer",
+        minimum: Number.MIN_SAFE_INTEGER,
+        maximum: Number.MAX_SAFE_INTEGER,
+      },
+      non_negative: {
+        type: "integer",
+        minimum: 0,
+        maximum: Number.MAX_SAFE_INTEGER,
+      },
+      bounded: {
+        type: "integer",
+        minimum: 1,
+        maximum: 100,
+      },
+    });
+    expect(schema.properties).toEqual({
+      unbounded_int: { type: "integer" },
+      non_negative: { type: "integer", minimum: 0 },
+      bounded: { type: "integer", minimum: 1, maximum: 100 },
+    });
   });
 });

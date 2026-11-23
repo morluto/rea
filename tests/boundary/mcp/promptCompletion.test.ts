@@ -1,14 +1,19 @@
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
   createAnalysisExecution,
   type AnalysisClient,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import type { AnalysisProfileCommitment } from "../../../src/domain/analysisProfile.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../../src/contracts/artifactComparisonExample.js";
@@ -28,14 +33,6 @@ import { observed } from "../../fixtures/analysisExecution.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { fragmentInventoryEvidence } from "../../fixtures/artifactEvidence.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
-
-let directory: string | undefined;
-
-afterEach(async () => {
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
-  directory = undefined;
-});
 
 describe("guided prompt completion from live analysis", () => {
   it("reads live documents and complete procedures without ambiguous names", async () => {
@@ -58,7 +55,7 @@ describe("guided prompt completion from live analysis", () => {
           ),
       },
     );
-    directory = await createTestTempDirectory("rea-prompt-completion-");
+    const directory = await createTestTempDirectory("rea-prompt-completion-");
     const target = join(directory, "fixture.hop");
     await writeFile(target, "fixture");
     expect((await session.open(target)).ok).toBe(true);
@@ -92,28 +89,60 @@ describe("guided prompt completion from live analysis", () => {
 it("offers only captures admitted by the process comparison identity", async () => {
   const session = createTestBinarySession(() => client([]));
   const captureResult = jsonValueSchema.parse(EMPTY_PROCESS_CAPTURE_EXAMPLE);
-  const unsupportedProvider = createEvidence(undefined, fixtureProvider, {
-    predicateType: "rea.process-capture",
-    operation: "capture_process_scenario",
-    parameters: {},
-    result: captureResult,
-    confidence: "observed",
-    authority: "controlled-replay",
-    environment: fixtureEnvironment,
-  });
-  const wrongPredicate = createEvidence(undefined, PROCESS_PROVIDER, {
-    predicateType: "rea.other-process-data",
-    operation: "capture_process_scenario",
-    parameters: {},
-    result: captureResult,
-    confidence: "observed",
-    authority: "controlled-replay",
-    environment: fixtureEnvironment,
-  });
+  const unsupportedProvider = createEvidence(
+    unknownTarget("not-observed"),
+    fixtureProvider,
+    {
+      predicateType: "rea.process-capture",
+      operation: "capture_process_scenario",
+      parameters: {},
+      result: captureResult,
+      confidence: "observed",
+      authority: "controlled-replay",
+      environment: fixtureEnvironment,
+    },
+  );
+  const wrongPredicate = createEvidence(
+    unknownTarget("not-observed"),
+    PROCESS_PROVIDER,
+    {
+      predicateType: "rea.other-process-data",
+      operation: "capture_process_scenario",
+      parameters: {},
+      result: captureResult,
+      confidence: "observed",
+      authority: "controlled-replay",
+      environment: fixtureEnvironment,
+    },
+  );
+  const {
+    selected_executable_sha256: _selectedDigest,
+    executable_identity: _identity,
+    executable_sha256,
+    ...legacyManifest
+  } = EMPTY_PROCESS_CAPTURE_EXAMPLE.manifest;
+  const legacyCapture = {
+    ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
+    manifest: { ...legacyManifest, executable_sha256 },
+  };
+  const legacyEvidence = createEvidence(
+    unknownTarget("not-observed"),
+    PROCESS_PROVIDER,
+    {
+      predicateType: "rea.process-capture",
+      operation: "capture_process_scenario",
+      parameters: {},
+      result: legacyCapture,
+      confidence: "observed",
+      authority: "controlled-replay",
+      environment: fixtureEnvironment,
+    },
+  );
   for (const evidence of [
     PROCESS_CAPTURE_REFERENCE,
     unsupportedProvider,
     wrongPredicate,
+    legacyEvidence,
   ])
     expect(session.recordEvidence(evidence).ok).toBe(true);
   const completion = createPromptCompletionSource(session, session);
@@ -126,69 +155,50 @@ it("offers only captures admitted by the process comparison identity", async () 
 });
 
 describe("guided prompt completion from investigation records", () => {
-  it("excludes process captures missing canonical executable identity", async () => {
-    const session = createTestBinarySession(() => client([]));
-    const {
-      selected_executable_sha256: _selectedDigest,
-      executable_identity: _identity,
-      executable_sha256,
-      ...legacyManifest
-    } = EMPTY_PROCESS_CAPTURE_EXAMPLE.manifest;
-    const legacyCapture = {
-      ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
-      manifest: { ...legacyManifest, executable_sha256 },
-    };
-    const evidence = createEvidence(undefined, PROCESS_PROVIDER, {
-      predicateType: "rea.process-capture",
-      operation: "capture_process_scenario",
-      parameters: {},
-      result: legacyCapture,
-      confidence: "observed",
-      authority: "controlled-replay",
-      environment: fixtureEnvironment,
-    });
-    expect(session.recordEvidence(evidence).ok).toBe(true);
-    const completion = createPromptCompletionSource(session, session);
-
-    expect(
-      await completion.complete("capture", evidence.evidence_id.slice(0, 8)),
-    ).toEqual([]);
-
-    await session.close();
-  });
-
   it("projects only validated typed identifiers from the evidence ledger", async () => {
     const session = createTestBinarySession(() => client([]));
-    const invalidCapture = createEvidence(undefined, PROCESS_PROVIDER, {
-      predicateType: "rea.process-capture",
-      operation: "capture_process_scenario",
-      parameters: {},
-      result: {},
-      confidence: "observed",
-      authority: "controlled-replay",
-      environment: fixtureEnvironment,
-    });
-    const invalidInventory = createEvidence(undefined, fixtureProvider, {
-      operation: "fixture_inventory",
-      parameters: {},
-      result: ARTIFACT_COMPARISON_EXAMPLE.right.normalized_result,
-      confidence: "observed",
-      authority: "shipped-artifact",
-    });
+    const invalidCapture = createEvidence(
+      unknownTarget("not-observed"),
+      PROCESS_PROVIDER,
+      {
+        predicateType: "rea.process-capture",
+        operation: "capture_process_scenario",
+        parameters: {},
+        result: {},
+        confidence: "observed",
+        authority: "controlled-replay",
+        environment: fixtureEnvironment,
+      },
+    );
+    const invalidInventory = createEvidence(
+      unknownTarget("not-observed"),
+      fixtureProvider,
+      {
+        operation: "fixture_inventory",
+        parameters: {},
+        result: ARTIFACT_COMPARISON_EXAMPLE.right.normalized_result,
+        confidence: "observed",
+        authority: "shipped-artifact",
+      },
+    );
     const inventoryInspection = createArtifactInspection(
       ARTIFACT_COMPARISON_EXAMPLE.left,
     );
     const inventory = artifactInventoryResultSchema.parse(
       ARTIFACT_COMPARISON_EXAMPLE.left.normalized_result,
     );
-    const inspectionEvidence = createEvidence(undefined, fixtureProvider, {
-      operation: "inspect_artifact",
-      parameters: {},
-      result: inventoryInspection,
-      confidence: "observed",
-      authority: "shipped-artifact",
-      evidenceLinks: inventoryInspection.evidence_links,
-    });
+    const inspectionEvidence = createEvidence(
+      unknownTarget("not-observed"),
+      fixtureProvider,
+      {
+        operation: "inspect_artifact",
+        parameters: {},
+        result: inventoryInspection,
+        confidence: "observed",
+        authority: "shipped-artifact",
+        evidenceLinks: inventoryInspection.evidence_links,
+      },
+    );
     for (const evidence of [
       ARTIFACT_COMPARISON_EXAMPLE.left,
       inspectionEvidence,
@@ -338,25 +348,6 @@ describe("guided prompt completion from retained records", () => {
 
     await session.close();
   });
-
-  it("deduplicates, case-folds, and returns deterministic live evidence IDs", async () => {
-    const session = createTestBinarySession(() => client([]));
-    for (let index = 149; index >= 0; index -= 1) {
-      const evidence = createEvidence(undefined, fixtureProvider, {
-        operation: `fixture-${String(index)}`,
-        parameters: { index },
-        result: index,
-        confidence: "derived",
-        authority: "analyst-inference",
-      });
-      expect(session.recordEvidence(evidence).ok).toBe(true);
-      expect(session.recordEvidence(evidence).ok).toBe(true);
-    }
-    const completion = createPromptCompletionSource(session, session);
-    const values = await completion.complete("evidence", "EV_");
-    expect(values).toHaveLength(150);
-    expect(values).toEqual([...values].sort());
-  });
 });
 
 describe("guided prompt completion from complete inventories", () => {
@@ -413,7 +404,7 @@ describe("guided prompt completion from complete inventories", () => {
         return Promise.resolve(
           observed(
             operation === "list_documents"
-              ? ["Ａpp", "App", "app", "Zulu"]
+              ? ["Ａpp", "App", "app", "Zulu", "App"]
               : null,
           ),
         );
@@ -450,7 +441,9 @@ type InspectionCorruption =
 const createPagedInspectionEvidence = async (
   corruption?: InspectionCorruption,
 ) => {
-  directory = await createTestTempDirectory("rea-prompt-inspection-pages-");
+  const directory = await createTestTempDirectory(
+    "rea-prompt-inspection-pages-",
+  );
   const path = join(directory, "fixture.app");
   await mkdir(path);
   await Promise.all([
@@ -561,12 +554,12 @@ const createPagedInspectionEvidence = async (
   if (target === null) throw new Error("fixture inventory has no subject");
   const evidence = createEvidence(
     {
-      path: target.local_path,
+      path: fileSubjectDisplay(target).local_path,
       sha256:
         corruption === "carrier-subject"
           ? "a".repeat(64)
-          : target.digest.sha256,
-      format: target.format,
+          : fileIdentity(target).sha256,
+      format: fileIdentity(target).format,
     },
     fixtureProvider,
     {

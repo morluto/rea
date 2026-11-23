@@ -1,9 +1,10 @@
+import type { RequestAnalysisPort } from "../../../src/ports/AnalysisProvider.js";
+import type { FlutterRequest } from "../../../src/domain/flutter/flutterBuildAnalysis.js";
 import { canonicalInputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { expect, it, onTestFinished } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 
-import type { FlutterBuildAnalysisPort } from "../../../src/application/flutter/FlutterBuildAnalysisPort.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { assertAdvertisedMcpContracts } from "./mcpContractHarness.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
@@ -198,7 +199,7 @@ const identifyExecution = () =>
   );
 
 /** A recording-free provider answering both Flutter operations inline. */
-const fakeProvider = (): FlutterBuildAnalysisPort => ({
+const fakeProvider = (): RequestAnalysisPort<FlutterRequest> => ({
   async inspectAvailability() {
     return { status: "available", code: null, reason: null, diagnostics: {} };
   },

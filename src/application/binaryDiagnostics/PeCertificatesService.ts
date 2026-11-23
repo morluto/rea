@@ -1,8 +1,7 @@
 import { insideArtifact } from "./artifactRange.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { PeCertificatesPort } from "./PeCertificatesPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { PeCertificatesPort } from "../../ports/binaryDiagnostics/PeCertificatesPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectPeCertificatesInputSchema,
@@ -10,9 +9,8 @@ import {
   type PeCertificates,
 } from "../../domain/native/peCertificates.js";
 import { peSubjectArchitecture } from "../../domain/peMachine.js";
-import { err, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import type { Result } from "../../domain/result.js";
+import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_pe_certificates";
 
@@ -24,68 +22,65 @@ export class PeCertificatesService {
     return this.provider.close?.() ?? Promise.resolve();
   }
 
-  async inspect(
+  inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    const input = parseAnalysisInput(
-      OPERATION,
-      rawInput,
-      inspectPeCertificatesInputSchema,
-      options?.signal,
-    );
-    if (!input.ok) return input;
-    const result = await this.provider.inspect(input.value, options);
-    if (!result.ok) return result;
-    const report = peCertificatesSchema.safeParse(result.value);
-    if (
-      !report.success ||
-      report.data.artifact.path !== input.value.path ||
-      !validReport(
-        report.data,
-        input.value.max_entries,
-        input.value.max_file_bytes,
-      )
-    )
-      return err(
-        new AnalysisOutputError(
-          OPERATION,
+    return executeArtifactInspection(
+      {
+        operation: OPERATION,
+        inputSchema: inspectPeCertificatesInputSchema,
+        outputSchema: peCertificatesSchema,
+        provider: this.provider,
+        invalidOutputMessage:
           "PE certificate provider returned malformed output or changed artifact identity.",
-        ),
-      );
-    const value = report.data;
-    const architecture = peSubjectArchitecture(value.machine, value.format);
-    const locations = [
-      { kind: "artifact-path" as const, path: value.artifact.path },
-      ...(value.table === null
-        ? []
-        : [
+        toParameters: (input) => input,
+        validateReport: (report, parameters) =>
+          report.artifact.path === parameters.path &&
+          validReport(
+            report,
+            parameters.max_entries,
+            parameters.max_file_bytes,
+          ),
+        buildEvidence: (value, identity, parameters) => {
+          const architecture = peSubjectArchitecture(
+            value.machine,
+            value.format,
+          );
+          const locations = [
+            { kind: "artifact-path" as const, path: value.artifact.path },
+            ...(value.table === null
+              ? []
+              : [
+                  {
+                    kind: "file-offset-range" as const,
+                    start: value.table.location.offset,
+                    end:
+                      value.table.location.offset + value.table.location.bytes,
+                  },
+                ]),
+          ];
+          return createEvidence(
             {
-              kind: "file-offset-range" as const,
-              start: value.table.location.offset,
-              end: value.table.location.offset + value.table.location.bytes,
+              path: value.artifact.path,
+              format: "pe",
+              sha256: value.artifact.sha256,
+              ...(architecture === undefined ? {} : { architecture }),
             },
-          ]),
-    ];
-    return completeProviderEvidence(
-      createEvidence(
-        {
-          path: value.artifact.path,
-          format: "pe",
-          sha256: value.artifact.sha256,
-          ...(architecture === undefined ? {} : { architecture }),
+            identity,
+            {
+              operation: OPERATION,
+              parameters,
+              result: value,
+              confidence: "observed",
+              limitations: value.limitations,
+              locations,
+            },
+          );
         },
-        this.provider.identity,
-        {
-          operation: OPERATION,
-          parameters: input.value,
-          result: value,
-          confidence: "observed",
-          limitations: value.limitations,
-          locations,
-        },
-      ),
-      options?.signal,
+      },
+      rawInput,
+      options,
     );
   }
 }

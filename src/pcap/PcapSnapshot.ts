@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { chmod, open, stat, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -14,6 +14,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { withSecondaryCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   assertRegularFileActive,
@@ -25,8 +26,9 @@ import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
-} from "../process/RuntimeControlUnavailableError.js";
+} from "../domain/runtimeControlUnavailableError.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_pcap_capture";
 const MAX_CAPTURE_BYTES = 2 * 1024 ** 3;
@@ -99,9 +101,7 @@ export class PcapSnapshot {
           resources: [this.path],
         },
       });
-      cancelled
-        .retainSecondaryFailure(cleanup)
-        .bindCleanupDependencies([cleanup]);
+      withSecondaryCleanupFailure(cancelled, cleanup);
       throw cancelled;
     }
   }
@@ -129,7 +129,7 @@ export class PcapSnapshot {
           {
             path: ["path"],
             reason: "invalid_value",
-            message: `Cannot read selected capture ${path}: ${cause instanceof Error ? cause.message : String(cause)}`,
+            message: `Cannot read selected capture ${path}: ${errorMessage(cause)}`,
           },
         ]);
       }
@@ -164,6 +164,7 @@ export class PcapSnapshot {
           fixedAllowanceOptions(
             "the owned capture snapshot allowance",
             "input",
+            { limit: MAX_CAPTURE_BYTES, unit: "bytes" },
           ),
         );
       const destination = this.own(

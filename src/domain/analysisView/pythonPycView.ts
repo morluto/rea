@@ -17,7 +17,7 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { selectViewRows } from "./selectViewRows.js";
+import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
 
 const code = pythonPycSchema.shape.code_objects.element;
 
@@ -110,6 +110,8 @@ export const projectPythonPycView = (
     ),
     source_index,
   });
+  const matches = (row: PythonPycCodeObject) =>
+    names === undefined || names.has(row.name);
   const selected =
     names === undefined && indices === undefined
       ? {
@@ -118,14 +120,15 @@ export const projectPythonPycView = (
             .map((row, index) => projectRow(row, view.offset + index)),
           total: code_objects.length,
         }
-      : selectViewRows(
-          code_objects,
-          view,
-          (row, index) =>
-            (names === undefined || names.has(row.name)) &&
-            (indices === undefined || indices.has(index)),
-          projectRow,
-        );
+      : indices !== undefined
+        ? selectIndexedViewRows(
+            code_objects,
+            indices,
+            view,
+            matches,
+            projectRow,
+          )
+        : selectViewRows(code_objects, view, matches, projectRow);
   return ok({
     ...shared,
     kind: "python-pyc" as const,

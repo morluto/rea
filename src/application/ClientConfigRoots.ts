@@ -1,6 +1,7 @@
 import { isAbsolute, join, posix, resolve, win32 } from "node:path";
 
 import { err, ok, type Result } from "../domain/result.js";
+import { isQualifiedCallerPath } from "../filesystem/callerPath.js";
 import { windowsAppDataRoots } from "./MsixPackageStorage.js";
 
 /**
@@ -41,6 +42,31 @@ export const absoluteXdgConfigHome = ({
   return value !== undefined && posix.isAbsolute(value)
     ? value
     : join(home, ".config");
+};
+
+/** MCPorter's expandHome: a leading `~` path segment names the home folder. */
+export const mcporterExpandHome = (value: string, home: string): string =>
+  value === "~"
+    ? home
+    : value.startsWith("~/") || value.startsWith("~\\")
+      ? join(home, value.slice(2))
+      : value;
+
+/**
+ * MCPorter's XDG folder (`mcporterConfigCandidates`): `XDG_CONFIG_HOME` is
+ * trimmed and `~`-expanded, and only an absolute result counts. Otherwise
+ * MCPorter uses its legacy `~/.mcporter` folder rather than `~/.config`, so
+ * there is no XDG folder and this returns `undefined`.
+ */
+export const mcporterXdgConfigHome = ({
+  home,
+  platform,
+  env,
+}: ClientRootContext): string | undefined => {
+  const value = mcporterExpandHome(env.XDG_CONFIG_HOME?.trim() ?? "", home);
+  return (platform === "win32" ? win32 : posix).isAbsolute(value)
+    ? value
+    : undefined;
 };
 
 /**
@@ -93,10 +119,10 @@ export const clientPathDependence = (
   path: string,
   platform: NodeJS.Platform,
 ): "relative" | "driveless" | undefined => {
-  if (platform !== "win32")
-    return posix.isAbsolute(path) ? undefined : "relative";
-  if (!win32.isAbsolute(path)) return "relative";
-  return /^[\\/](?![\\/])/u.test(path) ? "driveless" : undefined;
+  if (isQualifiedCallerPath(path, platform)) return undefined;
+  return platform === "win32" && win32.isAbsolute(path)
+    ? "driveless"
+    : "relative";
 };
 
 /**

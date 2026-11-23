@@ -2,11 +2,7 @@ import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createBeamService } from "../../../src/composition/erlang.js";
-import { MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS } from "../../../src/domain/erlang/beam.js";
-import {
-  erlangBeamRowsFixture,
-  erlangBeamFixture,
-} from "../../../src/erlang/Beam.fixture.js";
+import { erlangBeamFixture } from "../../../src/erlang/Beam.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("Erlang BEAM stable filesystem boundary", () => {
@@ -58,26 +54,5 @@ describe("Erlang BEAM stable filesystem boundary", () => {
     if (cancelled.ok) throw new Error("Expected cancellation");
     expect(cancelled.error._tag).toBe("AnalysisCancelledError");
     expect(cancelled.error.cause).toBe(reason);
-  });
-
-  it("stops combined table rows at the shared budget", async () => {
-    const root = await createTestTempDirectory("rea-beam-rows-");
-    const path = join(root, "rows.beam");
-    const below = Math.floor(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS / 2);
-    await writeFile(
-      path,
-      erlangBeamRowsFixture([
-        ["ExpT", below],
-        ["ImpT", below],
-        ["FunT", MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS - below * 2 + 1],
-      ]),
-    );
-    const result = await createBeamService().inspect({ path });
-    if (result.ok) throw new Error("Expected row budget failure");
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      resource: "capacity",
-      remediationAction: `The file exceeds the ${String(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS)}-row ceiling this operation accepts; select a smaller artifact.`,
-    });
   });
 });

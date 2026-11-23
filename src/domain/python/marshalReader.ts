@@ -1,4 +1,6 @@
 import { decodeMarshalUtf8 } from "./marshalUtf8.js";
+import { BinaryReader } from "../binaryContainer.js";
+import { Budget } from "../budget.js";
 import { ParseFailureError } from "../parseFailure.js";
 
 const FLAG_REF = 0x80;
@@ -122,14 +124,23 @@ export interface MarshalReaderOptions {
  */
 export abstract class MarshalReader<V extends { readonly kind: string }> {
   offset = 0;
-  objects = 0;
   depthReached = 0;
   readonly #refs: (V | undefined)[] = [];
+  readonly #objects: Budget;
+  readonly #reader: BinaryReader;
 
   constructor(
     readonly bytes: Buffer,
     readonly options: MarshalReaderOptions,
-  ) {}
+  ) {
+    this.#objects = new Budget(options.limits.maxObjects);
+    this.#reader = new BinaryReader(bytes, true, "python-marshal");
+  }
+
+  /** Objects read so far, within `maxObjects`. */
+  get objects(): number {
+    return this.#objects.used;
+  }
 
   /** View a core value as this reader's value type. */
   protected abstract wrap(value: MarshalCoreValue<V>): V;
@@ -171,9 +182,7 @@ export abstract class MarshalReader<V extends { readonly kind: string }> {
 
   readObject(depth: number): V {
     const { limits } = this.options;
-    this.objects += 1;
-    if (this.objects > limits.maxObjects)
-      this.limitExceeded({ limit: "objects" });
+    if (!this.#objects.tryCharge(1)) this.limitExceeded({ limit: "objects" });
     if (depth > limits.maxDepth) this.limitExceeded({ limit: "depth" });
     this.depthReached = Math.max(this.depthReached, depth);
     const raw = this.u8();
@@ -403,7 +412,7 @@ export abstract class MarshalReader<V extends { readonly kind: string }> {
         "truncated",
         "Marshal stream ended inside a 16-bit field.",
       );
-    const value = this.bytes.readUInt16LE(this.offset);
+    const value = this.#reader.u16(this.offset);
     this.offset += 2;
     return value;
   }
@@ -418,7 +427,7 @@ export abstract class MarshalReader<V extends { readonly kind: string }> {
         "truncated",
         "Marshal stream ended inside a 32-bit field.",
       );
-    const value = this.bytes.readInt32LE(this.offset);
+    const value = this.#reader.i32(this.offset);
     this.offset += 4;
     return value;
   }
@@ -430,7 +439,7 @@ export abstract class MarshalReader<V extends { readonly kind: string }> {
         "truncated",
         "Marshal stream ended inside a 64-bit integer.",
       );
-    const value = this.bytes.readBigInt64LE(this.offset);
+    const value = this.#reader.i64(this.offset);
     this.offset += 8;
     return value;
   }
@@ -439,7 +448,7 @@ export abstract class MarshalReader<V extends { readonly kind: string }> {
   f64(): number {
     if (this.offset > this.bytes.length - 8)
       this.malformed("truncated", "Marshal stream ended inside a float.");
-    const value = this.bytes.readDoubleLE(this.offset);
+    const value = this.#reader.f64(this.offset);
     this.offset += 8;
     return value;
   }

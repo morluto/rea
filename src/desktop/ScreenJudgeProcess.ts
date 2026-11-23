@@ -1,4 +1,4 @@
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,17 +9,17 @@ import type { ScreenJudge } from "../domain/desktop/appTaskScreen.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { providerCleanupErrorFromFailures } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { RetainedCommandCleanup } from "../process/RetainedCommandCleanup.js";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
-import {
-  AGENTENV_PROVIDER,
-  agentEnvInterpreter,
-  type ComputerRelease,
-} from "./AgentEnvComputerHelper.js";
+import { agentEnvInterpreter } from "./AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "./AgentEnvProviderIdentity.js";
+import type { ComputerRelease } from "../domain/desktop/computerRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const JUDGE_TIMEOUT_MS = 10 * 60 * 1000;
 const answerSchema = z.object({
@@ -85,15 +85,15 @@ export class ScreenJudgeProcess {
     if (!cleanup.verified) {
       const pending = [...this.#retained].map((item) => item.failure);
       if (pending.length === 1) throw pending[0];
-      throw new ProviderCleanupError(
+      throw providerCleanupErrorFromFailures(
         AGENTENV_PROVIDER,
-        cleanup.resources,
+        pending,
         { reason: cleanup.reason },
         {
           operation: "check_build_task",
           remediationAction: "Close the build computer to retry judge cleanup.",
         },
-      ).bindCleanupDependencies(pending);
+      );
     }
     if (signal.aborted) throw cancelledBy("check_build_task", signal);
     const python = await agentEnvInterpreter(
@@ -176,7 +176,7 @@ export class ScreenJudgeProcess {
         AGENTENV_PROVIDER,
         [folder],
         {
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
           ...(outcome === undefined ? {} : { completed_judge_result: outcome }),
         },
         {
@@ -212,7 +212,7 @@ export class ScreenJudgeProcess {
         : new ProviderAdapterError(AGENTENV_PROVIDER, "check_build_task", {
             cause,
           });
-    const message = cause instanceof Error ? cause.message : String(cause);
+    const message = errorMessage(cause);
     const failure = new ProviderCleanupError(
       AGENTENV_PROVIDER,
       owner.cleanupResources,
@@ -246,7 +246,7 @@ export class ScreenJudgeProcess {
         await item.lease.release();
         this.#retained.delete(item);
       } catch (cause: unknown) {
-        failures.push(cause instanceof Error ? cause.message : String(cause));
+        failures.push(errorMessage(cause));
         resources.push(...(item.lease.cleanupResources ?? []));
       }
     }

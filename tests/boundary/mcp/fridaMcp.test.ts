@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
@@ -7,8 +8,9 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
 import type { DeviceManager } from "frida";
 import { afterAll, expect, it, onTestFinished } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
-import type { FridaInstrumentationPort } from "../../../src/application/frida/FridaInstrumentationPort.js";
+import type { FridaInstrumentationPort } from "../../../src/ports/frida/FridaInstrumentationPort.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { FridaInstrumentationManager } from "../../../src/frida/FridaInstrumentationManager.js";
@@ -20,6 +22,8 @@ import { evidenceBundleSummarySchema } from "../../../src/domain/evidenceRecordS
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+const UNOBSERVED = unknownTarget("not-observed");
 
 const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());
@@ -295,7 +299,7 @@ it("delivers Frida status summaries with complete retained Evidence for both tru
     expect(parseMcpEvidenceBundle(bundle).records).toContainEqual(parent);
     expect(session.evidenceById(parent.evidence_id)).toEqual(parent);
     // Inline/file projection validates the owning result and exact source selection.
-    const malformed = createEvidence(undefined, parent.provider ?? undefined, {
+    const malformed = createEvidence(UNOBSERVED, parent.provider ?? undefined, {
       operation: parent.operation,
       parameters: { session_id: "00000000-0000-4000-8000-000000000099" },
       result: parent.normalized_result,
@@ -359,6 +363,72 @@ const expectFridaProcessDiscovery = async (client: Client) => {
     cleanup_error: "earlier endpoint cleanup diagnostic",
   });
 };
+
+it("pages Frida process discovery across changing enumeration order", async () => {
+  const first = { pid: 2, name: "first", identifier: null };
+  const second = { pid: 9, name: "second", identifier: null };
+  const last = { pid: 10, name: "last", identifier: null };
+  const initial = [last, first, second];
+  let enumerations = 0;
+  const provider = createFridaTestProvider({
+    async listProcesses(selector) {
+      const deviceId = selector.deviceId ?? "remote";
+      const processes =
+        deviceId === "empty"
+          ? []
+          : enumerations % 2 === 0
+            ? initial
+            : initial.toReversed();
+      enumerations += 1;
+      return { ok: true, value: { deviceId, processes, cleanupError: null } };
+    },
+  });
+  const session = createTestBinarySession(() => {
+    throw new Error("Binary provider must not start");
+  });
+  const server = createServer(
+    { kind: "session", session },
+    { fridaInstrumentation: provider },
+  );
+  const client = await connectFridaTestClient(server, session, "frida-pages");
+  const call = (args: {
+    device_id?: string;
+    limit?: number;
+    offset?: number;
+  }) =>
+    client.callTool({
+      name: "list_frida_processes",
+      arguments: { device_id: "local", ...args },
+    });
+  const schema = toolContract("list_frida_processes").outputSchema;
+  for (const [args, processes, total, truncated] of [
+    [{ limit: 1 }, [first], 3, true],
+    [{ offset: 1, limit: 1 }, [second], 3, true],
+    [{ offset: 1 }, [second, last], 3, true],
+    [{ offset: 3 }, [], 3, true],
+    [{ device_id: "empty", offset: 1 }, [], 0, false],
+    [{ limit: 3 }, [first, second, last], 3, false],
+  ] as const) {
+    const response = await call(args);
+    expect(response.isError).not.toBe(true);
+    expect(schema.parse(response.structuredContent)).toEqual({
+      device_id: "device_id" in args ? args.device_id : "local",
+      processes,
+      cleanup_error: null,
+      total_processes: total,
+      truncated,
+    });
+  }
+  const unpaged = await call({});
+  expect(schema.parse(unpaged.structuredContent)).toEqual({
+    device_id: "local",
+    processes: initial,
+    cleanup_error: null,
+  });
+  expect((await call({ limit: 0 })).isError).toBe(true);
+  expect((await call({ offset: -1 })).isError).toBe(true);
+  expect(enumerations).toBe(7);
+});
 
 const expectFridaSelectorGuidance = async (
   client: Client,
@@ -616,22 +686,14 @@ it("retains cancellation Evidence after the MCP client stops waiting", async () 
   const session = createTestBinarySession(() => {
     throw new Error("Binary provider must not start");
   });
-  let finishLoad: (() => void) | undefined;
-  const loadGate = new Promise<void>((resolve) => {
-    finishLoad = resolve;
-  });
-  let markLoadStarted: (() => void) | undefined;
-  const loadStarted = new Promise<void>((resolve) => {
-    markLoadStarted = resolve;
-  });
+  const scriptLoad = phaseGate();
   let markSessionClosed: (() => void) | undefined;
   const sessionClosed = new Promise<void>((resolve) => {
     markSessionClosed = resolve;
   });
   const provider = createFridaTestProvider({
     async loadScript() {
-      markLoadStarted?.();
-      await loadGate;
+      await scriptLoad.hold();
       return {
         ok: true,
         value: {
@@ -673,7 +735,7 @@ it("retains cancellation Evidence after the MCP client stops waiting", async () 
   );
   const controller = new AbortController();
   onTestFinished(async () => {
-    finishLoad?.();
+    scriptLoad.release();
     controller.abort();
     await client.close();
     await server.close();
@@ -697,9 +759,9 @@ it("retains cancellation Evidence after the MCP client stops waiting", async () 
     },
     { signal: controller.signal },
   );
-  await loadStarted;
+  await scriptLoad.reached(call, "Frida script load");
   controller.abort(new Error("cancel Frida observation"));
-  finishLoad?.();
+  scriptLoad.release();
   await expect(call).rejects.toThrow("cancel Frida observation");
   await sessionClosed;
   await client.ping();

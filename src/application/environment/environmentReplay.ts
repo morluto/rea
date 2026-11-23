@@ -178,18 +178,31 @@ const outranks = (score: MatchScore, best: MatchScore): boolean =>
         ? score.queryMatches > best.queryMatches
         : score.observedOrderMatches > best.observedOrderMatches;
 
-/** Choose the record whose path segments, then verbatim spellings, then query values best match the call; ties keep manifest order. */
+/** The selected recording and whether the call identifies its request exactly. */
+export interface ReplaySelection {
+  readonly exchange: RecordedExchange;
+  readonly exact: boolean;
+}
+
+/**
+ * Choose the record whose path segments, then verbatim spellings, then query values best match the call.
+ * When only some ordinals can supply a response, all cited recordings still inform query-order ambiguity.
+ */
 export const selectReplayExchange = (
   tool: EnvironmentManifestTool,
   exchanges: ReadonlyMap<number, RecordedExchange>,
   args: ReplayArguments,
-  observedQuery?: ObservedQuery,
-):
-  | { readonly exchange: RecordedExchange; readonly exact: boolean }
-  | undefined => {
+  options: {
+    readonly observedQuery?: ObservedQuery | undefined;
+    readonly eligibleOrdinals?: ReadonlySet<number>;
+  } = {},
+): ReplaySelection | undefined => {
+  const { observedQuery, eligibleOrdinals } = options;
   let best: { exchange: RecordedExchange; score: MatchScore } | undefined;
   const argumentsMap = environmentToolArguments(tool);
   for (const ordinal of tool.record_ordinals) {
+    if (eligibleOrdinals !== undefined && !eligibleOrdinals.has(ordinal))
+      continue;
     const exchange = exchanges.get(ordinal);
     if (exchange === undefined) continue;
     const score = scoreExchange(
@@ -209,54 +222,46 @@ export const selectReplayExchange = (
       ownMember(args, argument) === undefined ? [] : [name],
     ),
   );
-  const queryWasSupplied = suppliedQueryNames.size > 0;
-  const canInspectQuery = observedQuery !== undefined || queryWasSupplied;
-  const bestPairs = canInspectQuery
-    ? [
-        ...iterateUrlQueryParameters(
-          best.exchange.query ?? "",
-          suppliedQueryNames,
-        ),
-      ]
-    : [];
-  const orderAmbiguous =
-    observedQuery === undefined &&
-    queryWasSupplied &&
-    best.score.exact &&
-    tool.record_ordinals.some((ordinal) => {
-      const candidate = exchanges.get(ordinal);
-      if (
-        candidate === undefined ||
-        candidate.ordinal === best.exchange.ordinal
+  if (
+    observedQuery !== undefined ||
+    suppliedQueryNames.size === 0 ||
+    !best.score.exact
+  )
+    return { exchange: best.exchange, exact: best.score.exact };
+  const bestPairs = [
+    ...iterateUrlQueryParameters(best.exchange.query ?? "", suppliedQueryNames),
+  ];
+  const orderAmbiguous = tool.record_ordinals.some((ordinal) => {
+    const candidate = exchanges.get(ordinal);
+    if (candidate === undefined || candidate.ordinal === best.exchange.ordinal)
+      return false;
+    const score = scoreExchange(
+      tool,
+      argumentsMap.path,
+      argumentsMap.query,
+      candidate,
+      args,
+    );
+    if (
+      score.pathMatches !== best.score.pathMatches ||
+      score.verbatimMatches !== best.score.verbatimMatches ||
+      !score.exact
+    )
+      return false;
+    const pairs = [
+      ...iterateUrlQueryParameters(candidate.query ?? "", suppliedQueryNames),
+    ];
+    return (
+      pairs.length !== bestPairs.length ||
+      pairs.some(
+        ([name, value], index) =>
+          bestPairs[index]?.[0] !== name || bestPairs[index]?.[1] !== value,
       )
-        return false;
-      const score = scoreExchange(
-        tool,
-        argumentsMap.path,
-        argumentsMap.query,
-        candidate,
-        args,
-      );
-      if (
-        score.pathMatches !== best.score.pathMatches ||
-        score.verbatimMatches !== best.score.verbatimMatches ||
-        !score.exact
-      )
-        return false;
-      const pairs = [
-        ...iterateUrlQueryParameters(candidate.query ?? "", suppliedQueryNames),
-      ];
-      return (
-        pairs.length !== bestPairs.length ||
-        pairs.some(
-          ([name, value], index) =>
-            bestPairs[index]?.[0] !== name || bestPairs[index]?.[1] !== value,
-        )
-      );
-    });
+    );
+  });
   return {
     exchange: best.exchange,
-    exact: best.score.exact && !orderAmbiguous,
+    exact: !orderAmbiguous,
   };
 };
 
@@ -308,8 +313,8 @@ export const selectsRecordedLine = (
   return true;
 };
 
-/** Base64 characters, in whole groups, whose bytes fit the replay limit. */
-const BASE64_LIMIT_CHARS = Math.floor(REPLAY_BODY_LIMIT_BYTES / 3) * 4;
+/** Base64 bytes, in whole four-character groups, whose decoded bytes fit the replay limit. */
+const BASE64_LIMIT_BYTES = Math.floor(REPLAY_BODY_LIMIT_BYTES / 3) * 4;
 
 interface ReplayBody {
   readonly body: JsonValue;
@@ -325,7 +330,10 @@ const replayBody = (exchange: RecordedExchange): ReplayBody => {
     case "base64":
       return body.whole
         ? { body: body.encoded, truncated: false }
-        : { body: body.encoded.slice(0, BASE64_LIMIT_CHARS), truncated: true };
+        : {
+            body: utf8HeadExcerpt(body.encoded, BASE64_LIMIT_BYTES).text,
+            truncated: true,
+          };
     case "cut":
       return {
         body: utf8HeadExcerpt(body.text, REPLAY_BODY_LIMIT_BYTES).text,
@@ -348,12 +356,9 @@ export const replayEnvironmentTool = (
   args: ReplayArguments,
   observedQuery?: ObservedQuery,
 ): Result<ReplayResult, AnalysisError> => {
-  const selected = selectReplayExchange(
-    tool,
-    source.exchanges,
-    args,
+  const selected = selectReplayExchange(tool, source.exchanges, args, {
     observedQuery,
-  );
+  });
   if (selected === undefined)
     return err(
       new AnalysisInputError(
@@ -377,29 +382,28 @@ export const replayAnswer = (
   const recordedPath = utf8HeadExcerpt(
     exchange.path,
     REPLAY_METADATA_LIMIT_BYTES,
-  ).text;
+  );
   const recordedQuery =
     exchange.query === null
       ? null
-      : utf8HeadExcerpt(exchange.query, REPLAY_METADATA_LIMIT_BYTES).text;
+      : utf8HeadExcerpt(exchange.query, REPLAY_METADATA_LIMIT_BYTES);
   const contentType =
     exchange.contentType === null
       ? null
-      : utf8HeadExcerpt(exchange.contentType, REPLAY_METADATA_LIMIT_BYTES).text;
+      : utf8HeadExcerpt(exchange.contentType, REPLAY_METADATA_LIMIT_BYTES);
   return {
     status: exchange.status,
-    content_type: contentType,
+    content_type: contentType?.text ?? null,
     body,
     replay: {
       record_ordinal: exchange.ordinal,
       evidence_id: source.evidenceId,
       exact_match: exact,
-      recorded_path: recordedPath,
-      recorded_query: recordedQuery,
+      recorded_path: recordedPath.text,
+      recorded_query: recordedQuery?.text ?? null,
       recorded_line_truncated:
-        recordedPath.length < exchange.path.length ||
-        (recordedQuery?.length ?? 0) < (exchange.query?.length ?? 0),
-      content_type_truncated: contentType !== exchange.contentType,
+        recordedPath.truncated || recordedQuery?.truncated === true,
+      content_type_truncated: contentType?.truncated === true,
       body_recorded: exchange.bodyText !== null,
       body_encoding: exchange.bodyEncoding ?? "utf-8",
       truncated,

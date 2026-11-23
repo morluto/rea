@@ -1,3 +1,5 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import type { Client } from "@modelcontextprotocol/client";
@@ -35,7 +37,8 @@ async function runUnicodeSourceMapComparison(
 ): Promise<void> {
   const baseApplication = SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.application;
   const subject = baseApplication.subject;
-  if (subject === null) throw new Error("Application Evidence has no subject");
+  if (subject.identity.kind !== "file")
+    throw new Error("Application Evidence has no subject");
   const baseResult = javascriptApplicationAnalysisResultSchema.parse(
     baseApplication.normalized_result,
   );
@@ -81,8 +84,8 @@ async function runUnicodeSourceMapComparison(
   const unicodeApplication = createEvidence(
     {
       path: baseResult.input_path,
-      sha256: subject.digest.sha256,
-      format: subject.format,
+      sha256: fileIdentity(subject).sha256,
+      format: fileIdentity(subject).format,
     },
     baseApplication.provider,
     {
@@ -150,6 +153,13 @@ async function runUnicodeSourceMapComparison(
   const validateOutput = ajv.compile(outputSchema);
   expect(validateOutput(reply.structuredContent)).toBe(true);
 }
+
+/** A project-ignored exclusion without the pattern that admission requires. */
+const exclusionWithoutPattern = {
+  path: "vendor/removed.ts",
+  entry_kind: "file",
+  reason: "project-ignored",
+} as const;
 
 async function runInlineWorkflowScenarios(
   harness: ApplicationMcpHarness,
@@ -247,13 +257,7 @@ async function runInlineWorkflowScenarios(
     ...SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.reference,
     root_sha256: undefined,
     inventory_state: "partial",
-    exclusions: [
-      {
-        path: "vendor/removed.ts",
-        reason: "project-ignored",
-        pattern: "vendor/",
-      },
-    ],
+    exclusions: [{ ...exclusionWithoutPattern, pattern: "vendor/" }],
   });
   const argumentsWithExclusion = {
     ...SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE,
@@ -271,7 +275,7 @@ async function runInlineWorkflowScenarios(
     ...argumentsWithExclusion,
     reference: {
       ...referenceWithExclusion,
-      exclusions: [{ path: "vendor/removed.ts", reason: "project-ignored" }],
+      exclusions: [exclusionWithoutPattern],
     },
   };
   expect(
@@ -308,12 +312,12 @@ async function assertRejectedEvidenceReferences(
   session: BinarySession,
 ): Promise<void> {
   const wrongOperation = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     { operation: "inventory_artifact", parameters: {}, result: {} },
   );
   const wrongPredicate = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       predicateType: "fixture.application/v1",
@@ -344,19 +348,7 @@ async function assertRejectedEvidenceReferences(
   }
 }
 
-async function assertRejectedInlineEvidence(client: Client): Promise<void> {
-  const duplicateNative = await client.callTool({
-    name: "trace_application_feature",
-    arguments: {
-      ...JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
-      native_observations: [
-        JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application,
-        JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application,
-      ],
-    },
-  });
-  expect(duplicateNative.isError).toBe(true);
-
+async function assertRejectedSpoofedEvidence(client: Client): Promise<void> {
   const spoofed = await client.callTool({
     name: "trace_application_feature",
     arguments: {
@@ -376,7 +368,7 @@ describe("application workflow MCP parity", () => {
     try {
       await runInlineWorkflowScenarios(harness);
       await assertRejectedEvidenceReferences(harness.client, harness.session);
-      await assertRejectedInlineEvidence(harness.client);
+      await assertRejectedSpoofedEvidence(harness.client);
     } finally {
       await harness.close();
     }

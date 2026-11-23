@@ -1,5 +1,3 @@
-import { presentAdvertisedInputSchema } from "../../../src/contracts/compactInputSchema.js";
-import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../../../src/config/mcpInputSchemaProfile.js";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { isCallToolResult } from "@modelcontextprotocol/server";
@@ -10,7 +8,8 @@ import { BROWSER_TOOL_CONTRACTS } from "../../../src/contracts/browserToolContra
 import { BROWSER_SCENARIO_TOOL_CONTRACTS } from "../../../src/contracts/browserScenarioToolContracts.js";
 import { ELECTRON_TOOL_CONTRACTS } from "../../../src/contracts/javascript/electronToolContracts.js";
 import { JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS } from "../../../src/contracts/javascript/javascriptRuntimeObservationToolContracts.js";
-import { GENERATED_MCP_TOOL_CATALOG } from "../../fixtures/mcpToolCatalog.js";
+import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   prepareOwnedCommand,
@@ -51,8 +50,9 @@ it.skipIf(process.platform === "win32")(
   },
 );
 const resultSchema = z.object({
+  presentationOrder: z.array(z.string()),
   catalog: z.array(
-    z.object({
+    z.looseObject({
       name: z.string(),
       inputSchema: z.record(z.string(), z.unknown()),
       outputSchema: z.record(z.string(), z.unknown()).optional(),
@@ -64,6 +64,12 @@ const resultSchema = z.object({
 });
 
 it("preserves advertised schemas and handler meaning when presentation order changes", async () => {
+  const ordinary = await createApplicationMcpHarness({
+    serverOptions: { environment: {} },
+  });
+  const { tools: expected } = await ordinary.client
+    .listTools()
+    .finally(() => ordinary.close());
   const cancellation = new AbortController();
   const command = runOwnedCommand(
     {
@@ -89,24 +95,21 @@ it("preserves advertised schemas and handler meaning when presentation order cha
   const snapshot = await command;
   const stdout = snapshot.stdout.text;
   const result = resultSchema.parse(JSON.parse(stdout));
-  expect(result.catalog).toHaveLength(GENERATED_MCP_TOOL_CATALOG.length);
-  expect(new Set(result.catalog.map(({ name }) => name))).toEqual(
-    new Set(GENERATED_MCP_TOOL_CATALOG.map(({ name }) => name)),
+  const byName = <Tool extends { readonly name: string }>(
+    tools: readonly Tool[],
+  ) =>
+    tools.toSorted((left, right) => left.name.localeCompare(right.name, "en"));
+  const reversed = byName(result.catalog);
+  expect(result.presentationOrder).toEqual(
+    TOOL_CONTRACTS.toReversed().map(({ name }) => name),
   );
-  for (const advertised of result.catalog) {
-    const canonical = GENERATED_MCP_TOOL_CATALOG.find(
-      ({ name }) => name === advertised.name,
-    );
-    if (canonical === undefined) throw new Error(`Missing ${advertised.name}`);
-    expect(advertised.inputSchema).toEqual(
-      presentAdvertisedInputSchema(
-        canonical.inputSchema,
-        COMPACT_INPUT_SCHEMA_PRESENTATION,
-      ),
-    );
-    // The default output profile omits output schemas.
-    expect(advertised.outputSchema).toBeUndefined();
-  }
+  expect(reversed.map(({ name }) => name)).toEqual(
+    byName(TOOL_CONTRACTS).map(({ name }) => name),
+  );
+  expect(reversed).toEqual(byName(expected));
+  expect(
+    reversed.filter(({ outputSchema }) => outputSchema !== undefined),
+  ).toEqual([]);
   expect(result.responses.map(({ name }) => name).sort()).toEqual(
     [
       ...BROWSER_TOOL_CONTRACTS,

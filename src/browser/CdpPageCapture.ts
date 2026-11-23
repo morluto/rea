@@ -1,6 +1,6 @@
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -401,12 +401,7 @@ const capturePageDom = async (state: CaptureState): Promise<DomCapture> => {
     );
     return emptyDomCapture;
   }
-  const capture = captureDom(
-    result,
-    allowedOrigins,
-    context.input,
-    state.events.completeness,
-  );
+  const capture = captureDom(result, allowedOrigins, state.events.completeness);
   let step = capture.next();
   let descriptionUnavailable = false;
   const pendingController = new AbortController();
@@ -534,8 +529,11 @@ const accessibilityForFrames = async (
       limitations,
     );
     if (reply.ok) results.push(reply.value);
-    else if (reply.error._tag === "CdpCommandUnavailable") unavailable = true;
-    else
+    else if (reply.error._tag === "CdpCommandUnavailable") {
+      // Method availability belongs to the attached target session.
+      unavailable = true;
+      break;
+    } else
       events.completeness.exclude(
         "accessibility",
         "invalid_protocol_value",

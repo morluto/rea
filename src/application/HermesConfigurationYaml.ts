@@ -26,6 +26,7 @@ import {
   retainYamlScalarSource,
   yamlNumericValuesEqual,
 } from "./YamlConfigurationSource.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 const SOURCE_SCALAR_TAGS = new Set([
   "tag:yaml.org,2002:int",
@@ -298,8 +299,11 @@ const projectedYamlPathExists = (
   path: readonly string[],
 ): boolean => projectedYamlValue(document, path) !== "absent";
 
+/** A refused Hermes YAML edit with repair guidance from the document owner. */
+export class HermesConfigurationEditError extends ConfigurationError {}
+
 const inheritedRegistrationRemovalError = () =>
-  new ConfigurationError(
+  new HermesConfigurationEditError(
     "The registration is inherited from a YAML merge. Remove it at the shared source before rerunning uninstall",
   );
 
@@ -319,7 +323,7 @@ const inheritedYamlValue = (
       return isScalar(key) && key.value === name;
     });
     if (matches.length > 1)
-      throw new ConfigurationError(
+      throw new HermesConfigurationEditError(
         `YAML mapping contains more than one key resolving to ${JSON.stringify(name)}`,
       );
     if (matches[0] !== undefined) return matches[0].value;
@@ -358,7 +362,7 @@ const inheritedYamlMapOverride = (
   let inherited = inheritedYamlValue(document, owner, name);
   if (isAlias(inherited)) inherited = inherited.resolve(document);
   if (!isMap(inherited))
-    throw new ConfigurationError(
+    throw new HermesConfigurationEditError(
       `Inherited YAML setting ${JSON.stringify(name)} is not a mapping`,
     );
   const mergeDocument = parseHermesDocument("<<: {}\n");
@@ -366,13 +370,13 @@ const inheritedYamlMapOverride = (
     !isMap(mergeDocument.contents) ||
     mergeDocument.contents.items[0] === undefined
   )
-    throw new ConfigurationError("Cannot create a YAML merge key");
+    throw new HermesConfigurationEditError("Cannot create a YAML merge key");
   const alias = document.createAlias(inherited, "rea_inherited");
   const override = new YAMLMap(document.schema);
   override.items.push(new Pair(mergeDocument.contents.items[0].key, alias));
   document.setIn(parent, override);
   if (alias.resolve(document) !== inherited)
-    throw new ConfigurationError(
+    throw new HermesConfigurationEditError(
       "The inherited YAML anchor is shadowed; edit its shared source before rerunning setup",
     );
 };
@@ -434,9 +438,7 @@ export const editHermesConfigurationYaml = (
     ? "absent"
     : projectedYamlValue(document, path);
   if (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
+    isRecord(value) &&
     inheritedRegistration !== "absent" &&
     typeof inheritedRegistration.value === "object" &&
     inheritedRegistration.value !== null &&

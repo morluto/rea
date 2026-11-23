@@ -1,16 +1,20 @@
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { launchExhaustedResource } from "./launchFailure.js";
 import {
   execFile,
   spawn,
   type ExecFileOptionsWithBufferEncoding,
 } from "node:child_process";
+import { isAbortOf } from "./SignalAbort.js";
 
 type ExecFileOutputOptions = Omit<
   ExecFileOptionsWithBufferEncoding,
   "encoding" | "maxBuffer"
 > & {
   readonly maxBuffer?: number;
+  /** Retain raw stdout for callers that parse admitted nonzero exits. */
+  readonly preserveFailedStdout?: true;
   /**
    * Signal that stops the process on abort or timeout. On POSIX the command
    * leads its own process group, and the stop signal goes to that group
@@ -81,9 +85,12 @@ const invalidTimeout = (timeout: number): RangeError | undefined => {
   return error;
 };
 
+const failedStdoutBuffers = new WeakMap<Error, Buffer>();
+
 /** Captured subprocess output read from an execFileOutput rejection. */
 export interface ExecFileOutputFailure {
   readonly stdout: string;
+  readonly stdoutBuffer?: Buffer;
   readonly stderr: string;
   readonly code: string | number | null;
   readonly signal: string | null;
@@ -102,6 +109,7 @@ export const execFileOutputFailure = (
 ): ExecFileOutputFailure | undefined => {
   if (!(cause instanceof Error)) return undefined;
   const stdout = Reflect.get(cause, "stdout");
+  const stdoutBuffer = failedStdoutBuffers.get(cause);
   const stderr = Reflect.get(cause, "stderr");
   const code = Reflect.get(cause, "code");
   const signal = Reflect.get(cause, "signal");
@@ -115,6 +123,7 @@ export const execFileOutputFailure = (
     return undefined;
   return {
     stdout,
+    ...(stdoutBuffer === undefined ? {} : { stdoutBuffer }),
     stderr,
     ...(typeof stdoutBytes === "number" &&
     Number.isSafeInteger(stdoutBytes) &&
@@ -136,25 +145,16 @@ export const execFileOutputFailure = (
   };
 };
 
-/** Spawn errnos reporting exhausted host capacity rather than an unusable command. */
-export const HOST_SPAWN_CAPACITY_CODES: ReadonlySet<string> = new Set([
-  "EAGAIN",
-  "EMFILE",
-  "ENFILE",
-  "ENOMEM",
-]);
-
 /**
  * Whether the command never started because the host lacked process, memory
- * or file-descriptor capacity. The command itself may be usable; a retry after
- * capacity is freed can succeed.
+ * or file-descriptor capacity (classified by `launchExhaustedResource`). The
+ * command itself may be usable; a retry after capacity is freed can succeed.
  */
 export const spawnCapacityExhausted = (
   failure: ExecFileOutputFailure | undefined,
 ): boolean =>
   failure?.spawnFailed === true &&
-  typeof failure.code === "string" &&
-  HOST_SPAWN_CAPACITY_CODES.has(failure.code);
+  launchExhaustedResource(failure.code) !== undefined;
 
 /** Project admitted command failure facts without reinterpreting failure policy. */
 export const execFileFailureCapturedOutput = (
@@ -197,8 +197,14 @@ export const execFileBytes = (
   options: ExecFileOutputOptions = {},
 ): Promise<{ readonly stdout: Buffer; readonly stderr: Buffer }> =>
   new Promise((resolve, reject) => {
-    const { stopSignal, signal, timeout, lifetimePipe, ...execOptions } =
-      options;
+    const {
+      stopSignal,
+      signal,
+      timeout,
+      lifetimePipe,
+      preserveFailedStdout,
+      ...execOptions
+    } = options;
     if (lifetimePipe === true && stopSignal === undefined) {
       reject(new TypeError("lifetimePipe requires stopSignal"));
       return;
@@ -219,6 +225,7 @@ export const execFileBytes = (
     ): void => {
       if (error !== null) {
         admitSpawnFailure(error);
+        if (preserveFailedStdout) failedStdoutBuffers.set(error, stdout);
         Reflect.set(error, "stdout", stdout.toString("utf8"));
         Reflect.set(error, "stderr", stderr.toString("utf8"));
         Reflect.set(error, "stdoutBytes", stdout.byteLength);
@@ -242,8 +249,10 @@ export const execFileBytes = (
           },
           (error, stdout, stderr) =>
             complete(
-              error?.name === "AbortError" && error.code === "ABORT_ERR"
-                ? new ExecFileOutputCancelledError(error.cause)
+              // A successful callback's null is not a rejection, even when
+              // the caller's abort reason is also null.
+              error !== null && isAbortOf(error, signal)
+                ? new ExecFileOutputCancelledError(signal.reason)
                 : error,
               stdout,
               stderr,

@@ -1,9 +1,10 @@
+import type { RequestAnalysisPort } from "../../../src/ports/AnalysisProvider.js";
+import type { AdbRequest } from "../../../src/domain/adb/adbDeviceAnalysis.js";
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 
-import type { AdbDeviceAnalysisPort } from "../../../src/application/adb/AdbDeviceAnalysisPort.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { ADB_TOOL_CONTRACTS } from "../../../src/contracts/adb/adbToolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
@@ -312,7 +313,7 @@ const results: Readonly<Record<string, unknown>> = {
 };
 
 it("advertises exact valid ADB schemas and records inline evidence through MCP", async () => {
-  const provider: AdbDeviceAnalysisPort = {
+  const provider: RequestAnalysisPort<AdbRequest> = {
     async inspectAvailability() {
       return { status: "available", code: null, reason: null, diagnostics: {} };
     },
@@ -332,7 +333,10 @@ it("advertises exact valid ADB schemas and records inline evidence through MCP",
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
-  const client = new Client({ name: "adb-boundary", version: "0.0.0" });
+  const client = new Client(
+    { name: "adb-boundary", version: "0.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(() => client.close());
   await client.connect(clientTransport);
 
@@ -402,7 +406,7 @@ it("advertises exact valid ADB schemas and records inline evidence through MCP",
 });
 
 it("rejects invalid tool input before reaching the provider", async () => {
-  const provider: AdbDeviceAnalysisPort = {
+  const provider: RequestAnalysisPort<AdbRequest> = {
     async inspectAvailability() {
       return { status: "available", code: null, reason: null, diagnostics: {} };
     },
@@ -424,7 +428,10 @@ it("rejects invalid tool input before reaching the provider", async () => {
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
-  const client = new Client({ name: "adb-boundary-invalid", version: "0.0.0" });
+  const client = new Client(
+    { name: "adb-boundary-invalid", version: "0.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(() => client.close());
   await client.connect(clientTransport);
 

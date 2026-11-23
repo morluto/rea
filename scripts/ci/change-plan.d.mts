@@ -15,6 +15,14 @@ export interface ChangePlanRepository {
   readonly isAncestor: (ancestor: string, head: string) => boolean;
   readonly changedFiles: (base: string, head: string) => readonly string[];
   readonly readFile: (revision: string, path: string) => string;
+  readonly listFiles: (
+    revision: string,
+    directories: readonly string[],
+  ) => readonly string[];
+  readonly readFiles: (
+    revision: string,
+    paths: readonly string[],
+  ) => ReadonlyMap<string, string>;
 }
 
 export type ChangePlan = Readonly<Record<string, unknown>> & {
@@ -29,6 +37,9 @@ export type ChangePlan = Readonly<Record<string, unknown>> & {
   readonly files: readonly string[];
   readonly reasons: readonly string[];
   readonly testSelection: TestSelectionPlan;
+  readonly testShards: readonly string[];
+  /** null requests full typed lint when the file list exceeds the output bound. */
+  readonly typedLintFiles: readonly string[] | null;
 };
 
 export function planChanges(

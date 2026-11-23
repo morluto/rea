@@ -1,4 +1,4 @@
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import type {
   CaptureWebScreenshotInput,
   WebScreenshot,
@@ -37,6 +37,8 @@ interface ScreenshotContext {
   readonly progress?: ProgressReporter;
 }
 
+const screenshotOperation = "capture_web_screenshot";
+
 /** Capture the current viewport without navigation, evaluation, or page mutation. */
 export const captureCdpScreenshot = async (
   context: ScreenshotContext,
@@ -66,9 +68,9 @@ export const captureCdpScreenshot = async (
     beforeFacts.scope === "outside_policy" ||
     beforeFacts.scope === "unsupported"
   )
-    throw cdpOriginScopeRefusal("capture_web_screenshot");
+    throw cdpOriginScopeRefusal(screenshotOperation);
   if (beforeObservation.kind !== "observed")
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
+    throw new BrowserObservationError(screenshotOperation, "protocol_error");
   const beforeUrl = beforeFacts.url;
   const selected = cdpRootDocument(before);
   if (
@@ -76,10 +78,7 @@ export const captureCdpScreenshot = async (
     beforeFacts.origin === null ||
     selected === undefined
   )
-    throw new BrowserObservationError(
-      "capture_web_screenshot",
-      "protocol_error",
-    );
+    throw new BrowserObservationError(screenshotOperation, "protocol_error");
   const navigation: ScreenshotNavigation = {
     document: CdpTargetDocument.watch(context, selected),
     urlChanged: false,
@@ -94,13 +93,12 @@ export const captureCdpScreenshot = async (
   // visible URL moving within the document still invalidates the image.
   const assertCurrentDocument = () => {
     if (navigation.document.changed)
-      throw new BrowserObservationError("inspect_web_page", "target_changed");
-    if (navigation.leftScope)
-      throw cdpOriginScopeRefusal("capture_web_screenshot");
+      throw new BrowserObservationError(screenshotOperation, "target_changed");
+    if (navigation.leftScope) throw cdpOriginScopeRefusal(screenshotOperation);
     if (navigation.invalidIdentity)
-      throw new BrowserObservationError("inspect_web_page", "protocol_error");
+      throw new BrowserObservationError(screenshotOperation, "protocol_error");
     if (navigation.urlChanged)
-      throw new BrowserObservationError("inspect_web_page", "target_changed");
+      throw new BrowserObservationError(screenshotOperation, "target_changed");
   };
   let screenshot: Awaited<ReturnType<typeof captureScreenshotImage>>;
   let after: CdpFrameTree;
@@ -122,7 +120,7 @@ export const captureCdpScreenshot = async (
       assertSameViewport(currentViewport, recoveredViewport);
       if (!coversViewport(screenshot, recoveredViewport))
         throw new BrowserObservationError(
-          "inspect_web_page",
+          screenshotOperation,
           "protocol_error",
           {
             detail:
@@ -146,7 +144,7 @@ export const captureCdpScreenshot = async (
       !(cause instanceof AnalysisCancelledError) &&
       !(cause instanceof AnalysisError && cause.userCategory === "cancelled")
     )
-      throw new BrowserObservationError("inspect_web_page", "target_changed", {
+      throw new BrowserObservationError(screenshotOperation, "target_changed", {
         cause,
       });
     throw cause;
@@ -156,24 +154,21 @@ export const captureCdpScreenshot = async (
   assertCurrentDocument();
   const final = cdpRootDocument(after);
   if (final === undefined)
-    throw new BrowserObservationError(
-      "capture_web_screenshot",
-      "protocol_error",
-    );
+    throw new BrowserObservationError(screenshotOperation, "protocol_error");
   const comparison = navigation.document.observeTree(after);
   if (comparison === "changed")
-    throw new BrowserObservationError("inspect_web_page", "target_changed");
+    throw new BrowserObservationError(screenshotOperation, "target_changed");
   const afterObservation = after.root.url;
   const afterFacts = classifyCdpFrameUrl(afterObservation, origins);
   if (
     afterFacts.scope === "outside_policy" ||
     afterFacts.scope === "unsupported"
   )
-    throw cdpOriginScopeRefusal("capture_web_screenshot");
+    throw cdpOriginScopeRefusal(screenshotOperation);
   if (afterObservation.kind !== "observed")
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
+    throw new BrowserObservationError(screenshotOperation, "protocol_error");
   if (afterFacts.url === undefined || final.url !== selected.url)
-    throw new BrowserObservationError("inspect_web_page", "target_changed");
+    throw new BrowserObservationError(screenshotOperation, "target_changed");
   const unverified = navigation.document.unknown || comparison === "unknown";
   if (unverified) navigation.completeness.attachLimited("screenshot");
   await context.progress?.report({
@@ -220,7 +215,7 @@ const readScreenshotViewport = async (context: ScreenshotContext) => {
   const { clientWidth: pixelWidth, clientHeight: pixelHeight } = visualViewport;
   // Both viewports describe one page zoom; disagreement is incoherent geometry.
   if (visualViewport.scale !== scale)
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
+    throw new BrowserObservationError(screenshotOperation, "protocol_error");
   // Keep ordinary surface captures, including their scrollbars and pixel
   // density. The visual viewport excludes scrollbars and supplies only a
   // lower bound on the expected image size, allowing subpixel rounding.
@@ -230,7 +225,7 @@ const readScreenshotViewport = async (context: ScreenshotContext) => {
     !Number.isSafeInteger(minimumWidth) ||
     !Number.isSafeInteger(minimumHeight)
   )
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
+    throw new BrowserObservationError(screenshotOperation, "protocol_error");
   return {
     clip: { x: pageX, y: pageY, width, height, scale },
     pixelWidth,
@@ -262,7 +257,7 @@ const assertSameViewport = (
     before.pixelWidth !== after.pixelWidth ||
     before.pixelHeight !== after.pixelHeight
   )
-    throw new BrowserObservationError("inspect_web_page", "target_changed", {
+    throw new BrowserObservationError(screenshotOperation, "target_changed", {
       detail: "The visual viewport changed during screenshot capture.",
     });
 };
@@ -293,7 +288,7 @@ const captureScreenshotImage = async (
   );
   const screenshot = decodeScreenshot(data);
   if (screenshot === undefined)
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
+    throw new BrowserObservationError(screenshotOperation, "protocol_error");
   return screenshot;
 };
 

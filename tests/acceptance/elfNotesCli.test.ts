@@ -6,6 +6,7 @@ import {
   compressedElfNoteFixture,
   compressedElfNoteSectionFixture,
   elfExtendedSectionCountFixture,
+  elfNote,
   elfNoteFixture,
   elfNoteWithUnreadableSectionNameFixture,
 } from "../../src/native/elf/ElfNotes.fixture.js";
@@ -31,28 +32,62 @@ cliTest("reports a GNU build-id through the public CLI", async ({ cli }) => {
 });
 
 cliTest(
-  "resolves section note names from zlib and Zstandard string tables through the CLI",
+  "reports FDO producer assertions in public ELF note Evidence",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-elf-notes-fdo-cli-");
+    const path = join(root, "program");
+    const metadata = [{ soname: ["libdemo.so.1"], feature: "examples" }];
+    const notes = elfNote(
+      "FDO",
+      0x407c0c0a,
+      Buffer.from(JSON.stringify(metadata) + "\0"),
+    );
+    await writeFile(
+      path,
+      elfNoteFixture({
+        ownership: "section",
+        notes,
+        sectionName: ".note.dlopen",
+      }),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-elf-notes", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
+      result.json,
+    );
+    expect(evidence.normalized_result.entries[0]).toMatchObject({
+      type_name: "fdo_dlopen_metadata",
+      fdo: { metadata, issue: null },
+    });
+    expect(evidence.limitations).toContain(
+      "FDO packaging and dlopen metadata are unverified producer declarations.",
+    );
+  },
+);
+
+cliTest(
+  "resolves section note names from a compressed string table through the CLI",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-elf-notes-compressed-cli-");
-    for (const compressionType of [1, 2]) {
-      const path = join(root, `program-${String(compressionType)}`);
-      const bytes = compressedElfNoteFixture(64, true, compressionType);
-      await writeFile(path, bytes);
-      const result = await cli.run({
-        arguments: ["inspect-elf-notes", path, "--json"],
-      });
-      expect(result.exitCode, result.stderr).toBe(0);
-      const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
-        result.json,
-      );
-      expect(evidence.normalized_result.tables[0]?.name).toBe(
-        ".note.gnu.build-id",
-      );
-      expect(evidence.normalized_result.entries[0]?.gnu?.build_id_hex).toBe(
-        "0123456789abcdef0123456789abcdef01234567",
-      );
-      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
-    }
+    const path = join(root, "compressed-names.elf");
+    const bytes = compressedElfNoteFixture(64, true, 2);
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-elf-notes", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
+      result.json,
+    );
+    expect(evidence.normalized_result.tables[0]?.name).toBe(
+      ".note.gnu.build-id",
+    );
+    expect(evidence.normalized_result.entries[0]?.gnu?.build_id_hex).toBe(
+      "0123456789abcdef0123456789abcdef01234567",
+    );
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   },
 );
 
@@ -125,8 +160,10 @@ cliTest(
   "reports compressed note storage as unsupported without mutation",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-elf-notes-storage-cli-");
-    const path = join(root, "debug-notes.o");
-    const bytes = compressedElfNoteSectionFixture();
+    const path = join(root, "aliased.o");
+    const bytes = compressedElfNoteSectionFixture(64, true, "both");
+    // The program starts inside the compressed section and ends beyond it.
+    bytes.writeBigUInt64LE(bytes.readBigUInt64LE(64 + 8) + 4n, 64 + 8);
     await writeFile(path, bytes);
     const result = await cli.run({
       arguments: ["inspect-elf-notes", path, "--json"],

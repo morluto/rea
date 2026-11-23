@@ -145,5 +145,5 @@ npm run test:local -- tests/conformance/readiness/report/reconstructionReadiness
 ```
 
 Passing evaluator tests does not establish real-provider or fixture runtime
-behavior. Use the applicable [real-toolchain lanes](testing.md#real-toolchain-verification-lanes)
+behavior. Use the applicable [real-toolchain lanes](../testing-lanes.md#real-toolchain-verification-lanes)
 for those claims.

@@ -15,6 +15,13 @@ import type { FileOffsetPartialObservation } from "../domain/native/fileOffsetPa
 import { analysisClientFailureForOperation } from "./AnalysisClientFailure.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { regexMatchingDeadlineError } from "../process/RegexMatcher.js";
+import {
+  ProviderOwnedAnalysisError,
+  providerErrorTag,
+  type AnalysisErrorOptions,
+  type AnalysisErrorOwnPresentation,
+  type ProviderRequestFailure,
+} from "../domain/analysisErrorBase.js";
 import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const observation: FileOffsetPartialObservation = {
@@ -154,7 +161,15 @@ it("keeps the structured limit when a resource refusal changes operation", () =>
     "transport",
     "status exceeded the ceiling",
     { max_request_bytes: 8192 },
-    { remediationAction: "Raise the ceiling.", retryable: false, limit },
+    {
+      remediationAction: "Raise the ceiling.",
+      retryable: false,
+      limit,
+      related: {
+        parameters: ["max_output_bytes"],
+        operations: ["analyze_function"],
+      },
+    },
   );
   const attributed = analysisClientFailureForOperation(
     source,
@@ -167,9 +182,12 @@ it("keeps the structured limit when a resource refusal changes operation", () =>
   expect(attributed.operation).toBe("binary_overview");
   expect(attributed.retryable).toBe(false);
   expect(attributed.limit).toEqual(source.limit);
+  expect(attributed.related).toEqual(source.related);
   expect(projectAnalysisError(attributed)).toMatchObject({
     code: "resource_constraint",
     details: {
+      related_parameters: ["max_output_bytes"],
+      related_operations: ["analyze_function"],
       limit: {
         setting: "bridge.max_request_bytes",
         effective_value: 8192,
@@ -213,6 +231,47 @@ it.each([
   expect(projectAnalysisError(again).details?.secondary_failures).toHaveLength(
     2,
   );
+});
+
+it("reattributes a provider-owned failure through the request facts it reports", () => {
+  class ExampleRequestError extends ProviderOwnedAnalysisError {
+    readonly _tag = providerErrorTag("ExampleRequestError");
+    constructor(
+      readonly operation: string,
+      options: AnalysisErrorOptions = {},
+    ) {
+      super(`Example ${operation} failed`, options);
+    }
+    override ownPresentation(): AnalysisErrorOwnPresentation {
+      return { code: "execution_failure", category: "execution_failure" };
+    }
+    override providerRequest(): ProviderRequestFailure {
+      return {
+        facts: { operation: this.operation, request_id: 7 },
+        reattribute: (operation, options) =>
+          new ExampleRequestError(operation, options),
+      };
+    }
+  }
+  const source = new ExampleRequestError("wire_request", {
+    diagnostics: { bridge: "observed" },
+  });
+
+  const attributed = analysisClientFailureForOperation(
+    source,
+    "example",
+    "decompile",
+  );
+
+  expect(attributed).toBeInstanceOf(ExampleRequestError);
+  expect(attributed).toMatchObject({
+    operation: "decompile",
+    cause: source,
+    diagnostics: {
+      provider_request: { operation: "wire_request", request_id: 7 },
+      provider_diagnostics: { bridge: "observed" },
+    },
+  });
 });
 
 it("keeps the named integrity check when an artifact change changes operation", () => {

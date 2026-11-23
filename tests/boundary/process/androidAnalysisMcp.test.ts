@@ -7,6 +7,7 @@ import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mj
 import { z } from "zod";
 import { access } from "node:fs/promises";
 import { ANDROID_TOOL_CONTRACTS } from "../../../src/contracts/android/androidToolContracts.js";
+import { JADX_RELEASE } from "../../../src/android/JadxRelease.js";
 import { packagedJadxBridgeIdentity } from "../../support/packagedJadxBridge.js";
 import { androidPartialObservationSchema } from "../../../src/domain/android/androidPartialObservation.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -15,7 +16,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { startMcpTransport } from "../../../src/main/transport.js";
 import type { RuntimeDependencies } from "../../../src/main/types.js";
-import type { AndroidAnalysisPort } from "../../../src/application/android/AndroidAnalysisPort.js";
+import type { AndroidAnalysisPort } from "../../../src/ports/android/AndroidAnalysisPort.js";
 import { silentLogger } from "../../../src/logger.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -188,7 +189,7 @@ test.each([
     errorCode: "execution_failure",
     serverName: "rea-jadx-bridge",
     serverVersion: packagedJadxBridgeIdentity().version,
-    engineVersion: "0.7.1",
+    engineVersion: JADX_RELEASE.version,
     calls: [
       { operation: "rea_jvm_status" },
       { operation: "load_apk" },
@@ -206,7 +207,7 @@ test.each([
     errorCode: "execution_failure",
     serverName: "rea-jadx-bridge",
     serverVersion: packagedJadxBridgeIdentity().version,
-    engineVersion: "0.7.1",
+    engineVersion: JADX_RELEASE.version,
     calls: [{ operation: "rea_jvm_status" }, { operation: "load_apk" }],
     containsAmbientEnvironment: true,
   },

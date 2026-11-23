@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { PE_CODEVIEW_PREFIX_BYTES } from "./binaryTargetTypes.js";
 import { digestSchema } from "./digests.js";
 import { evidenceLocationSchema, type EvidenceLocation } from "./evidence.js";
 import {
@@ -193,9 +194,26 @@ const CHECK_TABLE = {
   }
 >;
 
+const pdbPathBytesSchema = z.strictObject({
+  image_path: localPathStringSchema,
+  bytes_hex: z
+    .string()
+    .max(PE_CODEVIEW_PREFIX_BYTES * 2)
+    .regex(/^(?:[0-9a-f]{2})+$/u),
+  encoding: z.literal("unknown"),
+});
+
+export type ReleaseExposurePdbPathBytes = z.infer<typeof pdbPathBytesSchema>;
+
 const observationSchema = z.strictObject({
   counts: z.record(z.string().min(1), z.int().nonnegative()),
   samples: z.array(z.string().min(1)).max(MAX_RELEASE_EXPOSURE_SAMPLES),
+  pdb_path_bytes: z
+    .array(pdbPathBytesSchema)
+    .min(1)
+    .max(MAX_RELEASE_EXPOSURE_SAMPLES)
+    .exactOptional()
+    .describe("CodeView locator bytes with unknown text encoding."),
 });
 
 const releaseExposureCheckSchema = z.strictObject({
@@ -375,6 +393,7 @@ export interface ReleaseExposureScan {
     readonly examined: number;
     readonly paths: readonly string[];
     readonly image_paths?: readonly string[];
+    readonly path_bytes?: readonly ReleaseExposurePdbPathBytes[];
     readonly failed: number;
   };
   readonly text_members: {
@@ -394,8 +413,6 @@ export interface FuseImageFact {
   readonly kind: "unsupported" | "failed" | "report";
   readonly role: "app-bundle" | "native-image";
   readonly path?: string;
-  /** Digest of the file the reader resolved, on a report. */
-  readonly sha256?: string;
   readonly reason?: string;
   readonly implications?: readonly {
     readonly subject: string;
@@ -464,6 +481,7 @@ const boundSamples = (samples: readonly string[]): string[] => {
 
 const boundLocations = (
   locations: readonly EvidenceLocation[],
+  // sample-cap: illustrative locations; observation.counts reports the totals
 ): EvidenceLocation[] => locations.slice(0, MAX_RELEASE_EXPOSURE_SAMPLES);
 
 const makeCheck = (
@@ -496,6 +514,7 @@ const findingLocations = (
   fallback: string,
 ): EvidenceLocation[] => {
   const locations = [...new Set(paths.filter((path) => path.length > 0))]
+    // sample-cap: illustrative locations; observation.counts reports the totals
     .slice(0, MAX_RELEASE_EXPOSURE_SAMPLES)
     .map((path) => ({ kind: "artifact-path" as const, path }));
   return locations.length > 0 ? locations : targetLocation(fallback);
@@ -704,22 +723,30 @@ const companionCheck = (scan: ReleaseExposureScan): ReleaseExposureCheck => {
 
 const pdbCheck = (scan: ReleaseExposureScan): ReleaseExposureCheck => {
   const { pdb, coverage, target } = scan;
+  const rawPaths = pdb.path_bytes ?? [];
+  const paths = pdb.paths.length + rawPaths.length;
   let status: Status;
-  if (pdb.paths.length > 0) status = "exposed";
+  if (paths > 0) status = "exposed";
   else if (pdb.failed > 0 || coverage !== "complete") status = "unknown";
   else if (pdb.examined === 0) status = "not_applicable";
   else status = "not_observed";
   const imagePaths = pdb.image_paths ?? [];
-  return makeCheck(
+  const check = makeCheck(
     "native.pdb_path",
     status,
     status === "unknown" ? "inferred" : "observed",
-    { examined: pdb.examined, paths: pdb.paths.length, failed: pdb.failed },
+    { examined: pdb.examined, paths, failed: pdb.failed },
     pdb.paths,
     status === "exposed"
       ? findingLocations(imagePaths, target.selected_path)
       : targetLocation(target.selected_path),
   );
+  return rawPaths.length === 0
+    ? check
+    : {
+        ...check,
+        observation: { ...check.observation, pdb_path_bytes: [...rawPaths] },
+      };
 };
 
 const metadataStatus = (

@@ -1,8 +1,14 @@
-import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
+import type { ConfigurationError } from "../domain/configurationErrors.js";
+import {
+  DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
+  type JavaScriptMemberMutationAllowance,
+} from "../domain/javascript/javascriptSemanticWorkAllowance.js";
+import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
 import type {
   ProviderIdentity,
   ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   sanitizeBrowserUrl,
   type InspectWebPageInput,
@@ -52,7 +58,7 @@ import {
   AnalysisError,
   type AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { providerCleanupErrorFromFailures } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisInputError,
   cancelledBy,
@@ -82,10 +88,11 @@ import {
 } from "../domain/browserDeadline.js";
 import { fetchWebSourceMaps } from "./WebSourceMapFetcher.js";
 import { authorizeCdpTarget } from "./CdpAuthorizedTarget.js";
+import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import { observeCdpSession } from "./CdpObservationSession.js";
 import { discoverWebMcp } from "./CdpWebMcpDiscovery.js";
 import { captureCdpScreenshot } from "./CdpScreenshot.js";
-import { comparePngScreenshots } from "./PngVisualDiff.js";
+import { comparePngScreenshots } from "../domain/pngVisualDiff.js";
 
 import { CDP_BROWSER_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
@@ -93,6 +100,7 @@ import {
   CdpTargetSessionOwner,
   bindCdpTransportCleanup,
 } from "./CdpTargetSessionOwner.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 const CLEANUP_DOMAINS = [
   "Network",
   "Debugger",
@@ -110,8 +118,24 @@ export class CdpBrowserProvider implements BrowserObservationPort {
   #closePromise: Promise<void> | undefined;
   readonly #idleWaiters = new Set<() => void>();
 
-  constructor(admission?: WebBundleAnalysisAdmission) {
+  readonly #memberMutationAllowance: () => Result<
+    JavaScriptMemberMutationAllowance,
+    ConfigurationError
+  >;
+
+  /**
+   * `memberMutationAllowance` resolves the accepted operation's allowance at
+   * each bundle analysis; the default applies when the host selects none.
+   */
+  constructor(
+    admission?: WebBundleAnalysisAdmission,
+    memberMutationAllowance: () => Result<
+      JavaScriptMemberMutationAllowance,
+      ConfigurationError
+    > = () => ok(DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE),
+  ) {
     this.#bundleAnalyzer = new IsolatedWebBundleAnalyzer(undefined, admission);
+    this.#memberMutationAllowance = memberMutationAllowance;
   }
 
   async close(): Promise<void> {
@@ -136,15 +160,12 @@ export class CdpBrowserProvider implements BrowserObservationPort {
       const typed = failures.filter(
         (failure): failure is AnalysisError => failure instanceof AnalysisError,
       );
-      throw new ProviderCleanupError(
+      throw providerCleanupErrorFromFailures(
         CDP_BROWSER_PROVIDER_IDENTITY.id,
-        typed.flatMap((failure) => failure.cleanupResources),
-        { reason: "Browser transport and analyzer cleanup remain incomplete" },
-        {
-          operation: "analyze_web_bundle",
-          cause: new AggregateError(failures),
-        },
-      ).bindCleanupDependencies(typed);
+        typed,
+        "Browser transport and analyzer cleanup remain incomplete",
+        { operation: "analyze_web_bundle", causes: failures },
+      );
     }
   }
 
@@ -278,6 +299,9 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     input: AnalyzeWebBundleInput,
     options: ExecutionOptions,
   ): Promise<Result<WebBundleAnalysis, AnalysisError>> {
+    // An invalid setting is refused before capture, never replaced by the default.
+    const memberMutationAllowance = this.#memberMutationAllowance();
+    if (!memberMutationAllowance.ok) return memberMutationAllowance;
     const admission = await this.#bundleAnalyzer.reserve();
     if (!admission.ok) return admission;
     let captured: CapturedPage | undefined;
@@ -330,6 +354,7 @@ export class CdpBrowserProvider implements BrowserObservationPort {
         },
         input,
         options.signal,
+        memberMutationAllowance.value,
       );
     } catch (cause: unknown) {
       // Capture and analyzer work can still throw the exact caller reason.
@@ -533,130 +558,106 @@ const withTargetSession = async <
   );
   let targetSession: CdpTargetSession | undefined;
   let attachAttempted = false;
-  let outcome: Result<Output, unknown>;
-  let cleanupFailure: AnalysisError | undefined;
-  try {
-    const { target, allowedOrigins } = authorizeCdpTarget(
-      endpoint.discovery,
-      input,
-      operation,
-    );
-    // The authorization owner already derived the target origin scope.
-    const scopedInput =
-      input.allowed_origins.length > 0
-        ? input
-        : { ...input, allowed_origins: [...allowedOrigins] };
-    if (endpoint.connection === undefined) {
-      targetSession = await openCdpTargetSession(
-        endpoint.discovery,
-        target,
-        operation,
-        options.signal,
-        { commandTimeoutMs },
-        owner,
-      );
-    } else {
-      attachAttempted = true;
-      targetSession = await attachCdpTargetSession(
-        endpoint.connection,
-        target,
-        operation,
-        options.signal,
-        owner,
-      );
-    }
-    outcome = ok(
-      await work({
-        connection: targetSession.connection,
-        sessionId: targetSession.sessionId,
-        discovery: endpoint.discovery,
-        target,
-        input: scopedInput,
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
-        ...(options.progress === undefined
-          ? {}
-          : { progress: options.progress }),
-      }),
-    );
-  } catch (cause: unknown) {
-    outcome = err(cause);
-  }
-  try {
-    if (targetSession !== undefined)
-      await closeCdpTargetSession(
-        targetSession,
-        CLEANUP_DOMAINS,
-        options.signal,
-        owner,
-        endpoint.reusableBrowserSocket === true,
-      );
-    if (
-      endpoint.connection !== undefined &&
-      endpoint.connection !== targetSession?.connection
-    ) {
-      if (endpoint.reusableBrowserSocket === true) {
-        if (attachAttempted)
-          await owner.evictBrowserSocket(endpoint.connection);
-        else await owner.releaseBrowserSocket(endpoint.connection);
-      } else {
-        await owner.finish(endpoint.connection);
-      }
-    }
-  } catch (cause: unknown) {
-    cleanupFailure =
-      cause instanceof AnalysisError
-        ? cause
-        : new ProviderCleanupError(
-            "rea-cdp-browser",
-            [input.target_id],
-            { reason: cause instanceof Error ? cause.message : String(cause) },
-            { operation, cause },
+  let attachRejected = false;
+  const finalized = await runOwned<Output>(
+    async () => {
+      try {
+        const { target, allowedOrigins } = authorizeCdpTarget(
+          endpoint.discovery,
+          input,
+          operation,
+        );
+        // The authorization owner already derived the target origin scope.
+        const scopedInput =
+          input.allowed_origins.length > 0
+            ? input
+            : { ...input, allowed_origins: [...allowedOrigins] };
+        if (endpoint.connection === undefined) {
+          targetSession = await openCdpTargetSession(
+            endpoint.discovery,
+            target,
+            operation,
+            options.signal,
+            { commandTimeoutMs },
+            owner,
           );
-  }
-
-  if (outcome.ok && options.signal?.aborted === true)
-    outcome = err(
-      partialObservation === undefined
-        ? cancelledBy(operation, options.signal)
-        : cancelledBy(operation, options.signal, {
-            partialObservation: partialObservation(outcome.value),
+        } else {
+          attachAttempted = true;
+          targetSession = await attachCdpTargetSession(
+            endpoint.connection,
+            target,
+            operation,
+            options.signal,
+            owner,
+          );
+        }
+        return ok(
+          await work({
+            connection: targetSession.connection,
+            sessionId: targetSession.sessionId,
+            discovery: endpoint.discovery,
+            target,
+            input: scopedInput,
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+            ...(options.progress === undefined
+              ? {}
+              : { progress: options.progress }),
           }),
-    );
-
-  if (cleanupFailure !== undefined) {
-    if (!outcome.ok && outcome.error instanceof AnalysisError)
-      throw bindCdpTransportCleanup(
-        cleanupFailure,
-        analysisErrorWithCleanupFailure(
-          outcome.error,
-          cleanupFailure,
-          operation,
-        ),
-      );
-    if (!outcome.ok)
-      throw new AggregateError(
-        [outcome.error, cleanupFailure],
-        `CDP operation ${operation} failed and cleanup remains incomplete.`,
-        { cause: outcome.error },
-      );
-    throw bindCdpTransportCleanup(
-      cleanupFailure,
-      new ProviderCleanupError(
-        "rea-cdp-browser",
-        cleanupFailure.cleanupResources,
-        { cleanup_error: cleanupFailure.message },
-        {
-          operation,
-          cause: cleanupFailure,
-          ...(partialObservation === undefined
-            ? {}
-            : { partialObservation: partialObservation(outcome.value) }),
-        },
-      ),
-    );
-  }
-  if (!outcome.ok) throw outcome.error;
-  return outcome.value;
+        );
+      } catch (cause: unknown) {
+        attachRejected = cause instanceof CdpCommandRejection;
+        return err(providerError(cause, operation));
+      }
+    },
+    {
+      providerId: CDP_BROWSER_PROVIDER_IDENTITY.id,
+      operation,
+      signal: options.signal,
+      ...(partialObservation === undefined
+        ? { diagnostics: () => undefined }
+        : { partial: partialObservation }),
+      close: async () => {
+        try {
+          if (targetSession !== undefined)
+            await closeCdpTargetSession(
+              targetSession,
+              CLEANUP_DOMAINS,
+              options.signal,
+              owner,
+              endpoint.reusableBrowserSocket === true,
+            );
+          if (
+            endpoint.connection !== undefined &&
+            endpoint.connection !== targetSession?.connection
+          ) {
+            if (endpoint.reusableBrowserSocket === true) {
+              // A correlated rejection confirms this attach created no session.
+              // A lost or unusable reply can leave an attachment on the socket.
+              if (attachAttempted && !attachRejected)
+                await owner.evictBrowserSocket(endpoint.connection);
+              else await owner.releaseBrowserSocket(endpoint.connection);
+            } else {
+              await owner.finish(endpoint.connection);
+            }
+          }
+        } catch (cause: unknown) {
+          const failure = cause instanceof AnalysisError ? cause : undefined;
+          throw bindCdpTransportCleanup(
+            cause,
+            new ProviderCleanupError(
+              CDP_BROWSER_PROVIDER_IDENTITY.id,
+              failure?.cleanupResources ?? [input.target_id],
+              { cleanup_error: failure?.message ?? errorMessage(cause) },
+              { operation, cause },
+            ),
+          );
+        }
+      },
+    },
+  );
+  const result = finalizedResult(finalized);
+  if (!result.ok) throw result.error;
+  return result.value;
 };
 
 const selectTargets = (

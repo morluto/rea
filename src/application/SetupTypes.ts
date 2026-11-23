@@ -15,7 +15,7 @@ import type {
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
 import type { SetupClient } from "./SupportedClients.js";
-import type { DesktopBuildSetupHost } from "./SetupDesktopBuild.js";
+import type { DesktopBuildSetupHost } from "../ports/DesktopBuildHost.js";
 import type {
   SetupFailureCode,
   SetupHopperInstallResult,
@@ -39,7 +39,7 @@ export interface SetupInitialState {
 export type ClientConfigurationResult =
   | {
       readonly status: "failed";
-      readonly reason: "registration_ownership";
+      readonly reason: "registration_ownership" | "invalid_configuration";
       readonly detail: string;
     }
   | {

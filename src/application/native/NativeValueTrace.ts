@@ -5,13 +5,14 @@ import {
   nativeValueTraceSchema,
 } from "../../domain/native/nativeValueTrace.js";
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
+import { jsonValueByteLength } from "../../domain/jsonValueByteLength.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { err, ok } from "../../domain/result.js";
-import type { AnalysisOperationPort } from "../AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { stopsTraversal } from "../CallRelationshipTraversal.js";
 import {
@@ -118,9 +119,10 @@ export const traceNativeValues = async (
       });
     return true;
   };
-  while (pending.length > 0) {
+  let pendingIndex = 0;
+  while (pendingIndex < pending.length) {
     if (signal?.aborted) return err(cancelledBy("trace_native_values", signal));
-    const next = pending.shift();
+    const next = pending[pendingIndex++];
     if (
       next === undefined ||
       attempted.has(next.procedure) ||
@@ -135,7 +137,7 @@ export const traceNativeValues = async (
       });
       // Keep the unanalyzed selector queued so later accounting attributes
       // it to this budget rather than to a depth limit.
-      pending.unshift(next);
+      pendingIndex -= 1;
       break;
     }
     // An exact selector is attempted once per trace, even on failure. Only
@@ -456,7 +458,11 @@ export const traceNativeValues = async (
     );
   // A destination queued at a lower depth is omitted by the budget that ended
   // traversal, and one already attempted was not narrowed by this call.
-  const queued = new Set(pending.map(({ procedure }) => procedure));
+  const queued = new Set<string>();
+  for (let index = pendingIndex; index < pending.length; index += 1) {
+    const entry = pending[index];
+    if (entry !== undefined) queued.add(entry.procedure);
+  }
   for (const skipped of unexpanded) {
     const { destination } = skipped;
     if (
@@ -519,8 +525,9 @@ export const traceNativeValues = async (
       ...renderSourceLimitations(sourceLimitations),
     ],
   });
+  const maxResultBytes = 32 * 1024 * 1024;
   const oversized =
-    Buffer.byteLength(JSON.stringify(result)) > 32 * 1024 * 1024;
+    jsonValueByteLength(result, maxResultBytes) > maxResultBytes;
   // The stopping failure stays primary over output size and a later abort.
   if (stopped !== undefined)
     return oversized ? err(stopped) : failedWithPartialResult(stopped, result);

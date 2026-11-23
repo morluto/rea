@@ -1,15 +1,12 @@
+import { registerContractDocumentCommand } from "./contractDocumentCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { wasmArtifactModule } from "../composition/wasm.js";
 import { COMPARE_WASM_INTERFACES_CONTRACT } from "../contracts/wasm/wasmComparisonContracts.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import {
-  inspectWithService,
-  registerContractCommand,
-  registerContractDocumentCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { inspectWithService } from "./contractCommandRunners.js";
 import {
   evidenceBundleOption,
   runEvidenceInputCommand,
@@ -26,18 +23,16 @@ export const registerWasmCommands = (
     logger,
     COMPARE_WASM_INTERFACES_CONTRACT,
     {
-      command: CLI_COMMANDS.compareWasmInterfaces,
       description:
         "Compare core WASM interfaces from two exact inspection Evidence records",
       document:
         "Inline JSON or input file containing left/right Evidence or retained references and required scope",
       cliOptions: { evidenceBundle: evidenceBundleOption },
     },
-    (document, { signal, operation, cliOptions }) =>
+    (document, { signal, operation, frame, cliOptions }) =>
       runEvidenceInputCommand(
-        operation,
-        cliOptions.evidenceBundle,
-        signal,
+        document,
+        { operation, signal, frame, cliOptions },
         async (lookup) => {
           const result = await compareWasmInterfaces(
             document,

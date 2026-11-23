@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import canonicalize from "canonicalize";
 
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
@@ -13,6 +11,7 @@ import {
   recordsValue,
   cdpStringValue,
 } from "./CdpCaptureValues.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 type StorageFingerprint =
   WebPageInspection["storage"]["content_fingerprints"][number];
@@ -139,22 +138,31 @@ const addCookies = async (
       run.state.complete = false;
       continue;
     }
-    // CDP Cookie.partitionKeyOpaque means the partition exists but is not
-    // serializable. A missing partitionKey means unpartitioned, so hashing
-    // that absence would align an unresolved partition with a different cookie.
-    // https://chromedevtools.github.io/devtools-protocol/tot/Network/#type-Cookie
-    const partitionOpaque = cookie.partitionKeyOpaque === true;
+    const { partitionKey, partitionKeyOpaque } = cookie;
+    const partition = recordValue(partitionKey);
+    // Older Chrome reports a string partition key. A missing key with no
+    // opaque flag means unpartitioned; malformed metadata leaves it unknown.
+    const partitionKnown =
+      (partitionKeyOpaque === undefined || partitionKeyOpaque === false) &&
+      (partitionKey === undefined ||
+        typeof partitionKey === "string" ||
+        (typeof partition?.topLevelSite === "string" &&
+          typeof partition.hasCrossSiteAncestor === "boolean"));
     addFingerprint(run.state, {
       scope: "cookie",
       identity: {
         domain,
         path,
         name,
-        partition_key: cookie.partitionKey ?? null,
-        ...(partitionOpaque ? { partition_opaque: true } : {}),
+        partition_key: partitionKey ?? null,
+        ...(partitionKeyOpaque === true
+          ? { partition_opaque: true }
+          : partitionKnown
+            ? {}
+            : { partition_unreadable: true }),
       },
       value,
-      complete: value !== undefined && !partitionOpaque,
+      complete: value !== undefined && partitionKnown,
     });
   }
 };
@@ -444,8 +452,7 @@ const addFingerprint = (
 
 const STORAGE_ENTRY_PAGE_SIZE = 1_000;
 
-const digest = (value: unknown): string =>
-  createHash("sha256").update(encodedValue(value)).digest("hex");
+const digest = (value: unknown): string => sha256Hex(encodedValue(value));
 
 const encodedValue = (value: unknown): Uint8Array | string => {
   if (value instanceof Uint8Array) return value;

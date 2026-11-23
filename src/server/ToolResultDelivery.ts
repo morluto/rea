@@ -3,7 +3,6 @@ import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
-import type { BinaryOpenResult } from "../application/binary/BinarySessionPort.js";
 import type { Evidence } from "../domain/evidence.js";
 import { safeParseEvidence } from "../domain/evidenceValidation.js";
 import {
@@ -17,13 +16,12 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { NoBinaryOpenError } from "../domain/configurationErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
-import { estimateJsonStorage } from "../application/JsonAuthenticationHeadroom.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   MCP_TRANSPORT_EVIDENCE_DISCOVERY,
-  MCP_TRANSPORT_EVIDENCE_EXPORT,
   MCP_TRANSPORT_EVIDENCE_LINKS,
   MCP_TRANSPORT_EVIDENCE_RECORDS,
+  MCP_TRANSPORT_EVIDENCE_SUMMARY,
 } from "../domain/analysisErrorPresentation.js";
 import {
   nodeStringCeilingRecovery,
@@ -31,12 +29,14 @@ import {
 } from "../config/mcpResponseBudget.js";
 import {
   encodeToolResult,
+  errorTextWireBytes,
   measureMcpResultWithinBudget,
   MCP_RESULT_STRING_LIMIT,
   NODE_MAX_STRING_LENGTH,
   TARGET_CONTENT_RESULT_META,
   type ToolResultEncoding,
 } from "./toolResultEncoding.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** Project a response-budget refusal without labeling REA's reserved string limit as Node's ceiling. */
 export const mcpResponseOverflowProjection = (input: {
@@ -75,18 +75,8 @@ export const mcpResponseOverflowProjection = (input: {
  * Each projection owns a different next step when it exceeds one MCP frame.
  */
 const evidenceBundleProjection = (value: JsonValue): JsonValue | undefined => {
-  const payload =
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    "result" in value
-      ? value.result
-      : value;
-  return typeof payload === "object" &&
-    payload !== null &&
-    !Array.isArray(payload)
-    ? payload.kind
-    : undefined;
+  const payload = isRecord(value) && "result" in value ? value.result : value;
+  return isRecord(payload) ? payload.kind : undefined;
 };
 
 /**
@@ -101,11 +91,10 @@ interface OverflowNextStep {
 
 const evidenceBundleOverflowStep = (value: JsonValue): OverflowNextStep => {
   const projection = evidenceBundleProjection(value);
-  // A summary already used detail: summary; export writes outside one frame.
   if (projection === "evidence-bundle-summary")
     return {
-      text: MCP_TRANSPORT_EVIDENCE_EXPORT,
-      operation: "export_evidence_bundle",
+      text: MCP_TRANSPORT_EVIDENCE_SUMMARY,
+      operation: "get_evidence_bundle",
     };
   return {
     text:
@@ -123,14 +112,8 @@ const evidenceBundleOverflowStep = (value: JsonValue): OverflowNextStep => {
  * `{ result }` envelope; a smaller limit only helps above one.
  */
 const unknownPageItems = (value: JsonValue): number => {
-  const page =
-    typeof value === "object" && value !== null && !Array.isArray(value)
-      ? value.result
-      : undefined;
-  return typeof page === "object" &&
-    page !== null &&
-    !Array.isArray(page) &&
-    Array.isArray(page.items)
+  const page = isRecord(value) ? value.result : undefined;
+  return isRecord(page) && Array.isArray(page.items)
     ? page.items.length
     : Number.POSITIVE_INFINITY;
 };
@@ -176,6 +159,29 @@ const overflowNextStep = (
 };
 
 /** Immutable encoding and recovery policy shared by one MCP server. */
+/** The encoding already computed by `ToolResultDelivery` for a structured error result. */
+export type ProjectedErrorEncoding =
+  | {
+      readonly ok: true;
+      readonly budgetBytes: number;
+      readonly targetContent: boolean;
+      readonly text: string;
+    }
+  | {
+      readonly ok: false;
+      readonly budgetBytes: number;
+      readonly targetContent: boolean;
+      readonly encoding: Extract<ToolResultEncoding, { readonly ok: false }>;
+      readonly structuredContent: Readonly<Record<string, JsonValue>>;
+    };
+
+const projectedErrorEncodings = new WeakMap<object, ProjectedErrorEncoding>();
+
+/** Return the `ToolResultDelivery` encoding stamped on this exact error result, if any. */
+export const projectedErrorEncoding = (
+  result: object,
+): ProjectedErrorEncoding | undefined => projectedErrorEncodings.get(result);
+
 export class ToolResultDelivery {
   readonly maximumResponseBytes: number;
   readonly resultBudgetBytes: number;
@@ -212,12 +218,20 @@ export class ToolResultDelivery {
       budgetBytes: number,
     ) => Iterable<JsonValue>,
   ): CallToolResult {
+    // A session tool's result is delivered inside `result`, alternatives too.
+    const shaped = (value: JsonValue): JsonValue =>
+      contract.kind === "session" ? { result: value } : value;
     return result.ok
       ? this.successResult(
-          contract.kind === "session" ? { result: result.value } : result.value,
+          shaped(result.value),
           contract,
           recovery,
-          alternatives,
+          alternatives === undefined
+            ? undefined
+            : function* (failure, budgetBytes) {
+                for (const alternative of alternatives(failure, budgetBytes))
+                  yield shaped(alternative);
+              },
         )
       : this.toErrorToolResult(result.error, contract.returnsTargetContent);
   }
@@ -276,24 +290,32 @@ export class ToolResultDelivery {
     evidence: Evidence,
     contract: ToolContract,
     recorded: Result<unknown, AnalysisError> | undefined,
-    viewSource?: JsonValue,
+    viewSource?: JsonValue | (() => JsonValue | undefined),
   ): CallToolResult {
     return recorded !== undefined && !recorded.ok
       ? this.toErrorToolResult(recorded.error, contract.returnsTargetContent)
-      : this.successResult(evidence, contract, {
-          evidence_id: evidence.evidence_id,
-          ...(recorded === undefined
-            ? {}
-            : {
-                evidence_reference: {
-                  kind: "retained-evidence",
-                  evidence_id: evidence.evidence_id,
-                },
-              }),
-          // A view names its caller's source, which needs no session to read again.
-          ...(recorded === undefined && viewSource === undefined
-            ? {}
-            : this.nativeContinuation(evidence, undefined, viewSource)),
+      : this.successResult(evidence, contract, () => {
+          const resolvedViewSource =
+            typeof viewSource === "function" ? viewSource() : viewSource;
+          return {
+            evidence_id: evidence.evidence_id,
+            ...(recorded === undefined
+              ? {}
+              : {
+                  evidence_reference: {
+                    kind: "retained-evidence",
+                    evidence_id: evidence.evidence_id,
+                  },
+                }),
+            // A view names its caller's source, which needs no session to read again.
+            ...(recorded === undefined && resolvedViewSource === undefined
+              ? {}
+              : this.nativeContinuation(
+                  evidence,
+                  undefined,
+                  resolvedViewSource,
+                )),
+          };
         });
   }
 
@@ -351,22 +373,18 @@ export class ToolResultDelivery {
     return this.projectedErrorResult(projected, targetContent);
   }
 
-  /** Include the session owner's selection at the end of this open attempt. */
-  toOpenFailureToolResult(
-    failure: Extract<BinaryOpenResult, { ok: false }>,
+  /**
+   * Deliver an error with facts its operation observed alongside it (an
+   * open's selection at failure, say) added to the error's own details.
+   */
+  toDetailedErrorToolResult(
+    error: AnalysisError,
+    details: Readonly<Record<string, JsonValue>>,
     targetContent: boolean,
   ): CallToolResult {
-    const projected = projectAnalysisError(failure.error);
+    const projected = projectAnalysisError(error);
     return this.projectedErrorResult(
-      {
-        ...projected,
-        details: {
-          ...projected.details,
-          selection_at_failure: failure.selection,
-          target_at_open_completion: failure.targetAtCompletion,
-          provider_id_at_open_completion: failure.providerIdAtCompletion,
-        },
-      },
+      { ...projected, details: { ...projected.details, ...details } },
       targetContent,
     );
   }
@@ -434,27 +452,34 @@ export class ToolResultDelivery {
       "error-text",
       targetContent,
     );
-    let candidateProjection = projected;
-    while (!encoded.ok) {
-      const limit = encoded;
-      const candidates = [...unretainedEvidenceCandidates(candidateProjection)]
-        .map((candidate) => ({
-          candidate,
-          size: estimateJsonStorage(candidate.value, {
-            maximumValueBytes: this.resultBudgetBytes,
-            includeSerialized: false,
-          }).valueBytes,
-        }))
-        .sort((left, right) => right.size - left.size);
-      let next: AnalysisErrorProjection | undefined;
-      for (const { candidate } of candidates) {
+    if (!encoded.ok) {
+      let candidateProjection = projected;
+      const rawCandidates = [
+        ...unretainedEvidenceCandidates(candidateProjection),
+      ];
+      const remaining =
+        rawCandidates.length <= 1
+          ? rawCandidates
+          : rawCandidates
+              .map((candidate) => ({
+                candidate,
+                size: errorTextWireBytes(
+                  candidate.value,
+                  this.resultBudgetBytes,
+                ),
+              }))
+              .sort((left, right) => right.size - left.size)
+              .map(({ candidate }) => candidate);
+      let index = 0;
+      while (!encoded.ok && index < remaining.length) {
         const compact = omitUnretainedEvidenceFromError(
           candidateProjection,
-          limit,
-          candidate,
+          encoded,
+          remaining[index]!,
         );
+        index += 1;
         if (compact === undefined) continue;
-        next ??= compact;
+        candidateProjection = compact;
         const content = { error: compact };
         const compactEncoded = encodeToolResult(
           content,
@@ -468,24 +493,41 @@ export class ToolResultDelivery {
           break;
         }
       }
-      if (encoded.ok) break;
-      if (next === undefined) break;
-      candidateProjection = next;
     }
     // The transport retains an oversized projected error before replacing it
     // with a recoverable delivery constraint, using this same budget.
-    return {
+    const result: CallToolResult = {
       content: encoded.ok ? [{ type: "text", text: encoded.text }] : [],
       structuredContent,
       isError: true,
       ...(targetContent ? { _meta: TARGET_CONTENT_RESULT_META } : {}),
     };
+    projectedErrorEncodings.set(
+      result,
+      encoded.ok
+        ? {
+            ok: true,
+            budgetBytes: this.resultBudgetBytes,
+            targetContent,
+            text: encoded.text,
+          }
+        : {
+            ok: false,
+            budgetBytes: this.resultBudgetBytes,
+            targetContent,
+            encoding: encoded,
+            structuredContent,
+          },
+    );
+    return result;
   }
 
   private successResult(
     value: JsonValue,
     contract: ToolContract,
-    recovery: Readonly<Record<string, JsonValue>> = {},
+    recovery:
+      | Readonly<Record<string, JsonValue>>
+      | (() => Readonly<Record<string, JsonValue>>) = {},
     alternatives?: (
       failure: Extract<ToolResultEncoding, { readonly ok: false }>,
       budgetBytes: number,
@@ -519,7 +561,9 @@ export class ToolResultDelivery {
           ? { _meta: TARGET_CONTENT_RESULT_META }
           : {}),
       };
-    const nextStep = overflowNextStep(value, contract, recovery);
+    const resolvedRecovery =
+      typeof recovery === "function" ? recovery() : recovery;
+    const nextStep = overflowNextStep(value, contract, resolvedRecovery);
     const projected = mcpResponseOverflowProjection({
       completed: true,
       constraint: encoded.constraint,
@@ -539,7 +583,7 @@ export class ToolResultDelivery {
           response_bytes_at_least: encoded.bytesAtLeast,
           response_code_units_at_least: encoded.codeUnitsAtLeast,
           constraint: encoded.constraint,
-          ...recovery,
+          ...resolvedRecovery,
           ...(nextStep.operation === undefined
             ? {}
             : { next_operation: nextStep.operation }),

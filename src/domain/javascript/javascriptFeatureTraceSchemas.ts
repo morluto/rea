@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { coverageStatusSchema } from "../coverage.js";
 
 import { evidenceSchema, providerSchema } from "../evidence.js";
 import { javascriptApplicationGraphSchema } from "./javascriptApplicationGraph.js";
@@ -170,12 +171,7 @@ export const applicationFeatureTraceResultSchema = z.strictObject({
   semantic_discovery: z
     .strictObject({
       source_graph_id: prefixedDigestSchema("jsrg"),
-      source_coverage: z.enum([
-        "complete",
-        "partial",
-        "unknown",
-        "unavailable",
-      ]),
+      source_coverage: z.enum([...coverageStatusSchema.options, "unavailable"]),
       total: z.int().nonnegative(),
       offset: z.int().nonnegative(),
       limit: z.int().positive(),
@@ -212,9 +208,7 @@ export const applicationFeatureTraceResultSchema = z.strictObject({
   coverage: z.strictObject({
     status: z.enum(["complete-within-source", "partial", "no-match"]),
     source_graph_status: z.enum([
-      "complete",
-      "partial",
-      "unknown",
+      ...coverageStatusSchema.options,
       "unavailable",
     ]),
     total_seed_matches: z.int().min(0),

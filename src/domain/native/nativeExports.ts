@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { isUtf8 } from "node:buffer";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -51,6 +52,15 @@ export type InspectNativeExportsInput = z.infer<
 const peExportSchema = z.strictObject({
   name: z.string().min(1).nullable(),
   ordinal: z.number().int().min(0).max(MAX_PE_EXPORT_ORDINAL),
+  rva: z
+    .number()
+    .int()
+    .min(1)
+    .max(0xffffffff)
+    .optional()
+    .describe(
+      "Export-address-table RVA as stored; address is the image base plus this RVA, and a forwarder's RVA locates its forwarder string. The parser always records it; Evidence saved before this field existed omits it.",
+    ),
   address: address.nullable(),
   forwarder: z.string().min(1).nullable(),
 });
@@ -108,7 +118,7 @@ const artifactSchema = z.strictObject({
 
 const coverageSchema = z.strictObject({
   /** complete: every table entry was read; partial: issues name the gaps. */
-  status: z.enum(["complete", "partial", "unsupported"]),
+  status: z.enum([...knownCoverageStatusSchema.options, "unsupported"]),
   reason: z.string().min(1).nullable(),
   examined_entries: uint,
   exports: uint,

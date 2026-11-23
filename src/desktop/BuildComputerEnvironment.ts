@@ -1,8 +1,7 @@
 import { stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
-import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
-import { reaCacheDirectory } from "../config/kunaCacheDirectory.js";
+import { reaCacheDirectory } from "../filesystem/cacheDirectory.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
@@ -16,19 +15,13 @@ export type BuildComputerSetting = (typeof BUILD_COMPUTER_SETTINGS)[number];
 /** The REA-owned folder `rea setup --desktop-build` packs runtime archives into. */
 export const buildComputerArchiveDirectory = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
-): string =>
-  reaCacheDirectory(
-    homeDirectoryFromEnvironment(environment, platform),
-    environment,
-    platform,
-    "build-computer",
-  );
+  platform: NodeJS.Platform,
+): string => reaCacheDirectory(environment, platform, "build-computer");
 
 /** The runtime archive packed for this REA version, named by that version. */
 export const defaultBuildComputerArchive = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   directory = buildComputerArchiveDirectory(environment, platform),
 ): string =>
   appendCallerPath(
@@ -94,7 +87,7 @@ export interface BuildComputerDefaults {
  */
 export const resolveBuildComputerEnvironment = async (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   sources: BuildComputerDefaults = {},
 ): Promise<Readonly<NodeJS.ProcessEnv>> => {
   const defaults: Record<string, string> = {};

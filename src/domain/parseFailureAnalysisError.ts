@@ -1,8 +1,58 @@
 import {
+  type ANALYSIS_RESOURCE_KINDS,
   AnalysisInputError,
+  AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
+  type ResourceConstraintRecovery,
 } from "./analysisErrorCore.js";
-import { ParseFailureError } from "./parseFailure.js";
+import type { AnalysisErrorOptions } from "./analysisErrorBase.js";
+import type { JsonValue } from "./jsonValue.js";
+import { ParseFailureError, reportedParseLimit } from "./parseFailure.js";
+
+/** A parse limit of `format`; any other cause, or another format's limit, is not one. */
+export const isParseLimit = (
+  cause: unknown,
+  format: string,
+): cause is ParseFailureError<"limit"> =>
+  cause instanceof ParseFailureError &&
+  cause.failure.kind === "limit" &&
+  cause.failure.format === format;
+
+/**
+ * The public refusal for a parse that stopped at a named limit. The reason is
+ * the failure's detail (prefixed with `Selected artifact <path>:` when `path`
+ * names one) and `reportedLimits` comes from the failure's `LimitRef`
+ * (`{ boundary: name, maximum, required? }`), so neither is spelled again at
+ * the catch site. Existing contracts may keep context fields and select their
+ * established field for the maximum. The producer supplies budget recovery.
+ */
+export const parseLimitConstraint = (
+  operation: string,
+  resource: (typeof ANALYSIS_RESOURCE_KINDS)[number],
+  cause: ParseFailureError<"limit">,
+  options: Omit<AnalysisErrorOptions, "cause"> &
+    ResourceConstraintRecovery & {
+      readonly path?: string | undefined;
+      readonly legacyMaximumKey?: string;
+      readonly reportedLimitContext?: Readonly<Record<string, JsonValue>>;
+      readonly requestSent?: boolean;
+    },
+): AnalysisResourceConstraintError => {
+  const { detail, limit } = cause.failure;
+  const { path, legacyMaximumKey, reportedLimitContext, ...errorOptions } =
+    options;
+  const reportedLimit =
+    legacyMaximumKey === undefined
+      ? reportedParseLimit(limit)
+      : { [legacyMaximumKey]: limit.maximum };
+  return new AnalysisResourceConstraintError(
+    operation,
+    resource,
+    path === undefined ? detail : `Selected artifact ${path}: ${detail}`,
+    { ...reportedLimitContext, ...reportedLimit },
+    { ...errorOptions, cause },
+  );
+};
 
 /**
  * The public refusal for a parser's format failure on the selected artifact.

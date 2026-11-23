@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { withVerifierArtifactScope } from "./lib/verifier-artifact-scope.mjs";
-import { readGhidraLanguageCatalog } from "../dist/ghidra/GhidraLanguageCatalog.js";
+import { AnalysisResourceConstraintError } from "../dist/domain/analysisErrorCore.js";
+import {
+  admitGhidraLanguageOverride,
+  readGhidraLanguageCatalog,
+} from "../dist/ghidra/GhidraLanguageCatalog.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
@@ -33,6 +35,7 @@ import {
   assertVerifierCleanupComplete,
 } from "./lib/verifier-run.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
 
@@ -57,7 +60,6 @@ if (installation.status !== "available")
     `Ghidra prerequisite unavailable: ${JSON.stringify(installation)}`,
   );
 
-const execute = promisify(execFile);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
 // Refuse a host without the fixture toolchain before allocating anything.
@@ -89,6 +91,8 @@ for (const setting of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"]) {
   if (process.env[setting] !== undefined)
     baseEnv[setting] = process.env[setting];
 }
+// The CLI shares one command owner, created before the lane starts a tool.
+const commands = await createVerifierCommands();
 
 /**
  * True when GhidraProvider would admit the language id as an override: the same
@@ -100,7 +104,13 @@ async function languageInstalled(languageId) {
       installation.installDir,
       scope,
     );
-    return catalog.some((definition) => definition.id === languageId);
+    const refusal = admitGhidraLanguageOverride(
+      { languageId },
+      catalog,
+      installation.providerVersion,
+    );
+    if (refusal instanceof AnalysisResourceConstraintError) throw refusal;
+    return refusal === null;
   });
 }
 
@@ -230,7 +240,7 @@ async function runPass({ fixture, languageOverride, label, layout }) {
   }
   if (languageOverride === undefined) {
     // CLI path through the same stock lane, not a private injected provider.
-    const cli = await execute(
+    const cli = await commands.exec(
       process.execPath,
       [
         entrypoint,
@@ -248,14 +258,14 @@ async function runPass({ fixture, languageOverride, label, layout }) {
       { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
     );
     const evidence = parseEvidence(JSON.parse(cli.stdout));
-    assert.equal(evidence.subject?.architecture, "powerpc");
-    assert.equal(evidence.subject?.digest.sha256, fixture.sha256);
+    assert.equal(evidence.subject?.identity.architecture, "powerpc");
+    assert.equal(evidence.subject?.identity.sha256, fixture.sha256);
     const cliDossier = functionDossierSchema.parse(evidence.normalized_result);
     assert.equal(BigInt(cliDossier.procedure.address), layout.entry);
     assert.ok(cliDossier.pseudocode.includes("__start"));
     report.cli = {
       entry: cliDossier.procedure.address,
-      subject_format: evidence.subject?.format ?? null,
+      subject_format: evidence.subject?.identity.format ?? null,
     };
   }
   return report;
@@ -317,6 +327,7 @@ try {
     }
   }, [
     async () => {
+      await workspaceFixture.closeEarly([() => commands.close()]);
       completed = await completeVerifierRun(run);
       assertVerifierCleanupComplete(completed.process_lineage);
     },

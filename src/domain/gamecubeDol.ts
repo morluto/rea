@@ -1,3 +1,4 @@
+import { BinaryReader } from "./binaryContainer.js";
 import { err, ok, type Result } from "./result.js";
 
 /** Fixed size of a DOL header; section file data may start no earlier than this. */
@@ -54,7 +55,7 @@ interface SlotTables {
 const hex = (value: number): string => `0x${value.toString(16)}`;
 
 const readSlots = (
-  view: DataView,
+  reader: BinaryReader,
   kind: DolSection["kind"],
   count: number,
   tables: SlotTables,
@@ -62,9 +63,9 @@ const readSlots = (
   Array.from({ length: count }, (_, index) => ({
     kind,
     index,
-    fileOffset: view.getUint32(tables.fileOffset + index * 4, false),
-    address: view.getUint32(tables.address + index * 4, false),
-    size: view.getUint32(tables.size + index * 4, false),
+    fileOffset: reader.u32(tables.fileOffset + index * 4),
+    address: reader.u32(tables.address + index * 4),
+    size: reader.u32(tables.size + index * 4),
   }));
 
 const rangesOverlap = (
@@ -83,6 +84,8 @@ export const parseDolHeader = (
   bytes: Uint8Array,
   fileSize: number = bytes.length,
 ): Result<DolHeader, string> => {
+  if (!Number.isSafeInteger(fileSize) || fileSize < 0)
+    return err("invalid DOL file extent: expected a nonnegative safe integer");
   if (fileSize < DOL_HEADER_SIZE)
     return err(
       `DOL header is truncated: needs ${DOL_HEADER_SIZE} bytes; the file has ${fileSize}`,
@@ -91,14 +94,18 @@ export const parseDolHeader = (
     return err(
       `DOL header bytes are incomplete: needs ${DOL_HEADER_SIZE} bytes; ${bytes.length} were supplied`,
     );
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const reader = new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, DOL_HEADER_SIZE),
+    false,
+    "gamecube-dol",
+  );
   const slots = [
-    ...readSlots(view, "text", DOL_TEXT_SECTION_COUNT, {
+    ...readSlots(reader, "text", DOL_TEXT_SECTION_COUNT, {
       fileOffset: TEXT_FILE_OFFSET_TABLE,
       address: TEXT_ADDRESS_TABLE,
       size: TEXT_SIZE_TABLE,
     }),
-    ...readSlots(view, "data", DOL_DATA_SECTION_COUNT, {
+    ...readSlots(reader, "data", DOL_DATA_SECTION_COUNT, {
       fileOffset: DATA_FILE_OFFSET_TABLE,
       address: DATA_ADDRESS_TABLE,
       size: DATA_SIZE_TABLE,
@@ -156,7 +163,7 @@ export const parseDolHeader = (
     }
   }
 
-  const entryPoint = view.getUint32(ENTRY_POINT_FIELD, false);
+  const entryPoint = reader.u32(ENTRY_POINT_FIELD);
   if (entryPoint % 4 !== 0)
     return err(`entry point ${hex(entryPoint)} must be 4-byte aligned`);
   const inText = text.some(
@@ -171,8 +178,8 @@ export const parseDolHeader = (
   // BSS may overlap data sections (real .sdata/.sdata2 placement does), but never text.
   // Bounds are checked in plain JS numbers, so address + size cannot wrap past 2^32;
   // the RAM end check refuses anything at or above 0x81800000 first.
-  const bssAddress = view.getUint32(BSS_ADDRESS_FIELD, false);
-  const bssSize = view.getUint32(BSS_SIZE_FIELD, false);
+  const bssAddress = reader.u32(BSS_ADDRESS_FIELD);
+  const bssSize = reader.u32(BSS_SIZE_FIELD);
   const bssOverlaps: number[] = [];
   const bssData: DolSection[] = [];
   if (bssSize > 0) {

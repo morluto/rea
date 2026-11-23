@@ -3,13 +3,13 @@ import {
   pythonPycSchema,
 } from "../../domain/python/pythonPyc.js";
 import type { ToolContract } from "../toolContractTypes.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import { toolContractMetadata, evidenceEffects } from "../toolEffects.js";
 import { analysisDetailOutputSchemaOf } from "../analysisDetail.js";
 import { z } from "zod";
 import {
-  pythonPycSummaryViewResultSchema,
   pythonPycCodeObjectsViewResultSchema,
-} from "../../domain/analysisView/analysisViewResult.js";
+  pythonPycSummaryViewResultSchema,
+} from "../../domain/analysisView/summarySchemas/pythonPycSummarySchemas.js";
 import {
   pythonPycCompleteDeliveryShape,
   pythonPycSummaryDeliveryShape,
@@ -29,7 +29,9 @@ export const inspectPythonPycRequestSchema = presentRootDiscriminator(
 export const PYTHON_PYC_TOOL_CONTRACTS = [
   {
     name: "inspect_python_pyc",
-    ...toolContractMetadata("inspect_python_pyc"),
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_python_pyc", evidenceEffects),
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:

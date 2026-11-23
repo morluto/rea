@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createMftDecoder,
+  hasMftFileRecordHeader,
   parseMftIndex,
   selectMftMetadata,
 } from "./ntfsMft.js";
@@ -210,12 +211,17 @@ describe("MFT header facts", () => {
     );
   });
 
-  it("verifies the older FILE header without reading its fixup words as a record number", () => {
+  it("recognizes the older FILE header and verifies its fixups without reading them as a record number", () => {
     const oldRecord = recordOf({ usaOffset: 42 });
     const newRecord = recordOf();
     new DataView(newRecord.buffer).setUint32(44, 1, true);
 
-    const parsed = parseMftIndex(streamOf(oldRecord, newRecord));
+    const stream = streamOf(oldRecord, newRecord);
+    const carrier = Buffer.alloc(stream.length + 7, 0xcc);
+    carrier.set(stream, 7);
+    const bytes = carrier.subarray(7);
+    expect(hasMftFileRecordHeader(bytes.subarray(0, 42))).toBe(true);
+    const parsed = parseMftIndex(bytes);
     if (!parsed.ok) throw new Error(parsed.error.message);
     expect(parsed.value.records).toMatchObject([
       {
@@ -536,18 +542,20 @@ describe("parseMftIndex refusals and limits", () => {
     });
   });
 
-  it("refuses streams that differ from the admitted byte count", () => {
+  it("refuses streams that differ from the admitted byte count", async () => {
     const stream = recordOf();
     const short = createMftDecoder(stream.length + 1);
     if (!short.ok) throw new Error(short.error.message);
     expect(short.value.write(stream).ok).toBe(true);
-    expect(short.value.finish()).toMatchObject({
-      ok: false,
-      error: {
-        kind: "format",
-        message: "stream ended before the admitted file length",
+    expect(await short.value.finish(async () => Buffer.alloc(0))).toMatchObject(
+      {
+        ok: false,
+        error: {
+          kind: "format",
+          message: "stream ended before the admitted file length",
+        },
       },
-    });
+    );
 
     const long = createMftDecoder(stream.length - 1);
     if (!long.ok) throw new Error(long.error.message);
@@ -560,13 +568,15 @@ describe("parseMftIndex refusals and limits", () => {
     });
   });
 
-  it("returns the same inventory without retaining all the decoded records", () => {
+  it("returns the same inventory without retaining all the decoded records", async () => {
     const bytes = streamOf(...Array.from({ length: 33 }, () => recordOf()));
     const decoder = createMftDecoder(bytes.length);
     const parsed = parseMftIndex(bytes);
     if (!decoder.ok || !parsed.ok) throw new Error("invalid fixture");
     expect(decoder.value.write(bytes).ok).toBe(true);
-    const inventory = decoder.value.finish();
+    const inventory = await decoder.value.finish(async (offset, length) =>
+      bytes.subarray(offset, offset + length),
+    );
     if (!inventory.ok) throw new Error(inventory.error.message);
     expect(inventory.value).not.toHaveProperty("records");
     expect(inventory.value.metadata).toEqual(parsed.value.metadata);
@@ -576,7 +586,7 @@ describe("parseMftIndex refusals and limits", () => {
     expect(parsed.value.records[32]).not.toHaveProperty("fileNames");
   });
 
-  it("decodes the same stream through the chunked decoder", () => {
+  it("decodes the same stream through the chunked decoder", async () => {
     const stream = streamOf(recordOf(), recordOf({ flags: 0x0003 }));
     const decoder = createMftDecoder(stream.length);
     expect(decoder.ok).toBe(true);
@@ -584,11 +594,37 @@ describe("parseMftIndex refusals and limits", () => {
     // Feed one byte past a record boundary so a chunk never aligns with a record.
     for (const chunk of [stream.subarray(0, 1025), stream.subarray(1025)])
       expect(decoder.value.write(chunk).ok).toBe(true);
-    const image = decoder.value.finish();
+    const image = await decoder.value.finish(async (offset, length) =>
+      stream.subarray(offset, offset + length),
+    );
     expect(image.ok).toBe(true);
     if (!image.ok) return;
     expect(image.value.metadata.record_count).toBe(2);
     expect(image.value.metadata.directory_record_count).toBe(1);
+  });
+
+  it("matches parseMftIndex across tiny unaligned chunks beyond the inline header window", async () => {
+    const stream = streamOf(
+      ...Array.from({ length: 40 }, (_, slot) =>
+        slot === 35
+          ? new Uint8Array(1024)
+          : recordOf({ flags: slot % 2 === 0 ? 0x0003 : 0x0001 }),
+      ),
+      new Uint8Array(123),
+    );
+    const parsed = parseMftIndex(stream);
+    const decoder = createMftDecoder(stream.length);
+    if (!parsed.ok || !decoder.ok) throw new Error("invalid fixture");
+    for (let offset = 0; offset < stream.length; offset += 17)
+      expect(decoder.value.write(stream.subarray(offset, offset + 17)).ok).toBe(
+        true,
+      );
+    const streamed = await decoder.value.finish(async (offset, length) =>
+      stream.subarray(offset, offset + length),
+    );
+    if (!streamed.ok) throw new Error(streamed.error.message);
+    expect(streamed.value.metadata).toEqual(parsed.value.metadata);
+    expect(streamed.value.limitations).toEqual(parsed.value.limitations);
   });
 });
 

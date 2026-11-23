@@ -1,14 +1,16 @@
 import { analysisClientFailureForOperation } from "./AnalysisClientFailure.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type {
   AnalysisClient,
   RetainedResourceScope,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -19,10 +21,10 @@ import {
   closedAnalysisClientError,
   ProviderAdapterError,
 } from "../domain/providerAdapterError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
-import { closeAnalysisClient } from "../application/AnalysisClientCleanup.js";
+import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
 
 /** Own deferred client creation while callers wait independently and close joins it. */
 export class AnalysisClientCreation {
@@ -160,21 +162,21 @@ export class AnalysisClientCreation {
       primary =
         primary === undefined
           ? inspections.error
-          : analysisErrorWithCleanupFailure(
+          : analysisErrorWithCleanupDependencies(
               primary,
               inspections.error,
               "create_analysis_client",
-            ).bindCleanupDependencies([primary, inspections.error]);
+            );
     if (primary !== undefined) {
       const closed = await this.#releaseClient(this.#closeOptions);
       return err(
         closed.ok
           ? primary
-          : analysisErrorWithCleanupFailure(
+          : analysisErrorWithCleanupDependencies(
               primary,
               closed.error,
               "create_analysis_client",
-            ).bindCleanupDependencies([primary, closed.error]),
+            ),
       );
     }
     if (this.#client === undefined)
@@ -222,11 +224,11 @@ export class AnalysisClientCreation {
         const closed = await this.#releaseClient(options);
         if (!closed.ok && inspectionFailure !== undefined)
           return err(
-            analysisErrorWithCleanupFailure(
+            analysisErrorWithCleanupDependencies(
               closed.error,
               inspectionFailure,
               "create_analysis_client",
-            ).bindCleanupDependencies([closed.error, inspectionFailure]),
+            ),
           );
         if (!closed.ok) return closed;
         if (inspectionFailure !== undefined) return err(inspectionFailure);
@@ -256,6 +258,7 @@ export class AnalysisClientCreation {
       await this.#clientLease.release();
       return ok(null);
     } catch (cause: unknown) {
+      const clientLease = this.#clientLease;
       const failure = new ProviderCleanupError(
         this.providerId,
         cause instanceof AnalysisError && cause.cleanupResources.length > 0
@@ -270,8 +273,23 @@ export class AnalysisClientCreation {
         },
         { cause, operation: "create_analysis_client" },
       );
-      failure.bindCleanupResourceOwner(this.#clientLease);
-      this.#clientLease.bindCleanupError(failure);
+      if (cause instanceof AnalysisError && cause.hasCleanupOwner) {
+        failure.bindCleanupResourceOwner({
+          get cleanupResources() {
+            return clientLease.released || !cause.cleanupIncomplete
+              ? []
+              : cause.cleanupResources;
+          },
+        });
+        failure.bindCleanupReleaseClaim({
+          get cleanupReleased() {
+            return !cause.cleanupIncomplete;
+          },
+        });
+      } else {
+        failure.bindCleanupResourceOwner(clientLease);
+      }
+      clientLease.bindCleanupError(failure);
       return err(failure);
     }
   }

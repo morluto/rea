@@ -1,9 +1,7 @@
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { APPLICATION_TOOL_CONTRACTS } from "../contracts/applicationToolContracts.js";
-import { contractNamed } from "./contractCliDescription.js";
-import { registerContractDocumentCommand } from "./contractCommand.js";
+import { COMPARE_SOURCE_TO_BUNDLE_TOOL_CONTRACT } from "../contracts/sourceToBundleToolContract.js";
+import { registerContractDocumentCommand } from "./contractDocumentCommand.js";
 import {
   evidenceBundleOption,
   runEvidenceInputCommand,
@@ -26,9 +24,8 @@ export const registerSourceToBundleCommand = (
   registerContractDocumentCommand(
     cli,
     logger,
-    contractNamed(APPLICATION_TOOL_CONTRACTS, "compare_source_to_bundle"),
+    COMPARE_SOURCE_TO_BUNDLE_TOOL_CONTRACT,
     {
-      command: CLI_COMMANDS.compareSourceToBundle,
       description:
         "Compare historical source (inline graph or reference {kind:file,path}) with authenticated application Evidence. Save the complete JSON to query with inspect-analysis-view.",
       document: "Inline workflow JSON or JSON file path",
@@ -38,12 +35,11 @@ export const registerSourceToBundleCommand = (
       },
       cliOptions: { evidenceBundle: evidenceBundleOption },
     },
-    async (document, { signal, operation, spelled, cliOptions }) => {
+    async (document, { signal, operation, spelled, frame, cliOptions }) => {
       const requestedReferencePath = spelledReferencePath(spelled);
       const result = await runEvidenceInputCommand(
-        operation,
-        cliOptions.evidenceBundle,
-        signal,
+        document,
+        { operation, signal, frame, cliOptions },
         async (lookup, resources) => {
           const { executeSourceToBundleComparison } =
             await import("../application/javascript/JavaScriptApplicationWorkflowService.js");

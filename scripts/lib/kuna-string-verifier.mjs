@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { runKunaCommand } from "../../dist/kuna/KunaCommand.js";
 import { kunaProjectDeadline } from "../../dist/kuna/KunaConfiguration.js";
 import { inspectKunaInstallation } from "../../dist/kuna/KunaInstallation.js";
+import { HOST_PLATFORM } from "../../dist/platform/HostPlatform.js";
 
 const entries = (path) =>
   readdir(path).catch((cause) => {
@@ -26,7 +27,7 @@ export const nativeKunaStrings = async ({
       REA_KUNA_COMMAND: executable,
       REA_KUNA_CACHE_DIR: cacheRoot,
     },
-    { resourceScope },
+    { platform: HOST_PLATFORM.platform, resourceScope },
   );
   assert.ok(installed.ok, "Native string oracle could not inspect Kuna");
   const input = await realpath(binary);

@@ -1,12 +1,14 @@
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import {
   AnalysisError,
   primaryAnalysisError,
   type AnalysisPartialObservation,
+  type AnalysisCapturedOutput,
+  type AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
@@ -23,6 +25,7 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** What closing the work's owner established. */
 export type CleanupOutcome =
@@ -93,13 +96,14 @@ export type CompletedValueRecord<Value> =
       readonly diagnostics: (
         value: Value,
         replacedBy: CompletedValueReplacement,
-      ) => Readonly<Record<string, JsonValue>>;
+      ) => Readonly<Record<string, JsonValue>> | undefined;
       readonly partial?: never;
     };
 
-type KeptCompletion =
-  | { readonly partialObservation: AnalysisPartialObservation }
-  | { readonly diagnostics: Readonly<Record<string, JsonValue>> };
+type KeptCompletion = Pick<
+  AnalysisErrorOptions,
+  "partialObservation" | "diagnostics" | "capturedOutput"
+>;
 
 export type RunOwnedOptions<Value> = RunOwnedBaseOptions<Value> &
   CompletedValueRecord<Value>;
@@ -125,8 +129,20 @@ interface RunOwnedBaseOptions<Value> {
    * the operation and its work budget.
    */
   readonly timeoutRecovery?: AnalysisTimeoutRecovery | undefined;
-  /** Releases everything the work acquired; awaited before the signal is read. */
-  readonly close: () => Promise<void>;
+  /** Releases everything the work acquired before reporting completion. */
+  readonly close?: () => Promise<void>;
+  /** Existing contracts can keep a failed close primary over cancellation of completed work. */
+  readonly cleanupFailureBeforeCancellation?: true;
+  /** Preserve a provider's published cleanup envelope. The finalizer binds both owners. */
+  readonly composeCleanupFailure?: (
+    primary: AnalysisError,
+    cleanup: AnalysisError,
+  ) => AnalysisError;
+  /** Retain separately bounded command output alongside the observation on cancellation. */
+  readonly capturedOutput?: (
+    value: Value,
+    replacedBy: CompletedValueReplacement,
+  ) => AnalysisCapturedOutput | undefined;
   /** Names the owned resources when a non-REA close failure names none. */
   readonly fallbackResource?: string;
   /**
@@ -155,21 +171,36 @@ interface RunOwnedBaseOptions<Value> {
 }
 
 const keepCompleted = <Value>(
-  record: CompletedValueRecord<Value>,
+  record: RunOwnedOptions<Value>,
   value: Value,
   replacedBy: CompletedValueReplacement,
-): KeptCompletion =>
-  record.partial === undefined
-    ? { diagnostics: record.diagnostics(value, replacedBy) }
-    : { partialObservation: record.partial(value, replacedBy) };
+  priorDiagnostics?: Readonly<Record<string, JsonValue>>,
+): KeptCompletion => {
+  const capturedOutput = record.capturedOutput?.(value, replacedBy);
+  const observation = record.partial?.(value, replacedBy);
+  const recorded = record.diagnostics?.(value, replacedBy);
+  const diagnostics =
+    priorDiagnostics === undefined
+      ? recorded
+      : { ...priorDiagnostics, ...recorded };
+  return {
+    ...(observation === undefined ? {} : { partialObservation: observation }),
+    ...(diagnostics === undefined ? {} : { diagnostics }),
+    ...(capturedOutput === undefined ? {} : { capturedOutput }),
+  };
+};
 
 const retainCompleted = (
   error: AnalysisError,
   kept: KeptCompletion,
-): AnalysisError =>
-  "partialObservation" in kept
-    ? error.retainPartialObservation(kept.partialObservation)
-    : error.retainDiagnostics(kept.diagnostics);
+): AnalysisError => {
+  if (kept.partialObservation !== undefined)
+    error.retainPartialObservation(kept.partialObservation);
+  if (kept.diagnostics !== undefined) error.retainDiagnostics(kept.diagnostics);
+  if (kept.capturedOutput !== undefined)
+    error.retainCapturedOutput(kept.capturedOutput);
+  return error;
+};
 
 const closeFailure = (
   cause: unknown,
@@ -186,7 +217,7 @@ const closeFailure = (
           options.fallbackResource ?? `${options.operation} resources`,
         )
       : {
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
           resources: [],
         };
   return new ProviderCleanupError(
@@ -244,6 +275,7 @@ const closeWithin = async (
     | "fallbackResource"
   >,
 ): Promise<AnalysisError | undefined> => {
+  if (options.close === undefined) return undefined;
   const closing = options.close();
   const deadline = options.deadline;
   if (deadline === undefined) {
@@ -384,7 +416,8 @@ export const runOwned = async <Value>(
   try {
     // Owners may resolve the primary's retained cleanup during close; only
     // they can confirm it, so its status is read again afterwards.
-    const unfinished = await closeWithin(options);
+    const unfinished =
+      options.close === undefined ? undefined : await closeWithin(options);
     if (unfinished !== undefined)
       cleanup = { kind: "retained", failure: unfinished };
   } catch (cause) {
@@ -529,13 +562,10 @@ export const runOwned = async <Value>(
     };
     if (outcome.ok && !committed) {
       // The value arrived after the budget elapsed and was not published.
-      const kept = keepCompleted(options, outcome.value, "failure");
       outcome = {
         ok: false,
         error: timeout(
-          "partialObservation" in kept
-            ? { partialObservation: kept.partialObservation }
-            : { diagnostics: { ...outcome.diagnostics, ...kept.diagnostics } },
+          keepCompleted(options, outcome.value, "failure", outcome.diagnostics),
         ),
       };
     } else if (!outcome.ok && budgetCancellation(outcome.error))
@@ -565,22 +595,27 @@ export const runOwned = async <Value>(
         value: outcome.value,
         lateCancellation: signal.reason,
       };
-    if (!committed) {
+    if (
+      cleanup.kind === "retained" &&
+      options.cleanupFailureBeforeCancellation === true
+    ) {
+      analysisErrorWithCancellation(
+        cleanup.failure,
+        cancelledBy(options.operation, signal),
+      );
+    } else if (!committed) {
       cancelled = true;
-      const kept = keepCompleted(options, outcome.value, "cancellation");
       outcome = {
         ok: false,
         error: cancelledBy(
           options.operation,
           signal,
-          "partialObservation" in kept
-            ? {
-                partialObservation: kept.partialObservation,
-                ...(outcome.diagnostics === undefined
-                  ? {}
-                  : { diagnostics: outcome.diagnostics }),
-              }
-            : { diagnostics: { ...outcome.diagnostics, ...kept.diagnostics } },
+          keepCompleted(
+            options,
+            outcome.value,
+            "cancellation",
+            outcome.diagnostics,
+          ),
         ),
       };
     }
@@ -604,6 +639,7 @@ export const runOwned = async <Value>(
               outcome.error,
               cleanup.failure,
               options.operation,
+              options.composeCleanupFailure,
             ),
       cleanup,
     };
