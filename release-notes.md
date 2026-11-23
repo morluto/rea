@@ -136,6 +136,7 @@
 * **elf:** do not count SPARC register declarations as imports ([d955cd0](https://github.com/morluto/rea/commit/d955cd0d60558a3f884b057e9aa6653b7652134d))
 * **elf:** establish direct initializer slot mappings ([#13452](https://github.com/morluto/rea/issues/13452)) ([bb81b0a](https://github.com/morluto/rea/commit/bb81b0a88dbb95dce6e86e737e35889e74d5deb0))
 * **elf:** name the auxv types current Linux kernels write ([#13569](https://github.com/morluto/rea/issues/13569)) ([0aecef3](https://github.com/morluto/rea/commit/0aecef3726c216d931d7b085725a50f099eb9e58))
+* **elf:** preserve kernel config framing and location provenance ([#14021](https://github.com/morluto/rea/issues/14021)) ([fabe0da](https://github.com/morluto/rea/commit/fabe0da74b5f2c3807b5e01be88bff476ea74a38))
 * **elf:** read build IDs without decoding unrelated notes ([#13776](https://github.com/morluto/rea/issues/13776)) ([4a62303](https://github.com/morluto/rea/commit/4a623037170d4e50e2c5e7c83f84150a726a19a6))
 * **elf:** report proven version and dynamic symbol facts ([#13441](https://github.com/morluto/rea/issues/13441)) ([c7f89cd](https://github.com/morluto/rea/commit/c7f89cd8b5b11025b72672af3c010e33e40496f3))
 * **elf:** respect compressed note storage across inspectors ([#13762](https://github.com/morluto/rea/issues/13762)) ([a4f9c23](https://github.com/morluto/rea/commit/a4f9c2309bc8cb2a8ababee9a8b7583d633e019d))
