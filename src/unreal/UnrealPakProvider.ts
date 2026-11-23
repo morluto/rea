@@ -1,3 +1,4 @@
+import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { UNREAL_PAK_PROVIDER_IDENTITY } from "./UnrealPakProviderIdentity.js";
 import { setImmediate } from "node:timers/promises";
 import {
@@ -96,13 +97,6 @@ const pakFailureDialect = (
     const pak = unrealPakFailureFacts(cause);
     if (pak === undefined) return undefined;
     const { failure } = pak;
-    if (failure.kind === "unsupported")
-      return new AnalysisUnsupportedTargetError(
-        OPERATION,
-        path,
-        failure.message,
-        { ...details, cause: failure },
-      );
     if (failure.failure.kind === "limit")
       return parseLimitConstraint(
         OPERATION,
@@ -124,13 +118,9 @@ const pakFailureDialect = (
                 )),
         },
       );
-    return new AnalysisInputError(OPERATION, { ...details, cause: failure }, [
-      {
-        path: ["path"],
-        reason: "invalid_format",
-        message: `Selected artifact ${path} is corrupt: ${failure.message}`,
-      },
-    ]);
+    // Unsupported, malformed and truncated pak bytes map like every other
+    // format parser's: an unsupported target or an invalid `path`.
+    return parseFailureAnalysisError(OPERATION, path, failure);
   },
   file: { path, description: "Unreal pak" },
   diagnostics: { path },

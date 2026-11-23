@@ -10,7 +10,7 @@ import {
 import { err, ok, type Result } from "../result.js";
 import { evidenceSubjectTarget } from "../evidence.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
@@ -93,27 +93,20 @@ interface CheckedReport {
   readonly counts: z.infer<typeof countsSchema>;
 }
 
-// Authenticated, frozen parents own these facts. Cache validation/counts for
-// their lifetime without a second report copy or a live filesystem cache.
+const readPakReport = createAnalysisViewResultReader(unrealPakSchema);
+// The validated immutable report owns its derived counts for its lifetime.
 const checkedReports = new WeakMap<object, CheckedReport>();
 
-/** Validate the parent and count its entries once per immutable sealed result. */
+/** Validate the parent through the shared reader and count its entries once. */
 const parsePakReport = (
   parent: AnalysisViewParent,
 ): Result<CheckedReport, AnalysisError> => {
-  const key = parent.normalizedResult;
-  const reusable =
-    parent.sealedResult === true &&
-    typeof key === "object" &&
-    key !== null &&
-    isImmutableJsonSnapshot(key);
-  const cached = reusable ? checkedReports.get(key) : undefined;
-  if (cached !== undefined) return ok(cached);
-  const parsed = parseAnalysisViewResult(unrealPakSchema, parent);
+  const parsed = readPakReport(parent);
   if (!parsed.ok) return parsed;
-  // This schema has no coercions/transforms; the authenticated owner value is
-  // equivalent to the validated clone and remains immutable across pages.
-  const report = reusable ? (key as UnrealPakReport) : parsed.value;
+  const report = parsed.value;
+  const reusable = isImmutableJsonSnapshot(report);
+  const cached = reusable ? checkedReports.get(report) : undefined;
+  if (cached !== undefined) return ok(cached);
   const counts = {
     entries: report.entries.length,
     encoded_records: 0,
@@ -133,7 +126,7 @@ const parsePakReport = (
     if (entry.path === null) counts.without_path++;
   }
   const checked = { report, counts };
-  if (reusable) checkedReports.set(key, checked);
+  if (reusable) checkedReports.set(report, checked);
   return ok(checked);
 };
 
