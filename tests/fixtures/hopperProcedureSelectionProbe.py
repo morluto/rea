@@ -16,7 +16,8 @@ class Segment:
     def getNameAtAddress(self, address):
         return "entry" if address == 0x401000 else "inner"
     def getProcedureAtAddress(self, address):
-        return procedure
+        # 0x40b000 models an import address-table slot outside every procedure.
+        return procedure if 0x401000 <= address < 0x402000 else None
 class Document:
     def __init__(self):
         self.names = []
@@ -24,17 +25,36 @@ class Document:
         return 0x401004
     def getAddressForName(self, name):
         self.names.append(name)
-        return {"entry": 0x401000, "alias_entry": 0x401000, "inner": 0x401004}.get(name)
+        return {
+            "entry": 0x401000,
+            "alias_entry": 0x401000,
+            "inner": 0x401004,
+            "CloseHandle": 0x40B000,
+        }.get(name)
     def getSegmentAtAddress(self, address):
         return segment
 segment = Segment()
 procedure = Procedure()
 document = Document()
 results = {}
-for selector in ["entry", "alias_entry", "inner", "0x401004", "401004", "file-offset:0x4"]:
+for selector in [
+    "entry",
+    "alias_entry",
+    "inner",
+    "0x401004",
+    "401004",
+    "file-offset:0x4",
+    "CloseHandle",
+    "0x40b000",
+    "missing_fn",
+]:
     try:
         selected = bridge["_procedure"](document, selector)
         results[selector] = {"entry": bridge["_hex"](selected.getEntryPoint())}
     except Exception as error:
-        results[selector] = {"diagnostic_type": bridge["_diagnostic_type"](error), "message": str(error)}
+        results[selector] = {
+            "diagnostic_type": bridge["_diagnostic_type"](error),
+            "message": str(error),
+            "diagnostic": bridge["_safe_diagnostic"](error),
+        }
 print(json.dumps({"results": results, "name_lookups": document.names}))
