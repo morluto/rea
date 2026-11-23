@@ -2714,9 +2714,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         if (procedureSearch) {
             // Search the names exact lookup accepts, keeping one row per
-            // procedure under its primary name.
+            // procedure under its primary name. An unbuilt inventory is
+            // scanned without retaining it for one ad-hoc search.
+            List<ProcedureEntry> entries =
+                procedureInventory != null ? procedureInventory : buildProcedures();
             List<MatchedProcedure> matches = new ArrayList<>();
-            for (ProcedureEntry entry : procedures()) {
+            for (ProcedureEntry entry : entries) {
                 monitor.checkCancelled();
                 ProcedureNameMatch match = matchProcedureNames(entry, matcher);
                 if (!match.matched()) {
@@ -2803,13 +2806,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (procedureInventory != null) {
             return procedureInventory;
         }
+        procedureInventory = List.copyOf(buildProcedures());
+        return procedureInventory;
+    }
+
+    private List<ProcedureEntry> buildProcedures() throws Exception {
         List<ProcedureEntry> result = new ArrayList<>();
         Set<Address> seen = new HashSet<>();
         appendFunctions(result, seen, currentProgram.getFunctionManager().getFunctions(true));
         appendFunctions(result, seen, currentProgram.getFunctionManager().getExternalFunctions());
         result.sort(PROCEDURE_ORDER);
-        procedureInventory = List.copyOf(result);
-        return procedureInventory;
+        return result;
     }
 
     private void appendFunctions(
