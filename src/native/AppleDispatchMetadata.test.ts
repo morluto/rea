@@ -1147,6 +1147,7 @@ describe("Apple dispatch pointer fixup metadata", () => {
       bytes.writeUInt32LE(0x80000022, 184);
       bytes.writeUInt32LE(48, 188);
       const bindings = Buffer.from([
+        0x3e, // SET_DYLIB_SPECIAL_IMM flat lookup
         0x40,
         ...Buffer.from("_OBJC_CLASS_$_NSObject\0"),
         0x51, // SET_TYPE_IMM pointer
@@ -1530,6 +1531,7 @@ describe("Objective-C category class references without a class name", () => {
     bytes.writeUInt32LE(0x80000022, 264);
     bytes.writeUInt32LE(48, 268);
     const bindings = Buffer.from([
+      0x3e, // SET_DYLIB_SPECIAL_IMM flat lookup
       0x40,
       ...Buffer.from("_$s4Main3FooCN\0"),
       0x51, // SET_TYPE_IMM pointer
@@ -2966,6 +2968,7 @@ describe("Objective-C category class property applicability", () => {
   it("reports a class property list bound to another image as not decoded", () => {
     const bytes = withLegacyFixups(categoryImage(0x40, 0));
     const bindings = Buffer.from([
+      0x3e, // SET_DYLIB_SPECIAL_IMM flat lookup
       0x40,
       ...Buffer.from("_external_list\0"),
       0x51, // SET_TYPE_IMM pointer

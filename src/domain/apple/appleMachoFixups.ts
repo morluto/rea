@@ -1194,10 +1194,10 @@ const sleb = (bytes: Buffer, cursor: { at: number }, end: number): bigint => {
 /** Registers of the `LC_DYLD_INFO` bind state machine. */
 interface BindState {
   type: number;
-  ordinal: number;
+  ordinal: number | undefined;
   ordinalFailure: string | null;
   segmentIndex: number;
-  symbol: SymbolName;
+  symbol: SymbolName | undefined;
   weak: boolean;
   addend: bigint;
   address: bigint;
@@ -1205,13 +1205,13 @@ interface BindState {
 
 /** Apply a bind opcode that sets a register; false when the opcode is not one. */
 const setBindRegister = (
-  image: FixupImage,
-  stream: { readonly cursor: { at: number }; readonly end: number },
+  segments: readonly Segment[],
+  bytes: Buffer,
+  cursor: { at: number },
   state: BindState,
   byte: number,
 ): boolean => {
-  const { bytes } = image;
-  const { cursor, end } = stream;
+  const end = bytes.length;
   const immediate = byte & 0x0f;
   switch (byte & 0xf0) {
     case 0x10:
@@ -1236,8 +1236,7 @@ const setBindRegister = (
       return true;
     case 0x40: {
       const stop = bytes.indexOf(0, cursor.at);
-      if (stop < 0 || stop >= end)
-        throw truncatedInput("macho", "Unterminated bind symbol");
+      if (stop < 0) throw truncatedInput("macho", "Unterminated bind symbol");
       state.symbol = symbolName(bytes.subarray(cursor.at, stop));
       state.weak = (immediate & 0x1) !== 0;
       cursor.at = stop + 1;
@@ -1250,7 +1249,7 @@ const setBindRegister = (
       state.addend = sleb(bytes, cursor, end);
       return true;
     case 0x70: {
-      const segment = image.segments[immediate];
+      const segment = segments[immediate];
       if (segment === undefined)
         throw malformedInput("macho", "Bind segment index is out of range");
       state.segmentIndex = immediate;
@@ -1273,17 +1272,20 @@ function* readBindStreamSteps(
   range: FixupCommands["binds"][number],
   binds: BindRun[],
 ): Generator<void, void, void> {
-  const { bytes } = image;
-  const end = range.offset + range.size;
-  if (end > bytes.length)
+  const fileEnd = range.offset + range.size;
+  if (fileEnd > image.bytes.length)
     throw malformedInput("macho", "Bind opcodes exceed the target");
-  const cursor = { at: range.offset };
+  // A non-owning view keeps both operands and symbol scans inside the command.
+  const bytes = image.bytes.subarray(range.offset, fileEnd);
+  const end = bytes.length;
+  const cursor = { at: 0 };
   const state: BindState = {
     type: range.stream === "lazy" ? 1 : 0,
-    ordinal: 0,
+    // Weak streams supply dyld's special weak-lookup ordinal implicitly.
+    ordinal: range.stream === "weak" ? -3 : undefined,
     ordinalFailure: null,
     segmentIndex: -1,
-    symbol: { symbol: "" },
+    symbol: undefined,
     weak: false,
     addend: 0n,
     address: 0n,
@@ -1316,11 +1318,19 @@ function* readBindStreamSteps(
     try {
       if (state.ordinalFailure !== null)
         throw malformedInput("macho", state.ordinalFailure);
-      const resolvedLibrary = libraryFacts(state.ordinal, image.dylibs);
+      const { ordinal, symbol } = state;
+      if (symbol === undefined)
+        throw malformedInput("macho", "Legacy bind has no selected symbol");
+      if (ordinal === undefined)
+        throw malformedInput(
+          "macho",
+          "Legacy bind has no selected library ordinal",
+        );
+      const resolvedLibrary = libraryFacts(ordinal, image.dylibs);
       const imported: Import = {
-        ...state.symbol,
+        ...symbol,
         binding_source: range.stream,
-        library_ordinal: state.ordinal,
+        library_ordinal: ordinal,
         ...(range.stream === "weak" ? { library: null } : resolvedLibrary),
         weak: state.weak,
         addend: state.addend,
@@ -1383,7 +1393,7 @@ function* readBindStreamSteps(
   while (cursor.at < end) {
     if (++opcodes % 4096 === 0) yield;
     const byte = bytes[cursor.at++] ?? 0;
-    if (setBindRegister(image, { cursor, end }, state, byte)) continue;
+    if (setBindRegister(image.segments, bytes, cursor, state, byte)) continue;
     switch (byte & 0xf0) {
       case 0x00:
         // DONE separates lazy-bind entries; other streams end here.

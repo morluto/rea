@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { chainedImportNames } from "../domain/apple/appleMachoFixups.js";
+import {
+  chainedImportNames,
+  type FixupCommands,
+} from "../domain/apple/appleMachoFixups.js";
 import { parsePointerFixups } from "./AppleMachoFixups.fixture.js";
 import type { Segment } from "../domain/apple/appleMachoSelection.js";
 
@@ -102,6 +105,24 @@ const SEGMENTS: Segment[] = [
   { address: BASE, size: 0x4000n, offset: 0, executable: true },
   { address: BASE + 0x4000n, size: 0x4000n, offset: 0x4000, executable: false },
 ];
+
+/** Place one opcode stream inside its file, independently of the bound metadata locations. */
+const legacyBind = (
+  opcodes: Buffer,
+  dylibs: FixupCommands["dylibs"],
+  stream: FixupCommands["binds"][number]["stream"] = "bind",
+  size = opcodes.length,
+) => {
+  const offset = 0x7000;
+  const image = Buffer.alloc(0x8000);
+  opcodes.copy(image, offset);
+  return parsePointerFixups(
+    image,
+    { chained: null, binds: [{ offset, size, stream }], rebases: [], dylibs },
+    SEGMENTS,
+    BASE,
+  );
+};
 
 it("decodes raw chained pointer layouts through real segment membership", () => {
   const data = chainedData(2);
@@ -274,22 +295,14 @@ it.each(["bind", "weak", "lazy"] as const)(
       0x90,
       0,
     ]);
-    const data = Buffer.alloc(0x8000);
-    opcodes.copy(data);
-    const fixups = parsePointerFixups(
-      data,
-      {
-        chained: null,
-        rebases: [],
-        binds: [{ offset: 0, size: opcodes.length, stream }],
-        dylibs: [{ bytes_base64: libraryBytes }, "/library-2"],
-      },
-      SEGMENTS,
-      BASE,
+    const fixups = legacyBind(
+      opcodes,
+      [{ bytes_base64: libraryBytes }, "/library-2"],
+      stream,
     );
     expect(fixups.decode(BASE + 0x4008n, 0n)).toMatchObject(
       stream === "weak"
-        ? { kind: "bind", symbol: "_first", library: null }
+        ? { kind: "bind", symbol: "_first", library: null, library_ordinal: 1 }
         : {
             kind: "unsupported",
             binding: {
@@ -303,6 +316,7 @@ it.each(["bind", "weak", "lazy"] as const)(
     expect(fixups.decode(BASE + 0x4010n, 0n)).toMatchObject({
       kind: "bind",
       symbol: "_second",
+      library_ordinal: 2,
       library: stream === "weak" ? null : "/library-2",
     });
     expect(fixups.decoded).toBe(1);
@@ -433,19 +447,7 @@ it.each(["bind", "weak", "lazy"] as const)(
       0x90,
       0,
     ]);
-    const data = Buffer.alloc(0x8000);
-    opcodes.copy(data, 0x7000);
-    const fixups = parsePointerFixups(
-      data,
-      {
-        chained: null,
-        binds: [{ offset: 0x7000, size: opcodes.length, stream }],
-        rebases: [],
-        dylibs: ["/library-1"],
-      },
-      SEGMENTS,
-      BASE,
-    );
+    const fixups = legacyBind(opcodes, ["/library-1"], stream);
     expect(fixups.decode(BASE + 0x4008n, 0n)).toMatchObject({
       kind: "unsupported",
       reason: expect.stringContaining("UTF-8"),
@@ -890,38 +892,47 @@ describe("incomplete legacy bind applicability", () => {
     expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x1008n, 4)).toBe(true);
   });
 
-  it("retains a positive bind prefix while leaving unmatched slots unknown", () => {
-    const opcodes = Buffer.from([
-      0x51,
-      0x11,
-      0x40,
-      ...Buffer.from("_x\0"),
-      0x71,
-      0x08,
-      0x90,
-      0xf0,
-    ]);
-    const fixups = parsePointerFixups(
-      opcodes,
-      {
-        chained: null,
-        binds: [{ offset: 0, size: opcodes.length, stream: "bind" }],
-        rebases: [],
-        dylibs: ["/library-1"],
-      },
-      SEGMENTS,
-      BASE,
-    );
-
-    expect(fixups.decode(BASE + 0x4008n, 0n)).toMatchObject({
-      kind: "bind",
-      symbol: "_x",
-    });
-    expect(fixups.decode(BASE + 0x4010n, 0n)).toMatchObject({
-      kind: "unknown",
-      raw: 0n,
-    });
-  });
+  it.each([
+    [true, 1, "raw"],
+    [false, 0, "unknown"],
+  ] as const)(
+    "keeps a bind prefix and distinguishes a symbol terminator at the stream boundary (%s)",
+    (inside, decoded, unmatched) => {
+      const opcodes = Buffer.from([
+        0x51,
+        0x11,
+        0x40,
+        ...Buffer.from("_x\0"),
+        0x71,
+        0x08,
+        0x90,
+        0x40,
+        ...Buffer.from("_tail\0"),
+      ]);
+      const fixups = legacyBind(
+        opcodes,
+        ["/library-1"],
+        "bind",
+        opcodes.length - (inside ? 0 : 1),
+      );
+      expect(fixups).toMatchObject({ examined: 1, decoded });
+      expect(fixups.issues).toEqual(
+        inside
+          ? []
+          : [
+              expect.objectContaining({
+                code: "bind_stream_decode_failed",
+                message: expect.stringContaining("Unterminated bind symbol"),
+              }),
+            ],
+      );
+      expect(fixups.decode(BASE + 0x4008n, 0n)).toMatchObject({
+        kind: "bind",
+        symbol: "_x",
+      });
+      expect(fixups.decode(BASE + 0x4010n, 0n).kind).toBe(unmatched);
+    },
+  );
 
   it("keeps unmatched chained-image slots unknown when a legacy bind tail fails", () => {
     const chained = chainedData(1);
@@ -1791,7 +1802,7 @@ describe("legacy bind write types", () => {
 });
 
 describe("legacy pointer fixup streams", () => {
-  it("interprets legacy bind, weak-bind and lazy-bind opcodes", () => {
+  it("keeps regular bind skips and both lazy entries through DONE", () => {
     const opcodes = Buffer.from([
       0x11, // SET_DYLIB_ORDINAL_IMM 1
       0x40,
@@ -1844,10 +1855,16 @@ describe("legacy pointer fixup streams", () => {
         symbol: "_OBJC_CLASS_$_NSObject",
         library: "/usr/lib/libobjc.A.dylib",
       });
-    expect(fixups.decode(BASE + 0x4038n, 0n)).toMatchObject({
-      symbol: "_malloc",
-      library: "/usr/lib/libSystem.B.dylib",
-    });
+    for (const [address, symbol] of [
+      [0x4030n, "_free"],
+      [0x4038n, "_malloc"],
+    ] as const)
+      expect(fixups.decode(BASE + address, 0n)).toMatchObject({
+        kind: "bind",
+        binding_source: "lazy",
+        symbol,
+        library: "/usr/lib/libSystem.B.dylib",
+      });
     expect(fixups.decode(BASE + 0x4018n, 0x99n)).toEqual({
       kind: "raw",
       target: 0x99n,
@@ -1877,17 +1894,10 @@ describe("legacy pointer fixup streams", () => {
       0x90, // DO_BIND the next slot
       0x00,
     ]);
-    const fixups = parsePointerFixups(
-      opcodes,
-      {
-        chained: null,
-        binds: [{ offset: 0, size: opcodes.length, stream: "bind" }],
-        rebases: [],
-        dylibs: ["/usr/lib/libc++.1.dylib", "/usr/lib/libobjc.A.dylib"],
-      },
-      SEGMENTS,
-      BASE,
-    );
+    const fixups = legacyBind(opcodes, [
+      "/usr/lib/libc++.1.dylib",
+      "/usr/lib/libobjc.A.dylib",
+    ]);
     expect(fixups.failures).toEqual([]);
     expect(fixups.decode(BASE + 0x4010n, 0n)).toMatchObject({
       kind: "bind",
@@ -1899,8 +1909,54 @@ describe("legacy pointer fixup streams", () => {
       target: 0x99n,
     });
   });
+});
 
-  it("retains weak-bind stream provenance independently from its default ordinal", () => {
+describe("legacy bind target registers", () => {
+  it.each([
+    { missing: "symbol", initial: [0x30] },
+    { missing: "library ordinal", initial: [0x40, ...Buffer.from("_name\0")] },
+  ])(
+    "retains a slot with an unset $missing and keeps later explicit registers",
+    ({ missing, initial }) => {
+      const opcodes = Buffer.from([
+        0x51,
+        0x71,
+        0x08,
+        ...initial,
+        0x90,
+        0x30,
+        0x40,
+        0,
+        0x90,
+        0x40,
+        ...Buffer.from("_following\0"),
+        0x90,
+        0,
+      ]);
+      const fixups = legacyBind(opcodes, []);
+      expect(fixups.decode(BASE + 0x4008n, 0x99n)).toMatchObject({
+        kind: "unsupported",
+        reason: expect.stringContaining(missing),
+      });
+      expect(fixups.hasUnresolvedLegacyBytes(BASE + 0x4008n, 8)).toBe(true);
+      expect(fixups.decode(BASE + 0x4010n, 0n)).toMatchObject({
+        kind: "bind",
+        symbol: "",
+        library_ordinal: 0,
+      });
+      expect(fixups.decode(BASE + 0x4018n, 0n)).toMatchObject({
+        kind: "bind",
+        symbol: "_following",
+        library_ordinal: 0,
+      });
+      expect(fixups.decode(BASE + 0x4020n, 0x12n)).toEqual({
+        kind: "raw",
+        target: 0x12n,
+      });
+    },
+  );
+
+  it("reports the implicit weak-lookup ordinal for a weak stream without a setter", () => {
     const opcodes = Buffer.from([
       0x51,
       0x40,
@@ -1910,21 +1966,11 @@ describe("legacy pointer fixup streams", () => {
       0x90,
       0x00,
     ]);
-    const fixups = parsePointerFixups(
-      opcodes,
-      {
-        chained: null,
-        binds: [{ offset: 0, size: opcodes.length, stream: "weak" }],
-        rebases: [],
-        dylibs: [],
-      },
-      SEGMENTS,
-      BASE,
-    );
+    const fixups = legacyBind(opcodes, [], "weak");
     expect(fixups.decode(BASE + 0x4018n, 0n)).toMatchObject({
       kind: "bind",
       binding_source: "weak",
-      library_ordinal: 0,
+      library_ordinal: -3,
       library: null,
     });
   });
@@ -1944,17 +1990,7 @@ describe("legacy bind operand decoding", () => {
       0x00,
     ]);
   const parseBinds = (opcodes: Buffer) =>
-    parsePointerFixups(
-      opcodes,
-      {
-        chained: null,
-        binds: [{ offset: 0, size: opcodes.length, stream: "bind" }],
-        rebases: [],
-        dylibs: ["/usr/lib/libSystem.B.dylib"],
-      },
-      SEGMENTS,
-      BASE,
-    );
+    legacyBind(opcodes, ["/usr/lib/libSystem.B.dylib"]);
 
   it.each([
     { addend: 0n, sleb: [0x00] },
@@ -2020,17 +2056,7 @@ describe("legacy bind operand decoding", () => {
 
   it("does not read beyond the declared stream to terminate an addend", () => {
     const opcodes = addendStream([0x80]);
-    const fixups = parsePointerFixups(
-      opcodes,
-      {
-        chained: null,
-        binds: [{ offset: 0, size: opcodes.length - 1, stream: "bind" }],
-        rebases: [],
-        dylibs: ["/library-1", "/library-2"],
-      },
-      SEGMENTS,
-      BASE,
-    );
+    const fixups = legacyBind(opcodes, [], "bind", opcodes.length - 1);
     expect(fixups).toMatchObject({ examined: 1, decoded: 0 });
     expect(fixups.failures).toEqual([
       "bind bind opcodes: Truncated bind opcode operand",
@@ -2040,6 +2066,7 @@ describe("legacy bind operand decoding", () => {
   const addressStream = (operand: readonly number[]) =>
     Buffer.from([
       0x51,
+      0x30, // SET_DYLIB_SPECIAL_IMM self
       0x40,
       ...Buffer.from("_x\0"),
       0x71,
@@ -2097,17 +2124,7 @@ it("preserves classic special ordinals and returns unsupported at invalid bind l
       0x90,
       0x00,
     ]);
-    return parsePointerFixups(
-      opcodes,
-      {
-        chained: null,
-        binds: [{ offset: 0, size: opcodes.length, stream: "bind" }],
-        rebases: [],
-        dylibs,
-      },
-      SEGMENTS,
-      BASE,
-    );
+    return legacyBind(opcodes, dylibs);
   };
   for (const ordinal of [0, -1, -2, -3]) {
     const fixups = parseOrdinal(ordinal, []);

@@ -1238,7 +1238,8 @@ complete observation.
 
 `get_objc_classes` keeps names from the provider inventory. It coalesces rows
 only when their exact selected-image pointer slots decode to the same class
-import, including its binding stream, raw library ordinal, resolved library, weak status, and addend. A literal filter is
+import, including its binding stream, library ordinal, resolved library, weak status, and addend. Weak streams use
+the implicit weak-lookup ordinal `-3` until an opcode supplies another ordinal. A literal filter is
 applied to the original names before that join; if the filter selects only an
 alias, the output keeps that exact row. `identity_coverage` distinguishes a
 complete selected-inventory scan from partial, unsupported, and unknown cases.
