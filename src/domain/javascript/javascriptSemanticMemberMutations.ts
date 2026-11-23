@@ -1751,12 +1751,15 @@ export function* collectSemanticMemberMutationsSteps(
       state.valueResourceLimits.add("alias-selections");
       queryCollapsed = true;
       try {
+        // The collapsed escape names no site, so it may precede any read.
+        // Its states then do not depend on which query reached them, and a
+        // later collapsed query stops at whatever an earlier one covered.
         walkValue(
           node,
           [],
           new Set(),
           "escape",
-          mutation,
+          undefined,
           originAt,
           ownerInitializer,
           widenedGetterResult,
@@ -1765,10 +1768,9 @@ export function* collectSemanticMemberMutationsSteps(
           selection,
         );
         for (const stored of storedSourceNodes(assignedSources ?? []))
-          walkValue(stored, [], new Set(), "escape", mutation);
+          walkValue(stored, [], new Set(), "escape", undefined);
       } finally {
         queryCollapsed = false;
-        collapsedEscapes.clear();
       }
     } finally {
       queryActive = false;

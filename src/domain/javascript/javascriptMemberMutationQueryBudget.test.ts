@@ -60,6 +60,35 @@ describe("a member-mutation query that outgrows its state budget", () => {
     expect(collapsed.value?.status).not.toBe("literal");
   });
 
+  it("covers a dense cluster once for every query that collapses into it", () => {
+    // A hundred calls each pass a member of one cyclic cluster. Their
+    // collapsed escapes name no site, so the cluster is walked once and
+    // later queries stop where an earlier one already covered.
+    const source = `export function result(unknown, n) {
+      const shared = { x: 1 };
+      const a = { v: shared, next: null };
+      const b = { v: shared, next: a };
+      const c = { v: shared, next: b };
+      a.next = c;
+      let s = a; let u = b; let w = c;
+      for (let i = 0; i < n; i++) { s = s.next; u = s.next; w = u.next; s = w; }
+      ${Array.from(
+        { length: 100 },
+        (_, index) => `unknown(${["s", "u", "w"][index % 3] ?? "s"}.next);`,
+      ).join(" ")}
+      return shared.x;
+    }`;
+    const ir = analyzeJavaScriptSemantics(source, tightPrecision, {
+      // Walking the cluster again for each site needs more than 4,000.
+      aliasStates: 3_000,
+      source: "request",
+    });
+    expect(ir.coverage.resourceLimits).toContain("alias-selections");
+    expect(onlyCallable(ir, "result").returnSites[0]?.value?.status).not.toBe(
+      "literal",
+    );
+  });
+
   it("leaves a query within its budget exact and undisclosed", () => {
     const { ir, value } = analyze(
       `const y = { v: 1 };
