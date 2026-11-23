@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -592,3 +592,28 @@ cliTest(
     }
   },
 );
+
+it("attributes an existing output directory to output_directory", async () => {
+  const root = await createTestTempDirectory("rea-uefi-existing-output-");
+  const imagePath = join(root, "flash.fd");
+  await writeFile(imagePath, buildFlashImage());
+  const existing = join(root, "existing");
+  await mkdir(existing);
+  const { call } = await connectLocalToolsMcp();
+
+  const refused = await call("extract_uefi_firmware", {
+    path: imagePath,
+    output_directory: existing,
+  });
+  expect(parseMcpToolError(refused).error).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["output_directory"],
+          message: "Output root already exists",
+        },
+      ],
+    },
+  });
+});
