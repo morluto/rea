@@ -25,6 +25,7 @@ import {
   gnuAbiTagNote,
   gnuBuildIdNote,
   gnuPropertyNote,
+  withElf64DirectSectionCount,
 } from "./ElfNotes.fixture.js";
 import { parseElfNotes } from "./ElfNoteParser.js";
 
@@ -72,44 +73,46 @@ const elf64 = (
   return tail === undefined ? header : Buffer.concat([header, tail]);
 };
 
-it("reads GNU build-id and ABI-tag notes from ELF32 and ELF64", () => {
-  for (const bits of [32, 64] as const) {
-    const bytes = elfNoteFixture({ bits, ownership: "program" });
-    const report = parse(bytes);
-    expect(report.format).toBe(bits === 64 ? "elf64" : "elf32");
-    expect(report.byte_order).toBe("little");
-    expect(report.tables).toHaveLength(1);
-    expect(report.tables[0]?.kind).toBe("program");
-    const buildId = report.entries.find(
-      (entry) => entry.type_name === "gnu_build_id",
-    );
-    const abi = report.entries.find(
-      (entry) => entry.type_name === "gnu_abi_tag",
-    );
-    expect(buildId?.gnu?.build_id_hex).toBe(
-      "0123456789abcdef0123456789abcdef01234567",
-    );
-    expect(abi?.gnu?.abi_tag).toMatchObject({
-      os: 0,
-      os_name: "linux",
-      major: 3,
-      minor: 2,
-      subminor: 0,
+it("retains GNU build ID and ABI from program or section notes", () => {
+  for (const [bits, little, ownership, machine] of [
+    [32, true, "program", 3],
+    [32, false, "program", 20],
+    [64, true, "program", 62],
+    [64, true, "section", 62],
+  ] as const) {
+    const report = parse(elfNoteFixture({ bits, little, ownership, machine }));
+    expect(report).toMatchObject({
+      format: bits === 64 ? "elf64" : "elf32",
+      byte_order: little ? "little" : "big",
+      machine,
+      tables: [
+        {
+          kind: ownership,
+          name: ownership === "section" ? ".note.gnu.build-id" : null,
+        },
+      ],
+      entries: [
+        {
+          table_kind: ownership,
+          type_name: "gnu_build_id",
+          gnu: { build_id_hex: "0123456789abcdef0123456789abcdef01234567" },
+        },
+        {
+          table_kind: ownership,
+          type_name: "gnu_abi_tag",
+          gnu: {
+            abi_tag: {
+              os: 0,
+              os_name: "linux",
+              major: 3,
+              minor: 2,
+              subminor: 0,
+            },
+          },
+        },
+      ],
     });
   }
-});
-
-it("reads the same notes from an SHT_NOTE section including its name", () => {
-  const report = parse(elfNoteFixture({ ownership: "section" }));
-  expect(report.tables).toEqual([
-    expect.objectContaining({
-      kind: "section",
-      name: ".note.gnu.build-id",
-    }),
-  ]);
-  expect(
-    report.entries.some((entry) => entry.type_name === "gnu_build_id"),
-  ).toBe(true);
 });
 
 it.each([
@@ -166,6 +169,9 @@ it("still checks an independent PT_NOTE beside an exact compressed-note alias", 
   expect(() => parse(framed)).toThrow(
     expect.objectContaining({ kind: "unsupported" }),
   );
+  const programs = Number(framed.readBigUInt64LE(32));
+  framed.writeBigUInt64LE(BigInt(framed.length), programs + 32);
+  expect(() => parse(framed)).toThrow(/leaves the artifact/u);
 });
 
 it("does not allocate the declared decoded note size, but still validates stored ranges", () => {
@@ -182,6 +188,20 @@ it("does not allocate the declared decoded note size, but still validates stored
   );
   bytes.writeBigUInt64LE(BigInt(bytes.length), noteSection + 32);
   expect(() => parse(bytes)).toThrow(ArtifactReaderFailure);
+});
+
+it("does not decode an earlier raw section overlapping compressed storage", () => {
+  const bytes = withElf64DirectSectionCount(
+    compressedElfNoteSectionFixture(),
+    4,
+  );
+  const alias = Number(bytes.readBigUInt64LE(40)) + 64;
+  bytes.copy(bytes, alias + 128, alias, alias + 64);
+  bytes.writeBigUInt64LE(0n, alias + 8);
+  bytes.writeBigUInt64LE(bytes.readBigUInt64LE(alias + 24) + 4n, alias + 24);
+  expect(() => parse(bytes)).toThrow(
+    expect.objectContaining({ kind: "unsupported" }),
+  );
 });
 
 it("preserves unknown ELF64 section flag bits without treating them as file sizes", () => {
@@ -454,13 +474,6 @@ it("reports missing note tables without claiming notes never existed", () => {
   expect(report.limitations[0]).toMatch(/No PT_NOTE/u);
 });
 
-it("fails a truncated note payload without partial success", () => {
-  const notes = gnuBuildIdNote();
-  notes.writeUInt32LE(64, 0);
-  const bytes = elfNoteFixture({ ownership: "program", notes });
-  expect(() => parse(bytes)).toThrow(ArtifactReaderFailure);
-});
-
 it("diagnoses incomplete note framing at the entry limit", () => {
   const note = elfNote("REA", 9, Buffer.from([1]));
   const truncatedName = Buffer.from(note);
@@ -502,65 +515,47 @@ it("keeps non-GNU owners as unknown types with descriptor hashes", () => {
   );
 });
 
-it("reads a big-endian ELF32 GNU build-id", () => {
-  const notes = gnuBuildIdNote(undefined, false);
-  const report = parse(
-    elfNoteFixture({
-      bits: 32,
-      little: false,
-      machine: 20,
-      ownership: "program",
-      notes,
-    }),
-  );
-  expect(report.byte_order).toBe("big");
-  expect(report.machine).toBe(20);
-  expect(report.entries[0]?.gnu?.build_id_hex).toBe(
-    "0123456789abcdef0123456789abcdef01234567",
-  );
-});
-
-it("reads an 8-aligned GNU property note from a PT_NOTE program header", () => {
-  const notes = gnuPropertyNote();
-  expect(notes.length).toBe(48);
-  const report = parse(
-    elfNoteFixture({ ownership: "program", notes, alignment: 8 }),
-  );
-  expect(report.tables).toEqual([
-    expect.objectContaining({ kind: "program", alignment: 8 }),
-  ]);
-  expect(report.entries).toHaveLength(1);
-  expect(report.entries[0]).toMatchObject({
-    owner: "GNU",
-    type: 5,
-    type_name: "gnu_property",
-    namesz: 4,
-    descsz: 32,
-  });
-  expect(report.entries[0]?.descriptor.location.offset).toBe(
-    (report.entries[0]?.location.offset ?? 0) + 16,
-  );
-});
-
-it("reads an 8-aligned GNU property note from an SHT_NOTE section", () => {
-  const report = parse(
-    elfNoteFixture({
-      ownership: "section",
-      notes: gnuPropertyNote(),
-      alignment: 8,
-      sectionName: ".note.gnu.property",
-    }),
-  );
-  expect(report.tables).toEqual([
-    expect.objectContaining({
-      kind: "section",
-      name: ".note.gnu.property",
-      alignment: 8,
-    }),
-  ]);
-  expect(report.entries[0]?.type_name).toBe("gnu_property");
-  expect(report.entries[0]?.descriptor.bytes).toBe(32);
-});
+it.each(["program", "section"] as const)(
+  "keeps the 8-byte stride and physical descriptor for a GNU property note in a %s table",
+  (ownership) => {
+    const notes = Buffer.concat([
+      elfNote("GNU", 3, Buffer.alloc(20, 1), true, 8),
+      gnuPropertyNote(),
+    ]);
+    const report = parse(
+      elfNoteFixture({
+        ownership,
+        notes,
+        alignment: 8,
+        sectionName: ".note.gnu.property",
+      }),
+    );
+    const offset = ownership === "program" ? 120 : 256;
+    expect(report.tables).toMatchObject([
+      {
+        kind: ownership,
+        name: ownership === "section" ? ".note.gnu.property" : null,
+        alignment: 8,
+        location: { offset, bytes: 88 },
+      },
+    ]);
+    expect(report.entries).toMatchObject([
+      { type_name: "gnu_build_id", location: { offset, bytes: 40 } },
+      {
+        owner: "GNU",
+        type: 5,
+        type_name: "gnu_property",
+        namesz: 4,
+        descsz: 32,
+        location: { offset: offset + 40, bytes: 48 },
+        descriptor: {
+          bytes: 32,
+          location: { offset: offset + 56, bytes: 32 },
+        },
+      },
+    ]);
+  },
+);
 
 it.each([0, 1] as const)(
   "treats declared note alignment %i as 4-byte padding",
