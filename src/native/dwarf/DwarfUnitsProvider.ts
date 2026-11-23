@@ -4,9 +4,8 @@ import {
   projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
   stableArtifactInputFailure,
-  type StableArtifactSnapshot,
   ArtifactReaderFailure,
-  readStableArtifact,
+  withStableArtifactHandle,
   yieldArtifactRead,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -37,16 +36,17 @@ import {
   binaryResourceCeiling,
   BinaryResourceFailure,
 } from "../../domain/binaryContainer.js";
-import { requireSelectedNativeImage } from "../../domain/apple/machoSliceSelection.js";
+import { requireSelectedNativeImageFromReader } from "../../domain/apple/machoSliceSelection.js";
 import { parseDwarfCompileUnits } from "./DwarfUnitParser.js";
 import {
   DwarfSectionAllowanceFailure,
-  locateDwarfSections,
+  locateDwarfSectionsFromHandle,
   type DebugInfoAvailability,
   type LocatedDwarfImage,
 } from "./DwarfSections.js";
 
 const OPERATION = "inspect_dwarf_units";
+const HEADER_PREFIX_BYTES = 4096;
 
 const CHILD_DIES =
   "Child DIEs, types, line tables, and location expressions are not read.";
@@ -82,37 +82,50 @@ export class DwarfUnitsProvider {
   ) {
     // Kept outside the read so a later decoding failure still reports the
     // file identity the read established.
-    let snapshot: StableArtifactSnapshot | undefined;
+    let snapshot:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
       return await this.#resources.run(async () => {
-        snapshot = await readStableArtifact(
+        const report = await withStableArtifactHandle(
           input.path,
           input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        const selected = requireSelectedNativeImage(
-          OPERATION,
-          input.path,
-          snapshot.bytes,
-          input.architecture,
-        );
-        const located = await locateDwarfSections(
-          selected.bytes,
-          undefined,
-          async () => {
-            await yieldArtifactRead(options?.signal);
+          {
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
+            onIdentity: (identity) => {
+              snapshot = identity;
+            },
           },
-        );
-        const report = dwarfUnitsSchema.parse(
-          buildReport(
-            input,
-            snapshot,
-            selected.fileOffset,
-            selected.selection,
-            located,
-          ),
+          async (handle) => {
+            const selected = await requireSelectedNativeImageFromReader(
+              OPERATION,
+              input.path,
+              {
+                size: handle.size,
+                prefix: handle.prefix,
+                readRange: (offset, length) => handle.readRange(offset, length),
+              },
+              input.architecture,
+            );
+            const located = await locateDwarfSectionsFromHandle(
+              selected.source,
+              undefined,
+              async () => {
+                await yieldArtifactRead(options?.signal);
+              },
+            );
+            return dwarfUnitsSchema.parse(
+              buildReport(
+                input,
+                { sha256: handle.sha256, bytes: handle.size },
+                selected.fileOffset,
+                selected.selection,
+                located,
+              ),
+            );
+          },
         );
         return ok(report);
       });
@@ -124,7 +137,7 @@ export class DwarfUnitsProvider {
 
 const buildReport = (
   input: InspectDwarfUnitsInput,
-  snapshot: { readonly sha256: string; readonly bytes: Buffer },
+  snapshot: { readonly sha256: string; readonly bytes: number },
   fileOffset: number,
   selection: DwarfUnitsReport["selected_slice"] | null,
   located: LocatedDwarfImage,
@@ -167,7 +180,7 @@ const buildReport = (
     artifact: {
       path: input.path,
       sha256: snapshot.sha256,
-      bytes: snapshot.bytes.length,
+      bytes: snapshot.bytes,
     },
     format: located.format,
     bits: located.bits,
@@ -336,7 +349,7 @@ const dwarfUnitsFailurePrimary = (
 const dwarfUnitsFailure = (
   cause: unknown,
   input: InspectDwarfUnitsInput,
-  snapshot: StableArtifactSnapshot | undefined,
+  snapshot: { readonly sha256: string; readonly bytes: number } | undefined,
 ) => {
   const primary = dwarfUnitsFailurePrimary(
     artifactFilePrimaryFacts(cause),
