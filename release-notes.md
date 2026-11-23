@@ -470,6 +470,7 @@
 * **mcp:** filter prompt completions before sorting ([#13251](https://github.com/morluto/rea/issues/13251)) ([0299413](https://github.com/morluto/rea/commit/0299413e86660456f5abd4f0c46921a16cbb1102))
 * **mcp:** index tool contracts, skip unadvertised projection, parallelize status probes, and stream tool result sizing ([#13263](https://github.com/morluto/rea/issues/13263)) ([7a2e8da](https://github.com/morluto/rea/commit/7a2e8da4959d73f88365aec6de48859dd6a6346e))
 * **mcp:** reduce deferred catalog startup data ([#13039](https://github.com/morluto/rea/issues/13039)) ([8f2b865](https://github.com/morluto/rea/commit/8f2b865c0645aab11a1d5d4c027d34089a925bf2))
+* **mcp:** serve compact output schemas from the build-recorded catalog ([#14121](https://github.com/morluto/rea/issues/14121)) ([54d62c7](https://github.com/morluto/rea/commit/54d62c75da2f2bd9267415899b4a0548c7900d35))
 * **model/uefi/rizin:** cache GGUF/UEFI BinaryReaders and share O(1) FifoQueue ([#13745](https://github.com/morluto/rea/issues/13745)) ([91b45c0](https://github.com/morluto/rea/commit/91b45c0aee520ff83355d8d11ff7fb2f49decda4))
 * **model:** reduce GGUF header parsing overhead ([#13634](https://github.com/morluto/rea/issues/13634)) ([33ca1be](https://github.com/morluto/rea/commit/33ca1be61cdb79e9bee579c9de1e050a8025e923))
 * **native-aot:** reuse PeImage BinaryReader and hoist hot-path math ([#13685](https://github.com/morluto/rea/issues/13685)) ([36b8675](https://github.com/morluto/rea/commit/36b8675833b40a38955b910a6836499d357a7747))
