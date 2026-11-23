@@ -330,7 +330,11 @@ const nameOf = (
   // A lone UTF-16 surrogate has no valid UTF-8 encoding, so a filesystem
   // handed this name would refuse or silently replace it. Report it as a
   // name that cannot be a path component while keeping the declared text.
-  if (/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:[^\uD800-\uDBFF]|^)[\uDC00-\uDFFF]/.test(decoded))
+  if (
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:[^\uD800-\uDBFF]|^)[\uDC00-\uDFFF]/.test(
+      decoded,
+    )
+  )
     return {
       name: decoded,
       problem: "declares a name with an unpaired UTF-16 surrogate",
@@ -934,7 +938,8 @@ export const parseCompoundFile = (
     // be broken this way: an ordinary storage's size and start fields are
     // stale, so counting it would inflate the broken-chain total.
     const bearing = allocationBearing(entry, index);
-    const markerStartWithBytes = bearing && entry.streamSize > 0 && isMarker(entry.startingSector);
+    const markerStartWithBytes =
+      bearing && entry.streamSize > 0 && isMarker(entry.startingSector);
     const empty = entry.streamSize === 0;
     const storage: CompoundFileDirectoryEntry["storage"] =
       !bearing || !cutoffValid
