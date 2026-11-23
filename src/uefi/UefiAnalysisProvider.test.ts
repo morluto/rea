@@ -7142,7 +7142,7 @@ it("rejects corrupted or truncated scratch inputs and verifies digest before acc
         );
         await writeFile(
           join(outDirArg, "mod_1.efi.c.outcome.json"),
-          JSON.stringify({ status: "ok", decompiled_functions: 1 }),
+          JSON.stringify({ status: "success", decompiled_functions: 1 }),
         );
         await writeFile(
           join(outDirArg, "mod_2.efi.c"),
@@ -7150,7 +7150,7 @@ it("rejects corrupted or truncated scratch inputs and verifies digest before acc
         );
         await writeFile(
           join(outDirArg, "mod_2.efi.c.outcome.json"),
-          JSON.stringify({ status: "ok", decompiled_functions: 1 }),
+          JSON.stringify({ status: "success", decompiled_functions: 1 }),
         );
       }
       return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
