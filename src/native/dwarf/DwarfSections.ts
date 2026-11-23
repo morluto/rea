@@ -144,6 +144,37 @@ const readSourceSlice = (
   return source.readRange(offset, clamped);
 };
 
+// A positional source can allocate per read. Keep total retained raw bytes
+// within the original file extent and reuse previously retained backings.
+const storedDwarfSections = (source: NativeByteSource) => {
+  const admitted: { readonly offset: number; readonly bytes: Buffer }[] = [];
+  let retained = 0;
+  return async (offset: number, size: number): Promise<Buffer> => {
+    const cached = admitted.find(
+      ({ offset: start, bytes }) =>
+        offset >= start && offset + size <= start + bytes.length,
+    );
+    if (cached !== undefined) {
+      const start = offset - cached.offset;
+      return cached.bytes.subarray(start, start + size);
+    }
+    if (offset + size <= (source.prefix?.length ?? 0))
+      return readSourceSlice(source, offset, size);
+    if (size > source.size - retained)
+      throw new BinaryResourceFailure(
+        "structure",
+        source.size,
+        "Retained file-backed DWARF sections would exceed the admitted image size.",
+        "structure",
+        "bytes",
+      );
+    const bytes = await readSourceSlice(source, offset, size);
+    retained += bytes.length;
+    admitted.push({ offset, bytes });
+    return bytes;
+  };
+};
+
 const bufferByteSource = (bytes: Buffer): NativeByteSource => ({
   size: bytes.length,
   prefix: bytes,
@@ -487,6 +518,7 @@ const locateElf = async (
   const candidates: Candidate[] = [];
   const relocations = new Set<string>();
   const satisfied = new Set<DwarfSectionRole>();
+  const readStored = storedDwarfSections(source);
   for (const section of directory.sections) {
     if (section.name_state !== "known" || section.name === null)
       throw new BinaryFormatFailure(
@@ -533,15 +565,16 @@ const locateElf = async (
     }
     const offset = asNumber(section.offset);
     const size = asNumber(section.size);
-    const stored = await readSourceSlice(source, offset, size);
     const gnuZlib = name.startsWith(".zdebug_");
     const compressed = (section.flags & SHF_COMPRESSED) !== 0n;
     if (!compressed && !gnuZlib) {
+      const stored = await readStored(offset, size);
       candidates.push(
         settle(storedCandidate(name, role, offset, size, stored), satisfied),
       );
       continue;
     }
+    const stored = await readSourceSlice(source, offset, size);
     const decoded = compressed
       ? pause === undefined
         ? decodeElfCompressedSection(
@@ -599,16 +632,18 @@ const adoptStored = async (
   offset: number,
   size: number,
   source: NativeByteSource,
+  readStored: ReturnType<typeof storedDwarfSections>,
   budget: InflateBudget,
   satisfied: Set<DwarfSectionRole>,
   subject: string,
 ): Promise<Candidate> => {
   if (satisfied.has(role))
     return unread(name, role, "duplicate", DUPLICATE_SECTION);
-  const stored = await readSourceSlice(source, offset, size);
   if (!gnuZdebugName(name)) {
+    const stored = await readStored(offset, size);
     return settle(storedCandidate(name, role, offset, size, stored), satisfied);
   }
+  const stored = await readSourceSlice(source, offset, size);
   const candidate = admitDecoded(
     name,
     role,
@@ -629,6 +664,7 @@ const locatePe = async (
   const names = await peSectionNames(source, directory);
   const candidates: Candidate[] = [];
   const satisfied = new Set<DwarfSectionRole>();
+  const readStored = storedDwarfSections(source);
   for (const section of directory.sections) {
     const name = names.get(section.index);
     if (name === undefined) continue;
@@ -647,6 +683,7 @@ const locatePe = async (
         offset,
         size,
         source,
+        readStored,
         budget,
         satisfied,
         `PE ${name} section`,
@@ -789,6 +826,7 @@ const locateMacho = async (
   const image = await readMachoImageFromReader(source);
   const candidates: Candidate[] = [];
   const satisfied = new Set<DwarfSectionRole>();
+  const readStored = storedDwarfSections(source);
   for (const section of image.sections) {
     if (section.format !== "macho") continue;
     if (!section.name.startsWith(MACHO_DWARF_SEGMENT)) continue;
@@ -814,6 +852,7 @@ const locateMacho = async (
         offset,
         size,
         source,
+        readStored,
         budget,
         satisfied,
         `Mach-O ${name} section`,

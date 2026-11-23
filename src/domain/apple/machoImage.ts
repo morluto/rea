@@ -13,6 +13,7 @@ import {
 } from "./machoSegmentHeader.js";
 import {
   declaredFileRange,
+  requireBinaryTableBudget,
   BinaryFormatFailure,
   BinaryReader,
   type BinaryContainer,
@@ -61,6 +62,7 @@ export const readMachoImageFromReader = async (
         offset: table.headerSize,
       },
     );
+  requireBinaryTableBudget(BigInt(table.commandBytes), "Mach-O load commands");
   const tableBytes = await readSlice(0, table.headerSize + table.commandBytes);
   return readMachoImageCore(tableBytes, source.size);
 };
