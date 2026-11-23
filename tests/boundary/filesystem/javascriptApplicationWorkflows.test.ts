@@ -571,7 +571,6 @@ describe("JavaScript application workflow error diagnostics", () => {
       "rea-application-workflow-diagnostics-",
     );
     temporary.push(root);
-    await writeFile(join(root, "package.json"), "{}");
     const evidence = await analyzeFixture(root);
     const subject = evidence.subject;
     if (subject.identity.kind !== "file")
@@ -605,7 +604,6 @@ describe("JavaScript application workflow error diagnostics", () => {
       "rea-application-workflow-schema-diagnostics-",
     );
     temporary.push(root);
-    await writeFile(join(root, "package.json"), "{}");
     const evidence = await analyzeFixture(root);
     const subject = evidence.subject;
     const result = javascriptApplicationAnalysisResultSchema.parse(
@@ -666,7 +664,6 @@ describe("JavaScript application workflow error diagnostics", () => {
       "rea-runtime-workflow-diagnostics-",
     );
     temporary.push(root);
-    await writeFile(join(root, "package.json"), "{}");
     const evidence = await analyzeFixture(root);
 
     const result = reconcileJavaScriptRuntimeEvidence({

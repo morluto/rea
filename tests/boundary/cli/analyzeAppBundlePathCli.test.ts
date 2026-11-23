@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect } from "vitest";
 
-import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
+import { pe, thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -82,14 +82,9 @@ cliTest(
     const root = await createTestTempDirectory("rea-analyze-native-dir-");
     const build = join(root, "build");
     await mkdir(join(build, "CMakeFiles"), { recursive: true });
-    // Minimal PE-shaped headers; no JavaScript, HTML, package.json or ASAR.
-    const pe = Buffer.alloc(128);
-    pe.write("MZ", 0, "latin1");
-    pe.writeUInt32LE(64, 0x3c);
-    pe.write("PE\0\0", 64, "latin1");
-    pe.writeUInt16LE(0x8664, 68);
-    await writeFile(join(build, "tool.exe"), pe);
-    await writeFile(join(build, "runtime.dll"), pe);
+    // Native images only; no JavaScript, HTML, package.json or ASAR.
+    await writeFile(join(build, "tool.exe"), pe(0x8664));
+    await writeFile(join(build, "runtime.dll"), pe(0x8664, 64, 0x2002));
     await writeFile(join(build, "ctest.json"), '{"tests":[]}');
     await writeFile(join(build, "CMakeFiles", "cmake.check_cache"), "x\n");
     const result = await cli.run({
@@ -108,8 +103,32 @@ cliTest(
           "inspect_artifact",
           "open_binary",
         ],
+        diagnostics: {
+          inventoried_entries: 4,
+          entries_by_format: { file: 2, pe: 2 },
+          json_files: 1,
+        },
       },
     });
+  },
+);
+
+cliTest(
+  "analyzes an empty directory with an explicit no-input limitation",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-analyze-empty-dir-");
+    const empty = join(root, "empty");
+    await mkdir(empty);
+    const result = await cli.run({
+      arguments: ["analyze", empty, "--json"],
+      cwd: root,
+      environment,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.json).toMatchObject({
+      operation: "analyze_javascript_application",
+    });
+    expect(result.stdout).toContain("No JavaScript inputs were found");
   },
 );
 

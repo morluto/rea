@@ -785,7 +785,6 @@ it("resolves parent segments against a nested source map's directory", async () 
 
 it("rejects static application Evidence whose subject path disagrees with its result", async () => {
   const root = await createTestTempDirectory("rea-application-subject-path-");
-  await writeFile(join(root, "package.json"), "{}");
   const analyzed = await analyzeJavaScriptApplication({ input_path: root });
   if (!analyzed.ok) throw analyzed.error;
   const subject = analyzed.value.subject;
