@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { lstat, readFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
@@ -23,6 +22,8 @@ import {
 } from "../../domain/desktop/desktopState.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
+import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
+import { readRegularFile } from "../../process/RegularFileRead.js";
 import type { SeedVersion } from "./DesktopExportFiles.js";
 import {
   planOutputTree,
@@ -70,23 +71,23 @@ export interface WithheldPlan {
   readonly consent: string | undefined;
 }
 
-/** Largest consent record file admitted from a caller-supplied path. */
-const MAX_CONSENT_BYTES = 1024 * 1024;
-
-/** The consent file's records as the bundle ships them, refused unless it parses; undefined when none was given. */
+/** Read a consent record from one checked descriptor; undefined when omitted. */
 const readConsent = async (path: string | undefined) => {
   if (path === undefined) return undefined;
-  let bytes: Buffer | undefined;
+  let bytes: Buffer;
   try {
-    const info = await lstat(path);
-    if (info.isFile() && info.size <= MAX_CONSENT_BYTES)
-      bytes = await readFile(path);
-  } catch {
-    bytes = undefined;
+    bytes = await readRegularFile(path, { symlinks: "reject" });
+  } catch (cause: unknown) {
+    if (cause instanceof RegularFileCleanupFailure) throw cause;
+    throw refused(
+      "consent",
+      `The consent file ${path} could not be read as a stable regular file.`,
+      "Pass the original consent record as a readable regular file and keep it unchanged while exporting.",
+    );
   }
-  const parsed = bytes === undefined ? undefined : safeParseUtf8Json(bytes);
+  const parsed = safeParseUtf8Json(bytes);
   const consent =
-    parsed?.ok === true ? consentFileSchema.safeParse(parsed.value) : undefined;
+    parsed.ok ? consentFileSchema.safeParse(parsed.value) : undefined;
   if (consent?.success !== true)
     throw refused(
       "consent",

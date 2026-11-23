@@ -574,11 +574,8 @@ const extractStream = (
   const writable = new WritableStream<Uint8Array>({
     write: async (chunk) => {
       assertArtifactReadActive(signal);
-      if (
-        !output.write(
-          Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength),
-        )
-      )
+      // The stream owns this copy for as long as downstream retains it.
+      if (!output.write(Buffer.from(chunk)))
         await once(output, "drain", { signal: controller.signal });
     },
     // Sink closure can precede getData's final validation or rejection.
