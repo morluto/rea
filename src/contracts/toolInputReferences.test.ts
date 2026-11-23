@@ -1,6 +1,6 @@
 import { Ajv, type Options } from "ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { applicationFeatureSeedSchema } from "../domain/javascript/javascriptFeatureTraceSchemas.js";
@@ -55,10 +55,22 @@ it.each(drafts)(
     });
     const options = { target, libraryOptions: { reused: "ref" as const } };
     for (const sharedFirst of [false, true]) {
-      const wrapped = transformAdvertisedInputJsonSchema(canonical, transform);
+      const seed = transform(
+        canonical["~standard"].jsonSchema.input({ target }),
+      );
+      const resolveCached = vi.fn(() => seed);
+      const wrapped = transformAdvertisedInputJsonSchema(
+        canonical,
+        transform,
+        resolveCached,
+      );
       const project = wrapped["~standard"].jsonSchema.input;
-      if (sharedFirst) project(options);
+      if (sharedFirst) {
+        project(options);
+        expect(resolveCached).not.toHaveBeenCalled();
+      }
       const advertised = project({ target });
+      expect(advertised).toBe(seed);
       expect(JSON.stringify(advertised)).not.toContain('"$ref":');
       expect(advertised).toEqual(
         transform(canonical["~standard"].jsonSchema.input({ target })),
@@ -69,6 +81,7 @@ it.each(drafts)(
         transform(canonical["~standard"].jsonSchema.input(options)),
       );
       expect(project({ target })).toBe(advertised);
+      expect(resolveCached).toHaveBeenCalledExactlyOnceWith(target);
     }
   },
 );
@@ -719,6 +732,43 @@ it.each(["$ref", "$dynamicRef"])(
 );
 
 describe("root union default presentation", () => {
+  it("preserves a required prototype-named field in a group-only object", () => {
+    const canonical = {
+      anyOf: [
+        {
+          type: "object",
+          properties: { text: { type: "string" } },
+          required: ["text"],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: {
+            config: {
+              type: "object",
+              properties: { ["__proto__"]: { type: "string", default: "" } },
+              required: ["__proto__"],
+              additionalProperties: false,
+            },
+          },
+          required: ["config"],
+          additionalProperties: false,
+        },
+      ],
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+
+    expect(advertised).not.toHaveProperty("anyOf");
+    const config = (advertised.properties as Record<string, unknown>)["config"];
+    // Client-facing JSON must carry the field as an own property.
+    expect(JSON.parse(JSON.stringify(config))).toEqual({
+      type: "object",
+      properties: { ["__proto__"]: { type: "string" } },
+      required: ["__proto__"],
+      additionalProperties: false,
+    });
+  });
+
   it.each(drafts)(
     "keeps shared defaults while omitting conflicting and group-only defaults in %s",
     (target) => {

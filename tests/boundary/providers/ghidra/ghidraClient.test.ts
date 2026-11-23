@@ -27,7 +27,7 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import pino from "pino";
 import { ConfigurationError } from "../../../../src/domain/configurationErrors.js";
 import { withVerifierCleanup } from "../../../../scripts/lib/verifier-cleanup.mjs";
-import { phaseGate } from "../../../support/lifecycleHarness.js";
+import { phaseArrival, phaseGate } from "../../../support/lifecycleHarness.js";
 import type { Logger } from "pino";
 import type { ProgressUpdate } from "../../../../src/ports/ProgressReporter.js";
 
@@ -475,6 +475,31 @@ it("hashes snapshot section ranges in the same pass as the whole-file digest", a
         digest(bytes.subarray(4)),
         digest(Buffer.alloc(0)),
       ],
+    },
+  });
+});
+
+it("reads bounded positional ranges of the snapshot without capturing the file", async () => {
+  const client = clientFor(new FixtureLauncher());
+  const started = await client.start();
+  if (!started.ok) throw started.error;
+  onTestFinished(async () => {
+    await client.close();
+  });
+  const bytes = readFileSync(fixturePath);
+  const result = await client.readTargetSnapshotRanges(async (range, size) => ({
+    size,
+    head: Buffer.from(await range(0, 4)),
+    middle: Buffer.from(await range(2, 3)),
+    pastEnd: Buffer.from(await range(bytes.length - 2, 16)),
+  }));
+  expect(result).toEqual({
+    ok: true,
+    value: {
+      size: bytes.length,
+      head: bytes.subarray(0, 4),
+      middle: bytes.subarray(2, 5),
+      pastEnd: bytes.subarray(bytes.length - 2),
     },
   });
 });
@@ -2440,14 +2465,29 @@ it("preserves the observed protocol failure when cancellation interrupts request
 it.each([null, "caller stopped", new Error("caller stopped")])(
   "retains the exact reason during startup endpoint polling %j",
   async (reason) => {
-    const observed = vi.spyOn(GhidraTransport, "observeGhidraEndpoint");
-    onTestFinished(() => observed.mockRestore());
+    const missingEndpoint = phaseArrival();
+    const observe = GhidraTransport.observeGhidraEndpoint;
+    const observed = vi
+      .spyOn(GhidraTransport, "observeGhidraEndpoint")
+      .mockImplementation(async (endpoint, options) => {
+        const result = await observe(endpoint, options);
+        if (result.ok && result.value === null) missingEndpoint.arrive();
+        return result;
+      });
     const launcher = new FixtureLauncher("silent");
-    const client = clientFor(launcher, { startupTimeoutMs: 10000 });
+    const client = clientFor(launcher, { startupTimeoutMs: 10_000 });
     const controller = new AbortController();
     const pending = client.start(controller.signal);
-    await waitFor(() => expect(observed).toHaveBeenCalled());
-    controller.abort(reason);
+    try {
+      await missingEndpoint.reached(pending, "missing startup endpoint");
+    } finally {
+      controller.abort(reason);
+      try {
+        await pending;
+      } finally {
+        observed.mockRestore();
+      }
+    }
     const result = await pending;
     if (result.ok) throw new Error("Expected startup cancellation");
     expect(result.error.kind).toBe("cancelled");
@@ -2520,119 +2560,106 @@ it("redacts the transport credential when refreshing startup diagnostics", async
   expect(JSON.stringify(result.error.diagnostics)).not.toContain(token);
 });
 
-it("preserves a failed launcher result when the final caller aborts before consumption", async () => {
-  const controller = new AbortController();
-  const physical = new GhidraLaunchError("controlled earlier launch failure", {
-    cause: new Error("physical failure"),
-  });
-  const client = clientFor({
-    launch: async (_session, options) => {
-      controller.abort(null);
-      if (options?.signal?.aborted !== true)
-        await new Promise<void>((resolve) =>
-          options?.signal?.addEventListener("abort", () => resolve(), {
-            once: true,
-          }),
-        );
-      return err(physical);
-    },
-  });
-  const result = await client.start(controller.signal);
-  expect(result).toMatchObject({
-    ok: false,
-    error: { kind: "start", cause: physical },
-  });
-});
-
-it.each([null, "helper owner stopped"])(
-  "consumes a producer cancellation without an aborted client deadline %j",
-  async (reason) => {
-    const cancellation = new AnalysisCancelledError("open_binary", {
-      cause: reason,
-    });
-    const client = clientFor({
-      launch: async () =>
-        err(
-          new GhidraLaunchError("producer helper cancelled", {
-            primaryFailure: cancellation,
-          }),
-        ),
-    });
-    const result = await client.start();
-    expect(result).toMatchObject({ ok: false, error: { kind: "cancelled" } });
-    if (result.ok) throw new Error("Expected cancellation");
-    expect(result.error.cancellation?.reason).toBe(reason);
-  },
-);
-
 it.each([
-  { interruption: "timeout", kind: "timeout" },
-  { interruption: "owner close", kind: "process" },
+  { interruption: "caller abort", producer: "physical failure", kind: "start" },
+  { interruption: "deadline", producer: "physical failure", kind: "start" },
+  {
+    interruption: "owner close",
+    producer: "helper cancellation",
+    kind: "process",
+  },
+  {
+    interruption: "deadline",
+    producer: "helper cancellation",
+    kind: "timeout",
+  },
+  {
+    interruption: "no client interruption",
+    producer: "helper cancellation",
+    kind: "cancelled",
+    reason: null,
+  },
+  {
+    interruption: "no client interruption",
+    producer: "helper cancellation",
+    kind: "cancelled",
+    reason: "helper owner stopped",
+  },
 ] as const)(
-  "reports the aborted startup deadline's $interruption over a producer cancellation with its own reason",
-  async ({ interruption, kind }) => {
+  "reports $kind for $producer returned after $interruption",
+  async (row) => {
+    const { interruption, producer, kind } = row;
     const controller = new AbortController();
-    const cancellation = new AnalysisCancelledError("open_binary", {
-      cause: "helper owner stopped",
-    });
+    const launching = phaseArrival<AbortSignal>();
+    const timeoutMs = interruption === "deadline" ? 50 : 10_000;
+    const producerReason =
+      "reason" in row ? row.reason : "helper owner stopped";
+    const failure =
+      producer === "physical failure"
+        ? new GhidraLaunchError("controlled earlier launch failure", {
+            cause: new Error("physical failure"),
+          })
+        : new GhidraLaunchError("producer helper cancelled", {
+            primaryFailure: new AnalysisCancelledError("open_binary", {
+              cause: producerReason,
+            }),
+          });
     const client = clientFor(
       {
         launch: async (_session, options) => {
-          if (options?.signal === undefined)
+          const signal = options?.signal;
+          if (signal === undefined)
             throw new Error("Expected owned startup signal");
-          if (interruption === "owner close")
-            controller.abort(OwnerCancellation.startupOwnerClosed);
-          if (!options.signal.aborted)
+          launching.arrive(signal);
+          if (interruption !== "no client interruption" && !signal.aborted)
             await new Promise<void>((resolve) =>
-              options.signal?.addEventListener("abort", () => resolve(), {
-                once: true,
-              }),
+              signal.addEventListener("abort", () => resolve(), { once: true }),
             );
-          return err(
-            new GhidraLaunchError("producer helper cancelled", {
-              primaryFailure: cancellation,
-            }),
-          );
+          return err(failure);
         },
       },
-      { startupTimeoutMs: interruption === "timeout" ? 50 : 60_000 },
+      { startupTimeoutMs: timeoutMs },
     );
-    const result = await client.start(controller.signal);
-    expect(result).toMatchObject({ ok: false, error: { kind } });
-    if (result.ok) throw new Error("Expected startup failure");
-    if (kind === "process")
-      expect(result.error.message).toContain(
-        "Ghidra session closed during startup",
+    if (interruption === "deadline")
+      vi.useFakeTimers({ toFake: ["performance"] });
+    const pending = client.start(controller.signal);
+    try {
+      const signal = await launching.reached(
+        pending,
+        "launcher before finalization",
       );
-    expect(result.error.cancellation?.reason).not.toBe("helper owner stopped");
+      expect(signal.aborted).toBe(false);
+      if (interruption === "deadline") vi.advanceTimersByTime(timeoutMs);
+      else if (interruption !== "no client interruption")
+        controller.abort(
+          interruption === "owner close"
+            ? OwnerCancellation.startupOwnerClosed
+            : null,
+        );
+
+      const result = await pending;
+      if (result.ok) throw new Error("Expected startup failure");
+      expect(result.error.kind).toBe(kind);
+      if (kind === "start") expect(result.error.cause).toBe(failure);
+      if (kind === "process")
+        expect(result.error.message).toContain(
+          "Ghidra session closed during startup",
+        );
+      if (kind === "timeout") expect(result.error.timeoutMs).toBe(timeoutMs);
+      if (kind === "cancelled")
+        expect(result.error.cancellation?.reason).toBe(producerReason);
+      else if (kind !== "start")
+        expect(result.error.cancellation).toBeUndefined();
+    } finally {
+      controller.abort();
+      try {
+        await pending;
+      } finally {
+        if (interruption === "deadline") vi.useRealTimers();
+      }
+    }
   },
 );
-
-it("preserves a producer failure while its result waits for the startup deadline", async () => {
-  const physical = new GhidraLaunchError(
-    "controlled physical failure before finalization",
-  );
-  const client = clientFor(
-    {
-      launch: async (_session, options) => {
-        if (options?.signal === undefined)
-          throw new Error("Expected owned startup signal");
-        if (!options.signal.aborted)
-          await new Promise<void>((resolve) =>
-            options.signal?.addEventListener("abort", () => resolve(), {
-              once: true,
-            }),
-          );
-        return err(physical);
-      },
-    },
-    { startupTimeoutMs: 500 },
-  );
-  expect(await client.start()).toMatchObject({
-    ok: false,
-    error: { kind: "start", cause: physical },
-  });
-});
 
 it.each(["search_procedures", "search_strings"] as const)(
   "%s retains native candidate rows for normal and ready-only dispatch",

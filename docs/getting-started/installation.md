@@ -399,15 +399,15 @@ A scoped report has `scope.mode: "explicit"`. Its `scope_checks` determine
 `environment_healthy` summarizes the full audit. `--target` adds a target check,
 but the report remains audit-wide unless a scope option is also supplied.
 
-With one selected client, Ghidra, IDA, JADX and Kuna provider checks use the
-client's recorded environment over the terminal it inherits. If that registration
-cannot be read or a setting a provider needs cannot be resolved, its available
-value is `null` and its check is `unknown`; its configured value is also `null`
-when the configuration setting itself is unknown. Doctor does not infer
-readiness from the terminal. A missing registration still uses terminal settings
-for setup. Other checks, including Hopper, use the terminal running doctor. A
-client-started server may receive a different environment, and doctor cannot
-observe it. When an available
+With one selected client, the Hopper, ilspycmd, Ghidra, IDA, JADX and Kuna
+checks use its recorded environment over the terminal it inherits. If Doctor cannot read the registration or resolve
+a setting a provider needs, the affected check reports `unknown`. For Ghidra,
+IDA, JADX and Kuna, the provider's available value is also `null`; its configured
+value is `null` when the configuration setting itself is unknown. A missing
+registration still uses terminal settings for setup. Doctor validates
+`REA_HOPPER_STARTUP_TIMEOUT_MS` independently of launcher discovery and reports
+an unresolved value in the selected registration as `unknown`. A client-started
+server may receive a different environment, which doctor cannot observe. When an available
 provider relies on a setting that a registration's file does not record, or
 records with other text, doctor adds a non-blocking
 `registration_environment:<client>` check with `classification: "unknown"`. The

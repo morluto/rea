@@ -528,9 +528,11 @@ export const draftTaskFiles = (
   return withinDraftBudget(
     changed.map(({ home, path, baseline, final, change }) => {
       const drafted = path.role === role && !isLeftOut(home);
-      const draft: FileDraft = drafted
-        ? suggestedChecks(home, baseline, final, role === "document")
-        : { suggested: [], ...NO_VALUES };
+      const shape = changeShape(change, final);
+      const draft: FileDraft =
+        drafted && shape.kind !== "unreadable" && shape.kind !== "format"
+          ? suggestedChecks(home, baseline, final, role === "document")
+          : { suggested: [], ...NO_VALUES };
       return {
         file: home,
         role: path.role,
@@ -542,10 +544,7 @@ export const draftTaskFiles = (
         values_cut: draft.valuesCut,
         guards: draft.guards,
         notes: drafted
-          ? [
-              ...fileNotes(home, changeShape(change, final), draft.facts),
-              ...(draft.notes ?? []),
-            ]
+          ? [...fileNotes(home, shape, draft.facts), ...(draft.notes ?? [])]
           : [],
       };
     }),

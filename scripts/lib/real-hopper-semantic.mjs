@@ -60,7 +60,7 @@ export function requireBridgeProgress(updates) {
     );
 }
 
-/** Require one sanitized invalid-request diagnostic from the real bridge. */
+/** Require one sanitized selector-miss diagnostic from the real bridge. */
 export function requireBridgeDiagnostic(chunks) {
   const diagnostics = chunks
     .join("")
@@ -71,7 +71,7 @@ export function requireBridgeDiagnostic(chunks) {
     !diagnostics.some(
       (diagnostic) =>
         diagnostic.type === "bridge-diagnostic" &&
-        diagnostic.category === "invalid_request" &&
+        diagnostic.category === "selector_not_found" &&
         diagnostic.message.includes(
           "Unknown Hopper address or name: __rea_missing_procedure__",
         ),

@@ -8,10 +8,8 @@ import {
 } from "./ClientRegistration.js";
 import { clientRegistrationEnvironment } from "./ClientRegistrationEnvironment.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
-import {
-  parseClientConfiguration,
-  clientConfigurationRecordSchema,
-} from "./ClientConfigurationDocument.js";
+import { parseClientConfiguration } from "./ClientConfigurationDocument.js";
+import { clientConfigurationRecordSchema } from "./ClientConfigurationValues.js";
 import type { SetupClient } from "./SupportedClients.js";
 import { supportedClientRegistrationProfile } from "../../tests/fixtures/clientRegistrationProfile.js";
 import { mcpClientRegistrationProfile } from "./McpRegistrationCatalog.js";

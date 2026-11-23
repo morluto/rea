@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 
-import { browserNetworkBodySchema } from "./browserNetworkEvidence.js";
+import {
+  browserNetworkBodySchema,
+  browserNetworkHeadersSchema,
+} from "./browserNetworkEvidence.js";
 
 const bytes = Buffer.from([0xff, 0, 0xfe]);
 const retained = {
@@ -64,4 +67,38 @@ it("rejects padding at a nonfinal base64 window boundary", () => {
       sha256: createHash("sha256").update(first).update(last).digest("hex"),
     }).success,
   ).toBe(false);
+});
+
+it("dispatches browser network body unavailable reasons and header states", () => {
+  expect(
+    browserNetworkBodySchema.safeParse({ state: "not_requested" }).success,
+  ).toBe(true);
+  expect(
+    browserNetworkBodySchema.safeParse({
+      state: "unavailable",
+      reason: "body-size-limit",
+      message: "too large",
+      limit_bytes: 1024,
+      observed_bytes: 2048,
+    }).success,
+  ).toBe(true);
+  expect(
+    browserNetworkBodySchema.safeParse({
+      state: "unavailable",
+      reason: "body-size-limit",
+      message: "missing bounds",
+    }).success,
+  ).toBe(false);
+  expect(
+    browserNetworkHeadersSchema.safeParse({
+      state: "captured",
+      items: [{ name: "accept", value: "*/*", redacted: false }],
+    }).success,
+  ).toBe(true);
+  expect(
+    browserNetworkHeadersSchema.safeParse({
+      state: "unavailable",
+      message: "omitted",
+    }).success,
+  ).toBe(true);
 });

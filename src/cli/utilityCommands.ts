@@ -32,10 +32,8 @@ import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { registerNativeCallCommands } from "./nativeCallCommands.js";
 import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
-import {
-  registerContractCommand,
-  runOnSessionTarget,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { runOnSessionTarget } from "./contractCommandRunners.js";
 
 export const registerUtilityCommands = (
   cli: CliInstance,

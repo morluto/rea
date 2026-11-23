@@ -16,7 +16,6 @@ import {
   type McpToolTimeoutInputs,
 } from "../config/mcpStartupPolicy.js";
 import {
-  clientConfigurationRecordSchema,
   clientServerForcedEnabled,
   clientServerListedDisabled,
   clientRegistrationEntry,
@@ -26,6 +25,7 @@ import {
   type ClientConfigurationDocument,
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
+import { clientConfigurationRecordSchema } from "./ClientConfigurationValues.js";
 import type { SetupClient } from "./SupportedClients.js";
 import {
   stdioSelectingFields,

@@ -260,10 +260,33 @@ cliTest(
           libapp: {
             coverage: "complete",
             snapshot_hash: REFERENCE_HASH,
+            snapshot_hash_candidates: [REFERENCE_HASH],
+            snapshot_hash_sources: 2,
+            sections: [
+              expect.objectContaining({
+                name: "_kDartVmSnapshotData",
+                magic_valid: true,
+              }),
+              expect.objectContaining({
+                name: "_kDartVmSnapshotInstructions",
+                magic_valid: false,
+              }),
+              expect.objectContaining({
+                name: "_kDartIsolateSnapshotData",
+                magic_valid: true,
+              }),
+              expect.objectContaining({
+                name: "_kDartIsolateSnapshotInstructions",
+                magic_valid: false,
+              }),
+            ],
             sha256: createHash("sha256").update(image).digest("hex"),
           },
           string_pool: {
             coverage: "complete",
+            package_uri_count_at_least: 2,
+            dart_uri_count_at_least: 2,
+            dart_uris: ["dart:_http", "dart:_http/crypto.dart"],
             class_like_tokens: expect.arrayContaining(["Login"]),
           },
         });

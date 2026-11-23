@@ -21,7 +21,7 @@
   "src/kuna/KunaProjectCache.ts": 1,
   "src/native/LldbCallTracer.ts": 2,
   "src/native/NativeCommandAnalysisError.ts": 1,
-  "src/native/NativeMacOSProvider.ts": 2,
+  "src/native/NativeMacosErrorProjection.ts": 2,
   "src/pcap/PcapProvider.ts": 5,
   "src/pcap/PcapSnapshot.ts": 1,
   "src/process/capture/ProcessCaptureError.ts": 3,

@@ -63,6 +63,17 @@ export const unsupportedVolumeBodyReason = (
 ): string =>
   `Firmware volume at 0x${header.absoluteBase.toString(16)} has an unsupported file-system GUID (${header.fileSystemGuid ?? "unavailable"}); its body was not parsed.`;
 
+const fvReaders = new WeakMap<Buffer, BinaryReader>();
+
+const fvReaderFor = (buffer: Buffer): BinaryReader => {
+  let reader = fvReaders.get(buffer);
+  if (reader === undefined) {
+    reader = new BinaryReader(buffer, true, "UEFI firmware volume");
+    fvReaders.set(buffer, reader);
+  }
+  return reader;
+};
+
 /**
  * Parse one header at a local position. Returns null when the position cannot
  * hold a structurally complete header (bounds or signature); returns header
@@ -82,7 +93,7 @@ export function parseFirmwareVolumeHeader(
   ) {
     return null;
   }
-  const reader = new BinaryReader(region.buffer, true, "UEFI firmware volume");
+  const reader = fvReaderFor(region.buffer);
   const signature = reader.u32(
     localHeaderBase + FV_HEADER_LAYOUT.signatureOffset,
   );
@@ -438,7 +449,7 @@ function verifyFirmwareVolumeChecksum(
   ) {
     return false;
   }
-  const checksumReader = new BinaryReader(buffer, true, "UEFI firmware volume");
+  const checksumReader = fvReaderFor(buffer);
   let total = 0;
   for (let offset = 0; offset < headerLength; offset += 2) {
     total = (total + checksumReader.u16(localHeaderBase + offset)) & 0xffff;

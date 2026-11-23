@@ -747,3 +747,63 @@ it.skipIf(resolveTypeScriptCompiler().name !== "tsrs")(
     }
   },
 );
+
+it("passes REA_OXLINT_THREADS and GITHUB_ACTIONS through Turbo lint without changing its cache hash", async () => {
+  const config = await readRootConfig();
+  const lintTask = config.tasks.lint;
+  expect(lintTask).toBeDefined();
+  const passThroughEnv = z.array(z.string()).parse(lintTask?.passThroughEnv);
+  expect(passThroughEnv).toEqual(
+    expect.arrayContaining(["REA_OXLINT_THREADS", "GITHUB_ACTIONS"]),
+  );
+  const root = await createTestTempDirectory("rea-turbo-lint-env-");
+  const cache = join(root, ".turbo-cache");
+  const observed = join(root, "observed.json");
+  await writeTaskFixture(root, ["lint"], {
+    lint: `node -e 'const fs=require("node:fs"); fs.writeFileSync(${JSON.stringify(observed)}, JSON.stringify({threads: process.env.REA_OXLINT_THREADS ?? null, ci: process.env.GITHUB_ACTIONS ?? null})); fs.mkdirSync(".cache/static-checks", {recursive: true}); fs.writeFileSync(".cache/static-checks/oxlint.json", "{}");'`,
+  });
+  await writeFile(
+    join(root, ".gitignore"),
+    "node_modules/\n.cache/\n.turbo/\n.turbo-cache/\nobserved.json\n",
+  );
+  await workflowGit(root, ["init", "--initial-branch=main"]);
+  await workflowGit(root, ["add", "."]);
+  await workflowGit(root, ["commit", "-m", "test: seed lint passthrough"]);
+  const runWithEnv = (envOverrides: Record<string, string>, dryRun = false) =>
+    spawnSync(
+      process.execPath,
+      [
+        turbo,
+        "run",
+        "lint",
+        ...(dryRun ? ["--dry=json"] : ["--output-logs=errors-only"]),
+        "--cache=local:rw",
+        "--cache-dir",
+        cache,
+      ],
+      {
+        cwd: root,
+        encoding: "utf8",
+        timeout: 30_000,
+        maxBuffer: 16 * 1024 * 1024,
+        env: { ...process.env, ...envOverrides },
+      },
+    );
+  const hashOne = dryRunSchema
+    .parse(JSON.parse(runWithEnv({ REA_OXLINT_THREADS: "1" }, true).stdout))
+    .tasks.find((entry) => entry.taskId === "lint")?.hash;
+  const hashTwo = dryRunSchema
+    .parse(JSON.parse(runWithEnv({ REA_OXLINT_THREADS: "3" }, true).stdout))
+    .tasks.find((entry) => entry.taskId === "lint")?.hash;
+  expect(hashOne).toBeDefined();
+  expect(hashTwo).toBe(hashOne);
+  const executed = runWithEnv({
+    REA_OXLINT_THREADS: "1",
+    GITHUB_ACTIONS: "true",
+  });
+  expect(executed.status, executed.stdout + executed.stderr).toBe(0);
+  expect(JSON.parse(await readFile(observed, "utf8"))).toEqual({
+    threads: "1",
+    ci: "true",
+  });
+});

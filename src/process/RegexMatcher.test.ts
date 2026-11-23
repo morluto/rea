@@ -70,9 +70,9 @@ it.each([
   },
   {
     name: "accepts quoted NODE_OPTIONS and a leading plus or zeros",
-    execArgv: ["--max-old-space-size=+0256"],
-    nodeOptions: '"--max-old-space-size=144"',
-    heap: effective(256, true),
+    execArgv: [],
+    nodeOptions: '"--max-old-space-size=+0144"',
+    heap: effective(144, true),
   },
   {
     name: "uses the last positive flag",
@@ -565,4 +565,58 @@ it("validates patterns even when the worker has no candidate values", async () =
     values: [],
   });
   expect(empty).toEqual({ ok: true, value: [] });
+});
+
+it("preserves Unicode case folding, astral and lone surrogates, and empty values", async () => {
+  expect(
+    await matchRegexValues({
+      operation: "search_strings",
+      pattern: "^(?:$|\\u{1F600}_|δ|[\\uD800])",
+      caseSensitive: false,
+      values: [
+        "",
+        "delta",
+        "Δelta",
+        "😀_emoji",
+        "\uD800",
+        "middle",
+        "",
+        "😀_end",
+        "δίκη",
+      ],
+    }),
+  ).toEqual({ ok: true, value: [0, 2, 3, 4, 6, 7, 8] });
+});
+
+it("matches across mixed ASCII, Unicode, and oversized single-item chunk boundaries", async () => {
+  const hugeString = `${"a".repeat(300_000)}NEEDLE_${"b".repeat(100)}`;
+  const values = Array.from({ length: 5_000 }, (_, i) => `item_${i}`);
+  values[12] = "Δ_chunk0";
+  values[4095] = "edge_chunk0_NEEDLE";
+  values[4096] = "start_chunk1_ascii";
+  values[4500] = hugeString;
+  values[4501] = "😀_post_huge_NEEDLE";
+  values[4999] = "\uD800_tail_NEEDLE";
+
+  expect(
+    await matchRegexValues({
+      operation: "search_strings",
+      pattern: "NEEDLE|Δ_chunk0",
+      caseSensitive: true,
+      values,
+    }),
+  ).toEqual({ ok: true, value: [12, 4095, 4500, 4501, 4999] });
+
+  const allEmpty = Array.from({ length: 4_200 }, () => "");
+  expect(
+    await matchRegexValues({
+      operation: "search_strings",
+      pattern: "^$",
+      caseSensitive: true,
+      values: allEmpty,
+    }),
+  ).toEqual({
+    ok: true,
+    value: Array.from({ length: 4_200 }, (_, i) => i),
+  });
 });
