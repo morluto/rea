@@ -11,10 +11,7 @@ import {
 } from "./ntfsMftAttributes.js";
 import { BinaryReader } from "../binaryContainer.js";
 import { err, ok, type Result } from "../result.js";
-import type {
-  RegionDecodeFailure,
-  RegionDecoder,
-} from "../firmware/regionDecoder.js";
+import type { RegionDecodeFailure } from "../firmware/regionDecoder.js";
 
 /** An NTFS FILE record begins with this signature. */
 const MFT_FILE_RECORD_MAGIC_BYTES = 4;
@@ -498,29 +495,27 @@ const resolveMftAttributeLists = (
 ): readonly MftRecord[] => {
   const totalSlots = Math.floor(bytes.length / recordBytes);
   let scratch: Buffer | undefined;
-  return resolveMftAttributeListsWithLookup(records, totalSlots, (index) => {
-    const offset = index * recordBytes;
-    if (
-      !hasMftFileRecordSignature(
-        bytes.subarray(offset, offset + MFT_FILE_RECORD_MAGIC_BYTES),
-      )
-    )
-      return null;
-    scratch ??= Buffer.allocUnsafe(recordBytes);
-    return readRecordSlice(
-      bytes.subarray(offset, offset + recordBytes),
-      offset,
-      scratch,
-    );
-  });
+  const steps = resolveMftAttributeListSteps(records, totalSlots);
+  let step = steps.next();
+  while (!step.done) {
+    const offset = step.value * recordBytes;
+    const slice = bytes.subarray(offset, offset + recordBytes);
+    let record: MftRecord | null = null;
+    if (hasMftFileRecordSignature(slice)) {
+      scratch ??= Buffer.allocUnsafe(recordBytes);
+      record = readRecordSlice(slice, offset, scratch);
+    }
+    step = steps.next(record);
+  }
+  return step.value;
 };
 
-const resolveMftAttributeListsWithLookup = (
+function* resolveMftAttributeListSteps(
   records: readonly MftRecord[],
   totalSlots: number,
-  lookupRecord: (index: number) => MftRecord | null,
-): readonly MftRecord[] => {
+): Generator<number, readonly MftRecord[], MftRecord | null> {
   const decoded = new Map(records.map((record) => [record.index, record]));
+  const unavailable = new Set<number>();
   let additionalRecords = 0;
   type ReferenceResult =
     MftAttributeListResolution["references"][number]["result"];
@@ -528,28 +523,39 @@ const resolveMftAttributeListsWithLookup = (
   const unresolved = (
     reason: UnresolvedReference["reason"],
   ): UnresolvedReference => ({ kind: "unresolved", reason });
-  const selectRecord = (
+  function* selectRecord(
     index: number,
-  ): Result<MftRecord, UnresolvedReference> => {
+  ): Generator<
+    number,
+    Result<MftRecord, UnresolvedReference>,
+    MftRecord | null
+  > {
     const retained = decoded.get(index);
     if (retained !== undefined) return ok(retained);
-    if (index >= totalSlots) return err(unresolved("record-unavailable"));
-    const record = lookupRecord(index);
-    if (record === null) return err(unresolved("record-unavailable"));
+    if (index >= totalSlots || unavailable.has(index))
+      return err(unresolved("record-unavailable"));
     // At most another 32 records (2 MiB at the largest format record size), shared by this page.
     if (additionalRecords >= MFT_INLINE_HEADER_LIMIT)
       return err(unresolved("capacity"));
+    const record = yield index;
+    if (record === null) {
+      unavailable.add(index);
+      return err(unresolved("record-unavailable"));
+    }
     additionalRecords += 1;
     decoded.set(index, record);
     return ok(record);
-  };
+  }
 
-  return records.map((base): MftRecord => {
+  const resolved: MftRecord[] = [];
+  for (const base of records) {
     if (
       base.baseRecordReference !== null ||
       !base.attributes.some((attribute) => attribute.type === 0x20)
-    )
-      return base;
+    ) {
+      resolved.push(base);
+      continue;
+    }
     const references: MftAttributeListResolution["references"] = [];
     const linkedAttributes: MftAttribute[] = [];
     const linkedFileNames: MftAttributeListResolution["linkedFileNames"] = [];
@@ -582,9 +588,11 @@ const resolveMftAttributeListsWithLookup = (
       }
     };
     for (const attribute of base.attributes) enqueueList(attribute);
-    const resolveEntry = (entry: MftAttributeListEntry): ReferenceResult => {
+    function* resolveEntry(
+      entry: MftAttributeListEntry,
+    ): Generator<number, ReferenceResult, MftRecord | null> {
       if (!baseVerified) return unresolved("unverified-base");
-      const selected = selectRecord(entry.reference.recordNumber);
+      const selected = yield* selectRecord(entry.reference.recordNumber);
       if (!selected.ok) return selected.error;
       const target = selected.value;
       if (!hasVerifiedMftRecordIdentity(target))
@@ -631,7 +639,7 @@ const resolveMftAttributeListsWithLookup = (
       }
       enqueueList(attribute);
       return { kind: "resolved", attributeFileOffset: attribute.fileOffset };
-    };
+    }
     for (
       let cursor = 0;
       cursor < queue.length &&
@@ -639,12 +647,12 @@ const resolveMftAttributeListsWithLookup = (
       cursor += 1
     ) {
       const entry = queue[cursor]!;
-      const result = resolveEntry(entry);
+      const result = yield* resolveEntry(entry);
       if (result.kind !== "resolved") complete = false;
       references.push({ listEntryFileOffset: entry.fileOffset, result });
     }
     const omittedKnownEntries = queue.length - references.length;
-    return {
+    resolved.push({
       ...base,
       attributeListResolution: {
         coverage:
@@ -657,9 +665,10 @@ const resolveMftAttributeListsWithLookup = (
         linkedAttributes,
         linkedFileNames,
       },
-    };
-  });
-};
+    });
+  }
+  return resolved;
+}
 
 const readRecord = (
   bytes: Uint8Array,
@@ -961,32 +970,18 @@ const verifyFixups = (
   };
 };
 
-const MAX_PREFETCHED_EXTENSION_TARGETS =
-  MFT_INLINE_HEADER_LIMIT * MFT_INLINE_ATTRIBUTE_REFERENCE_LIMIT;
-
-const collectWantedAttributeTargets = (
-  record: MftRecord,
-  wanted: Set<number>,
-): void => {
-  for (const attribute of record.attributes) {
-    if (
-      attribute.type !== 0x20 ||
-      attribute.storage.kind !== "resident" ||
-      attribute.storage.listEntries === null
-    )
-      continue;
-    for (const entry of attribute.storage.listEntries) {
-      if (wanted.size >= MAX_PREFETCHED_EXTENSION_TARGETS) return;
-      wanted.add(entry.reference.recordNumber);
-    }
-  }
-};
+interface MftDecoder {
+  write(chunk: Uint8Array): Result<void, RegionDecodeFailure>;
+  finish(
+    readRange: (offset: number, length: number) => Promise<Uint8Array>,
+  ): Promise<Result<MftInventory, RegionDecodeFailure>>;
+}
 
 /**
  * Stream one MFT acquisition record-by-record with O(recordBytes) working
  * memory instead of buffering the entire up-to-512 MiB file.
  */
-class StreamingMftDecoder implements RegionDecoder<MftInventory> {
+class StreamingMftDecoder implements MftDecoder {
   readonly #fileBytes: number;
   readonly #headerPrefix = Buffer.allocUnsafe(NTFS_MFT_MIN_RECORD_BYTES);
   #headerFill = 0;
@@ -1003,8 +998,6 @@ class StreamingMftDecoder implements RegionDecoder<MftInventory> {
 
   readonly #limitations: string[] = [];
   readonly #recordHeaders: MftRecord[] = [];
-  readonly #wantedTargets = new Set<number>();
-  readonly #prefetchedTargets = new Map<number, MftRecord>();
   #nextRecordHeaderIndex: number | null = null;
   #recordCount = 0;
   #inUseCount = 0;
@@ -1099,19 +1092,9 @@ class StreamingMftDecoder implements RegionDecoder<MftInventory> {
     const slotIndex = offset / this.#recordBytes;
     const restored = this.#restored!;
     const inDetailWindow = this.#recordHeaders.length < MFT_INLINE_HEADER_LIMIT;
-    const wantedExtension =
-      !inDetailWindow && this.#wantedTargets.has(slotIndex);
-    if (inDetailWindow || wantedExtension) {
+    if (inDetailWindow) {
       const record = readRecordSlice(slice, offset, restored);
-      if (inDetailWindow) {
-        this.#recordHeaders.push(record);
-        if (record.baseRecordReference === null)
-          collectWantedAttributeTargets(record, this.#wantedTargets);
-      } else {
-        this.#prefetchedTargets.set(slotIndex, record);
-        collectWantedAttributeTargets(record, this.#wantedTargets);
-        this.#nextRecordHeaderIndex ??= slotIndex;
-      }
+      this.#recordHeaders.push(record);
       this.#fileNameCount += record.fileNames.length;
       if (record.attributeCoverage === "incomplete")
         this.#incompleteAttributes += 1;
@@ -1154,7 +1137,9 @@ class StreamingMftDecoder implements RegionDecoder<MftInventory> {
     }
   }
 
-  finish(): Result<MftInventory, RegionDecodeFailure> {
+  async finish(
+    readRange: Parameters<MftDecoder["finish"]>[0],
+  ): Promise<Result<MftInventory, RegionDecodeFailure>> {
     if (this.#written !== this.#fileBytes)
       return err(failure("stream ended before the admitted file length"));
     if (this.#fileBytes < NTFS_MFT_MIN_RECORD_BYTES)
@@ -1197,6 +1182,22 @@ class StreamingMftDecoder implements RegionDecoder<MftInventory> {
       );
 
     const totalSlots = Math.floor(this.#fileBytes / this.#recordBytes);
+    const steps = resolveMftAttributeListSteps(this.#recordHeaders, totalSlots);
+    let step = steps.next();
+    while (!step.done) {
+      const offset = step.value * this.#recordBytes;
+      const bytes = await readRange(offset, this.#recordBytes);
+      if (bytes.length !== this.#recordBytes)
+        return err(
+          failure(
+            "positional record read ended before the admitted record length",
+          ),
+        );
+      const record = hasMftFileRecordSignature(bytes)
+        ? readRecordSlice(bytes, offset, this.#restored!)
+        : null;
+      step = steps.next(record);
+    }
     const metadata: MftMetadata = {
       kind: "ntfs-mft",
       record_bytes: this.#recordBytes,
@@ -1207,11 +1208,7 @@ class StreamingMftDecoder implements RegionDecoder<MftInventory> {
       fixup_mismatch_count: this.#mismatchCount,
       fixup_unverified_record_count: this.#unverifiedCount,
       truncated_tail_bytes: truncatedTailBytes,
-      record_headers: resolveMftAttributeListsWithLookup(
-        this.#recordHeaders,
-        totalSlots,
-        (index) => this.#prefetchedTargets.get(index) ?? null,
-      ),
+      record_headers: step.value,
       omitted_record_headers: this.#recordCount - this.#recordHeaders.length,
       record_header_start_index: 0,
       next_record_header_index: this.#nextRecordHeaderIndex,
@@ -1226,7 +1223,7 @@ class StreamingMftDecoder implements RegionDecoder<MftInventory> {
 
 export const createMftDecoder = (
   fileBytes: number,
-): Result<RegionDecoder<MftInventory>, RegionDecodeFailure> =>
+): Result<MftDecoder, RegionDecodeFailure> =>
   Number.isSafeInteger(fileBytes) &&
   fileBytes >= 0 &&
   fileBytes <= MFT_MAX_FILE_BYTES
