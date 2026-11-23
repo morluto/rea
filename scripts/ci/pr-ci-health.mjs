@@ -451,17 +451,21 @@ function compareRunEvidence(left, right) {
       ? 0
       : null;
   }
-  // A retry may start long after its original creation; without an attempt
-  // clock, creation dates only order first attempts from different runs.
-  if (
-    positiveInteger(leftRun.run_attempt) !== 1 ||
-    positiveInteger(rightRun.run_attempt) !== 1
-  )
-    return null;
-  const time =
-    Date.parse(leftRun.created_at ?? "") -
-    Date.parse(rightRun.created_at ?? "");
+  const time = attemptTime(leftRun) - attemptTime(rightRun);
   return Number.isFinite(time) && time !== 0 ? time : null;
+}
+
+function attemptTime(run) {
+  const attempt = positiveInteger(run.run_attempt);
+  const created = Date.parse(run.created_at ?? "");
+  if (attempt === 1) return created;
+  // Retried runs retain their original creation time. Use the newer start
+  // only after the retry has begun, otherwise the API may still describe
+  // the previous execution.
+  if (attempt === null || !["in_progress", "completed"].includes(run.status))
+    return NaN;
+  const started = Date.parse(run.run_started_at ?? "");
+  return started > created ? started : NaN;
 }
 
 function result(category, reason, runs) {
@@ -475,6 +479,8 @@ function result(category, reason, runs) {
       conclusion: typeof run.conclusion === "string" ? run.conclusion : null,
       headSha: isSha(run.head_sha) ? run.head_sha.toLowerCase() : null,
       createdAt: typeof run.created_at === "string" ? run.created_at : null,
+      startedAt:
+        typeof run.run_started_at === "string" ? run.run_started_at : null,
       url: typeof run.html_url === "string" ? run.html_url : null,
       identityBasis: basis,
     })),
