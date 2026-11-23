@@ -106,11 +106,12 @@ scan budget for the same source and decoded names. Repeated table ranges count a
 and each GNU version's trailing NUL run is scanned once; neither walk may
 exceed that byte ceiling. Malformed ELF headers, truncated header
 tables, declared note tables that extend past the file, and truncated
-note entries fail without partial success. ELF extended
-numbering (`PN_XNUM`, including a section count stored when `e_shnum` is 0) is
-unsupported and returns an unsupported-target outcome rather than invalid-input
-recovery. A direct section count of `0xff00` or greater in `e_shnum` is
-malformed. Compressed section-name tables require zero or a power of two for
+note entries fail without partial success. ELF extended program counts
+(`PN_XNUM`), section counts (`e_shnum` equal to zero with a nonzero section-table
+offset), and section-name indices (`SHN_XINDEX`) are resolved from inactive
+section zero. Their complete declared tables must fit inside the selected image;
+invalid escape values and a direct section count of `0xff00` or greater in
+`e_shnum` are malformed. Compressed section-name tables require zero or a power of two for
 the decoded alignment. A zlib stream must consume its full declared payload.
 
 FDO decoding separately admits up to 64 KiB of distinct recognized descriptor

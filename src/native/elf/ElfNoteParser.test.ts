@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+import { withElfExtendedNumbering } from "../../../tests/fixtures/elfExtendedNumbering.js";
 import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
@@ -50,6 +51,48 @@ const parse = (bytes: Buffer, input: typeof defaults = defaults) =>
     input,
     async () => {},
   );
+
+it.each([
+  { bits: 32, little: false, kind: "sections" },
+  { bits: 64, little: true, kind: "sections" },
+  { bits: 32, little: true, kind: "names" },
+  { bits: 64, little: false, kind: "names" },
+  { bits: 32, little: false, kind: "programs" },
+  { bits: 64, little: true, kind: "programs" },
+] as const)(
+  "retains notes with extended $kind numbering in ELF$bits (little=$little)",
+  async ({ bits, little, kind }) => {
+    const original = elfNoteFixture({ bits, little, ownership: "both" });
+    const control = await parse(original);
+    const report = await parse(withElfExtendedNumbering(original, kind));
+    expect({ ...report, artifact: control.artifact }).toEqual(control);
+    expect(report.tables.map(({ kind }) => kind)).toEqual([
+      "program",
+      "section",
+    ]);
+    expect(report.entries[0]?.gnu?.build_id_hex).toBe(
+      "0123456789abcdef0123456789abcdef01234567",
+    );
+  },
+);
+
+it.each([
+  { field: "type", at: 4, value: 1, reason: /inactive SHT_NULL/u },
+  {
+    field: "count",
+    at: 32,
+    value: 0xfeff,
+    reason: /invalid ELF extended section count/u,
+  },
+])(
+  "rejects an invalid section-zero $field before reading notes",
+  async ({ at, value, reason }) => {
+    const bytes = elfExtendedSectionCountFixture();
+    const sectionZero = Number(bytes.readBigUInt64LE(40));
+    bytes.writeUInt32LE(value, sectionZero + at);
+    await expect(parse(bytes)).rejects.toThrow(reason);
+  },
+);
 
 const noteTextLimit = (maximum: number) => ({
   failure: {
@@ -756,17 +799,17 @@ it("rejects note text that repeats beyond the shared byte budget", async () => {
 it("rejects program and section header tables that do not fit", async () => {
   await expect(
     parse(elf64({ phoff: 64, phnum: 1 }, Buffer.from([1, 0, 0, 0]))),
-  ).rejects.toThrow(/leaves the artifact/u);
+  ).rejects.toThrow(/truncated ELF .* header table/u);
   await expect(
     parse(
       elf64({ shoff: 64, shnum: 1, shentsize: 64 }, Buffer.from([0, 0, 0, 0])),
     ),
-  ).rejects.toThrow(/leaves the artifact/u);
+  ).rejects.toThrow(/truncated ELF .* header table/u);
 });
 
-it("rejects an extended section count stored in section zero", async () => {
+it("rejects extended section numbering without section zero", async () => {
   await expect(parse(elf64({ shoff: 64, shnum: 0 }))).rejects.toThrow(
-    /extended numbering/u,
+    /truncated ELF section header table/u,
   );
 });
 
@@ -1001,7 +1044,7 @@ it("reads a glibc-sized note table with the default entry budget", async () => {
   expect(report.entries).toHaveLength(81);
 });
 
-it("keeps unsafe table offsets ahead of unsupported extended numbering", async () => {
+it("rejects unsafe inactive table offsets beside extended numbering", async () => {
   const bytes = elfExtendedSectionCountFixture();
   bytes.writeBigUInt64LE(0xffffffffffffffffn, 32);
   await expect(parse(bytes)).rejects.toThrow(

@@ -1,10 +1,12 @@
-import { writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { contractNamed } from "../../src/cli/contractCliDescription.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import { elfDependencyFixture } from "../../src/native/elf/ElfDependencies.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { withElfExtendedNumbering } from "../fixtures/elfExtendedNumbering.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 const dependenciesContract = contractNamed(
@@ -399,5 +401,36 @@ cliTest(
           ".gnu.hash section header declares bytes past the end of the file",
       }),
     );
+  },
+);
+
+cliTest(
+  "reads dependencies with extended program numbering without mutation",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-elf-dependencies-extended-cli-",
+    );
+    const path = join(root, "program");
+    const bytes = withElfExtendedNumbering(elfDependencyFixture(), "programs");
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-elf-dependencies", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = dependenciesContract.outputSchema.parse(result.json);
+    expect(evidence.normalized_result).toMatchObject({
+      artifact: {
+        path,
+        bytes: bytes.length,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      },
+      needed: [
+        { name: "libstdc++.so.6" },
+        { name: "libm.so.6" },
+        { name: "libc.so.6" },
+      ],
+      coverage: { status: "complete" },
+    });
+    expect((await readFile(path)).equals(bytes)).toBe(true);
   },
 );

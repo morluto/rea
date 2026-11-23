@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -149,7 +150,7 @@ mcpTest(
 );
 
 mcpTest(
-  "reports valid extended numbering as unsupported without mutation",
+  "reads notes from valid extended numbering without mutation",
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);
     try {
@@ -161,10 +162,19 @@ mcpTest(
         name: "inspect_elf_notes",
         arguments: { path },
       });
-      expect(response.isError).toBe(true);
-      expect(parseMcpToolError(response).error).toMatchObject({
-        code: "unsupported_target",
-        message: expect.stringMatching(/extended.*number/iu),
+      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+      const evidence = inspectElfNotesContract.outputSchema.parse(
+        response.structuredContent,
+      );
+      expect(evidence.normalized_result).toMatchObject({
+        artifact: {
+          path,
+          bytes: before.length,
+          sha256: createHash("sha256").update(before).digest("hex"),
+        },
+        tables: [{ kind: "section", name: ".note.gnu.build-id" }],
+        entries: [{ gnu: { build_id_hex: "12345678" } }],
+        coverage: { status: "complete" },
       });
       expect((await readFile(path)).equals(before)).toBe(true);
     } finally {

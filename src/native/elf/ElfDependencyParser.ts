@@ -15,8 +15,7 @@ import {
   DT_SYMTAB,
   walkElfDynamicTable,
 } from "../../domain/elfDynamicEntry.js";
-import { validateElfSectionTableFields } from "../../domain/elfDeclaredRanges.js";
-import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
+import { readElfTableDeclarations } from "../../domain/elfDeclaredRanges.js";
 import {
   readElfGnuHashSymbolCountSteps,
   readElfHashSymbolCountSteps,
@@ -28,7 +27,6 @@ import {
   readElfProgramHeader,
   type ElfLoadMappings,
 } from "../../domain/elfProgramHeader.js";
-import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import {
   elfStringTableText,
@@ -870,9 +868,16 @@ const parseElfDependenciesCore = function* (
     Math.min(fileSize, 64),
     "ELF header",
   );
-  const fixed = readElfFixedHeader(headerBytes, fileSize);
-  if (!fixed.ok) return fail(fixed.error);
-  const header = fixed.value;
+  const declarations = readElfTableDeclarations(headerBytes, fileSize);
+  let declaration = declarations.next();
+  while (!declaration.done) {
+    const { offset, size } = declaration.value;
+    declaration = declarations.next(
+      yield* readElfRange(fileSize, offset, size, "ELF extended section zero"),
+    );
+  }
+  if (!declaration.value.ok) return fail(declaration.value.error);
+  const { header, programs, sections } = declaration.value.value;
   const type = header.type;
   if (type === ET_REL)
     fail(
@@ -884,28 +889,17 @@ const parseElfDependenciesCore = function* (
     );
   if (type !== ET_EXEC && type !== ET_DYN)
     fail(`ELF type ${String(type)} is not a loadable ET_EXEC or ET_DYN image.`);
-  const raw = readElfRawTableDeclarations(headerBytes, header);
-  if (!raw.ok) return fail(raw.error.message);
-  const sectionTable = validateElfSectionTableFields(raw.value);
-  if (!sectionTable.ok) return fail(sectionTable.error);
-  const { programs, sections } = raw.value;
   if (
     programs.offset > BigInt(Number.MAX_SAFE_INTEGER) ||
     sections.offset > BigInt(Number.MAX_SAFE_INTEGER)
   )
-    fail("ELF offset or size exceeds a safe integer.");
+    return fail("ELF offset or size exceeds a safe integer.");
   const phoff = Number(programs.offset);
   const shoff = Number(sections.offset);
   const phentsize = programs.width;
   const phnum = programs.count;
   const shentsize = sections.width;
   const shnum = sections.count;
-  const shstrndx = sections.namesIndex;
-  if (phnum === 0xffff || shstrndx === 0xffff)
-    throw new BinaryFormatFailure(
-      "unsupported",
-      "ELF extended numbering is unsupported.",
-    );
   const bits = header.elfClass;
   const little = header.byteOrder === "little";
   const window = createElfWindowReader(fileSize, little);
@@ -918,8 +912,6 @@ const parseElfDependenciesCore = function* (
     type_name: elfObjectTypeName(type),
   };
   if (phnum === 0) fail("ELF image has no program headers.");
-  if (phentsize < (bits === 64 ? 56 : 32))
-    fail("ELF program header width is invalid.");
   const programHeaders = yield* readElfRange(
     fileSize,
     phoff,
@@ -1454,8 +1446,6 @@ const readSections = function* (
   shentsize: number,
 ): ElfDependencySteps<SectionFacts[]> {
   if (shnum === 0) return [];
-  if (shentsize < (bits === 64 ? 64 : 40))
-    fail("ELF section header width is invalid.");
   const sectionHeaders = yield* readElfRange(
     fileSize,
     shoff,

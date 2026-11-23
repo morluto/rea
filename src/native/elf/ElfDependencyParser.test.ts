@@ -1,5 +1,6 @@
 import { setImmediate } from "node:timers/promises";
 import { expect, it } from "vitest";
+import { withElfExtendedNumbering } from "../../../tests/fixtures/elfExtendedNumbering.js";
 import { createDeferred } from "../../../tests/fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
@@ -46,6 +47,46 @@ const parse = async (
       async () => {},
     ),
   );
+
+it.each([
+  { bits: 32, little: false, kind: "sections" },
+  { bits: 64, little: true, kind: "sections" },
+  { bits: 32, little: true, kind: "names" },
+  { bits: 64, little: false, kind: "names" },
+  { bits: 32, little: false, kind: "programs" },
+  { bits: 64, little: true, kind: "programs" },
+] as const)(
+  "retains dependency facts with extended $kind numbering in ELF$bits (little=$little)",
+  async ({ bits, little, kind }) => {
+    const original = elfDependencyFixture({ bits, little, omitHash: true });
+    const control = await parse(original);
+    const report = await parse(withElfExtendedNumbering(original, kind));
+    expect({ ...report, artifact: control.artifact }).toEqual(control);
+    expect(report.imports.map(({ name }) => name)).toEqual([
+      "printf",
+      "memcpy",
+      "_ZSt4cout",
+      "abort",
+      "_exit",
+    ]);
+  },
+);
+
+it("rejects an invalid extended program count before returning dependency facts", async () => {
+  const bytes = withElfExtendedNumbering(elfDependencyFixture(), "programs");
+  const sectionZero = Number(bytes.readBigUInt64LE(40));
+  bytes.writeUInt32LE(0xfffe, sectionZero + 44);
+  await expect(parse(bytes)).rejects.toThrow(
+    "invalid ELF extended program count",
+  );
+});
+
+it("rejects truncated extended tables before returning dependency facts", async () => {
+  const bytes = withElfExtendedNumbering(elfDependencyFixture(), "sections");
+  await expect(parse(bytes.subarray(0, -1))).rejects.toThrow(
+    /truncated ELF section header table/u,
+  );
+});
 
 const defaultNeeded = ["libstdc++.so.6", "libm.so.6", "libc.so.6"];
 

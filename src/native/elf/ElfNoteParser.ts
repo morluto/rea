@@ -4,16 +4,12 @@ import {
 } from "../../domain/elfStringTable.js";
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
-import { validateElfSectionTableFields } from "../../domain/elfDeclaredRanges.js";
-import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
+import { readElfTableDeclarations } from "../../domain/elfDeclaredRanges.js";
 import {
   ArtifactReaderFailure,
   assertArtifactReadActive,
 } from "../../resources/index.js";
-import {
-  readElfFixedHeader,
-  type ElfFixedHeader,
-} from "../../domain/elfFixedHeader.js";
+import type { ElfFixedHeader } from "../../domain/elfFixedHeader.js";
 import {
   ELF_NOTE_HEADER_BYTES,
   elfNoteAlignment as noteAlignment,
@@ -780,21 +776,20 @@ const parseElfNoteSteps = function* (
   visitNote: VisitElfNote,
 ): ElfNoteSteps<ElfNoteTableScan> {
   const headerBytes = yield* readElfStep(fileSize, 0, Math.min(fileSize, 64));
-  const fixed = readElfFixedHeader(headerBytes, fileSize);
-  if (!fixed.ok) return fail(fixed.error);
-  const header = fixed.value;
+  const declarations = readElfTableDeclarations(headerBytes, fileSize);
+  let declaration = declarations.next();
+  while (!declaration.done) {
+    const { offset, size } = declaration.value;
+    declaration = declarations.next(yield* readElfStep(fileSize, offset, size));
+  }
+  if (!declaration.value.ok) return fail(declaration.value.error);
+  const { header, programs, sections } = declaration.value.value;
   const little = header.byteOrder === "little";
-  const wide = header.elfClass === 64;
-  const raw = readElfRawTableDeclarations(headerBytes, header);
-  if (!raw.ok) return fail(raw.error.message);
-  const { programs, sections } = raw.value;
   if (
     programs.offset > BigInt(Number.MAX_SAFE_INTEGER) ||
     sections.offset > BigInt(Number.MAX_SAFE_INTEGER)
   )
     return fail("ELF offset or size exceeds a safe integer.");
-  const sectionTable = validateElfSectionTableFields(raw.value);
-  if (!sectionTable.ok) return fail(sectionTable.error);
   const phoff = Number(programs.offset);
   const shoff = Number(sections.offset);
   const phentsize = programs.width;
@@ -802,21 +797,6 @@ const parseElfNoteSteps = function* (
   const shentsize = sections.width;
   const shnum = sections.count;
   const shstrndx = sections.namesIndex;
-  if (phnum === 0xffff || shstrndx === 0xffff || (shoff !== 0 && shnum === 0))
-    throw new BinaryFormatFailure(
-      "unsupported",
-      "ELF extended numbering is unsupported.",
-    );
-  if (phnum !== 0) {
-    if (phentsize < (wide ? 56 : 32))
-      return fail("ELF program header width is invalid.");
-    requireElfRange(fileSize, phoff, phnum * phentsize);
-  }
-  if (shnum !== 0) {
-    if (shentsize < (wide ? 64 : 40))
-      return fail("ELF section header width is invalid.");
-    requireElfRange(fileSize, shoff, shnum * shentsize);
-  }
   const text: TextBudget = {
     limit: Math.min(fileSize, input.max_file_bytes),
     used: 0,
@@ -825,23 +805,15 @@ const parseElfNoteSteps = function* (
     hashes: new Map(),
     scans: new Map(),
   };
-  const sectionTableOverlapsHeader = shnum !== 0 && shoff < header.headerSize;
   const sectionHeadersBytes =
-    shnum !== 0 && !sectionTableOverlapsHeader
-      ? yield* readElfStep(fileSize, shoff, shnum * shentsize)
-      : null;
+    shnum !== 0 ? yield* readElfStep(fileSize, shoff, shnum * shentsize) : null;
   let shstrtab: Buffer | null = null;
   const sectionNameLimitations = new Set<string>();
-  if (shnum !== 0 && shstrndx !== 0) {
-    if (shstrndx >= shnum)
-      return fail("ELF section name index is out of range.");
-    const namesHeaderBytes =
-      sectionHeadersBytes !== null
-        ? sectionHeadersBytes.subarray(
-            shstrndx * shentsize,
-            (shstrndx + 1) * shentsize,
-          )
-        : yield* readElfStep(fileSize, shoff + shstrndx * shentsize, shentsize);
+  if (sectionHeadersBytes !== null && shstrndx !== 0) {
+    const namesHeaderBytes = sectionHeadersBytes.subarray(
+      shstrndx * shentsize,
+      (shstrndx + 1) * shentsize,
+    );
     const parsedNames = readElfSectionHeader(
       namesHeaderBytes,
       header.elfClass,
@@ -1000,8 +972,6 @@ const parseElfNoteSteps = function* (
         visitNote(note, table, header, text);
     }
   }
-  if (sectionTableOverlapsHeader)
-    return fail("ELF section header table overlaps the native header.");
   for (const {
     index,
     nameOffset,
