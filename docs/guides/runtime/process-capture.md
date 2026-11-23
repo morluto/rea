@@ -739,7 +739,7 @@ value. That absence is not proof the process is foreign, and cleanup stays
 unverified rather than succeeding: the failure names the absent token
 instead of reporting a token mismatch.
 
-Reading those tokens requires compiling a small Swift helper with `xcrun swiftc`.
+On macOS, reading those tokens requires compiling a small Swift helper with `xcrun swiftc`.
 By default that compilation reuses Swift's shared module cache, while the
 compiler's intermediate objects stay inside the per-run temporary root that REA
 removes afterwards. Set `REA_DARWIN_MODULE_CACHE_PATH` to a writable directory

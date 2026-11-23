@@ -185,6 +185,32 @@ describe("owned process-group cleanup validation: ownership and lineage", () => 
   });
 });
 
+describe("owned process-group cleanup validation: mixed absent and foreign tokens", () => {
+  it("keeps the mismatch wording when only some members lack the run token", async () => {
+    // morluto/rea#4282: the absent-token wording applies only when every
+    // mismatched member lacks the token. A foreign token on any member
+    // keeps the mismatch wording, while each member's own tokenAbsent
+    // fact is still preserved.
+    const { adapter, signalGroup } = host({
+      100: { REA_PROCESS_RUN_ID: "run-token" },
+      101: {},
+      102: { REA_PROCESS_RUN_ID: "different-run" },
+    });
+    const result = await cleanupOwnedProcessGroup(ownership, adapter);
+    expect(result.cleaned).toBe(false);
+    if (result.cleaned) throw new Error("expected cleanup to retain ownership");
+    expect(result.reason).toBe(
+      "process ownership token mismatch for PID(s): 101, 102",
+    );
+    expect(result.reason).not.toContain("absent");
+    expect(result.failures).toEqual([
+      { pid: 101, reason: "run-token-mismatch", tokenAbsent: true },
+      { pid: 102, reason: "run-token-mismatch" },
+    ]);
+    expect(signalGroup).not.toHaveBeenCalled();
+  });
+});
+
 describe("owned process-group cleanup liveness rechecks", () => {
   it("reports fixed malformed procargs stages and sanitizes the cleanup summary", async () => {
     const reasons = [
