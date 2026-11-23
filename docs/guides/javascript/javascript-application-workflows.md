@@ -150,6 +150,26 @@ semantic unknown records remain in complete parent Evidence and trace tools.
 with one of its JSON scalar values; a missing key or non-scalar value never
 matches, and `values: []` matches none.
 
+To count distinct values instead of paging observations, use
+`javascript-fact-groups` with the same `where` and the property names to group
+by:
+
+```json
+{
+  "kind": "javascript-fact-groups",
+  "where": { "paths": ["preload.js"], "kinds": ["ipc-channel"] },
+  "group_by": ["operation", "channel"]
+}
+```
+
+Each row reports one distinct combination with its `observation_count` and
+`node_count`. A missing key is omitted from the combination, distinct from a
+retained null such as an unresolved dynamic channel. Rows are ordered by the
+canonical JSON of their values; the default offset/limit is 0/256 and the page
+total counts distinct combinations. Read a group's observations, with
+provenance, through `javascript-facts` and the same `where` plus matching
+`where.properties`.
+
 Rows follow retained node/observation order. The default offset/limit is 0/64;
 follow `coverage.next_offset`. Page totals count matching retained observations,
 while `source_coverage` preserves caller selection and application/semantic
