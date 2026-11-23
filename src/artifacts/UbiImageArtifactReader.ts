@@ -32,6 +32,8 @@ import {
   checkUbiPebs,
   classifyUbiPeb,
   findUbiEcHeader,
+  ubiCandidateGridOffsets,
+  ubiFirstPebMinSize,
   findUbiSpacingConflict,
   parseUbiFirstEcHeader,
   parseUbiVolumeTable,
@@ -200,7 +202,18 @@ export class UbiImageArtifactReader implements ArtifactReader {
       size,
     );
     if (!first.ok) throw parseFailure(first.error);
-    // The eraseblock size is the distance to the next erase-counter header.
+    // The eraseblock size is the distance to the next erase-counter header
+    // past the data the first PEB's VID header declares.
+    const minPebSize = ubiFirstPebMinSize(
+      await readArtifactFileBytes(
+        handle,
+        0,
+        Math.min(size, first.value.vidHeaderOffset + UBI_HEADER_BYTES),
+        size,
+        signal,
+      ),
+      first.value,
+    );
     const scanEnd = Math.min(size, UBI_MAX_PEB_BYTES + UBI_HEADER_BYTES);
     let next: number | null = null;
     for (
@@ -216,13 +229,13 @@ export class UbiImageArtifactReader implements ArtifactReader {
         size,
         signal,
       );
-      next = findUbiEcHeader(chunk, offset, first.value);
+      next = findUbiEcHeader(chunk, offset, first.value, minPebSize);
     }
     // Skipped eraseblocks before the second header would multiply the size;
-    // a header off the measured grid exposes that. A header the image's LEBs
-    // show to be payload is set aside once they are read.
+    // a header where a smaller eraseblock would begin exposes that. Once the
+    // LEBs are read, only the smaller sizes they still admit count.
     const spacingConflict = async (
-      ruledOut?: ReadonlySet<number>,
+      candidates: ReadonlySet<number>,
     ): Promise<number | null> => {
       if (next === null) return null;
       const { start, end } = ubiSpacingCheckRange(next, size);
@@ -245,12 +258,17 @@ export class UbiImageArtifactReader implements ArtifactReader {
           offset,
           first.value,
           next,
-          ruledOut,
+          candidates,
         );
       }
       return found;
     };
-    const conflict = await spacingConflict();
+    const conflict =
+      next === null
+        ? null
+        : await spacingConflict(
+            ubiCandidateGridOffsets(next, first.value.dataOffset),
+          );
     // Until then a spacing conflict keeps its precedence over later failures.
     const failure = (error: UbiImageParseError): ArtifactReaderFailure =>
       parseFailure(
@@ -314,9 +332,9 @@ export class UbiImageArtifactReader implements ArtifactReader {
     // eraseblock, so a header on only its grid is payload.
     const fit = ubiSmallerGridFit(measured.value, pebs, tableCopies);
     if (conflict !== null && next !== null) {
-      const real = fit.ruledOut.has(conflict % next)
-        ? await spacingConflict(fit.ruledOut)
-        : conflict;
+      const real = fit.plausible.has(conflict % next)
+        ? conflict
+        : await spacingConflict(fit.plausible);
       if (real !== null) throw parseFailure(ubiSpacingConflict(next, real));
     }
     // A valid header where an eraseblock of a smaller size would begin shows

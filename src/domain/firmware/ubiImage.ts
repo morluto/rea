@@ -262,33 +262,68 @@ const findEcHeaderWhere = (
  * erase-counter header, or null. A header whose layout or image_seq disagrees
  * with the first PEB's still begins an eraseblock: skipping it would measure a
  * multiple of the real size, so `classifyUbiPeb` and `checkUbiPebs` refuse it
- * instead.
+ * instead. A header before `minPebSize` (from `ubiFirstPebMinSize`) lies
+ * inside the data the first PEB's own VID header declares, so it is payload,
+ * such as a nested UBI image, and cannot begin the second eraseblock.
  */
 export const findUbiEcHeader = (
   chunk: Uint8Array,
   chunkOffset: number,
   first: UbiEcHeader,
-): number | null => findEcHeaderWhere(chunk, chunkOffset, first, () => true);
+  minPebSize = 0,
+): number | null =>
+  findEcHeaderWhere(
+    chunk,
+    chunkOffset,
+    first,
+    (offset) => offset >= minPebSize,
+  );
 
 /**
- * The first aligned offset in `chunk` holding a valid erase-counter header
- * that is not on the `pebSize` grid, or null. Such a header means eraseblocks
- * between the first two headers were skipped and `pebSize` is a multiple of
- * the real size. `ruledOut` (from `ubiRuledOutGridOffsets`) holds the
- * positions inside an eraseblock that only smaller sizes the image's LEBs
- * rule out would begin at; a header there is payload, not a conflict.
+ * Offsets inside one `pebSize` eraseblock where an eraseblock of a smaller
+ * candidate size would begin: multiples of every size on the 512-byte grid
+ * that divides `pebSize`, still leaves a LEB after `dataOffset`, and passes
+ * `admit`.
+ */
+export const ubiCandidateGridOffsets = (
+  pebSize: number,
+  dataOffset: number,
+  admit: (smallerPebSize: number) => boolean = () => true,
+): ReadonlySet<number> => {
+  const offsets = new Set<number>();
+  for (
+    let size = UBI_PEB_ALIGNMENT;
+    size < pebSize;
+    size += UBI_PEB_ALIGNMENT
+  ) {
+    if (pebSize % size !== 0 || size <= dataOffset) continue;
+    if (!admit(size)) continue;
+    for (let offset = size; offset < pebSize; offset += size)
+      offsets.add(offset);
+  }
+  return offsets;
+};
+
+/**
+ * The first aligned offset in `chunk` holding a valid erase-counter header at
+ * one of `candidates` inside a `pebSize` eraseblock, or null. Such a header
+ * means eraseblocks between the first two headers were skipped and `pebSize`
+ * is a multiple of the real size. Skipped eraseblocks leave a real size that
+ * divides `pebSize`, so `candidates` is at most `ubiCandidateGridOffsets`; a
+ * header at any other position no eraseblock could begin at, and is payload.
+ * Once the LEBs are read, `candidates` narrows to the grids they still admit
+ * (`ubiSmallerGridFit`).
  */
 export const findUbiSpacingConflict = (
   chunk: Uint8Array,
   chunkOffset: number,
   first: UbiEcHeader,
   pebSize: number,
-  ruledOut: ReadonlySet<number> = new Set(),
+  candidates: ReadonlySet<number>,
 ): number | null =>
-  findEcHeaderWhere(chunk, chunkOffset, first, (offset) => {
-    const within = offset % pebSize;
-    return within !== 0 && !ruledOut.has(within);
-  });
+  findEcHeaderWhere(chunk, chunkOffset, first, (offset) =>
+    candidates.has(offset % pebSize),
+  );
 
 /** The file range searched by `findUbiSpacingConflict` for a measured size. */
 export const ubiSpacingCheckRange = (
@@ -430,20 +465,8 @@ export const ubiPebHeadersErased = (
 export const ubiSmallerGridOffsets = (
   geometry: UbiGeometry,
   admit: (smallerPebSize: number) => boolean = () => true,
-): ReadonlySet<number> => {
-  const offsets = new Set<number>();
-  for (
-    let size = UBI_PEB_ALIGNMENT;
-    size < geometry.pebSize;
-    size += UBI_PEB_ALIGNMENT
-  ) {
-    if (geometry.pebSize % size !== 0 || size <= geometry.dataOffset) continue;
-    if (!admit(size)) continue;
-    for (let offset = size; offset < geometry.pebSize; offset += size)
-      offsets.add(offset);
-  }
-  return offsets;
-};
+): ReadonlySet<number> =>
+  ubiCandidateGridOffsets(geometry.pebSize, geometry.dataOffset, admit);
 
 /**
  * The first offset in `chunk` (read at `chunkOffset`) holding a valid
@@ -510,29 +533,20 @@ export const ubiSmallerPebSizeHoldsLebs = (
 };
 
 /**
- * Smaller-grid offsets that `ubiSmallerPebSizeHoldsLebs` admits, and those
- * only sizes it rules out would begin at. A header at a ruled-out position
- * lies in LEB data no smaller eraseblock could hold, such as a nested UBI
- * image inside a static volume, so it does not contradict the measured size.
+ * Smaller-grid offsets that `ubiSmallerPebSizeHoldsLebs` admits. A header
+ * anywhere else lies in LEB data no smaller eraseblock could begin at, such
+ * as a nested UBI image inside a volume, so it does not contradict the
+ * measured size.
  */
 export const ubiSmallerGridFit = (
   geometry: UbiGeometry,
   pebs: readonly UbiPeb[],
   tableCopies: readonly [Uint8Array | null, Uint8Array | null],
-): {
-  readonly plausible: ReadonlySet<number>;
-  readonly ruledOut: ReadonlySet<number>;
-} => {
-  const plausible = ubiSmallerGridOffsets(geometry, (size) =>
+): { readonly plausible: ReadonlySet<number> } => ({
+  plausible: ubiSmallerGridOffsets(geometry, (size) =>
     ubiSmallerPebSizeHoldsLebs(geometry, pebs, size, tableCopies),
-  );
-  const ruledOut = new Set(
-    [...ubiSmallerGridOffsets(geometry)].filter(
-      (offset) => !plausible.has(offset),
-    ),
-  );
-  return { plausible, ruledOut };
-};
+  ),
+});
 
 /**
  * The refusal when every header position of `smallerPebSize` off the measured
@@ -587,6 +601,67 @@ export type UbiPeb =
       readonly vid: UbiVidHeader;
     };
 
+type VidHeaderRead =
+  | { readonly state: "valid"; readonly vid: UbiVidHeader }
+  | { readonly state: "invalid"; readonly reason: string };
+
+const readVidHeader = (vidBytes: Uint8Array): VidHeaderRead => {
+  if (
+    vidBytes.length < UBI_HEADER_BYTES ||
+    !hasMagic(vidBytes, 0, UBI_VID_MAGIC)
+  )
+    return { state: "invalid", reason: "VID header magic is absent" };
+  const declared = u32(vidBytes, HEADER_CRC_BYTES);
+  const computed = ubiCrc(vidBytes.subarray(0, HEADER_CRC_BYTES));
+  if (declared !== computed)
+    return {
+      state: "invalid",
+      reason: `VID header CRC mismatch: declared 0x${declared.toString(16)}, computed 0x${computed.toString(16)}`,
+    };
+  if ((vidBytes[4] ?? 0) !== UBI_VERSION)
+    return { state: "invalid", reason: unsupportedVersion(vidBytes[4] ?? 0) };
+  return {
+    state: "valid",
+    vid: {
+      volType: vidBytes[5] ?? 0,
+      copyFlag: vidBytes[6] ?? 0,
+      compat: vidBytes[7] ?? 0,
+      volId: u32(vidBytes, 8),
+      lnum: u32(vidBytes, 12),
+      dataSize: u32(vidBytes, 20),
+      usedEbs: u32(vidBytes, 24),
+      dataPad: u32(vidBytes, 28),
+      dataCrc: u32(vidBytes, 32),
+      sqnum: u64(vidBytes, 40),
+    },
+  };
+};
+
+const isVolumeType = (volType: number): boolean =>
+  volType === VOLUME_TYPE_DYNAMIC || volType === VOLUME_TYPE_STATIC;
+
+/**
+ * The smallest eraseblock size the first PEB's own VID header fits, read from
+ * its first `vidHeaderOffset + 64` bytes, or 0 when it holds no valid VID
+ * header. As `classifyUbiPeb` requires, the LEB must hold data_pad plus
+ * data_size and more than data_pad, so a valid EC header nearer than this
+ * lies inside the first PEB's declared data, not at the next eraseblock.
+ */
+export const ubiFirstPebMinSize = (
+  bytes: Uint8Array,
+  first: UbiEcHeader,
+): number => {
+  const read = readVidHeader(
+    bytes.subarray(
+      first.vidHeaderOffset,
+      first.vidHeaderOffset + UBI_HEADER_BYTES,
+    ),
+  );
+  if (read.state === "invalid" || !isVolumeType(read.vid.volType)) return 0;
+  const { dataPad, dataSize } = read.vid;
+  return first.dataOffset + dataPad + Math.max(dataSize, 1);
+};
+
 /**
  * Classify one PEB from its first `headerReadBytes`. A valid header with a
  * different layout is an inconsistent image, not a skipped eraseblock; image
@@ -634,41 +709,12 @@ export const classifyUbiPeb = (
   const { eraseCounter, imageSeq } = ec.header;
   if (isErased(vidBytes)) return ok({ state: "free", eraseCounter, imageSeq });
   const facts: UbiPebEcFacts = { eraseCounter, imageSeq };
-  if (!hasMagic(vidBytes, 0, UBI_VID_MAGIC))
-    return ok({
-      state: "corrupt",
-      reason: "VID header magic is absent",
-      ec: facts,
-    });
-  const declared = u32(vidBytes, HEADER_CRC_BYTES);
-  const computed = ubiCrc(vidBytes.subarray(0, HEADER_CRC_BYTES));
-  if (declared !== computed)
-    return ok({
-      state: "corrupt",
-      reason: `VID header CRC mismatch: declared 0x${declared.toString(16)}, computed 0x${computed.toString(16)}`,
-      ec: facts,
-    });
-  if ((vidBytes[4] ?? 0) !== UBI_VERSION)
-    return ok({
-      state: "corrupt",
-      reason: unsupportedVersion(vidBytes[4] ?? 0),
-      ec: facts,
-    });
-  const vid: UbiVidHeader = {
-    volType: vidBytes[5] ?? 0,
-    copyFlag: vidBytes[6] ?? 0,
-    compat: vidBytes[7] ?? 0,
-    volId: u32(vidBytes, 8),
-    lnum: u32(vidBytes, 12),
-    dataSize: u32(vidBytes, 20),
-    usedEbs: u32(vidBytes, 24),
-    dataPad: u32(vidBytes, 28),
-    dataCrc: u32(vidBytes, 32),
-    sqnum: u64(vidBytes, 40),
-  };
+  const read = readVidHeader(vidBytes);
+  if (read.state === "invalid")
+    return ok({ state: "corrupt", reason: read.reason, ec: facts });
+  const { vid } = read;
   if (
-    (vid.volType !== VOLUME_TYPE_DYNAMIC &&
-      vid.volType !== VOLUME_TYPE_STATIC) ||
+    !isVolumeType(vid.volType) ||
     vid.dataPad >= geometry.lebSize ||
     vid.dataSize > geometry.lebSize - vid.dataPad
   )

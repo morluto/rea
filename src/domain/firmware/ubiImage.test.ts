@@ -7,6 +7,8 @@ import {
   checkUbiPebs,
   classifyUbiPeb,
   findUbiEcHeader,
+  ubiCandidateGridOffsets,
+  ubiFirstPebMinSize,
   findUbiSpacingConflict,
   parseUbiFirstEcHeader,
   parseUbiVolumeTable,
@@ -50,10 +52,15 @@ const parse = (bytes: Buffer): Result<UbiImage, UbiImageParseError> => {
   const first = parseUbiFirstEcHeader(bytes.subarray(0, 64), bytes.length);
   if (!first.ok) return first;
   const start = ubiPebSearchStart(first.value);
-  const next = findUbiEcHeader(bytes.subarray(start), start, first.value);
+  const next = findUbiEcHeader(
+    bytes.subarray(start),
+    start,
+    first.value,
+    ubiFirstPebMinSize(bytes, first.value),
+  );
   const spacing =
     next === null ? null : ubiSpacingCheckRange(next, bytes.length);
-  const spacingConflict = (ruledOut?: ReadonlySet<number>) =>
+  const spacingConflict = (candidates: ReadonlySet<number>) =>
     spacing === null || next === null
       ? null
       : findUbiSpacingConflict(
@@ -61,9 +68,12 @@ const parse = (bytes: Buffer): Result<UbiImage, UbiImageParseError> => {
           spacing.start,
           first.value,
           next,
-          ruledOut,
+          candidates,
         );
-  const conflict = spacingConflict();
+  const conflict =
+    next === null
+      ? null
+      : spacingConflict(ubiCandidateGridOffsets(next, first.value.dataOffset));
   const failed = (error: UbiImageParseError) => ({
     ok: false as const,
     error:
@@ -110,9 +120,9 @@ const parse = (bytes: Buffer): Result<UbiImage, UbiImageParseError> => {
   const tableCopies = [copy(left), copy(right)] as const;
   const fit = ubiSmallerGridFit(measured.value, pebs, tableCopies);
   if (conflict !== null && next !== null) {
-    const real = fit.ruledOut.has(conflict % next)
-      ? spacingConflict(fit.ruledOut)
-      : conflict;
+    const real = fit.plausible.has(conflict % next)
+      ? conflict
+      : spacingConflict(fit.plausible);
     if (real !== null)
       return { ok: false, error: ubiSpacingConflict(next, real) };
   }
@@ -1561,6 +1571,100 @@ describe("erase-counter headers inside static LEB payload", () => {
       });
     },
   );
+});
+
+describe("erase-counter headers no eraseblock could begin at", () => {
+  const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
+  const lebBytes = wide.pebSize - wide.dataOffset;
+
+  it("reads a dynamic LEB holding a nested image the same in any PEB", () => {
+    // A nested image of 2 KiB eraseblocks at the start of a dynamic LEB puts
+    // valid headers 4096 and 6144 bytes into the outer eraseblock, which no
+    // eligible smaller eraseblock (8 KiB and up, dividing 128 KiB) begins at.
+    const nested = ubiImage([{ kind: "free" }, { kind: "free" }]);
+    const records: UbiFixtureVolumeRecord[] = [
+      { id: 0, name: "rootfs", type: "dynamic", reservedPebs: 6 },
+    ];
+    const withNestedLeb = (nestedLnum: number) =>
+      ubiImage(
+        [
+          ...ubiLayoutPebs(records, wide),
+          ...Array.from({ length: 6 }, (_, lnum): UbiFixturePeb => {
+            const data = Buffer.alloc(lebBytes, 0x40 + lnum);
+            if (lnum === nestedLnum) nested.copy(data, 0);
+            return {
+              kind: "leb",
+              volId: 0,
+              lnum,
+              data,
+              sqnum: BigInt(lnum + 2),
+            };
+          }),
+        ],
+        wide,
+      );
+    // LEB 0 sits in PEB 2, inside the spacing check; LEB 3 in PEB 5 beyond it.
+    const inSpacingCheck = parse(withNestedLeb(0));
+    expect(inSpacingCheck).toMatchObject({
+      ok: true,
+      value: {
+        geometry: { pebSize: wide.pebSize, pebCount: 8 },
+        volumes: [{ extractRefusal: null, mappedLebCount: 6 }],
+      },
+    });
+    expect(inSpacingCheck).toEqual(parse(withNestedLeb(3)));
+  });
+
+  it.each([
+    ["the same layout", wide],
+    ["a different layout", { pebSize: 64 * 1024, dataOffset: 2048 }],
+  ])(
+    "measures past a nested header of %s inside the first PEB's static data",
+    (_case, inner) => {
+      // The dump starts with a static LEB, layout LEBs elsewhere, and a
+      // nested header 64 KiB into it. Its VID header declares 126976 bytes of
+      // data, so the next eraseblock cannot begin before 128 KiB.
+      const nestedHeader = ubiImage([{ kind: "free" }], inner).subarray(0, 64);
+      const records: UbiFixtureVolumeRecord[] = [
+        { id: 0, name: "kernel", type: "static", reservedPebs: 6 },
+      ];
+      const lebs = Array.from({ length: 6 }, (_, lnum): UbiFixturePeb => {
+        const data = Buffer.alloc(lebBytes, 0x40 + lnum);
+        if (lnum === 0) nestedHeader.copy(data, 64 * 1024 - wide.dataOffset);
+        return {
+          kind: "leb",
+          volId: 0,
+          lnum,
+          data,
+          sqnum: BigInt(lnum + 2),
+          volType: "static",
+          usedEbs: 6,
+        };
+      });
+      const bytes = ubiImage(
+        [lebs[0]!, ...ubiLayoutPebs(records, wide), ...lebs.slice(1)],
+        wide,
+      );
+      const first = parseUbiFirstEcHeader(bytes.subarray(0, 64), bytes.length);
+      expect(first.ok && ubiFirstPebMinSize(bytes, first.value)).toBe(
+        wide.pebSize,
+      );
+      expect(parse(bytes)).toMatchObject({
+        ok: true,
+        value: {
+          geometry: { pebSize: wide.pebSize, pebCount: 8 },
+          corruptPebCount: 0,
+          volumes: [{ extractRefusal: null, dataBytes: 6 * lebBytes }],
+        },
+      });
+    },
+  );
+
+  it("sets no minimum size when the first PEB holds no valid VID header", () => {
+    const bytes = ubiImage([{ kind: "free" }, { kind: "free" }]);
+    const first = parseUbiFirstEcHeader(bytes.subarray(0, 64), bytes.length);
+    expect(first.ok && ubiFirstPebMinSize(bytes, first.value)).toBe(0);
+  });
 });
 
 it("keeps erase-counter facts of an eraseblock whose VID header is corrupt", () => {

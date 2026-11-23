@@ -377,3 +377,56 @@ it("reads a static volume whose payload holds EC headers no smaller LEB could ho
     await reader.close();
   }
 });
+
+it("reads past nested EC headers no eraseblock could begin at", async () => {
+  // The dump starts with a static LEB holding a nested header 64 KiB in, and
+  // a dynamic LEB in PEB 2 starts with a nested image of 2 KiB eraseblocks,
+  // whose headers lie 4096 and 6144 bytes into the 128 KiB eraseblock.
+  const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
+  const lebBytes = wide.pebSize - wide.dataOffset;
+  const records = [
+    { id: 0, name: "kernel", type: "static" as const, reservedPebs: 1 },
+    { id: 1, name: "rootfs", type: "dynamic" as const, reservedPebs: 1 },
+  ];
+  const kernel = Buffer.alloc(lebBytes, 0x4b);
+  ubiImage([{ kind: "free" }], { pebSize: 64 * 1024, dataOffset: 2048 })
+    .subarray(0, 64)
+    .copy(kernel, 64 * 1024 - wide.dataOffset);
+  const rootfs = Buffer.alloc(lebBytes, 0x52);
+  ubiImage([{ kind: "free" }, { kind: "free" }]).copy(rootfs, 0);
+  const reader = new UbiImageArtifactReader(
+    await fixture(
+      ubiImage(
+        [
+          {
+            kind: "leb",
+            volId: 0,
+            lnum: 0,
+            data: kernel,
+            sqnum: 2n,
+            volType: "static",
+            usedEbs: 1,
+          },
+          ...ubiLayoutPebs(records, wide),
+          { kind: "leb", volId: 1, lnum: 0, data: rootfs, sqnum: 3n },
+        ],
+        wide,
+      ),
+    ),
+  );
+  try {
+    const volumes = await entries(reader);
+    expect(volumes).toMatchObject([
+      { declaredSize: lebBytes },
+      { declaredSize: lebBytes },
+    ]);
+    expect((await buffer(await reader.open(volumes[0]!))).equals(kernel)).toBe(
+      true,
+    );
+    expect((await buffer(await reader.open(volumes[1]!))).equals(rootfs)).toBe(
+      true,
+    );
+  } finally {
+    await reader.close();
+  }
+});
