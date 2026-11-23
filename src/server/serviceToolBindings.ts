@@ -1,4 +1,10 @@
-import type { UefiAnalysisService } from "../application/ProviderOperationServices.js";
+import type {
+  UefiAnalysisService,
+  ApktoolResourceAnalysisService,
+  FlutterBuildAnalysisService,
+  JebAnalysisService,
+  PcapAnalysisService,
+} from "../application/ProviderOperationServices.js";
 import type { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
 import type { ElectronFuseService } from "../application/electron/ElectronFuseService.js";
@@ -19,14 +25,10 @@ import {
 } from "../application/analysisView/AnalysisViewService.js";
 import { z } from "zod";
 import { analysisViewSourceSchema } from "../domain/analysisView/analysisViewRequest.js";
-import type { ApktoolResourceAnalysisService } from "../application/ProviderOperationServices.js";
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
 import type { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
-import type { FlutterBuildAnalysisService } from "../application/ProviderOperationServices.js";
 import { recordEvidenceSources } from "../application/investigation/recordEvidenceSources.js";
 import type { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
-import type { JebAnalysisService } from "../application/ProviderOperationServices.js";
-import type { PcapAnalysisService } from "../application/ProviderOperationServices.js";
 import type { SignalRecordingService } from "../application/signals/SignalRecordingService.js";
 import { OFFLINE_INSPECTION_TOOL_BINDINGS } from "./offlineInspectionToolBindings.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
@@ -240,12 +242,17 @@ const SERVICE_TOOL_BINDINGS = {
       "inspect_firmware_regions",
       "extract_firmware",
     ])) satisfies Bind<FirmwareAnalysisService>,
-  uefiAnalysis: ((service) =>
-    contractServiceBindings(service, [
-      "inspect_uefi_firmware",
+  uefiAnalysis: ((service) => ({
+    ...contractServiceBindings(service, [
       "extract_uefi_firmware",
       "inspect_uefi_nvram",
-    ])) satisfies Bind<UefiAnalysisService>,
+    ]),
+    inspect_uefi_firmware: {
+      admission: "application",
+      summary: (input, options) =>
+        service.execute("inspect_uefi_firmware", input, options),
+    },
+  })) satisfies Bind<UefiAnalysisService>,
   pcapAnalysis: ((service) => ({
     ...contractServiceBindings(service, ["inspect_pcap_client"]),
     inspect_pcap_capture: {
