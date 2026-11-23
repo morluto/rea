@@ -424,6 +424,7 @@
 * **native:** maintain owner index for ObjC dispatch implementations instead of O(C*M) filtering ([#13269](https://github.com/morluto/rea/issues/13269)) ([b38a496](https://github.com/morluto/rea/commit/b38a49656aa314cc3a84afaa1a11d6c4324a29d6))
 * **native:** pre-screen IL2CPP slots and reuse ObjC/PE indices ([#13314](https://github.com/morluto/rea/issues/13314)) ([ac4f655](https://github.com/morluto/rea/commit/ac4f65585846fc8542234ce1366b8a251336a790))
 * **native:** stream binary hardening inspection over FileHandle for ELF, PE, and Mach-O ([#13934](https://github.com/morluto/rea/issues/13934)) ([9d204d4](https://github.com/morluto/rea/commit/9d204d40d858c404cf7a627a22be5c4fa6293225))
+* **native:** stream PE and ELF export-table inspection over FileHandle ([#13951](https://github.com/morluto/rea/issues/13951)) ([7283e8e](https://github.com/morluto/rea/commit/7283e8e67836a2978e10ddfd03dee77692680897))
 * **ntfs:** stream MFT record decoding in O(recordBytes) memory ([#13957](https://github.com/morluto/rea/issues/13957)) ([1486488](https://github.com/morluto/rea/commit/1486488782cc72be8c714663508440c93b3b501a))
 * **nuget:** stream .nupkg ZIP over FileHandle instead of buffering full archive ([#13835](https://github.com/morluto/rea/issues/13835)) ([bddb023](https://github.com/morluto/rea/commit/bddb0233250ee29de3c3832aa785eb07383c8ead))
 * **objc:** streamline exact class identity projection ([#13897](https://github.com/morluto/rea/issues/13897)) ([cdca45c](https://github.com/morluto/rea/commit/cdca45c2709b61c303864667b02cd4fd9ef8cb5c))
