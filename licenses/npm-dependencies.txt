@@ -2750,11 +2750,11 @@ formatly@0.7.1 | development | MIT
   Package: https://www.npmjs.com/package/formatly/v/0.7.1
   Archive: https://registry.npmjs.org/formatly/-/formatly-0.7.1.tgz
   Integrity: sha512-ESuCEJE0SGgabl9q+zABI8LhJDmF+8nhpuqDzuM48HfJ9QTD5o6PqFJDFZY7w6f8xsh5lixuj5nJsQNvYOWvKQ==
-frida@17.23.2 | runtime, optional | LGPL-2.0 WITH WxWindows-exception-3.1
+frida@17.27.4 | runtime, optional | LGPL-2.0 WITH WxWindows-exception-3.1
   Lockfile path: node_modules/frida
-  Package: https://www.npmjs.com/package/frida/v/17.23.2
-  Archive: https://registry.npmjs.org/frida/-/frida-17.23.2.tgz
-  Integrity: sha512-gRCmmTUFdEILyHRN1b66erRoXafwsfWTqXyoBBqkSCFX0Ue7Jhvs/KhA3JO0XrgITNlPd91QAGsFvWzh0mhVgg==
+  Package: https://www.npmjs.com/package/frida/v/17.27.4
+  Archive: https://registry.npmjs.org/frida/-/frida-17.27.4.tgz
+  Integrity: sha512-vXuznuWSW24X7RyIPydNarLgCdwwq5VsosdAfgTX81Xe9kM059blT0hk+VSRXoZ8yzIGFSSlgSnyVWvgq8Z2dA==
 fs-constants@1.0.0 | runtime, optional | MIT
   Lockfile path: node_modules/fs-constants
   Package: https://www.npmjs.com/package/fs-constants/v/1.0.0

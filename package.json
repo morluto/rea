@@ -460,9 +460,9 @@
     "vitest": "5.0.3"
   },
   "optionalDependencies": {
-    "frida": "17.23.2"
+    "frida": "17.27.4"
   },
   "allowScripts": {
-    "frida@17.23.2": true
+    "frida@17.27.4": true
   }
 }

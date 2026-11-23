@@ -34,10 +34,10 @@ entries preserve the declared license and author metadata and include a clearly
 labeled standard license text. These are documented upstream notice gaps, not
 recovered copyright notices or a claim that attribution has been fully verified.
 
-The optional `frida@17.23.2` npm archive and tagged Node binding source also
+The optional `frida@17.27.4` npm archive and tagged Node binding source also
 omit a standalone license/copyright document. Its declared
 `LGPL-2.0 WITH WxWindows-exception-3.1` license is recorded with unchanged
-[Frida licensing text](licenses/frida-17.23.2-COPYING.txt) and the
+[Frida licensing text](licenses/frida-17.27.4-COPYING.txt) and the
 [GNU Library GPL v2](licenses/LGPL-2.0.txt). These are licensing supplements,
 not recovered Node binding or prebuild-component copyright notices.
 
