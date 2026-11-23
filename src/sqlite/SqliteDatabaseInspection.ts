@@ -1139,7 +1139,7 @@ export const inspectSqliteDatabaseSnapshot = (
     if (!supported.success)
       throw new SqliteInspectionFailure(
         "unavailable",
-        "SQLite inspection requires the native DatabaseSync.limits API to bound untrusted values and SQL. Use Node.js 24.15 or newer in the supported 24.x line, or a compatible Node.js 26+ runtime.",
+        "SQLite inspection requires the native DatabaseSync.limits API to bound untrusted values and SQL. Run REA on a supported Node.js 24.x or 26.x runtime.",
       );
     db.exec(
       "PRAGMA trusted_schema=OFF; PRAGMA query_only=ON; PRAGMA mmap_size=0; PRAGMA cell_size_check=ON; BEGIN;",

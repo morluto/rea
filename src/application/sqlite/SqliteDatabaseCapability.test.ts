@@ -23,7 +23,7 @@ it.each([
       available,
       reason: available
         ? null
-        : expect.stringContaining("Node.js 24.x >=24.15 or 26+"),
+        : expect.stringContaining("supported Node.js 24.x and 26.x runtimes"),
       availability_code: available ? null : "unsupported_version",
       limitations: [expect.stringContaining("DatabaseSync.limits")],
     });
