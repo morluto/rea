@@ -390,6 +390,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
 
+    /**
+     * Effective request-line ceiling, resolved once per bridge process. The
+     * client refuses an oversized request before writing, so this bounds only
+     * what this bridge retains for one request: an out-of-band client, or a
+     * caller that raised the shared setting above this bridge's default. The
+     * value counts decoded chars, and UTF-8 bytes are never fewer than chars,
+     * so a request the client admitted under its byte ceiling is never refused
+     * here. An unset setting keeps the default; an invalid one is refused here,
+     * as the client and the Hopper and Cutter bridges already refuse it, rather
+     * than silently defaulting or clamping to a different ceiling.
+     */
+    private static final int BRIDGE_MAX_REQUEST_CHARS =
+        ReaGhidraRequestLine.charCeiling(ReaGhidraRequestLine.resolveFromEnvironment());
+
     private void acceptAuthenticatedLoopbackClient(
             ServerSocketChannel server, SessionDescriptor descriptor) throws Exception {
         while (true) {
@@ -439,7 +453,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             Request request = first;
             first = null;
             if (request == null) {
-                String line = reader.readLine();
+                String line = ReaGhidraRequestLine.readBoundedLine(
+                    reader, BRIDGE_MAX_REQUEST_CHARS);
                 if (line == null) return;
                 try {
                     request = parseRequest(line, descriptor.token);

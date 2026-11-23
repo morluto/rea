@@ -159,21 +159,47 @@ await withVerifierFixture(scratchFixture, async () => {
     );
     process.exitCode = 1;
   } else {
-    console.log(
-      JSON.stringify({
-        ghidra_version: version,
-        javac: output(banner),
-        class_path_jars: jars.length,
-        sources,
-      }),
+    // The request-line owner is the one bridge source with no Ghidra import, so
+    // its self-test runs on the compiled classes with the candidate JDK. The
+    // Java and TypeScript parsers must refuse the same REA_BRIDGE_MAX_REQUEST_BYTES
+    // values; this run also proves the bridge refuses each invalid one instead of
+    // defaulting or clamping it, which only a real JVM environment can show.
+    const java = javac.endsWith("javac")
+      ? `${javac.slice(0, -"javac".length)}java`
+      : "java";
+    const selfTest = run(
+      java,
+      ["-cp", join(scratch, "classes"), "ReaGhidraRequestLine"],
+      { REA_BRIDGE_MAX_REQUEST_BYTES: "not-a-byte-count" },
     );
+    if (
+      selfTest.error ||
+      selfTest.status !== 0 ||
+      !output(selfTest).includes("REA_REQUEST_LINE_SELFTEST_OK")
+    ) {
+      process.stderr.write(
+        `${output(selfTest) || selfTest.error?.message || "the request-line self-test produced no result"}\nThe Ghidra bridge request-line contract is not satisfied.\n`,
+      );
+      process.exitCode = 1;
+    } else {
+      console.log(
+        JSON.stringify({
+          ghidra_version: version,
+          javac: output(banner),
+          class_path_jars: jars.length,
+          request_line_self_test: output(selfTest),
+          sources,
+        }),
+      );
+    }
   }
 });
 
-function run(command, args) {
+function run(command, args, environment = {}) {
   return spawnSync(command, args, {
     cwd: root,
     encoding: "utf8",
+    env: { ...process.env, ...environment },
     timeout: 300_000,
     maxBuffer: 16 * 1024 * 1024,
   });

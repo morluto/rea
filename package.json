@@ -69,6 +69,7 @@
     "bridge/ghidra/ReaGhidraMipsSoftFloat.java",
     "bridge/ghidra/ReaGhidraRiscvCallingConvention.java",
     "bridge/ghidra/ReaGhidraPrepareRaw.java",
+    "bridge/ghidra/ReaGhidraRequestLine.java",
     "bridge/ghidra/ReaGhidraPrepareDol.java",
     "bridge/android/ReaJadxBridge.java",
     "bridge/mitmproxy/capture.py",

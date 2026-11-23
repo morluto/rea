@@ -55,8 +55,9 @@ export const DEFAULT_BRIDGE_MAX_REQUEST: BridgeMaxRequestBytes = {
 
 /**
  * Peer a ceiling refusal is reported for. Ghidra differs from the other two:
- * its Java bridge reads no request ceiling, so only the REA client enforces
- * this setting for Ghidra and recovery must not ask for a bridge restart.
+ * its Java bridge bounds each request line it reads rather than the whole
+ * authenticated frame, and REA starts that bridge, so it takes the launch seed
+ * rather than a runtime change and recovery must not ask for a bridge restart.
  */
 export type BridgePeer = "Hopper" | "Cutter" | "Ghidra";
 
@@ -117,7 +118,7 @@ export const bridgeMaxRequestBytesRecovery = (
   [
     `The effective bridge.max_request_bytes value is ${String(limit.maximumBytes)} bytes (source ${limit.source}; default ${String(DEFAULT_BRIDGE_MAX_REQUEST_BYTES)}, floor ${String(MINIMUM_BRIDGE_MAX_REQUEST_BYTES)}, maximum ${String(MAXIMUM_BRIDGE_MAX_REQUEST_BYTES)}). It can be changed at runtime with update_analysis_settings. The launch seed is ${BRIDGE_MAX_REQUEST_BYTES_SETTING}.`,
     peer === "Ghidra"
-      ? `The Ghidra bridge enforces no request ceiling of its own, so only the REA client applies bridge.max_request_bytes to Ghidra requests.`
+      ? `The Ghidra bridge bounds each request line it reads to the same setting in decoded characters and closes the connection when a line exceeds it; the client also refuses an oversized request before writing.`
       : "The Hopper or Cutter bridge keeps the ceiling it started with until that bridge starts again.",
   ].join(" ");
 
