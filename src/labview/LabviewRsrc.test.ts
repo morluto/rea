@@ -16,6 +16,7 @@ import {
   buildLabviewRsrc,
   labviewContainer,
   labviewVersionSection,
+  labviewZlibSection,
 } from "../../tests/fixtures/labview/rsrc.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
@@ -55,6 +56,20 @@ describe("parseLabviewRsrc", () => {
     if (!scan.ok) throw scan.failure;
     expect(scan.containers).toHaveLength(1);
     expect(scan.containers[0]?.bytes.equals(labviewContainer())).toBe(true);
+  });
+
+  it("reads the version from a zlib-coded vers section", () => {
+    const parsed = parseLabviewRsrc(
+      buildLabviewRsrc([
+        { ident: "vers", sections: [labviewZlibSection("11.0")] },
+      ]),
+    );
+    if (!parsed.ok) throw new Error(parsed.failure.message);
+    expect(parsed.value.blocks[0]?.sections[0]).toMatchObject({
+      coding: "zlib",
+      decodedBytes: 4,
+    });
+    expect(parsed.value.labviewVersion).toBe("11.0");
   });
 
   it("accepts a list extent that runs past the resource payload", () => {
@@ -160,6 +175,20 @@ describe("LabviewArtifactProvider", () => {
       expect(projectAnalysisError(result.error).code).toBe("cancelled");
       expect(result.error.cause).toBe(reason);
     }
+    await provider.close();
+  });
+
+  it("keeps heap presence unknown for a .llb archive", async () => {
+    const root = await createTestTempDirectory("rea-labview-llb-");
+    const path = join(root, "fixture.llb");
+    await writeFile(path, labviewContainer());
+    const provider = new LabviewArtifactProvider();
+    const result = await provider.inspect({ path });
+    if (!result.ok) throw result.error;
+    // Member VIs inside the archive are not opened, so absence is not proven.
+    expect(result.value.block_diagram).toBe("unknown");
+    expect(result.value.front_panel).toBe("unknown");
+    expect(result.value.limitations.join(" ")).toContain("member VI contents");
     await provider.close();
   });
 

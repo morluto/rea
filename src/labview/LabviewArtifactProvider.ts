@@ -178,12 +178,14 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
 
     const bytes = snapshot.bytes;
     let containers: readonly EmbeddedRsrc[];
+    let coverage = true;
     if (bytes.subarray(0, 6).toString("latin1") === RSRC_MAGIC) {
       containers = [{ offset: 0, bytes }];
     } else {
       const scan = findEmbeddedRsrcContainers(bytes);
       if (!scan.ok) return err(limitFailure(scan.failure));
       containers = scan.containers;
+      coverage = scan.complete;
     }
     if (containers.length === 0)
       return err(
@@ -211,8 +213,13 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
     // A container that carries an embedded program tree, or a file whose other
     // containers were not examined, cannot establish that a heap is absent.
     // Absence is claimed only for a fully examined artifact.
+    // A `.llb` holds member VIs this reader does not open, and a PE walk that
+    // stopped early leaves branches unexamined; neither can establish absence.
+    const memberArchive = input.path.toLowerCase().endsWith(".llb");
     const unexamined =
       containers.length > 1 ||
+      memberArchive ||
+      !coverage ||
       value.blocks.some(({ identifier }) => identifier === "LVzp");
     const presence = (prefix: string): LabviewArtifactPresence =>
       value.blocks.some(({ identifier }) => identifier.startsWith(prefix))
@@ -228,6 +235,16 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
             `The file carries ${String(containers.length)} embedded RSRC containers; only the largest was inventoried, and the others were not examined.`,
           ]
         : []),
+      ...(memberArchive
+        ? [
+            "The selected .llb is an archive: member VI contents are not inspected.",
+          ]
+        : []),
+      ...(coverage
+        ? []
+        : [
+            "Part of the PE resource tree could not be examined, so heap presence is unknown for that content.",
+          ]),
       ...(value.blocks.some(({ identifier }) => identifier === "LVzp")
         ? [
             "The inspected container carries an embedded program tree (LVzp) that this reader does not decode.",

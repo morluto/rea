@@ -24,6 +24,8 @@ const MAX_SECTIONS_PER_BLOCK = 4096;
 const MAX_TOTAL_SECTIONS = 4096;
 /** Decoded work one container may spend, independent of its compressed size. */
 const MAX_DECODED_BYTES = 64 * 1024 * 1024;
+/** Compressed bytes one container may attempt, independent of its declared output. */
+const MAX_COMPRESSED_BYTES = 64 * 1024 * 1024;
 
 export type LabviewCoding = "none" | "zlib" | "xor" | "unknown";
 
@@ -83,7 +85,15 @@ const zlibHeaderValid = (cmf: number, flg: number): boolean =>
   (flg & 0x20) === 0;
 
 interface DecodeBudget {
-  remaining: number;
+  decodedRemaining: number;
+  inputRemaining: number;
+}
+
+interface SectionDecoding {
+  readonly coding: LabviewCoding;
+  readonly decodedBytes: number | null;
+  /** The decoded payload, kept only for blocks whose content is read back. */
+  readonly decoded: Buffer | undefined;
 }
 
 /**
@@ -95,31 +105,52 @@ const decodeSection = (
   blockIdentifier: string,
   stored: Buffer,
   budget: DecodeBudget,
-): { coding: LabviewCoding; decodedBytes: number | null } => {
-  // LVzp (the embedded program tree) is XOR-coded, not compressed, and this
-  // reader inventories it without materializing its payload.
-  if (blockIdentifier === "LVzp") return { coding: "xor", decodedBytes: null };
-  if (stored.length < 6) return { coding: "none", decodedBytes: null };
-  const head = new BinaryReader(stored, false, FORMAT);
-  const declared = head.u32(0);
-  if (!zlibHeaderValid(head.u8(4), head.u8(5)))
-    return { coding: "none", decodedBytes: null };
-  if (declared > budget.remaining)
-    return { coding: "unknown", decodedBytes: null };
-  // Charge the attempt, not only a successful decode: several section records
-  // may point at the same stored bytes, and the budget bounds total work.
-  budget.remaining -= declared;
-  try {
-    const decoded = inflateSync(stored.subarray(4), {
-      // Bound the allocation by the declared length, not by the input size.
-      maxOutputLength: Math.max(1, declared),
-    });
-    return decoded.length === declared
-      ? { coding: "zlib", decodedBytes: decoded.length }
-      : { coding: "unknown", decodedBytes: null };
-  } catch {
-    return { coding: "unknown", decodedBytes: null };
-  }
+  cacheKey: number,
+  cache: Map<number, SectionDecoding>,
+): SectionDecoding => {
+  const cached = cache.get(cacheKey);
+  if (cached !== undefined) return cached;
+  const unknown: SectionDecoding = {
+    coding: "unknown",
+    decodedBytes: null,
+    decoded: undefined,
+  };
+  const result = (): SectionDecoding => {
+    // LVzp (the embedded program tree) is XOR-coded, not compressed, and this
+    // reader inventories it without materializing its payload.
+    if (blockIdentifier === "LVzp")
+      return { coding: "xor", decodedBytes: null, decoded: undefined };
+    if (stored.length < 6)
+      return { coding: "none", decodedBytes: null, decoded: undefined };
+    const head = new BinaryReader(stored, false, FORMAT);
+    const declared = head.u32(0);
+    if (!zlibHeaderValid(head.u8(4), head.u8(5)))
+      return { coding: "none", decodedBytes: null, decoded: undefined };
+    // Charge both the compressed input and the declared output: a stream with
+    // a tiny declared length can still make the inflater traverse megabytes,
+    // and several section records may point at the same stored bytes.
+    if (stored.length > budget.inputRemaining) return unknown;
+    if (declared > budget.decodedRemaining) return unknown;
+    budget.inputRemaining -= stored.length;
+    budget.decodedRemaining -= declared;
+    try {
+      const decoded = inflateSync(stored.subarray(4), {
+        // Bound the allocation by the declared length, not by the input size.
+        maxOutputLength: Math.max(1, declared),
+      });
+      if (decoded.length !== declared) return unknown;
+      return {
+        coding: "zlib",
+        decodedBytes: decoded.length,
+        decoded: blockIdentifier === "vers" ? decoded : undefined,
+      };
+    } catch {
+      return unknown;
+    }
+  };
+  const value = result();
+  cache.set(cacheKey, value);
+  return value;
 };
 
 /** Read one Pascal name from a block's name list, bounded by the declared list. */
@@ -255,7 +286,7 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
       throw truncatedInput(FORMAT, "RSRC block-info list declares no records", {
         offset: infoOffset + 48,
       });
-    const listEnd = Math.min(blockInfo + blockInfoBytes, bytes.length);
+    const listEnd = Math.min(blockInfo + blockInfoBytes, infoEnd);
     const blockCount = reader.u32(blockInfo) + 1;
     if (blockCount > MAX_BLOCKS)
       throw decodeLimit(
@@ -272,7 +303,11 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
 
     const blocks: LabviewBlock[] = [];
     const versionSections: Uint8Array[] = [];
-    const budget: DecodeBudget = { remaining: MAX_DECODED_BYTES };
+    const budget: DecodeBudget = {
+      decodedRemaining: MAX_DECODED_BYTES,
+      inputRemaining: MAX_COMPRESSED_BYTES,
+    };
+    const decodedSections = new Map<number, SectionDecoding>();
     let totalSections = 0;
     for (let blockIndex = 0; blockIndex < blockCount; blockIndex += 1) {
       const headerAt = blockHeadersAt + blockIndex * BLOCK_HEADER_BYTES;
@@ -331,8 +366,15 @@ export const parseLabviewRsrc = (bytes: Buffer): LabviewParseResult => {
             { offset: sectionAt, field: identifier },
           );
         const stored = reader.range(sectionAt + 4, storedBytes, "section data");
-        const decoded = decodeSection(identifier, stored, budget);
-        if (identifier === "vers") versionSections.push(stored);
+        const decoded = decodeSection(
+          identifier,
+          stored,
+          budget,
+          sectionOffset,
+          decodedSections,
+        );
+        if (identifier === "vers")
+          versionSections.push(decoded.decoded ?? stored);
         sections.push({
           index: declaredIndex >= 0 ? declaredIndex : index,
           name: sectionName(reader, nameBase, nameOffset, listEnd),

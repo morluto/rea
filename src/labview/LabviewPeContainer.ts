@@ -28,7 +28,12 @@ export interface EmbeddedRsrc {
 }
 
 export type EmbeddedRsrcScan =
-  | { readonly ok: true; readonly containers: readonly EmbeddedRsrc[] }
+  | {
+      readonly ok: true;
+      readonly containers: readonly EmbeddedRsrc[];
+      /** Whether every resource branch this walk reached was examined. */
+      readonly complete: boolean;
+    }
   | { readonly ok: false; readonly failure: ParseFailureError<"limit"> };
 
 /**
@@ -45,11 +50,12 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
   } catch (cause) {
     // Not an admitted PE, or a malformed one: this file carries no embedded
     // RSRC container that this reader can locate.
-    if (cause instanceof ParseFailureError) return { ok: true, containers: [] };
+    if (cause instanceof ParseFailureError)
+      return { ok: true, containers: [], complete: false };
     throw cause;
   }
   if (layout.rva === 0 || layout.size < PE_RESOURCE_DIRECTORY_BYTES)
-    return { ok: true, containers: [] };
+    return { ok: true, containers: [], complete: true };
 
   const reader = new BinaryReader(bytes, true, "pe");
   const root = layout.rva;
@@ -57,6 +63,7 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
   const visited = new Set<number>();
   let visits = 0;
   let examinedEntries = 0;
+  let complete = true;
 
   /** File offset of directory metadata, which must stay inside the resource span. */
   const metadataOffset = (
@@ -82,7 +89,10 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
   };
 
   const visit = (relativeOffset: number, depth: number): void => {
-    if (depth > 3) return;
+    if (depth > 3) {
+      complete = false;
+      return;
+    }
     visits += 1;
     if (visits > MAX_DIRECTORY_VISITS)
       throw decodeLimit(
@@ -102,7 +112,10 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
       relativeOffset,
       PE_RESOURCE_DIRECTORY_BYTES,
     );
-    if (directory === undefined) return;
+    if (directory === undefined) {
+      complete = false;
+      return;
+    }
     const { entryCount } = readPeResourceDirectoryFacts(
       reader.range(
         directory,
@@ -135,7 +148,10 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
       relativeOffset + PE_RESOURCE_DIRECTORY_BYTES,
       entryCount * PE_RESOURCE_ENTRY_BYTES,
     );
-    if (rows === undefined) return;
+    if (rows === undefined) {
+      complete = false;
+      return;
+    }
     for (let index = 0; index < entryCount; index += 1) {
       const at = rows + index * PE_RESOURCE_ENTRY_BYTES;
       const { target } = readPeResourceEntryFacts(
@@ -149,7 +165,10 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
         target.offset,
         PE_RESOURCE_DATA_ENTRY_BYTES,
       );
-      if (dataEntry === undefined) continue;
+      if (dataEntry === undefined) {
+        complete = false;
+        continue;
+      }
       const { rva, size } = readPeResourceDataEntryFacts(
         reader.range(
           dataEntry,
@@ -159,7 +178,10 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
       );
       if (size < 6) continue;
       const dataOffset = payloadOffset(rva, size);
-      if (dataOffset === undefined) continue;
+      if (dataOffset === undefined) {
+        complete = false;
+        continue;
+      }
       if (
         reader.range(dataOffset, 6, "resource payload").toString("latin1") !==
         RSRC_MAGIC
@@ -193,5 +215,5 @@ export const findEmbeddedRsrcContainers = (bytes: Buffer): EmbeddedRsrcScan => {
       return { ok: false, failure: cause as ParseFailureError<"limit"> };
     throw cause;
   }
-  return { ok: true, containers: found };
+  return { ok: true, containers: found, complete };
 };
