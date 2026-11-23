@@ -286,7 +286,7 @@ it.skipIf(rizin === undefined)(
     }
 
     // The declared ARM widths 16 and 32 are applied as given and change the
-    // decoding.
+    // decoding. Rizin 0.7.4 and 0.9.1 print the same two ARM32 lines.
     const decode = async (bits: 16 | 32) =>
       runRizin(
         {
@@ -301,8 +301,7 @@ it.skipIf(rizin === undefined)(
     expect(thumb.lines).toEqual(["16", "bx lr", "bx lr"]);
     expect(thumb.stderr).toBe("");
     const arm32 = await decode(32);
-    expect(arm32.lines[0]).toBe("32");
-    expect(arm32.lines.slice(1)).not.toEqual(["bx lr", "bx lr"]);
+    expect(arm32.lines).toEqual(["32", "invalid", "svclt 0xbf00"]);
     expect(arm32.stderr).toBe("");
 
     // Every width that this Rizin's arch plugins declare is one REA admits,
