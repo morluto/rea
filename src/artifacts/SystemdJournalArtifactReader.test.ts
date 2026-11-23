@@ -368,6 +368,24 @@ it("refuses a file shorter than the fixed header", async () => {
   }
 });
 
+it("reports a short signed journal as truncated rather than malformed", async () => {
+  // The signature establishes the format before any structure does: 8 bytes
+  // of header in a 40-byte file is truncated input, not bytes of an unknown
+  // shape, and the failure carries that distinction for callers.
+  const path = await writeJournal(
+    "short-signed",
+    Buffer.concat([Buffer.from("LPKSHHRH", "latin1"), Buffer.alloc(32)]),
+  );
+  const reader = new SystemdJournalArtifactReader(path);
+  try {
+    await expect(
+      reader.entries()[Symbol.asyncIterator]().next(),
+    ).rejects.toMatchObject({ reason: "format", cause: { failure: { kind: "truncated" } } });
+  } finally {
+    await reader.close();
+  }
+});
+
 it("clamps an inline object window without changing the walked chain", async () => {
   const objects = Array.from({ length: 40 }, () => ({ type: 1, size: 32 }));
   const inventory = await scanCanonicalArtifactInventory(

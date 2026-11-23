@@ -7,6 +7,7 @@ import {
 import type { RegionDecodeFailure } from "../domain/firmware/regionDecoder.js";
 import {
   createJournalDecoder,
+  hasSystemdJournalHeader,
   type JournalInventory,
 } from "../domain/linux/systemdJournal.js";
 import {
@@ -19,8 +20,13 @@ import {
   assertArtifactReadActive,
   ArtifactFileSource,
 } from "../resources/index.js";
+import {
+  malformedInput,
+  truncatedInput,
+} from "../domain/parseFailure.js";
 import { ArtifactPreparation } from "./ArtifactPreparation.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 
 /**
@@ -33,6 +39,8 @@ export class SystemdJournalArtifactReader implements ArtifactReader {
   readonly #scope = new ArtifactResourceScope();
   readonly #source: ArtifactFileSource;
   readonly #preparation = new ArtifactPreparation();
+  /** True when the file starts with the journal signature, even if it is short. */
+  #signatureSeen = false;
   #metadata: ArtifactFormatMetadata | undefined;
   #limitations: readonly string[] = [];
   #closing = false;
@@ -118,6 +126,15 @@ export class SystemdJournalArtifactReader implements ArtifactReader {
 
   async #decode(signal?: AbortSignal): Promise<JournalInventory> {
     const { handle, initial } = await this.#source.read(signal);
+    // The signature is all a truncated file needs to be recognized as a
+    // journal, so it is read before the decoder's header requirement applies.
+    this.#signatureSeen = hasSystemdJournalHeader(
+      initial.size === 0
+        ? new Uint8Array()
+        : await readFileHandleRange(handle, 0, 8, () =>
+            assertArtifactReadActive(signal),
+          ),
+    );
     const decoder = createJournalDecoder(initial.size);
     if (!decoder.ok) throw this.#failure(decoder.error);
     if (initial.size > 0)
@@ -144,16 +161,26 @@ export class SystemdJournalArtifactReader implements ArtifactReader {
   }
 
   #failure(failure: RegionDecodeFailure): ArtifactReaderFailure {
-    return failure.kind === "format"
-      ? new ArtifactReaderFailure(
-          "format",
-          `systemd journal file is malformed: ${failure.message}`,
-        )
-      : new ArtifactReaderFailure(
-          "limit",
-          `systemd journal file exceeds a fixed limit: ${failure.message}`,
-          failure.boundary === undefined ? {} : { boundary: failure.boundary },
-        );
+    if (failure.kind === "limit")
+      return new ArtifactReaderFailure(
+        "limit",
+        `systemd journal file exceeds a fixed limit: ${failure.message}`,
+        failure.boundary === undefined ? {} : { boundary: failure.boundary },
+      );
+    // The signature establishes the format before any structure does, so a
+    // file that carries it and stops short is truncated input, not bytes of
+    // an unknown shape. The parse failure keeps that distinction for callers
+    // that report a reason.
+    const signed = this.#signatureSeen;
+    return new ArtifactReaderFailure(
+      "format",
+      `systemd journal file is malformed: ${failure.message}`,
+      {
+        cause: signed
+          ? truncatedInput("systemd-journal", failure.message)
+          : malformedInput("systemd-journal", failure.message),
+      },
+    );
   }
 }
 
