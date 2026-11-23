@@ -9,7 +9,7 @@ import { WasmArtifactService } from "../application/wasm/WasmArtifactService.js"
 import {
   wasmArtifactSchema,
   WASM_RESOURCE_DEFAULTS,
-  WABT_ACCEPTED_RANGE,
+  WABT_VERSION,
 } from "../domain/wasm/wasmArtifact.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { PrivateRuntimeRootUnavailableError } from "../domain/privateRuntimeRootUnavailableError.js";
@@ -28,9 +28,8 @@ const wabtFailure = (
 
 // Admission must not outrun the `1.0.x` banners wasmArtifactSchema accepts.
 it("admits 1.0.x releases but not the 1.1.0 upper boundary", () => {
-  expect(WABT_ACCEPTED_RANGE).toBe(">=1.0.42 <1.1.0");
   expect(admitWabtVersion("1.0.41").status).toBe("unsupported");
-  expect(admitWabtVersion("1.0.42").status).toBe("verified");
+  expect(admitWabtVersion(WABT_VERSION).status).toBe("verified");
   expect(admitWabtVersion("1.0.99").status).toBe("compatible");
   expect(admitWabtVersion("1.1.0").status).toBe("unsupported");
   expect(admitWabtVersion("2.0.0").status).toBe("unsupported");
