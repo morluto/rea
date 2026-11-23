@@ -29,7 +29,7 @@ import {
   type ContractCommandContext,
 } from "./contractCommand.js";
 import type { ReverseEngineeringService } from "../application/reverse/ReverseEngineeringService.js";
-import { gdbOneShotCommandMayInvalidateDetachProof } from "../gdb/GdbSessionManager.js";
+import { gdbOneShotCommandMayInvalidateDetachProof } from "../domain/gdbCommandClassification.js";
 import {
   createGdbSessionManager,
   createRizinDebugSessionManager,

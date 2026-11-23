@@ -15,10 +15,12 @@ import {
 import {
   commandMayChangeInferiorOutput,
   gdbOneShotCommandMayInvalidateDetachProof,
+} from "../../../src/domain/gdbCommandClassification.js";
+import {
   gdbThreadGroupPids,
-  GdbSessionManager,
   miStringField,
-} from "../../../src/gdb/GdbSessionManager.js";
+} from "../../../src/gdb/GdbInferiorVerification.js";
+import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
 import type {
   OwnedProviderProcessSpawnOptions,
   ProviderProcessHandle,
