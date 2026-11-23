@@ -1152,80 +1152,77 @@ describe("LC_LAZY_LOAD_DYLIB_INFO image offsets", () => {
     expect(onPage.status).toBe("parsed");
   });
 
-  it("measures the VM range from __TEXT and ignores __LINKEDIT", async () => {
-    const text = segmentCommand({
-      name: "__TEXT",
-      vmaddr: 0x100000000n,
-      vmsize: 0x8000n,
-    });
-    const inside = await read(
-      machoImageWithLazyLoadDylibInfo({
-        path: "@rpath/libl.dylib",
-        flagImageOffset: 0x8000,
-        commandsBefore: [text],
-      }),
+  it("measures the mapped end from the first __TEXT even when data precedes it", async () => {
+    const base = 0x8000000100000000n;
+    const commandsBefore = (
+      [
+        ["__DATA", 0x6001n, 0x4000n],
+        ["__TEXT", 0n, 0x8000n],
+        ["__TEXT", 0x1000n, 0x1000n],
+        ["__LINKEDIT", 0x20000n, 0x8000n],
+      ] as const
+    ).map(([name, offset, vmsize]) =>
+      segmentCommand({ name, vmaddr: base + offset, vmsize }),
     );
-    expect(inside.status).toBe("parsed");
-    const outside = await read(
-      machoImageWithLazyLoadDylibInfo({
-        path: "@rpath/libl.dylib",
-        chainStartImageOffset: 0x8001,
-        commandsBefore: [text],
-      }),
-    );
-    expect(outside).toMatchObject({
+    const readAtOffset = (offset: number) =>
+      read(
+        machoImageWithLazyLoadDylibInfo({
+          path: "@rpath/libl.dylib",
+          flagImageOffset: offset,
+          chainStartImageOffset: offset,
+          commandsBefore,
+        }),
+      );
+    expect((await readAtOffset(0xa001)).status).toBe("parsed");
+    expect(await readAtOffset(0xa002)).toMatchObject({
       status: "malformed",
-      reason: expect.stringContaining("slice VM range 0x8000"),
+      reason: expect.stringContaining("slice VM range 0xa001"),
     });
-    const linkedit = await read(
-      machoImageWithLazyLoadDylibInfo({
-        path: "@rpath/libl.dylib",
-        flagImageOffset: 0x4001,
-        commandsBefore: [
-          segmentCommand({
-            name: "__LINKEDIT",
-            vmaddr: 0n,
-            vmsize: 0x100000n,
-          }),
-        ],
-      }),
-    );
-    expect(linkedit.status).toBe("malformed");
   });
 
-  it("does not alias a BOM-prefixed segment name to __LINKEDIT", async () => {
-    const result = await read(
-      machoImageWithLazyLoadDylibInfo({
-        path: "@rpath/libl.dylib",
-        flagImageOffset: 0x4001,
-        commandsBefore: [
-          segmentCommand({
-            name: "\uFEFF__LINKEDIT",
-            vmaddr: 0n,
-            vmsize: 0x100000n,
-          }),
-        ],
-      }),
-    );
-    expect(result.status).toBe("parsed");
+  it("excludes only the exact __LINKEDIT name when no __TEXT supplies a base", async () => {
+    const readNamed = (name: string) =>
+      read(
+        machoImageWithLazyLoadDylibInfo({
+          path: "@rpath/libl.dylib",
+          flagImageOffset: 0x4001,
+          commandsBefore: [
+            segmentCommand({ name, vmaddr: 0n, vmsize: 0x100000n }),
+          ],
+        }),
+      );
+    expect(await readNamed("__LINKEDIT")).toMatchObject({
+      status: "malformed",
+      reason: expect.stringContaining("slice VM range 0x4000"),
+    });
+    expect((await readNamed("\uFEFF__LINKEDIT")).status).toBe("parsed");
   });
+
   it("keeps a short segment parseable until a lazy-info command needs its VM range", async () => {
     const short = new Uint8Array(16);
     const view = new DataView(short.buffer);
-    view.setUint32(0, 0x19, true);
+    view.setUint32(0, LC.SEGMENT_64, true);
     view.setUint32(4, short.length, true);
     expect((await read(machoImage({ commands: [short] }))).status).toBe(
       "parsed",
     );
-    const withLazy = await read(
-      machoImageWithLazyLoadDylibInfo({
-        path: "@rpath/libl.dylib",
-        commandsBefore: [short],
-      }),
-    );
-    expect(withLazy).toMatchObject({
+    const readLazy = (commandsBefore: readonly Uint8Array[]) =>
+      read(
+        machoImageWithLazyLoadDylibInfo({
+          path: "@rpath/libl.dylib",
+          commandsBefore,
+        }),
+      );
+    expect(await readLazy([short])).toEqual({
       status: "malformed",
-      reason: expect.stringContaining("slice VM range"),
+      reason:
+        "load command 0 is too short to establish the slice VM range for LC_LAZY_LOAD_DYLIB_INFO",
+    });
+    const unterminated = rpathCommand("x");
+    unterminated.fill(0x61, 12);
+    expect(await readLazy([short, unterminated])).toEqual({
+      status: "malformed",
+      reason: "load command 1 has an unterminated string",
     });
   });
 });
