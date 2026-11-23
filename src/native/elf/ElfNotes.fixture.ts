@@ -1,5 +1,4 @@
 import { deflateSync, zstdCompressSync } from "node:zlib";
-import type { PrefixedByteSource } from "../../domain/byteSource.js";
 
 const concat = (...parts: Buffer[]): Buffer => Buffer.concat(parts);
 

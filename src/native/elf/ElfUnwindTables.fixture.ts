@@ -1,7 +1,3 @@
-import type { ByteSource } from "../../domain/byteSource.js";
-
-/** In-memory carrier with the same retained prefix as the physical provider. */
-
 /** Hand-assembled ELF images with .eh_frame CIE/FDE records and .eh_frame_hdr. */
 
 export const UNWIND_FN_A = 0x400100;

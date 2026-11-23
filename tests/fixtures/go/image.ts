@@ -6,7 +6,6 @@ import {
   readGoBinaryImageFromHandle,
   type ReadGoBinaryImageOptions,
 } from "../../../src/go/GoBinaryImage.js";
-import type { ByteSource } from "../../../src/domain/byteSource.js";
 import { bufferByteSource } from "../../../src/domain/byteSource.js";
 
 export const readGoFixture = (
