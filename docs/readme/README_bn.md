@@ -1,41 +1,43 @@
 <div align="center">
 
-[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md) · [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md) · **বাংলা**
+[English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md) · **বাংলা**
 
 # REA: Reverse Engineer Anything
 
 ### বাইনারি, অ্যাপ্লিকেশন এবং runtime আচরণ — সবকিছুর reverse engineering-এর জন্য একটিই MCP।
 
-**পছন্দের কোনো ফিচার চোখে পড়েছে? সেটি কীভাবে কাজ করে, বাইনারি স্তর পর্যন্ত বুঝে নিন।**
+**পছন্দের কোনো ফিচার দেখলে, সেটি কীভাবে কাজ করে তা বাইনারি পর্যায় পর্যন্ত বুঝে নিন।**
 
-[![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
-[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../reference/mcp-contracts.md#generated-catalog)
-[![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
-[![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
+[![GitHub stars](https://img.shields.io/github/stars/morluto/rea?style=flat-square&logo=github)](https://github.com/morluto/rea/stargazers)
+[![Monthly npm downloads](https://img.shields.io/npm/dm/rea-agents?style=flat-square&label=npm%20downloads)](https://www.npmjs.com/package/rea-agents)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](../../LICENSE)
-[![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
-
-<a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
+[![Join the REA Discord](https://img.shields.io/badge/Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/GkcryMnJDM)
+[![Follow REA on X](https://img.shields.io/badge/X-000000?style=flat-square&logo=x&logoColor=white)](https://x.com/reatools)
+[![Supported platforms: macOS, Windows, and Linux](https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-4493F8?style=flat-square)](../getting-started/installation.md)
+[![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
 
 **[ওয়েবসাইট](https://rea.tools/bn/) · [গাইড](https://rea.tools/bn/guides/) · [শোকেস](https://rea.tools/bn/showcase/)**
 
 <a href="https://discord.com/invite/GkcryMnJDM"><img alt="Discord-এ REA কমিউনিটিতে যোগ দিন" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
 
-[দ্রুত শুরু](#দ্রুত-শুরু) · [REA কীভাবে কাজ করে](#rea-কীভাবে-কাজ-করে) · [কী কী বিশ্লেষণ করা যায়](#কী-কী-বিশ্লেষণ-করা-যায়) · [শোকেস](#শোকেস) · [RL এনভায়রনমেন্ট তৈরি করুন](#rl-এনভায়রনমেন্ট-তৈরি-করুন) · [সাধারণ প্রশ্নোত্তর](#সাধারণ-প্রশ্নোত্তর-faq) · [ডকুমেন্টেশন](#ডকুমেন্টেশন)
+[দ্রুত শুরু](#দ্রুত-শুরু) · [শোকেস](#শোকেস) · [REA কীভাবে কাজ করে](#rea-কীভাবে-কাজ-করে) · [কী কী বিশ্লেষণ করা যায়](#কী-কী-বিশ্লেষণ-করা-যায়) · [RL এনভায়রনমেন্ট তৈরি করুন](#rl-এনভায়রনমেন্ট-তৈরি-করুন) · [সাধারণ প্রশ্নোত্তর](#সাধারণ-প্রশ্নোত্তর) · [ডকুমেন্টেশন](#ডকুমেন্টেশন)
 
 <code>npx rea-agents setup</code>
 
 </div>
 
 > [!IMPORTANT]
-> REA-এর অফিসিয়াল উৎস: [morluto/rea](https://github.com/morluto/rea), [rea.tools](https://rea.tools/), [rea-agents](https://www.npmjs.com/package/rea-agents) (npm)।
-> ইনস্টলেশন ও release লিংকের জন্য এই অফিসিয়াল উৎসগুলোই অনুসরণ করুন। একই রকম repository নাম বা কপি করা README দেখে কোনো download অফিসিয়াল বলে ধরে নেওয়া যায় না।
+> REA নিন [morluto/rea](https://github.com/morluto/rea),
+> [rea.tools](https://rea.tools/), অথবা [rea-agents npm প্যাকেজ](https://www.npmjs.com/package/rea-agents)
+> থেকে। ইনস্টলেশন ও রিলিজ লিংক এই অফিসিয়াল সূত্রগুলো থেকেই অনুসরণ করুন। শুধু সাদৃশ্যপূর্ণ
+> রিপোজিটরি নাম বা কপি করা README দেখে কোনো ডাউনলোডকে অফিসিয়াল বলা যায় না।
 
 <div align="center">
 
 <br />
 
-<img src="../assets/rea-hopper-analysis.png" alt="একটি native বাইনারি পরীক্ষার সময় Hopper-এর ভেতরে REA তার analysis bridge চালু করছে" width="1200" />
+<img src="../assets/rea-hopper-analysis.png" alt="REA Hopper-এর ভিতরে তার analysis bridge চালু করে একটি নেটিভ বাইনারি পরীক্ষা করছে" width="1200" />
 
 <br /><br />
 
@@ -57,13 +59,11 @@
 
 ---
 
-কোনো অ্যাপের এমন একটি ফিচার দেখেছেন যা নিজের প্রোডাক্টে চান? আপনার agent-কে REA দিয়ে সেটি খুঁজে দেখতে বলুন। সোর্স কোড ছাড়াই এটি অ্যাপটি পরীক্ষা করতে পারে, ফিচারটি কীভাবে কাজ করে তা ব্যাখ্যা করতে পারে, প্রমাণ দেখাতে পারে এবং আপনার প্রজেক্টের জন্য একটি সংস্করণ তৈরি করে দিতে পারে।
+কোনো অ্যাপে এমন একটি ফিচার দেখলেন যা নিজের প্রোডাক্টেও চান? আপনার agent-কে REA দিয়ে সেটি খতিয়ে দেখতে বলুন। সোর্স কোড ছাড়াই সে অ্যাপটি পরীক্ষা করতে পারে, ফিচারটি কীভাবে কাজ করে তা ব্যাখ্যা করতে পারে, প্রমাণ দেখাতে পারে এবং আপনার প্রজেক্টের জন্য একটি সংস্করণ তৈরি করতে পারে।
 
-REA আপনার agent-কে native বাইনারি, JavaScript ও Electron অ্যাপ, .NET assembly এবং ওয়েবসাইট পরীক্ষা করার টুলের সঙ্গে যুক্ত করে। একই টুল আপনি টার্মিনাল থেকেও ব্যবহার করতে পারেন। বিশ্লেষণ চলে আপনার নিজের কম্পিউটারে, আর প্রতিটি সিদ্ধান্তের পেছনের প্রমাণ ও সীমাবদ্ধতা ফলাফলেই থাকে।
+REA আপনার agent-কে নেটিভ বাইনারি, JavaScript ও Electron অ্যাপ, .NET অ্যাসেম্বলি এবং ওয়েবসাইট পরীক্ষা করার টুলের সাথে যুক্ত করে। একই টুল টার্মিনাল থেকেও ব্যবহার করা যায়। বিশ্লেষণ স্থানীয়ভাবে চলে, আর ফলাফলে প্রতিটি সিদ্ধান্তের পেছনের প্রমাণ ও সীমাবদ্ধতা থাকে।
 
-Setup আপনার agent-এ REA নিবন্ধন করে এবং মানানসই workflow নির্দেশনা ইনস্টল করে। Native বিশ্লেষণে আগে থেকে ইনস্টল করা Hopper, Ghidra, IDA বা Kuna ব্যবহার করা যায়; চাইলে setup আপনার অনুমোদন নিয়ে Hopper ইনস্টল করে দিতে পারে। Static JavaScript বিশ্লেষণের জন্য কোনো native analysis engine লাগে না।
-
-> **[REA ওয়েবসাইট দেখুন](https://rea.tools/bn/)** — সেখানে setup নির্দেশনা, ছবিসহ গাইড এবং বাস্তব case study পাবেন।
+Setup আপনার agent-এ REA নিবন্ধন করে এবং মানানসই workflow নির্দেশনা ইনস্টল করে। নেটিভ বিশ্লেষণে বিদ্যমান Hopper, Ghidra, IDA বা Kuna ইনস্টলেশন ব্যবহার করা যায়; অনুমোদন নিয়ে setup Hopper ইনস্টলও করে দিতে পারে। Static JavaScript বিশ্লেষণের জন্য কোনো নেটিভ analysis engine লাগে না।
 
 ## দ্রুত শুরু
 
@@ -109,7 +109,7 @@ npm install --global rea-agents
 rea --help
 ```
 
-Native বিশ্লেষণের জন্য আগে একটি provider কনফিগার করুন। Native কমান্ড, provider
+নেটিভ বিশ্লেষণের জন্য আগে একটি provider কনফিগার করুন। নেটিভ কমান্ড, provider
 বাছাই, snapshot এবং scripting-এর জন্য [CLI ও Evidence গাইড](../getting-started/cli.md) দেখুন।
 Linux-এর পূর্বশর্তের জন্য [ইনস্টলেশন গাইড](../getting-started/installation.md#linux-owned-process-prerequisite) দেখুন।
 
@@ -131,89 +131,6 @@ Setup-এর পরিবর্তনগুলো দেখে agent রিস�
 সমস্যা সমাধানের জন্য [আপডেট ও uninstall নির্দেশনা](../getting-started/installation.md#diagnose-update-and-remove)
 দেখুন।
 
-## REA কীভাবে কাজ করে
-
-আপনার agent MCP-এর মাধ্যমে REA-কে call করে টার্গেট পরীক্ষা করে এবং প্রাসঙ্গিক কোড trace করে।
-REA প্রমাণসহ ফলাফল ফেরত দেয়। Agent সেগুলো ব্যবহার করে পরবর্তী প্রশ্ন করে,
-আচরণ ব্যাখ্যা করে, অথবা একটি implementation লিখে test করে।
-CLI কমান্ডও একই workflow ব্যবহার করে।
-
-![REA অনুসন্ধানের ধারা: আপনার agent একটি local টার্গেট সম্পর্কে প্রশ্ন করে, REA analysis টুল দিয়ে সেটি পরীক্ষা ও trace করে, আর agent ফেরত পাওয়া কোড, reference ও অজানা বিষয়গুলো ব্যবহার করে ব্যাখ্যা, implementation ও test করে।](../../website/public/assets/figures/rea-investigation-flow.svg)
-
-[পূর্ণ আকারের চিত্রটি খুলুন](../../website/public/assets/figures/rea-investigation-flow.svg)।
-
-<a id="current-status"></a>
-
-## কী কী বিশ্লেষণ করা যায়
-
-REA-এর জন্য লাগবে Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) বা 26.12.1+, সঙ্গে npm।
-অতিরিক্ত টুল ও host সমর্থন টার্গেটের ওপর নির্ভর করে:
-
-| টার্গেট                   | REA কী ফেরত দেয়                                                                           | প্রয়োজনীয়তা ও গাইড                                                                                                                                           |
-| ----------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ডেস্কটপ ইনস্টলেশন         | Runtime candidate, সহায়ক ফাইল, component marker ও পরবর্তী probe                              | বিল্ট-ইন সীমিত directory/header পরীক্ষা; [ডেস্কটপ অ্যাপ্লিকেশন](../desktop-applications.md)                                                                      |
-| Native বাইনারি            | Pseudocode, assembly, string, symbol, call ও reference                                    | Hopper, Ghidra, IDA বা Kuna; [native বিশ্লেষণ](../guides/native/native-investigation.md)                                                                    |
-| Offline ELF layout      | Section, segment, মূল symbol/relocation এবং static mitigation-এর সম্ভাব্য তালিকা                | Linux x64-এ caller-এর দেওয়া pwntools; [binary diagnostics](../guides/native/binary-diagnostics.md)                                                         |
-| Go বাইনারি                | Embedded compiler সংস্করণ, module, replacement ও build setting                             | বিল্ট-ইন static ELF/PE/thin Mach-O পরীক্ষা; Go ইনস্টল করার দরকার নেই                                                                                            |
-| GPU code object         | CUDA/HIP target, নির্বাচিত kernel-এর parameter ও resource এবং সংরক্ষিত PTX text              | বিল্ট-ইন static ELF/PE/fatbin/CUBIN/PTX পরীক্ষা; [GPU code object](../gpu-code-objects.md)                                                                   |
-| Model artifact          | GGUF / safetensors metadata, tensor ঘোষণা ও উদ্ভূত মোট মান                                    | বিল্ট-ইন header পরীক্ষা; ঐচ্ছিক পূর্ণ-ফাইল hash; [model ফাইল](../model-artifacts.md)                                                                              |
-| IL2CPP metadata         | Unity global-metadata.dat-এর assembly image, type ও method-এর নাম এবং index range          | বিল্ট-ইন static decoding (version 24, 27, 29, 31 ও 39); Unity লাগে না                                                                                        |
-| Godot PCK               | Archive-এর তালিকা ও extraction, মূল header/directory তথ্য এবং নির্বাচিত content identity        | বিল্ট-ইন static format 2, 3 ও 4; Godot লাগে না                                                                                                               |
-| Rust বাইনারি              | এমবেড করা cargo-auditable crate-এর নাম, সংস্করণ, উৎস ও dependency সম্পর্ক                      | বিল্ট-ইন static ELF/PE/thin Mach-O পরীক্ষা; [Rust বাইনারি](../rust-binaries.md)                                                                                |
-| PE certificate          | Authenticode WIN_CERTIFICATE entry এবং PKCS#7 signer/X.509 পরিচয়ের field                  | বিল্ট-ইন static PE পরীক্ষা; [PE certificate](../pe-certificates.md)                                                                                          |
-| PE import               | Import ও delay-load DLL-এর নাম, ordinal, IAT RVA এবং pefile import hash                    | বিল্ট-ইন static PE পরীক্ষা; [PE import](../pe-imports.md)                                                                                                    |
-| Windows shortcut        | Shell Link target, argument, working dir, ExtraData এবং Tracker droid fact                | বিল্ট-ইন static LNK পরীক্ষা; [Windows shortcut](../guides/native/windows-shortcut.md)                                                                        |
-| ELF note                | PT_NOTE/SHT_NOTE owner, type, GNU build-id ও ABI-tag field                                | বিল্ট-ইন static ELF পরীক্ষা; [ELF note](../elf-notes.md)                                                                                                     |
-| বাইনারি হার্ডেনিং           | ELF, PE ও Mach-O-এর PIE, NX, RELRO, CFG এবং সংশ্লিষ্ট header flag                           | বিল্ট-ইন static header inspection; [বাইনারি হার্ডেনিং](../binary-hardening.md)                                                                                 |
-| Apple IPS crash         | .ips metadata, thread, image, register এবং নথিভুক্ত crash শ্রেণি                             | বিল্ট-ইন static JSON পরীক্ষা; [Apple IPS](../apple-ips.md)                                                                                                   |
-| Linux kernel module     | .modinfo key, __versions CRC, this_module উপস্থিতি এবং signature trailer                   | বিল্ট-ইন static ELF পরীক্ষা; [kernel module](../kernel-modules.md)                                                                                           |
-| Erlang BEAM             | IFF chunk, atom, export, import, lambda এবং Code header                                   | বিল্ট-ইন static BEAM পরীক্ষা; [Erlang BEAM](../erlang-beam.md)                                                                                               |
-| WASM artifact           | Validation, section, হুবহু import/export WAT রূপ এবং decode করা WAT                           | Caller-এর দেওয়া WABT 1.0.42; `inspect_wasm_artifact`                                                                                                       |
-| EVM bytecode            | Dispatch selector, byte offset, অনুমিত argument ও mutability                               | Linux x64-এ local raw/hex carrier; [offline EVM গাইড](../guides/evm/evm-bytecode.md)                                                                       |
-| SQLite ডেটাবেস           | Table, column, index, view, trigger এবং নির্বাচিত সাধারণ table-এর row                         | Local database/WAL snapshot; native SQLite সীমাসহ Node.js 24.x >=24.15 বা 26+                                                                               |
-| রেকর্ড করা Linux crash    | Raw note, রেকর্ড করা প্রতিটি thread-এর register/signal এবং ঐচ্ছিক mapping candidate           | Linux x64-এ caller-এর দেওয়া pwntools; ঐচ্ছিক GDB/pwndbg; [রেকর্ড করা crash](../guides/native/recorded-crashes.md)                                             |
-| JavaScript / Electron   | Module, import, source map, route, IPC এবং native add-on-এর সম্পর্ক                         | Node.js ও npm; Linux: procps-সামঞ্জস্যপূর্ণ `ps`; [অ্যাপ্লিকেশন বিশ্লেষণ](../guides/javascript/javascript-application-workflows.md)                                |
-| ওয়েবসাইট                 | পেজের গঠন, script, network পর্যবেক্ষণ এবং অনুরোধ করা screenshot                               | একটি Chrome-ঘরানার ব্রাউজার; [ব্রাউজার বিশ্লেষণ](../guides/web/browser-observation.md)                                                                             |
-| সংরক্ষিত network capture | Request, response, উন্মুক্ত payload ও source location                                        | HAR বা Fiddler Everywhere SAZ; native mitmproxy capture-এর জন্য Linux-এ mitmdump; [capture গাইড](../guides/web/web-network-captures.md)                      |
-| .NET assembly           | Metadata, CIL instruction, ঘোষিত native dependency এবং build তুলনা                          | কিছু লাগে না (শুধু static); [managed-code গাইড](../guides/managed/managed-code-analysis.md)                                                                     |
-| Android APK             | Manifest ঘোষণা, class, decompile করা method ও reference                                     | Linux/macOS/Windows x64-এ headless JADX ও পূর্ণ JDK; [Android গাইড](../guides/android/android-analysis.md)                                                   |
-| APK signature           | v1/v2/v3/v3.1 signer, certificate fingerprint, key rotation এবং digest-এর অভ্যন্তরীণ সামঞ্জস্য | কিছু লাগে না (শুধু static); `inspect_apk_signature`                                                                                                            |
-| Android ডিভাইস           | ডিভাইস, package, process, log, dump, screen capture এবং APK/ফাইল আদান-প্রদান                   | Caller-এর দেওয়া adb (emulator বা হার্ডওয়্যার); [ADB গাইড](../guides/android/adb-device-analysis.md)                                                              |
-| JEB প্রজেক্ট              | Engine-চালিত project unit, artifact digest এবং type/method pseudo-code                     | REA_JEB_MCP_URL দিয়ে নির্বাচিত, caller-এর চালু করা একটি MCP-সার্ভিং JEB client; [JEB গাইড](../providers/jeb-analysis.md)                                          |
-| Android resource        | Decode করা manifest, string table, locale ও সংস্করণের তথ্য                                   | Caller-এর দেওয়া Apktool launcher; [resource গাইড](../guides/android/apktool-resource-analysis.md)                                                           |
-| Flutter অ্যাপ             | Dart snapshot hash, প্রতিটি ABI-এর library digest এবং engine build-এর উৎস                  | কিছু লাগে না (static APK parsing); [Flutter গাইড](../guides/android/flutter-analysis.md)                                                                      |
-| Firmware                | Region, extraction-এর ফলাফল এবং native বিশ্লেষণে হস্তান্তর                                     | Linux-এ Binwalk / Unblob; [firmware গাইড](../guides/firmware/firmware-analysis.md)                                                                         |
-| রেকর্ড করা packet         | নির্বাচিত field, পুনরাবৃত্ত value, filter এবং decode-as rule                                    | Linux: TShark 4.x + prlimit; [capture গাইড](../guides/data/packet-captures.md)                                                                             |
-| Packet সারাংশ             | Endpoint, DNS, TLS SNI, protocol বণ্টন এবং HTTP request                                    | Caller-এর দেওয়া tshark ও capinfos (Linux-এ যাচাই করা); [pcap গাইড](../guides/data/pcap-analysis.md)                                                            |
-| রেকর্ড করা logic signal   | Decoder annotation, sample range এবং diagnostics                                          | Linux: sigrok-cli 0.7.2 + prlimit; [signal রেকর্ডিং](../guides/signals/signal-recordings.md)                                                               |
-| Package ও resource      | ফাইলের তালিকা, digest, plist, Apple bundle-এর গঠন এবং extract করা resource                    | [Artifact ও JavaScript গাইড](../guides/javascript/javascript-artifact-reconstruction.md), [Apple অ্যাপ্লিকেশন](../guides/apple/apple-application-analysis.md) |
-| Process-এর আচরণ         | টার্মিনাল output, interaction, exit ও filesystem পর্যবেক্ষণ এবং run-এর তুলনা                     | Native PTY-সহ Linux/macOS; [process capture](../guides/runtime/process-capture.md)                                                                        |
-| PyInstaller executable  | CArchive member, Python সংস্করণ, entry script ও extract করা bytecode                        | কিছু লাগে না (শুধু static); [Python প্যাকেজ করা অ্যাপ্লিকেশন](../python-packaged-applications.md)                                                                    |
-| Deno compile বাইনারি      | Virtual file, entry point, recorded option, npm snapshot-এর দৈর্ঘ্য                         | কিছু লাগে না (শুধু static); [Deno compile executable](../deno-standalone.md)                                                                                   |
-
-Static JavaScript ও .NET পরীক্ষা অ্যাপ্লিকেশন না চালিয়েই দেওয়া ফাইলগুলো পড়ে।
-Runtime capture আপনার user permission নিয়ে নির্বাচিত টার্গেট চালায় বা তার সঙ্গে
-interact করে; প্রতিটি runtime গাইডে এর প্রভাব বর্ণনা করা আছে।
-
-Offline native-binary পরীক্ষার জন্য REA caller-এর দেওয়া GNU objdump ও Rizin-ও
-সমর্থন করে। Provider setup, CLI কমান্ড এবং Evidence-এর সীমাবদ্ধতার জন্য
-[reverse-engineering tools গাইড](../reverse-engineering-tools.md) দেখুন। REA
-এই দুই provider-এর কোনোটিই ইনস্টল বা আপডেট করে না।
-
-<a id="choosing-a-deep-analysis-provider"></a>
-
-Native format ও host সমর্থন provider ভেদে আলাদা। দেখুন
-[Hopper ও Ghidra setup](../getting-started/installation.md#hopper),
-[IDA গাইড](../providers/ida-provider.md) (ঐচ্ছিক native MCP bridge-সহ),
-[Kuna decompiler গাইড](../kuna-provider.md) এবং
-[পরীক্ষামূলক Windows Ghidra সমর্থন](../providers/windows-ghidra-p0.md)।
-Ghidra [16-bit DOS বিশ্লেষণ](../providers/ghidra-dos.md)-ও সমর্থন করে।
-বড় বাইনারির জন্য `REA_GHIDRA_STARTUP_TIMEOUT_MS` বা `REA_HOPPER_STARTUP_TIMEOUT_MS`
-দিয়ে provider-এর startup deadline বাড়িয়ে দিন।
-Provider বাছাইয়ের জন্য [CLI গাইড](../getting-started/cli.md#choose-a-provider) দেখুন।
-সর্বশেষ npm release-এর পরে যোগ হওয়া ফিচারের জন্য
-[release-এ প্রাপ্যতা](../getting-started/installation.md#released-package-and-main) দেখে নিন।
-
 ## শোকেস
 
 <a href="https://rea.tools/bn/showcase/">
@@ -223,111 +140,99 @@ Provider বাছাইয়ের জন্য [CLI গাইড](../getting-
   </picture>
 </a>
 
-### DX-Ball: একটি sound-pan হিসাব পুনর্গঠন
+<table>
+<tbody>
+<tr>
+<td>
+<h3>DX-Ball: একটি sound-pan হিসাব পুনর্গঠন</h3>
+<p>x86 নির্দেশনা থেকে একটি position-to-pan helper উদ্ধার করে ৩,২০৫টি আসল-x86 কেস এবং সংকলিত ফাংশনের সব ৬৩ বাইটের সাথে C পুনর্গঠন যাচাই করা।</p>
+<a href="https://rea.tools/bn/showcase/dx-ball/">কেস স্টাডি পড়ুন</a> ·
+<a href="https://github.com/N0zoM1z0/dx-ball">পুনর্গঠনের রিপোজিটরি</a>
+</td>
+</tr>
+<tr>
+<td>
+<h3>Notion: Electron clipboard bridge trace করা</h3>
+<p>renderer-এর clipboard API preload ও IPC হয়ে main process পর্যন্ত অনুসরণ করে দেখা, Notion কীভাবে সমৃদ্ধ clipboard ডেটা সামলায়।</p>
+<a href="https://rea.tools/bn/showcase/notion/">কেস স্টাডি পড়ুন</a>
+</td>
+</tr>
+<tr>
+<td>
+<h3>TH04: একটি DOS bullet-ring হিসাব উদ্ধার</h3>
+<p>PC-98 গেমের ১৬-বিট নির্দেশনা থেকে নির্দিষ্ট ও লক্ষ্য করা কোণের হিসাব উদ্ধার করে পুনর্গঠিত C++-কে ঐতিহাসিক কম্পাইলার আউটপুটের সাথে তুলনা করা।</p>
+<a href="https://rea.tools/bn/showcase/th04/">কেস স্টাডি পড়ুন</a> ·
+<a href="https://github.com/N0zoM1z0/th04">পুনর্গঠনের রিপোজিটরি</a>
+</td>
+</tr>
+</tbody>
+</table>
 
-একটি sound call অনুসরণ করে তার position-to-pan helper-এ পৌঁছান, instruction পরীক্ষা করুন
-এবং অসম্পূর্ণ pseudocode-কে C-তে রূপ দিন। পুনর্গঠিত কোডটি মূল x86-এর 3,205টি
-case পাস করে এবং compile করা function-এর 63টি byte হুবহু পুনরুৎপাদন করে।
-
-[Case study পড়ুন](https://rea.tools/bn/showcase/dx-ball/) ·
-[পুনর্গঠনের repository](https://github.com/N0zoM1z0/dx-ball)
-
-### Notion: Electron clipboard bridge trace করা
-
-Renderer-এর clipboard API খুঁজে বের করুন, preload ও IPC হয়ে main process পর্যন্ত
-সেটি অনুসরণ করুন এবং rich clipboard format পরীক্ষা করুন।
-
-[Case study পড়ুন](https://rea.tools/bn/showcase/notion/)
-
-### TH04: একটি DOS bullet-ring হিসাব উদ্ধার
-
-মূল PC-98 গেমের 16-bit instruction পরীক্ষা করুন, স্থির ও লক্ষ্য-অভিমুখী (aimed) কোণের
-হিসাব উদ্ধার করুন এবং পুনর্গঠিত C++ কোডকে ঐতিহাসিক compiler output-এর
-সঙ্গে মিলিয়ে দেখুন।
-
-[Case study পড়ুন](https://rea.tools/bn/showcase/th04/) ·
-[পুনর্গঠনের repository](https://github.com/N0zoM1z0/th04)
-
-### REA দিয়ে RL এনভায়রনমেন্ট তৈরি করুন
-
-একটি ওয়েব অ্যাপের session রেকর্ড করুন, এর API-কে tool-এ রূপান্তর করুন এবং এমন একটি এনভায়রনমেন্ট export করুন যা একটি AI agent ব্যবহার করতে পারে। AgentEnv দিয়ে এটি চালান, তারপর RL training বা মূল্যায়নের জন্য task ও reward check যোগ করুন।
-
-[গাইড পড়ুন](https://rea.tools/bn/guides/rl-environments/) ·
-[ভিডিও দেখুন](https://x.com/reatools/status/2112574822584918075?s=20)
-
-আপনি যদি মজার কিছুতে REA ব্যবহার করে থাকেন, আমরা তা দেখতে চাই। একটি
+REA দিয়ে কিছু আকর্ষণীয় কাজ করে থাকলে, আমরা সেটি দেখতে চাই। একটি
 [issue](https://github.com/morluto/rea/issues) বা
-[pull request](https://github.com/morluto/rea/pulls)-এ আপনার অভিজ্ঞতা শেয়ার করুন —
-টার্গেট, আপনার প্রশ্ন, REA কীভাবে সাহায্য করেছে এবং আপনি কী পেয়েছেন তা সহ।
+[pull request](https://github.com/morluto/rea/pulls)-এ আপনার কেস শেয়ার করুন —
+টার্গেট, আপনার প্রশ্ন, REA কীভাবে সাহায্য করেছে এবং আপনি কী পেয়েছেন তা লিখুন।
+
+## REA কীভাবে কাজ করে
+
+আপনার agent MCP-এর মাধ্যমে REA ব্যবহার করে টার্গেট পরীক্ষা করে এবং প্রাসঙ্গিক কোড trace করে।
+REA যে প্রমাণ ফেরত দেয়, সেগুলো দিয়ে agent পরবর্তী প্রশ্ন করতে, আচরণ ব্যাখ্যা করতে,
+অথবা একটি implementation লিখে পরীক্ষা করতে পারে। CLI-ও একই workflow ব্যবহার করে।
+
+![REA অনুসন্ধানের ধারা: আপনার agent স্থানীয় একটি টার্গেট নিয়ে প্রশ্ন করে, REA বিশ্লেষণ টুল দিয়ে সেটি পরীক্ষা ও trace করে, আর agent ফেরত আসা কোড, রেফারেন্স ও অজানা বিষয় ব্যবহার করে ব্যাখ্যা, বাস্তবায়ন এবং পরীক্ষা করে।](../../website/public/assets/figures/rea-investigation-flow.svg)
+
+[পূর্ণ আকারের ছবি খুলুন](../../website/public/assets/figures/rea-investigation-flow.svg)।
+
+<a id="current-status"></a>
+
+## কী কী বিশ্লেষণ করা যায়
+
+REA নেটিভ বাইনারি, JavaScript ও Electron অ্যাপ, ওয়েবসাইট, .NET
+অ্যাসেম্বলি, Android অ্যাপ, firmware এবং রেকর্ড করা runtime ও নেটওয়ার্ক কার্যকলাপ কভার করে।
+
+[সমর্থিত টার্গেট ও প্রয়োজনীয়তা](../reference/supported-targets.md)
+
+<a id="choosing-a-deep-analysis-provider"></a>
+
+নেটিভ ডিকম্পাইলেশনের জন্য এমন একটি provider বেছে নিন যা আপনার টার্গেট ফরম্যাট
+ও হোস্ট OS সমর্থন করে। দেখুন [গভীর বিশ্লেষণের provider বাছাই](../reference/supported-targets.md#choosing-a-deep-analysis-provider)।
 
 ## RL এনভায়রনমেন্ট তৈরি করুন
 
-একটি AI agent-কে মূল অ্যাপ না চালিয়েই কোনো issue খুঁজে বের করা বা ফোল্ডার তৈরি করার মতো কাজ অনুশীলনের জন্য একটি লোকাল এনভায়রনমেন্ট দিন। এটি reinforcement learning (RL)-এর জন্য, অথবা একটি agent কতটা ভালোভাবে কাজ সম্পন্ন করে তা পরীক্ষা করতে ব্যবহার করুন।
+রেকর্ড করা একটি ওয়েব সেশন বা Linux ডেস্কটপ অ্যাপ থেকে স্থানীয় একটি
+এনভায়রনমেন্ট তৈরি করুন, যাতে কোনো agent একটি কাজ অনুশীলন করে ফলাফল যাচাই করতে পারে।
+[REA দিয়ে RL এনভায়রনমেন্ট তৈরি করুন](https://rea.tools/bn/guides/rl-environments/)।
 
-REA রেকর্ড করা API request ও response-কে এমন tool-এ রূপান্তর করে যা agent কল করতে পারে। এনভায়রনমেন্টটি রেকর্ড করা ডেটা ব্যবহার করে এবং কেবল তখনই পরিবর্তন সমর্থন করে যখন রেকর্ডিং তাদের প্রভাব নিশ্চিত করে।
-
-আপনার agent-এ REA সেট আপ থাকলে, নিচের উদাহরণের URL ও ফোল্ডার-সংক্রান্ত কাজগুলো নিজের কাজ দিয়ে বদলে নিন:
-
-```text
-Use REA to build an RL environment from my test web app at
-http://127.0.0.1:3000.
-Cover listing, creating, renaming, and deleting folders. You may create and
-remove test folders. Leave existing data unchanged.
-Save it in a folder named my-env. Check which operations work and tell me
-how to run it.
-```
-
-<details>
-<summary>এর বদলে কমান্ড লাইন ব্যবহার করুন</summary>
-
-অ্যাপের রেকর্ড করা browser request ও response-সহ একটি ফাইল আগে থেকেই থাকলে এই কমান্ডগুলো ব্যবহার করুন। ফলাফল চালাতে AgentEnv এবং Docker-ও লাগবে।
-
-```sh
-rea environment-build ./session.har ./my-env --name my-env --json
-agent-env run ./my-env
-```
-
-</details>
-
-REA একটি চালানোযোগ্য এনভায়রনমেন্ট export করে, সঙ্গে একটি সাধারণ test থাকে যা যাচাই করে এটি চালু হয় এবং সাড়া দেয়। আপনার RL framework-এর সঙ্গে এটি ব্যবহার করে task-এর লক্ষ্য নির্ধারণ করুন, reward check যোগ করুন এবং training চালান।
-
-[এনভায়রনমেন্ট তৈরির গাইড](https://rea.tools/bn/guides/rl-environments/) ·
-[এনভায়রনমেন্ট রেফারেন্স](../agent-environments.md) ·
-[X-এ ডেমো দেখুন](https://x.com/reatools/status/2112574822584918075?s=20)
-
-REA Linux ডেস্কটপ অ্যাপের একটি এনভায়রনমেন্টও তৈরি করতে পারে, যা একটি এজেন্ট স্ক্রিনশট, মাউস ও কিবোর্ডের মাধ্যমে ব্যবহার করে। এক লাইনের অনুরোধ থেকে, যেমন "আমাকে একটি Gnote এনভায়রনমেন্ট তৈরি করুন যেখানে এজেন্ট শপিং লিস্ট নোটে অলিভ অয়েল যোগ করবে", আপনার এজেন্ট অ্যাপটি একটি লোকাল বিল্ড কম্পিউটারে ইনস্টল করে, টাস্ক লেখে, এনভায়রনমেন্ট export করে এবং একটি নতুন কম্পিউটারে টাস্কটি যাচাই করে। যে মেশিনটি এটি তৈরি করে তাতে amd64 বা arm64-এ Linux, Docker এবং গাইডে উল্লিখিত agentenv framework সংস্করণ লাগে।
-
-[ডেস্কটপ অ্যাপ এনভায়রনমেন্ট সেট আপ করুন](../desktop-build-computer.md)
-
-## সাধারণ প্রশ্নোত্তর (FAQ)
+## সাধারণ প্রশ্নোত্তর
 
 <details>
 <summary><strong>কোন কোন agent REA ব্যবহার করতে পারে?</strong></summary>
 
-Local MCP server সমর্থন করে এমন যেকোনো agent। Setup
-[সমর্থিত agent](../getting-started/installation.md#supported-agents)-গুলো কনফিগার করে; অন্য client
-[ম্যানুয়াল MCP নিবন্ধন](../getting-started/installation.md#mcp-registry) ব্যবহার করতে পারে।
+যেকোনো agent যা স্থানীয় MCP সার্ভার সমর্থন করে। Setup
+[সমর্থিত agent](../getting-started/installation.md#supported-agents)গুলো কনফিগার করে;
+অন্য client [ম্যানুয়াল MCP নিবন্ধন](../getting-started/installation.md#mcp-registry)
+ব্যবহার করতে পারে।
 
 </details>
 
 <details>
-<summary><strong>আমার কি native analysis engine লাগবে?</strong></summary>
+<summary><strong>আমার কি নেটিভ analysis engine লাগবে?</strong></summary>
 
-গভীর native বিশ্লেষণে টার্গেট ও কাজের ধরন অনুযায়ী Hopper, Ghidra, IDA বা Kuna
-ব্যবহৃত হয়। Static JavaScript ও .NET পরীক্ষা native analysis engine ছাড়াই কাজ
-করে। অনুমোদন পেলে setup Hopper ইনস্টল করতে পারে; Ghidra, IDA ও Kuna-র ক্ষেত্রে
-আপনার বিদ্যমান ইনস্টলেশন ব্যবহৃত হয়। Option ও সমর্থিত টার্গেটের জন্য
-[Provider setup](../getting-started/installation.md#hopper) দেখুন।
+গভীর নেটিভ বিশ্লেষণে টার্গেট ও অপারেশন অনুযায়ী Hopper, Ghidra, IDA বা Kuna
+ব্যবহার করা হয়। Static JavaScript ও .NET পরীক্ষায় নেটিভ analysis engine লাগে না।
+Setup অনুমোদনের পর Hopper ইনস্টল করতে পারে; Ghidra, IDA ও Kuna আপনার
+বিদ্যমান ইনস্টলেশন ব্যবহার করে। অপশন ও সমর্থিত টার্গেটের জন্য
+[provider setup](../getting-started/installation.md#hopper) দেখুন।
 
 </details>
 
 <details>
 <summary><strong>আমাকে কি আগে Hopper চালু করতে হবে?</strong></summary>
 
-কোনো কাজে দরকার হলে REA নিজেই Hopper চালু করে। macOS-এ প্রথমবার চালানোর সময় একটি
-dialog আপনাকে demo mode বেছে নিতে বা license সক্রিয় করতে বলতে পারে। প্রথম CLI/MCP
-কাজ বা স্বয়ংক্রিয় job-এর আগে একই user session-এ সেই prompt-টি সম্পন্ন করুন।
-প্রয়োজনে Hopper নিজে খুলুন। দেখুন
+কোনো অপারেশনের প্রয়োজন হলে REA Hopper চালু করে। macOS-এ প্রথমবার চালানোর সময়
+একটি ডায়ালগ demo মোড বেছে নিতে বা লাইসেন্স অ্যাক্টিভেট করতে বলতে পারে। প্রথম
+CLI/MCP অপারেশন বা আনঅ্যাটেন্ডেড কাজের আগে একই ইউজার সেশনে সেই প্রম্পট শেষ করুন।
+প্রয়োজন হলে Hopper নিজে খুলুন। দেখুন
 [Hopper চালু করা ও সমস্যা সমাধান](../getting-started/installation.md#launcher-paths-and-troubleshooting)।
 
 </details>
@@ -335,33 +240,33 @@ dialog আপনাকে demo mode বেছে নিতে বা license স
 <details>
 <summary><strong>skills.sh থেকে skill ইনস্টল করলে কী হয়?</strong></summary>
 
-Skill আপনার agent-কে অনুসন্ধানের নির্দেশনা দেয়। REA-এর MCP server নিবন্ধন করতে এবং
-মানানসই নির্দেশনা ইনস্টল করতে `npx rea-agents setup` ব্যবহার করুন, তারপর আপনার agent
-রিস্টার্ট করুন। দেখুন [শুধু skill ইনস্টলেশন](../getting-started/installation.md#skill-only-installation)।
+Skill আপনার agent-কে অনুসন্ধানের নির্দেশনা দেয়। `npx rea-agents setup`
+চালু করে REA-এর MCP সার্ভার নিবন্ধন করুন এবং মানানসই নির্দেশনা ইনস্টল করুন, তারপর
+agent রিস্টার্ট করুন। দেখুন [শুধু skill ইনস্টলেশন](../getting-started/installation.md#skill-only-installation)।
 
 </details>
 
 <details>
 <summary><strong>REA কী ধরনের কোড ফেরত দেয়?</strong></summary>
 
-Native বিশ্লেষণ pseudocode ও assembly ফেরত দেয়। JavaScript/Electron বিশ্লেষণ
+নেটিভ বিশ্লেষণ pseudocode ও assembly ফেরত দেয়। JavaScript/Electron বিশ্লেষণ
 module ও সেগুলোর পারস্পরিক সম্পর্ক উদ্ধার করে। আপনার agent এই ফলাফল ব্যবহার করে
-implementation লেখে ও test করে; [শোকেস](#শোকেস)-এ হাতে-কলমে উদাহরণ আছে।
+একটি implementation লিখে পরীক্ষা করে; [শোকেস](#শোকেস)-এ কাজ করা উদাহরণ আছে।
 
 </details>
 
 <details>
 <summary><strong>REA কি আমার অ্যাপ আপলোড করে?</strong></summary>
 
-REA টার্গেট local-ভাবে বিশ্লেষণ করে। টুলের ফলাফল আপনার agent পায়, আর সেই agent-এর
-model provider-এর নিজস্ব data policy আছে।
+REA টার্গেট স্থানীয়ভাবে বিশ্লেষণ করে। আপনার agent টুলের ফলাফল পায়, আর তার
+model provider-এর নিজস্ব ডেটা নীতি আছে।
 
 </details>
 
 <details>
 <summary><strong>কোনো bug পেলে কী করব?</strong></summary>
 
-আগে আপডেট করুন; সাম্প্রতিক কোনো release-এ হয়তো সমস্যাটি ঠিক হয়ে গেছে।
+আগে আপডেট করুন; সাম্প্রতিক রিলিজে হয়তো ইতিমধ্যে ঠিক হয়ে গেছে।
 
 `npm install --global` বা `bun add --global` দিয়ে ইনস্টল করা CLI-এর জন্য:
 
@@ -369,15 +274,15 @@ model provider-এর নিজস্ব data policy আছে।
 rea update
 ```
 
-`npx`-এর মাধ্যমে agent setup-এর জন্য:
+`npx` দিয়ে agent setup করা থাকলে:
 
 ```bash
 npx rea-agents@latest setup
 ```
 
-Agent ব্যবহার করলে [setup রিফ্রেশ](#rea-আপডেট-করুন) সম্পন্ন করে সেটি রিস্টার্ট করুন।
-একই কাজ আবার চেষ্টা করুন। সমস্যা থেকে গেলে আপনার REA সংস্করণ, টার্গেটের ধরন,
-সমস্যাটি ঘটানোর ধাপ এবং error output সহ [একটি issue খুলুন](https://github.com/morluto/rea/issues)।
+Agent ব্যবহার করলে [setup হালনাগাদ](#rea-আপডেট-করুন) শেষ করে সেটি রিস্টার্ট
+করুন। একই কাজ আবার চেষ্টা করুন। সমস্যা থাকলে [একটি issue খুলুন](https://github.com/morluto/rea/issues)
+এবং REA-এর সংস্করণ, টার্গেটের ধরন, পুনরুৎপাদনের ধাপ ও error আউটপুট দিন।
 
 </details>
 
@@ -391,56 +296,64 @@ Agent ব্যবহার করলে [setup রিফ্রেশ](#rea-আ�
 - [CLI ও Evidence](../getting-started/cli.md): কমান্ড, provider বাছাই, snapshot, import/export ও exit status।
 - [MCP contract](../reference/mcp-contracts.md) ও [agent prompt](../getting-started/mcp-prompts.md): টুলের ফলাফল, session ও নির্দেশিত অনুসন্ধান।
 - [টুল ক্যাটালগ](../reference/mcp-contracts.md#generated-catalog): টুল, provider ও CLI কমান্ডের স্বয়ংক্রিয়ভাবে তৈরি তালিকা।
-- [Roadmap](../development/roadmap.md): পরিকল্পিত কাজ ও সক্ষমতার tracker।
 
 নিরাপত্তা-ত্রুটি (vulnerability) জানাতে [SECURITY.md](../../SECURITY.md) দেখুন।
 
+## কমিউনিটি ও সহায়তা
+
+- **Discord** — ৫০,০০০-এর বেশি reverse engineer ও নির্মাতার উদ্যমী কমিউনিটিতে প্রশ্ন করুন এবং আপনি কী খতিয়ে দেখছেন তা শেয়ার করুন! [![Join the REA Discord](https://img.shields.io/badge/Join%20Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/GkcryMnJDM)
+- **Twitter / X** — আপডেট ও ঘোষণার জন্য [@reatools](https://x.com/reatools) ফলো করুন।
+- **মতামত ও ধারণা** — নতুন ফিচার বা কোনো ফাইল ফরম্যাটের সমর্থন চান? [একটি GitHub issue খুলুন](https://github.com/morluto/rea/issues) অথবা [আমাদের Discord-এ যোগ দিন](https://discord.gg/GkcryMnJDM) এবং জানান।
+
 ## Star-এর ইতিহাস
 
-🎉 **400,000 GitHub star — সবাইকে ধন্যবাদ!**
+🎉 **৪০০,০০০টি GitHub star — ধন্যবাদ!**
 
-যাঁরা REA ব্যবহার করছেন, bug রিপোর্ট করছেন, ফিচারের অনুরোধ জানাচ্ছেন, build test করছেন এবং fix দিয়ে অবদান রাখছেন — সবাইকে ধন্যবাদ।
+REA ব্যবহার, bug রিপোর্ট, ফিচার অনুরোধ, বিল্ড পরীক্ষা এবং সংশোধনে অবদান রাখা সবার প্রতি কৃতজ্ঞতা।
+
+<a href="https://rea.tools/bn/contributors/">
+  <img src="../../website/public/contributors/avatars.png" alt="REA-এর অবদানকারীরা" />
+</a>
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date&amp;theme=dark&amp;legend=top-left" />
     <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date" />
-    <img alt="REA GitHub star history" src="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date" />
+    <img alt="REA-এর GitHub star-এর ইতিহাস" src="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date" />
   </picture>
 </a>
+
+## অবদান রাখুন
+
+REA-তে আপনার সাহায্য আমরা চাই! bug জানাতে বা ফিচার প্রস্তাব করতে
+[একটি issue খুলুন](https://github.com/morluto/rea/issues), অথবা কোড বা ডকুমেন্টেশন উন্নত করতে
+[একটি pull request পাঠান](https://github.com/morluto/rea/pulls)।
+
+ডেভেলপমেন্ট সেটআপ ও চেকের জন্য [CONTRIBUTING.md](../../CONTRIBUTING.md) দেখুন। যাচাইয়ের lane-এর জন্য
+[টেস্টিং গাইড](../development/testing.md) দেখুন।
 
 ## দায়মুক্তি
 
 দায়িত্বশীল ব্যবহারের নির্দেশনার জন্য [DISCLAIMER.md](../../DISCLAIMER.md) দেখুন।
 
-অবৈধ বা অননুমোদিত ব্যবহার নিয়ে প্রজেক্টের অবস্থান REA-এর সব সংস্করণ, বিতরণের মাধ্যম
-ও প্ল্যাটফর্মের ক্ষেত্রে প্রযোজ্য; প্রতিটি কপিতে তার প্রযোজ্য license বহাল থাকে।
+অবৈধ বা অননুমোদিত ব্যবহার বিষয়ে প্রজেক্টের অবস্থান REA-এর সব সংস্করণ,
+বিতরণ চ্যানেল ও প্ল্যাটফর্মের ক্ষেত্রে প্রযোজ্য; প্রতিটি কপিতে তার প্রযোজ্য লাইসেন্সই থাকে।
 
-REA বৈধ গবেষণা, শিক্ষা, interoperability, সফটওয়্যার সংরক্ষণ এবং আপনার নিজের
-অথবা পরীক্ষা করার অনুমতি আছে এমন সফটওয়্যার বিশ্লেষণের জন্য।
-
-## অবদান রাখুন
-
-REA-তে আপনার সাহায্য পেলে আমরা খুশি হব! Bug রিপোর্ট করতে বা ফিচারের পরামর্শ দিতে
-[একটি issue খুলুন](https://github.com/morluto/rea/issues), অথবা কোড বা ডকুমেন্টেশন উন্নত করতে
-[pull request পাঠান](https://github.com/morluto/rea/pulls)।
-
-Development setup ও check-এর জন্য [CONTRIBUTING.md](../../CONTRIBUTING.md), যাচাইয়ের ধাপের জন্য
-[testing](../development/testing.md) এবং নির্বাচিত layer ও dependency path-এর জন্য
-[architecture map](../architecture/architecture.mermaid) দেখুন।
+REA বৈধ গবেষণা, শিক্ষা, আন্তঃকার্যকারিতা, সফটওয়্যার সংরক্ষণ,
+এবং যে সফটওয়্যার আপনার নিজস্ব বা পরীক্ষা করার অনুমতি আছে তার বিশ্লেষণের জন্য।
 
 ## লাইসেন্স
 
 [MIT](../../LICENSE)
 
-REA-র নিজস্ব কোড MIT license-এর অধীনে। Third-party উপাদানগুলোর নিজস্ব
-license ও copyright notice বহাল থাকে; dependency-র তালিকা, সংরক্ষিত license
-টেক্সট ও বাইরের টুলের শর্তাবলির জন্য [Third-party notices](../../THIRD_PARTY_NOTICES.md) দেখুন।
+REA-র লেখা কোড MIT লাইসেন্সে প্রকাশিত। থার্ড-পার্টি উপাদানে তাদের নিজস্ব
+লাইসেন্স ও কপিরাইট নোটিশ থাকে; নির্ভরতার তালিকা, সংরক্ষিত লাইসেন্স টেক্সট এবং
+বাহ্যিক টুলের শর্তাবলির জন্য [থার্ড-পার্টি নোটিশ](../../THIRD_PARTY_NOTICES.md) দেখুন।
 
-**বাণিজ্যিক টুল — যেমন IDA Pro / Hex-Rays decompiler, Hopper ও JEB — আপনাকে অবশ্যই
-বৈধভাবে সংগ্রহ করতে হবে এবং প্রযোজ্য license অনুযায়ী ব্যবহারের অনুমতি থাকতে হবে।**
-REA কোনো টুলের license, key বা activation-এর অধিকার দেয় না। Trial ও demo সংস্করণ
-vendor-এর শর্তাবলির অধীন, যার মধ্যে user, ফিচার, automation ও output শেয়ার করার
-সীমাবদ্ধতাও আছে। Crack করা কপি, চুরি করা key, অননুমোদিতভাবে key শেয়ার করা এবং
-license-এর সীমাবদ্ধতা এড়িয়ে যাওয়া অনুমোদিত নয়। এই নির্দেশনা MIT বা third-party
-license-এ কোনো পরিবর্তন আনে না।
+**বাণিজ্যিক টুল, যেমন IDA Pro / Hex-Rays ডিকম্পাইলার, Hopper এবং JEB, প্রযোজ্য
+লাইসেন্স অনুযায়ী বৈধভাবে সংগ্রহ ও ব্যবহারের অনুমতি থাকতে হবে।** REA কোনো টুল
+লাইসেন্স, কী বা অ্যাক্টিভেশনের অধিকার দেয় না। ট্রায়াল ও ডেমো ভেন্ডরের শর্তের
+অধীনে থাকে, যার মধ্যে ইউজার, ফিচার, অটোমেশন এবং আউটপুট শেয়ারের সীমাবদ্ধতা
+অন্তর্ভুক্ত। ক্র্যাক করা কপি, চুরি করা কী, অননুমোদিত কী শেয়ার এবং লাইসেন্স
+সীমাবদ্ধতা এড়ানো অনুমোদিত নয়। এই নির্দেশনা MIT বা থার্ড-পার্টি লাইসেন্স
+সংশোধন করে না।
