@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **limits:** an inspect_il2cpp_metadata refusal at the ELF pointer index reports reported_limits.boundary "virtual-pointer-index-bytes" and details.limit for max_native_index_bytes, and no longer carries a details.refusal fixed_ceiling.
 * **pe:** import and delay-import walks continue to the null descriptor past a short directory Size instead of stopping with a malformed_entry issue, and inspect-pe-resources reports an unsupported optional-header magic as unsupported_target.
 * **desktop:** the desktop application result adds the native family, the ui-framework and runtime-library component categories, new probe operations, a required probe priority and deferred_probes.
 * **macho:** inspect_go_binary, inspect_rust_binary, inspect_dwarf_units, inspect_native_initializers, inspect_native_dispatch_metadata, the IL2CPP binary readers and the macOS provider's lipo-selected slice reads now report a FAT header or table cut off by the file's end with details.format_failure "truncated" (previously "malformed", or an unsupported or not-universal result for a table past the end), plus details.available_bytes and details.required_bytes.
@@ -82,6 +83,7 @@
 * **artifacts:** preserve DMG verification cancellation at the deadline ([#13616](https://github.com/morluto/rea/issues/13616)) ([f18de40](https://github.com/morluto/rea/commit/f18de40af62ab25948fa8c94e4ecaa61a52353aa))
 * **artifacts:** publish Node SEA metadata only after carrier validation ([#13411](https://github.com/morluto/rea/issues/13411)) ([120980c](https://github.com/morluto/rea/commit/120980cac0bc674584b8480187768cfd70972c08))
 * **artifacts:** recognize standalone formats and route them to their readers ([#14192](https://github.com/morluto/rea/issues/14192)) ([6904da4](https://github.com/morluto/rea/commit/6904da4927685a864f164badfff02582fd18a9a5))
+* **artifacts:** report S-record data after the final count ([#14260](https://github.com/morluto/rea/issues/14260)) ([90d774f](https://github.com/morluto/rea/commit/90d774ffed385edb783cfb7dbd08db8bbe86aef5))
 * **artifacts:** report supported NES container layouts accurately ([#13499](https://github.com/morluto/rea/issues/13499)) ([321387c](https://github.com/morluto/rea/commit/321387c4319f5df167e488a827e38f3bed77eb36))
 * **artifacts:** route native images to static readers and name their architecture ([#14189](https://github.com/morluto/rea/issues/14189)) ([8ed8195](https://github.com/morluto/rea/commit/8ed819573bb3a4c8ef7a373f896c52554dd8acdf))
 * **artifacts:** share the examined-entry allowance across readers ([#13479](https://github.com/morluto/rea/issues/13479)) ([9560457](https://github.com/morluto/rea/commit/95604571965e9d1aec00a78665b4be64496eb094))
@@ -259,6 +261,7 @@
 * **javascript:** share widened reference-store propagation ([#12990](https://github.com/morluto/rea/issues/12990)) ([fba5e44](https://github.com/morluto/rea/commit/fba5e44bf5f393dcd6bd3269d88d7101f1586ff0))
 * **javascript:** track shared ESM HTTP agent mutations ([d500638](https://github.com/morluto/rea/commit/d500638d5d4b666cf0b255085ce4d75a29cbc35e))
 * **javascript:** verify Expo context getter ownership ([#13803](https://github.com/morluto/rea/issues/13803)) ([8c16d7d](https://github.com/morluto/rea/commit/8c16d7d18f71c0057240db4122c5df9a8b907a95))
+* **limits:** make the IL2CPP pointer index adjustable and require owned refusal limits ([#14243](https://github.com/morluto/rea/issues/14243)) ([6ab595c](https://github.com/morluto/rea/commit/6ab595cfd6fc67f6bfe7313e39f736ed67f036a3))
 * **macho:** correct encryption range VM mapping ([#13918](https://github.com/morluto/rea/issues/13918)) ([0fb1d11](https://github.com/morluto/rea/commit/0fb1d112f699b5619607f564f95fe52f14b7b061))
 * **macho:** keep header reads inside declared slices ([#13913](https://github.com/morluto/rea/issues/13913)) ([1172d7e](https://github.com/morluto/rea/commit/1172d7ed7d3fc76e664d6ad79abc8e7fa44b2c97))
 * **macho:** preserve legacy bind stream bounds and target scope ([#13874](https://github.com/morluto/rea/issues/13874)) ([a8ccf8b](https://github.com/morluto/rea/commit/a8ccf8b5b883f5df3394c7753d7edc0caaffa524))
@@ -1167,6 +1170,7 @@
 * **rizin:** consolidate stdin failure and cleanup checks ([#13018](https://github.com/morluto/rea/issues/13018)) ([8ab232b](https://github.com/morluto/rea/commit/8ab232b4d8e51e68ac9cc4829da0ae0800a6c4ea))
 * **rizin:** synchronize partial output with command deadlines ([#13040](https://github.com/morluto/rea/issues/13040)) ([3059921](https://github.com/morluto/rea/commit/3059921cc67d7d8506c59a6ca64f9bb399559044))
 * **rizin:** verify ownership when close readback is unavailable ([#13029](https://github.com/morluto/rea/issues/13029)) ([cd6d713](https://github.com/morluto/rea/commit/cd6d713e946da1d2c44f454aee7e3847b03d3c07))
+* run repeated CLI formatting capacity pairings in process ([#14279](https://github.com/morluto/rea/issues/14279)) ([3cb7ca9](https://github.com/morluto/rea/commit/3cb7ca9eeb57733396662720897c7bf2ba2dc430))
 * **rust:** consolidate auditable revision and cycle checks ([76ae995](https://github.com/morluto/rea/commit/76ae995f2b71d01802c94ff5a2284dcc5ff2b57b))
 * **rust:** consolidate carrier and public Evidence coverage ([#13571](https://github.com/morluto/rea/issues/13571)) ([c70d1af](https://github.com/morluto/rea/commit/c70d1af4162deb4827b5db9f967fb12d18221186))
 * **rust:** consolidate carrier budgets and retained views ([#12872](https://github.com/morluto/rea/issues/12872)) ([75908cc](https://github.com/morluto/rea/commit/75908cc1fa8fd36c0da515cfb62c69db654410ab))
