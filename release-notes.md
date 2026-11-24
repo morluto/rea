@@ -144,6 +144,7 @@
 * **ci:** verify packaged Agent Environment bridges ([#12874](https://github.com/morluto/rea/issues/12874)) ([41fc470](https://github.com/morluto/rea/commit/41fc470072d441eefc3536a3de4a3ebb7902b5e4))
 * **cli:** accept only the documented kebab-case option spelling ([#14204](https://github.com/morluto/rea/issues/14204)) ([c4fa5b4](https://github.com/morluto/rea/commit/c4fa5b475c26b6cce0e301154dad928634d84f2b))
 * **cli:** complete inline option values ([#13366](https://github.com/morluto/rea/issues/13366)) ([0451a86](https://github.com/morluto/rea/commit/0451a8688d55c389c67048fa7764af0c0d5a8ab1))
+* **cli:** count and page emitted output with tokenx 2 ([#14330](https://github.com/morluto/rea/issues/14330)) ([948835a](https://github.com/morluto/rea/commit/948835a41e04c0d0c6eacac71d6ee4428418981d))
 * **cli:** preserve doctor routing with empty output values ([#13262](https://github.com/morluto/rea/issues/13262)) ([a06e04b](https://github.com/morluto/rea/commit/a06e04b4dfcd994a426cc6b6ab77082260b95a3f))
 * **cli:** preserve explicit null output ([#13342](https://github.com/morluto/rea/issues/13342)) ([d4f78cb](https://github.com/morluto/rea/commit/d4f78cb5922d9fd83222514dda85db8bf5287f1b))
 * **cli:** register Kilo in linked worktrees of bare repositories ([#13285](https://github.com/morluto/rea/issues/13285)) ([27657b7](https://github.com/morluto/rea/commit/27657b7420a765d13f6e58e212c2b897900b5154))
