@@ -10,6 +10,7 @@ export declare const removeArmAttributes: (
     options: { readonly timeout: number },
   ) => Promise<unknown>,
   path: string,
+  options?: { readonly fallback?: boolean },
 ) => Promise<{
   readonly tool: string;
   readonly failures: readonly string[];

@@ -84,6 +84,21 @@ describe("ARM verifier objcopy prerequisite", () => {
     await expect(hasArmAttributes(path)).resolves.toBe(false);
   });
 
+  it("surfaces a caller-selected objcopy failure instead of falling back", async () => {
+    const path = await createFile("selected.elf");
+    await expect(
+      removeArmAttributes(
+        ["selected-objcopy"],
+        async () => {
+          throw new Error("cannot read ARM input");
+        },
+        path,
+        { fallback: false },
+      ),
+    ).rejects.toThrow("selected-objcopy: cannot read ARM input");
+    await expect(hasArmAttributes(path)).resolves.toBe(true);
+  });
+
   it("reports when the variant has no attributes section to remove", async () => {
     const path = await createFile("plain.elf", 1);
     await expect(

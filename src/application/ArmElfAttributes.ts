@@ -1,11 +1,16 @@
 import type { FileHandle } from "node:fs/promises";
-import type { ArmElfMetadata } from "../domain/binaryTargetTypes.js";
+import type {
+  ArmElfMetadata,
+  ArmIsaExtensionDeclaration,
+} from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 /** Observed AEABI declarations and coverage of their source tables. */
 export interface ArmElfAttributesInspection {
   readonly cpuArch: number | null;
   readonly cpuArchProfile: string | null;
+  /** Declared Tag_DIV_use and Tag_Virtualization_use pairs, in payload order. */
+  readonly extensions: readonly ArmIsaExtensionDeclaration[];
   readonly limitations: readonly string[];
 }
 
@@ -16,6 +21,8 @@ const ARM_ATTRIBUTES_MAX_TAGS = 4096;
 /** Tag_CPU_arch (6) and Tag_CPU_arch_profile (7), a one-byte character. */
 const TAG_CPU_ARCH = 6;
 const TAG_CPU_ARCH_PROFILE = 7;
+/** Tag_DIV_use (44) and Tag_Virtualization_use (68) declare ISA extensions. */
+const ISA_EXTENSION_TAGS = new Set([44, 68]);
 
 /** Read one ULEB128 value; null on truncation or an over-long encoding. */
 const readUleb128 = (
@@ -54,6 +61,8 @@ interface AeabiDeclarations {
   };
   readonly cpuArch: number | null;
   readonly cpuArchProfile: string | null;
+  /** ISA-extension declarations from every scope; any scope can enable one. */
+  readonly extensions: readonly ArmIsaExtensionDeclaration[];
   /**
    * A Section or Symbol scope, or a repeated File scope, declared an ISA or
    * profile that disagrees with the File-scope declaration; the payload then
@@ -66,12 +75,14 @@ const NO_AEABI_DECLARATIONS: AeabiDeclarations = {
   observed: { cpuArch: null, cpuArchProfile: null },
   cpuArch: null,
   cpuArchProfile: null,
+  extensions: [],
   declarationConflict: false,
 };
 
 /**
  * Walk one scope block's tag/value pairs. Scope tags cannot nest, Tag_NULL is
- * not a valid attribute boundary, Tag_nodefaults (64) carries no value, tags
+ * not a valid attribute boundary, Tag_nodefaults (64) carries an ignored ULEB
+ * value, tags
  * 4, 5, and 32 carry strings, odd tags above 32 carry NUL-terminated strings
  * such as Tag_also_compatible_with, and every other declared tag carries one
  * ULEB value. Repeated ISA or profile tags must agree.
@@ -81,13 +92,14 @@ const scanAeabiScope = (
   start: number,
   end: number,
 ):
-  | (Pick<AeabiDeclarations, "cpuArch" | "cpuArchProfile"> & {
+  | (Pick<AeabiDeclarations, "cpuArch" | "cpuArchProfile" | "extensions"> & {
       readonly repeatedDeclarationConflicts: boolean;
     })
   | null => {
   let cursor = start;
   let cpuArch: number | null = null;
   let cpuArchProfile: string | null = null;
+  const extensions: ArmIsaExtensionDeclaration[] = [];
   let conflict = false;
   let tags = 0;
   while (cursor < end) {
@@ -126,7 +138,6 @@ const scanAeabiScope = (
       cursor = next;
       continue;
     }
-    if (tag.value === 64) continue;
     if (tag.value > 32 && tag.value % 2 === 1) {
       const next = skipAttributesString(section, cursor, end);
       if (next === null) return null;
@@ -136,8 +147,15 @@ const scanAeabiScope = (
     const value = readUleb128(section, cursor, end);
     if (value === null) return null;
     cursor = value.next;
+    if (ISA_EXTENSION_TAGS.has(tag.value))
+      extensions.push({ tag: tag.value, value: value.value });
   }
-  return { cpuArch, cpuArchProfile, repeatedDeclarationConflicts: conflict };
+  return {
+    cpuArch,
+    cpuArchProfile,
+    extensions,
+    repeatedDeclarationConflicts: conflict,
+  };
 };
 
 /** Skip a scope's NUL-terminated ULEB128 index list; the tags follow it. */
@@ -171,6 +189,7 @@ const aeabiDeclarations = (
     NO_AEABI_DECLARATIONS;
   let allDeclarations: Pick<AeabiDeclarations, "cpuArch" | "cpuArchProfile"> =
     NO_AEABI_DECLARATIONS;
+  const extensions: ArmIsaExtensionDeclaration[] = [];
   let conflict = false;
   const disagrees = (
     scanned: Pick<AeabiDeclarations, "cpuArch" | "cpuArchProfile">,
@@ -198,6 +217,7 @@ const aeabiDeclarations = (
     if (scanned === null) return null;
     if (scanned.repeatedDeclarationConflicts || disagrees(scanned))
       conflict = true;
+    extensions.push(...scanned.extensions);
     allDeclarations = {
       cpuArch: scanned.cpuArch ?? allDeclarations.cpuArch,
       cpuArchProfile: scanned.cpuArchProfile ?? allDeclarations.cpuArchProfile,
@@ -211,6 +231,7 @@ const aeabiDeclarations = (
   }
   return {
     ...declarations,
+    extensions,
     observed: allDeclarations,
     declarationConflict: conflict,
   };
@@ -262,6 +283,7 @@ const armAttributesDeclarations = (section: Buffer): AeabiDeclarations => {
               cpuArch: declarations.cpuArch ?? merged.cpuArch,
               cpuArchProfile:
                 declarations.cpuArchProfile ?? merged.cpuArchProfile,
+              extensions: [...merged.extensions, ...declarations.extensions],
               observed: {
                 cpuArch:
                   declarations.observed.cpuArch ?? merged.observed.cpuArch,
@@ -354,6 +376,7 @@ export const readArmElfCpuArch = async (
     return ok({
       cpuArch: null,
       cpuArchProfile: null,
+      extensions: [],
       limitations: [
         "Extended or reserved ARM ELF table numbering is not inspected; attribute declarations remain unknown.",
       ],
@@ -367,11 +390,17 @@ export const readArmElfCpuArch = async (
       return ok({
         cpuArch: null,
         cpuArchProfile: null,
+        extensions: [],
         limitations: [
           "Extended ARM section numbering is not inspected; attribute declarations remain unknown.",
         ],
       });
-    return ok({ cpuArch: null, cpuArchProfile: null, limitations });
+    return ok({
+      cpuArch: null,
+      cpuArchProfile: null,
+      extensions: [],
+      limitations,
+    });
   }
   // The exact ELF32 entry size bounds the table allocation by the header
   // count alone; a padded stride could multiply a sparse file into one.
@@ -386,19 +415,38 @@ export const readArmElfCpuArch = async (
       `ARM section header table at file offset ${tableOffset} extends beyond the captured file: examined ${examinable} of ${count} complete headers. Declarations in unavailable headers remain unknown.`,
     );
   if (examinable === 0)
-    return ok({ cpuArch: null, cpuArchProfile: null, limitations });
+    return ok({
+      cpuArch: null,
+      cpuArchProfile: null,
+      extensions: [],
+      limitations,
+    });
   const contents = await read(
     tableOffset,
     examinable * stride,
     "section header table",
   );
   if (!contents.ok) return contents;
+  // Structural metadata is not section content: an attributes range that
+  // reaches into the ELF header or either header table cannot declare an ISA.
+  const programOffset = u32(bytes, 28);
+  const programExtent = u16(bytes, 42) * u16(bytes, 44);
+  const structure: readonly (readonly [number, number])[] = [
+    [0, metadata.headerSize],
+    [tableOffset, tableOffset + count * stride],
+    ...(programExtent === 0
+      ? []
+      : [[programOffset, programOffset + programExtent] as const]),
+  ];
+  const overlapsStructure = (offset: number, size: number): boolean =>
+    structure.some(([start, end]) => offset < end && start < offset + size);
   const locateAttributesSection = async (): Promise<
     Result<Buffer | undefined, string>
   > => {
     let section: Buffer | undefined;
     let attributeSectionSeen = false;
-    for (let index = 0; index < examinable; index += 1) {
+    // Section zero is the reserved null entry and owns no section contents.
+    for (let index = 1; index < examinable; index += 1) {
       checkCancelled();
       const position = index * stride;
       if (u32(contents.value, position + 4) !== SHT_ARM_ATTRIBUTES) continue;
@@ -414,6 +462,10 @@ export const readArmElfCpuArch = async (
         );
         continue;
       }
+      if (overlapsStructure(offset, size))
+        return err(
+          "ARM attribute section overlaps the ELF header or a header table",
+        );
       const candidate = await read(offset, size, "attribute section");
       if (!candidate.ok) return candidate;
       section = candidate.value;
@@ -423,7 +475,12 @@ export const readArmElfCpuArch = async (
   const section = await locateAttributesSection();
   if (!section.ok) return section;
   if (section.value === undefined)
-    return ok({ cpuArch: null, cpuArchProfile: null, limitations });
+    return ok({
+      cpuArch: null,
+      cpuArchProfile: null,
+      extensions: [],
+      limitations,
+    });
   // Preserve the declarations verbatim, including unknown enum values.
   // Provider admission, not parsing, decides which ISAs have been verified.
   return ok({

@@ -223,8 +223,19 @@ export interface ArmElfMetadata {
    * or null when absent; the arch enum alone does not identify the variant.
    */
   readonly cpuArchProfile?: string | null;
+  /**
+   * Tag_DIV_use and Tag_Virtualization_use declarations from any scope, as
+   * declared; undefined until the section table has been read.
+   */
+  readonly extensions?: readonly ArmIsaExtensionDeclaration[];
   /** Unavailable declaration sources; missing sections there remain unknown. */
   readonly limitations?: readonly string[];
+}
+
+/** One declared AEABI ISA-extension tag and its value, uninterpreted. */
+export interface ArmIsaExtensionDeclaration {
+  readonly tag: number;
+  readonly value: number;
 }
 
 /** Raw ELF facts; family recognition does not establish ISA or ABI support. */

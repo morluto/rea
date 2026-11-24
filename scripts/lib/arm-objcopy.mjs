@@ -65,8 +65,15 @@ export const neutralizeArmAttributes = async (path) => {
  * operation itself: a tool that answers --version but cannot parse ARM (GNU
  * objcopy on hosts built without the ARM target) falls through. When no
  * candidate can do it, the built-in ELF neutralizer keeps the lane runnable.
+ * A caller-selected tool passes `fallback: false`: its failure is reported
+ * instead of being replaced by another tool.
  */
-export const removeArmAttributes = async (candidates, execute, path) => {
+export const removeArmAttributes = async (
+  candidates,
+  execute,
+  path,
+  { fallback = true } = {},
+) => {
   const failures = [];
   for (const candidate of candidates) {
     try {
@@ -84,6 +91,10 @@ export const removeArmAttributes = async (candidates, execute, path) => {
       );
     }
   }
+  if (!fallback)
+    throw new Error(
+      `The selected objcopy could not remove .ARM.attributes: ${failures.join("; ")}`,
+    );
   await neutralizeArmAttributes(path);
   return { tool: "builtin-elf-neutralizer", failures };
 };

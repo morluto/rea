@@ -66,11 +66,17 @@ const NOT_APPLICABLE_PROFILE_ATTRIBUTES = Buffer.from([
   0x00, 0x00, 0x00, 0x06, 0x0a, 0x07, 0x00, 0x08, 0x01, 0x09, 0x02, 0x0a, 0x04,
   0x22, 0x01,
 ]);
-/** A valid v7/A block ending with the no-value Tag_nodefaults marker (64). */
+/** A valid v7/A block with Tag_nodefaults (64) and its ignored ULEB value 0. */
 const NODEFAULTS_ATTRIBUTES = Buffer.from([
-  0x41, 0x1a, 0x00, 0x00, 0x00, 0x61, 0x65, 0x61, 0x62, 0x69, 0x00, 0x01, 0x10,
-  0x00, 0x00, 0x00, 0x06, 0x0a, 0x07, 0x41, 0x40, 0x08, 0x01, 0x09, 0x02, 0x0a,
-  0x04,
+  0x41, 0x1b, 0x00, 0x00, 0x00, 0x61, 0x65, 0x61, 0x62, 0x69, 0x00, 0x01, 0x11,
+  0x00, 0x00, 0x00, 0x06, 0x0a, 0x07, 0x41, 0x40, 0x00, 0x08, 0x01, 0x09, 0x02,
+  0x0a, 0x04,
+]);
+/** The real v7/A payload plus Tag_DIV_use=2, as -march=armv7ve declares. */
+const DIV_ATTRIBUTES = Buffer.from([
+  0x41, 0x1d, 0x00, 0x00, 0x00, 0x61, 0x65, 0x61, 0x62, 0x69, 0x00, 0x01, 0x13,
+  0x00, 0x00, 0x00, 0x06, 0x0a, 0x07, 0x41, 0x08, 0x01, 0x09, 0x02, 0x0a, 0x04,
+  0x22, 0x01, 0x2c, 0x02,
 ]);
 /** A v7/A block followed by Tag_also_compatible_with (65), a string tag. */
 const STRING_TAG_ATTRIBUTES = Buffer.concat([
@@ -84,7 +90,7 @@ const STRING_TAG_ATTRIBUTES = Buffer.concat([
 ]);
 /** One File scope declaring v7 twice with conflicting values. */
 const CONFLICTING_FILE_ATTRIBUTES = Buffer.from([
-  0x41, 0x1d, 0x00, 0x00, 0x00, 0x61, 0x65, 0x61, 0x62, 0x69, 0x00, 0x01, 0x13,
+  0x41, 0x19, 0x00, 0x00, 0x00, 0x61, 0x65, 0x61, 0x62, 0x69, 0x00, 0x01, 0x0f,
   0x00, 0x00, 0x00, 0x06, 0x0a, 0x06, 0x0e, 0x07, 0x41, 0x08, 0x01, 0x09, 0x02,
 ]);
 /** A v7/A File scope beside a Symbol scope declaring v8 after its index
@@ -125,6 +131,8 @@ const armFixture = (
     headerSize?: number;
     truncatedTable?: boolean;
     stride?: number;
+    attributesSection?: number;
+    attributesOffset?: number;
   } = {},
 ): Buffer => {
   const sectionCount = attributes === null ? 1 : 2;
@@ -148,11 +156,12 @@ const armFixture = (
   bytes.writeUInt16LE(options.stride ?? 40, 46); // e_shentsize
   bytes.writeUInt16LE(sectionCount, 48); // e_shnum
   if (attributes !== null) {
-    const header = SECTION_TABLE_OFFSET + 40;
+    const header = SECTION_TABLE_OFFSET + 40 * (options.attributesSection ?? 1);
+    const offset = options.attributesOffset ?? ATTRIBUTES_OFFSET;
     bytes.writeUInt32LE(0x70000003, header + 4); // SHT_ARM_ATTRIBUTES
-    bytes.writeUInt32LE(ATTRIBUTES_OFFSET, header + 16);
+    bytes.writeUInt32LE(offset, header + 16);
     bytes.writeUInt32LE(attributes.length, header + 20);
-    if (!truncated) bytes.set(attributes, ATTRIBUTES_OFFSET);
+    if (!truncated) bytes.set(attributes, offset);
   }
   return bytes;
 };
@@ -407,3 +416,58 @@ it("preserves an ARM target above the attribute inspection capacity", async () =
     },
   });
 });
+
+it("declares nothing from an attributes header in reserved section zero", async () => {
+  const target = await resolveArm(
+    armFixture(V7_ATTRIBUTES, { attributesSection: 0 }),
+  );
+  expect(target).toMatchObject({
+    arm: { cpuArch: null, cpuArchProfile: null },
+  });
+});
+
+it("retains declared hardware-divide extensions with the v7 declaration", async () => {
+  const target = await resolveArm(armFixture(DIV_ATTRIBUTES));
+  expect(target).toMatchObject({
+    arm: {
+      cpuArch: 10,
+      cpuArchProfile: "A",
+      extensions: [{ tag: 44, value: 2 }],
+    },
+  });
+});
+
+it("refuses a section table inside the declared ELF header extent", async () => {
+  const bytes = armFixture(V7_ATTRIBUTES, { headerSize: 160 });
+  expect(await refusedAtAdmission(bytes)).toContain(
+    "section header table overlaps the fixed header",
+  );
+  const inspection = await inspectArm(bytes);
+  expect(inspection.ok).toBe(false);
+  expect((inspection as { error?: string }).error).toContain(
+    "invalid ARM section table offset or entry size",
+  );
+});
+
+it.each([
+  ["the declared ELF header", { headerSize: 128, attributesOffset: 60 }, {}],
+  [
+    "the section header table",
+    { attributesOffset: SECTION_TABLE_OFFSET + 8 },
+    {},
+  ],
+  ["the program header table", { attributesOffset: 56 }, { programs: true }],
+] as const)(
+  "refuses attributes that overlap %s",
+  async (_label, layout, extra) => {
+    const bytes = armFixture(V7_ATTRIBUTES, layout);
+    if ("programs" in extra) {
+      bytes.writeUInt32LE(52, 28); // e_phoff
+      bytes.writeUInt16LE(32, 42); // e_phentsize
+      bytes.writeUInt16LE(1, 44); // e_phnum: one PT_NULL entry
+    }
+    expect(await refusedAtAdmission(bytes)).toContain(
+      "ARM attribute section overlaps the ELF header or a header table",
+    );
+  },
+);

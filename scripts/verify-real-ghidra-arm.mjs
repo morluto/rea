@@ -46,12 +46,12 @@ if (installation.status !== "available")
     `Ghidra prerequisite unavailable: ${JSON.stringify(installation)}`,
   );
 const execute = promisify(execFile);
-const objcopyCandidates = [
-  process.env.REA_ARM_OBJCOPY,
-  "llvm-objcopy",
-  "llvm-objcopy-21",
-  "objcopy",
-].filter((candidate) => candidate !== undefined);
+// A caller-selected objcopy is exclusive; defaults are tried only without one.
+const selectedObjcopy = process.env.REA_ARM_OBJCOPY;
+const objcopyCandidates =
+  selectedObjcopy === undefined
+    ? ["llvm-objcopy", "llvm-objcopy-21", "objcopy"]
+    : [selectedObjcopy];
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
 const workspace = await mkdtemp(join(tmpdir(), "rea-arm-proof-"));
@@ -354,6 +354,7 @@ try {
     objcopyCandidates,
     execute,
     noAttributesPath,
+    { fallback: selectedObjcopy === undefined },
   );
   const stripReceipt = {
     attribute_strip_tool: stripped.tool,

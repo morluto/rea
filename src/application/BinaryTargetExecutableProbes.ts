@@ -287,6 +287,9 @@ const readElfMetadata = async (
         ...parsed.value.arm,
         cpuArch: attributes.value.cpuArch,
         cpuArchProfile: attributes.value.cpuArchProfile,
+        ...(attributes.value.extensions.length === 0
+          ? {}
+          : { extensions: attributes.value.extensions }),
         ...(attributes.value.limitations.length === 0
           ? {}
           : { limitations: attributes.value.limitations }),

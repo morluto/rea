@@ -93,6 +93,17 @@ describe("bounded Ghidra ARM admission", () => {
     });
   });
 
+  it("admits declarations that leave the divide and virtualization extensions off", () => {
+    const ghidra = new GhidraProvider(config(), silentLogger, {}, host);
+    const value = target({
+      extensions: [
+        { tag: 44, value: 1 },
+        { tag: 68, value: 0 },
+      ],
+    });
+    expect(ghidra.inspectTargetSupport(value).status).toBe("supported");
+  });
+
   it("records an unspecified float convention as such", () => {
     const parameters = ghidraArmProfileParameters(
       target({ flags: 0x05000000 }),
@@ -108,10 +119,13 @@ describe("bounded Ghidra ARM admission", () => {
     [{ flags: 0x04000400 }, "EABI5"],
     [{ flags: 0x05800400 }, "BE8"],
     [{ flags: 0x05000600 }, "FLOAT_SOFT"],
+    [{ flags: 0x05000000 }, "requires EF_ARM_ABI_FLOAT_HARD"],
     [{ cpuArch: null }, "Tag_CPU_arch"],
     [{ cpuArch: 14 }, "v8-A"],
     [{ cpuArch: 6 }, "v6"],
     [{ cpuArch: 13 }, "v7E-M"],
+    [{ cpuArch: 21 }, "v8.1-M Mainline"],
+    [{ cpuArch: 22 }, "v9-A"],
     [{ cpuArch: 99 }, "unknown architecture (99)"],
     [{ cpuArchProfile: "R" }, "Realtime profile"],
     [{ cpuArchProfile: "M" }, "Microcontroller profile"],
@@ -119,8 +133,18 @@ describe("bounded Ghidra ARM admission", () => {
     [{ cpuArchProfile: "\u0000" }, "Not Applicable profile"],
     [
       { limitations: ["ARM section header table extends beyond the file"] },
-      "completely examined section table",
+      "ARM section header table extends beyond the file",
     ],
+    [
+      {
+        limitations: [
+          "ARM attribute section at file offset 8192 exceeds the 65536-byte inspection bound; declarations remain unknown.",
+        ],
+      },
+      "exceeds the 65536-byte inspection bound",
+    ],
+    [{ extensions: [{ tag: 44, value: 2 }] }, "Tag_DIV_use=2"],
+    [{ extensions: [{ tag: 68, value: 3 }] }, "Tag_Virtualization_use=3"],
   ] satisfies [Partial<ArmElfMetadata>, string][])(
     "refuses an unverified ARM interpretation %j",
     async (change, reason) => {
