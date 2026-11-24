@@ -526,15 +526,25 @@ export const buildUefiEntryPointScaffolding = (
 
   if (normType === "smm-core") {
     return {
-      typedefs: [],
-      prototype: `void EFIAPI ${identifier}EntryPoint(void *SmramDescriptor);`,
+      typedefs: [
+        ...statusTypedefs,
+        "typedef void* EFI_HANDLE;",
+        "struct _EFI_SYSTEM_TABLE;",
+        "typedef struct _EFI_SYSTEM_TABLE EFI_SYSTEM_TABLE;",
+        "#define EFI_SUCCESS 0",
+      ],
+      prototype: `EFI_STATUS EFIAPI ${identifier}EntryPoint(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable);`,
       functionDefinition: [
-        `void EFIAPI ${identifier}EntryPoint(`,
-        "    void *SmramDescriptor",
+        `EFI_STATUS EFIAPI ${identifier}EntryPoint(`,
+        "    EFI_HANDLE ImageHandle,",
+        "    EFI_SYSTEM_TABLE *SystemTable",
         ") {",
         `    // Reconstructed SMM Core EntryPoint scaffolding for ${safeName}`,
         `    // Size: ${byteLength} bytes`,
-        "    (void)SmramDescriptor;",
+        "    EFI_STATUS Status = EFI_SUCCESS;",
+        "    (void)ImageHandle;",
+        "    (void)SystemTable;",
+        "    return Status;",
         "}",
       ].join("\n"),
     };
@@ -544,7 +554,9 @@ export const buildUefiEntryPointScaffolding = (
     normType === "driver" ||
     normType === "application" ||
     normType === "combined-smm-dxe" ||
-    normType === "combined-peim-driver";
+    normType === "combined-peim-driver" ||
+    normType === "smm" ||
+    normType === "smm-core";
 
   if (
     (phase === "MISC" || !["DXE", "APP", "SMM"].includes(phase)) &&

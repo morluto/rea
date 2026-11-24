@@ -2546,6 +2546,47 @@ it("declares opaque struct types for PEI services and system table to avoid poin
     "typedef struct _EFI_SYSTEM_TABLE EFI_SYSTEM_TABLE;",
   );
   expect(dxeScaffold.typedefs).not.toContain("typedef void* EFI_SYSTEM_TABLE;");
+
+  const smmCoreScaffold = buildUefiEntryPointScaffolding(
+    "TestSmmCore",
+    "TestSmmCoreModule",
+    4096,
+    "SMM",
+    "smm-core",
+    "64",
+  );
+  expect(smmCoreScaffold.prototype).toBe(
+    "EFI_STATUS EFIAPI TestSmmCoreEntryPoint(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable);",
+  );
+  expect(smmCoreScaffold.functionDefinition).toContain(
+    "EFI_HANDLE ImageHandle",
+  );
+  expect(smmCoreScaffold.functionDefinition).toContain(
+    "EFI_SYSTEM_TABLE *SystemTable",
+  );
+  expect(smmCoreScaffold.functionDefinition).toContain(
+    "EFI_STATUS Status = EFI_SUCCESS;",
+  );
+  expect(smmCoreScaffold.functionDefinition).toContain("return Status;");
+  expect(smmCoreScaffold.functionDefinition).toContain(
+    "// Reconstructed SMM Core EntryPoint scaffolding for TestSmmCoreModule",
+  );
+  expect(smmCoreScaffold.typedefs).toContain("typedef uint64_t EFI_STATUS;");
+  expect(smmCoreScaffold.typedefs).toContain("typedef void* EFI_HANDLE;");
+  expect(smmCoreScaffold.typedefs).toContain("struct _EFI_SYSTEM_TABLE;");
+
+  const smmMiscScaffold = buildUefiEntryPointScaffolding(
+    "TestSmmMisc",
+    "TestSmmMiscModule",
+    2048,
+    "MISC",
+    "smm",
+    "32",
+  );
+  expect(smmMiscScaffold.prototype).toBe(
+    "EFI_STATUS EFIAPI TestSmmMiscEntryPoint(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable);",
+  );
+  expect(smmMiscScaffold.typedefs).toContain("typedef uint32_t EFI_STATUS;");
 });
 
 it("discovers Terse Executable (TE / VZ) binaries in directory input mode", async () => {
