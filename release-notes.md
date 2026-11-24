@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **ghidra:** RISC-V images with this layout, such as ESP-IDF ESP32-C6, H2 and H21 builds, report flash code at its ELF address (0x42...) instead of .flash.text:0x42..., and their analysis profiles change. RISC-V images with any other section overlap that involves executable code are now refused with the overlapping sections named. These include ESP-IDF v5.5.2 ESP32-C5 and C61 builds, whose second reservation, .ext_ram.dummy, also covers .flash.text. See docs/ghidra-riscv.md.
 * **delivery:** for these seven tools, an omitted detail on a result above 32 KiB now returns the retained summary instead of complete Evidence. Pass detail: "complete" to keep the previous shape.
 * **deps:** MCP callers that need every volume, file and section inline must pass detail: "complete" to inspect_uefi_firmware.
 * **limits:** an inspect_il2cpp_metadata refusal at the ELF pointer index reports reported_limits.boundary "virtual-pointer-index-bytes" and details.limit for max_native_index_bytes, and no longer carries a details.refusal fixed_ceiling.
@@ -234,6 +235,7 @@
 * **ghidra:** expose NativeAOT opt-out recovery ([#12923](https://github.com/morluto/rea/issues/12923)) ([753b7e9](https://github.com/morluto/rea/commit/753b7e908c5ab91508cbda7b954aaa8138822712))
 * **ghidra:** forget an elapsed startup only after close settles ([ae2bbe0](https://github.com/morluto/rea/commit/ae2bbe056158eac51aaf0d6ff12d1c2eddc1e5f5))
 * **ghidra:** link the published installation guide from decompiler remediation ([62ec695](https://github.com/morluto/rea/commit/62ec69530319a17552f52dbfb7bdf3c4575ac85b)), refs [#7018](https://github.com/morluto/rea/issues/7018)
+* **ghidra:** load ESP-IDF flash code in Ghidra's default address space ([#8464](https://github.com/morluto/rea/issues/8464)) ([5e56bd0](https://github.com/morluto/rea/commit/5e56bd0a2311d92afe7ab8be1cb143f5b467c369))
 * **ghidra:** name invalid installed language definition files ([#13401](https://github.com/morluto/rea/issues/13401)) ([1d85f68](https://github.com/morluto/rea/commit/1d85f680f9aeee634ff3da8cd20c9209c6275b9e))
 * **ghidra:** name the code seed recovery for addresses outside the listing ([#10682](https://github.com/morluto/rea/issues/10682)) ([33ecda0](https://github.com/morluto/rea/commit/33ecda025f0f21ebe7abd73e6ebd5c43a21a5822))
 * **ghidra:** point to the LC_MAIN entry when a stripped Mach-O has no main symbol ([#12966](https://github.com/morluto/rea/issues/12966)) ([3db9120](https://github.com/morluto/rea/commit/3db9120c5e8af1e60e6d0e8ea7a0da35c181e085))
