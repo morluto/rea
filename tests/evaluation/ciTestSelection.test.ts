@@ -157,6 +157,8 @@ it("lets checker-only inputs and prose select nothing by themselves", () => {
           "scripts/lib/module-layers.baseline.json",
           ".git-blame-ignore-revs",
           "scripts/verify/baselines/some-guard.json",
+          "scripts/verify/fixed-ceiling-registry.json",
+          "scripts/verify/untyped-budget-refusal-baseline.json",
           "scripts/verify/advertised-schemas/tools/tool.json",
         ],
         sources,
@@ -224,6 +226,60 @@ it("selects tests under shared-boundary directories and declared fixture owners,
     mode: "full",
     reason:
       "Missing test owner tests/boundary/cli/cliParityGoldens.test.ts for tests/fixtures/cli-parity/error-unknown-command.txt",
+  });
+});
+
+it("selects adapter and packaging tests for owned bridge sources and fails closed otherwise", () => {
+  const sources = {
+    "src/ghidra/GhidraRawProfileDigest.test.ts": "",
+    "tests/boundary/providers/ghidra/ghidraLauncher.test.ts": "",
+    "tests/boundary/filesystem/ghidraBridgeSources.test.ts": "",
+    "tests/boundary/providers/hopper/hopperBridgeFacade.test.ts": "",
+    "tests/boundary/providers/hopper/hopperBookmarks.test.ts": "",
+    "tests/boundary/process/packedBridgeVerification.test.ts": "",
+    "tests/boundary/process/packageTarListing.test.ts": "",
+    "tests/conformance/package/packedTarListing.test.ts": "",
+    "tests/boundary/providers/adb/adbBugreport.test.ts": "",
+  };
+  expect(
+    selectedFiles(plan(["bridge/ghidra/ReaGhidraBridge.java"], sources)),
+  ).toEqual([
+    "src/ghidra/GhidraRawProfileDigest.test.ts",
+    "tests/boundary/filesystem/ghidraBridgeSources.test.ts",
+    "tests/boundary/process/packageTarListing.test.ts",
+    "tests/boundary/process/packedBridgeVerification.test.ts",
+    "tests/boundary/providers/ghidra/ghidraLauncher.test.ts",
+    "tests/conformance/package/packedTarListing.test.ts",
+  ]);
+  expect(selectedFiles(plan(["bridge/hopper_bridge.py"], sources))).toEqual([
+    "tests/boundary/process/packageTarListing.test.ts",
+    "tests/boundary/process/packedBridgeVerification.test.ts",
+    "tests/boundary/providers/hopper/hopperBookmarks.test.ts",
+    "tests/boundary/providers/hopper/hopperBridgeFacade.test.ts",
+    "tests/conformance/package/packedTarListing.test.ts",
+  ]);
+  // Missing a declared packaging owner fails closed to the full suite.
+  const withoutPackaging = Object.fromEntries(
+    Object.entries(sources).filter(
+      ([path]) =>
+        path !== "tests/boundary/process/packedBridgeVerification.test.ts",
+    ),
+  );
+  expect(
+    plan(["bridge/ghidra/ReaGhidraBridge.java"], withoutPackaging),
+  ).toMatchObject({
+    mode: "full",
+    reason:
+      "Missing test owner tests/boundary/process/packedBridgeVerification.test.ts for bridge/ghidra/ReaGhidraBridge.java",
+  });
+  // Unowned or non-code bridge inputs remain untraced and fail closed.
+  expect(plan(["bridge/ghidra/notes.txt"], sources)).toMatchObject({
+    mode: "full",
+    reason: "Input is not traced to tests: bridge/ghidra/notes.txt",
+  });
+  expect(plan(["bridge/unknown/helper.py"], sources)).toMatchObject({
+    mode: "full",
+    reason: "Input is not traced to tests: bridge/unknown/helper.py",
   });
 });
 
