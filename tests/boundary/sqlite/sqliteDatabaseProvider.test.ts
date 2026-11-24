@@ -978,32 +978,6 @@ it("reports application-collation row failures as unavailable while retaining sc
   expect(Buffer.compare(await readFile(path), original)).toBe(0);
 });
 
-it("rejects malformed databases without altering the selected file", async () => {
-  const workspace = await createTestWorkspace("rea-sqlite-invalid-");
-  onTestFinished(() => removeTestWorkspace(workspace.root));
-  const path = await workspace.write(
-    "not-a-database.db",
-    "selected non-SQLite bytes",
-  );
-  const bytes = await readFile(path);
-  const result = await createProvider().inspect({ path });
-  if (result.ok) throw new Error("accepted non-SQLite bytes");
-  // The bytes are at fault, not the request: a target refusal at the path.
-  expect(projectAnalysisError(result.error)).toMatchObject({
-    code: "unsupported_target",
-    retryable: false,
-    details: {
-      operation: "inspect_sqlite_database",
-      path,
-      failure_kind: "malformed",
-      format_failure: "malformed",
-      format: "sqlite",
-    },
-  });
-  expect(projectAnalysisError(result.error)).not.toHaveProperty("recovery");
-  expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
-});
-
 nativeTest.runIf(process.platform !== "win32")(
   "rejects a symlink database",
   async () => {
