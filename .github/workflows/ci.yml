@@ -165,7 +165,7 @@ jobs:
         id: shadow-upload
         if: steps.plan.outputs.test_shadow == 'true'
         continue-on-error: true
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-selection-shadow
           path: .git/test-selection-shadow.json
@@ -202,7 +202,7 @@ jobs:
       - name: Restore static task cache
         if: needs.changes.outputs.code == 'true'
         id: static-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .turbo/cache/
           key: rea-static-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-${{ github.sha }}
@@ -248,13 +248,13 @@ jobs:
           success() && needs.changes.outputs.code == 'true' &&
           steps.npm-cache.outputs.can-save == 'true' &&
           steps.static-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .turbo/cache/
           key: ${{ steps.static-cache.outputs.cache-primary-key }}
       - name: Upload complete static diagnostics
         if: always() && needs.changes.outputs.code == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: static-check-reports
           path: .cache/static-checks/
@@ -280,14 +280,14 @@ jobs:
       - run: npm ci
       - name: Restore deep static task cache
         id: static-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .turbo/cache/
           key: rea-static-deep-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-${{ github.sha }}
           restore-keys: rea-static-deep-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-
       - name: Restore Knip analysis cache
         id: knip-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: node_modules/.cache/knip
           # Each trusted commit publishes a new entry. Restore still matches the
@@ -306,7 +306,7 @@ jobs:
         if: >-
           success() && steps.npm-cache.outputs.can-save == 'true' &&
           steps.static-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .turbo/cache/
           key: ${{ steps.static-cache.outputs.cache-primary-key }}
@@ -314,13 +314,13 @@ jobs:
         if: >-
           success() && steps.npm-cache.outputs.can-save == 'true' &&
           steps.knip-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: node_modules/.cache/knip
           key: ${{ steps.knip-cache.outputs.cache-primary-key }}
       - name: Upload complete deep static diagnostics
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: static-deep-check-reports
           path: .cache/static-checks/
@@ -369,7 +369,7 @@ jobs:
         run: npm run test:fast -- --reporter=default --reporter=blob
         env:
           VITEST_BLOB_LABEL: source
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: vitest-report-source
@@ -403,7 +403,7 @@ jobs:
         id: npm-cache
         uses: ./.github/actions/npm-cache
       - run: npm ci
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rea-test-runtime
           path: .
@@ -425,7 +425,7 @@ jobs:
           MATRIX_SHARD: ${{ matrix.shard }}
           CI_TEST_SELECTION: ${{ needs.changes.outputs.test_selection }}
           REA_CI_TEST_HISTORY: .cache/ci-test-history/test-results.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: vitest-report-built-${{ strategy.job-index }}
@@ -470,7 +470,7 @@ jobs:
           npx --no-install stryker run stryker.semantics.config.mjs --dryRunOnly
       - name: Retain available reverse tools diagnostics
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: reverse-tools-quality-${{ needs.changes.outputs.tier }}-${{ github.run_attempt }}
           path: |
@@ -519,13 +519,13 @@ jobs:
       - name: Download previous timing report
         if: steps.history.outputs.run-id != ''
         continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ steps.history.outputs.artifact-name }}
           run-id: ${{ steps.history.outputs.run-id }}
           github-token: ${{ github.token }}
           path: .cache/ci-test-history
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rea-test-runtime
           overwrite: true
@@ -548,7 +548,7 @@ jobs:
         run: |
           # A new Turbo dry run can evict the entries this build just used.
           node scripts/ci/portable-build-cache.mjs snapshot .cache/ci-build-plan.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: needs.changes.outputs.build_cache == 'true'
         with:
           name: rea-build-cache
@@ -569,7 +569,7 @@ jobs:
       - name: Restore advertised schema engines
         if: needs.changes.outputs.code == 'true'
         id: schema-engines
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/rea-schema-engines
           key: rea-schema-engines-v1-${{ runner.os }}-${{ runner.arch }}-py${{ steps.schema-python.outputs.version }}-${{ hashFiles('scripts/verify/advertised-schemas/requirements.txt') }}
@@ -580,7 +580,7 @@ jobs:
           ~/.cache/rea-schema-engines/bin/pip install --disable-pip-version-check --no-input --require-hashes -r scripts/verify/advertised-schemas/requirements.txt
       - name: Save advertised schema engines
         if: needs.changes.outputs.code == 'true' && steps.schema-engines.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/rea-schema-engines
           key: ${{ steps.schema-engines.outputs.cache-primary-key }}
@@ -627,7 +627,7 @@ jobs:
         uses: ./.github/actions/npm-cache
       - if: needs.changes.outputs.code == 'true' && success()
         run: npm ci
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: >-
           !cancelled() && needs.changes.outputs.code == 'true' &&
           (env.SHARD_RESULT == 'success' || env.SHARD_RESULT == 'failure' ||
@@ -674,7 +674,7 @@ jobs:
         id: shadow-download
         if: ${{ !cancelled() && needs.changes.outputs.test_shadow_id != '' && hashFiles('test-timings.json') != '' }}
         continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.changes.outputs.test_shadow_id }}
           path: .cache/ci-test-shadow
@@ -691,7 +691,7 @@ jobs:
           CI_TEST_SELECTION: ${{ needs.changes.outputs.test_selection }}
           CI_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: node scripts/ci/test-report.mjs
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: needs.changes.outputs.code == 'true' && !cancelled() && hashFiles('test-results.json') != ''
         with:
           name: test-results
@@ -718,7 +718,7 @@ jobs:
           ) &&
           github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
           (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-timings-${{ needs.changes.outputs.tier }}
           overwrite: true
@@ -773,7 +773,7 @@ jobs:
             >> "${GITHUB_OUTPUT}"
       - name: Restore Windows native build outputs
         id: windows-native-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             native/windows/build/
@@ -788,7 +788,7 @@ jobs:
       - run: npm run verify:windows-native:artifact
       - if: steps.windows-native-cache.outputs.cache-hit != 'true'
         run: node scripts/build-windows-native.mjs --inspection-fixture
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-native-inspection-fixture
           path: .cache/windows-native-inspection-fixture/
@@ -815,19 +815,19 @@ jobs:
           steps.windows-native-cache.outputs.cache-hit != 'true' &&
           github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
           (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             native/windows/build/
             .cache/windows-native-inspection-fixture/
             .cache/windows-process-boundary/
           key: ${{ steps.windows-native-cache.outputs.cache-primary-key }}
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-process-boundary-fixture
           path: .cache/windows-process-boundary/
           if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-native-controls
           path: native/windows/build/
@@ -870,19 +870,19 @@ jobs:
           assert.equal(process.arch, process.env.EXPECTED_CI_ARCHITECTURE);
           console.log(JSON.stringify({ platform: process.platform, architecture: process.arch, node: process.version }));"
       - run: npm ci
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: matrix.os != 'windows-latest'
         with:
           name: rea-build-cache
           path: .turbo/cache/
       - name: Restore Windows Turbo build cache
         if: matrix.os == 'windows-latest'
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .turbo/cache/
           key: rea-windows-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-${{ github.sha }}
           restore-keys: rea-windows-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: windows-native-controls
           path: native/windows/build/
@@ -898,7 +898,7 @@ jobs:
         run: npm run verify:inspector
       - name: Retain the exact qualified release package
         if: needs.changes.outputs.tier == 'full' && matrix.platform == 'linux' && matrix.architecture == 'x64'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: verified-release-package
           path: .cache/verified-package/
@@ -924,7 +924,7 @@ jobs:
         id: npm-cache
         uses: ./.github/actions/npm-cache
       - run: npm ci
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rea-build-cache
           path: .turbo/cache/
@@ -1004,7 +1004,7 @@ jobs:
         run: |
           set -o pipefail
           npm run verify:readiness | tee readiness-summary.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: reconstruction-readiness
@@ -1037,7 +1037,7 @@ jobs:
       - run: npm ci
       - name: Restore Windows Turbo build cache
         id: windows-build-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .turbo/cache/
           key: rea-windows-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-${{ github.sha }}
@@ -1047,7 +1047,7 @@ jobs:
           GOMAXPROCS: "2"
           GOMEMLIMIT: "3GiB"
         run: node scripts/run-turbo.mjs run typecheck
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: windows-native-controls
           path: native/windows/build/
@@ -1057,7 +1057,7 @@ jobs:
         if: >-
           success() && matrix.suite == 'capabilities' && steps.npm-cache.outputs.can-save == 'true' &&
           steps.windows-build-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .turbo/cache/
           key: ${{ steps.windows-build-cache.outputs.cache-primary-key }}
@@ -1080,7 +1080,7 @@ jobs:
       # real engine claims remain in the separate controlled-provider workflow.
       # Run native proofs before the broad curated suite so an unrelated
       # fixture failure cannot hide the real control and recovery checks.
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: matrix.suite == 'capabilities'
         with:
           name: windows-process-boundary-fixture
@@ -1092,7 +1092,7 @@ jobs:
         run: >-
           npm run verify:windows-native -- .
           "${{ github.workspace }}\.cache\windows-process-boundary\process-boundary.exe"
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: matrix.suite == 'capabilities'
         with:
           name: windows-native-inspection-fixture
@@ -1184,7 +1184,7 @@ jobs:
           tests/boundary/filesystem/javascriptPackagePrecedence.test.ts
           tests/boundary/filesystem/javascriptArtifactContentIdentity.test.ts
           tests/boundary/process/sourceMapUncHosts.test.ts
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && matrix.suite == 'capabilities'
         with:
           name: windows-capabilities
@@ -1217,7 +1217,7 @@ jobs:
         run: npm run verify:docs:routes
       - name: Generation leaves authored files unchanged
         run: git diff --exit-code
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: generated-docs
           path: |
@@ -1445,7 +1445,7 @@ jobs:
         run: node scripts/ci/required.mjs
       - name: Upload full qualification receipt artifact
         if: needs.changes.outputs.tier == 'full' && success()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.gate.outputs.receipt_name }}
           path: ${{ steps.gate.outputs.receipt_path }}

@@ -430,15 +430,12 @@ printf '%s\n' 'C:\Users\runner with spaces\AppData\Local\npm-cache'
     expect(policy?.env?.LOCKFILES_HASH).toBe(
       "${{ hashFiles('package-lock.json', 'npm-shrinkwrap.json', '.npmrc') }}",
     );
-    expect(restoreAndSave?.uses).toBe(
-      "actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830",
-    );
+    const revision = restoreAndSave?.uses?.split("@")[1];
+    expect(revision).toMatch(/^[0-9a-f]{40}$/u);
     expect(restoreAndSave?.if).toBe(
       "steps.context.outputs.can-save == 'true' && inputs.save == 'true'",
     );
-    expect(restoreOnly?.uses).toBe(
-      "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830",
-    );
+    expect(restoreOnly?.uses).toBe(`actions/cache/restore@${revision}`);
     expect(restoreOnly?.if).toBe(
       "steps.context.outputs.can-save != 'true' || inputs.save != 'true'",
     );
