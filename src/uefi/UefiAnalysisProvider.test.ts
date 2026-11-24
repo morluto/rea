@@ -9043,3 +9043,185 @@ it("records malformed manifest rows as omitted candidates and marks coverage par
     await provider.close();
   }
 });
+
+it("rejects truncated TE headers (< 4 bytes or machine 0) during parsePeTeHeader and directory candidate discovery", async () => {
+  // Truncated TE header: starts with "VZ" but is only 3 bytes (< 4 bytes required for machine field)
+  const shortTe = Buffer.from([0x56, 0x5a, 0x01]);
+  expect(parsePeTeHeader(shortTe)).toBeUndefined();
+
+  // TE header with machine 0 must also be rejected
+  const zeroMachineTe = Buffer.from([0x56, 0x5a, 0x00, 0x00]);
+  expect(parsePeTeHeader(zeroMachineTe)).toBeUndefined();
+
+  // Directory candidate discovery must not admit short TE files
+  const directory = await createTestTempDirectory("rea-uefi-trunc-te-disc-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "truncated.te"), shortTe);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(0);
+    expect(result.total_modules_decompiled).toBe(0);
+    expect(result.coverage).toBe("complete");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("marks coverage partial when Ghidra decompiled C contains function decompilation warnings", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-ghidra-warning-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const peModule = createMinimalPeBuffer();
+  await writeFile(join(inDir, "driver.efi"), peModule);
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args) => {
+      if (command.includes("analyzeHeadless")) {
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(
+            outC,
+            "/* Ghidra Decompiler output */\nvoid Entry(void) {}\n/* WARNING: Failed to decompile function Sub_1000 */\n",
+          );
+          await writeFile(
+            `${outC}.outcome.json`,
+            JSON.stringify({
+              status: "success",
+              decompiled_functions: 1,
+              failed_functions: 0,
+            }),
+          );
+        }
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.modules[0]?.c_generator).toBe("ghidra");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes(
+          "was incomplete; one or more functions failed to decompile",
+        ),
+      ),
+    ).toBe(true);
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("marks coverage partial when Ghidra outcome reports failed functions count", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-ghidra-failed-count-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const peModule = createMinimalPeBuffer();
+  await writeFile(join(inDir, "sec_driver.efi"), peModule);
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args) => {
+      if (command.includes("analyzeHeadless")) {
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(
+            outC,
+            "/* Ghidra Decompiler output */\nvoid SecEntry(void) {}\n",
+          );
+          await writeFile(
+            `${outC}.outcome.json`,
+            JSON.stringify({
+              status: "success",
+              decompiled_functions: 1,
+              failed_functions: 3,
+            }),
+          );
+        }
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.modules[0]?.c_generator).toBe("ghidra");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("was incomplete; 3 function(s) failed to decompile"),
+      ),
+    ).toBe(true);
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
