@@ -335,7 +335,7 @@ const inspectDoctor = async (
     ...registrationAppleEventsChecks(
       identity.value.registrations,
       host.platform,
-      hopperPath ?? host.configuredHopperPath,
+      hopperPath ?? configuredHopperPath,
     ),
     ...registrationEnvironmentChecks(identity.value.registrations, selections),
     ...(await selectedDesktopBuildChecks(host, scope, identity.value.skill)),
@@ -397,11 +397,16 @@ const registrationAppleEventsChecks = (
   platform: NodeJS.Platform,
   hopperPath: string | undefined,
 ): readonly DoctorCheck[] =>
-  platform !== "darwin" || hopperPath === undefined
+  platform !== "darwin"
     ? []
-    : registrations.flatMap(({ client, command }) => {
+    : registrations.flatMap((registration) => {
+        const { client, command } = registration;
         const displayName = tccDisclaimingClientDisplayName(client);
-        return command.length === 0 || displayName === undefined
+        // The registration can select a launcher this process does not see.
+        const usesHopper =
+          hopperPath !== undefined ||
+          registration.records_hopper_launcher === true;
+        return command.length === 0 || displayName === undefined || !usesHopper
           ? []
           : [
               {

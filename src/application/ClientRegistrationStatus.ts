@@ -39,6 +39,7 @@ import {
   clientOwnershipEvidencePaths,
   manualRegistrationRemediation,
   resolveSupportedClients,
+  tccDisclaimingClientDisplayName,
 } from "./SupportedClients.js";
 import type { ClientSystemPaths, SetupClient } from "./SupportedClients.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
@@ -46,6 +47,7 @@ import { dshDocument } from "./DshCordisPatch.js";
 import {
   clientRegistrationEnvironmentDetailsWithBudget,
   recordedProviderSettings,
+  registrationRecordsSetting,
 } from "./ClientRegistrationEnvironment.js";
 import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
 import type {
@@ -82,6 +84,11 @@ interface ClientRegistrationStatusBase {
   readonly advisory?: string;
   /** Provider settings this process selected that the registration's file does not carry. */
   readonly provider_settings?: RecordedProviderSettings;
+  /**
+   * The file records `HOPPER_LAUNCHER_PATH`, without its value. Read only for
+   * clients whose launch decides whether macOS lets REA drive Hopper.
+   */
+  readonly records_hopper_launcher?: true;
   /**
    * A non-aligned state that setup cannot repair: the shared row's
    * `enable: false`, which setup preserves for every reader of that storage.
@@ -554,6 +561,14 @@ export const readClientRegistrationInspections = async (
                   : (name, value) =>
                       observeProbeSetting(client.name, name, value),
               ),
+        recordsHopperLauncher:
+          tccDisclaimingClientDisplayName(client.name) !== undefined &&
+          registrationRecordsSetting(
+            parsed,
+            client,
+            "HOPPER_LAUNCHER_PATH",
+            options.platform,
+          ) === true,
         activation,
       });
       record(
@@ -725,6 +740,7 @@ const configuredStatus = (input: {
   readonly configuration: EffectiveClientRegistrationConfiguration;
   readonly alignmentStale: boolean;
   readonly providerSettings: RecordedProviderSettings | undefined;
+  readonly recordsHopperLauncher: boolean;
   readonly activation: "enabled" | "disabled";
 }): ClientRegistrationStatus => {
   const {
@@ -738,6 +754,7 @@ const configuredStatus = (input: {
     configuration,
     alignmentStale,
     providerSettings,
+    recordsHopperLauncher,
     activation,
   } = input;
   const {
@@ -763,6 +780,9 @@ const configuredStatus = (input: {
     ...(providerSettings === undefined
       ? {}
       : { provider_settings: providerSettings }),
+    ...(recordsHopperLauncher
+      ? { records_hopper_launcher: true as const }
+      : {}),
   };
   if (state === "aligned")
     return {

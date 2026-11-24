@@ -353,7 +353,8 @@ macOS then attributes Hopper's Apple Events to REA's runtime (`node` or `bun`)
 instead of Claude Desktop and denies them without prompting, although Claude
 Desktop itself has the Apple Events entitlement. Hopper-backed analysis from
 this registration therefore fails; static and non-Hopper operations still work.
-When a Hopper launcher is configured or detected, doctor reports a non-blocking
+When a Hopper launcher is configured or detected, or the registration records
+`HOPPER_LAUNCHER_PATH`, doctor reports a non-blocking
 `registration_apple_events:claude_desktop` advisory. Register REA with a client
 that keeps TCC responsibility, such as Claude Code, or start it from Terminal
 for Hopper work. This was observed on macOS 26.6.2 with Claude Desktop

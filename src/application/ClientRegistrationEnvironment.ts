@@ -270,6 +270,31 @@ export const recordedProviderSettings = (
     : { ...facts, ...(owned.length === 0 ? {} : { owned }) };
 };
 
+/**
+ * Whether a registration's own file records a setting, as a literal or as an
+ * expression. Undefined means its environment could not be read. The recorded
+ * value stays in the file that owns it.
+ */
+export const registrationRecordsSetting = (
+  parsed: ClientConfigurationDocument,
+  client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
+  setting: string,
+  platform: NodeJS.Platform,
+): boolean | undefined => {
+  const details = clientRegistrationEnvironmentDetails(
+    parsed,
+    client,
+    platform,
+    {},
+    "fragment",
+  );
+  if (!details.ok) return undefined;
+  return (
+    details.value.runtimeEnvironment[setting] !== undefined ||
+    details.value.unresolvedSettings.has(setting)
+  );
+};
+
 /** Resolve the async provider-specific budget through its retained reader owner. */
 export const clientRegistrationEnvironmentDetailsWithBudget = async (
   parsed: ClientConfigurationDocument | undefined,

@@ -1012,7 +1012,6 @@ describe("Apple Events attribution advisory", () => {
     {
       case: "without a configured or detected Hopper launcher",
       overrides: {
-        validTarget: () => Promise.resolve(false),
         executable: () => Promise.resolve(false),
       },
       client: "claude_desktop",
@@ -1032,6 +1031,52 @@ describe("Apple Events attribution advisory", () => {
     );
 
     expect(appleEventsChecks(result.checks)).toEqual([]);
+  });
+
+  it("advises when only the registration records a Hopper launcher", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        executable: () => Promise.resolve(false),
+        clientRegistrations: () =>
+          Promise.resolve([
+            {
+              ...registration("claude_desktop"),
+              records_hopper_launcher: true,
+            },
+          ]),
+      }),
+      { clients: ["claude_desktop"] },
+    );
+
+    expect(result.hopperPath).toBeUndefined();
+    expect(result.healthy).toBe(true);
+    expect(appleEventsChecks(result.checks)).toHaveLength(1);
+  });
+
+  it("advises for a launcher saved in REA's user configuration that is not runnable", async () => {
+    const providerHost = host({
+      configuredHopperPath: "/saved/missing",
+      executable: () => Promise.resolve(false),
+    });
+    const result = await runDoctor(
+      undefined,
+      host({
+        executable: () => Promise.resolve(false),
+        clientRegistrations: () =>
+          Promise.resolve([registration("claude_desktop")]),
+        forProviderDiagnostics: () =>
+          Promise.resolve({
+            host: providerHost,
+            configuration: {
+              environment: { HOPPER_LAUNCHER_PATH: "/saved/missing" },
+            },
+          }),
+      }),
+    );
+
+    expect(result.hopperPath).toBeUndefined();
+    expect(appleEventsChecks(result.checks)).toHaveLength(1);
   });
 
   it("adds no advisory when the client has no REA registration", async () => {
