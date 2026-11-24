@@ -271,7 +271,7 @@ it("summarizes an inventory above the inline bound when detail is omitted, and r
   ).toMatchObject({ summary: { row_count: 1000 } });
 });
 
-it("inlines an inventory at the size-aware bound and returns larger ones complete without retention", async () => {
+it("inlines a small inventory, summarizes a large one, and keeps it complete when no paged summary is available", async () => {
   const rows = (count: number) =>
     Array.from({ length: count }, (_, index) => ({
       address: `0x${(0x1000 + index * 0x10).toString(16)}`,
@@ -311,6 +311,22 @@ it("inlines an inventory at the size-aware bound and returns larger ones complet
   expect(parseEvidence(forced.structuredContent)).toMatchObject({
     operation: "list_procedures",
     normalized_result: result,
+  });
+
+  // A session scope without inspect_analysis_view could not page a summary.
+  const unpaged = await connectGhidraMcp(
+    "native-inventory-size-aware-unpaged",
+    () => Promise.resolve(ok(rows(600))),
+    { environment: { REA_MCP_TOOL_FAMILIES: "session,direct,enhanced" } },
+  );
+  onTestFinished(() => unpaged.close());
+  const unpagedReply = await unpaged.mcp.callTool({
+    name: "list_procedures",
+    arguments: {},
+  });
+  if (unpagedReply.isError) throw new Error(JSON.stringify(unpagedReply));
+  expect(parseEvidence(unpagedReply.structuredContent)).toMatchObject({
+    operation: "list_procedures",
   });
 
   // Without a retaining session there is no summary to page, so omitted

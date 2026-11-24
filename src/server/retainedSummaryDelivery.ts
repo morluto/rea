@@ -10,21 +10,30 @@ import { SIZE_AWARE_INLINE_EVIDENCE_BYTES } from "../contracts/analysisDetail.js
 
 type Parameters = Readonly<Record<string, JsonValue>>;
 
+/** The view tool that pages a retained summary. */
+export const RETAINED_SUMMARY_VIEW_TOOL = "inspect_analysis_view";
+
 /**
  * Whether completed Evidence is delivered as its retained summary. An
  * explicit detail decides. Omitted under a size-aware contract, Evidence
- * above the inline bound is retained behind its summary when this server can
- * retain it, and is otherwise delivered complete.
+ * above the inline bound is retained behind its summary only when this
+ * server can retain it and the session advertises the view tool that pages
+ * it; otherwise it is delivered complete.
  */
 export const deliversRetainedSummary = (
   detail: unknown,
   evidence: Evidence,
-  options: { readonly sizeAware: boolean; readonly retained: boolean },
+  options: {
+    readonly sizeAware: boolean;
+    readonly retained: boolean;
+    readonly pageable: boolean;
+  },
 ): boolean =>
   detail === "summary" ||
   (detail === undefined &&
     options.sizeAware &&
     options.retained &&
+    options.pageable &&
     jsonValueByteLength(
       evidence as unknown as JsonValue,
       SIZE_AWARE_INLINE_EVIDENCE_BYTES,
@@ -54,10 +63,16 @@ export const retainedSummaryDelivery = (
       parameters.detail === "summary"
         ? requireAnalysisViewRetention(operation, retention)
         : ok(null),
-    projectEvidence: (parameters: Parameters, evidence: Evidence) =>
+    projectEvidence: (
+      parameters: Parameters,
+      evidence: Evidence,
+      // Only an omitted size-aware detail reads it.
+      pageable = false,
+    ) =>
       deliversRetainedSummary(parameters.detail, evidence, {
         sizeAware,
         retained,
+        pageable,
       })
         ? summarizeRetainedAnalysis(evidence, retention)
         : ok(evidence),
