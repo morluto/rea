@@ -10,6 +10,7 @@ import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
   ArtifactReaderFailure,
+  malformedArtifact,
   artifactFixedLimitFailure,
   artifactReaderLimitFailure,
   abortIfNeeded,
@@ -365,10 +366,10 @@ class BundleCursor {
       try {
         return decodeStrictUtf8(bytes, "preserve");
       } catch (cause) {
-        throw new ArtifactReaderFailure(
-          "format",
+        throw malformedArtifact(
+          "dotnet-bundle",
           "Invalid UTF-8 in .NET bundle manifest",
-          { cause },
+          { cause, offset: at, field: "manifest-string" },
         );
       }
     }
@@ -397,5 +398,5 @@ const exactManifestInteger = (value: bigint): number => {
 };
 
 const fail = (message: string): never => {
-  throw new ArtifactReaderFailure("format", message);
+  throw malformedArtifact("dotnet-bundle", message);
 };

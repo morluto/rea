@@ -25,6 +25,8 @@ import { Readable } from "node:stream";
 import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
+  artifactFormatFailure,
+  truncatedArtifact,
   copyArtifactEntry,
   sameArtifactEntry,
   type ArtifactEntry,
@@ -109,12 +111,18 @@ export class AsarArtifactReader implements ArtifactReader {
           );
         } catch (cause: unknown) {
           // Listing names members relative to this archive; keep which archive.
-          if (
-            cause instanceof ArtifactReaderFailure &&
-            (cause.reason === "format" || cause.reason === "path")
-          )
+          if (!(cause instanceof ArtifactReaderFailure)) throw cause;
+          if (cause.parseFailure !== undefined)
+            throw artifactFormatFailure(
+              {
+                ...cause.parseFailure,
+                detail: `${cause.parseFailure.detail} in ${this.path}`,
+              },
+              { cause },
+            );
+          if (cause.reason === "path")
             throw new ArtifactReaderFailure(
-              cause.reason,
+              "path",
               `${cause.message} in ${this.path}`,
               { cause },
             );
@@ -276,9 +284,12 @@ export class AsarArtifactReader implements ArtifactReader {
       start > archiveSize ||
       facts.size > archiveSize - start
     )
-      throw new ArtifactReaderFailure(
-        "format",
+      throw truncatedArtifact(
+        "asar",
         `ASAR entry range is outside its container: ${producedEntry.path}`,
+        start === undefined || !Number.isSafeInteger(start)
+          ? { field: "offset" }
+          : { offset: start, field: "offset" },
       );
     const snapshotPath = this.#snapshotPath();
     if (facts.size === 0) return Readable.from([]);

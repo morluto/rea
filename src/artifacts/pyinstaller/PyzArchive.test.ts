@@ -72,7 +72,7 @@ it("reports an entry that extends outside the PYZ as an integrity error", async 
 
 it.each([
   ["PYZ\0", "limit", /table exceeds/iu],
-  ["BAD\0", "format", /magic does not match/iu],
+  ["BAD\0", "malformed", /magic does not match/iu],
 ] as const)(
   "charges the table budget only after PYZ signature admission (%j)",
   async (signature, reason, message) => {
@@ -212,18 +212,18 @@ it.each([0, 0xffffffff])(
 );
 
 it.each([
-  ["PYZ\0", /table.*truncated/iu],
-  ["BAD\0", /magic does not match/iu],
+  ["PYZ\0", "truncated", /table.*truncated/iu],
+  ["BAD\0", "malformed", /magic does not match/iu],
 ] as const)(
   "reads a table only after PYZ signature admission (%j)",
-  async (signature, message) => {
+  async (signature, reason, message) => {
     const header = Buffer.alloc(12);
     header.write(signature);
     PYTHON_39_MAGIC.copy(header, 4);
     header.writeUInt32BE(12, 8);
     expect(await readImage(header, 16)).toMatchObject({
       ok: false,
-      error: { reason: "format", message: expect.stringMatching(message) },
+      error: { reason, message: expect.stringMatching(message) },
     });
   },
 );

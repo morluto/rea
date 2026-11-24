@@ -98,7 +98,11 @@ it.each([
     cause: malformedInput("pe", "bad field"),
     genericCode: "unsupported_target",
   },
-  { cause: truncatedInput("pe", "short field"), genericCode: "truncated" },
+  // Inventory and selected-file refusals of truncated bytes share one code.
+  {
+    cause: truncatedInput("pe", "short field"),
+    genericCode: "unsupported_target",
+  },
   {
     cause: unsupportedInput("pe", "unsupported image"),
     genericCode: "unsupported_target",
@@ -535,7 +539,7 @@ it("keeps only a path-kind reader refusal a selection error", () => {
       issues: [{ path: ["path"], reason: "invalid_format" }],
     },
   });
-  const bytes = new ArtifactReaderFailure("format", "Corrupt member table");
+  const bytes = new ArtifactReaderFailure("malformed", "Corrupt member table");
   expect(
     projectOwnedArtifactInputFailure(
       artifactFilePrimaryFacts(bytes),

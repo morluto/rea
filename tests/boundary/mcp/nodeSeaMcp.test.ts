@@ -166,10 +166,10 @@ it.each(["compact"] as const)(
       expect((await call("open_binary", { path })).isError).not.toBe(true);
       const invalid = await call("inspect_artifact", {});
       expect(parseMcpToolError(invalid).error).toMatchObject({
-        code: "artifact_operation_failed",
+        code: "unsupported_target",
         details: {
           operation: "inspect_artifact",
-          reason: "format",
+          reason: "malformed",
           detail: expect.stringContaining("magic"),
         },
       });

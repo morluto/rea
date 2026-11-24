@@ -111,7 +111,7 @@ it("does not publish a method-93 member with an incomplete final frame magic", a
     ok: false,
     error: {
       _tag: "ArtifactOperationError",
-      reason: "format",
+      reason: "malformed",
       detail: "ZIP archive is malformed: Invalid compressed data",
     },
   });
@@ -355,7 +355,7 @@ it("rejects malformed UTF-8 in flagged ZIP member names", async () => {
 
   await expect(inventoryArtifact(path)).rejects.toMatchObject({
     name: "ArtifactReaderFailure",
-    reason: "format",
+    reason: "malformed",
     message: "ZIP filename is not valid UTF-8",
   });
 });
@@ -371,7 +371,7 @@ it("rejects malformed UTF-8 in a CRC-valid Unicode Path extra field", async () =
 
   await expect(inventoryArtifact(path)).rejects.toMatchObject({
     name: "ArtifactReaderFailure",
-    reason: "format",
+    reason: "malformed",
     message: "ZIP Unicode Path extra field is not valid UTF-8",
   });
 });
@@ -615,7 +615,7 @@ it("rejects overlapping ZIP member data ranges through artifact inventory", asyn
 
   await expectInventoryFailure(
     path,
-    "format",
+    "malformed",
     "ZIP archive is malformed: Overlapping entry found",
   );
 });
@@ -682,7 +682,7 @@ it("preserves encrypted-member and malformed-compression observations", async ()
 
   await expectInventoryFailure(
     corruptPath,
-    "format",
+    "malformed",
     "ZIP archive is malformed: Invalid compressed data",
   );
 });
@@ -707,7 +707,7 @@ it("rejects a stored ZIP member whose payload disagrees with its CRC", async () 
   await writeFile(path, bytes);
   await expectInventoryFailure(
     path,
-    "format",
+    "malformed",
     "ZIP archive is malformed: Invalid CRC32",
   );
 });
@@ -723,7 +723,7 @@ it.each([0x04034b50, 0x06064b50])(
 
     await expectInventoryFailure(
       path,
-      "format",
+      "malformed",
       "ZIP archive is malformed: File format is not recognized",
     );
   },

@@ -10,6 +10,7 @@ import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {
   ArtifactResourceScope,
   ArtifactReaderFailure,
+  malformedArtifact,
   assertProducedEntry,
   copyArtifactEntry,
   type ArtifactEntry,
@@ -84,7 +85,7 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
           ));
         if (header === undefined)
           throw new ArtifactReaderFailure(
-            "format",
+            "unsupported",
             "Selected file has no .NET bundle header",
           );
         this.#bundle = await readDotnetBundle(
@@ -295,8 +296,8 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
         bytes !== file.size ||
         (inflater !== undefined && inflater.bytesWritten !== storedBytes)
       )
-        throw new ArtifactReaderFailure(
-          "format",
+        throw malformedArtifact(
+          "dotnet-bundle",
           `.NET bundle member length or compressed extent does not match its declaration: ${file.path}`,
         );
       await this.#source.readSelectedPath(signal);
@@ -322,10 +323,9 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
       cause instanceof Error &&
       "code" in cause &&
       ["Z_DATA_ERROR", "Z_BUF_ERROR"].includes(String(cause.code));
-    return new ArtifactReaderFailure(
-      malformedCompression ? "format" : "io",
-      `Could not read .NET bundle member: ${file.path}`,
-      { cause },
-    );
+    const message = `Could not read .NET bundle member: ${file.path}`;
+    return malformedCompression
+      ? malformedArtifact("dotnet-bundle", message, { cause })
+      : new ArtifactReaderFailure("io", message, { cause });
   }
 }

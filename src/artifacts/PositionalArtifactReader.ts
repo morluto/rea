@@ -235,7 +235,7 @@ export abstract class PositionalArtifactReader<
   /** Format-specific failure when an entry without a physical byte range is opened. */
   protected noPhysicalRange(entry: Entry): ArtifactReaderFailure {
     return new ArtifactReaderFailure(
-      "format",
+      "path",
       `${this.#label} member has no physical byte range: ${entry.path}`,
     );
   }

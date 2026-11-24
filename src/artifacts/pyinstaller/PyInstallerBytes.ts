@@ -26,7 +26,7 @@ export const readPyInstallerBytes = async (
   )
     return err(
       pyInstallerFailure(
-        "format",
+        "malformed",
         `${input.label} has an invalid source range`,
       ),
     );
@@ -52,7 +52,9 @@ export const readPyInstallerBytes = async (
     }
     abortIfNeeded(input.signal);
     if (count === 0)
-      return err(pyInstallerFailure("format", `${input.label} is truncated`));
+      return err(
+        pyInstallerFailure("truncated", `${input.label} is truncated`),
+      );
     offset += count;
   }
   return ok(bytes);

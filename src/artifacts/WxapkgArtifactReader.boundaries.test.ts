@@ -191,7 +191,7 @@ describe("wxapkg allocation and malformed-input boundaries", () => {
     const reader = new WxapkgArtifactReader(await fixture(bytes));
     try {
       await expect(entries(reader)).rejects.toMatchObject({
-        reason: "format",
+        reason: "truncated",
         message: expect.stringContaining("truncated"),
       });
     } finally {

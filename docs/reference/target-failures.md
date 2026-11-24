@@ -45,4 +45,10 @@ Some kinds add facts:
 
 Releases before this model reported a selected file's malformed or truncated bytes with the same `code` and `format_failure`. That is unchanged, and `failure_kind` is added. The remaining operations move to this vocabulary area by area, and each release note lists the operations whose `code` changes. The plan is tracked in [#14239](https://github.com/morluto/rea/issues/14239).
 
+Container and inventory readers (ZIP, ASAR, PyInstaller, .NET bundles, Node SEA, Deno and Bun standalones, Godot PCK, UnityFS, wxapkg, FIT, uImage, iNES, Android OTA payloads, ESP images, NTFS `$MFT` streams, firmware record files and others) now report damaged bytes as `malformed` or `truncated`, with the reader's `format`. Before, they reported `artifact_operation_failed` with `details.reason: "format"`. They also changed in three other ways:
+
+- `inventory_artifact`, `inspect_artifact`, `extract_artifact` and the other inventory operations report a truncated container as `unsupported_target`, not `truncated`.
+- The Playwright trace, NTFS journal, release exposure and web capture operations report a damaged selected file as `unsupported_target`, not `invalid_request`.
+- A short read after REA measured the file is now an integrity failure with `details.integrity_check: "read-coverage"` (the file changed during the read), not a format error.
+
 Related: [settings, limits and recovery](limits-and-recovery.md) for `resource` failures, and `docs/user-visible-errors.csv` for every error case and its code.

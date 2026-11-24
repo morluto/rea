@@ -77,9 +77,9 @@ cliTest(
   "attributes captured source faults and caller-selected map faults through CLI and stdio MCP",
   async ({ cli }) => {
     const { call } = await browserMcp();
-    for (const reason of ["format", "path"] as const) {
+    for (const reason of ["malformed", "path"] as const) {
       const fixture = await capturedSource(
-        reason === "format"
+        reason === "malformed"
           ? Buffer.from([255, 254])
           : Buffer.from("import(name)"),
         "https://app.test/main.js",
@@ -120,12 +120,15 @@ cliTest(
         );
         for (const error of [response.json, mcp.error])
           expect(error).toMatchObject({
-            code: "artifact_operation_failed",
+            code:
+              reason === "malformed"
+                ? "unsupported_target"
+                : "artifact_operation_failed",
             details: {
               operation: selection.operation,
               reason,
               detail: expect.stringContaining(
-                reason === "format" ? fixture.sourcePath : "../outside.js",
+                reason === "malformed" ? fixture.sourcePath : "../outside.js",
               ),
             },
           });
@@ -193,10 +196,12 @@ cliTest(
         await call(selection.operation, selection.input),
       );
       for (const error of [response.json, mcp.error])
+        // The selected map's bytes are at fault, not the request.
         expect(error).toMatchObject({
-          code: "invalid_request",
+          code: "unsupported_target",
           details: {
-            issues: [{ path: selection.field, reason: "invalid_format" }],
+            path: mapPath,
+            failure_kind: "malformed",
             partial_observation: {
               kind: "web-artifact-acquisition",
               analysis: "not-performed",

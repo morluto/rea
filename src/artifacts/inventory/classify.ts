@@ -7,6 +7,7 @@ import {
 import {
   artifactOperationCause,
   ArtifactReaderFailure,
+  artifactParseFailure,
   openRootArtifact,
   releaseRootArtifact,
   abortIfNeeded,
@@ -366,9 +367,7 @@ const classifyRootFormat = async (
   if (nesContainerFormat(evidence.prefix) !== undefined) {
     const parsed = parseInesLayout(evidence.prefix, archiveBytes);
     if (!parsed.ok)
-      throw new ArtifactReaderFailure("format", parsed.error.detail, {
-        cause: new ParseFailureError(parsed.error),
-      });
+      throw artifactParseFailure(new ParseFailureError(parsed.error), signal);
     return "ines";
   }
   const classificationPath = artifactNameForClassification(

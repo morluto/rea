@@ -217,7 +217,9 @@ it("reports impossible over-cap component extents as malformed", async () => {
     await fixture(buildUImage({ type: 4, payload })),
   );
   try {
-    await expect(entries(reader)).rejects.toMatchObject({ reason: "format" });
+    await expect(entries(reader)).rejects.toMatchObject({
+      reason: "malformed",
+    });
   } finally {
     await reader.close();
   }

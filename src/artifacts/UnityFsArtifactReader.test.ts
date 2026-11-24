@@ -288,14 +288,14 @@ describe("UnityFS unavailable and malformed directories", () => {
         bytes.writeBigUInt64BE(1n << 40n, 32);
         return bytes;
       })(),
-      "format",
+      "malformed",
     ],
     [
       "a node count that cannot fit",
       buildUnityFs(members, { declaredNodeCount: 0xffff_ffff }),
-      "format",
+      "malformed",
     ],
-    ["bytes without a bundle", Buffer.from("not a unity bundle"), "format"],
+    ["bytes without a bundle", Buffer.from("not a unity bundle"), "malformed"],
   ])("refuses %s", async (_, bytes, reason) => {
     await withReader(bytes, async (reader) => {
       await expect(list(reader)).rejects.toMatchObject({ reason });

@@ -1,7 +1,12 @@
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createInflate } from "node:zlib";
-import { ArtifactReaderFailure, abortIfNeeded } from "../../resources/index.js";
+import {
+  ArtifactReaderFailure,
+  abortIfNeeded,
+  malformedArtifact,
+} from "../../resources/index.js";
+import { invariantViolation } from "../../domain/internalInvariant.js";
 
 interface MemberStreamOptions {
   readonly sourceBytes: number;
@@ -181,8 +186,8 @@ export const pyInstallerMemberStream = (
     failure ??=
       cause instanceof ArtifactReaderFailure
         ? cause
-        : new ArtifactReaderFailure(
-            "format",
+        : malformedArtifact(
+            "pyinstaller",
             "Compressed PyInstaller member is not a complete zlib stream",
             { cause },
           );
@@ -219,6 +224,6 @@ export const pyInstallerMemberStream = (
 const asError = (cause: unknown): Error =>
   cause instanceof Error
     ? cause
-    : new ArtifactReaderFailure("format", "PyInstaller member read failed", {
+    : invariantViolation("PyInstaller member read failed without an error", {
         cause,
       });

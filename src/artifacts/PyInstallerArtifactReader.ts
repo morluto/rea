@@ -214,7 +214,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
       const read = stored.read;
       if (read === undefined)
         throw new ArtifactReaderFailure(
-          "format",
+          "path",
           `PyInstaller entry has no readable bytes: ${entry.path}`,
         );
       const { handle } = await this.#source.readSelectedPath();
@@ -471,7 +471,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     const observed = found.value;
     if (observed.state === "absent")
       throw new ArtifactReaderFailure(
-        "format",
+        "unsupported",
         "PyInstaller CArchive cookie was not found",
       );
     if (observed.state === "rejected-candidates")

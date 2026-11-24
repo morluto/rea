@@ -5,7 +5,11 @@ import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
 import { retainRoundedAsarSize } from "../domain/asarNode.js";
 
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  malformedArtifact,
+  truncatedArtifact,
+} from "./ArtifactReader.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   ASAR_HEADER_ADMISSION_SETTING,
@@ -136,10 +140,10 @@ const parseAsarHeaderExtents = (
 ): Result<Omit<AsarHeaderExtents, "archiveBytes">, ArtifactReaderFailure> => {
   if (prefix.byteLength < 16)
     return err(
-      new ArtifactReaderFailure(
-        "format",
-        "Truncated ASAR Pickle extent prefix",
-      ),
+      truncatedArtifact("asar", "Truncated ASAR Pickle extent prefix", {
+        offset: 0,
+        field: "pickle-prefix",
+      }),
     );
   const reader = new BinaryReader(
     Buffer.from(prefix.buffer, prefix.byteOffset, 16),
@@ -156,10 +160,10 @@ const parseAsarHeaderExtents = (
     jsonBytes > payloadBytes - 4
   )
     return err(
-      new ArtifactReaderFailure(
-        "format",
-        "ASAR header has invalid Pickle extents",
-      ),
+      malformedArtifact("asar", "ASAR header has invalid Pickle extents", {
+        offset: 0,
+        field: "pickle-prefix",
+      }),
     );
   if (
     archiveBytes !== undefined &&
@@ -168,10 +172,10 @@ const parseAsarHeaderExtents = (
       headerBytes > archiveBytes - 8)
   )
     return err(
-      new ArtifactReaderFailure(
-        "format",
-        "ASAR header leaves its observed container",
-      ),
+      truncatedArtifact("asar", "ASAR header leaves its observed container", {
+        offset: 8,
+        field: "header",
+      }),
     );
   return ok({ headerBytes, jsonBytes });
 };
@@ -406,7 +410,7 @@ export const admitAsarHeader = async (
   assertArtifactReadActive(signal);
   if (!observed.isFile())
     throw new ArtifactReaderFailure(
-      "format",
+      "path",
       "ASAR container is not a regular file",
     );
   const prefix = await readFileHandleRange(handle, 0, 16, () =>
@@ -414,7 +418,16 @@ export const admitAsarHeader = async (
   );
   assertArtifactReadActive(signal);
   if (prefix.length !== 16)
-    throw new ArtifactReaderFailure("format", "Truncated ASAR size pickle");
+    throw observed.size < 16
+      ? truncatedArtifact("asar", "Truncated ASAR size pickle", {
+          offset: 0,
+          field: "pickle-prefix",
+        })
+      : new ArtifactReaderFailure(
+          "integrity",
+          "ASAR size pickle read ended before the measured file size",
+          { integrityCheck: "read-coverage" },
+        );
   const parsed = parseAsarHeaderExtents(prefix, observed.size);
   if (!parsed.ok) throw parsed.error;
   if (parsed.value.headerBytes > admission.maximumBytes)
@@ -440,16 +453,22 @@ export const readAsarHeader = async (
   );
   assertArtifactReadActive(signal);
   if (bytes.length !== extents.jsonBytes)
-    throw new ArtifactReaderFailure("format", "Truncated ASAR JSON header");
+    // The extents were checked against the measured size, so a short read
+    // means the file changed underneath the read.
+    throw new ArtifactReaderFailure(
+      "integrity",
+      "ASAR JSON header read ended before its admitted extent",
+      { integrityCheck: "read-coverage" },
+    );
   let json: string;
   try {
     json = strictUtf8Decoder("preserve").decode(bytes);
   } catch (cause: unknown) {
-    throw new ArtifactReaderFailure(
-      "format",
-      "ASAR JSON header is not valid UTF-8",
-      { cause },
-    );
+    throw malformedArtifact("asar", "ASAR JSON header is not valid UTF-8", {
+      cause,
+      offset: 16,
+      field: "header",
+    });
   }
   const parsed = parseJsonWithDuplicatePolicy(json, "reject", {
     name: "size",
@@ -457,11 +476,15 @@ export const readAsarHeader = async (
   });
   if (!parsed.ok) {
     if (parsed.duplicate !== undefined)
-      throw new ArtifactReaderFailure(
-        "format",
+      throw malformedArtifact(
+        "asar",
         `ASAR JSON header declares member ${JSON.stringify(parsed.duplicate.name)} more than once in one object (offset ${String(parsed.duplicate.offset)})`,
       );
-    throw parsed.cause;
+    throw malformedArtifact("asar", "ASAR JSON header is not valid JSON", {
+      cause: parsed.cause,
+      offset: 16,
+      field: "header",
+    });
   }
   return parsed.value;
 };

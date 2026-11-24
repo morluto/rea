@@ -601,10 +601,17 @@ const assetUtilOutcomeContext = (
     )
       return new ArtifactOperationError(
         OPERATION,
-        "format",
+        "malformed",
         undefined,
         `assetutil rejected ${entry.path} as an invalid asset catalog`,
-        details,
+        {
+          ...details,
+          parseFailure: {
+            kind: "malformed",
+            format: "asset-catalog",
+            detail: `assetutil rejected ${entry.path} as an invalid asset catalog`,
+          },
+        },
       );
     return new AnalysisOutputError(
       OPERATION,

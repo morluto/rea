@@ -124,7 +124,7 @@ describe("UnityFS declared container bounds", () => {
       const reader = new UnityFsArtifactReader(await fixture(bytes));
       try {
         await expect(entries(reader)).rejects.toMatchObject({
-          reason: "format",
+          reason: "malformed",
         });
       } finally {
         await reader.close();
@@ -183,7 +183,7 @@ describe("UnityFS declared container bounds", () => {
       const invalid = new UnityFsArtifactReader(await fixture(bytes));
       try {
         await expect(entries(invalid)).rejects.toMatchObject({
-          reason: "format",
+          reason: "malformed",
           message: expect.stringContaining(
             "declared data area exceeds the bundle extent",
           ),
@@ -195,13 +195,17 @@ describe("UnityFS declared container bounds", () => {
   );
 });
 
+/** The reader refuses its bytes with the owner's failure kind. */
+const expectRejected = (reader: UnityFsArtifactReader, reason: string) =>
+  expect(entries(reader)).rejects.toMatchObject({ reason });
+
 describe("UnityFS allocation and malformed-input boundaries", () => {
   it("rejects an oversized directory extending past the physical file", async () => {
     const bytes = buildUnityFs([{ path: "data", data: "x" }]);
     bytes.writeUInt32BE(17 * 1024 * 1024, 40);
     const reader = new UnityFsArtifactReader(await fixture(bytes));
     try {
-      await expect(entries(reader)).rejects.toMatchObject({ reason: "format" });
+      await expectRejected(reader, "malformed");
     } finally {
       await reader.close();
     }
@@ -315,7 +319,7 @@ describe("UnityFS allocation and malformed-input boundaries", () => {
     bytes.fill(0x61, 64 + 34 + 20, 64 + 34 + 20 + 41 + 18);
     const reader = new UnityFsArtifactReader(await fixture(bytes));
     try {
-      await expect(entries(reader)).rejects.toMatchObject({ reason: "format" });
+      await expectRejected(reader, "truncated");
     } finally {
       await reader.close();
     }
@@ -326,7 +330,7 @@ describe("UnityFS allocation and malformed-input boundaries", () => {
     bytes[65] = 0xff;
     const reader = new UnityFsArtifactReader(await fixture(bytes));
     try {
-      await expect(entries(reader)).rejects.toMatchObject({ reason: "format" });
+      await expectRejected(reader, "malformed");
     } finally {
       await reader.close();
     }
@@ -343,7 +347,7 @@ describe("UnityFS allocation and malformed-input boundaries", () => {
     bytes.writeUInt32BE(5, tableOffset + 24);
     const reader = new UnityFsArtifactReader(await fixture(bytes));
     try {
-      await expect(entries(reader)).rejects.toMatchObject({ reason: "format" });
+      await expectRejected(reader, "malformed");
     } finally {
       await reader.close();
     }

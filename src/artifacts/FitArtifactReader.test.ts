@@ -288,8 +288,14 @@ it("fails a devicetree totalsize past the end of the file", async () => {
       ),
     ),
   ).rejects.toMatchObject({
-    reason: "format",
-    message: expect.stringContaining("FIT devicetree is truncated"),
+    reason: "truncated",
+    parseFailure: {
+      kind: "truncated",
+      format: "fit",
+      field: "totalsize",
+      availableBytes: FIT_EMBEDDED.length,
+      requiredBytes: FIT_EMBEDDED.length + 4,
+    },
   });
 });
 
@@ -301,7 +307,7 @@ it("fails /images followed by a malformed structure, and reads a plain DTB as a 
   await expect(
     scanCanonicalArtifactInventory(await writeFit("broken.itb", bytes)),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringMatching(/FDT.*token 10/iu),
   });
   const plain = await scanCanonicalArtifactInventory(

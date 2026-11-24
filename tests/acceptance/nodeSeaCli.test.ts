@@ -308,10 +308,12 @@ cliTest("rejects a malformed SEA blob through the CLI", async ({ cli }) => {
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
-    code: "artifact_operation_failed",
+    code: "unsupported_target",
     details: {
       operation: "inspect_artifact",
-      reason: "format",
+      reason: "malformed",
+      failure_kind: "malformed",
+      format: "node-sea",
       detail: expect.stringMatching(/magic/iu),
     },
   });

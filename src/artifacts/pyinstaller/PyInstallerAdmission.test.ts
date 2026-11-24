@@ -261,7 +261,7 @@ it("retains rejected magic candidates without classifying their native carrier a
     const observed = probes.completedFacts().pyInstaller;
     expect(observed).toMatchObject({
       state: "rejected-candidates",
-      failure: { reason: "format" },
+      failure: { reason: "malformed" },
     });
     const resumed = new ArtifactEmbeddedFormatProbes(
       path,
@@ -330,8 +330,8 @@ it("does not cache an incomplete tail read as an absent cookie and can retry", a
       });
     try {
       await expect(probes.pyInstaller()).rejects.toMatchObject({
-        reason: "format",
-        message: expect.stringMatching(/tail.*truncated/iu),
+        reason: "truncated",
+        parseFailure: { kind: "truncated", format: "pyinstaller" },
       });
       expect(calls).toBe(2);
       expect(Object.hasOwn(probes.completedFacts(), "pyInstaller")).toBe(false);

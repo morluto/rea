@@ -9,6 +9,7 @@ import {
 } from "../domain/windows/ntfsMft.js";
 import {
   ArtifactReaderFailure,
+  malformedArtifact,
   type ArtifactEntry,
   type ArtifactReaderTraversal,
 } from "../resources/index.js";
@@ -85,9 +86,9 @@ export class NtfsMftArtifactReader extends PositionalArtifactReader<ArtifactForm
   }
 
   #failure(failure: RegionDecodeFailure): ArtifactReaderFailure {
-    return failure.kind === "format"
-      ? new ArtifactReaderFailure(
-          "format",
+    return failure.kind === "malformed"
+      ? malformedArtifact(
+          "ntfs-mft",
           `$MFT stream is malformed: ${failure.message}`,
         )
       : new ArtifactReaderFailure(

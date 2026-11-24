@@ -589,7 +589,7 @@ const artifactMessage = ({
         ? `Declared ASAR integrity for unpacked entry ${details.logicalPath} contradicts its companion file; packaging tools commonly sign or strip unpacked native binaries after writing the archive.`
         : "Artifact bytes contradict declared integrity."
     } If expected, rerun ${operation === "inventory_artifact" ? "inspect_artifact" : operation} with integrity_policy=record-and-continue to retain observed bytes as untrusted; otherwise get a fresh copy.`;
-  if (reason === "format" || reason === "integrity")
+  if (reason === "integrity")
     return "Artifact is invalid or has changed. Get a fresh copy and try again.";
   return "Artifact could not be read or written. Check file access and try again.";
 };

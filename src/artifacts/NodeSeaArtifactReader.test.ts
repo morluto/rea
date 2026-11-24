@@ -331,7 +331,7 @@ it.each(["cpu-type", "cpu-subtype"] as const)(
     });
     const wrong = universalMacho([conflicting]);
     await expect(locate(wrong.bytes)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("CPU type/subtype disagrees"),
     });
     const unrelated = {
@@ -450,7 +450,7 @@ it.each([
     const handle = await open(await writeCarrier("macho-backing", bytes), "r");
     try {
       await expect(locateNodeSea(handle, bytes.length)).rejects.toMatchObject({
-        reason: "format",
+        reason: "malformed",
         message: expect.stringContaining(reason),
       });
     } finally {
@@ -497,7 +497,7 @@ it.each(["thin", "universal"] as const)(
     };
     await expect(locate(valid)).rejects.toMatchObject({ reason: "limit" });
     await expect(locate(malformed)).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining("segment range is outside the file"),
     });
   },
@@ -786,7 +786,7 @@ it("fails closed when the located blob is truncated, has a bad magic, or unknown
       ),
     ),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "truncated",
     message: expect.stringMatching(/Node SEA.*truncated/iu),
   });
   await expect(
@@ -794,7 +794,7 @@ it("fails closed when the located blob is truncated, has a bad magic, or unknown
       await writeCarrier("bad-magic", nodeSeaMachO({ blob: Buffer.alloc(16) })),
     ),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringMatching(/magic.*not.*0x143da20/iu),
   });
   const unknown = Buffer.alloc(9);
@@ -806,7 +806,7 @@ it("fails closed when the located blob is truncated, has a bad magic, or unknown
       await writeCarrier("unknown-flags", nodeSeaPe({ blob: unknown })),
     ),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringMatching(/flags.*unknown bits/iu),
   });
 });
@@ -822,7 +822,7 @@ it("fails closed when two different blobs are declared", async () => {
       ),
     ),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringMatching(/Node SEA blob.*declared more than once/iu),
   });
   await expect(
@@ -835,7 +835,7 @@ it("fails closed when two different blobs are declared", async () => {
       ),
     ),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringMatching(/Node SEA blob.*declared more than once/iu),
   });
 });
@@ -971,7 +971,7 @@ it("reads repeated PT_NOTE declarations at most once per note the file holds", a
       await writeCarrier("repeated-sea-notes", confirmed),
     ),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "malformed",
     message: expect.stringMatching(
       /ELF note tables.*more notes than the file holds/iu,
     ),
@@ -1156,7 +1156,7 @@ it("rejects missing Mach-O load commands after a confirmed SEA section", async (
   const handle = await open(path, "r");
   try {
     await expect(locateNodeSea(handle, bytes.length)).rejects.toMatchObject({
-      reason: "format",
+      reason: "truncated",
       message: expect.stringMatching(/Mach-O.*load commands.*truncated/iu),
     });
   } finally {
@@ -1513,7 +1513,7 @@ it.each([
         for await (const _entry of reader.entries()) {
           /* consume */
         }
-      }).rejects.toMatchObject({ reason: "format" });
+      }).rejects.toMatchObject({ reason: "truncated" });
     } finally {
       await reader.close();
     }

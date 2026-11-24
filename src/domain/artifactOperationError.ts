@@ -108,7 +108,6 @@ export class ArtifactOperationError extends AnalysisError {
     readonly reason:
       | ParseFailureKind
       | "cancelled"
-      | "format"
       | "integrity"
       | "path"
       | "unavailable"

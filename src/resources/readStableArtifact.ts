@@ -282,7 +282,8 @@ export const withStableArtifactHandle = async <Value>(
         // independent physical I/O, cancellation, and decoder failures primary.
         if (
           (cause instanceof ParseFailureError && cause.kind !== "limit") ||
-          (cause instanceof ArtifactReaderFailure && cause.reason === "format")
+          (cause instanceof ArtifactReaderFailure &&
+            cause.parseFailure !== undefined)
         )
           await verifyState();
         throw cause;

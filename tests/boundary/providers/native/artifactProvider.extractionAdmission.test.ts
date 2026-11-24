@@ -369,7 +369,7 @@ it("refuses an incomplete PyInstaller detection tail without reporting unsupport
           ok: false,
           error: {
             _tag: "ArtifactOperationError",
-            reason: "format",
+            reason: "truncated",
             detail: "CArchive tail is truncated",
           },
         });

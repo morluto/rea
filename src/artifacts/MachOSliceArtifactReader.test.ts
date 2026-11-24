@@ -337,7 +337,7 @@ describe("MachOSliceArtifactReader", () => {
     await expect(
       reader.entries()[Symbol.asyncIterator]().next(),
     ).rejects.toMatchObject({
-      reason: "format",
+      reason: "io",
       message: expect.stringMatching(
         /lipo.*readable architecture records.*no architectures/i,
       ),

@@ -253,7 +253,7 @@ describe("ASAR preparation cleanup", () => {
     });
     try {
       await expect(packedMember(reader)).rejects.toMatchObject({
-        reason: "format",
+        reason: "malformed",
         message: "ASAR header has invalid Pickle extents",
         cleanup: {
           reason: closeFailure.message,

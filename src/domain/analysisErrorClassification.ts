@@ -5,6 +5,7 @@ import {
 import {
   TARGET_FAILURE_KINDS,
   TARGET_FAILURE_PROJECTIONS,
+  type TargetFailureKind,
 } from "./targetFailure.js";
 import {
   domainErrorTag,
@@ -104,13 +105,22 @@ const RETRYABLE_CAPABILITY_UNAVAILABLE = classified(
   "unavailable",
 );
 
+/** The code and category the projection table gives one target failure kind. */
+const kindClassification = (
+  kind: TargetFailureKind,
+): AnalysisErrorClassification => {
+  const { code, category } = TARGET_FAILURE_PROJECTIONS[kind];
+  return { code, category };
+};
+
 const ARTIFACT_OPERATION_CLASSIFICATIONS = {
-  cancelled: classified("cancelled", "cancelled"),
-  // The artifact's bytes are at fault, not the request: a target refusal.
-  malformed: classified("unsupported_target", "unsupported_target"),
-  truncated: classified("truncated", "truncated"),
-  unsupported: classified("unsupported_target", "unsupported_target"),
-  format: classified("artifact_operation_failed", "execution_failure"),
+  // Reasons that name a target failure kind take that kind's projection,
+  // so an inventory refusal and a selected-file refusal of the same bytes
+  // report the same code. `limit` keeps `truncated`: the result was cut short.
+  cancelled: kindClassification("cancelled"),
+  malformed: kindClassification("malformed"),
+  truncated: kindClassification("truncated"),
+  unsupported: kindClassification("unsupported"),
   integrity: classified("artifact_operation_failed", "integrity_mismatch"),
   limit: classified("truncated", "truncated"),
   path: classified("artifact_operation_failed", "execution_failure"),
@@ -288,10 +298,8 @@ export const classifyAnalysisError = (
     return { code: owned.code, category: owned.category };
   if (error instanceof AnalysisCapabilityUnavailableError && error.retryable)
     return RETRYABLE_CAPABILITY_UNAVAILABLE;
-  if (error instanceof AnalysisTargetFailureError) {
-    const { code, category } = TARGET_FAILURE_PROJECTIONS[error.failure.kind];
-    return { code, category };
-  }
+  if (error instanceof AnalysisTargetFailureError)
+    return kindClassification(error.failure.kind);
   if (error instanceof ProviderSelectionError)
     return PROVIDER_SELECTION_CLASSIFICATIONS[error.reason];
   if (error instanceof BrowserObservationError)

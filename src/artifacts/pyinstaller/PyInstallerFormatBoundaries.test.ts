@@ -60,7 +60,7 @@ describe.each(["2.0", "2.1"] as const)(
     ] as const)("reports %s at the rejected record", async (_case, fillAt) => {
       const malformed = Buffer.from(record).fill(0x61, fillAt);
       await expect(readPaths(malformed)).rejects.toMatchObject({
-        reason: "format",
+        reason: "malformed",
         message: expect.stringContaining("table index 0 at TOC offset 0"),
       });
     });
@@ -94,7 +94,7 @@ describe("CArchive entry admission at the TOC record limit", () => {
       ).toMatchObject({
         ok: false,
         error: {
-          reason: "format",
+          reason: "malformed",
           message: expect.stringContaining(
             `table index ${entryCount} at TOC offset ${boundary}:`,
           ),
@@ -135,7 +135,7 @@ it.each([0, 1, 2])(
         }
       }),
     ).rejects.toMatchObject({
-      reason: "format",
+      reason: "malformed",
       message: expect.stringContaining(
         `table index ${index} at TOC offset ${record - toc}`,
       ),
@@ -288,7 +288,7 @@ it.each(["malformed zlib", "declared plaintext overrun"] as const)(
       };
       await expect(list()).rejects.toMatchObject(
         fault === "malformed zlib"
-          ? { reason: "format" }
+          ? { reason: "malformed" }
           : { reason: "integrity", integrityCheck: "declared-size" },
       );
     });
@@ -514,7 +514,9 @@ it.each(["size", "offset", "overlap"])(
       expect(failure).toBeInstanceOf(ArtifactReaderFailure);
       if (!(failure instanceof ArtifactReaderFailure))
         throw new Error("Expected parser failure");
-      expect(failure.reason).toBe(mode === "offset" ? "format" : "integrity");
+      expect(failure.reason).toBe(
+        mode === "offset" ? "malformed" : "integrity",
+      );
       expect(failure.message.length).toBeLessThan(128);
       expect(failure.message).toContain(
         `table index ${mode === "overlap" ? 1 : 0}`,
@@ -1446,7 +1448,10 @@ it("distinguishes actual EOF after a short PYZ header read", async () => {
         readPyzArchive(handle, 0, bytes.length),
       ).resolves.toMatchObject({
         ok: false,
-        error: { reason: "format", message: expect.stringContaining("header") },
+        error: {
+          reason: "truncated",
+          message: expect.stringContaining("header"),
+        },
       });
       expect(calls).toBe(2);
     } finally {
