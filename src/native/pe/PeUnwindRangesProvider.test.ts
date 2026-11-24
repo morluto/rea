@@ -248,6 +248,27 @@ describe("x64 PE exception directory refusals and absence", () => {
     expect(value.coverage.status).toBe("partial");
   });
 
+  it("resolves the exact parent among entries that share a begin RVA", async () => {
+    const second = { begin: 0x1000, end: 0x1100, unwind: 0x2200 };
+    const value = await report({
+      entries: [
+        { begin: 0x1000, end: 0x1080, unwind: 0x2000 },
+        second,
+        { begin: 0x1200, end: 0x1280, unwind: 0x2100 },
+      ],
+      blobs: [
+        { rva: 0x2000, bytes: unwindInfo(0, 0) },
+        { rva: 0x2100, bytes: unwindInfo(0x4, 0, second) },
+        { rva: 0x2200, bytes: unwindInfo(0, 0) },
+      ],
+    });
+    expect(value.entries[2]).toMatchObject({
+      kind: "chained",
+      parent: { end_rva: "0x1100", index: 1 },
+      primary_index: 1,
+    });
+  });
+
   it("reports both order and overlap for an out-of-order range", async () => {
     const value = await report({
       entries: [

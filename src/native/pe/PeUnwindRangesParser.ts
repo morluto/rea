@@ -207,17 +207,43 @@ const decodeUnwind = async (
 };
 
 /**
- * Entry indices ordered by begin RVA, then index. A sorted table is its own
- * order; an unsorted one is sorted once, so every parent lookup is a search.
+ * Entry indices ordered by the whole record (begin, end, unwind RVA), then
+ * index. Sorted once, so every parent lookup is a search, even when many
+ * entries share a begin RVA.
  */
-const beginOrder = (table: Table, sorted: boolean): Uint32Array => {
+const recordOrder = (table: Table): Uint32Array => {
   const order = new Uint32Array(table.count);
   for (let index = 0; index < table.count; index++) order[index] = index;
-  if (!sorted)
-    order.sort(
-      (left, right) => table.begin[left]! - table.begin[right]! || left - right,
-    );
+  order.sort(
+    (left, right) =>
+      table.begin[left]! - table.begin[right]! ||
+      table.end[left]! - table.end[right]! ||
+      table.unwind[left]! - table.unwind[right]! ||
+      left - right,
+  );
   return order;
+};
+
+/** First position whose record is not below (begin, end, unwind). */
+const lowerBound = (
+  table: Table,
+  order: Uint32Array,
+  { begin, end, unwind }: { begin: number; end: number; unwind: number },
+): number => {
+  let low = 0;
+  let high = table.count;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    const at = order[middle]!;
+    const below =
+      table.begin[at]! < begin ||
+      (table.begin[at] === begin &&
+        (table.end[at]! < end ||
+          (table.end[at] === end && table.unwind[at]! < unwind)));
+    if (below) low = middle + 1;
+    else high = middle;
+  }
+  return low;
 };
 
 /**
@@ -231,25 +257,19 @@ const indexOfRecord = (
   index: number,
 ): number => {
   const begin = table.parentBegin[index]!;
-  let low = 0;
-  let high = table.count;
-  while (low < high) {
-    const middle = (low + high) >>> 1;
-    if (table.begin[order[middle]!]! < begin) low = middle + 1;
-    else high = middle;
-  }
-  let found = -1;
-  for (let at = low; at < table.count; at++) {
-    const candidate = order[at]!;
-    if (table.begin[candidate] !== begin) break;
-    if (
-      table.end[candidate] === table.parentEnd[index] &&
-      table.unwind[candidate] === table.parentUnwind[index]
-    )
-      return candidate;
-    found = -2;
-  }
-  return found;
+  const end = table.parentEnd[index]!;
+  const unwind = table.parentUnwind[index]!;
+  const exact = lowerBound(table, order, { begin, end, unwind });
+  const candidate = order[exact];
+  if (
+    candidate !== undefined &&
+    table.begin[candidate] === begin &&
+    table.end[candidate] === end &&
+    table.unwind[candidate] === unwind
+  )
+    return candidate;
+  const first = order[lowerBound(table, order, { begin, end: 0, unwind: 0 })];
+  return first !== undefined && table.begin[first] === begin ? -2 : -1;
 };
 
 /** Follow one chain to the primary entry it extends, within the depth bound. */
@@ -279,10 +299,9 @@ const resolveChain = (table: Table, index: number): void => {
 /** Link every chained entry to its parent and primary entry; yields to cancellation. */
 const resolveChains = async (
   table: Table,
-  sorted: boolean,
   signal: AbortSignal | undefined,
 ): Promise<void> => {
-  const order = beginOrder(table, sorted);
+  const order = recordOrder(table);
   for (let index = 0; index < table.count; index++) {
     if (index % YIELD_EVERY === 0 && index > 0) {
       await setImmediate();
@@ -397,15 +416,14 @@ const emptyReport = (
   ],
 });
 
-/** Read every entry's bounds and unwind data; returns whether the table is sorted. */
+/** Read every entry's bounds and unwind data. */
 const decodeEntries = async (
   context: UnwindContext,
   bytes: Buffer,
   signal: AbortSignal | undefined,
-): Promise<boolean> => {
+): Promise<void> => {
   const { table } = context;
   const reader = new BinaryReader(bytes, true, "pe");
-  let sorted = true;
   for (let index = 0; index < table.count; index++) {
     if (index % YIELD_EVERY === 0 && index > 0) {
       await setImmediate();
@@ -421,7 +439,6 @@ const decodeEntries = async (
     if (index > 0) {
       const previousBegin = table.begin[index - 1]!;
       if (begin < previousBegin) {
-        sorted = false;
         table.issues[index]! |= issueBit("unsorted");
       }
       // Order and intersection are separate facts: an unsorted entry can overlap too.
@@ -443,7 +460,6 @@ const decodeEntries = async (
     }
     await decodeUnwind(context, order[position]!);
   }
-  return sorted;
 };
 
 /** Counts over every entry, and the selected page. */
@@ -528,9 +544,9 @@ export const parsePeUnwindRangesFromHandle = async (
     lookup,
     read: windowedReader(handle),
   };
-  const sorted = await decodeEntries(context, bytes, signal);
+  await decodeEntries(context, bytes, signal);
   assertArtifactReadActive(signal);
-  await resolveChains(table, sorted, signal);
+  await resolveChains(table, signal);
   const { primary, chained, unknown, withIssues, total, entries } =
     countAndPage(table, input);
   const end = input.offset + entries.length;
