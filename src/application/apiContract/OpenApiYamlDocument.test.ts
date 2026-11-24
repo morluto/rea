@@ -500,6 +500,30 @@ it("refuses boolean mapping keys instead of naming a member the source never wro
   expect(contractError(forged)).toContain("boolean mapping key");
 });
 
+it("refuses a key whose member name would come from the serializer, not String", async () => {
+  const timestamp = await importText(
+    "timestamp-key.yaml",
+    [
+      "%YAML 1.1",
+      "---",
+      "openapi: 3.0.4",
+      'info: {title: Owned API, version: "1"}',
+      "paths:",
+      "  /pets:",
+      "    additionalOperations:",
+      "      2001-01-01: {get: {operationId: stamped}}",
+      '      "Mon Jan 01 2001 00:00:00 GMT+0000 (Coordinated Universal Time)": {post: {operationId: quoted}}',
+    ].join("\n"),
+    "openapi-yaml",
+  );
+  // A `%YAML 1.1` timestamp compiles to a `Date`; `toJS` names its member
+  // through the serializer while `String` would name a different one, so the
+  // quoted key could evade the duplicate scan and be overwritten by `toJS`.
+  expect(contractError(timestamp)).toContain(
+    "cannot be derived without replaying the YAML serializer",
+  );
+});
+
 it("keeps a numeric key the parser projects back to its own token", async () => {
   const exact = await importText(
     "exact-numeric-key.yaml",

@@ -312,7 +312,27 @@ export const decodeOpenApiYaml = (
             "OpenAPI YAML uses a numeric mapping key the parser cannot project exactly; the JSON profile cannot name that member without changing its value",
           ),
         );
-      const member = scalar.value === null ? "" : String(scalar.value);
+      // `toJS` names a null key as the empty member name, not `"null"`, and a
+      // key that compiles to any other object (a `%YAML 1.1` timestamp becomes
+      // a `Date`) through its serializer, not `String`. This decoder cannot
+      // reproduce that projection, and a quoted key carrying the serializer's
+      // spelling would otherwise evade `projected` and be overwritten by
+      // `toJS` as a repeated member, so the document is refused instead.
+      const member =
+        scalar.value === null
+          ? ""
+          : typeof scalar.value === "string" ||
+              typeof scalar.value === "number" ||
+              typeof scalar.value === "boolean"
+            ? String(scalar.value)
+            : undefined;
+      if (member === undefined)
+        return err(
+          invalidDocument(
+            path,
+            "OpenAPI YAML uses a mapping key whose JSON member name cannot be derived without replaying the YAML serializer",
+          ),
+        );
       if (typeof scalar.value === "boolean")
         return err(
           invalidDocument(
