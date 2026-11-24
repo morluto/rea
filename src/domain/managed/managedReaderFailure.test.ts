@@ -88,7 +88,7 @@ describe("managedInspectionTargetFailure", () => {
         managedFailure(code, "metadata.tables", "detail"),
       );
       // Only a broken rule is malformed in both the inventory and a refusal.
-      expect(refusal instanceof AnalysisMalformedTargetError).toBe(
+      expect(refusal instanceof AnalysisTargetFailureError).toBe(
         status === "malformed",
       );
     },
