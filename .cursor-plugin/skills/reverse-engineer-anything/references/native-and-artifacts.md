@@ -974,6 +974,17 @@ stored. The v4 signature and any AVB footer are reported with sizes and are
 not verified. Extract `dtb` and pass that file to `inspect_devicetree`. See
 [Android boot images](https://github.com/morluto/rea/blob/main/docs/android-boot-image.md).
 
+ISO 9660 disc images (`CD001` at sector 16, any filename, even `.hop`) use
+the same inspection and extraction workflows on every host, without mounting.
+Volume identifiers and dates are target-derived. One tree is walked: an
+eligible Joliet tree when present, else the primary tree (`name_source`).
+Files only in an unwalked tree are not listed, so coverage is `unknown`
+whenever the image has another tree. Unsafe names become `entry-<index>`
+with the stored identifier in `source_path`. Separated multi-extent and interleaved files are listed with
+unavailable hashes, so extract other files by `occurrence_ids`. Rock Ridge,
+UDF, and El Torito boot images are not decoded. See
+[ISO 9660 disc images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/iso9660-images.md).
+
 Android A/B OTA `payload.bin` files (CrAU v2) use the same
 inspection/extraction workflows. Prefer a retained summary for header,
 partition table, dynamic groups and signature counts. Signatures are not
