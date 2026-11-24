@@ -1,3 +1,4 @@
+import { finalizedResult, runOwned } from "../../providers/runOwned.js";
 import { bindSessionEvidenceExecution } from "./SessionEvidenceReuse.js";
 import { admitCompletedAnalysis } from "../investigation/admitCompletedAnalysis.js";
 import { randomUUID } from "node:crypto";
@@ -65,7 +66,11 @@ import {
   currentRouteCapability,
 } from "./BinarySessionStatus.js";
 import { SessionRuntimeAvailability } from "./SessionRuntimeAvailability.js";
-import { isSourceEvidenceRetainable } from "./AnalysisSnapshotCache.js";
+import {
+  isSourceEvidenceRetainable,
+  oneShotSnapshotReplayRefusal,
+  snapshotNotSavedLimitation,
+} from "./AnalysisSnapshotCache.js";
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
 import {
   resolveSessionOpen,
@@ -80,6 +85,7 @@ import {
   prepareSessionExecution,
 } from "./BinarySessionExecution.js";
 import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
+import { bundleExecutableProvenance } from "../../domain/apple/bundleExecutableProvenance.js";
 import {
   analysisErrorWithCleanupDependencies,
   analysisErrorWithCloseRejection,
@@ -382,6 +388,8 @@ export class BinarySession
       const imported = this.importAnalysisSnapshot(options.snapshot);
       if (!imported.ok) return imported;
     }
+    // Refresh selection facts from this open while keeping the live engine.
+    this.#active = { ...retained, target };
     return ok(target);
   }
 
@@ -434,23 +442,30 @@ export class BinarySession
   }
 
   /** Resolve a target and provider profile without creating a provider client. */
-  previewTarget(
+  async previewTarget(
     target: BinaryTarget,
     options: BinarySessionOpenOptions = {},
   ): Promise<Result<ResolvedSessionOpen, AnalysisError>> {
     if (isAborted(options.signal))
-      return Promise.resolve(err(cancelledBy("open_binary", options.signal)));
-    return resolveSessionTarget({
-      router: this.#providerRouter,
-      current: this.#active,
-      target,
-      options,
-      stagedSnapshotMismatch: (target, profile) =>
-        this.snapshotMismatch(target, profile),
-    }).then((resolved) =>
-      resolved.ok && isAborted(options.signal)
-        ? err(cancelledBy("open_binary", options.signal))
-        : resolved,
+      return err(cancelledBy("open_binary", options.signal));
+    return finalizedResult(
+      await runOwned(
+        () =>
+          resolveSessionTarget({
+            router: this.#providerRouter,
+            current: this.#active,
+            target,
+            options,
+            stagedSnapshotMismatch: (target, profile) =>
+              this.snapshotMismatch(target, profile),
+          }),
+        {
+          providerId: "rea",
+          operation: "open_binary",
+          signal: options.signal,
+          diagnostics: () => undefined,
+        },
+      ),
     );
   }
 
@@ -541,6 +556,9 @@ export class BinarySession
         kind: "binary",
         path: this.#active.target.path,
         sha256: this.#active.target.sha256,
+        ...(this.#active.target.callerInputPath === undefined
+          ? {}
+          : { caller_input_path: this.#active.target.callerInputPath }),
       };
     if (this.#activeBundleResources !== undefined)
       return {
@@ -1217,12 +1235,16 @@ export class BinarySession
       run,
       onCleanupFailure === undefined ? {} : { onCleanupFailure },
     );
-    if (!closed.ok)
+    if (!closed.ok) {
+      // A fresh session can hold an imported snapshot and no retired target.
+      // Clear only a binding left by a target this open already retired.
+      if (previous !== undefined) this.#clearUnrestoredSnapshot();
       return analysisErrorWithCloseRejection(
         primary,
         closed.error,
         "open_binary",
       );
+    }
     return this.#restoreAfterFailedOpen(previous, primary);
   }
 
@@ -1232,6 +1254,7 @@ export class BinarySession
   ): Promise<AnalysisError> {
     const restored = await this.#restore(previous);
     if (restored.ok) return primary;
+    this.#clearUnrestoredSnapshot();
     primary.retainSecondaryFailure(restored.error, {
       restoration_error: projectAnalysisError(
         primaryAnalysisError(restored.error),
@@ -1468,12 +1491,13 @@ export class BinarySession
       const execution = { ...result.value, subject: null };
       return ok(execution);
     }
+    const sessionBinding = this.#active;
     const prepared = prepareSessionExecution({
-      active: this.#active,
+      active: sessionBinding,
       operation: name,
       parameters: arguments_,
       snapshotContext: options?.snapshotContext,
-      nativeSourceAdmitted: this.#active?.nativeSourceAdmitted === true,
+      nativeSourceAdmitted: sessionBinding?.nativeSourceAdmitted === true,
       isOperationAvailable: (operation) => this.#currentlyAvailable(operation),
       isOperationAdvertised: options?.isOperationAdvertised,
       unboundOperationError: (operation, route) =>
@@ -1488,14 +1512,26 @@ export class BinarySession
     // Stop replay before dispatch, including reads overlapping the write.
     if (capability.effects.mutatesArtifact) this.invalidateSnapshot();
     const dispatch = this.#runtimeAvailability.dispatch();
-    const dispatched = await active.client.execute(name, arguments_, options);
+    const executionOptions =
+      name === "inspect_macho" || name === "inspect_signature"
+        ? {
+            ...options,
+            bundleExecutableProvenance:
+              bundleExecutableProvenance(active.target) ?? null,
+          }
+        : options;
+    const dispatched = await active.client.execute(
+      name,
+      arguments_,
+      executionOptions,
+    );
     const result = unrecordedExecution(dispatched);
     const profiled = bindExecutionTarget(
       commitExecutionProfile(name, result, profile),
       name,
       active.target,
     );
-    const execution =
+    const observed =
       profiled.ok &&
       (name === "procedure_callers" || name === "procedure_callees") &&
       profiled.value.relationshipCoverage === undefined
@@ -1508,14 +1544,52 @@ export class BinarySession
             },
           })
         : profiled;
+    // A caller who asked for a one-shot snapshot learns when it cannot replay.
+    const recordingRefusal = (
+      execution: AnalysisExecution,
+      selected: AnalysisProfileCommitment,
+    ): string | undefined => {
+      const reason = this.snapshotRecordingRefusal({
+        target: active.target,
+        profile: selected,
+        operation: name,
+        parameters: arguments_,
+        execution,
+      });
+      return reason === undefined
+        ? undefined
+        : snapshotNotSavedLimitation(reason);
+    };
+    const refusal =
+      observed.ok && options?.snapshotContext === "one-shot-target"
+        ? (oneShotSnapshotReplayRefusal({
+            operation: name,
+            descriptor: capability,
+            parameters: arguments_,
+            execution: observed.value,
+            profiled: profile !== undefined,
+          }) ??
+          (profile === undefined
+            ? undefined
+            : recordingRefusal(observed.value, profile)))
+        : undefined;
+    const execution =
+      refusal === undefined || !observed.ok
+        ? observed
+        : ok({
+            ...observed.value,
+            limitations: [...observed.value.limitations, refusal],
+          });
     // A successful Ghidra operation proves this client's native source snapshot
     // was admitted; a composite health response and parsed path do not.
+    const currentBinding = this.#active;
     if (
       execution.ok &&
       capability.provider.id === "ghidra" &&
-      this.#active === active
+      currentBinding !== undefined &&
+      currentBinding.runId === sessionBinding?.runId
     )
-      this.#active.nativeSourceAdmitted = true;
+      currentBinding.nativeSourceAdmitted = true;
     if (
       this.#runtimeAvailability.observe(
         dispatch,
@@ -1571,7 +1645,10 @@ export class BinarySession
         name,
         arguments_,
         evidenceExecution,
-        this.admitRecoveryObservation.bind(this),
+        {
+          callerTarget: active.target,
+          admit: this.admitRecoveryObservation.bind(this),
+        },
       );
       if (!admitted.ok) return admitted;
       const evidence = createAnalysisExecutionEvidence(
@@ -1579,6 +1656,7 @@ export class BinarySession
         arguments_,
         evidenceExecution,
         "observed",
+        { callerTarget: active.target, immutable: true },
       );
       const recorded = this.recordEvidence(evidence);
       if (!recorded.ok) {
@@ -1593,6 +1671,7 @@ export class BinarySession
           : bindSessionEvidenceExecution(
               { ...execution.value, evidenceId: evidence.evidence_id },
               authenticated,
+              active.target.callerInputPath,
             );
       if (cacheable && execution.value.cachePolicy !== "live")
         this.recordSnapshot({
@@ -1601,7 +1680,7 @@ export class BinarySession
           operation: name,
           parameters: arguments_,
           execution: retained,
-          evidence: this.evidenceForAnalysis(evidence.evidence_id) ?? evidence,
+          evidence: authenticated ?? evidence,
         });
       return ok(retained);
     }
@@ -1707,6 +1786,13 @@ export class BinarySession
     } catch {
       return false;
     }
+  }
+
+  /** The retired target did not return, so its snapshot binding must not block the next open. */
+  #clearUnrestoredSnapshot(): void {
+    if (this.#active !== undefined) return;
+    this.clearSnapshot();
+    this.#clearRuntimeAvailability();
   }
 
   async #restore(

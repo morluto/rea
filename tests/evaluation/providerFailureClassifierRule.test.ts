@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { RuleTester } from "oxlint/plugins-dev";
 import rule from "../../scripts/lint/rules/provider-failure-classifier.mjs";
@@ -64,12 +64,12 @@ it("keeps the classifier baseline to existing source files", async () => {
     ),
   ) as { owners: string[]; counts: Record<string, number> };
   for (const owner of baseline.owners)
-    await expect(readFile(owner, "utf8")).resolves.toBeTypeOf("string");
+    expect((await stat(owner)).isFile(), owner).toBe(true);
   for (const [file, count] of Object.entries(baseline.counts)) {
     expect(file).toMatch(/^src\/.+\.ts$/u);
     expect(count).toBeGreaterThan(0);
     // The lint run reports an entry above a file's real count as stale; this
     // catches entries whose file no longer exists, which lint never visits.
-    await expect(readFile(file, "utf8")).resolves.toBeTypeOf("string");
+    expect((await stat(file)).isFile(), file).toBe(true);
   }
 });

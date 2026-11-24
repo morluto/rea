@@ -1,8 +1,10 @@
 import { isDeepStrictEqual } from "node:util";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
-import type {
-  BinaryTarget,
-  MipsElfMetadata,
+import {
+  isRecordlessLegacyMips32Header,
+  MIPS_SECTION_TABLE_TRUNCATION_PREFIX,
+  type BinaryTarget,
+  type MipsElfMetadata,
 } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 
@@ -22,6 +24,20 @@ const isGhidraMips16SharedTarget = (target: BinaryTarget): boolean =>
   target.mips.type === MIPS_ET_DYN &&
   (target.mips.flags & 0x0f000000) === MIPS16_HEADER_ASE;
 
+/** Candidate for plain MIPS32 PIC shared-library admission: no compressed-ISA ASE declared. */
+const isGhidraMipsStandardSharedTarget = (target: BinaryTarget): boolean =>
+  target.kind === "executable" &&
+  target.architecture === "mips" &&
+  target.mips.type === MIPS_ET_DYN &&
+  (target.mips.flags & 0x0f000000) === 0;
+
+/**
+ * R_MIPS_NONE, R_MIPS_REL32, and the TLS relocations whose values only the
+ * dynamic loader can supply (module index, TLS offsets); those stay unapplied.
+ */
+const MIPS_STANDARD_SHARED_RELOCATIONS = new Set([0, 3, 38, 39, 47]);
+const MIPS_TLS_RELOCATIONS = new Set([38, 39, 47]);
+
 /** Derive the verified MIPS32 import pin from this target's observed byte order. */
 export const ghidraMipsLanguageOverride = (
   target: BinaryTarget,
@@ -34,6 +50,18 @@ export const ghidraMipsLanguageOverride = (
         compilerSpecId: "default",
       }
     : undefined;
+
+/**
+ * A carved firmware image keeps its original section header table offset while
+ * the captured file ends before it. The optional section table is the only
+ * table this inspection records as a limitation; the required program header
+ * table must be read whole or the inspection fails outright. Every program
+ * header therefore has been checked and none declares PT_MIPS_ABIFLAGS, so the
+ * unread section headers can only hold declarations that stay unknown — the
+ * same o32-assumption footing as a complete recordless header.
+ */
+const isCarvedSectionTableLimitation = (limitation: string): boolean =>
+  limitation.startsWith(MIPS_SECTION_TABLE_TRUNCATION_PREFIX);
 
 /**
  * Recordless legacy ELF32 MIPS admission: the header declares no ABI field and
@@ -51,27 +79,18 @@ const hasLegacyMipsHeaderShape = (target: BinaryTarget): boolean => {
     target.mips === undefined
   )
     return false;
-  const { flags, abiFlags, limitations } = target.mips;
-  const arch = flags & 0xf0000000;
+  const { abiFlags, limitations } = target.mips;
   return (
     // The lane and its verification cover executable firmware images only;
     // recordless relocatable objects stay outside the inferred-o32 assumption.
-    target.mips.elfClass === 32 &&
-    target.mips.type === MIPS_ET_EXEC &&
-    (arch === MIPS_ARCH_1 ||
-      arch === MIPS_ARCH_32 ||
-      arch === MIPS_ARCH_32R2) &&
-    (flags & 0x0000f000) === 0 &&
-    (flags & 0x20) === 0 &&
-    // EF_MIPS_ABI_ON32 (bit 0x40) declares the old n32 ABI; it is not an
-    // unspecified-ABI header and must not inherit the o32 assumption.
-    (flags & 0x40) === 0 &&
-    (flags & 0x100) === 0 &&
+    isRecordlessLegacyMips32Header(target.mips) &&
     // Undefined means the record was not inspected; only an inspected
     // absence establishes the recordless legacy admission. An inspection
-    // that could not examine every declaration source stays unknown.
+    // that could not examine every declaration source stays unknown, except
+    // for the carved section table whose limitation names exactly that table.
     abiFlags === null &&
-    (limitations === undefined || limitations.length === 0)
+    (limitations === undefined ||
+      limitations.every(isCarvedSectionTableLimitation))
   );
 };
 
@@ -120,6 +139,14 @@ export const ghidraMipsUnsupportedReason = (
   if (target.format !== "elf" || metadata === undefined)
     return "MIPS analysis requires ELF header metadata; a family name alone does not select an ISA or ABI.";
   const shared = isGhidraMips16SharedTarget(target);
+  const standardShared = isGhidraMipsStandardSharedTarget(target);
+  if (
+    standardShared &&
+    (metadata.hasInterpreter === true ||
+      (metadata.sharedLoad?.status === "complete" &&
+        metadata.sharedLoad.declaresPie === true))
+  )
+    return "MIPS32 position-independent executables need separate load verification; this lane verifies shared libraries.";
   if (metadata.elfClass !== 32)
     return "This Ghidra MIPS lane supports ELF32 only; MIPS64 and n64 remain unsupported.";
   const gnuAttributesReason =
@@ -128,7 +155,8 @@ export const ghidraMipsUnsupportedReason = (
   if (
     metadata.type !== MIPS_ET_EXEC &&
     metadata.type !== MIPS_ET_REL &&
-    !shared
+    !shared &&
+    !standardShared
   )
     return "This Ghidra MIPS lane supports ET_EXEC and ET_REL only; shared images and PSP PRX need separate load verification.";
   if ((metadata.flags & 0x0f000000) !== 0 && !shared)
@@ -184,6 +212,19 @@ export const ghidraMipsUnsupportedReason = (
       return "This MIPS16 shared-image lane verifies R_MIPS_NONE and R_MIPS_REL32 only; other dynamic relocation types require separate verification.";
     if (load.symbolRelativeCount !== 0)
       return "Symbol-bearing R_MIPS_REL32 is unsupported: Ghidra normalizes MIPS16 function addresses and can lose the source function-pointer mode tag. Symbol-index-zero REL32 is verified separately.";
+  }
+  if (standardShared) {
+    const load = metadata.sharedLoad;
+    if (load === undefined || load.status !== "complete")
+      return `MIPS32 shared images require complete dynamic relocation inspection. ${load?.reason ?? "The source declarations have not been inspected."}`;
+    if (
+      load.relocationTypes.some(
+        (type) => !MIPS_STANDARD_SHARED_RELOCATIONS.has(type),
+      )
+    )
+      return "This MIPS32 shared-image lane verifies R_MIPS_NONE, R_MIPS_REL32 and the R_MIPS_TLS_DTPMOD32/DTPREL32/TPREL32 loader slots only; other dynamic relocation types require separate verification.";
+    if (load.prelinkBase !== null)
+      return "This MIPS32 shared image ends with a prelink trailer, which Ghidra prefers over its PT_LOAD link base; prelinked placement requires separate verification.";
   }
   const incomplete = ghidraMipsIncompleteDeclarationsReason(metadata);
   if (incomplete !== null) return incomplete;
@@ -314,18 +355,68 @@ export const ghidraMipsRelocatableLimitations = (
 /** Shared-image results are analysis observations, not dynamic-loader execution. */
 export const ghidraMipsSharedLimitations = (
   target: BinaryTarget,
-): readonly string[] =>
-  isGhidraMips16SharedTarget(target) && target.architecture === "mips"
-    ? [
-        "MIPS16 shared ELF: the endian-matched generic MIPS32 language uses the provider's per-address ISA_MODE context. The program language variant is not the instruction's encoding mode.",
-        "Shared-image addresses are Ghidra analysis coordinates, not runtime addresses. The source bytes remain unchanged; inspect_native_load_image retains original relocation bytes, loaded memory bytes and provider relocation status. External GOT bindings remain unverified without their defining images.",
-        ...(target.mips.abiFlags === null
-          ? [
-              "No MIPS ABI flags record was found in the completely examined declaration tables. The header declares o32 but does not establish the floating-point ABI; the default compiler specification does not verify floating-point argument or return storage.",
-            ]
-          : []),
-      ]
-    : [];
+): readonly string[] => {
+  if (target.kind !== "executable" || target.architecture !== "mips") return [];
+  const coordinates =
+    "Shared-image addresses are Ghidra analysis coordinates, not runtime addresses. The source bytes remain unchanged; inspect_native_load_image retains original relocation bytes, loaded memory bytes and provider relocation status. External GOT bindings remain unverified without their defining images.";
+  if (isGhidraMips16SharedTarget(target))
+    return [
+      "MIPS16 shared ELF: the endian-matched generic MIPS32 language uses the provider's per-address ISA_MODE context. The program language variant is not the instruction's encoding mode.",
+      coordinates,
+      ...(target.mips.abiFlags === null
+        ? [
+            "No MIPS ABI flags record was found in the completely examined declaration tables. The header declares o32 but does not establish the floating-point ABI; the default compiler specification does not verify floating-point argument or return storage.",
+          ]
+        : []),
+    ];
+  if (!isGhidraMipsStandardSharedTarget(target)) return [];
+  const load = target.mips.sharedLoad;
+  return [
+    "MIPS32 shared ELF: REA loads the image at its ELF link base, so returned addresses equal the addresses readelf and objdump report, not a process's runtime addresses. The source bytes remain unchanged; inspect_native_load_image retains original relocation bytes, loaded memory bytes and provider relocation status.",
+    "Ghidra fills local and global GOT entries itself; global entries for undefined symbols point at the EXTERNAL block, or at an imported function's .MIPS.stubs lazy-binding stub, so calls through them name the imported function without resolving its defining image. External GOT bindings remain unverified without their defining images.",
+    ...(load?.status === "complete" &&
+    load.relocationTypes.some((type) => MIPS_TLS_RELOCATIONS.has(type))
+      ? [
+          "TLS relocations (R_MIPS_TLS_DTPMOD32/DTPREL32/TPREL32) hold values only the dynamic loader assigns. Ghidra reports them UNSUPPORTED and leaves their original bytes; thread-local accesses are not resolved to variables.",
+        ]
+      : []),
+  ];
+};
+
+/** Ghidra's ELF image-base rule (`ElfHeader.getImageBase`): the lowest PT_LOAD
+ * address among the first 20 program headers, else 0. Importing there applies
+ * no image shift, so analysis addresses equal the image's link addresses. */
+const GHIDRA_IMAGE_BASE_HEADER_LIMIT = 20;
+
+/** Ghidra image base, as bare hex, that places a MIPS32 shared image at its link addresses. */
+export const ghidraMipsElfImageBase = (
+  target: BinaryTarget,
+): string | undefined => {
+  if (
+    !isGhidraMipsStandardSharedTarget(target) ||
+    target.architecture !== "mips" ||
+    target.mips.sharedLoad?.status !== "complete"
+  )
+    return undefined;
+  const counted = target.mips.sharedLoad.loadAddresses.filter(
+    (load) => load.headerIndex < GHIDRA_IMAGE_BASE_HEADER_LIMIT,
+  );
+  const base =
+    counted.length === 0
+      ? 0
+      : Math.min(...counted.map((load) => load.virtualAddress));
+  return base.toString(16);
+};
+
+/** Profile commitment for the image base the launcher passes to ElfLoader. */
+export const ghidraMipsElfImageBaseCommitment = (
+  target: BinaryTarget,
+): { readonly offset: string; readonly selection: string } | undefined => {
+  const imageBase = ghidraMipsElfImageBase(target);
+  return imageBase === undefined
+    ? undefined
+    : { offset: `0x${imageBase}`, selection: "elf-link-base" };
+};
 
 /** Commit source ELF interpretation without confusing target ISA with host CPU. */
 export const ghidraMipsProfileParameters = (
@@ -339,6 +430,7 @@ export const ghidraMipsProfileParameters = (
   )
     return {};
   const abi = target.mips.abiFlags;
+  const imageBase = ghidraMipsElfImageBaseCommitment(target);
   // A deliberate caller-selected language wins over the legacy pin; the pin
   // exists because header auto-selection misselects a 64-bit language.
   const legacy = isLegacyMipsAdmission(target);
@@ -407,6 +499,7 @@ export const ghidraMipsProfileParameters = (
                   },
           }),
     },
+    ...(imageBase === undefined ? {} : { elf_image_base: imageBase }),
     ...(isGhidraMipsSoftFloatTarget(target)
       ? { mips_soft_float_storage: GHIDRA_MIPS_SOFT_FLOAT_STORAGE }
       : {}),
@@ -416,9 +509,11 @@ export const ghidraMipsProfileParameters = (
         : "elf32-exec-arch32-legacy-pinned"
       : isGhidraMips16SharedTarget(target)
         ? "elf32-dyn-o32-arch32r2-mips16-local-rel32"
-        : target.mips.type === MIPS_ET_REL
-          ? "elf32-rel-o32-arch32r2-standard"
-          : "elf32-exec-o32-arch32r2-standard",
+        : isGhidraMipsStandardSharedTarget(target)
+          ? "elf32-dyn-o32-arch32r2-standard"
+          : target.mips.type === MIPS_ET_REL
+            ? "elf32-rel-o32-arch32r2-standard"
+            : "elf32-exec-o32-arch32r2-standard",
     ...(legacy ? { mips_abi_basis: "inferred-o32-assumption" } : {}),
     ...pinnedLanguage,
   };

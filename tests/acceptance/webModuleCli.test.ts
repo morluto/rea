@@ -101,6 +101,7 @@ cliTest(
     // The CLI renders native separators; MCP keeps the caller's spelling and
     // still selects the same manifest root from a forward-slash Windows path.
     const forwardSlash = manifestPath.replaceAll("\\", "/");
+    if (forwardSlash === manifestPath) return;
     const forward = await client.callTool({
       name: "trace_web_module_imports",
       arguments: { manifest_path: forwardSlash, script_index: 0 },

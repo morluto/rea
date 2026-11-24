@@ -1,4 +1,5 @@
 import { access } from "node:fs/promises";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { expect, it } from "vitest";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { DarwinProcessOwnershipInspectionError } from "../../process/DarwinProcessRunTokenReader.js";
@@ -10,6 +11,7 @@ import {
   type SourceMapDecoderDependencies,
 } from "./SourceMapCommand.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
+import { assertProcessOwnershipInspectionActive } from "../../process/ProcessInspectionCancellation.js";
 import { spawnOwnedProviderProcess } from "../../process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../../process/ProcessOwnership.js";
 import {
@@ -17,6 +19,7 @@ import {
   webSourceLocationFixture,
 } from "../../../tests/fixtures/webSourceLocation.js";
 import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
+import { createDeferred } from "../../../tests/fixtures/binarySession.js";
 
 const fixture = webSourceLocationFixture();
 const input = {
@@ -36,6 +39,66 @@ it("preserves the exact caller reason before source-map admission", async () => 
   if (response.ok) throw new Error("expected cancellation");
   expect(response.error).toBeInstanceOf(AnalysisCancelledError);
   expect(response.error.cause).toBe(reason);
+});
+
+it("cancels queued source-map work while the active request keeps its runtime", async () => {
+  const entered = createDeferred<void>();
+  const release = createDeferred<void>();
+  const roots: string[] = [];
+  const decoder = new SourceMapDecoder({
+    async createRuntime() {
+      const root = await PrivateRuntimeRoot.create({
+        prefix: "rea-source-map-queued-test-",
+      });
+      roots.push(root.path);
+      if (roots.length === 1) {
+        entered.resolve();
+        await release.promise;
+      }
+      return root;
+    },
+    launcher: (options) =>
+      spawnOwnedProviderProcess({
+        ...options,
+        arguments: ["-e", "process.exit(7)"],
+      }),
+  });
+  const active = decoder.trace(input);
+  try {
+    await entered.promise;
+    const controller = new AbortController();
+    const reason = { caller: "cancel the waiting source-map request" };
+    const queued = decoder.trace(input, { signal: controller.signal });
+    const following = decoder.trace(input);
+    controller.abort(reason);
+
+    const result = await Promise.race([
+      queued,
+      nextTurn("still queued" as const),
+    ]);
+    expect(result).not.toBe("still queued");
+    if (result === "still queued" || result.ok)
+      throw new Error("Expected cancellation before decoder admission");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(roots).toHaveLength(1);
+    await expect(access(roots[0]!)).resolves.toBeUndefined();
+
+    release.resolve();
+    const exited = {
+      ok: false,
+      error: { _tag: "ProviderAdapterError", diagnostics: { exit_code: 7 } },
+    };
+    await expect(active).resolves.toMatchObject(exited);
+    await expect(following).resolves.toMatchObject(exited);
+    expect(roots).toHaveLength(2);
+    for (const path of roots)
+      await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    release.resolve();
+    await decoder.close();
+  }
 });
 
 it("retains physical failure and late cancellation through cleanup failure and retry", async () => {
@@ -315,61 +378,67 @@ it("retains cancellation while retrying an earlier failed cleanup", async () => 
   }
 });
 
-it("retains Darwin preparation cleanup ownership and cancellation through retry", async () => {
-  const root = await PrivateRuntimeRoot.create({
-    prefix: "rea-source-map-prep-owner-",
-  });
-  const controller = new AbortController();
-  const reason = { caller: "after preparation failure" };
-  const cleanup = new ProviderCleanupError("darwin-helper", [root.path], {
-    reason: "held",
-  });
-  let release = false;
-  const physical = new DarwinProcessOwnershipInspectionError(
-    "compiler failure",
-    {
-      cleanupFailure: cleanup,
-      cleanupOwner: {
-        close: async () => {
-          if (!release) throw new Error("still held");
-          await root.close();
-          releaseOwnedCleanup(cleanup);
+it.each(["distinct", "shared"] as const)(
+  "retains physical Darwin preparation and cleanup for a %s caller reason",
+  async (reasonKind) => {
+    const root = await PrivateRuntimeRoot.create({
+      prefix: "rea-source-map-prep-owner-",
+    });
+    const controller = new AbortController();
+    const cleanup = new ProviderCleanupError("darwin-helper", [root.path], {
+      reason: "held",
+    });
+    let release = false;
+    const physical = new DarwinProcessOwnershipInspectionError(
+      "compiler failure",
+      {
+        cleanupFailure: cleanup,
+        cleanupOwner: {
+          close: async () => {
+            if (!release) throw new Error("still held");
+            await root.close();
+            releaseOwnedCleanup(cleanup);
+          },
         },
       },
-    },
-  );
-  const decoder = new SourceMapDecoder({
-    prepareOwnership: async () => {
-      controller.abort(reason);
-      throw physical;
-    },
-  });
-  try {
-    const failed = await decoder.trace(input, { signal: controller.signal });
-    if (failed.ok) throw new Error("expected failed preparation");
-    expect(failed.error.cleanupIncomplete).toBe(true);
-    expect(failed.error.cleanupResources).toContain(root.path);
-    expect(failed.error.cleanupPrimary?.cause).toBe(physical);
-    expect(
-      failed.error.cleanupPrimary?.secondaryFailures.find(
-        (entry) => entry instanceof AnalysisCancelledError,
-      )?.cause,
-    ).toBe(reason);
-    await expect(decoder.close()).rejects.toMatchObject({
-      cleanupIncomplete: true,
+    );
+    const reason =
+      reasonKind === "shared"
+        ? physical
+        : { caller: "after preparation failure" };
+    const decoder = new SourceMapDecoder({
+      prepareOwnership: async () => {
+        controller.abort(reason);
+        throw physical;
+      },
     });
-    expect(failed.error.cleanupResources).toContain(root.path);
-    await expect(access(root.path)).resolves.toBeUndefined();
-    release = true;
-    await decoder.close();
-    await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(failed.error.cleanupIncomplete).toBe(false);
-  } finally {
-    release = true;
-    await decoder.close();
-    await root.close();
-  }
-});
+    try {
+      const failed = await decoder.trace(input, { signal: controller.signal });
+      if (failed.ok) throw new Error("expected failed preparation");
+      expect(failed.error.cleanupIncomplete).toBe(true);
+      expect(failed.error.cleanupResources).toContain(root.path);
+      expect(failed.error.cleanupPrimary?.cause).toBe(physical);
+      expect(
+        failed.error.cleanupPrimary?.secondaryFailures.find(
+          (entry) => entry instanceof AnalysisCancelledError,
+        )?.cause,
+      ).toBe(reason);
+      await expect(decoder.close()).rejects.toMatchObject({
+        cleanupIncomplete: true,
+      });
+      expect(failed.error.cleanupResources).toContain(root.path);
+      await expect(access(root.path)).resolves.toBeUndefined();
+      release = true;
+      await decoder.close();
+      await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(failed.error.cleanupIncomplete).toBe(false);
+    } finally {
+      release = true;
+      await decoder.close();
+      await root.close();
+    }
+  },
+);
 
 it("does not claim an opaque caller reason's Darwin cleanup owner", async () => {
   const controller = new AbortController();
@@ -389,9 +458,9 @@ it("does not claim an opaque caller reason's Darwin cleanup owner", async () => 
     },
   );
   const decoder = new SourceMapDecoder({
-    prepareOwnership: async () => {
+    prepareOwnership: async (signal) => {
       controller.abort(reason);
-      throw reason;
+      assertProcessOwnershipInspectionActive(signal);
     },
   });
   const result = await decoder.trace(input, { signal: controller.signal });

@@ -120,18 +120,8 @@ export const managedTypeReferences = (
     const named =
       readManagedValue(
         () => ({
-          namespace: readMetadataString(
-            bytes,
-            layout,
-            value.namespaceIndex,
-            layout.strings.size,
-          ),
-          name: readMetadataString(
-            bytes,
-            layout,
-            value.nameIndex,
-            layout.strings.size,
-          ),
+          namespace: readMetadataString(bytes, layout, value.namespaceIndex),
+          name: readMetadataString(bytes, layout, value.nameIndex),
           enclosingRow: value.enclosingRow,
           scopeValid,
         }),

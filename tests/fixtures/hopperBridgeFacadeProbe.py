@@ -202,6 +202,7 @@ def main():
         "procedure_info", {"procedure": "0x401000"}
     )
     bridge["_assembly"] = lambda procedure: "ret"
+    bridge["_assembly_lines"] = lambda procedure, addresses=None: ["ret"]
     bridge["_pseudocode"] = lambda document, procedure: None
     bridge["_native_calls"] = lambda procedure, direction: ({}, [])
     bridge["_string_inventory"] = lambda document, targets=None: {}

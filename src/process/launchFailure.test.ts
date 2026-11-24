@@ -6,6 +6,7 @@ it.each([
   ["ELOOP", { kind: "missing", code: "ELOOP" }],
   ["ENAMETOOLONG", { kind: "missing", code: "ENAMETOOLONG" }],
   ["ENOEXEC", { kind: "not_executable", code: "ENOEXEC" }],
+  ["EFTYPE", { kind: "not_executable", code: "EFTYPE" }],
   ["EISDIR", { kind: "not_executable", code: "EISDIR" }],
   ["EPERM", { kind: "not_executable", code: "EPERM" }],
   ["ENOMEM", { kind: "host-exhausted", code: "ENOMEM", resource: "memory" }],
@@ -50,6 +51,36 @@ it.each([
     {
       kind: "not_executable",
       code: "EACCES",
+      executable: "C:\\tools\\tool.exe",
+      syscall: undefined,
+    },
+  ],
+  [
+    "Windows native launcher bad image",
+    {
+      code: "ERR_REA_WINDOWS_NATIVE",
+      win32Code: 193,
+      constraint: "Create process atomically inside owned Job Object failed",
+      requestedPath: "C:\\tools\\tool.dll",
+    },
+    {
+      kind: "not_executable",
+      code: "EFTYPE",
+      executable: "C:\\tools\\tool.dll",
+      syscall: undefined,
+    },
+  ],
+  [
+    "Windows native launcher other code",
+    {
+      code: "ERR_REA_WINDOWS_NATIVE",
+      win32Code: 216,
+      constraint: "Create process atomically inside owned Job Object failed",
+      requestedPath: "C:\\tools\\tool.exe",
+    },
+    {
+      kind: "failed",
+      code: "ERR_REA_WINDOWS_NATIVE",
       executable: "C:\\tools\\tool.exe",
       syscall: undefined,
     },

@@ -49,7 +49,6 @@ export type PyzArchive =
 const MAX_PYZ_TABLE_BYTES = 16 * 1024 * 1024;
 
 interface PyzHeaderFacts {
-  readonly signatureMatches: boolean;
   readonly pythonMagic: Buffer;
   readonly pythonVersion: string | undefined;
   readonly tocOffset: number;
@@ -58,11 +57,17 @@ interface PyzHeaderFacts {
 }
 
 /** Called only after the exact fixed-header read has succeeded. */
-const readPyzHeaderFacts = (header: Buffer, size: number): PyzHeaderFacts => {
+const readPyzHeaderFacts = (
+  header: Buffer,
+  size: number,
+): Result<PyzHeaderFacts, PyInstallerFailure> => {
+  if (!header.subarray(0, 4).equals(PYZ_MAGIC))
+    return err(
+      pyInstallerFailure("format", "PYZ archive magic does not match"),
+    );
   const pythonMagic = Buffer.from(header.subarray(4, 8));
   const tocOffset = new BinaryReader(header, false, "pyz").u32(8);
-  return {
-    signatureMatches: header.subarray(0, 4).equals(PYZ_MAGIC),
+  return ok({
     pythonMagic,
     pythonVersion: pythonVersionForMagic(pythonMagic),
     tocOffset,
@@ -70,7 +75,7 @@ const readPyzHeaderFacts = (header: Buffer, size: number): PyzHeaderFacts => {
       tocOffset >= PYZ_HEADER_BYTES && tocOffset <= size
         ? size - tocOffset
         : null,
-  };
+  });
 };
 
 /** Parse only the header and table in memory; hash the complete file range in chunks. */
@@ -91,7 +96,9 @@ export const readPyzArchive = async (
     signal,
   });
   if (!headerRead.ok) return headerRead;
-  const header = readPyzHeaderFacts(headerRead.value, size);
+  const admitted = readPyzHeaderFacts(headerRead.value, size);
+  if (!admitted.ok) return admitted;
+  const header = admitted.value;
   const tableSize =
     header.pythonVersion === undefined ? 0 : (header.tableBytes ?? 0);
   if (tableSize > MAX_PYZ_TABLE_BYTES)
@@ -129,10 +136,6 @@ const parsePyzParts = (
   table: Buffer,
   sha256: string,
 ): Result<PyzArchive, PyInstallerFailure> => {
-  if (!header.signatureMatches)
-    return err(
-      pyInstallerFailure("format", "PYZ archive magic does not match"),
-    );
   const { pythonMagic, pythonVersion, tocOffset } = header;
   if (pythonVersion === undefined)
     return ok({

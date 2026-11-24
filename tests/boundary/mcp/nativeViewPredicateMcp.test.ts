@@ -51,15 +51,24 @@ const expectRetainedMatchingInputs = (
   validation: ReturnType<typeof createMcpSchemaValidation>,
 ): void => {
   if (tool === undefined) throw new Error("Missing advertised matching schema");
+  expect(tool.description).toContain("list_procedures inventories");
+  expect(tool.description).toContain("Declared Evidence fields accept");
   expect(tool.inputSchema.properties).toMatchObject({
-    left: { description: expect.stringContaining("list_procedures Evidence") },
-    right: { description: expect.stringContaining("list_procedures Evidence") },
+    left: { type: "object" },
+    right: { type: "object" },
     left_observations: { type: "array" },
+    right_observations: { type: "array" },
   });
   const validate = validation.getValidator(tool.inputSchema);
   expect(validate({ left: selected, right: selected }).valid).toBe(true);
   expect(validate({ left: [], right: selected }).valid).toBe(false);
   expect(validate({ left: selected, right: [] }).valid).toBe(false);
+  for (const field of ["left_observations", "right_observations"]) {
+    const input = { left: selected, right: selected };
+    expect(validate({ ...input, [field]: [selected] }).valid).toBe(true);
+    expect(validate({ ...input, [field]: selected }).valid).toBe(false);
+    expect(validate({ ...input, [field]: [42] }).valid).toBe(false);
+  }
 };
 
 it.each(["compact"] as const)(

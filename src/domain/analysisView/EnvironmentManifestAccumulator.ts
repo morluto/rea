@@ -1,3 +1,4 @@
+import { isSuccessfulHttpStatus } from "../httpResponseStatus.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { jsonValueType, parseJsonObject } from "../jsonShape.js";
 import { ok, type Result } from "../result.js";
@@ -108,8 +109,7 @@ const manifestResponseIsEmpty = (record: WebNetworkCaptureRecord): boolean => {
 };
 /** A write group every response of which had no body, at least one of them a success. */
 const answeredEmpty = (group: GroupState): boolean =>
-  group.bodiless &&
-  [...group.statuses].some((status) => status >= 200 && status < 300);
+  group.bodiless && [...group.statuses].some(isSuccessfulHttpStatus);
 const ASSET_ESSENCES = new Set([
   "text/html",
   "application/xhtml+xml",
@@ -229,7 +229,7 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
       const releaseGrouping = this.temporaryCheckpoint();
       if (line.kind === "excluded") {
         releaseGrouping();
-        const prepared = this.prepareRecordedRequestLine(record, line);
+        const prepared = this.prepareRecordedRequestLine(record, line, null);
         if (!prepared.ok) return prepared;
         prepared.value();
         limitations.value();
@@ -262,22 +262,29 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
       ]);
       const group = this.#groups.get(key);
       const bodyShape =
-        group === undefined && WRITE_METHODS.has(line.method)
+        this.reportsBodyShapes &&
+        group === undefined &&
+        WRITE_METHODS.has(line.method)
           ? this.#bodyShape(record.reported)
           : ok(null);
       if (!bodyShape.ok) return bodyShape;
+      const mime = mediaTypeEssence(line.rawMime);
       const grouped = this.#prepareAppend(
         record.ordinal,
         line,
         route,
         queryNames,
         { key, group },
-        { shape: bodyShape.value, empty: manifestResponseIsEmpty(record) },
+        {
+          shape: bodyShape.value,
+          empty: manifestResponseIsEmpty(record),
+          mime,
+        },
       );
       if (!grouped.ok) return grouped;
       // Keep the parsed line's admission while releasing grouping-only scratch.
       releaseGrouping();
-      const prepared = this.prepareRecordedRequestLine(record, line);
+      const prepared = this.prepareRecordedRequestLine(record, line, mime);
       if (!prepared.ok) return prepared;
       // Both owners admitted their facts; neither commit can reject the record.
       grouped.value();
@@ -302,6 +309,7 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
   protected prepareRecordedRequestLine(
     _record: WebNetworkCaptureRecord,
     _line: RecordedRequestLine,
+    _mime: string | null,
   ): Result<() => void, AnalysisError> {
     return ok(() => {});
   }
@@ -337,10 +345,13 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
     route: RouteTemplate,
     queryNames: ReadonlySet<string> | undefined,
     bucket: { readonly key: string; readonly group: GroupState | undefined },
-    exchange: { readonly shape: BodyShape | null; readonly empty: boolean },
+    exchange: {
+      readonly shape: BodyShape | null;
+      readonly empty: boolean;
+      readonly mime: string | null;
+    },
   ): Result<() => void, AnalysisError> {
-    const bodyShape = exchange.shape;
-    const mime = mediaTypeEssence(line.rawMime);
+    const { shape: bodyShape, mime } = exchange;
     let group = bucket.group;
     // One retained record pointer, including its projected output.
     let bytes =

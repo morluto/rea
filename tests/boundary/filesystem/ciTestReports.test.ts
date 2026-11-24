@@ -34,6 +34,7 @@ const executeTimingReport = async (
       SOURCE_RESULT: "",
       CI_VERIFY_TEST_INVENTORY: "false",
       CI_TEST_SELECTION: "",
+      CI_COMPARE_TEST_SHADOW: "false",
       ...environment,
       GITHUB_STEP_SUMMARY: summary,
     },
@@ -55,7 +56,10 @@ const workflow = async () =>
   z
     .object({
       jobs: z.object({
-        test: z.object({ steps: stepsSchema }),
+        test: z.object({
+          steps: stepsSchema,
+          env: z.object({ SHARD_RESULT: z.string() }),
+        }),
         build: z.object({ steps: stepsSchema }),
         docs: z.object({ steps: stepsSchema }),
         python: z.object({ if: z.string(), steps: stepsSchema }),
@@ -83,7 +87,7 @@ it("merges available failed-shard diagnostics and skips unavailable shard report
   const merge = steps.findIndex((step) => step.run?.includes("test:ci:merge"));
   const upload = steps.findIndex((step) => step.with?.name === "test-results");
   const gate = steps.findIndex(
-    (step) => step.env?.SHARD_RESULT && step.run?.includes("test "),
+    (step) => step.name === "Require successful test shards",
   );
   expect(merge).toBeGreaterThan(0);
   expect(download?.if).toContain("!cancelled()");
@@ -141,14 +145,14 @@ function conditionValue(
   needs: Record<string, unknown>,
   canceled: boolean,
   timingReportExists = false,
+  shardResult = "",
 ) {
   if (!condition) throw new Error("Missing report collection condition");
   return runInNewContext(
-    condition
-      .replaceAll("needs.test-shard", 'needs["test-shard"]')
-      .replaceAll("needs.test-source", 'needs["test-source"]'),
+    condition.replaceAll("needs.test-source", 'needs["test-source"]'),
     {
       needs,
+      env: { SHARD_RESULT: shardResult },
       cancelled: () => canceled,
       hashFiles: () => (timingReportExists ? "timing-report" : ""),
     },
@@ -178,7 +182,6 @@ it("collects either fast test group while keeping full reports tied to full shar
         ] as const) {
           const needs = {
             changes: { outputs: { code, tier } },
-            "test-shard": { result: shard },
             "test-source": { result: source },
           };
           const builtAvailable = ["success", "failure"].includes(shard);
@@ -193,11 +196,15 @@ it("collects either fast test group while keeping full reports tied to full shar
                 full: tier === "full" && builtAvailable,
               }
             : { download: false, fast: false, full: false };
-          expect(conditionValue(download?.if, needs, canceled)).toBe(
-            expected.download,
+          expect(
+            conditionValue(download?.if, needs, canceled, false, shard),
+          ).toBe(expected.download);
+          expect(conditionValue(fast?.if, needs, canceled, false, shard)).toBe(
+            expected.fast,
           );
-          expect(conditionValue(fast?.if, needs, canceled)).toBe(expected.fast);
-          expect(conditionValue(full?.if, needs, canceled)).toBe(expected.full);
+          expect(conditionValue(full?.if, needs, canceled, false, shard)).toBe(
+            expected.full,
+          );
         }
       }
     }
@@ -205,7 +212,9 @@ it("collects either fast test group while keeping full reports tied to full shar
   const summary = steps.find((step) =>
     step.run?.includes("scripts/ci/test-report.mjs"),
   );
-  expect(summary?.env?.SHARD_RESULT).toBe("${{ needs.test-shard.result }}");
+  expect((await workflow()).test.env.SHARD_RESULT).toBe(
+    "${{ needs[needs.changes.outputs.test_shard_job].result }}",
+  );
   expect(summary?.env?.SOURCE_RESULT).toBe("${{ needs.test-source.result }}");
   // A selected PR subset runs its source tests in the selected test jobs.
   expect(summary?.env?.SOURCE_REQUIRED).toBe(
@@ -238,13 +247,14 @@ it("requires portable report validation even when the timing report is missing",
 it("keeps diagnosis available after merge failure and publishes only complete successful history", async () => {
   const steps = (await workflow()).test!.steps;
   const diagnosis = steps.find((step) => step.with?.name === "test-results");
+  expect(diagnosis?.with?.overwrite).toBe(true);
   expect(diagnosis?.if).toContain("!cancelled()");
   expect(diagnosis?.if).not.toContain("success()");
   const history = steps.find(
     (step) => step.name === "Publish successful timing history",
   );
   expect(history?.if).toContain("success()");
-  expect(history?.if).toContain("needs.test-shard.result == 'success'");
+  expect(history?.if).toContain("env.SHARD_RESULT == 'success'");
   expect(history?.if).toContain("needs.changes.outputs.tier == 'full'");
   expect(history?.if).toContain(
     "needs.changes.outputs.tier == 'fast' && needs.test-source.result == 'success'",
@@ -256,6 +266,7 @@ it("keeps diagnosis available after merge failure and publishes only complete su
   expect(history?.with?.name).toBe(
     "test-timings-${{ needs.changes.outputs.tier }}",
   );
+  expect(history?.with?.overwrite).toBe(true);
   expect(history?.with?.path).toBe(".cache/ci-test-history/test-results.json");
   const buildSteps = (await workflow()).build!.steps;
   const lookup = buildSteps.find((step) =>
@@ -530,6 +541,49 @@ it("exports portable timing history and removes it on a failed, partial, or inva
   await expect(readFile(history)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
+it.each([
+  {
+    label: "unsuccessful report",
+    success: false,
+    state: "passed",
+    unhandledErrors: 0,
+  },
+  {
+    label: "failed module",
+    success: true,
+    state: "failed",
+    unhandledErrors: 0,
+  },
+  {
+    label: "unhandled error",
+    success: true,
+    state: "passed",
+    unhandledErrors: 1,
+  },
+])(
+  "refuses a successful merge with $label and leaves diagnostics",
+  async ({ success, state, unhandledErrors }) => {
+    const root = await createTestTempDirectory("rea-ci-conflicting-report-");
+    await writeFile(
+      join(root, "test-timings.json"),
+      JSON.stringify({
+        version: 1,
+        success,
+        unhandledErrors,
+        files: [{ name: "tests/sample.test.ts", durationMs: 1, state }],
+      }),
+    );
+    await expect(executeTimingReport(root)).rejects.toMatchObject({ code: 1 });
+    const summary = await readFile(join(root, "summary.md"), "utf8");
+    expect(summary).toContain("## Merged test diagnostics");
+    expect(summary).toContain("| tests/sample.test.ts | 1 |");
+    expect(summary).toContain("diagnostic only");
+    await expect(
+      readFile(join(root, ".cache/ci-test-history/test-results.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
 it("recovers complete module costs from real blob reports without executing tests again", async () => {
   const root = await createTestTempDirectory("rea-ci-module-timing-");
   const config = join(root, "vitest.config.mjs");
@@ -649,10 +703,119 @@ it("recovers complete module costs from real blob reports without executing test
     unhandledErrors: 0,
     files: [{ state: "failed" }],
   });
-  // Even a caller accidentally marking the merge successful cannot publish this report.
-  await executeTimingReport(root);
+  const failedRun = await executeTimingReport(root, {
+    SHARD_RESULT: "failure",
+    MERGE_RESULT: "failure",
+  });
+  expect(failedRun.summary).toContain("Failed test modules reported: 1.");
+  expect(failedRun.summary).toContain('- "sample.test.js"');
+  expect(failedRun.stdout).toContain("Failed test modules reported: 1.");
+  expect(failedRun.stdout).toContain('- "sample.test.js"');
+  // A successful workflow status cannot override the failed blob merge report.
+  await expect(executeTimingReport(root)).rejects.toMatchObject({ code: 1 });
+  const rejectedSummary = await readFile(join(root, "summary.md"), "utf8");
+  expect(rejectedSummary).toContain("## Merged test diagnostics");
+  expect(rejectedSummary).toContain('- "sample.test.js"');
+  expect(rejectedSummary).toContain("diagnostic only");
   await expect(
     readFile(join(root, ".cache/ci-test-history/test-results.json")),
+  ).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("caps the failed file list and limits partial diagnostics to reported modules", async () => {
+  const root = await createTestTempDirectory("rea-ci-failed-sample-");
+  await writeFile(
+    join(root, "test-timings.json"),
+    JSON.stringify({
+      version: 1,
+      success: false,
+      unhandledErrors: 2,
+      files: [
+        ...Array.from({ length: 21 }, (_, index) => ({
+          name: `tests/z${String(20 - index).padStart(2, "0")}.test.ts`,
+          durationMs: 1,
+          state: "failed",
+        })),
+        { name: "tests/<tag>.test.ts", durationMs: 1, state: "failed" },
+        { name: "tests/passed.test.ts", durationMs: 1, state: "passed" },
+      ],
+    }),
+  );
+  const { summary, stdout } = await executeTimingReport(root, {
+    SHARD_RESULT: "skipped",
+    SOURCE_REQUIRED: "true",
+    SOURCE_RESULT: "failure",
+    MERGE_RESULT: "failure",
+  });
+  expect(summary).toContain("Partial test diagnostics");
+  expect(summary).toContain(
+    '```text\nFailed test modules reported: 22.\n- "tests/<tag>.test.ts"',
+  );
+  expect(stdout).toContain("Failed test modules reported: 22.");
+  expect(stdout).toContain('- "tests/<tag>.test.ts"');
+  expect(stdout).toContain('- "tests/z18.test.ts"');
+  expect(stdout).not.toContain("z19.test.ts");
+  expect(stdout).not.toContain("passed.test.ts");
+  expect(stdout).toContain("2 more in the test report.");
+  expect(stdout).toContain("Unhandled Vitest errors reported: 2.");
+});
+
+it("compares a frozen prediction with partial failing reports without changing their outcome", async () => {
+  const root = await createTestTempDirectory("rea-ci-selection-shadow-");
+  await workflowGit(root, ["init"]);
+  const names = ["src/a.test.ts", "src/b.test.ts", "src/c.test.ts"];
+  await mkdir(join(root, "src"));
+  for (const name of names) await writeFile(join(root, name), "");
+  await workflowGit(root, ["add", "src"]);
+  const sha = "a".repeat(40);
+  const directory = join(root, ".cache/ci-test-shadow");
+  await mkdir(directory, { recursive: true });
+  const path = join(directory, "test-selection-shadow.json");
+  await writeFile(
+    path,
+    JSON.stringify({ version: 1, sha, files: names.slice(0, 2) }),
+  );
+  await writeFile(
+    join(root, "test-timings.json"),
+    JSON.stringify({
+      version: 1,
+      success: false,
+      files: [names[0], names[2]].map((name) => ({
+        name,
+        state: "failed",
+        durationMs: 25,
+      })),
+    }),
+  );
+  const env = {
+    CI_VERIFY_TEST_INVENTORY: "true",
+    CI_COMPARE_TEST_SHADOW: "true",
+    GITHUB_SHA: sha,
+    SHARD_RESULT: "failure",
+    MERGE_RESULT: "failure",
+  };
+  await executeTimingReport(root, env);
+  expect(
+    JSON.parse(
+      await readFile(join(root, "test-selection-comparison.json"), "utf8"),
+    ),
+  ).toMatchObject({
+    sha,
+    candidates: 2,
+    observedCandidates: 1,
+    reportedFiles: 2,
+    completeInventory: false,
+    capturedFailures: [names[0]],
+    missedFailures: [names[2]],
+    candidateReportedDurationMs: 25,
+    totalReportedDurationMs: 50,
+  });
+  expect(
+    (await executeTimingReport(root, { ...env, GITHUB_SHA: "b".repeat(40) }))
+      .summary,
+  ).toContain("prediction unavailable");
+  await expect(
+    readFile(join(root, "test-selection-comparison.json")),
   ).rejects.toMatchObject({ code: "ENOENT" });
 });
 

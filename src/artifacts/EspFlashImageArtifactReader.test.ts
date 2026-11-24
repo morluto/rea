@@ -18,6 +18,7 @@ import {
   espFlashDump,
   otaData,
   otaRecord,
+  partitionEntry,
   partitionTable,
 } from "../domain/firmware/espFlash.fixture.js";
 import {
@@ -106,7 +107,7 @@ describe("ESP flash layout inventory", () => {
         flash_address: 0x8000,
         method: "default",
         partition_count: 6,
-        md5: { status: "valid" },
+        md5: { status: "valid", entries_after_checksum: 0 },
       },
       partitions_outside_dump: [],
       otadata: { partition_index: 1 },
@@ -173,6 +174,30 @@ describe("ESP flash layout inventory", () => {
     expect(snapshot.limitations).toContainEqual(
       expect.stringMatching(/0xa000.*0x1000.*MD5.*does not record/iu),
     );
+  });
+
+  it("reports partition entries after the MD5 record as a count", async () => {
+    const [first, second, third] = TWO_OTA_PARTITIONS;
+    const prefix = partitionTable([first!]);
+    const snapshot = await scanCanonicalArtifactInventory(
+      await writeDump(
+        espFlashDump({
+          bootloader: { at: 0, bytes: BOOTLOADER },
+          table: Buffer.concat([
+            prefix.subarray(0, 64),
+            partitionEntry(second!),
+            partitionEntry(third!),
+            prefix.subarray(64),
+          ]),
+        }),
+      ),
+    );
+    expect(root(snapshot)).toMatchObject({
+      partition_table: {
+        flash_address: 0x8000,
+        md5: { status: "valid", entries_after_checksum: 2 },
+      },
+    });
   });
 });
 

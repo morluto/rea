@@ -118,9 +118,7 @@ it.for([false, true])(
           tokenOffset: undefined,
         },
       );
-    expect(Number(render(true))).toBe(
-      estimateTokenCount(render(false).trimEnd()),
-    );
+    expect(Number(render(true))).toBe(estimateTokenCount(render(false)));
   },
 );
 
@@ -154,7 +152,11 @@ cliTest(
           "--mcp",
           ...declarations,
           "--token-limit",
-          "22",
+          String(
+            estimateTokenCount(
+              'code: MCP_MODE_REMOVED\nmessage: "Per-command [REDACTED]',
+            ),
+          ),
         ],
       });
     const control = await run([]);
@@ -192,5 +194,27 @@ cliTest(
       });
       expect(reply.stdout).not.toContain("--filter-output");
     }
+  },
+);
+
+it.for([false, true])(
+  "clamps dispatcher refusal token windows at the end (%s)",
+  (fullOutput) => {
+    const output = renderFailure(
+      { code: "COMMAND_NOT_FOUND", message: "Unknown command" },
+      { command: "fixture", duration: "0ms" },
+      undefined,
+      {
+        format: "json",
+        human: false,
+        fullOutput,
+        tokenCount: false,
+        tokenLimit: 5,
+        tokenOffset: 1000,
+      },
+    );
+    expect(output).toMatch(/\[truncated: showing tokens (\d+)–\1 of \1\]/u);
+    expect(output).not.toContain("nextOffset");
+    expect(output).not.toContain("Unknown command");
   },
 );

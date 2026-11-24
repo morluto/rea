@@ -65,6 +65,13 @@ describe("PE resource provider budget reporting", () => {
     expect(projectAnalysisError(error)).toMatchObject({
       retryable: false,
       remediation: { action: error.remediationAction },
+      details: {
+        reported_limits: {
+          boundary: "max_entries",
+          maximum: 1,
+          max_entries: 1,
+        },
+      },
     });
   });
 
@@ -153,7 +160,9 @@ describe("PE resource provider budget reporting", () => {
       max_entries: MAX_INSPECT_PE_DIRECTORY_ENTRIES,
     });
     if (result.ok) throw new Error("Expected malformed table refusal");
-    expect(result.error).toMatchObject({ _tag: "AnalysisInputError" });
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisMalformedTargetError",
+    });
   });
 });
 
@@ -181,6 +190,11 @@ it("names the fixed PE metadata allowance instead of host memory", async () => {
   const projected = projectAnalysisError(error);
   expect(projected.retryable).toBe(false);
   expect(projected.details).toMatchObject({
+    reported_limits: {
+      boundary: "pe_resource_metadata_bytes",
+      maximum: 8 * 1024 * 1024,
+      maximum_metadata_bytes: 8 * 1024 * 1024,
+    },
     refusal: {
       kind: "fixed_ceiling",
       allowance_kind: "parser",

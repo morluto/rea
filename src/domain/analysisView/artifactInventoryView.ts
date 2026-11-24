@@ -41,6 +41,10 @@ import {
 } from "./analysisViewCoverage.js";
 import { analysisViewResultInputError } from "./analysisViewParent.js";
 import { ARTIFACT_INVENTORY_VIEW_CAVEATS } from "./artifactInventoryViewCaveats.js";
+import {
+  compileInventoryPathGlob,
+  inventoryPathGlobSchema,
+} from "./inventoryPathGlob.js";
 import { androidOtaPayloadSummaryMetadataSchema } from "./androidOtaPayloadSummary.js";
 import {
   espFlashImageSummaryMetadataSchema,
@@ -65,6 +69,27 @@ export const artifactInventoryViewRequestSchema = z.discriminatedUnion(
       entry_kinds: z
         .array(artifactOccurrenceSchema.shape.entry_kind)
         .optional(),
+      artifact_kinds: z
+        .array(artifactOccurrenceSchema.shape.artifact_kind)
+        .optional()
+        .describe(
+          'Exact recognized artifact kinds, e.g. ["native-addon"]; [] matches none. Unrecognized bytes keep kind unknown.',
+        ),
+      path_globs: z
+        .array(inventoryPathGlobSchema)
+        .optional()
+        .describe(
+          'Whole-path globs over recorded logical paths, any of which may match: * and ? stay within one segment, a ** segment spans segments, e.g. ["lib/*/*.so"], ["META-INF/*"], ["*"] for root entries, ["assets/**"] for everything below; [] matches none. "." names the container itself and never matches.',
+        ),
+      order_by: z
+        .strictObject({
+          field: z.enum(["declared_size", "compressed_size"]),
+          direction: z.enum(["ascending", "descending"]),
+        })
+        .optional()
+        .describe(
+          'Order selected rows by size before paging; unknown sizes come last and ties keep inventory order. Omit for inventory order. The container itself (".") is a sized row; add path_globs ["**"] to rank only its entries.',
+        ),
       fields: z.array(artifactOccurrenceSchema.keyof()).optional(),
     }),
     z.strictObject({
@@ -419,8 +444,12 @@ export const projectArtifactInventoryView = (
 };
 
 const occurrencePage = (source: InventorySource, view: OccurrenceView) => {
-  const indices = occurrenceIndices(source, view);
   const rows = source.inventory.occurrences;
+  const selected = occurrenceIndices(source, view);
+  const indices =
+    view.order_by === undefined
+      ? selected
+      : sizeOrder(rows, selected, view.order_by);
   const total = indices?.length ?? rows.length;
   const items = [];
   for (
@@ -430,6 +459,23 @@ const occurrencePage = (source: InventorySource, view: OccurrenceView) => {
   )
     items.push(selectOccurrenceFields(rows[indices?.[at] ?? at]!, view.fields));
   return { items, total };
+};
+
+/** Stable size order; unknown sizes follow known ones in either direction. */
+const sizeOrder = (
+  rows: readonly ArtifactOccurrence[],
+  selected: number[] | undefined,
+  order: NonNullable<OccurrenceView["order_by"]>,
+): number[] => {
+  const sign = order.direction === "ascending" ? 1 : -1;
+  return (selected ?? rows.map((_, index) => index)).sort((left, right) => {
+    const a = rows[left]![order.field];
+    const b = rows[right]![order.field];
+    if (a === b) return left - right;
+    if (a === null) return 1;
+    if (b === null) return -1;
+    return (a - b) * sign;
+  });
 };
 
 const nodePage = (
@@ -489,23 +535,58 @@ const occurrenceIndices = (
   source: InventorySource,
   view: OccurrenceView,
 ): number[] | undefined => {
+  const selectors = [
+    view.occurrence_ids,
+    view.logical_paths,
+    view.entry_kinds,
+    view.artifact_kinds,
+    view.path_globs,
+  ];
+  if (selectors.every((selector) => selector === undefined)) return undefined;
+  if (selectors.some((selector) => selector?.length === 0)) return [];
+  const rows = source.inventory.occurrences;
+  const paths =
+    view.logical_paths === undefined ? undefined : new Set(view.logical_paths);
+  const kinds =
+    view.entry_kinds === undefined ? undefined : new Set(view.entry_kinds);
+  const artifactKinds =
+    view.artifact_kinds === undefined
+      ? undefined
+      : new Set(view.artifact_kinds);
+  const globs = view.path_globs?.map(compileInventoryPathGlob);
+  const matches = (index: number) => {
+    const row = rows[index]!;
+    return (
+      (paths === undefined || paths.has(row.logical_path)) &&
+      (kinds === undefined || kinds.has(row.entry_kind)) &&
+      (artifactKinds === undefined || artifactKinds.has(row.artifact_kind)) &&
+      (globs === undefined ||
+        (row.logical_path !== "." &&
+          globs.some((glob) => glob(row.logical_path))))
+    );
+  };
+  return exactCandidates(source, view)
+    .filter(matches)
+    .sort((left, right) => left - right);
+};
+
+/** Narrow by the most selective exact index; remaining selectors filter. */
+const exactCandidates = (
+  source: InventorySource,
+  view: OccurrenceView,
+): number[] => {
+  const rows = source.inventory.occurrences;
   if (
     view.occurrence_ids === undefined &&
     view.logical_paths === undefined &&
     view.entry_kinds === undefined
   )
-    return undefined;
-  if (
-    view.occurrence_ids?.length === 0 ||
-    view.logical_paths?.length === 0 ||
-    view.entry_kinds?.length === 0
-  )
-    return [];
+    return rows.map((_, index) => index);
   if (source.index === undefined) {
     const byId = new Map<string, number>();
     const byPath = new Map<string, number[]>();
     const byKind = new Map<ArtifactOccurrence["entry_kind"], number[]>();
-    for (const [index, row] of source.inventory.occurrences.entries()) {
+    for (const [index, row] of rows.entries()) {
       byId.set(row.occurrence_id, index);
       const existing = byPath.get(row.logical_path);
       if (existing === undefined) byPath.set(row.logical_path, [index]);
@@ -517,32 +598,18 @@ const occurrenceIndices = (
     source.index = { byId, byPath, byKind };
   }
   const lookup = source.index;
-  const paths =
-    view.logical_paths === undefined ? undefined : new Set(view.logical_paths);
-  const selected =
-    view.occurrence_ids === undefined
-      ? paths === undefined
-        ? [...new Set(view.entry_kinds)].flatMap(
-            (kind) => lookup.byKind.get(kind) ?? [],
-          )
-        : [...paths].flatMap((path) => lookup.byPath.get(path) ?? [])
-      : [...new Set(view.occurrence_ids)].flatMap((id) => {
-          const index = lookup.byId.get(id);
-          return index === undefined ||
-            (paths !== undefined &&
-              !paths.has(source.inventory.occurrences[index]!.logical_path))
-            ? []
-            : [index];
-        });
-  const kinds =
-    view.entry_kinds === undefined ? undefined : new Set(view.entry_kinds);
-  return selected
-    .filter(
-      (index) =>
-        kinds === undefined ||
-        kinds.has(source.inventory.occurrences[index]!.entry_kind),
-    )
-    .sort((left, right) => left - right);
+  if (view.occurrence_ids !== undefined)
+    return [...new Set(view.occurrence_ids)].flatMap((id) => {
+      const index = lookup.byId.get(id);
+      return index === undefined ? [] : [index];
+    });
+  if (view.logical_paths !== undefined)
+    return [...new Set(view.logical_paths)].flatMap(
+      (path) => lookup.byPath.get(path) ?? [],
+    );
+  return [...new Set(view.entry_kinds)].flatMap(
+    (kind) => lookup.byKind.get(kind) ?? [],
+  );
 };
 
 const nodeIndices = (

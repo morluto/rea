@@ -16,25 +16,51 @@ class Segment:
     def getNameAtAddress(self, address):
         return "entry" if address == 0x401000 else "inner"
     def getProcedureAtAddress(self, address):
-        return procedure
+        # 0x40b000 models an import address-table slot outside every procedure.
+        return procedure if 0x401000 <= address < 0x402000 else None
 class Document:
     def __init__(self):
         self.names = []
+        self.cursor = 0x401004
     def getCurrentAddress(self):
-        return 0x401004
+        return self.cursor
     def getAddressForName(self, name):
         self.names.append(name)
-        return {"entry": 0x401000, "alias_entry": 0x401000, "inner": 0x401004}.get(name)
+        return {
+            "entry": 0x401000,
+            "alias_entry": 0x401000,
+            "inner": 0x401004,
+            "CloseHandle": 0x40B000,
+        }.get(name)
     def getSegmentAtAddress(self, address):
         return segment
 segment = Segment()
 procedure = Procedure()
 document = Document()
 results = {}
-for selector in ["entry", "alias_entry", "inner", "0x401004", "401004", "file-offset:0x4"]:
+def select(key, selector):
     try:
         selected = bridge["_procedure"](document, selector)
-        results[selector] = {"entry": bridge["_hex"](selected.getEntryPoint())}
+        results[key] = {"entry": bridge["_hex"](selected.getEntryPoint())}
     except Exception as error:
-        results[selector] = {"diagnostic_type": bridge["_diagnostic_type"](error), "message": str(error)}
+        results[key] = {
+            "diagnostic_type": bridge["_diagnostic_type"](error),
+            "message": str(error),
+            "diagnostic": bridge["_safe_diagnostic"](error),
+        }
+for selector in [
+    "entry",
+    "alias_entry",
+    "inner",
+    "0x401004",
+    "401004",
+    "file-offset:0x4",
+    "CloseHandle",
+    "0x40b000",
+    "missing_fn",
+]:
+    select(selector, selector)
+# An omitted selector reads the cursor, here parked outside every procedure.
+document.cursor = 0x40B000
+select("<cursor>", None)
 print(json.dumps({"results": results, "name_lookups": document.names}))

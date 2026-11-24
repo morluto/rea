@@ -1,4 +1,4 @@
-import canonicalize from "canonicalize";
+import { serializeCanonicalValue } from "./canonicalDigest.js";
 import { z } from "zod";
 
 import type {
@@ -175,7 +175,10 @@ export const sessionTargetIdentitySchema = z.strictObject({
   kind: z.literal("session"),
   session_kind: debuggerSessionKindSchema,
   id: z.string().min(1),
-  target: z.union([fileTargetIdentitySchema, unknownTargetIdentitySchema]),
+  target: z.discriminatedUnion("kind", [
+    fileTargetIdentitySchema,
+    unknownTargetIdentitySchema,
+  ]),
 });
 
 /** A debugger session REA minted, bound to the target it launched. */
@@ -187,8 +190,7 @@ export interface SessionTargetIdentity {
 }
 
 /**
- * What an observation or cache entry is about. Tagged by `kind`; see
- * docs/adr/evidence/target-identity.md for the kinds later slices add.
+ * What an observation or cache entry is about. Tagged by `kind`.
  */
 export type TargetIdentity =
   | FileTargetIdentity
@@ -205,7 +207,7 @@ export type NonFileTargetIdentity = Exclude<TargetIdentity, FileTargetIdentity>;
  * facts can commit to. A session identity nests its target, so a persistence
  * format validates it with its own file declaration.
  */
-export const nonFileTargetIdentitySchema = z.union([
+export const nonFileTargetIdentitySchema = z.discriminatedUnion("kind", [
   unknownTargetIdentitySchema,
   urlTargetIdentitySchema,
   processTargetIdentitySchema,
@@ -258,7 +260,7 @@ export const binaryTargetIdentity = (
 
 /** The only comparison of two target identities: an RFC 8785 canonical digest. */
 export const targetIdentityKey = (identity: TargetIdentity): string => {
-  const encoded = canonicalize(identity);
+  const encoded = serializeCanonicalValue(identity);
   if (encoded === undefined)
     throw new TypeError("RFC 8785 canonicalization rejected a target identity");
   return `target_${sha256Hex(encoded)}`;

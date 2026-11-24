@@ -4,15 +4,33 @@ import type {
   JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import * as t from "@babel/types";
+import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import { isIntrinsicInstanceMethodCall } from "./javascriptSemanticIntrinsicInstances.js";
+import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
 
-export const isFetchCall = (
+const isFetchCall = (
   node: t.Node,
   bindings: JavaScriptSemanticAnalysisState,
 ): boolean =>
   (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
   isUnmodifiedGlobalReference(node.callee, bindings, "fetch");
+
+/** Read a proven Fetch Request input's source literal without constructing it. */
+export const literalFetchRequestConstructorUrl = (
+  call: t.Node,
+  input: t.Node,
+  bindings: JavaScriptSemanticAnalysisState,
+): string | undefined => {
+  const target = unwrapJavaScriptExpression(input).node;
+  if (
+    t.isNewExpression(target) &&
+    isFetchCall(call, bindings) &&
+    isUnmodifiedGlobalReference(target.callee, bindings, "Request")
+  )
+    return stringValue(target.arguments[0]);
+  return undefined;
+};
 
 /** Browser request identity requires an intact intrinsic, not a method spelling. */
 export const isBrowserNetworkRequest = (

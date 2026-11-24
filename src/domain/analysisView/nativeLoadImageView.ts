@@ -4,20 +4,23 @@ import {
   nativeLoadImageObservationSchema,
   nativeLoadImageSchema,
   nativeUnsupportedLoadImageSchema,
-  nativeDosLoadImageSchema,
+  nativeDosMzLoadImageSchema,
+  nativeDosComVerifiedComLoaderLoadImageSchema,
+  nativeDosComVerifiedBinaryLoaderLoadImageSchema,
+  nativeDosComMismatchLoadImageSchema,
   nativeRawLoadImageSchema,
   nativeDolLoadImageSchema,
 } from "../native/nativeLoadImage.js";
 import { nativeAddressObservationSchema } from "../native/nativeAddress.js";
 import { jsonValueSchema } from "../jsonValue.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
   type AdmittedView,
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
@@ -121,7 +124,22 @@ export const nativeLoadImageSummarySchema = z.strictObject({
       observations: true,
       limitations: true,
     }),
-    nativeDosLoadImageSchema.omit({
+    nativeDosMzLoadImageSchema.omit({
+      observations: true,
+      limitations: true,
+      checks: true,
+    }),
+    nativeDosComVerifiedComLoaderLoadImageSchema.omit({
+      observations: true,
+      limitations: true,
+      checks: true,
+    }),
+    nativeDosComVerifiedBinaryLoaderLoadImageSchema.omit({
+      observations: true,
+      limitations: true,
+      checks: true,
+    }),
+    nativeDosComMismatchLoadImageSchema.omit({
       observations: true,
       limitations: true,
       checks: true,
@@ -207,15 +225,8 @@ export const projectNativeLoadImageView = (
     SummaryAnalysisView | z.output<typeof nativeLoadImageViewRequestSchema>
   >(admitted, "summary", "native-load-image");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Native load-image Evidence supports summary and native-load-image views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Native load-image Evidence supports summary and native-load-image views.",
     );
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;

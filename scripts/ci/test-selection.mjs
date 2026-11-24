@@ -10,6 +10,8 @@ import { SHARED_BOUNDARY } from "./scopes.mjs";
 
 /** More selected files than this run the complete suite instead. */
 const SELECTION_CAP = 400;
+// Observe the next band while the complete suite still runs.
+const SHADOW_CAP = 600;
 // Selected files per test job, and the most jobs one selection uses. Each job
 // runs one `--shard` of the selection; the CI sequencer balances the shards by
 // main's recorded per-file durations when that history is available.
@@ -64,8 +66,8 @@ const isCheckerInput = (path) =>
   /^tests\/support\/analysis-efficiency\/.+\.py$/u.test(path) ||
   /^scripts\/verify\/baselines\/[^/]+\.json$/u.test(path) ||
   /^scripts\/verify\/advertised-schemas\/tools\/[^/]+\.json$/u.test(path);
-// Non-module fixtures with a single known owning test suite.
-const EXPLICIT_FIXTURE_OWNERS = [
+// Inputs whose owning tests are not reachable through the selection graph.
+const EXPLICIT_TEST_OWNERS = [
   [
     "tests/fixtures/cli-parity/*.txt",
     "tests/boundary/cli/cliParityGoldens.test.ts",
@@ -74,9 +76,13 @@ const EXPLICIT_FIXTURE_OWNERS = [
     "tests/boundary/cli/cliContractSchemaParity.uncomparable.json",
     "tests/boundary/cli/cliContractSchemaParity.test.ts",
   ],
+  [
+    "src/domain/managed/managedMemberPointers.ts",
+    "src/dotnet/ManagedMemberPointers.test.ts",
+  ],
 ];
-const explicitFixtureOwners = (path) =>
-  EXPLICIT_FIXTURE_OWNERS.filter(([pattern]) => matchesGlob(path, pattern)).map(
+const explicitTestOwners = (path) =>
+  EXPLICIT_TEST_OWNERS.filter(([pattern]) => matchesGlob(path, pattern)).map(
     ([, owner]) => owner,
   );
 // Verifier scripts are imported by their tests like source modules.
@@ -134,7 +140,7 @@ const isNonModuleFixture = (path) =>
   !isModule(path) &&
   !isProse(path) &&
   !isCheckerInput(path) &&
-  explicitFixtureOwners(path).length === 0;
+  explicitTestOwners(path).length === 0;
 /** Why a changed path cannot be traced to tests, if it cannot. */
 const untracedInput = (path) =>
   !isTest(path) && SHARED_BOUNDARY.test(path)
@@ -143,7 +149,7 @@ const untracedInput = (path) =>
         !isProse(path) &&
         !isCheckerInput(path) &&
         !isNonModuleFixture(path) &&
-        explicitFixtureOwners(path).length === 0
+        explicitTestOwners(path).length === 0
       ? `Input is not traced to tests: ${path}`
       : undefined;
 
@@ -153,9 +159,18 @@ const untracedInput = (path) =>
 // runs before dependencies are installed, so it cannot load that parser).
 const SPECIFIER =
   /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\bvi\.mock\(\s*|\bnew\s+URL\(\s*)["'](\.{1,2}\/[^"']+)["']/gu;
+// A substitution-free, unescaped template used by a dynamic import has the
+// same exact path identity as a quoted specifier.
+const STATIC_IMPORT_TEMPLATE =
+  /\bimport\s*\(\s*\x60(\.{1,2}\/[^\x60\\]*)\x60\s*(?=[,)])/gu;
 // TypeScript imports name the emitted `.js`/`.mjs`; scripts are imported as is.
 const importsOf = (path, source) =>
-  [...source.matchAll(SPECIFIER)].flatMap(([, specifier]) => {
+  [
+    ...source.matchAll(SPECIFIER),
+    ...[...source.matchAll(STATIC_IMPORT_TEMPLATE)].filter(
+      ([, specifier]) => !specifier.includes("${"),
+    ),
+  ].flatMap(([, specifier]) => {
     const target = posix.normalize(posix.join(posix.dirname(path), specifier));
     return [target, target.replace(/\.(m?)js$/u, ".$1ts")];
   });
@@ -194,7 +209,7 @@ export function traceAffectedTests({ files, snapshot }) {
   const changedNonModuleFixtures = files.filter(isNonModuleFixture);
   for (const path of files) {
     if (isTest(path)) select(path, "changed");
-    for (const owner of explicitFixtureOwners(path)) {
+    for (const owner of explicitTestOwners(path)) {
       if (!trackedSet.has(owner))
         untraced.push(`Missing test owner ${owner} for ${path}`);
       else select(owner, "owner");
@@ -202,7 +217,9 @@ export function traceAffectedTests({ files, snapshot }) {
   }
 
   const isNamedTarget = (path) =>
-    path.startsWith("scripts/") || path.startsWith("tests/fixtures/");
+    isTest(path) ||
+    path.startsWith("scripts/") ||
+    path.startsWith("tests/fixtures/");
   // A seed and every helper that imports or names it, directly or through another.
   const throughHelpers = (seed) => {
     const reached = new Set(seed);
@@ -223,11 +240,12 @@ export function traceAffectedTests({ files, snapshot }) {
     }
     return reached;
   };
-  // Close over test-only helpers, verifiers and shared script modules, then
-  // take the tests that import a change.
+  // Include removed tests: a coverage registry may still name the old path.
+  // Changes reach tests that import any affected test-only helper.
   const affected = throughHelpers([
     ...changedModules,
     ...changedNonModuleFixtures,
+    ...files.filter(isTest),
   ]);
   for (const test of tests)
     if (imports.get(test).some((target) => affected.has(target)))
@@ -260,7 +278,7 @@ export function traceAffectedTests({ files, snapshot }) {
   // selection, even when other changes select tests.
   for (const library of changedModules.filter(isScriptLibrary)) {
     const reached = throughHelpers([library]);
-    const paths = named(reached);
+    const paths = [...reached].filter(isNamedTarget);
     if (
       !tests.some(
         (test) =>
@@ -374,16 +392,16 @@ export function planTestSelection({ files, event, tier, code, snapshot }) {
   const paths = [...selected.keys()].sort();
   if (!paths.length)
     return full("No test imports, names or sits beside a changed path");
-  if (paths.length > SELECTION_CAP)
-    return full(
-      `${paths.length} affected test files exceed the ${SELECTION_CAP}-file selection cap`,
-    );
+  const overCap = paths.length > SELECTION_CAP;
+  const capReason = `${paths.length} affected test files exceed the ${SELECTION_CAP}-file selection cap`;
+  if (paths.length > SHADOW_CAP) return full(capReason);
   for (const path of paths)
     try {
       projectForTest(path);
     } catch {
-      return full(`No single test project runs ${path}`);
+      return full(overCap ? capReason : `No single test project runs ${path}`);
     }
+  if (overCap) return { ...full(capReason), shadowFiles: paths };
   const reasons = Object.groupBy([...selected.values()], (reason) => reason);
   return {
     version: 3,

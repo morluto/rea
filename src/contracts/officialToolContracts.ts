@@ -1,5 +1,8 @@
 import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
-import { analysisDetailSchema } from "./analysisDetail.js";
+import {
+  analysisDetailSchema,
+  analysisDetailSizeAwareSchema,
+} from "./analysisDetail.js";
 import { z } from "zod";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
 import { nativeFunctionAnnotationsInputSchema } from "../domain/native/nativeFunctionAnnotations.js";
@@ -31,7 +34,7 @@ import { decompileAnalysisSchema } from "../domain/analysisView/procedurePseudoc
 export const decompileAnalysisSelection = decompileAnalysisSchema
   .optional()
   .describe(
-    "Request a new independent decompile, bypassing project and snapshot results. Use only when the routed provider's procedure_pseudo_code capability declares independent_decompile; otherwise the request is refused. This may use different analysis context.",
+    "Select standalone analysis. independent_fresh requires independent_decompile. call_destination requires call_destination_decompile and an exact address.",
   );
 
 /** The contracts below that the CLI exposes as commands. */
@@ -41,6 +44,7 @@ const OFFICIAL_CLI_CONTRACTS: ReadonlySet<string> = new Set([
   "inspect_native_data_type",
   "inspect_native_instruction",
   "resolve_native_call_targets",
+  "list_procedures",
   "procedure_references",
   "xrefs",
   "search_bytes",
@@ -169,19 +173,19 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "list_names",
     evidenceEffects,
-    "List every analyzed memory and external symbol as address/value pairs. Provider metadata distinguishes Ghidra primary, dynamic, external, type, and source facts when available. Select detail summary for counts and retained native-inventory pages; complete remains the default.",
+    "List every analyzed memory and external symbol as address/value pairs. Provider metadata distinguishes Ghidra primary, dynamic, external, type, and source facts when available. Omitted detail returns the complete inventory when its Evidence is at most 32 KiB, else its retained summary with counts and native-inventory pages; complete or summary forces that shape.",
     z.object({
       document,
       address: optionalAddress,
-      detail: analysisDetailSchema,
+      detail: analysisDetailSizeAwareSchema,
     }),
     { evidenceParameters: "omit-detail" },
   ),
   official(
     "list_procedures",
     providerNetworkEvidenceEffects,
-    "List every analyzed procedure as address/value pairs after provider analysis. Ghidra metadata distinguishes thunks and external functions; use returned addresses in later function operations. Select detail summary for counts and retained native-inventory pages; complete remains the default.",
-    z.object({ document, detail: analysisDetailSchema }),
+    "List every analyzed procedure as address/value pairs after provider analysis. Ghidra metadata distinguishes thunks and external functions; use returned addresses in later function operations. Omitted detail returns the complete inventory when its Evidence is at most 32 KiB, else its retained summary with counts and native-inventory pages; complete or summary forces that shape.",
+    z.object({ document, detail: analysisDetailSizeAwareSchema }),
     { evidenceParameters: "omit-detail" },
   ),
   official(
@@ -193,11 +197,11 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "list_strings",
     providerNetworkEvidenceEffects,
-    "List every provider-reported string object or candidate, or filter to one address, as address/value pairs with encoding, terminator status, and byte length when available. Hopper reads complete typed objects and retains its original display text as provider_value; long literals may span adjacent unterminated objects. Kuna scans mapped printable sequences of at least five characters, including unterminated fragments; references are not computed. Select detail summary for counts and retained native-inventory pages; complete remains the default.",
+    "List every provider-reported string object or candidate, or filter to one address, as address/value pairs with encoding, terminator status, and byte length when available. Hopper reads complete typed objects and retains its original display text as provider_value; long literals may span adjacent unterminated objects. Kuna scans mapped printable sequences of at least five characters, including unterminated fragments; references are not computed. Omitted detail returns the complete inventory when its Evidence is at most 32 KiB, else its retained summary with counts and native-inventory pages; complete or summary forces that shape.",
     z.object({
       document,
       address: optionalAddress,
-      detail: analysisDetailSchema,
+      detail: analysisDetailSizeAwareSchema,
     }),
     { evidenceParameters: "omit-detail" },
   ),
@@ -271,7 +275,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "procedure_pseudo_code",
     providerUiNetworkEvidenceEffects,
-    "Decompile one analyzed procedure by symbol or provider-normalized address. Returns provider-specific pseudocode or null, never original source; raw_result.pseudocode_absence distinguishes reported provider-failure from not-in-export, otherwise the cause is unknown. Use procedure_assembly for instruction precision. detail summary retains text for inspect_analysis_view native/pseudocode pages without another decompile; complete is default. analysis: independent_fresh requests a separate attempt only when binary_session advertises independent_decompile; it may use different analysis context. Ghidra accepts file-offset:0x... or unique file offsets when a 0x selector resolves to no procedure; existing analysis addresses take precedence, and space-qualified addresses avoid that fallback. Its terminal-call assumptions may truncate the analyzed body, as limitations report.",
+    "Decompile one analyzed procedure by symbol or provider-normalized address. Returns provider-specific pseudocode or null, never original source; raw_result.pseudocode_absence distinguishes reported provider-failure from not-in-export, otherwise the cause is unknown. Use procedure_assembly for instruction precision. detail summary retains text for inspect_analysis_view native/pseudocode pages without another decompile; complete is default. analysis: independent_fresh requests a separate attempt only when binary_session advertises independent_decompile; it may use different analysis context. analysis: call_destination attempts standalone decompilation at an exact incoming direct call to an arm64 Mach-O address outside the procedure inventory when the capability declares call_destination_decompile. The result retains the call site and does not establish a discovered procedure. Ghidra accepts file-offset:0x... or unique file offsets when a 0x selector resolves to no procedure; existing analysis addresses take precedence, and space-qualified addresses avoid that fallback. Its terminal-call assumptions may truncate the analyzed body, as limitations report.",
     z.object({
       procedure,
       document,
@@ -290,15 +294,15 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "search_procedures",
     providerNetworkEvidenceEffects,
-    "Find analyzed procedures by literal name (default) or regex, including accepted secondary names. Returns deterministic provider-inventory matches under primary names with matched_aliases and available thunk/external metadata. For Ghidra case-insensitive literal searches, raw_result retains unfiltered candidates; normalized_result holds matches. detail summary retains native-inventory pages. Regex uses Java Pattern in Ghidra and ECMAScript Unicode in Kuna, IDA and Hopper; binary_session and errors report effective limits and recovery.",
-    z.object({ ...nativeSearchInput, detail: analysisDetailSchema }),
+    "Find analyzed procedures by literal name (default) or regex, including accepted secondary names. Returns deterministic provider-inventory matches under primary names with matched_aliases and available thunk/external metadata. For Ghidra case-insensitive literal searches, raw_result holds Ghidra's candidates only when Unicode filtering removed any; normalized_result holds matches. Omitted detail returns complete Evidence up to 32 KiB, else its retained summary with native-inventory pages; complete or summary forces that shape. Regex uses Java Pattern in Ghidra and ECMAScript Unicode in Kuna, IDA and Hopper; binary_session and errors report effective limits and recovery.",
+    z.object({ ...nativeSearchInput, detail: analysisDetailSizeAwareSchema }),
     { evidenceParameters: "omit-detail" },
   ),
   official(
     "search_strings",
     providerNetworkEvidenceEffects,
-    "Find provider-reported strings by literal text (default) or regex. Complete results cover that inventory, not all artifact text; packed/undefined strings or independently matched fragments may be missing. Ghidra search_bytes finds known encoded bytes without establishing string identity/use; xrefs inspects references at a known address. Kuna scans mapped sequences of at least five characters without references or read_bytes. Hopper preserves decoded typed objects, display text and decoding unknowns. For Ghidra case-insensitive literal searches, raw_result holds candidates; normalized_result holds matches. detail summary retains native-inventory pages. Regex uses Java Pattern in Ghidra and ECMAScript Unicode elsewhere; binary_session/errors report limits.",
-    z.object({ ...nativeSearchInput, detail: analysisDetailSchema }),
+    "Find provider-reported strings by literal text (default) or regex. Complete results cover that inventory, not all artifact text; packed/undefined strings or independently matched fragments may be missing. Ghidra search_bytes finds known encoded bytes without establishing string identity/use; xrefs inspects references at a known address. Kuna scans mapped sequences of at least five characters without references or read_bytes. Hopper preserves decoded typed objects, display text and decoding unknowns. For Ghidra case-insensitive literal searches, raw_result holds candidates only when Unicode filtering removed any; normalized_result holds matches. Omitted detail returns complete Evidence up to 32 KiB, else its retained summary with native-inventory pages; complete or summary forces that shape. Regex uses Java Pattern in Ghidra and ECMAScript Unicode elsewhere; binary_session/errors report limits.",
+    z.object({ ...nativeSearchInput, detail: analysisDetailSizeAwareSchema }),
     { evidenceParameters: "omit-detail" },
   ),
   official(

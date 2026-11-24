@@ -1,9 +1,11 @@
 import type { FileHandle } from "node:fs/promises";
-import type { ParseFailureError } from "../domain/parseFailure.js";
+import {
+  malformedInput,
+  type ParseFailureError,
+} from "../domain/parseFailure.js";
 
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import {
-  ArtifactReaderFailure,
   artifactFixedLimitFailure,
   artifactParseFailure,
 } from "../resources/index.js";
@@ -16,12 +18,14 @@ import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import type {
   AndroidBootImageEntryMetadata,
   AndroidBootImageMetadata,
-} from "../domain/artifactFormatMetadata.js";
+} from "../domain/formatMetadata/androidAndSystemMetadata.js";
 import {
+  ANDROID_BOOT_FORMAT,
   ANDROID_BOOT_HEADER_PROBE_BYTES,
   ANDROID_BOOT_FIXED_LIMITS,
   AVB_FOOTER_SIZE,
   compressionFromPrefix,
+  avbFooterOffset,
   inspectAvbFooter,
   parseAndroidBootHeader,
   parseVendorRamdiskTable,
@@ -137,13 +141,13 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
     plans: readonly AndroidBootComponentPlan[],
     signal?: AbortSignal,
   ): Promise<AvbFooterFacts> {
-    const trailing = fileSize - header.imageEnd;
+    const offset = avbFooterOffset(fileSize, header.dataEnd);
     this.assertOpen(signal);
     const tail =
-      trailing >= AVB_FOOTER_SIZE
+      offset !== null
         ? await readArtifactFileBytes(
             handle,
-            fileSize - AVB_FOOTER_SIZE,
+            offset,
             AVB_FOOTER_SIZE,
             fileSize,
             signal,
@@ -190,15 +194,9 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
   }
 }
 
-const formatFailure = (
-  detail: string,
-  options?: ErrorOptions,
-): ArtifactReaderFailure =>
-  new ArtifactReaderFailure(
-    "malformed",
-    `Android boot image is malformed: ${detail}`,
-    options,
-  );
+/** A structural violation found while planning entries, with the format's own facts. */
+const formatFailure = (detail: string): unknown =>
+  artifactParseFailure(malformedInput(ANDROID_BOOT_FORMAT, detail), undefined);
 
 const parseFailure = (failure: ParseFailureError): unknown => {
   const facts = failure.failure;

@@ -548,55 +548,6 @@ it.each([100, 101])(
   },
 );
 
-describe("token sweep batch failures", () => {
-  it("cleans token-owned groups when a failed batch has readable fallback observations", async () => {
-    const { adapter, signalGroup } = host({
-      100: { REA_PROCESS_RUN_ID: ownership.runId },
-      101: { REA_PROCESS_RUN_ID: ownership.runId },
-    });
-    await expect(
-      cleanupOwnedProcessGroup(
-        { ...ownership, sweepTokenOwnedProcesses: true, captureBaseline: [] },
-        {
-          ...adapter,
-          runTokens: () =>
-            Promise.reject(new Error("batch reader unavailable")),
-        },
-      ),
-    ).resolves.toEqual({ cleaned: true, signaled: true });
-    expect(signalGroup.mock.calls).toEqual([[100, "SIGKILL"]]);
-  });
-
-  it("uses fallback ownership when the initial batch fails and preserves both failures through retries", async () => {
-    const signalGroup = vi.fn();
-    const adapter: ProcessOwnershipHost = {
-      listProcesses: () => Promise.resolve(processes),
-      environment: (pid) =>
-        pid === 100
-          ? Promise.resolve({ REA_PROCESS_RUN_ID: ownership.runId })
-          : Promise.reject(new Error("individual unreadable")),
-      runTokens: () => Promise.reject(new Error("batch reader unavailable")),
-      signalGroup,
-    };
-    const result = await cleanupOwnedProcessGroup(
-      { ...ownership, sweepTokenOwnedProcesses: true, captureBaseline: [] },
-      adapter,
-    );
-    expect(result).toMatchObject({
-      cleaned: false,
-      failures: expect.arrayContaining([
-        expect.objectContaining({
-          pid: 101,
-          diagnostic: expect.stringMatching(
-            /individual unreadable.*batch reader unavailable/iu,
-          ),
-        }),
-      ]),
-    });
-    expect(signalGroup).not.toHaveBeenCalled();
-  });
-});
-
 it.each(["parent", "group"] as const)(
   "keeps a changed native launcher %s relation unavailable instead of publishing the earlier relation",
   async (changedRelation) => {

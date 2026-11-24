@@ -8,7 +8,8 @@ import {
 } from "./analysisErrorBase.js";
 import type { ArtifactReaderLimitFact } from "./artifactReaderLimits.js";
 import type { FixedAllowance } from "./fixedAllowanceRemediation.js";
-import type { ParseFailureKind } from "./parseFailure.js";
+import type { LimitRef, ParseFailureKind } from "./parseFailure.js";
+import type { MalformedTargetFailure } from "./analysisErrorCore.js";
 
 /** The resource class that refused an artifact operation. */
 export type ArtifactLimitBoundary = "file-size" | "capacity" | "memory";
@@ -65,10 +66,13 @@ export class ArtifactOperationError extends AnalysisError {
   readonly admission: ArtifactAdmissionLimit | undefined;
   readonly boundary: ArtifactLimitBoundary | undefined;
   readonly readerLimit: ArtifactReaderLimitFact | undefined;
+  readonly parserLimit: LimitRef | undefined;
   /** For a `limit` reason, the release-fixed allowance that refused the input. */
   readonly fixedAllowance: FixedAllowance | undefined;
   /** For an `integrity` reason, the check the producing reader named. */
   readonly integrityCheck: ArtifactIntegrityCheck | undefined;
+  /** For a `malformed` or `truncated` reason, the format owner's parsed facts. */
+  readonly parseFailure: MalformedTargetFailure | undefined;
 
   constructor(
     readonly operation:
@@ -118,8 +122,10 @@ export class ArtifactOperationError extends AnalysisError {
       readonly admission?: ArtifactAdmissionLimit;
       readonly boundary?: ArtifactLimitBoundary;
       readonly readerLimit?: ArtifactReaderLimitFact;
+      readonly parserLimit?: LimitRef;
       readonly fixedAllowance?: FixedAllowance;
       readonly integrityCheck?: ArtifactIntegrityCheck;
+      readonly parseFailure?: MalformedTargetFailure;
     },
   ) {
     super(
@@ -131,8 +137,10 @@ export class ArtifactOperationError extends AnalysisError {
     this.admission = options?.admission;
     this.boundary = options?.boundary;
     this.readerLimit = options?.readerLimit;
+    this.parserLimit = options?.parserLimit;
     this.fixedAllowance = options?.fixedAllowance;
     this.integrityCheck = options?.integrityCheck;
+    this.parseFailure = options?.parseFailure;
     this.remediationAction = options?.remediationAction;
     this.userMessage =
       options?.userMessage ??

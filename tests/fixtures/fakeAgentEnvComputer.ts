@@ -32,9 +32,12 @@ import { z } from "zod";
 
 import { onTestFinished } from "vitest";
 
+import { readHostFile } from "../../src/desktop/HostFileRead.js";
 import { DesktopBuildComputers } from "../../src/application/desktop/DesktopBuildComputers.js";
 import type { BuildComputerDefaults } from "../../src/desktop/BuildComputerEnvironment.js";
+import { awaitAcknowledgement } from "./lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
+import { waitFor } from "../support/testWait.js";
 
 /** A 2x1 PNG of a black and a white pixel, the fake driver's drawn desktop. */
 export const FAKE_FRAME_PNG =
@@ -62,6 +65,8 @@ export interface FakeComputerOptions {
   readonly blankFrames?: number;
   /** How long each screenshot, in order, waits before its reply, unless its request is cancelled. */
   readonly screenshotDelaysMs?: readonly number[];
+  /** Encoded image data in response to JPEG screenshot requests, in order. */
+  readonly jpegScreenshotData?: readonly string[];
   /** Bytes data/get appends to each segment beyond its manifest size. */
   readonly segmentPadding?: number;
   /** Recording starts, in order, whose recording begins but whose reply is lost. */
@@ -150,6 +155,7 @@ const startFakeDriver = async (
       : "A".repeat(options.frameCharacters);
   let blankFrames = options.blankFrames ?? 0;
   let screenshots = 0;
+  let jpegScreenshots = 0;
   const mcp = new McpServer({ name: "fake-reference-driver", version: "1" });
   for (const name of COMPUTER_TOOLS)
     mcp.registerTool(
@@ -174,12 +180,16 @@ const startFakeDriver = async (
         const frame = { frame_id: `f${String(calls.length)}`, width: 1280 };
         const blank = name === "computer_screenshot" && blankFrames > 0;
         if (blank) blankFrames -= 1;
+        const jpegData =
+          name === "computer_screenshot" && args.format === "jpeg"
+            ? options.jpegScreenshotData?.[jpegScreenshots++]
+            : undefined;
         const image =
           name === "computer_screenshot" || args.screenshot === true
             ? [
                 {
                   type: "image" as const,
-                  data: blank ? FAKE_BLANK_PNG : frameData,
+                  data: blank ? FAKE_BLANK_PNG : (jpegData ?? frameData),
                   mimeType: "image/png",
                 },
               ]
@@ -658,7 +668,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import time
 import types
 
 STATE = os.environ["FAKE_STATE"]
@@ -705,7 +714,9 @@ def run_bundle(root, *, tasks=(), keep=False, emulate=True, sandbox=None, on_pro
     os.system("echo a build writing to stdout")
     print("agentenv writing to stdout")
     on_progress("deploying the computer")
-    time.sleep(float(os.environ.get("FAKE_DEPLOY_SECONDS", "0")))
+    if os.environ.get("FAKE_HOLD_DEPLOY"):
+        _note("deploying.jsonl", {"pid": os.getpid()})
+        signal.pause()
     signal.signal(signal.SIGTERM, previous)
     chatter = int(os.environ.get("FAKE_CHATTER_BYTES", "0"))
     for line in range(chatter // 80):
@@ -731,6 +742,31 @@ export interface FakeAgentEnvRunner {
   /** Lines one JSON-lines note file holds. */
   notes(name: string): Promise<unknown[]>;
 }
+
+/** Observe the exact helper waiting at the cancellable deployment phase. */
+export const awaitFakeDeployWait = async (
+  runner: FakeAgentEnvRunner,
+  operation: Promise<unknown>,
+): Promise<{ pid: number }[]> => {
+  let observing = true;
+  const acknowledgement = waitFor(async () => {
+    if (!observing) return [];
+    return z
+      .tuple([z.object({ pid: z.int().positive() })])
+      .parse(await runner.notes("deploying.jsonl"));
+  });
+  try {
+    await awaitAcknowledgement(
+      acknowledgement,
+      operation,
+      "fake deployment wait",
+    );
+    return await acknowledgement;
+  } finally {
+    observing = false;
+    await Promise.allSettled([acknowledgement]);
+  }
+};
 
 /**
  * JSONL notes from the fake build computer. A trailing fragment without a
@@ -824,6 +860,7 @@ export const fakeBuildComputers = async (
   const runner = await fakeAgentEnvRunner(computer);
   const computers = new DesktopBuildComputers(
     { ...process.env, ...runner.environment, ...environment },
+    readHostFile,
     undefined,
     await isolatedBuildDefaults(),
   );

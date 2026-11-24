@@ -15,7 +15,12 @@ const linkerScript = fileURLToPath(
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 /** BYO GNU cross-binutils; generated controls are never executed or byte-patched. */
-export async function buildMips16SharedFixture(directory, byteOrder, variant) {
+export async function buildMips16SharedFixture(
+  directory,
+  byteOrder,
+  variant,
+  run = execute,
+) {
   assert(["little", "big"].includes(byteOrder));
   assert(
     [
@@ -32,17 +37,16 @@ export async function buildMips16SharedFixture(directory, byteOrder, variant) {
   const object = `${prefix}.o`;
   const path = `${prefix}.so`;
   const assemblerVersion = (
-    await execute(assembler, ["--version"], { timeout: 10000 })
+    await run(assembler, ["--version"], { timeout: 10000 })
   ).stdout;
-  const linkerVersion = (
-    await execute(linker, ["--version"], { timeout: 10000 })
-  ).stdout;
+  const linkerVersion = (await run(linker, ["--version"], { timeout: 10000 }))
+    .stdout;
   assert(
     assemblerVersion.includes("GNU assembler"),
     "Use GNU's MIPS assembler: other assemblers have different compressed-instruction behavior.",
   );
   assert(linkerVersion.includes("GNU ld"));
-  await execute(
+  await run(
     assembler,
     [
       "-32",
@@ -57,7 +61,7 @@ export async function buildMips16SharedFixture(directory, byteOrder, variant) {
     ],
     { timeout: 60000 },
   );
-  await execute(
+  await run(
     linker,
     [
       endian,
@@ -97,7 +101,7 @@ export async function buildMips16SharedFixture(directory, byteOrder, variant) {
     assert.equal(mappings.length, 1);
     return u32(mappings[0] + 4) + address - u32(mappings[0] + 8);
   };
-  const readelf = await execute(
+  const readelf = await run(
     fixtureCommand(FIXTURE_TOOLS.mipsReadelf),
     ["-W", "-h", "-l", "-s", "-r", path],
     { timeout: 10000 },

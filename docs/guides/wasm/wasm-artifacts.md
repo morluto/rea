@@ -1,9 +1,8 @@
 # Offline WebAssembly artifacts
 
 `inspect_wasm_artifact` / `inspect-wasm-artifact` inspects explicitly selected
-local WASM bytes using caller-supplied WABT 1.0.x (verified with 1.0.42). No
-active binary target is
-required. REA does not install tools or fetch artifacts and does not execute WASM.
+local WASM bytes using caller-supplied WABT tools
+([accepted releases](#configure-wabt)). No active binary target is required. REA does not install tools or fetch artifacts and does not execute WASM.
 
 `open_binary` is not the WASM inspection route. A recognized WASM v1 header
 returns `target_unavailable` with category `unsupported_target` and constraint
@@ -18,6 +17,8 @@ The recognized WASM header is checked before automatic database routing from a
 .hop filename. Renaming a module to .hop therefore keeps the static-inspection
 diagnostic. An explicit database selection or raw/COM format selection retains
 the caller's requested interpretation; ordinary .hop database routing is unchanged.
+
+## Configure WABT
 
 Set `REA_WABT_BIN_DIRECTORY` to an absolute directory containing executable
 `wasm-validate`, `wasm-objdump` and `wasm2wat` (with `.exe` on Windows). Missing
@@ -37,12 +38,13 @@ or repeating an unchanged call. All three tools must report the same release on
 stdout with empty stderr, and that release must fall within the accepted range
 (`>=1.0.42 <1.1.0`, verified with 1.0.42). A release above 1.0.42 in that range is
 admitted: the observed banner becomes `tool_profile.release` and the
-`provider.version`, and the report states that only 1.0.42 was verified. Managed
-downloads stay pinned to 1.0.42. For CLI calls, set the environment before the
-next invocation. For
+`provider.version`, and the report states that only 1.0.42 was verified. For
+CLI calls, set the environment before the next invocation. For
 MCP, change the server's launch environment and restart/reconnect that server;
 exporting a variable in a different shell does not update a running server.
 REA never installs tools or relaxes version admission to recover.
+
+## Inspect a module
 
 ```bash
 REA_WABT_BIN_DIRECTORY=/absolute/wabt/bin rea inspect-wasm-artifact \
@@ -130,7 +132,7 @@ To change the default across new MCP operations, set `wasm.command_timeout_ms`
 through `update_analysis_settings`. An explicit `command_timeout_ms` still wins;
 correct that argument if it caused the timeout. Runtime defaults do not insert
 omitted arguments into Evidence parameters. See the
-[settings design](../../design/limits-and-recovery.md#precedence-and-lifetime).
+[analysis settings and recovery](../../reference/limits-and-recovery.md#precedence-and-lifetime).
 
 For example, `rea inspect-wasm-artifact /artifacts/module.wasm
 --command-timeout-ms 60000 --format json` uses a 60-second per-command deadline;
@@ -196,7 +198,7 @@ Candidates are caller-selected files; their identity does not imply validation.
 Both CLI and MCP use the same typed port and application service. MCP publishes
 SDK-compatible schemas and records Evidence for `get_evidence_bundle` readback.
 See [WABT provenance](https://github.com/morluto/rea/blob/main/third_party/wabt/README.md) and
-[testing](../../development/testing.md#offline-wasm-artifacts) for real-tool verification.
+[testing lanes](../../testing-lanes.md#offline-wasm-artifacts) for real-tool verification.
 
 ## Compare core-module interfaces
 

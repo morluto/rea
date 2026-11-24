@@ -160,6 +160,8 @@ processTest(
   async ({ processes }) => {
     const fixture = environmentStateServeFixture(
       timedCaptureEvidence([
+        ["GET", "/api/contacts?maxSize=2&withItems=false", [{ id: 2 }]],
+        ["GET", "/api/contacts?maxSize=3&withItems=true", [{ id: 3 }]],
         [
           "GET",
           "/api/contacts?maxSize=2&withItems=true",

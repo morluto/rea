@@ -4,10 +4,11 @@ import type { Writable } from "node:stream";
 import { estimateTokenCount } from "tokenx";
 
 import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
-import type { ParsedCliOutputArguments } from "../cliOutput.js";
+import type { ParsedCliOutputArguments } from "./cliOutput.js";
 import {
   cliOperationFailureIdentity,
   cliOperationFailurePayload,
+  isCliCompletedFailureReport,
 } from "../cliLogging.js";
 import {
   AnalysisInputError,
@@ -39,12 +40,20 @@ import { jsonLinesErrorRecord } from "./jsonLines.js";
 import type { OutputFilterPath } from "./outputFilter.js";
 import { writeCliJsonLines } from "./jsonLinesOutput.js";
 import {
+  ToonOutputCleanupFailure,
+  toonOutputCancellationStatus,
+  writeToonOutput,
+} from "./toonOutput.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
   jsonOutputParts,
   isTerminalOutput,
   writeJsonOutput,
   writeOutputParts,
   writeOutputText,
 } from "./jsonOutput.js";
+export { toonOutputCancellationStatus as cliOutputCancellationStatus } from "./toonOutput.js";
+
 /** Result metadata supplied by the command that actually ran. */
 export interface CliResultOutputMetadata {
   readonly command: string;
@@ -104,6 +113,7 @@ export const createCliResultOutput = (
     | "tsv";
   let handled = false;
   let failed = false;
+  let interrupted = false;
   let error: AnalysisErrorProjection | undefined;
   let completed:
     | {
@@ -117,38 +127,68 @@ export const createCliResultOutput = (
   const recoverFormattingFailure = async (cause: unknown): Promise<boolean> => {
     // A rejected command never reaches write(). Destination failures retain
     // handled ownership. Only a completed, unwritten result can be replaced.
+    const formattingCause =
+      cause instanceof ToonOutputCleanupFailure
+        ? cause.outputFailure?.cause
+        : cause;
     if (
       completed === undefined ||
       handled ||
-      hostRangeErrorKind(cause) !== "host-capacity" ||
-      !(cause instanceof Error) ||
-      cause.message !== "Invalid string length"
+      !(formattingCause instanceof Error)
     )
       return false;
+    const stringCapacity =
+      hostRangeErrorKind(formattingCause) === "host-capacity" &&
+      formattingCause.message === "Invalid string length";
+    const systemCode =
+      "code" in formattingCause ? formattingCause.code : undefined;
+    const stagingCapacity =
+      format === "toon" &&
+      (systemCode === "ENOSPC" ||
+        systemCode === "EDQUOT" ||
+        systemCode === "EFBIG")
+        ? systemCode
+        : undefined;
+    if (!stringCapacity && stagingCapacity === undefined) return false;
     const { originalFailure } = completed;
-    error = projectAnalysisError(
-      retainCliPublicationOnError(
-        new AnalysisResourceConstraintError(
-          completed.metadata.command,
-          "memory",
-          `The ${format} result could not fit in a runtime string. The original result was not written.`,
-          {
-            format,
-            formatted_characters: null,
-            max_string_characters: constants.MAX_STRING_LENGTH,
-            ...(originalFailure === undefined
-              ? {}
-              : { original_failure: originalFailure }),
-          },
-          {
-            cause,
-            retryable: false,
-            remediationAction:
-              "Use --format json to stream the complete result, or narrow it with --filter-output. Token limits are applied after formatting and cannot avoid this constraint.",
-          },
-        ),
-        completed.receipt,
+    const refusal = retainCliPublicationOnError(
+      new AnalysisResourceConstraintError(
+        completed.metadata.command,
+        stagingCapacity === undefined ? "memory" : "capacity",
+        stagingCapacity === undefined
+          ? `The ${format} result could not fit in a runtime string. The original result was not written.`
+          : "The temporary storage could not stage the TOON result. The original result was not written.",
+        {
+          format,
+          ...(stagingCapacity === undefined
+            ? {
+                formatted_characters: null,
+                max_string_characters: constants.MAX_STRING_LENGTH,
+              }
+            : { system_code: stagingCapacity }),
+          ...(originalFailure === undefined
+            ? {}
+            : { original_failure: originalFailure }),
+        },
+        {
+          cause: formattingCause,
+          retryable: false,
+          remediationAction:
+            stagingCapacity === undefined
+              ? "Use --format json to stream the complete result, or narrow it with --filter-output. Token limits are applied after formatting and cannot avoid this constraint."
+              : "Free space in the system temporary directory, use --format json, or narrow the result with --filter-output.",
+        },
       ),
+      completed.receipt,
+    );
+    error = projectAnalysisError(
+      cause instanceof ToonOutputCleanupFailure
+        ? analysisErrorWithCleanupDependencies(
+            refusal,
+            cause,
+            completed.metadata.command,
+          )
+        : refusal,
     );
     const document = options.fullOutput
       ? {
@@ -231,6 +271,12 @@ export const createCliResultOutput = (
       }
       return written;
     } catch (cause: unknown) {
+      if (toonOutputCancellationStatus(cause) !== undefined) {
+        interrupted = true;
+        handled = true;
+        failed = true;
+        throw cause;
+      }
       if (await recoverFormattingFailure(cause)) return true;
       if (handled) failed = true;
       throw cause;
@@ -251,11 +297,12 @@ export const createCliResultOutput = (
       format = options.format as typeof format;
       handled = false;
       failed = false;
+      interrupted = false;
       error = undefined;
       completed = undefined;
     },
     finish() {
-      return writeOutputText(destination, "");
+      return interrupted ? Promise.resolve() : writeOutputText(destination, "");
     },
     write,
     recoverFormattingFailure,
@@ -264,7 +311,7 @@ export const createCliResultOutput = (
   async function writeResult(
     value: unknown,
     metadata: CliResultOutputMetadata,
-    operationFailure: unknown,
+    reportedFailure: unknown,
   ): Promise<boolean> {
     completed = {
       metadata,
@@ -274,11 +321,29 @@ export const createCliResultOutput = (
     const filterPaths = options.filterPaths?.ok
       ? options.filterPaths.value
       : undefined;
-    const failure = options.fullOutput ? operationFailure : undefined;
-    const ownsFilteredOutput =
-      operationFailure === undefined &&
+    // A completed report with a failed verdict, such as an unhealthy doctor
+    // report, is still the command's result: --filter-output selects from it.
+    // The selection then stands in for the report in the full-output envelope.
+    // Whether the outcome failed is decided before selection, so a selection
+    // that omits the health signal, or selects nothing, never turns it into a
+    // success. JSONL frames every classified failure whole.
+    const reportSelection =
+      reportedFailure !== undefined &&
       filterPaths !== undefined &&
-      filterPaths.length > 0;
+      format !== "csv" &&
+      format !== "tsv" &&
+      format !== "jsonl" &&
+      isCliCompletedFailureReport(value)
+        ? applyCliOutputFilter(value, filterPaths)
+        : undefined;
+    // An invalid selection is reported as a filter error below instead.
+    const failureReported =
+      reportedFailure !== undefined && reportSelection?.ok !== false;
+    const operationFailure =
+      reportSelection?.ok === true ? reportSelection.value : reportedFailure;
+    const envelopeFailed = options.fullOutput && failureReported;
+    const ownsFilteredOutput =
+      !failureReported && filterPaths !== undefined && filterPaths.length > 0;
     if (
       (format === "toon" || format === "yaml") &&
       value == null &&
@@ -291,7 +356,7 @@ export const createCliResultOutput = (
     // Suppressed human presentation must never erase
     // the typed failure that this boundary already owns.
     if (
-      operationFailure === undefined &&
+      !failureReported &&
       metadata.renderOutput === false &&
       format !== "jsonl" &&
       !options.fullOutput &&
@@ -300,7 +365,7 @@ export const createCliResultOutput = (
       return false;
     if (format === "csv" || format === "tsv") {
       const meta = resultMeta(metadata);
-      if (operationFailure !== undefined) {
+      if (failureReported) {
         const parsedFailure =
           analysisErrorProjectionSchema.safeParse(operationFailure);
         error = parsedFailure.success
@@ -365,9 +430,10 @@ export const createCliResultOutput = (
       }
       return true;
     }
-    const selection =
-      operationFailure !== undefined || filterPaths === undefined
-        ? ok(operationFailure ?? value)
+    const selection = failureReported
+      ? ok(operationFailure)
+      : filterPaths === undefined
+        ? ok(value)
         : applyCliOutputFilter(value, filterPaths);
     if (!selection.ok) {
       error = projectAnalysisError(
@@ -454,16 +520,21 @@ export const createCliResultOutput = (
       return true;
     };
     if (
-      (format === "toon" || format === "md") &&
+      format === "md" &&
       !options.tokenCount &&
-      (!options.tokenWindow ||
-        format === "md" ||
-        operationFailure !== undefined) &&
-      (format === "md"
-        ? containsUnrepresentableMarkdown(selected)
-        : containsUnpairedSurrogate(selected))
+      containsUnrepresentableMarkdown(selected)
     )
       return refuseUnrepresentableText();
+    if (format === "toon") {
+      // Scalar strings can be counted or sliced directly. Structured TOON
+      // documents must be representable before the encoder can produce text.
+      const usesRawString =
+        typeof selected === "string" &&
+        !failureReported &&
+        (options.tokenCount ? !options.fullOutput : options.tokenWindow);
+      if (!usesRawString && containsUnpairedSurrogate(selected))
+        return refuseUnrepresentableText();
+    }
     const filtered =
       (format === "json" || format === "jsonl") &&
       ownsFilteredOutput &&
@@ -471,7 +542,7 @@ export const createCliResultOutput = (
         ? normalizeJsonArrayValues(selected)
         : selected;
     const ownsSuccessfulTokenWindow =
-      operationFailure === undefined &&
+      !failureReported &&
       options.tokenWindow &&
       !options.tokenCount &&
       format !== "json" &&
@@ -485,7 +556,7 @@ export const createCliResultOutput = (
             source: value,
             selected: filtered,
             filterPaths,
-            operationFailure,
+            operationFailure: failureReported ? operationFailure : undefined,
             command: metadata.command,
             duration: metadata.duration,
             ...(metadata.cliControls === undefined
@@ -501,18 +572,17 @@ export const createCliResultOutput = (
       return true;
     }
     const meta = resultMeta(metadata);
-    const errorDocument =
-      options.fullOutput && failure !== undefined
-        ? fullFailureEnvelope(
-            failure,
-            meta,
-            format,
-            options.tokenLimit,
-            options.tokenOffset,
-          )
-        : undefined;
+    const errorDocument = envelopeFailed
+      ? fullFailureEnvelope(
+          operationFailure,
+          meta,
+          format,
+          options.tokenLimit,
+          options.tokenOffset,
+        )
+      : undefined;
     const document = options.fullOutput
-      ? failure !== undefined
+      ? envelopeFailed
         ? errorDocument
         : filtered === undefined
           ? { ok: true, meta }
@@ -530,20 +600,13 @@ export const createCliResultOutput = (
       // require a complete formatted string.
       const tokenValue = document;
       let characters = 0;
-      if (
-        tokenValue !== undefined &&
-        tokenValue !== null &&
-        typeof tokenValue !== "function" &&
-        typeof tokenValue !== "symbol"
-      ) {
-        if (format === "json") {
-          for (const part of jsonOutputParts(
-            tokenValue,
-            format,
-            isTerminalOutput(destination),
-          ))
-            characters += part.length;
-        }
+      if (format === "json") {
+        for (const part of jsonOutputParts(
+          tokenValue,
+          format,
+          isTerminalOutput(destination),
+        ))
+          characters += part.length;
       }
       if (characters <= constants.MAX_STRING_LENGTH) {
         let formatted: string;
@@ -557,7 +620,7 @@ export const createCliResultOutput = (
             isTerminalOutput(destination),
           ))
             formatted += part;
-        } else formatted = formatCliOutput(tokenValue, format);
+        } else formatted = `${formatCliOutput(tokenValue, format)}\n`;
         const count = estimateTokenCount(formatted);
         handled = true;
         try {
@@ -607,6 +670,8 @@ export const createCliResultOutput = (
       const sliced = window.truncated
         ? `${window.text}\n[truncated: showing tokens ${window.start}–${window.end} of ${window.total}]`
         : formatted;
+      if (format === "toon" && hasUnpairedSurrogate(sliced))
+        return refuseUnrepresentableText();
       const outputDocument = options.fullOutput
         ? formatCliOutput(
             window.truncated
@@ -624,8 +689,6 @@ export const createCliResultOutput = (
             format,
           )
         : sliced;
-      if (format === "toon" && hasUnpairedSurrogate(outputDocument))
-        return refuseUnrepresentableText();
       handled = true;
       try {
         await writeOutputText(
@@ -638,6 +701,17 @@ export const createCliResultOutput = (
         failed = true;
         throw cause;
       }
+      return true;
+    }
+    if (format === "toon") {
+      await writeToonOutput(
+        document,
+        destination,
+        () => {
+          handled = true;
+        },
+        metadata.command,
+      );
       return true;
     }
     // Once writing starts, a failed destination must not receive another document.

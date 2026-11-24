@@ -547,6 +547,7 @@ describe("reconstruction verification integrity", () => {
         unknown: 0,
         behavioral: 0,
         structural: 1,
+        visual: 0,
       },
       claims: { items: [claim] },
       recommended_probes: [],

@@ -35,7 +35,7 @@ import { EspImageArtifactReader } from "./EspImageArtifactReader.js";
 import { FitArtifactReader } from "./FitArtifactReader.js";
 import type { GodotPckAdmission } from "./GodotPckLocation.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
-import { InesArtifactReader, INES_LIMITATION } from "./InesArtifactReader.js";
+import { InesArtifactReader } from "./InesArtifactReader.js";
 import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
 import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
 import { NativeDmgArtifactReader } from "./NativeDmgArtifactReader.js";
@@ -43,12 +43,17 @@ import type { NodeSeaAdmission } from "./nodeSea/NodeSeaAdmission.js";
 import { NodeSeaArtifactReader } from "./NodeSeaArtifactReader.js";
 import type { PyInstallerAdmission } from "./pyinstaller/PyInstallerAdmission.js";
 import { PyInstallerArtifactReader } from "./PyInstallerArtifactReader.js";
+import { UefiArtifactReader } from "../uefi/UefiArtifactReader.js";
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
+import {
+  GpuAssetArtifactReader,
+  type GpuAssetFormat,
+} from "./gpuAsset/GpuAssetArtifactReader.js";
 
 /** How inventory describes a format when no reader was constructed. */
 export type AbsentInventory = "platform" | "universal" | "unavailable" | "root";
@@ -74,8 +79,6 @@ export interface ArtifactReaderConstruction {
 
 export interface FormatDescriptor {
   readonly id: ArtifactFormatId;
-  /** Every ZIP package family shares this row of capabilities. */
-  readonly zipFamily: boolean;
   /** Root occurrence kind is container, including directories and zip packages. */
   readonly occurrenceContainer: boolean;
   /** Path-role classification treats the format as a container of its own. */
@@ -144,7 +147,6 @@ function admittedAs(
 
 /** One capability row for every ZIP-backed package family. */
 const ZIP_FAMILY_CAPABILITIES = {
-  zipFamily: true,
   occurrenceContainer: true,
   roleContainer: false,
   retainClassifiedSource: true,
@@ -203,7 +205,6 @@ function described<Id extends ArtifactFormatId>(
 }
 
 const plain = {
-  zipFamily: false,
   occurrenceContainer: false,
   roleContainer: false,
   retainClassifiedSource: false,
@@ -236,6 +237,19 @@ function container<Id extends ArtifactFormatId>(
     ? withoutReader(id, capabilities)
     : withReader(id, capabilities, createReader);
 }
+
+/** GPU asset containers: declared header facts and stored regions, nothing decoded. */
+const gpuAsset = <Id extends GpuAssetFormat>(id: Id) =>
+  container(id, {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation:
+      "GPU asset inventory reports declared header fields and the byte regions they name. Texture, mesh and image payloads are not decoded or decompressed.",
+    createReader: (path, options) =>
+      new GpuAssetArtifactReader(path, id, sourceOf(options)),
+  });
 
 const NON_ZIP_FORMATS = {
   "dotnet-bundle": container("dotnet-bundle", {
@@ -278,24 +292,27 @@ const NON_ZIP_FORMATS = {
   }),
   pkg: container("pkg", { absentInventory: "platform" }),
   asar: container("asar", {
+    retainClassifiedSource: true,
     extractable: true,
     absentInventory: "unavailable",
-    createReader: (path, options) =>
-      new AsarArtifactReader(path, {
+    createReader: (path, options) => {
+      const admitted = sourceOf(options);
+      return new AsarArtifactReader(path, {
         ...(options.asarHeaderAdmission === undefined
           ? {}
           : { headerAdmission: options.asarHeaderAdmission }),
         ...(options.selectedPath === undefined
           ? {}
           : { selectedPath: options.selectedPath }),
-      }),
+        ...(admitted === undefined ? {} : { admitted }),
+      });
+    },
   }),
   ines: container("ines", {
     roleContainer: true,
     retainClassifiedSource: true,
     extractable: true,
     absentInventory: "unavailable",
-    readerLimitation: INES_LIMITATION,
     createReader: (path, options) => {
       const source = sourceOf(options);
       if (source === undefined)
@@ -342,6 +359,10 @@ const NON_ZIP_FORMATS = {
     createReader: (path, options) =>
       new WxapkgArtifactReader(path, sourceOf(options)),
   }),
+  dds: gpuAsset("dds"),
+  glb: gpuAsset("glb"),
+  ktx: gpuAsset("ktx"),
+  ktx2: gpuAsset("ktx2"),
   uimage: container("uimage", {
     roleContainer: true,
     retainClassifiedSource: true,
@@ -397,7 +418,18 @@ const NON_ZIP_FORMATS = {
   "gamecube-dol": described("gamecube-dol", plain),
   hopper: described("hopper", plain),
   "analysis-database": described("analysis-database", plain),
+  uefi: described("uefi", {
+    ...plain,
+    retainClassifiedSource: true,
+    absentInventory: "unavailable",
+    createReader: (path, options) =>
+      new UefiArtifactReader(path, sourceOf(options)),
+  }),
   plist: described("plist", plain),
+  sqlite: described("sqlite", plain),
+  "windows-shortcut": described("windows-shortcut", plain),
+  "python-pyc": described("python-pyc", plain),
+  devicetree: described("devicetree", plain),
   entitlements: described("entitlements", plain),
   directory: container("directory", {
     absentInventory: "unavailable",
