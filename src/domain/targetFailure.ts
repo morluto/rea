@@ -45,6 +45,16 @@ export interface TargetFailureFacts {
   readonly field?: string;
 }
 
+/**
+ * Where a truncated structure stopped: the bytes the input holds from the
+ * structure's start, and the bytes the structure declares. Only a reader that
+ * measured the input's end reports it.
+ */
+export interface TruncatedExtent {
+  readonly availableBytes: number;
+  readonly requiredBytes: number;
+}
+
 /** One input of a composite request, named by the request field that chose it. */
 export interface TargetFailureInput {
   readonly field: string;
@@ -64,10 +74,8 @@ export type TargetFailure = TargetFailureFacts &
     | { readonly kind: "malformed" }
     | {
         readonly kind: "truncated";
-        /** Bytes present from the structure's start, when measured. */
-        readonly availableBytes?: number;
-        /** Bytes the structure declares, when measured. */
-        readonly requiredBytes?: number;
+        /** The measured end and the length needed, when the owner measured them. */
+        readonly extent?: TruncatedExtent;
       }
     | { readonly kind: "integrity" }
     | {
@@ -257,12 +265,12 @@ export const targetFailureDetails = (
     case "truncated":
       return {
         ...common,
-        ...(failure.availableBytes === undefined
+        ...(failure.extent === undefined
           ? {}
-          : { available_bytes: failure.availableBytes }),
-        ...(failure.requiredBytes === undefined
-          ? {}
-          : { required_bytes: failure.requiredBytes }),
+          : {
+              available_bytes: failure.extent.availableBytes,
+              required_bytes: failure.extent.requiredBytes,
+            }),
       };
     case "conflict":
       return {

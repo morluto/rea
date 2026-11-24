@@ -1,4 +1,8 @@
-import type { TargetFailureFacts, TargetFailureOf } from "./targetFailure.js";
+import type {
+  TargetFailureFacts,
+  TargetFailureOf,
+  TruncatedExtent,
+} from "./targetFailure.js";
 
 /**
  * How a byte-format parser failed. The byte-structure outcomes are the
@@ -87,9 +91,22 @@ export const malformedInput = (
 export const truncatedInput = (
   format: string,
   detail: string,
-  { cause, ...at }: ParseFailureSite = {},
+  {
+    cause,
+    extent,
+    ...at
+  }: ParseFailureSite & { readonly extent?: TruncatedExtent } = {},
 ): ParseFailureError<"truncated"> =>
-  failureWith({ kind: "truncated", format, detail, ...at }, cause);
+  failureWith(
+    {
+      kind: "truncated",
+      format,
+      detail,
+      ...at,
+      ...(extent === undefined ? {} : { extent }),
+    },
+    cause,
+  );
 
 /** The bytes use a form outside this decoder's coverage. */
 export const unsupportedInput = (

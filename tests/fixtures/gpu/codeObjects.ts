@@ -22,6 +22,34 @@ interface ElfFixtureSection {
   link?: number;
   entrySize?: number;
 }
+/** Names up to this length are found through an index of entry suffixes. */
+const INDEXED_SECTION_NAME_LENGTH = 256;
+/**
+ * Find each sh_name: the first offset where `${name}\0` occurs, which may be a
+ * suffix of an earlier name (".strtab" inside ".shstrtab"). Searching the
+ * table per section is quadratic for an extended section count, and indexing
+ * every suffix is quadratic for a long name. Index each entry's suffixes up to
+ * a bounded length once, and search the table directly for the few longer
+ * names; both give the same first occurrence.
+ */
+const sectionNameOffsets = (names: Buffer): ((name: string) => number) => {
+  const offsets = new Map<string, number>();
+  let start = 0;
+  for (const entry of names.toString("latin1").split("\0")) {
+    const first = Math.max(0, entry.length - INDEXED_SECTION_NAME_LENGTH);
+    for (let index = first; index <= entry.length; index++) {
+      const suffix = entry.slice(index);
+      if (!offsets.has(suffix)) offsets.set(suffix, start + index);
+    }
+    start += entry.length + 1;
+  }
+  return (name) => {
+    const key = Buffer.from(name).toString("latin1");
+    return key.length > INDEXED_SECTION_NAME_LENGTH
+      ? names.indexOf(Buffer.from(`${name}\0`))
+      : offsets.get(key)!;
+  };
+};
 /** Format boundary fixtures, including numeric records checked against nvcc 12.9 cuobjdump. */
 export const elfFixture = (
   machine: number,
@@ -36,6 +64,7 @@ export const elfFixture = (
     { name: ".shstrtab", type: 3, bytes: names },
     ...sections,
   ];
+  const nameOffset = sectionNameOffsets(names);
   const extendedSectionCount = rows.length >= 0xff00;
   let position = 64;
   const entries = rows.map((row) => {
@@ -70,7 +99,7 @@ export const elfFixture = (
   for (let index = 1; index < entries.length; index++) {
     const { row, offset } = entries[index]!,
       h = table + index * 64;
-    result.writeUInt32LE(names.indexOf(Buffer.from(`${row.name}\0`)), h);
+    result.writeUInt32LE(nameOffset(row.name), h);
     result.writeUInt32LE(row.type ?? 1, h + 4);
     result.writeBigUInt64LE(row.flags ?? 0n, h + 8);
     result.writeBigUInt64LE(BigInt(offset), h + 24);
