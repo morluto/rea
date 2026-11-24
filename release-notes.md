@@ -153,6 +153,7 @@
 * **ci:** keep equal-duration shard allocation from leaving jobs empty ([#14257](https://github.com/morluto/rea/issues/14257)) ([5aef49a](https://github.com/morluto/rea/commit/5aef49a421bf6ccefc5f55dbf1b032c77dba49a8))
 * **ci:** keep static diagnostics for each workflow attempt ([#14360](https://github.com/morluto/rea/issues/14360)) ([d15068e](https://github.com/morluto/rea/commit/d15068e2b441354291ea45b6a7fe4fa574e736f0))
 * **ci:** make Windows native artifact uploads retryable ([#14362](https://github.com/morluto/rea/issues/14362)) ([3015c13](https://github.com/morluto/rea/commit/3015c13bcd0794e31e546d76cbfacafabb9bef9e))
+* **ci:** preserve CodeQL PR checkout history and exclude non-shipped verifiers ([#14385](https://github.com/morluto/rea/issues/14385)) ([42bbf33](https://github.com/morluto/rea/commit/42bbf33f2d29aadcaedf6f25d477c8e59157bdd0))
 * **ci:** read portable build plan from a file instead of a pipe ([#13456](https://github.com/morluto/rea/issues/13456)) ([60dfeec](https://github.com/morluto/rea/commit/60dfeec745235e7b8c6f524b54960dbb31729dd9))
 * **ci:** recheck pull request eligibility during health scans ([#14365](https://github.com/morluto/rea/issues/14365)) ([5411689](https://github.com/morluto/rea/commit/5411689a5ca3e06b93ecbef9925e927e8d3a2708))
 * **ci:** refresh health diagnostics on workflow retries ([#14349](https://github.com/morluto/rea/issues/14349)) ([5095e12](https://github.com/morluto/rea/commit/5095e1205935b7a4eb7e2d4d1140c6977c641af9))
