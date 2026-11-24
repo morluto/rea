@@ -332,10 +332,10 @@ not, the work is never refused or truncated:
   the bundle as an `evidence-file` source. Without it, the one-shot CLI
   writes nothing to disk, no bundle, cache or spill file: it prints
   `{"summary", "delivery"}` with `retained: "not-retained"`, and
-  `delivery.rerun` gives the exact commands as argv arrays, `complete` with
-  `--detail complete` added and `retained` with
-  `--evidence_output <new-bundle-path>` added. The note names both. A
-  command that declares sensitive values gives only the arguments to add.
+  `delivery.rerun` gives the arguments to add to the original command as argv
+  arrays for every invocation: `complete` (`["--detail", "complete"]`) and
+  `retained` (`["--evidence_output", "<new-bundle-path>"]`). Caller inputs are
+  never echoed, since they can carry access credentials; the note names both.
 
 Recovery: pass `detail: "complete"` (CLI `--detail complete`) for everything
 inline on one call, or raise the setting for the runtime with
