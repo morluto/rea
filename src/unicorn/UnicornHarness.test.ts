@@ -4,15 +4,15 @@ import { describe, expect, it } from "vitest";
 import { emulateFunctionInputSchema } from "../contracts/unicorn/unicornToolContracts.js";
 import { validateEmulationHarness } from "./UnicornHarness.js";
 
-const CODE = 0x1000000;
-const STACK = 0x7f000000;
+const CODE = "0x1000000";
+const STACK = "0x7f000000";
 
 const baseInput = () =>
   emulateFunctionInputSchema.parse({
     architecture: "x86_64",
     function_bytes: "89f801f0c3",
     code_address: CODE,
-    registers: { rdi: 40, rsi: 2 },
+    registers: { rdi: "0x28", rsi: "0x2" },
     stack_address: STACK,
     stack_size: 65536,
   });
@@ -35,7 +35,7 @@ describe("validateEmulationHarness", () => {
   it("rejects an unaligned code address", () => {
     const issues = validateEmulationHarness({
       ...baseInput(),
-      code_address: CODE + 1,
+      code_address: "0x1000001",
     });
     expect(issues.map((issue) => issue.path)).toContainEqual(["code_address"]);
   });
@@ -43,7 +43,7 @@ describe("validateEmulationHarness", () => {
   it("rejects an unaligned stack address", () => {
     const issues = validateEmulationHarness({
       ...baseInput(),
-      stack_address: STACK + 8,
+      stack_address: "0x7f000008",
     });
     expect(issues.map((issue) => issue.path)).toContainEqual(["stack_address"]);
   });
@@ -68,7 +68,7 @@ describe("validateEmulationHarness", () => {
   it("rejects a stub address inside a declared region", () => {
     const issues = validateEmulationHarness({
       ...baseInput(),
-      stubs: { "0x1000000": 0 },
+      stubs: { "0x1000000": "0x0" },
     });
     expect(issues.map((issue) => issue.path)).toContainEqual(["stubs"]);
   });
@@ -99,7 +99,7 @@ describe("validateEmulationHarness", () => {
   it("keeps high stub addresses exact instead of wrapping to 32 bits", () => {
     const issues = validateEmulationHarness({
       ...baseInput(),
-      stubs: { "0x101000000": 0 },
+      stubs: { "0x101000000": "0x0" },
     });
     expect(issues).toEqual([]);
   });
@@ -107,7 +107,7 @@ describe("validateEmulationHarness", () => {
   it("rejects a code region covering the return sentinel page", () => {
     const issues = validateEmulationHarness({
       ...baseInput(),
-      code_address: 0x0badf000,
+      code_address: "0x0badf000",
     });
     expect(issues.length).toBeGreaterThan(0);
     expect(issues[0]?.message).toMatch(/sentinel/);
@@ -116,9 +116,27 @@ describe("validateEmulationHarness", () => {
   it("rejects a stub address on the return sentinel page", () => {
     const issues = validateEmulationHarness({
       ...baseInput(),
-      stubs: { "0x0badf000": 0 },
+      stubs: { "0x0badf000": "0x0" },
     });
     expect(issues.map((issue) => issue.path)).toContainEqual(["stubs"]);
+  });
+
+  it("rejects a memory image over the combined input budget", () => {
+    // The decoded length is summed from the hex string before any decoding,
+    // so an oversized image is rejected without allocating its copy
+    // (Greptile 2026-11-03 P2).
+    const issues = validateEmulationHarness({
+      ...baseInput(),
+      memory: [
+        {
+          address: "0x2000000",
+          bytes: "00".repeat(33 * 1024 * 1024),
+        },
+      ],
+    });
+    expect(issues.map((issue) => issue.path)).toContainEqual([
+      "function_bytes",
+    ]);
   });
 
   it("rejects a function digest mismatch", () => {

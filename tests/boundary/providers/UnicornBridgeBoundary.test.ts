@@ -19,14 +19,14 @@ import {
 import { UNICORN_PYTHON_ENV_VAR } from "../../../src/unicorn/UnicornRelease.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const CODE = 0x1000000;
-const STACK = 0x7f000000;
+const CODE = "0x1000000";
+const STACK = "0x7f000000";
 
 const addInput = () => ({
   architecture: "x86_64",
   function_bytes: "89f801f0c3",
   code_address: CODE,
-  registers: { rdi: 40, rsi: 2 },
+  registers: { rdi: "0x28", rsi: "0x2" },
   stack_address: STACK,
   stack_size: 65536,
 });
@@ -81,11 +81,12 @@ describe("Unicorn bridge boundary", () => {
           JSON.stringify({
             ok: true,
             stop_reason: "returned",
-            return_value: 0,
+            return_value: "0x0",
             registers: {},
             memory_writes: [],
             memory_diff_truncated: false,
             calls_hit: [],
+            calls_truncated: false,
             instructions_executed: 1,
             engine: { name: "unicorn", version: "2.0.0" },
           }),
@@ -180,7 +181,9 @@ describe("Unicorn bridge boundary", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error._tag).toBe("AnalysisInputError");
   });
+});
 
+describe("Unicorn bridge boundary: input budgets", () => {
   it("rejects a function image above the input cap", async () => {
     const client = new UnicornClient(
       {},
@@ -231,11 +234,12 @@ describe("Unicorn bridge boundary fixes", () => {
             JSON.stringify({
               ok: true,
               stop_reason: "returned",
-              return_value: 42,
+              return_value: "0x2a",
               registers: {},
               memory_writes: [],
               memory_diff_truncated: false,
               calls_hit: [],
+              calls_truncated: false,
               instructions_executed: 3,
               engine: { name: "unicorn", version: "2.1.2" },
             }),

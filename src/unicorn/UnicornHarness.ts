@@ -9,6 +9,14 @@ const PAGE_SIZE = 0x1000;
 const alignUp = (size: number): number =>
   (size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
 
+/**
+ * A 0x-prefixed hex address as a number for pre-check arithmetic. Values
+ * above 2^53 lose precision here, but this is only a pre-check: the bridge
+ * re-validates everything with exact integers (trust boundary), so an
+ * imprecise pre-check can only reject, never admit, a bad harness.
+ */
+const parseHexAddress = (value: string): number => Number.parseInt(value, 16);
+
 const issue = (
   path: readonly (string | number)[],
   reason: AnalysisInputIssue["reason"],
@@ -33,8 +41,10 @@ export const validateEmulationHarness = (
 ): readonly AnalysisInputIssue[] => {
   const issues: AnalysisInputIssue[] = [];
   const functionBytes = Buffer.from(input.function_bytes, "hex");
+  const codeAddress = parseHexAddress(input.code_address);
+  const stackAddress = parseHexAddress(input.stack_address);
 
-  if (input.code_address % PAGE_SIZE !== 0)
+  if (codeAddress % PAGE_SIZE !== 0)
     issues.push(
       issue(
         ["code_address"],
@@ -42,7 +52,7 @@ export const validateEmulationHarness = (
         "code_address must be page-aligned.",
       ),
     );
-  if (input.stack_address % PAGE_SIZE !== 0)
+  if (stackAddress % PAGE_SIZE !== 0)
     issues.push(
       issue(
         ["stack_address"],
@@ -61,19 +71,20 @@ export const validateEmulationHarness = (
 
   const regions: NormalizedRegion[] = [
     {
-      start: input.code_address,
-      end: input.code_address + alignUp(functionBytes.length),
+      start: codeAddress,
+      end: codeAddress + alignUp(functionBytes.length),
       label: "code",
     },
     {
-      start: input.stack_address,
-      end: input.stack_address + alignUp(input.stack_size),
+      start: stackAddress,
+      end: stackAddress + alignUp(input.stack_size),
       label: "stack",
     },
   ];
   let totalInputBytes = functionBytes.length;
   input.memory.forEach((region, index) => {
-    if (region.address % PAGE_SIZE !== 0)
+    const address = parseHexAddress(region.address);
+    if (address % PAGE_SIZE !== 0)
       issues.push(
         issue(
           ["memory", index, "address"],
@@ -81,11 +92,13 @@ export const validateEmulationHarness = (
           "memory region addresses must be page-aligned.",
         ),
       );
-    const data = Buffer.from(region.bytes, "hex");
-    totalInputBytes += data.length;
+    // Sum the decoded length from the hex string before decoding: an
+    // oversized image must be rejected without allocating its copy.
+    const decodedLength = region.bytes.length / 2;
+    totalInputBytes += decodedLength;
     regions.push({
-      start: region.address,
-      end: region.address + alignUp(data.length),
+      start: address,
+      end: address + alignUp(decodedLength),
       label: `memory[${index}]`,
     });
   });

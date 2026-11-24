@@ -12,9 +12,6 @@ import { UnicornClient } from "../../src/unicorn/UnicornClient.js";
 import type { UnicornBridgeLauncher } from "../../src/unicorn/UnicornBridge.js";
 import { UNICORN_PYTHON_ENV_VAR } from "../../src/unicorn/UnicornRelease.js";
 
-const CODE = 0x1000000;
-const STACK = 0x7f000000;
-
 const snapshot = (): ProviderProcessSnapshot => ({
   stdout: { text: "", bytes: 0, observedBytes: 0 },
   stderr: { text: "", bytes: 0, observedBytes: 0 },
@@ -58,7 +55,7 @@ describe("emulate_function acceptance", () => {
   it("runs the contract example through the client and validates the output", async () => {
     const contract = toolContract("emulate_function");
     const input = emulateFunctionInputSchema.parse(contract.examples[0]!.input);
-    const registers: Record<string, number> = {};
+    const registers: Record<string, string> = {};
     for (const [name, value] of Object.entries(input.registers))
       if (value !== undefined) registers[name] = value;
     const client = new UnicornClient(
@@ -67,17 +64,18 @@ describe("emulate_function acceptance", () => {
         launcher: replyingLauncher({
           ok: true,
           stop_reason: "returned",
-          return_value: 42,
+          return_value: "0x2a",
           registers: {
-            rax: 42,
-            rdi: 40,
-            rsi: 2,
-            rsp: STACK + 65536 - 8,
-            rip: 0x0badf00d,
+            rax: "0x2a",
+            rdi: "0x28",
+            rsi: "0x2",
+            rsp: "0x7f00fff8", // stack 0x7f000000 + 65536 - 8
+            rip: "0x0badf00d",
           },
           memory_writes: [],
           memory_diff_truncated: false,
           calls_hit: [],
+          calls_truncated: false,
           instructions_executed: 3,
           engine: { name: "unicorn", version: "2.1.2" },
         }),
@@ -91,13 +89,11 @@ describe("emulate_function acceptance", () => {
       stack_address: input.stack_address,
       stack_size: input.stack_size,
     });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     const output = emulateFunctionOutputSchema.parse(result.value.result);
     expect(output.stop_reason).toBe("returned");
-    expect(output.return_value).toBe(42);
+    expect(output.return_value).toBe("0x2a");
     expect(result.value.provider.id).toBe("unicorn");
     expect(result.value.limitations.length).toBeGreaterThan(0);
-    void CODE;
   });
 });

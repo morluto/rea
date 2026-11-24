@@ -59,10 +59,10 @@ def base_request(**overrides):
     request = {
         "architecture": "x86_64",
         "function_bytes": "",
-        "code_address": CODE,
+        "code_address": "0x%x" % CODE,
         "registers": {},
         "memory": [],
-        "stack_address": STACK,
+        "stack_address": "0x%x" % STACK,
         "stack_size": 65536,
         "stubs": {},
         "stub_policy": "record",
@@ -162,7 +162,7 @@ class UnicornEngineTests(unittest.TestCase):
         # syscall; mov eax, 42; ret
         req = base_request(
             function_bytes="0f05b82a000000c3",
-            registers={"rax": 60},
+            registers={"rax": "0x3c"},
             stub_policy="stop",
         )
         reply = self.run_request(req)
@@ -171,7 +171,7 @@ class UnicornEngineTests(unittest.TestCase):
         self.assertEqual(reply["calls_hit"][0]["kind"], "syscall")
         self.assertEqual(reply["calls_hit"][0]["number"], 60)
         # The stop path never sets the stubbed return value.
-        self.assertEqual(reply["registers"]["rax"], 60)
+        self.assertEqual(reply["registers"]["rax"], "0x3c")
         self.assertIsNone(reply["return_value"])
 
     def test_undeclared_import_returns_zero_and_records(self):
@@ -179,13 +179,13 @@ class UnicornEngineTests(unittest.TestCase):
         req = base_request(function_bytes=call_bytes(IMPORT) + "b82a000000c3")
         reply = self.run_request(req)
         self.assertEqual(reply["stop_reason"], "returned")
-        self.assertEqual(reply["return_value"], 42)
+        self.assertEqual(reply["return_value"], "0x2a")
         self.assertEqual(len(reply["calls_hit"]), 1)
         call = reply["calls_hit"][0]
         self.assertEqual(call["kind"], "import")
-        self.assertEqual(call["address"], IMPORT)
+        self.assertEqual(call["address"], "0x3000000")
         self.assertTrue(call["stubbed"])
-        self.assertEqual(call["returned"], 0)
+        self.assertEqual(call["returned"], "0x0")
 
     def test_second_undeclared_import_on_same_page(self):
         # call IMPORT; call IMPORT+0x10; mov eax, 42; ret
@@ -197,19 +197,21 @@ class UnicornEngineTests(unittest.TestCase):
         )
         reply = self.run_request(req)
         self.assertEqual(reply["stop_reason"], "returned")
-        self.assertEqual(reply["return_value"], 42)
+        self.assertEqual(reply["return_value"], "0x2a")
         self.assertEqual(
             [call["address"] for call in reply["calls_hit"]],
-            [IMPORT, IMPORT + 0x10],
+            ["0x3000000", "0x3000010"],
         )
-        self.assertTrue(all(call["returned"] == 0 for call in reply["calls_hit"]))
+        self.assertTrue(
+            all(call["returned"] == "0x0" for call in reply["calls_hit"])
+        )
 
     def test_padding_write_is_reported(self):
         # mov byte ptr [rdi+1], 0xab; ret
         req = base_request(
             function_bytes="c64701abc3",
-            registers={"rdi": 0x2000000},
-            memory=[{"address": 0x2000000, "bytes": "00"}],
+            registers={"rdi": "0x2000000"},
+            memory=[{"address": "0x2000000", "bytes": "00"}],
         )
         reply = self.run_request(req)
         self.assertEqual(reply["stop_reason"], "returned")
@@ -217,20 +219,45 @@ class UnicornEngineTests(unittest.TestCase):
         writes = {
             write["address"]: write for write in reply["memory_writes"]
         }
-        self.assertIn(0x2000001, writes)
-        self.assertEqual(writes[0x2000001]["after"], "ab")
+        self.assertIn("0x2000001", writes)
+        self.assertEqual(writes["0x2000001"]["after"], "ab")
+
+    def test_full_64_bit_return_value_round_trips_as_hex(self):
+        # movabs rax, 0xffffffffffffffff; ret — a JSON number cannot hold
+        # this value exactly, so the reply must carry it as a hex string
+        # (Greptile 2026-11-03 P1).
+        req = base_request(function_bytes="48b8ffffffffffffffffc3")
+        reply = self.run_request(req)
+        self.assertEqual(reply["stop_reason"], "returned")
+        self.assertEqual(reply["return_value"], "0xffffffffffffffff")
+        self.assertEqual(reply["registers"]["rax"], "0xffffffffffffffff")
+
+    def test_call_records_are_capped_and_flagged(self):
+        # mov ecx, 11000; loop: call IMPORT; sub ecx, 1; jnz loop; ret.
+        # The declared stub records every call; retention stops at
+        # MAX_CALL_RECORDS and the reply flags the truncation (Greptile
+        # 2026-10-26 P1, partially fixed: the reply bound alone does not
+        # stop the in-memory list from growing).
+        req = base_request(
+            function_bytes="b9f82a0000e8f6ffff0183e90175f6c3",
+            stubs={"0x3000000": "0x0"},
+        )
+        reply = self.run_request(req)
+        self.assertEqual(reply["stop_reason"], "returned")
+        self.assertTrue(reply["calls_truncated"])
+        self.assertEqual(len(reply["calls_hit"]), impl.MAX_CALL_RECORDS)
 
     def test_declared_stub_still_returns_its_value(self):
         # call IMPORT; ret
         req = base_request(
             function_bytes=call_bytes(IMPORT) + "c3",
-            stubs={"0x3000000": 7},
+            stubs={"0x3000000": "0x7"},
         )
         reply = self.run_request(req)
         self.assertEqual(reply["stop_reason"], "returned")
-        self.assertEqual(reply["return_value"], 7)
+        self.assertEqual(reply["return_value"], "0x7")
         self.assertEqual(len(reply["calls_hit"]), 1)
-        self.assertEqual(reply["calls_hit"][0]["returned"], 7)
+        self.assertEqual(reply["calls_hit"][0]["returned"], "0x7")
 
 
 class UnicornValidationTests(unittest.TestCase):
@@ -240,12 +267,12 @@ class UnicornValidationTests(unittest.TestCase):
 
     def test_sentinel_page_region_rejected(self):
         with self.assertRaises(impl.RequestError):
-            base_request(function_bytes="c3", code_address=0x0BADF000)
+            base_request(function_bytes="c3", code_address="0x0badf000")
         with self.assertRaises(impl.RequestError):
-            base_request(function_bytes="c3", stack_address=0x0BADF000)
+            base_request(function_bytes="c3", stack_address="0x0badf000")
         with self.assertRaises(impl.RequestError):
             base_request(
-                function_bytes="c3", stubs={"0x0badf000": 0}
+                function_bytes="c3", stubs={"0x0badf000": "0x0"}
             )
 
     def test_write_reply_refuses_oversize(self):

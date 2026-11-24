@@ -29,6 +29,14 @@ import { UNICORN_LIMITS, UNICORN_PYTHON_ENV_VAR } from "./UnicornRelease.js";
 
 export const UNICORN_OPERATION = "emulate_function";
 
+/** A 64-bit value as a 0x-prefixed hex string: JSON numbers lose precision above 2^53-1. */
+const hexUint64Schema = z
+  .string()
+  .regex(
+    /^0x[0-9a-fA-F]{1,16}$/u,
+    "Must be a 0x-prefixed hex integer below 2^64.",
+  );
+
 /** Wire reply for a completed run, as produced by bridge/unicorn/. */
 export const unicornBridgeSuccessReplySchema = z.strictObject({
   ok: z.literal(true),
@@ -41,11 +49,11 @@ export const unicornBridgeSuccessReplySchema = z.strictObject({
     "timeout",
     "escaped_code_region",
   ]),
-  return_value: z.number().int().nullable(),
-  registers: z.record(z.string(), z.number().int()),
+  return_value: hexUint64Schema.nullable(),
+  registers: z.record(z.string(), hexUint64Schema),
   memory_writes: z.array(
     z.strictObject({
-      address: z.number().int().nonnegative(),
+      address: hexUint64Schema,
       before: z.string(),
       after: z.string(),
     }),
@@ -54,16 +62,17 @@ export const unicornBridgeSuccessReplySchema = z.strictObject({
   calls_hit: z.array(
     z.strictObject({
       kind: z.enum(["import", "syscall"]),
-      address: z.number().int().nullable(),
+      address: hexUint64Schema.nullable(),
       number: z.number().int().nullable(),
       arguments: z.record(
         z.string(),
-        z.union([z.number().int(), z.array(z.number().int())]),
+        z.union([hexUint64Schema, z.array(hexUint64Schema)]),
       ),
       stubbed: z.literal(true),
-      returned: z.number().int(),
+      returned: hexUint64Schema,
     }),
   ),
+  calls_truncated: z.boolean(),
   instructions_executed: z.number().int().nonnegative(),
   engine: z.strictObject({
     name: z.literal("unicorn"),

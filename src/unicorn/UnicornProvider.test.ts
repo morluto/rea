@@ -145,9 +145,8 @@ describe("UnicornProvider", () => {
   it("resolves a profile bound to the provider identity", async () => {
     const provider = new UnicornProvider({});
     const resolution = await provider.resolveAnalysisProfile();
-    expect(resolution.ok).toBe(true);
-    if (resolution.ok)
-      expect(resolution.value.profile?.provider.id).toBe("unicorn");
+    if (!resolution.ok) throw resolution.error;
+    expect(resolution.value.profile?.provider.id).toBe("unicorn");
   });
 
   it("creates a Unicorn client and closes cleanly", async () => {

@@ -9,14 +9,14 @@ import { UNICORN_PYTHON_ENV_VAR } from "./UnicornRelease.js";
 import { UnicornClient } from "./UnicornClient.js";
 import type { UnicornBridgeLauncher } from "./UnicornBridge.js";
 
-const CODE = 0x1000000;
-const STACK = 0x7f000000;
+const CODE = "0x1000000";
+const STACK = "0x7f000000";
 
 const addInput = () => ({
   architecture: "x86_64",
   function_bytes: "89f801f0c3",
   code_address: CODE,
-  registers: { rdi: 40, rsi: 2 },
+  registers: { rdi: "0x28", rsi: "0x2" },
   stack_address: STACK,
   stack_size: 65536,
 });
@@ -43,17 +43,18 @@ const snapshot = (
 const successReply = (overrides: Record<string, unknown> = {}) => ({
   ok: true,
   stop_reason: "returned",
-  return_value: 42,
+  return_value: "0x2a",
   registers: {
-    rax: 42,
-    rdi: 40,
-    rsi: 2,
-    rsp: STACK + 65536 - 8,
-    rip: 0x0badf00d,
+    rax: "0x2a",
+    rdi: "0x28",
+    rsi: "0x2",
+    rsp: "0x7f00fff8",
+    rip: "0x0badf00d",
   },
   memory_writes: [],
   memory_diff_truncated: false,
   calls_hit: [],
+  calls_truncated: false,
   instructions_executed: 3,
   engine: { name: "unicorn", version: "2.1.2" },
   ...overrides,
@@ -96,15 +97,61 @@ describe("UnicornClient", () => {
         { launcher: replyingLauncher(successReply()), runtimeDirBase: dir },
       );
       const result = await client.execute("emulate_function", addInput());
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
+      if (!result.ok) throw result.error;
       const output = result.value.result as Record<string, unknown>;
       expect(output["stop_reason"]).toBe("returned");
-      expect(output["return_value"]).toBe(42);
+      expect(output["return_value"]).toBe("0x2a");
       expect(result.value.provider.id).toBe("unicorn");
       expect(result.value.limitations.join(" ")).toMatch(/No operating system/);
       expect(result.value.limitations.join(" ")).not.toMatch(/stopped early/);
       expect(await readdir(dir)).toEqual([]);
+    });
+  });
+
+  it("preserves 64-bit register values exactly as hex strings", async () => {
+    await withTempDir(async (dir) => {
+      const client = new UnicornClient(
+        { [UNICORN_PYTHON_ENV_VAR]: "/usr/bin/python3" },
+        {
+          launcher: replyingLauncher(
+            successReply({
+              return_value: "0xffffffffffffffff",
+              registers: {
+                rax: "0xffffffffffffffff",
+                rdi: "0x28",
+                rsi: "0x2",
+                rsp: "0x7f00fff8",
+                rip: "0x0badf00d",
+              },
+            }),
+          ),
+          runtimeDirBase: dir,
+        },
+      );
+      const result = await client.execute("emulate_function", addInput());
+      if (!result.ok) throw result.error;
+      const output = result.value.result as Record<string, unknown>;
+      // A JSON number cannot hold this value exactly; the hex string must
+      // round-trip untouched (Greptile 2026-11-03 P1).
+      expect(output["return_value"]).toBe("0xffffffffffffffff");
+      expect((output["registers"] as Record<string, unknown>)["rax"]).toBe(
+        "0xffffffffffffffff",
+      );
+    });
+  });
+
+  it("reports truncated call records as a limitation", async () => {
+    await withTempDir(async (dir) => {
+      const client = new UnicornClient(
+        { [UNICORN_PYTHON_ENV_VAR]: "/usr/bin/python3" },
+        {
+          launcher: replyingLauncher(successReply({ calls_truncated: true })),
+          runtimeDirBase: dir,
+        },
+      );
+      const result = await client.execute("emulate_function", addInput());
+      if (!result.ok) throw result.error;
+      expect(result.value.limitations.join(" ")).toMatch(/truncated/);
     });
   });
 
@@ -122,9 +169,9 @@ describe("UnicornClient", () => {
                   kind: "syscall",
                   address: null,
                   number: 60,
-                  arguments: { rdi: 0 },
+                  arguments: { rdi: "0x0" },
                   stubbed: true,
-                  returned: 0,
+                  returned: "0x0",
                 },
               ],
             }),
@@ -133,8 +180,7 @@ describe("UnicornClient", () => {
         },
       );
       const result = await client.execute("emulate_function", addInput());
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
+      if (!result.ok) throw result.error;
       const limitations = result.value.limitations.join(" ");
       expect(limitations).toMatch(/stopped early: unmapped_access/);
       expect(limitations).toMatch(/1 import\/syscall call\(s\) were stubbed/);
@@ -151,8 +197,7 @@ describe("UnicornClient", () => {
       },
     );
     const result = await client.execute("health", {});
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(result.value.provider.id).toBe("unicorn");
     expect(result.value.result).toBeNull();
   });
@@ -164,8 +209,7 @@ describe("UnicornClient", () => {
         { launcher: replyingLauncher(successReply()), runtimeDirBase: dir },
       );
       const result = await client.execute("emulate_function", addInput());
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
+      if (!result.ok) throw result.error;
       // An explicit null subject keeps the session from substituting the
       // active target; the authority says replay, not artifact provenance.
       expect(result.value.subject).toBeNull();

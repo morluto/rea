@@ -155,6 +155,7 @@ export class UnicornClient implements AnalysisClient {
       memory_writes: reply.memory_writes,
       memory_diff_truncated: reply.memory_diff_truncated,
       calls_hit: reply.calls_hit,
+      calls_truncated: reply.calls_truncated,
       instructions_executed: reply.instructions_executed,
       engine: reply.engine,
     };
@@ -166,6 +167,10 @@ export class UnicornClient implements AnalysisClient {
     if (reply.memory_diff_truncated)
       limitations.push(
         `Memory-write diff was truncated at the ${String(UNICORN_LIMITS.maxMemoryDiffBytes)}-byte budget; later writes are unreported.`,
+      );
+    if (reply.calls_truncated)
+      limitations.push(
+        "Call records were truncated at the retained-record budget; later stubbed calls are unreported.",
       );
     if (reply.calls_hit.length > 0)
       limitations.push(

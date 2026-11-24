@@ -38,6 +38,10 @@ MAX_ADDRESS_SPACE_BYTES = 3 * 1024 * 1024 * 1024
 MAX_INPUT_BYTES = 32 * 1024 * 1024
 MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 MAX_MEMORY_DIFF_BYTES = 1024 * 1024
+# Retained stubbed-call records are bounded so a tight call loop cannot grow
+# the reply without limit; the run continues, only recording stops, and the
+# reply reports the truncation. The serialized reply stays bounded at 64 MiB.
+MAX_CALL_RECORDS = 10_000
 # The setup writes an 8-byte sentinel at stack_top - 8; a smaller stack
 # leaves that write below the mapped stack.
 MIN_STACK_SIZE = 8
@@ -85,8 +89,32 @@ def _parse_hex(value, field):
     return bytes.fromhex(value)
 
 
+def _hex(value):
+    """A 64-bit value as a 0x-prefixed hex string (lossless in JSON)."""
+    return "0x%x" % value
+
+
+def _hex_args(args):
+    """Call arguments with every 64-bit value rendered as a hex string."""
+    return {
+        name: [_hex(item) for item in value]
+        if isinstance(value, list)
+        else _hex(value)
+        for name, value in args.items()
+    }
+
+
 def _parse_address(value, field):
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+    if isinstance(value, bool):
+        raise RequestError("%s must be a non-negative integer" % field)
+    if isinstance(value, str):
+        if not value.startswith("0x") or not value[2:]:
+            raise RequestError("%s must be a 0x-prefixed hex integer" % field)
+        try:
+            value = int(value, 16)
+        except ValueError:
+            raise RequestError("%s must be a 0x-prefixed hex integer" % field)
+    if not isinstance(value, int) or value < 0:
         raise RequestError("%s must be a non-negative integer" % field)
     if value >= 1 << 64:
         raise RequestError("%s exceeds 64 bits" % field)
@@ -336,6 +364,7 @@ def run_emulation(uc_module, x86, req):
         "stop": None,
         "count": 0,
         "calls": [],
+        "calls_truncated": False,
         "timed_out": False,
         # Last in-code-range instruction seen, for recognizing a call whose
         # target faulted (undeclared import). None before the first one.
@@ -384,12 +413,19 @@ def run_emulation(uc_module, x86, req):
                 return True
         return False
 
+    def _record_call(call):
+        """Retain one stubbed-call record, bounded so a call loop cannot grow the reply without limit."""
+        if len(state["calls"]) >= MAX_CALL_RECORDS:
+            state["calls_truncated"] = True
+            return
+        state["calls"].append(call)
+
     def _import_call_record(u, address):
         return {
             "kind": "import",
-            "address": address,
+            "address": _hex(address),
             "number": None,
-            "arguments": {
+            "arguments": _hex_args({
                 "rdi": read_register("rdi"),
                 "rsi": read_register("rsi"),
                 "rdx": read_register("rdx"),
@@ -397,9 +433,9 @@ def run_emulation(uc_module, x86, req):
                 "r8": read_register("r8"),
                 "r9": read_register("r9"),
                 "stack": read_stack_args(),
-            },
+            }),
             "stubbed": True,
-            "returned": 0,
+            "returned": _hex(0),
         }
 
     def _read_return_address(u):
@@ -429,9 +465,9 @@ def run_emulation(uc_module, x86, req):
         if address in stubs:
             call = {
                 "kind": "import",
-                "address": address,
+                "address": _hex(address),
                 "number": None,
-                "arguments": {
+                "arguments": _hex_args({
                     "rdi": read_register("rdi"),
                     "rsi": read_register("rsi"),
                     "rdx": read_register("rdx"),
@@ -439,11 +475,11 @@ def run_emulation(uc_module, x86, req):
                     "r8": read_register("r8"),
                     "r9": read_register("r9"),
                     "stack": read_stack_args(),
-                },
+                }),
                 "stubbed": True,
-                "returned": stubs[address],
+                "returned": _hex(stubs[address]),
             }
-            state["calls"].append(call)
+            _record_call(call)
             if req["stub_policy"] == "stop":
                 state["stop"] = "stubbed_call"
                 u.emu_stop()
@@ -462,7 +498,7 @@ def run_emulation(uc_module, x86, req):
             # dynamic page: no fault fires, so record it here and redirect
             # to the caller's return address. The instruction itself (page
             # padding) is skipped, never executed.
-            state["calls"].append(_import_call_record(u, address))
+            _record_call(_import_call_record(u, address))
             ret = _read_return_address(u)
             if ret is None:
                 state["stop"] = "unmapped_access"
@@ -490,7 +526,7 @@ def run_emulation(uc_module, x86, req):
             if address - page > PAGE_SIZE - 3:
                 state["stop"] = "unmapped_access"
                 return False
-            state["calls"].append(_import_call_record(u, address))
+            _record_call(_import_call_record(u, address))
             u.reg_write(x86.UC_X86_REG_RAX, 0)
             u.mem_map(page, PAGE_SIZE, UC_PROT_ALL)
             u.mem_write(address, b"\x31\xc0\xc3")
@@ -502,20 +538,20 @@ def run_emulation(uc_module, x86, req):
         return False
 
     def hook_syscall(u, _data):
-        state["calls"].append({
+        _record_call({
             "kind": "syscall",
             "address": None,
             "number": u.reg_read(x86.UC_X86_REG_RAX),
-            "arguments": {
+            "arguments": _hex_args({
                 "rdi": u.reg_read(x86.UC_X86_REG_RDI),
                 "rsi": u.reg_read(x86.UC_X86_REG_RSI),
                 "rdx": u.reg_read(x86.UC_X86_REG_RDX),
                 "r10": u.reg_read(x86.UC_X86_REG_R10),
                 "r8": u.reg_read(x86.UC_X86_REG_R8),
                 "r9": u.reg_read(x86.UC_X86_REG_R9),
-            },
+            }),
             "stubbed": True,
-            "returned": 0,
+            "returned": _hex(0),
         })
         if req["stub_policy"] == "stop":
             # Mirror the import path: a stop policy stops at the stubbed
@@ -560,9 +596,9 @@ def run_emulation(uc_module, x86, req):
 
     registers_out = {}
     for name in sorted(REGISTER_IDS):
-        registers_out[name] = uc.reg_read(REGISTER_IDS[name])
-    registers_out["rsp"] = uc.reg_read(x86.UC_X86_REG_RSP)
-    registers_out["rip"] = uc.reg_read(x86.UC_X86_REG_RIP)
+        registers_out[name] = _hex(uc.reg_read(REGISTER_IDS[name]))
+    registers_out["rsp"] = _hex(uc.reg_read(x86.UC_X86_REG_RSP))
+    registers_out["rip"] = _hex(uc.reg_read(x86.UC_X86_REG_RIP))
 
     memory_writes = []
     diff_bytes = 0
@@ -578,7 +614,7 @@ def run_emulation(uc_module, x86, req):
                 truncated = True
                 break
             memory_writes.append({
-                "address": address + offset,
+                "address": _hex(address + offset),
                 "before": before_hex,
                 "after": after_hex,
             })
@@ -594,6 +630,7 @@ def run_emulation(uc_module, x86, req):
         "memory_writes": memory_writes,
         "memory_diff_truncated": truncated,
         "calls_hit": state["calls"],
+        "calls_truncated": state["calls_truncated"],
         "instructions_executed": state["count"],
         "engine": {"name": "unicorn", "version": PINNED_UNICORN_VERSION},
     }

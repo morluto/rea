@@ -17,8 +17,8 @@ const UNICORN_PROVIDER = {
   version: "2.1.2",
 };
 
-const CODE = 0x1000000;
-const STACK = 0x7f000000;
+const CODE = "0x1000000";
+const STACK = "0x7f000000";
 
 const emulateFunctionContract = () =>
   UNICORN_TOOL_CONTRACTS.find(
@@ -29,7 +29,7 @@ const baseInput = () => ({
   architecture: "x86_64",
   function_bytes: "89f801f0c3",
   code_address: CODE,
-  registers: { rdi: 40, rsi: 2 },
+  registers: { rdi: "0x28", rsi: "0x2" },
   stack_address: STACK,
   stack_size: 65536,
 });
@@ -59,11 +59,12 @@ describe("emulate_function contract", () => {
     const contract = emulateFunctionContract();
     const raw = emulateFunctionOutputSchema.parse({
       stop_reason: "returned",
-      return_value: 42,
-      registers: { rax: 42, rip: 0x0badf00d },
+      return_value: "0x2a",
+      registers: { rax: "0x2a", rip: "0x0badf00d" },
       memory_writes: [],
       memory_diff_truncated: false,
       calls_hit: [],
+      calls_truncated: false,
       instructions_executed: 3,
       engine: { name: "unicorn", version: "2.1.2" },
     });
@@ -115,7 +116,7 @@ describe("emulate_function contract", () => {
     expect(() =>
       emulateFunctionInputSchema.parse({
         ...baseInput(),
-        code_address: -1,
+        code_address: "-1",
       }),
     ).toThrow();
     expect(() =>
@@ -134,7 +135,18 @@ describe("emulate_function contract", () => {
     expect(() =>
       emulateFunctionInputSchema.parse({
         ...baseInput(),
-        stubs: { "not-an-address": 0 },
+        stubs: { "not-an-address": "0x0" },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects numeric register values", () => {
+    // 64-bit values cross the boundary as hex strings; a JSON number cannot
+    // hold the full range (Greptile 2026-11-03 P1).
+    expect(() =>
+      emulateFunctionInputSchema.parse({
+        ...baseInput(),
+        registers: { rdi: 40 },
       }),
     ).toThrow();
   });
@@ -142,14 +154,15 @@ describe("emulate_function contract", () => {
   it("parses a complete run output", () => {
     const parsed = emulateFunctionOutputSchema.parse({
       stop_reason: "returned",
-      return_value: 42,
-      registers: { rax: 42, rsp: STACK + 65536 - 8, rip: 0x0badf00d },
+      return_value: "0x2a",
+      registers: { rax: "0x2a", rsp: "0x7f00fff8", rip: "0x0badf00d" },
       memory_writes: [],
       memory_diff_truncated: false,
       calls_hit: [],
+      calls_truncated: false,
       instructions_executed: 3,
       engine: { name: "unicorn", version: "2.1.2" },
     });
-    expect(parsed.return_value).toBe(42);
+    expect(parsed.return_value).toBe("0x2a");
   });
 });

@@ -24,13 +24,17 @@ export const UNICORN_LIMITS = {
   maxMemoryDiffBytes: 1024 * 1024,
 } as const;
 
-const safeAddressSchema = z
-  .number()
-  .int()
-  .nonnegative()
-  .refine((value) => Number.isSafeInteger(value), {
-    message: "Addresses must be safe integers (below 2^53).",
-  });
+/**
+ * A 64-bit value as a 0x-prefixed hex string. JSON numbers cannot represent
+ * the full 64-bit range (values above 2^53-1 lose precision), so every
+ * address, register, and return value crosses the boundary as hex.
+ */
+const hexUint64Schema = z
+  .string()
+  .regex(
+    /^0x[0-9a-fA-F]{1,16}$/u,
+    "Must be a 0x-prefixed hex integer below 2^64.",
+  );
 
 const hexBytesSchema = z
   .string()
@@ -38,21 +42,21 @@ const hexBytesSchema = z
 
 /** General-purpose registers the caller may set; RIP and RSP are derived. */
 const registerSchema = z.strictObject({
-  rax: safeAddressSchema.optional(),
-  rbx: safeAddressSchema.optional(),
-  rcx: safeAddressSchema.optional(),
-  rdx: safeAddressSchema.optional(),
-  rsi: safeAddressSchema.optional(),
-  rdi: safeAddressSchema.optional(),
-  rbp: safeAddressSchema.optional(),
-  r8: safeAddressSchema.optional(),
-  r9: safeAddressSchema.optional(),
-  r10: safeAddressSchema.optional(),
-  r11: safeAddressSchema.optional(),
-  r12: safeAddressSchema.optional(),
-  r13: safeAddressSchema.optional(),
-  r14: safeAddressSchema.optional(),
-  r15: safeAddressSchema.optional(),
+  rax: hexUint64Schema.optional(),
+  rbx: hexUint64Schema.optional(),
+  rcx: hexUint64Schema.optional(),
+  rdx: hexUint64Schema.optional(),
+  rsi: hexUint64Schema.optional(),
+  rdi: hexUint64Schema.optional(),
+  rbp: hexUint64Schema.optional(),
+  r8: hexUint64Schema.optional(),
+  r9: hexUint64Schema.optional(),
+  r10: hexUint64Schema.optional(),
+  r11: hexUint64Schema.optional(),
+  r12: hexUint64Schema.optional(),
+  r13: hexUint64Schema.optional(),
+  r14: hexUint64Schema.optional(),
+  r15: hexUint64Schema.optional(),
 });
 
 const budgetsSchema = z.strictObject({
@@ -82,18 +86,18 @@ export const emulateFunctionInputSchema = z.strictObject({
     .min(2, "function_bytes must contain at least one byte.")
     .max(UNICORN_LIMITS.inputBytes * 2),
   entry_offset: z.number().int().nonnegative().default(0),
-  code_address: safeAddressSchema,
+  code_address: hexUint64Schema,
   registers: registerSchema.default({}),
   memory: z
     .array(
       z.strictObject({
-        address: safeAddressSchema,
+        address: hexUint64Schema,
         bytes: hexBytesSchema,
       }),
     )
     .max(1024)
     .default([]),
-  stack_address: safeAddressSchema,
+  stack_address: hexUint64Schema,
   // The setup writes an 8-byte return sentinel at stack_top - 8; a smaller
   // stack leaves that write below the mapped stack.
   stack_size: z
@@ -105,7 +109,7 @@ export const emulateFunctionInputSchema = z.strictObject({
   stubs: z
     .record(
       z.string().regex(/^0x[0-9a-fA-F]+$/u, "Stub keys must be hex addresses."),
-      safeAddressSchema,
+      hexUint64Schema,
     )
     .default({}),
   stub_policy: z.enum(["record", "stop"]).default("record"),
@@ -133,11 +137,11 @@ export const emulateFunctionOutputSchema = z.strictObject({
     "timeout",
     "escaped_code_region",
   ]),
-  return_value: z.number().int().nullable(),
-  registers: z.record(z.string(), z.number().int()),
+  return_value: hexUint64Schema.nullable(),
+  registers: z.record(z.string(), hexUint64Schema),
   memory_writes: z.array(
     z.strictObject({
-      address: safeAddressSchema,
+      address: hexUint64Schema,
       before: hexBytesSchema,
       after: hexBytesSchema,
     }),
@@ -146,16 +150,17 @@ export const emulateFunctionOutputSchema = z.strictObject({
   calls_hit: z.array(
     z.strictObject({
       kind: z.enum(["import", "syscall"]),
-      address: safeAddressSchema.nullable(),
+      address: hexUint64Schema.nullable(),
       number: z.number().int().nullable(),
       arguments: z.record(
         z.string(),
-        z.union([z.number().int(), z.array(z.number().int())]),
+        z.union([hexUint64Schema, z.array(hexUint64Schema)]),
       ),
       stubbed: z.literal(true),
-      returned: z.number().int(),
+      returned: hexUint64Schema,
     }),
   ),
+  calls_truncated: z.boolean(),
   instructions_executed: z.number().int().nonnegative(),
   engine: z.strictObject({
     name: z.literal("unicorn"),
@@ -191,9 +196,10 @@ export const UNICORN_TOOL_CONTRACTS = [
       "Imports and syscalls are stubbed and recorded, never executed on the host; no " +
       "operating system is modeled (no threading, signals, filesystem, or network). " +
       "A run establishes observed behavior for the declared inputs only; it is not a " +
-      "proof of equivalence. Requires the caller-supplied pwntools Python profile " +
-      "(REA_PWNTOOLS_PYTHON with unicorn 2.1.2) and runs on Linux x64 hosts in Phase 1. " +
-      "Register and return values above 2^53 lose precision in JSON transport.",
+      "proof of equivalence. 64-bit addresses, registers, and return values are " +
+      "0x-prefixed hex strings, so the full range is preserved exactly. " +
+      "Requires the caller-supplied pwntools Python profile " +
+      "(REA_PWNTOOLS_PYTHON with unicorn 2.1.2) and runs on Linux x64 hosts in Phase 1.",
     kind: "native-provider",
     requiresActiveTarget: false,
     inputSchema: emulateFunctionInputSchema,
@@ -204,9 +210,9 @@ export const UNICORN_TOOL_CONTRACTS = [
         input: z.record(z.string(), jsonValueSchema).parse({
           architecture: "x86_64",
           function_bytes: "89f801f0c3",
-          code_address: 0x1000000,
-          registers: { rdi: 40, rsi: 2 },
-          stack_address: 0x7f000000,
+          code_address: "0x1000000",
+          registers: { rdi: "0x28", rsi: "0x2" },
+          stack_address: "0x7f000000",
           stack_size: 65536,
         }),
       },

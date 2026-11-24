@@ -26,8 +26,8 @@ if (pythonPath === undefined || !isAbsolute(pythonPath)) {
   process.exit(1);
 }
 
-const CODE = 0x1000000;
-const STACK = 0x7f000000;
+const CODE = "0x1000000";
+const STACK = "0x7f000000";
 
 const failures = [];
 const check = (name, condition, detail) => {
@@ -55,13 +55,13 @@ const add = await run(client, "add returns 42", {
   architecture: "x86_64",
   function_bytes: "89f801f0c3",
   code_address: CODE,
-  registers: { rdi: 40, rsi: 2 },
+  registers: { rdi: "0x28", rsi: "0x2" },
   stack_address: STACK,
   stack_size: 65536,
 });
 if (add !== null) {
   check("add stop_reason", add.stop_reason === "returned", add.stop_reason);
-  check("add return_value", add.return_value === 42, add.return_value);
+  check("add return_value", add.return_value === "0x2a", add.return_value);
 }
 
 // 2. buffer write: mov dword [rdi], 0x11223344; ret — exact memory diff.
@@ -69,8 +69,8 @@ const written = await run(client, "buffer write reports exact diff", {
   architecture: "x86_64",
   function_bytes: "c70744332211c3",
   code_address: CODE,
-  registers: { rdi: 0x2000000, rax: 0 },
-  memory: [{ address: 0x2000000, bytes: "00000000" }],
+  registers: { rdi: "0x2000000", rax: "0x0" },
+  memory: [{ address: "0x2000000", bytes: "00000000" }],
   stack_address: STACK,
   stack_size: 65536,
 });
@@ -83,7 +83,7 @@ if (written !== null) {
   check(
     "buffer write diff",
     written.memory_writes.length === 1 &&
-      written.memory_writes[0].address === 0x2000000 &&
+      written.memory_writes[0].address === "0x2000000" &&
       written.memory_writes[0].before === "00000000" &&
       written.memory_writes[0].after === "44332211",
     JSON.stringify(written.memory_writes),
@@ -95,10 +95,10 @@ const stubbed = await run(client, "stubbed import call returns stub value", {
   architecture: "x86_64",
   function_bytes: "e8fbffff01c3",
   code_address: CODE,
-  registers: { rdi: 40 },
+  registers: { rdi: "0x28" },
   stack_address: STACK,
   stack_size: 65536,
-  stubs: { "0x3000000": 7 },
+  stubs: { "0x3000000": "0x7" },
 });
 if (stubbed !== null) {
   check(
@@ -108,16 +108,16 @@ if (stubbed !== null) {
   );
   check(
     "stubbed return_value",
-    stubbed.return_value === 7,
+    stubbed.return_value === "0x7",
     stubbed.return_value,
   );
   check(
     "stubbed call recorded",
     stubbed.calls_hit.length === 1 &&
       stubbed.calls_hit[0].kind === "import" &&
-      stubbed.calls_hit[0].address === 0x3000000 &&
+      stubbed.calls_hit[0].address === "0x3000000" &&
       stubbed.calls_hit[0].stubbed === true &&
-      stubbed.calls_hit[0].returned === 7,
+      stubbed.calls_hit[0].returned === "0x7",
     JSON.stringify(stubbed.calls_hit),
   );
 }
@@ -127,7 +127,7 @@ const unmapped = await run(client, "unmapped read stops, never crashes", {
   architecture: "x86_64",
   function_bytes: "488b07c3",
   code_address: CODE,
-  registers: { rdi: 0x4000000 },
+  registers: { rdi: "0x4000000" },
   stack_address: STACK,
   stack_size: 65536,
 });
@@ -141,6 +141,34 @@ if (unmapped !== null) {
     "unmapped return_value",
     unmapped.return_value === null,
     unmapped.return_value,
+  );
+}
+
+// 5. 64-bit value: movabs rax, 0xffffffffffffffff; ret — the full range
+// must round-trip as a hex string (Greptile 2026-11-03 P1).
+const wide = await run(client, "64-bit return value round-trips", {
+  architecture: "x86_64",
+  function_bytes: "48b8ffffffffffffffffc3",
+  code_address: CODE,
+  registers: {},
+  stack_address: STACK,
+  stack_size: 65536,
+});
+if (wide !== null) {
+  check(
+    "64-bit stop_reason",
+    wide.stop_reason === "returned",
+    wide.stop_reason,
+  );
+  check(
+    "64-bit return_value",
+    wide.return_value === "0xffffffffffffffff",
+    wide.return_value,
+  );
+  check(
+    "64-bit rax",
+    wide.registers.rax === "0xffffffffffffffff",
+    wide.registers.rax,
   );
 }
 
