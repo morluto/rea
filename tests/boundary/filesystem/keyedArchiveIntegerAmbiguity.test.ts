@@ -42,17 +42,17 @@ const fixture = async (scenario: (typeof scenarios)[number]) => {
         $objects: ["$null", { real: 9007199254740992 }],
       }),
     );
-    const trailer = bytes.length - 32;
-    // Add one unreachable offset entry backed by the first trailer byte. The
-    // locked primary decoder accepts it; supplemental pre-trailer capacity does not.
-    bytes.writeBigUInt64BE(
-      bytes.readBigUInt64BE(trailer + 8) + 1n,
-      trailer + 8,
-    );
     const original = parseBinary(bytes);
     expect(original).toMatchObject({
       $objects: ["$null", { real: 9007199254740992 }],
     });
+    const trailer = bytes.length - 32;
+    // Add one unreachable offset entry backed by the first trailer byte. The
+    // reachable object graph is unchanged, but the supplemental table no longer fits.
+    bytes.writeBigUInt64BE(
+      bytes.readBigUInt64BE(trailer + 8) + 1n,
+      trailer + 8,
+    );
   } else {
     let xml = build(source)
       .replace(

@@ -36,6 +36,7 @@ import {
 } from "./pefileImphash.js";
 import type { PrefixedByteSource } from "../../domain/byteSource.js";
 import type { PeHeaderAnomaly } from "../../domain/native/peHeaderAnomalies.js";
+import { peImageBaseHex, peVa } from "../../domain/native/peAddressSpace.js";
 
 type Artifact = PeImports["artifact"];
 
@@ -258,6 +259,7 @@ const parsePeImportsCore = async (
     machine: image.pe_machine,
     bits,
     architecture: image.architecture,
+    image_base: peImageBaseHex(image.image_base),
   };
   const issues: PeImportIssue[] = [];
   const admitRva = (rva: number, size: number, label: string): boolean => {
@@ -376,6 +378,7 @@ const parsePeImportsCore = async (
           ordinal: Number(thunk & 0xffffn),
           ilt_rva: nameTableRva === addressTableRva ? null : nameRva,
           iat_rva: iatRva,
+          iat_va: peVa(image.image_base, iatRva),
           thunk_hex: thunkHex,
         });
         continue;
@@ -403,6 +406,7 @@ const parsePeImportsCore = async (
           ordinal: null,
           ilt_rva: nameTableRva === addressTableRva ? null : nameRva,
           iat_rva: iatRva,
+          iat_va: peVa(image.image_base, iatRva),
           thunk_hex: thunkHex,
         });
       } catch (cause) {

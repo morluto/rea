@@ -106,6 +106,10 @@ import {
   ghidraRiscvCallingConventionFailure,
   ghidraRiscvCallingConventionLimitations,
   ghidraRiscvLimitations,
+  ghidraRiscvLoadPreparation,
+  ghidraRiscvLoadPreparationFailure,
+  ghidraRiscvLoadPreparationLimitations,
+  ghidraRiscvLoadPreparationParameters,
 } from "./GhidraRiscvProfile.js";
 import { ghidraPePdbLimitations } from "./GhidraPeProfile.js";
 import {
@@ -129,7 +133,8 @@ import {
   ghidraNotInListingLimitation,
   ghidraNotInProcedureLimitation,
   windowsP0Limitations,
-  limitationsFor,
+  ghidraOperationLimitations,
+  ghidraSessionCommonLimitations,
 } from "./GhidraProviderCapabilities.js";
 import { GHIDRA_PROVIDER_IDENTITY } from "./GhidraProviderMetadata.js";
 import {
@@ -152,7 +157,12 @@ import {
   ghidraExtensionLimitations,
 } from "./extensions/GhidraExtensions.js";
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
-import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
+import {
+  GHIDRA_RAW_ENTRY_CONTEXT,
+  ghidraRawBinaryLanguage,
+  ghidraRawBinaryLimitations,
+  GHIDRA_PROCESSOR_LABELS_NOT_APPLIED,
+} from "./GhidraRawBinaryLanguage.js";
 import { ghidraDolLanguage, ghidraDolSectionFile } from "./GhidraDolProfile.js";
 import { isRecord } from "../kernel/isRecord.js";
 
@@ -433,6 +443,23 @@ export const createGhidraProviderClient = (input: {
         "Resolve the RISC-V calling-convention policy into the analysis profile before opening the session.",
       ),
     );
+  const riscvLoadPreparation = ghidraRiscvLoadPreparation(target);
+  if (
+    !isDeepStrictEqual(
+      committedProfile.parameters.elf_load_preparation,
+      riscvLoadPreparation === undefined
+        ? undefined
+        : ghidraRiscvLoadPreparationParameters(riscvLoadPreparation),
+    )
+  )
+    return err(
+      new ProviderAdapterError("ghidra", "open_binary", {
+        diagnostics: {
+          reason:
+            "Resolve the RISC-V load preparation into the analysis profile before opening the session.",
+        },
+      }),
+    );
   const extensionProfile = ghidraExtensionSchema
     .array()
     .safeParse(committedProfile.parameters.analysis_extensions ?? []);
@@ -576,15 +603,20 @@ export const createGhidraProviderClient = (input: {
   const softFloatLimitations: string[] = [
     ...ghidraMipsSoftFloatLimitations(softFloat),
   ];
-  // Replaced by the reported prototype outcome once the handshake is checked.
-  const riscvCallingConventionLimitations: string[] = [
+  // Replaced by the reported preparation and prototype outcomes once the
+  // handshake is checked.
+  const riscvPolicyLimitations: string[] = [
+    ...ghidraRiscvLoadPreparationLimitations(riscvLoadPreparation),
     ...ghidraRiscvCallingConventionLimitations(riscvCallingConvention),
   ];
   // Replaced by the reported per-program outcome once the handshake is checked.
   const disabledAnalyzerLimitations: string[] = [];
   const rawLanguage =
     target.format === "raw-binary"
-      ? ghidraRawBinaryLanguage(target.architecture)
+      ? ghidraRawBinaryLanguage(
+          target.architecture,
+          target.rawLoad.architectureVariant,
+        )
       : undefined;
   const targetLimitations = [
     ...(target.format === "dos-mz"
@@ -600,14 +632,12 @@ export const createGhidraProviderClient = (input: {
           "BSS is mapped uninitialized only outside the data sections it overlaps. The DOL header is not an identification of the producing SDK, and no runtime initialization, OS, or hardware state is modeled.",
         ]
       : []),
-    ...(target.format === "raw-binary"
-      ? [
-          "Headerless raw-binary analysis uses the caller-supplied architecture and entry address; file offset 0 is mapped at that address. Headers are not discovered from file bytes.",
-          "Little-endian generic Ghidra languages are used for x86, x86_64, arm, arm64, and NMOS 6502; m68k uses the big-endian 68000 default language, which decodes the 68040 superset. Big-endian ARM, Thumb-only, Cortex-M, 65C02, 65816, separate 68020/68030/CPU32/ColdFire variants, and other processor variants are unsupported in this increment.",
-          "Static analysis does not emulate reset vectors, memory-mapped I/O, or firmware boot sequences.",
-        ]
+    ...(target.format === "raw-binary" && rawLanguage !== undefined
+      ? ghidraRawBinaryLimitations(target.rawLoad, rawLanguage)
       : []),
-    ...(target.architecture === "mips" ? (target.mips.limitations ?? []) : []),
+    ...(target.architecture === "mips"
+      ? (target.mips.limitations ?? []).map((limitation) => limitation.message)
+      : []),
     ...(committedProfile.parameters.mips_abi_basis === "inferred-o32-assumption"
       ? [
           "The ELF header declares no ABI field and no ABI flags record was observed; o32 calling conventions are an analysis assumption of this lane, not a declared fact.",
@@ -689,6 +719,7 @@ export const createGhidraProviderClient = (input: {
       ...(riscvCallingConvention === undefined
         ? {}
         : { riscvCallingConvention }),
+      ...(riscvLoadPreparation === undefined ? {} : { riscvLoadPreparation }),
       ...(target.format === "dos-mz" ? { dosMz: true } : {}),
       ...(comSelection === undefined
         ? {}
@@ -699,7 +730,19 @@ export const createGhidraProviderClient = (input: {
             rawBinary: {
               languageId: rawLanguage.languageId,
               compilerSpecId: rawLanguage.compilerSpecId,
-              baseAddr: target.entryPoint,
+              baseAddr: target.rawLoad.baseAddress,
+              entryPoint: target.rawLoad.entryPoint,
+              ...(target.rawLoad.entryIsaMode === undefined
+                ? {}
+                : {
+                    entryContext:
+                      GHIDRA_RAW_ENTRY_CONTEXT[target.rawLoad.entryIsaMode],
+                  }),
+              // The committed profile owns the label policy.
+              ...(committedProfile.parameters.processor_labels ===
+              GHIDRA_PROCESSOR_LABELS_NOT_APPLIED
+                ? { applyProcessorLabels: false as const }
+                : {}),
             },
           }),
       ...(target.format === "gamecube-dol"
@@ -776,7 +819,8 @@ export const createGhidraProviderClient = (input: {
     seeds !== undefined ||
     disabledAnalyzers !== undefined ||
     softFloat ||
-    riscvCallingConvention !== undefined;
+    riscvCallingConvention !== undefined ||
+    riscvLoadPreparation !== undefined;
   const lostProviderHealth = (): ProviderOperationHealth | undefined =>
     providerStarted ? client.operationHealthSnapshot?.() : undefined;
   // Only a thin image REA imported itself has Ghidra's import at the declared
@@ -854,7 +898,12 @@ export const createGhidraProviderClient = (input: {
           info,
         );
     } else {
-      const callingConventionReason =
+      const policyReason =
+        ghidraRiscvLoadPreparationFailure(
+          riscvLoadPreparation,
+          info.elf_load_preparation,
+          info.target.default_address_space,
+        ) ??
         ghidraMipsSoftFloatFailure(softFloat, info.mips_soft_float_storage) ??
         ghidraRiscvCallingConventionFailure(
           riscvCallingConvention,
@@ -872,10 +921,11 @@ export const createGhidraProviderClient = (input: {
           info.disabled_analyzers,
           operation,
         ) ??
-        (callingConventionReason === undefined
+        (policyReason === undefined
           ? undefined
           : new ProviderAdapterError("ghidra", operation, {
-              diagnostics: { reason: callingConventionReason },
+              userMessage: policyReason,
+              diagnostics: { reason: policyReason },
             }));
       if (extensionFailure === undefined && info.analysis_seeds !== undefined)
         seedLimitations.splice(
@@ -893,9 +943,13 @@ export const createGhidraProviderClient = (input: {
           ),
         );
       if (extensionFailure === undefined)
-        riscvCallingConventionLimitations.splice(
+        riscvPolicyLimitations.splice(
           0,
-          riscvCallingConventionLimitations.length,
+          riscvPolicyLimitations.length,
+          ...ghidraRiscvLoadPreparationLimitations(
+            riscvLoadPreparation,
+            info.elf_load_preparation,
+          ),
           ...ghidraRiscvCallingConventionLimitations(
             riscvCallingConvention,
             info.riscv_calling_convention,
@@ -940,10 +994,14 @@ export const createGhidraProviderClient = (input: {
   const releaseLimitation = unverifiedGhidraBuildLimitation(
     prerequisites.value.providerVersion,
   );
-  const knownDefectLimitations = ghidraKnownProviderDefectLimitations(
-    prerequisites.value.providerVersion,
-  );
-  const sessionLimitations = (): readonly string[] => {
+  // Defect records apply only where their declared scope can match the
+  // target's architecture and the operation's dependence on flow recovery.
+  const knownDefectLimitations = (operation: string) =>
+    ghidraKnownProviderDefectLimitations(prerequisites.value.providerVersion, {
+      architecture: target.architecture,
+      operation,
+    });
+  const sessionLimitations = (operation: string): readonly string[] => {
     const restored = client.checkpointRestore?.();
     return [
       ...(restored === undefined
@@ -959,13 +1017,13 @@ export const createGhidraProviderClient = (input: {
       ...targetLimitations,
       ...(psp ? GHIDRA_PSP_LIMITATIONS : []),
       ...softFloatLimitations,
-      ...riscvCallingConventionLimitations,
+      ...riscvPolicyLimitations,
       ...ghidraExtensionLimitations(extensions),
       ...seedLimitations,
       ...disabledAnalyzerLimitations,
       ...pdbLimitations,
       ...(releaseLimitation === undefined ? [] : [releaseLimitation]),
-      ...knownDefectLimitations,
+      ...knownDefectLimitations(operation),
     ];
   };
   const nativeAotOwner =
@@ -1000,11 +1058,14 @@ export const createGhidraProviderClient = (input: {
             ],
           }),
       analysisProfile: committedProfile,
-      limitations: [
-        ...limitationsFor(operation, projection.source),
-        ...(observation.limitations ?? []),
-        ...sessionLimitations(),
-      ],
+      ...sessionScopedLimitations(
+        ghidraSessionCommonLimitations(projection.source),
+        [
+          ...ghidraOperationLimitations(operation, projection.source),
+          ...(observation.limitations ?? []),
+        ],
+        sessionLimitations(operation),
+      ),
     });
   };
   const inventoryExecution = (
@@ -1098,10 +1159,11 @@ export const createGhidraProviderClient = (input: {
         return ok(
           createAnalysisExecution(started.value, committedProfile.provider, {
             analysisProfile: committedProfile,
-            limitations: [
-              ...ghidraHealthLimitations(projection.source),
-              ...sessionLimitations(),
-            ],
+            ...sessionScopedLimitations(
+              ghidraHealthLimitations(projection.source),
+              [],
+              sessionLimitations(operation),
+            ),
           }),
         );
       }
@@ -1406,3 +1468,16 @@ const ghidraClientPrerequisites = (
     profile,
   });
 };
+
+/**
+ * Keep every limitation inline in source order and name the entries that
+ * describe the session, not the call: the common base and the session facts.
+ */
+const sessionScopedLimitations = (
+  common: readonly string[],
+  operation: readonly string[],
+  session: readonly string[],
+) => ({
+  limitations: [...common, ...operation, ...session],
+  sessionLimitations: [...common, ...session],
+});

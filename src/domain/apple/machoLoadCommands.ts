@@ -9,6 +9,9 @@ import {
 /** Fixed fields present in both thin header widths, before the 64-bit reserved word. */
 export const MACHO_COMMON_HEADER_BYTES = 28;
 
+/** Load commands larger than this are refused instead of buffered. */
+export const MAX_LOAD_COMMAND_BYTES = 16 * 1024 * 1024;
+
 const MACHO_LOAD_COMMAND_HEADER_BYTES = 8;
 
 /** Read numeric fields from exactly the supplied Mach-O view. */
@@ -117,6 +120,70 @@ export const readMachoLoadCommandTableHeader = (
   if (!parsed.ok || parsed.value === null) return parsed;
   const issue = machoCommandTableIssue(parsed.value, fileSize);
   return issue === null ? parsed : err(issue.message);
+};
+
+export type MachoBoundedCommandTableFailure =
+  | { readonly kind: "malformed"; readonly message: string }
+  | { readonly kind: "limit"; readonly message: string };
+
+/**
+ * Canonical header/table admission enforcing both file extent and the bounded
+ * load-command byte limit (`MAX_LOAD_COMMAND_BYTES`).
+ */
+export const readBoundedMachoLoadCommandTableHeader = (
+  bytes: Uint8Array,
+  fileSize: number,
+  maxCommandBytes = MAX_LOAD_COMMAND_BYTES,
+): Result<MachoHeaderDeclarations | null, MachoBoundedCommandTableFailure> => {
+  const parsed = readMachoLoadCommandTableHeader(bytes, fileSize);
+  if (!parsed.ok) return err({ kind: "malformed", message: parsed.error });
+  if (parsed.value === null) return ok(null);
+  if (parsed.value.commandBytes > maxCommandBytes)
+    return err({
+      kind: "limit",
+      message: `load commands occupy ${String(parsed.value.commandBytes)} bytes, above the ${String(maxCommandBytes)}-byte limit`,
+    });
+  return ok(parsed.value);
+};
+
+/** Walk every declared load-command header through a bounded window reader. */
+export const validateMachoLoadCommandFraming = async (
+  table: MachoLoadCommandTableHeader,
+  input: {
+    readonly prefix: Uint8Array;
+    readonly fileSize: number;
+    readonly readWindow: (
+      offset: number,
+      length: number,
+    ) => Promise<Uint8Array>;
+  },
+): Promise<Result<null, string>> => {
+  const commands = new MachoLoadCommandCursor(table);
+  let window = input.prefix;
+  let windowOffset = 0;
+  while (commands.nextOffset !== null) {
+    const offset = table.headerSize + commands.nextOffset;
+    if (
+      offset + MACHO_LOAD_COMMAND_HEADER_BYTES <= input.fileSize &&
+      (offset < windowOffset ||
+        offset + MACHO_LOAD_COMMAND_HEADER_BYTES >
+          windowOffset + window.byteLength)
+    ) {
+      windowOffset = offset;
+      window = await input.readWindow(
+        offset,
+        Math.min(4096, input.fileSize - offset),
+      );
+    }
+    const relative = offset - windowOffset;
+    const frame = commands.read(
+      relative >= 0
+        ? window.subarray(relative, relative + MACHO_LOAD_COMMAND_HEADER_BYTES)
+        : new Uint8Array(0),
+    );
+    if (!frame.ok) return frame;
+  }
+  return commands.finish();
 };
 
 /** One owner's count, alignment and extent proof for a sequential command walk. */

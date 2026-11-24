@@ -7,6 +7,11 @@ import type { z } from "zod";
 
 import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
+import {
+  deliversRetainedSummary,
+  RETAINED_SUMMARY_VIEW_TOOL,
+} from "./retainedSummaryDelivery.js";
+import { declaresSizeAwareDetail } from "../contracts/analysisDetail.js";
 import type {
   AnalysisOperationPort,
   ExecutionOptions,
@@ -183,30 +188,55 @@ export const createEvidenceToolHandler =
     recordEvidence?: EvidenceWriter["recordEvidence"],
     withAdmittedAnalysis?: WithAdmittedAnalysis,
     viewSource?: (input: unknown) => JsonValue | undefined,
+    retention?: AnalysisViewRetention,
   ) =>
-  <TOperation extends string>(contract: ToolContract<TOperation>) =>
-  (input: unknown, context: ServerContext) =>
-    runAdmittedToolOperation(
-      server,
-      withAdmittedAnalysis,
-      contract.name,
-      context.mcpReq.signal,
-      async () => {
-        const result = await logToolExecution(logger, contract.name, () =>
-          operation(input, {
-            signal: context.mcpReq.signal,
-            progress: mcpProgressReporter(context),
-          }),
-        );
-        return deliverEvidenceResult(
-          server,
-          result,
-          contract,
-          recordEvidence,
-          viewSource === undefined ? undefined : () => viewSource(input),
-        );
-      },
-    );
+  <TOperation extends string>(contract: ToolContract<TOperation>) => {
+    // A size-aware contract's detail selects delivery and never reaches the
+    // operation, so its Evidence identity is the same for every detail.
+    const sizeAware = declaresSizeAwareDetail(contract.inputSchema);
+    return (input: unknown, context: ServerContext) =>
+      runAdmittedToolOperation(
+        server,
+        withAdmittedAnalysis,
+        contract.name,
+        context.mcpReq.signal,
+        async () => {
+          const { detail, input: operationInput } = sizeAware
+            ? deliveryDetail(input)
+            : { detail: undefined, input };
+          const ready = requireAnalysisViewRetention(
+            contract.name,
+            retention ?? { recordEvidence: undefined, evidenceById: undefined },
+          );
+          if (detail === "summary" && !ready.ok)
+            return server.delivery.toCallToolResult(err(ready.error), contract);
+          const result = await logToolExecution(logger, contract.name, () =>
+            operation(operationInput, {
+              signal: context.mcpReq.signal,
+              progress: mcpProgressReporter(context),
+            }),
+          );
+          const delivered =
+            result.ok &&
+            retention !== undefined &&
+            sizeAware &&
+            deliversRetainedSummary(detail, result.value, {
+              sizeAware,
+              retained: ready.ok,
+              pageable: server.advertisesTool(RETAINED_SUMMARY_VIEW_TOOL),
+            })
+              ? summarizeRetainedAnalysis(result.value, retention)
+              : result;
+          return deliverEvidenceResult(
+            server,
+            delivered,
+            contract,
+            recordEvidence,
+            viewSource === undefined ? undefined : () => viewSource(input),
+          );
+        },
+      );
+  };
 
 /** The MCP request a value-returning workflow runs for. */
 export interface ValueToolRequest {
@@ -562,7 +592,12 @@ export const createAnalysisToolHandler =
           analyze(input, analysis, { signal, progress }),
         );
         const response =
-          !analyzed.ok || detail === "summary"
+          !analyzed.ok ||
+          deliversRetainedSummary(detail, analyzed.value.evidence, {
+            sizeAware: declaresSizeAwareDetail(contract.inputSchema),
+            retained: requireAnalysisViewRetention(contract.name, retention).ok,
+            pageable: server.advertisesTool(RETAINED_SUMMARY_VIEW_TOOL),
+          })
             ? deliverEvidenceResult(
                 server,
                 analyzed.ok

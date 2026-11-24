@@ -1,6 +1,7 @@
 import { projectWebSourceLocationView } from "./webSourceLocationView.js";
 import { projectNativeProcedureReferencesView } from "./nativeProcedureReferencesView.js";
 import { projectPlaywrightTraceView } from "./playwrightTraceView.js";
+import { projectWebPageView } from "./webPageView.js";
 import { projectApiContractView } from "./apiContractView.js";
 import {
   isNativeObservationOperation,
@@ -239,6 +240,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_artifact", projectArtifactInventoryView),
   retain("inventory_artifact", projectArtifactInventoryView),
   retain("analyze_web_bundle", projectWebBundleView),
+  retain("inspect_web_page", projectWebPageView),
   retain("trace_web_source_location", projectWebSourceLocationView),
 ]);
 

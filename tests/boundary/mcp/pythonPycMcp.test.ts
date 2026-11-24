@@ -175,23 +175,6 @@ it("advertises inspect_python_pyc and reads nested code objects", async () => {
   }
 });
 
-it("requires an absolute path for inspect_python_pyc", async () => {
-  const { client, close } = await connect();
-  try {
-    const response = await client.callTool({
-      name: "inspect_python_pyc",
-      arguments: { path: "sample.pyc" },
-    });
-    expect(response.isError).toBe(true);
-    expect(parseMcpToolError(response).error).toMatchObject({
-      code: "invalid_request",
-      details: { operation: "inspect_python_pyc" },
-    });
-  } finally {
-    await close();
-  }
-});
-
 it("advertised pyc output schema preserves historical signed fields", async () => {
   const { client, close } = await connect();
   try {

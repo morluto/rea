@@ -34,8 +34,7 @@ export class NativeExportsService {
           "Native export reader returned malformed output or changed artifact identity.",
         toParameters: (input) => input,
         validateReport: (report, parameters) =>
-          report.artifact.path === parameters.path &&
-          report.artifact.bytes <= parameters.max_file_bytes,
+          report.artifact.path === parameters.path,
         buildEvidence: (value, identity, parameters) =>
           createEvidence(
             {

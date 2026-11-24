@@ -24,6 +24,7 @@ import {
   type PeImage,
 } from "../native/peImage.js";
 import type { PeHeaderAnomaly } from "../native/peHeaderAnomalies.js";
+import { peImageBaseHex } from "../native/peAddressSpace.js";
 import {
   peFailure,
   type PeRangeReader,
@@ -126,6 +127,7 @@ const mapPeResourceLayout = (image: PeImage, fileSize: number) => {
   return {
     format: image.bits === 64 ? ("pe32-plus" as const) : ("pe32" as const),
     machine: image.pe_machine,
+    imageBase: peImageBaseHex(image.image_base),
     /** File offset of the resource data-directory entry, when the image declares it. */
     directoryAt:
       resource === undefined

@@ -206,7 +206,7 @@ it("shares complete/summary source identity and advertised contracts across all 
   ).toHaveLength(10);
 });
 
-it("recovers an oversized complete inventory through a working retained page without another provider read", async () => {
+it("summarizes an inventory above the inline bound when detail is omitted, and recovers a requested complete one through a retained page", async () => {
   const items = Array.from({ length: 1000 }, (_, index) => ({
     address: `0x${(0x1000 + index * 0x2000).toString(16)}`,
     value: "x".repeat(7000),
@@ -220,9 +220,19 @@ it("recovers an oversized complete inventory through a working retained page wit
     Promise.resolve(ok(items)),
   );
   onTestFinished(() => harness.close());
-  const complete = await harness.mcp.callTool({
+  const omitted = await harness.mcp.callTool({
     name: "list_strings",
     arguments: {},
+  });
+  if (omitted.isError) throw new Error(JSON.stringify(omitted));
+  const sized = parseEvidence(omitted.structuredContent);
+  expect(sized).toMatchObject({
+    operation: "inspect_analysis_view",
+    normalized_result: { kind: "summary", summary: { row_count: 1000 } },
+  });
+  const complete = await harness.mcp.callTool({
+    name: "list_strings",
+    arguments: { detail: "complete" },
   });
   expect(complete.isError).toBe(true);
   const error = parseMcpToolError(complete).error;
@@ -250,7 +260,7 @@ it("recovers an oversized complete inventory through a working retained page wit
     throw new Error("Expected inventory page");
   expect(page.rows.map((row) => row.record)).toEqual(items.slice(0, 64));
   expect(page.coverage).toMatchObject({ total: 1000, next_offset: 64 });
-  expect(harness.calls).toEqual(["list_strings"]);
+  expect(harness.calls).toEqual(["list_strings", "list_strings"]);
   const summaryReply = await harness.mcp.callTool({
     name: "list_strings",
     arguments: { detail: "summary" },
@@ -259,6 +269,101 @@ it("recovers an oversized complete inventory through a working retained page wit
   expect(
     parseEvidence(summaryReply.structuredContent).normalized_result,
   ).toMatchObject({ summary: { row_count: 1000 } });
+});
+
+it("inlines a small inventory, summarizes a large one, and keeps it complete when no paged summary is available", async () => {
+  const rows = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      address: `0x${(0x1000 + index * 0x10).toString(16)}`,
+      value: `procedure_${String(index).padStart(4, "0")}`,
+      procedure: { external: false, thunk: false, thunk_target: null },
+    }));
+  let result = rows(2);
+  const harness = await connectGhidraMcp("native-inventory-size-aware", () =>
+    Promise.resolve(ok(result)),
+  );
+  onTestFinished(() => harness.close());
+  const small = await harness.mcp.callTool({
+    name: "list_procedures",
+    arguments: {},
+  });
+  if (small.isError) throw new Error(JSON.stringify(small));
+  expect(parseEvidence(small.structuredContent)).toMatchObject({
+    operation: "list_procedures",
+    normalized_result: result,
+  });
+  result = rows(600);
+  const large = await harness.mcp.callTool({
+    name: "list_procedures",
+    arguments: {},
+  });
+  if (large.isError) throw new Error(JSON.stringify(large));
+  const summary = parseEvidence(large.structuredContent);
+  expect(summary).toMatchObject({
+    operation: "inspect_analysis_view",
+    normalized_result: { kind: "summary", summary: { row_count: 600 } },
+  });
+  const forced = await harness.mcp.callTool({
+    name: "list_procedures",
+    arguments: { detail: "complete" },
+  });
+  if (forced.isError) throw new Error(JSON.stringify(forced));
+  expect(parseEvidence(forced.structuredContent)).toMatchObject({
+    operation: "list_procedures",
+    normalized_result: result,
+  });
+
+  // A session scope without inspect_analysis_view could not page a summary.
+  const unpaged = await connectGhidraMcp(
+    "native-inventory-size-aware-unpaged",
+    () => Promise.resolve(ok(rows(600))),
+    { environment: { REA_MCP_TOOL_FAMILIES: "session,direct,enhanced" } },
+  );
+  onTestFinished(() => unpaged.close());
+  const unpagedReply = await unpaged.mcp.callTool({
+    name: "list_procedures",
+    arguments: {},
+  });
+  if (unpagedReply.isError) throw new Error(JSON.stringify(unpagedReply));
+  expect(parseEvidence(unpagedReply.structuredContent)).toMatchObject({
+    operation: "list_procedures",
+  });
+
+  // Without a retaining session there is no summary to page, so omitted
+  // detail keeps the complete Evidence whatever its size.
+  const server = createServer({
+    kind: "fixed",
+    analysis: {
+      execute: async () =>
+        ok(
+          createAnalysisExecution(rows(600), {
+            id: "fixture",
+            name: "Fixture",
+            version: "1",
+          }),
+        ),
+    },
+  });
+  const client = new Client(
+    { name: "unretained-size-aware", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  onTestFinished(async () => {
+    await client.close();
+    await server.close();
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const unretained = await client.callTool({
+    name: "list_procedures",
+    arguments: {},
+  });
+  if (unretained.isError) throw new Error(JSON.stringify(unretained));
+  expect(parseEvidence(unretained.structuredContent)).toMatchObject({
+    operation: "list_procedures",
+  });
 });
 
 it("refuses summary before provider work when no retaining session is configured", async () => {

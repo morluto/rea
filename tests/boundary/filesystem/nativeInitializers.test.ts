@@ -10,6 +10,7 @@ import {
 } from "../../../src/native/initializers/NativeInitializers.fixture.js";
 import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
 describe("native initializer stable filesystem boundary", () => {
   it.each([
@@ -51,20 +52,11 @@ describe("native initializer stable filesystem boundary", () => {
     await writeFile(path, elf64PieInitializers());
     await symlink(path, alias);
     const service = createNativeInitializersService();
-    for (const [candidate, reason] of [
-      [root, "invalid_format"],
-      [alias, "invalid_format"],
-      [join(root, "missing"), "invalid_value"],
-      [join(path, "child"), "invalid_value"],
-    ] as const) {
-      const result = await service.inspect({ path: candidate });
-      if (result.ok) throw new Error("Expected file acquisition failure");
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisInputError",
-        operation: "inspect_native_initializers",
-        issues: [{ path: ["path"], reason, message: expect.any(String) }],
-      });
-    }
+    await expectFileSelectionErrors(service, "inspect_native_initializers", {
+      root,
+      alias,
+      path,
+    });
   });
 
   it("reads a stable file and returns typed budget and cancellation failures", async () => {
