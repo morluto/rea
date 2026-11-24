@@ -188,6 +188,94 @@ describe("GLB headers", () => {
   });
 });
 
+describe("declared-extent edge cases", () => {
+  /** A legacy uncompressed DDS: 24-bit RGB, 1x2, rows padded to `pitch`. */
+  const rgbDds = (pitch: number, mips = 1): Buffer => {
+    const bytes = ddsBc7Fixture(0).subarray(0, 128);
+    bytes.writeUInt32LE(0x1 | 0x2 | 0x4 | 0x8 | 0x1000, 8);
+    bytes.writeUInt32LE(2, 12);
+    bytes.writeUInt32LE(1, 16);
+    bytes.writeUInt32LE(pitch, 20);
+    bytes.writeUInt32LE(mips, 28);
+    bytes.writeUInt32LE(0x40, 80);
+    bytes.writeUInt32LE(0, 84);
+    bytes.writeUInt32LE(24, 88);
+    return Buffer.concat([bytes, Buffer.alloc(pitch * 2)]);
+  };
+
+  it("does not derive a DDS size when rows are padded to a declared pitch", async () => {
+    const result = await read("dds", rgbDds(4));
+    expect(result.metadata).toMatchObject({
+      payload_bytes: 8,
+      expected_payload_bytes: null,
+      extent_check: "consistent",
+    });
+    expect(result.coverage[0]?.limitations).toEqual([
+      "The DDS rows are padded to a declared pitch; the payload size was not derived.",
+    ]);
+  });
+
+  it("derives an unpadded DDS row size from its bit count", async () => {
+    const result = await read("dds", rgbDds(3));
+    expect(result.metadata).toMatchObject({
+      payload_bytes: 6,
+      expected_payload_bytes: 6,
+      extent_check: "consistent",
+    });
+  });
+
+  it("leaves the size unknown when a DDS declares more than 32 mip levels", async () => {
+    const result = await read("dds", rgbDds(3, 40));
+    expect(result.metadata).toMatchObject({
+      mip_map_count: 40,
+      expected_payload_bytes: null,
+    });
+  });
+
+  it("refuses a GLB whose chunks stop short of its declared length", async () => {
+    const bytes = glbFixture();
+    const padded = Buffer.concat([bytes, Buffer.alloc(4)]);
+    padded.writeUInt32LE(bytes.length + 4, 8);
+    await expect(read("glb", padded)).rejects.toMatchObject({
+      parseFailure: { kind: "malformed", format: "glb" },
+    });
+  });
+
+  it("stops listing GLB chunks at the chunk allowance with unknown coverage", async () => {
+    const bytes = glbFixture();
+    const empty = Buffer.alloc(8);
+    empty.writeUInt32LE(0x12345678, 4);
+    const flooded = Buffer.concat([
+      bytes,
+      ...Array.from({ length: 1100 }, () => empty),
+    ]);
+    flooded.writeUInt32LE(flooded.length, 8);
+    const result = await read("glb", flooded);
+    expect(result.entries).toHaveLength(1024 + 1);
+    expect(result.coverage[0]?.status).toBe("unknown");
+    expect(result.coverage[0]?.limitations[0]).toMatch(
+      /^The GLB has more than 1024 chunks; chunks from offset \d+ were not listed\.$/u,
+    );
+  });
+
+  it("keeps coverage unknown when a GLB image does not resolve", async () => {
+    const bytes = glbFixture();
+    const at = bytes.indexOf('"bufferView":1');
+    bytes.write('"bufferView":7', at, "latin1");
+    const result = await read("glb", bytes);
+    expect(result.entries.map((entry) => entry.path)).toEqual([
+      "chunks/0.json",
+      "chunks/1.bin",
+    ]);
+    expect(result.coverage[0]).toEqual({
+      status: "unknown",
+      limitations: [
+        "1 GLB image(s) name a bufferView that does not resolve inside the BIN chunk; they were not listed.",
+      ],
+    });
+  });
+});
+
 describe("KTX headers", () => {
   it("reads KTX 1.1 fields, key/value data and mip levels", async () => {
     const result = await read("ktx", ktxFixture());

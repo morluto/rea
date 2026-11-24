@@ -27,6 +27,11 @@ export interface GpuAssetLayout<Metadata> {
   readonly metadata: Metadata;
   readonly regions: readonly GpuAssetRegion[];
   readonly limitations: readonly string[];
+  /**
+   * Whether every region the declarations name was examined. Separate from
+   * the extent check: a GLB can be consistent yet have images not listed.
+   */
+  readonly regionsExamined: "complete" | "unknown";
 }
 
 /** Bounded positional reads of the carrier. Short reads return fewer bytes. */
@@ -40,6 +45,11 @@ export const GLB_JSON_PARSE_BYTES = 16 * 1024 * 1024;
 const MAX_LEVELS = 32;
 /** Images listed from a GLB JSON chunk. */
 const MAX_GLB_IMAGES = 4096;
+/**
+ * Chunks walked in a GLB. The specification defines JSON, BIN and reserved
+ * extension chunks; the allowance stops zero-length chunk floods.
+ */
+const MAX_GLB_CHUNKS = 1024;
 
 /**
  * Keep regions that fit the file and name each one that does not. A region
@@ -135,6 +145,7 @@ const FOURCC_BLOCK_BYTES = new Map<string, number>([
 const DDPF_FOURCC = 0x4;
 const DDPF_UNCOMPRESSED = 0x2 | 0x40 | 0x200 | 0x20000;
 const DDSCAPS2_CUBEMAP = 0x200;
+const DDSD_PITCH = 0x8;
 const DDSCAPS2_VOLUME = 0x200000;
 const DDS_RESOURCE_MISC_TEXTURECUBE = 0x4;
 const D3D10_RESOURCE_DIMENSION_TEXTURE3D = 4;
@@ -198,7 +209,8 @@ export const ddsLayout = (
       ? (caps2 & DDSCAPS2_VOLUME) !== 0
       : dx10.resource_dimension === D3D10_RESOURCE_DIMENSION_TEXTURE3D;
   const depth = volume ? Math.max(1, u32(24)) : 1;
-  const mips = Math.max(1, Math.min(u32(28), MAX_LEVELS));
+  const declaredMips = Math.max(1, u32(28));
+  const mips = declaredMips <= MAX_LEVELS ? declaredMips : undefined;
   const faces =
     dx10 === null
       ? (caps2 & DDSCAPS2_CUBEMAP) !== 0
@@ -224,7 +236,18 @@ export const ddsLayout = (
             u32(88) > 0
           ? { pixel: u32(88) / 8 }
           : undefined;
-  const expected = ddsExpectedBytes(width, height, depth, mips, layers, unit);
+  // Uncompressed rows may be padded to a declared pitch. Derive a size only
+  // when the pitch, if declared, equals the unpadded row.
+  const pitchDeclared = (u32(8) & DDSD_PITCH) !== 0;
+  const rowsUnpadded =
+    unit === undefined ||
+    "block" in unit ||
+    !pitchDeclared ||
+    u32(20) === width * unit.pixel;
+  const expected =
+    mips === undefined || !rowsUnpadded
+      ? null
+      : ddsExpectedBytes(width, height, depth, mips, layers, unit);
   const payloadOffset = hasDx10 ? 148 : 128;
   const payloadBytes = Math.max(0, fileSize - payloadOffset);
   const limitations: string[] = [];
@@ -237,7 +260,11 @@ export const ddsLayout = (
   }
   if (expected === null)
     limitations.push(
-      "The DDS payload size was not derived for this pixel format; payload bytes are listed but not checked against the declared dimensions.",
+      mips === undefined
+        ? `The DDS header declares ${String(declaredMips)} mip levels, more than ${String(MAX_LEVELS)}; the payload size was not derived.`
+        : !rowsUnpadded
+          ? "The DDS rows are padded to a declared pitch; the payload size was not derived."
+          : "The DDS payload size was not derived for this pixel format; payload bytes are listed but not checked against the declared dimensions.",
     );
   return {
     metadata: {
@@ -272,6 +299,7 @@ export const ddsLayout = (
             },
           ],
     limitations,
+    regionsExamined: "complete",
   };
 };
 
@@ -322,7 +350,17 @@ export const glbLayout = async (
   let json: Record<string, unknown> = {};
   let binOffset: number | undefined;
   let binLength = 0;
-  for (let at = 12, index = 0; at + 8 <= end; index++) {
+  let regionsExamined: GpuAssetLayout<GlbMetadata>["regionsExamined"] =
+    "complete";
+  let at = 12;
+  for (let index = 0; at + 8 <= end; index++) {
+    if (index === MAX_GLB_CHUNKS) {
+      regionsExamined = "unknown";
+      limitations.push(
+        `The GLB has more than ${String(MAX_GLB_CHUNKS)} chunks; chunks from offset ${String(at)} were not listed.`,
+      );
+      break;
+    }
     const chunkHeader = await read(at, 8);
     if (chunkHeader.length < 8) break;
     const chunk = new BinaryReader(chunkHeader, true, "glb");
@@ -332,6 +370,8 @@ export const glbLayout = async (
       throw malformed("glb", "the first GLB chunk is not JSON", at);
     if (length % 4 !== 0)
       throw malformed("glb", "GLB chunk length is not 4-byte aligned", at);
+    if (at + 8 + length > declaredLength)
+      throw malformed("glb", "GLB chunk crosses the declared GLB length", at);
     const typeName =
       type === GLB_JSON
         ? "JSON"
@@ -376,11 +416,26 @@ export const glbLayout = async (
     }
     at += 8 + length;
   }
+  // A chunk table that stops short of a physically present declared end
+  // leaves bytes no chunk claims, which the layout does not allow.
+  if (
+    regionsExamined === "complete" &&
+    declaredLength <= fileSize &&
+    at !== declaredLength
+  )
+    throw malformed(
+      "glb",
+      `GLB chunks end at ${String(at)}, not at the declared length ${String(declaredLength)}`,
+      at,
+    );
+  if (jsonStatus !== "parsed") regionsExamined = "unknown";
   const counts: Record<string, number> = {};
   for (const [key, value] of Object.entries(json))
     if (Array.isArray(value)) counts[key] = value.length;
   const bufferViews = arrayOf(json["bufferViews"]);
   const images = boundedList(arrayOf(json["images"]), MAX_GLB_IMAGES);
+  if (images.omitted > 0) regionsExamined = "unknown";
+  let unresolvedImages = 0;
   if (images.omitted > 0)
     limitations.push(
       `The GLB declares ${String(images.omitted)} image(s) past the ${String(MAX_GLB_IMAGES)}-image listing allowance; their bytes stay inside the BIN chunk region.`,
@@ -389,6 +444,8 @@ export const glbLayout = async (
     const view = recordOf(
       bufferViews[indexOf(recordOf(image)["bufferView"]) ?? -1],
     );
+    // An image named by URI is outside the GLB, not one of its regions.
+    if (recordOf(image)["bufferView"] === undefined) return;
     const start = indexOf(view["byteOffset"] ?? 0);
     const length = indexOf(view["byteLength"]);
     if (
@@ -397,8 +454,10 @@ export const glbLayout = async (
       start === undefined ||
       length === undefined ||
       start + length > binLength
-    )
+    ) {
+      unresolvedImages++;
       return;
+    }
     const mime = recordOf(image)["mimeType"];
     const extension =
       typeof mime === "string"
@@ -412,6 +471,12 @@ export const glbLayout = async (
       length,
     });
   });
+  if (unresolvedImages > 0) {
+    regionsExamined = "unknown";
+    limitations.push(
+      `${String(unresolvedImages)} GLB image(s) name a bufferView that does not resolve inside the BIN chunk; they were not listed.`,
+    );
+  }
   const asset = recordOf(json["asset"]);
   const fit = fitRegions("GLB", regions, fileSize, declaredLength);
   return {
@@ -443,6 +508,7 @@ export const glbLayout = async (
               : "The GLB JSON chunk is not a readable JSON object; collection counts were not read.",
           ]),
     ],
+    regionsExamined,
   };
 };
 
@@ -531,6 +597,7 @@ export const ktxLayout = async (
     },
     regions: fit.regions,
     limitations: fit.limitations,
+    regionsExamined: "complete",
   };
 };
 
@@ -625,5 +692,6 @@ export const ktx2Layout = async (
     },
     regions: fit.regions,
     limitations: fit.limitations,
+    regionsExamined: "complete",
   };
 };

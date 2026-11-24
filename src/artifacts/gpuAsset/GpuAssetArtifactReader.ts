@@ -116,7 +116,8 @@ export class GpuAssetArtifactReader extends PositionalArtifactReader<GpuAssetMet
       entries,
       coverage: {
         status:
-          layout.metadata.extent_check === "consistent"
+          layout.metadata.extent_check === "consistent" &&
+          layout.regionsExamined === "complete"
             ? "complete"
             : "unknown",
         limitations: [...layout.limitations],
