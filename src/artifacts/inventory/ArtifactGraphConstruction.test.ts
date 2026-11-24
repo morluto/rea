@@ -731,6 +731,26 @@ describe("bounded FAT inventory classification", () => {
   );
 });
 
+it("classifies a streamed XML plist whose prolog passes the retained prefix", () => {
+  const prolog = `<?xml version="1.0"?><!--${" ".repeat(9_000)}-->`;
+  const probe = createArtifactClassificationProbe();
+  const plist = Buffer.from(`${prolog}<plist version="1.0"><dict/></plist>`);
+  for (let offset = 0; offset < plist.length; offset += 4_096)
+    probe.write(plist.subarray(offset, offset + 4_096));
+  const evidence = probe.finish(plist.length);
+  expect(evidence.xmlPlistSignature).toBe(true);
+  expect(
+    classifyArtifactContent("state.archive", evidence, plist.length),
+  ).toMatchObject({
+    kind: "plist",
+    format: "plist",
+  });
+  const other = createArtifactClassificationProbe();
+  const root = Buffer.from(`${prolog}<root><plist/></root>`);
+  other.write(root);
+  expect(other.finish(root.length).xmlPlistSignature).toBe(false);
+});
+
 it("preserves path-selected inventory roles for XML content", () => {
   const xml = Buffer.from(
     '<?xml version="1.0"?><plist version="1.0"><dict/></plist>',

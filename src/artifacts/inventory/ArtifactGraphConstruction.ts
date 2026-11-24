@@ -11,10 +11,7 @@ import {
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { isJavaScriptSourcePath } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
-import {
-  hasBinaryPlistSignature,
-  hasXmlPlistSignature,
-} from "../../domain/apple/appleArchiveFormat.js";
+import { hasBinaryPlistSignature } from "../../domain/apple/appleArchiveFormat.js";
 import {
   artifactEdgeId,
   artifactIdForNode,
@@ -653,7 +650,7 @@ export const classifyArtifactHeader = (
       recognition.format !== "esp-flash-image"
     )
       return only(recognition.format);
-  if (hasXmlPlistSignature(prefix)) return only("plist");
+  if (evidence.xmlPlistSignature) return only("plist");
   const fatFormat = classifyFatArtifact(evidence);
   if (fatFormat !== null) return only(fatFormat);
   // Admit ELF and thin Mach-O as target resolution does: a magic number
