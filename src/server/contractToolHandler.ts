@@ -7,6 +7,8 @@ import type { z } from "zod";
 
 import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
+import { deliversRetainedSummary } from "./retainedSummaryDelivery.js";
+import { declaresSizeAwareDetail } from "../contracts/analysisDetail.js";
 import type {
   AnalysisOperationPort,
   ExecutionOptions,
@@ -562,7 +564,11 @@ export const createAnalysisToolHandler =
           analyze(input, analysis, { signal, progress }),
         );
         const response =
-          !analyzed.ok || detail === "summary"
+          !analyzed.ok ||
+          deliversRetainedSummary(detail, analyzed.value.evidence, {
+            sizeAware: declaresSizeAwareDetail(contract.inputSchema),
+            retained: requireAnalysisViewRetention(contract.name, retention).ok,
+          })
             ? deliverEvidenceResult(
                 server,
                 analyzed.ok
