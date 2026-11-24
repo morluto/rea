@@ -1,7 +1,8 @@
 import { z } from "zod";
 
-import { ConfigurationError } from "../domain/configurationErrors.js";
-import { err, ok, type Result } from "../domain/result.js";
+import type { ConfigurationError } from "../domain/configurationErrors.js";
+import type { Result } from "../domain/result.js";
+import { parseOptionalMcpSetting } from "./optionalMcpSetting.js";
 
 // This override supports clients with larger frames. Keep the configuration
 // parser independent of the SDK's eager server imports; conformance verifies
@@ -47,19 +48,10 @@ const budgetConstraint = `REA_MCP_MAX_RESPONSE_BYTES must be a decimal safe inte
 /** Parse only the MCP-specific budget without loading unrelated provider settings. */
 export const parseMcpResponseBudget = (
   value: string | undefined,
-): Result<number | undefined, ConfigurationError> => {
-  if (value === undefined) return ok(undefined);
-  const parsed = mcpResponseBudgetSchema.safeParse(value);
-  return parsed.success
-    ? ok(parsed.data)
-    : err(
-        new ConfigurationError(budgetConstraint, {
-          settings: [
-            {
-              setting: "REA_MCP_MAX_RESPONSE_BYTES",
-              constraint: budgetConstraint,
-            },
-          ],
-        }),
-      );
-};
+): Result<number | undefined, ConfigurationError> =>
+  parseOptionalMcpSetting(
+    value,
+    mcpResponseBudgetSchema,
+    "REA_MCP_MAX_RESPONSE_BYTES",
+    budgetConstraint,
+  );

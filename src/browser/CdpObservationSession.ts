@@ -84,7 +84,7 @@ export const observeCdpSession = async (
   const capture = new TimelineCapture(allowedOrigins, document, initialUrl);
   let removeListener = (): void => {};
   const removeDisconnectListener = context.connection.onDisconnect(() =>
-    capture.transportDisconnected(),
+    capture.recordTermination("transport_disconnected"),
   );
   try {
     await context.connection.send(
@@ -274,10 +274,10 @@ class TimelineCapture {
         this.#lifecycle(registered.payload);
         return;
       case "Target.detachedFromTarget":
-        this.sessionDetached();
+        this.recordTermination("session_detached");
         return;
       case "Inspector.targetCrashed":
-        this.targetTerminated();
+        this.recordTermination("target_terminated");
         return;
       default:
         return;
@@ -340,40 +340,18 @@ class TimelineCapture {
     this.#listeners.clear();
   }
 
-  targetTerminated(): void {
+  recordTermination(
+    reason: "target_terminated" | "session_detached" | "transport_disconnected",
+  ): void {
     if (this.#endReason !== undefined) return;
     this.#add({
-      type: "target_terminated",
+      type: reason,
       timestamp: null,
       rawUrl: null,
       requestId: null,
-      detail: "target_terminated",
+      detail: reason,
     });
-    this.end("target_terminated");
-  }
-
-  sessionDetached(): void {
-    if (this.#endReason !== undefined) return;
-    this.#add({
-      type: "session_detached",
-      timestamp: null,
-      rawUrl: null,
-      requestId: null,
-      detail: "session_detached",
-    });
-    this.end("session_detached");
-  }
-
-  transportDisconnected(): void {
-    if (this.#endReason !== undefined) return;
-    this.#add({
-      type: "transport_disconnected",
-      timestamp: null,
-      rawUrl: null,
-      requestId: null,
-      detail: "transport_disconnected",
-    });
-    this.end("transport_disconnected");
+    this.end(reason);
   }
 
   setFinalUrl(rawUrl: string): void {
