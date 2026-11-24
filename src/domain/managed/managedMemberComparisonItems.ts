@@ -1,6 +1,7 @@
-import canonicalize from "canonicalize";
-
-import { digestCanonicalValue } from "../canonicalDigest.js";
+import {
+  digestCanonicalValue,
+  serializeCanonicalValue,
+} from "../canonicalDigest.js";
 import type { ManagedMemberInspection } from "./managedArtifact.js";
 import type { ManagedMemberComparisonResult } from "./managedMemberComparison.js";
 import type {
@@ -193,8 +194,8 @@ const methodDimensions = (
   )
     dimensions.push("cil");
   if (
-    canonicalize(left.body.opcode_counts) !==
-    canonicalize(right.body.opcode_counts)
+    serializeCanonicalValue(left.body.opcode_counts) !==
+    serializeCanonicalValue(right.body.opcode_counts)
   )
     dimensions.push("opcode-shape");
   if (!sameFieldShape) dimensions.push("field-shape");

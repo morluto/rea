@@ -2135,11 +2135,11 @@ caniuse-lite@1.0.30001826 | development | CC-BY-4.0
   Package: https://www.npmjs.com/package/caniuse-lite/v/1.0.30001826
   Archive: https://registry.npmjs.org/caniuse-lite/-/caniuse-lite-1.0.30001826.tgz
   Integrity: sha512-wTB+9tIbLro/BCXwLuNV1meHE4L9dS6dArMDwgYfNBPMYScqClHyGunhkCSDtHhe/69Xl0sHlKgBVZ+fNsYtWA==
-canonicalize@3.0.0 | runtime | Apache-2.0
+canonicalize@5.1.0 | runtime | Apache-2.0
   Lockfile path: node_modules/canonicalize
-  Package: https://www.npmjs.com/package/canonicalize/v/3.0.0
-  Archive: https://registry.npmjs.org/canonicalize/-/canonicalize-3.0.0.tgz
-  Integrity: sha512-yYLfHyDMIXRyRqsKBRLX023riFLpXY2YOfdtqKXZRZy9qsfOJ9U+4F9YZL7MEzL5+ziN2x2nlBvY/Voi3EBljA==
+  Package: https://www.npmjs.com/package/canonicalize/v/5.1.0
+  Archive: https://registry.npmjs.org/canonicalize/-/canonicalize-5.1.0.tgz
+  Integrity: sha512-bab9+WefZljqQ8jT0qRwVmTyzAUU63K97QIQD3agynIBrb6sa5M2eAy8Hv8K3p4V9+ONVYZKtGYl4Dg+/5Gumw==
 cborg@7.0.0 | runtime | Apache-2.0
   Lockfile path: node_modules/cborg
   Package: https://www.npmjs.com/package/cborg/v/7.0.0
