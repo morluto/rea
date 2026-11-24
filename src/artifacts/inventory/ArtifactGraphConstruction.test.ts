@@ -777,5 +777,6 @@ it("keeps an auditd log a resource rather than an executable", () => {
     kind: "resource",
     format: "auditd-log",
     contentFormat: "auditd-log",
+    contentArchitecture: null,
   });
 });
