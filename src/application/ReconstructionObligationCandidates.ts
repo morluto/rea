@@ -29,12 +29,22 @@ export interface ReconstructionObligationCandidate extends CandidateFields {
   readonly disposition: ReviewedReconstructionObligation["disposition"];
   /** Analyst reason recorded with a retiring disposition. */
   readonly dispositionReason: string | null;
+  /** Retiring reviewed records for this ID that were not applied. */
+  readonly competingRetirements: readonly CompetingRetirement[];
+}
+
+type RetiringDisposition = "out-of-scope" | "not-applicable";
+
+/** A retiring review that competes with the applied definition. */
+export interface CompetingRetirement {
+  readonly disposition: RetiringDisposition;
+  readonly reason: string;
 }
 
 /** A retiring disposition removes the obligation from required closure work. */
 export const retiresObligation = (
   disposition: ReconstructionObligationCandidate["disposition"],
-): boolean =>
+): disposition is RetiringDisposition =>
   disposition === "out-of-scope" || disposition === "not-applicable";
 
 export interface ReconstructionObligationCandidateSet {
@@ -283,6 +293,7 @@ const deriveProcessCandidate = (
     definitionCount: 1,
     disposition: "active",
     dispositionReason: null,
+    competingRetirements: [],
   });
   if (capture.truncated)
     limitations.add(
@@ -343,6 +354,7 @@ const generatedCandidate = ({
   definitionCount: 1,
   disposition: "active",
   dispositionReason: null,
+  competingRetirements: [],
 });
 
 /** Separate the review-only fields from the obligation definition. */
@@ -409,6 +421,7 @@ const reviewedCandidate = (
     definitionCount: 1,
     disposition,
     dispositionReason,
+    competingRetirements: [],
   };
 };
 
@@ -478,6 +491,19 @@ const addCandidate = (
     retiresObligation(candidate.disposition) &&
     !retiresObligation(current.disposition) &&
     candidate.obligation_version === current.obligation_version;
+  // A retiring record that is not applied keeps its reason visible on the
+  // competing-definition diagnostic instead of being dropped.
+  const competing: CompetingRetirement[] =
+    !retiresGenerated &&
+    retiresObligation(candidate.disposition) &&
+    candidate.dispositionReason !== null
+      ? [
+          {
+            disposition: candidate.disposition,
+            reason: candidate.dispositionReason,
+          },
+        ]
+      : [];
   candidates.set(candidate.obligation_id, {
     ...current,
     ...(retiresGenerated
@@ -486,6 +512,14 @@ const addCandidate = (
           dispositionReason: candidate.dispositionReason,
         }
       : {}),
+    competingRetirements: uniqueSortedBy(
+      [
+        ...current.competingRetirements,
+        ...candidate.competingRetirements,
+        ...competing,
+      ],
+      ({ disposition, reason }) => `${disposition}:${reason}`,
+    ),
     authority_references: uniqueSortedBy(
       [...current.authority_references, ...candidate.authority_references],
       (reference) =>

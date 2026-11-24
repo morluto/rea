@@ -401,7 +401,10 @@ its binding reports `fixture-failed` or `verifier-failed` and fails the
 ledger. An authenticated contradiction on a retired obligation reports a
 `contradiction` diagnostic and also fails the ledger. Residual unknowns,
 unavailable authority, and competing reviewed definitions remain visible on
-it.
+it. When several retiring records name one obligation, only the first in
+canonical order (not input order) is applied; each other one is reported as a
+`duplicate-definition` diagnostic that carries its disposition and reason, so
+no review reason is dropped.
 
 ### Over-generation
 

@@ -393,42 +393,56 @@ describe("reconstruction obligation retired claim proof", () => {
 });
 
 describe("reconstruction obligation competing retirements", () => {
-  it("reports two retiring records for one generated ID as competing definitions in any order", () => {
-    const capture = processEvidence();
-    const review = proofEvidence("double-review");
-    const generated = build(request([capture])).obligations[0];
-    if (generated === undefined) throw new Error("Expected process obligation");
-    const first = retired(
-      generated.obligation_id,
-      review.evidence_id,
-      "out-of-scope",
-      "First sweep.",
-    );
-    const second = retired(
-      generated.obligation_id,
-      review.evidence_id,
-      "not-applicable",
-      "Second sweep.",
-    );
-    const forward = build(
-      request([capture, review], { reviewed_obligations: [first, second] }),
-    );
-    const reversed = build(
-      request([capture, review], { reviewed_obligations: [second, first] }),
-    );
+  it.each([
+    ["different dispositions", "not-applicable"],
+    ["the same disposition", "out-of-scope"],
+  ] as const)(
+    "reports two retiring records with %s for one generated ID as competing definitions in any order, keeping both reasons",
+    (_, secondDisposition) => {
+      const capture = processEvidence();
+      const review = proofEvidence("double-review");
+      const generated = build(request([capture])).obligations[0];
+      if (generated === undefined)
+        throw new Error("Expected process obligation");
+      const first = retired(
+        generated.obligation_id,
+        review.evidence_id,
+        "out-of-scope",
+        "First sweep.",
+      );
+      const second = retired(
+        generated.obligation_id,
+        review.evidence_id,
+        secondDisposition,
+        "Second sweep.",
+      );
+      const forward = build(
+        request([capture, review], { reviewed_obligations: [first, second] }),
+      );
+      const reversed = build(
+        request([capture, review], { reviewed_obligations: [second, first] }),
+      );
 
-    expect(forward).toEqual(reversed);
-    expect(forward.obligations).toHaveLength(1);
-    expect(forward.obligations[0]).toMatchObject({
-      origin: "generated",
-      required: true,
-      status: "out-of-scope",
-    });
-    expect(
-      forward.obligations[0]?.diagnostics.map(({ code }) => code),
-    ).toContain("duplicate-definition");
-    expect(forward.summary).toMatchObject({ required: 1, required_open: 1 });
-  });
+      expect(forward).toEqual(reversed);
+      expect(forward.obligations).toHaveLength(1);
+      expect(forward.obligations[0]).toMatchObject({
+        origin: "generated",
+        required: true,
+        status: "out-of-scope",
+      });
+      const diagnostics = forward.obligations[0]?.diagnostics ?? [];
+      expect(diagnostics.map(({ code }) => code)).toContain(
+        "duplicate-definition",
+      );
+      // Neither review silently wins: each reason stays in a diagnostic.
+      for (const reason of ["First sweep.", "Second sweep."])
+        expect(
+          diagnostics.filter(({ detail }) => detail.includes(reason)),
+        ).toHaveLength(1);
+      expect(forward.summary).toMatchObject({ required: 1, required_open: 1 });
+      expect(forward.status).toBe("open");
+    },
+  );
 
   it("does not retire a generated claim with a reviewed record for another version", () => {
     const capture = processEvidence();

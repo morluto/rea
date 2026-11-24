@@ -273,6 +273,12 @@ const evaluateObligation = (
       "duplicate-definition",
       "Multiple candidate definitions share this obligation ID.",
     );
+  for (const { disposition, reason } of candidate.competingRetirements)
+    addDiagnostic(
+      diagnostics,
+      "duplicate-definition",
+      `A competing reviewed record that would mark this obligation ${disposition} was not applied. Reason: ${reason}`,
+    );
   if (bindings.length === 0 && !retired)
     addDiagnostic(
       diagnostics,
