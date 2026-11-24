@@ -926,7 +926,7 @@ it("refuses duplicate MethodDef tokens before publishing linked Evidence or Ghid
       details: {
         path,
         format: "il2cpp-metadata",
-        format_failure: "malformed",
+        failure_kind: "malformed",
         reason: expect.stringMatching(/^invalid-method-definition-token:/u),
       },
     });

@@ -16,7 +16,7 @@ import { ZIP_ZSTANDARD_WINDOW_CEILING } from "../../../src/resources/ZipArtifact
 
 const expectRefusal = (diagnostic: unknown, large: boolean): void => {
   expect(diagnostic).toMatchObject({
-    code: large ? "truncated" : "unsupported_target",
+    code: large ? "partial" : "unsupported_target",
     details: {
       reason: large ? "limit" : "malformed",
       ...(large ? { boundary: "memory", truncated: true } : {}),

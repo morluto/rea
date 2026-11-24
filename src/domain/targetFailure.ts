@@ -1,9 +1,17 @@
 /**
  * Why a target could not be read: one owned fact, raised once by the format
  * or filesystem owner that established it. Wrappers carry it unchanged.
- * The public `code`, `category`, `retryable`, recovery and `details` are
- * derived from `kind` by {@link TARGET_FAILURE_PROJECTIONS} and
- * {@link targetFailureDetails}. See `docs/reference/target-failures.md`.
+ *
+ * `failure_kind` is the primary machine identifier (RFC 9457's problem type).
+ * The coarse `code`, its `category`, the `retry` hint, the recovery and the
+ * `details` are all derived from the kind by {@link TARGET_FAILURE_PROJECTIONS}
+ * and {@link targetFailureDetails}. See `docs/reference/target-failures.md`.
+ *
+ * The model describes the target. A caller's cancellation and an admission
+ * limit describe the operation, so they keep their own error types
+ * (`AnalysisCancelledError`, `AnalysisResourceConstraintError`).
+ *
+ * Identifiers are lower-case ASCII in American spelling.
  *
  * Areas migrate onto this model one at a time (#14239). The declarative
  * conformance registry under `tests/support/targetFailure/` lists every
@@ -14,7 +22,7 @@
 /** Every kind, in the order the error reference lists them. */
 export const TARGET_FAILURE_KINDS = [
   "selection",
-  "unrecognised",
+  "unrecognized",
   "unsupported",
   "malformed",
   "truncated",
@@ -23,8 +31,6 @@ export const TARGET_FAILURE_KINDS = [
   "changed",
   "access",
   "io",
-  "cancelled",
-  "resource",
 ] as const;
 export type TargetFailureKind = (typeof TARGET_FAILURE_KINDS)[number];
 
@@ -45,15 +51,11 @@ export interface TargetFailureInput {
   readonly path: string;
 }
 
-/**
- * One target failure. A variant adds only the facts its caller action needs.
- * Kinds the model reserves for areas that have not migrated yet still have
- * their projection row, so every consumer switch is total.
- */
+/** One target failure. A variant adds only the facts its caller action needs. */
 export type TargetFailure = TargetFailureFacts &
   (
     | { readonly kind: "selection" }
-    | { readonly kind: "unrecognised" }
+    | { readonly kind: "unrecognized" }
     | {
         readonly kind: "unsupported";
         /** The input holds the content, in a form this decoder cannot read. */
@@ -75,9 +77,14 @@ export type TargetFailure = TargetFailureFacts &
       }
     | { readonly kind: "changed" }
     | { readonly kind: "access" }
-    | { readonly kind: "io" }
-    | { readonly kind: "cancelled" }
-    | { readonly kind: "resource" }
+    | {
+        readonly kind: "io";
+        /**
+         * The host reported a transient condition (EAGAIN, EINTR, a timeout)
+         * rather than a persistent device error. Set from the owner's errno.
+         */
+        readonly transient: boolean;
+      }
   );
 
 /** The variant of one kind. */
@@ -89,6 +96,14 @@ export type TargetFailureOf<Kind extends TargetFailureKind> = Extract<
 /** Bytes that break, or end inside, a structure of the format being read. */
 export type MalformedTargetFailure = TargetFailureOf<"malformed" | "truncated">;
 
+/**
+ * When repeating the request can help, after gRPC's status semantics:
+ * `none` (never, the target itself must change), `backoff` (the unchanged
+ * request may succeed later), `after_change` (only once the caller changes
+ * the request or a control).
+ */
+export type TargetFailureRetry = "none" | "backoff" | "after_change";
+
 /** What a caller should do next. Each adapter renders it in its own words. */
 export type TargetFailureRecovery =
   | "fix_request"
@@ -99,126 +114,107 @@ export type TargetFailureRecovery =
   | "check_input_pairing"
   | "retry_on_stable_copy"
   | "fix_permissions"
-  | "check_host"
-  | "none"
-  | "raise_named_control";
+  | "check_host";
 
 /** The public projection of one kind. */
 export interface TargetFailureProjection {
   /** A short summary of the kind that does not change per occurrence (RFC 9457 `title`). */
   readonly title: string;
+  /** A coarse class derived from the kind; `failure_kind` identifies the failure. */
   readonly code:
     | "invalid_request"
     | "unsupported_target"
+    | "target_integrity_mismatch"
+    | "input_conflict"
     | "artifact_changed"
     | "access_denied"
-    | "artifact_operation_failed"
-    | "cancelled"
-    | "resource_constraint";
+    | "host_io_failed";
   readonly category:
     | "invalid_input"
     | "unsupported_target"
     | "integrity_mismatch"
     | "unavailable"
-    | "execution_failure"
-    | "cancelled"
-    | "resource_constraint";
-  /** Whether repeating the unchanged request may succeed. */
-  readonly retryable: boolean;
+    | "execution_failure";
+  /** The kind's retry hint; `io` refines it from its errno fact. */
+  readonly retry: TargetFailureRetry;
   readonly recovery: TargetFailureRecovery;
 }
 
 /**
- * The single projection table. `retryable` follows gRPC's split: only a
- * concurrent change (ABORTED) and a cancellation succeed when repeated
- * unchanged; every other kind needs the caller to change something first.
+ * The single projection table. No two codes cover unrelated caller actions:
+ * the four target refusals share `unsupported_target` because each needs a
+ * different target or tool, and their `failure_kind` says which.
  */
 export const TARGET_FAILURE_PROJECTIONS = {
   selection: {
     title: "Unselectable",
     code: "invalid_request",
     category: "invalid_input",
-    retryable: false,
+    retry: "after_change",
     recovery: "fix_request",
   },
-  unrecognised: {
-    title: "Unrecognised",
+  unrecognized: {
+    title: "Unrecognized",
     code: "unsupported_target",
     category: "unsupported_target",
-    retryable: false,
+    retry: "none",
     recovery: "choose_another_tool",
   },
   unsupported: {
     title: "Unsupported",
     code: "unsupported_target",
     category: "unsupported_target",
-    retryable: false,
+    retry: "none",
     recovery: "choose_another_tool",
   },
   malformed: {
     title: "Malformed",
     code: "unsupported_target",
     category: "unsupported_target",
-    retryable: false,
+    retry: "none",
     recovery: "choose_another_target",
   },
   truncated: {
     title: "Truncated",
     code: "unsupported_target",
     category: "unsupported_target",
-    retryable: false,
+    retry: "none",
     recovery: "reacquire_complete_file",
   },
   integrity: {
     title: "Integrity-mismatched",
-    // `artifact_integrity_mismatch` is reserved for a failure that names both
-    // declared and calculated digests; this kind need not carry them.
-    code: "artifact_operation_failed",
+    code: "target_integrity_mismatch",
     category: "integrity_mismatch",
-    retryable: false,
+    retry: "none",
     recovery: "replace_or_record_integrity",
   },
   conflict: {
     title: "Conflicting",
-    code: "invalid_request",
+    code: "input_conflict",
     category: "invalid_input",
-    retryable: false,
+    retry: "after_change",
     recovery: "check_input_pairing",
   },
   changed: {
     title: "Changed",
     code: "artifact_changed",
     category: "integrity_mismatch",
-    retryable: true,
+    retry: "backoff",
     recovery: "retry_on_stable_copy",
   },
   access: {
     title: "Inaccessible",
     code: "access_denied",
     category: "unavailable",
-    retryable: false,
+    retry: "after_change",
     recovery: "fix_permissions",
   },
   io: {
     title: "Unreadable",
-    code: "artifact_operation_failed",
+    code: "host_io_failed",
     category: "execution_failure",
-    retryable: false,
+    retry: "none",
     recovery: "check_host",
-  },
-  cancelled: {
-    title: "Cancelled",
-    code: "cancelled",
-    category: "cancelled",
-    retryable: true,
-    recovery: "none",
-  },
-  resource: {
-    title: "Limited",
-    code: "resource_constraint",
-    category: "resource_constraint",
-    retryable: false,
-    recovery: "raise_named_control",
   },
 } as const satisfies Readonly<
   Record<TargetFailureKind, TargetFailureProjection>
@@ -231,6 +227,14 @@ export const unhandledTargetFailureCase = (value: never): never => {
   );
 };
 
+/** The retry hint of one failure: its kind's, refined by an `io` errno fact. */
+export const targetFailureRetry = (
+  failure: TargetFailure,
+): TargetFailureRetry =>
+  failure.kind === "io" && failure.transient
+    ? "backoff"
+    : TARGET_FAILURE_PROJECTIONS[failure.kind].retry;
+
 type DetailValue =
   | string
   | number
@@ -238,8 +242,7 @@ type DetailValue =
 
 /**
  * The machine-readable facts of a failure, in the public spelling. Every kind
- * reports `failure_kind` and `format`; `format_failure` stays for the two
- * byte-structure kinds that reported it before this model.
+ * reports `failure_kind` and `format`; a variant adds its own facts.
  */
 export const targetFailureDetails = (
   failure: TargetFailure,
@@ -251,11 +254,8 @@ export const targetFailureDetails = (
     ...(failure.field === undefined ? {} : { field: failure.field }),
   };
   switch (failure.kind) {
-    case "malformed":
-      return { format_failure: failure.kind, ...common };
     case "truncated":
       return {
-        format_failure: failure.kind,
         ...common,
         ...(failure.availableBytes === undefined
           ? {}
@@ -270,14 +270,13 @@ export const targetFailureDetails = (
         inputs: failure.inputs.map(({ field, path }) => ({ field, path })),
       };
     case "selection":
-    case "unrecognised":
+    case "unrecognized":
     case "unsupported":
+    case "malformed":
     case "integrity":
     case "changed":
     case "access":
     case "io":
-    case "cancelled":
-    case "resource":
       return common;
     default:
       return unhandledTargetFailureCase(failure);
@@ -302,17 +301,15 @@ export const targetFailureRecovery = (
     case "replace_or_record_integrity":
       return "The target's bytes contradict a checksum or digest they declare. Get a fresh copy, or rerun with integrity_policy=record-and-continue to keep the observed bytes as untrusted.";
     case "check_input_pairing":
-      return "The selected inputs each parse but disagree. Check that they belong together; neither is reported as damaged.";
+      return `The selected inputs (${failure.kind === "conflict" ? failure.inputs.map(({ field }) => field).join(", ") : "all inputs"}) each parse but disagree, so neither is reported as damaged. Select inputs from the same build. If they are from the same build, either may be damaged or its layout may be outside coverage; each input can still be read on its own.`;
     case "retry_on_stable_copy":
       return "The target changed while it was read. Retry once it is stable, or copy it first.";
     case "fix_permissions":
       return "Host permissions denied the read. Grant read access to the selected path, then retry.";
     case "check_host":
-      return "The host could not read the target. Check the device and file, then retry.";
-    case "none":
-      return "The operation was cancelled. Start it again when ready.";
-    case "raise_named_control":
-      return "A named limit stopped the work. Raise that control or select a smaller target.";
+      return failure.kind === "io" && failure.transient
+        ? "The host reported a transient read failure. Retry with backoff."
+        : "The host could not read the target. Check the device and file before retrying.";
     default:
       return unhandledTargetFailureCase(recovery);
   }

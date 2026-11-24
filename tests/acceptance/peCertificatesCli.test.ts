@@ -56,7 +56,7 @@ cliTest(
           : {
               code: "unsupported_target",
               details: {
-                format_failure: kind,
+                failure_kind: kind,
                 format: "pe-certificate-table",
                 reason: expect.stringContaining(message),
               },
@@ -105,7 +105,7 @@ cliTest.for([false, true])(
       code: "unsupported_target",
       details: {
         operation: "inspect_pe_certificates",
-        format_failure: "truncated",
+        failure_kind: "truncated",
         format: "pe-certificate-table",
       },
     };
@@ -189,7 +189,7 @@ cliTest.for([0x00, 0xff, null])(
           code: "unsupported_target",
           details: {
             operation: "inspect_pe_certificates",
-            format_failure: "malformed",
+            failure_kind: "malformed",
             format: "pe-certificate-table",
             reason: expect.stringContaining("critical"),
           },
@@ -224,7 +224,7 @@ cliTest(
       code: "unsupported_target",
       details: {
         operation: "inspect_pe_certificates",
-        format_failure: "malformed",
+        failure_kind: "malformed",
         format: "pe-certificate-table",
         reason: expect.stringContaining("Name RDN"),
       },
@@ -260,7 +260,7 @@ cliTest(
       code: "unsupported_target",
       details: {
         operation: "inspect_pe_certificates",
-        format_failure: "malformed",
+        failure_kind: "malformed",
         format: "pe-certificate-table",
         reason: expect.stringContaining("padding"),
       },
@@ -437,7 +437,7 @@ cliTest(
       code: "unsupported_target",
       details: {
         operation: "inspect_pe_certificates",
-        format_failure: "malformed",
+        failure_kind: "malformed",
         format: "pe-certificate-table",
       },
     });

@@ -35,7 +35,7 @@ describe("managedInspectionTargetFailure", () => {
       details: {
         operation: OPERATION,
         path: PATH,
-        format_failure: "malformed",
+        failure_kind: "malformed",
         format: "pe-cli",
         field: "pe.section-data",
         offset: 0x2000,
