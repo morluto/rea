@@ -1263,8 +1263,8 @@ publish timing history. Fast runs publish `test-timings-fast` and full runs
 publish `test-timings-full`. The build job accepts only verified artifacts from
 successful default-branch CI runs that match its tier. It lists one page of
 matching artifacts and checks up to five producer runs individually. When
-eligible artifacts remain, it can check them against one page of successful CI
-runs. A tier with no qualifying artifact leaves history unset. The build
+eligible artifacts remain, it can check them against up to three pages of
+successful CI runs within the shared 20-second lookup budget. A tier with no qualifying artifact leaves history unset. The build
 downloads the small, checkout-relative timing file. Timing weights come from Vitest module
 diagnostics and include tests and hooks, worker preparation, environment,
 imports, and setup. Import timings already include transform waits, which are
