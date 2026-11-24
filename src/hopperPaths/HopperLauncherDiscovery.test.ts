@@ -9,12 +9,18 @@ describe("default Linux Hopper launcher", () => {
     (path: string): boolean =>
       paths.includes(path);
 
-  it.each([["/opt/hopper-v4/bin/hopper"], ["/usr/bin/hopper"]])(
-    "selects an existing system launcher %s",
-    (path) => {
+  it.each([
+    [
+      "/opt/hopper-v4/bin/hopper",
+      ["/usr/bin/hopper", "/opt/hopper-v4/bin/hopper"],
+    ],
+    ["/usr/bin/hopper", ["/usr/bin/hopper"]],
+  ])(
+    "selects system launcher %s when those candidates exist",
+    (expected, present) => {
       expect(
-        defaultHopperLauncherPath("linux", home, withExecutables([path])),
-      ).toBe(path);
+        defaultHopperLauncherPath("linux", home, withExecutables(present)),
+      ).toBe(expected);
     },
   );
 
@@ -25,6 +31,7 @@ describe("default Linux Hopper launcher", () => {
         home,
         withExecutables([
           "/opt/hopper/bin/Hopper",
+          `${home}/.local/share/rea/hopper/bin/Hopper`,
           "/opt/hopper-v4/bin/hopper",
           "/usr/bin/hopper",
         ]),

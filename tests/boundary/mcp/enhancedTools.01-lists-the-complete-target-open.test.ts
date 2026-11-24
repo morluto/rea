@@ -1,5 +1,3 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
@@ -282,11 +280,31 @@ describe("enhanced MCP tools", () => {
       ["trace_native_values", { procedure: "0x1" }],
       ["decompile_all", { output_directory: join(outputParent, "out") }],
     ] as const;
+    const functionProgress: {
+      progress: number;
+      message?: string | undefined;
+    }[] = [];
     const results = await Promise.all(
       calls.map(async ([name, arguments_]) =>
-        jsonResult(await client.callTool({ name, arguments: arguments_ })),
+        jsonResult(
+          await client.callTool(
+            { name, arguments: arguments_ },
+            name === "analyze_function"
+              ? { onprogress: (update) => functionProgress.push(update) }
+              : undefined,
+          ),
+        ),
       ),
     );
+    expect(functionProgress[0]?.message).toBe("analyze_function: started");
+    expect(functionProgress.at(-1)?.message).toBe(
+      "analyze_function: completed",
+    );
+    functionProgress.forEach(({ progress }, index) => {
+      expect(progress).toBeGreaterThan(
+        functionProgress[index - 1]?.progress ?? 0,
+      );
+    });
     expect(results[0]).toMatchObject({
       count: 2,
       classes: [

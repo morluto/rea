@@ -108,7 +108,7 @@ const PROJECT_POLICIES = {
   },
   "process-boundary": {
     pool: "forks" as const,
-    maxWorkers: MAX_TEST_WORKERS,
+    maxWorkers: 1,
     // Process-tree observations share host sampling resources; keep this small
     // lane serial while the independent projects run together.
     fileParallelism: false,

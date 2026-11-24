@@ -51,6 +51,8 @@ interface DirectoryTraversalOptions extends ArtifactTraversalOptions {
   readonly descendInto?: (path: string) => boolean;
   /** Bound examined children, including omitted special entries. */
   readonly maximumEntries?: number;
+  /** Charge an examined child to a caller's shared allowance before inspection. */
+  readonly admitExaminedEntry?: () => void;
 }
 
 /** Exhausted an examined-entry budget; unrelated I/O and cleanup failures stay distinct. */
@@ -125,6 +127,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
     const examine = () => {
       if (maximum !== undefined && examined >= maximum)
         throw new DirectoryArtifactTraversalLimit(examined, maximum);
+      options?.admitExaminedEntry?.();
       examined += 1;
     };
     const pending = [root];
@@ -341,7 +344,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
     await this.#validateRoot();
     if (entry.kind !== "file")
       throw new ArtifactReaderFailure(
-        "format",
+        "path",
         "Only regular files can be opened",
       );
     const identity = entry.sourceIdentity;
@@ -694,6 +697,12 @@ const mapStableFileRead = async function* (
     })) {
       abortIfNeeded(signal);
       bytes += BigInt(chunk.length);
+      if (bytes > expectedBytes) {
+        // Count the probe for validation without delivering bytes beyond the admitted range.
+        const admitted = chunk.length - Number(bytes - expectedBytes);
+        if (admitted > 0) yield chunk.subarray(0, admitted);
+        break;
+      }
       yield chunk;
     }
     abortIfNeeded(signal);

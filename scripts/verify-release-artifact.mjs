@@ -31,7 +31,6 @@ const environment = {
   ...process.env,
   npm_config_cache: join(workspace, "npm-cache"),
 };
-delete environment.HOPPER_TARGET_PATH;
 const commands = await createPackageVerifierCommands({
   // The package command owner releases the fixture after its commands close.
   workspace: { path: workspace, close: () => fixture.release() },

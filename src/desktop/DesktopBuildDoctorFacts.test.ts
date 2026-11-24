@@ -33,6 +33,15 @@ import {
   resolveBuildComputerEnvironment,
 } from "./BuildComputerEnvironment.js";
 
+/** The explicit scope's checks; an audit-wide report has none. */
+const scopeChecksOf = <Check>(report: {
+  readonly scope_checks?: readonly Check[];
+}): readonly Check[] => {
+  if (report.scope_checks === undefined)
+    throw new Error("Expected an explicit-scope doctor report");
+  return report.scope_checks;
+};
+
 const execute = promisify(execFile);
 
 const program = (path: string, body: string) =>
@@ -508,7 +517,7 @@ it.skipIf(process.platform === "win32")(
         clients: ["claude_code"],
       });
       expect(
-        report.scope_checks.find(
+        scopeChecksOf(report).find(
           ({ name }) => name === "desktop_build-agent-env",
         ),
       ).toMatchObject({ ok: true });
@@ -571,6 +580,67 @@ it.skipIf(process.platform === "win32")(
         unresolved: [],
       },
     ]);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "reports project desktop commands as unchecked while admitting the same user registration",
+  async () => {
+    const { root, home } = await buildHost("rea-desktop-doctor-project-");
+    const project = join(root, "project");
+    const user = join(home, ".config", "opencode");
+    await mkdir(project);
+    await mkdir(user, { recursive: true });
+    const runner = join(root, "registered-agent-env");
+    const docker = join(root, "registered-docker");
+    await writeFile(runner, "", { mode: 0o755 });
+    await writeFile(docker, "", { mode: 0o755 });
+    const file = join(project, "opencode.json");
+    const row = {
+      type: "local",
+      command: [process.execPath, "/opt/rea/scripts/rea.mjs", "mcp"],
+      environment: {
+        REA_AGENT_ENV_COMMAND: runner,
+        REA_DOCKER_COMMAND: docker,
+      },
+    };
+    await writeFile(file, JSON.stringify({ mcp: { servers: { rea: row } } }));
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(project);
+    const probe = vi.fn(async (path: string) => {
+      const stdout = path === runner ? "agent-env 0.9.1485" : root;
+      return { stdout, stderr: "", stdoutBytes: stdout.length, stderrBytes: 0 };
+    });
+    const host = systemDoctorHost({
+      environment: { HOME: home, USERPROFILE: home, PATH: "" },
+      platform: "linux",
+      architecture: "x64",
+      execFileOutput: probe,
+      desktopBuildFacts: readDesktopBuildFacts,
+    });
+    try {
+      const projectFacts = await host.desktopBuildFacts?.(["opencode"]);
+      expect.soft(projectFacts?.registrations[0]).toMatchObject({
+        client: "opencode",
+        registered: true,
+        unchecked: ["REA_AGENT_ENV_COMMAND", "REA_DOCKER_COMMAND"],
+      });
+      expect.soft(probe.mock.calls.map(([path]) => path)).not.toContain(runner);
+      expect.soft(probe.mock.calls.map(([path]) => path)).not.toContain(docker);
+
+      await rm(file);
+      await writeFile(
+        join(user, "opencode.json"),
+        JSON.stringify({ mcp: { servers: { rea: row } } }),
+      );
+      probe.mockClear();
+      await host.desktopBuildFacts?.(["opencode"]);
+      expect(probe.mock.calls.map(([path]) => path)).toEqual(
+        expect.arrayContaining([runner, docker]),
+      );
+    } finally {
+      cwd.mockRestore();
+      await host.close?.();
+    }
   },
 );
 

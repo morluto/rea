@@ -26,10 +26,11 @@ it.each([
   },
 );
 
-it.each<[string, unknown, "toon" | "json" | "yaml" | "jsonl", string]>([
-  ["no value as TOON", null, "toon", ""],
+it.each<[string, unknown, "toon" | "json" | "yaml" | "jsonl" | "md", string]>([
+  ["no value as TOON", undefined, "toon", ""],
   ["no value as JSON", undefined, "json", ""],
-  ["no value as YAML", null, "yaml", ""],
+  ["no value as YAML", undefined, "yaml", ""],
+  ["no value as Markdown", undefined, "md", ""],
   ["a scalar as TOON", 12, "toon", "12"],
   ["text as TOON", "text", "toon", "text"],
   [

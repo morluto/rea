@@ -40,6 +40,33 @@ const normalizeYamlInteger = (_key: unknown, value: unknown): unknown =>
     ? Number(value)
     : value;
 
+// A comment-only document has no root; a bare marker has an unwritten null
+// scalar. Explicit null values, tags and anchors remain actual values.
+const isEmptyYamlRoot = (root: Document["contents"]): boolean =>
+  root === null ||
+  (isScalar(root) &&
+    root.value === null &&
+    root.source === "" &&
+    root.tag === undefined &&
+    root.anchor === undefined);
+
+export const yamlConfigurationValue = (document: Document): unknown =>
+  isEmptyYamlRoot(document.contents)
+    ? {}
+    : document.toJS({ reviver: normalizeYamlInteger });
+
+export const initializeEmptyYamlMapping = (document: Document): void => {
+  const root = document.contents;
+  if (isEmptyYamlRoot(root)) {
+    const map = document.createNode({});
+    if (isScalar(root))
+      map.commentBefore = [root.commentBefore, root.comment]
+        .filter((comment) => comment !== undefined)
+        .join("\n");
+    document.contents = map;
+  }
+};
+
 const containsRetainedSource = (
   roots: readonly unknown[],
   retainedSources: ReadonlySet<Node>,

@@ -21,6 +21,10 @@ export const evidenceRecordFiltersSchema = z.strictObject({
 export type EvidenceRecordFilters = z.infer<typeof evidenceRecordFiltersSchema>;
 
 const countSchema = z.int().nonnegative();
+
+/** Default metadata page size when the caller explicitly selects paging. */
+export const EVIDENCE_SUMMARY_SELECTION_LIMIT = 64;
+
 const nativeMetadataSchema = z.object({
   procedure: z.object({ address: z.string(), name: z.string().nullish() }),
   native_value_flow: z.unknown().optional(),
@@ -55,10 +59,12 @@ export const evidenceBundleSummarySchema = z.strictObject({
   kind: z.literal("evidence-bundle-summary"),
   filters: z.record(z.string(), z.string()),
   total_retained_records: countSchema,
-  matching_records: countSchema,
+  matching_records: countSchema.describe(
+    "Every matching record, including records outside the selected metadata page.",
+  ),
   unknown_revisions: countSchema,
   direct_links: countSchema.describe(
-    "Distinct evidence_links of each matching record; detail links names them.",
+    "Distinct evidence_links of every matching record, including records outside the selected metadata page; detail links names them.",
   ),
   missing_direct_links: countSchema.describe(
     "Those direct links whose records this session or bundle does not retain. Zero establishes no transitive closure or analysis coverage.",
@@ -77,6 +83,16 @@ export const evidenceBundleSummarySchema = z.strictObject({
       native_dossier: nativeSummarySchema,
     }),
   ),
+  page: z
+    .strictObject({
+      offset: countSchema,
+      limit: z.int().positive(),
+      next_offset: countSchema.nullable(),
+    })
+    .exactOptional()
+    .describe(
+      "Present only when offset or limit is supplied. Metadata rows follow matching Evidence ID order; matching-record and link totals cover every match.",
+    ),
 });
 export type EvidenceBundleSummary = z.infer<typeof evidenceBundleSummarySchema>;
 
@@ -134,7 +150,7 @@ function* matchingEvidenceRecords(
   filters: EvidenceRecordFilters,
 ): Generator<{
   readonly evidence: Evidence;
-  readonly native: z.infer<typeof nativeSummarySchema>;
+  readonly native: z.infer<typeof nativeSummarySchema> | undefined;
 }> {
   for (const evidence of bundle.records) {
     if (
@@ -148,10 +164,13 @@ function* matchingEvidenceRecords(
         filters.analysis_profile_digest !== evidence.analysis_profile?.digest)
     )
       continue;
-    const native = nativeSummary(evidence);
+    const native =
+      filters.procedure_address === undefined
+        ? undefined
+        : nativeSummary(evidence);
     if (
       filters.procedure_address !== undefined &&
-      (!native.available ||
+      (native?.available !== true ||
         filters.procedure_address !== native.procedure_address)
     )
       continue;
@@ -167,9 +186,18 @@ const directLinksOf = ({ evidence_links: links }: Evidence): string[] =>
 export const summarizeEvidenceBundle = (
   bundle: EvidenceBundle,
   filters: EvidenceRecordFilters = {},
+  options: {
+    readonly offset?: number | undefined;
+    readonly limit?: number | undefined;
+  } = {},
 ): EvidenceBundleSummary => {
+  const paged = options.offset !== undefined || options.limit !== undefined;
+  // optional-fact-default: a request default for paging, not an observed fact.
+  const offset = options.offset ?? 0;
+  const limit = options.limit ?? EVIDENCE_SUMMARY_SELECTION_LIMIT;
   const records: EvidenceBundleSummary["records"] = [];
   const retained = new Set(bundle.records.map(({ evidence_id: id }) => id));
+  let matchingRecords = 0;
   let directLinks = 0;
   let missingDirectLinks = 0;
   for (const { evidence, native } of matchingEvidenceRecords(bundle, filters)) {
@@ -177,6 +205,10 @@ export const summarizeEvidenceBundle = (
       directLinks += 1;
       if (!retained.has(link)) missingDirectLinks += 1;
     }
+    const selected =
+      !paged || (matchingRecords >= offset && records.length < limit);
+    matchingRecords += 1;
+    if (!selected) continue;
     records.push({
       evidence_id: evidence.evidence_id,
       subject: evidence.subject,
@@ -187,18 +219,30 @@ export const summarizeEvidenceBundle = (
       analysis_profile_digest: evidence.analysis_profile?.digest ?? null,
       retention: "complete-record",
       limitation_count: evidence.limitations.length,
-      native_dossier: native,
+      native_dossier: native ?? nativeSummary(evidence),
     });
   }
   return {
     kind: "evidence-bundle-summary",
     filters: selectedFilters(filters),
     total_retained_records: bundle.records.length,
-    matching_records: records.length,
+    matching_records: matchingRecords,
     unknown_revisions: bundle.unknowns.length,
     direct_links: directLinks,
     missing_direct_links: missingDirectLinks,
     records,
+    ...(paged
+      ? {
+          page: {
+            offset,
+            limit,
+            next_offset:
+              offset + records.length < matchingRecords
+                ? offset + records.length
+                : null,
+          },
+        }
+      : {}),
   };
 };
 
@@ -274,7 +318,7 @@ export const evidenceLinkTraversalSchema = z.enum([
   "direct",
   "retained-closure",
 ]);
-/** Which inspected links a page returns; counts always cover all of them. */
+/** Which target-matching links a page returns; counts precede this filter. */
 export const evidenceLinkStatusFilterSchema = z.enum([
   "missing",
   "retained",
@@ -294,6 +338,7 @@ export const evidenceLinkInspectionSchema = z.strictObject({
   kind: z.literal("evidence-link-inspection"),
   filters: z.record(z.string(), z.string()),
   traversal: evidenceLinkTraversalSchema,
+  linked_evidence_id: prefixedDigestSchema("ev").exactOptional(),
   link_status: evidenceLinkStatusFilterSchema,
   total_retained_records: countSchema,
   matching_records: countSchema,
@@ -306,13 +351,15 @@ export const evidenceLinkInspectionSchema = z.strictObject({
       retained: countSchema,
       missing: countSchema,
     })
-    .describe("Every link read from the examined records, before link_status."),
+    .describe(
+      "Every link read from the examined records that matches linked_evidence_id when supplied, before link_status and paging.",
+    ),
   // domain-vocabulary: whether every direct evidence_link in the walked subgraph is retained in this bundle, not analysis coverage.
   retained_closure: z
     .enum(["complete", "incomplete"])
     .nullable()
     .describe(
-      "With retained-closure traversal, incomplete means a link could not be followed, so what lies beyond it remains unknown. Null for direct traversal or an empty selection, which make no closure claim.",
+      "With retained-closure traversal, incomplete means an outgoing link could not be followed, so what lies beyond it remains unknown. This covers every examined link, independently of linked_evidence_id and link_status. Null for direct traversal or an empty selection, which make no closure claim.",
     ),
   offset: countSchema,
   limit: z.int().positive(),
@@ -342,12 +389,15 @@ export const inspectEvidenceLinks = (
     readonly linkStatus?:
       | z.infer<typeof evidenceLinkStatusFilterSchema>
       | undefined;
+    readonly linkedEvidenceId?: string | undefined;
     readonly offset?: number | undefined;
     readonly limit?: number | undefined;
   } = {},
 ): EvidenceLinkInspection => {
   const traversal = options.traversal ?? "direct";
-  const linkStatus = options.linkStatus ?? "missing";
+  const linkedEvidenceId = options.linkedEvidenceId;
+  const linkStatus =
+    options.linkStatus ?? (linkedEvidenceId === undefined ? "missing" : "all");
   // optional-fact-default: a request default for paging, not an observed fact.
   const offset = options.offset ?? 0;
   const limit = options.limit ?? EVIDENCE_LINK_INSPECTION_LIMIT;
@@ -371,6 +421,7 @@ export const inspectEvidenceLinks = (
   }
   const rows: EvidenceLinkInspection["rows"] = [];
   const counts = { total: 0, retained: 0, missing: 0 };
+  let hasMissingLink = false;
   let matchingLinks = 0;
   // Bundle order is canonical, so a page stays stable across requests.
   for (const evidence of bundle.records) {
@@ -378,6 +429,8 @@ export const inspectEvidenceLinks = (
     if (!examined.has(id)) continue;
     for (const link of directLinksOf(evidence)) {
       const status = retained.has(link) ? "retained" : "missing";
+      if (status === "missing") hasMissingLink = true;
+      if (linkedEvidenceId !== undefined && link !== linkedEvidenceId) continue;
       counts.total += 1;
       counts[status] += 1;
       if (linkStatus !== "all" && linkStatus !== status) continue;
@@ -391,6 +444,9 @@ export const inspectEvidenceLinks = (
     kind: "evidence-link-inspection",
     filters: selectedFilters(filters),
     traversal,
+    ...(linkedEvidenceId === undefined
+      ? {}
+      : { linked_evidence_id: linkedEvidenceId }),
     link_status: linkStatus,
     total_retained_records: bundle.records.length,
     matching_records: matching,
@@ -400,14 +456,21 @@ export const inspectEvidenceLinks = (
     retained_closure:
       traversal === "direct" || examined.size === 0
         ? null
-        : counts.missing === 0
-          ? "complete"
-          : "incomplete",
+        : hasMissingLink
+          ? "incomplete"
+          : "complete",
     offset,
     limit,
     matching_links: matchingLinks,
     next_offset: end < matchingLinks ? end : null,
     rows,
-    limitations: [...EVIDENCE_LINK_INSPECTION_LIMITATIONS],
+    limitations: [
+      ...EVIDENCE_LINK_INSPECTION_LIMITATIONS,
+      ...(linkedEvidenceId === undefined
+        ? []
+        : [
+            "Referrers are direct citations from the examined retained records only; zero matches does not establish absence elsewhere or validate a conclusion.",
+          ]),
+    ],
   };
 };

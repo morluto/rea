@@ -412,7 +412,7 @@ async function readSourceSnapshot(file: FileHandle, signal?: AbortSignal) {
     signal,
     cancellationFailure: (reason) => new RegularFileOperationCancelled(reason),
   })) {
-    const bytes = Buffer.from(chunk);
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     hash.update(bytes);
     if (size < prefix.length)
       bytes.copy(prefix, size, 0, Math.min(bytes.length, prefix.length - size));

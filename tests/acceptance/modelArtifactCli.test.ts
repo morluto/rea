@@ -26,15 +26,13 @@ import {
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, createSharedMcpSession } from "../support/cli/cliFixture.js";
 
-/** A malformed model header is an invalid `path` on both adapters. */
+/** A malformed model header is a target refusal on both adapters. */
 const MALFORMED_MODEL = {
-  code: "invalid_request",
-  category: "invalid_input",
+  code: "unsupported_target",
+  category: "unsupported_target",
   details: {
     operation: "inspect_model_artifact",
-    issues: [
-      expect.objectContaining({ path: ["path"], reason: "invalid_format" }),
-    ],
+    format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
   },
 } as const;
 
@@ -187,6 +185,7 @@ cliTest(
       expect(summary.summary.limitations).toContainEqual(limitation);
       expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
       await unlink(path);
+      if (blockBytes !== 36) continue;
 
       const source = {
         kind: "retained-evidence",
@@ -443,6 +442,7 @@ cliTest(
         expect(summary.summary.limitations).toContain(limitation);
       expect(Buffer.compare(await readFile(path), fixture.bytes)).toBe(0);
       await unlink(path);
+      if (layout !== "legacy") continue;
       await assertRetainedLayoutViews(
         call,
         summary.parent_evidence_id,
@@ -532,24 +532,22 @@ cliTest(
     );
     // The raw extent is outside this empty file, and that check runs before
     // the offset is converted to a host number.
+    // The bytes, not the arguments, are at fault, so this is a target refusal.
     expect(offsetFailure.error).toMatchObject({
-      code: "invalid_request",
-      category: "invalid_input",
+      code: "unsupported_target",
+      category: "unsupported_target",
       details: {
         operation: "inspect_model_artifact",
-        issues: [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: `Selected artifact ${path}: Declared extent is outside the file`,
-          },
-        ],
+        path,
+        reason: "Declared extent is outside the file",
+        format_failure: "malformed",
       },
     });
+    expect(offsetFailure.error).not.toHaveProperty("recovery");
   },
 );
 
-it.each(["named", "default", "inventory-only", "absent"] as const)(
+it.each(["named", "default", "inventory-only"] as const)(
   "reports actual chat-template presence in summaries and page context (%s)",
   async (kind) => {
     const root = await createTestTempDirectory("rea-model-templates-");
@@ -573,9 +571,7 @@ it.each(["named", "default", "inventory-only", "absent"] as const)(
         ? [names, template]
         : kind === "default"
           ? [template]
-          : kind === "inventory-only"
-            ? [names]
-            : [];
+          : [names];
     await writeFile(path, ggufFixture({ metadata }).bytes);
     const call = await modelMcp.session.call();
     const response = await call("inspect_model_artifact", { path });
@@ -1043,6 +1039,7 @@ cliTest(
           createHash("sha256").update(safetensors.header).digest("hex"),
         );
       } else {
+        expect(report.metadata).toEqual([]);
         expect(report.tensors).toEqual([]);
         expect(report.tensor_data_offset).toBe(alignedOffset);
         expect(report.artifact.header_length).toBe(

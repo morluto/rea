@@ -18,10 +18,10 @@ const unavailableViewCoverageSchema = z.strictObject({
 });
 
 /** Only views with nullable collections can report unavailable page coverage. */
-export const nullableCollectionViewCoverageSchema = z.union([
-  analysisViewCoverageSchema,
-  unavailableViewCoverageSchema,
-]);
+export const nullableCollectionViewCoverageSchema = z.discriminatedUnion(
+  "status",
+  [analysisViewCoverageSchema, unavailableViewCoverageSchema],
+);
 
 export type AnalysisViewCoverage = z.output<typeof analysisViewCoverageSchema>;
 

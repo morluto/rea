@@ -20,75 +20,75 @@ const TARGET: BinaryTarget = {
 };
 const PROVIDER = { id: "fixture", name: "Fixture provider", version: "1" };
 
-it("accepts and replaces caller path metadata for the same semantic record", () => {
-  const original = createEvidence(TARGET, PROVIDER, {
+it("updates caller spellings independently while preserving the semantic record", () => {
+  const evidence = createEvidence(TARGET, PROVIDER, {
     operation: "health",
     parameters: {},
     result: true,
   });
-  const selected = withEvidenceCallerInputPath(original, "./selected-alias");
-  const ledger = new EvidenceLedger();
-  expect(ledger.record(original)).toEqual({ ok: true, value: "added" });
-  expect(ledger.import(createEvidenceBundle([selected]))).toEqual({
-    ok: true,
-    value: {
-      recordsAdded: 0,
-      unknownsAdded: 0,
-      changed: true,
-      replacements: [
-        { kind: "metadata", previous: original, current: selected },
-      ],
-    },
-  });
-  expect(ledger.get(original.evidence_id)?.caller_input_path).toBe(
-    "./selected-alias",
-  );
-});
-
-it("replaces auxiliary caller spelling on duplicate import and ignores record key order", () => {
-  const original = createEvidence(TARGET, PROVIDER, {
-    operation: "health",
-    parameters: {},
-    result: true,
-  });
-  const first = withEvidenceCallerInputPath(original, "./same-schema", {
+  const original = withEvidenceCallerInputPath(evidence, undefined, {
     operations_path: "./queries",
     other: "./unchanged",
   });
-  const second = withEvidenceCallerInputPath(original, "./same-schema", {
-    other: "./unchanged",
-    operations_path: "./alias/../queries",
-  });
   const ledger = new EvidenceLedger();
-  expect(ledger.record(first).ok).toBe(true);
-  expect(second.evidence_id).toBe(first.evidence_id);
-  const imported = ledger.import(createEvidenceBundle([second]));
-  expect(imported).toMatchObject({
-    ok: true,
-    value: {
-      recordsAdded: 0,
-      changed: true,
-      replacements: [{ kind: "metadata" }],
-    },
+  expect(ledger.record(original)).toEqual({ ok: true, value: "added" });
+
+  const importRecord = (record: typeof original) =>
+    ledger.import(createEvidenceBundle([record]));
+  const expectReplacement = (
+    previous: typeof original,
+    current: typeof original,
+  ) => {
+    expect(current.evidence_id).toBe(original.evidence_id);
+    expect(importRecord(current)).toEqual({
+      ok: true,
+      value: {
+        recordsAdded: 0,
+        unknownsAdded: 0,
+        changed: true,
+        replacements: [{ kind: "metadata", previous, current }],
+      },
+    });
+  };
+
+  const selected = withEvidenceCallerInputPath(original, "./selected-alias", {
+    operations_path: "./queries",
+    other: "./unchanged",
   });
-  expect(ledger.get(first.evidence_id)?.caller_input_paths).toEqual(
-    second.caller_input_paths,
+  expectReplacement(original, selected);
+  expect(ledger.get(original.evidence_id)?.caller_input_path).toBe(
+    "./selected-alias",
   );
-  expect(first.caller_input_paths?.operations_path).toBe("./queries");
-  const reordered = withEvidenceCallerInputPath(original, "./same-schema", {
+
+  const rebound = withEvidenceCallerInputPath(selected, "./selected-alias", {
+    other: "./unchanged",
+    operations_path: "./alias/../queries",
+  });
+  expectReplacement(selected, rebound);
+  expect(ledger.get(original.evidence_id)?.caller_input_paths).toEqual({
     operations_path: "./alias/../queries",
     other: "./unchanged",
   });
-  expect(ledger.import(createEvidenceBundle([reordered]))).toMatchObject({
+
+  const reordered = withEvidenceCallerInputPath(evidence, "./selected-alias", {
+    operations_path: "./alias/../queries",
+    other: "./unchanged",
+  });
+  expect(Object.keys(reordered.caller_input_paths ?? {})).toEqual([
+    "operations_path",
+    "other",
+  ]);
+  expect(Object.keys(rebound.caller_input_paths ?? {})).toEqual([
+    "other",
+    "operations_path",
+  ]);
+  expect(importRecord(reordered)).toMatchObject({
     ok: true,
     value: { changed: false, replacements: [] },
   });
-  const unannotated = withEvidenceCallerInputPath(original, "./same-schema");
-  expect(ledger.import(createEvidenceBundle([unannotated]))).toMatchObject({
-    ok: true,
-    value: { changed: true },
-  });
-  expect(ledger.get(first.evidence_id)?.caller_input_paths).toBeUndefined();
+  const unannotated = withEvidenceCallerInputPath(evidence, "./selected-alias");
+  expectReplacement(rebound, unannotated);
+  expect(ledger.get(original.evidence_id)?.caller_input_paths).toBeUndefined();
 });
 
 describe("evidence ledger recording", () => {

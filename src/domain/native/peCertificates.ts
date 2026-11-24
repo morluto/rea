@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
 import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
@@ -148,6 +149,8 @@ export const peCertificatesSchema = z.strictObject({
     examined_entries: uint,
     certificates: uint,
   }),
+  /** Evidence saved before this field existed omits it. */
+  header_anomalies: peHeaderAnomaliesSchema.optional(),
   limitations: z.array(z.string()),
 });
 

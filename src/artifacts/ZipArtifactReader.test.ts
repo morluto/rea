@@ -591,7 +591,7 @@ it("refuses to open ZIP symlink entries even when unixMode is absent", async () 
       if (entry === undefined)
         throw new Error(`Missing ZIP symlink ${logicalPath}`);
       await expect(reader.open(entry)).rejects.toMatchObject({
-        reason: "format",
+        reason: "path",
         message: expect.stringContaining("regular file"),
       });
     }

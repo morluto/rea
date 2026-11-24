@@ -9,6 +9,7 @@ import {
   workflowAnalysisProfileParameters,
 } from "./WorkflowAnalysisProfile.js";
 import type {
+  AnalysisExecution,
   AnalysisOperation,
   AnalysisOperationPort,
 } from "../ports/AnalysisProvider.js";
@@ -58,7 +59,7 @@ import {
  * with the number of items.
  */
 export interface ComposedLimitationBudget {
-  /** Operations the workflow calls once per item. */
+  /** Operations whose caveats the workflow admits after checking the item. */
   readonly perItemOperations: ReadonlySet<AnalysisOperation>;
   /**
    * First distinct per-item caveats retained, grouped by provider and text.
@@ -98,10 +99,18 @@ export type ComposedWorkflowResult =
     readonly partial?: ComposedWorkflowObservation;
   };
 
+export interface WorkflowAnalysisPort extends AnalysisOperationPort {
+  /** Publish caveats only after admitting an observation for a workflow item. */
+  recordItemLimitations?(
+    operation: AnalysisOperation,
+    execution: AnalysisExecution,
+  ): void;
+}
+
 /** Retain the limits of exactly the observations used by one composed call. */
 export const executeComposedWorkflow = async (
   analysis: AnalysisOperationPort,
-  execute: (observed: AnalysisOperationPort) => EnhancedResult,
+  execute: (observed: WorkflowAnalysisPort) => EnhancedResult,
   budget?: ComposedLimitationBudget,
 ): Promise<ComposedWorkflowResult> => {
   const limitations = new Map<string, SourceLimitation>();
@@ -112,7 +121,46 @@ export const executeComposedWorkflow = async (
   let omittedObservations = 0;
   let cachePolicy: "live" | undefined;
   const workScope = new AnalysisWorkScope();
-  const observed: AnalysisOperationPort = {
+  const recordLimitations = (
+    operation: AnalysisOperation,
+    execution: AnalysisExecution,
+  ): void => {
+    for (const limitation of execution.limitations) {
+      const fact = {
+        provider: execution.provider,
+        operation,
+        limitation,
+      } satisfies SourceLimitation;
+      if (budget?.perItemOperations.has(operation) === true) {
+        // Reject oversized text before allocating a grouping key. Complete
+        // caveats are already retained by the export's per-function owner.
+        const maxBytes = budget.maxBytes ?? 8_000;
+        const bytes = jsonStringByteLength(limitation, maxBytes);
+        if (bytes > maxBytes) {
+          omittedObservations += 1;
+          continue;
+        }
+        const group = sourceLimitationGroupKey(fact);
+        if (!perItemGroups.has(group)) {
+          if (
+            perItemGroups.size >= budget.maxDistinct ||
+            perItemBytes + bytes > maxBytes
+          ) {
+            omittedObservations += 1;
+            continue;
+          }
+          perItemGroups.add(group);
+          perItemBytes += bytes;
+        }
+      }
+      limitations.set(sourceLimitationKey(fact), fact);
+    }
+  };
+  const observed: WorkflowAnalysisPort = {
+    recordItemLimitations: (operation, execution) => {
+      if (budget?.perItemOperations.has(operation) === true)
+        recordLimitations(operation, execution);
+    },
     resourceScope: analysis.resourceScope,
     execute: async (operation, parameters, options) => {
       let execution = await analysis.execute(operation, parameters, {
@@ -148,37 +196,8 @@ export const executeComposedWorkflow = async (
         evidenceLinks.add(execution.value.evidenceId);
       if (execution.ok && execution.value.cachePolicy === "live")
         cachePolicy = "live";
-      if (execution.ok)
-        for (const limitation of execution.value.limitations) {
-          const fact = {
-            provider: execution.value.provider,
-            operation,
-            limitation,
-          } satisfies SourceLimitation;
-          if (budget?.perItemOperations.has(operation) === true) {
-            // Reject oversized text before allocating a grouping key. Complete
-            // caveats are already retained by the export's per-function owner.
-            const maxBytes = budget.maxBytes ?? 8_000;
-            const bytes = jsonStringByteLength(limitation, maxBytes);
-            if (bytes > maxBytes) {
-              omittedObservations += 1;
-              continue;
-            }
-            const group = sourceLimitationGroupKey(fact);
-            if (!perItemGroups.has(group)) {
-              if (
-                perItemGroups.size >= budget.maxDistinct ||
-                perItemBytes + bytes > maxBytes
-              ) {
-                omittedObservations += 1;
-                continue;
-              }
-              perItemGroups.add(group);
-              perItemBytes += bytes;
-            }
-          }
-          limitations.set(sourceLimitationKey(fact), fact);
-        }
+      if (execution.ok && budget?.perItemOperations.has(operation) !== true)
+        recordLimitations(operation, execution.value);
       return execution;
     },
   };

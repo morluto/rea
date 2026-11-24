@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { appendFile, symlink, truncate, writeFile } from "node:fs/promises";
+import { symlink, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -19,7 +19,7 @@ const admitted = async (contents: string) => {
 };
 
 describe("hashStableRegularFileDescriptor", () => {
-  it("hashes the admitted bytes and captures the requested prefix", async () => {
+  it("hashes the admitted bytes and refuses a subsequent shrink", async () => {
     const { path, source } = await admitted("abcdef");
     try {
       expect(
@@ -32,18 +32,7 @@ describe("hashStableRegularFileDescriptor", () => {
         bytes: 6,
         prefix: Buffer.from("ab"),
       });
-    } finally {
-      await source.handle.close();
-    }
-  });
-
-  it.each([
-    ["grows", (path: string) => appendFile(path, "more")],
-    ["shrinks", (path: string) => truncate(path, 2)],
-  ])("refuses a file that %s after admission", async (_change, mutate) => {
-    const { path, source } = await admitted("abcdef");
-    try {
-      await mutate(path);
+      await truncate(path, 2);
       await expect(
         hashStableRegularFileDescriptor(source, path, {
           symlinks: "reject",

@@ -5,6 +5,7 @@ import {
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import {
+  isObjectPrototypeSetter,
   isRuntimeJavaScriptClassProperty,
   javaScriptExpressionWrapperTarget,
   semanticStaticPropertyKey,
@@ -547,18 +548,6 @@ const expandGetterResult = (
 
 type ObjectLiteralMember = t.ObjectExpression["properties"][number];
 
-/** Only this colon-form definition selects an object literal's prototype. */
-const isObjectPrototypeSetter = (
-  property: ObjectLiteralMember,
-  name = t.isSpreadElement(property)
-    ? null
-    : semanticStaticPropertyKey(property.key, property.computed),
-): property is t.ObjectProperty =>
-  t.isObjectProperty(property) &&
-  !property.computed &&
-  !property.shorthand &&
-  name === "__proto__";
-
 /** Property positions grouped by whether an exact key can reach them. */
 interface ObjectPropertyIndex {
   /** Spreads, computed keys and `__proto__` data entries reach every key. */
@@ -709,7 +698,11 @@ class ObjectReferenceWalk {
     property: t.ObjectMethod | t.ObjectProperty,
     name: string | null,
   ): boolean {
-    if (!isObjectPrototypeSetter(property, name)) return false;
+    if (
+      !t.isObjectProperty(property) ||
+      !isObjectPrototypeSetter(property, name)
+    )
+      return false;
     const selected = this.#key ?? null;
     if (this.accessor !== undefined && this.accessorLookup === "own")
       return true;
@@ -931,7 +924,8 @@ export const semanticNativePrototypeChain = (
   if (exact !== undefined && objectExpressionDefinedKeys(node).has(exact))
     return [];
   for (const property of node.properties) {
-    if (!isObjectPrototypeSetter(property)) continue;
+    if (!t.isObjectProperty(property) || !isObjectPrototypeSetter(property))
+      continue;
     const prototype = unwrapJavaScriptExpression(property.value).node;
     // Null removes the prototype. Objects select the explicitly retained
     // chain, while primitive values are ignored and unknowns may be primitive.

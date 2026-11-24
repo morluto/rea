@@ -17,7 +17,10 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import {
   pageViewCoverage,
   unavailableViewCoverage,
@@ -262,15 +265,8 @@ export const projectNativeObservationView = (
     view.kind !== "native-observation" &&
     view.kind !== "native-context"
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Use summary, native-observation or native-context with this source.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Use summary, native-observation or native-context with this source.",
     );
   assertOwnedView<
     | SummaryAnalysisView

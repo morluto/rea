@@ -76,7 +76,9 @@ export const resolveXrefsName = async (
   }
   if (signal?.aborted) return err(cancelledBy(operation, signal));
   const addresses = new Set<string>();
-  for (const [index, row] of inventory.value.fact.entries()) {
+  const rows = inventory.value.fact;
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index]!;
     // An empty address cannot be passed back to xrefs.
     if (row.address.length === 0)
       return err(

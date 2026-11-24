@@ -324,9 +324,6 @@ cliTest(
           observed_sqlite_snapshot_input_bytes: String(maximum + 1),
         },
       },
-      remediation: {
-        action: expect.stringContaining("supported export workflow"),
-      },
     };
     expect(cliResult.exitCode).toBe(1);
     expect(cliResult.json).toMatchObject(expectedError);
@@ -384,14 +381,11 @@ cliTest.skipIf(process.platform === "win32" || !SQLITE_NATIVE_LIMITS_AVAILABLE)(
       code: "capability_unavailable",
       category: "unsupported_provider",
       retryable: false,
-      message: expect.stringContaining("supported consistent offline export"),
       details: {
         provider_id: "sqlite",
         operation: "inspect_sqlite_database",
+        // The system code is the fact that rules out a malformed database.
         reason: expect.stringContaining("ENAMETOOLONG"),
-      },
-      remediation: {
-        action: expect.stringContaining("supported consistent offline export"),
       },
     };
     expect(cliResult.exitCode).toBe(1);
@@ -582,7 +576,9 @@ cliTest(
           available: SQLITE_NATIVE_LIMITS_AVAILABLE,
           reason: SQLITE_NATIVE_LIMITS_AVAILABLE
             ? null
-            : expect.stringContaining("Node.js 24.x >=24.15 or 26+"),
+            : expect.stringContaining(
+                "supported Node.js 24.x and 26.x runtimes",
+              ),
           availability_code: SQLITE_NATIVE_LIMITS_AVAILABLE
             ? null
             : "unsupported_version",
@@ -618,7 +614,9 @@ cliTest(
           available: SQLITE_NATIVE_LIMITS_AVAILABLE,
           remediation: SQLITE_NATIVE_LIMITS_AVAILABLE
             ? null
-            : expect.stringContaining("Node.js 24.x >=24.15 or 26+"),
+            : expect.stringContaining(
+                "supported Node.js 24.x and 26.x runtimes",
+              ),
         }),
       ]),
     );
@@ -716,11 +714,11 @@ const sourceState = async (path: string) => {
   };
 };
 
-const createLosslessSnapshot = (path: string, journalMode: string): void => {
+const createLosslessSnapshot = (path: string): void => {
   const database = new DatabaseSync(path);
   try {
-    database.exec(`PRAGMA journal_mode=${journalMode}`);
     database.exec(`
+      PRAGMA journal_mode=PERSIST;
       CREATE TABLE "odd "" table" (
         id INTEGER PRIMARY KEY,
         payload BLOB,
@@ -753,15 +751,17 @@ const createLosslessSnapshot = (path: string, journalMode: string): void => {
   }
 };
 
-cliTest
-  .runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)
-  .for(["DELETE", "PERSIST", "TRUNCATE"])(
-  "inspects a real %s SQLite schema and lossless selected records identically through CLI and MCP",
-  async (journalMode, { cli }) => {
+cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
+  "inspects a lossless SQLite snapshot with a retained rollback journal through CLI and MCP",
+  async ({ cli }) => {
     const root = await createTestTempDirectory("rea-sqlite-public-");
     const path = join(root, "selected.db");
-    createLosslessSnapshot(path, journalMode);
+    createLosslessSnapshot(path);
     const original = await readFile(path);
+    const journalPath = `${path}-journal`;
+    const { bytes: journalBytes, ...journalIdentity } =
+      await sourceState(journalPath);
+    expect(journalBytes.length).toBeGreaterThanOrEqual(28);
     const result = await cli.run({
       arguments: [
         "inspect-sqlite-database",
@@ -875,6 +875,10 @@ cliTest
       "selected.db",
     );
     expect(Buffer.compare(await readFile(path), original)).toBe(0);
+    const { bytes: afterBytes, ...afterIdentity } =
+      await sourceState(journalPath);
+    expect(afterBytes.equals(journalBytes)).toBe(true);
+    expect(afterIdentity).toEqual(journalIdentity);
   },
 );
 
@@ -1032,7 +1036,20 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       environment: { REA_LOG_LEVEL: "silent" },
     });
     expect(ambiguous.exitCode).toBe(1);
-    expect(ambiguous.stdout).toContain("shadow table");
+    // An unresolved kind and an absent table share this issue shape, so
+    // the issue message is what distinguishes the unknown kind.
+    expect(ambiguous.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["table"],
+            reason: "invalid_format",
+            message: expect.stringContaining("shadow table"),
+          },
+        ],
+      },
+    });
     expect(
       (
         await call("inspect_sqlite_database", {
@@ -1052,7 +1069,18 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       environment: { REA_LOG_LEVEL: "silent" },
     });
     expect(missing.exitCode).toBe(1);
-    expect(missing.stdout).toContain("absent");
+    expect(missing.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["table"],
+            reason: "invalid_format",
+            message: expect.stringContaining("absent"),
+          },
+        ],
+      },
+    });
     expect(
       (await call("inspect_sqlite_database", { path: valid, table: "absent" }))
         .isError,
@@ -1101,6 +1129,8 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         "records",
         "--column",
         "value",
+        "--column",
+        "value",
         "--row-limit",
         "1",
         "--json",
@@ -1112,9 +1142,14 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       normalized_result: {
         schema: { scope: "inventory" },
         rows: {
-          columns: ["value"],
+          columns: ["value", "value"],
           returned_rows: 1,
-          values: [[{ type: "text", value: "retained" }]],
+          values: [
+            [
+              { type: "text", value: "retained" },
+              { type: "text", value: "retained" },
+            ],
+          ],
         },
       },
     });

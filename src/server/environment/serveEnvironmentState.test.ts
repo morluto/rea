@@ -617,185 +617,144 @@ describe("state data plane cancellation", () => {
   });
 });
 
-describe("state data plane response budget", () => {
-  it("measures oversized batch replies without stringifying them whole and leaves room for reset", async () => {
-    const document = renamedDocument();
-    const large = {
-      rea_state: {
-        ...document.rea_state,
-        entities: document.rea_state.entities.map((entity) =>
-          entity.type === "/api/users" && entity.id === "2"
-            ? {
-                ...entity,
-                fields: {
-                  ...entity.fields,
-                  login: "x".repeat(Math.ceil(MAX_RPC_RESPONSE_BYTES / 3)),
-                },
-              }
-            : entity,
-        ),
+it("bounds a data/get batch with exact refusal sizes and applies a later reset", async () => {
+  const plane = dataPlane();
+  const document = renamedDocument();
+  const prefix = 'élan\t😀"';
+  const withLogin = (login: string) => ({
+    rea_state: {
+      ...document.rea_state,
+      entities: document.rea_state.entities.map((entity) =>
+        entity.type === "/api/users" && entity.id === "2"
+          ? { ...entity, fields: { ...entity.fields, login } }
+          : entity,
+      ),
+    },
+  });
+  const get = (id: number | string) => ({
+    jsonrpc: "2.0",
+    id,
+    method: "data/get",
+  });
+  const snapshotReply = (id: number | string) => ({
+    jsonrpc: "2.0",
+    id,
+    result: { parts: [{ kind: "data", data: plane.store.snapshot() }] },
+  });
+  const resetSnapshot = snapshotReply("after reset");
+  await expect(
+    plane.add({ kind: "data", data: withLogin(prefix) }),
+  ).resolves.toMatchObject({ result: {} });
+  const refusalIds = Array.from(
+    { length: 96 },
+    (_, index) => `réplique "${index}😀"`,
+  );
+  const baseBytes = (id: number | string) =>
+    Buffer.byteLength(JSON.stringify(snapshotReply(id)), "utf8");
+  // Read three alone would fit. Later refusals still need their full envelopes.
+  const fill =
+    Math.floor((MAX_RPC_RESPONSE_BYTES - 100) / 3) - baseBytes(refusalIds[0]!);
+  const refusalSizes = refusalIds.map((id) => baseBytes(id) + fill);
+  const login = prefix + "x".repeat(fill);
+  const root = await createTestTempDirectory("rea-environment-state-budget-");
+  const path = join(root, "large.json");
+  await writeFile(path, JSON.stringify(withLogin(login)));
+  await expect(
+    plane.add({ kind: "file", file: { uri: pathToFileURL(path).href } }),
+  ).resolves.toMatchObject({ result: {} });
+
+  const stringify = JSON.stringify;
+  let largeValueEncodes = 0;
+  const encoding = vi.spyOn(JSON, "stringify").mockImplementation((...args) => {
+    const [value] = args;
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "result" in value &&
+      typeof value.result === "object" &&
+      "id" in value &&
+      typeof value.id === "string" &&
+      refusalIds.includes(value.id)
+    )
+      throw new Error("a refused reply was stringified whole");
+    // Stop on the first extra traversal so a regression cannot retain large
+    // chunks from all of the refused replies in the spy's call records.
+    if (
+      typeof value === "string" &&
+      value.startsWith(prefix) &&
+      ++largeValueEncodes > 2
+    )
+      throw new Error("a refused reply encoded its loaded data");
+    return stringify(...args);
+  });
+  let response: Response;
+  try {
+    response = await plane.postRaw([
+      get(1),
+      get(2),
+      ...refusalIds.map(get),
+      { jsonrpc: "2.0", id: "reset", method: "data/reset" },
+      get(resetSnapshot.id),
+    ]);
+  } finally {
+    encoding.mockRestore();
+  }
+  expect(response.status).toBe(200);
+  const text = await response.text();
+  expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(
+    MAX_RPC_RESPONSE_BYTES,
+  );
+  const replies: Record<string, unknown>[] = JSON.parse(
+    text,
+    (key, value: unknown) =>
+      key === "login" && typeof value === "string" && value.length > 1024
+        ? value === login
+        : value,
+  );
+  expect(replies.map((reply) => Object.keys(reply).sort())).toEqual(
+    replies.map((reply) =>
+      "error" in reply
+        ? ["error", "id", "jsonrpc"]
+        : ["id", "jsonrpc", "result"],
+    ),
+  );
+  expect(replies).toMatchObject([
+    ...[1, 2].map((id) => ({
+      jsonrpc: "2.0",
+      id,
+      result: {
+        parts: [
+          {
+            kind: "data",
+            data: {
+              rea_state: {
+                entities: expect.arrayContaining([
+                  expect.objectContaining({
+                    id: "2",
+                    type: "/api/users",
+                    fields: expect.objectContaining({ login: true }),
+                  }),
+                ]),
+              },
+            },
+          },
+        ],
       },
-    };
-    const root = await createTestTempDirectory("rea-environment-state-budget-");
-    const path = join(root, "large.json");
-    await writeFile(path, JSON.stringify(large));
-    const plane = dataPlane();
-    await expect(
-      plane.add({ kind: "file", file: { uri: pathToFileURL(path).href } }),
-    ).resolves.toMatchObject({ result: {} });
-    const get = (id: number) => ({ jsonrpc: "2.0", id, method: "data/get" });
-    const replyBytes = Buffer.byteLength(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        id: 3,
-        result: { parts: [{ kind: "data", data: plane.store.snapshot() }] },
-      }),
-    );
-    const stringify = vi.spyOn(JSON, "stringify");
-    try {
-      const response = await plane.postRaw([
-        get(1),
-        get(2),
-        get(3),
-        get(4),
-        { jsonrpc: "2.0", id: 5, method: "data/reset" },
-      ]);
-      expect(response.status).toBe(200);
-      const text = await response.text();
-      expect(Buffer.byteLength(text)).toBeLessThanOrEqual(
-        MAX_RPC_RESPONSE_BYTES,
-      );
-      const refusal = {
+    })),
+    ...refusalIds.map((id, index) => ({
+      jsonrpc: "2.0",
+      id,
+      error: {
         code: -32000,
         data: {
           max_response_bytes: MAX_RPC_RESPONSE_BYTES,
-          reply_bytes: replyBytes,
+          reply_bytes: refusalSizes[index],
         },
-      };
-      expect(
-        stringify.mock.calls.some(
-          ([value]) =>
-            typeof value === "object" &&
-            value !== null &&
-            "result" in value &&
-            typeof value.result === "object" &&
-            "id" in value &&
-            (value.id === 3 || value.id === 4),
-        ),
-      ).toBe(false);
-      expect(JSON.parse(text)).toMatchObject([
-        { id: 1, result: { parts: [{ kind: "data" }] } },
-        { id: 2, result: { parts: [{ kind: "data" }] } },
-        { id: 3, error: refusal },
-        { id: 4, error: refusal },
-        { id: 5, result: {} },
-      ]);
-      expect(loginOf(plane.store)).toBe("probe");
-    } finally {
-      stringify.mockRestore();
-    }
-  });
-});
-
-describe("repeated state reads", () => {
-  it("reuses the encoded size of a state for refused repeated data/get calls", async () => {
-    const plane = dataPlane();
-    const document = renamedDocument();
-    const large = {
-      rea_state: {
-        ...document.rea_state,
-        entities: document.rea_state.entities.map((entity) =>
-          entity.type === "/api/users" && entity.id === "2"
-            ? {
-                ...entity,
-                fields: { ...entity.fields, large: "x".repeat(1024 * 1024) },
-              }
-            : entity,
-        ),
       },
-    };
-    await plane.add({ kind: "data", data: large });
-    const fields = plane.store
-      .snapshot()
-      .rea_state.entities.find((entity) => entity.id === "2")?.fields;
-    if (fields === undefined) throw new Error("Expected the loaded entity");
-
-    const originalKeys = Object.keys;
-    let fieldEnumerations = 0;
-    const keys = vi.spyOn(Object, "keys").mockImplementation((value) => {
-      if (value === fields) fieldEnumerations += 1;
-      return originalKeys(value);
-    });
-    try {
-      const batch = await plane.post(
-        Array.from({ length: 100 }, (_, index) => ({
-          jsonrpc: "2.0",
-          id: index + 1,
-          method: "data/get",
-        })),
-      );
-      expect(
-        (batch.json as { error?: unknown }[]).filter((reply) => reply.error),
-      ).not.toHaveLength(0);
-      expect(fieldEnumerations).toBeLessThan(65);
-      expect(Buffer.byteLength(JSON.stringify(batch.json))).toBeLessThanOrEqual(
-        MAX_RPC_RESPONSE_BYTES,
-      );
-    } finally {
-      keys.mockRestore();
-    }
-  });
-});
-
-describe("state data plane response budget reserve", () => {
-  it("keeps room for every later refusal and the batch's framing, so the body never passes the budget", async () => {
-    const document = renamedDocument();
-    const withLogin = (login: string) => ({
-      rea_state: {
-        ...document.rea_state,
-        entities: document.rea_state.entities.map((entity) =>
-          entity.type === "/api/users" && entity.id === "2"
-            ? { ...entity, fields: { ...entity.fields, login } }
-            : entity,
-        ),
-      },
-    });
-    const plane = dataPlane();
-    await plane.add({ kind: "data", data: withLogin("") });
-    const base = Buffer.byteLength(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        result: { parts: [{ kind: "data", data: plane.store.snapshot() }] },
-      }),
-    );
-    // Three reads that alone fall 100 bytes short of the budget.
-    const login = "x".repeat(
-      Math.floor((MAX_RPC_RESPONSE_BYTES - 100) / 3) - base,
-    );
-    const root = await createTestTempDirectory(
-      "rea-environment-state-reserve-",
-    );
-    const path = join(root, "large.json");
-    await writeFile(path, JSON.stringify(withLogin(login)));
-    await plane.add({ kind: "file", file: { uri: pathToFileURL(path).href } });
-    const ids = Array.from({ length: 23 }, (_, index) => index + 1);
-    const batch = await plane.post(
-      ids.map((id) => ({ jsonrpc: "2.0", id, method: "data/get" })),
-    );
-    // The third read would leave no room for the twenty refusals after it.
-    expect((batch.json as unknown[]).slice(0, 3)).toMatchObject([
-      { id: 1, result: {} },
-      { id: 2, result: {} },
-      { id: 3, error: { code: -32000 } },
-    ]);
-    expect((batch.json as { id: number }[]).map((reply) => reply.id)).toEqual(
-      ids,
-    );
-    expect(Buffer.byteLength(JSON.stringify(batch.json))).toBeLessThanOrEqual(
-      MAX_RPC_RESPONSE_BYTES,
-    );
-  });
+    })),
+    { jsonrpc: "2.0", id: "reset", result: {} },
+    resetSnapshot,
+  ]);
 });
 
 const served: ServedEnvironment[] = [];

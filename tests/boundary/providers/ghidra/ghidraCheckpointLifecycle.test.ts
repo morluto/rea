@@ -102,18 +102,42 @@ it.skipIf(process.platform === "win32")(
     expect(f.client.checkpointRestore()).toBeUndefined();
     expect((await f.client.start()).ok).toBe(true);
     expect(f.client.checkpointRestore()).toBeNull();
-    const path = join(f.selection.directory, "current.json"),
-      before = await readFile(path, "utf8");
+    const path = join(f.selection.directory, "current.json");
+    const before = await readFile(path, "utf8");
+    const manifest = JSON.parse(before);
+    const sha256 = createHash("sha256")
+      .update("fixture checkpoint initial")
+      .digest("hex");
+    expect(manifest).toMatchObject({
+      version: 2,
+      source: { kind: "initial-analysis", sha256 },
+    });
     expect((await f.client.close()).ok).toBe(true);
     expect(f.client.checkpointRestore()).toBeUndefined();
-    expect(await readFile(path, "utf8")).toEqual(before);
-    expect(f.launcher.requests).toContain("checkpoint_program");
+    expect(await readFile(path, "utf8")).toBe(before);
+    const resources = new ArtifactResourceScope();
     const selection = await resolveGhidraCheckpoint(
       f.root,
       f.sha256,
       profile,
-      new ArtifactResourceScope(),
+      resources,
     );
+    expect(selection).toEqual(f.selection);
+    const otherProfile = createAnalysisProfile(profile.provider, {
+      checkpoint_test: false,
+    });
+    for (const [target, baseProfile] of [
+      ["2".repeat(64), profile],
+      [f.sha256, otherProfile],
+    ] as const) {
+      const other = await resolveGhidraCheckpoint(
+        f.root,
+        target,
+        baseProfile,
+        resources,
+      );
+      expect(other.directory).not.toBe(selection.directory);
+    }
     const resumed = new GhidraClient({
       launcher: f.launcher,
       targetPath: f.targetPath,
@@ -125,12 +149,12 @@ it.skipIf(process.platform === "win32")(
     });
     clients.push(resumed);
     expect((await resumed.start()).ok).toBe(true);
-    expect(resumed.checkpointRestore()).toMatchObject({
-      sha256: JSON.parse(await readFile(path, "utf8")).source.sha256,
-    });
-    expect(f.launcher.packedPrograms.at(-1)?.sha256).toBe(
-      JSON.parse(await readFile(path, "utf8")).source.sha256,
-    );
+    const packed = {
+      path: join(selection.directory, manifest.source.file),
+      sha256,
+    };
+    expect(resumed.checkpointRestore()).toEqual(packed);
+    expect(f.launcher.packedPrograms.at(-1)).toEqual(packed);
   },
 );
 

@@ -73,11 +73,6 @@ const workspaceFixture = await VerifierFixture.open({
   private: false,
 });
 const workspace = workspaceFixture.path;
-// A failed run keeps its workspace for diagnosis; the fixture records why.
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -670,7 +665,7 @@ try {
   cleanupFailure = cause;
 }
 if (cleanupFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `RISC-V command cleanup failed; retained diagnostic workspace: ${workspace}`,
     {
       cause:
@@ -690,7 +685,7 @@ try {
   lineageFailure = cause;
 }
 if (lineageFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `Cleanup unverified; retained workspace: ${workspace}`,
     {
       cause:
@@ -703,18 +698,18 @@ if (lineageFailure !== undefined)
     },
   );
 if (failure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `RISC-V verification failed; retained workspace: ${workspace}; MCP stderr: ${stderr}`,
     { cause: failure },
   );
 const survivors = await readdir(runtime);
 if (survivors.length > 0)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `Runtime resources survived server shutdown (${survivors.join(", ")}); retained workspace: ${workspace}`,
   );
 const interrupted = commandInterruption.reason();
 if (interrupted !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `RISC-V verification interrupted; retained diagnostic workspace: ${workspace}`,
     { cause: interrupted },
   );

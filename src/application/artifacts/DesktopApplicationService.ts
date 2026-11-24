@@ -1,9 +1,7 @@
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { DesktopApplicationPort } from "../../ports/artifacts/DesktopApplicationPort.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { createDesktopApplicationEvidence } from "../../domain/desktopApplicationEvidence.js";
 import {
@@ -11,7 +9,7 @@ import {
   inspectDesktopApplicationInputSchema,
 } from "../../domain/desktopApplication.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { err, type Result } from "../../domain/result.js";
+import type { Result } from "../../domain/result.js";
 
 /** One input, interpretation and Evidence boundary shared by CLI, MCP and embedders. */
 export class DesktopApplicationService {
@@ -20,35 +18,32 @@ export class DesktopApplicationService {
     return this.reader.close();
   }
 
-  async inspect(
+  inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    const operation = "inspect_desktop_application";
-    const parsed = parseAnalysisInput(
-      operation,
-      rawInput,
-      inspectDesktopApplicationInputSchema,
-      options?.signal,
-    );
-    if (!parsed.ok) return parsed;
-    const result = await this.reader.inspect(parsed.value, options);
-    if (!result.ok) return result;
-    const report = desktopApplicationSchema.safeParse(result.value);
-    if (!report.success || report.data.root.path !== parsed.value.path)
-      return err(
-        new AnalysisOutputError(
-          operation,
+    return executeArtifactInspection(
+      {
+        operation: "inspect_desktop_application",
+        inputSchema: inspectDesktopApplicationInputSchema,
+        outputSchema: desktopApplicationSchema,
+        provider: {
+          identity: ARTIFACT_GRAPH_PROVIDER,
+          inspect: (
+            input: Parameters<DesktopApplicationPort["inspect"]>[0],
+            execOptions,
+          ) => this.reader.inspect(input, execOptions),
+        },
+        invalidOutputMessage:
           "Directory inspection changed the selected root or returned malformed facts.",
-        ),
-      );
-    return completeProviderEvidence(
-      createDesktopApplicationEvidence(
-        parsed.value,
-        report.data,
-        ARTIFACT_GRAPH_PROVIDER,
-      ),
-      options?.signal,
+        toParameters: (input) => input,
+        validateReport: (report, parameters) =>
+          report.root.path === parameters.path,
+        buildEvidence: (report, identity, parameters) =>
+          createDesktopApplicationEvidence(parameters, report, identity),
+      },
+      rawInput,
+      options,
     );
   }
 }
