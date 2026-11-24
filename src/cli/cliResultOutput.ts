@@ -82,6 +82,71 @@ const resultMeta = (metadata: CliResultOutputMetadata) => ({
     : { cli_controls: { ...metadata.cliControls } }),
 });
 
+/** CLI-only issue tracker URL appended to human-TTY refusal hints. */
+const CLI_ISSUE_REPORT_URL = "https://github.com/morluto/rea/issues";
+
+const ISSUE_HINT_ERROR_CODES: ReadonlySet<AnalysisErrorProjection["code"]> =
+  new Set(["unsupported_target", "target_unavailable", "execution_failure"]);
+
+const shouldAppendIssueReportHint = (
+  projection: AnalysisErrorProjection,
+): boolean =>
+  ISSUE_HINT_ERROR_CODES.has(projection.code) ||
+  projection.details?.reason === "file_format_rejected" ||
+  projection.details?.constraint === "file_format_rejected";
+
+/**
+ * Interactive terminal presentation gate for command-execution failures:
+ * activates only when stdout is a TTY and no explicit format, full-output,
+ * token, or filter control was requested.
+ */
+const isHumanTerminalFailurePresentation = (
+  options: ParsedCliOutputArguments,
+  destination: Writable,
+): boolean =>
+  isTerminalOutput(destination) &&
+  !options.formatExplicit &&
+  !options.fullOutput &&
+  !options.tokenCount &&
+  !options.tokenWindow &&
+  options.filterOutput === undefined;
+
+/**
+ * Render an `AnalysisErrorProjection` as concise plain text for a human
+ * reading an interactive terminal. Never used for piped output, explicit
+ * machine formats, or MCP responses.
+ */
+const renderHumanAnalysisError = (
+  projection: AnalysisErrorProjection,
+): string => {
+  const lines: string[] = [`Error (${projection.code}): ${projection.message}`];
+  const action = projection.remediation.action.trim();
+  if (action.length > 0 && action !== projection.message.trim())
+    lines.push(`Next step: ${action}`);
+  if (shouldAppendIssueReportHint(projection))
+    lines.push(
+      `If this refusal is unexpected, please report it at ${CLI_ISSUE_REPORT_URL}`,
+    );
+  return `${lines.join("\n")}\n`;
+};
+
+const resolveHumanFailureProjection = (
+  value: unknown,
+  metadata: CliResultOutputMetadata,
+  options: ParsedCliOutputArguments,
+  destination: Writable,
+): AnalysisErrorProjection | undefined => {
+  if (!isHumanTerminalFailurePresentation(options, destination))
+    return undefined;
+  const candidate = metadata.failure
+    ? value
+    : cliOperationFailurePayload(value);
+  if (candidate === undefined || isCliCompletedFailureReport(value))
+    return undefined;
+  const parsed = analysisErrorProjectionSchema.safeParse(candidate);
+  return parsed.success ? parsed.data : undefined;
+};
+
 /** Optional executable-owned result surface for one CLI invocation. */
 export interface CliResultOutput {
   readonly handled: boolean;
@@ -249,15 +314,19 @@ export const createCliResultOutput = (
       ownsDocument && selectedMetadata.cta !== undefined
         ? { ...selectedMetadata, cta: undefined }
         : selectedMetadata;
+    let renderedHumanFailure = false;
     try {
       const written = await writeResult(
         value,
         presentedMetadata,
         operationFailure,
+        () => {
+          renderedHumanFailure = true;
+        },
       );
       if (
         metadata.cta !== undefined &&
-        (!written || !ownsDocument) &&
+        (!written || (!ownsDocument && !renderedHumanFailure)) &&
         error === undefined &&
         !options.fullOutput &&
         !options.tokenCount
@@ -312,12 +381,33 @@ export const createCliResultOutput = (
     value: unknown,
     metadata: CliResultOutputMetadata,
     reportedFailure: unknown,
+    onHumanFailure: () => void,
   ): Promise<boolean> {
     completed = {
       metadata,
       receipt: cliEvidencePublicationReceipt(),
       originalFailure: cliOperationFailureIdentity(value),
     };
+    const humanFailure = resolveHumanFailureProjection(
+      value,
+      metadata,
+      options,
+      destination,
+    );
+    if (humanFailure !== undefined) {
+      onHumanFailure();
+      handled = true;
+      try {
+        await writeOutputText(
+          destination,
+          renderHumanAnalysisError(humanFailure),
+        );
+      } catch (cause: unknown) {
+        failed = true;
+        throw cause;
+      }
+      return true;
+    }
     const filterPaths = options.filterPaths?.ok
       ? options.filterPaths.value
       : undefined;
