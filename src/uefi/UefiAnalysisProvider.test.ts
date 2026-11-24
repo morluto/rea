@@ -6021,25 +6021,19 @@ it("marks aggregate disassembly truncation as partial coverage", async () => {
   const outDir = join(directory, "out");
   await mkdir(inDir, { recursive: true });
 
-  await writeFile(join(inDir, "mod1.efi"), createMinimalPeBuffer());
-  await writeFile(join(inDir, "mod2.efi"), createMinimalPeBuffer());
+  const count = 33;
+  for (let i = 1; i <= count; i++) {
+    await writeFile(join(inDir, `mod${i}.efi`), createMinimalPeBuffer());
+  }
 
   const ExecFileOutputModule = await import("../process/ExecFileOutput.js");
-  let callCount = 0;
+  const maxModuleOutput = "A".repeat(2 * 1024 * 1024);
   const spy = vi
     .spyOn(ExecFileOutputModule, "execFileOutput")
     .mockImplementation(async (command) => {
       if (command === "llvm-objdump" || command === "objdump") {
-        callCount++;
-        if (callCount === 1) {
-          return {
-            stdout: "A".repeat(64 * 1024 * 1024),
-            stderr: "",
-            status: 0,
-          } as never;
-        }
         return {
-          stdout: "sub_0:\n  ret\n",
+          stdout: maxModuleOutput,
           stderr: "",
           status: 0,
         } as never;
@@ -6061,8 +6055,48 @@ it("marks aggregate disassembly truncation as partial coverage", async () => {
         lim.includes("Disassembly output truncated after reaching 64 MiB"),
       ),
     ).toBe(true);
+    expect(
+      result.modules.filter((m) => m.disassembly_status === "ok").length,
+    ).toBe(32);
+    expect(
+      result.modules.filter((m) => m.disassembly_status === "omitted").length,
+    ).toBe(1);
   } finally {
     spy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("discovers direct PE\\0\\0 executable modules without DOS stub during directory discovery", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-direct-pe-discovery-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  // Direct COFF/PE without MZ header: starts with PE\0\0
+  const directPe = Buffer.alloc(256, 0);
+  directPe.set(Buffer.from("PE\0\0"), 0);
+  directPe.writeUInt16LE(0x8664, 4); // machine x86_64
+  directPe.writeUInt16LE(1, 6); // numSections
+  directPe.writeUInt16LE(0xf0, 20); // size of optional header
+  directPe.writeUInt16LE(0x20b, 24); // PE32+ (64-bit) optional header magic
+
+  await writeFile(join(inDir, "direct.efi"), directPe);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(1);
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.modules[0]?.name).toBe("direct");
+  } finally {
     await provider.close();
   }
 });

@@ -197,23 +197,48 @@ export const sanitizeCComment = (text: string): string =>
     .replace(/[\x00-\x1f\x7f]+/g, " ")
     .trim();
 
-export const detectPeTeMachineWidth = (bytes: Buffer): UefiMachineWidth => {
-  if (bytes.length < 4) {
-    return "unknown";
-  }
+export interface PeTeHeaderInfo {
+  readonly kind: "te" | "pe";
+  readonly machine: number;
+  readonly numSections: number;
+  readonly optionalHeaderMagic?: number | undefined;
+}
 
+export const parsePeTeHeader = (bytes: Buffer): PeTeHeaderInfo | undefined => {
+  if (bytes.length < 4) return undefined;
   try {
     const reader = new BinaryReader(bytes, true, "UEFI image header");
-    let candidateMachine: number | undefined;
-    let isPe = false;
-    let optionalHeaderMagic: number | undefined;
-
-    // 1. Check for TE header (Signature "VZ" = 0x56, 0x5A)
-    if (bytes[0] === 0x56 && bytes[1] === 0x5a && bytes.length >= 4) {
-      candidateMachine = reader.u16(2);
+    // 1. TE ("VZ")
+    if (bytes[0] === 0x56 && bytes[1] === 0x5a) {
+      const machine = reader.u16(2);
+      const numSections = bytes.length >= 5 ? reader.u8(4) : 0;
+      if (machine !== 0) {
+        return { kind: "te", machine, numSections };
+      }
     }
-    // 2. Check for PE header ("MZ" DOS header followed by PE signature at e_lfanew)
-    else if (bytes[0] === 0x4d && bytes[1] === 0x5a && bytes.length >= 0x40) {
+    // 2. Direct PE/COFF header ("PE\0\0")
+    if (
+      bytes.length >= 6 &&
+      bytes[0] === 0x50 &&
+      bytes[1] === 0x45 &&
+      bytes[2] === 0x00 &&
+      bytes[3] === 0x00
+    ) {
+      const machine = reader.u16(4);
+      const numSections = bytes.length >= 8 ? reader.u16(6) : 0;
+      let optionalHeaderMagic: number | undefined;
+      if (bytes.length >= 26) {
+        const sizeOfOpt = reader.u16(20);
+        if (sizeOfOpt >= 2) {
+          optionalHeaderMagic = reader.u16(24);
+        }
+      }
+      if (machine !== 0) {
+        return { kind: "pe", machine, numSections, optionalHeaderMagic };
+      }
+    }
+    // 3. PE with DOS stub ("MZ")
+    if (bytes[0] === 0x4d && bytes[1] === 0x5a && bytes.length >= 64) {
       const eLfanew = reader.u32(0x3c);
       if (eLfanew + 6 <= bytes.length) {
         if (
@@ -222,76 +247,70 @@ export const detectPeTeMachineWidth = (bytes: Buffer): UefiMachineWidth => {
           bytes[eLfanew + 2] === 0x00 &&
           bytes[eLfanew + 3] === 0x00
         ) {
-          isPe = true;
-          candidateMachine = reader.u16(eLfanew + 4);
+          const machine = reader.u16(eLfanew + 4);
+          const numSections =
+            eLfanew + 8 <= bytes.length ? reader.u16(eLfanew + 6) : 0;
+          let optionalHeaderMagic: number | undefined;
           if (eLfanew + 26 <= bytes.length) {
             const sizeOfOpt = reader.u16(eLfanew + 20);
             if (sizeOfOpt >= 2) {
               optionalHeaderMagic = reader.u16(eLfanew + 24);
             }
           }
-        }
-      }
-    }
-    // 3. Direct COFF header without DOS stub
-    else if (
-      bytes.length >= 6 &&
-      bytes[0] === 0x50 &&
-      bytes[1] === 0x45 &&
-      bytes[2] === 0x00 &&
-      bytes[3] === 0x00
-    ) {
-      isPe = true;
-      candidateMachine = reader.u16(4);
-      if (bytes.length >= 26) {
-        const sizeOfOpt = reader.u16(20);
-        if (sizeOfOpt >= 2) {
-          optionalHeaderMagic = reader.u16(24);
-        }
-      }
-    }
-
-    if (candidateMachine !== undefined) {
-      if (isPe) {
-        if (
-          optionalHeaderMagic === undefined ||
-          (optionalHeaderMagic !== 0x10b && optionalHeaderMagic !== 0x20b)
-        ) {
-          return "unknown";
-        }
-      }
-
-      const decoded = decodePeMachine(candidateMachine);
-      if (decoded !== undefined && !decoded.nativeOsOverride) {
-        if (isPe) {
-          const expectedMagic = peOptionalHeaderMagic(decoded.architecture);
-          if (optionalHeaderMagic !== expectedMagic) {
-            return "unknown";
+          if (machine !== 0) {
+            return { kind: "pe", machine, numSections, optionalHeaderMagic };
           }
         }
-        return decoded.architecture === "x86_64" ||
-          decoded.architecture === "arm64"
-          ? "64"
-          : "32";
       }
-      if (candidateMachine === 0x5032 || candidateMachine === 0x6232) {
-        if (isPe && optionalHeaderMagic !== 0x10b) {
-          return "unknown";
-        }
-        return "32";
-      }
-      if (candidateMachine === 0x5064 || candidateMachine === 0x6264) {
-        if (isPe && optionalHeaderMagic !== 0x20b) {
-          return "unknown";
-        }
-        return "64";
-      }
-      return "unknown";
     }
   } catch {
+    return undefined;
+  }
+  return undefined;
+};
+
+export const detectPeTeMachineWidth = (bytes: Buffer): UefiMachineWidth => {
+  const header = parsePeTeHeader(bytes);
+  if (header === undefined) {
     return "unknown";
   }
 
+  const { kind, machine: candidateMachine, optionalHeaderMagic } = header;
+  const isPe = kind === "pe";
+
+  if (isPe) {
+    if (
+      optionalHeaderMagic === undefined ||
+      (optionalHeaderMagic !== 0x10b && optionalHeaderMagic !== 0x20b)
+    ) {
+      return "unknown";
+    }
+  }
+
+  const decoded = decodePeMachine(candidateMachine);
+  if (decoded !== undefined && !decoded.nativeOsOverride) {
+    if (isPe) {
+      const expectedMagic = peOptionalHeaderMagic(decoded.architecture);
+      if (optionalHeaderMagic !== expectedMagic) {
+        return "unknown";
+      }
+    }
+    return decoded.architecture === "x86_64" || decoded.architecture === "arm64"
+      ? "64"
+      : "32";
+  }
+  if (candidateMachine === 0x5032 || candidateMachine === 0x6232) {
+    if (isPe && optionalHeaderMagic !== 0x10b) {
+      return "unknown";
+    }
+    return "32";
+  }
+  if (candidateMachine === 0x5064 || candidateMachine === 0x6264) {
+    if (isPe && optionalHeaderMagic !== 0x20b) {
+      return "unknown";
+    }
+    return "64";
+  }
   return "unknown";
 };
 
@@ -3789,24 +3808,19 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 probeLen,
                 0,
               );
-              if (bytesRead < 40) return false;
-              if (headerBuf[0] === 0x56 && headerBuf[1] === 0x5a) {
-                // Terse Executable ("VZ")
-                const r = new BinaryReader(
-                  headerBuf,
-                  true,
-                  "UEFI candidate TE header",
-                );
-                const machine = r.u16(2);
-                const numSections = r.u8(4);
-                return machine !== 0 && numSections > 0;
+              if (bytesRead < 24) return false;
+              const directHeader = parsePeTeHeader(
+                headerBuf.subarray(0, bytesRead),
+              );
+              if (directHeader !== undefined && directHeader.numSections > 0) {
+                return true;
               }
               if (
                 headerBuf[0] === 0x4d &&
                 headerBuf[1] === 0x5a &&
                 bytesRead >= 64
               ) {
-                // Portable Executable ("MZ")
+                // Portable Executable ("MZ") with DOS header pointing to eLfanew
                 const r = new BinaryReader(
                   headerBuf,
                   true,
@@ -3830,16 +3844,13 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     }
                   }
                   if (peHeaderBuf !== undefined) {
-                    const peReader = new BinaryReader(
-                      peHeaderBuf,
-                      true,
-                      "UEFI candidate PE header",
-                    );
-                    const peSig = peReader.u32(0);
-                    if (peSig === 0x00004550) {
-                      const machine = peReader.u16(4);
-                      const numSections = peReader.u16(6);
-                      return machine !== 0 && numSections > 0;
+                    const peDirect = parsePeTeHeader(peHeaderBuf);
+                    if (
+                      peDirect !== undefined &&
+                      peDirect.kind === "pe" &&
+                      peDirect.numSections > 0
+                    ) {
+                      return true;
                     }
                   }
                 }
