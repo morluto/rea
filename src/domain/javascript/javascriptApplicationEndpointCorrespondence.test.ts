@@ -2,10 +2,9 @@ import { expect, it } from "vitest";
 
 import {
   artifactEvidence,
-  completeCoverage,
+  graphForNode,
   fixtureNode,
 } from "./javascriptApplicationGraph.fixture.js";
-import { createJavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
 import { compareJavaScriptApplicationVersions } from "./javascriptApplicationVersionComparison.js";
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 
@@ -73,25 +72,16 @@ const endpoint = (options: {
 };
 
 const compare = (left: ApplicationNode, right: ApplicationNode) => {
-  const graph = (node: ApplicationNode) =>
-    createJavaScriptApplicationGraph({
-      schema: "JavaScriptApplicationGraph",
-      root_node_ids: [node.node_id],
-      nodes: [node],
-      edges: [],
-      coverage: completeCoverage,
-      limitations: [],
-    });
   return compareJavaScriptApplicationVersions({
     left: {
       evidenceId: `ev_${"1".repeat(64)}`,
       rootArtifactSha256: "a".repeat(64),
-      graph: graph(left),
+      graph: graphForNode(left),
     },
     right: {
       evidenceId: `ev_${"2".repeat(64)}`,
       rootArtifactSha256: "b".repeat(64),
-      graph: graph(right),
+      graph: graphForNode(right),
     },
     leftNativeEvidence: [],
     rightNativeEvidence: [],
