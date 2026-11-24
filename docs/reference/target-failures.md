@@ -45,4 +45,4 @@ Some kinds add facts:
 
 Releases before this model reported a selected file's malformed or truncated bytes with the same `code` and `format_failure`. That is unchanged, and `failure_kind` is added. The remaining operations move to this vocabulary area by area, and each release note lists the operations whose `code` changes. The plan is tracked in [#14239](https://github.com/morluto/rea/issues/14239).
 
-Related: [settings, limits and recovery](limits-and-recovery.md) for `resource` failures, and [`user-visible-errors.csv`](../user-visible-errors.csv) for every error case and its code.
+Related: [settings, limits and recovery](limits-and-recovery.md) for `resource` failures, and `docs/user-visible-errors.csv` for every error case and its code.
