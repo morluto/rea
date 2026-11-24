@@ -15,10 +15,7 @@ import {
 } from "./ArtifactGraphConstruction.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import {
-  translateArtifactFailure,
-  createAsarHeaderSignatureProbe,
-} from "../../resources/index.js";
+import { translateArtifactFailure } from "../../resources/index.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { artifactIdForContent } from "../../domain/artifactIdentity.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";
@@ -144,24 +141,20 @@ describe("native header admission", () => {
 it("projects the parsed ASAR header size when admission rejects an archive", () => {
   const bytes = asarHeaderBytes("{}", { padding: Buffer.alloc(8, 0x20) });
   const headerBytes = bytes.readUInt32LE(4);
-  const probe = createAsarHeaderSignatureProbe({
+  const probe = createArtifactClassificationProbe({
     maximumBytes: headerBytes - 1,
     source: "setting",
   });
   probe.write(bytes);
-  const asarHeader = probe.finish(bytes.length);
-  expect(asarHeader).toMatchObject({
+  const evidence = probe.finish(bytes.length);
+  expect(evidence.asarHeader).toMatchObject({
     state: "limit",
     extents: { headerBytes },
   });
 
   let failure: unknown;
   try {
-    classifyArtifactContent(
-      "app.asar",
-      { prefix: bytes, asarHeader },
-      bytes.length,
-    );
+    classifyArtifactContent("app.asar", evidence, bytes.length);
   } catch (cause) {
     failure = cause;
   }
@@ -719,12 +712,9 @@ describe("FAT prefix observation coverage", () => {
     probe.write(bytes.subarray(0, 8_192));
     const evidence = probe.finish(bytes.length);
 
-    expect(
-      evidence.fatSliceHeaders?.sliceHeadersByOffset.get(4_096)?.magic,
-    ).toBe(0xcffaedfe);
-    expect(evidence.fatSliceHeaders?.sliceHeadersByOffset.has(8_192)).toBe(
-      false,
-    );
+    expect(evidence.fatHeader.state).toBe("parsed");
+    expect(evidence.fatSliceHeadersByOffset.get(4_096)?.magic).toBe(0xcffaedfe);
+    expect(evidence.fatSliceHeadersByOffset.has(8_192)).toBe(false);
   });
 });
 

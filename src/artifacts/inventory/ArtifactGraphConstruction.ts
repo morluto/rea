@@ -37,10 +37,7 @@ import {
   type ZipPackageFormat,
 } from "../../domain/zipPackageFormat.js";
 import { hasDosMzMagic, parseMzHeaderEvidence } from "../../domain/dosMz.js";
-import {
-  classifyFatContainerEvidence,
-  readFatContainerHeader,
-} from "../../domain/apple/machoContainer.js";
+import { classifyFatContainerEvidence } from "../../domain/apple/machoContainer.js";
 import {
   parsePeRecordFacts,
   parsePeRecordStructure,
@@ -657,7 +654,7 @@ export const classifyArtifactHeader = (
     )
       return only(recognition.format);
   if (hasXmlPlistSignature(prefix)) return only("plist");
-  const fatFormat = classifyFatArtifact(evidence, fileSize);
+  const fatFormat = classifyFatArtifact(evidence);
   if (fatFormat !== null) return only(fatFormat);
   // Admit ELF and thin Mach-O as target resolution does: a magic number
   // whose header does not decode is not an executable REA can open.
@@ -712,11 +709,8 @@ export const classifyArtifactHeader = (
 
 const classifyFatArtifact = (
   evidence: ArtifactClassificationEvidence,
-  fileSize: number,
 ): ArtifactNode["format"] | null => {
-  const { prefix, fatSliceHeaders } = evidence;
-  const fatHeader =
-    fatSliceHeaders?.header ?? readFatContainerHeader(prefix, fileSize);
+  const { prefix, fatHeader, fatSliceHeadersByOffset } = evidence;
   if (
     fatHeader.state === "needs-data" ||
     fatHeader.state === "malformed" ||
@@ -727,7 +721,7 @@ const classifyFatArtifact = (
   const identity = classifyFatContainerEvidence(
     fatHeader,
     prefix,
-    fatSliceHeaders?.sliceHeadersByOffset,
+    fatSliceHeadersByOffset,
   );
   return identity.state === "mach-o" ? "mach-o-universal" : "unknown";
 };
