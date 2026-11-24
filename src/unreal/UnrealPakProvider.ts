@@ -1,4 +1,7 @@
-import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
 import { UNREAL_PAK_PROVIDER_IDENTITY } from "./UnrealPakProviderIdentity.js";
 import { setImmediate } from "node:timers/promises";
 import {
@@ -19,7 +22,6 @@ import {
   type AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import { errorMessage } from "../kernel/errorMessage.js";
-import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
 import type { ParseFailureError } from "../domain/parseFailure.js";
 import {
   classifyProviderFailure,
@@ -119,7 +121,7 @@ const pakFailureDialect = (
         },
       );
     // Unsupported, malformed and truncated pak bytes map like every other
-    // format parser's: an unsupported target or an invalid `path`.
+    // format parser's: an unsupported or malformed target refusal.
     return parseFailureAnalysisError(OPERATION, path, failure);
   },
   file: { path, description: "Unreal pak" },

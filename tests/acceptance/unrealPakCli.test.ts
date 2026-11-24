@@ -173,17 +173,12 @@ cliTest(
         "outside.pak",
         outside,
         {
-          code: "invalid_request",
+          code: "unsupported_target",
           details: {
             operation: "inspect_unreal_pak",
-            issues: [
-              {
-                path: ["path"],
-                reason: "invalid_format",
-                message: expect.stringContaining("entry-out-of-bounds"),
-              },
-            ],
+            format_failure: "malformed",
           },
+          message: expect.stringContaining("entry-out-of-bounds"),
         },
       ],
     ] as const) {
