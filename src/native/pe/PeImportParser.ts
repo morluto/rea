@@ -35,6 +35,8 @@ import {
   pefileImphash,
 } from "./pefileImphash.js";
 import type { PrefixedByteSource } from "../../domain/byteSource.js";
+import type { PeHeaderAnomaly } from "../../domain/native/peHeaderAnomalies.js";
+import { peImageBaseHex, peVa } from "../../domain/native/peAddressSpace.js";
 
 type Artifact = PeImports["artifact"];
 
@@ -257,6 +259,7 @@ const parsePeImportsCore = async (
     machine: image.pe_machine,
     bits,
     architecture: image.architecture,
+    image_base: peImageBaseHex(image.image_base),
   };
   const issues: PeImportIssue[] = [];
   const admitRva = (rva: number, size: number, label: string): boolean => {
@@ -375,6 +378,7 @@ const parsePeImportsCore = async (
           ordinal: Number(thunk & 0xffffn),
           ilt_rva: nameTableRva === addressTableRva ? null : nameRva,
           iat_rva: iatRva,
+          iat_va: peVa(image.image_base, iatRva),
           thunk_hex: thunkHex,
         });
         continue;
@@ -402,6 +406,7 @@ const parsePeImportsCore = async (
           ordinal: null,
           ilt_rva: nameTableRva === addressTableRva ? null : nameRva,
           iat_rva: iatRva,
+          iat_va: peVa(image.image_base, iatRva),
           thunk_hex: thunkHex,
         });
       } catch (cause) {
@@ -478,6 +483,8 @@ const parsePeImportsCore = async (
 
   const importDirectory = image.pe_data_directories?.[PE_IMPORT_DIRECTORY];
   const delayDirectory = image.pe_data_directories?.[PE_DELAY_IMPORT_DIRECTORY];
+  const headerAnomalies: PeHeaderAnomaly[] = [...image.pe_header_anomalies];
+  const sizeExceeded = new Set<object>();
   const imports: PeImportDll[] = [];
   let importDirectoryResult: PeImports["import_directory"] = null;
   if (importDirectory !== undefined && importDirectory.address !== 0) {
@@ -486,17 +493,18 @@ const parsePeImportsCore = async (
       if (++entries % ENTRIES_PER_YIELD === 0) await checkpoint();
       const descriptorRva =
         importDirectory.address + index * IMPORT_DESCRIPTOR_BYTES;
+      // The loader walks descriptors to the null terminator without
+      // consulting Size, so neither does this walk.
       if (
         index * IMPORT_DESCRIPTOR_BYTES + IMPORT_DESCRIPTOR_BYTES >
-        importDirectory.size
+          importDirectory.size &&
+        !sizeExceeded.has(importDirectory)
       ) {
-        issues.push({
-          code: "malformed_entry",
-          location: hex(descriptorRva),
-          message:
-            "Import directory ends before a null descriptor; its declared size does not cover the complete descriptor slot",
+        sizeExceeded.add(importDirectory);
+        headerAnomalies.push({
+          code: "directory_size_below_structure",
+          message: `Data directory ${String(importDirectory === importDirectory ? PE_IMPORT_DIRECTORY : PE_DELAY_IMPORT_DIRECTORY)} (import) declares Size ${String(importDirectory.size)}, which ends before descriptor ${String(index)}; the loader ignores this Size and reads descriptors to the null terminator, and so did this read.`,
         });
-        break;
       }
       const descriptor = mapDescriptor(
         descriptorRva,
@@ -572,17 +580,18 @@ const parsePeImportsCore = async (
       if (++entries % ENTRIES_PER_YIELD === 0) await checkpoint();
       const descriptorRva =
         delayDirectory.address + index * DELAY_DESCRIPTOR_BYTES;
+      // The loader walks descriptors to the null terminator without
+      // consulting Size, so neither does this walk.
       if (
         index * DELAY_DESCRIPTOR_BYTES + DELAY_DESCRIPTOR_BYTES >
-        delayDirectory.size
+          delayDirectory.size &&
+        !sizeExceeded.has(delayDirectory)
       ) {
-        issues.push({
-          code: "malformed_entry",
-          location: hex(descriptorRva),
-          message:
-            "Delay-load directory ends before a null descriptor; its declared size does not cover the complete descriptor slot",
+        sizeExceeded.add(delayDirectory);
+        headerAnomalies.push({
+          code: "directory_size_below_structure",
+          message: `Data directory ${String(delayDirectory === importDirectory ? PE_IMPORT_DIRECTORY : PE_DELAY_IMPORT_DIRECTORY)} (delay-load import) declares Size ${String(delayDirectory.size)}, which ends before descriptor ${String(index)}; the loader ignores this Size and reads descriptors to the null terminator, and so did this read.`,
         });
-        break;
       }
       const descriptor = mapDescriptor(
         descriptorRva,
@@ -684,6 +693,7 @@ const parsePeImportsCore = async (
       delayImports.reduce((count, dll) => count + dll.functions.length, 0),
     ),
     issues,
+    header_anomalies: headerAnomalies,
     limitations,
   };
 };

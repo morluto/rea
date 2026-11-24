@@ -7,7 +7,7 @@ import {
   truncatedInput,
   unsupportedInput,
 } from "../domain/parseFailure.js";
-import type { ByteSource } from "../domain/byteSource.js";
+import { readByteSourceSlice, type ByteSource } from "../domain/byteSource.js";
 
 /** The ParseFailure format of WebAssembly section framing. */
 export const WASM_FORMAT = "wasm";
@@ -54,14 +54,8 @@ export const readRustWasmSectionsFromReader = async (
   source: ByteSource,
   pause?: ZstandardFramePause,
 ): Promise<RustWasmSections> => {
-  const readSlice = (offset: number, length: number): Promise<Buffer> => {
-    if (length <= 0 || offset >= source.size)
-      return Promise.resolve(Buffer.alloc(0));
-    const clamped = Math.min(length, source.size - offset);
-    if (source.prefix !== undefined && offset + clamped <= source.prefix.length)
-      return Promise.resolve(source.prefix.subarray(offset, offset + clamped));
-    return source.readRange(offset, clamped);
-  };
+  const readSlice = (offset: number, length: number) =>
+    readByteSourceSlice(source, offset, length);
   if (source.size < 8)
     throw truncatedInput(WASM_FORMAT, "WebAssembly header is truncated", {
       offset: 0,

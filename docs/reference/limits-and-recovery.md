@@ -93,6 +93,34 @@ page runs a fresh discovery on that device.
 Graph tools accept per-call traversal bounds (`max_depth` and `max_nodes` on
 `get_call_graph` and `trace_call_path`).
 
+`inspect_elf_notes` and `inspect_elf_debug_link` refuse a file above
+`max_file_bytes`, a decoded section-name table above it, or more notes than
+`max_entries` with `details.limit` naming that field
+(`control_kind: "parameter"`), its effective value, default and range. `inspect_il2cpp_metadata`
+accepts `max_native_index_bytes` (default 1 GiB) for the estimated ELF pointer
+index of `binary_path`; its refusal reports the same kind of limit. See
+[IL2CPP metadata](../il2cpp-metadata.md#native-method-addresses).
+
+### Static reader read allowance
+
+`inspect_pe_imports`, `inspect_pe_resources`, `inspect_pe_load_config`,
+`inspect_pe_certificates`, `inspect_pe_unwind_ranges`, `inspect_binary_hardening` and
+`inspect_native_exports` bound the bytes they read, not the file size.
+`max_file_bytes` (CLI `--max-file-bytes`) counts each positional read of
+headers, directory tables and the ranges they reference. Defaults are 64 MiB
+(256 MiB for exports), with a floor of 64 bytes and a maximum of 512 MiB. The
+one streaming pass that hashes the file for its identity is not counted.
+
+An exhausted allowance is a `capacity` refusal. `details.limit` has
+`control_kind: "parameter"`, `parameter: "max_file_bytes"`, the effective
+value, the bounds, the default and `applies_at: "next_call"`, and
+`details.reported_limits.required_read_bytes` holds the reads needed so far.
+Raise `max_file_bytes` and retry; `update_analysis_settings` does not change it.
+The identity pass has a fixed whole-file ceiling: 4 GiB minus one byte for the
+PE-only readers, whose file offsets are 32-bit, and 512 MiB for hardening and
+exports. A file above it is a `file-size` refusal naming that fixed allowance,
+which `max_file_bytes` does not raise.
+
 ### Producer limits
 
 Operations with an owned producer accept an optional
@@ -121,11 +149,12 @@ rejected.
 | `inspect_binary_layout`, `inspect_recorded_crash` (pwntools) | `input_bytes` 32 MiB (or `REA_PWNTOOLS_MAX_INPUT_BYTES`), `output_bytes` 64 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes`, `cpu_seconds` 30 |
 | `inspect_evm_interface`                                      | `input_bytes` 4 MiB, `output_bytes` 16 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes` (16 MiB), `cpu_seconds` 30                             |
 | `inspect_rust_binary`                                        | `input_bytes` 256 MiB, `output_bytes` 8 MiB                                                                                                                                                   |
+| `inspect_pcap_capture`                                       | `input_bytes` 2 GiB (the streamed capture snapshot), `output_bytes` 8 MiB of combined stdout and stderr per TShark JSON pass, at most 128 MiB (the fixed decoded-JSON allowance)              |
 
 The pwntools and EVM operations take their wall-clock deadline from a separate
 argument (`pwntools_timeout_ms`, `timeout_ms`) instead of `command_timeout_ms`.
 Packet and signal results report the effective values as `limits`, where an
-inherited OS ceiling can appear as `0`. When pwntools or Rust work exhausts a
+inherited OS ceiling can appear as `0`. When pwntools, Rust or pcap work exhausts a
 budget, `details.limit` carries `control_kind: "parameter"`,
 `parameter: "producer_limits.<field>"`, `minimum: 1` and
 `applies_at: "next_call"`, as described under [failure and retry](#failure-and-retry);
@@ -282,6 +311,23 @@ and raising a provider deadline cannot make the client wait longer.
 
 The failure names the limit and the effective value. Say this release has no
 runtime override, and name what does not raise it. Do not invent a setting.
+
+Every fixed ceiling a refusal declares (`fixedAllowanceOptions`,
+`fixedProducerInputAllowance`, `artifactFixedLimitFailure` or an inline
+`fixedAllowance`) is listed in
+[`fixed-ceiling-registry.json`](https://github.com/morluto/rea/blob/main/scripts/verify/fixed-ceiling-registry.json)
+under its file and allowance, with its class and reason: `format`,
+`protocol`, `representation`, `derived` (grows with the admitted input or
+another control), `forwarding` (relays a ceiling declared elsewhere), or
+`pending` with the issue that tracks giving it a control.
+`npm run lint` runs `scripts/verify/fixed-ceilings.mjs`, which fails on an
+unregistered declaration and on a stale entry. A resource or admission limit
+is not a fixed ceiling: give it a setting or per-call parameter and report
+`details.limit`. The same script counts refusals whose only recovery is an
+authored `remediationAction`, with no `limit`, `fixedAllowance` or
+`measuredExhaustion`, against `scripts/verify/untyped-budget-refusal-baseline.json`;
+that count may only shrink, and `--shrink-baselines` lowers it
+([#14234](https://github.com/morluto/rea/issues/14234)).
 
 JSON values stop at `MAX_JSON_DEPTH` (1000) in
 [`jsonValue.ts`](https://github.com/morluto/rea/blob/main/src/domain/jsonValue.ts):

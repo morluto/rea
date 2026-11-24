@@ -13,7 +13,7 @@ import {
   type FatSliceDeclaration,
   type MachoHeaderPrefixFacts,
 } from "./machoContainer.js";
-import type { ByteSource } from "../byteSource.js";
+import { readByteSourceSlice, type ByteSource } from "../byteSource.js";
 
 type UniversalMachoHeader = Extract<FatContainerHeader, { state: "parsed" }>;
 
@@ -55,6 +55,34 @@ const containerFailure = (
 };
 
 /**
+ * The universal file's own failure for a FAT header the container reader did
+ * not parse. A header or table past the file's measured end carries that
+ * reader's extent; `needs-data` remains only when a read returned fewer bytes
+ * than the measured size admits.
+ */
+const unparsedHeaderFailure = (
+  fat: Exclude<FatContainerHeader, { state: "parsed" | "not-fat" }>,
+): MachoImageSelectionFailure => {
+  if (fat.state === "malformed")
+    return containerFailure("malformed", fat.reason);
+  if (fat.state === "needs-data")
+    return containerFailure(
+      "truncated",
+      "Universal Mach-O header is truncated",
+    );
+  return {
+    kind: "format",
+    message: fat.reason,
+    failure: {
+      kind: "truncated",
+      format: MACHO_FORMAT,
+      detail: fat.reason,
+      extent: fat.extent,
+    },
+  };
+};
+
+/**
  * Check one selected declaration against its slice's observed header prefix.
  * The table entry and the slice header are two records in the same file, so
  * their disagreement breaks the container's own rule: malformed, never the
@@ -90,12 +118,7 @@ export const readUniversalMachoImage = (
 ): Result<UniversalMachoHeader | null, MachoImageSelectionFailure> => {
   const fat = readFatContainerHeader(bytes, bytes.byteLength);
   if (fat.state === "not-fat") return ok(null);
-  if (fat.state !== "parsed")
-    return err(
-      fat.state === "malformed"
-        ? containerFailure("malformed", fat.reason)
-        : containerFailure("truncated", "Universal Mach-O header is truncated"),
-    );
+  if (fat.state !== "parsed") return err(unparsedHeaderFailure(fat));
   const identity = classifyFatContainerEvidence(fat, bytes);
   if (identity.state === "malformed")
     return err(containerFailure(identity.category, identity.reason));
@@ -124,19 +147,6 @@ export const readUniversalMachoSlice = (
   return failure === null ? ok(image) : err(failure);
 };
 
-const readSourceSlice = (
-  source: ByteSource,
-  offset: number,
-  length: number,
-): Promise<Buffer> => {
-  if (length <= 0 || offset >= source.size)
-    return Promise.resolve(Buffer.alloc(0));
-  const clamped = Math.min(length, source.size - offset);
-  if (source.prefix !== undefined && offset + clamped <= source.prefix.length)
-    return Promise.resolve(source.prefix.subarray(offset, offset + clamped));
-  return source.readRange(offset, clamped);
-};
-
 /**
  * Admit a universal Mach-O header over a random-access source without buffering
  * slice payloads; returns both the parsed header and the raw container table bytes.
@@ -152,7 +162,11 @@ export const readUniversalMachoImageFromReader = async (
     MachoImageSelectionFailure
   >
 > => {
-  const initial = await readSourceSlice(source, 0, Math.min(4096, source.size));
+  const initial = await readByteSourceSlice(
+    source,
+    0,
+    Math.min(4096, source.size),
+  );
   let fat = readFatContainerHeader(initial, source.size);
   if (fat.state === "not-fat") return ok(null);
   let tableBytes = initial;
@@ -168,24 +182,20 @@ export const readUniversalMachoImageFromReader = async (
         8 + Math.min(count, 4096) * entryBytes,
       );
       if (needed > initial.length) {
-        tableBytes = await readSourceSlice(source, 0, needed);
+        tableBytes = await readByteSourceSlice(source, 0, needed);
         fat = readFatContainerHeader(tableBytes, source.size);
       }
     }
   }
-  if (fat.state !== "parsed")
-    return err(
-      fat.state === "malformed"
-        ? containerFailure("malformed", fat.reason)
-        : containerFailure("truncated", "Universal Mach-O header is truncated"),
-    );
+  if (fat.state === "not-fat") return ok(null);
+  if (fat.state !== "parsed") return err(unparsedHeaderFailure(fat));
   if (tableBytes.length < fat.tableEnd)
-    tableBytes = await readSourceSlice(source, 0, fat.tableEnd);
+    tableBytes = await readByteSourceSlice(source, 0, fat.tableEnd);
   const sliceHeadersByOffset = new Map<number, MachoHeaderPrefixFacts>();
   for (const [index, slice] of fat.slices.entries()) {
     if (fat.rangeIssues[index] !== null || slice.size < 4) continue;
     if (sliceHeadersByOffset.has(slice.offset)) continue;
-    const slicePrefix = await readSourceSlice(
+    const slicePrefix = await readByteSourceSlice(
       source,
       slice.offset,
       Math.min(16, slice.size),
@@ -215,7 +225,7 @@ export const validateUniversalMachoSliceFromReader = async (
   header: UniversalMachoHeader,
   slice: FatSliceDeclaration,
 ): Promise<Result<void, MachoImageSelectionFailure>> => {
-  const prefix = await readSourceSlice(
+  const prefix = await readByteSourceSlice(
     source,
     slice.offset,
     Math.min(16, slice.size),

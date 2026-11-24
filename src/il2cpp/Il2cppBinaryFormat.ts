@@ -1,6 +1,9 @@
 import { ParseFailureError } from "../domain/parseFailure.js";
 
-/** Existing selected-binary allowance also bounds its retained pointer workspace. */
+/**
+ * Selected-binary file allowance. The ELF pointer index has its own per-call
+ * control, `max_native_index_bytes`.
+ */
 export const IL2CPP_BINARY_BYTES = 1024 * 1024 * 1024;
 
 export const IL2CPP_BINARY_FAILURE_REASONS = {
@@ -79,12 +82,15 @@ export class Il2cppBinaryFormatFailure extends ParseFailureError<
     message: string,
     maximum: number,
     unit: NativeBudgetUnit,
+    limitName?: string,
   );
   constructor(
     readonly reason: Il2cppBinaryFailureReason,
     message: string,
     maximum?: number,
     unit?: NativeBudgetUnit,
+    /** The exceeded budget's name; defaults to the reason for a fixed budget. */
+    limitName: string = reason,
   ) {
     const detail = `${reason}: ${message}`;
     super(
@@ -93,7 +99,7 @@ export class Il2cppBinaryFormatFailure extends ParseFailureError<
             kind: "limit",
             format: IL2CPP_BINARY_FORMAT,
             detail,
-            limit: { name: reason, maximum },
+            limit: { name: limitName, maximum },
           }
         : isUnsupported(reason as Il2cppBinaryFormatReason)
           ? {

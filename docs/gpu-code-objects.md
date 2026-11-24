@@ -2,7 +2,8 @@
 
 `inspect_gpu_code_objects` answers which GPU targets and kernel declarations a
 local artifact carries. It reads ELF/PE sections, standalone CUDA fatbins,
-CUBIN/PTX and Clang HIP bundles, including CCOB v1/v2/v3. It neither executes the
+CUBIN/PTX, AMDGPU HSA and PAL code objects and Clang HIP bundles, including
+CCOB v1/v2/v3. It neither executes the
 artifact nor invokes CUDA/ROCm tools. GPU execution, SASS disassembly and host
 launch correlation remain outside coverage.
 
@@ -157,17 +158,36 @@ Kernel representations have different meanings:
   count unknown, preserve the kernel's other facts, and mark object, report and
   target decoding coverage partial. Missing symbol tables or unresolved section
   names also make that coverage partial even when some kernel facts survive.
-- **AMDGPU** reads v3+ MessagePack notes; legacy YAML metadata is unsupported.
-  V3 processor identity comes from `EF_AMDGPU_MACH` in ELF `e_flags`, so known
-  processors are selectable even when the note omits `amdhsa.target`. Only the
-  processor is reported; version-specific feature flags are not interpreted.
-  Unknown processor values remain unknown, and a conflict between ELF flags and
-  note metadata leaves the processor unresolved. Argument counts include hidden
-  ABI arguments when present; SGPR/VGPR counts and fixed group/private segment
-  sizes keep their declared meanings. Note failures preserve earlier parsed
-  declarations and the original failure reason. PAL-ABI graphics code objects
-  carry `amdpal` rather than `amdhsa.kernels` metadata and currently report
-  `malformed` ([#14154](https://github.com/morluto/rea/issues/14154)).
+- **AMDGPU** processor identity comes from `EF_AMDGPU_MACH` in ELF `e_flags`,
+  so known processors are selectable even when no note declares a target. Only
+  the processor is reported; version-specific feature flags are not
+  interpreted. Unknown processor values remain unknown, and a conflict between
+  ELF flags and note metadata leaves the processor unresolved.
+  `amd_target_metadata` keeps the raw ELF `os_abi` and the runtime `abi` it
+  declares, which alone selects the note schema:
+
+  | `os_abi` | `abi`     | Metadata                                           |
+  | -------- | --------- | -------------------------------------------------- |
+  | 64       | `amdhsa`  | `amdhsa.kernels` notes become kernels              |
+  | 65       | `amdpal`  | `amdpal.pipelines` notes become `amd_pal_metadata` |
+  | 66       | `mesa3d`  | Notes unexamined; the object is `unsupported`      |
+  | Other    | `unknown` | Notes unexamined; the object is `unsupported`      |
+  - **HSA** reads v3+ MessagePack notes; legacy YAML metadata is unsupported.
+    Argument counts include hidden ABI arguments when present; SGPR/VGPR counts
+    and fixed group/private segment sizes keep their declared meanings.
+  - **PAL** graphics and compute pipelines declare no HSA kernels, so kernel
+    analysis reports no kernels for them. It reports the `amdpal.version` and,
+    per pipeline, its name, type, API, API shader stages with their hardware
+    mapping, and each hardware stage's entry point, entry point symbol,
+    SGPR/VGPR/AGPR counts, wavefront size, LDS size and scratch memory size.
+    Stage names and values are kept as declared; absent fields are null. A
+    value of an unexpected type is null with a limitation and partial
+    coverage. Register settings, hashes and other pipeline keys are not
+    interpreted. A PAL object without a MessagePack note, or with only the
+    legacy register-pair note, is `unsupported` with its target retained.
+  - Corrupt MessagePack and violated container shapes, such as a pipeline list
+    that is not an array, are `malformed`. Note failures preserve earlier parsed
+    declarations, including earlier pipelines, and the original failure reason.
 
 Standalone PTX recognition scans up to 16 MiB, allowing leading comments and
 whitespace, after which `.version` must be the first module token. Inventory and
@@ -244,7 +264,9 @@ selected payloads. `bytes_read` includes hashing and later descriptor reads.
 
 Payload work is reserved before reading or allocating, and a capacity refusal
 does not reread an aliased payload. AMD note discovery also bounds depth and
-container and string allocations; standalone AMD targets are read from those
+container and string allocations, and shares one 262,144-value allowance across
+all of a code object's notes, which also bounds the PAL pipeline facts expanded
+from them; standalone AMD targets are read from those
 notes before target selection, and kernel analysis reuses the parsed
 declarations. CUDA ELF limits are checked before index growth and are not claims
 about JavaScript heap size. Equivalent scoped metadata ranges and repeated equal

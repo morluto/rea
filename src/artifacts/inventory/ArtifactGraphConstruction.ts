@@ -11,10 +11,8 @@ import {
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { isJavaScriptSourcePath } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
-import {
-  hasBinaryPlistSignature,
-  hasXmlPlistSignature,
-} from "../../domain/apple/appleArchiveFormat.js";
+import type { DirectoryRootDigest } from "../../domain/directoryTreeDigest.js";
+import { hasBinaryPlistSignature } from "../../domain/apple/appleArchiveFormat.js";
 import {
   artifactEdgeId,
   artifactIdForNode,
@@ -37,10 +35,7 @@ import {
   type ZipPackageFormat,
 } from "../../domain/zipPackageFormat.js";
 import { hasDosMzMagic, parseMzHeaderEvidence } from "../../domain/dosMz.js";
-import {
-  classifyFatContainerEvidence,
-  readFatContainerHeader,
-} from "../../domain/apple/machoContainer.js";
+import { classifyFatContainerEvidence } from "../../domain/apple/machoContainer.js";
 import {
   parsePeRecordFacts,
   parsePeRecordStructure,
@@ -157,6 +152,9 @@ export const createOccurrence = (
     ...(entry.formatMetadata === undefined
       ? {}
       : { format_metadata: { ...entry.formatMetadata } }),
+    ...(entry.linkTarget === undefined
+      ? {}
+      : { link_target: { ...entry.linkTarget } }),
   };
 };
 
@@ -230,10 +228,17 @@ export const createRootNode = (input: {
       } & ArtifactClassificationEvidence)
     | null;
   readonly occurrences: readonly MutableOccurrence[];
+  /** A directory root's tree digest, which names it when complete. */
+  readonly treeDigest?: DirectoryRootDigest | undefined;
 }): ArtifactNode =>
   createArtifactNode({
     sha256:
       input.digest?.sha256 ??
+      (input.treeDigest?.status === "complete"
+        ? input.treeDigest.sha256
+        : undefined) ??
+      // A partial walk has no tree identity. This listing commitment keeps
+      // the graph addressable, and the inventory reports the digest partial.
       digestCanonicalValue(
         {
           kind: "directory-root",
@@ -657,8 +662,8 @@ export const classifyArtifactHeader = (
       recognition.format !== "esp-flash-image"
     )
       return only(recognition.format);
-  if (hasXmlPlistSignature(prefix)) return only("plist");
-  const fatFormat = classifyFatArtifact(evidence, fileSize);
+  if (evidence.xmlPlistSignature) return only("plist");
+  const fatFormat = classifyFatArtifact(evidence);
   if (fatFormat !== null) return only(fatFormat);
   // Admit ELF and thin Mach-O as target resolution does: a magic number
   // whose header does not decode is not an executable REA can open.
@@ -713,18 +718,19 @@ export const classifyArtifactHeader = (
 
 const classifyFatArtifact = (
   evidence: ArtifactClassificationEvidence,
-  fileSize: number,
 ): ArtifactNode["format"] | null => {
-  const { prefix, fatSliceHeaders } = evidence;
-  const fatHeader =
-    fatSliceHeaders?.header ?? readFatContainerHeader(prefix, fileSize);
-  if (fatHeader.state === "needs-data" || fatHeader.state === "malformed")
+  const { prefix, fatHeader, fatSliceHeadersByOffset } = evidence;
+  if (
+    fatHeader.state === "needs-data" ||
+    fatHeader.state === "malformed" ||
+    fatHeader.state === "truncated"
+  )
     return "unknown";
   if (fatHeader.state === "not-fat") return null;
   const identity = classifyFatContainerEvidence(
     fatHeader,
     prefix,
-    fatSliceHeaders?.sliceHeadersByOffset,
+    fatSliceHeadersByOffset,
   );
   return identity.state === "mach-o" ? "mach-o-universal" : "unknown";
 };
