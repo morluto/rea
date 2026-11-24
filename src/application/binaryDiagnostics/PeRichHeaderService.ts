@@ -1,7 +1,6 @@
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { PeRichHeaderPort } from "../../ports/binaryDiagnostics/PeRichHeaderPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectPeRichHeaderInputSchema,
@@ -12,9 +11,8 @@ import {
   type PeRichHeader,
 } from "../../domain/native/peRichHeader.js";
 import { peSubjectArchitecture } from "../../domain/peMachine.js";
-import { err, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import type { Result } from "../../domain/result.js";
+import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_pe_rich_header";
 const DOS_HEADER_BYTES = 64;
@@ -27,64 +25,59 @@ export class PeRichHeaderService {
     return this.provider.close?.() ?? Promise.resolve();
   }
 
-  async inspect(
+  inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    const input = parseAnalysisInput(
-      OPERATION,
-      rawInput,
-      inspectPeRichHeaderInputSchema,
-      options?.signal,
-    );
-    if (!input.ok) return input;
-    const result = await this.provider.inspect(input.value, options);
-    if (!result.ok) return result;
-    const report = peRichHeaderSchema.safeParse(result.value);
-    if (
-      !report.success ||
-      report.data.artifact.path !== input.value.path ||
-      !validReport(report.data, input.value)
-    )
-      return err(
-        new AnalysisOutputError(
-          OPERATION,
+    return executeArtifactInspection(
+      {
+        operation: OPERATION,
+        inputSchema: inspectPeRichHeaderInputSchema,
+        outputSchema: peRichHeaderSchema,
+        provider: this.provider,
+        invalidOutputMessage:
           "PE Rich header provider returned malformed output or changed artifact identity.",
-        ),
-      );
-    const value = report.data;
-    const architecture = peSubjectArchitecture(value.machine, value.format);
-    const record = recordRange(value);
-    return completeProviderEvidence(
-      createEvidence(
-        {
-          path: value.artifact.path,
-          format: "pe",
-          sha256: value.artifact.sha256,
-          ...(architecture === undefined ? {} : { architecture }),
+        toParameters: (input) => input,
+        validateReport: (report, input) =>
+          report.artifact.path === input.path && validReport(report, input),
+        buildEvidence: (value, identity, parameters) => {
+          const architecture = peSubjectArchitecture(
+            value.machine,
+            value.format,
+          );
+          const record = recordRange(value);
+          return createEvidence(
+            {
+              path: value.artifact.path,
+              format: "pe",
+              sha256: value.artifact.sha256,
+              ...(architecture === undefined ? {} : { architecture }),
+            },
+            identity,
+            {
+              operation: OPERATION,
+              parameters,
+              result: value,
+              confidence: "observed",
+              limitations: value.limitations,
+              locations: [
+                { kind: "artifact-path" as const, path: value.artifact.path },
+                ...(record === null
+                  ? []
+                  : [
+                      {
+                        kind: "file-offset-range" as const,
+                        start: record.offset,
+                        end: record.offset + record.bytes,
+                      },
+                    ]),
+              ],
+            },
+          );
         },
-        this.provider.identity,
-        {
-          operation: OPERATION,
-          parameters: input.value,
-          result: value,
-          confidence: "observed",
-          limitations: value.limitations,
-          locations: [
-            { kind: "artifact-path" as const, path: value.artifact.path },
-            ...(record === null
-              ? []
-              : [
-                  {
-                    kind: "file-offset-range" as const,
-                    start: record.offset,
-                    end: record.offset + record.bytes,
-                  },
-                ]),
-          ],
-        },
-      ),
-      options?.signal,
+      },
+      rawInput,
+      options,
     );
   }
 }
