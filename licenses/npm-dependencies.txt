@@ -1515,11 +1515,11 @@ commander@13.1.0 | development | MIT
   Package: https://www.npmjs.com/package/@stryker-mutator/vitest-runner/v/10.0.0
   Archive: https://registry.npmjs.org/@stryker-mutator/vitest-runner/-/vitest-runner-10.0.0.tgz
   Integrity: sha512-SHK2/vfvRUpiz7jXPnQMBnr6zLdm69DK03Mo5mPhaZWcRSygrKUqYsPqWsXsK+5ySHzlMTfCyFK5NQ/X9sJFFw==
-@toon-format/toon@2.3.1 | runtime | MIT
+@toon-format/toon@4.4.0 | runtime | MIT
   Lockfile path: node_modules/@toon-format/toon
-  Package: https://www.npmjs.com/package/@toon-format/toon/v/2.3.1
-  Archive: https://registry.npmjs.org/@toon-format/toon/-/toon-2.3.1.tgz
-  Integrity: sha512-sWqEMeAJGMda9qRrfPKrX3C4c33CO9SJuvJzzrcBEn5sbDB+k6pSLkDsfN0rVnLQwR97MV3sDgVbcxQNsq8xVw==
+  Package: https://www.npmjs.com/package/@toon-format/toon/v/4.4.0
+  Archive: https://registry.npmjs.org/@toon-format/toon/-/toon-4.4.0.tgz
+  Integrity: sha512-A6UcsVoWbNdhdLNhJbe6JpRlocmf/DZGG57fur3bd8oQtsjBaKWo2hHbOU2zTuy+byUmLIOyP1xJeitopCZzpQ==
 @tsrs/darwin-arm64@0.18.0-ts7.1.0-dev.20260929 | development, optional | Apache-2.0
   Lockfile path: node_modules/@tsrs/darwin-arm64
   Package: https://www.npmjs.com/package/@tsrs/darwin-arm64/v/0.18.0-ts7.1.0-dev.20260929

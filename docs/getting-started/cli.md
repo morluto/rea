@@ -1552,7 +1552,10 @@ A document can exceed the runtime's string limit when each encoded line fits.
 Staging limits the encoded text kept in memory. The TOON encoder still
 normalizes the input tree before yielding lines, so working memory also
 depends on the size of the input and the longest encoded line.
-Token counting and token windows still require a complete formatted string.
+Token counting and token windows require a complete formatted string. For structured
+TOON output, every selected key and string must contain well-formed UTF-16,
+including values outside the requested token window. Use `--filter-output` to
+select a representable field, or JSON or YAML to retain unpaired surrogates.
 Use `--json` to stream the result without TOON staging or to save it for a
 JSON consumer. Valued output flags (`--format`, `--filter-output`,
 `--token-limit`, `--token-offset`) accept `--flag value` or `--flag=value`; a
