@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import type { addressedValueSchema } from "./nativeInventory.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 
 type NameRow = z.infer<typeof addressedValueSchema>;
 
@@ -65,7 +66,9 @@ const select = (
   if (byAddress.size === 0) return undefined;
   const candidates = [...byAddress]
     .map(([address, name]) => ({ address, name }))
-    .sort((left, right) => left.address.localeCompare(right.address));
+    .sort((left, right) =>
+      compareUnicodeCodePoints(left.address, right.address),
+    );
   return candidates.length === 1
     ? { status: "resolved", ...candidates[0]!, match }
     : { status: "ambiguous", match, candidates };
@@ -111,6 +114,8 @@ export const selectNativeSymbol = (
     status: "unresolved",
     candidates: [...candidates]
       .map(([address, name]) => ({ address, name }))
-      .sort((left, right) => left.address.localeCompare(right.address)),
+      .sort((left, right) =>
+        compareUnicodeCodePoints(left.address, right.address),
+      ),
   };
 };
