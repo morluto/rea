@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { buffer } from "node:stream/consumers";
 import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
-import { stat, utimes, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, stat, utimes, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { setImmediate } from "node:timers/promises";
 
 import { expect, it, vi } from "vitest";
@@ -19,6 +19,7 @@ import {
   SREC_S19,
   intelHexInterleavedRuns,
   intelHexRecord,
+  srecRecord,
 } from "../domain/firmware/hexRecords.fixture.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
@@ -84,6 +85,55 @@ it("reports unknown coverage and termination facts as limitations", async () => 
     ),
   );
 });
+
+it.each([
+  [5, false],
+  [6, false],
+  [5, true],
+] as const)(
+  "retains data after an S%i count (later final count: %s)",
+  async (type, finalCount) => {
+    const text = SREC_S19.replace(
+      "S5030002FA",
+      [
+        srecRecord(type, 2, []),
+        srecRecord(1, 0x20, [0x2a]),
+        ...(finalCount ? [srecRecord(type, 3, [])] : []),
+      ].join("\n"),
+    );
+    const path = await writeImage("count.s19", text);
+    const result = await scanCanonicalArtifactInventory(path);
+    const warning = expect.stringMatching(
+      /line 4.*count covers 2 of 3 data records/iu,
+    );
+    if (finalCount) expect(result.limitations).not.toContainEqual(warning);
+    else expect(result.limitations).toContainEqual(warning);
+    expect(result.coverage.status).toBe("complete");
+
+    // GNU objcopy 2.44 retained these exact bytes for the S5 inputs.
+    const resourceScope = new ArtifactResourceScope();
+    try {
+      const extracted = await extractArtifact({
+        inputPath: path,
+        inputFormat: "srec",
+        outputRoot: join(dirname(path), "out"),
+        environment: process.env,
+        integrityPolicy: "fail",
+        resourceScope,
+      });
+      const bytes = await readFile(
+        join(extracted.output_root, "0x00000000-0x00000020.bin"),
+      );
+      const expected = Buffer.from([
+        ...Array.from({ length: 32 }, (_, index) => index),
+        0x2a,
+      ]);
+      expect(bytes.equals(expected)).toBe(true);
+    } finally {
+      await resourceScope.close();
+    }
+  },
+);
 
 it("refuses one over-limit physical run even when all addresses could merge", async () => {
   await expect(

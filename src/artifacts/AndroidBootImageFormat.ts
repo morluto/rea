@@ -140,7 +140,7 @@ export interface AvbFooterFacts {
 }
 
 /** The ParseFailure format of an Android boot or vendor boot image. */
-const ANDROID_BOOT_FORMAT = "android-boot-image";
+export const ANDROID_BOOT_FORMAT = "android-boot-image";
 
 const formatError = (message: string): never => {
   throw malformedInput(ANDROID_BOOT_FORMAT, message);

@@ -515,7 +515,8 @@ it("rejects a short positional read of an admitted banner range", async () => {
       input,
     ),
   ).rejects.toMatchObject({
-    reason: "format",
+    reason: "integrity",
+    integrityCheck: "read-coverage",
     message: "Kernel image ended before the admitted file range.",
   });
 });

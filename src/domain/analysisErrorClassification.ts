@@ -70,6 +70,10 @@ const STATIC_ERROR_CLASSIFICATIONS = {
     "unsupported_target",
     "unsupported_target",
   ),
+  AnalysisMalformedTargetError: classified(
+    "unsupported_target",
+    "unsupported_target",
+  ),
   AnalysisCancelledError: classified("cancelled", "cancelled"),
   AnalysisTimeoutError: classified("provider_timeout", "timeout"),
   AnalysisResourceConstraintError: classified(
@@ -98,7 +102,8 @@ const RETRYABLE_CAPABILITY_UNAVAILABLE = classified(
 
 const ARTIFACT_OPERATION_CLASSIFICATIONS = {
   cancelled: classified("cancelled", "cancelled"),
-  malformed: classified("invalid_request", "invalid_input"),
+  // The artifact's bytes are at fault, not the request: a target refusal.
+  malformed: classified("unsupported_target", "unsupported_target"),
   truncated: classified("truncated", "truncated"),
   unsupported: classified("unsupported_target", "unsupported_target"),
   format: classified("artifact_operation_failed", "execution_failure"),

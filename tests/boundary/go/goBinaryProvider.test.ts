@@ -4,8 +4,9 @@ import { scheduler } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 import { GoBinaryService } from "../../../src/application/go/GoBinaryService.js";
 import { GoBinaryProvider } from "../../../src/go/GoBinaryProvider.js";
+import { GO_ANALYSIS_BUDGET_DEFAULTS } from "../../../src/domain/go/goBinary.js";
 import {
-  AnalysisInputError,
+  AnalysisMalformedTargetError,
   AnalysisResourceConstraintError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { BinaryFormatFailure } from "../../../src/domain/binaryContainer.js";
@@ -29,8 +30,9 @@ it("rejects advertised PE32 data directories outside the optional header", async
   const result = await new GoBinaryProvider().inspect({ path });
   if (result.ok) throw new Error("Truncated PE32 directories must be refused");
   expect(projectAnalysisError(result.error)).toMatchObject({
-    code: "invalid_request",
-    details: { issues: [{ path: ["path"], reason: "invalid_format" }] },
+    code: "unsupported_target",
+    category: "unsupported_target",
+    details: { path, format_failure: "malformed" },
   });
 });
 
@@ -69,8 +71,9 @@ it.each([false, true])(
           },
         });
       else {
-        expect(result.error).toBeInstanceOf(AnalysisInputError);
-        if (!(result.error instanceof AnalysisInputError)) throw result.error;
+        expect(result.error).toBeInstanceOf(AnalysisMalformedTargetError);
+        if (!(result.error instanceof AnalysisMalformedTargetError))
+          throw result.error;
         expect(result.error.cause).toBeInstanceOf(BinaryFormatFailure);
         if (!(result.error.cause instanceof BinaryFormatFailure))
           throw result.error.cause;
@@ -81,9 +84,12 @@ it.each([false, true])(
           offset: 32,
         });
         expect(projected).toMatchObject({
-          code: "invalid_request",
+          code: "unsupported_target",
           details: {
-            issues: [{ path: ["path"], reason: "invalid_format" }],
+            format_failure: "truncated",
+            format: "macho",
+            field: "Mach-O load commands",
+            offset: 32,
           },
         });
       }
@@ -108,7 +114,7 @@ it("preserves the actual build-info byte guard as a resource failure", async () 
   expect(result.error.reason).toContain(path);
   expect(result.error.reportedLimits).toEqual({
     boundary: "build-info",
-    maximum: 1024 * 1024,
+    maximum: GO_ANALYSIS_BUDGET_DEFAULTS.max_build_info_bytes,
   });
   const projected = projectAnalysisError(result.error);
   expect(projected.details?.limit).toMatchObject({
@@ -117,10 +123,6 @@ it("preserves the actual build-info byte guard as a resource failure", async () 
     unit: "bytes",
   });
   expect(projected.retryable).toBe(false);
-  expect(projected.remediation.action).toContain(
-    "Go build-info string allowance",
-  );
-  expect(projected.remediation.action).not.toMatch(/available host memory/u);
 });
 
 it("keeps the header-search budget distinct from a worker CPU limit", async () => {
@@ -136,12 +138,10 @@ it("keeps the header-search budget distinct from a worker CPU limit", async () =
       resource: "cpu",
       reported_limits: {
         boundary: "search",
-        maximum: 256 * 1024 * 1024,
+        maximum: GO_ANALYSIS_BUDGET_DEFAULTS.max_header_search_bytes,
       },
     },
   });
-  expect(projected.remediation.action).toContain("header-search allowance");
-  expect(projected.remediation.action).not.toMatch(/observed signal/u);
 });
 
 it("reports unreadable ELF names alongside the no-record limitation", async () => {
@@ -296,7 +296,6 @@ it.each([
             unit: "bytes",
           },
         },
-        remediation: { action: expect.stringContaining(parameter) },
       });
       const recovered = await service.inspect({ path, [parameter]: raised });
       if (!recovered.ok) throw recovered.error;

@@ -3,6 +3,11 @@ import { z } from "zod";
 import { digestSchema } from "../digests.js";
 import { jsonObjectSchema } from "../jsonValue.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import {
+  DEFAULT_ELF_READ_FILE_BYTES,
+  MINIMUM_ELF_READ_FILE_BYTES,
+  type ElfReadBudgets,
+} from "./elfReadBudgets.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const range = z.strictObject({ offset: uint, bytes: uint });
@@ -18,6 +23,20 @@ export const MAX_INSPECT_ELF_NOTE_ENTRIES = 256;
  * program and section tables; the default admits that with room to spare.
  */
 export const DEFAULT_INSPECT_ELF_NOTE_ENTRIES = 128;
+
+/** The per-call budgets `inspect_elf_notes` accepts, shared by its schema and refusals. */
+export const ELF_NOTES_READ_BUDGETS: ElfReadBudgets = {
+  max_file_bytes: {
+    minimum: MINIMUM_ELF_READ_FILE_BYTES,
+    maximum: MAX_INSPECT_ELF_NOTE_FILE_BYTES,
+    default_value: DEFAULT_ELF_READ_FILE_BYTES,
+  },
+  max_entries: {
+    minimum: 1,
+    maximum: MAX_INSPECT_ELF_NOTE_ENTRIES,
+    default_value: DEFAULT_INSPECT_ELF_NOTE_ENTRIES,
+  },
+};
 
 export const ELF_NOTE_TYPE_NAMES = [
   "gnu_abi_tag",
@@ -130,16 +149,16 @@ export const inspectElfNotesInputSchema = z.strictObject({
   max_file_bytes: z
     .number()
     .int()
-    .min(64)
-    .max(MAX_INSPECT_ELF_NOTE_FILE_BYTES)
-    .default(67108864)
+    .min(ELF_NOTES_READ_BUDGETS.max_file_bytes.minimum)
+    .max(ELF_NOTES_READ_BUDGETS.max_file_bytes.maximum)
+    .default(ELF_NOTES_READ_BUDGETS.max_file_bytes.default_value)
     .describe("Maximum stable artifact bytes to read (default 64 MiB)"),
   max_entries: z
     .number()
     .int()
-    .min(1)
-    .max(MAX_INSPECT_ELF_NOTE_ENTRIES)
-    .default(DEFAULT_INSPECT_ELF_NOTE_ENTRIES)
+    .min(ELF_NOTES_READ_BUDGETS.max_entries.minimum)
+    .max(ELF_NOTES_READ_BUDGETS.max_entries.maximum)
+    .default(ELF_NOTES_READ_BUDGETS.max_entries.default_value)
     .describe(
       "Maximum note entries to examine across every table; exceeding the budget fails without partial success",
     ),

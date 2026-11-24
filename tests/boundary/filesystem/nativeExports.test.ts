@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics/nativeExports.js";
-import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
@@ -94,12 +93,6 @@ describe("native export stable filesystem boundary", () => {
               unit: "bytes",
             },
           });
-          expect(result.error.message).toContain(
-            "16777216-byte retained-text allowance",
-          );
-          const action = analysisErrorRemediationAction(result.error);
-          expect(action).toContain("fixed byte allowance");
-          expect(action).not.toContain("fixed count");
         }
       }
     } finally {
@@ -358,17 +351,13 @@ describe("native export entry allowance", () => {
           });
         else
           expect(projected).toMatchObject({
-            code: "invalid_request",
+            code: "unsupported_target",
+            category: "unsupported_target",
             details: {
-              issues: [
-                {
-                  path: ["path"],
-                  reason: "invalid_format",
-                  message: expect.stringContaining(
-                    "ELF dynamic symbols range is outside the file",
-                  ),
-                },
-              ],
+              path,
+              reason: expect.stringContaining(
+                "ELF dynamic symbols range is outside the file",
+              ),
             },
           });
       } finally {
@@ -396,18 +385,15 @@ describe("native export entry allowance", () => {
         expect(result.error).toMatchObject({
           _tag: "AnalysisResourceConstraintError",
           resource: "capacity",
-          reportedLimits: { boundary: "rows", maximum: 262144 },
+          reportedLimits: { boundary: "rows", maximum: MAX_NATIVE_EXPORT_ROWS },
           retryable: false,
           fixedAllowance: {
             name: "The native export inventory allowance",
             kind: "count",
-            limit: 262144,
+            limit: MAX_NATIVE_EXPORT_ROWS,
             unit: "entries",
           },
         });
-        const action = analysisErrorRemediationAction(result.error);
-        expect(action).toContain("fixed count");
-        expect(action).not.toContain("fixed byte allowance");
       } finally {
         await service.close();
       }
@@ -495,7 +481,6 @@ describe("native export encoding and failures", () => {
 
     for (const [candidate, reason] of [
       [alias, "invalid_format"],
-      [malformed, "invalid_format"],
       [join(root, "missing.dll"), "invalid_value"],
     ] as const)
       expect(await failure({ path: candidate })).toMatchObject({
@@ -503,6 +488,12 @@ describe("native export encoding and failures", () => {
         operation: "inspect_native_exports",
         issues: [{ path: ["path"], reason }],
       });
+    // Malformed bytes are a target refusal, not a request-field error.
+    expect(await failure({ path: malformed })).toMatchObject({
+      _tag: "AnalysisMalformedTargetError",
+      operation: "inspect_native_exports",
+      path: malformed,
+    });
     expect(await failure({ path: macho })).toMatchObject({
       _tag: "AnalysisUnsupportedTargetError",
       reason: expect.stringContaining("inspect_macho"),

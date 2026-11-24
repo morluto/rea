@@ -5,7 +5,11 @@ import {
   type StableArtifactHandle,
 } from "../resources/index.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
-import { decodeLimit } from "../domain/parseFailure.js";
+import {
+  decodeLimit,
+  malformedInput,
+  truncatedInput,
+} from "../domain/parseFailure.js";
 import {
   MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
   type ErlangBeam,
@@ -13,8 +17,14 @@ import {
 } from "../domain/erlang/beam.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 
+/** The bytes violate BEAM's IFF structure. */
 const fail = (message: string): never => {
-  throw new ArtifactReaderFailure("format", message);
+  throw malformedInput("beam", message);
+};
+
+/** A declared BEAM structure starts in the bytes but ends past them. */
+const failTruncated = (message: string): never => {
+  throw truncatedInput("beam", message);
 };
 
 const LIMITATIONS = [
@@ -23,6 +33,7 @@ const LIMITATIONS = [
 ] as const;
 
 const STREAM_CHUNK_BYTES = 1024 * 1024;
+const FOR1_MAGIC = Buffer.from("FOR1", "latin1");
 const RETAINED_TABLE_CHUNKS = new Set(["AtU8", "Atom", "ExpT", "ImpT", "FunT"]);
 const CODE_HEADER_BYTES = 20;
 
@@ -38,7 +49,7 @@ const requireRange = (
     length < 0 ||
     offset > fileSize - length
   )
-    fail(
+    failTruncated(
       `BEAM range ${String(offset)} + ${String(length)} leaves the artifact.`,
     );
 };
@@ -57,12 +68,12 @@ const atomLength = (
   at: number,
   compact: boolean,
 ): [length: number, next: number] => {
-  if (at >= payload.length) fail("BEAM atom table is truncated.");
+  if (at >= payload.length) failTruncated("BEAM atom table is truncated.");
   const first = payload[at]!;
   if (!compact) return [first, at + 1];
   const decoded = compactUnsigned(payload, at);
   if (decoded.value > BigInt(payload.length - decoded.next))
-    fail("BEAM atom table is truncated.");
+    failTruncated("BEAM atom table is truncated.");
   return [Number(decoded.value), decoded.next];
 };
 
@@ -74,7 +85,8 @@ const compactUnsigned = (
   let cursor = at;
   let value: bigint;
   for (;;) {
-    if (cursor >= payload.length) fail("BEAM atom table is truncated.");
+    if (cursor >= payload.length)
+      failTruncated("BEAM atom table is truncated.");
     const first = payload[cursor]!;
     if ((first & 0x07) !== 0) fail("BEAM atom length is not a u tag.");
     if ((first & 0x08) === 0) {
@@ -83,7 +95,8 @@ const compactUnsigned = (
       break;
     }
     if ((first & 0x10) === 0) {
-      if (cursor + 1 >= payload.length) fail("BEAM atom table is truncated.");
+      if (cursor + 1 >= payload.length)
+        failTruncated("BEAM atom table is truncated.");
       value = BigInt(((first >> 5) << 8) | payload[cursor + 1]!);
       cursor += 2;
       break;
@@ -106,7 +119,8 @@ const readCompactUnsignedBytes = (
   at: number,
   byteCount: number,
 ): bigint => {
-  if (byteCount > payload.length - at) fail("BEAM atom table is truncated.");
+  if (byteCount > payload.length - at)
+    failTruncated("BEAM atom table is truncated.");
   // OTP's unpack_varint only accepts values that fit a signed machine word.
   // For REA's supported 64-bit runtime target, that is at most eight bytes.
   const maxValue = 9_223_372_036_854_775_807n;
@@ -128,7 +142,7 @@ const parseAtoms = (
   readonly atoms: NonNullable<ErlangBeam["atoms"]>;
   readonly trailingBytes: number;
 } => {
-  if (payload.length < 4) fail("BEAM atom table is truncated.");
+  if (payload.length < 4) failTruncated("BEAM atom table is truncated.");
   // Only AtU8 supports OTP 28+'s negated count and compact name lengths.
   // Historical Atom uses an unsigned count and single-byte lengths.
   const encoding = format === "AtU8" ? "utf8" : "latin1";
@@ -138,7 +152,8 @@ const parseAtoms = (
   const count = compact ? -declared : declared;
   // Every entry needs at least one length byte, regardless of the layout.
   // Reject an impossible table before treating its count as a budget refusal.
-  if (count > payload.length - 4) fail("BEAM atom table is truncated.");
+  if (count > payload.length - 4)
+    failTruncated("BEAM atom table is truncated.");
   const overBudget = count > maxAtoms;
   const atoms: NonNullable<ErlangBeam["atoms"]> = [];
   const examined = Math.min(count, maxAtoms);
@@ -148,7 +163,7 @@ const parseAtoms = (
     // Reserve at least one length byte per remaining atom. A length inside
     // the admitted prefix can disprove framing without inspecting those rows.
     if (length > payload.length - next - (count - index))
-      fail("BEAM atom table is truncated.");
+      failTruncated("BEAM atom table is truncated.");
     at = next + length;
     if (overBudget) continue;
     const nameBytes = payload.subarray(next, at);
@@ -166,12 +181,13 @@ const parseAtoms = (
 };
 
 const frameRows = (payload: Buffer, width: number, label: string) => {
-  if (payload.length < 4) fail(`BEAM ${label} table is truncated.`);
+  if (payload.length < 4) failTruncated(`BEAM ${label} table is truncated.`);
   const reader = new BinaryReader(payload, false, "beam");
   const count = reader.u32(0);
   const rowBytes = width * 4;
   const bytesRead = 4 + count * rowBytes;
-  if (bytesRead > payload.length) fail(`BEAM ${label} table is truncated.`);
+  if (bytesRead > payload.length)
+    failTruncated(`BEAM ${label} table is truncated.`);
   return { reader, count, rowBytes, trailingBytes: payload.length - bytesRead };
 };
 
@@ -191,7 +207,7 @@ const parseCode = (
   chunkOffset: number,
 ): NonNullable<ErlangBeam["code"]> => {
   if (payloadLength < CODE_HEADER_BYTES || header.length < CODE_HEADER_BYTES)
-    fail("BEAM Code chunk is truncated.");
+    failTruncated("BEAM Code chunk is truncated.");
   const reader = new BinaryReader(header, false, "beam");
   const infoSize = reader.u32(0);
   if (infoSize < 16 || infoSize > payloadLength - 4)
@@ -412,6 +428,11 @@ export const parseErlangBeamFromHandle = async (
   artifact: ErlangBeam["artifact"],
   input: InspectErlangBeamInput,
 ): Promise<ErlangBeam> => {
+  // A short file that does not start like FOR1 is another format, not a
+  // truncated BEAM: judge the magic bytes that exist before the length.
+  const magic = handle.prefix.subarray(0, Math.min(4, handle.size));
+  if (!magic.equals(FOR1_MAGIC.subarray(0, magic.length)))
+    fail("Expected a FOR1 IFF container.");
   requireRange(handle.size, 0, 12);
   const header =
     handle.prefix.length >= 12
@@ -429,7 +450,7 @@ export const parseErlangBeamFromHandle = async (
   const payloads = new Map<string, RetainedBeamChunk>();
   let at = 12;
   while (at < formEnd) {
-    if (formEnd - at < 8) fail("BEAM chunk header is truncated.");
+    if (formEnd - at < 8) failTruncated("BEAM chunk header is truncated.");
     const chunkHeader = await readAdmittedRange(handle, at, 8);
     const size = new BinaryReader(chunkHeader, false, "beam").u32(4);
     const payloadOffset = at + 8;
