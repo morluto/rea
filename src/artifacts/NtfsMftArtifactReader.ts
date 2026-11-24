@@ -74,15 +74,27 @@ export class NtfsMftArtifactReader extends PositionalArtifactReader<ArtifactForm
       }) as AsyncIterable<Buffer>) {
         this.assertOpen(signal);
         const written = decoder.value.write(chunk);
-        if (!written.ok) throw this.#failure(written.error);
+        if (!written.ok) throw await this.#stableFailure(written.error, signal);
       }
     const image = await decoder.value.finish((offset, length) =>
       readFileHandleRange(handle, offset, length, () =>
         this.assertOpen(signal),
       ),
     );
-    if (!image.ok) throw this.#failure(image.error);
+    if (!image.ok) throw await this.#stableFailure(image.error, signal);
     return image.value;
+  }
+
+  /**
+   * A decoder failure blames the bytes only once the carrier is shown to be
+   * unchanged; a carrier that shrank or changed reports that instead.
+   */
+  async #stableFailure(
+    failure: RegionDecodeFailure,
+    signal: AbortSignal | undefined,
+  ): Promise<ArtifactReaderFailure> {
+    await this.verifyCarrier(signal);
+    return this.#failure(failure);
   }
 
   #failure(failure: RegionDecodeFailure): ArtifactReaderFailure {
