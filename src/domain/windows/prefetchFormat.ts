@@ -130,10 +130,20 @@ const MAM_VERSION_OFFSET = MAM_MAGIC.length;
  * an optional checksum flag, so the container is still XPRESS Huffman. */
 const MAM_ALGORITHM_MASK = 0x7f;
 const MAM_VERSION = 4;
+/** Set alongside the checksum bytes the wrapper appends after the size. */
+const MAM_CHECKSUM_FLAG = 0x80;
+const MAM_CHECKSUM_BYTES = 4;
 const hasMamMagic = (bytes: Uint8Array): boolean =>
   bytes.length > MAM_MAGIC.length &&
   Buffer.from(bytes.subarray(0, MAM_MAGIC.length)).equals(MAM_MAGIC) &&
   ((bytes[MAM_VERSION_OFFSET] ?? 0) & MAM_ALGORITHM_MASK) === MAM_VERSION;
+
+/** Fixed bytes a container header holds before its payload, checksum included. */
+const mamHeaderBytes = (bytes: Uint8Array): number =>
+  MAM_HEADER_BYTES +
+  (((bytes[MAM_VERSION_OFFSET] ?? 0) & MAM_CHECKSUM_FLAG) === 0
+    ? 0
+    : MAM_CHECKSUM_BYTES);
 
 /**
  * Whether a prefix carries MAM ownership. The four-byte signature is enough:
@@ -189,7 +199,7 @@ export const parsePrefetchFile = (
   // signature alone does not make a container: a file that ends inside the
   // fixed MAM header is truncated, not an intact unimplemented format.
   if (hasMamMagic(bytes)) {
-    if (bytes.length < MAM_HEADER_BYTES)
+    if (bytes.length < mamHeaderBytes(bytes))
       return err({
         kind: "format",
         message: "The file ends inside the MAM container header.",

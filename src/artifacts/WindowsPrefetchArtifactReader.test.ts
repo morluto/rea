@@ -173,6 +173,24 @@ it("does not read a MAM prefix without the container version byte as Prefetch", 
   expect(snapshot.manifest.root_format).not.toBe("windows-prefetch");
 });
 
+it("calls a checksum-bearing capture ending before its checksum truncated", async () => {
+  const reader = await readerFor(
+    prefetchFixture({
+      version: "23",
+      compressed: true,
+      checksum: true,
+    }).subarray(0, 10),
+  );
+  try {
+    await expect(inventory(reader)).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringContaining("MAM container header") as unknown,
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
 it.each([
   ["inside the version byte", 4],
   ["inside the uncompressed-size field", 5],
