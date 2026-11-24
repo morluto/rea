@@ -182,7 +182,7 @@ export const createSemanticReturnedReferences = (
     // correlations. Growing/shrinking cycles still converge at any depth;
     // selector-budget widening retains the complete may-target closure.
     const selections = new SemanticAliasSelections(() => {
-      state.valueResourceLimits.add("alias-selections");
+      state.observations.valueResourceLimits.add("alias-selections");
       result.precision = "widened";
     }, state.precision.alias_selections);
     const enqueue = (
@@ -264,7 +264,7 @@ export const createSemanticReturnedReferences = (
         ++additionalContexts > state.precision.alias_selections
       ) {
         contextsWidened = true;
-        state.valueResourceLimits.add("alias-selections");
+        state.observations.valueResourceLimits.add("alias-selections");
         result.precision = "widened";
         // Generic transitions select only the source receiver and authored
         // argument values. Keep that complete finite source closure when their
@@ -792,7 +792,7 @@ export const createSemanticReturnedReferences = (
       })),
     });
     if (result.precision === "widened")
-      state.returnedReferenceWidenings.add(callee);
+      state.observations.returnedReferenceWidenings.add(callee);
     return result;
   };
   return Object.assign(resolve, {

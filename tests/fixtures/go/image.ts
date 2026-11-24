@@ -465,10 +465,10 @@ export const createGoBinaryDiagnosticFixtures = () => {
       ...shortOptionalHeaders,
     ].map((fixture) => ({
       ...fixture,
-      code: "invalid_request" as const,
+      code: "unsupported_target" as const,
       details: {
         operation: "inspect_go_binary",
-        issues: [{ path: ["path"], reason: "invalid_format" }],
+        format_failure: "malformed",
       },
     })),
   ];

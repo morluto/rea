@@ -103,6 +103,10 @@ export const ARTIFACT_FORMAT_IDS = [
   "esp-flash-image",
   "fit",
   "ntfs-mft",
+  "sqlite",
+  "windows-shortcut",
+  "python-pyc",
+  "devicetree",
   "unknown",
 ] as const;
 
@@ -134,6 +138,10 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "pe",
   "dos-mz",
   "plist",
+  "sqlite",
+  "windows-shortcut",
+  "python-pyc",
+  "devicetree",
   "directory",
   "file",
   "unknown",

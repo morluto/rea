@@ -358,17 +358,13 @@ describe("native export entry allowance", () => {
           });
         else
           expect(projected).toMatchObject({
-            code: "invalid_request",
+            code: "unsupported_target",
+            category: "unsupported_target",
             details: {
-              issues: [
-                {
-                  path: ["path"],
-                  reason: "invalid_format",
-                  message: expect.stringContaining(
-                    "ELF dynamic symbols range is outside the file",
-                  ),
-                },
-              ],
+              path,
+              reason: expect.stringContaining(
+                "ELF dynamic symbols range is outside the file",
+              ),
             },
           });
       } finally {
@@ -495,7 +491,6 @@ describe("native export encoding and failures", () => {
 
     for (const [candidate, reason] of [
       [alias, "invalid_format"],
-      [malformed, "invalid_format"],
       [join(root, "missing.dll"), "invalid_value"],
     ] as const)
       expect(await failure({ path: candidate })).toMatchObject({
@@ -503,6 +498,12 @@ describe("native export encoding and failures", () => {
         operation: "inspect_native_exports",
         issues: [{ path: ["path"], reason }],
       });
+    // Malformed bytes are a target refusal, not a request-field error.
+    expect(await failure({ path: malformed })).toMatchObject({
+      _tag: "AnalysisMalformedTargetError",
+      operation: "inspect_native_exports",
+      path: malformed,
+    });
     expect(await failure({ path: macho })).toMatchObject({
       _tag: "AnalysisUnsupportedTargetError",
       reason: expect.stringContaining("inspect_macho"),

@@ -108,18 +108,13 @@ cliTest(
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
         operation: "inspect_dwarf_units",
-        issues: [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: expect.stringContaining(
-              "PE long section name string table is unavailable",
-            ),
-          },
-        ],
+        format_failure: "malformed",
+        reason: expect.stringContaining(
+          "PE long section name string table is unavailable",
+        ),
       },
     });
   },

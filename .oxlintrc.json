@@ -270,6 +270,7 @@
     "coverage",
     ".turbo",
     ".cache",
+    ".claude",
     ".codex",
     ".devin",
     ".factory",
