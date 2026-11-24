@@ -72,9 +72,11 @@ cliTest(
     expect(rejected.isError).toBe(true);
     expect(parseMcpToolError(rejected)).toEqual({ error: failed.json });
 
-    // Bytes that are not an NE image are a target refusal, not caller input.
+    // Bytes that are not an NE image are a target refusal, not caller input,
+    // and keep the verified identity of the bytes read through both adapters.
     const malformed = join(root, "malformed.dll");
-    await writeFile(malformed, Buffer.from("not an NE image"));
+    const malformedBytes = Buffer.from("not an NE image");
+    await writeFile(malformed, malformedBytes);
     const refused = await cli.run({
       arguments: ["inspect-ne-executable", malformed, "--json"],
     });
@@ -87,9 +89,21 @@ cliTest(
         operation: "inspect_ne_executable",
         path: malformed,
         format_failure: "malformed",
+        partial_observation: {
+          kind: "file-snapshot-hash",
+          path: malformed,
+          bytes: malformedBytes.length,
+          sha256: createHash("sha256").update(malformedBytes).digest("hex"),
+        },
       },
     });
     expect(refused.json).not.toHaveProperty("details.issues");
+    const mcpRefused = await client.callTool({
+      name: contract.name,
+      arguments: { path: malformed },
+    });
+    expect(mcpRefused.isError).toBe(true);
+    expect(parseMcpToolError(mcpRefused)).toEqual({ error: refused.json });
 
     for (const arguments_ of [
       { path, max_rows: 1 },

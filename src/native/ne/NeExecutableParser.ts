@@ -1,5 +1,6 @@
 import { setImmediate } from "node:timers/promises";
 import { BinaryReader } from "../../domain/binaryContainer.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import {
   decodeLimit,
   malformedInput,
@@ -122,7 +123,7 @@ class NeReader {
     this.rows += count;
     if (this.rows % 1024 < count) {
       await setImmediate();
-      this.signal?.throwIfAborted();
+      assertArtifactReadActive(this.signal);
     }
   }
 
@@ -407,7 +408,7 @@ export const parseNeExecutable = async (
   input: InspectNeExecutableInput,
   signal?: AbortSignal,
 ): Promise<NeExecutable> => {
-  signal?.throwIfAborted();
+  assertArtifactReadActive(signal);
   const windows = observeMzWindowsHeader(bytes);
   if (windows.state !== "declared" || windows.signature !== "NE")
     return neFailure("Expected an MZ image declaring an NE header.");
@@ -452,7 +453,7 @@ export const parseNeExecutable = async (
           ]),
     ],
   };
-  signal?.throwIfAborted();
+  assertArtifactReadActive(signal);
   if (jsonBytes(report, METADATA_BYTES) > METADATA_BYTES)
     limit(
       "NE result exceeds the 8 MiB allocation budget.",
