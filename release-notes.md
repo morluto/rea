@@ -740,6 +740,7 @@
 * **uninstall:** extract registration-removal and item-collapse helpers from Uninstall ([#14006](https://github.com/morluto/rea/issues/14006)) ([bc8a0b3](https://github.com/morluto/rea/commit/bc8a0b32f37ef707e71fde55d394087d2b489c71))
 * **uninstall:** extract UninstallDataAndSkills from Uninstall ([#13736](https://github.com/morluto/rea/issues/13736)) ([054bbbc](https://github.com/morluto/rea/commit/054bbbc55e63ff8d4b617a04cb681145f2ca134f))
 * **verify:** exclude negated .ok checks from the abort-reclassification guard ([a80dc68](https://github.com/morluto/rea/commit/a80dc68318d2b9e2abca08ae5d4eaf1206b83bde)), closes [#11920](https://github.com/morluto/rea/issues/11920)
+* **views:** reuse invalid-view results and row selectors ([#14314](https://github.com/morluto/rea/issues/14314)) ([5dafc31](https://github.com/morluto/rea/commit/5dafc31d23f8f6f13a57b9b374411f412917d199))
 * **xml:** share DOM element traversal helpers in xmlDocument ([#13799](https://github.com/morluto/rea/issues/13799)) ([4b648f2](https://github.com/morluto/rea/commit/4b648f23fd061417a7b0b57e560683e907f83020))
 
 
