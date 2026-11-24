@@ -735,6 +735,7 @@
 * **server:** simplify contractToolBindings types and handler dispatch ([#13912](https://github.com/morluto/rea/issues/13912)) ([fdad60a](https://github.com/morluto/rea/commit/fdad60aea7ba8c090c367ad7315a0101b644ecc4))
 * **setup:** extract SupportedClientLocations from SupportedClients ([#13731](https://github.com/morluto/rea/issues/13731)) ([8e619be](https://github.com/morluto/rea/commit/8e619be40c3074a36fe21d319d1c9dde11ae533d))
 * **tests:** consolidate repeated CLI capture and fixture construction ([#14311](https://github.com/morluto/rea/issues/14311)) ([78149ee](https://github.com/morluto/rea/commit/78149eeec979a124ffca8f36c815405491901709))
+* **tooling:** share verifier fixture and lint helpers ([#14318](https://github.com/morluto/rea/issues/14318)) ([4f0d160](https://github.com/morluto/rea/commit/4f0d1602546adc9b9da23bb148a844ab139310ae))
 * **uefi/native:** cache UEFI BinaryReader and reuse hasDosMzMagic ([#13659](https://github.com/morluto/rea/issues/13659)) ([0fc591d](https://github.com/morluto/rea/commit/0fc591da7c2309f59a46933658de8591a4c90c41))
 * **uefi/native:** cache UEFI BinaryReader per buffer and reuse hasDosMzMagic ([0fc591d](https://github.com/morluto/rea/commit/0fc591da7c2309f59a46933658de8591a4c90c41))
 * **uefi:** exercise only the framed LZMA worker ([#14072](https://github.com/morluto/rea/issues/14072)) ([1f4c8fe](https://github.com/morluto/rea/commit/1f4c8fe5d5c810a7aa7d7702c6fc8142b5afd37c))
