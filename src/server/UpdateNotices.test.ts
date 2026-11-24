@@ -105,10 +105,15 @@ it("does not block a tool or discovery, preserves structured output and announce
   const client = await connect(new UpdateNotices("1.0.0", lookup));
   await client.listTools();
   expect(lookup).not.toHaveBeenCalled();
-  const first = await client.callTool({ name: "fixture", arguments: {} });
-  expect(first.structuredContent).toEqual({ result: 42 });
-  expect(first.content).toHaveLength(1);
-  release(ok("1.1.0"));
+  let first: Awaited<ReturnType<typeof client.callTool>>;
+  try {
+    first = await client.callTool({ name: "fixture", arguments: {} });
+    expect(first.structuredContent).toEqual({ result: 42 });
+    expect(first.content).toHaveLength(1);
+  } finally {
+    // Cleanup joins the lookup, so settle it even when an assertion fails.
+    release(ok("1.1.0"));
+  }
   await waitFor(() => expect(lookup).toHaveResolved());
   const second = await client.callTool({ name: "fixture", arguments: {} });
   expect(second.structuredContent).toEqual(first.structuredContent);
@@ -227,10 +232,13 @@ it("cancels and joins pending discovery at close, suppressing late success", asy
   const closing = notices.close().then(() => {
     closed = true;
   });
-  expect(signal?.aborted).toBe(true);
-  expect(closed).toBe(false);
-  release();
-  await closing;
+  try {
+    expect(signal?.aborted).toBe(true);
+    expect(closed).toBe(false);
+  } finally {
+    release();
+    await closing;
+  }
   expect(notices.peek()).toBeUndefined();
   notices.refresh();
   expect(closed).toBe(true);
@@ -334,10 +342,13 @@ it("server shutdown owns pending lookups even without a remaining SDK transport"
   const closing = server.close().then(() => {
     closed = true;
   });
-  expect(signal?.aborted).toBe(true);
-  expect(closed).toBe(false);
-  release();
-  await closing;
+  try {
+    expect(signal?.aborted).toBe(true);
+    expect(closed).toBe(false);
+  } finally {
+    release();
+    await closing;
+  }
   expect(closed).toBe(true);
   expect(notices.peek()).toBeUndefined();
 });

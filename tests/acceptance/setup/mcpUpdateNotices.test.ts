@@ -43,7 +43,10 @@ for (const mode of ["offline", "deferred", "eager"] as const)
         USERPROFILE: home,
         HOPPER_LAUNCHER_PATH: join(home, "absent-hopper"),
         ...(mode === "offline" ? {} : { REA_MCP_UPDATE_CHECK: "1" }),
-        ...(mode === "eager" ? { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" } : {}),
+        // Only `compact` leaves the recorded catalog and composes eagerly.
+        ...(mode === "eager"
+          ? { REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact" }
+          : {}),
       },
       stderr: "pipe",
     });
