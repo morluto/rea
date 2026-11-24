@@ -241,6 +241,7 @@ function normalizeJob(job) {
     url: stringOrNull(job.html_url),
     name: job.name,
     workflowName: stringOrNull(job.workflow_name),
+    runnerId: Number.isSafeInteger(job.runner_id) ? job.runner_id : null,
     status: job.status,
     conclusion: stringOrNull(job.conclusion),
     createdAt: stringOrNull(job.created_at),
@@ -263,6 +264,7 @@ function normalizeStep(step) {
   if (step.conclusion === "skipped")
     return {
       name: step.name,
+      conclusion: "skipped",
       costKey: null,
       duration: unknownDuration("step was skipped"),
     };
@@ -271,6 +273,7 @@ function normalizeStep(step) {
   );
   return {
     name: step.name,
+    conclusion: stringOrNull(step.conclusion),
     costKey: cost?.key ?? null,
     duration: duration(step.started_at, step.completed_at),
   };
