@@ -377,3 +377,70 @@ it("filters relationship endpoints from recorded facts rather than caller displa
     });
   }
 });
+
+it("preserves paging and unknown counts on first and repeated sealed-parent queries", () => {
+  const report = methodFacts();
+  const method = report.methods[1];
+  if (method === undefined) throw new Error("Method fixture is missing");
+  report.methods.splice(2, 0, {
+    ...method,
+    token: "0x06000005",
+    declaring_type: null,
+    declaring_type_token: null,
+  });
+  const sealed = parent(freezeOwnedJsonTreeSnapshot(report));
+  const cases = [
+    {
+      filter: { declaring_types: ["Exact.Type"] },
+      offset: 1,
+      total: 3,
+      unresolved: 1,
+      indices: [3, 4],
+    },
+    {
+      filter: { declaring_types: [] },
+      offset: 0,
+      total: 0,
+      unresolved: 0,
+      indices: [],
+    },
+    {
+      filter: { declaring_types: ["Exact.Type", "Other.Type"] },
+      offset: 1,
+      total: 4,
+      unresolved: 1,
+      indices: [1, 3],
+    },
+    {
+      filter: {
+        names: ["Keep"],
+        declaring_types: ["Exact.Type", "Other.Type"],
+      },
+      offset: 1,
+      total: 3,
+      unresolved: 1,
+      indices: [1, 4],
+    },
+  ];
+  for (const { filter, offset, total, unresolved, indices } of cases) {
+    const view = managedMembersViewRequestSchema.parse({
+      kind: "managed-members",
+      collection: "methods",
+      ...filter,
+      fields: [],
+      offset,
+      limit: 2,
+    });
+    for (let run = 0; run < 2; run += 1) {
+      const result = projectManagedMemberView(sealed, view);
+      if (!result.ok) throw result.error;
+      expect(result.value).toMatchObject({
+        coverage: { total },
+        page: {
+          unresolved_filter_rows: unresolved,
+          rows: indices.map((source_index) => ({ source_index })),
+        },
+      });
+    }
+  }
+});

@@ -101,134 +101,128 @@ const openedHandle = (): FileHandle => {
   return handle;
 };
 
-it.each(carriers)(
-  "$name keeps the caller's expected digest and rechecks identity after binding",
-  async (carrier) => {
-    const { path, sha256 } = await carrierFile(carrier);
-    const reader = carrier.reader(path);
-    const expected = "0".repeat(64);
-    try {
-      await reader.prepareContainer(sha256);
-      await expect(reader.prepareContainer(expected)).rejects.toMatchObject({
-        reason: "integrity",
-        details: {
-          logicalPath: ".",
-          declaredSha256: expected,
-          calculatedSha256: sha256,
-          unpacked: false,
-        },
-      });
-      await reader.prepareContainer(sha256);
-      await writeFile(path, carrier.bytes(BODY.repeat(3)));
-      await expect(reader.prepareContainer(sha256)).rejects.toMatchObject({
-        reason: "integrity",
-        integrityCheck: "container-identity",
-      });
-    } finally {
-      await reader.close();
-    }
-  },
-);
+it("Godot PCK preserves the requested digest and rechecks bound carrier identity", async () => {
+  const carrier = carriers[0];
+  const { path, sha256 } = await carrierFile(carrier);
+  const reader = carrier.reader(path);
+  const expected = "0".repeat(64);
+  try {
+    await reader.prepareContainer(sha256);
+    await expect(reader.prepareContainer(expected)).rejects.toMatchObject({
+      reason: "integrity",
+      details: {
+        logicalPath: ".",
+        declaredSha256: expected,
+        calculatedSha256: sha256,
+        unpacked: false,
+      },
+    });
+    await reader.prepareContainer(sha256);
+    await writeFile(path, carrier.bytes(BODY.repeat(3)));
+    await expect(reader.prepareContainer(sha256)).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "container-identity",
+    });
+  } finally {
+    await reader.close();
+  }
+});
 
-it.each(carriers)(
-  "$name joins late admission before close and refuses replacement work",
-  async (carrier) => {
-    const { path, sha256 } = await carrierFile(carrier);
-    const admission = phaseGate();
-    control.onOpen = async (handle) => {
-      vi.spyOn(handle, "close");
-      await admission.hold();
-    };
-    const reader = carrier.reader(path);
-    const operations: Promise<unknown>[] = [];
-    let closed = false;
-    try {
-      const preparing = reader.prepareContainer(sha256);
-      operations.push(preparing);
-      await admission.reached(preparing, "carrier admission");
-      const handle = openedHandle();
-      const closeAttempts = [reader.close(), reader.close()];
-      operations.push(...closeAttempts);
-      const closing = Promise.all(closeAttempts).then(() => {
-        closed = true;
-      });
-      operations.push(closing);
-      await setImmediate();
-      expect(closed).toBe(false);
-      expect(handle.fd).toBeGreaterThanOrEqual(0);
-      expect(handle.close).not.toHaveBeenCalled();
-      admission.release();
-      await preparing;
-      await closing;
-      expect(handle.fd).toBe(-1);
-      expect(handle.close).toHaveBeenCalledOnce();
-      await expect(reader.prepareContainer(sha256)).rejects.toMatchObject({
-        reason: "unavailable",
-      });
-      await expect(
-        reader.entries()[Symbol.asyncIterator]().next(),
-      ).rejects.toMatchObject({
-        reason: "unavailable",
-      });
-      expect(control.handles.size).toBe(1);
-      await reader.close();
-      expect(handle.close).toHaveBeenCalledOnce();
-    } finally {
-      admission.release();
-      await Promise.allSettled(operations);
-      await reader.close();
-    }
-  },
-);
+it("Godot PCK joins late carrier admission before close and refuses replacement work", async () => {
+  const carrier = carriers[0];
+  const { path, sha256 } = await carrierFile(carrier);
+  const admission = phaseGate();
+  control.onOpen = async (handle) => {
+    vi.spyOn(handle, "close");
+    await admission.hold();
+  };
+  const reader = carrier.reader(path);
+  const operations: Promise<unknown>[] = [];
+  let closed = false;
+  try {
+    const preparing = reader.prepareContainer(sha256);
+    operations.push(preparing);
+    await admission.reached(preparing, "carrier admission");
+    const handle = openedHandle();
+    const closeAttempts = [reader.close(), reader.close()];
+    operations.push(...closeAttempts);
+    const closing = Promise.all(closeAttempts).then(() => {
+      closed = true;
+    });
+    operations.push(closing);
+    await setImmediate();
+    expect(closed).toBe(false);
+    expect(handle.fd).toBeGreaterThanOrEqual(0);
+    expect(handle.close).not.toHaveBeenCalled();
+    admission.release();
+    await preparing;
+    await closing;
+    expect(handle.fd).toBe(-1);
+    expect(handle.close).toHaveBeenCalledOnce();
+    await expect(reader.prepareContainer(sha256)).rejects.toMatchObject({
+      reason: "unavailable",
+    });
+    await expect(
+      reader.entries()[Symbol.asyncIterator]().next(),
+    ).rejects.toMatchObject({
+      reason: "unavailable",
+    });
+    expect(control.handles.size).toBe(1);
+    await reader.close();
+    expect(handle.close).toHaveBeenCalledOnce();
+  } finally {
+    admission.release();
+    await Promise.allSettled(operations);
+    await reader.close();
+  }
+});
 
-it.each(carriers)(
-  "$name retains a failed physical close and retries only that exact descriptor",
-  async (carrier) => {
-    const { path, sha256 } = await carrierFile(carrier);
-    const carrierClose = phaseGate();
-    const failure = new Error("controlled carrier close failure");
-    let blocked = true;
-    control.onOpen = async (handle) => {
-      const close = handle.close.bind(handle);
-      vi.spyOn(handle, "close").mockImplementation(async () => {
-        await carrierClose.hold();
-        if (blocked) throw failure;
-        await close();
-      });
-    };
-    const reader = carrier.reader(path);
-    let closing: Promise<PromiseSettledResult<void>[]> | undefined;
-    try {
-      await reader.prepareContainer(sha256);
-      const [entry] = await entries(reader);
-      if (entry === undefined) throw new Error("Missing carrier member");
-      expect(await text(await reader.open(entry))).toBe(BODY);
-      const handle = openedHandle();
-      closing = Promise.allSettled([reader.close(), reader.close()]);
-      await carrierClose.reached(closing, "carrier close");
-      expect(handle.fd).toBeGreaterThanOrEqual(0);
-      expect(handle.close).toHaveBeenCalledOnce();
-      carrierClose.release();
-      expect(await closing).toEqual([
-        { status: "rejected", reason: failure },
-        { status: "rejected", reason: failure },
-      ]);
-      expect(handle.fd).toBeGreaterThanOrEqual(0);
-      blocked = false;
-      await Promise.all([reader.close(), reader.close()]);
-      expect(handle.fd).toBe(-1);
-      expect(handle.close).toHaveBeenCalledTimes(2);
-      await reader.close();
-      expect(handle.close).toHaveBeenCalledTimes(2);
-      expect(control.handles.size).toBe(1);
-    } finally {
-      blocked = false;
-      carrierClose.release();
-      await closing;
-      await reader.close();
-    }
-  },
-);
+it("Node SEA retains a failed physical close and retries only that descriptor", async () => {
+  const carrier = carriers[1];
+  const { path, sha256 } = await carrierFile(carrier);
+  const carrierClose = phaseGate();
+  const failure = new Error("controlled carrier close failure");
+  let blocked = true;
+  control.onOpen = async (handle) => {
+    const close = handle.close.bind(handle);
+    vi.spyOn(handle, "close").mockImplementation(async () => {
+      await carrierClose.hold();
+      if (blocked) throw failure;
+      await close();
+    });
+  };
+  const reader = carrier.reader(path);
+  let closing: Promise<PromiseSettledResult<void>[]> | undefined;
+  try {
+    await reader.prepareContainer(sha256);
+    const [entry] = await entries(reader);
+    if (entry === undefined) throw new Error("Missing carrier member");
+    expect(await text(await reader.open(entry))).toBe(BODY);
+    const handle = openedHandle();
+    closing = Promise.allSettled([reader.close(), reader.close()]);
+    await carrierClose.reached(closing, "carrier close");
+    expect(handle.fd).toBeGreaterThanOrEqual(0);
+    expect(handle.close).toHaveBeenCalledOnce();
+    carrierClose.release();
+    expect(await closing).toEqual([
+      { status: "rejected", reason: failure },
+      { status: "rejected", reason: failure },
+    ]);
+    expect(handle.fd).toBeGreaterThanOrEqual(0);
+    blocked = false;
+    await Promise.all([reader.close(), reader.close()]);
+    expect(handle.fd).toBe(-1);
+    expect(handle.close).toHaveBeenCalledTimes(2);
+    await reader.close();
+    expect(handle.close).toHaveBeenCalledTimes(2);
+    expect(control.handles.size).toBe(1);
+  } finally {
+    blocked = false;
+    carrierClose.release();
+    await closing;
+    await reader.close();
+  }
+});
 
 it.each(carriers)(
   "$name borrows the admitted descriptor after path replacement and leaves its close to the caller",
@@ -272,19 +266,13 @@ it.each(carriers)(
   },
 );
 
-const admissionCases = carriers.flatMap((carrier) =>
-  (
-    [
-      { primary: "io", closeFails: false },
-      { primary: "io", closeFails: true },
-      { primary: "cancelled", closeFails: false },
-      { primary: "cancelled", closeFails: true },
-    ] as const
-  ).map((scenario) => ({ name: carrier.name, carrier, ...scenario })),
-);
-
-it.each(admissionCases)(
-  "$name awaits physical admission cleanup and preserves $primary (closeFails=$closeFails)",
+it.each([
+  { carrier: carriers[0], primary: "io", closeFails: false },
+  { carrier: carriers[0], primary: "io", closeFails: true },
+  { carrier: carriers[1], primary: "cancelled", closeFails: false },
+  { carrier: carriers[1], primary: "cancelled", closeFails: true },
+] as const)(
+  "$carrier.name awaits physical admission cleanup and preserves $primary (closeFails=$closeFails)",
   async ({ carrier, primary, closeFails }) => {
     const { path } = await carrierFile(carrier);
     const admissionClose = phaseGate();

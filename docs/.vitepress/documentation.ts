@@ -9,6 +9,11 @@ export const documentationSections = [
         route: "/installation",
       },
       {
+        text: "Supported targets and requirements",
+        source: "reference/supported-targets.md",
+        route: "/supported-targets",
+      },
+      {
         text: "Client configuration and troubleshooting",
         source: "getting-started/client-configuration.md",
         route: "/client-configuration",
@@ -172,6 +177,11 @@ export const documentationSections = [
         text: "PE TLS callbacks and load configuration",
         source: "pe-load-config.md",
         route: "/pe-load-config",
+      },
+      {
+        text: "PE x64 exception-directory function ranges",
+        source: "guides/native/pe-unwind-ranges.md",
+        route: "/pe-unwind-ranges",
       },
       {
         text: "Match native functions across builds",
@@ -508,6 +518,16 @@ export const documentationSections = [
         source: "wxapkg.md",
         route: "/wxapkg",
       },
+      {
+        text: "tar and gzip-compressed tar archives",
+        source: "tar-archives.md",
+        route: "/tar-archives",
+      },
+      {
+        text: "GPU asset headers: DDS, GLB, KTX and KTX2",
+        source: "gpu-asset-headers.md",
+        route: "/gpu-asset-headers",
+      },
     ],
   },
   {
@@ -647,6 +667,11 @@ export const documentationSections = [
         text: "MCP runtime contracts",
         source: "reference/mcp-contracts.md",
         route: "/mcp-contracts",
+      },
+      {
+        text: "Directory identity",
+        source: "reference/directory-identity.md",
+        route: "/directory-identity",
       },
       {
         text: "Reconstruction obligation ledgers",

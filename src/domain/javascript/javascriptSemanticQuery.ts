@@ -1,5 +1,13 @@
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { JavaScriptSemanticGraph } from "./javascriptSemanticGraph.js";
+import {
+  buildSemanticAdjacency,
+  getSemanticGraphIndex,
+  type SemanticAdjacency,
+  type SemanticGraphIndex,
+} from "./javascriptSemanticGraphIndex.js";
 import type {
+  JavaScriptSemanticEvidenceContext,
   JavaScriptSemanticGraphNode,
   JavaScriptSemanticGraphRelation,
   JavaScriptSemanticGraphUnknown,
@@ -16,21 +24,13 @@ import {
   resolveJavaScriptSemanticQuerySeeds as resolveSeeds,
 } from "./javascriptSemanticQueryIdentity.js";
 
-interface TraversalEntry {
-  readonly relation: JavaScriptSemanticGraphRelation;
-  readonly nextNodeId: string;
-}
-
 interface Traversal {
   readonly nodeIds: Set<string>;
-  readonly relationIds: Set<string>;
-  readonly functionIds: Set<string>;
-  readonly modules: Set<string>;
-}
-
-interface QueryResult {
   readonly retainedNodes: JavaScriptSemanticGraphNode[];
   readonly retainedRelations: JavaScriptSemanticGraphRelation[];
+  readonly functionIds: Set<string>;
+  readonly modules: Set<string>;
+  readonly candidateRelations: number;
 }
 
 /** Run a query already parsed by its owning request boundary. */
@@ -40,37 +40,52 @@ export const queryJavaScriptSemanticGraph = (
 ): JavaScriptSemanticQueryResult => {
   const queryId = queryIdentifier(graph, input);
   const seeds = resolveSeeds(graph, input);
-  const nodes = new Map(graph.nodes.map((node) => [node.node_id, node]));
-  const adjacency = buildAdjacency(graph.relations, input);
-  const traversal = traverse(nodes, seeds, adjacency);
-  const result = createQueryResult(graph, traversal);
+  const index = getSemanticGraphIndex(graph);
+  const allowed =
+    input.allowed_relations === undefined
+      ? null
+      : new Set(input.allowed_relations);
+  if (seeds.length === 0)
+    return buildEmptySeedQueryResult(graph, input, queryId, index, allowed);
+
+  const nodes =
+    index !== undefined
+      ? index.getNodesById()
+      : new Map(graph.nodes.map((node) => [node.node_id, node]));
+  const adjacency =
+    index !== undefined
+      ? index.getAdjacency()
+      : buildSemanticAdjacency(graph.relations);
+  const traversal = traverse(nodes, seeds, adjacency, input, allowed);
   const relevantUnknowns = relevantUnknownFrontiers(
     graph,
     traversal.nodeIds,
-    input,
-  );
-  const candidateRelations = relevantCandidateRelationCount(
-    graph,
-    traversal.nodeIds,
-    input,
+    input.direction,
+    allowed,
+    index,
   );
   const expectedMatches = expectedMatchesFor(
-    result.retainedNodes,
-    result.retainedRelations,
+    traversal.retainedNodes,
+    traversal.retainedRelations,
     input,
   );
-  const retainedContextIds = new Set([
-    ...result.retainedNodes.map(({ evidence }) => evidence.context_id),
-    ...result.retainedRelations.map(({ evidence }) => evidence.context_id),
-    ...relevantUnknowns.map(({ evidence }) => evidence.context_id),
-  ]);
+  const retainedContextIds = collectContextIds(
+    traversal.retainedNodes,
+    traversal.retainedRelations,
+    relevantUnknowns,
+  );
+  const evidenceContexts = selectEvidenceContexts(
+    graph,
+    retainedContextIds,
+    index,
+  );
   const assessment = assessJavaScriptSemanticQuery({
     graph,
     totalSeeds: seeds.length,
     expectedMatches: expectedMatches.length,
     hasExpectation: input.expected !== null,
     unknowns: relevantUnknowns,
-    candidateRelations,
+    candidateRelations: traversal.candidateRelations,
   });
   return javaScriptSemanticQueryResultSchema.parse({
     query_id: queryId,
@@ -79,17 +94,15 @@ export const queryJavaScriptSemanticGraph = (
     direction: input.direction,
     status: assessment.status,
     seed_node_ids: seeds,
-    evidence_contexts: graph.evidence_contexts.filter(({ context_id }) =>
-      retainedContextIds.has(context_id),
-    ),
-    nodes: result.retainedNodes,
-    relations: result.retainedRelations,
+    evidence_contexts: evidenceContexts,
+    nodes: traversal.retainedNodes,
+    relations: traversal.retainedRelations,
     unknowns: relevantUnknowns,
     expected_match_node_ids: expectedMatches.map(({ node_id }) => node_id),
     summary: {
       total_seed_matches: seeds.length,
       traversed_nodes: traversal.nodeIds.size,
-      traversed_relations: traversal.relationIds.size,
+      traversed_relations: traversal.retainedRelations.length,
       traversed_functions: traversal.functionIds.size,
       traversed_modules: traversal.modules.size,
       relevant_unknowns: relevantUnknowns.length,
@@ -99,161 +112,205 @@ export const queryJavaScriptSemanticGraph = (
   });
 };
 
-const createQueryResult = (
+const buildEmptySeedQueryResult = (
   graph: JavaScriptSemanticGraph,
-  traversal: Traversal,
-): QueryResult => {
-  const retainedNodes = graph.nodes.filter(({ node_id }) =>
-    traversal.nodeIds.has(node_id),
-  );
-  const retainedRelations = graph.relations.filter(({ relation_id }) =>
-    traversal.relationIds.has(relation_id),
-  );
-  return { retainedNodes, retainedRelations };
-};
-
-const buildAdjacency = (
-  relations: readonly JavaScriptSemanticGraphRelation[],
   input: JavaScriptSemanticQueryInput,
-): ReadonlyMap<string, TraversalEntry[]> => {
-  const adjacency = new Map<string, TraversalEntry[]>();
-  const allowed =
-    input.allowed_relations === undefined
-      ? null
-      : new Set(input.allowed_relations);
-  for (const relation of relations) {
-    if (allowed !== null && !allowed.has(relation.relation)) continue;
-    if (
-      relation.resolution === "candidate" &&
-      !input.include_ambiguous_dynamic_edges
-    )
-      continue;
-    addDirectedEntries(adjacency, relation, input.direction);
-  }
-  return adjacency;
-};
-
-const addDirectedEntries = (
-  adjacency: Map<string, TraversalEntry[]>,
-  relation: JavaScriptSemanticGraphRelation,
-  direction: JavaScriptSemanticQueryInput["direction"],
-): void => {
-  if (direction === "callers") {
-    if (relation.relation === "calls")
-      addEntry(
-        adjacency,
-        relation.target_node_id,
-        relation.source_node_id,
-        relation,
-      );
-    return;
-  }
-  if (direction === "ownership") {
-    if (!ownershipRelation(relation.relation)) return;
-    addEntry(
-      adjacency,
-      relation.source_node_id,
-      relation.target_node_id,
-      relation,
-    );
-    addEntry(
-      adjacency,
-      relation.target_node_id,
-      relation.source_node_id,
-      relation,
-    );
-    return;
-  }
-  if (direction === "backward-provenance")
-    addEntry(
-      adjacency,
-      relation.target_node_id,
-      relation.source_node_id,
-      relation,
-    );
-  else
-    addEntry(
-      adjacency,
-      relation.source_node_id,
-      relation.target_node_id,
-      relation,
-    );
-};
-
-const addEntry = (
-  adjacency: Map<string, TraversalEntry[]>,
-  from: string,
-  nextNodeId: string,
-  relation: JavaScriptSemanticGraphRelation,
-): void => {
-  const entries = adjacency.get(from) ?? [];
-  entries.push({ relation, nextNodeId });
-  adjacency.set(from, entries);
+  queryId: string,
+  index: SemanticGraphIndex | undefined,
+  allowed: ReadonlySet<JavaScriptSemanticGraphRelation["relation"]> | null,
+): JavaScriptSemanticQueryResult => {
+  const globalUnknowns =
+    index !== undefined
+      ? index.getGlobalUnknowns()
+      : graph.unknowns.filter((unknown) => unknown.node_id === null);
+  const relevantUnknowns = globalUnknowns.filter((unknown) =>
+    unknownMatchesFilter(unknown, input.direction, allowed),
+  );
+  const evidenceContexts =
+    relevantUnknowns.length === 0
+      ? []
+      : selectEvidenceContexts(
+          graph,
+          collectContextIds([], [], relevantUnknowns),
+          index,
+        );
+  const assessment = assessJavaScriptSemanticQuery({
+    graph,
+    totalSeeds: 0,
+    expectedMatches: 0,
+    hasExpectation: input.expected !== null,
+    unknowns: relevantUnknowns,
+    candidateRelations: 0,
+  });
+  return javaScriptSemanticQueryResultSchema.parse({
+    query_id: queryId,
+    source_graph_id: graph.graph_id,
+    seed: input.seed,
+    direction: input.direction,
+    status: assessment.status,
+    seed_node_ids: [],
+    evidence_contexts: evidenceContexts,
+    nodes: [],
+    relations: [],
+    unknowns: relevantUnknowns,
+    expected_match_node_ids: [],
+    summary: {
+      total_seed_matches: 0,
+      traversed_nodes: 0,
+      traversed_relations: 0,
+      traversed_functions: 0,
+      traversed_modules: 0,
+      relevant_unknowns: relevantUnknowns.length,
+    },
+    coverage: assessment.coverage,
+    limitations: assessment.limitations,
+  });
 };
 
 const traverse = (
   nodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
   seeds: readonly string[],
-  adjacency: ReadonlyMap<string, TraversalEntry[]>,
+  adjacency: SemanticAdjacency,
+  input: JavaScriptSemanticQueryInput,
+  allowed: ReadonlySet<JavaScriptSemanticGraphRelation["relation"]> | null,
 ): Traversal => {
   const nodeIds = new Set(seeds);
-  const relationIds = new Set<string>();
+  const retainedNodes: JavaScriptSemanticGraphNode[] = [];
+  const retainedRelationsMap = new Map<
+    string,
+    JavaScriptSemanticGraphRelation
+  >();
   const functionIds = new Set<string>();
   const modules = new Set<string>();
   const queue = [...nodeIds];
-  for (const nodeId of nodeIds)
-    retainOwners(nodes.get(nodeId), functionIds, modules);
+  for (const nodeId of nodeIds) {
+    const node = nodes.get(nodeId);
+    if (node !== undefined) {
+      retainedNodes.push(node);
+      retainOwners(node, functionIds, modules);
+    }
+  }
+  const direction = input.direction;
+  const includeCandidates = input.include_ambiguous_dynamic_edges;
+  const seenCandidateIds =
+    direction === "ownership" ? new Set<string>() : undefined;
+  let candidateRelations = 0;
+
+  const visitIncident = (
+    relation: JavaScriptSemanticGraphRelation,
+    nextNodeId: string,
+  ): void => {
+    if (allowed !== null && !allowed.has(relation.relation)) return;
+    if (relation.resolution === "candidate") {
+      if (seenCandidateIds === undefined) candidateRelations += 1;
+      else if (!seenCandidateIds.has(relation.relation_id)) {
+        seenCandidateIds.add(relation.relation_id);
+        candidateRelations += 1;
+      }
+      if (!includeCandidates) return;
+    }
+    retainedRelationsMap.set(relation.relation_id, relation);
+    if (nodeIds.has(nextNodeId)) return;
+    const nextNode = nodes.get(nextNodeId);
+    if (nextNode === undefined) return;
+    nodeIds.add(nextNodeId);
+    retainedNodes.push(nextNode);
+    retainOwners(nextNode, functionIds, modules);
+    queue.push(nextNodeId);
+  };
+
   for (let offset = 0; offset < queue.length; offset += 1) {
     const current = queue[offset];
     if (current === undefined) continue;
-    for (const entry of adjacency.get(current) ?? []) {
-      relationIds.add(entry.relation.relation_id);
-      if (nodeIds.has(entry.nextNodeId)) continue;
-      const node = nodes.get(entry.nextNodeId);
-      if (node === undefined) continue;
-      nodeIds.add(entry.nextNodeId);
-      retainOwners(node, functionIds, modules);
-      queue.push(entry.nextNodeId);
+    if (direction === "forward-influence") {
+      for (const relation of adjacency.outgoingByNode.get(current) ?? [])
+        visitIncident(relation, relation.target_node_id);
+    } else if (direction === "backward-provenance") {
+      for (const relation of adjacency.incomingByNode.get(current) ?? [])
+        visitIncident(relation, relation.source_node_id);
+    } else if (direction === "callers") {
+      for (const relation of adjacency.incomingByNode.get(current) ?? [])
+        if (relation.relation === "calls")
+          visitIncident(relation, relation.source_node_id);
+    } else {
+      for (const relation of adjacency.outgoingByNode.get(current) ?? [])
+        if (ownershipRelation(relation.relation))
+          visitIncident(relation, relation.target_node_id);
+      for (const relation of adjacency.incomingByNode.get(current) ?? [])
+        if (ownershipRelation(relation.relation))
+          visitIncident(relation, relation.source_node_id);
     }
   }
+
+  if (retainedNodes.length > 1)
+    retainedNodes.sort((left, right) =>
+      compareUnicodeCodePoints(left.node_id, right.node_id),
+    );
+  const retainedRelations = [...retainedRelationsMap.values()];
+  if (retainedRelations.length > 1)
+    retainedRelations.sort((left, right) =>
+      compareUnicodeCodePoints(left.relation_id, right.relation_id),
+    );
   return {
     nodeIds,
-    relationIds,
+    retainedNodes,
+    retainedRelations,
     functionIds,
     modules,
+    candidateRelations,
   };
 };
 
 const retainOwners = (
-  node: JavaScriptSemanticGraphNode | undefined,
+  node: JavaScriptSemanticGraphNode,
   functions: Set<string>,
   modules: Set<string>,
 ): void => {
-  if (node === undefined) return;
   const functionId =
     node.kind === "function" ? node.node_id : node.function_node_id;
   if (functionId !== null) functions.add(functionId);
   modules.add(node.identity.module_path);
 };
 
+const unknownMatchesFilter = (
+  unknown: JavaScriptSemanticGraphUnknown,
+  direction: JavaScriptSemanticQueryInput["direction"],
+  allowed: ReadonlySet<JavaScriptSemanticGraphRelation["relation"]> | null,
+): boolean =>
+  unknown.relation_kinds.some(
+    (relation) =>
+      directionAllowsRelation(direction, relation) &&
+      (allowed === null || allowed.has(relation)),
+  );
+
 const relevantUnknownFrontiers = (
   graph: JavaScriptSemanticGraph,
   nodeIds: ReadonlySet<string>,
-  input: JavaScriptSemanticQueryInput,
+  direction: JavaScriptSemanticQueryInput["direction"],
+  allowed: ReadonlySet<JavaScriptSemanticGraphRelation["relation"]> | null,
+  index: SemanticGraphIndex | undefined,
 ): JavaScriptSemanticGraphUnknown[] => {
-  const allowed =
-    input.allowed_relations === undefined
-      ? null
-      : new Set(input.allowed_relations);
-  return graph.unknowns.filter(
-    (unknown) =>
-      (unknown.node_id === null || nodeIds.has(unknown.node_id)) &&
-      unknown.relation_kinds.some(
-        (relation) =>
-          directionAllowsRelation(input.direction, relation) &&
-          (allowed === null || allowed.has(relation)),
-      ),
-  );
+  if (index === undefined)
+    return graph.unknowns.filter(
+      (unknown) =>
+        (unknown.node_id === null || nodeIds.has(unknown.node_id)) &&
+        unknownMatchesFilter(unknown, direction, allowed),
+    );
+  const unknownsIndex = index.getUnknowns();
+  const retained: JavaScriptSemanticGraphUnknown[] = [];
+  for (const unknown of unknownsIndex.global)
+    if (unknownMatchesFilter(unknown, direction, allowed))
+      retained.push(unknown);
+  for (const nodeId of nodeIds) {
+    for (const unknown of unknownsIndex.byNodeId.get(nodeId) ?? [])
+      if (unknownMatchesFilter(unknown, direction, allowed))
+        retained.push(unknown);
+  }
+  if (retained.length > 1)
+    retained.sort((left, right) =>
+      compareUnicodeCodePoints(left.unknown_id, right.unknown_id),
+    );
+  return retained;
 };
 
 const directionAllowsRelation = (
@@ -266,37 +323,39 @@ const directionAllowsRelation = (
       ? ownershipRelation(relation)
       : true;
 
-const relevantCandidateRelationCount = (
+const collectContextIds = (
+  nodes: readonly JavaScriptSemanticGraphNode[],
+  relations: readonly JavaScriptSemanticGraphRelation[],
+  unknowns: readonly JavaScriptSemanticGraphUnknown[],
+): Set<string> => {
+  const ids = new Set<string>();
+  for (const node of nodes) ids.add(node.evidence.context_id);
+  for (const relation of relations) ids.add(relation.evidence.context_id);
+  for (const unknown of unknowns) ids.add(unknown.evidence.context_id);
+  return ids;
+};
+
+const selectEvidenceContexts = (
   graph: JavaScriptSemanticGraph,
-  nodeIds: ReadonlySet<string>,
-  input: JavaScriptSemanticQueryInput,
-): number => {
-  const allowed =
-    input.allowed_relations === undefined
-      ? null
-      : new Set(input.allowed_relations);
-  let relevant = 0;
-  for (const relation of graph.relations) {
-    if (
-      relation.resolution !== "candidate" ||
-      (allowed !== null && !allowed.has(relation.relation))
-    )
-      continue;
-    const sourceIsRelevant = nodeIds.has(relation.source_node_id);
-    const targetIsRelevant = nodeIds.has(relation.target_node_id);
-    if (
-      (input.direction === "callers" &&
-        relation.relation === "calls" &&
-        targetIsRelevant) ||
-      (input.direction === "ownership" &&
-        ownershipRelation(relation.relation) &&
-        (sourceIsRelevant || targetIsRelevant)) ||
-      (input.direction === "backward-provenance" && targetIsRelevant) ||
-      (input.direction === "forward-influence" && sourceIsRelevant)
-    )
-      relevant += 1;
+  contextIds: ReadonlySet<string>,
+  index: SemanticGraphIndex | undefined,
+): JavaScriptSemanticEvidenceContext[] => {
+  if (contextIds.size === 0) return [];
+  if (index === undefined)
+    return graph.evidence_contexts.filter(({ context_id }) =>
+      contextIds.has(context_id),
+    );
+  const contextsById = index.getContextsById();
+  const retained: JavaScriptSemanticEvidenceContext[] = [];
+  for (const contextId of contextIds) {
+    const context = contextsById.get(contextId);
+    if (context !== undefined) retained.push(context);
   }
-  return relevant;
+  if (retained.length > 1)
+    retained.sort((left, right) =>
+      compareUnicodeCodePoints(left.context_id, right.context_id),
+    );
+  return retained;
 };
 
 const expectedMatchesFor = (

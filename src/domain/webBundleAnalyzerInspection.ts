@@ -158,15 +158,15 @@ export const analyzeScript = (
         node: endpoint.node,
         accumulator,
       });
-  if (index.bindings.returnedReferenceWidenings.size > 0)
+  if (index.bindings.observations.returnedReferenceWidenings.size > 0)
     accumulator.widenedScripts.push(script.script_key);
   // Finishing route recovery can itself exhaust a getter or alias budget.
   // Snapshot the evaluator's facts only after every consumer has finished.
   const routeFacts = completeSemanticSteps(routeScan.finishSteps());
   const { bindings } = index;
   const reached = new Set([
-    ...bindings.valueResourceLimits,
-    ...bindings.getterResourceLimits,
+    ...bindings.observations.valueResourceLimits,
+    ...bindings.observations.getterResourceLimits,
   ]);
   return {
     routeFacts,

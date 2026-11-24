@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { Budget } from "../domain/budget.js";
 import { jsonParts } from "../domain/jsonSerialization.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import {
   SQLITE_ROW_LIMIT_DEFAULT,
   sqliteSchemaHasObjectDeclaration,
@@ -70,6 +71,42 @@ const arrayRow = z.array(
 );
 const encodingSchema = z.enum(["UTF-8", "UTF-16le", "UTF-16be"]);
 const cellByteLengths = z.array(z.bigint().nonnegative());
+type ArrayRowValue = z.output<typeof arrayRow>[number];
+
+const parseCellByteLengthsFast = (raw: unknown): bigint[] => {
+  if (Array.isArray(raw)) {
+    let valid = true;
+    for (let index = 0; index < raw.length; index += 1) {
+      const value = raw[index];
+      if (typeof value !== "bigint" || value < 0n) {
+        valid = false;
+        break;
+      }
+    }
+    if (valid) return raw as bigint[];
+  }
+  return cellByteLengths.parse(raw);
+};
+
+const parseArrayRowFast = (raw: unknown): ArrayRowValue[] => {
+  if (Array.isArray(raw)) {
+    let valid = true;
+    for (let index = 0; index < raw.length; index += 1) {
+      const value = raw[index];
+      if (
+        value !== null &&
+        typeof value !== "bigint" &&
+        typeof value !== "string" &&
+        !(typeof value === "number" && !Number.isNaN(value))
+      ) {
+        valid = false;
+        break;
+      }
+    }
+    if (valid) return raw as ArrayRowValue[];
+  }
+  return arrayRow.parse(raw);
+};
 type DatabaseEncoding = z.output<typeof encodingSchema>;
 type Inspection = Pick<
   SqliteDatabase,
@@ -174,12 +211,21 @@ const sqliteNameBytes = (
     );
   return row?.name;
 };
-const textEncoding = (encoding: DatabaseEncoding): string =>
-  encoding === "UTF-8"
-    ? "utf-8"
-    : encoding === "UTF-16le"
-      ? "utf-16le"
-      : "utf-16be";
+// Stateless one-shot TextDecoder instances reset state after every decode()
+// call (including throws on fatal decoders), so sharing one per encoding and
+// fatal mode is equivalent to allocating fresh decoders per cell/schema field.
+const FATAL_UTF16_DECODERS: Readonly<
+  Record<Exclude<DatabaseEncoding, "UTF-8">, TextDecoder>
+> = {
+  "UTF-16le": new TextDecoder("utf-16le", { fatal: true, ignoreBOM: true }),
+  "UTF-16be": new TextDecoder("utf-16be", { fatal: true, ignoreBOM: true }),
+};
+
+const LENIENT_TEXT_DECODERS: Readonly<Record<DatabaseEncoding, TextDecoder>> = {
+  "UTF-8": new TextDecoder("utf-8", { ignoreBOM: true }),
+  "UTF-16le": new TextDecoder("utf-16le", { ignoreBOM: true }),
+  "UTF-16be": new TextDecoder("utf-16be", { ignoreBOM: true }),
+};
 
 const decodeSchemaText = (
   value: Uint8Array,
@@ -187,10 +233,9 @@ const decodeSchemaText = (
   label: string,
 ): string => {
   try {
-    return new TextDecoder(textEncoding(encoding), {
-      fatal: true,
-      ignoreBOM: true,
-    }).decode(value);
+    return encoding === "UTF-8"
+      ? decodeStrictUtf8(value, "preserve")
+      : FATAL_UTF16_DECODERS[encoding].decode(value);
   } catch (cause: unknown) {
     throw new SqliteInspectionFailure(
       "format",
@@ -232,9 +277,7 @@ const cell = (
     );
   return {
     type: "text",
-    value: new TextDecoder(textEncoding(encoding), { ignoreBOM: true }).decode(
-      Buffer.from(hex, "hex"),
-    ),
+    value: LENIENT_TEXT_DECODERS[encoding].decode(Buffer.from(hex, "hex")),
     bytes_hex: hex,
     encoding,
   };
@@ -1027,11 +1070,11 @@ const readRows = (
     );
     lengths.setReturnArrays(true);
     for (const raw of lengths.iterate(limit, offset))
-      budget.beforeProjection(cellByteLengths.parse(raw));
+      budget.beforeProjection(parseCellByteLengthsFast(raw));
     const statement = db.prepare(`SELECT ${projection} FROM ${window}`);
     statement.setReturnArrays(true);
     for (const raw of statement.iterate(limit, offset)) {
-      const rawRow = arrayRow.parse(raw);
+      const rawRow = parseArrayRowFast(raw);
       // Hex expansion already belongs to the retained-output budget, before decoding/copying cells.
       budget.beforeDecode(rawRow);
       const values = rawRow.map((value) => cell(value, encoding));
@@ -1039,6 +1082,7 @@ const readRows = (
       rows.values.push(values);
     }
     rows.truncated =
+      rows.values.length === limit &&
       db
         .prepare(`SELECT 1 FROM ${source}${clause} LIMIT 1 OFFSET ?`)
         .get(offset + rows.values.length) !== undefined;
@@ -1095,7 +1139,7 @@ export const inspectSqliteDatabaseSnapshot = (
     if (!supported.success)
       throw new SqliteInspectionFailure(
         "unavailable",
-        "SQLite inspection requires the native DatabaseSync.limits API to bound untrusted values and SQL. Use Node.js 24.15 or newer in the supported 24.x line, or a compatible Node.js 26+ runtime.",
+        "SQLite inspection requires the native DatabaseSync.limits API to bound untrusted values and SQL. Run REA on a supported Node.js 24.x or 26.x runtime.",
       );
     db.exec(
       "PRAGMA trusted_schema=OFF; PRAGMA query_only=ON; PRAGMA mmap_size=0; PRAGMA cell_size_check=ON; BEGIN;",

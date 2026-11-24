@@ -8,8 +8,6 @@ export const MCP_CONNECTION_START_FAILED =
   "Retry once. If it fails again, tell the user REA could not start its MCP connection and ask them to restart the MCP client, then run `rea doctor`.";
 export const MCP_SHUTDOWN_FAILED =
   "REA could not close cleanly. End the REA process before starting it again.";
-export const SERVER_START_FAILED =
-  "Do not repeat this startup. Tell the user REA could not start and ask them to restart the MCP client, then run `rea doctor`.";
 /** The listener error owns recovery for its parsed failure; never its native cause text. */
 export const mcpHttpListenFailed = (remediation: string): string =>
   `REA could not listen for MCP HTTP connections. ${remediation}`;

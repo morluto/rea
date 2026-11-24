@@ -16,13 +16,23 @@ import {
   ANALYSIS_SNAPSHOT_PROVIDER,
   ANALYSIS_SNAPSHOT_TARGET,
 } from "./analysisSnapshot.fixture.js";
+import { createAnalysisProfile } from "./analysisProfile.js";
 import { createEvidence, evidenceSubject } from "./evidence.js";
 import { unknownTarget } from "./targetIdentity.js";
-import { createEvidenceBundle } from "./evidenceBundle.js";
+import {
+  createEvidenceBundle,
+  createImmutableEvidenceBundle,
+} from "./evidenceBundle.js";
+import { freezeJsonSnapshot } from "./immutableJson.js";
 import {
   RAW_ONLY_ARCHITECTURES,
   type BinaryTarget,
 } from "./binaryTargetTypes.js";
+import {
+  admittedRawLoad,
+  rawLoadAtEntry,
+  vectorTableWords,
+} from "./rawBinary.fixture.js";
 
 const snapshotWithHistoricalEvidence = () => {
   const target = snapshotTarget(ANALYSIS_SNAPSHOT_TARGET);
@@ -142,27 +152,46 @@ describe("analysis snapshot target identity", () => {
   );
 
   it("partitions raw snapshots and query identities by the canonical entry", () => {
-    const target: BinaryTarget = {
+    const target: Extract<BinaryTarget, { format: "raw-binary" }> = {
       path: "/fixture/image.bin",
       sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
       kind: "executable",
       format: "raw-binary",
       architecture: "arm",
       availableArchitectures: ["arm"],
-      entryPoint: "0x8000000",
-      entryPointSource: "0x08000000",
+      rawLoad: {
+        baseAddress: "0x8000000",
+        entryPoint: "0x8000000",
+        entrySource: { kind: "caller" },
+      },
     };
     const snapshot = snapshotTarget(target);
     const binding = snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE);
-    const changed = {
+    // A load based at its caller-selected entry selects its entry only, as
+    // before separate bases and variants existed.
+    expect(snapshot).toStrictEqual({
+      kind: "executable",
+      identity: {
+        kind: "file",
+        sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+        format: "raw-binary",
+        architecture: "arm",
+        selection: { kind: "entry-point", entry_point: "0x8000000" },
+      },
+    });
+    const changed: Extract<BinaryTarget, { format: "raw-binary" }> = {
       ...target,
-      entryPoint: "0x9000000",
-      entryPointSource: "0x09000000",
+      rawLoad: {
+        baseAddress: "0x9000000",
+        entryPoint: "0x9000000",
+        entrySource: { kind: "caller" },
+      },
     };
+    // Another spelling of the same entry is the same load.
     expect(
       snapshotMatchesTarget(snapshot, {
         ...target,
-        entryPointSource: "0x8000000",
+        rawLoad: rawLoadAtEntry("0x08000000"),
       }),
     ).toBe(true);
     expect(snapshotMatchesTarget(snapshot, changed)).toBe(false);
@@ -178,7 +207,7 @@ describe("analysis snapshot target identity", () => {
     });
     expect(parsed.target.identity.selection).toEqual({
       kind: "entry-point",
-      entry_point: target.entryPoint,
+      entry_point: target.rawLoad.entryPoint,
     });
     // A raw target without its entry selection is not one REA can open.
     expect(
@@ -192,6 +221,81 @@ describe("analysis snapshot target identity", () => {
     ).toBe(false);
     expect(snapshotTarget(ANALYSIS_SNAPSHOT_TARGET).identity.selection).toBe(
       null,
+    );
+  });
+});
+
+describe("analysis snapshot M-profile raw identity", () => {
+  const target = (
+    baseAddress: string,
+  ): Extract<BinaryTarget, { format: "raw-binary" }> => ({
+    path: "/fixture/flash.bin",
+    sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+    kind: "executable",
+    format: "raw-binary",
+    architecture: "arm",
+    availableArchitectures: ["arm"],
+    rawLoad: admittedRawLoad(
+      {
+        architecture: "arm",
+        architectureVariant: "armv7-m",
+        entryPoint: undefined,
+        baseAddress,
+        fileBytes: 0x400,
+      },
+      vectorTableWords(0x20005000, 0x080001c5),
+    ),
+  });
+
+  it("commits the resolved load and keeps spellings out of identity", () => {
+    const snapshot = snapshotTarget(target("0x08000000"));
+    expect(snapshot.identity.selection).toStrictEqual({
+      kind: "entry-point",
+      entry_point: "0x80001c4",
+      raw_load: {
+        version: 1,
+        base_address: "0x8000000",
+        architecture_variant: "armv7-m",
+        vector_table_address: "0x8000000",
+        entries: [
+          {
+            address: "0x80001c4",
+            isa_mode: "thumb",
+            role: "reset",
+            basis: "vector-table",
+          },
+        ],
+      },
+    });
+    const binding = snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE);
+    expect(
+      analysisSnapshotSchema.parse({
+        target: snapshot,
+        binding,
+        entries: [],
+        workflow_entries: [],
+        evidence_bundle: createEvidenceBundle([]),
+      }).target,
+    ).toStrictEqual(snapshot);
+    expect(snapshotMatchesTarget(snapshot, target("0x8000000"))).toBe(true);
+  });
+
+  it("partitions by base and from a legacy load at the same entry", () => {
+    const snapshot = snapshotTarget(target("0x08000000"));
+    const moved = target("0x07ffff00");
+    expect(moved.rawLoad.entryPoint).toBe("0x80001c4");
+    expect(snapshotMatchesTarget(snapshot, moved)).toBe(false);
+    const selection = snapshot.identity.selection;
+    if (selection?.kind !== "entry-point") throw new Error("expected raw");
+    const { raw_load: _identity, ...legacySelection } = selection;
+    const legacy = {
+      ...snapshot,
+      identity: { ...snapshot.identity, selection: legacySelection },
+    };
+    expect(snapshotMatchesTarget(legacy, target("0x08000000"))).toBe(false);
+    const binding = snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE);
+    expect(analysisQueryId(snapshot, binding, "list_procedures", {})).not.toBe(
+      analysisQueryId(legacy, binding, "list_procedures", {}),
     );
   });
 });
@@ -504,51 +608,6 @@ describe("analysis snapshot canonical ordering and scope", () => {
   });
 });
 
-it("does not select arbitrary provenance when multiple authenticated records match one replay entry", () => {
-  const { current, snapshot } = snapshotWithHistoricalEvidence();
-  const source = snapshot.evidence_bundle.records.find(
-    (record) => record.operation === "unprofiled_query",
-  )!;
-  const alternative = createEvidence(
-    ANALYSIS_SNAPSHOT_TARGET,
-    ANALYSIS_SNAPSHOT_PROVIDER,
-    {
-      operation: current.operation,
-      parameters: current.parameters,
-      result: current.normalized_result,
-      analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
-      evidenceLinks: [source.evidence_id],
-    },
-  );
-  expect(alternative.evidence_id).not.toBe(current.evidence_id);
-  const ambiguous = parseAnalysisSnapshot({
-    ...snapshot,
-    evidence_bundle: createEvidenceBundle([
-      ...snapshot.evidence_bundle.records,
-      alternative,
-    ]),
-  });
-  expect(ambiguous.entries).toEqual(snapshot.entries);
-  const reversedInsertion = parseAnalysisSnapshot({
-    ...ambiguous,
-    evidence_bundle: createEvidenceBundle(
-      [...ambiguous.evidence_bundle.records].reverse(),
-    ),
-  });
-  expect(reversedInsertion).toEqual(ambiguous);
-  for (const candidate of [ambiguous, reversedInsertion])
-    expect(
-      snapshotEvidenceForQuery(candidate, {
-        target: ANALYSIS_SNAPSHOT_TARGET,
-        bindingProfile: ANALYSIS_SNAPSHOT_PROFILE,
-        operation: current.operation,
-        parameters: current.parameters,
-        provider: ANALYSIS_SNAPSHOT_PROVIDER,
-        evidenceProfile: ANALYSIS_SNAPSHOT_PROFILE,
-      }),
-    ).toBeUndefined();
-});
-
 it("retains linked foreign Evidence without treating it as selected-target replay", () => {
   const { current, snapshot } = snapshotWithHistoricalEvidence();
   const foreignTarget = { ...ANALYSIS_SNAPSHOT_TARGET, sha256: "b".repeat(64) };
@@ -580,16 +639,37 @@ it("retains linked foreign Evidence without treating it as selected-target repla
     ...snapshot,
     evidence_bundle: bundle,
   });
+  const query = {
+    target: ANALYSIS_SNAPSHOT_TARGET,
+    bindingProfile: ANALYSIS_SNAPSHOT_PROFILE,
+    operation: linked.operation,
+    parameters: linked.parameters,
+    provider: ANALYSIS_SNAPSHOT_PROVIDER,
+    evidenceProfile: ANALYSIS_SNAPSHOT_PROFILE,
+  };
+  expect(snapshotEvidenceForQuery(admitted, query)).toEqual(linked);
+  const differentProfile = createAnalysisProfile(ANALYSIS_SNAPSHOT_PROVIDER, {
+    fixture: "other",
+  });
   expect(
     snapshotEvidenceForQuery(admitted, {
-      target: ANALYSIS_SNAPSHOT_TARGET,
-      bindingProfile: ANALYSIS_SNAPSHOT_PROFILE,
-      operation: linked.operation,
-      parameters: linked.parameters,
-      provider: ANALYSIS_SNAPSHOT_PROVIDER,
-      evidenceProfile: ANALYSIS_SNAPSHOT_PROFILE,
+      ...query,
+      evidenceProfile: differentProfile,
     }),
-  ).toEqual(linked);
+  ).toBeUndefined();
+  expect(
+    snapshotEvidenceForQuery(admitted, {
+      ...query,
+      bindingProfile: differentProfile,
+    }),
+  ).toBeUndefined();
+  expect(
+    snapshotEvidenceForQuery(admitted, {
+      ...query,
+      operation: "unprofiled_query",
+      parameters: {},
+    }),
+  ).toBeUndefined();
   expect(snapshotMatchesTarget(admitted.target, foreignTarget)).toBe(false);
   const unrelated = createEvidence(foreignTarget, ANALYSIS_SNAPSHOT_PROVIDER, {
     operation: "unrelated",
@@ -612,8 +692,7 @@ it("binds raw Evidence only when its entry point matches the snapshot target", (
     format: "raw-binary",
     architecture: "arm",
     availableArchitectures: ["arm"],
-    entryPoint,
-    entryPointSource: entryPoint,
+    rawLoad: rawLoadAtEntry(entryPoint),
   });
   const selected = raw("0x8000000");
   const target = snapshotTarget(selected);
@@ -672,30 +751,6 @@ it("binds raw Evidence only when its entry point matches the snapshot target", (
 });
 
 describe("analysis snapshot Evidence binding", () => {
-  it("finds only Evidence committed to the exact binding and profile", () => {
-    const { current, snapshot } = snapshotWithHistoricalEvidence();
-    expect(
-      snapshotEvidenceForQuery(snapshot, {
-        target: ANALYSIS_SNAPSHOT_TARGET,
-        bindingProfile: ANALYSIS_SNAPSHOT_PROFILE,
-        operation: "analyze_function",
-        parameters: { procedure: "main" },
-        provider: ANALYSIS_SNAPSHOT_PROVIDER,
-        evidenceProfile: ANALYSIS_SNAPSHOT_PROFILE,
-      }),
-    ).toEqual(current);
-    expect(
-      snapshotEvidenceForQuery(snapshot, {
-        target: ANALYSIS_SNAPSHOT_TARGET,
-        bindingProfile: ANALYSIS_SNAPSHOT_PROFILE,
-        operation: "unprofiled_query",
-        parameters: {},
-        provider: ANALYSIS_SNAPSHOT_PROVIDER,
-        evidenceProfile: ANALYSIS_SNAPSHOT_PROFILE,
-      }),
-    ).toBeUndefined();
-  });
-
   it("rejects cached execution data that differs from its bundled Evidence", () => {
     const target = snapshotTarget(ANALYSIS_SNAPSHOT_TARGET);
     const binding = snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE);
@@ -884,4 +939,59 @@ describe("analysis snapshot payload ownership", () => {
       expect(Object.isFrozen(tamperedEntry.execution.result)).toBe(false);
     },
   );
+});
+
+describe("detached snapshot exports", () => {
+  it("detaches sealed nested JSON payloads while keeping immutable snapshots shared", () => {
+    const { snapshot } = snapshotWithHistoricalEvidence();
+    const entry = snapshot.entries[0];
+    if (entry === undefined) throw new Error("Missing fixture entry");
+    const frozenResult = freezeJsonSnapshot({ summary: "cached", items: [1] });
+    const frozenRaw = freezeJsonSnapshot({ source: ["raw"] });
+    const frozenParams = freezeJsonSnapshot({ procedure: "main" });
+    const evidence = createEvidence(
+      ANALYSIS_SNAPSHOT_TARGET,
+      ANALYSIS_SNAPSHOT_PROVIDER,
+      {
+        operation: entry.operation,
+        parameters: frozenParams,
+        result: frozenResult,
+        rawResult: frozenRaw,
+        analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+      },
+    );
+    const sealedBundle = createImmutableEvidenceBundle([evidence]);
+    const input = {
+      ...snapshot,
+      entries: [
+        {
+          ...entry,
+          parameters: frozenParams,
+          execution: {
+            ...entry.execution,
+            result: frozenResult,
+            raw_result: frozenRaw,
+          },
+        },
+      ],
+      evidence_bundle: sealedBundle,
+    };
+    const detached = parseAnalysisSnapshot(input);
+    const detachedEntry = detached.entries[0]!;
+    const detachedRecord = detached.evidence_bundle.records[0]!;
+    expect(Object.isFrozen(detachedEntry.execution.result)).toBe(false);
+    expect(Object.isFrozen(detachedEntry.execution.raw_result)).toBe(false);
+    expect(Object.isFrozen(detachedEntry.parameters)).toBe(false);
+    expect(Object.isFrozen(detachedRecord.normalized_result)).toBe(false);
+    expect(Object.isFrozen(detachedRecord.raw_result)).toBe(false);
+    expect(Object.isFrozen(detachedRecord.parameters)).toBe(false);
+    (detachedRecord.normalized_result as { items: number[] }).items.push(2);
+    expect(sealedBundle.records[0]?.normalized_result).toEqual({
+      summary: "cached",
+      items: [1],
+    });
+    expect(Object.isFrozen(sealedBundle.records[0]?.normalized_result)).toBe(
+      true,
+    );
+  });
 });

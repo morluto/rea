@@ -73,6 +73,7 @@ export const unavailableCallGraph = (reason: string): CallGraphCallees => ({
   coverage: {
     status: "unknown",
     reason: `Upstream callgraph was unavailable (${reason}); callee edges remain unknown.`,
+    limited_directions: ["callees"],
     diagnostics: [UNRECOGNIZED_CALLEE_LIMITATION],
   },
 });
@@ -109,9 +110,14 @@ export const readCallGraphCallees = async (
   const edges = row.edges.filter(
     ({ type, from }) => type === "call" && from === address,
   );
-  const targets = [...new Set(edges.map(({ to }) => to))].sort((left, right) =>
-    BigInt(left) < BigInt(right) ? -1 : BigInt(left) > BigInt(right) ? 1 : 0,
-  );
+  const targetSet = new Set<string>();
+  for (const edge of edges) targetSet.add(edge.to);
+  const targets = [...targetSet]
+    .map((target) => ({ target, offset: BigInt(target) }))
+    .sort((left, right) =>
+      left.offset < right.offset ? -1 : left.offset > right.offset ? 1 : 0,
+    )
+    .map(({ target }) => target);
   const limitations = [UNRECOGNIZED_CALLEE_LIMITATION];
   const diagnostics = [UNRECOGNIZED_CALLEE_LIMITATION];
   const coverageLimitations: string[] = [];
@@ -153,7 +159,7 @@ export const readCallGraphCallees = async (
         const rows = new Map<string, (typeof parsed.data)[number] | null>();
         for (const item of parsed.data) {
           const query = idaAddressSchema.safeParse(item.query);
-          if (!query.success || !targets.includes(query.data)) continue;
+          if (!query.success || !targetSet.has(query.data)) continue;
           rows.set(query.data, rows.has(query.data) ? null : item);
         }
         for (const target of targets) {

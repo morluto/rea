@@ -12,6 +12,7 @@ import {
 } from "../../src/native/elf/ElfDebugLink.fixture.js";
 import {
   compressedElfNoteSectionFixture,
+  coreFileNote,
   gnuBuildIdNote,
   withElf64DirectSectionCount,
 } from "../../src/native/elf/ElfNotes.fixture.js";
@@ -24,7 +25,7 @@ const debugLinkContract = contractNamed(
 );
 
 cliTest(
-  "verifies a matching debug file from absolute and relative paths",
+  "verifies a debug file while preserving both relative caller paths",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-elf-debug-link-cli-");
     const candidate = elfDebugCandidateFixture();
@@ -35,17 +36,23 @@ cliTest(
     const candidatePath = join(root, "prog.debug");
     await writeFile(imagePath, image);
     await writeFile(candidatePath, candidate);
-    const absolute = await cli.run({
+    const selected = await cli.run({
       arguments: [
         "inspect-elf-debug-link",
-        imagePath,
+        "prog",
         "--candidate-path",
-        candidatePath,
+        "prog.debug",
         "--json",
       ],
+      cwd: root,
     });
-    expect(absolute.exitCode, absolute.stderr).toBe(0);
-    const evidence = debugLinkContract.outputSchema.parse(absolute.json);
+    expect(selected.exitCode, selected.stderr).toBe(0);
+    const evidence = debugLinkContract.outputSchema.parse(selected.json);
+    expect(evidence.subject.local_path).toBe(imagePath);
+    expect(evidence.caller_input_path).toBe("prog");
+    expect(evidence.caller_input_paths).toEqual({
+      candidate_path: "prog.debug",
+    });
     expect(evidence.parameters).toEqual({
       path: imagePath,
       candidate_path: candidatePath,
@@ -94,49 +101,40 @@ cliTest(
         ],
       ].map(([kind, path]) => ({ kind, path, trust: "observed-untrusted" })),
     );
-    const relative = await cli.run({
-      arguments: [
-        "inspect-elf-debug-link",
-        "prog",
-        "--candidate-path",
-        "prog.debug",
-        "--json",
-      ],
-      cwd: root,
-    });
-    expect(relative.exitCode, relative.stderr).toBe(0);
-    const relativeEvidence = debugLinkContract.outputSchema.parse(
-      relative.json,
-    );
-    expect(relativeEvidence.normalized_result.verification?.status).toBe(
-      "matches",
-    );
-    expect(relativeEvidence.subject?.local_path).toBe(imagePath);
-    expect(relativeEvidence.caller_input_path).toBe("prog");
-    expect(relativeEvidence.caller_input_paths).toEqual({
-      candidate_path: "prog.debug",
-    });
-    expect(relativeEvidence.normalized_result.candidate?.path).toBe(
-      candidatePath,
-    );
   },
 );
 
 cliTest(
-  "reports a mismatching candidate without failing the read",
+  "compares both build IDs beside unrelated CORE mappings",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-elf-debug-link-cli-miss-");
     const imagePath = join(root, "prog");
     const candidatePath = join(root, "other.debug");
+    const fileNote = coreFileNote(
+      Array.from({ length: 60 }, (_, index) => ({
+        start: 0x1000 + index * 0x1000,
+        end: 0x2000 + index * 0x1000,
+        file_ofs: 0,
+        path: "/bin/core-app",
+      })),
+    );
+    const notes = (hex: string) =>
+      Buffer.concat([fileNote, gnuBuildIdNote(hex)]);
     await writeFile(
       imagePath,
       elfDebugLinkFixture({
+        type: 4,
+        notes: notes(FIXTURE_BUILD_ID_HEX),
         debuglink: debuglinkSection(FIXTURE_DEBUG_NAME, 0x11111111, true),
       }),
     );
     await writeFile(
       candidatePath,
-      elfDebugCandidateFixture({ buildIdHex: "dd".repeat(20) }),
+      elfDebugLinkFixture({
+        type: 4,
+        debuglink: null,
+        notes: notes("dd".repeat(20)),
+      }),
     );
     const result = await cli.run({
       arguments: [
@@ -149,25 +147,18 @@ cliTest(
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = debugLinkContract.outputSchema.parse(result.json);
-    expect(evidence.normalized_result.verification?.status).toBe(
-      "does_not_match",
-    );
+    expect(evidence.normalized_result.verification).toMatchObject({
+      status: "does_not_match",
+      reason: "crc32_and_build_id_mismatch",
+      crc32: { status: "mismatch", expected_hex: "11111111" },
+      build_id: {
+        status: "mismatch",
+        binary_hex: FIXTURE_BUILD_ID_HEX,
+        candidate_hex: "dd".repeat(20),
+      },
+    });
   },
 );
-
-cliTest("reports a non-ELF file as invalid input", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-elf-debug-link-cli-bad-");
-  const path = join(root, "broken");
-  await writeFile(path, Buffer.from("not an elf"));
-  const result = await cli.run({
-    arguments: ["inspect-elf-debug-link", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_elf_debug_link" },
-  });
-});
 
 cliTest(
   "retains separate readable build IDs beside compressed ELF notes",

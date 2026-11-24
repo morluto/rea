@@ -133,7 +133,9 @@ other format characters), and fit within
 a default 64 MiB header-scan budget and 512 KiB aggregate string budget
 (`truncated: true` when capped). Select `max_string_literal_bytes`,
 `max_string_bytes`, `max_string_header_scan_bytes`, or `max_string_candidates`
-to change these independent budgets. Their CLI flags use hyphens, for example
+to change these independent budgets. Length limits apply to structurally admitted
+ranges before their contents are read. Only printable candidates fill the
+retained-candidate budget. Their CLI flags use hyphens, for example
 `--max-string-literal-bytes 16384`. `limits_reached` names exhausted controls;
 increase those controls for a new inspection of the same complete artifact. Compiler-inlined or
 stack-constructed strings without static headers, unapplied relocation addends
@@ -192,6 +194,22 @@ any, that selects each. A slice whose Mach-O header does not match its FAT
 declaration, such as a different CPU subtype, is listed as unverified, and no
 value is offered for it. `architecture` on any other image is rejected rather
 than ignored.
+
+A damaged universal file is a target refusal, not a request to correct:
+overlapping slices, a slice range outside the file, or a selected slice whose
+header disagrees with its FAT entry return `unsupported_target` with
+`details.format` `macho`, `details.format_failure` `malformed` (`truncated`
+when the selected slice ends inside its Mach-O header), and `details.path`
+naming the universal file. A file that ends inside its FAT header or
+architecture table was cut short rather than corrupted: `format_failure` is
+`truncated`, `details.available_bytes` is the file's size and
+`details.required_bytes` is the length that header or table needs, so
+acquire the complete file again. A CAFEBABE file whose architecture count
+reads as a Java class-file version is not read as a truncated
+universal file. A FAT form outside REA's coverage, such as an
+alignment exponent above 52, is `unsupported_target` without
+`format_failure`. The same rules apply to `inspect_rust_binary`,
+`inspect_dwarf_units` and `inspect_native_initializers`.
 
 For ELF images without a named build-info section, discovery checks each
 nonempty writable, non-executable load segment in program-header order. This

@@ -31,9 +31,12 @@ const fixture = async () => {
     process.platform === "win32" ? "junction" : undefined,
   );
   await writeFile(join(root, "package.json"), '{"type":"module"}');
+  // Disable Vitest's disk module cache in nested fixture configs; root/node_modules
+  // symlinks the parent workspace's node_modules, so a lockfile mismatch would
+  // otherwise clear the parent runner's node_modules/.vitest-cache mid-run.
   await writeFile(
     join(root, "vitest.config.mjs"),
-    'export default { test: { projects: ["domain", "boundary"].map(name => ({ test: { name, include: ["value.test.ts"], pool: "forks" } })) } };',
+    'export default { test: { fsModuleCache: false, projects: ["domain", "boundary"].map(name => ({ test: { name, fsModuleCache: false, include: ["value.test.ts"], pool: "forks" } })) } };',
   );
   return root;
 };
