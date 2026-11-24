@@ -148,25 +148,31 @@ const observeWindowsHeader = (
       ? signatureEvidence.bytes
       : inlineSignature;
   const signature = windowsHeaderSignature(available);
-  // The Windows loader reads e_lfanew without consulting DOS relocation or
-  // page fields, so a complete "PE\0\0" signature there declares the image
-  // even when a DOS relocation table claims those bytes.
-  if (offset !== 0 && signature === "PE")
-    return { state: "declared", offset, signature };
   if (
     headerBytes !== 0 &&
     relocationCount > 0 &&
     tableStart < 64 &&
     tableEnd > 60
-  )
-    // Only a PE signature overrides the table's claim; request those bytes
-    // when the prefix does not hold them.
-    return offset !== 0 &&
-      signature === "unobserved" &&
+  ) {
+    // A relocation table a DOS loader can honor owns dword60, even when those
+    // bytes point at planted PE data. A table that starts inside the fixed
+    // 28-byte header, or with invalid page fields, describes no DOS load
+    // module (corkami dllnullep.dll, nullEP.exe); the Windows loader then
+    // reads e_lfanew alone, so only a complete "PE\0\0" there declares a
+    // PE image, requested when the prefix does not hold it.
+    const dosOwnsPointer =
+      tableStart >= 28 &&
+      dosMzDeclaredImageByteLength(
+        declarations ?? fixedDosMzDeclarations(reader),
+      ).ok;
+    if (dosOwnsPointer || offset === 0) return { state: "absent" };
+    if (signature === "PE") return { state: "declared", offset, signature };
+    return signature === "unobserved" &&
       signatureEvidence?.offset !== offset &&
       fileSize - offset >= 4
       ? { state: "signature-needed", offset }
       : { state: "absent" };
+  }
   if (offset === 0) return { state: "absent" };
   if (signature !== "other" && signature !== "unobserved")
     return { state: "declared", offset, signature };
