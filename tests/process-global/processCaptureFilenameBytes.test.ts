@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../fixtures/canonicalOutputSchema.js";
 import { createHash } from "node:crypto";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { Dirent } from "node:fs";
@@ -11,6 +12,7 @@ import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { advertisedSchemaErrors } from "../fixtures/mcpAdvertisedSchemaValidity.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof fs>();
@@ -137,7 +139,10 @@ it("advertises byte-preserving omissions in valid SDK-converted MCP schemas", as
     throw new Error("Schema discovery must not launch a provider");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "capture-name-bytes", version: "1" });
+  const client = new Client(
+    { name: "capture-name-bytes", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   try {
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
@@ -149,8 +154,12 @@ it("advertises byte-preserving omissions in valid SDK-converted MCP schemas", as
     expect(tool).toBeDefined();
     if (tool === undefined) throw new Error("Missing process capture contract");
     expect(advertisedSchemaErrors([tool])).toEqual([]);
-    expect(JSON.stringify(tool.outputSchema)).toContain("unrepresentable_name");
-    expect(JSON.stringify(tool.outputSchema)).toContain("raw_name_hex");
+    expect(JSON.stringify(canonicalOutputSchema(tool.name))).toContain(
+      "unrepresentable_name",
+    );
+    expect(JSON.stringify(canonicalOutputSchema(tool.name))).toContain(
+      "raw_name_hex",
+    );
   } finally {
     await client.close();
     await server.close();

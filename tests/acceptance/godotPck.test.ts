@@ -12,7 +12,7 @@ import {
 } from "../fixtures/godotPck.js";
 import { elf } from "../../src/domain/binaryTarget.fixture.js";
 import { readEvidenceBundle } from "../../src/application/EvidenceBundleFiles.js";
-import { analysisViewResultSchema } from "../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import {
@@ -74,14 +74,21 @@ cliTest.for([1, 2, 3, 4] as const)(
       expect(row?.source_path).toBe(member.path);
       expect(row?.hash_status).toBe("verified");
     }
+    const outputRoot = join(root, "extracted");
     const extracted = await cli.run({
-      arguments: ["extract-artifact", source, "--json"],
-      environment: { TMPDIR: root, TMP: root, TEMP: root },
+      arguments: [
+        "extract-artifact",
+        source,
+        "--output-root",
+        outputRoot,
+        "--json",
+      ],
     });
     expect(extracted.exitCode, extracted.stdout + extracted.stderr).toBe(0);
     const result = artifactExtractionResultSchema.parse(
       parseEvidence(extracted.json).normalized_result,
     );
+    expect(result.output_root).toBe(outputRoot);
     expect(result.containment_verified).toBe(true);
     for (const member of members)
       expect(
@@ -251,9 +258,10 @@ cliTest(
         source,
         "--integrity-policy",
         "record-and-continue",
+        "--output-root",
+        join(root, "extracted"),
         "--json",
       ],
-      environment: { TMPDIR: root, TMP: root, TEMP: root },
     });
     expect(extracted.exitCode, extracted.stdout + extracted.stderr).toBe(0);
     const result = artifactExtractionResultSchema.parse(
@@ -269,8 +277,8 @@ cliTest(
 cliTest(
   "retains encrypted-directory declarations without claiming an empty package",
   async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-pck-encrypted-cli-");
-    const source = join(root, "encrypted.pck");
+    const root = await createTestTempDirectory("rea-pck-refusal-");
+    const source = join(root, "game.pck");
     const bytes = buildGodotPck(4, members, { packFlags: 3 });
     const directory = Number(bytes.readBigUInt64LE(32));
     bytes.fill(0xff, directory + 4);
@@ -293,10 +301,21 @@ cliTest(
       },
     });
     const extracted = await cli.run({
-      arguments: ["extract-artifact", source, "--json"],
-      environment: { TMPDIR: root, TMP: root, TEMP: root },
+      arguments: [
+        "extract-artifact",
+        source,
+        "--output-root",
+        join(root, "extracted"),
+        "--json",
+      ],
     });
     expect(extracted.exitCode).toBe(1);
+    expect(extracted.json).toMatchObject({
+      code: "unsupported_target",
+      message: expect.stringMatching(/\bencrypted\b/iu),
+      details: { path: source },
+    });
+    expect(await readdir(root)).toEqual(["game.pck"]);
   },
 );
 
@@ -383,7 +402,6 @@ cliTest(
       }),
     ]);
   },
-  30000,
 );
 
 cliTest(
@@ -424,5 +442,4 @@ cliTest(
       }
     }
   },
-  30000,
 );

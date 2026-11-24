@@ -1,4 +1,5 @@
 import { setImmediate } from "node:timers/promises";
+import { readByteSourceSlice, type ByteSource } from "../domain/byteSource.js";
 
 import {
   DEFAULT_MAX_RUST_INFERRED_CRATES,
@@ -27,7 +28,7 @@ import {
 import type {
   BinaryContainer,
   ImageSection,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 
 const CARGO_TOKEN = Buffer.from("cargo");
 const RUSTC_TOKEN = Buffer.from("rustc ");
@@ -112,8 +113,8 @@ const isSafeElfCommentSection = (section: ImageSection): boolean =>
   (section.flags & ELF_SHF_WRITE) === 0n &&
   (section.flags & ELF_SHF_EXECINSTR) === 0n;
 
-const candidateFingerprintRanges = (
-  bytes: Buffer,
+export const rustSourceFingerprintRanges = (
+  fileBytes: number,
   container: BinaryContainer,
 ): FileByteRange[] => {
   const sections = container.sections
@@ -125,7 +126,7 @@ const candidateFingerprintRanges = (
           .filter((region) => region.read && !region.write && !region.execute)
           .map(({ mapping }) => mapping)
       : [];
-  return mergedReadOnlyFileRanges([...sections, ...loadRegions], bytes.length);
+  return mergedReadOnlyFileRanges([...sections, ...loadRegions], fileBytes);
 };
 
 const isPathSeparator = (byte: number): boolean =>
@@ -189,6 +190,11 @@ const isRegistryCrateDirByte = (byte: number): boolean =>
   (byte >= 0x80 && byte <= 0xf4);
 
 const MAX_OVERLONG_CARGO_LOOKAHEAD_BYTES = 4096;
+/** Cargo prefix, registry index, crate directory and trailing separator. */
+const FINGERPRINT_LOOKAHEAD_BYTES =
+  CARGO_TOKEN.length + 1 + 13 + 2 * (MAX_OVERLONG_CARGO_LOOKAHEAD_BYTES + 1);
+/** Boundary checks examine at most the preceding `.rs` suffix. */
+const FINGERPRINT_LOOKBEHIND_BYTES = 3;
 
 type ParsedCargoCrateCandidate = Omit<
   RustInferredCrate,
@@ -360,7 +366,7 @@ function* scanWindowCargoCandidates(
   windowStart: number,
   windowEnd: number,
   state: FingerprintAccumulator,
-): Generator<void, void> {
+): Generator<undefined, void> {
   const cargoSlice = region.subarray(
     windowStart,
     Math.min(region.length, windowEnd + CARGO_TOKEN.length - 1),
@@ -414,7 +420,7 @@ function* scanWindowRustcCandidates(
   windowEnd: number,
   regionTruncated: boolean,
   state: FingerprintAccumulator,
-): Generator<void, void> {
+): Generator<undefined, void> {
   const rustcSlice = region.subarray(
     windowStart,
     Math.min(region.length, windowEnd + RUSTC_TOKEN.length - 1),
@@ -456,12 +462,19 @@ function* scanWindowRustcCandidates(
   }
 }
 
+interface FingerprintRead {
+  readonly offset: number;
+  readonly length: number;
+}
+
 function* recoverRustSourceFingerprintsSteps(
-  bytes: Buffer,
-  container: BinaryContainer,
+  ranges: readonly FileByteRange[],
   maxInferredCrates: number,
-): Generator<void, RecoveredRustSourceFingerprints> {
-  const ranges = candidateFingerprintRanges(bytes, container);
+): Generator<
+  FingerprintRead | undefined,
+  RecoveredRustSourceFingerprints,
+  Buffer | undefined
+> {
   const state: FingerprintAccumulator = {
     cratesByKey: new Map(),
     retainedCrates: [],
@@ -486,30 +499,37 @@ function* recoverRustSourceFingerprintsSteps(
     if (regionTruncated) scanTruncated = true;
     remainingBudget -= admittedBytes;
 
-    const region = bytes.subarray(range.offset, range.offset + admittedBytes);
+    const admittedEnd = range.offset + admittedBytes;
     for (
-      let windowStart = 0;
-      windowStart < region.length;
+      let windowStart = range.offset;
+      windowStart < admittedEnd;
       windowStart += SCAN_WINDOW_BYTES
     ) {
-      yield;
-      const windowEnd = Math.min(
-        region.length,
-        windowStart + SCAN_WINDOW_BYTES,
+      const windowEnd = Math.min(admittedEnd, windowStart + SCAN_WINDOW_BYTES);
+      const readStart = Math.max(
+        range.offset,
+        windowStart - FINGERPRINT_LOOKBEHIND_BYTES,
       );
+      const readEnd = Math.min(
+        admittedEnd,
+        windowEnd + FINGERPRINT_LOOKAHEAD_BYTES,
+      );
+      const region = yield { offset: readStart, length: readEnd - readStart };
+      if (region === undefined)
+        throw new Error("Rust fingerprint scan requires the requested byte range.");
       yield* scanWindowCargoCandidates(
         region,
-        range.offset,
-        windowStart,
-        windowEnd,
+        readStart,
+        windowStart - readStart,
+        windowEnd - readStart,
         state,
       );
       yield* scanWindowRustcCandidates(
         region,
-        range.offset,
-        windowStart,
-        windowEnd,
-        regionTruncated,
+        readStart,
+        windowStart - readStart,
+        windowEnd - readStart,
+        regionTruncated || readEnd < range.end,
         state,
       );
     }
@@ -553,14 +573,18 @@ export const recoverRustSourceFingerprints = (
   checkActive?: () => void,
 ): RecoveredRustSourceFingerprints => {
   const steps = recoverRustSourceFingerprintsSteps(
-    bytes,
-    container,
+    rustSourceFingerprintRanges(bytes.length, container),
     maxInferredCrates,
   );
+  let region: Buffer | undefined;
   for (;;) {
     checkActive?.();
-    const next = steps.next();
+    const next = steps.next(region);
     if (next.done) return next.value;
+    region =
+      next.value === undefined
+        ? undefined
+        : bytes.subarray(next.value.offset, next.value.offset + next.value.length);
   }
 };
 
@@ -575,15 +599,39 @@ export const recoverRustSourceFingerprintsAsync = async (
   checkActive?: () => void,
 ): Promise<RecoveredRustSourceFingerprints> => {
   const steps = recoverRustSourceFingerprintsSteps(
-    bytes,
-    container,
+    rustSourceFingerprintRanges(bytes.length, container),
     maxInferredCrates,
   );
+  let region: Buffer | undefined;
   for (;;) {
     checkActive?.();
-    const next = steps.next();
+    const next = steps.next(region);
     if (next.done) return next.value;
+    region =
+      next.value === undefined
+        ? undefined
+        : bytes.subarray(next.value.offset, next.value.offset + next.value.length);
     checkActive?.();
     await setImmediate();
+  }
+};
+
+/** Stream the same bounded scan through the selected artifact's range reader. */
+export const recoverRustSourceFingerprintsFromReader = async (
+  source: ByteSource,
+  ranges: readonly FileByteRange[],
+  maxInferredCrates: number = DEFAULT_MAX_RUST_INFERRED_CRATES,
+  pause: () => void | Promise<void>,
+): Promise<RecoveredRustSourceFingerprints> => {
+  const steps = recoverRustSourceFingerprintsSteps(ranges, maxInferredCrates);
+  let region: Buffer | undefined;
+  for (;;) {
+    await pause();
+    const next = steps.next(region);
+    if (next.done) return next.value;
+    region =
+      next.value === undefined
+        ? undefined
+        : await readByteSourceSlice(source, next.value.offset, next.value.length);
   }
 };

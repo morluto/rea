@@ -1,0 +1,11 @@
+$ rea completions nushell
+exit: 0
+--- stdout
+# External completer for rea
+# Add to $env.config.completions.external.completer or use in a dispatch completer.
+let _incur_complete_rea = {|spans|
+    COMPLETE=nushell rea -- ...$spans | from json
+}
+<end>
+--- stderr
+<end>

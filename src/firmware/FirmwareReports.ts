@@ -65,6 +65,12 @@ const multiFile = z.object({
   extraction_reports: z.array(jsonValueSchema),
 });
 const hashes = z.object({ sha256: digestSchema });
+const fileMagic = z.object({ mime_type: z.string() });
+const chunkDetail = z.object({
+  handler_name: z.string(),
+  is_encrypted: z.boolean(),
+  extraction_reports: z.array(jsonValueSchema),
+});
 /**
  * The provider's structured missing-dependency report. Non-strict on purpose:
  * unfamiliar extra fields stay in retained diagnostics, only the dependency
@@ -94,15 +100,23 @@ const extractionProblemFacts = (
   const kinds = new Set<ExtractionFailureKind>();
   let dependencies: DependencyFacts | null = null;
   for (const item of reports) {
-    const parsed = missingDependency.safeParse(item);
-    if (parsed.success) {
+    if (typeof item !== "object" || item === null) continue;
+    const candidate = item as Record<string, unknown>;
+    const parsed =
+      candidate.__typename__ === "ExtractorDependencyNotFoundReport"
+        ? missingDependency.safeParse(item)
+        : null;
+    if (parsed?.success) {
       kinds.add("missing-extractor-dependency");
       dependencies ??= { names: new Set<string>(), unnamed: false };
       if (parsed.data.dependencies.length === 0) dependencies.unnamed = true;
       for (const name of parsed.data.dependencies)
         if (name === "") dependencies.unnamed = true;
         else dependencies.names.add(name);
-    } else if (extractionError.safeParse(item).success)
+    } else if (
+      candidate.severity === "ERROR" &&
+      extractionError.safeParse(item).success
+    )
       kinds.add("extractor-failure");
   }
   return { failureKinds: [...kinds], dependencies };
@@ -302,7 +316,14 @@ export const normalizeUnblobReport = (
   const taskFailures = new Set<string>();
   const missingDependencies = new Map<string, DependencyFacts>();
   /** Dependencies reported by one chunk's extraction, keyed with its chunk id. */
-  const chunkMissingDependencies = new Map<string, DependencyFacts>();
+  const chunkMissingDependencies = new Map<
+    string,
+    {
+      readonly input_path: string;
+      readonly provider_id: string;
+      readonly facts: DependencyFacts;
+    }
+  >();
   const dependencyRows = (
     facts: DependencyFacts,
   ): readonly { dependencies: readonly string[] }[] => [
@@ -320,9 +341,16 @@ export const normalizeUnblobReport = (
       );
     seen.add(path);
     if (record.task.depth >= context.maxDepth) depths.push(path);
-    const metadata = record.reports.find(
-      (r) => r.__typename__ === "StatReport",
-    );
+    let metadata: (typeof record.reports)[number] | undefined;
+    let hash: (typeof record.reports)[number] | undefined;
+    let magic: (typeof record.reports)[number] | undefined;
+    for (const r of record.reports) {
+      if (metadata === undefined && r.__typename__ === "StatReport")
+        metadata = r;
+      else if (hash === undefined && r.__typename__ === "HashReport") hash = r;
+      else if (magic === undefined && r.__typename__ === "FileMagicReport")
+        magic = r;
+    }
     if (metadata === undefined)
       throw new AnalysisOutputError(
         "extract_firmware",
@@ -348,17 +376,10 @@ export const normalizeUnblobReport = (
         "Selected input was not reported as a regular file",
       );
     sizes.set(path, parsedStat.size);
-    const hash = record.reports.find((r) => r.__typename__ === "HashReport");
-    const magic = record.reports.find(
-      (r) => r.__typename__ === "FileMagicReport",
-    );
     if (parsedStat.is_file && !parsedStat.is_link)
       files.set(path, {
         sha256: hash === undefined ? null : hashes.parse(hash).sha256,
-        mimeType:
-          magic === undefined
-            ? null
-            : z.object({ mime_type: z.string() }).parse(magic).mime_type,
+        mimeType: magic === undefined ? null : fileMagic.parse(magic).mime_type,
         depth: record.task.depth,
       });
     for (const item of record.reports) {
@@ -396,32 +417,30 @@ export const normalizeUnblobReport = (
             `Invalid chunk bounds for ${path}`,
           );
         const detail =
-          item.__typename__ === "ChunkReport"
-            ? z
-                .object({
-                  handler_name: z.string(),
-                  is_encrypted: z.boolean(),
-                  extraction_reports: z.array(jsonValueSchema),
-                })
-                .parse(item)
-            : null;
+          item.__typename__ === "ChunkReport" ? chunkDetail.parse(item) : null;
         const problems = extractionProblemFacts(
           detail?.extraction_reports ?? [],
         );
         // Chunk-nested reports retain their owning chunk, not the whole task.
-        accumulateDependencies(
-          chunkMissingDependencies,
-          JSON.stringify([path, parsed.id]),
-          problems.dependencies,
-        );
+        if (problems.dependencies !== null) {
+          const chunkKey = JSON.stringify([path, parsed.id]);
+          const knownChunk = chunkMissingDependencies.get(chunkKey);
+          if (knownChunk === undefined) {
+            chunkMissingDependencies.set(chunkKey, {
+              input_path: path,
+              provider_id: parsed.id,
+              facts: problems.dependencies,
+            });
+          } else {
+            for (const name of problems.dependencies.names)
+              knownChunk.facts.names.add(name);
+            knownChunk.facts.unnamed ||= problems.dependencies.unnamed;
+          }
+        }
         if (detail !== null)
           for (const problem of detail.extraction_reports) {
             diagnostics.push(
-              extractionDiagnostic(
-                path,
-                detail.handler_name,
-                jsonValueSchema.parse(problem),
-              ),
+              extractionDiagnostic(path, detail.handler_name, problem),
             );
           }
         addBlobOrigin(path, parsed.id, {
@@ -611,15 +630,14 @@ export const normalizeUnblobReport = (
             ? 1
             : 0,
       ),
-    chunk_missing_dependencies: [...chunkMissingDependencies.entries()]
-      .flatMap(([key, facts]) => {
-        const [input_path, provider_id] = JSON.parse(key) as [string, string];
-        return dependencyRows(facts).map(({ dependencies }) => ({
+    chunk_missing_dependencies: [...chunkMissingDependencies.values()]
+      .flatMap(({ input_path, provider_id, facts }) =>
+        dependencyRows(facts).map(({ dependencies }) => ({
           input_path,
           provider_id,
           dependencies,
-        }));
-      })
+        })),
+      )
       .sort((left, right) =>
         `${left.input_path}\u0000${left.provider_id}` <
         `${right.input_path}\u0000${right.provider_id}`

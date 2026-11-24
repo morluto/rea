@@ -5,17 +5,6 @@ import { XML_LINE_ENDING } from "../domain/xmlDocument.js";
 const ANDROID_NAMESPACE = "http://schemas.android.com/apk/res/android";
 export const childNodes = (element: Element): readonly Node[] =>
   Array.from(element.childNodes);
-export const isManifestElement = (node: Node | null): node is Element =>
-  node !== null &&
-  node.nodeType === 1 &&
-  (node as Element).namespaceURI === null;
-export const plainAttribute = (
-  element: Element,
-  name: string,
-): string | null => {
-  const value = element.getAttribute(name);
-  return value === "" ? null : value;
-};
 /** Namespace identity, never the spelling of a bound prefix, selects a fact. */
 export const isAndroidAttribute = (attribute: Attr): boolean =>
   attribute.namespaceURI === ANDROID_NAMESPACE ||

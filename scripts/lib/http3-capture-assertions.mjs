@@ -64,7 +64,7 @@ function assertHeaders(record, side, headers) {
   }
 }
 
-export function assertEndpointHeaders(actual, expected) {
+function assertEndpointHeaders(actual, expected) {
   // The proxy rebuilds pseudo fields from its HTTP state. Compare their values
   // by name while retaining the exact order and duplicates of regular headers.
   const partition = (headers) => {

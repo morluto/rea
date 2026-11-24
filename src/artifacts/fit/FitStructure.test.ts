@@ -5,7 +5,7 @@ import {
   devicetreeFixture,
   dtString,
   type FixtureNode,
-} from "../../firmware/devicetree/Devicetree.fixture.js";
+} from "../../domain/firmware/devicetree.fixture.js";
 import {
   FIT_EMBEDDED,
   FIT_KERNEL,
@@ -646,3 +646,25 @@ it.each(["data-offset", "data-position"] as const)(
     expect(imageBytes(file, 1).equals(data)).toBe(true);
   },
 );
+
+it("fails an image node that repeats a property name", () => {
+  const file = devicetreeFixture({
+    name: "",
+    children: [
+      {
+        name: "images",
+        children: [
+          {
+            name: "kernel",
+            properties: { data: FIT_KERNEL, type: dtString("kernel") },
+            repeatedProperties: [["type", dtString("ramdisk")]],
+          },
+        ],
+      },
+    ],
+  });
+  expect(failureOf(file)).toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/duplicate.*property/iu),
+  });
+});

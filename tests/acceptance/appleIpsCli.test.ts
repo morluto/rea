@@ -29,7 +29,6 @@ cliTest(
         "--json",
       ],
       environment: { NODE_OPTIONS: "--max-old-space-size=256" },
-      timeoutMs: 30000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = toolContract("inspect_apple_ips").outputSchema.parse(
@@ -44,7 +43,6 @@ cliTest(
     ).toBe(createHash("sha256").update(name).digest("hex"));
     expect(evidence.normalized_result.coverage.status).toBe("complete");
   },
-  45000,
 );
 
 cliTest(
@@ -212,7 +210,7 @@ cliTest(
   },
 );
 
-cliTest("reports a truncated IPS as invalid input", async ({ cli }) => {
+cliTest("reports a truncated IPS as a malformed target", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-apple-ips-cli-bad-");
   const path = join(root, "broken.ips");
   await writeFile(path, appleIpsBytes({ truncateBody: true }));
@@ -221,7 +219,11 @@ cliTest("reports a truncated IPS as invalid input", async ({ cli }) => {
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_apple_ips" },
+    code: "unsupported_target",
+    details: {
+      operation: "inspect_apple_ips",
+      path,
+      format_failure: "malformed",
+    },
   });
 });

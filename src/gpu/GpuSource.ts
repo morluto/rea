@@ -1,15 +1,19 @@
 import { createHash } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
+import { decodeElfSectionNameRequestCooperative } from "../domain/native/elfSectionNameTable.js";
+import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
 import type {
   NativeReadRequest,
   NativeSectionDirectory,
-} from "../native/metadata/NativeSectionDirectory.js";
+} from "../domain/native/nativeSectionDirectory.js";
 export const GPU_OBJECT_BYTES = 128 * 1024 * 1024;
 export const GPU_REPORT_BYTES = 16 * 1024 * 1024;
 /** A retained-facts refusal aborts discovery; it is never downgraded to one opaque payload. */
@@ -19,6 +23,8 @@ export class GpuReportCapacityFailure extends BinaryResourceFailure {
       "structure",
       GPU_REPORT_BYTES,
       "GPU facts exceed the 16 MiB retained report budget",
+      "gpu-retained-report-bytes",
+      "bytes",
     );
   }
 }
@@ -80,6 +86,7 @@ export class GpuFileSource implements GpuSource {
         throw new ArtifactReaderFailure(
           "integrity",
           "GPU source was truncated during inspection",
+          { integrityCheck: "read-coverage" },
         );
       position += result.bytesRead;
       this.bytesRead += result.bytesRead;
@@ -115,17 +122,25 @@ export class GpuBufferSource implements GpuSource {
 export const readGpuNativeDirectory = async (
   source: GpuSource,
   steps: Generator<NativeReadRequest, NativeSectionDirectory, Buffer>,
+  pause: ZstandardFramePause,
 ): Promise<NativeSectionDirectory> => {
   let next = steps.next();
   while (!next.done) {
-    const { offset, size } = next.value;
-    next = steps.next(await source.read(offset, size));
+    const step = next.value;
+    if (
+      step.sectionNames !== undefined &&
+      step.fulfillSectionNames !== undefined
+    ) {
+      step.fulfillSectionNames(
+        await decodeElfSectionNameRequestCooperative(step.sectionNames, pause),
+      );
+      next = steps.next(Buffer.alloc(0));
+      continue;
+    }
+    next = steps.next(await source.read(step.offset, step.size));
   }
   return next.value;
 };
-export const gpuSha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
-
 export const nextGpuContainerOffset = async (
   source: GpuSource,
   start: number,

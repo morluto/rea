@@ -1,17 +1,43 @@
 // Run from the repository root after `npm run build:cached` on macOS arm64,
 // with Hopper and the Xcode command-line tools installed. No target is executed.
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { promisify } from "node:util";
+import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
 import { artifactMcpCall } from "./lib/artifact-e2e.mjs";
 import { snapshotHopperRuntime } from "./lib/real-hopper-cleanup.mjs";
+import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import {
+  assertVerifierCleanupComplete,
+  completeVerifierRun,
+  createVerifierRun,
+} from "./lib/verifier-run.mjs";
 import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/process/HopperLease.js";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+
+const verifierRun = createVerifierRun();
+// xcrun resolves the compiler before a workspace exists. A failed probe must
+// not allocate a root, so it uses the same short-lived owner as requireLaneToolchain.
+const probeOwnedCommand = async (command, arguments_) => {
+  const snapshot = await runOwnedCommand(
+    {
+      command,
+      arguments: arguments_,
+      cwd: process.cwd(),
+      env: process.env,
+      runId: `rea-hopper-callers-probe-${randomUUID()}`,
+      expectedCommand: null,
+      sweepTokenOwnedProcesses: true,
+    },
+    { timeoutMs: null, diagnosticBytes: 1024 * 1024 },
+  );
+  return snapshot.stdout.text;
+};
 
 assert.equal(process.platform, "darwin", "requires macOS");
 assert.equal(
@@ -30,15 +56,41 @@ const { StdioClientTransport } = await import(
 const { parseConfig } = await import(
   pathToFileURL(join(root, "dist/config/parseConfig.js"))
 );
+const { selectedHopperLauncherPath } = await import(
+  pathToFileURL(join(root, "dist/hopperPaths/HopperLauncherDiscovery.js")).href
+);
 const config = parseConfig(process.env);
 if (!config.ok) throw config.error;
-await access(config.value.hopperLauncherPath, constants.X_OK);
-const run = promisify(execFile);
-const clang = (await run("xcrun", ["--find", "clang"])).stdout.trim();
+await access(
+  selectedHopperLauncherPath(
+    config.value.hopperLauncherPath,
+    process.platform,
+    process.env,
+  ),
+  constants.X_OK,
+);
+const clang = (await probeOwnedCommand("xcrun", ["--find", "clang"])).trim();
 const sdk = (
-  await run("xcrun", ["--sdk", "macosx", "--show-sdk-path"])
-).stdout.trim();
-const directory = await mkdtemp(join("/tmp", "rea-hopper-callers-verifier-"));
+  await probeOwnedCommand("xcrun", ["--sdk", "macosx", "--show-sdk-path"])
+).trim();
+// The command owner is created before the workspace. If allocation fails,
+// the owner is still closed and no root is left behind.
+const commands = await createVerifierCommands();
+// A plain root under /tmp, where this verifier has always built its fixtures.
+const workspace = await VerifierFixture.open({
+  prefix: "rea-hopper-callers-verifier-",
+  parent: "/tmp",
+  private: false,
+}).catch(async (cause) => {
+  await commands.close().catch((closeCause) => {
+    throw new AggregateError(
+      [cause, closeCause],
+      "Hopper caller workspace allocation and command cleanup both failed",
+    );
+  });
+  throw cause;
+});
+const directory = workspace.path;
 const fixture = join(directory, "tail-call");
 const large = join(directory, "long-scan");
 const source = fileURLToPath(
@@ -48,11 +100,9 @@ const digest = async (path) =>
   createHash("sha256")
     .update(await readFile(path))
     .digest("hex");
-const sessionsBefore = await snapshotHopperRuntime(
-  "/tmp",
-  HOPPER_TARGET_LEASE_DIRECTORY,
-);
-const ownedProcessIds = new Set();
+const sessionsBefore = (
+  await snapshotHopperRuntime("/tmp", HOPPER_TARGET_LEASE_DIRECTORY)
+).paths;
 const client = new Client({ name: "hopper-callers-verifier", version: "1" });
 const transport = new StdioClientTransport({
   command: process.execPath,
@@ -93,8 +143,9 @@ const matchingRef = (ref, site, from, to) =>
   ref.source_procedure?.address === from &&
   ref.target_procedure?.address === to &&
   ref.call?.classification === "direct";
+let primaryFailure;
 try {
-  await run(clang, [
+  await commands.exec(clang, [
     "-isysroot",
     sdk,
     "-arch",
@@ -114,7 +165,7 @@ try {
   lines.push("int main(void) { return rea_progress_0000(); }");
   const largeSource = join(directory, "long-scan.c");
   await writeFile(largeSource, lines.join("\n"));
-  await run(clang, [
+  await commands.exec(clang, [
     "-isysroot",
     sdk,
     "-arch",
@@ -129,7 +180,6 @@ try {
   await client.connect(transport);
   if (transport.pid === null)
     throw new Error("MCP process identity unavailable");
-  ownedProcessIds.add(transport.pid);
   let notifications = 0;
   const original = transport.onmessage;
   transport.onmessage = (message) => {
@@ -287,23 +337,94 @@ try {
       sha256: beforeLarge,
     }),
   );
-} finally {
-  await client.close();
-  await transport.close();
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  const leaked = [
-    ...(await snapshotHopperRuntime(
-      "/tmp",
-      HOPPER_TARGET_LEASE_DIRECTORY,
-      ownedProcessIds,
-    )),
-  ].filter((path) => !sessionsBefore.has(path));
-  if (leaked.length === 0)
-    await rm(directory, { recursive: true, force: true });
-  if (stderr) process.stderr.write(stderr);
-  assert.deepEqual(
-    leaked,
-    [],
-    `Hopper resources remain: ${leaked.join(", ")}; fixture retained at ${directory}`,
+} catch (cause) {
+  primaryFailure = cause;
+}
+let hopperCleanupFailure;
+try {
+  await workspace.closeEarly([
+    async () => {
+      try {
+        await closeVerifierResources([
+          () => client.close(),
+          () => transport.close(),
+          async () => {
+            await new Promise((resolve) => setTimeout(resolve, 500));
+            const leaked = [
+              ...(
+                await snapshotHopperRuntime(
+                  "/tmp",
+                  HOPPER_TARGET_LEASE_DIRECTORY,
+                )
+              ).paths,
+            ].filter((path) => !sessionsBefore.has(path));
+            assert.deepEqual(
+              leaked,
+              [],
+              `Hopper resources remain: ${leaked.join(", ")}`,
+            );
+          },
+        ]);
+      } catch (cause) {
+        throw new Error(
+          `Hopper cleanup failed; fixture retained at ${directory}`,
+          { cause },
+        );
+      } finally {
+        if (stderr) process.stderr.write(stderr);
+      }
+    },
+  ]);
+} catch (cause) {
+  hopperCleanupFailure = cause;
+}
+if (hopperCleanupFailure !== undefined)
+  primaryFailure =
+    primaryFailure === undefined
+      ? hopperCleanupFailure
+      : new AggregateError(
+          [primaryFailure, hopperCleanupFailure],
+          "Hopper caller verification and Hopper cleanup both failed",
+        );
+let commandCleanupFailure;
+try {
+  await workspace.closeEarly([() => commands.close()]);
+} catch (cause) {
+  commandCleanupFailure = cause;
+}
+if (commandCleanupFailure !== undefined)
+  throw workspace.retainedError(
+    `Hopper caller command cleanup failed; retained diagnostic workspace: ${directory}`,
+    {
+      cause:
+        primaryFailure === undefined
+          ? commandCleanupFailure
+          : new AggregateError(
+              [primaryFailure, commandCleanupFailure],
+              "Hopper caller verification and command cleanup both failed",
+            ),
+    },
+  );
+const completedVerifierRun = await completeVerifierRun(verifierRun);
+try {
+  assertVerifierCleanupComplete(completedVerifierRun.process_lineage);
+} catch (cause) {
+  throw workspace.retainedError(
+    `Cleanup unverified; retained diagnostic workspace: ${directory}`,
+    {
+      cause:
+        primaryFailure === undefined
+          ? cause
+          : new AggregateError(
+              [primaryFailure, cause],
+              "Hopper caller verification failed and cleanup was unverified",
+            ),
+    },
   );
 }
+if (primaryFailure !== undefined)
+  throw workspace.retainedError(
+    `Hopper caller verification failed; retained workspace: ${directory}`,
+    { cause: primaryFailure },
+  );
+await workspace.release();

@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
-import canonicalize from "canonicalize";
+import { serializeCanonicalValue } from "../canonicalDigest.js";
 import { z } from "zod";
 import { jsonRecordSchema } from "../jsonRecord.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const positiveBudget = z.int().safe().positive();
 /** Read the explicitly committed output budget without applying scenario defaults. */
@@ -89,10 +89,10 @@ export const normalizationSchema = z.object({
 
 /** Compute a canonical SHA-256 commitment independent of object key order. */
 export const digestProcessCommitment = (value: unknown): string => {
-  const serialized = canonicalize(value);
+  const serialized = serializeCanonicalValue(value);
   if (serialized === undefined)
     throw new TypeError("Process capture commitment is not canonical JSON");
-  return createHash("sha256").update(serialized).digest("hex");
+  return sha256Hex(serialized);
 };
 
 /** Explicit private-input facts contain no textual marker that can collide with a value. */

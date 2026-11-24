@@ -7,16 +7,21 @@ import {
   rustBinarySchema,
 } from "../domain/rust/rustBinary.js";
 import { parseExactRustcVersionBanner } from "../domain/rust/rustSourceFingerprints.js";
-import type { BinaryContainer } from "../native/metadata/BinaryContainer.js";
-import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
+import type { BinaryContainer } from "../domain/binaryContainer.js";
+import { readBinaryContainer } from "../domain/native/readBinaryContainer.js";
 import {
   createRustImage,
+  createRustWasmModule,
   createUniversalRustMachoImage,
 } from "../../tests/fixtures/rust/image.js";
+import { bufferByteSource } from "../domain/byteSource.js";
+import { readRustBinaryImageFromHandle } from "./RustBinaryImage.js";
 import { RustBinaryProvider } from "./RustBinaryProvider.js";
 import {
   recoverRustSourceFingerprints,
   recoverRustSourceFingerprintsAsync,
+  recoverRustSourceFingerprintsFromReader,
+  rustSourceFingerprintRanges,
 } from "./RustInferredCrates.js";
 
 it("recovers relative Cargo paths packed after another Rust source path", () => {
@@ -268,7 +273,7 @@ it.each([
   },
 );
 
-it("recovers tokens straddling the 1 MiB scan window boundary without double-counting overlapping mappings", () => {
+it("recovers tokens straddling the 1 MiB scan window boundary without double-counting overlapping mappings", async () => {
   const windowBoundary = 1024 * 1024;
   const bytes = Buffer.alloc(windowBoundary + 512);
   // Place "cargo" so 'c','a' sit before 1 MiB and 'r','g','o' sit at/after 1 MiB.
@@ -339,6 +344,37 @@ it("recovers tokens straddling the 1 MiB scan window boundary without double-cou
       reference_count: 1,
     },
   ]);
+  const reads: number[] = [];
+  const source = bufferByteSource(bytes, 0);
+  const streamed = await recoverRustSourceFingerprintsFromReader(
+    {
+      ...source,
+      readRange: (offset, length) => {
+        reads.push(length);
+        return source.readRange(offset, length);
+      },
+    },
+    rustSourceFingerprintRanges(bytes.length, container),
+    undefined,
+    async () => {},
+  );
+  expect(streamed).toEqual(result);
+  expect(reads.length).toBeGreaterThan(1);
+  expect(Math.max(...reads)).toBeLessThan(windowBoundary + 16 * 1024);
+
+  const cancelled = new Error("cancelled streamed fingerprint scan");
+  let pauses = 0;
+  await expect(
+    recoverRustSourceFingerprintsFromReader(
+      source,
+      rustSourceFingerprintRanges(bytes.length, container),
+      undefined,
+      () => {
+        if (++pauses === 3) throw cancelled;
+      },
+    ),
+  ).rejects.toBe(cancelled);
+
 });
 
 it("enforces max_inferred_crates, 64-banner rustc_versions cap, 64 MiB scan budget, and cooperative cancellation", () => {
@@ -1224,4 +1260,57 @@ it("rejects digit-prefixed registry crate names in scanner and retained-report s
   const digitPrefixedReport = structuredClone(validReport);
   digitPrefixedReport.inferred_crates.items[0]!.name = "123foo";
   expect(rustBinarySchema.safeParse(digitPrefixedReport).success).toBe(false);
+});
+
+it("keeps default reader reports unchanged while inferring crates through native and Wasm range readers", async () => {
+  const fingerprintBytes = Buffer.from(
+    "/cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.217/src/lib.rs\0rustc 1.85.0 (4d91de4e4 2025-02-17)\0",
+  );
+  for (const format of ["elf", "pe", "macho", "wasm"] as const) {
+    const bytes =
+      format === "wasm"
+        ? createRustWasmModule({ readOnlyBytes: fingerprintBytes })
+        : createRustImage({ format, readOnlyBytes: fingerprintBytes });
+    const source = bufferByteSource(bytes, 0);
+    const pause = async () => {};
+    const baseline = await readRustBinaryImageFromHandle(
+      source,
+      undefined,
+      undefined,
+      pause,
+    );
+    expect(baseline).not.toHaveProperty("inferred_crates");
+    expect(baseline).not.toHaveProperty("rustc_versions");
+    const disabled = await readRustBinaryImageFromHandle(
+      source,
+      undefined,
+      undefined,
+      pause,
+      { includeInferredCrates: false },
+    );
+    expect(disabled).toEqual(baseline);
+    const { inferred_crates, rustc_versions, ...observed } =
+      await readRustBinaryImageFromHandle(
+        source,
+        undefined,
+        undefined,
+        pause,
+        { includeInferredCrates: true },
+      );
+    expect(observed).toEqual(baseline);
+    expect(inferred_crates?.items).toEqual([
+      expect.objectContaining({
+        name: "serde",
+        version: "1.0.217",
+        reference_count: 1,
+      }),
+    ]);
+    expect(rustc_versions?.items).toEqual([
+      expect.objectContaining({
+        version: "1.85.0",
+        commit_hash: "4d91de4e4",
+        reference_count: 1,
+      }),
+    ]);
+  }
 });

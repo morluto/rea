@@ -30,7 +30,9 @@ that contains `/images` is treated as a FIT. The container format is `fit`.
 
 Recognition is a probe. The complete devicetree parse decides, so a file whose
 prefix declares `/images` but whose structure is malformed fails as a
-malformed FIT rather than falling back to plain classification.
+malformed FIT rather than falling back to plain classification. FIT inventory
+reports nonzero structure alignment padding using the shared
+[devicetree rules](devicetree.md).
 
 ## Images and metadata
 

@@ -1,24 +1,24 @@
-import { lstat, open, realpath, writeFile } from "node:fs/promises";
+import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
 import { constants, type BigIntStats } from "node:fs";
 import { join } from "node:path";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+  withArtifactFileHandle,
+  assertArtifactReadActive,
+  completedStableArtifactStream,
+  mapArtifactFileFailure,
+  streamStableArtifact,
+  type StableArtifactFileSystem,
+  type StableArtifactStream,
+} from "../resources/index.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentity.js";
-import {
-  withArtifactFileHandle,
-  assertArtifactReadActive,
-} from "../artifacts/ArtifactFileOperation.js";
-import {
-  completedStableArtifact,
-  readStableArtifact,
-  type StableArtifactSnapshot,
-  type StableArtifactFileSystem,
-} from "../artifacts/readStableArtifact.js";
 import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
 
 const fileSystem: StableArtifactFileSystem = {
@@ -79,7 +79,7 @@ const optionalSidecarStat = async (
         throw new ArtifactReaderFailure(
           "integrity",
           `SQLite snapshot file set changed before sidecar inspection: ${databasePath}`,
-          { cause },
+          { cause, integrityCheck: "container-identity" },
         );
       const remedy =
         "Use the application's supported consistent offline export or copy workflow to move the complete known database file set to a shorter path. Do not rename a live database or omit its WAL or journal.";
@@ -139,13 +139,14 @@ const duringAcquisition = async <T>(
       throw new ArtifactReaderFailure(
         "integrity",
         `SQLite snapshot file set changed during acquisition: ${path}`,
-        { cause },
+        { cause, integrityCheck: "container-identity" },
       );
     if (cause instanceof ArtifactReaderFailure && cause.reason === "limit") {
       const changed = new ArtifactReaderFailure(
         "integrity",
         `SQLite snapshot file set exceeded its observed size during acquisition: ${path}`,
         {
+          integrityCheck: "container-identity",
           cause,
           ...(cause.partialObservation === undefined
             ? {}
@@ -165,44 +166,199 @@ const duringAcquisition = async <T>(
   }
 };
 
-const readObservedArtifact = (
-  role: SnapshotMemberRole,
-  path: string,
-  observed: BigIntStats,
-  maximumBytes: number,
-  selectedFileSystem: StableArtifactFileSystem,
-  resourceScope: ArtifactResourceScope,
+const SQLITE_SNAPSHOT_CHUNK_BYTES = 1048576;
+
+/** Isolate destination errors so duringAcquisition only attributes source path changes. */
+class SnapshotDestinationWriteError extends Error {
+  constructor(readonly destinationCause: unknown) {
+    super("SQLite snapshot destination write failed", {
+      cause: destinationCause,
+    });
+    this.name = "SnapshotDestinationWriteError";
+  }
+}
+
+const writeSnapshotChunk = async (
+  handle: FileHandle,
+  chunk: Buffer,
+  destinationPath: string,
   signal?: AbortSignal,
-) => {
+): Promise<void> => {
+  let offset = 0;
+  while (offset < chunk.length) {
+    assertArtifactReadActive(signal);
+    const { bytesWritten } = await handle.write(
+      chunk,
+      offset,
+      chunk.length - offset,
+    );
+    if (bytesWritten === 0)
+      throw new ArtifactReaderFailure(
+        "unavailable",
+        `Output stopped accepting bytes: ${destinationPath}`,
+      );
+    offset += bytesWritten;
+  }
+};
+
+const openSnapshotDestination = async (
+  destinationPath: string,
+  selectedFileSystem: StableArtifactFileSystem,
+): Promise<OwnedFileHandle> => {
+  try {
+    const handle = await selectedFileSystem.open(
+      destinationPath,
+      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
+      0o600,
+    );
+    return new OwnedFileHandle(handle);
+  } catch (cause: unknown) {
+    throw new SnapshotDestinationWriteError(cause);
+  }
+};
+
+const observedSourceFileSystem = (
+  role: SnapshotMemberRole,
+  sourcePath: string,
+  observed: BigIntStats,
+  selectedFileSystem: StableArtifactFileSystem,
+): StableArtifactFileSystem => {
   const resolveSelectedPath =
     role === "database" ? selectedFileSystem.realpath : undefined;
-  return duringAcquisition(path, () =>
-    readStableArtifact(
-      path,
-      maximumBytes,
-      signal,
-      {
-        open: (selectedPath, flags) =>
-          selectedFileSystem.open(selectedPath, flags),
-        ...(resolveSelectedPath === undefined
-          ? {}
-          : {
-              realpath: (selectedPath: string) =>
-                resolveSelectedPath.call(selectedFileSystem, selectedPath),
-            }),
-        lstat: async (selectedPath) => {
-          const current = await selectedFileSystem.lstat(selectedPath);
-          if (selectedPath === path && !sameState(observed, current))
-            throw new ArtifactReaderFailure(
-              "integrity",
-              `SQLite snapshot file set changed during acquisition: ${selectedPath}`,
+  return {
+    open: (selectedPath, flags) => selectedFileSystem.open(selectedPath, flags),
+    ...(resolveSelectedPath === undefined
+      ? {}
+      : {
+          realpath: (selectedPath: string) =>
+            resolveSelectedPath.call(selectedFileSystem, selectedPath),
+        }),
+    lstat: async (selectedPath) => {
+      const current = await selectedFileSystem.lstat(selectedPath);
+      if (selectedPath === sourcePath && !sameState(observed, current))
+        throw new ArtifactReaderFailure(
+          "integrity",
+          `SQLite snapshot file set changed during acquisition: ${selectedPath}`,
+          { integrityCheck: "container-identity" },
+        );
+      return current;
+    },
+  };
+};
+
+const copyObservedArtifact = async (options: {
+  readonly role: SnapshotMemberRole;
+  readonly sourcePath: string;
+  readonly destinationPath: string;
+  readonly observed: BigIntStats;
+  readonly maximumBytes: number;
+  readonly selectedFileSystem: StableArtifactFileSystem;
+  readonly resourceScope: ArtifactResourceScope;
+  readonly onSourceCompleted: (member: {
+    readonly sha256: string;
+    readonly bytes: number;
+  }) => void;
+  readonly signal?: AbortSignal | undefined;
+}): Promise<{ readonly sha256: string; readonly bytes: number }> => {
+  const {
+    role,
+    sourcePath,
+    destinationPath,
+    observed,
+    maximumBytes,
+    selectedFileSystem,
+    resourceScope,
+    onSourceCompleted,
+    signal,
+  } = options;
+  let destination: OwnedFileHandle | undefined;
+  let streamResult: StableArtifactStream;
+  try {
+    streamResult = await duringAcquisition(sourcePath, () =>
+      streamStableArtifact(sourcePath, maximumBytes, {
+        retainBytes: () => 0,
+        chunkBytes: SQLITE_SNAPSHOT_CHUNK_BYTES,
+        signal,
+        resourceScope,
+        fileSystem: observedSourceFileSystem(
+          role,
+          sourcePath,
+          observed,
+          selectedFileSystem,
+        ),
+        onChunk: async (chunk) => {
+          try {
+            assertArtifactReadActive(signal);
+            destination ??= await openSnapshotDestination(
+              destinationPath,
+              selectedFileSystem,
             );
-          return current;
+            await writeSnapshotChunk(
+              destination.handle,
+              chunk,
+              destinationPath,
+              signal,
+            );
+          } catch (cause: unknown) {
+            if (cause instanceof SnapshotDestinationWriteError) throw cause;
+            if (
+              cause instanceof ArtifactReaderFailure &&
+              cause.reason === "cancelled"
+            )
+              throw cause;
+            throw new SnapshotDestinationWriteError(cause);
+          }
         },
-      },
-      resourceScope,
-    ),
+      }),
+    );
+  } catch (cause: unknown) {
+    const unwrapped = mapArtifactFileFailure(cause, (primary) =>
+      primary instanceof SnapshotDestinationWriteError
+        ? primary.destinationCause
+        : primary,
+    );
+    const completedStream = completedStableArtifactStream(unwrapped);
+    if (completedStream !== undefined)
+      onSourceCompleted({
+        sha256: completedStream.sha256,
+        bytes: completedStream.size,
+      });
+    if (destination !== undefined) {
+      await withArtifactFileHandle(
+        destinationPath,
+        destination,
+        resourceScope,
+        undefined,
+        async () => {
+          throw unwrapped;
+        },
+      );
+    }
+    throw unwrapped;
+  }
+  const completed = { sha256: streamResult.sha256, bytes: streamResult.size };
+  onSourceCompleted(completed);
+  if (destination === undefined) {
+    assertArtifactReadActive(signal);
+    try {
+      destination = await openSnapshotDestination(
+        destinationPath,
+        selectedFileSystem,
+      );
+    } catch (cause: unknown) {
+      throw cause instanceof SnapshotDestinationWriteError
+        ? cause.destinationCause
+        : cause;
+    }
+  }
+  await withArtifactFileHandle(
+    destinationPath,
+    destination,
+    resourceScope,
+    signal,
+    async () => {},
   );
+  return completed;
 };
 
 const verifyInactiveJournal = async (
@@ -234,6 +390,7 @@ const verifyInactiveJournal = async (
         throw new ArtifactReaderFailure(
           "integrity",
           `SQLite journal changed before open: ${path}`,
+          { integrityCheck: "container-identity" },
         );
       // TRUNCATE commits leave an empty file; PERSIST commits zero the complete
       // 28-byte fixed header. A new active journal may zero only its magic bytes.
@@ -256,6 +413,7 @@ const verifyInactiveJournal = async (
         throw new ArtifactReaderFailure(
           "integrity",
           `SQLite journal changed during inspection: ${path}`,
+          { integrityCheck: "container-identity" },
         );
       if (
         before.size !== 0n &&
@@ -266,6 +424,10 @@ const verifyInactiveJournal = async (
           phase === "initial"
             ? `Rollback journal may require recovery: ${path}. Supply a clean offline snapshot; only empty journals or a fully zeroed header are supported.`
             : `Rollback journal became active or malformed during database acquisition: ${path}`,
+          {
+            integrityCheck:
+              phase === "initial" ? undefined : "container-identity",
+          },
         );
     },
   );
@@ -291,41 +453,33 @@ export const captureSqliteDatabaseSnapshot = async (
 ) => {
   const walPath = `${path}-wal`;
   const completedMembers: CompletedSnapshotMember[] = [];
-  const recordMember = (
-    role: SnapshotMemberRole,
-    snapshot: StableArtifactSnapshot,
-  ) => {
-    completedMembers.push({
-      role,
-      path: role === "database" ? path : walPath,
-      sha256: snapshot.sha256,
-      bytes: snapshot.bytes.length,
-    });
-    return snapshot;
-  };
-  const readMember = async (
+  const copyMember = async (
     role: SnapshotMemberRole,
     observed: BigIntStats,
     maximumBytes: number,
+    destinationPath: string,
   ) => {
-    try {
-      return recordMember(
-        role,
-        await readObservedArtifact(
-          role,
-          role === "database" ? path : walPath,
-          observed,
-          maximumBytes,
-          selectedFileSystem,
-          resourceScope,
-          signal,
-        ),
-      );
-    } catch (cause: unknown) {
-      const completed = completedStableArtifact(cause);
-      if (completed !== undefined) recordMember(role, completed);
-      throw cause;
-    }
+    const sourcePath = role === "database" ? path : walPath;
+    let recorded = false;
+    const onSourceCompleted = (member: {
+      readonly sha256: string;
+      readonly bytes: number;
+    }) => {
+      if (recorded) return;
+      recorded = true;
+      completedMembers.push({ role, path: sourcePath, ...member });
+    };
+    return copyObservedArtifact({
+      role,
+      sourcePath,
+      destinationPath,
+      observed,
+      maximumBytes,
+      selectedFileSystem,
+      resourceScope,
+      onSourceCompleted,
+      signal,
+    });
   };
   try {
     assertArtifactReadActive(signal);
@@ -372,37 +526,29 @@ export const captureSqliteDatabaseSnapshot = async (
         signal,
       );
     const snapshotPath = join(root, "database.snapshot");
-    const captured = await readMember(
+    const captured = await copyMember(
       "database",
       database,
       SQLITE_DATABASE_LIMITS.inputBytes,
+      snapshotPath,
     );
-    await writeFile(snapshotPath, captured.bytes, {
-      flag: "wx",
-      mode: 0o600,
-      ...(signal === undefined ? {} : { signal }),
-    });
     const artifact = {
       path,
       sha256: captured.sha256,
-      bytes: captured.bytes.length,
+      bytes: captured.bytes,
     };
     let walArtifact: typeof artifact | null = null;
     if (wal !== null) {
-      const capturedWal = await readMember(
+      const capturedWal = await copyMember(
         "wal",
         wal,
         SQLITE_DATABASE_LIMITS.inputBytes - artifact.bytes,
+        `${snapshotPath}-wal`,
       );
-      await writeFile(`${snapshotPath}-wal`, capturedWal.bytes, {
-        flag: "wx",
-        mode: 0o600,
-        ...(signal === undefined ? {} : { signal }),
-      });
       walArtifact = {
         path: `${path}-wal`,
         sha256: capturedWal.sha256,
-        bytes: capturedWal.bytes.length,
+        bytes: capturedWal.bytes,
       };
     }
     // Identity alone does not establish an inactive journal when timestamps are
@@ -426,6 +572,7 @@ export const captureSqliteDatabaseSnapshot = async (
         throw new ArtifactReaderFailure(
           "integrity",
           `SQLite snapshot file set changed during acquisition: ${paths[index] ?? path}`,
+          { integrityCheck: "container-identity" },
         );
     assertArtifactReadActive(signal);
     return { snapshotPath, artifact, wal: walArtifact };

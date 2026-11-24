@@ -1,23 +1,22 @@
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { expect } from "vitest";
 
 import { processTest as test } from "../../support/process/processFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 
 test("generates locked inventory and rejects stale notice metadata or preserved texts", async ({
   processes,
 }) => {
   const root = await createTestTempDirectory("rea-notice-records-");
-  await mkdir(resolve(root, "scripts/lib"), { recursive: true });
   await mkdir(resolve(root, "licenses"));
-  for (const file of [
-    "scripts/generate-third-party-inventory.mjs",
-    "scripts/lib/generated-file.mjs",
-  ])
-    await copyFile(resolve(file), resolve(root, file));
+  await copyScriptsWithImports(
+    ["scripts/generate-third-party-inventory.mjs"],
+    root,
+  );
   const script = resolve(root, "scripts/generate-third-party-inventory.mjs");
   const runtime = {
     version: "1.0.0",

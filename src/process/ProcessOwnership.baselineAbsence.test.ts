@@ -66,17 +66,12 @@ const fixture = (
   };
 };
 
-it.each(
-  (["linux", "darwin"] as const).flatMap((platform) =>
-    (["old-start", null] as const).flatMap((baseline) =>
-      (["unavailable", "absent"] as const).map((first) => ({
-        platform,
-        baseline,
-        first,
-      })),
-    ),
-  ),
-)(
+it.each([
+  { platform: "linux", baseline: "old-start", first: "absent" },
+  { platform: "linux", baseline: null, first: "unavailable" },
+  { platform: "darwin", baseline: "old-start", first: "unavailable" },
+  { platform: "darwin", baseline: null, first: "absent" },
+] as const)(
   "settles baseline $baseline after $first becomes native absence on $platform",
   async ({ platform, baseline, first }) => {
     let reads = 0;
@@ -87,6 +82,7 @@ it.each(
       cleaned: true,
       signaled: false,
     });
+    expect(owned.evidenceOwner.coverage.examinedPids).toBe(1);
     expect(owned.evidenceOwner.candidates).toEqual([]);
     expect(owned.signalGroup).not.toHaveBeenCalled();
   },

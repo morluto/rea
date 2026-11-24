@@ -1,159 +1,62 @@
-import { parseCliJsonOption } from "./cliJsonOption.js";
-import { z } from "incur";
-import { producerLimitsOption } from "./producerLimitsOption.js";
-import { rustProducerLimitsSchema } from "../domain/rust/rustResourceLimits.js";
-import {
-  DEFAULT_MAX_RUST_INFERRED_CRATES,
-  inspectRustBinaryInputSchema,
-  MAX_RUST_INFERRED_CRATES_LIMIT,
-  rustMaxInferredCratesSchema,
-} from "../domain/rust/rustBinary.js";
-import { cliDecimalField } from "./options.js";
-import { createRustBinaryService } from "../composition/rust.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { logCliCommand } from "../cliLogging.js";
-import {
-  analysisEvidenceDeliveryOptions,
-  deliverCliAnalysisEvidence,
-} from "./analysisEvidenceDelivery.js";
-import { inspectRustBinaryRequestSchema } from "../domain/rust/rustBinaryQuery.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
+
+import { createRustBinaryService } from "../composition/rust.js";
+import { RUST_TOOL_CONTRACTS } from "../contracts/rust/rustToolContracts.js";
+import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { deliverWithService } from "./contractCommandRunners.js";
+import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
 import type { CliInstance } from "./types.js";
-import { withCommandCancellation } from "./commandCancellation.js";
-import { localPathStringSchema } from "../domain/localPath.js";
-import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { machoSliceArchitectureSchema } from "../domain/apple/machoTargetSelection.js";
 
 /** Resolve caller paths and inspect embedded Rust dependencies through the shared workflow. */
 export const registerRustCommands = (
   cli: CliInstance,
   logger: Logger,
 ): void => {
-  cli.command(CLI_COMMANDS.inspectRustBinary, {
-    description:
-      "Inspect embedded cargo-auditable Rust dependencies and optional source-path crate/rustc fingerprints without target execution",
-    args: z.object({
-      path: localPathStringSchema.describe(
-        "Local ELF, PE, thin Mach-O or universal Mach-O image",
-      ),
-    }),
-    options: z.object({
-      ...analysisEvidenceDeliveryOptions,
-      producerLimits: producerLimitsOption(rustProducerLimitsSchema),
-      maxRustcHashes: cliDecimalField(
-        inspectRustBinaryInputSchema.shape.max_rustc_hashes,
-      ),
-      architecture: machoSliceArchitectureSchema
-        .optional()
-        .describe(
-          "CPU family of the slice to read from a universal Mach-O; required for universal files",
-        ),
-      includeInferredCrates: z
-        .boolean()
-        .optional()
-        .describe(
-          "Also scan read-only and ELF .comment sections for Cargo crate source-path fingerprints and rustc version banners",
-        ),
-      maxInferredCrates: cliDecimalField(
-        rustMaxInferredCratesSchema.optional(),
-      ).describe(
-        `Maximum distinct inferred Cargo crates (1-${String(MAX_RUST_INFERRED_CRATES_LIMIT)}; default ${String(DEFAULT_MAX_RUST_INFERRED_CRATES)}; requires --include-inferred-crates)`,
-      ),
-      detail: z
-        .enum(["complete", "summary"])
-        .optional()
-        .describe(
-          "Default complete; a view selects compact delivery with --evidence_output",
-        ),
-      view: z
-        .string()
-        .optional()
-        .describe(
-          "JSON package, edge or inferred_crates selection; retains complete Evidence with --evidence_output",
-        ),
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.inspectRustBinary, async () => {
-          const decoded = parseCliJsonOption(
-            "inspect_rust_binary",
-            "view",
-            options.view,
-            "view must be a JSON package, edge or inferred_crates selection",
-          );
-          if (!decoded.ok) return projectAnalysisError(decoded.error);
-          const view = decoded.value;
-          const input = inspectRustBinaryRequestSchema.safeParse({
-            path: absoluteCallerPath(args.path),
-            ...(options.producerLimits === undefined
-              ? {}
-              : { producer_limits: options.producerLimits }),
-            ...(options.maxRustcHashes === undefined
-              ? {}
-              : { max_rustc_hashes: options.maxRustcHashes }),
-            ...(options.architecture === undefined
-              ? {}
-              : { architecture: options.architecture }),
-            ...(options.includeInferredCrates === undefined
-              ? {}
-              : { include_inferred_crates: options.includeInferredCrates }),
-            ...(options.maxInferredCrates === undefined
-              ? {}
-              : { max_inferred_crates: options.maxInferredCrates }),
-            ...(options.detail === undefined ? {} : { detail: options.detail }),
-            ...(view === undefined ? {} : { view }),
-          });
-          if (!input.success)
-            return projectAnalysisError(
-              analysisInputErrorFromIssues(
-                "inspect_rust_binary",
-                input.error.issues,
-                { view },
-              ),
-            );
-          const service = createRustBinaryService();
-          return deliverCliAnalysisEvidence({
-            callerInputPath: args.path,
-            run: () =>
-              service.inspect(
-                {
-                  path: input.data.path,
-                  ...(input.data.producer_limits === undefined
-                    ? {}
-                    : { producer_limits: input.data.producer_limits }),
-                  ...(input.data.max_rustc_hashes === undefined
-                    ? {}
-                    : { max_rustc_hashes: input.data.max_rustc_hashes }),
-                  ...(input.data.architecture === undefined
-                    ? {}
-                    : { architecture: input.data.architecture }),
-                  ...(input.data.include_inferred_crates === undefined
-                    ? {}
-                    : {
-                        include_inferred_crates:
-                          input.data.include_inferred_crates,
-                      }),
-                  ...(input.data.max_inferred_crates === undefined
-                    ? {}
-                    : { max_inferred_crates: input.data.max_inferred_crates }),
-                },
-                { signal },
-              ),
-            service,
-            providerId: "rust-auditable",
-            operation: "inspect_rust_binary",
-            signal,
-            detail:
-              input.data.detail ??
-              (input.data.view === undefined ? "complete" : "summary"),
-            evidenceOutput: options.evidence_output,
-            ...(input.data.view === undefined
-              ? {}
-              : { view: { kind: "rust" as const, ...input.data.view } }),
-          });
-        }),
-      ),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(RUST_TOOL_CONTRACTS, "inspect_rust_binary"),
+    {
+      description:
+        "Inspect embedded cargo-auditable Rust dependencies and optional source-path crate/rustc fingerprints without target execution",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      jsonText: ["producer_limits"],
+      evidenceDelivery: true,
+      viewDelivery: {
+        invalidJson: "view must be a JSON package, edge or inferred_crates selection",
+        kind: "rust",
+        viewSelectsSummary: true,
+      },
+      fields: {
+        path: {
+          description:
+            "Local ELF, PE, thin or universal Mach-O, or WebAssembly core-module image",
+        },
+        producer_limits: { description: PRODUCER_LIMITS_HELP },
+        architecture: {
+          description:
+            "Slice to read from a universal Mach-O, by CPU family; when several slices share a family, arm64 (arm64 or arm64v8), arm64e (arm64e or arm64e.x1) or x86_64 names the subtype, and a value matching several slices is refused; required for universal files",
+        },
+        include_inferred_crates: {
+          description:
+            "Also scan read-only data, ELF .comment and WebAssembly data for Cargo crate source-path fingerprints and rustc version banners",
+        },
+        max_inferred_crates: {
+          description:
+            "Maximum distinct inferred Cargo crates (1-10000; default 1000; requires --include-inferred-crates)",
+        },
+        detail: {
+          description:
+            "Default complete; a view selects compact delivery with --evidence_output",
+        },
+        view: {
+          description:
+            "JSON package, edge or inferred_crates selection; retains complete Evidence with --evidence_output",
+        },
+      },
+    },
+    deliverWithService(createRustBinaryService, "rust-auditable"),
+  );
 };

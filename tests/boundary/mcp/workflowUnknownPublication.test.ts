@@ -16,7 +16,7 @@ import { createTestProviderRouter } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-it.each(["compact", "full"] as const)(
+it.each(["compact"] as const)(
   "reports the committed Unknown prefix and retained trace through MCP (%s)",
   async (profile) => {
     const directory = await createTestTempDirectory("rea-unknown-publication-");

@@ -1,9 +1,9 @@
-import { MISSING_EVIDENCE_SUBJECT_LIMITATION } from "../../domain/evidence.js";
 import {
   analysisExecutionEnvelopeForAdmission,
   type AnalysisObservation,
 } from "../../domain/analysisObservation.js";
 import { estimateJsonArrayScalarEntry } from "../JsonAuthenticationHeadroom.js";
+import type { EvidenceCreationOptions } from "../../domain/evidence.js";
 import {
   admitInvestigationAuthentication,
   type RecoveryAdmission,
@@ -14,25 +14,23 @@ export const admitCompletedAnalysis = (
   operation: string,
   parameters: unknown,
   observation: AnalysisObservation,
-  admit: RecoveryAdmission = (input, name, additional) =>
-    admitInvestigationAuthentication(input, name, {}, additional),
+  {
+    callerTarget,
+    admit = (input, name, additional) =>
+      admitInvestigationAuthentication(input, name, {}, additional),
+  }: {
+    readonly callerTarget?: EvidenceCreationOptions["callerTarget"];
+    readonly admit?: RecoveryAdmission | undefined;
+  } = {},
 ) => {
   const envelope = analysisExecutionEnvelopeForAdmission(
     operation,
     parameters,
     observation,
-    "observed",
+    callerTarget,
   );
   let valueBytes = 0;
   let serializedUtf16Bytes = 0;
-  if (observation.subject == null) {
-    const entry = estimateJsonArrayScalarEntry(
-      MISSING_EVIDENCE_SUBJECT_LIMITATION,
-      observation.limitations.length > 0,
-    );
-    valueBytes += entry.valueBytes;
-    serializedUtf16Bytes += entry.serializedUtf16Bytes;
-  }
   for (const [index, source] of (observation.sourceEvidence ?? []).entries()) {
     const entry = estimateJsonArrayScalarEntry(source.evidence_id, index > 0);
     valueBytes += entry.valueBytes;

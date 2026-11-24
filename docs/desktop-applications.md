@@ -94,12 +94,13 @@ same bundle. Export writes only the caller-selected output file.
 | Family       | Evidence used                                                                                                                                                                                                                                  |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | .NET         | A PE optional header declares a nonempty CLI directory.                                                                                                                                                                                        |
-| Unity Mono   | A managed assembly below `*_Data/Managed` or `Contents/Resources/Data/Managed` has an exact UnityEngine assembly reference.                                                                                                                    |
+| Unity Mono   | A PE file below `*_Data/Managed` or `Contents/Resources/Data/Managed` has an exact UnityEngine assembly reference in the probed metadata.                                                                                                      |
 | Unity IL2CPP | A recognized IL2CPP metadata magic (with the raw version when complete) coexists with a conventionally named native `GameAssembly.dll`, `GameAssembly.so`, `GameAssembly.dylib` or `libil2cpp.so` image. Build correspondence remains unknown. |
 | Godot        | A `GDPC` header at file start or a validated executable trailer offset.                                                                                                                                                                        |
 | GameMaker    | A bounded `FORM` container starts with a `GEN8` chunk. The scan probes conventional `data.win`, `game.unx`, and `game.ios` data files for that header.                                                                                         |
 | Unreal       | `Content/Paks` path conventions or an IoStore TOC signature; arbitrary `.pak` filenames are insufficient.                                                                                                                                      |
 | Electron     | A `resources/app.asar` or `resources/default_app.asar` path convention; archive validity is unverified.                                                                                                                                        |
+| Native       | Only when no family above applies: PE `.exe`, or ELF or Mach-O images without a library extension, at the shallowest depth any of them occupies. The UI stack comes from component markers; the code is unexamined.                            |
 
 When the four-byte metadata magic is present but version bytes are incomplete,
 the fact retains `raw_version: null`; it does not offer an IL2CPP metadata
@@ -109,6 +110,12 @@ admitted file path, including when no native library was found. This probe does
 not establish full metadata validity or correspondence to a native binary;
 version 24 inspection still applies only to supported header layouts. See
 [IL2CPP metadata](il2cpp-metadata.md).
+
+The Unity Mono probe reads the mapped CLI header prefix and follows its metadata
+directory to look for an `AssemblyRef` witness. A readable prefix and reference
+can support this candidate while the rest of the declared CLI header extent
+remains unverified. Use `inspect_managed_artifact` to check the complete CLI
+header and managed metadata for that file.
 
 In a managed directory with a Unity Mono witness, `Assembly-CSharp.dll` and
 `Assembly-CSharp-firstpass.dll` get an `inspect_managed_members` probe listed
@@ -122,6 +129,37 @@ Point the scan at the game folder: a root that is the `<Product>_Data` or
 Candidates are derived or inferred from these facts and do not prove loading or
 execution. BepInEx, MelonLoader, Easy Anti-Cheat and BattlEye labels identify
 path conventions only; runtime presence stays unknown. No bypass is provided.
+
+Component markers also name native UI stacks and runtimes from the files a
+release ships: Qt (`Qt5Core.dll`, `Qt6Core.dll`, `platforms/qwindows.dll`,
+`qt.conf`), SDL (`SDL2.dll`, `SDL3.dll`), wxWidgets, GTK (`ui-framework`) and
+the Microsoft Visual C++ runtime (`vcruntime140.dll`, `msvcp140.dll`;
+`runtime-library`). They are file-name conventions with
+`runtime_presence: "unknown"`. A native candidate's main executables get
+`inspect_pe_imports` and `inspect_pe_resources` (resource-tree inventory) probes
+(ELF and Mach-O get `inspect_binary_hardening` and `open_binary`). Headers are
+read for host-marked executables, for `Contents/MacOS/` entries and for
+extensionless files at the root, so Unix mains are found on a Windows host too. Each Godot pack carrier, including
+an executable with a trailer pack, gets an `open_binary` probe that selects it
+for `inspect_artifact`.
+
+## Probe ranking
+
+Each probe has a `priority`. `application` probes come first. They read code the
+release names as its own:
+
+- a managed assembly whose stem matches a `<name>.runtimeconfig.json`,
+  `<name>.deps.json` or `<name>.pdb` in the same directory;
+- Unity script-assembly member probes;
+- native main executables and Godot packs.
+
+`dependency` probes read the other managed assemblies. Runtime and framework
+facades (`System.*`, `Microsoft.*`, `mscorlib`, `netstandard`, WPF assemblies,
+`Mono.*`, `UnityEngine.*`) get no probe each. Instead, `deferred_probes` counts
+them as one `runtime-facade` group with an example file, and the default summary
+keeps that group. For example, a
+self-contained OpenRA release lists 25 managed probes, led by `OpenRA.Game.dll`,
+plus a deferred group of 167.
 
 `file_id` includes the admitted root namespace, recorded path and available filesystem identity. The caller-selected root path and admitted canonical path/root identity are both retained; `local_path` identifies each observed file for follow-up operations. The selected root may be a symlink; child symlinks are not followed. Exact
 metadata integers remain decimal strings. Read ranges have offsets, byte counts

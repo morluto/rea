@@ -1,0 +1,6 @@
+$ COMPLETE=bash rea -- rea mc
+exit: 0
+--- stdout
+mcp<0x01><end>
+--- stderr
+<end>

@@ -12,7 +12,7 @@ import {
 } from "../domain/evidenceInputContract.js";
 import { retainedEvidenceReferenceSchema } from "../domain/evidenceReference.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import { EvidenceReferenceError } from "../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
@@ -92,11 +92,7 @@ export function resolveEvidenceRequest(
     parsed.value,
     (input, path) => {
       if (options.signal?.aborted)
-        return err(
-          new AnalysisCancelledError(operation, {
-            cause: options.signal.reason,
-          }),
-        );
+        return err(cancelledBy(operation, options.signal));
       let selected = input;
       if (typeof input === "object" && input !== null && "kind" in input) {
         const reference = retainedEvidenceReferenceSchema.safeParse(input);
@@ -142,14 +138,13 @@ export function resolveEvidenceRequest(
         }
         selected = admitted.value;
       }
+      // A synchronous lookup or format admission can initiate cancellation.
+      if (options.signal?.aborted)
+        return err(cancelledBy(operation, options.signal));
       sources.add(selected);
       return ok(selected);
     },
   );
-  if (result.ok && options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError(operation, { cause: options.signal.reason }),
-    );
   return result.ok
     ? ok({
         input: result.value,
@@ -194,38 +189,8 @@ export const resolveEvidenceInput = (
   return ok(record);
 };
 
-/** Resolve explicit paired sources; Evidence files use the shared file reader. */
-export const resolvePairedEvidenceSources = async <
-  T extends {
-    readonly left: EvidenceSourceInput;
-    readonly right: EvidenceSourceInput;
-  },
->(
-  input: T,
-  lookup: EvidenceLookup | undefined,
-  options: EvidenceSourceResolutionOptions,
-): Promise<
-  Result<
-    Omit<T, "left" | "right"> & {
-      readonly left: Evidence;
-      readonly right: Evidence;
-    },
-    AnalysisError
-  >
-> => {
-  const left = await resolveEvidenceSource(input.left, "left", lookup, options);
-  if (!left.ok) return left;
-  const right = await resolveEvidenceSource(
-    input.right,
-    "right",
-    lookup,
-    options,
-  );
-  if (!right.ok) return right;
-  return ok({ ...input, left: left.value, right: right.value });
-};
-
-const resolveEvidenceSource = async (
+/** Resolve one side of a paired source with the same file and ledger owners. */
+export const resolveEvidenceSource = async (
   input: EvidenceSourceInput,
   side: "left" | "right",
   lookup: EvidenceLookup | undefined,

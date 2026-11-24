@@ -8,26 +8,31 @@ import { analyzeJavaScriptSemantics } from "../../../src/domain/javascript/javas
 import type { JavaScriptArtifactFile } from "../../../src/domain/javascript/javascriptArtifactFiles.js";
 import { resolveJavaScriptSemanticEvidence } from "../../support/javascriptSemanticGraphFixture.js";
 
+// This forked project uses the same main-thread stack as the CLI parent.
+// These real callable facts exceed V8's call-argument capacity, but fit the
+// caller-selectable one-million-node graph ceiling.
+const count = 130_000;
+const source = "(()=>{});\n".repeat(count);
+const sha256 = createHash("sha256").update(source).digest("hex");
+const file: JavaScriptArtifactFile = {
+  path: "entry.mjs",
+  container_sha256: sha256,
+  sha256,
+  bytes: Buffer.byteLength(source),
+  inventory_artifact_id: `art_${sha256}`,
+  kind: "javascript",
+  unpacked: false,
+  text: { included: true, value: source },
+};
+// Projection reads the analysis without changing it, so both projection modes
+// share one analysis of the wide source instead of repeating it.
+let analysis: ReturnType<typeof analyzeJavaScriptSemantics> | undefined;
+const analyzedSource = () => (analysis ??= analyzeJavaScriptSemantics(source));
+
 it.each(["direct", "transferred"] as const)(
   "retains an admitted source's wide fingerprint list through %s projection",
   (mode) => {
-    // This forked project uses the same main-thread stack as the CLI parent.
-    // These real callable facts exceed V8's call-argument capacity, but fit
-    // the caller-selectable one-million-node graph ceiling.
-    const count = 130_000;
-    const source = "(()=>{});\n".repeat(count);
-    const sha256 = createHash("sha256").update(source).digest("hex");
-    const file: JavaScriptArtifactFile = {
-      path: "entry.mjs",
-      container_sha256: sha256,
-      sha256,
-      bytes: Buffer.byteLength(source),
-      inventory_artifact_id: `art_${sha256}`,
-      kind: "javascript",
-      unpacked: false,
-      text: { included: true, value: source },
-    };
-    const ir = analyzeJavaScriptSemantics(source);
+    const ir = analyzedSource();
     expect(ir.callables).toHaveLength(count);
     expect(ir.functionFingerprints).toHaveLength(count);
     const projection = createJavaScriptSemanticGraphProjection({
@@ -94,5 +99,4 @@ it.each(["direct", "transferred"] as const)(
       });
     }
   },
-  30_000,
 );

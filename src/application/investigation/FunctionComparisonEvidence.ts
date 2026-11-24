@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { functionComparisonInputSchema } from "../../domain/functionComparisonSchemas.js";
 import {
   FUNCTION_COMPARISON_PROFILE,
@@ -50,20 +51,24 @@ export const compareFunctionEvidence = (
     const rightEvidence = right.value.evidence;
     const leftIds = [leftEvidence.evidence_id];
     const rightIds = [rightEvidence.evidence_id];
-    const evidence = createEvidence(undefined, FUNCTION_COMPARISON_PROVIDER, {
-      predicateType: "rea.function-comparison",
-      operation: "compare_functions",
-      analysisProfile: FUNCTION_COMPARISON_PROFILE,
-      parameters: {
-        left_evidence_id: leftEvidence.evidence_id,
-        right_evidence_id: rightEvidence.evidence_id,
+    const evidence = createEvidence(
+      unknownTarget("derived-from-linked-evidence"),
+      FUNCTION_COMPARISON_PROVIDER,
+      {
+        predicateType: "rea.function-comparison",
+        operation: "compare_functions",
+        analysisProfile: FUNCTION_COMPARISON_PROFILE,
+        parameters: {
+          left_evidence_id: leftEvidence.evidence_id,
+          right_evidence_id: rightEvidence.evidence_id,
+        },
+        result: comparison,
+        confidence: "derived",
+        authority: "analyst-inference",
+        limitations: comparison.limitations,
+        evidenceLinks: [...leftIds, ...rightIds],
       },
-      result: comparison,
-      confidence: "derived",
-      authority: "analyst-inference",
-      limitations: comparison.limitations,
-      evidenceLinks: [...leftIds, ...rightIds],
-    });
+    );
     return ok({
       evidence,
       sources: [leftEvidence, rightEvidence],
@@ -103,33 +108,6 @@ const comparisonUnknownInput = (
         (dimension === "calls" && discoveryUnresolved),
     )
     .map(({ dimension }) => dimension);
-  return functionUnknownInput({
-    status,
-    dimensions,
-    discoveryUnresolved,
-    leftIds,
-    rightIds,
-    comparisonEvidenceId,
-  });
-};
-
-const functionUnknownInput = ({
-  status,
-  dimensions,
-  discoveryUnresolved,
-  leftIds,
-  rightIds,
-  comparisonEvidenceId,
-}: {
-  status: ReturnType<typeof compareFunctions>["status"];
-  discoveryUnresolved: boolean;
-  dimensions: readonly ReturnType<
-    typeof compareFunctions
-  >["dimensions"][number]["dimension"][];
-  leftIds: readonly string[];
-  rightIds: readonly string[];
-  comparisonEvidenceId: string;
-}): RecordUnknownInput | undefined => {
   if (status === "unchanged") return undefined;
   const supportingIds = [
     ...new Set([...leftIds, ...rightIds, comparisonEvidenceId]),

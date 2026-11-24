@@ -11,13 +11,14 @@ import {
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { minimalElfImage } from "../../../fixtures/nativeHeaders.js";
 import {
   createNonApplicationZipInventory,
   inventoryApplicationPackage,
   requireSuccessfulProjection,
 } from "../../../support/applicationSessionFixture.js";
 
-import { projectAndroidApplicationEvidence } from "../../../../src/application/android/AndroidApplicationService.js";
+import { projectAndroidApplicationEvidence } from "../../../../src/application/InventoryProjectionEvidence.js";
 import { androidApplicationProjectionResultSchema } from "../../../../src/domain/android/androidApplication.js";
 import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
@@ -37,10 +38,7 @@ describe("Android application projection", () => {
         Uint8Array.from([0x64, 0x65, 0x78, 0x0a, 0x30, 0x33, 0x35, 0]),
       ),
     );
-    const elf = () =>
-      new Uint8ArrayReader(
-        Uint8Array.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]),
-      );
+    const elf = () => new Uint8ArrayReader(Uint8Array.from(minimalElfImage()));
     await writer.add("lib/arm64-v8a/libreactnativejni.so", elf());
     await writer.add("lib/arm64-v8a/libflutter.so", elf());
     await writer.add("lib/arm64-v8a/libunity.so", elf());

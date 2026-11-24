@@ -73,8 +73,10 @@ export async function verifyNotesPublication(run, options) {
       "Contribution inventory does not start at the published baseline tag",
     );
   await verifyInventoryHistory(run, inventory, source);
-  return {
-    status: "verified",
-    ...verifyReleaseNotes(inventory, await read("CHANGELOG.md"), pr.body),
-  };
+  const { report } = verifyReleaseNotes(
+    inventory,
+    await read("CHANGELOG.md"),
+    pr.body,
+  );
+  return { status: "verified", ...report };
 }
