@@ -81,7 +81,7 @@ const readFailure = (
             "Select a complete document within max_file_bytes; increasing reply limits or paging does not change this file admission.",
         },
       );
-    if (cause.reason === "path" || cause.reason === "format")
+    if (cause.reason === "path")
       return inputFailure(input.path, cause, cause.message, input.parameter);
   }
   if (cause instanceof Error && "code" in cause) {

@@ -1,3 +1,4 @@
+import { ok, type Result } from "../domain/result.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { constants, type Stats } from "node:fs";
 import { link, lstat, mkdtemp, open, realpath, rename } from "node:fs/promises";
@@ -34,6 +35,9 @@ export interface ClientConfigurationWriteProblem {
   readonly syscall?: string;
   readonly requestedOwnership?: { readonly uid: number; readonly gid: number };
 }
+
+/** The selected path lost its admission before publication. */
+export class ClientConfigurationPathError extends ConfigurationError {}
 
 /** Preserve the operation and original cause before publication cleanup runs. */
 export class ClientConfigurationWriteError extends Error {
@@ -179,15 +183,29 @@ export class ClientConfigurationPublication {
 
   /** Keep all publication resources owned through the complete operation. */
   async verify<Value>(operation: () => Promise<Value>): Promise<Value> {
-    let outcome: RegularFileOperationOutcome<Value>;
+    const result = await this.verifyResult(async () => ok(await operation()));
+    if (!result.ok) throw result.error;
+    return result.value;
+  }
+
+  async verifyResult<Value, Failure>(
+    operation: () => Promise<Result<Value, Failure>>,
+  ): Promise<Result<Value, Failure>> {
+    let result: Result<Value, Failure>;
     try {
-      outcome = { kind: "completed", value: await operation() };
+      result = await operation();
     } catch (cause: unknown) {
-      outcome = { kind: "failed", cause };
+      await releaseStaging(this.path, this.staging, this.cleanup, {
+        kind: "failed",
+        cause,
+      });
+      throw cause;
     }
+    const outcome: RegularFileOperationOutcome<Value> = result.ok
+      ? { kind: "completed", value: result.value }
+      : { kind: "failed", cause: result.error };
     await releaseStaging(this.path, this.staging, this.cleanup, outcome);
-    if (outcome.kind === "failed") throw outcome.cause;
-    return outcome.value;
+    return result;
   }
 
   async assertCurrent(readback: string): Promise<void> {
@@ -287,7 +305,7 @@ const assertRequestedConfigurationPath = async (
 ): Promise<void> => {
   const current = await resolveClientConfigTransactionPath(requestedPath);
   if (current === undefined)
-    throw new ConfigurationError(
+    throw new ClientConfigurationPathError(
       `Client configuration path could not be safely verified: ${requestedPath}`,
     );
   if (resolve(current) === resolve(path)) return;
@@ -310,7 +328,7 @@ const isParentAliasRetarget = async (
     requestedStats = await lstat(requestedPath);
   } catch (cause: unknown) {
     if (isNodeErrorCode(cause, "ENOENT")) return false;
-    throw new ConfigurationError(
+    throw new ClientConfigurationPathError(
       `Client configuration path could not be safely verified: ${requestedPath}`,
     );
   }

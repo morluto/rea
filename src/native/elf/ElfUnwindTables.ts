@@ -38,9 +38,9 @@ import {
   readElfDirectoryFromReader,
   type ElfProgramDeclaration,
   type ElfSectionDirectory,
-  type NativeByteSource,
   type NativeSection,
 } from "../../domain/native/nativeSectionDirectory.js";
+import type { ByteSource } from "../../domain/byteSource.js";
 
 const DW_EH_PE_OMIT = 0xff;
 /** CIE augmentation letters, compared as bytes. */
@@ -266,7 +266,7 @@ function* readSlice(
 
 /** Read unwind ranges over a bounded file handle. Truncation stays incomplete. */
 export const parseElfUnwindRangesFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   artifact: ElfUnwindRanges["artifact"],
   input: InspectElfUnwindRangesInput,
   signal?: AbortSignal,
@@ -294,8 +294,9 @@ export const parseElfUnwindRangesFromHandle = async (
         : await source.readRange(offset, length);
     if (slice.length !== length)
       throw new ArtifactReaderFailure(
-        "format",
+        "integrity",
         "ELF unwind range ended before its admitted file extent.",
+        { integrityCheck: "read-coverage" },
       );
     next = steps.next(slice);
   }

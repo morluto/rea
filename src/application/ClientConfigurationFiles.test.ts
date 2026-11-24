@@ -1,3 +1,4 @@
+import { expectResultValue } from "../../tests/support/expectResultValue.js";
 import { describe, expect, it } from "vitest";
 
 import { parseClientConfiguration } from "./ClientConfigurationDocument.js";
@@ -16,16 +17,20 @@ const sources = (
   inline: Record<string, string>,
 ) => [
   {
-    ...parseClientConfiguration(
-      JSON.stringify({ mcp: { rea: kilo(file) } }),
-      "kilo",
+    ...expectResultValue(
+      parseClientConfiguration(
+        JSON.stringify({ mcp: { rea: kilo(file) } }),
+        "kilo",
+      ),
     ),
     sourcePath: client.configPath,
   },
   {
-    ...parseClientConfiguration(
-      JSON.stringify({ mcp: { rea: { environment: inline } } }),
-      "kilo",
+    ...expectResultValue(
+      parseClientConfiguration(
+        JSON.stringify({ mcp: { rea: { environment: inline } } }),
+        "kilo",
+      ),
     ),
     inlineOrigin: "KILO_CONFIG_CONTENT" as const,
   },

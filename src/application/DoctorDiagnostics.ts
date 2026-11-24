@@ -521,7 +521,7 @@ const providerDoctorChecks = (
         ? inspection.id
         : `${inspection.id}-${candidate.name}`,
     ok: candidate.ok,
-    classification: candidate.ok ? "healthy" : candidate.classification,
+    classification: candidate.classification,
     detail: candidate.detail,
     ...(candidate.remediation === null
       ? {}

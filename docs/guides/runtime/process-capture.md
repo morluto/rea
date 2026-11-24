@@ -694,10 +694,9 @@ observations and explicit unavailable fields. Older records may omit this option
 array. No intervention entry is added without an observed signaling fact; absence
 does not prove that cleanup sent no signals.
 
-Readers that previously accepted only `not_required` for a quiesced settlement
-must refresh the advertised MCP schema or update their saved-capture reader to
-accept `cleaned` as well. Existing saved captures remain valid and keep their
-recorded outcome; missing historical signal facts are not reconstructed.
+A quiesced settlement can report `cleaned` as well as `not_required`. Saved
+captures keep their recorded outcome; missing historical signal facts are not
+reconstructed.
 
 When the host withholds an unrelated process's ownership token, REA leaves that
 process untouched and records its PID and reason in `cleanup.unverified_processes`

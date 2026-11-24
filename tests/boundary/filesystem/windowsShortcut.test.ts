@@ -65,7 +65,6 @@ describe("Windows shortcut stable filesystem boundary", () => {
     for (const [candidate, reason] of [
       [root, "invalid_format"],
       [alias, "invalid_format"],
-      [malformed, "invalid_format"],
       [join(root, "missing.lnk"), "invalid_value"],
       [join(path, "child.lnk"), "invalid_value"],
     ] as const) {
@@ -83,6 +82,14 @@ describe("Windows shortcut stable filesystem boundary", () => {
         ],
       });
     }
+    // Malformed bytes are a target refusal, not a request-field error.
+    const malformedResult = await service.inspect({ path: malformed });
+    if (malformedResult.ok) throw new Error("Expected a malformed target");
+    expect(malformedResult.error).toMatchObject({
+      _tag: "AnalysisMalformedTargetError",
+      operation: "inspect_windows_shortcut",
+      path: malformed,
+    });
   });
 
   it.skipIf(process.platform === "win32")(

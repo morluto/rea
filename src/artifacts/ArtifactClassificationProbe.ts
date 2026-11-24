@@ -7,9 +7,9 @@ import {
   readFatContainerHeader,
   readFatContainerTable,
   readMachoHeaderPrefixFacts,
+  type FatContainerHeader,
   type FatContainerTable,
   type MachoHeaderPrefixFacts,
-  type FatSliceHeaderEvidence,
 } from "../domain/apple/machoContainer.js";
 import {
   hasDosMzMagic,
@@ -37,8 +37,13 @@ export interface ArtifactClassificationEvidence {
   readonly prefix: Buffer;
   /** The last bytes of the stream, when the producer observed its end. */
   readonly suffix?: Buffer;
+  /** The probe matched an XML plist prolog in the retained prefix. */
+  readonly xmlPlistSignature: boolean;
   readonly asarHeader: FinalAsarHeaderProbeObservation;
-  readonly fatSliceHeaders?: FatSliceHeaderEvidence;
+  /** The FAT header decided once for the finished stream size. */
+  readonly fatHeader: FatContainerHeader;
+  /** Thin headers observed at slice offsets; empty unless `fatHeader` parsed. */
+  readonly fatSliceHeadersByOffset: ReadonlyMap<number, MachoHeaderPrefixFacts>;
   readonly mzWindowsHeaderSignature?: MzWindowsHeaderSignatureEvidence;
   readonly mzWindowsHeaderRecord?: MzWindowsHeaderRecordEvidence;
 }
@@ -86,9 +91,13 @@ const observeFatSliceHeaders = (input: {
   }
 };
 
+const NO_FAT_SLICE_HEADERS: ReadonlyMap<number, MachoHeaderPrefixFacts> =
+  new Map();
+
 const finishClassificationEvidence = (
   prefix: Buffer,
   suffix: Buffer | undefined,
+  xmlPlistSignature: boolean,
   archiveBytes: number,
   finishAsar: (archiveBytes: number) => FinalAsarHeaderProbeObservation,
   sliceHeadersByOffset: Map<number, MachoHeaderPrefixFacts>,
@@ -114,15 +123,16 @@ const finishClassificationEvidence = (
       );
     }
   }
-  const fatSliceHeaders =
-    finalHeader.state === "parsed"
-      ? { header: finalHeader, sliceHeadersByOffset }
-      : undefined;
   return {
     prefix,
     ...(suffix === undefined ? {} : { suffix }),
+    xmlPlistSignature,
     asarHeader: finishAsar(archiveBytes),
-    ...(fatSliceHeaders === undefined ? {} : { fatSliceHeaders }),
+    fatHeader: finalHeader,
+    fatSliceHeadersByOffset:
+      finalHeader.state === "parsed"
+        ? sliceHeadersByOffset
+        : NO_FAT_SLICE_HEADERS,
     ...(mzWindowsHeaderSignature === undefined
       ? {}
       : { mzWindowsHeaderSignature }),
@@ -338,6 +348,7 @@ export const createArtifactClassificationProbe = (
         observedBytes === archiveBytes
           ? suffixBuffer.subarray(0, suffixLength)
           : undefined,
+        xml.state === "matched",
         archiveBytes,
         (bytes) => asar.finish(bytes),
         fatSliceHeadersByOffset,

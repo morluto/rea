@@ -172,7 +172,8 @@ it("preserves explicit unknown slice evidence instead of falling back to retaine
     classifyArtifactBytes(
       {
         ...evidence,
-        fatSliceHeaders: { header, sliceHeadersByOffset: new Map() },
+        fatHeader: header,
+        fatSliceHeadersByOffset: new Map(),
       },
       bytes.length,
     ),
@@ -181,7 +182,8 @@ it("preserves explicit unknown slice evidence instead of falling back to retaine
     classifyArtifactBytes(
       {
         ...evidence,
-        fatSliceHeaders: { header, sliceHeadersByOffset: unknown },
+        fatHeader: header,
+        fatSliceHeadersByOffset: unknown,
       },
       bytes.length,
     ),

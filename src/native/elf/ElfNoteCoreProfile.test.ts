@@ -8,15 +8,15 @@ import {
   coreFileNote,
   corePrpsinfoNote,
   coreSiginfoNote,
-  elfNoteByteSource,
   elfNoteFixture,
   gnuBuildIdNote,
 } from "./ElfNotes.fixture.js";
+import { bufferByteSource } from "../../domain/byteSource.js";
 
 const input = inspectElfNotesInputSchema.parse({ path: "/fixture.core" });
 const parse = (bytes: Buffer) =>
   parseElfNotesFromHandle(
-    elfNoteByteSource(bytes),
+    bufferByteSource(bytes, 4096),
     {
       path: input.path,
       bytes: bytes.length,

@@ -1,9 +1,11 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { minVersion, subset } from "semver";
 import { parse } from "yaml";
 import { z } from "zod";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { executeWorkflowFixture } from "../../support/workflowGit.js";
 
 const workflow = async (filename = "ci.yml") =>
@@ -97,15 +99,65 @@ it("opts only the Noble binary-layout toolchain into the Ubuntu Azure archive fa
 });
 
 const recordedCrashRefresh = "refresh --kill-after=5s 150s";
+const recordedCrashNobleRefresh = "refresh --kill-after=5s 75s";
 const recordedCrashDownload = "download --kill-after=5s 180s";
 
 it.skipIf(process.platform === "win32").each([
-  ["ok", 0, [recordedCrashRefresh, recordedCrashDownload, "install untimed"]],
-  ["refresh", 100, [recordedCrashRefresh]],
-  ["download", 124, [recordedCrashRefresh, recordedCrashDownload]],
+  [
+    "ok",
+    "debian",
+    0,
+    [recordedCrashRefresh, recordedCrashDownload, "install untimed"],
+  ],
+  ["refresh", "debian", 100, [recordedCrashRefresh]],
+  ["download", "debian", 124, [recordedCrashRefresh, recordedCrashDownload]],
+  [
+    "noble-fallback",
+    "noble",
+    0,
+    [
+      recordedCrashNobleRefresh,
+      recordedCrashNobleRefresh,
+      recordedCrashDownload,
+      "install untimed",
+    ],
+  ],
+  [
+    "noble-refresh-fail",
+    "noble",
+    124,
+    [recordedCrashNobleRefresh, recordedCrashNobleRefresh],
+  ],
 ] as const)(
   "recorded-crash APT runs the expected stages and deadlines for the %s outcome",
-  async (mode, code, expected) => {
+  async (mode, distro, code, expected) => {
+    const root = await createTestTempDirectory("rea-recorded-crash-apt-");
+    const osRelease = join(root, "os-release");
+    const aptRoot = join(root, "apt");
+    const sourcesDir = join(aptRoot, "sources.list.d");
+    const ubuntuSources = join(sourcesDir, "ubuntu.sources");
+    await mkdir(sourcesDir, { recursive: true });
+    await writeFile(
+      osRelease,
+      distro === "noble"
+        ? "ID=ubuntu\nVERSION_CODENAME=noble\n"
+        : "ID=debian\nVERSION_CODENAME=trixie\n",
+    );
+    await writeFile(
+      ubuntuSources,
+      [
+        "Types: deb",
+        "URIs: http://archive.ubuntu.com/ubuntu/",
+        "Suites: noble noble-updates",
+        "Components: main universe",
+        "",
+        "Types: deb",
+        "URIs: http://security.ubuntu.com/ubuntu/",
+        "Suites: noble-security",
+        "Components: main universe",
+        "",
+      ].join("\n"),
+    );
     const steps = z
       .array(z.object({ run: z.string().optional() }))
       .parse(
@@ -118,6 +170,9 @@ it.skipIf(process.platform === "win32").each([
     if (!provision) throw new Error("Missing recorded-crash APT step");
     const mock = `
       mode=$1
+      REA_OS_RELEASE=$2
+      REA_APT_SOURCES_ROOT=$3
+      refresh_calls=0
       timeout() {
         local args="$1 $2"
         shift 2
@@ -127,11 +182,18 @@ it.skipIf(process.platform === "win32").each([
       apt-get() {
         case " $* " in
           *" update "*)
+            refresh_calls=$((refresh_calls + 1))
             record_stage refresh
             [[ " $* " == *" Acquire::Languages=none "* ]] || return 98
             [[ " $* " != *" -qq "* ]] || return 99
             if [[ $mode == refresh && " $* " == *" --error-on=any "* ]]; then
               return 100
+            fi
+            if [[ $mode == noble-fallback && $refresh_calls -eq 1 ]]; then
+              return 124
+            fi
+            if [[ $mode == noble-refresh-fail ]]; then
+              return 124
             fi
             ;;
           *" --download-only "*)
@@ -149,6 +211,8 @@ it.skipIf(process.platform === "win32").each([
       mock + provision,
       "fixture",
       mode,
+      osRelease,
+      aptRoot,
     ])
       .then(({ stdout }) => ({ code: 0, stdout }))
       .catch((cause: unknown) =>
@@ -159,9 +223,19 @@ it.skipIf(process.platform === "win32").each([
     expect(lines.filter((line) => !line.startsWith("::error::"))).toEqual(
       expected,
     );
+    if (mode === "noble-fallback" || mode === "noble-refresh-fail") {
+      const rewritten = await readFile(ubuntuSources, "utf8");
+      expect(rewritten).toContain(
+        "URIs: http://azure.archive.ubuntu.com/ubuntu/",
+      );
+      expect(rewritten).not.toContain("http://archive.ubuntu.com/ubuntu/");
+      expect(rewritten).not.toContain("http://security.ubuntu.com/ubuntu/");
+    }
     if (code !== 0)
       expect(lines.at(-1)).toContain(
-        mode === "refresh" ? "index refresh failed" : "package download failed",
+        mode === "refresh" || mode === "noble-refresh-fail"
+          ? "index refresh failed"
+          : "package download failed",
       );
   },
 );
@@ -1227,3 +1301,39 @@ it.skipIf(process.platform === "win32").each([
     if (status !== "0") expect(result.stdout).toContain(`(exit ${status})`);
   },
 );
+
+it("wires changed-file typed lint into fast Static checks", async () => {
+  const ci = await workflow();
+  const changesOutputs = z
+    .object({ outputs: z.record(z.string(), z.string()) })
+    .parse(ci.jobs.changes).outputs;
+  expect(changesOutputs.typed_lint_files).toBe(
+    "${{ steps.plan.outputs.typed_lint_files }}",
+  );
+  const staticSteps = z
+    .array(
+      z
+        .object({
+          name: z.string().optional(),
+          if: z.string().optional(),
+          env: z.record(z.string(), z.string()).optional(),
+          run: z.string().optional(),
+        })
+        .passthrough(),
+    )
+    .parse(z.object({ steps: z.unknown() }).parse(ci.jobs.static).steps);
+  const typedLintStep = staticSteps.find(
+    (step) => step.name === "Run typed lint on changed files",
+  );
+  expect(typedLintStep).toMatchObject({
+    env: {
+      CI_TYPED_LINT_FILES: "${{ needs.changes.outputs.typed_lint_files }}",
+    },
+    run: "node scripts/ci/static-check-report.mjs typed-lint-changed",
+  });
+  expect(typedLintStep?.if).toContain("needs.changes.outputs.tier == 'fast'");
+  expect(typedLintStep?.if).toContain("needs.changes.outputs.code == 'true'");
+  expect(typedLintStep?.if).toContain(
+    "needs.changes.outputs.typed_lint_files != '[]'",
+  );
+});

@@ -4,7 +4,6 @@ import { lstat, open } from "node:fs/promises";
 import {
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
-  ArtifactReaderFailure,
   readStableArtifact,
   type StableArtifactFileSystem,
   type StableArtifactSnapshot,
@@ -281,25 +280,13 @@ const windowsShortcutFailure = (
       operation: OPERATION,
       path: input.path,
       description: "shortcut",
-      recognise: (failure, origin) => {
+      recognise: (failure) => {
         if (failure instanceof WindowsShortcutResourceFailure)
           return parseLimitConstraint(OPERATION, "capacity", failure, {
             path: input.path,
             retryable: false,
             remediationAction: budgetRemediation(failure.failure.limit),
           });
-        if (
-          origin === "owned-or-classified" &&
-          failure instanceof ArtifactReaderFailure &&
-          (failure.reason === "path" || failure.reason === "format")
-        )
-          return new AnalysisInputError(OPERATION, { cause: failure }, [
-            {
-              path: ["path"],
-              reason: "invalid_format",
-              message: failure.message,
-            },
-          ]);
         return undefined;
       },
       fileSize: (failure) =>

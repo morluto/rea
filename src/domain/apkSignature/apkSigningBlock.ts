@@ -29,6 +29,7 @@ import {
  */
 import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
 import { type Result, err, ok } from "../result.js";
+import type { PrefixedByteSource } from "../byteSource.js";
 
 /** "APK Sig Block 42" — the 16-byte block magic (JAR/APK signing block spec). */
 const BLOCK_MAGIC = "APK Sig Block 42";
@@ -93,14 +94,6 @@ export interface ApkSigningBlockPair {
 export interface ApkSigningBlock {
   readonly blockStart: number;
   readonly pairs: readonly ApkSigningBlockPair[];
-}
-
-/** Minimal random-access reader for streaming APK ZIP/signing-block parsing. */
-export interface RandomAccessBytes {
-  readonly size: number;
-  /** At least the first `min(size, 4)` bytes of the file. */
-  readonly prefix: Uint8Array;
-  readonly readRange: (offset: number, length: number) => Promise<Uint8Array>;
 }
 
 /** Read an unsigned 64-bit little-endian value as a Number, or null if unsafe/oob. */
@@ -225,7 +218,7 @@ const ZIP_TAIL_WINDOW_BYTES =
  * buffering the whole archive. Also returns the raw EOCD bytes when valid.
  */
 export const parseZipTailFromReader = async (
-  source: RandomAccessBytes,
+  source: PrefixedByteSource,
 ): Promise<
   Result<
     { readonly tail: ZipTail; readonly eocdBytes: Uint8Array },
@@ -453,7 +446,7 @@ export const parseZipTailFromReader = async (
  * buffering the whole archive.
  */
 export const locateApkSigningBlockFromReader = async (
-  source: RandomAccessBytes,
+  source: PrefixedByteSource,
   tail: ZipTail,
 ): Promise<Result<ApkSigningBlock | null, ApkSigningBlockError>> => {
   const cdOffset = tail.centralDirectoryOffset;
