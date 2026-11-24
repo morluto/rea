@@ -11,8 +11,16 @@ import { artifactInventoryResultSchema } from "../artifactGraph.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import {
   artifactInventoryViewRequestSchema,
+  artifactInventorySummarySchema,
   projectArtifactInventoryView,
 } from "./artifactInventoryView.js";
+import {
+  DEFAULT_BUN_READER_LIMITS,
+  DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
+  DEFAULT_GODOT_READER_LIMITS,
+  DEFAULT_ISO9660_READER_LIMITS,
+  DEFAULT_NODE_SEA_READER_LIMITS,
+} from "../artifactReaderLimits.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { changedEvidenceSubject } from "../../../tests/fixtures/evidenceSubject.js";
 
@@ -321,4 +329,28 @@ it("reuses immutable facts while binding each view to its current Evidence ident
       { kind: "inventory", collection: "nodes" },
     ),
   ).toThrow();
+});
+
+it("projects summary views for saved inventories lacking android_sparse without inventing it", () => {
+  const preSparseLimits = {
+    bun: DEFAULT_BUN_READER_LIMITS,
+    dotnet_bundle: DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
+    node_sea: DEFAULT_NODE_SEA_READER_LIMITS,
+    godot: DEFAULT_GODOT_READER_LIMITS,
+    iso9660: DEFAULT_ISO9660_READER_LIMITS,
+    expanded_bytes: 4096,
+  };
+  const inventory = freezeJsonSnapshot({
+    ...freshInventory(),
+    effective_limits: preSparseLimits,
+  });
+  const projected = projectArtifactInventoryView(parent(inventory), {
+    kind: "summary",
+  });
+  if (!projected.ok) throw projected.error;
+  if (projected.value.kind !== "summary")
+    throw new Error("Expected summary projection");
+  const parsed = artifactInventorySummarySchema.parse(projected.value.summary);
+  expect(parsed.effective_limits).toEqual(preSparseLimits);
+  expect("android_sparse" in parsed.effective_limits!).toBe(false);
 });

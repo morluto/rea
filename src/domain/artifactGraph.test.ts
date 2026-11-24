@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { artifactInventoryResultSchema } from "./artifactGraph.js";
+import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
+import {
+  artifactExtractionResultSchema,
+  artifactInventoryResultSchema,
+} from "./artifactGraph.js";
+import { parseArtifactInventoryResult } from "./artifactInventoryEvidence.js";
+import {
+  DEFAULT_BUN_READER_LIMITS,
+  DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
+  DEFAULT_GODOT_READER_LIMITS,
+  DEFAULT_ISO9660_READER_LIMITS,
+  DEFAULT_NODE_SEA_READER_LIMITS,
+} from "./artifactReaderLimits.js";
 
 describe("artifact graph path and provenance fields", () => {
   it("preserves long archive paths and command arguments inline", () => {
@@ -110,5 +122,64 @@ describe("artifact graph path and provenance fields", () => {
         integrity_contradictions: [],
       }).success,
     ).toBe(true);
+  });
+
+  it("reads saved pre-android_sparse effective_limits without fabricating missing groups", () => {
+    const preSparseLimits = {
+      bun: DEFAULT_BUN_READER_LIMITS,
+      dotnet_bundle: DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
+      node_sea: DEFAULT_NODE_SEA_READER_LIMITS,
+      godot: DEFAULT_GODOT_READER_LIMITS,
+      iso9660: DEFAULT_ISO9660_READER_LIMITS,
+      expanded_bytes: 1024,
+    };
+    const { iso9660: _iso, ...preIsoLimits } = preSparseLimits;
+    const carrier = ARTIFACT_COMPARISON_EXAMPLE.left;
+    const base = artifactInventoryResultSchema.parse(carrier.normalized_result);
+
+    const parsedPreSparse = parseArtifactInventoryResult(
+      {
+        ...base,
+        effective_limits: preSparseLimits,
+      },
+      carrier.subject,
+    );
+    expect(parsedPreSparse.effectiveLimits).toEqual(preSparseLimits);
+    expect("android_sparse" in parsedPreSparse.effectiveLimits!).toBe(false);
+
+    const parsedPreIso = artifactInventoryResultSchema.parse({
+      ...base,
+      effective_limits: preIsoLimits,
+    });
+    expect(parsedPreIso.effective_limits).toEqual(preIsoLimits);
+    expect("iso9660" in parsedPreIso.effective_limits!).toBe(false);
+    expect("android_sparse" in parsedPreIso.effective_limits!).toBe(false);
+
+    const parsedExtraction = artifactExtractionResultSchema.parse({
+      effective_limits: preSparseLimits,
+      manifest: base.manifest,
+      extraction_manifest: {
+        extraction_id: `aex_${"e".repeat(64)}`,
+        source_manifest_id: base.manifest.manifest_id,
+        selected_occurrence_ids: [],
+        files_sha256: "f".repeat(64),
+        output_root_alias: "$OUTPUT_ROOT",
+      },
+      output_root: "/tmp/out",
+      artifacts: [],
+      omitted_entries: [],
+      containment_verified: true,
+      cleanup: {
+        attempted: false,
+        verified: true,
+        retained_count: 0,
+        residual_paths: [],
+      },
+      coverage: { scope: "container-entries", status: "complete" },
+      provenance: [],
+      integrity_contradictions: [],
+      limitations: [],
+    });
+    expect("android_sparse" in parsedExtraction.effective_limits!).toBe(false);
   });
 });

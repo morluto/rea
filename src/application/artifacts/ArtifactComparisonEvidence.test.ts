@@ -23,6 +23,14 @@ import {
 } from "../../domain/evidenceErrors.js";
 import { resolveArtifactComparisonEvidence } from "./ArtifactComparisonEvidence.js";
 import { artifactInventoryResultSchema } from "../../domain/artifactGraph.js";
+import { compareArtifacts } from "../../domain/artifactComparison.js";
+import {
+  DEFAULT_BUN_READER_LIMITS,
+  DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
+  DEFAULT_GODOT_READER_LIMITS,
+  DEFAULT_ISO9660_READER_LIMITS,
+  DEFAULT_NODE_SEA_READER_LIMITS,
+} from "../../domain/artifactReaderLimits.js";
 import {
   artifactGraphDigest,
   artifactManifestId,
@@ -452,4 +460,61 @@ it("authenticates an alias summary of a selected flash image against its retaine
   expect(
     resolveArtifactComparisonEvidence(summary.value, () => parent),
   ).toEqual({ ok: true, value: parent });
+});
+
+it("resolves summaries and compares saved inventories lacking android_sparse without inventing limits", async () => {
+  const original = ARTIFACT_COMPARISON_EXAMPLE.left;
+  const parsedBase = artifactInventoryResultSchema.parse(
+    original.normalized_result,
+  );
+  const preSparseLimits = {
+    bun: DEFAULT_BUN_READER_LIMITS,
+    dotnet_bundle: DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
+    node_sea: DEFAULT_NODE_SEA_READER_LIMITS,
+    godot: DEFAULT_GODOT_READER_LIMITS,
+    iso9660: DEFAULT_ISO9660_READER_LIMITS,
+    expanded_bytes: 2048,
+  };
+  const historicalEvidence = createEvidence(
+    fileSubjectTarget(original.subject),
+    original.provider,
+    {
+      operation: "inventory_artifact",
+      parameters: {},
+      result: {
+        ...parsedBase,
+        effective_limits: preSparseLimits,
+      },
+      confidence: "observed",
+      authority: "shipped-artifact",
+    },
+  );
+
+  const summary = await inspectAnalysisView(
+    {
+      source: { kind: "inline", evidence: historicalEvidence },
+      view: { kind: "summary" },
+    },
+    (evidenceId) =>
+      evidenceId === historicalEvidence.evidence_id
+        ? historicalEvidence
+        : undefined,
+  );
+  if (!summary.ok) throw summary.error;
+
+  const summaryView = artifactInventorySummaryViewResultSchema.parse(
+    summary.value.normalized_result,
+  );
+  expect(summaryView.summary.effective_limits).toEqual(preSparseLimits);
+  expect("android_sparse" in summaryView.summary.effective_limits!).toBe(false);
+  expect(
+    resolveArtifactComparisonEvidence(summary.value, () => historicalEvidence),
+  ).toEqual({ ok: true, value: historicalEvidence });
+
+  const comparison = compareArtifacts(
+    historicalEvidence,
+    ARTIFACT_COMPARISON_EXAMPLE.right,
+  );
+  expect(comparison.status).toBe("changed");
+  expect(comparison.left_manifest_id).toBe(parsedBase.manifest.manifest_id);
 });

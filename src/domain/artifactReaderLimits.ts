@@ -218,6 +218,17 @@ export const artifactReaderLimitsSchema = z.strictObject({
 });
 export type ArtifactReaderLimits = z.output<typeof artifactReaderLimitsSchema>;
 
+/**
+ * Recorded `effective_limits` schema for persisted or returned Evidence:
+ * accepts unchanged historical records lacking `android_sparse` without
+ * inventing or defaulting a limit they never recorded.
+ */
+export const recordedArtifactReaderLimitsSchema =
+  artifactReaderLimitsSchema.extend({
+    iso9660: iso9660ReaderLimitsSchema.exactOptional(),
+    android_sparse: androidSparseReaderLimitsSchema.exactOptional(),
+  });
+
 export const resolveArtifactReaderLimits = (
   selected?: ArtifactReaderLimitsInput,
 ): ArtifactReaderLimits => ({
