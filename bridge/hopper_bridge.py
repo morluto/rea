@@ -219,6 +219,19 @@ class InvalidRequestError(Exception):
     """Caller input failed bridge request or operation validation."""
 
 
+class SelectorNotFoundError(InvalidRequestError):
+    """A valid selector did not resolve in the current Hopper document.
+
+    ``selector`` records how the selector resolved: its caller value, whether
+    Hopper matched it as a symbol, an address, or the cursor, and the resolved
+    address. An unresolved name has no address.
+    """
+
+    def __init__(self, message, selector=None):
+        super().__init__(message)
+        self.selector = selector
+
+
 EXHAUSTIVE_ANALYSIS_METHODS = frozenset(
     (
         "analyze_function",
@@ -457,7 +470,10 @@ def _address_selection(document, value=None):
             try:
                 address = int(value, 16)
             except ValueError as error:
-                raise InvalidRequestError("Unknown Hopper address or name: %s" % value) from error
+                raise SelectorNotFoundError(
+                    "Unknown Hopper address or name: %s" % value,
+                    {"value": value, "source": "unresolved"},
+                ) from error
     if not 0 <= address < 0xFFFFFFFFFFFFFFFF:
         raise InvalidRequestError("Address is outside Hopper's usable unsigned 64-bit range: %s" % value)
     return address, source
@@ -478,7 +494,13 @@ def _procedure(document, value=None):
     address, source = _address_selection(document, value)
     result = _segment(document, address).getProcedureAtAddress(address)
     if result is None:
-        raise InvalidRequestError("No procedure exists at the requested address")
+        selector = {"value": value, "source": source, "address": _hex(address)}
+        if source == "symbol":
+            raise SelectorNotFoundError(
+                "Name %s resolves to %s, which is not inside a Hopper procedure" % (value, _hex(address)),
+                selector,
+            )
+        raise SelectorNotFoundError("No procedure exists at %s" % _hex(address), selector)
     if source == "symbol" and address != result.getEntryPoint():
         raise InvalidRequestError(
             "Symbol %s at %s is inside procedure %s at %s; select its entry name/address or use resolve_containing_procedure for explicit containment"
@@ -546,7 +568,7 @@ def _basic_block_end(procedure, block):
     return end
 
 
-def _block_instruction_addresses(procedure, block):
+def _block_instructions(procedure, block, end=None):
     """Walk either endpoint convention using Hopper's block ownership API.
 
     Some Hopper builds return the final instruction start, despite the public
@@ -555,7 +577,8 @@ def _block_instruction_addresses(procedure, block):
     """
     segment = procedure.getSegment()
     address = block.getStartingAddress()
-    end = _basic_block_end(procedure, block)
+    if end is None:
+        end = _basic_block_end(procedure, block)
     while address < end:
         if procedure.getBasicBlockAtAddress(address) != block:
             break
@@ -565,8 +588,13 @@ def _block_instruction_addresses(procedure, block):
         length = instruction.getInstructionLength()
         if length <= 0 or address + length > end:
             break
-        yield address
+        yield address, instruction
         address += length
+
+
+def _block_instruction_addresses(procedure, block):
+    for address, _ in _block_instructions(procedure, block):
+        yield address
 
 
 def _instruction_addresses(procedure):
@@ -608,35 +636,52 @@ def _native_calls(procedure, direction):
     return calls, sorted(unresolved, key=lambda item: int(item["address"], 16))
 
 
+def _resolve_procedure_identity(document, address, containing, identities):
+    if address in containing:
+        procedure = containing[address]
+    else:
+        procedure, _ = _containing_procedure(document, address)
+        containing[address] = procedure
+    if procedure is None:
+        return None
+    entry = procedure.getEntryPoint()
+    identity = identities.get(entry)
+    if identity is None:
+        identity = _procedure_identity(procedure)
+        identities[entry] = identity
+    return identity
+
+
 def _procedure_references(document, params):
     procedure = _procedure(document, params.get("procedure"))
     direction = params.get("direction", "outgoing")
     if direction not in ("incoming", "outgoing"):
         raise InvalidRequestError("direction must be incoming or outgoing")
     addresses = _instruction_addresses(procedure)
+    segment = procedure.getSegment()
     edges = set()
     for address in addresses:
-        segment = _segment(document, address)
         references = segment.getReferencesFromAddress(address) if direction == "outgoing" else segment.getReferencesOfAddress(address)
         for reference in references:
             edges.add((address, reference) if direction == "outgoing" else (reference, address))
     calls, unresolved = _native_calls(procedure, direction)
     edges.update(calls)
     ordered = sorted(edges)
+    self_identity = _procedure_identity(procedure)
+    containing = {address: procedure for address in addresses}
+    identities = {procedure.getEntryPoint(): self_identity}
     items = []
     for source, target in ordered:
-        source_procedure, _ = _containing_procedure(document, source)
-        target_procedure, _ = _containing_procedure(document, target)
         items.append({
             "source_address": _hex(source),
             "target_address": _hex(target),
-            "source_procedure": _procedure_identity(source_procedure) if source_procedure is not None else None,
-            "target_procedure": _procedure_identity(target_procedure) if target_procedure is not None else None,
+            "source_procedure": _resolve_procedure_identity(document, source, containing, identities),
+            "target_procedure": _resolve_procedure_identity(document, target, containing, identities),
             "kind": _unavailable("Hopper exposes partial CallReference classification, but not detailed reference flags"),
             **({"call": calls[(source, target)]} if (source, target) in calls else {}),
         })
     return {
-        "procedure": _procedure_identity(procedure), "direction": direction,
+        "procedure": self_identity, "direction": direction,
         "reference_kinds_available": False,
         # These are native CallReference objects, not proof that every unresolved
         # dispatch site has been enumerated by Hopper.
@@ -939,6 +984,26 @@ def _search_inventory(document, kind):
     return inventory
 
 
+def _search_inventory_folded(document, kind):
+    """Cache pre-casefolded search text alongside an unchanged document inventory."""
+    key = (id(document), f"{kind}_folded")
+    folded = _search_inventory_cache.get(key)
+    if folded is None:
+        inventory = _search_inventory(document, kind)
+        if kind == "string":
+            folded = tuple(
+                (address, record, record["value"].casefold())
+                for address, record in inventory
+            )
+        else:
+            folded = tuple(
+                (address, value, value.casefold())
+                for address, value in inventory
+            )
+        _search_inventory_cache[key] = folded
+    return folded
+
+
 def _search_results(document, kind, params):
     pattern = params.get("pattern")
     if not isinstance(pattern, str) or not pattern:
@@ -950,22 +1015,33 @@ def _search_results(document, kind, params):
     if not isinstance(case_sensitive, bool):
         raise InvalidRequestError("case_sensitive must be a boolean")
 
-    if mode == "literal":
-        needle = pattern if case_sensitive else pattern.casefold()
-        matches = lambda value: needle in (value if case_sensitive else value.casefold())
-    else:
+    if mode != "literal":
         raise CapabilityUnavailableError("Regex matching requires REA's supervised worker; the native bridge only executes literal searches")
 
+    if case_sensitive:
+        if kind == "string":
+            return [
+                {"address": address, **record}
+                for address, record in _search_inventory(document, kind)
+                if pattern in record["value"]
+            ]
+        return [
+            {"address": address, "value": value}
+            for address, value in _search_inventory(document, kind)
+            if pattern in value
+        ]
+
+    needle = pattern.casefold()
     if kind == "string":
         return [
             {"address": address, **record}
-            for address, record in _search_inventory(document, kind)
-            if matches(record["value"])
+            for address, record, folded in _search_inventory_folded(document, kind)
+            if needle in folded
         ]
     return [
         {"address": address, "value": value}
-        for address, value in _search_inventory(document, kind)
-        if matches(value)
+        for address, value, folded in _search_inventory_folded(document, kind)
+        if needle in folded
     ]
 
 
@@ -992,10 +1068,7 @@ def _name_at_address(document, address):
     return segment.getNameAtAddress(address)
 
 
-def _render_instruction(segment, address):
-    instruction = segment.getInstructionAtAddress(address)
-    if instruction is None:
-        return None
+def _render_instruction_object(address, instruction):
     arguments = [
         instruction.getFormattedArgument(index)
         for index in range(instruction.getArgumentCount())
@@ -1008,11 +1081,26 @@ def _render_instruction(segment, address):
     )
 
 
+def _render_instruction(segment, address):
+    instruction = segment.getInstructionAtAddress(address)
+    if instruction is None:
+        return None
+    return _render_instruction_object(address, instruction)
+
+
 def _assembly_lines(procedure, addresses=None):
     """Render assembly lines while guarding against malformed instruction cycles."""
-    segment = procedure.getSegment()
     if addresses is None:
-        addresses = _instruction_addresses(procedure)
+        lines = []
+        seen = set()
+        for block in procedure.basicBlockIterator():
+            for address, instruction in _block_instructions(procedure, block):
+                if address in seen:
+                    continue
+                seen.add(address)
+                lines.append(_render_instruction_object(address, instruction))
+        return lines
+    segment = procedure.getSegment()
     return [
         line for address in addresses
         if (line := _render_instruction(segment, address)) is not None
@@ -1027,8 +1115,7 @@ def _assembly(procedure):
 def _read_function_instructions(document, params):
     """Read all raw instructions without invoking decompilation."""
     procedure = _procedure(document, params.get("procedure"))
-    addresses = _instruction_addresses(procedure)
-    items = _assembly_lines(procedure, addresses)
+    items = _assembly_lines(procedure)
     return {
         "procedure": _procedure_identity(procedure),
         "instructions": items,
@@ -1042,10 +1129,18 @@ def _read_function_instructions(document, params):
 def _analyze_function(document, params):
     """Collect the complete function dossier for agent callers."""
     procedure = _procedure(document, params.get("procedure"))
-    addresses = _instruction_addresses(procedure)
+    addresses = []
+    procedure_addresses = set()
+    assembly_lines = []
     blocks = []
-    all_blocks = list(procedure.basicBlockIterator())
-    for block in all_blocks:
+    for block in procedure.basicBlockIterator():
+        end = _basic_block_end(procedure, block)
+        for address, instruction in _block_instructions(procedure, block, end):
+            if address in procedure_addresses:
+                continue
+            procedure_addresses.add(address)
+            addresses.append(address)
+            assembly_lines.append(_render_instruction_object(address, instruction))
         successors = []
         for index in range(block.getSuccessorCount()):
             successor = block.getSuccessorAddressAtIndex(index)
@@ -1053,17 +1148,16 @@ def _analyze_function(document, params):
                 successors.append(_hex(successor))
         blocks.append({
             "start": _hex(block.getStartingAddress()),
-            "end": _hex(_basic_block_end(procedure, block)),
+            "end": _hex(end),
             "successors": sorted(set(successors), key=lambda value: int(value, 16)),
         })
     pseudo = _pseudocode(document, procedure)
-    assembly_lines = _assembly_lines(procedure, addresses)
     callers = sorted((_procedure_identity(item) for item in procedure.getAllCallerProcedures()), key=lambda item: int(item["address"], 16))
     callees = sorted((_procedure_identity(item) for item in procedure.getAllCalleeProcedures()), key=lambda item: int(item["address"], 16))
+    segment = procedure.getSegment()
     comments = []
     edges = set()
     for address in addresses:
-        segment = _segment(document, address)
         comment = segment.getCommentAtAddress(address)
         inline_comment = segment.getInlineCommentAtAddress(address)
         if comment:
@@ -1076,19 +1170,19 @@ def _analyze_function(document, params):
             edges.add((source, address))
     incoming = []
     outgoing = []
-    procedure_addresses = set(addresses)
     outgoing_calls, unresolved_calls = _native_calls(procedure, "outgoing")
     incoming_calls, _ = _native_calls(procedure, "incoming")
     calls = {**incoming_calls, **outgoing_calls}
     edges.update(calls)
+    self_identity = _procedure_identity(procedure)
+    containing = {address: procedure for address in addresses}
+    identities = {procedure.getEntryPoint(): self_identity}
     for source, target in sorted(edges):
-        source_procedure, _ = _containing_procedure(document, source)
-        target_procedure, _ = _containing_procedure(document, target)
         item = {
             "source_address": _hex(source),
             "target_address": _hex(target),
-            "source_procedure": _procedure_identity(source_procedure) if source_procedure is not None else None,
-            "target_procedure": _procedure_identity(target_procedure) if target_procedure is not None else None,
+            "source_procedure": _resolve_procedure_identity(document, source, containing, identities),
+            "target_procedure": _resolve_procedure_identity(document, target, containing, identities),
             "kind": _unavailable("Hopper exposes partial CallReference classification, but not detailed reference flags"),
             **({"call": calls[(source, target)]} if (source, target) in calls else {}),
         }
@@ -1586,6 +1680,8 @@ def _diagnostic_type(error):
         return "capability_unavailable"
     if isinstance(error, PermissionError):
         return "authorization"
+    if isinstance(error, SelectorNotFoundError):
+        return "selector_not_found"
     if isinstance(error, InvalidRequestError):
         return "invalid_request"
     return "bridge_exception"
@@ -1598,11 +1694,15 @@ def _safe_diagnostic(error):
         message = str(error)
     elif diagnostic_type == "authorization":
         message = "Invalid bridge capability"
-    elif diagnostic_type == "invalid_request":
+    elif diagnostic_type in ("invalid_request", "selector_not_found"):
         message = str(error)
     else:
         message = "%s: Hopper bridge operation failed" % type(error).__name__
-    return {"code": -32000, "message": message, "type": diagnostic_type}
+    diagnostic = {"code": -32000, "message": message, "type": diagnostic_type}
+    selector = getattr(error, "selector", None)
+    if diagnostic_type == "selector_not_found" and selector is not None:
+        diagnostic["selector"] = selector
+    return diagnostic
 
 
 def _run():

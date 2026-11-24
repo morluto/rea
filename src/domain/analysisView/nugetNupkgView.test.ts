@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { createEvidence } from "../evidence.js";
 import { projectAnalysisView } from "./analysisView.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
-import { nugetNupkgSummaryViewResultSchema } from "./analysisViewResult.js";
+import { nugetNupkgSummaryViewResultSchema } from "./summarySchemas/nugetNupkgSummarySchema.js";
 import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 const report = {

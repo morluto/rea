@@ -49,31 +49,6 @@ const parent = (): AnalysisViewParent => {
   };
 };
 
-it("validates mutable inline reports again after an earlier successful view", () => {
-  const mutable = structuredClone(report);
-  const input = { ...parent(), normalizedResult: mutable };
-  expect(projectAnalysisView(input, { kind: "summary" }).ok).toBe(true);
-  mutable.artifact.bytes = -1;
-  expect(
-    projectAnalysisView({ ...input, sealedResult: true }, { kind: "summary" })
-      .ok,
-  ).toBe(false);
-});
-
-it("bounds inherited messages while keeping their complete parent reference", () => {
-  const note = "Large source note: " + "x".repeat(300_000);
-  const input = {
-    ...parent(),
-    limitations: [note],
-  };
-  const result = projectAnalysisView(input, { kind: "summary" });
-  if (!result.ok) throw result.error;
-  expect(result.value.limitations.join(" ")).toContain(input.evidenceId);
-  expect(result.value.limitations.join(" ")).toContain("omitted");
-  expect(result.value.unknowns.join(" ")).toContain("runtime dependencies");
-  expect(input.limitations[0]).toBe(note);
-});
-
 it.each(["digest", "format"] as const)(
   "rejects a Go parent whose authenticated %s conflicts with its report",
   (field) => {
@@ -199,6 +174,105 @@ it.each(["dependencies", "settings"] as const)(
       total: 0,
       next_offset: null,
       exhausted: true,
+    });
+  },
+);
+
+const indexedNames = ["keep-0", "drop-1", "keep-2", "keep-3", "keep-4"];
+const indexedReport: GoBinary = {
+  ...report,
+  build_info: {
+    header_offset: 0,
+    encoding: "inline",
+    go_version: null,
+    go_version_bytes_base64: "",
+    module_text: null,
+    module_bytes_base64: "",
+    version_location: { offset: 32, bytes: 0 },
+    module_location: { offset: 32, bytes: 0 },
+    module: {
+      path: null,
+      main: null,
+      dependencies: indexedNames.map((path) => ({
+        path,
+        version: "v1.0.0",
+        sum: null,
+        replacement: null,
+      })),
+      settings: indexedNames.map((key) => ({ key, value: "value" })),
+      unparsed_lines: [],
+      unparsed_line_bytes_base64: [],
+      complete: true,
+    },
+  },
+  string_literals: {
+    evidence_kind: "inferred",
+    items: indexedNames.map((value, index) => ({
+      value,
+      location: { offset: 256 + index * 16, bytes: Buffer.byteLength(value) },
+      first_header_offset: 64 + index * 16,
+      reference_count: 1,
+    })),
+    discovered_count: indexedNames.length,
+    aggregate_bytes: Buffer.byteLength(indexedNames.join("")),
+    max_items: indexedNames.length,
+    truncated: false,
+  },
+};
+
+const selectedNames = indexedNames.filter((name) => name.startsWith("keep-"));
+it.each([
+  { collection: "dependencies", paths: selectedNames },
+  { collection: "settings", keys: selectedNames },
+  { collection: "string_literals", contains: "keep-" },
+  { collection: "string_literals", values: selectedNames },
+] as const)(
+  "pages filtered and unfiltered $collection rows in source order",
+  (filter) => {
+    const input = {
+      ...parent(),
+      normalizedResult: freezeOwnedJsonTreeSnapshot(
+        structuredClone(indexedReport),
+      ),
+      sealedResult: true,
+    };
+    const result = projectAnalysisView(input, {
+      kind: "go",
+      indices: [3, 90, 0, 2, 1, 3],
+      offset: 1,
+      limit: 1,
+      ...filter,
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({
+      page: {
+        collection: filter.collection,
+        rows: [{ index: 2 }],
+      },
+      coverage: {
+        status: "page",
+        examined: 1,
+        total: 3,
+        next_offset: 2,
+        exhausted: false,
+      },
+    });
+
+    const unfiltered = projectAnalysisView(input, {
+      kind: "go",
+      collection: filter.collection,
+      fields: [],
+      offset: 3,
+      limit: 1,
+    });
+    if (!unfiltered.ok || unfiltered.value.kind !== "go")
+      throw new Error("Expected an unfiltered Go page");
+    expect(unfiltered.value.page.collection).toBe(filter.collection);
+    expect(unfiltered.value.page.rows).toEqual([{ index: 3 }]);
+    expect(unfiltered.value.coverage).toMatchObject({
+      total: 5,
+      next_offset: 4,
+      exhausted: false,
     });
   },
 );

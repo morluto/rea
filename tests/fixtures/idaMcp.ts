@@ -228,6 +228,14 @@ export class RecordingIdaMcp implements IdaMcpConnection {
           matches: [{ addr: "0x3000", string: "a.b\nC" }],
           cursor: { done: true },
         };
+      case "string_at":
+        return {
+          matches:
+            args.addr === "0x3000"
+              ? [{ addr: "0x3000", string: "a.b\nC" }]
+              : [],
+          cursor: { done: true },
+        };
       default:
         throw new Error(`Unimplemented producer tool ${name}`);
     }

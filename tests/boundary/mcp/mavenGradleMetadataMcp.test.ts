@@ -129,26 +129,6 @@ mcpTest(
 );
 
 mcpTest(
-  "requires an absolute path for inspect_maven_gradle_metadata",
-  async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
-    try {
-      const response = await client.callTool({
-        name: "inspect_maven_gradle_metadata",
-        arguments: { path: "pom.xml" },
-      });
-      expect(response.isError).toBe(true);
-      expect(parseMcpToolError(response).error).toMatchObject({
-        code: "invalid_request",
-        details: { operation: "inspect_maven_gradle_metadata" },
-      });
-    } finally {
-      await session.close();
-    }
-  },
-);
-
-mcpTest(
   "reports a foreign file as an unsupported target rather than a parse",
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);

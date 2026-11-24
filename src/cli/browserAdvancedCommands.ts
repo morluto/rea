@@ -9,12 +9,14 @@ import {
 import { contractNamed } from "./contractCliDescription.js";
 import {
   admittedContractInput,
-  commandRoute,
-  contractInputBranch,
   registerContractCommand,
-  registerRoutedCommand,
   type ContractCommandContext,
 } from "./contractCommand.js";
+import {
+  commandRoute,
+  contractInputBranch,
+  registerRoutedCommand,
+} from "./routedContractCommand.js";
 import {
   captureWebScreenshot,
   compareWebCaptureEvidence,

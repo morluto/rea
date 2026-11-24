@@ -620,8 +620,10 @@ Every capture requires `truncation_details`, with separate accounting for:
   remain available and issued reads settle before final coverage is returned.
 
 The aggregate `truncated` flag summarizes these observations. Comparisons retain
-results for unaffected dimensions and mark affected dimensions unknown; an
-incomplete capture cannot locate the first divergence across all dimensions.
+results for unaffected dimensions. If the hash budget omits a file's digest,
+different retained digests for another path still mark the filesystem dimension
+`changed`. Incomplete captures leave the first divergence across all dimensions
+unknown.
 Trace assertions use coverage for the sources they select, so an assertion
 about complete raw terminal output need not fail because rendered snapshots
 were omitted. A trace difference applies to the dimensions identified by its
@@ -692,10 +694,9 @@ observations and explicit unavailable fields. Older records may omit this option
 array. No intervention entry is added without an observed signaling fact; absence
 does not prove that cleanup sent no signals.
 
-Readers that previously accepted only `not_required` for a quiesced settlement
-must refresh the advertised MCP schema or update their saved-capture reader to
-accept `cleaned` as well. Existing saved captures remain valid and keep their
-recorded outcome; missing historical signal facts are not reconstructed.
+A quiesced settlement can report `cleaned` as well as `not_required`. Saved
+captures keep their recorded outcome; missing historical signal facts are not
+reconstructed.
 
 When the host withholds an unrelated process's ownership token, REA leaves that
 process untouched and records its PID and reason in `cleanup.unverified_processes`

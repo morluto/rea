@@ -23,7 +23,7 @@
  */
 import { estimateTokenCount } from "tokenx";
 
-import { renderCliDocument, type CliOutputFormat } from "../cliOutput.js";
+import { renderCliDocument, type CliOutputFormat } from "./cliOutput.js";
 import { jsonLinesErrorRecord } from "./jsonLines.js";
 import { sliceTextByTokenWindow } from "./tokenWindow.js";
 
@@ -132,7 +132,7 @@ export const renderFailure = (
     const document = presentation.fullOutput
       ? { ok: false, error: failure, meta }
       : bare;
-    return line(String(estimateTokenCount(encode(document))));
+    return line(String(estimateTokenCount(line(encode(document)))));
   }
   if (
     presentation.human &&

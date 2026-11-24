@@ -532,6 +532,7 @@ describe("Hopper error catalogue", () => {
         "remote",
         "authorization",
         "invalid_request",
+        "selector_not_found",
         "capability_unavailable",
         "bridge_exception",
       ] as const

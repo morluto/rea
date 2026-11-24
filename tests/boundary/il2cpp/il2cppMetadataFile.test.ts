@@ -14,6 +14,7 @@ import {
 } from "../../fixtures/il2cpp/readers.js";
 import {
   createIl2cppMetadataFixture,
+  createLinkedIl2cppMetadataFixture,
   FIXTURE_IMAGES,
   fixtureImages,
   FIXTURE_METHODS,
@@ -207,6 +208,28 @@ describe("rejected IL2CPP global-metadata", () => {
       expect(rejected.message).toContain("metadata version is unknown");
     },
   );
+
+  it.each([
+    ["a MethodDef row reused within one image", (first: number) => first],
+    ["a token outside the MethodDef table", () => 0x0a000002],
+    ["MethodDef row zero", () => 0x06000000],
+  ])("refuses %s as malformed metadata before native linking", (_, token) => {
+    const fixture = createLinkedIl2cppMetadataFixture({ version: 31 });
+    const bytes = Buffer.from(fixture.bytes);
+    // Methods 0 and 1 belong to the same image; the token is at offset 24.
+    const first = bytes.readUInt32LE(fixture.record("methods", 0) + 24);
+    bytes.writeUInt32LE(token(first), fixture.record("methods", 1) + 24);
+    // The public inventory does not read tokens, so it is unaffected.
+    expect(readIl2cppMetadata(bytes).methods).toHaveLength(
+      readIl2cppMetadata(fixture.bytes).methods.length,
+    );
+    const rejected = failure(bytes, readIl2cppMetadataForLinking);
+    expect(rejected).toMatchObject({
+      reason: "invalid-method-definition-token",
+      kind: "malformed",
+      failure: { format: "il2cpp-metadata" },
+    });
+  });
 
   it("uses the same truncated-prefix classification before native linking", () => {
     const bytes = Buffer.alloc(7);

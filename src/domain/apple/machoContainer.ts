@@ -1,5 +1,7 @@
 import { BinaryReader } from "../binaryContainer.js";
+import type { TruncatedExtent } from "../parseFailure.js";
 import {
+  hasJvmClassHeader,
   isJvmClassFile,
   JVM_CLASS_IDENTITY_LIMIT_REASON,
 } from "./jvmClassFile.js";
@@ -25,10 +27,22 @@ export interface FatSliceRangeIssue {
   readonly reason: string;
 }
 
+/**
+ * A FAT header or table that runs past the measured end of the file: the
+ * declared structure is intact as far as the file goes, so the file is cut
+ * short rather than corrupt.
+ */
+export interface FatContainerTruncation {
+  readonly state: "truncated";
+  readonly reason: string;
+  readonly extent: TruncatedExtent;
+}
+
 export type FatContainerHeader =
   | { readonly state: "not-fat" }
   | { readonly state: "needs-data"; readonly requiredBytes: number }
   | { readonly state: "malformed"; readonly reason: string }
+  | FatContainerTruncation
   | {
       readonly state: "parsed";
       readonly magic: number;
@@ -86,6 +100,44 @@ export const readMachoHeaderPrefixFacts = (
     format,
     identity: { cpuType: fields.u32(4), cpuSubtype: fields.u32(8) },
   };
+};
+
+/** Bounded thin-header prefix length needed to read magic, CPU type, and subtype. */
+export const FAT_SLICE_HEADER_PREFIX_BYTES = 12;
+
+/**
+ * Read bounded thin Mach-O header prefixes for each valid FAT slice using the
+ * caller's positional range reader, optionally preserving already-observed
+ * slice headers and skipping slices below `minSliceSize`.
+ */
+export const readFatSliceHeaders = async (
+  header: Extract<FatContainerHeader, { readonly state: "parsed" }>,
+  readRange: (offset: number, length: number) => Promise<Buffer>,
+  options?: {
+    readonly existing?: ReadonlyMap<number, MachoHeaderPrefixFacts>;
+    readonly minSliceSize?: number;
+  },
+): Promise<FatSliceHeaderEvidence> => {
+  const sliceHeadersByOffset = new Map<number, MachoHeaderPrefixFacts>(
+    options?.existing,
+  );
+  const minSliceSize = options?.minSliceSize ?? 0;
+  for (let index = 0; index < header.slices.length; index += 1) {
+    const slice = header.slices[index];
+    if (slice === undefined || header.rangeIssues[index] !== null) continue;
+    if (slice.size < minSliceSize) continue;
+    if (options?.existing !== undefined) {
+      const observed = sliceHeadersByOffset.get(slice.offset);
+      if (observed !== undefined && observed.magic !== null) continue;
+    }
+    const observedLength = Math.min(FAT_SLICE_HEADER_PREFIX_BYTES, slice.size);
+    const thinHeader = await readRange(slice.offset, observedLength);
+    sliceHeadersByOffset.set(
+      slice.offset,
+      readMachoHeaderPrefixFacts(thinHeader),
+    );
+  }
+  return { header, sliceHeadersByOffset };
 };
 
 /** FAT declarations decoded before the caller knows the final stream length. */
@@ -214,9 +266,14 @@ export const readFatContainerHeader = (
   const table = decodeFatContainerTable(bytes, prefix);
   if (table.state !== "parsed") {
     if (table.state === "needs-data" && table.requiredBytes > fileSize) {
-      return table.requiredBytes === 8 && fileSize < 8
-        ? { state: "malformed", reason: "FAT header is truncated" }
-        : { state: "not-fat" };
+      if (prefix.state === "incomplete")
+        return fatTruncation("FAT header", fileSize, table.requiredBytes);
+      // A CAFEBABE count that reads as a JVM class version may belong to a
+      // class file shorter than the table it would declare. Any other FAT
+      // header that declares a table past the file's end is cut short.
+      return hasJvmClassHeader(bytes)
+        ? { state: "not-fat" }
+        : fatTruncation("FAT table", fileSize, table.requiredBytes);
     }
     return table;
   }
@@ -230,6 +287,16 @@ export const readFatContainerHeader = (
     ),
   };
 };
+
+const fatTruncation = (
+  structure: "FAT header" | "FAT table",
+  availableBytes: number,
+  requiredBytes: number,
+): FatContainerTruncation => ({
+  state: "truncated",
+  reason: `${structure} is truncated: the file has ${availableBytes} bytes and the ${structure} needs ${requiredBytes}`,
+  extent: { availableBytes, requiredBytes },
+});
 
 /** Decode bounded FAT declarations without assuming the final file size. */
 export const readFatContainerTable = (bytes: Uint8Array): FatContainerTable =>
@@ -275,23 +342,21 @@ export const classifyFatContainerIdentity = (
   header: Extract<FatContainerHeader, { readonly state: "parsed" }>,
   sliceHeaderAt: (offset: number) => number | null | undefined,
 ): FatContainerIdentity => {
-  const hasKnownCpu = header.slices.some(({ cpuType }) =>
-    KNOWN_MACHO_CPU_TYPES.includes(cpuType),
-  );
   const invalidRange = header.rangeIssues.find(
     (issue): issue is FatSliceRangeIssue => issue !== null,
   );
   // Preserve the existing malformed-range result for recognized CPU tables;
   // a valid CPU declaration by itself does not establish a Mach-O image.
-  if (hasKnownCpu && invalidRange !== undefined)
+  if (
+    invalidRange !== undefined &&
+    header.slices.some(({ cpuType }) => KNOWN_MACHO_CPU_TYPES.includes(cpuType))
+  )
     return { state: "malformed", ...invalidRange };
-  const validRanges = header.slices.filter(
-    (_slice, index) => header.rangeIssues[index] === null,
-  );
   const missingHeaders: number[] = [];
   let observedMachO = false;
   let observedNonMachO = false;
-  for (const slice of validRanges) {
+  for (const [index, slice] of header.slices.entries()) {
+    if (header.rangeIssues[index] !== null) continue;
     if (slice.size < 4) {
       observedNonMachO = true;
       continue;
@@ -317,22 +382,16 @@ export const classifyFatContainerEvidence = (
   header: Extract<FatContainerHeader, { readonly state: "parsed" }>,
   prefix: Uint8Array,
   sliceHeadersByOffset?: ReadonlyMap<number, MachoHeaderPrefixFacts>,
-): FatContainerIdentity =>
-  classifyFatContainerIdentity(header, (offset) => {
+): FatContainerIdentity => {
+  const reader = machoReader(prefix, false);
+  // The classifier requests magic only from a valid range of at least four
+  // bytes. An alias declaration at this offset cannot narrow that range.
+  return classifyFatContainerIdentity(header, (offset) => {
     if (sliceHeadersByOffset?.has(offset))
       return sliceHeadersByOffset.get(offset)?.magic;
-    const slice = header.slices.find(
-      (candidate) => candidate.offset === offset,
-    );
-    if (slice === undefined || offset >= prefix.byteLength) return undefined;
-    const available = Math.max(
-      0,
-      Math.min(slice.size, prefix.byteLength - offset, 12),
-    );
-    return readMachoHeaderPrefixFacts(
-      prefix.subarray(offset, offset + available),
-    ).magic;
+    return offset <= prefix.byteLength - 4 ? reader.u32(offset) : undefined;
   });
+};
 
 /**
  * A malformed table is conclusive after a capped JVM scan only if one

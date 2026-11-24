@@ -125,22 +125,25 @@ export type FinalAsarHeaderProbeObservation = Exclude<
   { readonly state: "pending" }
 >;
 
+/** Why a fixed two-Pickle prefix does not establish ASAR header extents. */
+const ASAR_EXTENT_REFUSALS = {
+  truncated: "Truncated ASAR Pickle extent prefix",
+  "invalid-pickle-extents": "ASAR header has invalid Pickle extents",
+  "leaves-container": "ASAR header leaves its observed container",
+} as const;
+type AsarExtentRefusal = keyof typeof ASAR_EXTENT_REFUSALS;
+
 /**
  * Parse the fixed two-Pickle prefix and optionally check it against the actual
  * observed archive size. This establishes byte extents only; JSON validity and
  * the ASAR header schema belong to the decoder at the interpretation boundary.
+ * Refusals are plain tags: the signature probe refuses most streams it sees.
  */
 const parseAsarHeaderExtents = (
   prefix: Uint8Array,
   archiveBytes?: number,
-): Result<Omit<AsarHeaderExtents, "archiveBytes">, ArtifactReaderFailure> => {
-  if (prefix.byteLength < 16)
-    return err(
-      new ArtifactReaderFailure(
-        "format",
-        "Truncated ASAR Pickle extent prefix",
-      ),
-    );
+): Result<Omit<AsarHeaderExtents, "archiveBytes">, AsarExtentRefusal> => {
+  if (prefix.byteLength < 16) return err("truncated");
   const reader = new BinaryReader(
     Buffer.from(prefix.buffer, prefix.byteOffset, 16),
     true,
@@ -155,24 +158,14 @@ const parseAsarHeaderExtents = (
     payloadBytes !== headerBytes - 4 ||
     jsonBytes > payloadBytes - 4
   )
-    return err(
-      new ArtifactReaderFailure(
-        "format",
-        "ASAR header has invalid Pickle extents",
-      ),
-    );
+    return err("invalid-pickle-extents");
   if (
     archiveBytes !== undefined &&
     (!Number.isSafeInteger(archiveBytes) ||
       archiveBytes < 8 ||
       headerBytes > archiveBytes - 8)
   )
-    return err(
-      new ArtifactReaderFailure(
-        "format",
-        "ASAR header leaves its observed container",
-      ),
-    );
+    return err("leaves-container");
   return ok({ headerBytes, jsonBytes });
 };
 
@@ -416,7 +409,11 @@ export const admitAsarHeader = async (
   if (prefix.length !== 16)
     throw new ArtifactReaderFailure("format", "Truncated ASAR size pickle");
   const parsed = parseAsarHeaderExtents(prefix, observed.size);
-  if (!parsed.ok) throw parsed.error;
+  if (!parsed.ok)
+    throw new ArtifactReaderFailure(
+      "format",
+      ASAR_EXTENT_REFUSALS[parsed.error],
+    );
   if (parsed.value.headerBytes > admission.maximumBytes)
     throw asarHeaderAdmissionFailure(admission, parsed.value.headerBytes);
   return {

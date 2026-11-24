@@ -2,10 +2,13 @@ import {
   projectProtobufCapturePage,
   protobufViewRequestSchema,
 } from "./protobufCaptureView.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { createAnalysisViewResultReader } from "./analysisViewParent.js";
+import { parseAnalysisViewResult } from "./analysisViewParent.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import {
@@ -460,15 +463,14 @@ const preview = (record: WebNetworkCaptureRecord, format: string) => {
   };
 };
 
-const readCaptureParent = createAnalysisViewResultReader({
-  safeParse: safeParseOwnedWebNetworkCapture,
-});
-
 /** Authenticate the retained report and its subject at one owning boundary. */
 const parseCaptureParent = (
   parent: AnalysisViewParent,
 ): Result<WebNetworkCapture, AnalysisError> => {
-  const parsed = readCaptureParent(parent);
+  const parsed = parseAnalysisViewResult(
+    { safeParse: safeParseOwnedWebNetworkCapture },
+    parent,
+  );
   if (!parsed.ok) return parsed;
   const report = parsed.value;
   const subject = evidenceFileTarget(parent);
@@ -499,15 +501,8 @@ export const projectWebNetworkCaptureView = (
     view.kind !== "protobuf" &&
     view.kind !== "qlog"
   )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Historical captures support summary, capture record pages, qlog fact pages and admitted api-surface, environment-manifest, environment-state or environment-coverage views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Historical captures support summary, capture record pages, qlog fact pages and admitted api-surface, environment-manifest, environment-state or environment-coverage views.",
     );
   assertOwnedView<
     | SummaryAnalysisView

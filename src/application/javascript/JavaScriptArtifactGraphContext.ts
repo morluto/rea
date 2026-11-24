@@ -45,6 +45,14 @@ export interface JavaScriptArtifactGraphContext {
   readonly directoryPaths: ReadonlySet<string>;
   readonly root: ApplicationNode;
   readonly filesByPath: ReadonlyMap<string, JavaScriptArtifactFile>;
+  readonly analyzedFilesByPath?: ReadonlyMap<
+    string,
+    JavaScriptArtifactAnalysis["files"][number]
+  >;
+  readonly packagesByPath?: ReadonlyMap<
+    string,
+    JavaScriptArtifactAnalysis["packages"][number]
+  >;
   /** Borrowed inventory lookup for present files outside the source projection. */
   readonly unanalyzedFiles: JavaScriptUnanalyzedArtifactLookup | undefined;
   readonly fileNodes: Map<string, ApplicationNode>;
@@ -143,9 +151,10 @@ export const applicationRootPath = (
     const file =
       context.filesByPath.get(path) ?? context.unanalyzedFiles?.get(path);
     if (file?.container_sha256 !== source.container_sha256) continue;
-    const metadata = context.analysis.packages.find(
-      (value) => value.path === path,
-    );
+    const metadata =
+      context.packagesByPath !== undefined
+        ? context.packagesByPath.get(path)
+        : context.analysis.packages.find((value) => value.path === path);
     if (metadata?.status !== "included") return null;
     const defaultEntry = context.filesByPath.get(`${prefix}index.js`);
     if (

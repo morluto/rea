@@ -594,3 +594,35 @@ it("handles unique HTTP request targets beyond the cache limit without dropping 
   expect(result.httpRequestUriCount).toBe(1100);
   expect(result.partial).toBe(true);
 });
+
+it("reports hasDnsProtocol only when base dissection sees DNS, mDNS, or LLMNR traffic or fields", async () => {
+  expect(
+    (
+      await prepareTsharkBaseOutput(
+        capture([{ "frame.protocols": ["eth:ethertype:ip:tcp:tls"] }]),
+      )
+    ).hasDnsProtocol,
+  ).toBe(false);
+  for (const stack of [
+    "eth:ethertype:ip:udp:dns",
+    "eth:ethertype:ip:udp:mdns",
+    "eth:ethertype:ip:udp:llmnr",
+  ]) {
+    expect(
+      (await prepareTsharkBaseOutput(capture([{ "frame.protocols": [stack] }])))
+        .hasDnsProtocol,
+    ).toBe(true);
+  }
+  expect(
+    (
+      await prepareTsharkBaseOutput(
+        capture([
+          {
+            "frame.protocols": ["eth:ethertype:ip:udp"],
+            "dns.qry.name": ["example.com"],
+          },
+        ]),
+      )
+    ).hasDnsProtocol,
+  ).toBe(true);
+});
