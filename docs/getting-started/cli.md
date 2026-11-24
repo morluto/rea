@@ -447,6 +447,16 @@ footer. `ANDROID!` does not record boot versus init_boot versus recovery.
 Standalone `dtbo.img` partition tables (`0xd7b7ab1e`) can also be inspected
 and extracted with `inspect-artifact` and `extract-artifact`; see [Android DTBO partition images](../android-dtbo.md).
 
+Inventory and extract an ISO 9660 disc image without mounting it:
+
+```sh
+rea inspect-artifact ./installer.iso --detail summary --evidence_output installer.json --json
+rea extract-artifact ./installer.iso --json
+```
+
+See [ISO 9660 disc images](../guides/firmware/iso9660-images.md) for volume facts, Joliet
+names, multi-extent and interleaved files, and what is not decoded.
+
 Inspect local model declarations without loading weights:
 
 ```bash

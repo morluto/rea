@@ -256,6 +256,7 @@ export interface ArtifactReader {
     | "android-boot-image"
     | "android-dtbo"
     | "android-ota-payload"
+    | "iso9660"
     | "uefi"
     | "pyinstaller"
     | "dotnet-bundle"
