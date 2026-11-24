@@ -108,36 +108,69 @@ const overlappingUniversalMacho = () => {
   return bytes;
 };
 
+/** A universal Mach-O cut off inside its FAT table: 20 of its 48 table bytes. */
+const truncatedUniversalMacho = () => {
+  const slice = (type: number, subtype: number) => ({
+    cpu: { type, subtype },
+    bytes: machoImage({ cpu: { type, subtype }, wide: true }),
+  });
+  return Buffer.from(
+    fatImage([slice(0x01000007, 3), slice(0x0100000c, 0)]),
+  ).subarray(0, 20);
+};
+
+const nativeUniversalCommands = [
+  "inspect-go-binary",
+  "inspect-rust-binary",
+  "inspect-dwarf-units",
+  "inspect-native-initializers",
+];
+
 // Format owners with their own mappers: a managed PE/CLI reader and the
 // universal Mach-O container read before slice selection. The selected file's
-// bytes are at fault, so each is a malformed target at that file's path.
-for (const { command, bytes, format, extra = [], identity } of [
+// bytes are at fault, so each is a malformed or truncated target at that
+// file's path; a truncated one carries the measured and needed lengths.
+interface FormatOwnerRow {
+  readonly command: string;
+  readonly bytes: () => Buffer;
+  readonly failure: "malformed" | "truncated";
+  readonly format: { readonly format: string } & Record<string, unknown>;
+  readonly extra: readonly string[];
+  readonly identity: boolean;
+}
+
+for (const { command, bytes, failure, format, extra, identity } of [
   ...[
     "inspect-managed-artifact",
     "inspect-managed-members",
     "inspect-managed-native-boundaries",
-  ].map((command) => ({
+  ].map((command): FormatOwnerRow => ({
     command,
     bytes: managedSectionPastEof,
+    failure: "malformed",
     format: { format: "pe-cli", field: "pe.section-data" },
-    extra: [] as string[],
+    extra: [],
     identity: false,
   })),
-  ...[
-    "inspect-go-binary",
-    "inspect-rust-binary",
-    "inspect-dwarf-units",
-    "inspect-native-initializers",
-  ].map((command) => ({
+  ...nativeUniversalCommands.map((command): FormatOwnerRow => ({
     command,
     bytes: overlappingUniversalMacho,
+    failure: "malformed",
     format: { format: "macho", reason: "Mach-O slices 0 and 1 overlap." },
+    extra: ["--architecture", "arm64"],
+    identity: true,
+  })),
+  ...nativeUniversalCommands.map((command): FormatOwnerRow => ({
+    command,
+    bytes: truncatedUniversalMacho,
+    failure: "truncated",
+    format: { format: "macho", available_bytes: 20, required_bytes: 48 },
     extra: ["--architecture", "arm64"],
     identity: true,
   })),
 ]) {
   cliTest(
-    `${command} refuses malformed ${format.format} bytes as a malformed target`,
+    `${command} refuses ${failure} ${format.format} bytes as a ${failure} target`,
     async ({ cli }) => {
       const root = await createTestTempDirectory("rea-format-owner-");
       const path = join(root, "malformed.bin");
@@ -154,7 +187,7 @@ for (const { command, bytes, format, extra = [], identity } of [
         details: {
           operation: command.replaceAll("-", "_"),
           path,
-          format_failure: "malformed",
+          format_failure: failure,
           ...format,
           ...(identity
             ? { partial_observation: fileIdentity(path, written) }

@@ -66,7 +66,11 @@ import {
   currentRouteCapability,
 } from "./BinarySessionStatus.js";
 import { SessionRuntimeAvailability } from "./SessionRuntimeAvailability.js";
-import { isSourceEvidenceRetainable } from "./AnalysisSnapshotCache.js";
+import {
+  isSourceEvidenceRetainable,
+  oneShotSnapshotReplayRefusal,
+  snapshotNotSavedLimitation,
+} from "./AnalysisSnapshotCache.js";
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
 import {
   resolveSessionOpen,
@@ -1548,7 +1552,7 @@ export class BinarySession
             },
           })
         : profiled;
-    const execution = covered.ok
+    const observed = covered.ok
       ? ok(
           deliverSessionLimitations(
             covered.value,
@@ -1557,6 +1561,42 @@ export class BinarySession
           ),
         )
       : covered;
+    // A caller who asked for a one-shot snapshot learns when it cannot replay.
+    const recordingRefusal = (
+      execution: AnalysisExecution,
+      selected: AnalysisProfileCommitment,
+    ): string | undefined => {
+      const reason = this.snapshotRecordingRefusal({
+        target: active.target,
+        profile: selected,
+        operation: name,
+        parameters: arguments_,
+        execution,
+      });
+      return reason === undefined
+        ? undefined
+        : snapshotNotSavedLimitation(reason);
+    };
+    const refusal =
+      observed.ok && options?.snapshotContext === "one-shot-target"
+        ? (oneShotSnapshotReplayRefusal({
+            operation: name,
+            descriptor: capability,
+            parameters: arguments_,
+            execution: observed.value,
+            profiled: profile !== undefined,
+          }) ??
+          (profile === undefined
+            ? undefined
+            : recordingRefusal(observed.value, profile)))
+        : undefined;
+    const execution =
+      refusal === undefined || !observed.ok
+        ? observed
+        : ok({
+            ...observed.value,
+            limitations: [...observed.value.limitations, refusal],
+          });
     // A successful Ghidra operation proves this client's native source snapshot
     // was admitted; a composite health response and parsed path do not.
     const currentBinding = this.#active;

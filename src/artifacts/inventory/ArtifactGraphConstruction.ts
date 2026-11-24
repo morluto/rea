@@ -717,7 +717,11 @@ const classifyFatArtifact = (
   const { prefix, fatSliceHeaders } = evidence;
   const fatHeader =
     fatSliceHeaders?.header ?? readFatContainerHeader(prefix, fileSize);
-  if (fatHeader.state === "needs-data" || fatHeader.state === "malformed")
+  if (
+    fatHeader.state === "needs-data" ||
+    fatHeader.state === "malformed" ||
+    fatHeader.state === "truncated"
+  )
     return "unknown";
   if (fatHeader.state === "not-fat") return null;
   const identity = classifyFatContainerEvidence(
