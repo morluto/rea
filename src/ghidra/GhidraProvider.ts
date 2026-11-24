@@ -1,4 +1,5 @@
 import { resolveGhidraCheckpoint } from "./GhidraCheckpoint.js";
+import { ghidraCompanionDsymDigest } from "./GhidraCompanionDsym.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
@@ -517,7 +518,16 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       options?.signal,
     );
     if (!seeds.ok) return seeds;
+    const companionDsymSha256 =
+      installation.platform === "win32"
+        ? null
+        : await ghidraCompanionDsymDigest(
+            target.path,
+            this.#inspectionResources,
+            options?.signal,
+          );
     if (
+      companionDsymSha256 === null &&
       extensions.value.length === 0 &&
       seeds.value === undefined &&
       this.config.ghidraCheckpointDirectory === undefined
@@ -525,6 +535,9 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       return resolved;
     const baseProfile = createAnalysisProfile(resolved.value.profile.provider, {
       ...resolved.value.profile.parameters,
+      ...(companionDsymSha256 === null
+        ? {}
+        : { companion_dsym_sha256: companionDsymSha256 }),
       ...(extensions.value.length === 0
         ? {}
         : { analysis_extensions: jsonValueSchema.parse(extensions.value) }),

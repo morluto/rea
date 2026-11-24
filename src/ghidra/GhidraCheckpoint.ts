@@ -308,7 +308,21 @@ const sameSource = (
     ? left === right
     : left.file === right.file && left.sha256 === right.sha256;
 
-/** Resolve storage and content identity once for the shared CLI/MCP analysis profile. */
+/**
+ * Bind one checkpoint directory to the target and analysis-profile commitment,
+ * which already includes any staged companion dSYM digest.
+ */
+export const ghidraCheckpointKey = (
+  targetSha256: string,
+  profileDigest: string,
+): string => sha256Hex(JSON.stringify([targetSha256, profileDigest]));
+
+/**
+ * Resolve storage and content identity once for the shared CLI/MCP analysis
+ * profile. The profile commits the staged companion's digest, so a new or
+ * changed dSYM selects a separate checkpoint without changing the identity of
+ * targets that have no companion.
+ */
 export async function resolveGhidraCheckpoint(
   root: string,
   targetSha256: string,
@@ -316,7 +330,7 @@ export async function resolveGhidraCheckpoint(
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
 ): Promise<GhidraCheckpointSelection> {
-  const key = sha256Hex(JSON.stringify([targetSha256, profile.digest]));
+  const key = ghidraCheckpointKey(targetSha256, profile.digest);
   const selection = {
     directory: appendCallerPath(root, key),
     key,

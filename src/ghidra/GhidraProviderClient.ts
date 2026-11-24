@@ -373,6 +373,18 @@ export const createGhidraProviderClient = (input: {
   if (comImport?.ok === false)
     return err(ghidraProfileConflict("open_binary", comImport.error));
   const comSelection = comImport?.value;
+  const companionDsymSha256 = committedProfile.parameters.companion_dsym_sha256;
+  if (
+    companionDsymSha256 !== undefined &&
+    (typeof companionDsymSha256 !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(companionDsymSha256))
+  )
+    return err(
+      ghidraProfileConflict(
+        "open_binary",
+        "Resolve the sibling dSYM digest into the analysis profile before opening the session.",
+      ),
+    );
   const checkpoint = ghidraCheckpointSelectionSchema
     .optional()
     .safeParse(committedProfile.parameters.owned_checkpoint);
@@ -800,6 +812,8 @@ export const createGhidraProviderClient = (input: {
         ? (target.sourcePath ?? target.path)
         : target.path,
     targetSha256: target.sha256,
+    companionDsymSha256:
+      typeof companionDsymSha256 === "string" ? companionDsymSha256 : null,
     transport:
       installation.platform === "win32"
         ? "authenticated-loopback-tcp"
