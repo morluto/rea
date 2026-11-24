@@ -96,8 +96,10 @@ describe("onboarding documentation product facts", () => {
           ))
             anchors.add(id ?? "");
         for (const child of token.children ?? []) {
-          const href =
+          // `attrGet` is typed `string | number` because attributes may be numeric.
+          const attribute =
             child.type === "link_open" ? child.attrGet("href") : null;
+          const href = typeof attribute === "string" ? attribute : null;
           if (href?.startsWith("#"))
             fragments.push(decodeURIComponent(href.slice(1)));
         }
