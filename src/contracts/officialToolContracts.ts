@@ -41,6 +41,7 @@ const OFFICIAL_CLI_CONTRACTS: ReadonlySet<string> = new Set([
   "inspect_native_data_type",
   "inspect_native_instruction",
   "resolve_native_call_targets",
+  "list_procedures",
   "procedure_references",
   "xrefs",
   "search_bytes",

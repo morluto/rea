@@ -67,6 +67,12 @@ import {
   FIT_EXTERNAL,
 } from "../../../src/artifacts/fit/FitImage.fixture.js";
 import { devicetreeFixture } from "../../../src/domain/firmware/devicetree.fixture.js";
+import {
+  ddsBc7Fixture,
+  glbFixture,
+  ktx2Fixture,
+  ktxFixture,
+} from "../../../src/artifacts/gpuAsset/gpuAsset.fixture.js";
 
 it.each([
   [4000, false],
@@ -925,6 +931,24 @@ it("classifies a FIT by its /images node and a plain DTB as a devicetree artifac
     ok: true,
     value: { kind: "artifact", format: "devicetree" },
   });
+});
+
+it("classifies DDS, GLB, KTX and KTX2 files as archive targets by their headers", async () => {
+  const directory = await createTestTempDirectory("rea-gpu-asset-target-");
+  for (const [format, bytes] of [
+    ["dds", ddsBc7Fixture()],
+    ["glb", glbFixture()],
+    ["ktx", ktxFixture()],
+    ["ktx2", ktx2Fixture()],
+  ] as const) {
+    // An unrelated extension: detection reads the header, not the name.
+    const path = join(directory, `${format}.bin`);
+    await writeFile(path, bytes);
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: { kind: "archive", format },
+    });
+  }
 });
 
 const executablePlist = (encodedName: string) =>
