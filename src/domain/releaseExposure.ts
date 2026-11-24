@@ -913,15 +913,20 @@ const notAssessed = (
  */
 const formatApplicability = (scan: ReleaseExposureScan) => {
   const formats = new Set(scan.native_images.map((image) => image.format));
-  const unread =
-    scan.target.kind !== "executable" && nativeImagesMayBeUnread(scan);
+  // An embedded package, such as a .NET bundle or PyInstaller archive, may
+  // hold members of any format, including native images it stores unread.
+  const embedsPackage = scan.extractable.formats.length > 0;
+  const unread = nativeImagesMayBeUnread(scan) || embedsPackage;
   return {
     native: formats.size > 0 || unread,
     macho: formats.has("mach-o") || formats.has("mach-o-universal") || unread,
-    // The audit does not recognize Android packages, so a directory or an
-    // unclassified file may hold one. An app bundle, an ASAR, or a native
-    // executable cannot be one.
-    android: scan.target.kind === "directory" || scan.target.kind === "file",
+    // The audit does not recognize Android packages, so a directory, an
+    // unclassified file, or an embedded package may hold one. An app bundle,
+    // an ASAR, or a native executable with no embedded package cannot.
+    android:
+      scan.target.kind === "directory" ||
+      scan.target.kind === "file" ||
+      embedsPackage,
     // A native executable carries JavaScript only inside an embedded package.
     javascript:
       scan.target.kind !== "executable" ||

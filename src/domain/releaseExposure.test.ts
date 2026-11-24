@@ -4,6 +4,7 @@ import {
   assembleReleaseExposureReport,
   exposureMeetsFailOn,
   PACKAGED_NATIVE_IMAGES,
+  releaseExposureReportSchema,
   type ReleaseExposureCheckId,
   type ReleaseExposureOwnerFacts,
   type ReleaseExposureScan,
@@ -205,6 +206,70 @@ describe("release exposure format applicability", () => {
       "not_observed",
     );
     expect(statusOf(report, "javascript.source_maps")).toBe("not_observed");
+  });
+
+  it("keeps Mach-O and Android checks on a PE bundle whose packaged images are unread", () => {
+    const report = reportFor(
+      executable("pe", {
+        extractable: {
+          formats: ["dotnet-bundle"],
+          readable_members: 1,
+          unreadable_members: 0,
+          samples: ["helper"],
+        },
+        omitted: [
+          {
+            subject: PACKAGED_NATIVE_IMAGES,
+            count: 1,
+            reason: "stored inside a package",
+          },
+        ],
+      }),
+      owners({ electron_family: "not_a_directory" }),
+    );
+    expect(statusOf(report, "macho.hardened_runtime")).toBe("not_assessed");
+    expect(statusOf(report, "android.manifest")).toBe("not_assessed");
+    expect(
+      report.checks.find(({ id }) => id === "macho.hardened_runtime")
+        ?.next_probe,
+    ).toBe("inspect_signature");
+  });
+
+  it("rejects reports whose rows and inapplicable checks do not split the table", () => {
+    const valid = reportFor(
+      executable("pe"),
+      owners({ electron_family: "not_a_directory" }),
+    );
+    expect(releaseExposureReportSchema.safeParse(valid).success).toBe(true);
+    const [first, second] = valid.coverage.inapplicable_checks;
+    if (first === undefined || second === undefined)
+      throw new Error("Expected inapplicable checks");
+    const reported = valid.checks[0];
+    if (reported === undefined) throw new Error("Expected a reported check");
+    const variants = {
+      duplicate: [first, first, ...valid.coverage.inapplicable_checks.slice(1)],
+      overlapping: [...valid.coverage.inapplicable_checks, reported.id],
+      missing: valid.coverage.inapplicable_checks.slice(1),
+      reordered: [
+        second,
+        first,
+        ...valid.coverage.inapplicable_checks.slice(2),
+      ],
+    };
+    for (const [label, inapplicable] of Object.entries(variants))
+      expect(
+        releaseExposureReportSchema.safeParse({
+          ...valid,
+          coverage: { ...valid.coverage, inapplicable_checks: inapplicable },
+        }).success,
+        label,
+      ).toBe(false);
+    expect(
+      releaseExposureReportSchema.safeParse({
+        ...valid,
+        checks: [...valid.checks].reverse(),
+      }).success,
+    ).toBe(false);
   });
 
   it("keeps format-gated checks on a directory whose native images may be unread", () => {
