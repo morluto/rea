@@ -228,6 +228,11 @@ const failure = (
   ...(boundary === undefined ? {} : { boundary }),
 });
 
+const unsupported = (message: string): RegionDecodeFailure => ({
+  kind: "unsupported",
+  message,
+});
+
 const limit = (
   message: string,
   boundary?: RegionDecodeFailure["boundary"],
@@ -643,7 +648,10 @@ class JournalScanner {
         : BigInt(header.tail_object_offset);
     const unknownFlags = header.incompatible_flags & ~INCOMPATIBLE_FLAGS_KNOWN;
     if (unknownFlags !== 0) {
-      this.#refusal = failure(
+      // The file is complete: the header itself says its layout is one this
+      // reader does not implement. Truncation would misdirect the caller
+      // towards obtaining another copy instead of a compatible decoder.
+      this.#refusal = unsupported(
         `the header sets incompatible flag bit(s) 0x${unknownFlags.toString(16)} outside the known set, so its object layout is not one this reader can interpret`,
       );
       this.#phase = "closed";

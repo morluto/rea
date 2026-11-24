@@ -18,7 +18,11 @@ import {
   assertArtifactReadActive,
   ArtifactFileSource,
 } from "../resources/index.js";
-import { malformedInput, truncatedInput } from "../domain/parseFailure.js";
+import {
+  malformedInput,
+  truncatedInput,
+  unsupportedInput,
+} from "../domain/parseFailure.js";
 import { ArtifactPreparation } from "./ArtifactPreparation.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
@@ -156,6 +160,20 @@ export class SystemdJournalArtifactReader implements ArtifactReader {
   }
 
   #failure(failure: RegionDecodeFailure): ArtifactReaderFailure {
+    if (failure.kind === "unsupported") {
+      // The signature established the format and the header names a layout
+      // this reader does not implement, so the file is complete and a fresh
+      // copy cannot help. Truncation stays reserved for short structures.
+      return new ArtifactReaderFailure(
+        "unsupported",
+        `systemd journal file is unsupported: ${failure.message}`,
+        {
+          cause: unsupportedInput("systemd-journal", failure.message, {
+            undecodedContent: true,
+          }),
+        },
+      );
+    }
     if (failure.kind === "limit")
       return new ArtifactReaderFailure(
         "limit",

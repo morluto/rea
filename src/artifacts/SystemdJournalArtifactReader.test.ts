@@ -287,9 +287,14 @@ it("refuses to describe objects under incompatible flags it does not know", asyn
   );
   const reader = new SystemdJournalArtifactReader(path);
   try {
+    // The file is complete; only its layout is outside this reader's
+    // coverage, so callers must not be told to obtain a fresh copy.
     await expect(
       reader.entries()[Symbol.asyncIterator]().next(),
-    ).rejects.toMatchObject({ reason: "format" });
+    ).rejects.toMatchObject({
+      reason: "unsupported",
+      cause: { failure: { kind: "unsupported" } },
+    });
   } finally {
     await reader.close();
   }
