@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { createEvidenceBundle } from "../domain/evidenceBundle.js";
+import { processCaptureSchema } from "../domain/process/processCapture.js";
+import { FINALIZED_PROCESS_CAPTURE_EXAMPLE } from "../domain/process/processCapture.fixture.js";
 
 import {
   build,
@@ -8,6 +11,7 @@ import {
   processEvidence,
   proofEvidence,
   readyProcessLedgerRequest,
+  readyReviewedLedgerRequest,
   request,
   reviewedObligation,
 } from "./ReconstructionObligationLedger.fixture.js";
@@ -165,6 +169,54 @@ describe("reconstruction obligation ledger Evidence provenance", () => {
 });
 
 describe("reconstruction obligation ledger case closure", () => {
+  it("does not turn a timeout with unknown exit code into negative or cancellation cases", () => {
+    const capture = processEvidence(
+      processCaptureSchema.parse(FINALIZED_PROCESS_CAPTURE_EXAMPLE),
+    );
+    const ledger = build(request([capture]));
+    expect(
+      ledger.obligations[0]?.observed_cases.map(({ kind }) => kind),
+    ).toEqual(["teardown"]);
+    expect(ledger.obligations[0]?.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "missing-original-case",
+          detail: expect.stringContaining("negative"),
+        }),
+        expect.objectContaining({
+          code: "missing-original-case",
+          detail: expect.stringContaining("cancellation"),
+        }),
+      ]),
+    );
+  });
+
+  it("distinguishes signal termination from a known nonzero exit", () => {
+    const signaled = processEvidence({
+      exit: { code: null, signal: 15, reason: "exited" },
+    });
+    const nonzero = processEvidence({
+      exit: { code: 2, signal: null, reason: "exited" },
+    });
+    const ambiguous = processEvidence({
+      exit: { code: 2, signal: 15, reason: "exited" },
+    });
+    expect(
+      build(request([signaled])).obligations[0]?.observed_cases.map(
+        ({ kind }) => kind,
+      ),
+    ).toEqual(["teardown"]);
+    expect(
+      build(request([nonzero])).obligations[0]?.observed_cases.map(
+        ({ kind }) => kind,
+      ),
+    ).toEqual(["negative", "teardown"]);
+    expect(
+      build(request([ambiguous])).obligations[0]?.observed_cases.map(
+        ({ kind }) => kind,
+      ),
+    ).toEqual(["teardown"]);
+  });
   it("keeps unobserved original cases open", () => {
     const capture = processEvidence();
     const proof = proofEvidence("packaged-original-gap");
@@ -256,6 +308,116 @@ describe("reconstruction obligation ledger case closure", () => {
 });
 
 describe("reconstruction obligation manifest references", () => {
+  it("does not claim readiness with unresolved references on an optional obligation", () => {
+    const input = readyReviewedLedgerRequest();
+    const reviewed = input.reviewed_obligations[0]!;
+    const binding = input.manifest.bindings[0]!;
+    const absent = `ev_${"c".repeat(64)}`;
+    const original = binding.original_cases[0]!.evidence_id;
+    const proof = binding.verifier!.result_evidence_id;
+    const optional = { ...reviewed, required: false };
+    const candidates = [
+      {
+        ...binding,
+        original_cases: [
+          ...binding.original_cases,
+          {
+            kind: "malformed" as const,
+            evidence_id: absent,
+            location: "/extra",
+          },
+        ],
+      },
+      {
+        ...binding,
+        fixtures: [
+          ...binding.fixtures,
+          {
+            fixture_id: "fixture.extra",
+            case_kind: "malformed" as const,
+            authority: "unit" as const,
+            evidence_ids: [absent],
+          },
+        ],
+      },
+      {
+        ...binding,
+        verifier: { ...binding.verifier!, result_evidence_id: absent },
+      },
+    ];
+    for (const candidate of candidates) {
+      const result = build({
+        ...input,
+        reviewed_obligations: [optional],
+        manifest: { bindings: [candidate], contradictions: [] },
+      });
+      expect(result.status).toBe("unknown");
+      expect(result.coverage.status).toBe("partial");
+      expect(result.evidence_links).toContain(absent);
+      expect(result.limitations).toContainEqual(
+        expect.stringMatching(
+          /1 Evidence reference.*absent from the input bundle.*closure cannot be claimed/iu,
+        ),
+      );
+    }
+    const contradiction = build({
+      ...input,
+      reviewed_obligations: [optional],
+      manifest: {
+        bindings: [binding],
+        contradictions: [
+          {
+            obligation_id: optional.obligation_id,
+            evidence_ids: [original, absent],
+          },
+        ],
+      },
+    });
+    expect(contradiction.status).not.toBe("ready");
+    expect(contradiction.evidence_links).toContain(absent);
+    const resolved = build({
+      ...input,
+      reviewed_obligations: [optional],
+      manifest: {
+        bindings: [
+          {
+            ...candidates[1]!,
+            fixtures: [
+              ...binding.fixtures,
+              {
+                fixture_id: "fixture.extra",
+                case_kind: "malformed",
+                authority: "unit",
+                evidence_ids: [proof],
+              },
+            ],
+          },
+        ],
+        contradictions: [],
+      },
+    });
+    expect(resolved.status).toBe("ready");
+    expect(resolved.obligations[0]?.status).toBe("verified");
+
+    const required = readyProcessLedgerRequest();
+    const mixed = build({
+      evidence_bundle: createEvidenceBundle([
+        ...input.evidence_bundle.records,
+        ...required.evidence_bundle.records,
+      ]),
+      reviewed_obligations: [optional],
+      manifest: {
+        bindings: [candidates[1]!, ...required.manifest.bindings],
+        contradictions: [],
+      },
+    });
+    expect(mixed.summary.required_open).toBe(0);
+    expect(mixed.status).toBe("unknown");
+    expect(mixed.evidence_links).toContain(absent);
+  });
+});
+
+describe("reconstruction obligation manifest reference controls", () => {
   it("withholds readiness when a manifest entry names absent Evidence", () => {
     const ledgerRequest = readyProcessLedgerRequest();
     // A valid entry for the same case kind must not hide an absent reference.
@@ -264,10 +426,12 @@ describe("reconstruction obligation manifest references", () => {
     if (binding === undefined) throw new Error("Expected binding");
     const variants: {
       readonly code: string;
+      readonly kind: "positive" | "malformed";
       readonly binding: typeof binding;
     }[] = [
       {
         code: "missing-original-case",
+        kind: "positive",
         binding: {
           ...binding,
           original_cases: [
@@ -278,6 +442,7 @@ describe("reconstruction obligation manifest references", () => {
       },
       {
         code: "missing-case",
+        kind: "positive",
         binding: {
           ...binding,
           fixtures: [
@@ -291,17 +456,88 @@ describe("reconstruction obligation manifest references", () => {
           ],
         },
       },
+      {
+        code: "missing-original-case",
+        kind: "malformed",
+        binding: {
+          ...binding,
+          original_cases: [
+            ...binding.original_cases,
+            { kind: "malformed", evidence_id: absent, location: "/old" },
+          ],
+        },
+      },
+      {
+        code: "missing-case",
+        kind: "malformed",
+        binding: {
+          ...binding,
+          fixtures: [
+            ...binding.fixtures,
+            {
+              fixture_id: "packaged.old",
+              case_kind: "malformed",
+              authority: "packaged-process",
+              evidence_ids: [absent],
+            },
+          ],
+        },
+      },
     ];
-    for (const { code, binding: dangling } of variants) {
+    for (const { code, kind, binding: dangling } of variants) {
       const open = build({
         ...ledgerRequest,
         manifest: { ...ledgerRequest.manifest, bindings: [dangling] },
       });
       expect(open.status).not.toBe("ready");
       expect(open.obligations[0]?.status).toBe("implemented");
-      expect(open.obligations[0]?.diagnostics).toEqual([
-        { code, detail: expect.stringContaining(absent) },
-      ]);
+      expect(open.obligations[0]?.diagnostics).toContainEqual({
+        code,
+        detail: expect.stringMatching(new RegExp(`${kind}.*${absent}`)),
+      });
+      expect(open.evidence_links).toContain(absent);
     }
+
+    const surplusEvidence = proofEvidence("surplus-case");
+    const validSurplus = build(
+      request([...ledgerRequest.evidence_bundle.records, surplusEvidence], {
+        manifest: {
+          ...ledgerRequest.manifest,
+          bindings: [
+            {
+              ...binding,
+              original_cases: [
+                ...binding.original_cases,
+                {
+                  kind: "malformed",
+                  evidence_id: surplusEvidence.evidence_id,
+                  location: "/retained",
+                },
+              ],
+              fixtures: [
+                ...binding.fixtures,
+                {
+                  fixture_id: "packaged.malformed",
+                  case_kind: "malformed",
+                  authority: "packaged-process",
+                  evidence_ids: [surplusEvidence.evidence_id],
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+    expect(validSurplus.status).toBe("ready");
+    expect(validSurplus.obligations[0]?.observed_cases).toContainEqual(
+      expect.objectContaining({ kind: "malformed", location: "/retained" }),
+    );
+    expect(validSurplus.obligations[0]?.binding?.fixtures).toContainEqual(
+      expect.objectContaining({
+        case_kind: "malformed",
+        fixture_id: "packaged.malformed",
+      }),
+    );
+    expect(validSurplus.evidence_links).toContain(surplusEvidence.evidence_id);
   });
 });

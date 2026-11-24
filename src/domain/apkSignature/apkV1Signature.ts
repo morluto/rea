@@ -16,7 +16,18 @@
  * state per record (up to ~11M records in a 512 MiB Zip64 file) and only a few
  * names decoded.
  */
+import { boundedList } from "../boundedList.js";
+import { BinaryReader } from "../binaryContainer.js";
+import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
 import { type Result, err, ok } from "../result.js";
+import {
+  ZIP_CENTRAL_HEADER,
+  readZipCentralExtent,
+} from "../zip/zipCentralHeader.js";
+import {
+  ZIP_LOCAL_HEADER_BYTES,
+  ZIP_LOCAL_HEADER_SIGNATURE,
+} from "../zip/zipLocalHeader.js";
 import {
   canonicalNameHash,
   compareCanonicalNames,
@@ -25,9 +36,15 @@ import {
   sameZipName,
   type StoredZipName,
 } from "./zipEntryName.js";
-
-const CD_SIGNATURE = 0x02014b50;
-const CD_FIXED_SIZE = 46;
+import {
+  APK_V1_MANIFEST_PATH,
+  APK_V1_META_INF_PREFIX,
+  isV1SignatureBlockName,
+  isV1SignatureFileName,
+  isV1SignatureMetadataName,
+  startsWithV1MetaInfPrefix,
+  v1SignatureFileNameForBlock,
+} from "./apkV1MetadataName.js";
 
 export type ApkCentralDirectoryError =
   | {
@@ -35,17 +52,13 @@ export type ApkCentralDirectoryError =
       readonly offset: number;
       readonly detail: string;
     }
-  | {
-      readonly kind: "budget-exceeded";
-      readonly resource: "v1-signature-entries";
-      readonly limit: number;
-    };
+  | ParseFailureError<"limit">;
 
 /**
  * Signing-relevant `META-INF/` entries retained. A signed APK holds a manifest
  * plus one `.SF` and one block per v1 signer; thousands is already pathological.
  */
-export const MAX_V1_SIGNATURE_ENTRIES = 4096;
+const MAX_V1_SIGNATURE_ENTRIES = 4096;
 
 /**
  * v1 signers (signature block + `.SF` pairs) decoded. apksig accepts at most
@@ -54,38 +67,7 @@ export const MAX_V1_SIGNATURE_ENTRIES = 4096;
 export const MAX_V1_SIGNERS = 32;
 
 /** Duplicated central-directory names decoded for the report; the rest are counted. */
-export const MAX_DUPLICATE_NAME_SAMPLE = 5;
-
-const META_INF = "META-INF/";
-const MANIFEST = "META-INF/MANIFEST.MF";
-const META_INF_BYTES = Uint8Array.from(
-  [...META_INF].map((c) => c.charCodeAt(0)),
-);
-
-/** True when the raw name starts with `META-INF/` (apksig's selection). */
-const startsWithMetaInf = (
-  bytes: Uint8Array,
-  start: number,
-  length: number,
-): boolean => {
-  if (length < META_INF_BYTES.length) return false;
-  for (let i = 0; i < META_INF_BYTES.length; i += 1)
-    if (bytes[start + i] !== META_INF_BYTES[i]) return false;
-  return true;
-};
-
-const BLOCK_SUFFIXES = [".RSA", ".DSA", ".EC"] as const;
-const isSignatureFile = (name: string): boolean => name.endsWith(".SF");
-const isSignatureBlock = (name: string): boolean =>
-  BLOCK_SUFFIXES.some((suffix) => name.endsWith(suffix));
-
-/** The `.SF` file apksig pairs with a signature block. */
-const signatureFileFor = (block: string): string =>
-  `${block.slice(0, block.lastIndexOf("."))}.SF`;
-
-/** The one owner of which `META-INF/` names take part in v1 signing. */
-const isV1SignatureName = (name: string): boolean =>
-  name === MANIFEST || isSignatureFile(name) || isSignatureBlock(name);
+const MAX_DUPLICATE_NAME_SAMPLE = 5;
 
 /** A signing-relevant central-directory entry and where its data is stored. */
 export interface ApkV1Entry {
@@ -248,9 +230,10 @@ const duplicateNames = (
   }
   const sampled = (firsts: number[]): ApkDuplicateNameSample => {
     firsts.sort((a, b) => a - b);
+    const { items, omitted } = boundedList(firsts, MAX_DUPLICATE_NAME_SAMPLE);
     return {
-      count: firsts.length,
-      sample: firsts.slice(0, MAX_DUPLICATE_NAME_SAMPLE).map((i) => {
+      count: items.length + omitted,
+      sample: items.map((i) => {
         const start = starts[i] ?? 0;
         const storedBytes = lengths[i] ?? 0;
         return {
@@ -282,8 +265,8 @@ export const centralDirectoryV1SignatureEntries = (
   centralDirectorySize: number,
   totalEntries: number,
   apksigRecords: number = totalEntries,
+  baseOffset = 0,
 ): Result<ApkCentralDirectoryScan, ApkCentralDirectoryError> => {
-  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const end = centralDirectoryOffset + centralDirectorySize;
   if (
     !Number.isSafeInteger(end) ||
@@ -293,74 +276,86 @@ export const centralDirectoryV1SignatureEntries = (
   )
     return err({
       kind: "malformed-central-directory",
-      offset: centralDirectoryOffset,
+      offset: baseOffset + centralDirectoryOffset,
       detail: "declared central-directory extent is outside the file",
     });
+  const reader = new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    true,
+    "zip",
+  );
   // A record takes at least its fixed bytes, so the walk fails before a
   // declared count past this capacity is reached.
   const capacity = Math.min(
     totalEntries,
-    Math.max(0, Math.floor((end - centralDirectoryOffset) / CD_FIXED_SIZE)),
+    Math.max(
+      0,
+      Math.floor((end - centralDirectoryOffset) / ZIP_CENTRAL_HEADER.bytes),
+    ),
   );
   const starts = new Uint32Array(capacity);
   const lengths = new Uint16Array(capacity);
   const entries: ApkV1Entry[] = [];
   let at = centralDirectoryOffset;
   for (let i = 0; i < totalEntries; i += 1) {
-    if (at + CD_FIXED_SIZE > end)
+    const extent = readZipCentralExtent(reader, at, end);
+    if (!extent.ok) {
+      const { kind, offset } = extent.error;
+      const detail = {
+        "fixed-fields": `central directory ends after ${String(i)} of ${String(totalEntries)} records`,
+        signature: "central-directory record signature mismatch",
+        name: "central-directory file name runs past the directory",
+        "extra-or-comment":
+          "central-directory extra field or comment runs past the directory",
+      }[kind];
       return err({
         kind: "malformed-central-directory",
-        offset: at,
-        detail: `central directory ends after ${String(i)} of ${String(totalEntries)} records`,
+        offset: baseOffset + offset,
+        detail,
       });
-    if (dv.getUint32(at, true) !== CD_SIGNATURE)
-      return err({
-        kind: "malformed-central-directory",
-        offset: at,
-        detail: "central-directory record signature mismatch",
-      });
-    const nameLength = dv.getUint16(at + 28, true);
-    const extraLength = dv.getUint16(at + 30, true);
-    const commentLength = dv.getUint16(at + 32, true);
-    const nameStart = at + CD_FIXED_SIZE;
-    if (nameStart + nameLength > end)
-      return err({
-        kind: "malformed-central-directory",
-        offset: nameStart,
-        detail: "central-directory file name runs past the directory",
-      });
+    }
+    const { name: nameStart, extra, next } = extent.value;
+    const nameLength = extra - nameStart;
     starts[i] = nameStart;
     lengths[i] = nameLength;
-    if (startsWithMetaInf(bytes, nameStart, nameLength)) {
+    if (startsWithV1MetaInfPrefix(bytes, nameStart, nameLength)) {
       const rawName = bytes.subarray(nameStart, nameStart + nameLength);
       const name = decodeZipName(rawName);
-      if (isV1SignatureName(name)) {
+      if (isV1SignatureMetadataName(name)) {
         if (entries.length >= MAX_V1_SIGNATURE_ENTRIES)
-          return err({
-            kind: "budget-exceeded",
-            resource: "v1-signature-entries",
-            limit: MAX_V1_SIGNATURE_ENTRIES,
-          });
+          return err(
+            decodeLimit(
+              "apk-v1-central-directory",
+              `The central directory holds more than ${String(MAX_V1_SIGNATURE_ENTRIES)} META-INF v1 signing entries.`,
+              {
+                name: "max_v1_signature_entries",
+                maximum: MAX_V1_SIGNATURE_ENTRIES,
+              },
+              { offset: baseOffset + at },
+            ),
+          );
         entries.push({
           name,
           rawName,
-          flags: dv.getUint16(at + 8, true),
-          method: dv.getUint16(at + 10, true),
-          crc32: dv.getUint32(at + 16, true),
-          compressedSize: dv.getUint32(at + 20, true),
-          uncompressedSize: dv.getUint32(at + 24, true),
-          localHeaderOffset: dv.getUint32(at + 42, true),
+          flags: reader.u16(at + 8),
+          method: reader.u16(at + 10),
+          crc32: reader.u32(at + 16),
+          compressedSize: reader.u32(at + 20),
+          uncompressedSize: reader.u32(at + 24),
+          localHeaderOffset: reader.u32(
+            at + ZIP_CENTRAL_HEADER.localHeaderOffset,
+          ),
         });
       }
     }
-    at = nameStart + nameLength + extraLength + commentLength;
+    at = next;
   }
   // An under-declared record count would silently hide entries (and so v1
   // signing): the walk must consume exactly the declared directory.
   if (at !== end)
     return err({
       kind: "malformed-central-directory",
-      offset: at,
+      offset: baseOffset + at,
       detail: `${String(end - at)} bytes of the declared central directory remain after ${String(totalEntries)} records`,
     });
   return ok({
@@ -373,7 +368,9 @@ export const centralDirectoryV1SignatureEntries = (
 export const detectV1Signature = (
   entries: readonly ApkV1Entry[],
 ): ApkV1Signature => {
-  const selected = entries.filter((entry) => entry.name.startsWith(META_INF));
+  const selected = entries.filter((entry) =>
+    entry.name.startsWith(APK_V1_META_INF_PREFIX),
+  );
   // Case-sensitive throughout, as apksig matches JAR signature entries.
   const seen = new Set<string>();
   const duplicates = new Set<string>();
@@ -382,32 +379,30 @@ export const detectV1Signature = (
     else seen.add(name);
   const signatureFiles = selected
     .map((entry) => entry.name)
-    .filter(isSignatureFile);
-  const blocks = selected.filter((entry) => isSignatureBlock(entry.name));
+    .filter(isV1SignatureFileName);
+  const blocks = selected.filter((entry) => isV1SignatureBlockName(entry.name));
   const sfNames = new Set(signatureFiles);
   const paired = new Set<string>();
   const signers = blocks.flatMap((block) => {
-    const signatureFile = signatureFileFor(block.name);
+    const signatureFile = v1SignatureFileNameForBlock(block.name);
     if (!sfNames.has(signatureFile) || paired.has(block.name)) return [];
     paired.add(block.name);
     // apksig reads every signer's manifest, so a duplicate one affects them all.
     const duplicate =
-      [block.name, signatureFile, MANIFEST].find((name) =>
+      [block.name, signatureFile, APK_V1_MANIFEST_PATH].find((name) =>
         duplicates.has(name),
       ) ?? null;
     return [{ signatureFile, block, duplicate }];
   });
   return {
     present: signers.length > 0,
-    hasManifest: selected.some((entry) => entry.name === MANIFEST),
+    hasManifest: selected.some((entry) => entry.name === APK_V1_MANIFEST_PATH),
     signatureFiles,
     blockFiles: blocks.map((block) => block.name),
     signers,
   };
 };
 
-const LOCAL_SIGNATURE = 0x04034b50;
-const LOCAL_FIXED_SIZE = 30;
 const ZIP64_SENTINEL = 0xffffffff;
 const FLAG_ENCRYPTED = 0x1;
 const FLAG_DATA_DESCRIPTOR = 0x8;
@@ -439,11 +434,24 @@ export interface ApkLocalEntryData {
  * encryption flag (bit 0) does not stop the read; it is returned so the caller
  * can say so, and bytes that really are encrypted fail to decode.
  */
-export const localEntryData = (
-  bytes: Uint8Array,
+/** Validated local header extent for one v1 signature entry. */
+export interface ApkLocalEntryHeader {
+  readonly dataStart: number;
+  readonly dataEnd: number;
+  readonly declaresEncryption: boolean;
+}
+
+/**
+ * Validate a local file header (starting at byte 0 of `localHeaderAndName`)
+ * against the central-directory entry and return the file-relative byte span
+ * of its stored data.
+ */
+export const parseLocalEntryHeader = (
+  localHeaderAndName: Uint8Array,
   entry: ApkV1Entry,
   entriesEnd: number,
-): Result<ApkLocalEntryData, ApkLocalEntryError> => {
+  fileSize: number,
+): Result<ApkLocalEntryHeader, ApkLocalEntryError> => {
   if (
     entry.compressedSize === ZIP64_SENTINEL ||
     entry.uncompressedSize === ZIP64_SENTINEL ||
@@ -451,17 +459,25 @@ export const localEntryData = (
   )
     return err({ detail: "Zip64 entry sizes are not read" });
   const at = entry.localHeaderOffset;
-  const limit = Math.min(entriesEnd, bytes.length);
-  if (at + LOCAL_FIXED_SIZE > limit)
+  const limit = Math.min(entriesEnd, fileSize);
+  if (at + ZIP_LOCAL_HEADER_BYTES > limit)
     return err({
       detail: `local header at byte ${String(at)} is out of range`,
     });
-  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (dv.getUint32(at, true) !== LOCAL_SIGNATURE)
+  const reader = new BinaryReader(
+    Buffer.from(
+      localHeaderAndName.buffer,
+      localHeaderAndName.byteOffset,
+      localHeaderAndName.byteLength,
+    ),
+    true,
+    "zip",
+  );
+  if (reader.u32(0) !== ZIP_LOCAL_HEADER_SIGNATURE)
     return err({
       detail: `local header signature mismatch at byte ${String(at)}`,
     });
-  const flags = dv.getUint16(at + 6, true);
+  const flags = reader.u16(6);
   const descriptor = (flags & FLAG_DATA_DESCRIPTOR) !== 0;
   if (descriptor !== ((entry.flags & FLAG_DATA_DESCRIPTOR) !== 0))
     return err({
@@ -474,34 +490,59 @@ export const localEntryData = (
       ["compressed size", 18, entry.compressedSize],
       ["uncompressed size", 22, entry.uncompressedSize],
     ] as const) {
-      const local = dv.getUint32(at + offset, true);
+      const local = reader.u32(offset);
       if (local !== expected)
         return err({
           detail: `local header ${field} ${String(local)} differs from the central directory's ${String(expected)}`,
         });
     }
-  const nameLength = dv.getUint16(at + 26, true);
-  const nameStart = at + LOCAL_FIXED_SIZE;
+  const nameLength = reader.u16(26);
+  const nameStart = at + ZIP_LOCAL_HEADER_BYTES;
   if (
     nameStart + nameLength > limit ||
     // apksig refuses a local name longer in bytes before decoding either.
     nameLength > entry.rawName.length ||
     !sameZipName(
-      bytes.subarray(nameStart, nameStart + nameLength),
+      localHeaderAndName.subarray(
+        ZIP_LOCAL_HEADER_BYTES,
+        ZIP_LOCAL_HEADER_BYTES + nameLength,
+      ),
       entry.rawName,
     )
   )
     return err({
       detail: "local header name differs from the central directory's",
     });
-  const start = nameStart + nameLength + dv.getUint16(at + 28, true);
-  const end = start + entry.compressedSize;
-  if (end > limit)
+  const dataStart = nameStart + nameLength + reader.u16(28);
+  const dataEnd = dataStart + entry.compressedSize;
+  if (dataEnd > limit)
     return err({
-      detail: `entry data at byte ${String(start)} runs past the entries`,
+      detail: `entry data at byte ${String(dataStart)} runs past the entries`,
     });
   return ok({
-    data: bytes.subarray(start, end),
+    dataStart,
+    dataEnd,
     declaresEncryption: ((entry.flags | flags) & FLAG_ENCRYPTED) !== 0,
+  });
+};
+
+export const localEntryData = (
+  bytes: Uint8Array,
+  entry: ApkV1Entry,
+  entriesEnd: number,
+): Result<ApkLocalEntryData, ApkLocalEntryError> => {
+  const at = entry.localHeaderOffset;
+  const headerSlice =
+    at >= 0 && at <= bytes.length ? bytes.subarray(at) : new Uint8Array(0);
+  const header = parseLocalEntryHeader(
+    headerSlice,
+    entry,
+    entriesEnd,
+    bytes.length,
+  );
+  if (!header.ok) return header;
+  return ok({
+    data: bytes.subarray(header.value.dataStart, header.value.dataEnd),
+    declaresEncryption: header.value.declaresEncryption,
   });
 };

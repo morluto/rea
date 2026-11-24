@@ -233,10 +233,18 @@ export function assertScenarioCapture(capture) {
   const final = capture.steps.at(-1);
   if (
     final === undefined ||
-    Object.values(final.artifacts).some(({ state }) => state !== "captured")
+    Object.entries(final.artifacts).some(
+      ([kind, { state }]) => kind !== "screenshot" && state !== "captured",
+    )
   )
     throw new Error(
       `Scenario launch did not capture every requested artifact: ${JSON.stringify(final?.artifacts ?? null)}`,
+    );
+  for (const step of capture.steps)
+    assert.ok(
+      step.artifacts.screenshot.state === "missing" &&
+        step.artifacts.screenshot.reason.includes("sensitive"),
+      "Sensitive scenario screenshots must be withheld from its first step",
     );
   const storageNames =
     final.artifacts.storage.state === "captured"
@@ -281,10 +289,13 @@ export function assertScenarioCapture(capture) {
   );
   // This fixture polls continuously. A request crossing the capture cutoff
   // makes later activity unknown even when no response body was selected.
-  const expectedMissing = unfinished.length === 0 ? [] : ["events"];
+  const expectedMissing = [
+    ...(unfinished.length === 0 ? [] : ["events"]),
+    "screenshot",
+  ].sort();
   if (
     capture.events.items.length === 0 ||
-    capture.completeness.equality_eligible !== (unfinished.length === 0) ||
+    capture.completeness.equality_eligible !== false ||
     JSON.stringify(capture.completeness.missing_sections) !==
       JSON.stringify(expectedMissing) ||
     capture.completeness.truncated_sections.length !== 0

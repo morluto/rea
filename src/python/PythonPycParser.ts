@@ -1,50 +1,59 @@
-import { createHash } from "node:crypto";
+import { observePythonBytecodePrefix } from "../domain/python/pythonBytecodeIdentity.js";
 import {
-  PYTHON_PYC_CHECK_SOURCE,
+  MarshalReader,
+  smallBitLength,
+  type MarshalCoreValue,
+  type MarshalLimitExceeded,
+} from "../domain/python/marshalReader.js";
+import {
   PYTHON_PYC_CONST_PREVIEW_LIMIT,
-  PYTHON_PYC_HASH_BASED,
   PYTHON_PYC_HEADER_BYTES,
-  PYTHON_PYC_INT_PREVIEW_BITS,
-  pythonPycMagicEntry,
-  type InspectPythonPycInput,
+  PYTHON_PYC_SLICE_MAGIC,
+  interpretPythonPycHeaderFlags,
+  pythonPycMarshalProfile,
+  type PythonPycLimits,
   type PythonPyc,
   type PythonPycCodeLayout,
-  type PythonPycCodeObject,
   type PythonPycConst,
 } from "../domain/python/pythonPyc.js";
+import { Budget } from "../domain/budget.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
+import { PYTHON_PYC_FORMAT, pythonPycLimit } from "./PythonPyc.errors.js";
+import { pythonPycBytecodeIdentity } from "./PythonPycBytecodeEquality.js";
 import {
-  PythonPycFormatFailure,
-  PythonPycResourceFailure,
-} from "./PythonPyc.errors.js";
+  asBytes,
+  asString,
+  asStringWithRaw,
+  asTuple,
+  emptyPythonPycWork,
+  flattenCode,
+  malformed,
+  parseMarshalFloat,
+  sha256,
+  summarizeConst,
+  unsupported,
+  type CodeNode,
+  type MarshalValue,
+  type PythonPycWork,
+} from "./PycReportProjection.js";
 
-const FLAG_REF = 0x80;
 const TYPE_NULL = 0x30;
 const TYPE_NONE = 0x4e;
 const TYPE_FALSE = 0x46;
 const TYPE_TRUE = 0x54;
 const TYPE_STOPITER = 0x53;
 const TYPE_ELLIPSIS = 0x2e;
-const TYPE_INT = 0x69;
+const TYPE_INT64 = 0x49;
 const TYPE_FLOAT_TEXT = 0x66;
 const TYPE_FLOAT = 0x67;
 const TYPE_COMPLEX_TEXT = 0x78;
 const TYPE_COMPLEX = 0x79;
-const TYPE_LONG = 0x6c;
-const TYPE_BYTES = 0x73;
-const TYPE_INTERNED = 0x74;
-const TYPE_REF = 0x72;
-const TYPE_TUPLE = 0x28;
-const TYPE_LIST = 0x5b;
 const TYPE_DICT = 0x7b;
 const TYPE_CODE = 0x63;
-const TYPE_UNICODE = 0x75;
 const TYPE_SET = 0x3c;
 const TYPE_FROZENSET = 0x3e;
-const TYPE_ASCII = 0x61;
-const TYPE_ASCII_INTERNED = 0x41;
-const TYPE_SMALL_TUPLE = 0x29;
-const TYPE_SHORT_ASCII = 0x7a;
-const TYPE_SHORT_ASCII_INTERNED = 0x5a;
+/** CPython 3.14 slice constants; `PYTHON_PYC_SLICE_MAGIC` gates the tag. */
+const TYPE_SLICE = 0x3a;
 const TYPES_WITHOUT_REFERENCE_SLOTS = new Set([
   TYPE_NULL,
   TYPE_NONE,
@@ -56,45 +65,10 @@ const TYPES_WITHOUT_REFERENCE_SLOTS = new Set([
 /** CPython `CO_VARARGS` / `CO_VARKEYWORDS`. Each consumes one local name. */
 const CO_VARARGS = 0x04;
 const CO_VARKEYWORDS = 0x08;
+/** CPython 3.7–3.10 derives this bit from the free/cell variable tables. */
+const CO_NOFREE = 0x40;
 /** CPython `_PyLocals_Kind` bit counted by `_PyCode_Validate` as a local. */
 const CO_FAST_LOCAL = 0x20;
-
-type MarshalValue =
-  | { readonly kind: "null" }
-  | { readonly kind: "none" }
-  | { readonly kind: "bool"; readonly value: boolean }
-  | { readonly kind: "ellipsis" }
-  | { readonly kind: "stopiter" }
-  | { readonly kind: "int"; readonly value: bigint; readonly bits: number }
-  | { readonly kind: "float"; readonly value: number }
-  | { readonly kind: "complex"; readonly real: number; readonly imag: number }
-  | { readonly kind: "bytes"; readonly value: Buffer }
-  | {
-      readonly kind: "str";
-      readonly value: string;
-      readonly bytes: number;
-      /** Marshal bytes. JavaScript strings merge lone surrogates with pairs. */
-      readonly raw: Buffer;
-    }
-  | { readonly kind: "tuple"; readonly items: MarshalValue[] }
-  | { readonly kind: "list"; readonly items: MarshalValue[] }
-  | { readonly kind: "set"; readonly items: MarshalValue[] }
-  | { readonly kind: "frozenset"; readonly items: MarshalValue[] }
-  | {
-      readonly kind: "dict";
-      readonly items: [MarshalValue, MarshalValue][];
-    }
-  | { readonly kind: "code"; readonly value: CodeNode };
-
-/**
- * A decoded code object. `consts` and `nested` stay empty until the marshal
- * graph is complete: a container can refer to itself before its items exist.
- * TYPE_REF children are the same node, not copies.
- */
-type CodeNode = Omit<PythonPycCodeObject, "nested_code" | "consts"> & {
-  consts: PythonPycConst[];
-  nested: CodeNode[];
-};
 
 const EMPTY_CODES: readonly CodeNode[] = [];
 
@@ -124,7 +98,8 @@ const isContainer = (value: MarshalValue): boolean =>
   value.kind === "list" ||
   value.kind === "set" ||
   value.kind === "frozenset" ||
-  value.kind === "dict";
+  value.kind === "dict" ||
+  value.kind === "slice";
 
 const containerChildren = (value: MarshalValue): readonly MarshalValue[] => {
   if (value.kind === "dict") {
@@ -136,7 +111,8 @@ const containerChildren = (value: MarshalValue): readonly MarshalValue[] => {
     value.kind === "tuple" ||
     value.kind === "list" ||
     value.kind === "set" ||
-    value.kind === "frozenset"
+    value.kind === "frozenset" ||
+    value.kind === "slice"
   )
     return value.items;
   return [];
@@ -149,12 +125,19 @@ const containerChildren = (value: MarshalValue): readonly MarshalValue[] => {
  */
 type CodeEquality = {
   readonly consts: readonly MarshalValue[];
+  /** The co_consts tuple itself, which may be a reference to an unfinished tuple. */
+  readonly constsTuple: MarshalValue;
+  readonly effectiveFlags: number;
+  readonly bytecode: Buffer;
+  readonly name: Buffer;
+  readonly nameTables: readonly (readonly Buffer[])[];
   readonly linetable: string;
   readonly exceptiontable: string;
 };
 
-const malformed = (message: string): never => {
-  throw new PythonPycFormatFailure("malformed", message);
+type NameTable = {
+  readonly display: string[];
+  readonly equality: Buffer[];
 };
 
 /** Locals CPython's 3.11+ validator counts toward `co_varnames`. */
@@ -167,70 +150,86 @@ const fastLocalCount = (kinds: Buffer): number => {
   return count;
 };
 
-const unsupported = (message: string): never => {
-  throw new PythonPycFormatFailure("unsupported", message);
-};
-
-const digests = new WeakMap<Buffer, string>();
-const sha256 = (bytes: Buffer): string => {
-  const cached = digests.get(bytes);
-  if (cached !== undefined) return cached;
-  const digest = createHash("sha256").update(bytes).digest("hex");
-  digests.set(bytes, digest);
-  return digest;
-};
-
-/** Decode one bounded CPython 3.7–3.13 pyc without executing bytecode. */
+/** Decode one bounded CPython 3.7–3.15 pyc without executing bytecode. */
 export const parsePythonPyc = (
   bytes: Buffer,
   artifact: { path: string; sha256: string; bytes: number },
-  input: InspectPythonPycInput,
+  input: PythonPycLimits,
+  work: PythonPycWork = emptyPythonPycWork(),
 ): PythonPyc => {
   if (bytes.length !== artifact.bytes)
     malformed("Selected artifact length disagrees with the retained bytes.");
+  const prefix = observePythonBytecodePrefix(bytes);
+  if (prefix.state === "incomplete")
+    return malformed("Selected file is shorter than a pyc magic.");
+  if (prefix.state === "invalid-crlf")
+    return malformed(
+      "Pyc magic is not a little-endian integer followed by CR LF.",
+    );
+  const { magic, identity } = prefix;
+  const mapped = pythonPycMarshalProfile(magic);
+  if (identity !== null && identity.headerBytes !== PYTHON_PYC_HEADER_BYTES)
+    return unsupported(
+      `Pyc magic ${magic} uses an unsupported ${identity.headerBytes}-byte CPython header.`,
+    );
   if (bytes.length < PYTHON_PYC_HEADER_BYTES)
     malformed(
       "Selected file is shorter than a 16-byte CPython 3.7+ pyc header.",
     );
-  if (bytes[2] !== 0x0d || bytes[3] !== 0x0a)
-    malformed("Pyc magic is not a little-endian integer followed by CR LF.");
-  const magic = bytes.readUInt16LE(0);
-  const mapped = pythonPycMagicEntry(magic);
-  if (mapped === null)
+  // Every CPython 3.7+ header packs flags at 4, then the source hash (8..16)
+  // or the source mtime (8) and size (12).
+  const header = new BinaryReader(bytes, true, PYTHON_PYC_FORMAT);
+  const flags = header.u32(4);
+  const { hashBased, checkSource, inactiveCheckSource, hasUnknownFlags } =
+    interpretPythonPycHeaderFlags(flags);
+  if (mapped === null || identity === null) {
+    // A known identity without a pinned code layout is a different outcome from an
+    // unrecognized magic: the header below is still qualified from the same packed
+    // fields every 3.7+ pyc uses, so report it instead of a bare rejection.
+    const headerFacts = `16-byte header, flags 0x${flags.toString(16)}, ${
+      hashBased ? "hash-based" : "timestamp-based"
+    }`;
     return unsupported(
-      `Pyc magic ${magic} is outside the pinned CPython 3.7–3.13 table.`,
+      identity === null
+        ? `Pyc magic ${magic} is not a pinned CPython identity, so its header cannot be qualified; standalone marshal decoding is pinned for CPython 3.7–3.13 and the 3.14 and 3.15 magics 3627 and 3666.`
+        : `CPython ${identity.pythonVersion} header is recognized (magic ${magic}, ${headerFacts}), but no marshal code layout is pinned for that version, so its code objects cannot be decoded. Standalone marshal decoding is pinned for CPython 3.7–3.13 and the 3.14 and 3.15 magics 3627 and 3666.`,
     );
-  const flags = bytes.readUInt32LE(4);
-  const hashBased = (flags & PYTHON_PYC_HASH_BASED) !== 0;
-  const header = {
+  }
+  const headerFields = {
     magic,
-    python_version: mapped.python_version,
+    python_version: identity.pythonVersion,
     code_layout: mapped.code_layout,
     flags,
     hash_based: hashBased,
-    check_source: (flags & PYTHON_PYC_CHECK_SOURCE) !== 0,
+    check_source: checkSource,
     source_hash_hex: hashBased ? bytes.subarray(8, 16).toString("hex") : null,
-    source_mtime: hashBased ? null : bytes.readUInt32LE(8),
-    source_size: hashBased ? null : bytes.readUInt32LE(12),
+    source_mtime: hashBased ? null : header.u32(8),
+    source_size: hashBased ? null : header.u32(12),
   };
   const marshal = bytes.subarray(PYTHON_PYC_HEADER_BYTES);
-  const reader = new MarshalReader(marshal, mapped.code_layout, input);
+  const reader = new PycMarshalReader(
+    marshal,
+    mapped.code_layout,
+    magic,
+    input,
+    mapped.negative_code_fields === "rejected",
+    magic >= PYTHON_PYC_SLICE_MAGIC,
+    work,
+  );
   const root = reader.readObject(0);
   if (reader.offset !== marshal.length)
     malformed("Marshal stream has trailing bytes after the top-level object.");
   if (root.kind !== "code")
     return malformed("Top-level marshal object is not a code object.");
   reader.finishCodes();
-  const codeObjects = flattenCode(root.value);
-  const unknownFlags =
-    flags & ~(PYTHON_PYC_HASH_BASED | PYTHON_PYC_CHECK_SOURCE);
+  const codeObjects = flattenCode(root.value, work);
   return {
     artifact: {
       path: artifact.path,
       sha256: artifact.sha256,
       bytes: artifact.bytes,
     },
-    header,
+    header: headerFields,
     code_objects: codeObjects,
     coverage: {
       status: "complete",
@@ -246,26 +245,33 @@ export const parsePythonPyc = (
         ? "source_hash_hex is the PEP 552 header field; the original .py is not read."
         : "source_mtime and source_size are header fields; they do not prove a matching .py is present.",
       "python_version is the pinned CPython magic table for this header, not a runtime interpreter.",
-      ...(unknownFlags === 0
-        ? []
-        : [
+      ...(mapped.negative_code_fields === "revision-dependent" &&
+      codeObjects.some((code) => code.stacksize < 0 || code.flags < 0)
+        ? [
+            "Magic 3410 is shared by CPython revisions with different negative co_stacksize/co_flags constructor checks; these raw values are preserved, but this header cannot establish constructor acceptance.",
+          ]
+        : []),
+      ...(inactiveCheckSource
+        ? [
+            "The stored check_source bit is set but applies only to hash-based pycs. This pyc carries timestamp metadata.",
+          ]
+        : []),
+      ...(hasUnknownFlags
+        ? [
             `Header flags ${flags} include unrecognized bits; only hash-based and check-source bits are decoded.`,
-          ]),
+          ]
+        : []),
     ],
   };
 };
 
-class MarshalReader {
-  offset = 0;
-  objects = 0;
-  depthReached = 0;
-  readonly #intern: (MarshalValue | undefined)[] = [];
+class PycMarshalReader extends MarshalReader<MarshalValue> {
   /** Name and identifier bytes the report carries across all code objects. */
-  #reportedStringBytes = 0;
+  readonly #reportedStringBytes: Budget;
   /** Const summaries the report copies, including tables shared by TYPE_REF. */
-  #reportedConsts = 0;
+  readonly #reportedCopies: Budget;
   /** Bytes of hash-key descriptors materialized for set and dict rules. */
-  #keyBytes = 0;
+  readonly #keyBytes: Budget;
   /** Identity keys for NaN values, which are not equal to themselves. */
   readonly #identities = new WeakMap<MarshalValue, number>();
   #identityNext = 0;
@@ -276,12 +282,19 @@ class MarshalReader {
   /** Interned descriptors so equal values share one token within this walk. */
   readonly #keyTokens = new Map<string, string>();
   #keyTokenNext = 0;
-  /** Explicit key-walk steps. Stream `max_depth` does not bound reference chains. */
-  #keySteps = 0;
+  /**
+   * Explicit key-walk steps, `max_objects * 8`. Stream `max_depth` does not
+   * bound reference chains.
+   */
+  readonly #keySteps: Budget;
   /** One code-equality key per code object. Empty while that key is in progress. */
   readonly #codeKeys = new WeakMap<CodeNode, string>();
   readonly #codeIdentities = new WeakMap<CodeNode, number>();
   readonly #codeEquality = new WeakMap<CodeNode, CodeEquality>();
+  /** Completed Python hashability checks per code object. */
+  readonly #codeHashable = new WeakMap<CodeNode, boolean>();
+  /** Tuples whose items are still being read; CPython cannot hash them yet. */
+  readonly #readingTuples = new WeakSet<MarshalValue>();
   /** Code objects whose const summaries wait until the graph is fully decoded. */
   readonly #codes: CodeNode[] = [];
   /**
@@ -290,48 +303,101 @@ class MarshalReader {
    * bound. Absent while a container is still on the explicit walk stack.
    */
   readonly #nestedCache = new WeakMap<MarshalValue, readonly CodeNode[]>();
-  #nestedSteps = 0;
-  #nestedRetained = 0;
+  /** Walk steps and retained code references share max_objects * max_depth. */
+  readonly #nestedSteps: Budget;
+  readonly #nestedRetained: Budget;
 
   constructor(
-    readonly bytes: Buffer,
+    bytes: Buffer,
     readonly layout: PythonPycCodeLayout,
-    readonly input: InspectPythonPycInput,
-  ) {}
+    readonly magic: number,
+    readonly input: PythonPycLimits,
+    readonly rejectNegativeCodeFields: boolean,
+    /** Marshal slice constants exist from CPython 3.14a1 magic 3608. */
+    readonly acceptSlices: boolean,
+    readonly work: PythonPycWork,
+  ) {
+    super(bytes, {
+      format: PYTHON_PYC_FORMAT,
+      limits: {
+        maxObjects: input.max_objects,
+        maxDepth: input.max_depth,
+        maxStringBytes: input.max_string_bytes,
+      },
+      previewLimit: PYTHON_PYC_CONST_PREVIEW_LIMIT,
+      publishContainers: "before-items",
+    });
+    this.#nestedSteps = new Budget(input.max_objects * input.max_depth);
+    this.#nestedRetained = new Budget(input.max_objects * input.max_depth);
+    this.#reportedStringBytes = new Budget(input.max_file_bytes);
+    this.#reportedCopies = new Budget(input.max_objects);
+    this.#keyBytes = new Budget(input.max_file_bytes);
+    this.#keySteps = new Budget(input.max_objects * 8);
+  }
 
-  readObject(depth: number): MarshalValue {
-    this.objects += 1;
-    if (this.objects > this.input.max_objects)
-      throw new PythonPycResourceFailure(
-        "objects",
-        { max_objects: this.input.max_objects },
-        `Marshal object count exceeds max_objects ${this.input.max_objects}.`,
-      );
-    if (depth > this.input.max_depth)
-      throw new PythonPycResourceFailure(
-        "depth",
-        { max_depth: this.input.max_depth },
-        `Marshal nesting exceeds max_depth ${this.input.max_depth}.`,
-      );
-    this.depthReached = Math.max(this.depthReached, depth);
-    const raw = this.u8();
-    const flagged = (raw & FLAG_REF) !== 0;
-    const type = raw & ~FLAG_REF;
-    // CPython masks FLAG_REF before dispatch; TYPE_REF returns its existing
-    // slot directly, and singleton tags bypass reference registration.
-    if (type === TYPE_REF) return this.readRef();
-    const slot =
-      flagged && !TYPES_WITHOUT_REFERENCE_SLOTS.has(type)
-        ? this.#intern.length
-        : undefined;
-    if (slot !== undefined) this.#intern.push(undefined);
-    const value = this.readTyped(type, depth, slot);
-    if (slot !== undefined && this.#intern[slot] === undefined)
-      this.#intern[slot] = value;
+  protected wrap(value: MarshalCoreValue<MarshalValue>): MarshalValue {
     return value;
   }
 
-  readTyped(
+  protected limitExceeded(exceeded: MarshalLimitExceeded): never {
+    const { max_objects, max_depth, max_string_bytes } = this.input;
+    switch (exceeded.limit) {
+      case "objects":
+        throw pythonPycLimit(
+          "max_objects",
+          max_objects,
+          `Marshal object count exceeds max_objects ${max_objects}.`,
+        );
+      case "depth":
+        throw pythonPycLimit(
+          "max_depth",
+          max_depth,
+          `Marshal nesting exceeds max_depth ${max_depth}.`,
+        );
+      case "string-bytes":
+        throw pythonPycLimit(
+          "max_string_bytes",
+          max_string_bytes,
+          `Marshal string of ${exceeded.amount} bytes exceeds max_string_bytes ${max_string_bytes}.`,
+        );
+      default:
+        // Long digits; this reader sets no sequence or digit-count bound.
+        throw pythonPycLimit(
+          "max_string_bytes",
+          max_string_bytes,
+          `Marshal long of ${exceeded.amount} digit bytes exceeds max_string_bytes ${max_string_bytes}.`,
+        );
+    }
+  }
+
+  protected override reservesReference(type: number): boolean {
+    return !TYPES_WITHOUT_REFERENCE_SLOTS.has(type);
+  }
+
+  /**
+   * A slice with a TYPE_NULL member yields no object, as in CPython, so its
+   * reserved slot stays invalid for later references.
+   */
+  protected override isAbsent(value: MarshalValue): boolean {
+    return value.kind === "null";
+  }
+
+  protected override sequenceItem(item: MarshalValue): void {
+    if (item.kind === "null")
+      malformed("NULL object in marshal data for sequence.");
+  }
+
+  /** Tuples whose items are still being read cannot be hashed yet. */
+  protected override sequenceReading(
+    value: MarshalValue,
+    reading: boolean,
+  ): void {
+    if (value.kind !== "tuple") return;
+    if (reading) this.#readingTuples.add(value);
+    else this.#readingTuples.delete(value);
+  }
+
+  protected override readExtended(
     type: number,
     depth: number,
     slot: number | undefined,
@@ -349,8 +415,8 @@ class MarshalReader {
         return { kind: "stopiter" };
       case TYPE_ELLIPSIS:
         return { kind: "ellipsis" };
-      case TYPE_INT: {
-        const value = BigInt(this.i32());
+      case TYPE_INT64: {
+        const value = this.i64();
         return { kind: "int", value, bits: smallBitLength(value) };
       }
       case TYPE_FLOAT_TEXT:
@@ -365,65 +431,67 @@ class MarshalReader {
         };
       case TYPE_COMPLEX:
         return { kind: "complex", real: this.f64(), imag: this.f64() };
-      case TYPE_LONG: {
-        const decoded = this.long();
-        return { kind: "int", value: decoded.value, bits: decoded.bits };
-      }
-      case TYPE_BYTES:
-        return { kind: "bytes", value: this.blob(this.u32()) };
-      case TYPE_INTERNED:
-      case TYPE_UNICODE:
-        return this.utf8(this.u32(), false);
-      case TYPE_ASCII:
-      case TYPE_ASCII_INTERNED:
-        return this.utf8(this.u32(), true);
-      case TYPE_SHORT_ASCII:
-      case TYPE_SHORT_ASCII_INTERNED:
-        return this.utf8(this.u8(), true);
-      case TYPE_TUPLE:
-        return this.sequenceValue("tuple", this.u32(), depth, slot);
-      case TYPE_SMALL_TUPLE:
-        return this.sequenceValue("tuple", this.u8(), depth, slot);
-      case TYPE_LIST:
-        return this.sequenceValue("list", this.u32(), depth, slot);
       case TYPE_SET:
-        return this.setValue("set", this.u32(), depth, slot);
+        return this.setValue(
+          "set",
+          this.nonNegativeInt32("Marshal set length"),
+          depth,
+          slot,
+        );
       case TYPE_FROZENSET:
-        return this.setValue("frozenset", this.u32(), depth, slot);
+        return this.setValue(
+          "frozenset",
+          this.nonNegativeInt32("Marshal frozenset length"),
+          depth,
+          slot,
+        );
       case TYPE_DICT:
         return this.dict(depth, slot);
       case TYPE_CODE:
         return { kind: "code", value: this.code(depth) };
+      case TYPE_SLICE:
+        if (!this.acceptSlices)
+          return malformed(
+            `Unsupported marshal type 0x3a before CPython magic ${PYTHON_PYC_SLICE_MAGIC}.`,
+          );
+        return this.slice(depth);
       default:
-        return malformed(`Unsupported marshal type 0x${type.toString(16)}.`);
+        return super.readExtended(type, depth, slot);
     }
   }
 
   code(depth: number): CodeNode {
-    const argcount = this.signedCount("co_argcount");
+    const argcount = this.nonNegativeInt32("co_argcount");
     const posonlyargcount =
-      this.layout === "py37" ? null : this.signedCount("co_posonlyargcount");
+      this.layout === "py37"
+        ? null
+        : this.nonNegativeInt32("co_posonlyargcount");
     if (posonlyargcount !== null && argcount < posonlyargcount)
       malformed("co_argcount is smaller than co_posonlyargcount.");
-    const kwonlyargcount = this.signedCount("co_kwonlyargcount");
+    const kwonlyargcount = this.nonNegativeInt32("co_kwonlyargcount");
     const nlocals =
-      this.layout === "py311" ? null : this.signedCount("co_nlocals");
-    const stacksize = this.signedCount("co_stacksize");
-    const flags = this.u32();
+      this.layout === "py311" ? null : this.nonNegativeInt32("co_nlocals");
+    const stacksize = this.i32();
+    if (this.rejectNegativeCodeFields && stacksize < 0)
+      malformed("co_stacksize is negative.");
+    const flags = this.i32();
+    if (this.rejectNegativeCodeFields && flags < 0)
+      malformed("co_flags is negative.");
     const bytecode = asBytes(this.readObject(depth + 1), "co_code");
     // 3.11+ `_PyCode_Validate` rejects a length that is not a whole code unit.
     // 3.7–3.10 constructors do not, so an odd `co_code` stays readable there.
     if (this.layout === "py311" && bytecode.length % 2 !== 0)
       malformed("co_code is malformed.");
-    const consts = asTuple(this.readObject(depth + 1), "co_consts");
+    const constsTuple = this.readObject(depth + 1);
+    const consts = asTuple(constsTuple, "co_consts");
     this.#chargeConsts(consts.length);
     const names = this.#nameTable(
       asTuple(this.readObject(depth + 1), "co_names"),
     );
-    let varnames: string[] | null = null;
-    let freevars: string[] | null = null;
-    let cellvars: string[] | null = null;
-    let localsplusnames: string[] | null = null;
+    let varnames: NameTable | null = null;
+    let freevars: NameTable | null = null;
+    let cellvars: NameTable | null = null;
+    let localsplusnames: NameTable | null = null;
     let localspluskinds_hex: string | null = null;
     if (this.layout === "py311") {
       localsplusnames = this.#nameTable(
@@ -433,7 +501,7 @@ class MarshalReader {
         this.readObject(depth + 1),
         "co_localspluskinds",
       );
-      if (localspluskinds.length !== localsplusnames.length)
+      if (localspluskinds.length !== localsplusnames.display.length)
         malformed(
           "co_localspluskinds length does not match co_localsplusnames.",
         );
@@ -458,11 +526,13 @@ class MarshalReader {
         argcount,
         kwonlyargcount,
         flags,
-        varnames.length,
+        varnames.display.length,
       );
     }
     const filename = asString(this.readObject(depth + 1), "co_filename");
-    const name = asString(this.readObject(depth + 1), "co_name");
+    const nameObject = this.readObject(depth + 1);
+    const codeName = asStringWithRaw(nameObject, "co_name");
+    const name = codeName.value;
     const qualname =
       this.layout === "py311"
         ? asString(this.readObject(depth + 1), "co_qualname")
@@ -477,11 +547,11 @@ class MarshalReader {
       name,
       qualname ?? "",
       filename,
-      ...names,
-      ...(varnames ?? []),
-      ...(freevars ?? []),
-      ...(cellvars ?? []),
-      ...(localsplusnames ?? []),
+      ...names.display,
+      ...(varnames?.display ?? []),
+      ...(freevars?.display ?? []),
+      ...(cellvars?.display ?? []),
+      ...(localsplusnames?.display ?? []),
       localspluskinds_hex ?? "",
     ]);
     const node: CodeNode = {
@@ -495,20 +565,40 @@ class MarshalReader {
       nlocals,
       stacksize,
       flags,
-      names,
-      varnames,
-      freevars,
-      cellvars,
-      localsplusnames,
+      names: names.display,
+      varnames: varnames?.display ?? null,
+      freevars: freevars?.display ?? null,
+      cellvars: cellvars?.display ?? null,
+      localsplusnames: localsplusnames?.display ?? null,
       localspluskinds_hex,
-      bytecode: { bytes: bytecode.length, sha256: sha256(bytecode) },
+      bytecode: { bytes: bytecode.length, sha256: sha256(bytecode, this.work) },
       consts: [],
       nested: [],
     };
+    const effectiveFlags =
+      this.layout === "py311"
+        ? flags
+        : (freevars?.display.length ?? 0) === 0 &&
+            (cellvars?.display.length ?? 0) === 0
+          ? flags | CO_NOFREE
+          : flags & ~CO_NOFREE;
     this.#codeEquality.set(node, {
       consts,
-      linetable: `${linetable.length}:${sha256(linetable)}`,
-      exceptiontable: `${exceptiontable.length}:${sha256(exceptiontable)}`,
+      constsTuple,
+      effectiveFlags,
+      bytecode,
+      name: codeName.raw,
+      nameTables:
+        localsplusnames !== null
+          ? [names.equality, localsplusnames.equality]
+          : [
+              names.equality,
+              varnames?.equality ?? [],
+              freevars?.equality ?? [],
+              cellvars?.equality ?? [],
+            ],
+      linetable: `${linetable.length}:${sha256(linetable, this.work)}`,
+      exceptiontable: `${exceptiontable.length}:${sha256(exceptiontable, this.work)}`,
     });
     this.#codes.push(node);
     return node;
@@ -537,7 +627,7 @@ class MarshalReader {
     const summaries: PythonPycConst[] = [];
     for (const item of items) {
       if (item.kind === "code") this.#reportStrings([item.value.name]);
-      summaries.push(summarizeConst(item));
+      summaries.push(summarizeConst(item, this.work));
     }
     return summaries;
   }
@@ -547,14 +637,15 @@ class MarshalReader {
    * in the report, so bound what the report carries, not the stream.
    */
   #reportStrings(values: readonly string[]): void {
-    for (const value of values)
-      this.#reportedStringBytes += Buffer.byteLength(value, "utf8");
-    if (this.#reportedStringBytes > this.input.max_file_bytes)
-      throw new PythonPycResourceFailure(
-        "string",
-        { max_file_bytes: this.input.max_file_bytes },
-        `Reported code-object strings exceed max_file_bytes ${this.input.max_file_bytes}.`,
-      );
+    let bytes = 0;
+    for (const value of values) bytes += Buffer.byteLength(value, "utf8");
+    this.#reportedStringBytes.charge(bytes, () =>
+      pythonPycLimit(
+        "reported_string_bytes",
+        this.#reportedStringBytes.maximum,
+        `Reported code-object strings exceed max_file_bytes ${this.#reportedStringBytes.maximum}.`,
+      ),
+    );
   }
 
   /**
@@ -568,11 +659,18 @@ class MarshalReader {
   /**
    * A name table shared through TYPE_REF is one marshal object and a full
    * copy in every code object. Empty strings add no report bytes, so charge
-   * each copied entry before `strings()` builds the array the report keeps.
+   * each copied entry before building the report and equality arrays.
    */
-  #nameTable(items: readonly MarshalValue[]): string[] {
+  #nameTable(items: readonly MarshalValue[]): NameTable {
     this.#chargeReported(items.length, "names");
-    return strings(items);
+    const display: string[] = [];
+    const equality: Buffer[] = [];
+    for (const [index, item] of items.entries()) {
+      const string = asStringWithRaw(item, `Tuple item ${index}`);
+      display.push(string.value);
+      equality.push(string.raw);
+    }
+    return { display, equality };
   }
 
   /**
@@ -585,13 +683,13 @@ class MarshalReader {
     count: number,
     what: "constants" | "names" | "nested code relationships",
   ): void {
-    this.#reportedConsts += count;
-    if (this.#reportedConsts > this.input.max_objects)
-      throw new PythonPycResourceFailure(
-        "objects",
-        { max_objects: this.input.max_objects },
-        `Reported ${what} exceed max_objects ${this.input.max_objects}.`,
-      );
+    this.#reportedCopies.charge(count, () =>
+      pythonPycLimit(
+        "reported_rows",
+        this.#reportedCopies.maximum,
+        `Reported ${what} exceed max_objects ${this.#reportedCopies.maximum}.`,
+      ),
+    );
   }
 
   /**
@@ -628,7 +726,7 @@ class MarshalReader {
     if (this.#memoizeNested(value, added)) {
       for (const entry of added) {
         this.#nestedCache.delete(entry.value);
-        this.#nestedRetained -= entry.retained;
+        this.#nestedRetained.refund(entry.retained);
       }
       const walked = this.#walkNested(value);
       this.#nestedCache.set(value, walked);
@@ -652,7 +750,7 @@ class MarshalReader {
       index: number;
       /** Built once. A dictionary child list is not copied on every step. */
       children: readonly MarshalValue[];
-    }[] = [{ value: root, index: 0, children: containerChildren(root) }];
+    }[] = [{ value: root, index: 0, children: this.#children(root) }];
     gray.add(root);
     while (frames.length > 0) {
       this.#takeNestedStep();
@@ -669,16 +767,16 @@ class MarshalReader {
         frames.push({
           value: child,
           index: 0,
-          children: containerChildren(child),
+          children: this.#children(child),
         });
         continue;
       }
-      const retainedBefore = this.#nestedRetained;
+      const retainedBefore = this.#nestedRetained.used;
       const codes = this.#combineNested(frame.children);
       this.#nestedCache.set(frame.value, codes);
       added.push({
         value: frame.value,
-        retained: this.#nestedRetained - retainedBefore,
+        retained: this.#nestedRetained.used - retainedBefore,
       });
       gray.delete(frame.value);
       frames.pop();
@@ -707,7 +805,7 @@ class MarshalReader {
         continue;
       }
       visited.add(current);
-      const children = containerChildren(current);
+      const children = this.#children(current);
       for (let index = children.length - 1; index >= 0; index -= 1) {
         const child = children[index];
         if (child !== undefined) stack.push(child);
@@ -754,68 +852,46 @@ class MarshalReader {
   }
 
   #takeNestedStep(): void {
-    this.#nestedSteps += 1;
-    const limit = this.input.max_objects * this.input.max_depth;
-    if (this.#nestedSteps > limit)
-      throw new PythonPycResourceFailure(
-        "objects",
-        {
-          max_objects: this.input.max_objects,
-          max_depth: this.input.max_depth,
-        },
-        `Nested code walk exceeds ${limit} steps (max_objects * max_depth).`,
-      );
+    this.#nestedSteps.charge(1, () =>
+      pythonPycLimit(
+        "nested_code_steps",
+        this.#nestedSteps.maximum,
+        `Nested code walk exceeds ${String(this.#nestedSteps.maximum)} steps (max_objects * max_depth).`,
+      ),
+    );
+    this.work.nestedSteps += 1;
+  }
+
+  #children(value: MarshalValue): readonly MarshalValue[] {
+    const children = containerChildren(value);
+    this.work.listedChildren += children.length;
+    return children;
   }
 
   #retainNested(codes: readonly CodeNode[]): void {
-    this.#nestedRetained += codes.length;
-    const limit = this.input.max_objects * this.input.max_depth;
-    if (this.#nestedRetained > limit)
-      throw new PythonPycResourceFailure(
-        "objects",
-        {
-          max_objects: this.input.max_objects,
-          max_depth: this.input.max_depth,
-        },
-        `Nested code walk retains more than ${limit} code references.`,
-      );
-  }
-
-  readRef(): MarshalValue {
-    const index = this.u32();
-    const value = this.#intern[index];
-    if (value === undefined)
-      return malformed(
-        `TYPE_REF index ${index} is missing or still being constructed.`,
-      );
-    return value;
-  }
-
-  #publish(slot: number | undefined, value: MarshalValue): void {
-    if (slot !== undefined) this.#intern[slot] = value;
+    this.#nestedRetained.charge(codes.length, () =>
+      pythonPycLimit(
+        "nested_code_references",
+        this.#nestedRetained.maximum,
+        `Nested code walk retains more than ${String(this.#nestedRetained.maximum)} code references.`,
+      ),
+    );
   }
 
   /**
-   * CPython registers tuples and lists before reading items, so a container
-   * can refer to itself. The same object is what later TYPE_REF entries see.
+   * CPython 3.14 reserves a slice's reference slot before reading its start,
+   * stop, and step, so a reference back into the slice is still invalid. A
+   * null member leaves the slice without a value instead of failing here;
+   * the enclosing container or top-level read reports it, as in CPython.
    */
-  sequenceValue(
-    kind: "tuple" | "list",
-    count: number,
-    depth: number,
-    slot: number | undefined,
-  ): MarshalValue {
+  slice(depth: number): MarshalValue {
     const items: MarshalValue[] = [];
-    const value: MarshalValue =
-      kind === "tuple" ? { kind: "tuple", items } : { kind: "list", items };
-    this.#publish(slot, value);
-    for (let index = 0; index < count; index += 1) {
+    for (let index = 0; index < 3; index += 1) {
       const item = this.readObject(depth + 1);
-      if (item.kind === "null")
-        malformed("NULL object in marshal data for sequence.");
+      if (item.kind === "null") return item;
       items.push(item);
     }
-    return value;
+    return { kind: "slice", items };
   }
 
   /**
@@ -832,7 +908,7 @@ class MarshalReader {
     const items: MarshalValue[] = [];
     const value: MarshalValue =
       kind === "set" ? { kind: "set", items } : { kind: "frozenset", items };
-    if (kind === "set") this.#publish(slot, value);
+    if (kind === "set") this.publish(slot, value);
     for (let index = 0; index < count; index += 1) {
       const item = this.readObject(depth + 1);
       if (item.kind === "null")
@@ -854,7 +930,7 @@ class MarshalReader {
   dict(depth: number, slot: number | undefined): MarshalValue {
     const items: [MarshalValue, MarshalValue][] = [];
     const value: MarshalValue = { kind: "dict", items };
-    this.#publish(slot, value);
+    this.publish(slot, value);
     const indexes = new Map<string, number>();
     for (;;) {
       const key = this.readObject(depth + 1);
@@ -928,8 +1004,15 @@ class MarshalReader {
       this.#takeKeyStep();
       const frame = frames[frames.length - 1];
       if (frame === undefined) break;
+      // A tuple still being read has missing items; CPython cannot hash it.
+      if (mode === "hash" && this.#readingTuples.has(frame.value))
+        frame.failed = true;
+      // Slices hash and compare through start, stop, and step since CPython
+      // 3.12, so they walk like a tuple but never equal one.
       const items =
-        frame.value.kind === "tuple" || frame.value.kind === "frozenset"
+        frame.value.kind === "tuple" ||
+        frame.value.kind === "frozenset" ||
+        frame.value.kind === "slice"
           ? frame.value.items
           : undefined;
       if (items === undefined) {
@@ -1015,14 +1098,14 @@ class MarshalReader {
    * not `max_depth`, because a reference chain is shallow in the stream.
    */
   #takeKeyStep(): void {
-    this.#keySteps += 1;
-    const limit = this.input.max_objects * 8;
-    if (this.#keySteps > limit)
-      throw new PythonPycResourceFailure(
-        "objects",
-        { max_objects: this.input.max_objects },
-        `Marshal key walk exceeds ${limit} steps (max_objects * 8).`,
-      );
+    this.#keySteps.charge(1, () =>
+      pythonPycLimit(
+        "marshal_key_steps",
+        this.#keySteps.maximum,
+        `Marshal key walk exceeds ${this.#keySteps.maximum} steps (max_objects * 8).`,
+      ),
+    );
+    this.work.keySteps += 1;
   }
 
   #leafKey(value: MarshalValue, mode: KeyMode): ResolvedKey | null {
@@ -1075,13 +1158,14 @@ class MarshalReader {
           ":",
         );
       case "str":
-        return this.#stringKey(value.raw);
+        return this.#marshalStringKey(value.raw);
       case "bytes": {
         this.#reserveKey(value.value.length * 2 + 8);
         const prefix = mode === "hash" ? "b" : "y";
         return `${prefix}${value.value.length}:${value.value.toString("hex")}`;
       }
       case "code":
+        if (mode === "hash" && !this.#isCodeHashable(value.value)) return null;
         return this.#codeKey(value.value);
       default:
         return mode === "const" ? this.#identity(value) : null;
@@ -1102,7 +1186,8 @@ class MarshalReader {
     const expanded = this.#expandedContainerSize(childExpanded);
     if (expanded > this.input.max_string_bytes) this.#keyTooLarge(expanded);
     const ordered = value.kind === "frozenset" ? [...parts].sort() : parts;
-    const kind = value.kind === "tuple" ? "T" : "F";
+    const kind =
+      value.kind === "tuple" ? "T" : value.kind === "slice" ? "L" : "F";
     const descriptor = `${kind}:${ordered.join(",")}`;
     // Charge the descriptor that is stored, not the unmaterialized expansion.
     // A linear reference chain stays within the file budget; repeating one
@@ -1145,27 +1230,21 @@ class MarshalReader {
     const material =
       this.#codeEquality.get(node) ??
       malformed("Code object is missing equality material.");
-    const nameTables = [
-      this.#nameTableKey(node.names),
-      ...(node.localsplusnames !== null
-        ? [this.#nameTableKey(node.localsplusnames)]
-        : [
-            this.#nameTableKey(node.varnames ?? []),
-            this.#nameTableKey(node.freevars ?? []),
-            this.#nameTableKey(node.cellvars ?? []),
-          ]),
-    ];
     const fields = [
-      node.name,
+      this.#marshalStringKey(material.name),
       String(node.argcount),
       String(node.posonlyargcount ?? 0),
       String(node.kwonlyargcount),
       node.nlocals === null ? "" : String(node.nlocals),
-      String(node.flags),
+      String(material.effectiveFlags),
       String(node.firstlineno),
-      `${node.bytecode.bytes}:${node.bytecode.sha256}`,
+      pythonPycBytecodeIdentity(
+        material.bytecode,
+        this.magic,
+        node.bytecode.sha256,
+      ),
       this.#constKeyItems(material.consts),
-      ...nameTables,
+      ...material.nameTables.map((items) => this.#nameTableKey(items)),
       // CPython started including line and exception tables in code equality
       // with the 3.11 code layout; earlier layouts still retain their digests
       // in CodeEquality, but those fields do not affect container identity.
@@ -1182,6 +1261,82 @@ class MarshalReader {
     return key;
   }
 
+  /**
+   * CPython hashes the consts tuple itself, so one unhashable const makes the
+   * code unhashable. A const that leads back to the same code counts as
+   * unhashable instead of recursing.
+   */
+  #isCodeHashable(node: CodeNode): boolean {
+    const known = this.#codeHashable.get(node);
+    if (known !== undefined) return known;
+    const frames: { value: MarshalValue; finish: boolean }[] = [
+      { value: { kind: "code", value: node }, finish: false },
+    ];
+    const gray = new Set<MarshalValue | CodeNode>();
+    const complete = new Set<MarshalValue>();
+    const reject = (): false => {
+      this.#codeHashable.set(node, false);
+      return false;
+    };
+    while (frames.length > 0) {
+      this.#takeKeyStep();
+      const frame = frames.pop()!;
+      const value = frame.value;
+      const identity = value.kind === "code" ? value.value : value;
+      if (frame.finish) {
+        gray.delete(identity);
+        if (value.kind === "code") {
+          const material =
+            this.#codeEquality.get(value.value) ??
+            malformed("Code object is missing equality material.");
+          // Child code checks are now complete, so the existing tuple key
+          // walker preserves its equality and expansion budgets without recursion.
+          const hashable =
+            this.#equalityKey(material.constsTuple, "hash") !== null;
+          this.#codeHashable.set(value.value, hashable);
+          if (!hashable) return reject();
+        } else complete.add(value);
+        continue;
+      }
+      if (value.kind === "code") {
+        const cached = this.#codeHashable.get(value.value);
+        if (cached === false) return reject();
+        if (cached === true) continue;
+      } else {
+        const cached = this.#keyCache.get(value);
+        if (cached === null) return reject();
+        if (cached !== undefined || complete.has(value)) continue;
+      }
+      if (
+        gray.has(identity) ||
+        this.#readingTuples.has(value) ||
+        value.kind === "list" ||
+        value.kind === "set" ||
+        value.kind === "dict" ||
+        value.kind === "null"
+      )
+        return reject();
+      const children =
+        value.kind === "code"
+          ? [
+              (
+                this.#codeEquality.get(value.value) ??
+                malformed("Code object is missing equality material.")
+              ).constsTuple,
+            ]
+          : value.kind === "tuple" ||
+              value.kind === "frozenset" ||
+              value.kind === "slice"
+            ? value.items
+            : [];
+      gray.add(identity);
+      frames.push({ value, finish: true });
+      for (let index = children.length - 1; index >= 0; index -= 1)
+        frames.push({ value: children[index]!, finish: false });
+    }
+    return true;
+  }
+
   #codeIdentity(node: CodeNode): number {
     const existing = this.#codeIdentities.get(node);
     if (existing !== undefined) return existing;
@@ -1195,8 +1350,22 @@ class MarshalReader {
    * bare NUL makes `()` and `("",)` the same key, and the same join hides
    * which of `co_varnames`, `co_freevars`, and `co_cellvars` held each name.
    */
-  #nameTableKey(items: readonly string[]): string {
-    const entries = items.map((item) => `${item.length}:${item}`).join(",");
+  #nameTableKey(items: readonly Buffer[]): string {
+    let size = `${items.length}[]`.length;
+    for (let index = 0; index < items.length; index += 1) {
+      const raw = items[index];
+      if (raw === undefined) continue;
+      const keyLength = this.#marshalStringKeyLength(raw.length);
+      size += String(keyLength).length + 1 + keyLength;
+      if (index > 0) size += 1;
+    }
+    this.#reserveKey(size);
+    const entries = items
+      .map((item) => {
+        const key = this.#marshalStringKey(item);
+        return `${key.length}:${key}`;
+      })
+      .join(",");
     return `${items.length}[${entries}]`;
   }
 
@@ -1212,9 +1381,13 @@ class MarshalReader {
   }
 
   /** Python string identity is the marshal bytes, not the JavaScript string. */
-  #stringKey(raw: Buffer): string {
-    this.#reserveKey(raw.length * 2 + 8);
+  #marshalStringKey(raw: Buffer): string {
+    this.#reserveKey(this.#marshalStringKeyLength(raw.length));
     return `s${raw.length}:${raw.toString("hex")}`;
+  }
+
+  #marshalStringKeyLength(bytes: number): number {
+    return String(bytes).length + bytes * 2 + 2;
   }
 
   #signedZero(value: number): string {
@@ -1241,19 +1414,20 @@ class MarshalReader {
 
   #reserveKey(size: number): void {
     if (size > this.input.max_string_bytes) this.#keyTooLarge(size);
-    this.#keyBytes += size;
-    if (this.#keyBytes > this.input.max_file_bytes)
-      throw new PythonPycResourceFailure(
-        "string",
-        { max_file_bytes: this.input.max_file_bytes },
-        `Marshal key expansion exceeds max_file_bytes ${this.input.max_file_bytes}.`,
-      );
+    this.#keyBytes.charge(size, () =>
+      pythonPycLimit(
+        "marshal_key_bytes",
+        this.#keyBytes.maximum,
+        `Marshal key expansion exceeds max_file_bytes ${this.#keyBytes.maximum}.`,
+      ),
+    );
+    this.work.keyBytes += size;
   }
 
   #keyTooLarge(size: number): never {
-    throw new PythonPycResourceFailure(
-      "string",
-      { max_string_bytes: this.input.max_string_bytes },
+    throw pythonPycLimit(
+      "max_string_bytes",
+      this.input.max_string_bytes,
       `Marshal key of ${size} bytes exceeds max_string_bytes ${this.input.max_string_bytes}.`,
     );
   }
@@ -1280,53 +1454,6 @@ class MarshalReader {
    * the digits against the string budget (they never use another one), reject
    * the digits CPython rejects, and build the value in one linear pass.
    */
-  long(): { value: bigint; bits: number } {
-    const count = this.i32();
-    const size = Math.abs(count);
-    if (size * 2 > this.input.max_string_bytes)
-      throw new PythonPycResourceFailure(
-        "string",
-        { max_string_bytes: this.input.max_string_bytes },
-        `Marshal long of ${size * 2} digit bytes exceeds max_string_bytes ${this.input.max_string_bytes}.`,
-      );
-    if (this.offset > this.bytes.length - size * 2)
-      malformed("Marshal long overruns the selected file.");
-    const nibbles: number[] = [];
-    let carry = 0;
-    let carryBits = 0;
-    let digit = 0;
-    for (let index = 0; index < size; index += 1) {
-      digit = this.u16();
-      if (digit >= 0x8000) malformed("Marshal long digit is out of range.");
-      carry |= digit << carryBits;
-      carryBits += 15;
-      while (carryBits >= 4) {
-        nibbles.push(carry & 0xf);
-        carry >>>= 4;
-        carryBits -= 4;
-      }
-    }
-    if (size > 0 && digit === 0) malformed("Marshal long is not normalized.");
-    if (carryBits > 0) nibbles.push(carry);
-    let bits = 0;
-    if (size > 0) {
-      let top = digit;
-      while (top > 0) {
-        top >>>= 1;
-        bits += 1;
-      }
-      bits += (size - 1) * 15;
-    }
-    if (nibbles.length === 0) return { value: 0n, bits: 0 };
-    const magnitude = BigInt(
-      `0x${nibbles
-        .reverse()
-        .map((nibble) => nibble.toString(16))
-        .join("")}`,
-    );
-    return { value: count < 0 ? -magnitude : magnitude, bits };
-  }
-
   /** Marshal version 0 writes a one-byte length and a CPython float literal. */
   textFloat(): number {
     const bytes = this.blob(this.u8());
@@ -1337,304 +1464,4 @@ class MarshalReader {
       malformed("Marshal float text is not a CPython float.")
     );
   }
-
-  utf8(length: number, ascii: boolean): MarshalValue {
-    const bytes = this.blob(length);
-    if (ascii) {
-      if (bytes.some((byte) => byte > 0x7f))
-        malformed("Marshal ASCII string contains a non-ASCII byte.");
-      return {
-        kind: "str",
-        value: bytes.toString("latin1"),
-        bytes: length,
-        raw: bytes,
-      };
-    }
-    return {
-      kind: "str",
-      value: decodeSurrogatePass(bytes),
-      bytes: length,
-      raw: bytes,
-    };
-  }
-
-  blob(length: number): Buffer {
-    if (length > this.input.max_string_bytes)
-      throw new PythonPycResourceFailure(
-        "string",
-        { max_string_bytes: this.input.max_string_bytes },
-        `Marshal string of ${length} bytes exceeds max_string_bytes ${this.input.max_string_bytes}.`,
-      );
-    if (this.offset > this.bytes.length - length)
-      malformed("Marshal string overruns the selected file.");
-    const value = this.bytes.subarray(this.offset, this.offset + length);
-    this.offset += length;
-    return Buffer.from(value);
-  }
-
-  u8(): number {
-    if (this.offset >= this.bytes.length)
-      malformed("Marshal stream ended inside an object.");
-    const value = this.bytes[this.offset];
-    this.offset += 1;
-    if (value === undefined)
-      return malformed("Marshal stream ended inside an object.");
-    return value;
-  }
-
-  u16(): number {
-    if (this.offset > this.bytes.length - 2)
-      malformed("Marshal stream ended inside a 16-bit field.");
-    const value = this.bytes.readUInt16LE(this.offset);
-    this.offset += 2;
-    return value;
-  }
-
-  u32(): number {
-    if (this.offset > this.bytes.length - 4)
-      malformed("Marshal stream ended inside a 32-bit field.");
-    const value = this.bytes.readUInt32LE(this.offset);
-    this.offset += 4;
-    return value;
-  }
-
-  i32(): number {
-    if (this.offset > this.bytes.length - 4)
-      malformed("Marshal stream ended inside a 32-bit field.");
-    const value = this.bytes.readInt32LE(this.offset);
-    this.offset += 4;
-    return value;
-  }
-
-  /** CPython `r_long` count. Negative values are rejected before Evidence. */
-  signedCount(field: string): number {
-    const value = this.i32();
-    if (value < 0) malformed(`${field} is negative.`);
-    return value;
-  }
-
-  f64(): number {
-    if (this.offset > this.bytes.length - 8)
-      malformed("Marshal stream ended inside a float.");
-    const value = this.bytes.readDoubleLE(this.offset);
-    this.offset += 8;
-    return value;
-  }
 }
-
-/**
- * Decode marshal UTF-8 the way CPython does (`surrogatepass`): encoded lone
- * surrogates are kept, every other ill-formed sequence is rejected.
- */
-const decodeSurrogatePass = (bytes: Buffer): string => {
-  const units: number[] = [];
-  let text = "";
-  for (let index = 0; index < bytes.length;) {
-    const lead = bytes[index] ?? 0;
-    let codePoint: number;
-    let width: number;
-    if (lead < 0x80) {
-      codePoint = lead;
-      width = 1;
-    } else if (lead >= 0xc2 && lead <= 0xdf) {
-      codePoint = lead & 0x1f;
-      width = 2;
-    } else if (lead >= 0xe0 && lead <= 0xef) {
-      codePoint = lead & 0x0f;
-      width = 3;
-    } else if (lead >= 0xf0 && lead <= 0xf4) {
-      codePoint = lead & 0x07;
-      width = 4;
-    } else {
-      return malformed("Marshal string is not valid UTF-8.");
-    }
-    if (index + width > bytes.length)
-      return malformed("Marshal string is not valid UTF-8.");
-    for (let offset = 1; offset < width; offset += 1) {
-      const next = bytes[index + offset] ?? 0;
-      if ((next & 0xc0) !== 0x80)
-        return malformed("Marshal string is not valid UTF-8.");
-      codePoint = (codePoint << 6) | (next & 0x3f);
-    }
-    if (
-      (width === 3 && codePoint < 0x800) ||
-      (width === 4 && (codePoint < 0x10000 || codePoint > 0x10ffff))
-    )
-      return malformed("Marshal string is not valid UTF-8.");
-    units.push(codePoint);
-    index += width;
-    if (units.length === 4096) {
-      text += codePointsToString(units);
-      units.length = 0;
-    }
-  }
-  return text + codePointsToString(units);
-};
-
-const codePointsToString = (codePoints: readonly number[]): string =>
-  codePoints
-    .map((codePoint) =>
-      codePoint >= 0xd800 && codePoint <= 0xdfff
-        ? String.fromCharCode(codePoint)
-        : String.fromCodePoint(codePoint),
-    )
-    .join("");
-
-/** JSON has no non-finite numbers; keep CPython's repr for them. */
-const jsonFloat = (value: number): number | "inf" | "-inf" | "nan" =>
-  Number.isNaN(value)
-    ? "nan"
-    : value === Infinity
-      ? "inf"
-      : value === -Infinity
-        ? "-inf"
-        : value;
-
-/**
- * Emit each distinct code object once, the top-level object first. A child
- * shared through TYPE_REF is listed once and referenced by index, so the
- * report never repeats a subtree.
- */
-const flattenCode = (root: CodeNode): PythonPycCodeObject[] => {
-  const indexes = new Map<CodeNode, number>();
-  const order: CodeNode[] = [];
-  const visit = (node: CodeNode): void => {
-    if (indexes.has(node)) return;
-    indexes.set(node, order.length);
-    order.push(node);
-    for (const child of node.nested) visit(child);
-  };
-  visit(root);
-  return order.map(({ nested, ...code }) => ({
-    ...code,
-    nested_code: nested.map(
-      (child) =>
-        indexes.get(child) ?? malformed("Nested code object was not listed."),
-    ),
-  }));
-};
-
-const asBytes = (value: MarshalValue, field: string): Buffer => {
-  if (value.kind !== "bytes")
-    return malformed(`${field} is not marshal bytes.`);
-  return value.value;
-};
-
-const asString = (value: MarshalValue, field: string): string => {
-  if (value.kind !== "str")
-    return malformed(`${field} is not a marshal string.`);
-  return value.value;
-};
-
-const asTuple = (
-  value: MarshalValue,
-  field: string,
-): readonly MarshalValue[] => {
-  if (value.kind !== "tuple")
-    return malformed(`${field} is not a marshal tuple.`);
-  return value.items;
-};
-
-const strings = (items: readonly MarshalValue[]): string[] =>
-  items.map((item, index) => {
-    if (item.kind !== "str")
-      return malformed(`Tuple item ${index} is not a marshal string.`);
-    return item.value;
-  });
-
-const constSummaries = new WeakMap<MarshalValue, PythonPycConst>();
-
-/** One summary per decoded object, so TYPE_REF does not repeat the work. */
-const summarizeConst = (value: MarshalValue): PythonPycConst => {
-  const cached = constSummaries.get(value);
-  if (cached !== undefined) return cached;
-  const summary = buildConstSummary(value);
-  constSummaries.set(value, summary);
-  return summary;
-};
-
-const buildConstSummary = (value: MarshalValue): PythonPycConst => {
-  switch (value.kind) {
-    case "none":
-      return { kind: "none" };
-    case "bool":
-      return { kind: "bool", value: value.value };
-    case "int":
-      return {
-        kind: "int",
-        bits: value.bits,
-        value:
-          value.bits <= PYTHON_PYC_INT_PREVIEW_BITS
-            ? value.value.toString()
-            : null,
-      };
-    case "float":
-      return { kind: "float", value: jsonFloat(value.value) };
-    case "str": {
-      const truncated = value.value.length > PYTHON_PYC_CONST_PREVIEW_LIMIT;
-      return {
-        kind: "str",
-        bytes: value.bytes,
-        truncated,
-        value: truncated
-          ? value.value.slice(0, PYTHON_PYC_CONST_PREVIEW_LIMIT)
-          : value.value,
-      };
-    }
-    case "bytes":
-      return {
-        kind: "bytes",
-        bytes: value.value.length,
-        sha256: sha256(value.value),
-      };
-    case "code":
-      return {
-        kind: "code",
-        name: value.value.name,
-        firstlineno: value.value.firstlineno,
-      };
-    case "tuple":
-      return { kind: "tuple", length: value.items.length };
-    case "list":
-      return { kind: "list", length: value.items.length };
-    case "set":
-      return { kind: "set", length: value.items.length };
-    case "frozenset":
-      return { kind: "frozenset", length: value.items.length };
-    case "dict":
-      return { kind: "dict", length: value.items.length };
-    case "ellipsis":
-      return { kind: "ellipsis" };
-    case "complex":
-      return {
-        kind: "complex",
-        real: jsonFloat(value.real),
-        imag: jsonFloat(value.imag),
-      };
-    default:
-      return { kind: "other", type: value.kind };
-  }
-};
-
-const smallBitLength = (value: bigint): number => {
-  if (value === 0n) return 0;
-  const magnitude = value < 0n ? -value : value;
-  return magnitude.toString(2).length;
-};
-
-/**
- * CPython's `PyOS_string_to_double` grammar for marshal version 0: an optional
- * sign, then `inf`/`infinity`, `nan`, or a decimal literal. No hex floats and
- * no surrounding whitespace.
- */
-const MARSHAL_FLOAT =
-  /^([+-]?)(?:(inf(?:inity)?)|(nan)|((?:\d+\.\d*|\.\d+|\d+)(?:[eE][+-]?\d+)?))$/i;
-
-const parseMarshalFloat = (text: string): number | undefined => {
-  const match = MARSHAL_FLOAT.exec(text);
-  if (match === null) return undefined;
-  if (match[2] !== undefined) return match[1] === "-" ? -Infinity : Infinity;
-  if (match[3] !== undefined) return Number.NaN;
-  const value = Number(text);
-  return Number.isNaN(value) ? undefined : value;
-};

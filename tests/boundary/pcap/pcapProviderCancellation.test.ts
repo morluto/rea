@@ -1,3 +1,4 @@
+import { UnclassifiedProviderFailure } from "../../../src/domain/unclassifiedProviderFailure.js";
 import { realpath, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, onTestFinished, test, vi } from "vitest";
@@ -6,18 +7,22 @@ import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
 } from "../../../src/domain/analysisErrorCore.js";
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
+import { readStableArtifact } from "../../../src/resources/readStableArtifact.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { resolvedAnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
-import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
+import {
+  spawnOwnedProviderProcess,
+  type ProviderProcessHandle,
+} from "../../../src/process/ProviderProcess.js";
 import { PcapProvider } from "../../../src/pcap/PcapProvider.js";
 import type { PcapCommandLauncher } from "../../../src/pcap/PcapCommand.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { stopTestChild } from "../../support/process/stopTestChild.js";
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -75,8 +80,10 @@ const fixture = async (
   const capture = join(root, "capture.pcap");
   await writeFile(capture, "controlled capture bytes");
   let cleanupAttempts = 0;
+  const spawnedProcesses: ProviderProcessHandle[] = [];
   const launcher: PcapCommandLauncher = async (spawn) => {
     const launched = await spawnOwnedProviderProcess(spawn);
+    spawnedProcesses.push(launched.process);
     const captureCommand = spawn.arguments.includes("-M");
     const activeVersionCommand =
       activeVersion && spawn.arguments.includes("--version");
@@ -109,7 +116,13 @@ const fixture = async (
     launcher,
     artifactReader,
   });
-  onTestFinished(async () => provider.close());
+  onTestFinished(async () => {
+    try {
+      await provider.close();
+    } finally {
+      await Promise.all(spawnedProcesses.map(stopTestChild));
+    }
+  });
   return { provider, root, capture, cleanupAttempts: () => cleanupAttempts };
 };
 
@@ -121,8 +134,10 @@ const probeCleanupFixture = async (rereadCloseFailure = false) => {
   const tshark = await realpath(tools.tshark);
   let tsharkReads = 0;
   let probeCleanupAttempts = 0;
+  const spawnedProcesses: ProviderProcessHandle[] = [];
   const launcher: PcapCommandLauncher = async (spawn) => {
     const launched = await spawnOwnedProviderProcess(spawn);
+    spawnedProcesses.push(launched.process);
     if (!spawn.arguments.includes("--version")) return launched;
     const cleanup =
       launched.cleanup ?? (() => cleanupOwnedProcessGroup(launched.ownership));
@@ -144,9 +159,11 @@ const probeCleanupFixture = async (rereadCloseFailure = false) => {
     if (tsharkReads !== 3) return snapshot;
     if (!rereadCloseFailure) return { ...snapshot, sha256: "0".repeat(64) };
     const resource = `executable-read:${tshark}`;
+    const lease = new AnalysisCleanupLease(async () => {}, [resource]);
+    args[4]?.retain({ kind: "lease", resource, lease });
     throw new ArtifactReaderFailure("io", "injected executable read failure", {
       cleanup: { reason: "injected file close failure", resources: [resource] },
-      cleanupLeases: [new AnalysisCleanupLease(async () => {}, [resource])],
+      cleanupLeases: [lease],
     });
   };
   const provider = new PcapProvider({
@@ -157,7 +174,13 @@ const probeCleanupFixture = async (rereadCloseFailure = false) => {
     launcher,
     artifactReader,
   });
-  onTestFinished(async () => provider.close());
+  onTestFinished(async () => {
+    try {
+      await provider.close();
+    } finally {
+      await Promise.all(spawnedProcesses.map(stopTestChild));
+    }
+  });
   return provider;
 };
 
@@ -196,6 +219,8 @@ it("keeps an executable re-read's own cleanup live beside the probe's pending cl
       expect.stringMatching(/^process-group:/u),
     ]),
   );
+  await provider.close();
+  expect(result.error.cleanupIncomplete).toBe(false);
 });
 
 it("availability surfaces a probe's pending cleanup instead of reporting the tool unavailable", async () => {
@@ -364,7 +389,7 @@ it("a physical command failure survives a late cancellation and cleanup retry", 
   if (result.ok) return;
   const returned = result.error;
   const primary = returned.cleanupPrimary;
-  expect(primary?._tag).toBe("AnalysisProtocolError");
+  expect(primary).toBeInstanceOf(UnclassifiedProviderFailure);
   expect(primary?.cause).not.toBe(reason);
   expect(projectAnalysisError(returned).code).toBe("cleanup_incomplete");
   expect(returned.capturedOutput?.stderr).toContain(

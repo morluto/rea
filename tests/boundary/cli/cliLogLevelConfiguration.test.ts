@@ -58,3 +58,47 @@ for (const level of ["loud", "INFO"])
       });
     },
   );
+
+cliTest(
+  "keeps fresh and shared CLI configuration precedence for doctor-looking data",
+  async ({ cli }) => {
+    for (const arguments_ of [
+      ["--filter-output", "doctor", "providers"],
+      ["providers", "doctor"],
+      ["--format", "", "doctor"],
+      ["--filter-output", "", "doctor"],
+      ["--token-limit", "", "doctor"],
+      ["--token-offset", "", "doctor"],
+      ["--unknown", "doctor"],
+      ["--version", "doctor"],
+      ["--", "doctor"],
+    ]) {
+      const invocation = {
+        arguments: arguments_,
+        environment: { REA_LOG_LEVEL: "loud" },
+      };
+      // Compare the launcher itself with the file's shared process.
+      const fresh = await cli.run({ ...invocation, freshProcess: true });
+      const shared = await cli.run(invocation);
+      for (const result of [fresh, shared]) {
+        expect(result.exitCode, JSON.stringify(arguments_)).toBe(1);
+        expect(result.stdout, JSON.stringify(arguments_)).toBe("");
+        expect(result.stderr, JSON.stringify(arguments_)).toBe(
+          invalidLogLevelMessage,
+        );
+      }
+    }
+
+    const completion = {
+      arguments: ["doctor"],
+      environment: { REA_LOG_LEVEL: "loud", COMPLETE: "bash" },
+    };
+    const fresh = await cli.run({ ...completion, freshProcess: true });
+    const shared = await cli.run(completion);
+    for (const result of [fresh, shared]) {
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe(invalidLogLevelMessage);
+    }
+  },
+);

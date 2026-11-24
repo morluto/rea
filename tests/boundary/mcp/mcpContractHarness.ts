@@ -26,9 +26,12 @@ export const assertAdvertisedMcpContracts = (
   const ajv = new Ajv2020({ strict: false, allErrors: true });
   for (const name of operationNames) {
     const contract = toolContract(name);
-    const listed = tools.find((tool) => tool.name === name);
-    expect(listed, name).toBeTruthy();
-    if (listed?.inputSchema === undefined) continue;
+    const matches = tools.filter((tool) => tool.name === name);
+    if (matches.length !== 1)
+      throw new Error(`${name} must have exactly one advertised definition`);
+    const listed = matches[0];
+    if (listed?.inputSchema === undefined)
+      throw new Error(`${name} must advertise an input schema`);
     const validate = ajv.compile(
       JSON.parse(JSON.stringify(listed.inputSchema)),
     );

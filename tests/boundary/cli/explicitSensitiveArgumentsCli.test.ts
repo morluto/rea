@@ -41,13 +41,11 @@ describe("CLI --sensitive-value parser diagnostics", () => {
     },
     {
       name: "camel-case declaration",
-      arguments: [
-        ...CAPTURE,
-        "har",
-        `--sensitiveValue=${LITERAL}`,
-        `--no-${LITERAL}`,
-      ],
-      message: "Unknown flag: --no-[REDACTED]",
+      arguments: [...CAPTURE, "har", `--sensitiveValue=${LITERAL}`],
+      // The parser refuses the schema key spelling; its value stays redacted.
+      message:
+        "Unknown flag: --sensitiveValue. Did you mean --sensitive-value?",
+      failure: { code: "PARSE_ERROR", retryable: false },
     },
     {
       // Incur removes builtin output flags before reading the declared value.
@@ -64,11 +62,14 @@ describe("CLI --sensitive-value parser diagnostics", () => {
     },
   ])(
     "excludes declarations from a JSON $name rejection",
-    async ({ arguments: arguments_, message }, { cli }) => {
+    async (
+      { arguments: arguments_, message, failure = { code: "UNKNOWN" } },
+      { cli },
+    ) => {
       const result = await cli.run({ arguments: [...arguments_, "--json"] });
 
       expectExcluded(result);
-      expect(JSON.parse(result.stdout)).toEqual({ code: "UNKNOWN", message });
+      expect(JSON.parse(result.stdout)).toEqual({ ...failure, message });
     },
   );
 
@@ -112,7 +113,7 @@ describe("CLI --sensitive-value parser diagnostics", () => {
       expectExcluded(result, ["mitmproxy"]);
       expect(JSON.parse(result.stdout)).toMatchObject({
         code: "VALIDATION_ERROR",
-        message: expect.stringContaining('"har"|"[REDACTED]"|"saz"'),
+        message: expect.stringMatching(/arguments.*expected type/iu),
         fieldErrors: [
           expect.objectContaining({ code: "invalid_value", path: "format" }),
         ],
@@ -156,22 +157,22 @@ describe("CLI --sensitive-value output-value diagnostics", () => {
     {
       name: "a spaced --format value",
       arguments: [...DECLARED, "--format", LITERAL],
-      message: 'Invalid format: \\"[REDACTED]\\"',
+      message: 'Invalid format: "[REDACTED]"',
     },
     {
       name: "an equals-form --format value",
       arguments: [...DECLARED, `--format=${LITERAL}`],
-      message: 'Invalid format: \\"[REDACTED]\\"',
+      message: 'Invalid format: "[REDACTED]"',
     },
     {
       name: "a --token-limit value",
       arguments: [...DECLARED, "--token-limit", LITERAL],
-      message: 'Invalid value for --token-limit: \\"[REDACTED]\\"',
+      message: 'Invalid value for --token-limit: "[REDACTED]"',
     },
     {
       name: "a partially declared --token-offset value",
       arguments: [...DECLARED, "--token-offset", `1${LITERAL}`],
-      message: 'Invalid value for --token-offset: \\"1[REDACTED]\\"',
+      message: 'Invalid value for --token-offset: "1[REDACTED]"',
     },
   ])(
     "keeps rejecting $name without the declaration",
@@ -179,7 +180,13 @@ describe("CLI --sensitive-value output-value diagnostics", () => {
       const result = await cli.run({ arguments: arguments_ });
 
       expectExcluded(result);
-      expect(result.stdout).toContain(`code: UNKNOWN\nmessage: "${message}`);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        ok: false,
+        error: {
+          code: "INVALID_OUTPUT_VALUE",
+          message: expect.stringContaining(message),
+        },
+      });
     },
   );
 
@@ -207,20 +214,20 @@ describe("CLI --sensitive-value output-value diagnostics", () => {
       name: "flag-name and value",
       declared: ["token"],
       arguments: ["--token-limit", "token"],
-      message: 'Invalid value for --[REDACTED]-limit: \\"[REDACTED]\\"',
+      message: 'Invalid value for --[REDACTED]-limit: "[REDACTED]"',
     },
     {
       name: "overlapping",
       declared: ["tok", "token"],
       arguments: ["--token-offset", "token1"],
-      message: 'Invalid value for --[REDACTED]-offset: \\"[REDACTED]1\\"',
+      message: 'Invalid value for --[REDACTED]-offset: "[REDACTED]1"',
     },
     {
       name: "fixed-text",
       declared: ["Invalid", "Expected"],
       arguments: ["--format", "bogus"],
       message:
-        '[REDACTED] format: \\"bogus\\". [REDACTED] one of: toon, json, yaml, md, jsonl',
+        '[REDACTED] format: "bogus". [REDACTED] one of: toon, json, yaml, md, jsonl',
     },
     {
       // Codes and keys identify the contract, not caller text.
@@ -228,7 +235,7 @@ describe("CLI --sensitive-value output-value diagnostics", () => {
       declared: ["UNKNOWN", "code", "message"],
       arguments: ["--format", "bogus"],
       message:
-        'Invalid format: \\"bogus\\". Expected one of: toon, json, yaml, md, jsonl',
+        'Invalid format: "bogus". Expected one of: toon, json, yaml, md, jsonl',
     },
   ])(
     "redacts the whole rejected output message for $name declarations",
@@ -243,7 +250,13 @@ describe("CLI --sensitive-value output-value diagnostics", () => {
       });
 
       expect(result.exitCode).toBe(1);
-      expect(result.stdout).toBe(`code: UNKNOWN\nmessage: "${message}"\n`);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        ok: false,
+        error: {
+          code: "INVALID_OUTPUT_VALUE",
+          message: expect.stringContaining(message),
+        },
+      });
     },
   );
 
@@ -252,7 +265,7 @@ describe("CLI --sensitive-value output-value diagnostics", () => {
     ["--token-limit=x"],
     ["--token-offset", " "],
   ])(
-    "renders %s rejections exactly as Incur does without declarations",
+    "renders the same structured %s rejection with an unrelated declaration",
     async (arguments_, { cli }) => {
       const command = [...CAPTURE, "har", ...arguments_];
       const incur = await cli.run({ arguments: command });

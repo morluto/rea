@@ -1,5 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import {
+  analysisViewCaptureEvidence,
+  environmentManifestCaptureFixture,
+  type TimedCaptureRow,
+} from "../../../tests/fixtures/analysisView.js";
+import {
+  environmentStateServeFixture,
+  environmentStateServeInputs,
+} from "../../../tests/fixtures/environmentServe.js";
 import {
   servedFrom,
   type Served,
@@ -11,6 +20,7 @@ import {
   BOOK_ROWS,
   DELETE_NOT_FOUND,
   DETAILED_LIST_ROWS,
+  EXPANDED_LIST_ROWS,
   FIRST_BOOK,
   OMITTED_FIELD_ROWS,
   PROJECTED_ROWS,
@@ -27,6 +37,7 @@ import {
   book,
   bookClock,
   detailedBook,
+  expandedBook,
   UNCHAPTERED_ROWS,
   VERSIONED_ROWS,
   numberedUuid,
@@ -35,12 +46,12 @@ import {
   renamedBook,
   type Book,
 } from "../../../tests/fixtures/environmentStateWrites.js";
-import type { TimedCaptureRow } from "../../../tests/fixtures/analysisView.js";
 import { seededUuid } from "../../domain/analysisView/environmentStateWriteValues.js";
-import type { StateWritePlan } from "../../domain/analysisView/environmentStateWriteRules.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import type { ReplayArguments } from "./environmentReplay.js";
 import { servedCatalog } from "./environmentState.js";
-import { describeWrite } from "./environmentStateWriteDescription.js";
+import { EnvironmentStateStore } from "./environmentStateStore.js";
+import { environmentToolAnswer } from "./environmentToolAnswer.js";
 import {
   environmentToolArguments,
   environmentToolDefinitions,
@@ -59,6 +70,153 @@ const expectReloadsUnchanged = (books: Served): void => {
   expect(books.store.replace(JSON.parse(before)).ok).toBe(true);
   expect(books.snapshot()).toBe(before);
 };
+
+describe("confirmed write response bodies", () => {
+  it.each<{
+    name: string;
+    status?: number;
+    content: Record<string, JsonValue>;
+    shape: "recorded" | "empty";
+    bodyRecorded: boolean;
+  }>([
+    {
+      name: "unsupported encoding with empty text",
+      content: {
+        mimeType: "application/json",
+        text: "",
+        encoding: "custom-json",
+      },
+      shape: "recorded",
+      bodyRecorded: false,
+    },
+    {
+      name: "omitted text with nonzero content size",
+      content: { mimeType: "application/json", size: 25 },
+      shape: "recorded",
+      bodyRecorded: false,
+    },
+    {
+      name: "205 without retained text",
+      status: 205,
+      content: { mimeType: "text/html" },
+      shape: "recorded",
+      bodyRecorded: false,
+    },
+    ...[undefined, null].map((text) => ({
+      name: `zero-size HTML with ${text === null ? "null" : "omitted"} text`,
+      content: {
+        mimeType: "text/html",
+        size: 0,
+        ...(text === null ? { text } : {}),
+      },
+      shape: "recorded" as const,
+      bodyRecorded: false,
+    })),
+    {
+      name: "known empty text",
+      content: { mimeType: "application/json", size: 0, text: "" },
+      shape: "empty",
+      bodyRecorded: true,
+    },
+  ])(
+    "preserves $name when serving a confirmed document write",
+    ({ content, shape, bodyRecorded, status = 200 }) => {
+      const entries: Record<string, JsonValue>[] = [
+        {
+          request: { method: "GET", url: "http://app.example/api/settings" },
+          response: {
+            status: 200,
+            content: {
+              mimeType: "application/json",
+              text: '{"theme":"light","lang":"en"}',
+            },
+          },
+        },
+        {
+          request: {
+            method: "PATCH",
+            url: "http://app.example/api/settings",
+            postData: {
+              mimeType: "application/json",
+              text: '{"theme":"dark"}',
+            },
+          },
+          response: { status, content },
+        },
+        {
+          request: { method: "GET", url: "http://app.example/api/settings" },
+          response: {
+            status: 200,
+            content: {
+              mimeType: "application/json",
+              text: '{"theme":"dark","lang":"en"}',
+            },
+          },
+        },
+      ];
+      const capture = analysisViewCaptureEvidence(
+        environmentManifestCaptureFixture(
+          entries.map((entry, index) => ({
+            ...entry,
+            startedDateTime: `2026-10-17T18:00:0${String(index)}.000Z`,
+            time: 5,
+          })),
+        ),
+      );
+      const { source, state } = environmentStateServeInputs(
+        environmentStateServeFixture(capture),
+      );
+      const store = new EnvironmentStateStore(state);
+      expect(store.state.writes.get("patch_settings")).toMatchObject({
+        effect: "document",
+        served: true,
+        response: { ordinal: 1, shape, pointer: null },
+        checked_record_ordinals: [2],
+      });
+      const respond = environmentToolAnswer(source, store);
+      const patch = source.manifest.tools.find(
+        (tool) => tool.name === "patch_settings",
+      );
+      const get = source.manifest.tools.find(
+        (tool) => tool.name === "get_settings",
+      );
+      if (patch === undefined || get === undefined)
+        throw new Error("Expected settings tools");
+      const write = respond(patch, { body: { theme: "blue" } });
+      if (!write.ok) throw write.error;
+      expect(write.value).toMatchObject({
+        status,
+        body: null,
+        replay: {
+          record_ordinal: 1,
+          evidence_id: source.evidenceId,
+          body_recorded: bodyRecorded,
+        },
+        state: { source: "state", view: "document-write" },
+      });
+      const read = respond(get, {});
+      if (!read.ok) throw read.error;
+      expect(read.value.body).toEqual({ theme: "blue", lang: "en" });
+    },
+  );
+});
+
+it("refuses an unrepresentable generated clock without changing the held state", () => {
+  const books = servedFrom();
+  const pending = books.store.pendingWrite();
+  const pendingWrite = books.store.pendingWrite.bind(books.store);
+  vi.spyOn(books.store, "pendingWrite").mockImplementation(() => ({
+    ...pendingWrite(),
+    clockMs: Date.parse("0000-01-01T00:00:00+01:00"),
+  }));
+  const before = books.snapshot();
+  const refusal = books.refusal("post_books", CREATE_NEW_BOOK);
+  expect(JSON.stringify(refusal)).toContain(
+    "outside its recorded four-digit year format",
+  );
+  expect(books.snapshot()).toBe(before);
+  expect(books.store.pendingWrite().count).toBe(pending.count);
+});
 
 describe("served creates", () => {
   it("refuses an exhausted generated-value collision search without changing state", () => {
@@ -120,7 +278,7 @@ describe("served creates", () => {
     expect(books.snapshot()).toBe(before);
     expect(books.store.pendingWrite()).toEqual(pending);
   });
-  it("creates a book with the next id, the served clock and a derived slug, which later reads show", () => {
+  it("creates a book with its generated values and reloads it without invented citations", () => {
     const books = servedFrom();
     const created = books.answer("post_books", CREATE_NEW_BOOK);
     expect(created).toMatchObject({
@@ -135,20 +293,10 @@ describe("served creates", () => {
       },
     });
     expect(created.body).toEqual(NEW_BOOK);
-    expect(books.answer("get_books_by_id", { id: "3" })).toMatchObject({
-      status: 200,
-      body: NEW_BOOK,
-      state: { source: "state", view: "item", id: "3" },
-    });
     expect(books.answer("get_books")).toMatchObject({
       body: [FIRST_BOOK, SECOND_BOOK, NEW_BOOK],
       state: { source: "state", view: "list", membership: "all", listed: 3 },
     });
-  });
-
-  it("reports a created book in data/get without record citations and loads it back unchanged", () => {
-    const books = servedFrom();
-    books.answer("post_books", CREATE_NEW_BOOK);
     expect(entityOf(books, "3")).toEqual({
       type: "/api/books",
       collection: "/api/books",
@@ -158,7 +306,11 @@ describe("served creates", () => {
       record_ordinals: [],
     });
     expectReloadsUnchanged(books);
-    expect(books.answer("get_books_by_id", { id: "3" }).body).toEqual(NEW_BOOK);
+    expect(books.answer("get_books_by_id", { id: "3" })).toMatchObject({
+      status: 200,
+      body: NEW_BOOK,
+      state: { source: "state", view: "item", id: "3" },
+    });
   });
 });
 
@@ -189,7 +341,7 @@ describe("served updates and deletes", () => {
   const SECOND_EDITION = renamedBook(SECOND_BOOK, "Second Edition", 13);
   const RENAME_SECOND = { id: "2", body: { name: "Second Edition" } };
 
-  it("changes only the sent members, the slug that follows them and the clock", () => {
+  it("updates only the observed fields and reloads the changed book without citations", () => {
     const books = servedFrom();
     expect(books.answer("patch_books_by_id", RENAME_SECOND)).toMatchObject({
       status: 200,
@@ -203,11 +355,6 @@ describe("served updates and deletes", () => {
       FIRST_BOOK,
       SECOND_EDITION,
     ]);
-  });
-
-  it("cites no records for an updated book in data/get, so it loads back unchanged", () => {
-    const books = servedFrom();
-    books.answer("patch_books_by_id", RENAME_SECOND);
     expect(entityOf(books, "2")).toMatchObject({
       fields: SECOND_EDITION,
       record_ordinals: [],
@@ -280,17 +427,16 @@ describe("wider write coverage", () => {
     );
   });
 
-  it("replays a call that asks for some fields only, and answers the rest from the state", () => {
-    const books = servedFrom(PROJECTED_ROWS);
-    expect(
-      books.answer("get_books_by_id", { id: "2", fields: "name" }),
-    ).toMatchObject({
-      body: { name: "Second Book" },
-      state: { source: "recording", reason: "projection" },
+  it("replays a call naming a parameter only the expanded line names, and lists a served create on the plain one", () => {
+    const books = servedFrom(EXPANDED_LIST_ROWS);
+    const created = books.answer("post_books", CREATE_NEW_BOOK).body as Book;
+    expect(books.answer("get_books")).toMatchObject({
+      body: [FIRST_BOOK, SECOND_BOOK, created],
+      state: { source: "state", view: "list" },
     });
-    expect(books.answer("get_books_by_id", { id: "2" })).toMatchObject({
-      body: SECOND_BOOK,
-      state: { source: "state", view: "item" },
+    expect(books.answer("get_books", { expand: "shelf" })).toMatchObject({
+      body: [FIRST_BOOK, SECOND_BOOK].map(expandedBook),
+      state: { source: "recording", reason: "variant" },
     });
   });
 
@@ -303,6 +449,113 @@ describe("wider write coverage", () => {
     expect(books.answer("get_books_by_id", { id: "1" }).body).toEqual(
       assetBook(FIRST_BOOK, "000-001"),
     );
+  });
+});
+
+describe("items only a replayed line showed", () => {
+  it("replays the recorded read of an item only a variant line showed, and still finds an unrecorded one missing", () => {
+    const books = servedFrom([
+      ["GET", "/api/books", [FIRST_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/1?expand=shelf", expandedBook(FIRST_BOOK)],
+      ["GET", "/api/books/2?expand=shelf", expandedBook(SECOND_BOOK)],
+    ]);
+    expect(
+      books.answer("get_books_by_id", { id: "2", expand: "shelf" }),
+    ).toMatchObject({
+      status: 200,
+      body: expandedBook(SECOND_BOOK),
+      state: { source: "recording", reason: "variant" },
+    });
+    expect(
+      books.refusal("get_books_by_id", { id: "3", expand: "shelf" }),
+    ).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("holds no /api/books entity 3"),
+    });
+  });
+});
+
+describe("items a served write made and removed", () => {
+  it("finds an item a served create made and a served delete removed missing, though a variant line recorded it", () => {
+    const created = book(3, "Third Book", bookClock(4));
+    const books = servedFrom([
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/2", SECOND_BOOK],
+      ["GET", "/api/books/1?expand=shelf", expandedBook(FIRST_BOOK)],
+      ["POST", "/api/books", created, 201, { name: "Third Book" }],
+      ["GET", "/api/books/3", created],
+      ["GET", "/api/books/3?expand=shelf", expandedBook(created)],
+      ["DELETE", "/api/books/3", "", 204],
+      ["GET", "/api/books/3", BOOK_NOT_FOUND, 404],
+    ]);
+    expect(
+      books.answer("post_books", { body: { name: "Third Book" } }),
+    ).toMatchObject({
+      status: 201,
+      body: { id: 3, name: "Third Book" },
+      state: { source: "state", view: "create", id: "3" },
+    });
+    const expanded = { id: "3", expand: "shelf" };
+    expect(books.answer("get_books_by_id", expanded)).toMatchObject({
+      status: 200,
+      body: expandedBook(created),
+      state: { source: "recording", reason: "variant" },
+    });
+    expect(books.answer("delete_books_by_id", { id: "3" })).toMatchObject({
+      status: 204,
+      state: { source: "state", view: "delete", id: "3" },
+    });
+    expect(books.answer("get_books_by_id", expanded)).toMatchObject({
+      status: 404,
+      body: BOOK_NOT_FOUND,
+      state: { source: "state", view: "missing", id: "3" },
+    });
+  });
+});
+
+describe("field selections beside replayed reads", () => {
+  it("replays a field selection no checked line gave, and answers a selection of every field from the state", () => {
+    const books = servedFrom([
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1?fields=*", FIRST_BOOK],
+      ["GET", "/api/books/2?fields=*", SECOND_BOOK],
+      ["GET", "/api/books/2?fields=name", { name: "Second Book" }],
+    ]);
+    expect(
+      books.answer("get_books_by_id", { id: "1", fields: "id" }),
+    ).toMatchObject({ state: { source: "recording", reason: "projection" } });
+    expect(
+      books.answer("get_books_by_id", { id: "1", fields: "*" }),
+    ).toMatchObject({
+      body: FIRST_BOOK,
+      state: { source: "state", view: "item" },
+    });
+  });
+
+  it("replays a field selection a replayed read gave, beside a variant key and a checked line giving it too", () => {
+    // One read asking for a book's name answered it whole; another left the id out.
+    const books = servedFrom([
+      ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+      ["GET", "/api/books/1", FIRST_BOOK],
+      ["GET", "/api/books/1?fields=name", FIRST_BOOK],
+      ["GET", "/api/books/2?fields=name", { name: "Second Book" }],
+      ["GET", "/api/books/1?expand=shelf", expandedBook(FIRST_BOOK)],
+    ]);
+    expect(
+      books.answer("get_books_by_id", { id: "2", fields: "name" }),
+    ).toMatchObject({
+      body: { name: "Second Book" },
+      state: { source: "recording", reason: "projection" },
+    });
+    expect(
+      books.answer("get_books_by_id", { id: "1", expand: "shelf" }),
+    ).toMatchObject({ state: { source: "recording", reason: "variant" } });
+    expect(books.answer("get_books_by_id", { id: "2" })).toMatchObject({
+      body: SECOND_BOOK,
+      state: { source: "state", view: "item" },
+    });
   });
 });
 
@@ -335,24 +588,28 @@ describe("write coverage limits", () => {
     expect(create("Seventh Book")).toMatchObject({ asset: "100-01" });
   });
 
-  it("replays a call naming a projection parameter, even an empty one", () => {
-    expect(
-      servedFrom(PROJECTED_ROWS).answer("get_books_by_id", {
-        id: "2",
-        fields: "",
-      }),
-    ).toMatchObject({ state: { source: "recording", reason: "projection" } });
-  });
-
-  it("answers a projection of a book the state no longer holds as a missing one", () => {
+  it("replays projections of a live item and reports its absence after deletion", () => {
     const books = servedFrom([
       ...PROJECTED_ROWS,
       ...BOOK_ROWS.slice(BOOK_INIT_ROWS.length),
     ]);
-    books.answer("delete_books_by_id", { id: "2" });
+    const item = { id: "2" };
+    expect(books.answer("get_books_by_id", item)).toMatchObject({
+      body: SECOND_BOOK,
+      state: { source: "state", view: "item" },
+    });
+    const projected = { ...item, fields: "name" };
+    expect(books.answer("get_books_by_id", projected)).toMatchObject({
+      body: { name: "Second Book" },
+      state: { source: "recording", reason: "projection" },
+    });
     expect(
-      books.answer("get_books_by_id", { id: "2", fields: "name" }),
+      books.answer("get_books_by_id", { ...item, fields: "" }),
     ).toMatchObject({
+      state: { source: "recording", reason: "projection" },
+    });
+    books.answer("delete_books_by_id", item);
+    expect(books.answer("get_books_by_id", projected)).toMatchObject({
       status: 404,
       body: BOOK_NOT_FOUND,
       state: { source: "state", view: "missing", id: "2" },
@@ -673,62 +930,29 @@ describe("served catalog", () => {
       "patch_books_by_id",
       "post_books",
     ]);
-    expect(described.get("post_books")?.description).toContain(
-      'creates an entity of /api/books in the served environment state (body members "name"; required: "name"), modelled on the recorded calls',
+    expect(described.get("post_books")?.description).toMatch(
+      /creates an entity.*\/api\/books.*"name".*required.*"name"/iu,
     );
-    expect(described.get("patch_books_by_id")?.description).toContain(
-      'changes the entity the path names in the served environment state (body members "name"; send at least one)',
+    expect(described.get("patch_books_by_id")?.description).toMatch(
+      /changes the entity.*path.*"name".*send at least one/iu,
     );
     expect(described.get("delete_books_by_id")?.description).toContain(
       "removes the entity the path names from the served environment state",
     );
     expect(described.get("post_books")?.annotations.readOnlyHint).toBe(false);
-    expect(described.get("get_books")?.description).toContain(
-      "answers from the served environment state where the state backs this tool",
+    expect(described.get("get_books")?.description).toMatch(
+      /answers.*served environment state.*state backs this tool/iu,
     );
-  });
-
-  it("quotes body member names and omits one that exceeds the sample budget", () => {
-    const plan: StateWritePlan = {
-      tool: "post_books",
-      effect: "create",
-      target: "/api/books",
-      served: true,
-      reason: null,
-      exemplar_ordinal: null,
-      observation: null,
-      response: null,
-      body: {
-        accepted: ["name, title", "note\nline"],
-        fixed: [],
-        required: [],
-        identity: null,
-        kinds: [],
-      },
-      rules: [],
-      collection: null,
-      insert: null,
-      merge: null,
-      checked_record_ordinals: [],
-      contradicted_by: null,
-    };
-    expect(describeWrite(plan)).toContain(
-      'body members "name, title", "note\\nline"',
-    );
-    const long = describeWrite({
-      ...plan,
-      body: { ...plan.body!, accepted: ["m".repeat(2000)] },
-    });
-    expect(long).not.toContain("m".repeat(2000));
-    expect(Buffer.byteLength(long ?? "", "utf8")).toBeLessThan(1200);
   });
 
   it("quotes the member names a write's description lists and samples a long one", () => {
-    const long = "n".repeat(90_000);
+    const long = "n".repeat(2_000);
+    const note = "note\nline";
     const item = (id: number, name: string) => ({
       id,
       name,
       "x, y": name,
+      [note]: name,
       [long]: name,
     });
     const { source, state } = servedFrom([
@@ -739,7 +963,7 @@ describe("served catalog", () => {
         "/api/books",
         item(2, "B"),
         201,
-        { name: "B", "x, y": "B", [long]: "B" },
+        { name: "B", "x, y": "B", [note]: "B", [long]: "B" },
       ],
       ["GET", "/api/books/2", item(2, "B")],
       ["GET", "/api/books", [item(1, "A"), item(2, "B")]],
@@ -749,9 +973,13 @@ describe("served catalog", () => {
     const created = catalog.value.tools.find(
       (tool) => tool.name === "post_books",
     );
-    expect(created?.description).toContain(
-      'body members "name", "x, y", … (2/3 shown; full list in state Evidence)',
+    const description = created?.description ?? "";
+    expect(description).toContain(
+      'body members "name", "x, y", "note\\nline", … (3/4 shown; full list in state Evidence)',
     );
+    expect(description).not.toContain(note);
+    expect(Buffer.byteLength(description, "utf8")).toBeLessThan(1200);
+    expect(state.writes.get("post_books")?.body?.accepted).toContain(long);
   });
 
   it("serves every manifest tool unchanged in replay mode", () => {
@@ -1206,8 +1434,9 @@ describe("values the state started with", () => {
     return { books, toolOf, create };
   };
 
-  it("creates in a collection's recorded spelling after the collection empties", () => {
+  it("preserves a known spelling after a delete or a reload removes its entities", () => {
     const { books, toolOf, create } = twoOrgs("my%20org1", "my org1");
+    const { rea_state: held } = books.store.snapshot();
     const remove = toolOf("DELETE");
     const [parent, id] = environmentToolArguments(remove).path.values();
     for (const held of ["1", "3"])
@@ -1215,48 +1444,71 @@ describe("values the state started with", () => {
     expect(books.store.collectionsOf("/api/orgs/{org}/books")).not.toContain(
       "/api/orgs/my%20org1/books",
     );
-    expect(create("my%20org1", "Epsilon")).toBe("/api/orgs/my%20org1/books");
-  });
-
-  it("creates in the Evidence's spelling of a collection a loaded state does not hold", () => {
-    const { books, create } = twoOrgs("my%20org1", "my org1");
-    const { rea_state: held } = books.store.snapshot();
+    expect(create("my%20org1", "After deletion")).toBe(
+      "/api/orgs/my%20org1/books",
+    );
     expect(
       books.store.replace({
         rea_state: {
-          version: held.version,
+          ...held,
           entities: held.entities.filter(
             (entity) => !entity.collection.includes("%20"),
           ),
-          documents: held.documents,
         },
       }).ok,
     ).toBe(true);
-    expect(create("my%20org1", "Epsilon")).toBe("/api/orgs/my%20org1/books");
+    expect(
+      books.store.inCollection(
+        "/api/orgs/{org}/books",
+        "/api/orgs/my%20org1/books",
+      ),
+    ).toEqual([]);
+    expect(create("my%20org1", "After reload")).toBe(
+      "/api/orgs/my%20org1/books",
+    );
   });
 
-  it("creates in the loaded state's collection when the Evidence spells the same one differently", () => {
+  it("chooses live collection spellings after a load and restores the Evidence spelling on reset", () => {
     const { books, create } = twoOrgs("%61cme1", "acme1");
     const { rea_state: held } = books.store.snapshot();
-    expect(
-      books.store.replace({
-        rea_state: {
-          version: held.version,
-          entities: held.entities.map((entity) =>
-            entity.collection.includes("%61cme1")
-              ? {
-                  ...entity,
-                  collection: entity.collection.replace("%61cme1", "a%63me1"),
-                  record_ordinals: [],
-                }
-              : entity,
-          ),
-          documents: held.documents,
-        },
-      }).ok,
-    ).toBe(true);
-    // Both spellings decode to the argument; the one holding books wins over the Evidence's emptied one.
-    expect(create("acme1", "Epsilon")).toBe("/api/orgs/a%63me1/books");
+    const original = held.entities.find(({ collection }) =>
+      collection.includes("%61cme1"),
+    );
+    if (original === undefined)
+      throw new Error("Fixture omitted the first organization");
+    const moved = (spelling: string) =>
+      held.entities.map((entity) =>
+        entity.collection === original.collection
+          ? {
+              ...entity,
+              collection: `/api/orgs/${spelling}/books`,
+              record_ordinals: [],
+            }
+          : entity,
+      );
+    const load = (entities: typeof held.entities) =>
+      expect(books.store.replace({ rea_state: { ...held, entities } }).ok).toBe(
+        true,
+      );
+    const historicalSpelling = "%61cme%31";
+    const deleted = {
+      ...original,
+      collection: `/api/orgs/${historicalSpelling}/books`,
+      fields: { ...original.fields, deleted: true },
+      record_ordinals: [],
+    };
+    for (const [name, history] of [
+      ["After load", []],
+      ["After load with a deleted row", [deleted]],
+    ] as const) {
+      load([...history, ...moved("a%63me1")]);
+      expect(create("acme1", name)).toBe("/api/orgs/a%63me1/books");
+    }
+    expect(create(historicalSpelling, "Exact")).toBe(deleted.collection);
+    load(moved("acme1"));
+    expect(create("acme1", "Plain")).toBe("/api/orgs/acme1/books");
+    books.store.reset();
+    expect(create("acme1", "Reset")).toBe(original.collection);
   });
 
   it("creates in the spelling of a collection the capture listed empty", () => {
@@ -1288,32 +1540,6 @@ describe("values the state started with", () => {
           (entity) => entity.fields["name"] === "Epsilon",
         )?.collection,
     ).toBe("/api/orgs/my%20org1/books");
-  });
-
-  it("forgets the spellings of a loaded state once reset", () => {
-    const { books, create } = twoOrgs("%61cme1", "acme1");
-    const { rea_state: held } = books.store.snapshot();
-    // A loaded state spells the first organisation plainly; the Evidence's state spells it encoded.
-    expect(
-      books.store.replace({
-        rea_state: {
-          version: held.version,
-          // Moved to another spelling, the entity cites none of the Evidence's records.
-          entities: held.entities.map((entity) =>
-            entity.collection.includes("%61cme1")
-              ? {
-                  ...entity,
-                  collection: entity.collection.replace("%61cme1", "acme1"),
-                  record_ordinals: [],
-                }
-              : entity,
-          ),
-          documents: held.documents,
-        },
-      }).ok,
-    ).toBe(true);
-    books.store.reset();
-    expect(create("acme1", "Epsilon")).toBe("/api/orgs/%61cme1/books");
   });
 });
 
@@ -1547,5 +1773,454 @@ describe("asset sequence inference", () => {
     expect(
       books.answer("post_books", { body: { name: "Gamma" } }).body,
     ).toEqual(gamma);
+  });
+});
+
+describe("served catalog of calls that only read", () => {
+  it("serves a lookup POST the capture shows reading only, by replay", () => {
+    const { source, state } = servedFrom([
+      ...BOOK_INIT_ROWS,
+      ["POST", "/api/books/ids", [FIRST_BOOK], 200, { ids: [1] }],
+    ]);
+    const catalog = servedCatalog(source, state, "books");
+    if (!catalog.ok) throw catalog.error;
+    expect(catalog.value.tools.map((tool) => tool.name)).toContain(
+      "post_books_ids",
+    );
+    expect(state.writes.has("post_books_ids")).toBe(false);
+  });
+});
+
+describe("creates read under another path", () => {
+  it("creates into the collection a linked create's returned id was read under", () => {
+    const note = (id: number, title: string) => ({ id, title });
+    const [alpha, beta, gamma] = [
+      note(1001, "Alpha"),
+      note(1002, "Beta"),
+      note(1003, "Gamma"),
+    ];
+    const notes = servedFrom([
+      ["GET", "/api/notes", [alpha, beta]],
+      ["GET", "/api/notes/1001", alpha],
+      ["GET", "/api/notes/1002", beta],
+      ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
+      ["GET", "/api/notes/1003", gamma],
+      ["GET", "/api/notes", [alpha, beta, gamma]],
+    ]);
+    expect(
+      notes.answer("post_drafts_publish", { body: { title: "Delta" } }),
+    ).toMatchObject({ status: 201 });
+    // The capture's own create is not in the initial state, so the served one takes the next id.
+    const delta = note(1003, "Delta");
+    expect(notes.answer("get_notes_by_id", { id: "1003" }).body).toEqual(delta);
+    expect(notes.answer("get_notes").body).toEqual([alpha, beta, delta]);
+  });
+
+  it("refuses a linked create called with other path arguments than its recording sent", () => {
+    const note = (id: number, title: string) => ({ id, title });
+    const [alpha, beta, gamma] = [
+      note(1001, "Alpha"),
+      note(1002, "Beta"),
+      note(1003, "Gamma"),
+    ];
+    const notes = servedFrom([
+      ["GET", "/api/projects/11/notes", [alpha, beta]],
+      ["GET", "/api/projects/11/notes/1001", alpha],
+      ["GET", "/api/projects/11/notes/1002", beta],
+      [
+        "POST",
+        "/api/projects/11/publish",
+        { id: 1003 },
+        201,
+        { title: "Gamma" },
+      ],
+      ["GET", "/api/projects/11/notes/1003", gamma],
+      ["GET", "/api/projects/11/notes", [alpha, beta, gamma]],
+    ]);
+    const before = notes.snapshot();
+    // No read showed where project 12's publish creates, so it is not put into project 11.
+    expect(
+      notes.refusal("post_projects_publish_by_id", {
+        id: "12",
+        body: { title: "Delta" },
+      }),
+    ).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining(
+        "creates into /api/projects/11/notes only with the path arguments its recording sent",
+      ),
+    });
+    expect(notes.snapshot()).toBe(before);
+    expect(
+      notes.answer("post_projects_publish_by_id", {
+        id: "11",
+        body: { title: "Delta" },
+      }),
+    ).toMatchObject({ status: 201 });
+  });
+});
+
+describe("path values of creates read under another path", () => {
+  it("refuses a linked create that changes one of two path values its template names alike", () => {
+    const note = (id: number, title: string) => ({ id, title });
+    const [alpha, beta, gamma] = [
+      note(1001, "Alpha"),
+      note(1002, "Beta"),
+      note(1003, "Gamma"),
+    ];
+    const group = "/api/projects/11/groups/5";
+    const notes = servedFrom([
+      ["GET", `${group}/notes`, [alpha, beta]],
+      ["GET", `${group}/notes/1001`, alpha],
+      ["GET", `${group}/notes/1002`, beta],
+      ["POST", `${group}/publish`, { id: 1003 }, 201, { title: "Gamma" }],
+      ["GET", `${group}/notes/1003`, gamma],
+      ["GET", `${group}/notes`, [alpha, beta, gamma]],
+    ]);
+    const publish = notes.source.manifest.tools.find(
+      (tool) => tool.method === "POST",
+    )!;
+    expect(publish.path_template).toBe(
+      "/api/projects/{numeric}/groups/{numeric}/publish",
+    );
+    const [project, groupArgument] =
+      environmentToolArguments(publish).path.values();
+    expect(notes.state.writes.get(publish.name)).toMatchObject({
+      served: true,
+      collection: `${group}/notes`,
+    });
+    // Project 12's group 5 is another source, though the group value matches.
+    expect(
+      notes.refusal(publish.name, {
+        [project!]: "12",
+        [groupArgument!]: "5",
+        body: { title: "Delta" },
+      }),
+    ).toMatchObject({ code: "invalid_request" });
+  });
+
+  it("creates in the recorded linked collection for escaped and plain path values", () => {
+    const note = (id: number, title: string) => ({
+      id,
+      title,
+      project: "my org1",
+    });
+    const [alpha, beta, gamma] = [
+      note(1001, "Alpha"),
+      note(1002, "Beta"),
+      note(1003, "Gamma"),
+    ];
+    const other = { id: 2001, title: "Other", project: "my org2" };
+    const project = "/api/projects/my%20org1";
+    // A second project makes the project segment a path parameter.
+    const notes = servedFrom([
+      ["GET", "/api/projects/my%20org2/notes", [other]],
+      ["GET", "/api/projects/my%20org2/notes/2001", other],
+      ["GET", `${project}/notes`, [alpha, beta]],
+      ["GET", `${project}/notes/1001`, alpha],
+      ["GET", `${project}/notes/1002`, beta],
+      ["POST", `${project}/publish`, { id: 1003 }, 201, { title: "Gamma" }],
+      ["GET", `${project}/notes/1003`, gamma],
+      ["GET", `${project}/notes`, [alpha, beta, gamma]],
+      ["POST", "/api/projects/my%20org2/publish", { ok: true }, 200, {}],
+    ]);
+    for (const [index, spelling] of ["my%20org1", "my org1"].entries()) {
+      expect(
+        notes.answer("post_projects_publish_by_project_id", {
+          project_id: spelling,
+          body: { title: "Delta" },
+        }),
+        spelling,
+      ).toMatchObject({ status: 201 });
+      const created = notes.store
+        .snapshot()
+        .rea_state.entities.filter((entity) => entity.fields.title === "Delta");
+      expect(created, spelling).toHaveLength(index + 1);
+      for (const entity of created)
+        expect(entity, spelling).toMatchObject({
+          collection: `${project}/notes`,
+          fields: { project: "my org1" },
+        });
+    }
+  });
+
+  it("counts a linked create's call from a source that names the exemplar's only after decoding twice as another source's", () => {
+    const note = (id: number, title: string) => ({ id, title });
+    const [alpha, beta, gamma, delta] = [
+      note(1001, "Alpha"),
+      note(1002, "Beta"),
+      note(1003, "Gamma"),
+      note(1004, "Delta"),
+    ];
+    const other = note(2001, "Other");
+    const project = "/api/projects/team1";
+    // A second project makes the project segment a path parameter.
+    const notes = servedFrom([
+      ["GET", "/api/projects/team2/notes", [other]],
+      ["GET", "/api/projects/team2/notes/2001", other],
+      ["GET", `${project}/notes`, [alpha, beta]],
+      ["GET", `${project}/notes/1001`, alpha],
+      ["GET", `${project}/notes/1002`, beta],
+      ["POST", `${project}/publish`, { id: 1003 }, 201, { title: "Gamma" }],
+      ["GET", `${project}/notes/1003`, gamma],
+      ["GET", `${project}/notes`, [alpha, beta, gamma]],
+      // `team%2531` decodes once to `team%31`, another project than `team1`.
+      [
+        "POST",
+        "/api/projects/team%2531/publish",
+        delta,
+        201,
+        { title: "Delta" },
+      ],
+      ["GET", `${project}/notes`, [alpha, beta, gamma]],
+    ]);
+    expect(
+      notes.state.writes.get("post_projects_publish_by_project_id"),
+    ).toMatchObject({ served: true, contradicted_by: null });
+  });
+});
+
+/** A card whose token is a NanoID and whose edit info a create stamps, created at exchange 3 and read back. */
+const tokenCard = (id: number, token: string, at: string) => ({
+  id,
+  name: `Card ${String(id)}`,
+  token,
+  edit: { at, by: "rea" },
+});
+const CARD_ROWS: readonly TimedCaptureRow[] = [
+  [
+    "GET",
+    "/api/cards",
+    [
+      tokenCard(1, "chYl65ZvCJ9U6yNk-YyqK", "2026-10-01T09:00:00.000Z"),
+      tokenCard(2, "Qx81mP0aZkT3vB7n-Lw2e", "2026-10-01T10:00:00.000Z"),
+    ],
+  ],
+  [
+    "GET",
+    "/api/cards/1",
+    tokenCard(1, "chYl65ZvCJ9U6yNk-YyqK", "2026-10-01T09:00:00.000Z"),
+  ],
+  [
+    "GET",
+    "/api/cards/2",
+    tokenCard(2, "Qx81mP0aZkT3vB7n-Lw2e", "2026-10-01T10:00:00.000Z"),
+  ],
+  [
+    "POST",
+    "/api/cards",
+    tokenCard(3, "cdMLcknG-Lcu6oWL-3ZgA", `${bookClock(3).slice(0, -1)}.030Z`),
+    201,
+    { name: "Card 3" },
+  ],
+  [
+    "GET",
+    "/api/cards/3",
+    tokenCard(3, "cdMLcknG-Lcu6oWL-3ZgA", `${bookClock(3).slice(0, -1)}.030Z`),
+  ],
+];
+
+/** Notes whose update sends html the application stores nowhere and derives the excerpt from, and sends back the clock it read. */
+const note = (id: number, title: string, excerpt: string) => ({
+  id,
+  title,
+  excerpt,
+  updated_at: bookClock(3),
+});
+const EDITED_NOTE = note(1, "First (edited)", "Edited body text.");
+const NOTE_ROWS: readonly TimedCaptureRow[] = [
+  [
+    "GET",
+    "/api/notes",
+    [note(1, "First", "Old body text."), note(2, "Second", "Custom excerpt.")],
+  ],
+  ["GET", "/api/notes/1", note(1, "First", "Old body text.")],
+  ["GET", "/api/notes/2", note(2, "Second", "Custom excerpt.")],
+  [
+    "PATCH",
+    "/api/notes/1?source=html",
+    EDITED_NOTE,
+    200,
+    {
+      title: "First (edited)",
+      html: "<p>Edited body text.</p>",
+      updated_at: bookClock(3),
+    },
+  ],
+  ["GET", "/api/notes/1", EDITED_NOTE],
+];
+
+describe("served values an application stamps", () => {
+  it("takes an enveloped body as the capture sent it, and refuses one sent bare", () => {
+    const books = servedFrom([
+      ...BOOK_INIT_ROWS,
+      [
+        "PATCH",
+        "/api/books/1",
+        { books: [renamedBook(FIRST_BOOK, "Renamed Book", 3)] },
+        200,
+        { books: [{ name: "Renamed Book" }] },
+      ],
+      ["GET", "/api/books/1", renamedBook(FIRST_BOOK, "Renamed Book", 3)],
+    ]);
+    const before = books.snapshot();
+    expect(
+      books.refusal("patch_books_by_id", {
+        id: "2",
+        body: { name: "Second Edition" },
+      }).message,
+    ).toContain('wrapped as {"books":[{...}]}');
+    expect(books.snapshot()).toBe(before);
+    const answered = books.answer("patch_books_by_id", {
+      id: "2",
+      body: { books: [{ name: "Second Edition" }] },
+    });
+    expect(answered).toMatchObject({
+      status: 200,
+      body: {
+        books: [{ id: 2, name: "Second Edition", slug: "second-edition" }],
+      },
+    });
+    expect(books.answer("get_books_by_id", { id: "2" }).body).toMatchObject({
+      name: "Second Edition",
+    });
+  });
+
+  it("generates a token spelled like the type's and stamps the edit info with the served clock", () => {
+    const cards = servedFrom(CARD_ROWS);
+    const created = cards.answer("post_cards", { body: { name: "Card 4" } })
+      .body as { token: string; edit: { at: string; by: string } };
+    expect(created.token).toMatch(
+      /^[A-Za-z0-9]{8}-[A-Za-z0-9]{7}-[A-Za-z0-9]{4}$/u,
+    );
+    expect([
+      "chYl65ZvCJ9U6yNk-YyqK",
+      "Qx81mP0aZkT3vB7n-Lw2e",
+      "cdMLcknG-Lcu6oWL-3ZgA",
+    ]).not.toContain(created.token);
+    expect(created.edit.by).toBe("rea");
+    expect(created.edit.at).not.toBe(`${bookClock(3).slice(0, -1)}.030Z`);
+    expect(created.edit.at).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u,
+    );
+  });
+
+  it("derives a value only on an entity holding what it was derived from, with the recorded query and the held clock", () => {
+    const notes = servedFrom(NOTE_ROWS);
+    const edit = (
+      id: string,
+      updated: string,
+      query: { source?: string } = { source: "html" },
+    ) => ({
+      id,
+      ...query,
+      body: {
+        title: "Renamed",
+        html: "<p>Edited body text.</p>",
+        updated_at: updated,
+      },
+    });
+    const before = notes.snapshot();
+    expect(
+      notes.refusal("patch_notes_by_id", edit("2", bookClock(3))).message,
+    ).toContain("derives excerpt");
+    expect(
+      notes.refusal(
+        "patch_notes_by_id",
+        edit("1", bookClock(3), { source: "markdown" }),
+      ).message,
+    ).toContain("takes only the query its recording sent (source=html)");
+    expect(
+      notes.refusal("patch_notes_by_id", edit("1", "2026-01-01T00:00:00Z"))
+        .message,
+    ).toContain("must repeat the value the entity holds");
+    expect(notes.snapshot()).toBe(before);
+    const answered = notes.answer("patch_notes_by_id", edit("1", bookClock(3)));
+    expect(answered).toMatchObject({
+      status: 200,
+      body: { id: 1, title: "Renamed", excerpt: "Edited body text." },
+    });
+    expect((answered.body as { updated_at: string }).updated_at).not.toBe(
+      bookClock(3),
+    );
+    // Without the member the value derives from, the update keeps the excerpt the note holds.
+    expect(
+      notes.answer("patch_notes_by_id", {
+        id: "2",
+        source: "html",
+        body: { title: "Second (renamed)", updated_at: bookClock(3) },
+      }).body,
+    ).toMatchObject({ title: "Second (renamed)", excerpt: "Custom excerpt." });
+  });
+});
+
+describe("path fields of creates read under another path", () => {
+  it("fills a linked create's path field from its exemplar decoded once, whichever accepted spelling the call uses", () => {
+    const note = (id: number, title: string) => ({
+      id,
+      title,
+      project: "team%31",
+    });
+    const [alpha, beta, gamma] = [
+      note(1001, "Alpha"),
+      note(1002, "Beta"),
+      note(1003, "Gamma"),
+    ];
+    const other = { id: 2001, title: "Other", project: "team2" };
+    // The recorded segment `team%2531` names the project `team%31`.
+    const project = "/api/projects/team%2531";
+    for (const spelling of ["team%2531", "team%31"]) {
+      const notes = servedFrom([
+        ["GET", "/api/projects/team2/notes", [other]],
+        ["GET", "/api/projects/team2/notes/2001", other],
+        ["GET", `${project}/notes`, [alpha, beta]],
+        ["GET", `${project}/notes/1001`, alpha],
+        ["GET", `${project}/notes/1002`, beta],
+        ["POST", `${project}/publish`, { id: 1003 }, 201, { title: "Gamma" }],
+        ["GET", `${project}/notes/1003`, gamma],
+        ["GET", `${project}/notes`, [alpha, beta, gamma]],
+        ["POST", "/api/projects/team2/publish", { ok: true }, 200, {}],
+      ]);
+      notes.answer("post_projects_publish_by_project_id", {
+        project_id: spelling,
+        body: { title: "Delta" },
+      });
+      const created = notes.store
+        .snapshot()
+        .rea_state.entities.filter((entity) => entity.fields.title === "Delta");
+      expect(created).toMatchObject([{ fields: { project: "team%31" } }]);
+    }
+  });
+});
+
+describe("array fields a view lists sorted", () => {
+  it("answers the update with the written order and later reads with it sorted", () => {
+    const tagged = (entry: Book, tags: string[]): Book => ({ ...entry, tags });
+    const books = servedFrom([
+      [
+        "GET",
+        "/api/books",
+        [tagged(FIRST_BOOK, ["alpha", "beta"]), tagged(SECOND_BOOK, ["gamma"])],
+      ],
+      ["GET", "/api/books/1", tagged(FIRST_BOOK, ["alpha", "beta"])],
+      ["GET", "/api/books/2", tagged(SECOND_BOOK, ["gamma"])],
+      [
+        "PATCH",
+        "/api/books/2",
+        tagged(SECOND_BOOK, ["zeta", "delta"]),
+        200,
+        { tags: ["zeta", "delta"] },
+      ],
+      ["GET", "/api/books/2", tagged(SECOND_BOOK, ["delta", "zeta"])],
+    ]);
+    expect(
+      books.answer("patch_books_by_id", {
+        id: "1",
+        body: { tags: ["omega", "beta"] },
+      }).body,
+    ).toMatchObject({ tags: ["omega", "beta"] });
+    expect(books.answer("get_books_by_id", { id: "1" }).body).toMatchObject({
+      tags: ["beta", "omega"],
+    });
   });
 });

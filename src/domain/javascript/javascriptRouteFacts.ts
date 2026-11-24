@@ -7,6 +7,7 @@ export const javaScriptRouteMechanismSchema = z.enum([
   "nested-route-object",
   "typed-route-tree",
   "next-app-chunk",
+  "expo-router-context-key",
   "navigation-target",
   "route-string-constant",
 ]);
@@ -16,7 +17,7 @@ export const javaScriptRouteSegmentSchema = z.strictObject({
   origin: z.enum(["literal", "property-name", "next-app-path"]),
 });
 export const javaScriptRouteCandidateSchema = z.strictObject({
-  path: z.string().startsWith("/"),
+  path: z.string().regex(/^\//u),
   mechanism: javaScriptRouteMechanismSchema,
   confidence: z.enum(["low", "medium", "high"]),
   derivation: z.enum(["literal", "joined", "inferred"]),

@@ -1,4 +1,10 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
+import {
+  nativeCallCaptureLimitsInputSchema,
+  nativeCallCaptureLimitsSchema,
+} from "./nativeCallCaptureLimits.js";
+import { jsonRecordSchema } from "../jsonRecord.js";
 import { localPathStringSchema } from "../localPath.js";
 
 const hexSchema = z.string().regex(/^0x[0-9a-f]+$/u);
@@ -18,7 +24,7 @@ const functionBreakpoint = {
   name: nativeString
     .min(1)
     .describe(
-      "Exact symbol name, such as `open`, a C++ or mangled Swift symbol, or `-[NSString length]`.",
+      "Exact LLDB runtime symbol name, such as `open`, a C++ or mangled Swift symbol, or `-[NSString length]`. On Darwin, pass an inspect_macho export or import `runtime_name` (`main`), not its symbol-table `name` (`_main`); REA preserves the selected name without translating it.",
     ),
 };
 
@@ -58,21 +64,31 @@ export const nativeCallBreakpointSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+const environmentNameSchema = z
+  .string()
+  .min(1)
+  .regex(/^[^=\x00]+$/u, "Environment names cannot contain '=' or NUL");
+const environmentValueSchema = z
+  .string()
+  .regex(/^[^\x00]*$/u, "Environment values cannot contain NUL");
+const nativeCallEnvironmentSchema = jsonRecordSchema(
+  environmentValueSchema,
+  environmentNameSchema,
+);
+
 /**
  * Launch the active Mach-O as an owned process under LLDB and observe calls.
  * Duration and event bounds keep runtime observation finite.
  */
 export const nativeCallObservationInputSchema = z.strictObject({
+  capture_limits: nativeCallCaptureLimitsInputSchema
+    .optional()
+    .describe(
+      "Retention budgets for this observation. Omitted fields keep documented defaults. Select before launch; increasing them cannot recover an earlier observation. Limits do not extend duration_ms or max_events.",
+    ),
   breakpoints: z.array(nativeCallBreakpointSchema).min(1),
   arguments: z.array(nativeString).default([]),
-  environment: z
-    .record(
-      z
-        .string()
-        .min(1)
-        .regex(/^[^=\x00]+$/u, "Environment names cannot contain '=' or NUL"),
-      z.string().regex(/^[^\x00]*$/u, "Environment values cannot contain NUL"),
-    )
+  environment: nativeCallEnvironmentSchema
     .default({})
     .describe("Overrides on top of the environment REA runs with."),
   working_directory: localPathStringSchema.optional(),
@@ -119,6 +135,18 @@ export const nativeCodeLocationSchema = z.strictObject({
   module: z.string().nullable(),
   module_path: z.string().nullable(),
   symbol: z.string().nullable(),
+  /** LLDB line-table attribution; does not verify source file contents. */
+  source_location: z
+    .strictObject({
+      file_path: z.string().min(1).nullable(),
+      line: z.number().int().positive().nullable(),
+      column: z.number().int().positive().nullable(),
+    })
+    .nullable()
+    .optional()
+    .describe(
+      "Compiler or debugger source attribution only; REA does not read or verify the named source-file bytes.",
+    ),
 });
 
 /** One observed entry into a requested function or method. */
@@ -147,12 +175,13 @@ export const nativeCapturedOutputSchema = z.strictObject({
 
 /** Observed calls, the process lifecycle, and breakpoint resolution. */
 export const nativeCallObservationResultSchema = z.strictObject({
+  capture_limits: nativeCallCaptureLimitsSchema.optional(),
   target: z.strictObject({
     path: z.string(),
     sha256: z.string().regex(/^[0-9a-f]{64}$/u),
     architecture: z.string(),
     arguments: z.array(z.string()),
-    environment: z.record(z.string(), z.string()),
+    environment: nativeCallEnvironmentSchema,
     working_directory: z.string().nullable(),
     launch_identity: z.strictObject({
       /** A pathname hash does not verify the bytes mapped into the process. */
@@ -206,11 +235,14 @@ export const nativeCallObservationResultSchema = z.strictObject({
   ),
   events: z.array(nativeCallEventSchema),
   coverage: z.strictObject({
-    status: z.enum(["complete", "partial"]),
+    status: knownCoverageStatusSchema,
     event_limit_reached: z.boolean(),
     resource_limit_reached: z.boolean(),
+    capture_limit: z.enum(["trace_bytes", "trace_frames"]).optional(),
     /** Aggregate breakpoint-location metadata exhausted its retained-byte budget. */
     breakpoint_locations_truncated: z.boolean().optional(),
+    /** Other stops that may be unrecorded breakpoint hits; events may be missing. */
+    unattributed_breakpoint_stops: z.int().positive().optional(),
     /** Requests that matched no code in any image loaded while observing. */
     unresolved_breakpoints: z.array(z.int().nonnegative()),
   }),

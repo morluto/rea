@@ -1,29 +1,32 @@
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { z } from "zod";
 
-import { artifactComparisonResultSchema } from "./artifactComparison.js";
 import type { AnalysisInputError } from "./analysisErrorCore.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { analysisInputErrorFromIssues } from "./inputIssueProjection.js";
-import { readEvidence, readEvidencePayload } from "./evidenceValidation.js";
+import { readEvidence } from "./evidenceValidation.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import {
   comparisonSourceEvidenceIds,
-  assertComparisonFindingLinks,
+  comparisonSourceEvidenceSides,
 } from "./comparisonSourceEvidence.js";
+import {
+  prepareUnreportedArtifactPaths,
+  type UnreportedArtifactPathClassifier,
+} from "./artifactComparison.js";
+import {
+  readComparisonResult,
+  type ParsedComparisonEvidence,
+} from "./comparisonEvidenceResult.js";
 import { evidenceSchema, type Evidence } from "./evidence.js";
 import { hasComparisonEvidenceIdentity } from "./comparisonEvidenceIdentity.js";
-import {
-  functionComparisonDimensionNameSchema,
-  functionComparisonResultSchema,
-} from "./functionComparisonSchemas.js";
+import { functionComparisonDimensionNameSchema } from "./functionComparisonSchemas.js";
 import type { JsonValue } from "./jsonValue.js";
 import {
   comparisonStatusSchema,
-  processCaptureComparisonSchema,
+  PROCESS_COMPARISON_DIMENSIONS,
 } from "./process/processComparison.js";
-import { PROCESS_COMPARISON_DIMENSIONS } from "./process/processComparison.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
@@ -147,25 +150,39 @@ export type StaticRuntimeCorrelationResult = z.infer<
 type Mapping = z.infer<typeof mappingSchema>;
 type CorrelationItem = z.infer<typeof correlationItemSchema>;
 type ComparisonStatus = z.infer<typeof comparisonStatusSchema>;
-type StaticComparison =
-  | {
-      readonly operation: "compare_artifacts";
-      readonly evidence: Evidence;
-      readonly result: z.infer<typeof artifactComparisonResultSchema>;
-    }
-  | {
-      readonly operation: "compare_functions";
-      readonly evidence: Evidence;
-      readonly result: z.infer<typeof functionComparisonResultSchema>;
-    };
-interface RuntimeComparison {
-  readonly evidence: Evidence;
-  readonly result: z.infer<typeof processCaptureComparisonSchema>;
+type StaticComparison = ParsedComparisonEvidence<
+  "compare_artifacts" | "compare_functions"
+>;
+type RuntimeComparison = ParsedComparisonEvidence<"compare_process_captures">;
+/** Exact retained source records, used to classify unreported artifact paths. */
+type SourceEvidenceLookup = (evidenceId: string) => Evidence | undefined;
+
+/**
+ * Per-call resolver for an artifact comparison's unreported paths; undefined
+ * when its source inventories are unavailable.
+ */
+type UnreportedPathResolver = (
+  comparison: ArtifactComparisonEvidence,
+) => UnreportedArtifactPathClassifier | undefined;
+type ArtifactComparisonEvidence = Extract<
+  StaticComparison,
+  { operation: "compare_artifacts" }
+>;
+
+/** Correlation options that do not change the public input contract. */
+export interface StaticRuntimeCorrelationOptions {
+  /**
+   * Resolve an artifact comparison's source inventories so a selected path it
+   * compared as unchanged, and therefore omitted from `changes`, can be
+   * evaluated. Without it, such a path remains unresolved.
+   */
+  readonly sourceEvidence?: SourceEvidenceLookup;
 }
 
 /** Correlate only caller-declared static/runtime hypotheses. */
 export const correlateStaticAndRuntime = (
   input: unknown,
+  options: StaticRuntimeCorrelationOptions = {},
 ): StaticRuntimeCorrelationResult => {
   const parsed = staticRuntimeCorrelationEnvelopeSchema.safeParse(input);
   if (!parsed.success)
@@ -195,8 +212,9 @@ export const correlateStaticAndRuntime = (
   );
   const staticById = byId(staticEvidence);
   const runtimeById = byId(runtimeEvidence);
+  const unreportedPaths = unreportedPathResolver(options.sourceEvidence);
   const correlations = data.mappings.map((mapping, index) =>
-    correlate(mapping, staticById, runtimeById, input, index),
+    correlate(mapping, staticById, runtimeById, unreportedPaths, input, index),
   );
   const duplicateMappingIndex = firstDuplicateIndex(
     correlations.map(({ correlation_id }) => correlation_id),
@@ -250,6 +268,7 @@ const correlate = (
   mapping: Mapping,
   staticById: ReadonlyMap<string, StaticComparison>,
   runtimeById: ReadonlyMap<string, RuntimeComparison>,
+  unreportedPaths: UnreportedPathResolver,
   input: unknown,
   mappingIndex: number,
 ): CorrelationItem => {
@@ -270,12 +289,13 @@ const correlate = (
   const { limitations: selectedLimitations, ...selectedStatic } = selectStatic(
     staticEvidence,
     mapping.static.selector,
+    unreportedPaths,
     input,
     ["mappings", mappingIndex, "static", "selector"],
   );
   const process = runtimeEvidence.result;
   const runtimeStatus = process[mapping.runtime.dimension];
-  const pattern = observedPattern(selectedStatic.status, runtimeStatus);
+  const pattern = observedPattern(selectedStatic, runtimeStatus);
   const classification =
     pattern === "unknown" || pattern === "truncated"
       ? "unresolved_branch"
@@ -316,6 +336,7 @@ const correlate = (
 const selectStatic = (
   comparison: StaticComparison,
   selector: z.infer<typeof staticSelectorSchema>,
+  unreportedPaths: UnreportedPathResolver,
   input: unknown,
   path: readonly (string | number)[],
 ): Pick<CorrelationItem["static"], "status" | "conclusion_kind"> & {
@@ -350,12 +371,16 @@ const selectStatic = (
   const matches = result.changes.filter(
     ({ logical_path: path }) => path === selector.logical_path,
   );
+  if (matches.length > 1)
+    throw callerInputError(input, path, INVALID_ARTIFACT_SELECTOR);
   const match = matches.at(0);
-  if (matches.length !== 1 || match === undefined)
-    throw callerInputError(
+  if (match === undefined)
+    return selectUnreportedArtifactPath(
+      comparison,
+      selector.logical_path,
+      unreportedPaths,
       input,
       path,
-      "Artifact selector must resolve exactly one reported delta",
     );
   const status = match.classification;
   return {
@@ -367,6 +392,82 @@ const selectStatic = (
         : status === "unknown"
           ? "unresolved_branch"
           : "derived_relationship",
+  };
+};
+
+const INVALID_ARTIFACT_SELECTOR =
+  "Artifact selector must resolve exactly one compared artifact path";
+
+/**
+ * Artifact comparisons omit unchanged paths from `changes`. Resolve the exact
+ * compared inventories so an observed unchanged path keeps its status, while
+ * a path neither inventory observed remains invalid caller input.
+ */
+const selectUnreportedArtifactPath = (
+  comparison: ArtifactComparisonEvidence,
+  logicalPath: string,
+  unreportedPaths: UnreportedPathResolver,
+  input: unknown,
+  path: readonly (string | number)[],
+): Pick<CorrelationItem["static"], "status" | "conclusion_kind"> & {
+  readonly limitations: readonly string[];
+} => {
+  const classify = unreportedPaths(comparison);
+  if (classify === undefined)
+    return {
+      status: "unknown",
+      conclusion_kind: "unresolved_branch",
+      limitations: [
+        "The selected artifact path has no reported change, and the comparison's source inventories were unavailable to establish that it was compared as unchanged.",
+      ],
+    };
+  const unreported = classify(logicalPath);
+  if (unreported.status === "unobserved")
+    throw callerInputError(input, path, INVALID_ARTIFACT_SELECTOR);
+  return unreported.status === "unchanged"
+    ? {
+        status: "unchanged",
+        conclusion_kind: "derived_relationship",
+        limitations: [],
+      }
+    : {
+        status: "unknown",
+        conclusion_kind: "unresolved_branch",
+        limitations: [unreported.limitation],
+      };
+};
+
+/**
+ * Resolve and validate each artifact comparison's source inventories at most
+ * once per correlation call, so many mappings into one comparison share the
+ * parsed inventories and path index. A validation failure still fails the
+ * whole call on first use.
+ */
+const unreportedPathResolver = (
+  sourceEvidence: SourceEvidenceLookup | undefined,
+): UnreportedPathResolver => {
+  const prepared = new Map<
+    string,
+    UnreportedArtifactPathClassifier | undefined
+  >();
+  return (comparison) => {
+    const id = comparison.evidence.evidence_id;
+    if (prepared.has(id)) return prepared.get(id);
+    const sides = comparisonSourceEvidenceSides(comparison.evidence);
+    const resolve = (ids: readonly string[]) => {
+      const records = ids.map((sourceId) => sourceEvidence?.(sourceId));
+      return records.every((record): record is Evidence => record !== undefined)
+        ? records
+        : undefined;
+    };
+    const left = resolve(sides.left);
+    const right = resolve(sides.right);
+    const classifier =
+      left === undefined || right === undefined
+        ? undefined
+        : prepareUnreportedArtifactPaths(comparison.result, { left, right });
+    prepared.set(id, classifier);
+    return classifier;
   };
 };
 
@@ -388,29 +489,9 @@ const parseStatic = (
       "Static/runtime correlation requires artifact or function comparison Evidence",
     );
   assertComparisonIdentity(evidence);
-  if (evidence.operation === "compare_artifacts") {
-    const result = readEvidencePayload(
-      artifactComparisonResultSchema,
-      evidence.normalized_result,
-    );
-    if (!result.ok) throw result.error;
-    assertComparisonFindingLinks(
-      evidence,
-      result.value.changes.flatMap(({ evidence_links: links }) => links),
-    );
-    return { operation: evidence.operation, evidence, result: result.value };
-  } else {
-    const result = readEvidencePayload(
-      functionComparisonResultSchema,
-      evidence.normalized_result,
-    );
-    if (!result.ok) throw result.error;
-    assertComparisonFindingLinks(
-      evidence,
-      result.value.dimensions.flatMap(({ evidence_links: links }) => links),
-    );
-    return { operation: evidence.operation, evidence, result: result.value };
-  }
+  const result = readComparisonResult(evidence, evidence.operation);
+  if (!result.ok) throw result.error;
+  return result.value;
 };
 
 const parseRuntime = (
@@ -428,12 +509,9 @@ const parseRuntime = (
       "Static/runtime correlation requires process comparison Evidence",
     );
   assertComparisonIdentity(evidence);
-  const result = readEvidencePayload(
-    processCaptureComparisonSchema,
-    evidence.normalized_result,
-  );
+  const result = readComparisonResult(evidence, evidence.operation);
   if (!result.ok) throw result.error;
-  return { evidence, result: result.value };
+  return result.value;
 };
 
 const assertComparisonIdentity = (evidence: Evidence): void => {
@@ -453,12 +531,18 @@ const assertComparisonIdentity = (evidence: Evidence): void => {
 };
 
 const observedPattern = (
-  staticStatus: ComparisonStatus,
+  staticFinding: Pick<CorrelationItem["static"], "status" | "conclusion_kind">,
   runtimeStatus: ComparisonStatus,
 ): z.infer<typeof observedPatternSchema> => {
+  const staticStatus = staticFinding.status;
   if (staticStatus === "truncated" || runtimeStatus === "truncated")
     return "truncated";
-  if (staticStatus === "unknown" || runtimeStatus === "unknown")
+  if (
+    staticStatus === "unknown" ||
+    runtimeStatus === "unknown" ||
+    staticFinding.conclusion_kind !== "derived_relationship" ||
+    runtimeStatus === "contradiction"
+  )
     return "unknown";
   const staticChanged = staticStatus !== "unchanged";
   const runtimeChanged = runtimeStatus !== "unchanged";

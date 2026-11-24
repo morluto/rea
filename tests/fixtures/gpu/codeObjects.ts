@@ -12,7 +12,7 @@ export const ptxFixture = `// Producer-shaped static PTX; portable tests do not 
 ret;
 }
 `;
-export interface ElfFixtureSection {
+interface ElfFixtureSection {
   name: string;
   type?: number;
   flags?: bigint;
@@ -22,6 +22,34 @@ export interface ElfFixtureSection {
   link?: number;
   entrySize?: number;
 }
+/** Names up to this length are found through an index of entry suffixes. */
+const INDEXED_SECTION_NAME_LENGTH = 256;
+/**
+ * Find each sh_name: the first offset where `${name}\0` occurs, which may be a
+ * suffix of an earlier name (".strtab" inside ".shstrtab"). Searching the
+ * table per section is quadratic for an extended section count, and indexing
+ * every suffix is quadratic for a long name. Index each entry's suffixes up to
+ * a bounded length once, and search the table directly for the few longer
+ * names; both give the same first occurrence.
+ */
+const sectionNameOffsets = (names: Buffer): ((name: string) => number) => {
+  const offsets = new Map<string, number>();
+  let start = 0;
+  for (const entry of names.toString("latin1").split("\0")) {
+    const first = Math.max(0, entry.length - INDEXED_SECTION_NAME_LENGTH);
+    for (let index = first; index <= entry.length; index++) {
+      const suffix = entry.slice(index);
+      if (!offsets.has(suffix)) offsets.set(suffix, start + index);
+    }
+    start += entry.length + 1;
+  }
+  return (name) => {
+    const key = Buffer.from(name).toString("latin1");
+    return key.length > INDEXED_SECTION_NAME_LENGTH
+      ? names.indexOf(Buffer.from(`${name}\0`))
+      : offsets.get(key)!;
+  };
+};
 /** Format boundary fixtures, including numeric records checked against nvcc 12.9 cuobjdump. */
 export const elfFixture = (
   machine: number,
@@ -36,6 +64,8 @@ export const elfFixture = (
     { name: ".shstrtab", type: 3, bytes: names },
     ...sections,
   ];
+  const nameOffset = sectionNameOffsets(names);
+  const extendedSectionCount = rows.length >= 0xff00;
   let position = 64;
   const entries = rows.map((row) => {
     position = Math.ceil(position / 8) * 8;
@@ -62,12 +92,14 @@ export const elfFixture = (
   result.writeUInt32LE(machine === 190 ? 0x500550 : 0x12c, 48);
   result.writeUInt16LE(64, 52);
   result.writeUInt16LE(64, 58);
-  result.writeUInt16LE(rows.length, 60);
+  result.writeUInt16LE(extendedSectionCount ? 0 : rows.length, 60);
   result.writeUInt16LE(1, 62);
+  if (extendedSectionCount)
+    result.writeBigUInt64LE(BigInt(rows.length), table + 32);
   for (let index = 1; index < entries.length; index++) {
     const { row, offset } = entries[index]!,
       h = table + index * 64;
-    result.writeUInt32LE(names.indexOf(Buffer.from(`${row.name}\0`)), h);
+    result.writeUInt32LE(nameOffset(row.name), h);
     result.writeUInt32LE(row.type ?? 1, h + 4);
     result.writeBigUInt64LE(row.flags ?? 0n, h + 8);
     result.writeBigUInt64LE(BigInt(offset), h + 24);
@@ -90,6 +122,8 @@ export const cubinFixture = (
     architecture?: number;
     osAbi?: number;
     flags?: number;
+    extendedSectionIndex?: boolean;
+    v2ParameterSize?: number;
   } = {},
 ): Buffer => {
   const name = options.name ?? "add_one";
@@ -97,22 +131,45 @@ export const cubinFixture = (
   symbols.writeUInt32LE(1, 24);
   symbols[28] = 0x12;
   symbols[29] = 0x10;
-  symbols.writeUInt16LE(4, 30);
+  symbols.writeUInt16LE(options.extendedSectionIndex ? 0xffff : 4, 30);
   symbols.writeBigUInt64LE(16n, 40);
   const record = Buffer.from("042f0800010000000a000000", "hex");
   record.writeUInt32LE(options.globalRegisters ?? 10, 8);
   const global = Buffer.alloc(record.length * (options.globalRecords ?? 1));
   for (let offset = 0; offset < global.length; offset += record.length)
     record.copy(global, offset);
-  const info = Buffer.from(
-    "03190c0004170c00000000000100080000f0110004170c00000000000000000000f02100",
-    "hex",
-  );
+  const info =
+    options.v2ParameterSize === undefined
+      ? Buffer.from(
+          "03190c0004170c00000000000100080000f0110004170c00000000000000000000f02100",
+          "hex",
+        )
+      : (() => {
+          const byteCount = Buffer.alloc(4);
+          byteCount[0] = 3;
+          byteCount[1] = 0x19;
+          byteCount.writeUInt16LE(options.v2ParameterSize!, 2);
+          const v2 = Buffer.alloc(16);
+          v2[0] = 4;
+          v2[1] = 0x45;
+          v2.writeUInt16LE(12, 2);
+          v2.writeUInt32LE(options.v2ParameterSize!, 12);
+          return Buffer.concat([byteCount, v2]);
+        })();
+  const paddingSections = options.extendedSectionIndex
+    ? Array.from({ length: 65531 }, (_, index) => ({
+        name: `.padding.${index}`,
+      }))
+    : [];
+  const textSectionIndex = options.extendedSectionIndex ? 65535 : 4;
+  const extendedIndices = Buffer.alloc(8);
+  extendedIndices.writeUInt32LE(textSectionIndex, 4);
   const result = elfFixture(
     190,
     [
       { name: ".strtab", type: 3, bytes: Buffer.from(`\0${name}\0`) },
       { name: ".symtab", type: 2, link: 2, entrySize: 24, bytes: symbols },
+      ...paddingSections,
       {
         name: `.text.${name}`,
         flags: 0x100006n,
@@ -124,15 +181,26 @@ export const cubinFixture = (
         name: `.nv.info.${name}`,
         type: 0x70000000,
         link: 3,
-        info: 4,
+        info: textSectionIndex,
         bytes: info,
       },
       {
         name: `.nv.shared.${name}`,
         type: 8,
-        info: 4,
+        info: textSectionIndex,
         size: options.shared ?? 1056,
       },
+      ...(options.extendedSectionIndex
+        ? [
+            {
+              name: ".symtab_shndx",
+              type: 18,
+              link: 3,
+              entrySize: 4,
+              bytes: extendedIndices,
+            },
+          ]
+        : []),
       ...Array.from({ length: (options.globalAliases ?? 1) - 1 }, () => ({
         name: ".nv.info",
         type: 0x70000000,
@@ -148,12 +216,21 @@ export const cubinFixture = (
       48,
     );
   const table = Number(result.readBigUInt64LE(40));
+  const sectionCount =
+    result.readUInt16LE(60) === 0
+      ? Number(result.readBigUInt64LE(table + 32))
+      : result.readUInt16LE(60);
   if (options.osAbi !== undefined) {
     result[7] = options.osAbi;
     result.writeUInt32LE(1, 20);
   }
   if (options.flags !== undefined) result.writeUInt32LE(options.flags, 48);
-  for (let index = 8; index < result.readUInt16LE(60); index++) {
+  for (
+    let index =
+      8 + paddingSections.length + (options.extendedSectionIndex ? 1 : 0);
+    index < sectionCount;
+    index++
+  ) {
     result.writeBigUInt64LE(
       result.readBigUInt64LE(table + 5 * 64 + 24),
       table + index * 64 + 24,
@@ -162,10 +239,21 @@ export const cubinFixture = (
   }
   return result;
 };
-export const amdFixture = (
+/** Wrap stored metadata in an AMDGPU ELF note. */
+export const amdDescriptorNoteFixture = (metadata: Buffer): Buffer => {
+  const note = Buffer.alloc(20 + Math.ceil(metadata.length / 4) * 4);
+  note.writeUInt32LE(7, 0);
+  note.writeUInt32LE(metadata.length, 4);
+  note.writeUInt32LE(32, 8);
+  note.write("AMDGPU\0", 12);
+  metadata.copy(note, 20);
+  return note;
+};
+
+/** One producer-shaped AMDGPU MessagePack note, composable with later notes. */
+export const amdNoteFixture = (
   hidden = false,
-  trailingNote?: Buffer,
-  target = "amdgcn-amd-amdhsa--gfx900",
+  target: string | number | null = "amdgcn-amd-amdhsa--gfx900",
 ): Buffer => {
   const args = [
     { ".offset": 0, ".size": 8, ".value_kind": "global_buffer" },
@@ -177,7 +265,7 @@ export const amdFixture = (
   ];
   const metadata = Buffer.from(
     encode({
-      "amdhsa.target": target,
+      ...(target === null ? {} : { "amdhsa.target": target }),
       "amdhsa.version": [1, 1],
       "amdhsa.kernels": [
         {
@@ -193,12 +281,14 @@ export const amdFixture = (
       ],
     }),
   );
-  const note = Buffer.alloc(20 + Math.ceil(metadata.length / 4) * 4);
-  note.writeUInt32LE(7, 0);
-  note.writeUInt32LE(metadata.length, 4);
-  note.writeUInt32LE(32, 8);
-  note.write("AMDGPU\0", 12);
-  metadata.copy(note, 20);
+  return amdDescriptorNoteFixture(metadata);
+};
+export const amdFixture = (
+  hidden = false,
+  trailingNote?: Buffer,
+  target: string | number | null = "amdgcn-amd-amdhsa--gfx900",
+): Buffer => {
+  const note = amdNoteFixture(hidden, target);
   return elfFixture(224, [
     {
       name: ".note",
@@ -208,16 +298,140 @@ export const amdFixture = (
     },
   ]);
 };
+/**
+ * MessagePack with `Map` keys kept as written: PAL `.registers` maps use
+ * unsigned register-offset keys, which plain objects cannot express.
+ */
+export const msgpackWithIntegerKeys = (value: unknown): Buffer => {
+  const header = (fix: number, wide: number, count: number) => {
+    if (count < 16) return Buffer.from([fix | count]);
+    const head = Buffer.alloc(3);
+    head[0] = wide;
+    head.writeUInt16BE(count, 1);
+    return head;
+  };
+  if (value instanceof Map)
+    return Buffer.concat([
+      header(0x80, 0xde, value.size),
+      ...[...value].flatMap(([key, item]) => [
+        msgpackWithIntegerKeys(key),
+        msgpackWithIntegerKeys(item),
+      ]),
+    ]);
+  if (Array.isArray(value))
+    return Buffer.concat([
+      header(0x90, 0xdc, value.length),
+      ...value.map(msgpackWithIntegerKeys),
+    ]);
+  if (value !== null && typeof value === "object")
+    return msgpackWithIntegerKeys(new Map(Object.entries(value)));
+  return Buffer.from(encode(value, { useBigInt64: true }));
+};
+/** Producer-shaped `amdpal.pipelines` metadata (LLVM AMDGPUUsage, AMDPAL). */
+export const amdPalMetadataFixture = (): Buffer =>
+  msgpackWithIntegerKeys({
+    "amdpal.version": [3, 0],
+    "amdpal.pipelines": [
+      {
+        ".name": "triangle",
+        ".type": "VsPs",
+        ".api": "Vulkan",
+        ".internal_pipeline_hash": [0x0123456789abcdefn, 0xfedcba9876543210n],
+        ".shaders": {
+          ".vertex": {
+            ".api_shader_hash": [1, 0],
+            ".hardware_mapping": [".vs"],
+          },
+          ".pixel": {
+            ".api_shader_hash": [2, 0],
+            ".hardware_mapping": [".ps"],
+          },
+        },
+        ".hardware_stages": {
+          ".vs": {
+            ".entry_point": "_amdgpu_vs_main",
+            ".entry_point_symbol": "main_vs",
+            ".sgpr_count": 20,
+            ".vgpr_count": 12,
+            ".wavefront_size": 32,
+            ".scratch_memory_size": 0,
+          },
+          ".ps": {
+            ".entry_point": "_amdgpu_ps_main",
+            ".sgpr_count": 10,
+            ".vgpr_count": 6,
+            ".lds_size": 256,
+          },
+        },
+        // SPI_SHADER_PGM_RSRC1_PS and _VS register offsets with raw values.
+        ".registers": new Map([
+          [0x2c0a, 0x002c0041],
+          [0x2c4a, 0x002c0083],
+        ]),
+      },
+    ],
+  });
+/**
+ * A minimal AMDGPU ELF64 code object for gfx1030 (EF_AMDGPU_MACH 0x36) with
+ * the given EI_OSABI and an optional NT_AMDGPU_METADATA note.
+ */
+export const amdAbiFixture = (
+  osAbi: number,
+  metadata: Buffer | null,
+): Buffer => {
+  const bytes = elfFixture(
+    224,
+    metadata === null
+      ? []
+      : [{ name: ".note", type: 7, bytes: amdDescriptorNoteFixture(metadata) }],
+  );
+  bytes[7] = osAbi;
+  bytes.writeUInt32LE(0x36, 48);
+  return bytes;
+};
+/**
+ * One final LZ4 literal sequence, the block form CUDA's 0x2000 profile stores.
+ * A single sequence is valid LZ4: separate sequences need an intervening match.
+ */
+const lz4LiteralBlock = (data: Buffer): Buffer => {
+  const head = [Math.min(data.length, 15) << 4];
+  if (data.length >= 15) {
+    let extra = data.length - 15;
+    while (extra >= 255) {
+      head.push(255);
+      extra -= 255;
+    }
+    head.push(extra);
+  }
+  return Buffer.concat([Buffer.from(head), data]);
+};
 export const cudaFixture = (
-  compression: "none" | "zstd" = "none",
-  entries = [
+  compression: "none" | "zstd" | "lz4" | "legacy" = "none",
+  entries: { kind: number; target: number; bytes: Buffer; flags?: number }[] = [
     { kind: 1, target: 80, bytes: Buffer.from(ptxFixture) },
     { kind: 2, target: 90, bytes: cubinFixture({ architecture: 90 }) },
   ],
 ): Buffer => {
-  const records = entries.map(({ kind, target, bytes }) => {
-    const compressed = compression === "zstd",
-      data = compressed ? zstdCompressSync(bytes) : bytes;
+  const records = entries.map(({ kind, target, bytes, flags: entryFlags }) => {
+    const compressed = compression !== "none",
+      data =
+        compression === "zstd"
+          ? zstdCompressSync(bytes)
+          : compression === "legacy"
+            ? deflateSync(bytes)
+            : compression === "lz4"
+              ? lz4LiteralBlock(bytes)
+              : bytes,
+      // CUDA tags each supported profile with its own flag bit; 0x2000 alone is
+      // the LZ4 profile and 0x1000 alone stays an unsupported declaration.
+      compressionFlag =
+        compression === "zstd"
+          ? 0x8000n
+          : compression === "legacy"
+            ? 0x1000n
+            : compression === "lz4"
+              ? 0x2000n
+              : 0n;
     const result = Buffer.alloc(64 + Math.ceil(data.length / 8) * 8);
     result.writeUInt16LE(kind, 0);
     result.writeUInt16LE(0x101, 2);
@@ -225,7 +439,10 @@ export const cudaFixture = (
     result.writeBigUInt64LE(BigInt(result.length - 64), 8);
     result.writeUInt32LE(compressed ? data.length : 0, 16);
     result.writeUInt32LE(target, 28);
-    result.writeBigUInt64LE(compressed ? 0x8011n : 0x11n, 40);
+    result.writeBigUInt64LE(
+      0x11n | compressionFlag | BigInt(entryFlags ?? 0),
+      40,
+    );
     result.writeBigUInt64LE(compressed ? BigInt(bytes.length) : 0n, 56);
     data.copy(result, 64);
     return result;
@@ -243,21 +460,43 @@ export const cudaFixture = (
 export const hipFixture = (
   payload = amdFixture(),
   targetId = "hipv4-amdgcn-amd-amdhsa--gfx900",
+  siblings: readonly { readonly id: string; readonly bytes: Buffer }[] = [],
 ): Buffer => {
-  const ids = ["host-x86_64-unknown-linux", targetId];
-  const headers = ids.map((id) => Buffer.alloc(24 + Buffer.byteLength(id)));
-  const start = 32 + headers.reduce((total, row) => total + row.length, 0);
-  for (let index = 0; index < headers.length; index++) {
+  const entries = [
+    { id: "host-x86_64-unknown-linux", bytes: Buffer.alloc(0) },
+    { id: targetId, bytes: payload },
+    ...siblings,
+  ];
+  const headers = entries.map(({ id }) =>
+    Buffer.alloc(24 + Buffer.byteLength(id)),
+  );
+  let offset = 32 + headers.reduce((total, row) => total + row.length, 0);
+  for (const [index, { id, bytes }] of entries.entries()) {
     const row = headers[index]!;
-    row.writeBigUInt64LE(BigInt(start));
-    row.writeBigUInt64LE(index === 0 ? 0n : BigInt(payload.length), 8);
-    row.writeBigUInt64LE(BigInt(Buffer.byteLength(ids[index]!)), 16);
-    row.write(ids[index]!, 24);
+    row.writeBigUInt64LE(BigInt(offset));
+    row.writeBigUInt64LE(BigInt(bytes.length), 8);
+    row.writeBigUInt64LE(BigInt(Buffer.byteLength(id)), 16);
+    row.write(id, 24);
+    offset += bytes.length;
   }
   const head = Buffer.alloc(32);
   head.write("__CLANG_OFFLOAD_BUNDLE__");
-  head.writeBigUInt64LE(2n, 24);
-  return Buffer.concat([head, ...headers, payload]);
+  head.writeBigUInt64LE(BigInt(entries.length), 24);
+  return Buffer.concat([
+    head,
+    ...headers,
+    ...entries.map(({ bytes }) => bytes),
+  ]);
+};
+/** Representation recognition only; these bytes do not establish valid LLVM IR. */
+export const llvmBitcodeFixture = (wrapped = false): Buffer => {
+  const raw = Buffer.from([0x42, 0x43, 0xc0, 0xde, 0, 0, 0, 0]);
+  if (!wrapped) return raw;
+  const header = Buffer.alloc(20);
+  header.writeUInt32LE(0x0b17c0de, 0);
+  header.writeUInt32LE(20, 8);
+  header.writeUInt32LE(raw.length, 12);
+  return Buffer.concat([header, raw]);
 };
 export const ccobFixture = (
   version: 1 | 2 | 3 = 2,

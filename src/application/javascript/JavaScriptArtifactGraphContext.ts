@@ -14,16 +14,16 @@ import type { ApplicationNode } from "../../domain/javascript/javascriptApplicat
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type {
   JavaScriptHtmlInlineScriptsObservation,
-  JavaScriptModuleArtifactAnalysis,
+  JavaScriptArtifactAnalysis,
   JavaScriptArtifactAnalysisScope,
 } from "./JavaScriptArtifactAnalysisTypes.js";
-import type { JavaScriptUnanalyzedArtifactLookup } from "../../domain/javascript/javascriptArtifactFiles.js";
-import { HTML_INLINE_SCRIPT_LOCATION_LIMIT } from "../../domain/javascript/htmlArtifactReferences.js";
 import type {
+  JavaScriptUnanalyzedArtifactLookup,
   JavaScriptArtifactFile,
   JavaScriptArtifactFileSet,
   JavaScriptArtifactFileKind,
 } from "../../domain/javascript/javascriptArtifactFiles.js";
+import { HTML_INLINE_SCRIPT_LOCATION_LIMIT } from "../../domain/javascript/htmlArtifactReferences.js";
 import { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
 import {
   artifactObservationEvidence,
@@ -41,10 +41,18 @@ export interface JavaScriptArtifactGraphContext {
   readonly accumulator: JavaScriptArtifactGraphAccumulator;
   readonly snapshot: ArtifactInventorySnapshot;
   readonly fileSet: JavaScriptArtifactFileSet;
-  readonly analysis: JavaScriptModuleArtifactAnalysis;
+  readonly analysis: JavaScriptArtifactAnalysis;
   readonly directoryPaths: ReadonlySet<string>;
   readonly root: ApplicationNode;
   readonly filesByPath: ReadonlyMap<string, JavaScriptArtifactFile>;
+  readonly analyzedFilesByPath?: ReadonlyMap<
+    string,
+    JavaScriptArtifactAnalysis["files"][number]
+  >;
+  readonly packagesByPath?: ReadonlyMap<
+    string,
+    JavaScriptArtifactAnalysis["packages"][number]
+  >;
   /** Borrowed inventory lookup for present files outside the source projection. */
   readonly unanalyzedFiles: JavaScriptUnanalyzedArtifactLookup | undefined;
   readonly fileNodes: Map<string, ApplicationNode>;
@@ -118,6 +126,7 @@ export const applicationRootPath = (
   context: JavaScriptArtifactGraphContext,
   source: JavaScriptArtifactFile,
 ): string | null => {
+  if (context.snapshot.coverage.status !== "complete") return null;
   // Unread launch metadata can name a main in another inventoried container.
   // Archive occurrence identity does not prove isolation from the Node loader.
   if (context.applicationOwnershipUnknownContainers.size > 0) return null;
@@ -142,9 +151,10 @@ export const applicationRootPath = (
     const file =
       context.filesByPath.get(path) ?? context.unanalyzedFiles?.get(path);
     if (file?.container_sha256 !== source.container_sha256) continue;
-    const metadata = context.analysis.packages.find(
-      (value) => value.path === path,
-    );
+    const metadata =
+      context.packagesByPath !== undefined
+        ? context.packagesByPath.get(path)
+        : context.analysis.packages.find((value) => value.path === path);
     if (metadata?.status !== "included") return null;
     const defaultEntry = context.filesByPath.get(`${prefix}index.js`);
     if (
@@ -215,7 +225,10 @@ export interface RoleAssetLinkInput {
 
 /** An explicit processing/selection gap with the applicable phase's authority. */
 export interface UnavailableParseInput {
-  readonly file: JavaScriptArtifactFile;
+  /** Missing source bytes are anchored to their observed inventory container. */
+  readonly file: Pick<JavaScriptArtifactFile, "path" | "container_sha256"> & {
+    readonly sha256: string | null;
+  };
   readonly asset: ApplicationNode;
   readonly operation: string;
   readonly authority: JavaScriptArtifactAnalysisScope["authority"];
@@ -318,10 +331,11 @@ export const addUnavailableStaticParseScope = (
   context: JavaScriptArtifactGraphContext,
   input: UnavailableParseInput,
 ): void => {
+  const artifactSha256 = input.file.sha256 ?? input.file.container_sha256;
   const node = context.accumulator.addNode({
     kind: "unknown",
     identity: artifactLocalIdentity(
-      input.file.sha256,
+      artifactSha256,
       "static-parse-scope",
       `${input.operation}:${input.file.path}`,
     ),
@@ -334,13 +348,16 @@ export const addUnavailableStaticParseScope = (
           path: input.file.path,
           operation: input.operation,
           limitation: input.limitation,
+          ...(input.file.sha256 === null
+            ? { source_bytes_available: false }
+            : {}),
           ...(input.failure === undefined
             ? {}
             : { analysis_failure: input.failure }),
         },
         evidence: unavailableStaticEvidence({
           authority: input.authority,
-          sha256: input.file.sha256,
+          sha256: artifactSha256,
           path: input.file.path,
           operation: input.operation,
           coverage:
@@ -361,7 +378,7 @@ export const addUnavailableStaticParseScope = (
     relation: "contains",
     properties: { scope: "unavailable-static-analysis" },
     evidence: artifactObservationEvidence({
-      sha256: input.file.sha256,
+      sha256: artifactSha256,
       path: input.file.path,
       operation: "associate-unavailable-parse-scope",
       coverage: completeApplicationCoverage(),
@@ -372,12 +389,19 @@ export const addUnavailableStaticParseScope = (
 /** Coverage for one bounded JavaScript AST analysis. */
 export const javascriptAnalysisCoverage = (
   analysis: NonNullable<
-    JavaScriptModuleArtifactAnalysis["files"][number]["javascript"]
+    JavaScriptArtifactAnalysis["files"][number]["javascript"]
   >,
 ): JavaScriptArtifactGraphCoverage =>
   analysis.parse_status === "complete"
     ? completeApplicationCoverage()
     : partialApplicationCoverage([], null);
+
+/** Parsed inventory identity shared by whole-file graph representations. */
+export const fileOccurrenceIdentity = (file: JavaScriptArtifactFile) => ({
+  container_sha256: file.container_sha256,
+  path: file.path,
+  sha256: file.sha256,
+});
 
 /** Stable identity for a fact scoped to one exact artifact. */
 export const artifactLocalIdentity = (

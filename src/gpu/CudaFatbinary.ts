@@ -1,38 +1,48 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
 import type { GpuObject } from "../domain/gpu/gpuCodeObjects.js";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/index.js";
 import {
   gpuCount,
   nextGpuContainerOffset,
   rejectGpu,
   type GpuSource,
 } from "./GpuSource.js";
-import { gpuObject } from "./GpuObject.js";
+import { gpuObject, recordDeclaredGpuDecodedSize } from "./GpuObject.js";
+const CUDA_FATBINARY = "cuda-fatbinary";
 export async function* readCudaFatbinary(
   source: GpuSource,
   signal?: AbortSignal,
-): AsyncGenerator<GpuObject> {
+): AsyncGenerator<{ row: GpuObject; declaredDecodedSize: number | bigint }> {
   let base = 0;
   while (base < source.size) {
-    const header = await source.read(base, 16);
-    if (header.readUInt32LE(0) !== 0xba55ed50)
+    const header = new BinaryReader(
+      await source.read(base, 16),
+      true,
+      CUDA_FATBINARY,
+    );
+    if (header.u32(0) !== 0xba55ed50)
       rejectGpu("Unexpected bytes between CUDA fatbinary records");
-    if (header.readUInt16LE(4) !== 1 || header.readUInt16LE(6) < 16)
+    if (header.u16(4) !== 1 || header.u16(6) < 16)
       rejectGpu("Unsupported CUDA fatbinary header");
-    const start = base + header.readUInt16LE(6),
-      length = gpuCount(header.readBigUInt64LE(8));
+    const start = base + header.u16(6),
+      length = gpuCount(header.word(8, 64));
     if (start > source.size || length > source.size - start)
       rejectGpu("CUDA fatbinary extent is truncated");
     const end = start + length;
     for (let position = start; position < end;) {
       assertArtifactReadActive(signal);
       if (end - position < 64) rejectGpu("CUDA entry header is truncated");
-      const h = await source.read(position, 64);
-      const kind = h.readUInt16LE(0),
-        version = h.readUInt16LE(2),
-        width = h.readUInt32LE(4);
-      const padded = gpuCount(h.readBigUInt64LE(8)),
-        encoded = h.readUInt32LE(16),
-        flags = h.readBigUInt64LE(40);
+      const h = new BinaryReader(
+        await source.read(position, 64),
+        true,
+        CUDA_FATBINARY,
+      );
+      const kind = h.u16(0),
+        version = h.u16(2),
+        width = h.u32(4);
+      const padded = gpuCount(h.word(8, 64)),
+        encoded = h.u32(16),
+        flags = h.word(40, 64);
       if (
         width < 64 ||
         width > end - position ||
@@ -40,14 +50,20 @@ export async function* readCudaFatbinary(
         encoded > padded
       )
         rejectGpu("CUDA entry extent is invalid");
-      const compressed = (flags & 0xa000n) !== 0n;
+      const compressed = (flags & 0xb000n) !== 0n;
       const row = gpuObject(source, {
         offset: position + width,
         size: compressed ? encoded : padded,
         kind: kind === 1 ? "ptx" : kind === 2 ? "cubin" : "unknown",
         metadata: { offset: position, size: width },
       });
-      row.target = `sm_${h.readUInt32LE(28)}${(flags & 0x100000n) !== 0n ? "a" : ""}`;
+      const architectureSuffix =
+        (flags & 0x100000n) !== 0n
+          ? "a"
+          : (flags & 0x200000n) !== 0n
+            ? "f"
+            : "";
+      row.target = `sm_${h.u32(28)}${architectureSuffix}`;
       row.raw_flags = `0x${flags.toString(16)}`;
       row.compression =
         (flags & 0x8000n) !== 0n && (flags & 0x2000n) === 0n
@@ -58,8 +74,8 @@ export async function* readCudaFatbinary(
               ? "unsupported"
               : "none";
       row.compression_id = compressed ? `cuda-flags:${row.raw_flags}` : null;
-      row.decoded_size = compressed ? gpuCount(h.readBigUInt64LE(56)) : padded;
-      if (compressed && (encoded === 0 || row.decoded_size === 0))
+      const declaredDecodedSize = compressed ? h.word(56, 64) : padded;
+      if (compressed && (encoded === 0 || declaredDecodedSize === 0n))
         rejectGpu("Compressed CUDA entry has an empty declared extent");
       if (version !== 0x101) {
         row.compression = "unsupported";
@@ -68,12 +84,14 @@ export async function* readCudaFatbinary(
         row.limitations.push(
           `CUDA entry version 0x${version.toString(16)} is not decoded`,
         );
+      } else {
+        recordDeclaredGpuDecodedSize(row, declaredDecodedSize);
       }
       if (row.compression === "unsupported")
         row.limitations.push(
           "This CUDA compression/version is not supported; original encoded bytes and target declarations remain located",
         );
-      yield row;
+      yield { row, declaredDecodedSize };
       position += width + padded;
     }
     base = await nextGpuContainerOffset(source, end);

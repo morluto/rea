@@ -1,10 +1,25 @@
 import {
+  canBorrowParsedJsonSnapshot,
+  freezeJsonSnapshot,
+  immutableJsonSnapshotMember,
+  isImmutableJsonSnapshot,
+} from "../../domain/immutableJson.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
+import {
   JAVASCRIPT_APPLICATION_PROVIDER,
   JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
-} from "../InvestigationProviders.js";
-import { isImmutableEvidence, type Evidence } from "../../domain/evidence.js";
-import { safeParseEvidence } from "../../domain/evidenceValidation.js";
+} from "../../domain/investigationProviders.js";
+import {
+  isImmutableEvidence,
+  evidenceFileTarget,
+  evidenceSubjectDisplay,
+  evidenceSubjectTarget,
+  type Evidence,
+  type EvidenceSubjectTarget,
+} from "../../domain/evidence.js";
+import { readEvidence } from "../../domain/evidenceValidation.js";
+import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import {
   type AnalysisInputIssue,
   AnalysisInputError,
@@ -34,6 +49,31 @@ export interface ApplicationGraphEvidenceSource {
   readonly semanticGraph: JavaScriptSemanticGraph | null;
 }
 
+/** Carry a subject only when it identifies the graph's root artifact. */
+export const applicationGraphSubjectTarget = (
+  source: ApplicationGraphEvidenceSource,
+): EvidenceSubjectTarget | undefined => {
+  const subject = source.evidence.subject;
+  const staticRootObserved =
+    source.kind === "static-application" &&
+    source.graph.nodes.some(
+      (node) =>
+        node.kind === "artifact" &&
+        node.identity.strategy === "content-digest" &&
+        node.identity.sha256 === source.rootArtifactSha256 &&
+        node.observations.some(
+          ({ evidence }) => evidence.extractor.operation === "inventory-root",
+        ),
+    );
+  const file = evidenceFileTarget({ subject });
+  return staticRootObserved ||
+    (source.kind === "managed-application" &&
+      file?.format === "pe" &&
+      file.sha256 === source.rootArtifactSha256)
+    ? evidenceSubjectTarget(subject)
+    : undefined;
+};
+
 /** Caller-owned Evidence failed validation at the application graph boundary. */
 export interface ApplicationGraphEvidenceInputFailure {
   readonly issues: readonly AnalysisInputIssue[];
@@ -42,9 +82,11 @@ export interface ApplicationGraphEvidenceInputFailure {
 /** Convert typed parser issues into this workflow's caller-facing input error. */
 export const applicationGraphEvidenceInputError = (
   operation: string,
-  failure: ApplicationGraphEvidenceInputFailure,
-): AnalysisInputError =>
-  new AnalysisInputError(operation, undefined, failure.issues);
+  failure: ApplicationGraphEvidenceInputFailure | EvidenceIntegrityError,
+): AnalysisInputError | EvidenceIntegrityError =>
+  failure instanceof EvidenceIntegrityError
+    ? failure
+    : new AnalysisInputError(operation, undefined, failure.issues);
 
 class InvalidApplicationGraphEvidence extends Error {
   constructor(readonly issues: readonly AnalysisInputIssue[]) {
@@ -84,47 +126,76 @@ export const parseApplicationGraphEvidence = (
   path: readonly (string | number)[] = [],
 ): Result<
   ApplicationGraphEvidenceSource,
-  ApplicationGraphEvidenceInputFailure
+  ApplicationGraphEvidenceInputFailure | EvidenceIntegrityError
 > =>
   captureInputValidation(() => {
-    const evidence = parseEvidenceInput(input, path);
+    const evidence = parseEvidenceInput(input);
     const owned = ownedApplicationSources.get(evidence);
     if (owned !== undefined) return owned;
+    const immutable =
+      isImmutableEvidence(evidence) && isImmutableJsonSnapshot(evidence);
+    let source: ApplicationGraphEvidenceSource;
     if (evidence.operation === "analyze_javascript_application") {
       requirePredicate(evidence, "rea.javascript-application-analysis", path);
       requireProvider(evidence, JAVASCRIPT_APPLICATION_PROVIDER, path);
-      return staticApplicationSource(evidence, path);
-    }
-    if (evidence.operation === "reconcile_javascript_runtime") {
+      source = staticApplicationSource(evidence, path, immutable);
+    } else if (evidence.operation === "reconcile_javascript_runtime") {
       requirePredicate(evidence, "rea.javascript-runtime-reconciliation", path);
       requireProvider(
         evidence,
         JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
         path,
       );
-      return staticRuntimeSource(evidence, path);
-    }
-    if (evidence.operation === "project_managed_application_graph") {
+      source = staticRuntimeSource(evidence, path, immutable);
+    } else if (evidence.operation === "project_managed_application_graph") {
       requirePredicate(evidence, "rea.managed-application-graph", path);
       requireProvider(evidence, MANAGED_WORKFLOW_PROVIDER, path);
-      return managedApplicationSource(evidence, path);
+      source = managedApplicationSource(evidence, path, immutable);
+    } else {
+      throw invalidEvidence(
+        path,
+        "operation",
+        "Expected authenticated JavaScript analysis, runtime reconciliation, or managed application graph Evidence.",
+      );
     }
-    throw invalidEvidence(
-      path,
-      "operation",
-      "Expected authenticated JavaScript analysis, runtime reconciliation, or managed application graph Evidence.",
-    );
+    if (immutable) {
+      const cached = Object.freeze(source);
+      ownedApplicationSources.set(evidence, cached);
+      return cached;
+    }
+    return source;
   });
+
+const borrowOrSealNormalizedResult = <Parsed extends JsonValue>(
+  evidence: Evidence,
+  parsed: Parsed,
+  immutable: boolean,
+  memberKeys: readonly string[],
+): Parsed => {
+  if (!immutable) return parsed;
+  const snapshot = immutableJsonSnapshotMember(evidence, "normalized_result");
+  const owned =
+    snapshot !== undefined && canBorrowParsedJsonSnapshot(snapshot, parsed)
+      ? (snapshot as Parsed)
+      : freezeJsonSnapshot(parsed);
+  for (const key of memberKeys) immutableJsonSnapshotMember(owned, key);
+  return owned;
+};
 
 const staticApplicationSource = (
   evidence: Evidence,
   path: readonly (string | number)[],
+  immutable: boolean,
 ): ApplicationGraphEvidenceSource => {
-  const result = parseCallerValue(
+  const parsed = parseCallerValue(
     (input) => javascriptApplicationAnalysisResultSchema.parse(input),
     evidence.normalized_result,
     [...path, "normalized_result"],
   );
+  const result = borrowOrSealNormalizedResult(evidence, parsed, immutable, [
+    "graph",
+    "semantic_graph",
+  ]);
   return staticApplicationSourceForResult(evidence, result, path);
 };
 
@@ -166,6 +237,7 @@ const staticApplicationSourceForResult = (
 const staticRuntimeSource = (
   evidence: Evidence,
   path: readonly (string | number)[],
+  immutable: boolean,
 ): ApplicationGraphEvidenceSource => {
   if (
     evidence.authority !== "analyst-inference" ||
@@ -176,11 +248,14 @@ const staticRuntimeSource = (
       "authority",
       "Runtime reconciliation Evidence must use analyst-inference authority and inferred confidence.",
     );
-  const result = parseCallerValue(
+  const parsed = parseCallerValue(
     (input) => javascriptRuntimeReconciliationResultSchema.parse(input),
     evidence.normalized_result,
     [...path, "normalized_result"],
   );
+  const result = borrowOrSealNormalizedResult(evidence, parsed, immutable, [
+    "graph",
+  ]);
   assertResultEvidenceLinksInEnvelope(
     result.evidence_links,
     evidence,
@@ -208,6 +283,7 @@ const staticRuntimeSource = (
 const managedApplicationSource = (
   evidence: Evidence,
   path: readonly (string | number)[],
+  immutable: boolean,
 ): ApplicationGraphEvidenceSource => {
   if (
     evidence.authority !== "analyst-inference" ||
@@ -218,11 +294,14 @@ const managedApplicationSource = (
       "authority",
       "Managed application graph Evidence must use analyst-inference authority and inferred confidence.",
     );
-  const result = parseCallerValue(
+  const parsed = parseCallerValue(
     (input) => managedApplicationGraphResultSchema.parse(input),
     evidence.normalized_result,
     [...path, "normalized_result"],
   );
+  const result = borrowOrSealNormalizedResult(evidence, parsed, immutable, [
+    "graph",
+  ]);
   assertResultEvidenceLinksInEnvelope(
     result.evidence_links,
     evidence,
@@ -262,11 +341,12 @@ const assertApplicationSubject = (
   result: JavaScriptApplicationAnalysisResult,
   path: readonly (string | number)[],
 ): void => {
+  const target = evidenceFileTarget(evidence);
   if (
-    evidence.subject === null ||
-    evidence.subject.digest.sha256 !== result.root_artifact_sha256 ||
-    evidence.subject.format !== result.format ||
-    evidence.subject.local_path !== result.input_path
+    target === undefined ||
+    target.sha256 !== result.root_artifact_sha256 ||
+    target.format !== result.format ||
+    evidenceSubjectDisplay(evidence)?.local_path !== result.input_path
   )
     throw invalidEvidence(
       path,
@@ -321,12 +401,15 @@ const requireProvider = (
 export const parseNativeApplicationEvidence = (
   inputs: readonly unknown[],
   path: readonly (string | number)[] = [],
-): Result<readonly Evidence[], ApplicationGraphEvidenceInputFailure> =>
+): Result<
+  readonly Evidence[],
+  ApplicationGraphEvidenceInputFailure | EvidenceIntegrityError
+> =>
   captureInputValidation(() => {
-    const parsed = inputs.map((input, index) =>
-      parseEvidenceInput(input, [...path, index]),
+    const parsed = inputs.map((input) => parseEvidenceInput(input));
+    const withoutSubject = parsed.findIndex(
+      (evidence) => evidenceFileTarget(evidence) === undefined,
     );
-    const withoutSubject = parsed.findIndex(({ subject }) => subject === null);
     if (withoutSubject !== -1)
       throw invalidEvidence(
         [...path, withoutSubject],
@@ -338,23 +421,24 @@ export const parseNativeApplicationEvidence = (
 
 const captureInputValidation = <Value>(
   operation: () => Value,
-): Result<Value, ApplicationGraphEvidenceInputFailure> => {
+): Result<
+  Value,
+  ApplicationGraphEvidenceInputFailure | EvidenceIntegrityError
+> => {
   try {
     return ok(operation());
   } catch (cause: unknown) {
     if (cause instanceof InvalidApplicationGraphEvidence)
       return err({ issues: cause.issues });
+    if (cause instanceof EvidenceIntegrityError) return err(cause);
     throw cause;
   }
 };
 
-const parseEvidenceInput = (
-  input: unknown,
-  path: readonly (string | number)[],
-): Evidence => {
-  const parsed = safeParseEvidence(input);
-  if (parsed.ok) return parsed.value;
-  throw zodInputFailure(parsed.error, input, path);
+const parseEvidenceInput = (input: unknown): Evidence => {
+  const parsed = readEvidence(input);
+  if (!parsed.ok) throw parsed.error;
+  return parsed.value;
 };
 
 const parseCallerValue = <Value>(

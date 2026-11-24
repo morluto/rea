@@ -1,3 +1,7 @@
+import {
+  coverageStatusSchema,
+  knownCoverageStatusSchema,
+} from "../coverage.js";
 import { javascriptSourceRangeSchema } from "./javascriptSourceCoordinates.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { z } from "zod";
@@ -16,9 +20,11 @@ import {
 import {
   classifyNextAppRoutePath,
   nextScriptBasePath,
+  nextAppSourceContextSchema,
+  type NextAppSourceContext,
 } from "./javascriptRoutePaths.js";
 
-const sourceStatus = z.enum(["complete", "partial", "unavailable", "unknown"]);
+const sourceStatus = z.enum([...coverageStatusSchema.options, "unavailable"]);
 const confidence = javaScriptRouteCandidateSchema.shape.confidence;
 const sourceShape = {
   id: z.string().regex(/^jss:[a-f0-9]{32}$/u),
@@ -30,6 +36,7 @@ const sourceShape = {
   status: sourceStatus,
   reported_route_capacity: javaScriptRouteSourceFactsSchema.shape.capacity,
   reason: z.string().nullable(),
+  next_app_context: nextAppSourceContextSchema.exactOptional(),
   base_path: z
     .strictObject({
       value: z.string(),
@@ -54,7 +61,7 @@ export const javaScriptRouteOccurrenceSchema = z.strictObject({
 });
 export const javaScriptInventoryRouteSchema = z.strictObject({
   id: z.string().regex(/^jsr:[a-f0-9]{32}$/u),
-  path: z.string().startsWith("/"),
+  path: z.string().regex(/^\//u),
   classification: z.enum(["page", "system", "unknown"]),
   classification_basis: z.enum([
     "next-app-page",
@@ -99,8 +106,8 @@ const inventoryShape = z.strictObject({
   unknowns: z.array(javaScriptRouteGapSchema),
   coverage: z.strictObject({
     scope: z.literal("provided-code-sources"),
-    source_parsing: z.enum(["complete", "partial", "unknown"]),
-    candidate_enumeration: z.enum(["complete", "partial"]),
+    source_parsing: coverageStatusSchema,
+    candidate_enumeration: knownCoverageStatusSchema,
     application_routes: z.literal("unknown"),
   }),
   statistics: z.strictObject({
@@ -134,13 +141,16 @@ export const javaScriptRouteInventorySchema = inventoryShape.superRefine(
             source.url,
             source.sha256,
             source.container_sha256,
+            ...(source.next_app_context === undefined
+              ? []
+              : [source.next_app_context]),
           ])
       )
         context.addIssue({
           code: "custom",
           path: ["sources"],
           message:
-            "Route source identity must be unique and bind its source/content fields",
+            "Route source identity must be unique and bind source/content/applicability fields",
         });
       sources.add(source.id);
     }
@@ -268,6 +278,7 @@ export type JavaScriptRouteInventorySource = z.infer<
   typeof javaScriptRouteInventorySourceSchema
 >;
 export interface JavaScriptRouteInventoryInput {
+  readonly next_app_context?: NextAppSourceContext;
   readonly key: string;
   readonly path: string | null;
   readonly url: string | null;
@@ -429,12 +440,28 @@ export function* buildJavaScriptRouteInventorySteps(
   const manifestIds: string[] = [];
   for (const input of inputs) {
     yield;
+    const metadata = classifyNextAppRoutePath(
+      input.url ?? input.path ?? "",
+      input.url !== null
+        ? { kind: "script-url" }
+        : {
+            kind: "source-path",
+            source: input.next_app_context ?? {
+              kind: "unknown",
+              package: null,
+              reason: "Next App Router source applicability was not measured.",
+            },
+          },
+    );
+    const nextContext =
+      metadata === undefined ? undefined : input.next_app_context;
     const id = lookupId("jss", [
       input.key,
       input.path,
       input.url,
       input.sha256,
       input.container_sha256,
+      ...(nextContext === undefined ? [] : [nextContext]),
     ]);
     manifestIds.push(id);
     const prefix =
@@ -447,6 +474,7 @@ export function* buildJavaScriptRouteInventorySteps(
       sha256: input.sha256,
       container_sha256: input.container_sha256,
       status: input.status,
+      ...(nextContext === undefined ? {} : { next_app_context: nextContext }),
       reported_route_capacity: input.facts?.capacity ?? null,
       reason: input.reason,
       base_path: prefix
@@ -455,7 +483,6 @@ export function* buildJavaScriptRouteInventorySteps(
     };
     if (!reserve(source)) continue;
     sources.push(source);
-    const metadata = classifyNextAppRoutePath(input.url ?? input.path ?? "");
     const metadataPath = metadata?.kind === "known" ? metadata.path : undefined;
     contexts.push({ input, source, metadataPath });
     if (metadata?.kind === "unknown") {

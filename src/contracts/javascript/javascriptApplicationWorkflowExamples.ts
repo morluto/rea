@@ -1,3 +1,5 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import { createEvidence } from "../../domain/evidence.js";
 import {
   readRuntimeReconciliationInput,
@@ -22,7 +24,7 @@ if (!reconciliationInput.ok)
   );
 const reconciliation = reconcileJavaScriptRuntime(reconciliationInput.value);
 const reconciliationEvidence = createEvidence(
-  undefined,
+  unknownTarget("derived-from-linked-evidence"),
   {
     id: "rea-javascript-runtime-reconciliation",
     name: "REA JavaScript runtime reconciliation",
@@ -111,4 +113,4 @@ export const SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE = {
     limitations: [],
   }),
   application: JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE,
-};
+} satisfies Readonly<Record<string, JsonValue>>;

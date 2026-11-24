@@ -8,6 +8,7 @@ import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
+  analyzeJavaScriptApplication,
   reconstructJavaScriptArtifact,
   readJavaScriptArtifactFiles,
 } from "../../support/javascriptApplicationScope.js";
@@ -15,7 +16,7 @@ import { scanArtifactInventory } from "../../fixtures/artifactInventory.js";
 import type {
   ArtifactEntry,
   ArtifactReader,
-} from "../../../src/artifacts/ArtifactReader.js";
+} from "../../../src/resources/ArtifactReader.js";
 import { writeJavaScriptArtifactFixture } from "../../fixtures/javascriptArtifactApplication.js";
 
 it("reads local source maps as part of static artifact analysis", async () => {
@@ -382,7 +383,36 @@ it("retains every repeated content observation and containment path", async () =
     truncated: false,
     omitted_count: 0,
   });
-}, 15_000);
+});
+
+it("rejects NUL paths through the public request contract before reconstruction", async () => {
+  const input = { input_path: "invalid\u0000.asar" };
+  await expect(reconstructJavaScriptArtifact(input)).rejects.toMatchObject({
+    name: "ZodError",
+    issues: [
+      {
+        code: "invalid_format",
+        path: ["input_path"],
+        message: "Local filesystem paths cannot contain NUL",
+      },
+    ],
+  });
+
+  const result = await analyzeJavaScriptApplication(input);
+  if (result.ok) throw new Error("Expected invalid input path");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisInputError",
+    operation: "analyze_javascript_application",
+    issues: [
+      {
+        path: ["input_path"],
+        reason: "invalid_format",
+        expected: "regex",
+        message: "Local filesystem paths cannot contain NUL",
+      },
+    ],
+  });
+});
 
 it("rejects traversal from a production reader seam and malformed ASAR containers", async () => {
   const root = await fixtureDirectory();

@@ -1,24 +1,65 @@
 import {
-  erlangBeamSchema,
   inspectErlangBeamInputSchema,
+  erlangBeamSchema,
 } from "../../domain/erlang/beam.js";
 import type { ToolContract } from "../toolContractTypes.js";
-import { toolContractMetadata } from "../toolEffects.js";
-import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
+import { toolContractMetadata, evidenceEffects } from "../toolEffects.js";
+import { analysisDetailOutputSchemaOf } from "../analysisDetail.js";
+import { z } from "zod";
+import {
+  erlangBeamSummaryViewResultSchema,
+  erlangBeamTableViewResultSchema,
+} from "../../domain/analysisView/summarySchemas/erlangBeamSummarySchemas.js";
+import {
+  erlangBeamCompleteDeliveryShape,
+  erlangBeamSummaryDeliveryShape,
+} from "../../domain/analysisView/erlangBeamView.js";
+import { presentRootDiscriminator } from "../../domain/schemaAnnotations.js";
 
-/** Static BEAM IFF inspection is independent of active native-analysis providers. */
+/** Delivery selection does not change provider inputs or complete Evidence identity. */
+export const inspectErlangBeamRequestSchema = presentRootDiscriminator(
+  z.discriminatedUnion("detail", [
+    inspectErlangBeamInputSchema.extend(erlangBeamCompleteDeliveryShape),
+    inspectErlangBeamInputSchema.extend(erlangBeamSummaryDeliveryShape),
+  ]),
+  "detail",
+);
+
+/** Static BEAM inspection is independent of active native-analysis providers. */
 export const ERLANG_BEAM_TOOL_CONTRACTS = [
   {
     name: "inspect_erlang_beam",
-    ...toolContractMetadata("inspect_erlang_beam"),
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_erlang_beam", evidenceEffects),
     kind: "artifact-provider",
+    requiresActiveTarget: true,
     description:
-      "Inspect one explicit local Erlang BEAM IFF container without executing bytecode or installing Erlang. Returns FOR1 form bounds, chunk names, payload SHA-256, Atom/AtU8 names, export/import/lambda tables with resolved atom names when present, and the Code chunk instruction-set header. Missing optional tables stay null rather than empty-everywhere. Reads a stable regular file; malformed FOR1/BEAM headers, truncated chunks and exhausted budgets return no partial success. Portable on supported Node hosts; no BEAM emulator is required.",
-    inputSchema: inspectErlangBeamInputSchema,
-    outputSchema: evidenceResultOf(erlangBeamSchema),
+      "Inspect an Erlang BEAM IFF file without executing bytecode or requiring Erlang. Returns chunk byte ranges/digests, atoms, exports/imports/lambdas and Code header. Default complete returns full Evidence; detail summary retains it, and an optional beam view selects collection rows in the first call. Reuse inspect_analysis_view kind beam for atoms/exports/imports/lambdas/chunks, exact names/indices/fields and paging. source_index scopes rows to parent/collection, preserving every arity; original atom/lambda indices remain distinct. Missing tables/counts stay null, not empty; runtime absence is unknown. Malformed/truncated input or exhausted budgets fail without partial success.",
+    inputSchema: inspectErlangBeamRequestSchema,
+    outputSchema: analysisDetailOutputSchemaOf(
+      erlangBeamSchema,
+      z.union([
+        erlangBeamSummaryViewResultSchema,
+        erlangBeamTableViewResultSchema,
+      ]),
+    ),
     examples: [
       {
-        title: "Inspect BEAM atoms, exports and the Code header",
+        title: "Return selected exports and retain the complete BEAM report",
+        input: {
+          path: "/artifacts/app.beam",
+          detail: "summary",
+          view: {
+            kind: "beam",
+            collection: "exports",
+            names: ["module_info"],
+            fields: ["function_index", "function", "arity", "label"],
+          },
+        },
+      },
+      {
+        title: "Inspect the complete BEAM structure",
         input: { path: "/artifacts/app.beam" },
       },
     ],

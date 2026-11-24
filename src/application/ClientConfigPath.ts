@@ -1,5 +1,7 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { lstat, realpath } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
 interface ClientConfigPathStats {
   readonly uid?: number;
@@ -70,16 +72,25 @@ const resolveOwnedConfigSymlink = async (
 const canonicalRegularConfigPath = async (
   requestedPath: string,
   fileSystem: ClientConfigPathFileSystem,
-): Promise<string> => {
+): Promise<string | undefined> => {
   if (fileSystem.realpath === undefined) return requestedPath;
-  let ancestor = resolve(requestedPath);
+  let ancestor = absoluteCallerPath(requestedPath);
+  const directoryRequired =
+    HOST_PLATFORM.platform !== "win32" && ancestor.endsWith("/");
   const missing: string[] = [];
   while (true) {
     try {
-      return join(await fileSystem.realpath(ancestor), ...missing);
+      const canonical = join(await fileSystem.realpath(ancestor), ...missing);
+      // Reconstructing missing children must retain the caller's directory
+      // requirement; otherwise a missing `config.json/` becomes a writable file.
+      return directoryRequired && !canonical.endsWith("/")
+        ? `${canonical}/`
+        : canonical;
     } catch (cause: unknown) {
-      if (!isAbsentPath(cause) || dirname(ancestor) === ancestor)
+      if (!isAbsentClientConfigPath(cause) || dirname(ancestor) === ancestor)
         return requestedPath;
+      // An absent directory before '..' cannot establish the selected parent.
+      if (basename(ancestor) === "..") return undefined;
       missing.unshift(basename(ancestor));
       ancestor = dirname(ancestor);
     }
@@ -89,7 +100,8 @@ const canonicalRegularConfigPath = async (
 const isMissing = (cause: unknown): boolean =>
   cause instanceof Error && "code" in cause && cause.code === "ENOENT";
 
-const isAbsentPath = (cause: unknown): boolean =>
+/** A candidate cannot exist when the entry is missing or an ancestor is a file. */
+export const isAbsentClientConfigPath = (cause: unknown): boolean =>
   cause instanceof Error &&
   "code" in cause &&
   (cause.code === "ENOENT" || cause.code === "ENOTDIR");

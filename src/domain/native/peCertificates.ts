@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
+import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -66,6 +68,8 @@ const distinguishedNameSchema = z.strictObject({
       oid: z.string(),
       oid_name: z.string().nullable(),
       value: z.string(),
+      // Older retained Evidence omitted RDN grouping.
+      rdn_index: uint.optional(),
     }),
   ),
 });
@@ -97,6 +101,8 @@ const signerInfoSchema = z.strictObject({
     .regex(/^[0-9a-f]*$/)
     .nullable(),
   authenticated_attributes: z.boolean(),
+  // Null means the signer has no unsigned attributes; an array lists them.
+  unsigned_attribute_oids: z.array(z.string()).nullable(),
 });
 
 const pkcs7Schema = z.strictObject({
@@ -139,10 +145,12 @@ export const peCertificatesSchema = z.strictObject({
     .nullable(),
   entries: z.array(certificateEntrySchema),
   coverage: z.strictObject({
-    status: z.literal("complete"),
+    status: knownCoverageStatusSchema,
     examined_entries: uint,
     certificates: uint,
   }),
+  /** Evidence saved before this field existed omits it. */
+  header_anomalies: peHeaderAnomaliesSchema.optional(),
   limitations: z.array(z.string()),
 });
 

@@ -12,12 +12,14 @@ import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ghidraInstallationHost } from "./ghidraMcpHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const REFUSAL =
-  "REA_GHIDRA_LANGUAGE_ID cannot override the admitted raw-binary import.";
+  "Processor or compiler specification overrides cannot replace the admitted raw-binary import.";
 
 const openRawArm = async (languageId: string | undefined) => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-profile-refusal-"));
+  const directory = await createTestTempDirectory("rea-profile-refusal-");
   const path = join(directory, "image.bin");
   await writeFile(path, Buffer.from([0, 0, 160, 225]));
   const config = parseConfig({
@@ -43,7 +45,10 @@ const openRawArm = async (languageId: string | undefined) => {
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "profile-refusal", version: "1.0.0" });
+  const mcp = new Client(
+    { name: "profile-refusal", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -63,28 +68,18 @@ const openRawArm = async (languageId: string | undefined) => {
   } finally {
     await Promise.allSettled([mcp.close(), server.close()]);
     await session.close();
-    await rm(directory, { recursive: true, force: true });
   }
 };
 
-it("returns provider-selection diagnostics when the selected provider refuses its profile", async () => {
+it("returns configuration diagnostics when a language override conflicts with the admitted profile", async () => {
   const { result, clients } = await openRawArm("ARM:LE:32:v7");
   expect(clients).toBe(0);
   const { error } = parseMcpToolError(result);
   expect(error).toMatchObject({
-    code: "capability_unavailable",
+    code: "configuration_invalid",
     message: expect.stringContaining(REFUSAL),
     details: {
-      selection_reason: "target_unsupported",
-      requested_provider_id: "ghidra",
-      candidate_ids: ["ghidra"],
-      rejections: [
-        expect.objectContaining({
-          provider_id: "ghidra",
-          code: "target_format_unsupported",
-          reason: REFUSAL,
-        }),
-      ],
+      settings: [{ setting: "REA_GHIDRA_LANGUAGE_ID", constraint: REFUSAL }],
     },
   });
 });

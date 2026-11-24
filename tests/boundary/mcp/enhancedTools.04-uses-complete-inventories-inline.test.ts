@@ -6,12 +6,12 @@ import {
   connect as connectTool,
   jsonResult,
 } from "./enhancedToolsHarness.js";
-import type {
-  AnalysisExecution,
-  AnalysisOperationPort,
-} from "../../../src/application/AnalysisProvider.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
-import type { AnalysisOperation } from "../../../src/application/AnalysisProvider.js";
+import {
+  createAnalysisExecution,
+  type AnalysisExecution,
+  type AnalysisOperation,
+  type AnalysisOperationPort,
+} from "../../../src/ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -22,6 +22,7 @@ import {
   ok as resultOk,
   type Result,
 } from "../../../src/domain/result.js";
+import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 
@@ -120,6 +121,37 @@ it("retains distinct class locations and excludes compiler bookkeeping", async (
       { address: "0xd", name: "_$s4main7ScoringMp" },
     ],
   });
+});
+
+it("rejects extra protocol arguments before reading an empty name inventory", async () => {
+  const reads: string[] = [];
+  const client = await connect({
+    execute: async (name) => {
+      if (name !== "list_names") throw new Error(`Unexpected read: ${name}`);
+      reads.push(name);
+      return ok([]);
+    },
+  });
+
+  const invalid = await client.callTool({
+    name: "get_objc_protocols",
+    arguments: { unexpected: "benign" },
+  });
+  expect(invalid.isError).toBe(true);
+  expect(parseMcpToolError(invalid).error).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [{ path: ["unexpected"], reason: "unknown_argument" }],
+    },
+  });
+  expect(reads).toEqual([]);
+
+  const empty = await client.callTool({
+    name: "get_objc_protocols",
+    arguments: {},
+  });
+  expect(jsonResult(empty)).toEqual({ count: 0, protocols: [] });
+  expect(reads).toEqual(["list_names"]);
 });
 
 it("discovers stripped Hopper class labels through MCP with literal filtering", async () => {
@@ -364,6 +396,10 @@ describe("enhanced MCP binary overview", () => {
       segment_count: 2,
       procedure_count: 2,
       string_count: 700,
+      inventory_coverage: {
+        scope: "provider_inventory",
+        discovery_coverage: "unknown",
+      },
     });
   });
 
@@ -406,11 +442,56 @@ describe("enhanced MCP binary overview", () => {
       document: "/tmp/fixture.bin",
       procedure_count: 0,
       string_count: 0,
+      inventory_coverage: {
+        scope: "provider_inventory",
+        discovery_coverage: "unknown",
+      },
     });
   });
 });
 
 describe("enhanced MCP inventory validation", () => {
+  // Injected provider successes verify public MCP composition, not real-provider behavior.
+  it.each(["list_procedures", "list_strings"] as const)(
+    "rejects malformed successful %s inventory without manufacturing overview counts",
+    async (operation) => {
+      let inventory: JsonValue = [];
+      const client = await connect({
+        execute: (name, parameters, options) =>
+          name === operation
+            ? Promise.resolve(ok(inventory))
+            : completeOverviewPort.execute(name, parameters, options),
+      });
+      for (const malformed of [
+        { error: "inventory unavailable" },
+        { "0x1000": "obsolete map" },
+        [{ address: "0x1000", value: 7 }],
+      ]) {
+        inventory = malformed;
+        const response = await client.callTool({
+          name: "binary_overview",
+          arguments: {},
+        });
+        expect(response.isError).toBe(true);
+        expect(parseMcpToolError(response).error).toMatchObject({
+          code: "unreadable_output",
+          details: { operation },
+        });
+      }
+      inventory = [{ address: "0x1000", value: "canonical control" }];
+      const response = await client.callTool({
+        name: "binary_overview",
+        arguments: {},
+      });
+      expect(response.isError).not.toBe(true);
+      expect(jsonResult(response)).toMatchObject({
+        document: "fixture",
+        procedure_count: operation === "list_procedures" ? 1 : 2,
+        string_count: operation === "list_strings" ? 1 : 700,
+      });
+    },
+  );
+
   it("rejects paginated provider output", async () => {
     const client = await connect({
       execute: () =>

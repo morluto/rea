@@ -1,26 +1,20 @@
-import { metadataReportSubjectFormat } from "../../domain/apple/machoTargetSelection.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { RustBinaryPort } from "./RustBinaryPort.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { binaryMetadataArchitecture } from "../../domain/binaryMetadataArchitecture.js";
 import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+  machoSelectionAnswersArchitecture,
+  metadataReportSubjectFormat,
+} from "../../domain/apple/machoTargetSelection.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { RustBinaryPort } from "../../ports/rust/RustBinaryPort.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
-  rustArchitectureForSubject,
   rustBinarySchema,
   type InspectRustBinaryInput,
 } from "../../domain/rust/rustBinary.js";
 import { inspectRustBinaryRequestSchema } from "../../domain/rust/rustBinaryQuery.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import { err, ok, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import {
-  requireAnalysisViewRetention,
-  projectRetainedAnalysis,
-  type AnalysisViewRetention,
-} from "../analysisView/AnalysisViewService.js";
+import type { Result } from "../../domain/result.js";
+import type { AnalysisViewRetention } from "../analysisView/AnalysisViewRetention.js";
+import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_rust_binary";
 
@@ -29,56 +23,45 @@ export class RustBinaryService {
   constructor(readonly provider: RustBinaryPort) {}
 
   close(): Promise<void> {
-    return this.provider.close?.() ?? Promise.resolve();
+    return this.provider.close();
   }
 
   /** Inspect one explicitly selected file without acquiring a binary session. */
-  async inspect(
+  inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
-    retention: AnalysisViewRetention = {
-      recordEvidence: undefined,
-      evidenceById: undefined,
-    },
+    retention?: AnalysisViewRetention,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    const input = inspectRustBinaryRequestSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    const { detail, view, ...parameters } = input.data;
-    const compact = detail === "summary" || view !== undefined;
-    if (compact) {
-      const ready = requireAnalysisViewRetention(OPERATION, retention);
-      if (!ready.ok) return ready;
-    }
-    const inspected = await this.provider.inspect(parameters, options);
-    if (!inspected.ok) return inspected;
-    const report = rustBinarySchema.safeParse(inspected.value);
-    if (!report.success || report.data.artifact.path !== input.data.path)
-      return err(
-        new AnalysisOutputError(
-          OPERATION,
-          "Rust dependency reader returned malformed metadata or changed the selected artifact identity.",
-        ),
-      );
-    const completed = completeProviderEvidence(
-      evidenceFor(this.provider.identity, parameters, report.data),
-      options?.signal,
+    return executeArtifactInspection(
+      {
+        operation: OPERATION,
+        inputSchema: inspectRustBinaryRequestSchema,
+        outputSchema: rustBinarySchema,
+        provider: this.provider,
+        retainCompletedReport: true,
+        invalidOutputMessage:
+          "Rust dependency reader returned malformed metadata or changed the selected artifact or slice identity.",
+        toParameters: ({ detail: _detail, view: _view, ...parameters }) =>
+          parameters,
+        selectRetainedView: ({ detail, view }) =>
+          detail === "summary" || view !== undefined
+            ? view === undefined
+              ? { kind: "summary" }
+              : { kind: "rust", ...view }
+            : undefined,
+        validateReport: (report, parameters) =>
+          report.artifact.path === parameters.path &&
+          machoSelectionAnswersArchitecture(
+            report.selected_slice,
+            parameters.architecture,
+          ),
+        buildEvidence: (report, identity, parameters) =>
+          evidenceFor(identity, parameters, report),
+      },
+      rawInput,
+      options,
+      retention,
     );
-    return compact && completed.ok
-      ? projectRetainedAnalysis(
-          completed.value,
-          retention,
-          view === undefined ? { kind: "summary" } : { kind: "rust", ...view },
-        )
-      : completed;
   }
 }
 
@@ -87,7 +70,7 @@ const evidenceFor = (
   parameters: InspectRustBinaryInput,
   value: ReturnType<typeof rustBinarySchema.parse>,
 ): Evidence => {
-  const architecture = rustArchitectureForSubject(value.architecture);
+  const architecture = binaryMetadataArchitecture(value.architecture);
   const section = value.auditable_metadata;
   return createEvidence(
     {

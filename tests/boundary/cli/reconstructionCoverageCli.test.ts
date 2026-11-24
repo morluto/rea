@@ -1,3 +1,5 @@
+import { reconstructionClosureResultSchema } from "../../../src/domain/reconstructionCoverage.js";
+import { reconstructionCoverageScopeCases } from "../../../src/domain/reconstructionCoverageScope.fixture.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -18,18 +20,37 @@ const currentCoverage = () => {
   };
 };
 
-const evaluate = async (cli: TestCli, coverage: unknown) => {
+const evaluate = async (
+  cli: TestCli,
+  coverage: unknown,
+  boundaryId = "replacement.cli",
+) => {
   const root = await createTestTempDirectory("rea-coverage-cli-");
   const input = join(root, "request.json");
-  await writeFile(
-    input,
-    JSON.stringify({ coverage, boundary_id: "replacement.cli" }),
-  );
+  await writeFile(input, JSON.stringify({ coverage, boundary_id: boundaryId }));
   return cli.run({
     arguments: ["evaluate-reconstruction-coverage", input, "--json"],
     cwd: root,
   });
 };
+
+cliTest(
+  "distinguishes malformed boundary IDs from unknown IDs",
+  async ({ cli }) => {
+    const coverage = currentCoverage();
+    for (const [boundaryId, reason] of [
+      ["replacement cli", "invalid_format"],
+      ["replacement.other", "invalid_value"],
+    ] as const) {
+      const result = await evaluate(cli, coverage, boundaryId);
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        details: { issues: [{ path: ["boundary_id"], reason }] },
+      });
+    }
+  },
+);
 
 cliTest(
   "evaluates complete inline coverage through the compiled CLI",
@@ -113,5 +134,41 @@ cliTest(
         issues: [{ path: ["coverage", "owners"], reason: "invalid_type" }],
       },
     });
+  },
+);
+
+cliTest(
+  "accounts for effective scope and conflicting proofs through CLI and MCP",
+  async ({ cli }) => {
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected shared file MCP session");
+    for (const {
+      label,
+      coverage,
+      status,
+      codes,
+      surfaces,
+      evidenceIds,
+    } of reconstructionCoverageScopeCases()) {
+      coverage.verifier_results[0]!.observed_at = new Date().toISOString();
+      const cliResult = await evaluate(cli, coverage);
+      expect(cliResult.exitCode, label).toBe(0);
+      const mcpResult = await call("evaluate_reconstruction_coverage", {
+        coverage,
+        boundary_id: "replacement.cli",
+      });
+      expect(mcpResult.isError, label).not.toBe(true);
+      for (const output of [cliResult.json, mcpResult.structuredContent]) {
+        const result = reconstructionClosureResultSchema.parse(output);
+        expect(result.status, label).toBe(status);
+        expect(result.summary.required_surfaces, label).toBe(surfaces);
+        expect(result.reasons.map(({ code }) => code).sort(), label).toEqual(
+          [...codes].sort(),
+        );
+        expect(result.evidence_ids, label).toEqual(
+          expect.arrayContaining([...evidenceIds]),
+        );
+      }
+    }
   },
 );

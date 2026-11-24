@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { z } from "zod";
 
 import {
@@ -9,12 +7,23 @@ import {
 
 import { decodeCanonicalBase64 } from "../webScreenshot.js";
 import { readPngHeaderDimensions } from "../pngHeader.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const scope = {
   pid: z.int().positive(),
   window_id: z.int().positive(),
-  screenshot: z.boolean().default(true),
-  accessibility: z.boolean().default(true),
+  screenshot: z
+    .boolean()
+    .default(true)
+    .describe(
+      "Capture the selected window; screenshot or accessibility must be enabled.",
+    ),
+  accessibility: z
+    .boolean()
+    .default(true)
+    .describe(
+      "Read the selected window accessibility tree; screenshot or accessibility must be enabled.",
+    ),
   max_nodes: z
     .int()
     .positive()
@@ -69,7 +78,7 @@ const nativeUiScreenshotSchema = z
       .string()
       .min(4)
       .describe(
-        "Canonical base64 encoding of PNG bytes; the decoded bytes must have a PNG signature and IHDR chunk.",
+        "Canonical base64 encoding of PNG bytes; the decoded bytes must have a PNG signature and a valid IHDR chunk.",
       ),
     sha256: z
       .string()
@@ -93,7 +102,7 @@ const nativeUiScreenshotSchema = z
       });
       return;
     }
-    if (createHash("sha256").update(bytes).digest("hex") !== screenshot.sha256)
+    if (sha256Hex(bytes) !== screenshot.sha256)
       context.addIssue({
         code: "custom",
         message: "PNG screenshot digest mismatch",
@@ -129,7 +138,7 @@ export const nativeUiSnapshotSchema = z.strictObject({
       path: z.array(z.int().nonnegative()),
       role: z.string().nullable(),
       title: z.string().nullable(),
-      value: z.string().nullable(),
+      value: z.union([z.string(), z.number(), z.boolean()]).nullable(),
       actions: z.array(z.string()),
       children_count: z.int().nonnegative().nullable(),
     }),

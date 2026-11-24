@@ -15,6 +15,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createJadxStartupFixture as setup } from "../../fixtures/android/jadxStartup.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -286,10 +287,13 @@ it("returns terminal startup diagnostics and partial identity through the MCP co
     { kind: "session", session },
     { androidAnalysis: f.provider },
   );
-  const client = new Client({
-    name: "jadx-startup-finalization",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "jadx-startup-finalization",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   try {
     const [local, remote] = InMemoryTransport.createLinkedPair();
     await server.connect(remote);
@@ -439,12 +443,12 @@ it("keeps a foreign file-cleanup abort reason opaque at the session checkpoint",
   const caller = new AbortController();
   const handle = await open(f.apk, "r");
   const owner = new OwnedFileHandle(handle);
-  const reason = new RegularFileCleanupFailure(
-    f.apk,
+  const reason = new RegularFileCleanupFailure({
+    path: f.apk,
     owner,
-    { kind: "failed", cause: new Error("foreign read failed") },
-    new Error("foreign close failed"),
-  );
+    outcome: { kind: "failed", cause: new Error("foreign read failed") },
+    cleanupCause: new Error("foreign close failed"),
+  });
   const execute = JadxSession.prototype.execute;
   const checkpoint = vi
     .spyOn(JadxSession.prototype, "execute")

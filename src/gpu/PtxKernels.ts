@@ -1,61 +1,107 @@
-import { BinaryFormatFailure } from "../native/metadata/BinaryContainer.js";
+import {
+  BinaryFormatFailure,
+  BinaryResourceFailure,
+} from "../domain/binaryContainer.js";
 import type { GpuKernel } from "../domain/gpu/gpuCodeObjects.js";
-import { BinaryResourceFailure } from "../native/metadata/BinaryContainer.js";
 import { GPU_REPORT_BYTES, rejectGpu } from "./GpuSource.js";
 interface Token {
   readonly value: string;
   readonly start: number;
   readonly end: number;
 }
+const isPtxWordChar = (code: number): boolean =>
+  (code >= 0x30 && code <= 0x39) ||
+  (code >= 0x41 && code <= 0x5a) ||
+  (code >= 0x61 && code <= 0x7a) ||
+  code === 0x5f ||
+  code === 0x2e ||
+  code === 0x24 ||
+  code === 0x25 ||
+  code === 0x40;
+
+const isWhitespaceAt = (text: string, at: number, code: number): boolean =>
+  code < 0x80
+    ? code === 0x20 || (code >= 0x09 && code <= 0x0d)
+    : /\s/u.test(text[at]!);
+
 /** Byte coordinates are accumulated once, including non-ASCII comments and quoted strings. */
 function* tokens(text: string): Generator<Token> {
+  const len = text.length;
   let at = 0,
     byte = 0;
   const advance = (): void => {
+    const first = text.charCodeAt(at);
+    if (first < 0x80) {
+      at += 1;
+      byte += 1;
+      return;
+    }
     const code = text.codePointAt(at)!;
     at += code > 0xffff ? 2 : 1;
-    byte += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+    byte += code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
   };
-  while (at < text.length) {
-    if (/\s/u.test(text[at]!)) {
+  while (at < len) {
+    const code = text.charCodeAt(at);
+    if (isWhitespaceAt(text, at, code)) {
       advance();
       continue;
     }
-    if (text.startsWith("//", at)) {
-      while (at < text.length && text[at] !== "\n") advance();
-      continue;
-    }
-    if (text.startsWith("/*", at)) {
-      advance();
-      advance();
-      while (at < text.length && !text.startsWith("*/", at)) advance();
-      if (at === text.length) rejectGpu("Unterminated PTX comment");
-      advance();
-      advance();
-      continue;
+    if (code === 0x2f && at + 1 < len) {
+      const next = text.charCodeAt(at + 1);
+      if (next === 0x2f) {
+        while (at < len && text.charCodeAt(at) !== 0x0a) advance();
+        continue;
+      }
+      if (next === 0x2a) {
+        at += 2;
+        byte += 2;
+        while (
+          at < len &&
+          !(text.charCodeAt(at) === 0x2a && text.charCodeAt(at + 1) === 0x2f)
+        )
+          advance();
+        if (at === len) rejectGpu("Unterminated PTX comment");
+        at += 2;
+        byte += 2;
+        continue;
+      }
     }
     const start = byte,
       position = at;
-    if (text[at] === '"') {
-      advance();
+    if (code === 0x22) {
+      at += 1;
+      byte += 1;
       let closed = false;
-      while (at < text.length) {
-        if (text[at] === '"') {
-          advance();
+      while (at < len) {
+        const ch = text.charCodeAt(at);
+        if (ch === 0x22) {
+          at += 1;
+          byte += 1;
           closed = true;
           break;
         }
-        if (text[at] === "\\") {
-          advance();
-          if (at < text.length) advance();
+        if (ch === 0x5c) {
+          at += 1;
+          byte += 1;
+          if (at < len) advance();
         } else advance();
       }
       if (!closed) rejectGpu("Unterminated PTX string");
       yield { value: '""', start, end: byte };
       continue;
     }
-    if (/[.\w$%@]/u.test(text[at]!)) {
-      while (at < text.length && /[.\w$%@]/u.test(text[at]!)) advance();
+    if (isPtxWordChar(code)) {
+      // Dot-prefixed keywords remain separate when their whitespace is omitted.
+      // Internal dots in names, instruction mnemonics and version literals stay intact.
+      const keyword = code === 0x2e;
+      at += 1;
+      byte += 1;
+      while (at < len) {
+        const ch = text.charCodeAt(at);
+        if (!isPtxWordChar(ch) || (keyword && ch === 0x2e)) break;
+        at += 1;
+        byte += 1;
+      }
     } else advance();
     if (at - position > 65536)
       throw new BinaryResourceFailure(
@@ -71,15 +117,47 @@ const integer = (token: string | undefined): number | null => {
   const value = Number(token);
   return Number.isSafeInteger(value) ? value : null;
 };
+/** Read a single nonnegative PTX integer literal used as an array extent. */
+const arrayExtent = (token: string | undefined): number | null => {
+  if (token === undefined) return null;
+  const digits = token.endsWith("U") ? token.slice(0, -1) : token;
+  if (/^0[0-7]+$/u.test(digits)) {
+    const value = Number(`0o${digits.slice(1)}`);
+    return Number.isSafeInteger(value) ? value : null;
+  }
+  if (!/^0(?:[xX][0-9a-fA-F]+|[bB][01]+)$/u.test(digits))
+    return integer(digits);
+  const value = Number(digits);
+  return Number.isSafeInteger(value) ? value : null;
+};
+const alignmentValue = (token: string | undefined): number | null => {
+  const value = integer(token);
+  // A logarithm can round a neighboring large integer to a whole exponent.
+  return value !== null &&
+    value > 0 &&
+    2 ** Math.round(Math.log2(value)) === value
+    ? value
+    : null;
+};
+type PtxVersion = { major: number; minor: number };
+const ptxVersion = (token: string | undefined): PtxVersion | null => {
+  const match = /^(\d+)\.(\d+)$/u.exec(token ?? "");
+  if (match === null) return null;
+  const major = Number(match[1]),
+    minor = Number(match[2]);
+  return Number.isSafeInteger(major) && Number.isSafeInteger(minor)
+    ? { major, minor }
+    : null;
+};
 const sizeOf = (type: string | undefined): number | null => {
   const match = /^\.(?:b|u|s|f)(8|16|32|64|128)$/u.exec(type ?? "");
   return match === null ? null : Number(match[1]) / 8;
 };
+const identifier = /^(?:%?[A-Za-z_$][\w$@.]*|%[0-9][A-Za-z0-9_$]*)$/u;
 /** Stream register names/ranges without retaining the declaration token list. */
 const registerDeclaration = (
   next: () => Token,
 ): { type: string; count: number | null } => {
-  const identifier = /^%?[A-Za-z_$][\w$@.]*$/u;
   let type = "";
   let t = next();
   while (!identifier.test(t.value)) {
@@ -137,18 +215,62 @@ const declaration = (
 } => {
   const values = source[0] === ".param" ? source.slice(1) : source;
   let at = 0;
-  const explicit = values[at] === ".align";
-  const alignment = explicit ? integer(values[++at]) : null;
+  let explicit = values[at] === ".align";
+  let alignment = explicit ? alignmentValue(values[++at]) : null;
   if (explicit) at++;
   const vector = values[at] === ".v2" ? 2 : values[at] === ".v4" ? 4 : 1;
   if (vector !== 1) at++;
   const scalar = values[at++],
-    unit = sizeOf(scalar),
-    candidate = values[at++];
-  const name =
-    candidate !== undefined && /^[A-Za-z_$][\w$@.]*$/u.test(candidate)
-      ? candidate
-      : null;
+    unit = sizeOf(scalar);
+  let pointer = false,
+    layoutKnown = unit !== null && (!explicit || alignment !== null);
+  while (values[at]?.startsWith(".")) {
+    const qualifier = values[at++]!;
+    if (qualifier === ".ptr") {
+      if (pointer) layoutKnown = false;
+      pointer = true;
+    } else if (
+      pointer &&
+      [".const", ".global", ".local", ".shared"].includes(qualifier)
+    ) {
+      // Address-space qualifiers describe the pointed-to object.
+    } else if (qualifier === ".align") {
+      const alignmentToken = values[at];
+      if (alignmentToken !== undefined && /^[0-9]+$/u.test(alignmentToken))
+        at++;
+      const declaredAlignment = alignmentValue(alignmentToken);
+      if (declaredAlignment === null) layoutKnown = false;
+      if (!pointer) {
+        if (explicit) layoutKnown = false;
+        explicit = true;
+        alignment = declaredAlignment;
+      }
+    } else layoutKnown = false;
+  }
+  const name = identifier.test(values[at] ?? "") ? values[at]! : null;
+  if (name === null) layoutKnown = false;
+  let cursor = at + (name === null ? 0 : 1);
+  const dimensions: string[][] = [];
+  while (values[cursor] === "[") {
+    const start = ++cursor;
+    let parentheses = 0;
+    while (cursor < values.length) {
+      const value = values[cursor]!;
+      if (value === "(") parentheses++;
+      else if (value === ")") {
+        if (parentheses === 0) break;
+        parentheses--;
+      } else if (value === "]" && parentheses === 0) break;
+      cursor++;
+    }
+    if (values[cursor] !== "]" || parentheses !== 0) {
+      layoutKnown = false;
+      break;
+    }
+    dimensions.push(values.slice(start, cursor));
+    cursor++;
+  }
+  if (cursor !== values.length || dimensions.length > 1) layoutKnown = false;
   let size = unit === null ? null : unit * vector;
   const type =
     scalar === undefined
@@ -157,24 +279,16 @@ const declaration = (
         ? scalar
         : `.v${vector} ${scalar}`;
   const align = explicit ? alignment : size;
-  if (values[at] === "[") {
-    const count = integer(values[at + 1]);
-    size =
-      count === null ||
-      size === null ||
-      values[at + 2] !== "]" ||
-      !Number.isSafeInteger(count * size)
-        ? null
-        : count * size;
-    at += 3;
+  if (dimensions.length === 1) {
+    const dimension = dimensions[0]!,
+      count = dimension.length === 1 ? arrayExtent(dimension[0]) : null;
+    if (count === null || size === null || !Number.isSafeInteger(count * size))
+      layoutKnown = false;
+    else size *= count;
   }
-  if (
-    at !== values.length ||
-    name === null ||
-    align === null ||
-    align <= 0 ||
-    !Number.isInteger(Math.log2(align))
-  )
+  // Explicit alignment was checked at admission. Natural alignment comes
+  // from the supported power-of-two scalar and vector sizes.
+  if (align === null || !layoutKnown)
     return { name, type, size: null, align: null };
   return { name, type, size, align };
 };
@@ -183,6 +297,7 @@ const declaration = (
 export function* readPtxKernels(
   text: string,
   objectId: string,
+  targetTracker?: PtxTargetTracker,
 ): Generator<{ kernel: GpuKernel; coverage: "complete" | "partial" }> {
   if (Buffer.byteLength(text) > GPU_REPORT_BYTES)
     throw new BinaryResourceFailure(
@@ -198,8 +313,13 @@ export function* readPtxKernels(
   };
   let kernelCount = 0;
   let outerDepth = 0;
+  let version: PtxVersion | null = null;
+  let firstToken = true;
+  let targetTrackingEnabled = false;
   for (let step = iterator.next(); !step.done; step = iterator.next()) {
     const token = step.value;
+    const isFirst = firstToken;
+    firstToken = false;
     if (token.value === "{") {
       outerDepth++;
       continue;
@@ -209,9 +329,25 @@ export function* readPtxKernels(
       outerDepth--;
       continue;
     }
-    if (outerDepth !== 0 || token.value !== ".entry") continue;
+    if (outerDepth !== 0) continue;
+    if (token.value === ".version") {
+      const value = iterator.next();
+      version = value.done ? null : ptxVersion(value.value.value);
+      if (isFirst) targetTrackingEnabled = version !== null;
+      continue;
+    }
+    if (
+      targetTracker !== undefined &&
+      targetTrackingEnabled &&
+      token.value === ".target"
+    ) {
+      const value = iterator.next();
+      targetTracker.observe(value.done ? undefined : value.value.value);
+      continue;
+    }
+    if (token.value !== ".entry") continue;
     const name = next();
-    if (!/^[A-Za-z_$][\w$@.]*$/u.test(name.value))
+    if (!identifier.test(name.value))
       rejectGpu("Malformed PTX entry name or parameters");
     const parameters: GpuKernel["parameters"] = [];
     let part: string[] = [],
@@ -219,19 +355,23 @@ export function* readPtxKernels(
     const flush = (): void => {
       if (part.length === 0) return;
       if (part[0] !== ".param") rejectGpu("Unknown PTX parameter declaration");
+      if (parameters.length >= 65536)
+        throw new BinaryResourceFailure(
+          "structure",
+          65536,
+          "PTX parameter declarations exceed the facts budget",
+        );
       const value = declaration(part);
       let offset: number | null = null;
       if (
         parameterBytes !== null &&
         value.size !== null &&
-        value.align !== null &&
-        value.align > 0 &&
-        Number.isSafeInteger(value.align)
+        value.align !== null
       ) {
-        offset = Math.ceil(parameterBytes / value.align) * value.align;
-        parameterBytes = Number.isSafeInteger(offset + value.size)
-          ? offset + value.size
-          : null;
+        const aligned = Math.ceil(parameterBytes / value.align) * value.align;
+        const end = aligned + value.size;
+        offset = Number.isSafeInteger(aligned) ? aligned : null;
+        parameterBytes = Number.isSafeInteger(end) ? end : null;
       } else parameterBytes = null;
       parameters.push({
         ordinal: parameters.length,
@@ -245,10 +385,23 @@ export function* readPtxKernels(
     };
     let t = next();
     if (t.value === "(") {
-      for (t = next(); t.value !== ")"; t = next()) {
-        if (t.value === ",") flush();
+      let parentheses = 0,
+        brackets = 0;
+      while (true) {
+        t = next();
+        if (t.value === "(") parentheses++;
+        else if (t.value === ")") {
+          if (parentheses > 0) parentheses--;
+          else if (brackets === 0) break;
+          else rejectGpu("Malformed PTX parameter dimension");
+        } else if (t.value === "[") brackets++;
+        else if (t.value === "]") {
+          if (brackets === 0) rejectGpu("Malformed PTX parameter dimension");
+          brackets--;
+        }
+        if (t.value === "," && parentheses === 0 && brackets === 0) flush();
         else part.push(t.value);
-        if (part.length > 128 || parameters.length > 65536)
+        if (part.length > 128)
           throw new BinaryResourceFailure(
             "structure",
             65536,
@@ -264,6 +417,21 @@ export function* readPtxKernels(
     let headerTokens = 0;
     while (t.value !== "{" && t.value !== ";") {
       if (++headerTokens > 65536) rejectGpu("PTX entry header is too large");
+      if (t.value === ".pragma") {
+        t = next();
+        if (t.value !== '""') rejectGpu("Malformed PTX entry pragma");
+        while (true) {
+          if (++headerTokens > 65536)
+            rejectGpu("PTX entry header is too large");
+          t = next();
+          if (t.value === ";") break;
+          if (t.value !== ",") rejectGpu("Malformed PTX entry pragma");
+          t = next();
+          if (t.value !== '""') rejectGpu("Malformed PTX entry pragma");
+        }
+        t = next();
+        continue;
+      }
       t = next();
     }
     let end = t.end,
@@ -280,6 +448,37 @@ export function* readPtxKernels(
         }
         if (t.value === "}") {
           depth--;
+          continue;
+        }
+        if (
+          t.value === ".param" &&
+          version !== null &&
+          version.major === 1 &&
+          version.minor <= 3
+        ) {
+          const bodyParameter = [t.value];
+          for (t = next(); t.value !== ";"; t = next()) {
+            if (t.value === "}")
+              rejectGpu("Malformed PTX parameter declaration");
+            if (bodyParameter.length >= 128)
+              throw new BinaryResourceFailure(
+                "structure",
+                65536,
+                "PTX parameter declarations exceed the facts budget",
+              );
+            bodyParameter.push(t.value);
+          }
+          part = bodyParameter;
+          flush();
+          end = t.end;
+          continue;
+        }
+        // Call prototypes contain formal .reg/.param declarations, not entry resources.
+        if (t.value === ".callprototype") {
+          for (t = next(); t.value !== ";"; t = next()) {
+            if (t.value === "}") rejectGpu("Malformed PTX call prototype");
+          }
+          end = t.end;
           continue;
         }
         if (t.value !== ".reg" && t.value !== ".shared") continue;
@@ -303,12 +502,7 @@ export function* readPtxKernels(
           declarationTokens.push(t.value);
         }
         const value = declaration(declarationTokens);
-        if (
-          shared === null ||
-          value.size === null ||
-          value.align === null ||
-          value.align === 0
-        )
+        if (shared === null || value.size === null || value.align === null)
           shared = null;
         else {
           const total =
@@ -388,35 +582,114 @@ export function* readPtxKernels(
   if (outerDepth !== 0) rejectGpu("Unbalanced PTX body");
 }
 
-/** Positive PTX header recognition uses the same lexer as kernel extraction. */
-export const readPtxTarget = (text: string): string | null => {
+export interface PtxTargetFacts {
+  readonly recognized: boolean;
+  readonly target: string | null;
+  readonly limitation: string | null;
+}
+
+/** Single-pass `.target` directive accumulator shared by target discovery and module parsing. */
+export interface PtxTargetTracker {
+  observe(spelling: string | undefined): void;
+  markMalformed(): void;
+  facts(): PtxTargetFacts;
+}
+
+export const createPtxTargetTracker = (): PtxTargetTracker => {
+  let target: string | null = null,
+    targetIdentity: string | null = null,
+    targetArchitecture = -1,
+    ambiguous = false,
+    unsupported = false,
+    malformed = false;
+  return {
+    observe(spelling) {
+      if (spelling === undefined) {
+        unsupported = true;
+        return;
+      }
+      const match = /^(?:sm_|compute_)([0-9]+)(?:a|f)?$/u.exec(spelling);
+      if (match === null) {
+        unsupported = true;
+        return;
+      }
+      const architecture = Number(match[1]);
+      if (!Number.isSafeInteger(architecture)) {
+        unsupported = true;
+        return;
+      }
+      const identity = ptxTargetIdentity(spelling);
+      if (architecture > targetArchitecture) {
+        target = spelling;
+        targetIdentity = identity;
+        targetArchitecture = architecture;
+        ambiguous = false;
+      } else if (
+        architecture === targetArchitecture &&
+        targetIdentity !== identity
+      ) {
+        ambiguous = true;
+      }
+    },
+    markMalformed() {
+      malformed = true;
+    },
+    facts() {
+      const recognized = target !== null;
+      const limitation = !recognized
+        ? null
+        : unsupported
+          ? "Unsupported PTX target directives leave the effective target unknown."
+          : ambiguous
+            ? "Same-generation PTX target profiles cannot be represented by one effective target."
+            : malformed
+              ? "Malformed PTX text prevents complete target discovery."
+              : null;
+      return {
+        recognized,
+        target: limitation === null ? target : null,
+        limitation,
+      };
+    },
+  };
+};
+
+/** PTX's compute spelling is an alias for the corresponding baseline SM target. */
+export const ptxTargetIdentity = (target: string): string =>
+  target.replace(/^compute_(\d+[a-z]?)$/u, "sm_$1");
+
+/** Resolve all module-scope targets through the highest numbered architecture. */
+export const readPtxTarget = (text: string): PtxTargetFacts => {
   const stream = tokens(text);
-  let version = false,
-    target: string | null = null;
+  const tracker = createPtxTargetTracker();
+  let depth = 0;
   try {
+    const first = stream.next();
+    if (first.done || first.value.value !== ".version")
+      return { recognized: false, target: null, limitation: null };
+    const declaredVersion = stream.next();
+    if (
+      declaredVersion.done ||
+      ptxVersion(declaredVersion.value.value) === null
+    )
+      return { recognized: false, target: null, limitation: null };
     for (const token of stream) {
-      if (
-        token.value === ".entry" ||
-        token.value === ".func" ||
-        token.value === "{"
-      )
-        break;
-      if (token.value === ".version") {
-        const value = stream.next();
-        version = !value.done && /^[0-9]+\.[0-9]+$/u.test(value.value.value);
+      if (token.value === "{") {
+        depth++;
+        continue;
       }
-      if (token.value === ".target") {
-        const value = stream.next();
-        target =
-          !value.done && /^sm_[0-9]+[a-z]?$/u.test(value.value.value)
-            ? value.value.value
-            : null;
+      if (token.value === "}") {
+        if (depth > 0) depth--;
+        continue;
       }
-      if (version && target !== null) return target;
+      if (depth !== 0) continue;
+      if (token.value !== ".target") continue;
+      const value = stream.next();
+      tracker.observe(value.done ? undefined : value.value.value);
     }
   } catch (cause) {
     if (!(cause instanceof BinaryFormatFailure)) throw cause;
-    // A malformed quote/comment before both directives does not establish PTX identity.
+    tracker.markMalformed();
   }
-  return null;
+  return tracker.facts();
 };

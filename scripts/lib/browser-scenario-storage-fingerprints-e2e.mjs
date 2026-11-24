@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { requireMcpEvidenceBundle } from "./mcp-verifier-results.mjs";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
@@ -10,7 +11,7 @@ import {
   runScenarioCli,
   scenarioProfiles,
 } from "./browser-scenario-verifier.mjs";
-import { closeVerifierResources } from "./verifier-cleanup.mjs";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 
 const secretVariable = "REA_BROWSER_FINGERPRINT_VERIFIER_SECRET";
 const secret = "rea-storage-fingerprint-private";
@@ -143,8 +144,7 @@ export async function verifyScenarioStorageFingerprints(executable, origin) {
     name: "browser-storage-fingerprints-e2e",
     version: "1",
   });
-  let failure;
-  try {
+  return withVerifierCleanup(async () => {
     const cli = await verifyValues(
       (value) => runScenarioCli(scenarioFor(executable, origin, value)),
       (before, after) =>
@@ -184,12 +184,20 @@ export async function verifyScenarioStorageFingerprints(executable, origin) {
           (step) => step.artifacts.storage,
         ),
       );
-    const bundle = await call("get_evidence_bundle", {});
+    const bundleReply = await artifactMcpCall(client, {
+      name: "get_evidence_bundle",
+      arguments: {},
+    });
+    assert.ok(
+      bundleReply.structuredContent,
+      "MCP omitted structured Evidence bundle",
+    );
+    const bundle = requireMcpEvidenceBundle(bundleReply);
     for (const evidence of mcp) {
-      const record = bundle.result.records.find(
+      const record = bundle.records.find(
         ({ evidence_id }) => evidence_id === evidence.evidence_id,
       );
-      assert.deepEqual(parseEvidence(record), evidence);
+      assert.deepEqual(record, evidence);
     }
     await client.ping();
     return {
@@ -204,24 +212,18 @@ export async function verifyScenarioStorageFingerprints(executable, origin) {
       retained_evidence: true,
       versionless_captures_unknown: true,
     };
-  } catch (cause) {
-    failure = cause;
-    throw cause;
-  } finally {
-    if (previousSecret === undefined) delete process.env[secretVariable];
-    else process.env[secretVariable] = previousSecret;
-    await closeVerifierResources(
-      [
-        () => client.close(),
-        () => transport.close(),
-        async () =>
-          assert.ok(
-            [...(await scenarioProfiles())].every((profile) =>
-              profilesBefore.has(profile),
-            ),
-          ),
-      ],
-      failure,
-    );
-  }
+  }, [
+    () => {
+      if (previousSecret === undefined) delete process.env[secretVariable];
+      else process.env[secretVariable] = previousSecret;
+    },
+    () => client.close(),
+    () => transport.close(),
+    async () =>
+      assert.ok(
+        [...(await scenarioProfiles())].every((profile) =>
+          profilesBefore.has(profile),
+        ),
+      ),
+  ]);
 }

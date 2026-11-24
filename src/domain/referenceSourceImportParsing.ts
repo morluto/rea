@@ -1,32 +1,37 @@
-import type {
-  CallExpression,
-  File,
-  ImportExpression,
-  Node,
-  StringLiteral,
-} from "@babel/types";
+import {
+  isJavaScriptMemberMutationRefusal,
+  type JavaScriptMemberMutationAllowance,
+} from "./javascript/javascriptSemanticWorkAllowance.js";
+import type { File, Node } from "@babel/types";
 import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
 import { readExactJavaScriptLiteral } from "./javascript/javascriptAstValues.js";
 import {
   parseRecoveredJavaScript,
-  parserPluginsForPath,
+  JavaScriptLoaderSyntaxError,
+  javaScriptSourceLoaderCondition,
+  type JavaScriptPackageType,
 } from "./javascript/javascriptSourceParser.js";
-import { unshadowedReferenceSourceRequireCalls } from "./referenceSourceRequireBindings.js";
+import {
+  referenceSourceRequireCalls,
+  type ReferenceSourceRequireCall,
+  type ReferenceSourceRequireInvocation,
+} from "./referenceSourceRequireBindings.js";
 import { isRelativeJavaScriptModuleSpecifier } from "./javascript/javascriptModuleSpecifier.js";
 import {
   isCallExpression,
   isExportAllDeclaration,
   isExportNamedDeclaration,
-  isIdentifier,
-  isImport,
   isImportDeclaration,
   isImportExpression,
-  isMemberExpression,
+  isNewExpression,
+  isOptionalCallExpression,
+  isTSImportType,
   isStringLiteral,
   isTSExternalModuleReference,
   isTSImportEqualsDeclaration,
   isTSModuleDeclaration,
 } from "@babel/types";
+import { decodeStrictUtf8 } from "./strictUtf8.js";
 
 type ReferenceSourceImportKind =
   | "imports"
@@ -50,6 +55,8 @@ interface ReferenceSourceImportRelationship {
   readonly parse_state: ReferenceSourceImportParseState;
   /** Distinguishes call-form CommonJS require from TS import-equals `requires`. */
   readonly resolutionStrategy?: "runtime-require";
+  /** Internal lookup origin for a proven createRequire URL base. */
+  readonly resolutionBasePath?: string;
 }
 
 interface ReferenceSourceParseFailure {
@@ -72,6 +79,16 @@ const safeModuleName = (node: Node | null | undefined): string | undefined => {
   return undefined;
 };
 
+const exactStringModuleName = (
+  node: Node | null | undefined,
+): string | undefined => {
+  if (node === null || node === undefined) return undefined;
+  const literal = readExactJavaScriptLiteral(node);
+  return literal.found && typeof literal.value === "string"
+    ? literal.value
+    : undefined;
+};
+
 const resolveSpecifier = (
   specifier: string,
 ): ReferenceSourceImportResolution => {
@@ -81,34 +98,6 @@ const resolveSpecifier = (
   )
     return "internal";
   return "external";
-};
-
-const isModuleExpression = (
-  expression: Node | null | undefined,
-): expression is StringLiteral | CallExpression =>
-  isStringLiteral(expression) || isCallExpression(expression);
-
-const moduleSpecifierFromExpression = (
-  expression: Node | null | undefined,
-):
-  | { specifier: string; parseState: ReferenceSourceImportParseState }
-  | undefined => {
-  if (expression === null || expression === undefined) return undefined;
-  const literal = readExactJavaScriptLiteral(expression);
-  if (literal.found && typeof literal.value === "string")
-    return { specifier: literal.value, parseState: "parsed" };
-  if (
-    isCallExpression(expression) &&
-    isImport(expression.callee) &&
-    expression.arguments.length > 0
-  ) {
-    const first = expression.arguments[0];
-    if (isStringLiteral(first)) {
-      return { specifier: first.value, parseState: "parsed" };
-    }
-    return { specifier: "<dynamic-import>", parseState: "partial" };
-  }
-  return undefined;
 };
 
 const appendRelationship = (
@@ -121,6 +110,7 @@ const appendRelationship = (
     readonly parseState: ReferenceSourceImportParseState;
     readonly resolution?: ReferenceSourceImportResolution;
     readonly resolutionStrategy?: "runtime-require";
+    readonly resolutionBasePath?: string;
   },
 ): void => {
   if (input.to === undefined) return;
@@ -139,172 +129,133 @@ const appendRelationship = (
     ...(input.resolutionStrategy === undefined
       ? {}
       : { resolutionStrategy: input.resolutionStrategy }),
+    ...(input.resolutionBasePath === undefined
+      ? {}
+      : { resolutionBasePath: input.resolutionBasePath }),
   });
 };
 
-const extractImportDeclarations = (
-  body: readonly Node[],
+const appendImportEquals = (
+  statement: Node,
   from_path: string,
   relationships: ReferenceSourceImportRelationship[],
   limitations: string[],
 ): void => {
-  for (const statement of body) {
-    if (isImportDeclaration(statement)) {
-      appendRelationship(relationships, limitations, {
-        fromPath: from_path,
-        to: safeModuleName(statement.source),
-        kind: "imports",
-        parseState: "parsed",
-      });
-      continue;
-    }
-
-    if (isExportNamedDeclaration(statement)) {
-      if (statement.source !== null && statement.source !== undefined) {
-        appendRelationship(relationships, limitations, {
-          fromPath: from_path,
-          to: safeModuleName(statement.source),
-          kind: "imports",
-          parseState: "parsed",
-        });
-      }
-      continue;
-    }
-
-    if (isExportAllDeclaration(statement)) {
-      appendRelationship(relationships, limitations, {
-        fromPath: from_path,
-        to: safeModuleName(statement.source),
-        kind: "imports",
-        parseState: "parsed",
-      });
-      continue;
-    }
-
-    if (isTSImportEqualsDeclaration(statement)) {
-      const reference = statement.moduleReference;
-      if (isTSExternalModuleReference(reference)) {
-        appendRelationship(relationships, limitations, {
-          fromPath: from_path,
-          to: safeModuleName(reference.expression),
-          kind: "requires",
-          parseState: "parsed",
-        });
-      }
-      continue;
-    }
-
-    if (isTSModuleDeclaration(statement)) {
-      if (statement.declare === true && isStringLiteral(statement.id)) {
-        appendRelationship(relationships, limitations, {
-          fromPath: from_path,
-          to: statement.id.value,
-          kind: "declares-module",
-          parseState: "parsed",
-          resolution: "unknown",
-        });
-      }
-    }
-  }
+  if (!isTSImportEqualsDeclaration(statement)) return;
+  const reference = statement.moduleReference;
+  if (!isTSExternalModuleReference(reference)) return;
+  appendRelationship(relationships, limitations, {
+    fromPath: from_path,
+    to: safeModuleName(reference.expression),
+    kind: "requires",
+    parseState: "parsed",
+  });
 };
 
-const isRequireCallee = (callee: Node | null | undefined): boolean => {
-  if (isIdentifier(callee) && callee.name === "require") return true;
-  if (
-    isMemberExpression(callee) &&
-    isIdentifier(callee.object) &&
-    callee.object.name === "require" &&
-    ((!callee.computed && isIdentifier(callee.property)) ||
-      isStringLiteral(callee.property))
-  ) {
-    const propertyName = isIdentifier(callee.property)
-      ? callee.property.name
-      : isStringLiteral(callee.property)
-        ? callee.property.value
-        : undefined;
-    return propertyName === "resolve" || propertyName === "main";
-  }
-  return false;
-};
-
-const extractRequireAndDynamicImports = (
-  body: readonly Node[],
+/** One AST owner retains historical declarations, types and runtime requests. */
+const extractImports = (
+  ast: File,
   from_path: string,
   relationships: ReferenceSourceImportRelationship[],
   limitations: string[],
-  unshadowedRequireCalls: ReadonlySet<CallExpression>,
+  requireCalls: ReadonlyMap<
+    ReferenceSourceRequireInvocation,
+    ReferenceSourceRequireCall
+  >,
 ): void => {
-  // Single traversal owner: iterative, VISITOR_KEYS-gated, no recursion over
-  // loc/comment objects. Survives deeply nested generated member chains that
-  // overflowed the previous hand-rolled Object.values walker.
-  const expressions: Array<CallExpression | ImportExpression> = [];
-  for (const statement of body)
-    traverseJavaScriptAst(statement, {
-      enter: (node) => {
-        if (isCallExpression(node) || isImportExpression(node))
-          expressions.push(node);
-      },
-    });
-
-  for (const call of expressions) {
-    if (isImportExpression(call)) {
-      const specifier = safeModuleName(call.source);
-      appendRelationship(relationships, limitations, {
-        fromPath: from_path,
-        to: specifier ?? "<dynamic-import>",
-        kind: "imports",
-        parseState: specifier === undefined ? "partial" : "parsed",
-        ...(specifier === undefined ? { resolution: "unknown" } : {}),
-      });
-      continue;
-    }
-    const first = call.arguments[0];
-    // The shared exact-literal reader owns argument exactness: it unwraps
-    // runtime-transparent TS wrappers (`as const`, `!`, `satisfies`) and
-    // admits quoted and expression-free template spellings alike.
-    if (isRequireCallee(call.callee) && unshadowedRequireCalls.has(call)) {
-      const result = moduleSpecifierFromExpression(first);
-      if (result !== undefined) {
+  let unresolvedRequireTarget = false;
+  traverseJavaScriptAst(ast.program, {
+    enter: (node) => {
+      if (
+        isImportDeclaration(node) ||
+        isExportAllDeclaration(node) ||
+        (isExportNamedDeclaration(node) && node.source != null)
+      ) {
         appendRelationship(relationships, limitations, {
           fromPath: from_path,
-          to: result.specifier,
-          kind: "requires",
-          parseState: result.parseState,
-          resolutionStrategy: "runtime-require",
-        });
-      }
-      continue;
-    }
-
-    if (isImport(call.callee) && isModuleExpression(first)) {
-      const result = moduleSpecifierFromExpression(first);
-      if (result !== undefined) {
-        appendRelationship(relationships, limitations, {
-          fromPath: from_path,
-          to: result.specifier,
+          to: safeModuleName(node.source),
           kind: "imports",
-          parseState: result.parseState,
+          parseState: "parsed",
+        });
+      } else if (isTSImportEqualsDeclaration(node)) {
+        appendImportEquals(node, from_path, relationships, limitations);
+      } else if (isTSModuleDeclaration(node)) {
+        if (node.declare === true && isStringLiteral(node.id))
+          appendRelationship(relationships, limitations, {
+            fromPath: from_path,
+            to: node.id.value,
+            kind: "declares-module",
+            parseState: "parsed",
+            resolution: "unknown",
+          });
+      } else if (isImportExpression(node) || isTSImportType(node)) {
+        const specifier = exactStringModuleName(node.source);
+        appendRelationship(relationships, limitations, {
+          fromPath: from_path,
+          to: specifier ?? "<dynamic-import>",
+          kind: "imports",
+          parseState: specifier === undefined ? "partial" : "parsed",
+          ...(specifier === undefined ? { resolution: "unknown" } : {}),
+        });
+      } else if (
+        isCallExpression(node) ||
+        isOptionalCallExpression(node) ||
+        isNewExpression(node)
+      ) {
+        const requireCall = requireCalls.get(node);
+        if (requireCall === undefined) return;
+        // Undefined arguments are an opaque normalized list, such as
+        // `require.apply(null, args)`. An empty list is an explicit call
+        // with no target.
+        if (requireCall.arguments === undefined) {
+          unresolvedRequireTarget = true;
+          return;
+        }
+        const target = requireCall.arguments[0];
+        if (target === undefined) return;
+        const literal = readExactJavaScriptLiteral(target);
+        if (!literal.found) {
+          unresolvedRequireTarget = true;
+          return;
+        }
+        if (typeof literal.value !== "string") return;
+        if (
+          requireCall.limitation !== undefined &&
+          !limitations.includes(requireCall.limitation)
+        )
+          limitations.push(requireCall.limitation);
+        const uncertainResolution = requireCall.resolutionBase === "unknown";
+        appendRelationship(relationships, limitations, {
+          fromPath: from_path,
+          to: literal.value,
+          kind: "requires",
+          parseState: uncertainResolution ? "partial" : "parsed",
+          ...(uncertainResolution ? { resolution: "unknown" } : {}),
+          ...(uncertainResolution
+            ? {}
+            : { resolutionStrategy: "runtime-require" as const }),
+          ...(typeof requireCall.resolutionBase === "object"
+            ? { resolutionBasePath: requireCall.resolutionBase.path }
+            : {}),
         });
       }
-    }
-  }
+    },
+  });
+  if (unresolvedRequireTarget)
+    limitations.push(
+      `A CommonJS module target in ${from_path} could not be determined statically.`,
+    );
 };
 
 const parseWithBabel = (
   path: string,
   source: string,
-  language: string | null,
+  packageType: JavaScriptPackageType | undefined,
 ): {
   ast: File | undefined;
-  reasons: readonly string[];
+  reasons: readonly Pick<ReferenceSourceParseFailure, "parser" | "reason">[];
   moduleOnlyErrors: readonly string[];
 } => {
-  // Single parser-mode owner: path-driven plugins (dts/JSX/mts) shared with
-  // the semantic pipeline. `language` only gates non-JS/TS callers upstream;
-  // TypeScript syntax must parse identically here and in semantic analysis.
-  void language;
-  const plugins = parserPluginsForPath(path);
-
   try {
     const { file: ast, moduleOnlyErrors } = parseRecoveredJavaScript(
       source,
@@ -313,20 +264,53 @@ const parseWithBabel = (
         allowImportExportEverywhere: false,
         allowReturnOutsideFunction: true,
         allowUndeclaredExports: true,
-        plugins,
       },
+      packageType,
     );
     return {
       ast,
-      reasons: ast.errors.map((error) => error.message),
+      reasons: ast.errors.map((error) => ({
+        parser:
+          error instanceof JavaScriptLoaderSyntaxError
+            ? "rea-node-loader"
+            : "babel",
+        reason: error.message,
+      })),
       moduleOnlyErrors,
     };
   } catch (cause: unknown) {
     return {
       ast: undefined,
-      reasons: [cause instanceof Error ? cause.message : "Parse failed"],
+      reasons: [
+        {
+          parser: "babel",
+          reason: cause instanceof Error ? cause.message : "Parse failed",
+        },
+      ],
       moduleOnlyErrors: [],
     };
+  }
+};
+
+/**
+ * CommonJS require calls need the member-mutation index to prove the loader.
+ * When that phase is refused, the file keeps its declaration-level imports and
+ * records which requests were not examined instead of failing the import.
+ */
+const requireCallsOrRefusal = (
+  ast: File,
+  path: string,
+  limitations: string[],
+  memberMutationAllowance: JavaScriptMemberMutationAllowance | undefined,
+): ReturnType<typeof referenceSourceRequireCalls> => {
+  try {
+    return referenceSourceRequireCalls(ast, path, memberMutationAllowance);
+  } catch (cause: unknown) {
+    if (!isJavaScriptMemberMutationRefusal(cause)) throw cause;
+    limitations.push(
+      `CommonJS require calls in ${path} were not examined because the member-mutation phase was refused (${cause.reason}). ${cause.remediationAction ?? ""}`.trimEnd(),
+    );
+    return new Map();
   }
 };
 
@@ -335,13 +319,16 @@ export const parseReferenceSourceImports = (
   path: string,
   bytes: Uint8Array,
   language: string | null,
+  packageType?: JavaScriptPackageType,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): ReferenceSourceImportParseResult => {
   if (language !== null && !PARSEABLE_REFERENCE_SOURCE_LANGUAGES.has(language))
     return { relationships: [], parse_failures: [], limitations: [] };
 
   let source: string;
   try {
-    source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    // The shared parser owns loader-specific BOM/hashbang preprocessing.
+    source = decodeStrictUtf8(bytes, "preserve");
   } catch {
     return {
       relationships: [],
@@ -359,18 +346,22 @@ export const parseReferenceSourceImports = (
   const { ast, reasons, moduleOnlyErrors } = parseWithBabel(
     path,
     source,
-    language,
+    packageType,
   );
+  const loaderCondition =
+    ast === undefined
+      ? undefined
+      : javaScriptSourceLoaderCondition(ast.program);
   const limitations =
     moduleOnlyErrors.length === 0
       ? []
       : [
           `Strict-mode errors apply only if this file is an ES module: ${moduleOnlyErrors.join("; ")}`,
         ];
+  if (loaderCondition !== undefined) limitations.push(loaderCondition);
   const parseFailures = reasons.map((reason) => ({
     path,
-    parser: "babel",
-    reason,
+    ...reason,
   }));
 
   if (ast === undefined) {
@@ -382,20 +373,20 @@ export const parseReferenceSourceImports = (
   }
 
   const relationships: ReferenceSourceImportRelationship[] = [];
-  extractImportDeclarations(ast.program.body, path, relationships, limitations);
-  extractRequireAndDynamicImports(
-    ast.program.body,
+  extractImports(
+    ast,
     path,
     relationships,
     limitations,
-    unshadowedReferenceSourceRequireCalls(ast, path),
+    requireCallsOrRefusal(ast, path, limitations, memberMutationAllowance),
   );
 
   return {
     relationships: relationships.map((relationship) => ({
       ...relationship,
       parse_state:
-        parseFailures.length > 0 && relationship.parse_state === "parsed"
+        (parseFailures.length > 0 || loaderCondition !== undefined) &&
+        relationship.parse_state === "parsed"
           ? "partial"
           : relationship.parse_state,
     })),

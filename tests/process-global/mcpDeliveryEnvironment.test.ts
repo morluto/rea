@@ -3,7 +3,7 @@ import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { createAnalysisExecution } from "../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../src/ports/AnalysisProvider.js";
 import { AnalysisInputError } from "../../src/domain/analysisErrorCore.js";
 import { jsonObjectSchema } from "../../src/domain/jsonValue.js";
 import { ok } from "../../src/domain/result.js";
@@ -11,6 +11,7 @@ import { run } from "../../src/main.js";
 import { createServer } from "../../src/server/createServer.js";
 import type { EvidenceMcpServer } from "../../src/server/EvidenceMcpServer.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 afterEach(async () => {
@@ -19,7 +20,10 @@ afterEach(async () => {
 });
 
 const connect = async (server: EvidenceMcpServer) => {
-  const client = new Client({ name: "selected-delivery", version: "1" });
+  const client = new Client(
+    { name: "selected-delivery", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -182,8 +186,8 @@ it("snapshots the runtime-selected environment before optional loading and reuse
       return server;
     },
     serve: (factory) => {
-      factory({ era: "modern" });
-      factory({ era: "legacy" });
+      expect(factory({ era: "modern" })).toBe(observed[0]);
+      expect(factory({ era: "legacy" })).toBe(observed[1]);
       return {
         close: async () => {
           await Promise.all(observed.map((server) => server.close()));

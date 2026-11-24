@@ -1,52 +1,104 @@
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import type { WebScriptArtifactPort } from "../application/WebScriptArtifactPort.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
+import type { WebScriptArtifactPort } from "../ports/WebScriptArtifactPort.js";
 import { LocalWebScriptArtifacts } from "./assets/LocalWebScriptArtifacts.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type WebArtifactOwner =
   | "web-source-location-artifacts"
   | "web-module-artifacts";
 
-/** Close a composed artifact reader without closing a shared script scope twice. */
-export const closeWebArtifactResources = async (
-  owner: WebArtifactOwner,
-  resources: ArtifactResourceScope,
-  scripts: WebScriptArtifactPort,
-): Promise<void> => {
-  const sourceLocation = owner === "web-source-location-artifacts";
-  const operation = sourceLocation
-    ? "trace_web_source_location"
-    : "trace_web_module_imports";
-  const resource = sourceLocation
-    ? "web source-location artifacts"
-    : "web module artifacts";
-  const closeScript =
-    scripts instanceof LocalWebScriptArtifacts &&
-    scripts.resources === resources
-      ? undefined
-      : scripts.close?.bind(scripts);
-  const results = await Promise.allSettled([
-    Promise.resolve().then(() => resources.close()),
-    ...(closeScript === undefined ? [] : [Promise.resolve().then(closeScript)]),
-  ]);
-  const failures = results.flatMap((result, index) =>
-    result.status === "rejected"
-      ? [
-          {
-            cause: result.reason,
-            resource: index === 0 ? resource : "web scripts",
-          },
-        ]
-      : [],
+const cleanupOwner = (resource: string, close: () => Promise<void>) => {
+  let retained: readonly string[] = [resource];
+  const lease = new AnalysisCleanupLease(
+    async () => {
+      try {
+        await close();
+      } catch (cause: unknown) {
+        if (cause instanceof AnalysisError) lease.bindCleanupError(cause);
+        retained =
+          cause instanceof AnalysisError && cause.cleanupResources.length > 0
+            ? cause.cleanupResources
+            : ArtifactReaderFailure.cleanupObservation(cause, resource)
+                .resources;
+        throw cause;
+      }
+    },
+    {
+      get cleanupResources() {
+        return retained;
+      },
+    },
   );
-  const error = webArtifactCleanupFailures(owner, operation, failures);
-  if (error !== undefined) throw error;
+  return { resource, lease };
 };
 
-export const webArtifactCleanupFailures = (
+/** Retain each composed artifact owner's release across partial cleanup retries. */
+export class WebArtifactCleanup {
+  readonly #owners: readonly {
+    readonly resource: string;
+    readonly lease: AnalysisCleanupLease;
+  }[];
+  readonly #operation: string;
+
+  constructor(
+    private readonly owner: WebArtifactOwner,
+    resources: ArtifactResourceScope,
+    scripts: WebScriptArtifactPort,
+  ) {
+    const sourceLocation = owner === "web-source-location-artifacts";
+    this.#operation = sourceLocation
+      ? "trace_web_source_location"
+      : "trace_web_module_imports";
+    const resource = sourceLocation
+      ? "web source-location artifacts"
+      : "web module artifacts";
+    const closeScript =
+      scripts instanceof LocalWebScriptArtifacts &&
+      scripts.resources === resources
+        ? undefined
+        : scripts.close?.bind(scripts);
+    this.#owners = [
+      cleanupOwner(resource, () => resources.close()),
+      ...(closeScript === undefined
+        ? []
+        : [cleanupOwner("web scripts", closeScript)]),
+    ];
+  }
+
+  async close(): Promise<void> {
+    const pending = this.#owners.filter(({ lease }) => !lease.released);
+    const results = await Promise.allSettled(
+      pending.map(({ lease }) => lease.release()),
+    );
+    const failures = results.flatMap((result, index) =>
+      result.status === "rejected"
+        ? [{ cause: result.reason as unknown, ...pending[index]! }]
+        : [],
+    );
+    const error = webArtifactCleanupFailures(
+      this.owner,
+      this.#operation,
+      failures,
+    );
+    if (error !== undefined) {
+      new AnalysisCleanupLeaseGroup(
+        error,
+        failures.map(({ lease }) => lease),
+      );
+      throw error;
+    }
+  }
+}
+
+const webArtifactCleanupFailures = (
   owner: string,
   operation: string,
   failures: readonly { readonly resource: string; readonly cause: unknown }[],
@@ -96,7 +148,7 @@ export const webArtifactCleanupFailures = (
           ? projection
           : {
               name: cause instanceof Error ? cause.name : "UnknownError",
-              message: cause instanceof Error ? cause.message : String(cause),
+              message: errorMessage(cause),
               resource: [...observation.resources],
             },
       ),

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { runInNewContext } from "node:vm";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import {
+  analyzeJavaScriptStaticSource as analyzeUnknownHostSource,
+  analyzeParsedJavaScriptStaticSource,
+} from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import { analyzeCommonJsStaticFixture as analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
 // Webpack 5 standalone bootstrap with an Electron external, as emitted for
 // `target: "electron-main"`.
@@ -30,7 +36,37 @@ const expectUnresolved = (source: string) => {
   ).toEqual([]);
 };
 
+it("does not claim Electron host identity from an unbound require in unknown context", () => {
+  const analysis = analyzeUnknownHostSource(bootstrap(EXTERNAL, CONSUMER));
+  expect(analysis.electron.browser_windows).toContainEqual(
+    expect.objectContaining({
+      preload_path: "./preload.js",
+      loader_authority: "candidate",
+    }),
+  );
+  expect(analysis.analysis_coverage.applicability.electron).toBe("unknown");
+});
+
 describe("Electron identity through Webpack externals", () => {
+  it.each([
+    ["const key=45840;n.m[key]=local;", 0],
+    ["const key='45840';delete n.m[key];", 0],
+    ["n.m[runtimeKey]=local;", 0],
+    ["const key=45841;n.m[key]=local;", 1],
+    ["const key=flag?45841:'45842';n.m[key]=local;", 1],
+    ["const key=flag?45840:'45842';n.m[key]=local;", 0],
+    ["const key=flag?dynamicKey:'45842';n.m[key]=local;", 0],
+    ["const key=flag?'__proto__':'45842';n.m[key]=local;", 0],
+  ] as const)(
+    "preserves only unmodified external slots after %s",
+    (write, expected) => {
+      expect(
+        electronOf(bootstrap(EXTERNAL, CONSUMER, `n.m=m;${write}n(100);`))
+          .browser_windows,
+      ).toHaveLength(expected);
+    },
+  );
+
   it("follows the default-export getter produced by webpack n.n", () => {
     const source = bootstrap(
       EXTERNAL,
@@ -70,6 +106,14 @@ describe("Electron identity through Webpack externals", () => {
     ["delete", "delete n.n;"],
     ["a destructuring write", "({g:n.n}={g:e=>()=>0});"],
     ["an unknown key", "n[key]=e=>()=>0;"],
+    [
+      "a stable loader alias",
+      "const copy=n;copy.n=e=>()=>({BrowserWindow:class{}});",
+    ],
+    [
+      "a reflective write through a loader alias",
+      "const copy=n;Reflect.set(copy,'n',e=>()=>({BrowserWindow:class{}}));",
+    ],
   ])(
     "does not infer Electron after a getter write through %s",
     (_name, write) => {
@@ -158,6 +202,226 @@ describe("Electron identity through Webpack externals", () => {
   });
 });
 
+it.each([
+  ["45841", 1],
+  ["45840", 0],
+] as const)(
+  "scopes writes to cache slots when one key is %s",
+  (key, expected) => {
+    const source = bootstrap(
+      EXTERNAL,
+      CONSUMER,
+      `n.c=c;const key=flag?${key}:"45842";n.c[key]={exports:local};n(100);`,
+    );
+    expect(electronOf(source).browser_windows).toHaveLength(expected);
+  },
+);
+
+describe("Webpack loader alias bounds", () => {
+  const getterSource = (initializers: readonly string[], selection = "") =>
+    bootstrap(
+      EXTERNAL,
+      'const s=n.n(n(45840));new(s().BrowserWindow)({});s().ipcMain.handle("ready",()=>{});',
+      `let box={};${initializers.map((value) => `if(flag)box=${value};`).join("")}${selection}box.n=()=>0;n(100);`,
+    );
+
+  it.each([false, true])(
+    "preserves only proven Electron identity beside a large object union (loader=%s)",
+    (includesLoader) => {
+      const source = getterSource([
+        ...Array<string>(520).fill("{}"),
+        ...(includesLoader ? ["n"] : []),
+      ]);
+      const analysis = analyzeJavaScriptStaticSource(source);
+      expect(analysis.parse_error_count).toBe(0);
+      expect(analysis.electron.browser_windows).toHaveLength(
+        includesLoader ? 0 : 1,
+      );
+      expect(analysis.electron.ipc).toHaveLength(includesLoader ? 0 : 1);
+      if (!includesLoader)
+        expect(analysis.analysis_coverage).toMatchObject({
+          examination: {
+            semantic_resource_limits: expect.not.arrayContaining([
+              "alias-selections",
+            ]),
+          },
+        });
+    },
+  );
+
+  it.each(
+    [1, 520].flatMap((count) =>
+      [
+        "flag?n:{}",
+        "flag&&n",
+        "flag||n",
+        "(0,n)",
+        "getLoader()",
+        "new GetLoader()",
+        "holder.loader",
+        "unresolvedLoader",
+      ].map((value) => ({ count, value })),
+    ),
+  )(
+    "keeps $count possible loader values through $value unknown",
+    ({ count, value }) => {
+      const analysis = analyzeJavaScriptStaticSource(
+        getterSource(Array<string>(count).fill(value)),
+      );
+      expect(analysis.parse_error_count).toBe(0);
+      expect(analysis.electron.browser_windows).toEqual([]);
+      expect(analysis.electron.ipc).toEqual([]);
+    },
+  );
+
+  it.each(["[]", "()=>0", "class {}", "0", "'text'"])(
+    "retains the getter when terminal origins are %s",
+    (value) => {
+      const analysis = analyzeJavaScriptStaticSource(
+        getterSource(Array<string>(520).fill(value)),
+      );
+      expect(analysis.electron.browser_windows).toHaveLength(1);
+      expect(analysis.electron.ipc).toHaveLength(1);
+    },
+  );
+
+  it.each([1, 520])("keeps %s projected loader writes unknown", (count) => {
+    const analysis = analyzeJavaScriptStaticSource(
+      getterSource([], "if(flag)({slot:box}={slot:n});".repeat(count)),
+    );
+    expect(analysis.electron.browser_windows).toEqual([]);
+    expect(analysis.electron.ipc).toEqual([]);
+  });
+
+  it.each(["conditional", "projected"])(
+    "observes no runtime window after a %s alias replaces the getter",
+    (kind) => {
+      let windows = 0;
+      const source =
+        kind === "conditional"
+          ? getterSource(Array<string>(520).fill("flag?n:{}"))
+          : getterSource([], "if(flag)({slot:box}={slot:n});");
+      expect(() =>
+        runInNewContext(source, {
+          flag: true,
+          require: () => ({
+            BrowserWindow: class {
+              constructor() {
+                windows += 1;
+              }
+            },
+            ipcMain: { handle() {} },
+          }),
+        }),
+      ).toThrow(/is not a function/u);
+      expect(windows).toBe(0);
+    },
+  );
+
+  it("keeps a limited loader-alias walk unknown", () => {
+    const aliases = Array.from(
+      { length: 520 },
+      (_, index) => `const box${index + 1}=box${index};`,
+    ).join("");
+    const analysis = analyzeJavaScriptStaticSource(
+      bootstrap(
+        EXTERNAL,
+        "const s=n.n(n(45840));new(s().BrowserWindow)({});",
+        `const box0={};${aliases}box520.n=()=>0;n(100);`,
+      ),
+    );
+    expect(analysis.electron.browser_windows).toEqual([]);
+    expect(analysis.analysis_coverage).toMatchObject({
+      examination: {
+        semantic_resource_limits: expect.arrayContaining(["alias-selections"]),
+      },
+    });
+  });
+});
+
+it("reports the alias budget when a destructured external alias chain exceeds it", () => {
+  // 520 const hops exceed the default 512 alias selections; the origin is not
+  // claimed, and the walk reports its limit instead of a silent absence.
+  const hops = Array.from(
+    { length: 520 },
+    (_, index) => `const a${index + 1}=a${index};`,
+  ).join("");
+  const analysis = analyzeJavaScriptStaticSource(
+    bootstrap(
+      EXTERNAL,
+      `const a0=n(45840);${hops}const{BrowserWindow}=a520;new BrowserWindow({});`,
+    ),
+  );
+  expect(analysis.electron.browser_windows).toEqual([]);
+  expect(analysis.analysis_coverage).toMatchObject({
+    examination: {
+      semantic_resource_limits: expect.arrayContaining(["alias-selections"]),
+    },
+  });
+});
+
+describe("exhausted CommonJS delegate-write receiver selections", () => {
+  const writes = "while(flag)receiver=receiver[key];receiver[key]=0;";
+
+  it.each([
+    ["a closed local cycle", `let receiver={};${writes}`, 1],
+    [
+      "a Module stored in a property",
+      `let receiver={host:module};${writes}`,
+      0,
+    ],
+    [
+      "a Module installed through a prior member write",
+      `let receiver={};receiver.host=module;${writes}`,
+      0,
+    ],
+    [
+      "an opaque parameter",
+      `function mutate(receiver){${writes}}mutate(module);`,
+      0,
+    ],
+    [
+      "a mutated prototype",
+      `Object.prototype.host=module;let receiver={};${writes}`,
+      0,
+    ],
+    [
+      "indirect eval that can change inherited members",
+      `(0, eval)(code);let receiver={};${writes}`,
+      0,
+    ],
+    [
+      "constructed code that can change inherited members",
+      `Function(code)();let receiver={};${writes}`,
+      0,
+    ],
+    [
+      "an unfinished source closure",
+      `let receiver=[${Array<string>(24).fill("0").join(",")}];${writes}`,
+      0,
+    ],
+  ] as const)(
+    "preserves the receiver proof for %s",
+    (_name, sideEffect, expected) => {
+      const source = bootstrap(EXTERNAL, CONSUMER, `${sideEffect}n(100);`);
+      const parsed = parseJavaScriptSource(source, "main.cjs");
+      if (parsed === null) throw new Error("Expected a parsed Webpack fixture");
+      const analysis = analyzeParsedJavaScriptStaticSource(source, parsed, {
+        alias_selections: 16,
+      });
+      expect(
+        analysis.analysis_coverage.examination.semantic_resource_limits,
+      ).toContain("alias-selections");
+      expect(analysis.electron.browser_windows).toHaveLength(expected);
+      expect(
+        analysis.electron.ipc.filter(
+          ({ resolution_basis }) => resolution_basis !== "wrapper-substitution",
+        ),
+      ).toHaveLength(expected);
+    },
+  );
+});
+
 describe("Webpack externals with a tampered runtime", () => {
   it.each([
     [
@@ -223,6 +487,38 @@ describe("Webpack externals with a tampered runtime", () => {
 });
 
 describe("Webpack externals with a tampered loader or module object", () => {
+  it.each([
+    ["invoked", "n.i(runtimeChunks);"],
+    ["read through an alias", "const install=n.i;install(runtimeChunks);"],
+    ["read through a dynamic key", "n[runtimeMember](runtimeChunks);"],
+    ["exposed with its namespace", "publish(n);"],
+    [
+      "reachable through a helper receiver",
+      "n.run=function(){this.i(runtimeChunks)};n.run();",
+    ],
+  ])(
+    "keeps an unknown chunk installation unresolved when %s",
+    (_name, invoke) => {
+      expectUnresolved(
+        bootstrap(
+          EXTERNAL,
+          CONSUMER,
+          `n.m=m;n.i=e=>{for(var k in e)n.m[k]=e[k]};${invoke}n(100);`,
+        ),
+      );
+    },
+  );
+
+  it("does not treat a called assignment value as an unused installer", () => {
+    expectUnresolved(
+      bootstrap(
+        EXTERNAL,
+        CONSUMER,
+        "n.m=m;(n.i=e=>{for(var k in e)n.m[k]=e[k]})(runtimeChunks);n(100);",
+      ),
+    );
+  });
+
   it.each([
     [
       "cached exports rewritten through the runtime exposure",
@@ -374,5 +670,146 @@ describe("Webpack externals through the loader's completion paths", () => {
     expect(electronOf(source).browser_windows).toMatchObject([
       { preload_path: "./preload.js" },
     ]);
+  });
+});
+
+describe("Webpack identity through erased TypeScript syntax", () => {
+  it.each([
+    [
+      "the module table",
+      bootstrap(
+        EXTERNAL,
+        CONSUMER,
+        "interface RuntimeShape { m(): void } n(100);",
+      ),
+    ],
+    [
+      "the fresh module object",
+      bootstrap(EXTERNAL, CONSUMER).replace(
+        "return m[t](o,o.exports,n)",
+        "interface ModuleShape { o(): void } return m[t](o,o.exports,n)",
+      ),
+    ],
+    [
+      "the module table through a type query",
+      bootstrap(EXTERNAL, CONSUMER, "type RuntimeShape = typeof m; n(100);"),
+    ],
+    [
+      "the fresh module object through a type query",
+      bootstrap(EXTERNAL, CONSUMER).replace(
+        "return m[t](o,o.exports,n)",
+        "type ModuleShape = typeof o; return m[t](o,o.exports,n)",
+      ),
+    ],
+    [
+      "the loader beside an uncalled installer",
+      bootstrap(
+        EXTERNAL,
+        CONSUMER,
+        "n.m=m;n.i=e=>{for(var k in e)n.m[k]=e[k]};interface RuntimeShape { n(): void } n(100);",
+      ),
+    ],
+    [
+      "the loader through a type query beside an uncalled installer",
+      bootstrap(
+        EXTERNAL,
+        CONSUMER,
+        "n.m=m;n.i=e=>{for(var k in e)n.m[k]=e[k]};type RuntimeShape = typeof n; n(100);",
+      ),
+    ],
+  ])("does not let erased TypeScript syntax escape %s", (_name, source) => {
+    const electron = electronOf(source);
+    expect(electron.browser_windows).toMatchObject([
+      { preload_path: "./preload.js" },
+    ]);
+    expect(electron.ipc).toMatchObject([
+      { channel: "get-connections", side: "main" },
+    ]);
+  });
+
+  it.each([
+    "const shape = { [m]: true }; n(100);",
+    "const kind = typeof m; n(100);",
+    "m.extra; n(100);",
+  ])(
+    "keeps an actual table reference outside the loader unproven: %s",
+    (entry) => {
+      expectUnresolved(bootstrap(EXTERNAL, CONSUMER, entry));
+    },
+  );
+});
+
+describe("Electron members destructured from a Webpack external binding", () => {
+  const WINDOW = 'webPreferences:{preload:"./p.js",nodeIntegration:true}';
+  const directIpc = (source: string) =>
+    electronOf(source).ipc.filter(
+      ({ resolution_basis: basis }) => basis !== "wrapper-substitution",
+    );
+
+  it.each([
+    ["a shorthand pattern", "const{BrowserWindow}=s;new BrowserWindow"],
+    ["a renamed pattern", "const{BrowserWindow:W}=s;new W"],
+    ["a two-hop alias", "const w=s;const{BrowserWindow}=w;new BrowserWindow"],
+    ["a plain alias", "const w=s;new w.BrowserWindow"],
+  ])("follows the window class through %s", (_name, consumer) => {
+    expect(
+      electronOf(
+        bootstrap(EXTERNAL, `const s=n(45840);${consumer}({${WINDOW}});`),
+      ).browser_windows,
+    ).toMatchObject([{ preload_path: "./p.js" }]);
+  });
+
+  it.each([
+    [
+      "a top-level registration",
+      'const s=n(45840);const{app,ipcMain}=s;ipcMain.handle("chan",async()=>[]);',
+    ],
+    [
+      "a guarded registration in a nested function",
+      'const s=n(45840);const{app,ipcMain}=s;const init=()=>{if(!ipcMain||!app)return;ipcMain.on("chan",()=>{})};init();',
+    ],
+  ])("follows destructured IPC through %s", (_name, consumer) => {
+    expect(directIpc(bootstrap(EXTERNAL, consumer))).toMatchObject([
+      { channel: "chan", side: "main" },
+    ]);
+  });
+
+  it.each([
+    [
+      "a reassigned external binding",
+      "let s=n(45840);s=other;const{BrowserWindow}=s;",
+    ],
+    [
+      "an overwritten class member",
+      "const s=n(45840);s.BrowserWindow=class{};const{BrowserWindow}=s;",
+    ],
+    [
+      "an overwritten member through an alias",
+      "const s=n(45840);const w=s;w.BrowserWindow=class{};const{BrowserWindow}=s;",
+    ],
+    ["a cyclic alias", "var a=b,b=a;const{BrowserWindow}=a;"],
+    [
+      "an alias read before its hoisted source is initialized",
+      "var saved=s;var s=n(45840);const{BrowserWindow}=saved;",
+    ],
+    ["a different table key", "const s=n(45841);const{BrowserWindow}=s;"],
+    [
+      "a rebindable binding exposed to direct eval",
+      "let s=n(45840);eval(code);const{BrowserWindow}=s;",
+    ],
+  ])("keeps %s unresolved", (_name, prefix) => {
+    expect(
+      electronOf(
+        bootstrap(EXTERNAL, `${prefix}new BrowserWindow({${WINDOW}});`),
+      ).browser_windows,
+    ).toEqual([]);
+  });
+
+  it("keeps a require alias exposed to direct eval unresolved", () => {
+    expect(
+      electronOf(
+        `let s=require("electron");eval(code);const{BrowserWindow}=s;new BrowserWindow({${WINDOW}});`,
+      ).browser_windows,
+    ).toEqual([]);
   });
 });

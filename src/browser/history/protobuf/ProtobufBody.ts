@@ -161,11 +161,10 @@ export const decodeProtobufBody = async (
         );
         const facts = parsed.ok ? parsed.value : parsed.error;
         frame.examined_bytes = facts.examined_bytes;
-        if (parsed.ok || parsed.error.kind !== "invalid-utf8")
-          frame.trailers = facts.trailers.map(({ name, value }) => ({
-            name: redact(name),
-            value: redact(value),
-          }));
+        frame.trailers = facts.trailers.map(({ name, value }) => ({
+          name: redact(name),
+          value: redact(value),
+        }));
         if (!parsed.ok) {
           frame.status = "partial";
           frame.error = {

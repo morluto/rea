@@ -1,9 +1,7 @@
 import type { Document, Node } from "@xmldom/xmldom";
-import {
-  MAX_PLIST_DEPTH,
-  plistNestingLimitMessage,
-} from "./apple/plistValue.js";
+import { MAX_PLIST_DEPTH, PlistNestingLimitError } from "./apple/plistValue.js";
 import { err, ok, type Result } from "./result.js";
+import { type ParseFailureError, unsupportedInput } from "./parseFailure.js";
 import { parseXmlDocument, XML_LINE_ENDING } from "./xmlDocument.js";
 import {
   decodeXmlPlistData,
@@ -16,17 +14,22 @@ interface ScalarSpan {
   readonly selfClosing: boolean;
 }
 
-export class XmlPlistSourceError extends TypeError {
-  readonly _tag = "XmlPlistSourceError";
-  constructor() {
-    super("Cannot locate XML plist scalar in its original source");
-  }
-}
+/** The DOM node's reported position does not locate its scalar in the text. */
+const scalarSourceUnlocated = (): ParseFailureError<"unsupported"> =>
+  unsupportedInput(
+    "xml-plist",
+    "Cannot locate XML plist scalar in its original source",
+    { undecodedContent: true },
+  );
 
 /** One source owner binds lexical scalar values to their validated DOM nodes. */
-export const readXmlPlistSource = (text: string) => {
-  const normalized = text.replace(XML_LINE_ENDING, "\n");
-  const parsed = parseXmlDocument(normalized, {
+export const readXmlPlistSource = (
+  text: string,
+  maximumDepth = MAX_PLIST_DEPTH,
+) => {
+  // CoreFoundation keeps a literal CR in a key or string, so the document is
+  // read as written; XML 1.0 line-ending normalization would rewrite both.
+  const parsed = parseXmlDocument(text, {
     doctype: "allow",
     lineEndings: "preserve",
   });
@@ -58,14 +61,16 @@ export const readXmlPlistSource = (text: string) => {
       ? err("source-location")
       : ok({ start: openingEnd + 1, end, selfClosing });
   };
-  const spans = collectXmlPlistScalarSpans(document, readSpan);
+  const spans = collectXmlPlistScalarSpans(document, readSpan, maximumDepth);
   return {
     document,
-    scalarLiteral(node: Node): Result<string, XmlPlistSourceError> {
+    scalarLiteral(
+      node: Node,
+    ): Result<string, ParseFailureError<"unsupported">> {
       const span = spans.get(node);
       return span?.ok === true
         ? ok(text.slice(span.value.start, span.value.end))
-        : err(new XmlPlistSourceError());
+        : err(scalarSourceUnlocated());
     },
     dataValue(node: Node): Result<Uint8Array, XmlPlistDataError> {
       const span = spans.get(node);
@@ -162,6 +167,7 @@ const PLIST_CONTAINER_ELEMENTS = new Set(["plist", "dict", "array"]);
 const collectXmlPlistScalarSpans = (
   document: Document,
   readSpan: (node: Node) => Result<ScalarSpan, "source-location">,
+  maximumDepth: number,
 ): WeakMap<Node, Result<ScalarSpan, "source-location">> => {
   const spans = new WeakMap<Node, Result<ScalarSpan, "source-location">>();
   const root = document.documentElement;
@@ -178,8 +184,8 @@ const collectXmlPlistScalarSpans = (
     if (node.nextSibling !== null)
       pending.push({ node: node.nextSibling, depth });
     if (node.nodeType !== node.ELEMENT_NODE) continue;
-    if (node.nodeName !== "key" && depth > MAX_PLIST_DEPTH)
-      throw new RangeError(plistNestingLimitMessage());
+    if (node.nodeName !== "key" && depth > maximumDepth)
+      throw new PlistNestingLimitError(maximumDepth);
     if (PLIST_LEXICAL_SCALARS.has(node.nodeName))
       spans.set(node, readSpan(node));
     if (PLIST_CONTAINER_ELEMENTS.has(node.nodeName) && node.firstChild !== null)

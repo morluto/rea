@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 
@@ -65,6 +66,16 @@ export const peResourcesSchema = z.strictObject({
     .nullable(),
   directories: z.array(
     z.strictObject({
+      path: z
+        .array(identity)
+        .max(2)
+        .describe(
+          "Type/name identities leading to this directory; [] for the root",
+        ),
+      entry_locations: z
+        .array(range)
+        .max(2)
+        .describe("Incoming entry file ranges corresponding to path"),
       location: range,
       characteristics: uint,
       timestamp: uint,
@@ -117,6 +128,8 @@ export const peResourcesSchema = z.strictObject({
     examined_entries: uint,
     resources: uint,
   }),
+  /** Evidence saved before this field existed omits it. */
+  header_anomalies: peHeaderAnomaliesSchema.optional(),
   limitations: z.array(z.string()),
 });
 

@@ -16,10 +16,21 @@ import {
 /** The graph only emits edges whose destinations IDA recognizes as functions. */
 export const UNRECOGNIZED_CALLEE_LIMITATION =
   "This relationship read does not establish calls to targets IDA does not recognize as functions; imports and other non-function call targets remain unknown.";
+/**
+ * IDA callee reads return function edges without the call sites behind them,
+ * so a computed call's target set is never established as exhaustive.
+ */
+export const UNCLASSIFIED_CALL_SITE_LIMITATION =
+  "IDA's callee read does not identify computed or indirect call sites, so it cannot establish every target of such a call; additional callees may remain unknown.";
+export const IDA_CALLEE_DISCOVERY = {
+  callees: { status: "unknown", reason: UNCLASSIFIED_CALL_SITE_LIMITATION },
+} as const;
 const TRUNCATED_LIMITATION =
   "Upstream callgraph was truncated; additional callees remain unknown.";
 const POSSIBLY_TRUNCATED_LIMITATION =
   "Upstream callgraph may be truncated; additional callees may remain unknown.";
+const UNDECLARED_TRUNCATION_LIMITATION =
+  "Upstream callgraph did not declare whether it truncated the root scan; additional callees may remain unknown.";
 const expectedReadFailure = (cause: unknown): boolean =>
   cause instanceof AnalysisProtocolError ||
   cause instanceof AnalysisOutputError ||
@@ -98,9 +109,14 @@ export const readCallGraphCallees = async (
   const edges = row.edges.filter(
     ({ type, from }) => type === "call" && from === address,
   );
-  const targets = [...new Set(edges.map(({ to }) => to))].sort((left, right) =>
-    BigInt(left) < BigInt(right) ? -1 : BigInt(left) > BigInt(right) ? 1 : 0,
-  );
+  const targetSet = new Set<string>();
+  for (const edge of edges) targetSet.add(edge.to);
+  const targets = [...targetSet]
+    .map((target) => ({ target, offset: BigInt(target) }))
+    .sort((left, right) =>
+      left.offset < right.offset ? -1 : left.offset > right.offset ? 1 : 0,
+    )
+    .map(({ target }) => target);
   const limitations = [UNRECOGNIZED_CALLEE_LIMITATION];
   const diagnostics = [UNRECOGNIZED_CALLEE_LIMITATION];
   const coverageLimitations: string[] = [];
@@ -113,12 +129,19 @@ export const readCallGraphCallees = async (
   const saturated =
     row.max_edges_per_func !== undefined &&
     edges.length >= row.max_edges_per_func;
+  // Completeness needs both upstream markers: the graph-level truncation flag
+  // and the per-function cap. An omitted marker is unknown, never "not truncated".
+  const undeclared =
+    row.truncated === undefined ||
+    (row.per_func_capped === undefined && row.max_edges_per_func === undefined);
   if (truncated) {
     limitations.push(TRUNCATED_LIMITATION);
     coverageLimitations.push(TRUNCATED_LIMITATION);
   } else if (saturated) {
     limitations.push(POSSIBLY_TRUNCATED_LIMITATION);
     coverageLimitations.push(POSSIBLY_TRUNCATED_LIMITATION);
+  } else if (undeclared) {
+    limitations.push(UNDECLARED_TRUNCATION_LIMITATION);
   }
 
   const names = new Map<string, string>();
@@ -135,7 +158,7 @@ export const readCallGraphCallees = async (
         const rows = new Map<string, (typeof parsed.data)[number] | null>();
         for (const item of parsed.data) {
           const query = idaAddressSchema.safeParse(item.query);
-          if (!query.success || !targets.includes(query.data)) continue;
+          if (!query.success || !targetSet.has(query.data)) continue;
           rows.set(query.data, rows.has(query.data) ? null : item);
         }
         for (const target of targets) {
@@ -165,14 +188,27 @@ export const readCallGraphCallees = async (
       };
     }),
     limitations,
-    coverage: {
-      ...(coverageLimitations.length === 0
-        ? { status: "complete" as const }
-        : {
-            status: "partial" as const,
-            limitations: coverageLimitations,
-          }),
-      diagnostics,
-    },
+    coverage:
+      coverageLimitations.length === 0 && undeclared
+        ? {
+            status: "unknown",
+            reason: UNDECLARED_TRUNCATION_LIMITATION,
+            limited_directions: ["callees"],
+            diagnostics,
+            discovery: IDA_CALLEE_DISCOVERY,
+          }
+        : coverageLimitations.length > 0
+          ? {
+              status: "partial",
+              limitations: coverageLimitations,
+              limited_directions: ["callees"],
+              diagnostics,
+              discovery: IDA_CALLEE_DISCOVERY,
+            }
+          : {
+              status: "complete",
+              diagnostics,
+              discovery: IDA_CALLEE_DISCOVERY,
+            },
   };
 };

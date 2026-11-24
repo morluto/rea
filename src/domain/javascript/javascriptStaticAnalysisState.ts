@@ -1,6 +1,7 @@
 import type * as t from "@babel/types";
-import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticAnalysis.js";
-import type { JavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
+import type { JavaScriptBundlerFactoryRoles } from "./javascriptBundlerFactoryRoles.js";
+import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
+import type { JavaScriptRpcScan } from "./javascriptRpcEndpoint.js";
 import type { JavaScriptStaticPathIntrinsicQuery } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 
@@ -20,7 +21,10 @@ import type {
   ElectronIpcFinding,
   ElectronNativeAddonBindingFinding,
   ElectronSenderValidationFinding,
+  ElectronProtocolFinding,
+  ElectronDynamicCodeFinding,
   ElectronUtilityProcessFinding,
+  ElectronWindowConstructor,
 } from "./electronStaticAnalysisTypes.js";
 import { JavaScriptModuleRangeIndex } from "./javascriptStaticAnalysisFindings.js";
 
@@ -41,6 +45,13 @@ export interface LocatedJavaScriptFinding<Value> {
 
 /** Mutable collections used during one inert AST traversal. */
 export interface JavaScriptAnalysisAccumulator {
+  readonly pendingBundlerExports: {
+    readonly factory: t.Node;
+    readonly roles: JavaScriptBundlerFactoryRoles;
+    readonly exports: string[];
+  }[];
+  /** Factory parameter defaults the bundler calling convention never runs. */
+  readonly unusedFactoryDefaults: Set<t.Node>;
   readonly pendingModuleRequireCalls: (
     | t.CallExpression
     | t.OptionalCallExpression
@@ -48,7 +59,7 @@ export interface JavaScriptAnalysisAccumulator {
   )[];
   readonly appPathChanges: LocatedJavaScriptFinding<ElectronAppPathChangeFinding>[];
   electronCallPaths?: readonly ElectronCallPath[];
-  electronCallPathLimitReached?: boolean;
+  electronCallPathLimits?: Set<"wrapper_visits" | "wrapper_depth">;
   readonly references: LocatedJavaScriptFinding<JavaScriptStaticReference>[];
   readonly endpoints: LocatedJavaScriptFinding<JavaScriptStaticEndpoint>[];
   /** Target and receiver identities awaiting the shared mutation index. */
@@ -71,48 +82,85 @@ export interface JavaScriptAnalysisAccumulator {
   readonly sourceMaps: JavaScriptStaticAnalysis["source_map_urls"][number][];
   readonly registrations: JavaScriptBundlerRegistration[];
   readonly browserWindows: LocatedJavaScriptFinding<ElectronBrowserWindowFinding>[];
-  readonly pendingBrowserWindows: t.NewExpression[];
+  readonly pendingBrowserWindows: {
+    readonly node: t.NewExpression;
+    readonly constructor: ElectronWindowConstructor;
+  }[];
   readonly contextBridgeApis: LocatedJavaScriptFinding<ElectronContextBridgeFinding>[];
   readonly ipc: LocatedJavaScriptFinding<ElectronIpcFinding>[];
+  readonly pendingIpcChannels: Map<number, t.Node>;
   readonly senderValidations: LocatedJavaScriptFinding<ElectronSenderValidationFinding>[];
   readonly utilityProcesses: LocatedJavaScriptFinding<ElectronUtilityProcessFinding>[];
   readonly nativeAddonBindings: LocatedJavaScriptFinding<ElectronNativeAddonBindingFinding>[];
+  readonly pendingNativeAddonBindings: (
+    | t.VariableDeclarator
+    | t.AssignmentExpression
+  )[];
+  readonly protocols: LocatedJavaScriptFinding<ElectronProtocolFinding>[];
+  readonly dynamicCode: LocatedJavaScriptFinding<ElectronDynamicCodeFinding>[];
+  readonly pendingDynamicCode: (t.NewExpression | t.CallExpression)[];
   readonly moduleRangeIndex: JavaScriptModuleRangeIndex;
   /** Binding identities proven as third-parameter loaders of recovered factories. */
   readonly factoryRequireBindingIds: Set<string>;
-  /** `preload` attributes of audio and video elements, which are not scripts. */
-  readonly mediaElementPreloads: WeakSet<t.Node>;
   readonly seen: Set<string>;
+  bundlerExportHelpersObserved: boolean;
   visitedNodes: number;
   unknownFindings: number;
 }
 
 /** Shared source and accumulator for helper inspections. */
 export interface JavaScriptFindingContext {
-  /** Node path.resolve identity established by shared callee and mutation owners. */
-  readonly nodePathResolve?: JavaScriptStaticPathIntrinsicQuery;
+  /** Native path/URL identities established by shared lexical and mutation owners. */
+  readonly pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery;
+  readonly electronExportIntact?: (path: readonly string[]) => boolean;
+  readonly browserWindowReceiver?: (
+    node: t.Node,
+    site: t.Node,
+    suffix: readonly string[],
+  ) =>
+    | {
+        readonly owner: t.NewExpression;
+        readonly path: readonly string[];
+        readonly authority: { readonly loader_authority?: "candidate" };
+      }
+    | undefined;
+  readonly xhrOpenRequest?: (node: t.Node) => boolean;
+  readonly rendererLoad?: (
+    callee: t.Node,
+    site: t.Node,
+  ) => { readonly loader_authority?: "candidate" } | undefined;
   readonly rpcScan: JavaScriptRpcScan;
   /** Shared bounded argv/nullish argument shapes for optional-slot signatures. */
   readonly expressionShapes: JavaScriptExpressionShapeResolver;
   readonly source: string;
   readonly accumulator: JavaScriptAnalysisAccumulator;
-  readonly vitePreloadDependencyTable: readonly (string | undefined)[] | null;
+  readonly vitePreloadDependencyTable: {
+    readonly helper: t.Node;
+    readonly dependencies: readonly (string | undefined)[];
+  } | null;
   readonly openReceiverFacts?: ReadonlyMap<number, JavaScriptOpenReceiverFact>;
   /** Proven Electron export path segments by root offset. */
   readonly electronBindings?: ReadonlyMap<number, readonly string[]>;
+  /** Conditional Electron export paths, keyed by call/construction root. */
+  readonly electronCandidateBindings?: ReadonlyMap<number, readonly string[]>;
   /** Normalized invocation target from the shared Electron and intrinsic owners. */
   readonly electronInvocationPath?: (
     node: t.CallExpression | t.OptionalCallExpression,
   ) => readonly string[] | undefined;
   /** A possible shared-app mutation does not establish concrete API identity. */
   readonly electronAppPathChangePossible?: (node: t.Node) => boolean;
+  readonly electronCandidateAppPathChangePossible?: (node: t.Node) => boolean;
 }
 
 /** Candidate import, require, worker, or service-worker reference. */
 export interface JavaScriptReferenceInput {
+  readonly operation?: JavaScriptStaticReference["operation"];
   readonly node: t.Node;
   readonly kind: JavaScriptStaticReference["kind"];
   readonly specifier: string | undefined;
+  readonly resolutionBasePath?: string;
+  readonly loader?: JavaScriptStaticReference["loader"];
+  readonly loaderAuthority?: "candidate";
 }
 
 /** Candidate route or network endpoint literal. */
@@ -139,6 +187,8 @@ export interface LocatedJavaScriptFindingInput<
 export const createJavaScriptAnalysisAccumulator = (
   sourceLength: number,
 ): JavaScriptAnalysisAccumulator => ({
+  pendingBundlerExports: [],
+  unusedFactoryDefaults: new Set(),
   pendingModuleRequireCalls: [],
   appPathChanges: [],
   references: [],
@@ -153,13 +203,18 @@ export const createJavaScriptAnalysisAccumulator = (
   pendingBrowserWindows: [],
   contextBridgeApis: [],
   ipc: [],
+  pendingIpcChannels: new Map(),
   senderValidations: [],
   utilityProcesses: [],
   nativeAddonBindings: [],
+  pendingNativeAddonBindings: [],
+  protocols: [],
+  dynamicCode: [],
+  pendingDynamicCode: [],
   moduleRangeIndex: new JavaScriptModuleRangeIndex(sourceLength),
   factoryRequireBindingIds: new Set(),
-  mediaElementPreloads: new WeakSet(),
   seen: new Set(),
+  bundlerExportHelpersObserved: false,
   visitedNodes: 0,
   unknownFindings: 0,
 });

@@ -1,7 +1,6 @@
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import {
   managedNativeVerificationResultSchema,
-  type ManagedNativeVerificationInput,
   type ManagedNativeVerificationResult,
 } from "./managedNativeVerificationSchemas.js";
 import {
@@ -9,10 +8,7 @@ import {
   collectNativeSymbols,
   verifyPinvoke,
 } from "./managedNativeVerificationMatch.js";
-import {
-  readManagedNativeVerificationSource,
-  type ManagedNativeVerificationSource,
-} from "./managedNativeVerificationSource.js";
+import type { ManagedNativeVerificationSource } from "./managedNativeVerificationSource.js";
 
 /** Pure verification over authenticated, parsed source facts. */
 export const verifyManagedNativeVerificationSource = (
@@ -48,11 +44,11 @@ export const verifyManagedNativeVerificationSource = (
   });
 };
 
-/** Raw domain API retained for CLI and existing callers. */
-export const verifyManagedNativeBoundaries = (
-  input: ManagedNativeVerificationInput,
-): ManagedNativeVerificationResult => {
-  const source = readManagedNativeVerificationSource(input);
-  if (!source.ok) throw source.error;
-  return verifyManagedNativeVerificationSource(source.value);
-};
+/** Input coverage can retain a residual question even when no item was produced. */
+export const managedNativeVerificationHasUnknowns = (
+  result: Pick<ManagedNativeVerificationResult, "coverage" | "summary">,
+): boolean =>
+  result.coverage.status !== "complete-within-inputs" ||
+  result.summary.unresolved > 0 ||
+  result.summary.contradicted > 0 ||
+  result.summary.native_body_unresolved > 0;

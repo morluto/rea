@@ -1,6 +1,9 @@
 import { constants as fsConstants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
-import { delimiter, isAbsolute, join, resolve, sep } from "node:path";
+import { isAbsolute, sep } from "node:path";
+
+import { absoluteCallerPath } from "../../filesystem/callerPath.js";
+import { posixPathCandidates } from "../executableSearch.js";
 
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
 import {
@@ -14,9 +17,11 @@ import { processCaptureCancelled } from "./ProcessCaptureError.js";
 export const resolveProcessScenarioRuntimePaths = async (
   scenario: ProcessScenario,
   environment: Readonly<Record<string, string | undefined>> = process.env,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): Promise<ProcessScenario> => {
-  const selectedWorkingDirectory = resolve(scenario.working_directory);
+  const selectedWorkingDirectory = absoluteCallerPath(
+    scenario.working_directory,
+  );
   let workingDirectory: string;
   try {
     workingDirectory = await realpath(selectedWorkingDirectory);
@@ -38,7 +43,7 @@ export const resolveProcessScenarioRuntimePaths = async (
       hostAccessDenial(selectedWorkingDirectory, cause) ??
       invalidScenarioPath(
         "working_directory",
-        `working directory could not be inspected: ${workingDirectory}${osFailure(cause)}`,
+        `working directory could not be inspected: ${selectedWorkingDirectory}${osFailure(cause)}`,
         cause,
       )
     );
@@ -46,17 +51,16 @@ export const resolveProcessScenarioRuntimePaths = async (
   if (!workingDirectoryStat.isDirectory())
     throw invalidScenarioPath(
       "working_directory",
-      `working directory is not a directory: ${workingDirectory}`,
+      `working directory is not a directory: ${selectedWorkingDirectory}`,
     );
   const executable = await resolveExecutable(
     scenario.executable,
     workingDirectory,
     snapshotEnvironment(scenario.environment, platform).PATH ??
-      snapshotEnvironment(environment, platform).PATH ??
-      "",
+      snapshotEnvironment(environment, platform).PATH,
   );
   const observationPaths = scenario.filesystem_observation_paths.map((path) =>
-    resolve(workingDirectory, path),
+    absoluteCallerPath(path, { cwd: workingDirectory }),
   );
   return {
     ...scenario,
@@ -72,25 +76,26 @@ export const resolveProcessScenarioRuntimePaths = async (
  * continues past denied directories, and an existing file without execute
  * permission remains an invalid selection.
  */
-export const resolveExecutable = async (
+const resolveExecutable = async (
   command: string,
   workingDirectory: string,
-  searchPath: string,
+  searchPath: string | undefined,
 ): Promise<string> => {
-  const directories = searchPath
-    .split(delimiter)
-    .map((directory) =>
-      directory === ""
-        ? workingDirectory
-        : resolve(workingDirectory, directory),
-    );
+  // Match Node's Unix default search path when PATH is absent. An empty
+  // PATH is different: its empty component selects the working directory.
   const explicit =
     isAbsolute(command) ||
     command.includes("/") ||
     (sep === "\\" && command.includes("\\"));
   const candidates = explicit
-    ? [resolve(workingDirectory, command)]
-    : directories.map((directory) => join(directory, command));
+    ? [absoluteCallerPath(command, { cwd: workingDirectory })]
+    : Array.from(
+        posixPathCandidates(command, searchPath ?? "/usr/bin:/bin", {
+          relativeEntries: "resolve",
+          workingDirectory,
+        }),
+        ({ path }) => path,
+      );
   const failures: string[] = [];
   for (const candidate of candidates) {
     let metadata;

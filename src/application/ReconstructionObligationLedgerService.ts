@@ -1,8 +1,9 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import type { ReconstructionObligationLedger } from "../domain/reconstructionObligationLedgerSchemas.js";
 import { ok, type Result } from "../domain/result.js";
-import { JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER } from "./InvestigationProviders.js";
+import { JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER } from "../domain/investigationProviders.js";
 import { deriveReconstructionObligationCandidates } from "./ReconstructionObligationCandidates.js";
 import { evaluateReconstructionObligationLedger } from "./ReconstructionObligationLedgerEvaluation.js";
 import {
@@ -38,18 +39,22 @@ export const buildResolvedReconstructionObligationLedgerEvidence = (
 const createLedgerEvidence = (
   ledger: ReconstructionObligationLedger,
 ): Evidence =>
-  createEvidence(undefined, JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER, {
-    predicateType: "rea.reconstruction-obligation-ledger",
-    operation: OPERATION,
-    parameters: {
-      ledger_id: ledger.ledger_id,
-      closure_digest: ledger.closure_digest,
+  createEvidence(
+    unknownTarget("derived-from-linked-evidence"),
+    JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER,
+    {
+      predicateType: "rea.reconstruction-obligation-ledger",
+      operation: OPERATION,
+      parameters: {
+        ledger_id: ledger.ledger_id,
+        closure_digest: ledger.closure_digest,
+      },
+      result: ledger,
+      rawResult: null,
+      confidence: "inferred",
+      authority: "analyst-inference",
+      environment: null,
+      limitations: ledger.limitations,
+      evidenceLinks: ledger.evidence_links,
     },
-    result: ledger,
-    rawResult: null,
-    confidence: "inferred",
-    authority: "analyst-inference",
-    environment: null,
-    limitations: ledger.limitations,
-    evidenceLinks: ledger.evidence_links,
-  });
+  );

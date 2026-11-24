@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
-import { access, chmod, open, rm, writeFile } from "node:fs/promises";
+import { ChildProcess, execFile } from "node:child_process";
+import { access, chmod, open, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -21,11 +21,12 @@ import { err, ok } from "../../../../src/domain/result.js";
 
 import { HopperReleaseError } from "../../../../src/application/HopperReleaseFeed.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../../../../src/artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../../../../src/artifacts/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../../../../src/resources/AnalysisCleanupLease.js";
+import { ArtifactReaderFailure } from "../../../../src/resources/ArtifactReader.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
+import { selectLinuxPrivateDisplayStrategy } from "../../../../src/hopper/LinuxPrivateDisplayProbe.js";
 
 const readyDirectDisplay = async () =>
   ({
@@ -65,6 +66,106 @@ const options = (launcherPath: string): HopperApplicationLauncherOptions => ({
   launchMode: "verified_linux_demo",
   demoHelperPath: "/rea/hopper-demo-x11.py",
 });
+
+for (const deniedStops of [0, 2])
+  it.skipIf(process.platform === "win32")(
+    `retains a timed-out private-display probe through cleanup retry (denied stops=${String(deniedStops)})`,
+    async () => {
+      const directory = await createTestTempDirectory("rea-probe-owner-retry-");
+      const helperPath = fileURLToPath(
+        new URL("../../../fixtures/x11ProbeHang.py", import.meta.url),
+      );
+      const originalStop = ProviderProcessSupervisor.prototype.stop;
+      const captured: { current?: ProviderProcessSupervisor } = {};
+      let attempts = 0;
+      const stop = vi
+        .spyOn(ProviderProcessSupervisor.prototype, "stop")
+        .mockImplementation(function (
+          this: ProviderProcessSupervisor,
+          settings,
+        ) {
+          if (
+            !(this.launch.process instanceof ChildProcess) ||
+            !this.launch.process.spawnargs.includes(helperPath)
+          )
+            return originalStop.call(this, settings);
+          captured.current = this;
+          attempts += 1;
+          return attempts <= deniedStops
+            ? Promise.resolve({
+                status: "incomplete" as const,
+                reason: "Fixture probe stop unavailable",
+              })
+            : originalStop.call(this, settings);
+        });
+      const launcher = new HopperApplicationLauncher(
+        options(process.execPath),
+        {
+          platform: "win32",
+          verifyLinuxLauncher: async () =>
+            ok({
+              sha256: verifiedSha256,
+              version: "fixture",
+              primaryFingerprint: "0".repeat(40),
+              signingFingerprint: "1".repeat(40),
+              source: "signed_package_cache",
+            }),
+          selectPrivateDisplay: (settings) =>
+            selectLinuxPrivateDisplayStrategy({
+              ...settings,
+              helperPath,
+              timeoutMs: 75,
+            }),
+        },
+      );
+      try {
+        const launched = await launcher.launch({
+          directory,
+          socketPath: join(directory, "bridge.sock"),
+          token: "fixture-token",
+          runId: randomUUID(),
+        });
+        if (launched.ok) throw new Error("Expected private-display timeout");
+        const original = launched.error;
+        expect(projectAnalysisError(original).details).toMatchObject({
+          diagnostics: { reason: "probe_timeout" },
+        });
+        const initiallyPending = original.cleanupIncomplete;
+        if (deniedStops > 0) expect(initiallyPending).toBe(true);
+        if (initiallyPending)
+          expect(original.cleanupResources).toEqual(
+            expect.arrayContaining([
+              expect.stringMatching(/^hopper-private-display-probe:/u),
+            ]),
+          );
+        const supervisor = captured.current;
+        if (supervisor === undefined)
+          throw new Error("Expected the real owned probe");
+        if (deniedStops > 0) {
+          const child = supervisor.launch.process;
+          expect(child.exitCode).toBeNull();
+          expect(child.signalCode).toBeNull();
+          expect((await launcher.cleanup()).ok).toBe(false);
+          expect(original.cleanupIncomplete).toBe(true);
+        }
+        expect((await launcher.cleanup()).ok).toBe(true);
+        expect(original.cleanupIncomplete).toBe(false);
+        expect(original.cleanupResources).toEqual([]);
+        expect(
+          supervisor.launch.process.exitCode !== null ||
+            supervisor.launch.process.signalCode !== null,
+        ).toBe(true);
+        const expectedAttempts =
+          deniedStops === 0 && initiallyPending ? 2 : deniedStops + 1;
+        expect(attempts).toBe(expectedAttempts);
+      } finally {
+        stop.mockRestore();
+        if (captured.current !== undefined)
+          await originalStop.call(captured.current);
+        await launcher.cleanup();
+      }
+    },
+  );
 
 it("resolves mixed image and publisher cleanup only after each owner releases", async () => {
   const directory = await createTestTempDirectory("rea-hopper-mixed-cleanup-");
@@ -548,6 +649,37 @@ it.skipIf(process.platform !== "linux")(
   },
 );
 
+it("refuses a Linux demo launch when no launcher verification was supplied", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-publisher-unconfigured-",
+  );
+  const targetPath = join(directory, "target");
+  await writeFile(targetPath, "fixture target");
+  const selectPrivateDisplay = vi.fn(readyDirectDisplay);
+  const launcher = new HopperApplicationLauncher(
+    { ...options("/unused/Hopper"), targetPath },
+    { platform: "linux", selectPrivateDisplay },
+  );
+  const result = await launcher.launch({
+    directory,
+    socketPath: join(directory, "bridge.sock"),
+    token: "fixture-token",
+    runId: randomUUID(),
+  });
+  if (result.ok) throw new Error("Unverified launcher started");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "provider_unavailable",
+    details: {
+      stage: "launch",
+      launch_rejection: {
+        boundary: "publisher_verification",
+        reason: "verification_unavailable",
+      },
+    },
+  });
+  expect(selectPrivateDisplay).not.toHaveBeenCalled();
+});
+
 it.skipIf(process.platform !== "linux")(
   "asks the demo helper to shut down orderly so its X lock is removed",
   async () => {
@@ -761,3 +893,40 @@ it.skipIf(process.platform !== "linux")(
     }
   },
 );
+
+it("ordinary executable launches pass a verified private image with configured loader arguments", async () => {
+  const directory = await createTestTempDirectory("rea-hopper-ordinary-image-");
+  const targetPath = join(directory, "target.exe");
+  const selected = Buffer.from("MZ selected image");
+  await writeFile(targetPath, selected);
+  const launcher = new HopperApplicationLauncher({
+    environment: {},
+    launcherPath: process.execPath,
+    targetPath,
+    targetKind: "executable",
+    targetSha256: createHash("sha256").update(selected).digest("hex"),
+    loaderArgs: ["-e", "process.stdout.write(process.argv.at(-1))", "--"],
+    bridgeScriptPath: "/rea/unused-bridge.py",
+    launchMode: "native",
+  });
+  const launched = await launcher.launch({
+    directory,
+    socketPath: join(directory, "bridge.sock"),
+    token: "fixture-token",
+    runId: randomUUID(),
+  });
+  if (!launched.ok) throw launched.error;
+  const supervisor = new ProviderProcessSupervisor(launched.value);
+  try {
+    expect(await supervisor.waitForOutputClose(5_000)).toBe(true);
+    const preparedPath = join(directory, "image.executable");
+    expect(supervisor.snapshot().stdout.text).toBe(preparedPath);
+    expect(launched.value.preparedImagePath).toBe(preparedPath);
+    await writeFile(targetPath, "replacement bytes");
+    expect(Buffer.compare(await readFile(preparedPath), selected)).toBe(0);
+  } finally {
+    await supervisor.stop();
+    await launched.value.releaseLease?.();
+    expect(await launcher.cleanup()).toEqual({ ok: true, value: null });
+  }
+});

@@ -44,6 +44,61 @@ const nativeIdentity = (
 });
 
 it.each(
+  [false, true].flatMap((native) =>
+    ([undefined, "foreign"] as const).map((runId) => ({ native, runId })),
+  ),
+)(
+  "keeps missing ownership distinct from an observed foreign token, native=$native, runId=$runId",
+  async ({ native, runId }) => {
+    const signalGroup = vi.fn();
+    const host: ProcessOwnershipHost = {
+      platform: "linux",
+      listProcesses: async () => [launcher],
+      environment: async () =>
+        runId === undefined ? {} : { REA_PROCESS_RUN_ID: runId },
+      ...(native
+        ? {
+            processIdentities: async (
+              rows: readonly Pick<ProcessTableEntry, "pid">[],
+            ) =>
+              new Map(
+                rows.map(({ pid }) => {
+                  const row = [launcher].find(
+                    (candidate) => candidate.pid === pid,
+                  )!;
+                  return [row.pid, nativeIdentity(row)];
+                }),
+              ),
+          }
+        : {}),
+      signalGroup,
+    };
+    const ownership = {
+      runId: "owned",
+      leaderPid: launcher.pid,
+      processGroupId: launcher.processGroupId,
+      expectedParentPid: launcher.parentPid,
+      expectedCommand: launcher.command,
+    };
+    await expect(
+      observeOwnedProcessLineage(ownership, host),
+    ).resolves.toMatchObject({
+      status: "unavailable",
+      reason:
+        runId === undefined
+          ? expect.stringMatching(/REA_PROCESS_RUN_ID.*PID 100.*unverified/iu)
+          : expect.stringMatching(/unowned.*PID.reused/iu),
+    });
+    await expect(
+      cleanupOwnedProcessGroup(ownership, host),
+    ).resolves.toMatchObject({
+      cleaned: false,
+    });
+    expect(signalGroup).not.toHaveBeenCalled();
+  },
+);
+
+it.each(
   (["parent", "group", "command"] as const).flatMap((mismatch) =>
     (
       ["foreign", "missing", "unavailable", "identity-unavailable"] as const
@@ -106,7 +161,12 @@ it.each(
         ),
       processIdentities: async (rows) =>
         new Map(
-          rows.map((row): [number, ProcessIdentityObservation] => {
+          rows.map(({ pid }): [number, ProcessIdentityObservation] => {
+            const row = [
+              nativeLauncher,
+              observing ? foreign : { ...foreign, parentPid: 1 },
+              independentlyOwned,
+            ].find((candidate) => candidate.pid === pid)!;
             if (!observing && row.pid !== foreign.pid)
               return [row.pid, { state: "absent", reason: "not-in-snapshot" }];
             if (
@@ -171,7 +231,14 @@ it("preserves independently token-owned ancestry when the launcher identity mism
         ]),
       ),
     processIdentities: async (rows) =>
-      new Map(rows.map((row) => [row.pid, nativeIdentity(row)])),
+      new Map(
+        rows.map(({ pid }) => {
+          const row = [foreignLauncher, ownedParent, unreadableChild].find(
+            (candidate) => candidate.pid === pid,
+          )!;
+          return [row.pid, nativeIdentity(row)];
+        }),
+      ),
     signalGroup: vi.fn(),
   };
 
@@ -221,19 +288,24 @@ it.each(["parent", "group"] as const)(
       processIdentities: async (rows) => {
         identityReads += 1;
         return new Map(
-          rows.map((row) => [
-            row.pid,
-            nativeIdentity(
-              row.pid === launcher.pid && identityReads > 1
-                ? {
-                    ...row,
-                    parentPid: mismatch === "parent" ? 999 : row.parentPid,
-                    processGroupId:
-                      mismatch === "group" ? 999 : row.processGroupId,
-                  }
-                : row,
-            ),
-          ]),
+          rows.map(({ pid }) => {
+            const row = [launcher, detached].find(
+              (candidate) => candidate.pid === pid,
+            )!;
+            return [
+              row.pid,
+              nativeIdentity(
+                row.pid === launcher.pid && identityReads > 1
+                  ? {
+                      ...row,
+                      parentPid: mismatch === "parent" ? 999 : row.parentPid,
+                      processGroupId:
+                        mismatch === "group" ? 999 : row.processGroupId,
+                    }
+                  : row,
+              ),
+            ];
+          }),
         );
       },
       signalGroup: vi.fn(),
@@ -302,7 +374,10 @@ it.each([
       processIdentities: async (rows) => {
         identityReads.push(rows.map(({ pid }) => pid));
         return new Map(
-          rows.map((row): [number, ProcessIdentityObservation] => {
+          rows.map(({ pid }): [number, ProcessIdentityObservation] => {
+            const row = [launcher, child, grandchild].find(
+              (candidate) => candidate.pid === pid,
+            )!;
             if (
               phase === "exited" ||
               (phase === "omitted" && row.pid !== child.pid)
@@ -393,12 +468,17 @@ it("retains a live native descendant behind an exited table ancestor", async () 
     },
     processIdentities: async (rows) =>
       new Map(
-        rows.map((row): [number, ProcessIdentityObservation] => [
-          row.pid,
-          row.pid === child.pid
-            ? { state: "absent", reason: "not-in-snapshot" }
-            : nativeIdentity(row),
-        ]),
+        rows.map(({ pid }): [number, ProcessIdentityObservation] => {
+          const row = [launcher, child, grandchild].find(
+            (candidate) => candidate.pid === pid,
+          )!;
+          return [
+            row.pid,
+            row.pid === child.pid
+              ? { state: "absent", reason: "not-in-snapshot" }
+              : nativeIdentity(row),
+          ];
+        }),
       ),
     signalGroup: vi.fn(),
   };
@@ -447,21 +527,26 @@ it.each(["unavailable-relation", "absent"] as const)(
         ),
       processIdentities: async (rows) =>
         new Map(
-          rows.map((row): [number, ProcessIdentityObservation] => [
-            row.pid,
-            (omitted && row.pid === launcher.pid) ||
-            (ancestor === "absent" && row.pid === child.pid)
-              ? { state: "absent", reason: "not-in-snapshot" }
-              : row.pid === child.pid
-                ? {
-                    ...nativeIdentity(row),
-                    relation: {
-                      state: "unavailable",
-                      reason: "relation denied",
-                    },
-                  }
-                : nativeIdentity(row),
-          ]),
+          rows.map(({ pid }): [number, ProcessIdentityObservation] => {
+            const row = [launcher, child, detached].find(
+              (candidate) => candidate.pid === pid,
+            )!;
+            return [
+              row.pid,
+              (omitted && row.pid === launcher.pid) ||
+              (ancestor === "absent" && row.pid === child.pid)
+                ? { state: "absent", reason: "not-in-snapshot" }
+                : row.pid === child.pid
+                  ? {
+                      ...nativeIdentity(row),
+                      relation: {
+                        state: "unavailable",
+                        reason: "relation denied",
+                      },
+                    }
+                  : nativeIdentity(row),
+            ];
+          }),
         ),
       signalGroup: vi.fn(),
     };
@@ -501,12 +586,17 @@ it("retains a verified child before rejecting an unreadable launcher identity", 
     environment: async () => ({ REA_PROCESS_RUN_ID: "run" }),
     processIdentities: async (rows) =>
       new Map(
-        rows.map((row): [number, ProcessIdentityObservation] => [
-          row.pid,
-          row.pid === launcher.pid
-            ? { state: "unavailable", reason: "native identity denied" }
-            : nativeIdentity(row),
-        ]),
+        rows.map(({ pid }): [number, ProcessIdentityObservation] => {
+          const row = [launcher, child].find(
+            (candidate) => candidate.pid === pid,
+          )!;
+          return [
+            row.pid,
+            row.pid === launcher.pid
+              ? { state: "unavailable", reason: "native identity denied" }
+              : nativeIdentity(row),
+          ];
+        }),
       ),
     signalGroup: vi.fn(),
   };
@@ -542,14 +632,19 @@ it("uses a readable native relation to exclude a stale table descendant", async 
     },
     processIdentities: async (rows) =>
       new Map(
-        rows.map((row) => [
-          row.pid,
-          nativeIdentity(
-            row.pid === child.pid
-              ? { ...row, parentPid: 1, processGroupId: 200 }
-              : row,
-          ),
-        ]),
+        rows.map(({ pid }) => {
+          const row = [launcher, child].find(
+            (candidate) => candidate.pid === pid,
+          )!;
+          return [
+            row.pid,
+            nativeIdentity(
+              row.pid === child.pid
+                ? { ...row, parentPid: 1, processGroupId: 200 }
+                : row,
+            ),
+          ];
+        }),
       ),
     signalGroup: vi.fn(),
   };
@@ -580,17 +675,25 @@ it("does not retain table scope after a native relation resolves as unrelated", 
     processIdentities: async (rows) => {
       identityReads += 1;
       return new Map(
-        rows.map((row): [number, ProcessIdentityObservation] => [
-          row.pid,
-          row.pid !== child.pid
-            ? nativeIdentity(row)
-            : identityReads === 1
-              ? {
-                  ...nativeIdentity(row),
-                  relation: { state: "unavailable", reason: "relation denied" },
-                }
-              : nativeIdentity({ ...row, parentPid: 1, processGroupId: 200 }),
-        ]),
+        rows.map(({ pid }): [number, ProcessIdentityObservation] => {
+          const row = [launcher, child].find(
+            (candidate) => candidate.pid === pid,
+          )!;
+          return [
+            row.pid,
+            row.pid !== child.pid
+              ? nativeIdentity(row)
+              : identityReads === 1
+                ? {
+                    ...nativeIdentity(row),
+                    relation: {
+                      state: "unavailable",
+                      reason: "relation denied",
+                    },
+                  }
+                : nativeIdentity({ ...row, parentPid: 1, processGroupId: 200 }),
+          ];
+        }),
       );
     },
     signalGroup: vi.fn(),
@@ -632,7 +735,10 @@ it.each(["none", "unresolved", "known"] as const)(
       processIdentities: async (rows) => {
         identityReads += 1;
         return new Map(
-          rows.map((row): [number, ProcessIdentityObservation] => {
+          rows.map(({ pid }): [number, ProcessIdentityObservation] => {
+            const row = [launcher, child].find(
+              (candidate) => candidate.pid === pid,
+            )!;
             if (row.pid === launcher.pid)
               return [
                 row.pid,
@@ -653,7 +759,10 @@ it.each(["none", "unresolved", "known"] as const)(
                 row.pid,
                 {
                   ...nativeIdentity(row),
-                  relation: { state: "unavailable", reason: "relation denied" },
+                  relation: {
+                    state: "unavailable",
+                    reason: "relation denied",
+                  },
                 },
               ];
             return [
@@ -728,7 +837,10 @@ it.each(["replaced", "relation-unavailable-replaced", "unavailable"] as const)(
       processIdentities: async (rows) => {
         identityReads += 1;
         return new Map(
-          rows.map((row): [number, ProcessIdentityObservation] => {
+          rows.map(({ pid }): [number, ProcessIdentityObservation] => {
+            const row = [launcher, child, detached].find(
+              (candidate) => candidate.pid === pid,
+            )!;
             const replacedAncestor =
               row.pid === child.pid && ancestorGeneration !== "unavailable";
             if (
@@ -840,19 +952,24 @@ it("keeps an exiting descendant whose termination cannot be confirmed", async ()
     processIdentities: async (rows) => {
       identityReads += 1;
       return new Map(
-        rows.map((row): [number, ProcessIdentityObservation] => [
-          row.pid,
-          row.pid === launcher.pid
-            ? omitted
-              ? { state: "absent", reason: "not-in-snapshot" }
-              : nativeIdentity(row)
-            : identityReads === 1
-              ? {
-                  ...nativeIdentity(row),
-                  lifecycle: { state: "observed", lifecycle: "exiting" },
-                }
-              : { state: "unavailable", reason: "identity denied" },
-        ]),
+        rows.map(({ pid }): [number, ProcessIdentityObservation] => {
+          const row = [launcher, child].find(
+            (candidate) => candidate.pid === pid,
+          )!;
+          return [
+            row.pid,
+            row.pid === launcher.pid
+              ? omitted
+                ? { state: "absent", reason: "not-in-snapshot" }
+                : nativeIdentity(row)
+              : identityReads === 1
+                ? {
+                    ...nativeIdentity(row),
+                    lifecycle: { state: "observed", lifecycle: "exiting" },
+                  }
+                : { state: "unavailable", reason: "identity denied" },
+          ];
+        }),
       );
     },
     signalGroup,
@@ -924,7 +1041,10 @@ it.each(
       processIdentities: async (rows) => {
         identityReads += 1;
         return new Map(
-          rows.map((row): [number, ProcessIdentityObservation] => {
+          rows.map(({ pid }): [number, ProcessIdentityObservation] => {
+            const row = [launcher, child].find(
+              (candidate) => candidate.pid === pid,
+            )!;
             if (row.pid !== stale.pid)
               return [
                 row.pid,
@@ -1014,13 +1134,19 @@ it.each(["absent", "zombie", "dead"] as const)(
       processIdentities: async (rows) => {
         identityReads += 1;
         return new Map(
-          rows.map((row): [number, ProcessIdentityObservation] => {
+          rows.map(({ pid }): [number, ProcessIdentityObservation] => {
+            const row = [launcher, child, detached].find(
+              (candidate) => candidate.pid === pid,
+            )!;
             if (row.pid === child.pid)
               return [
                 row.pid,
                 identityReads === 1
                   ? exitedIdentity(row, exit)
-                  : { ...nativeIdentity(replacement), identity: "replacement" },
+                  : {
+                      ...nativeIdentity(replacement),
+                      identity: "replacement",
+                    },
               ];
             if (
               phase === "exited" ||

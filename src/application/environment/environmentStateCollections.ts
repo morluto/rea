@@ -31,7 +31,12 @@ export const createdCollection = (
   type: string,
 ): string | undefined => {
   const segments = callSegments(tool, args);
-  if (segments === undefined || segments.some(({ text }) => text.length === 0))
+  // A supplied path argument may not be empty; an empty literal segment, from a
+  // repeated separator in the route, is part of the collection's spelling.
+  if (
+    segments === undefined ||
+    segments.some(({ text, supplied }) => supplied && text.length === 0)
+  )
     return undefined;
   // The spelling the call supplies verbatim wins, as item calls choose their entity, then the first known: held ones lead.
   return selectedCollection(segments, creatableCollectionsOf(serving, type));

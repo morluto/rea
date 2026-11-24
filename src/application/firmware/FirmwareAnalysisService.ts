@@ -1,6 +1,6 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
-import type { FirmwareAnalysisPort } from "./FirmwareAnalysisPort.js";
+import type { FirmwareAnalysisPort } from "../../ports/firmware/FirmwareAnalysisPort.js";
 import {
   firmwareRequestSchema,
   firmwareExecutionBudgetSchema,
@@ -8,12 +8,12 @@ import {
   type FirmwareOperation,
 } from "../../domain/firmware/firmwareAnalysis.js";
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
+import { analysisOperationInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
@@ -32,17 +32,15 @@ export class FirmwareAnalysisService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(operation, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(operation, options.signal));
     const parsed = firmwareRequestSchema.safeParse({ operation, input });
     if (!parsed.success)
       return err(
-        analysisInputErrorFromIssues(
+        analysisOperationInputErrorFromIssues(
           operation,
           parsed.error.issues,
-          { operation, input },
-          { cause: parsed.error },
+          input,
+          parsed.error,
         ),
       );
     const executed = await this.provider.execute(parsed.data, options);

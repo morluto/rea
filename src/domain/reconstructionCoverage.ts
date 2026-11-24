@@ -1,3 +1,4 @@
+import { reconstructionCoverageScope } from "./reconstructionCoverageScope.js";
 import { z } from "zod";
 import { AnalysisInputError } from "./analysisErrorCore.js";
 import type { EvidenceIntegrityError } from "./evidenceErrors.js";
@@ -19,8 +20,7 @@ import {
   recommendedReconstructionProbes,
   type ReconstructionEvaluationContext,
 } from "./reconstructionCoverageEvaluation.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import {
   offsetDateTimeInstantFromEpochMilliseconds,
@@ -31,7 +31,10 @@ const evidenceIdSchema = prefixedDigestSchema("ev");
 const stableIdSchema = z
   .string()
   .regex(/^[A-Za-z][A-Za-z0-9._:\x2f\x2d]{0,199}$/u);
-const boundedTextSchema = z.string().trim().min(1);
+export const reconstructionBoundaryIdSchema = stableIdSchema.describe(
+  "Exact identifier of a boundary declared in the reconstruction coverage.",
+);
+const trimmedTextSchema = z.string().trim().min(1);
 
 const authoritySchema = z.enum([
   "observed",
@@ -54,7 +57,7 @@ const surfaceSchema = z.strictObject({
   family: z.string().trim().min(1),
   artifact_id: stableIdSchema,
   occurrence_id: z.string().trim().min(1).nullable(),
-  location: boundedTextSchema,
+  location: trimmedTextSchema,
   authority: authoritySchema,
   dependency_surface_ids: z.array(stableIdSchema),
   evidence_ids: z.array(evidenceIdSchema).min(1),
@@ -62,7 +65,7 @@ const surfaceSchema = z.strictObject({
 
 const implementationOwnerSchema = z.strictObject({
   disposition: z.literal("implemented"),
-  owner_path: boundedTextSchema,
+  owner_path: trimmedTextSchema,
   owner_export: z.string().trim().min(1).nullable(),
   owner_sha256: digestSchema,
   path_state: z.enum(["present", "missing", "unknown"]),
@@ -72,7 +75,7 @@ const implementationOwnerSchema = z.strictObject({
 
 const externalOwnerSchema = z.strictObject({
   disposition: z.enum(["external", "non-goal"]),
-  rationale: boundedTextSchema,
+  rationale: trimmedTextSchema,
 });
 
 const ownerSchema = z.strictObject({
@@ -97,7 +100,7 @@ const claimSchema = z.strictObject({
   ]),
 });
 
-const verifierContractBaseSchema = z.strictObject({
+const verifierContractSchema = z.strictObject({
   verifier_id: stableIdSchema,
   claim_ids: z.array(stableIdSchema).min(1),
   dimensions: z.array(stableIdSchema).min(1),
@@ -111,9 +114,6 @@ const verifierContractBaseSchema = z.strictObject({
   minimum_repeats: z.int().min(1),
   normalization_sha256: digestSchema,
   normalization_removes_dimensions: z.literal(false),
-});
-
-const verifierContractSchema = verifierContractBaseSchema.extend({
   contract_sha256: digestSchema,
 });
 
@@ -161,7 +161,7 @@ const packageProofSchema = z.strictObject({
 });
 
 const boundarySchema = z.strictObject({
-  boundary_id: stableIdSchema,
+  boundary_id: reconstructionBoundaryIdSchema,
   title: z.string().trim().min(1),
   required_surface_ids: z.array(stableIdSchema).min(1),
   required_claim_ids: z.array(stableIdSchema).min(1),
@@ -207,20 +207,15 @@ export interface ParsedReconstructionCoverage {
     string,
     ReconstructionCoverageData["claims"][number]
   >;
+  readonly boundaries: ReadonlyMap<
+    string,
+    ReconstructionCoverageData["boundaries"][number]
+  >;
   readonly ownersBySurface: ReadonlyMap<
     string,
     readonly ReconstructionCoverageData["owners"][number][]
   >;
 }
-
-/** Parse inline coverage data and validate every evidence and authority link. */
-export const createReconstructionCoverageData = (
-  input: unknown,
-): ReconstructionCoverageData => {
-  const parsed = readReconstructionCoverageData(input);
-  if (!parsed.ok) throw parsed.error;
-  return parsed.value.coverage;
-};
 
 const coverageEnvelopeSchema = reconstructionCoverageDataSchema.extend({
   evidence_bundle: z.unknown(),
@@ -246,7 +241,10 @@ export const readReconstructionCoverageData = (
         })),
       ),
     );
-  const bundle = readEvidenceBundle(parsed.data.evidence_bundle);
+  const bundle = readEvidenceBundle(parsed.data.evidence_bundle, {
+    operation: "evaluate_reconstruction_coverage",
+    path: [...path, "evidence_bundle"],
+  });
   if (!bundle.ok) return bundle;
   const coverage = { ...parsed.data, evidence_bundle: bundle.value };
   try {
@@ -286,11 +284,11 @@ const closureReasonSchema = z.strictObject({
     "package-proof-unknown",
   ]),
   subject_id: stableIdSchema,
-  detail: boundedTextSchema,
+  detail: trimmedTextSchema,
 });
 
 export const reconstructionClosureResultSchema = z.strictObject({
-  boundary_id: stableIdSchema,
+  boundary_id: reconstructionBoundaryIdSchema,
   status: z.enum(["partial", "failed", "unknown", "ready"]),
   summary: z.strictObject({
     required_surfaces: z.int().min(0),
@@ -302,7 +300,7 @@ export const reconstructionClosureResultSchema = z.strictObject({
     z.strictObject({
       operation: stableIdSchema,
       subject_id: stableIdSchema,
-      rationale: boundedTextSchema,
+      rationale: trimmedTextSchema,
     }),
   ),
   evidence_ids: z.array(evidenceIdSchema),
@@ -314,26 +312,13 @@ export type ReconstructionClosureResult = z.infer<
 
 type ClosureReason = z.infer<typeof closureReasonSchema>;
 
-/** Build a verifier contract whose digest prevents retrospective coverage edits. */
-export const createReconstructionVerifierContract = (
-  input: z.input<typeof verifierContractBaseSchema>,
-): ReconstructionVerifierContract => {
-  const parsed = verifierContractBaseSchema.parse(input);
-  return verifierContractSchema.parse({
-    ...parsed,
-    contract_sha256: digestCanonicalValue(parsed, "Reconstruction coverage"),
-  });
-};
-
 /** Evaluate the owner's authenticated workspace and lookup facts. */
 export const evaluateParsedReconstructionClosure = (
   parsed: ParsedReconstructionCoverage,
   boundaryId: string,
   nowEpochMs: number,
 ): Result<ReconstructionClosureResult, AnalysisInputError> => {
-  const boundary = parsed.coverage.boundaries.find(
-    ({ boundary_id: id }) => id === boundaryId,
-  );
+  const boundary = parsed.boundaries.get(boundaryId);
   if (boundary === undefined)
     return err(
       coverageInputError(
@@ -345,6 +330,7 @@ export const evaluateParsedReconstructionClosure = (
   const context: ReconstructionEvaluationContext = {
     ...parsed,
     boundary,
+    scope: reconstructionCoverageScope(parsed, boundary),
     nowEpochMs,
     nowInstant,
     reasons: [],
@@ -360,8 +346,8 @@ export const evaluateParsedReconstructionClosure = (
       boundary_id: boundary.boundary_id,
       status: closureStatus(reasons),
       summary: {
-        required_surfaces: boundary.required_surface_ids.length,
-        required_claims: boundary.required_claim_ids.length,
+        required_surfaces: context.scope.surfaceIds.size,
+        required_claims: context.scope.claimIds.size,
         reasons: reasons.length,
       },
       reasons,
@@ -407,7 +393,10 @@ const validateCoverageReferences = (
     ...path,
     "package_proofs",
   ]);
-  indexUnique(workspace.boundaries, "boundary_id", [...path, "boundaries"]);
+  const boundaries = indexUnique(workspace.boundaries, "boundary_id", [
+    ...path,
+    "boundaries",
+  ]);
   for (const [index, contract] of workspace.verifier_contracts.entries()) {
     const { contract_sha256: contractSha256, ...base } = contract;
     if (
@@ -483,7 +472,14 @@ const validateCoverageReferences = (
         ["residual_unknown_ids", index],
         `Coverage workspace residual unknown is missing: ${id}`,
       );
-  return { evidenceById, artifacts, surfaces, claims, ownersBySurface };
+  return {
+    evidenceById,
+    artifacts,
+    surfaces,
+    claims,
+    boundaries,
+    ownersBySurface,
+  };
 };
 
 const indexUnique = <Item extends Record<Key, string>, Key extends keyof Item>(

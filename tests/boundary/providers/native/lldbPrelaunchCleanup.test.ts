@@ -4,15 +4,21 @@ import { PassThrough } from "node:stream";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
+import { primaryAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { nativeCallObservationInputSchema } from "../../../../src/domain/native/nativeCallObservation.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../../src/domain/result.js";
-import { NativeCommandFailure } from "../../../../src/native/CommandRunner.js";
+import { NativeCommandFailure } from "../../../../src/providers/NativeCommandRunner.js";
 import { LldbCallTracer } from "../../../../src/native/LldbCallTracer.js";
 import { DarwinProcessOwnershipInspectionError } from "../../../../src/process/DarwinProcessRunTokenReader.js";
 import * as processBoundary from "../../../../src/process/ProviderProcess.js";
+import { releaseOwnedCleanup } from "../../../support/cleanupRelease.js";
 
-const tool = { path: "/usr/bin/true", sha256: "b".repeat(64) };
+const tool = {
+  invocationPath: "/usr/bin/true",
+  resolvedPath: "/usr/bin/true",
+  sha256: "b".repeat(64),
+};
 const request = {
   executable: "/fixture",
   architecture: "arm64" as const,
@@ -22,18 +28,19 @@ const request = {
   }),
 };
 
-const preparation = () => {
+const preparation = (cancellation?: { readonly reason: unknown }) => {
   const marker = new ProviderCleanupError(
     "process-ownership",
     ["owned-helper-root"],
     { reason: "controlled root deletion failure" },
   );
   const close = vi.fn(async () => {
-    marker.resolveCleanup();
+    releaseOwnedCleanup(marker);
   });
   const failure = new DarwinProcessOwnershipInspectionError(
     "controlled compiler failure",
     {
+      ...(cancellation === undefined ? {} : { cancellation }),
       cleanupFailure: marker,
       cleanupOwner: { close },
       compilerOutcome: {
@@ -147,7 +154,7 @@ it("retries the tracer-owned resolver supervisor before another trace", async ()
     const result = await tracer.trace(request);
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
+    expect(result.error._tag).toBe("ProviderAdapterError");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.cleanupResources).toEqual(["owned-resolver-process"]);
     expect(projectAnalysisError(result.error).code).toBe("cleanup_incomplete");
@@ -162,6 +169,11 @@ it("retries the tracer-owned resolver supervisor before another trace", async ()
     expect(stop).toHaveBeenCalledTimes(2);
 
     failStop = false;
+    // The supervisor's own stop completes the marker and the returned error
+    // before the tracer retries anything.
+    expect((await supervisor.stop()).status).not.toBe("incomplete");
+    expect(marker.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupIncomplete).toBe(false);
     const released = await tracer.close();
     expect(released.ok).toBe(true);
     expect(marker.cleanupIncomplete).toBe(false);
@@ -178,13 +190,12 @@ it("retries the tracer-owned resolver supervisor before another trace", async ()
   }
 });
 
-it("keeps resolver preparation cleanup with the foreign helper", async () => {
+it("releases resolver preparation cleanup through the transferred helper owner", async () => {
   const prepared = preparation();
-  const resolver = vi.fn(async () =>
-    err(
-      new NativeCommandFailure("lldb", "io", null, { cause: prepared.failure }),
-    ),
-  );
+  const failure = new NativeCommandFailure("lldb", "io", null, {
+    cause: prepared.failure,
+  });
+  const resolver = vi.fn(async () => err(failure));
   const tracer = new LldbCallTracer({}, undefined, resolver);
   try {
     const result = await tracer.trace(request);
@@ -192,10 +203,12 @@ it("keeps resolver preparation cleanup with the foreign helper", async () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error._tag).toBe("ProviderAdapterError");
-    expect(result.error.diagnostics).toMatchObject({
+    expect(primaryAnalysisError(result.error).cause).toBe(failure);
+    expect(primaryAnalysisError(result.error).diagnostics).toMatchObject({
       phase: "process-preparation",
       tool: "lldb",
-      reason: "controlled compiler failure",
+      reason: "io",
+      detail: "controlled compiler failure",
       compiler_outcome: { outcome: "exited", code: 1, signal: null },
     });
     expect(result.error.capturedOutput).toMatchObject({
@@ -206,9 +219,9 @@ it("keeps resolver preparation cleanup with the foreign helper", async () => {
     expect(projectAnalysisError(result.error).code).toBe("cleanup_incomplete");
 
     expect((await tracer.close()).ok).toBe(true);
-    expect(prepared.close).not.toHaveBeenCalled();
-    expect(prepared.marker.cleanupIncomplete).toBe(true);
-    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(prepared.close).toHaveBeenCalledOnce();
+    expect(prepared.marker.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupIncomplete).toBe(false);
 
     await tracer.trace(request);
     expect(resolver).toHaveBeenCalledTimes(2);
@@ -221,3 +234,34 @@ it("keeps resolver preparation cleanup with the foreign helper", async () => {
     await prepared.close();
   }
 });
+
+it.each([
+  ["timeout", "AnalysisTimeoutError", "provider_timeout"],
+  ["cancelled", "AnalysisCancelledError", "cancelled"],
+] as const)(
+  "preserves resolver preparation %s classification and exact reason",
+  async (reason, tag, code) => {
+    const abortReason = { phase: "resolver preparation" };
+    const prepared = preparation({ reason: abortReason });
+    const failure = new NativeCommandFailure("lldb", reason, null, {
+      cause: prepared.failure,
+    });
+    const tracer = new LldbCallTracer({}, undefined, async () => err(failure));
+    try {
+      const result = await tracer.trace(request);
+      if (result.ok) throw new Error("Expected preparation failure");
+      expect(primaryAnalysisError(result.error)._tag).toBe(tag);
+      if (reason === "cancelled")
+        expect(primaryAnalysisError(result.error).cause).toBe(abortReason);
+      else expect(primaryAnalysisError(result.error).cause).toBe(failure);
+      expect(result.error.capturedOutput?.stderr).toBe("compiler failed");
+      expect(result.error.cleanupIncomplete).toBe(true);
+      await prepared.close();
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(projectAnalysisError(result.error).code).toBe(code);
+    } finally {
+      await tracer.close();
+      await prepared.close();
+    }
+  },
+);

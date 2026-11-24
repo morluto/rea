@@ -15,7 +15,7 @@ import {
   assertExportedScriptAnalysis,
 } from "./browser-script-export-assertions.mjs";
 import { mcpTextValue } from "./mcp-verifier-results.mjs";
-import { closeVerifierResources } from "./verifier-cleanup.mjs";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 
 /** Verify capture → export → existing analysis through real CLI and stdio MCP. */
 export async function verifyBrowserScriptExport(
@@ -27,8 +27,7 @@ export async function verifyBrowserScriptExport(
   let root;
   let transport;
   let client;
-  let primaryError;
-  try {
+  return withVerifierCleanup(async () => {
     site = await startBrowserScriptSite();
     root = await mkdtemp(join(tmpdir(), "rea-browser-script-export-"));
     const env = {
@@ -109,18 +108,15 @@ export async function verifyBrowserScriptExport(
       query_variants_isolated: true,
       implicit_refetches: 0,
     };
-  } catch (cause) {
-    primaryError = cause;
-    throw cause;
-  } finally {
-    const cleanup = [];
-    if (client !== undefined) cleanup.push(() => client.close());
-    if (transport !== undefined) cleanup.push(() => transport.close());
-    if (site !== undefined) cleanup.push(() => site.close());
-    if (root !== undefined)
-      cleanup.push(() => rm(root, { recursive: true, force: true }));
-    await closeVerifierResources(cleanup, primaryError);
-  }
+  }, [
+    () => client?.close(),
+    () => transport?.close(),
+    () => site?.close(),
+    () =>
+      root === undefined
+        ? undefined
+        : rm(root, { recursive: true, force: true }),
+  ]);
 }
 
 const verifyPassiveExport = async (attachment, { cli, call, save }) => {

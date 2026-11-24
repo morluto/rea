@@ -9,6 +9,7 @@ import type {
 } from "../domain/reconstructionObligationLedgerSchemas.js";
 import { parseApplicationGraphEvidence } from "./javascript/JavaScriptApplicationEvidenceGraph.js";
 import { parseProcessCaptureEvidence } from "./process/ProcessEvidence.js";
+import { evidenceSupportsOriginalAuthority } from "./ReconstructionObligationAuthority.js";
 import {
   applicationObligationPolicy,
   semanticObligationPolicy,
@@ -201,25 +202,25 @@ const deriveProcessCandidate = (
   }
   const { record: evidence, capture } = parsed.value;
   const observedCases: ReconstructionObligation["observed_cases"] = [
-    {
-      kind: capture.exit.code === 0 ? "positive" : "negative",
-      evidence_id: evidence.evidence_id,
-      location: "/normalized_result/exit",
-    },
+    ...(capture.exit.reason !== "exited" ||
+    (capture.exit.signal !== null && capture.exit.signal !== 0) ||
+    capture.exit.code === null
+      ? []
+      : [
+          {
+            kind:
+              capture.exit.code === 0
+                ? ("positive" as const)
+                : ("negative" as const),
+            evidence_id: evidence.evidence_id,
+            location: "/normalized_result/exit",
+          },
+        ]),
     {
       kind: "teardown",
       evidence_id: evidence.evidence_id,
       location: "/normalized_result/settlement",
     },
-    ...(capture.exit.signal !== null || capture.exit.reason !== "exited"
-      ? [
-          {
-            kind: "cancellation" as const,
-            evidence_id: evidence.evidence_id,
-            location: "/normalized_result/exit",
-          },
-        ]
-      : []),
   ];
   if (capture.manifest.executable_sha256 === null) {
     limitations.add(
@@ -396,12 +397,7 @@ const graphReference = (
 const reviewedEvidenceState = (
   evidence: Evidence,
 ): ReconstructionObligation["authority_references"][number]["state"] => {
-  if (
-    evidence.operation === "capture_process_scenario" &&
-    evidence.predicate_type === "rea.process-capture" &&
-    evidence.confidence === "observed"
-  )
-    return "observed";
+  if (evidenceSupportsOriginalAuthority(evidence, "process")) return "observed";
   if (
     evidence.authority === "external-service" &&
     evidence.confidence === "observed"

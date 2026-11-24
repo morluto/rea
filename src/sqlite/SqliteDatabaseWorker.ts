@@ -5,9 +5,11 @@ import { inspectSqliteDatabaseSnapshot } from "./SqliteDatabaseInspection.js";
 import {
   SQLITE_DATABASE_LIMITS,
   SqliteColumnEvaluationFailure,
+  SqliteColumnLimitFailure,
   SqliteInspectionFailure,
   sqlitePrimaryResultCode,
 } from "./SqliteDatabaseLimits.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const requestSchema = z.strictObject({
   snapshot_path: z.string(),
@@ -32,7 +34,7 @@ const main = async (): Promise<void> => {
     };
   } catch (cause: unknown) {
     const code = sqlitePrimaryResultCode(cause);
-    const message = cause instanceof Error ? cause.message : String(cause);
+    const message = errorMessage(cause);
     reply =
       cause instanceof SqliteColumnEvaluationFailure
         ? {
@@ -41,18 +43,26 @@ const main = async (): Promise<void> => {
             message,
             readable_columns: cause.readableColumns,
           }
-        : {
-            ok: false,
-            reason:
-              cause instanceof SqliteInspectionFailure
-                ? cause.reason
-                : code === 7
-                  ? "memory"
-                  : code === 18
-                    ? "output-limit"
-                    : "format",
-            message,
-          };
+        : cause instanceof SqliteColumnLimitFailure
+          ? {
+              ok: false,
+              reason: cause.reason,
+              message,
+              selected_columns: cause.selectedColumns,
+              engine_column_limit: cause.engineColumnLimit,
+            }
+          : {
+              ok: false,
+              reason:
+                cause instanceof SqliteInspectionFailure
+                  ? cause.reason
+                  : code === 7
+                    ? "memory"
+                    : code === 18
+                      ? "output-limit"
+                      : "format",
+              message,
+            };
   }
   let encoded = JSON.stringify(reply);
   if (Buffer.byteLength(encoded) > SQLITE_DATABASE_LIMITS.outputBytes)

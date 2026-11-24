@@ -1,5 +1,5 @@
 import { isUtf8 } from "node:buffer";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import type {
@@ -22,34 +22,43 @@ import type {
   FridaSessionObservation,
   FridaSessionStatus,
   StartFridaSessionInput,
-} from "../application/frida/FridaInstrumentationPort.js";
-import { FridaScriptLoadCancelledError } from "../application/frida/FridaInstrumentationPort.js";
-import type { OptionalProviderLoadFailure } from "../application/OptionalObservationProviders.js";
+} from "../ports/frida/FridaInstrumentationPort.js";
+import { FridaScriptLoadCancelledError } from "../ports/frida/FridaInstrumentationPort.js";
+import type { OptionalProviderLoadFailure } from "../ports/OptionalObservationProviders.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { isValidFridaRemoteAddress } from "../domain/fridaRemoteAddress.js";
+import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
+import { providerCleanupErrorFromFailures } from "../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   unknownFridaScript,
   unknownFridaSession,
-} from "../application/frida/fridaInputErrors.js";
+} from "../domain/fridaInputErrors.js";
 import {
-  MAX_BINARY_MESSAGE_BYTES,
-  MAX_CAPTURE_JSON_NODES,
-  MAX_JSON_DEPTH,
-  MAX_MESSAGE_METADATA_BYTES,
-  MAX_MESSAGE_TEXT_BYTES,
-  MAX_MESSAGE_TYPE_BYTES,
-  MAX_SESSION_CAPTURE_BYTES,
-  type FridaOwnedCaptureLimit,
-} from "./fridaCaptureLimits.js";
+  resolveFridaCapturePolicy,
+  type FridaCapturePolicy,
+} from "../domain/fridaCapturePolicy.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { FifoQueue } from "../kernel/FifoQueue.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
+import {
+  boundedRedactedString,
+  buildCapturedObservation,
+  remoteSecrets,
+} from "./FridaMessageCapture.js";
 
 const DEVICE_LOOKUP_TIMEOUT_MS = 1_000;
 
@@ -64,14 +73,8 @@ const isFridaDeviceLookupTimeout = (cause: unknown): boolean =>
   cause instanceof Error &&
   cause.message === FRIDA_DEVICE_LOOKUP_TIMEOUT_MESSAGE;
 
-export const FRIDA_PROVIDER_IDENTITY = {
-  id: "frida",
-  name: "Frida",
-  version: null,
-} as const;
-
 interface ScriptMessageCapture {
-  readonly messages: MessageFifo<JsonValue>;
+  readonly messages: FifoQueue<JsonValue>;
   truncated: boolean;
 }
 
@@ -98,6 +101,8 @@ interface PendingStartupCleanup extends ManagedRemoteConnection {
 }
 
 interface ManagedSession extends ManagedRemoteConnection {
+  readonly captureLimits: FridaCapturePolicy;
+  readonly secrets: readonly string[];
   readonly id: string;
   readonly device: Device;
   readonly session: Session;
@@ -105,8 +110,10 @@ interface ManagedSession extends ManagedRemoteConnection {
   readonly pid: number;
   readonly mode: "attach" | "spawn";
   readonly scripts: Map<string, ManagedScript>;
-  readonly messages: MessageFifo<CapturedMessage>;
+  readonly messages: FifoQueue<CapturedMessage>;
   readonly scriptCaptures: Map<string, ScriptMessageCapture>;
+  /** Once close begins, this session is retained only for cleanup. */
+  cleanupStarted: boolean;
   detached: boolean;
   targetResumeObserved: boolean;
   resumeAfterDetachPending: boolean;
@@ -123,6 +130,7 @@ export interface FridaInstrumentationManagerOptions {
 export class FridaInstrumentationManager implements FridaInstrumentationPort {
   readonly #sessions = new Map<string, ManagedSession>();
   readonly #pendingStartups = new Set<PendingStartupCleanup>();
+  readonly #cleanupLeases = new WeakMap<object, AnalysisCleanupLease>();
   readonly #sessionQueues = new Map<string, Promise<void>>();
   readonly #sessionClosures = new Map<
     string,
@@ -130,7 +138,12 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
   >();
   readonly #remoteDevices = new Map<
     string,
-    { references: number; optionsDigest: string; device: Promise<Device> }
+    {
+      id: string;
+      references: number;
+      optionsDigest: string;
+      device: Promise<Device>;
+    }
   >();
   readonly #remoteQueues = new Map<string, Promise<void>>();
   readonly #deviceManagerLoader: () => Promise<DeviceManager>;
@@ -202,9 +215,20 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
           cleanupError = sanitizeError(cleanupCause, remote);
         }
       }
-      return err(
-        providerError("list_frida_devices", cause, remote, cleanupError),
+      const failure = providerError(
+        "list_frida_devices",
+        cause,
+        remote,
+        cleanupError,
+        remote === undefined ? undefined : { remote },
       );
+      const reference =
+        remote === undefined
+          ? undefined
+          : this.#remoteDevices.get(remote.address);
+      if (reference !== undefined && failure.cleanupIncomplete)
+        this.#retainCleanupFailure(reference, failure);
+      return err(failure);
     }
   }
 
@@ -262,14 +286,20 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
           cleanupError = sanitizeError(cleanupCause, selector.remote);
         }
       }
-      return err(
-        providerError(
-          "list_frida_processes",
-          cause,
-          selector.remote,
-          cleanupError,
-        ),
+      const failure = providerError(
+        "list_frida_processes",
+        cause,
+        selector.remote,
+        cleanupError,
+        selector,
       );
+      const reference =
+        selector.remote === undefined
+          ? undefined
+          : this.#remoteDevices.get(selector.remote.address);
+      if (reference !== undefined && failure.cleanupIncomplete)
+        this.#retainCleanupFailure(reference, failure);
+      return err(failure);
     }
   }
 
@@ -282,6 +312,18 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
   async #startSession(
     input: StartFridaSessionInput,
   ): Promise<Result<FridaSessionObservation, AnalysisError>> {
+    const policy = resolveFridaCapturePolicy(input.captureLimits ?? {});
+    if (!policy.success)
+      return err(
+        analysisInputErrorFromIssues(
+          "start_frida_session",
+          policy.error.issues.map((issue) => ({
+            ...issue,
+            path: ["capture_limits", ...issue.path],
+          })),
+          { capture_limits: input.captureLimits },
+        ),
+      );
     let manager: DeviceManager | undefined;
     let device: Device | undefined;
     let remoteHeld = false;
@@ -316,6 +358,8 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
       const id = randomUUID();
       const managed: ManagedSession = {
         id,
+        captureLimits: policy.data,
+        secrets: remoteSecrets(input.remote),
         device,
         deviceManager: manager,
         remote: input.remote,
@@ -326,8 +370,9 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         pid,
         mode: input.mode,
         scripts: new Map(),
-        messages: new MessageFifo(),
+        messages: new FifoQueue(),
         scriptCaptures: new Map(),
+        cleanupStarted: false,
         detached: false,
         targetResumeObserved: false,
         resumeAfterDetachPending: false,
@@ -345,6 +390,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
       return ok(sessionObservation(managed));
     } catch (cause: unknown) {
       let cleanupFailures: readonly string[] = [];
+      let pendingCleanup: PendingStartupCleanup | undefined;
       if (
         manager !== undefined &&
         device !== undefined &&
@@ -363,16 +409,19 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         // Keep the original provider handles until every acquired resource is
         // released, including failures before a session can be registered.
         this.#pendingStartups.add(pending);
+        pendingCleanup = pending;
         cleanupFailures = await this.#cleanupStartup(pending);
       }
-      return err(
-        providerError(
-          "start_frida_session",
-          cause,
-          input.remote,
-          cleanupFailures.join("; ") || undefined,
-        ),
+      const failure = providerError(
+        "start_frida_session",
+        cause,
+        input.remote,
+        cleanupFailures.join("; ") || undefined,
+        input,
       );
+      if (pendingCleanup !== undefined && failure.cleanupIncomplete)
+        this.#retainCleanupFailure(pendingCleanup, failure);
+      return err(failure);
     }
   }
 
@@ -398,9 +447,9 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
   ): Promise<Result<FridaScriptObservation, AnalysisError>> {
     if (signal?.aborted)
       return err(cancelledOperation("load_frida_script", signal));
-    const managed = this.#sessions.get(sessionId);
-    if (managed === undefined || managed.detached)
-      return err(unknownFridaSession("load_frida_script", sessionId));
+    const admitted = this.#admitSessionWork(sessionId, "load_frida_script");
+    if (!admitted.ok) return admitted;
+    const managed = admitted.value;
 
     let scriptSource: string;
     let sourceSha256: string;
@@ -410,7 +459,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         source.sourceKind === "inline"
           ? source.source
           : await readFile(source.path);
-      sourceSha256 = createHash("sha256").update(selectedSource).digest("hex");
+      sourceSha256 = sha256Hex(selectedSource);
       scriptSource =
         typeof selectedSource === "string"
           ? selectedSource
@@ -419,9 +468,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         sourceRepresentation = {
           encoding: "utf8",
           decoding: "replacement",
-          loadedSourceSha256: createHash("sha256")
-            .update(scriptSource)
-            .digest("hex"),
+          loadedSourceSha256: sha256Hex(scriptSource),
         };
     } catch (cause: unknown) {
       const sourcePath = source.sourceKind === "file" ? source.path : undefined;
@@ -449,7 +496,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
       return err(cancelledOperation("load_frida_script", signal));
     const scriptId = randomUUID();
     const capture: ScriptMessageCapture = {
-      messages: new MessageFifo(),
+      messages: new FifoQueue(),
       truncated: false,
     };
     managed.scriptCaptures.set(scriptId, capture);
@@ -486,17 +533,20 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
       if (entry === undefined) managed.scriptCaptures.delete(scriptId);
       else cleanupReason = await this.#releaseScript(managed, entry);
     }
-    if (nativeFailure !== undefined && cancellation === undefined)
-      return err(
-        providerError(
-          "load_frida_script",
-          nativeFailure.cause,
-          managed.remote,
-          cleanupReason,
-        ),
+    if (nativeFailure !== undefined && cancellation === undefined) {
+      const failure = providerError(
+        "load_frida_script",
+        nativeFailure.cause,
+        managed.remote,
+        cleanupReason,
       );
+      if (entry !== undefined && failure.cleanupIncomplete)
+        this.#retainCleanupFailure(entry, failure);
+      return err(failure);
+    }
     const observation: FridaScriptObservation = {
       scriptId,
+      captureLimits: managed.captureLimits,
       sourceKind: source.sourceKind,
       sourcePath: source.sourceKind === "file" ? source.path : null,
       sourceSha256,
@@ -504,31 +554,33 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
       messages: capture.messages.toArray(),
       messagesTruncated: capture.truncated,
     };
-    if (cancellation !== undefined)
-      return err(
-        new FridaScriptLoadCancelledError(observation, {
-          cause: cancellation.reason,
-          scriptHandleAcquired: entry !== undefined,
-          ...(nativeFailure === undefined
-            ? {}
-            : {
-                diagnostics: {
-                  native_failure: sanitizeError(
-                    nativeFailure.cause,
-                    managed.remote,
-                  ),
-                },
-              }),
-          ...(cleanupReason === undefined
-            ? {}
-            : {
-                cleanup: {
-                  reason: cleanupReason,
-                  resources: [sessionId, scriptId],
-                },
-              }),
-        }),
-      );
+    if (cancellation !== undefined) {
+      const failure = new FridaScriptLoadCancelledError(observation, {
+        cause: cancellation.reason,
+        scriptHandleAcquired: entry !== undefined,
+        ...(nativeFailure === undefined
+          ? {}
+          : {
+              diagnostics: {
+                native_failure: sanitizeError(
+                  nativeFailure.cause,
+                  managed.remote,
+                ),
+              },
+            }),
+        ...(cleanupReason === undefined
+          ? {}
+          : {
+              cleanup: {
+                reason: cleanupReason,
+                resources: [sessionId, scriptId],
+              },
+            }),
+      });
+      if (entry !== undefined && failure.cleanupIncomplete)
+        this.#retainCleanupFailure(entry, failure);
+      return err(failure);
+    }
     return ok(observation);
   }
 
@@ -553,15 +605,24 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
   async #resumeSession(
     sessionId: string,
   ): Promise<Result<null, AnalysisError>> {
-    const managed = this.#sessions.get(sessionId);
-    if (managed === undefined || managed.detached)
-      return err(unknownFridaSession("resume_frida_session", sessionId));
+    const admitted = this.#admitSessionWork(sessionId, "resume_frida_session");
+    if (!admitted.ok) return admitted;
+    const managed = admitted.value;
     if (managed.mode !== "spawn" || managed.targetResumeObserved)
       return err(
-        new AnalysisCapabilityUnavailableError(
-          "frida",
+        new AnalysisInputError(
           "resume_frida_session",
-          "Only a paused process spawned by this session can be resumed.",
+          {
+            userMessage:
+              "Only a paused process spawned by this session can be resumed.",
+          },
+          [
+            {
+              path: ["session_id"],
+              reason: "invalid_value",
+              message: "Select a paused process spawned by this session.",
+            },
+          ],
         ),
       );
     const pendingScripts = [...managed.scripts.values()].filter(
@@ -594,6 +655,26 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
     }
   }
 
+  #admitSessionWork(
+    sessionId: string,
+    operation: "load_frida_script" | "resume_frida_session",
+  ): Result<ManagedSession, AnalysisError> {
+    const managed = this.#sessions.get(sessionId);
+    if (managed === undefined)
+      return err(unknownFridaSession(operation, sessionId));
+    if (managed.cleanupStarted) {
+      const message = `Frida session ${sessionId} is retained for cleanup.`;
+      return err(
+        new AnalysisCapabilityUnavailableError("frida", operation, message, {
+          userMessage: message,
+          remediationAction: `Retry close_frida_session with session_id ${sessionId} to finish cleanup.`,
+        }),
+      );
+    }
+    if (managed.detached) return err(unknownFridaSession(operation, sessionId));
+    return ok(managed);
+  }
+
   unloadScript(
     sessionId: string,
     scriptId: string,
@@ -624,16 +705,18 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
     if (entry === undefined)
       return err(unknownFridaScript("unload_frida_script", scriptId));
     const cleanupReason = await this.#releaseScript(managed, entry);
-    return cleanupReason === undefined
-      ? ok(null)
-      : err(
-          providerError(
-            "unload_frida_script",
-            new Error(cleanupReason),
-            managed.remote,
-            cleanupReason,
-          ),
-        );
+    if (cleanupReason === undefined) return ok(null);
+    return err(
+      this.#retainCleanupFailure(
+        entry,
+        providerError(
+          "unload_frida_script",
+          new Error(cleanupReason),
+          managed.remote,
+          cleanupReason,
+        ),
+      ),
+    );
   }
 
   async #releaseScript(
@@ -660,6 +743,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
     }
     managed.scripts.delete(entry.id);
     managed.scriptCaptures.delete(entry.id);
+    await this.#resolveCleanupFailures(entry);
     return undefined;
   }
 
@@ -707,6 +791,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
     const managed = this.#sessions.get(sessionId);
     if (managed === undefined)
       return err(unknownFridaSession("close_frida_session", sessionId));
+    managed.cleanupStarted = true;
     const scriptFailures = new Map<string, string>();
     const cleanupFailures: string[] = [];
     managed.detached ||= managed.session.isDetached();
@@ -768,19 +853,23 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
     }
     if (failures.length > 0)
       return err(
-        new AnalysisCapabilityUnavailableError(
-          "frida",
-          "close_frida_session",
-          failures[0] ?? "Frida session cleanup failed",
-          {
-            cleanup: {
-              reason: failures.join("; "),
-              resources: [sessionId],
+        this.#retainCleanupFailure(
+          managed,
+          new AnalysisCapabilityUnavailableError(
+            "frida",
+            "close_frida_session",
+            failures[0] ?? "Frida session cleanup failed",
+            {
+              cleanup: {
+                reason: failures.join("; "),
+                resources: [sessionId],
+              },
             },
-          },
+          ),
         ),
       );
     this.#sessions.delete(sessionId);
+    await this.#resolveCleanupFailures(managed);
     return ok({ targetResumeObserved });
   }
 
@@ -795,21 +884,34 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
 
   async #closeAll(): Promise<void> {
     await Promise.allSettled(this.#operations);
-    const startupFailures = (
-      await Promise.all(
-        [...this.#pendingStartups].map((pending) =>
-          this.#cleanupStartup(pending),
-        ),
-      )
-    ).flat();
+    const startupFailures = await Promise.all(
+      [...this.#pendingStartups].map(async (pending) => {
+        const reasons = await this.#cleanupStartup(pending);
+        return reasons.length === 0
+          ? []
+          : [
+              this.#retainCleanupFailure(
+                pending,
+                new ProviderCleanupError(
+                  "frida",
+                  [pending.id],
+                  {
+                    reason: reasons.join("; "),
+                  },
+                  { operation: "frida_cleanup" },
+                ),
+              ),
+            ];
+      }),
+    );
     const results = await Promise.all(
       [...this.#sessions.keys()].map((sessionId) =>
         this.closeSession(sessionId),
       ),
     );
     const failures = [
-      ...startupFailures,
-      ...results.flatMap((result) => (result.ok ? [] : [result.error.message])),
+      ...startupFailures.flat(),
+      ...results.flatMap((result) => (result.ok ? [] : [result.error])),
     ];
     const manager = this.#deviceManager;
     if (manager !== undefined) {
@@ -817,17 +919,33 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         if (reference.references !== 0) continue;
         try {
           await this.#releaseRemote(manager, address);
-        } catch {
+        } catch (cause) {
           failures.push(
-            "Unable to close remote Frida connection during shutdown",
+            this.#retainCleanupFailure(
+              reference,
+              new ProviderCleanupError(
+                "frida",
+                [address],
+                {
+                  reason:
+                    "Unable to close remote Frida connection during shutdown",
+                },
+                { cause, operation: "frida_cleanup" },
+              ),
+            ),
           );
         }
       }
     }
     if (failures.length > 0)
-      throw new AggregateError(
+      throw providerCleanupErrorFromFailures(
+        "frida",
         failures,
         "Frida session cleanup was incomplete",
+        {
+          operation: "frida_cleanup",
+          message: "Frida session cleanup was incomplete",
+        },
       );
   }
 
@@ -857,8 +975,34 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
       const remoteFailure = await this.#releaseManagedRemote(pending);
       if (remoteFailure !== undefined) return [remoteFailure];
       this.#pendingStartups.delete(pending);
+      await this.#resolveCleanupFailures(pending);
       return [];
     });
+  }
+
+  #retainCleanupFailure<Failure extends AnalysisError>(
+    owner: { readonly id: string },
+    failure: Failure,
+  ): Failure {
+    const lease = this.#cleanupLease(owner);
+    failure.bindCleanupResourceOwner(lease);
+    lease.bindCleanupError(failure);
+    return failure;
+  }
+
+  #cleanupLease(owner: { readonly id: string }): AnalysisCleanupLease {
+    let lease = this.#cleanupLeases.get(owner);
+    if (lease === undefined) {
+      // The manager confirms native release before settling this private lease;
+      // its callback must not re-enter the session or remote cleanup lock.
+      lease = new AnalysisCleanupLease(async () => {}, [owner.id]);
+      this.#cleanupLeases.set(owner, lease);
+    }
+    return lease;
+  }
+
+  async #resolveCleanupFailures(owner: { readonly id: string }): Promise<void> {
+    await this.#cleanupLease(owner).release();
   }
 
   async #releaseManagedRemote(
@@ -952,145 +1096,16 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
     message: FridaMessage,
     data: Buffer | null,
   ): void {
-    const payload = message.payload;
-    const secrets = [managed.remote?.token, managed.remote?.certificate].filter(
-      (value): value is string => value !== undefined && value.length > 0,
-    );
-    let payloadResult:
-      | {
-          readonly value: JsonValue;
-          readonly truncated: boolean;
-          readonly bytes: number;
-          readonly limit?: FridaOwnedCaptureLimit;
-        }
-      | undefined;
-    if (payload !== undefined) {
-      try {
-        payloadResult = boundedJsonValue(
-          payload,
-          MAX_SESSION_CAPTURE_BYTES - MAX_MESSAGE_METADATA_BYTES,
-          secrets,
-        );
-      } catch {
-        payloadResult = {
-          value: { payload_unavailable: true },
-          truncated: true,
-          bytes: Buffer.byteLength('{"payload_unavailable":true}'),
-          limit: "unrepresentable",
-        };
-      }
-    }
-    let binaryResult: Record<string, JsonValue> = {};
-    if (data !== null) {
-      const payloadBytes = payloadResult?.bytes ?? 0;
-      const remainingMessageBytes = Math.max(
-        0,
-        MAX_SESSION_CAPTURE_BYTES -
-          MAX_MESSAGE_METADATA_BYTES -
-          payloadBytes -
-          4096,
-      );
-      const messageBinaryLimit = Math.min(
-        MAX_BINARY_MESSAGE_BYTES,
-        Math.floor((remainingMessageBytes * 3) / 4),
-      );
-      if (secrets.some((secret) => data.includes(secret, 0, "utf8"))) {
-        binaryResult = { data_redacted: true };
-      } else if (data.byteLength > messageBinaryLimit) {
-        const sessionConstrained =
-          messageBinaryLimit < MAX_BINARY_MESSAGE_BYTES;
-        binaryResult = {
-          data_truncated: true,
-          data_bytes: data.byteLength,
-          data_capture_limit: sessionConstrained
-            ? "session_bytes"
-            : "binary_bytes",
-        };
-        if (sessionConstrained) markMessageTruncated(managed, scriptId);
-      } else {
-        binaryResult = { data_base64: data.toString("base64") };
-      }
-    }
-    const type = boundedRedactedString(
-      message.type,
-      MAX_MESSAGE_TYPE_BYTES,
-      secrets,
-    );
-    const description =
-      message.description === undefined
-        ? undefined
-        : boundedRedactedString(
-            message.description,
-            MAX_MESSAGE_TEXT_BYTES,
-            secrets,
-          );
-    const stack =
-      message.stack === undefined
-        ? undefined
-        : boundedRedactedString(message.stack, MAX_MESSAGE_TEXT_BYTES, secrets);
-    const fileName =
-      message.fileName === undefined
-        ? undefined
-        : boundedRedactedString(
-            message.fileName,
-            MAX_MESSAGE_TEXT_BYTES,
-            secrets,
-          );
-    const observation: JsonValue = {
-      script_id: scriptId,
-      type: type.value,
-      ...(type.truncated ? { type_truncated: true } : {}),
-      ...(payloadResult === undefined
-        ? {}
-        : {
-            payload: payloadResult.value,
-            ...(payloadResult.truncated
-              ? {
-                  payload_truncated: true,
-                  ...(payloadResult.limit === undefined
-                    ? {}
-                    : { payload_capture_limit: payloadResult.limit }),
-                }
-              : {}),
-          }),
-      ...(description === undefined
-        ? {}
-        : {
-            description: description.value,
-            ...(description.truncated ? { description_truncated: true } : {}),
-          }),
-      ...(stack === undefined
-        ? {}
-        : {
-            stack: stack.value,
-            ...(stack.truncated ? { stack_truncated: true } : {}),
-          }),
-      ...(fileName === undefined
-        ? {}
-        : {
-            file_name: fileName.value,
-            ...(fileName.truncated ? { file_name_truncated: true } : {}),
-          }),
-      ...(typeof message.lineNumber === "number" &&
-      Number.isSafeInteger(message.lineNumber) &&
-      message.lineNumber >= 0
-        ? { line_number: message.lineNumber }
-        : {}),
-      ...(typeof message.columnNumber === "number" &&
-      Number.isSafeInteger(message.columnNumber) &&
-      message.columnNumber >= 0
-        ? { column_number: message.columnNumber }
-        : {}),
-      ...binaryResult,
-    };
-    const charge = Buffer.byteLength(JSON.stringify(observation));
-    if (charge > MAX_SESSION_CAPTURE_BYTES) {
+    const built = buildCapturedObservation(managed, scriptId, message, data);
+    if (built.binaryTruncated) markMessageTruncated(managed, scriptId);
+    const { observation, charge } = built;
+    if (charge > managed.captureLimits.session_bytes) {
       markMessageTruncated(managed, scriptId);
       return;
     }
     while (
       managed.messages.size > 0 &&
-      managed.capturedBytes + charge > MAX_SESSION_CAPTURE_BYTES
+      managed.capturedBytes + charge > managed.captureLimits.session_bytes
     ) {
       const removed = managed.messages.shift();
       if (removed !== undefined) {
@@ -1168,9 +1183,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
     remote: FridaRemoteConnection,
   ): Promise<Device> {
     return this.#withRemoteLock(remote.address, async () => {
-      const optionsDigest = createHash("sha256")
-        .update(JSON.stringify(remoteOptions(remote)))
-        .digest("hex");
+      const optionsDigest = sha256Hex(JSON.stringify(remoteOptions(remote)));
       let reference = this.#remoteDevices.get(remote.address);
       if (reference !== undefined) {
         if (reference.optionsDigest !== optionsDigest)
@@ -1188,7 +1201,12 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
           remote.address,
           remoteOptions(remote),
         );
-        reference = { references: 1, optionsDigest, device };
+        reference = {
+          id: remote.address,
+          references: 1,
+          optionsDigest,
+          device,
+        };
         this.#remoteDevices.set(remote.address, reference);
       }
       try {
@@ -1220,6 +1238,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         return;
       }
       await manager.removeRemoteDevice(address);
+      await this.#resolveCleanupFailures(reference);
       if (this.#remoteDevices.get(address) === reference)
         this.#remoteDevices.delete(address);
     });
@@ -1247,196 +1266,6 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
   }
 }
 
-const boundedRedactedString = (
-  input: string,
-  maximumBytes: number,
-  secrets: readonly string[],
-): { readonly value: string; readonly truncated: boolean } => {
-  const chunks: string[] = [];
-  let outputBytes = 0;
-  let cursor = 0;
-  let segmentStart = 0;
-  let truncated = false;
-  while (cursor < input.length) {
-    let nextSecretStart = input.length;
-    let nextSecret: string | undefined;
-    for (const secret of secrets) {
-      const match = input.indexOf(secret, cursor);
-      if (match !== -1 && match < nextSecretStart) {
-        nextSecretStart = match;
-        nextSecret = secret;
-      }
-    }
-    if (nextSecretStart === cursor && nextSecret !== undefined) {
-      const replacement = "[redacted]";
-      const replacementBytes = jsonStringByteLength(replacement) - 2;
-      if (outputBytes + replacementBytes > maximumBytes) {
-        truncated = true;
-        break;
-      }
-      chunks.push(input.slice(segmentStart, cursor), replacement);
-      outputBytes += replacementBytes;
-      cursor += nextSecret.length;
-      segmentStart = cursor;
-      continue;
-    }
-    while (cursor < nextSecretStart) {
-      const codePoint = input.codePointAt(cursor);
-      if (codePoint === undefined) break;
-      const character = String.fromCodePoint(codePoint);
-      const characterBytes = jsonStringByteLength(character) - 2;
-      if (
-        cursor + character.length > nextSecretStart ||
-        outputBytes + characterBytes > maximumBytes
-      ) {
-        truncated = true;
-        break;
-      }
-      outputBytes += characterBytes;
-      cursor += character.length;
-    }
-    if (truncated) break;
-  }
-  chunks.push(input.slice(segmentStart, cursor));
-  if (cursor < input.length) truncated = true;
-  return { value: chunks.join(""), truncated };
-};
-
-type BoundedJson = {
-  readonly value: JsonValue;
-  readonly truncated: boolean;
-  readonly limit?: FridaOwnedCaptureLimit;
-};
-
-const clipped = (limit: FridaOwnedCaptureLimit): BoundedJson => ({
-  value: null,
-  truncated: true,
-  limit,
-});
-
-const boundedJsonValue = (
-  input: unknown,
-  maximumBytes: number,
-  secrets: readonly string[],
-): BoundedJson & { readonly bytes: number } => {
-  const seen = new WeakSet<object>();
-  let remainingNodes = MAX_CAPTURE_JSON_NODES;
-  const visit = (
-    value: unknown,
-    budget: number,
-    depth: number,
-  ): BoundedJson => {
-    remainingNodes -= 1;
-    if (remainingNodes < 0) return clipped("json_nodes");
-    if (depth > MAX_JSON_DEPTH) return clipped("json_depth");
-    if (budget < 8) return clipped("payload_bytes");
-    if (value === null) return { value: null, truncated: false };
-    if (typeof value === "boolean" || typeof value === "number") {
-      if (typeof value === "number" && !Number.isFinite(value))
-        return clipped("unrepresentable");
-      return { value, truncated: false };
-    }
-    if (typeof value === "string") {
-      const bounded = boundedRedactedString(
-        value,
-        Math.max(0, budget - 2),
-        secrets,
-      );
-      return bounded.truncated
-        ? { value: bounded.value, truncated: true, limit: "payload_bytes" }
-        : { value: bounded.value, truncated: false };
-    }
-    if (typeof value !== "object") return clipped("unrepresentable");
-    if (seen.has(value)) return clipped("unrepresentable");
-    seen.add(value);
-    try {
-      if (Array.isArray(value)) {
-        const output: JsonValue[] = [];
-        let usedBytes = 2;
-        let limit: FridaOwnedCaptureLimit | undefined;
-        for (let index = 0; index < value.length; index += 1) {
-          const separatorBytes = output.length === 0 ? 0 : 1;
-          const remaining = budget - usedBytes - separatorBytes - 1;
-          if (remaining < 8) {
-            limit ??= "payload_bytes";
-            break;
-          }
-          const item = visit(value[index] ?? null, remaining, depth + 1);
-          const itemBytes = Buffer.byteLength(JSON.stringify(item.value));
-          if (itemBytes > remaining) {
-            limit ??= "payload_bytes";
-            break;
-          }
-          output.push(item.value);
-          usedBytes += separatorBytes + itemBytes;
-          if (item.truncated) {
-            limit ??= item.limit;
-            break;
-          }
-        }
-        if (output.length < value.length) limit ??= "payload_bytes";
-        return limit === undefined
-          ? { value: output, truncated: false }
-          : { value: output, truncated: true, limit };
-      }
-      const output: Record<string, JsonValue> = {};
-      let usedBytes = 2;
-      let entries = 0;
-      let limit: FridaOwnedCaptureLimit | undefined;
-      for (const rawKey in value) {
-        if (!Object.hasOwn(value, rawKey)) continue;
-        const separatorBytes = entries === 0 ? 0 : 1;
-        const keyLimit = Math.max(0, budget - usedBytes - separatorBytes - 10);
-        const boundedKey = boundedRedactedString(rawKey, keyLimit, secrets);
-        if (boundedKey.truncated) {
-          limit ??= "payload_bytes";
-          break;
-        }
-        const key = boundedKey.value;
-        const keyBytes = jsonStringByteLength(key) + 1;
-        const remaining = budget - usedBytes - separatorBytes - keyBytes - 1;
-        if (remaining < 8) {
-          limit ??= "payload_bytes";
-          break;
-        }
-        const entry = visit(Reflect.get(value, rawKey), remaining, depth + 1);
-        const entryBytes = Buffer.byteLength(JSON.stringify(entry.value));
-        if (entryBytes > remaining) {
-          limit ??= "payload_bytes";
-          break;
-        }
-        Object.defineProperty(output, key, {
-          value: entry.value,
-          configurable: true,
-          enumerable: true,
-          writable: true,
-        });
-        entries += 1;
-        usedBytes += separatorBytes + keyBytes + entryBytes;
-        if (entry.truncated) {
-          limit ??= entry.limit;
-          break;
-        }
-      }
-      return limit === undefined
-        ? { value: output, truncated: false }
-        : { value: output, truncated: true, limit };
-    } finally {
-      seen.delete(value);
-    }
-  };
-  const result = visit(input, maximumBytes, 0);
-  const bytes = Buffer.byteLength(JSON.stringify(result.value));
-  return bytes > maximumBytes
-    ? {
-        value: null,
-        truncated: true,
-        bytes: Buffer.byteLength("null"),
-        limit: result.limit ?? "payload_bytes",
-      }
-    : { ...result, bytes };
-};
-
 const remoteOptions = (remote: FridaRemoteConnection): RemoteDeviceOptions => ({
   ...(remote.token === undefined ? {} : { token: remote.token }),
   ...(remote.certificate === undefined
@@ -1463,6 +1292,7 @@ const sessionObservation = (
   managed: ManagedSession,
 ): FridaSessionObservation => ({
   sessionId: managed.id,
+  captureLimits: managed.captureLimits,
   deviceId: managed.device.id,
   target: managed.target,
   pid: managed.pid,
@@ -1482,17 +1312,78 @@ const sanitizeError = (
     ),
   ).value;
 
+/**
+ * Frida reports a refused ptrace seize with this prefix. Only that request
+ * is recognized: the reason carries no errno, so it does not say whether the
+ * host lacks ptrace support or permissions refused this target, and discovery
+ * can succeed where injection is refused.
+ */
+const PTRACE_SEIZE_REFUSAL = /^Unable to perform ptrace seize\b/i;
+
+/**
+ * Guidance for the Frida failures whose generic "choose another target"
+ * remediation would send the operator the wrong way.
+ */
+const providerFailureGuidance = (
+  reason: string,
+  remote: boolean,
+): {
+  readonly userMessage?: string;
+  readonly remediationAction?: string;
+} => {
+  if (remote && reason === "Unable to connect to remote frida-server")
+    return {
+      remediationAction:
+        "Confirm the selected Frida server is reachable and its connection options are correct, then retry.",
+    };
+  if (PTRACE_SEIZE_REFUSAL.test(reason))
+    return {
+      userMessage:
+        "Frida could not start tracing the target because its ptrace seize request was refused.",
+      remediationAction:
+        "The operating system refused Frida's PTRACE_SEIZE request (see details.reason). Either the host does not implement it, as emulated environments such as PRoot-Distro on Android do, so no target can be injected although device and process discovery still succeed, or ptrace permissions refused this target alone. If other targets fail the same way, run REA on a host with native ptrace support, or select a Frida server running on one with the remote options. Otherwise check the ptrace permissions that apply to this target. Then retry.",
+    };
+  return {};
+};
+
 const providerError = (
   operation: string,
   cause: unknown,
   remote?: FridaRemoteConnection,
   cleanupReason?: string,
+  selector?: FridaDeviceSelector,
 ): AnalysisError => {
+  const secrets = [remote?.token, remote?.certificate].filter(
+    (secret): secret is string => secret !== undefined && secret.length > 0,
+  );
+  const selection =
+    selector?.remote === undefined
+      ? selector?.deviceId
+      : isValidFridaRemoteAddress(selector.remote.address)
+        ? selector.remote.address
+        : undefined;
+  const selectionKey =
+    selector?.remote === undefined ? "device_id" : "remote_address";
+  const diagnostics = {
+    ...(cause instanceof AnalysisError
+      ? redactExplicitFailure(cause, secrets).diagnostics
+      : {}),
+    ...(selection === undefined
+      ? {}
+      : {
+          [selectionKey]: boundedRedactedString(selection, 4096, secrets).value,
+        }),
+  };
   if (cause instanceof AnalysisInputError)
-    return new AnalysisInputError(operation, { cause }, cause.issues);
+    return new AnalysisInputError(
+      operation,
+      { cause, diagnostics },
+      cause.issues,
+    );
   if (cause instanceof AnalysisTimeoutError)
     return new AnalysisTimeoutError(operation, cause.timeoutMs, {
       cause,
+      diagnostics,
       ...(cause.userMessage === undefined
         ? {}
         : { userMessage: cause.userMessage }),
@@ -1509,8 +1400,8 @@ const providerError = (
           }),
     });
   if (cause instanceof AnalysisCancelledError)
-    return new AnalysisCancelledError(operation, {
-      cause: cause.cause,
+    return cancelledBy(operation, carriedReason(cause.cause), {
+      diagnostics,
       ...(cleanupReason === undefined
         ? {}
         : {
@@ -1523,6 +1414,10 @@ const providerError = (
   const reason = sanitizeError(cause, remote);
   return new AnalysisCapabilityUnavailableError("frida", operation, reason, {
     cause: remote === undefined ? cause : new Error(reason),
+    diagnostics,
+    ...(cleanupReason !== undefined
+      ? {}
+      : providerFailureGuidance(reason, selector?.remote !== undefined)),
     ...(cleanupReason === undefined
       ? {}
       : {
@@ -1534,14 +1429,10 @@ const providerError = (
   });
 };
 
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
 const cancelledOperation = (
   operation: string,
   signal: AbortSignal,
-): AnalysisCancelledError =>
-  new AnalysisCancelledError(operation, { cause: signal.reason });
+): AnalysisCancelledError => cancelledBy(operation, signal);
 
 interface CapturedMessage {
   readonly observation: JsonValue;
@@ -1558,42 +1449,3 @@ const markMessageTruncated = (
   const capture = managed.scriptCaptures.get(scriptId);
   if (capture !== undefined) capture.truncated = true;
 };
-
-/**
- * Arrival-ordered queue whose eviction advances a head offset. A full capture
- * budget evicts on every message, and `Array#shift` would copy every retained
- * message each time.
- */
-class MessageFifo<T> {
-  #items: (T | undefined)[] = [];
-  #head = 0;
-
-  get size(): number {
-    return this.#items.length - this.#head;
-  }
-
-  push(item: T): void {
-    this.#items.push(item);
-  }
-
-  peek(): T | undefined {
-    return this.#items[this.#head];
-  }
-
-  shift(): T | undefined {
-    if (this.#head >= this.#items.length) return undefined;
-    const item = this.#items[this.#head];
-    this.#items[this.#head] = undefined;
-    this.#head += 1;
-    // Compacting once half the slots are evicted keeps eviction amortized O(1).
-    if (this.#head * 2 >= this.#items.length) {
-      this.#items = this.#items.slice(this.#head);
-      this.#head = 0;
-    }
-    return item;
-  }
-
-  toArray(): T[] {
-    return this.#items.slice(this.#head) as T[];
-  }
-}

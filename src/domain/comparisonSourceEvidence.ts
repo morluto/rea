@@ -18,7 +18,13 @@ const sideParametersSchema = z.object({
 export const comparisonSourceEvidenceSides = (
   evidence: Evidence,
 ): { left: string[]; right: string[] } => {
-  const parsed = readEvidencePayload(sideParametersSchema, evidence.parameters);
+  const parsed = readEvidencePayload(
+    sideParametersSchema,
+    evidence.parameters,
+    {
+      within: ["parameters"],
+    },
+  );
   if (!parsed.ok) throw parsed.error;
   const parameters = parsed.value;
   if (
@@ -60,16 +66,4 @@ export const comparisonSourceEvidenceSides = (
 export const comparisonSourceEvidenceIds = (evidence: Evidence): string[] => {
   const sides = comparisonSourceEvidenceSides(evidence);
   return uniqueSorted([...sides.left, ...sides.right]);
-};
-
-/** Preserve the source closure when consuming nested comparison findings. */
-export const assertComparisonFindingLinks = (
-  evidence: Pick<Evidence, "evidence_links">,
-  nestedLinks: readonly string[],
-): void => {
-  const closure = new Set(evidence.evidence_links);
-  if (nestedLinks.some((id) => !closure.has(id)))
-    throw new EvidenceIntegrityError(
-      "Comparison finding cites Evidence outside its top-level closure",
-    );
 };

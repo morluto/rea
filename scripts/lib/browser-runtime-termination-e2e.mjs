@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { CdpConnection } from "../../dist/browser/CdpConnection.js";
 import { mcpTextValue, requireMcpToolError } from "./mcp-verifier-results.mjs";
-import { closeVerifierResources } from "./verifier-cleanup.mjs";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 
 /** Close a separately owned fixture page after actual MCP arming and inspect native cleanup diagnostics. */
 export async function verifyRuntimeTargetTermination(client, input, origin) {
@@ -14,8 +14,7 @@ export async function verifyRuntimeTargetTermination(client, input, origin) {
   );
   let targetId;
   let closed = false;
-  let primaryError;
-  try {
+  return withVerifierCleanup(async () => {
     ({ targetId } = await root.send("Target.createTarget", { url: origin }));
     assert.equal(typeof targetId, "string");
     await waitForTarget(input.cdp_endpoint, targetId, origin);
@@ -81,21 +80,13 @@ export async function verifyRuntimeTargetTermination(client, input, origin) {
       cleanup: "unconfirmed_reported",
       observed_window_end_reason: "session_detached",
     };
-  } catch (cause) {
-    primaryError = cause;
-    throw cause;
-  } finally {
-    await closeVerifierResources(
-      [
-        () =>
-          targetId === undefined || closed
-            ? undefined
-            : root.send("Target.closeTarget", { targetId }),
-        () => root.close(),
-      ],
-      primaryError,
-    );
-  }
+  }, [
+    () =>
+      targetId === undefined || closed
+        ? undefined
+        : root.send("Target.closeTarget", { targetId }),
+    () => root.close(),
+  ]);
 }
 
 async function waitForTarget(endpoint, targetId, origin) {

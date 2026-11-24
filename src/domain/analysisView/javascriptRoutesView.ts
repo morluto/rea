@@ -1,5 +1,6 @@
 import { javascriptSourceRangeSchema } from "../javascript/javascriptSourceCoordinates.js";
 import { z } from "zod";
+import { webBundleViewRequestSchema } from "./webBundleView.js";
 import { digestSchema } from "../digests.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { err, ok, type Result } from "../result.js";
@@ -20,17 +21,18 @@ import {
   type JavaScriptRouteInventorySource,
 } from "../javascript/javascriptRouteInventory.js";
 import { javaScriptRouteMechanismSchema } from "../javascript/javascriptRouteFacts.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { assertOwnedView, type AdmittedView } from "./analysisViewShape.js";
+import {
+  ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+  analysisViewInputError,
+} from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 const identity = { kind: z.literal("javascript-routes") };
 const paging = {
@@ -122,16 +124,11 @@ export const javaScriptRoutesSummaryDeliveryShape = {
 };
 export const webRoutesSummaryDeliveryShape = {
   detail: z.literal("summary"),
-  view: javaScriptRoutesViewRequestSchema,
+  view: z.union([
+    javaScriptRoutesViewRequestSchema,
+    webBundleViewRequestSchema,
+  ]),
 };
-export const javaScriptRoutesDeliverySchema = z.discriminatedUnion("detail", [
-  z.strictObject(javaScriptRoutesCompleteDeliveryShape),
-  z.strictObject(javaScriptRoutesSummaryDeliveryShape),
-]);
-export const webRoutesDeliverySchema = z.discriminatedUnion("detail", [
-  z.strictObject(javaScriptRoutesCompleteDeliveryShape),
-  z.strictObject(webRoutesSummaryDeliveryShape),
-]);
 export const javaScriptRouteProvenanceSchema = z.strictObject({
   source_id: javaScriptRouteInventorySourceSchema.shape.id,
   occurrence_id: javaScriptRouteOccurrenceSchema.shape.id.nullable(),
@@ -187,8 +184,6 @@ export const javaScriptRoutesViewSummarySchema = z.strictObject({
     unknown: z.int().nonnegative(),
   }),
 });
-export const javaScriptRoutesSourceReferenceSchema =
-  javaScriptRouteInventorySourceSchema;
 
 type Request = z.output<typeof javaScriptRoutesViewRequestSchema>;
 type Gap = z.infer<typeof javaScriptRouteGapSchema>;
@@ -273,16 +268,16 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
 const candidates = <T extends { id: string }>(
   rows: Table<T>,
   selected: readonly string[] | undefined,
-): readonly T[] =>
-  selected === undefined
-    ? rows.rows
-    : [...new Set(selected)]
-        .flatMap((id) => {
-          const entry = rows.byId.get(id);
-          return entry === undefined ? [] : [entry];
-        })
-        .sort((a, b) => a.index - b.index)
-        .map((entry) => entry.row);
+): readonly T[] => {
+  if (selected === undefined) return rows.rows;
+  const entries: { row: T; index: number }[] = [];
+  for (const id of new Set(selected)) {
+    const entry = rows.byId.get(id);
+    if (entry !== undefined) entries.push(entry);
+  }
+  entries.sort((a, b) => a.index - b.index);
+  return entries.map((entry) => entry.row);
+};
 const choose = (
   row: Record<string, JsonValue>,
   fields: readonly string[],
@@ -314,10 +309,14 @@ const captureIdentity = z.object({
 /** Historical projection: no source file reads, browser connection or reanalysis. */
 export const projectJavaScriptRoutesView = (
   parent: AnalysisViewParent,
-  selected: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
+  selected: AdmittedView,
+) => {
   if (selected.kind !== "javascript-routes")
     return err(inputError("Select a javascript-routes view."));
+  assertOwnedView<z.output<typeof javaScriptRoutesViewRequestSchema>>(
+    selected,
+    "javascript-routes",
+  );
   const operation = parent.operation;
   if (
     operation !== "analyze_javascript_application" &&
@@ -342,11 +341,8 @@ export const projectJavaScriptRoutesView = (
       path: identity.data.input_path,
       sha256: identity.data.root_artifact_sha256,
     };
-    if (
-      parent.subject != null &&
-      (parent.subject.local_path !== artifact.path ||
-        parent.subject.digest.sha256 !== artifact.sha256)
-    )
+    const subject = evidenceFileTarget(parent);
+    if (subject != null && subject.sha256 !== artifact.sha256)
       return err(
         inputError(
           "Parent subject does not match its application artifact identity.",
@@ -405,6 +401,7 @@ export const projectJavaScriptRoutesView = (
           limit_bytes: PAGE_BYTES,
           collection: view.collection,
         },
+        ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
       ),
     );
   if (view.collection === "summary") {
@@ -421,10 +418,7 @@ export const projectJavaScriptRoutesView = (
         },
       },
       byte_limited: false,
-      coverage: completeWithinViewCoverage(
-        inventory.routes.length,
-        inventory.routes.length,
-      ),
+      coverage: completeWithinViewCoverage(inventory.routes.length),
     };
     return jsonValueByteLength(summary, PROJECTION_BYTES) > PROJECTION_BYTES
       ? tooLarge()
@@ -449,8 +443,8 @@ export const projectJavaScriptRoutesView = (
       item: Record<string, JsonValue>;
       sources: readonly string[];
     },
-  ): Result<UnsignedAnalysisView, AnalysisError> => {
-    const rows = candidates(source, ids).filter(predicate),
+  ) => {
+    const rows = candidates(source, ids),
       items: Record<string, JsonValue>[] = [],
       refs = new Map<string, JavaScriptRouteInventorySource>();
     // Count the fixed envelope once. Counter widths and status text reserve the
@@ -476,12 +470,17 @@ export const projectJavaScriptRoutesView = (
         ),
       byte_limited = false;
     if (bytes > PAGE_BYTES) return tooLarge();
-    for (
-      let index = page.offset;
-      index < rows.length && items.length < page.limit;
-      index++
-    ) {
-      const projected = project(rows[index]!),
+    let total = 0;
+    for (const row of rows) {
+      if (!predicate(row)) continue;
+      const matchedIndex = total++;
+      if (
+        matchedIndex < page.offset ||
+        items.length >= page.limit ||
+        byte_limited
+      )
+        continue;
+      const projected = project(row),
         additions: JavaScriptRouteInventorySource[] = [];
       let addedBytes =
         jsonValueByteLength(projected.item, PAGE_BYTES - bytes) +
@@ -501,11 +500,11 @@ export const projectJavaScriptRoutesView = (
       if (bytes + addedBytes > PAGE_BYTES) {
         if (items.length === 0) return tooLarge();
         byte_limited = true;
-        break;
+        continue;
       }
       bytes += addedBytes;
       items.push(projected.item);
-      for (const row of additions) refs.set(row.id, row);
+      for (const sourceRow of additions) refs.set(sourceRow.id, sourceRow);
     }
     const result = {
       ...shared,
@@ -513,7 +512,7 @@ export const projectJavaScriptRoutesView = (
       sources: [...refs.values()],
       summary: null,
       byte_limited,
-      coverage: pageViewCoverage(page.offset, items.length, rows.length),
+      coverage: pageViewCoverage(page.offset, items.length, total),
     };
     return jsonValueByteLength({ ...result, items }, PROJECTION_BYTES) >
       PROJECTION_BYTES
