@@ -1,3 +1,4 @@
+import { write32, write64 } from "../../native/BinaryInteger.fixture.js";
 import { elfNote, elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
 import { peResourceFixture } from "../../domain/pe/peResources.fixture.js";
 
@@ -332,24 +333,4 @@ const thinMachOWithoutDenoSection = (): Buffer => {
 
 const writeName = (bytes: Buffer, offset: number, name: string): void => {
   bytes.write(name, offset, Math.min(name.length, 16), "latin1");
-};
-
-const write32 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeUInt32LE(value, offset);
-  else bytes.writeUInt32BE(value, offset);
-};
-
-const write64 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeBigUInt64LE(BigInt(value), offset);
-  else bytes.writeBigUInt64BE(BigInt(value), offset);
 };

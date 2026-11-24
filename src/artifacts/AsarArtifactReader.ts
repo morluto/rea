@@ -225,7 +225,7 @@ export class AsarArtifactReader implements ArtifactReader {
     const state = this.#entries.get(entry.adapterKey);
     if (state === undefined && entry.kind !== "file")
       throw new ArtifactReaderFailure(
-        "format",
+        "path",
         "ASAR entry is not a regular file",
       );
     if (state === undefined)

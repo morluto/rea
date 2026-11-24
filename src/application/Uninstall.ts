@@ -1,10 +1,19 @@
 import {
   isMissing,
   item,
-  type UninstallAction,
   type UninstallFileSystem,
   type UninstallItem,
 } from "./UninstallShared.js";
+import {
+  clientRegistrationRemoval,
+  collapseUninstallItems,
+  enabledRegistration,
+  ownedRegistrationRemoval,
+  registrationPresent,
+  registrationRemovalDocument,
+  resolveUninstallConfigPath,
+  uninstallConfigPaths,
+} from "./UninstallClientConfiguration.js";
 import {
   inspectManagedSkill,
   purgeSelectedData,
@@ -18,16 +27,12 @@ import {
   retryClientConfigurationCleanup,
 } from "./ClientConfigurationCleanup.js";
 import {
-  ClientConfigurationShapeError,
   clientConfigurationServersKey,
   clientConfigurationSyntaxName,
   parseClientConfiguration,
   serializeClientConfiguration,
   clientServerPath,
   effectiveClientServer,
-  legacyClientServerPath,
-  shadowedClientServers,
-  withClientServers,
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -59,10 +64,7 @@ import {
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { readSkillFile, skillDestinationSelection } from "./SetupSkill.js";
 import { dshDocument } from "./DshCordisPatch.js";
-import {
-  isAbsentClientConfigPath,
-  resolveClientConfigTransactionPath,
-} from "./ClientConfigPath.js";
+import { isAbsentClientConfigPath } from "./ClientConfigPath.js";
 import {
   preserveCurrentRecoveryBackup,
   type RecoveryBackupPreservationOptions,
@@ -92,13 +94,6 @@ import {
   redirectedWriteBlocker,
   type MsixPackageView,
 } from "./MsixPackageStorage.js";
-
-export type {
-  ManagedPathStats,
-  UninstallAction,
-  UninstallFileSystem,
-  UninstallItem,
-} from "./UninstallShared.js";
 
 const systemFileSystem = (
   resources: ArtifactResourceScope,
@@ -344,14 +339,10 @@ const hasOwnershipEvidence = async (
       if (typeof completed !== "string") continue;
       original = completed;
     }
-    let parsed: ClientConfigurationDocument;
-    try {
-      parsed = parseClientConfiguration(original, client.format);
-    } catch {
-      // Malformed shared data is retained, never ownership evidence.
-      continue;
-    }
-    const removal = clientRegistrationRemoval(parsed, original, client);
+    const parsed = parseClientConfiguration(original, client.format);
+    // Malformed shared data is retained and cannot prove ownership.
+    if (!parsed.ok) continue;
+    const removal = clientRegistrationRemoval(parsed.value, original, client);
     // Refusing the edit never retracts the owned-row fact: an effective
     // REA-owned row shadowed by a foreign duplicate still proves ownership,
     // so later read failures stay blocking instead of softening to retained.
@@ -630,10 +621,11 @@ export const systemUninstallHost = (
       redirection = appDataRedirection(supported);
       if (projectDirectory !== undefined) {
         const directory =
-          await requireProjectUninstallDirectory(projectDirectory);
+          await resolveProjectUninstallDirectory(projectDirectory);
+        if (!directory.ok) throw directory.error;
         return resolveProjectUninstallClients(
           supported,
-          directory,
+          directory.value,
           projectTargets,
           fileSystem,
           resources,
@@ -972,43 +964,6 @@ export const systemUninstallHost = (
  * package can read either its private copy or the AppData file, and earlier
  * setups wrote the AppData file, so both lose REA's entry.
  */
-const uninstallConfigPaths = (client: SetupClient): readonly string[] => [
-  ...new Set([
-    ...(client.readOnlyLowerLayers === true
-      ? [client.configPath]
-      : (client.configPaths ?? [client.configPath])),
-    ...(client.msixPackage === undefined
-      ? []
-      : [
-          client.msixPackage.privateConfigPath,
-          client.msixPackage.appDataConfigPath,
-        ]),
-  ]),
-];
-
-/** Whether a client loads this entry: present and not disabled. */
-const enabledRegistration = (entry: unknown): boolean =>
-  entry !== undefined &&
-  !(
-    typeof entry === "object" &&
-    entry !== null &&
-    "enabled" in entry &&
-    entry.enabled === false
-  );
-
-/** Whether removal would change this configuration. */
-const registrationPresent = (parsed: ClientConfigurationDocument): boolean => {
-  const name = PRODUCT_IDENTITY.mcpServerKey;
-  return (
-    Object.hasOwn(parsed.servers, name) ||
-    // Beside a native OpenCode V2 table, OpenCode also loads a V1 `mcp.rea`.
-    legacyClientServerPath(parsed, name) !== undefined ||
-    // Harness ownership is the stable entry id. A stale or malformed launcher
-    // still belongs to that id, and so does a direct patch that projects no row.
-    (parsed.dialect === "dsh" && dshDocument(parsed.document).carriesEntry)
-  );
-};
-
 type ClientConfigurationRead =
   | { readonly kind: "item"; readonly item: UninstallItem }
   | {
@@ -1113,132 +1068,27 @@ const readClientConfiguration = async (
     configurationFailure,
   });
   if (typeof original !== "string") return original;
-  try {
-    const parsed = parseClientConfiguration(original, format);
-    return { kind: "configuration", transactionPath, original, parsed };
-  } catch (cause: unknown) {
-    return configurationFailure(
-      cause instanceof ClientConfigurationShapeError ||
-        cause instanceof ConfigurationError
-        ? `Configuration was not changed: ${cause.message}. Repair it, then rerun uninstall.`
-        : format === undefined
-          ? "This client's configuration syntax is unknown, so its configuration was not changed."
-          : `Configuration is not valid ${clientConfigurationSyntaxName(format)} and was not changed. Repair it, then rerun uninstall.`,
-    );
-  }
+  const parsed = parseClientConfiguration(original, format);
+  if (parsed.ok)
+    return {
+      kind: "configuration",
+      transactionPath,
+      original,
+      parsed: parsed.value,
+    };
+  return configurationFailure(
+    parsed.error.kind === "shape" || parsed.error.kind === "document"
+      ? `Configuration was not changed: ${parsed.error.detail}. Repair it, then rerun uninstall.`
+      : format === undefined
+        ? "This client's configuration syntax is unknown, so its configuration was not changed."
+        : `Configuration is not valid ${clientConfigurationSyntaxName(format)} and was not changed. Repair it, then rerun uninstall.`,
+  );
 };
 
 const itemRead = (result: UninstallItem): ClientConfigurationRead => ({
   kind: "item",
   item: result,
 });
-
-/**
- * Share the exact ownership and applicability decision with preflight. A
- * removable legacy entry carries its document path, so removal edits exactly
- * the entry this decision admitted.
- */
-type RegistrationRemoval = {
-  readonly removeNative: boolean;
-  readonly legacyPath: readonly string[] | undefined;
-};
-type RegistrationRemovalRefusal = {
-  readonly kind: "shadowed_unowned_member" | "foreign_legacy_fallback";
-  readonly detail: string;
-  /** The owned rows that motivated removal; refusing the edit keeps them. */
-  readonly owned: RegistrationRemoval;
-};
-
-const ownedRegistrationRemoval = (
-  parsed: ClientConfigurationDocument,
-  client: SetupClient,
-): RegistrationRemoval => {
-  const name = PRODUCT_IDENTITY.mcpServerKey;
-  if (
-    parsed.dialect === "dsh" &&
-    dshDocument(parsed.document).hasUnknownStructure
-  )
-    return { removeNative: false, legacyPath: undefined };
-  const removeNative =
-    (parsed.dialect === "dsh" && dshDocument(parsed.document).carriesEntry) ||
-    (Object.hasOwn(parsed.servers, name) &&
-      clientRegistrationOwnership(parsed.servers[name], client) === "owned");
-  const legacyPath = legacyClientServerPath(parsed, name);
-  const removeLegacy =
-    legacyPath !== undefined &&
-    clientRegistrationOwnership(parsed.legacyServers[name], client) === "owned";
-  return {
-    removeNative,
-    legacyPath: removeLegacy ? legacyPath : undefined,
-  };
-};
-
-const clientRegistrationRemoval = (
-  parsed: ClientConfigurationDocument,
-  original: string,
-  client: SetupClient,
-): Result<RegistrationRemoval, RegistrationRemovalRefusal> => {
-  const name = PRODUCT_IDENTITY.mcpServerKey;
-  const ownership = ownedRegistrationRemoval(parsed, client);
-  const { removeNative, legacyPath } = ownership;
-  if (removeNative || legacyPath !== undefined) {
-    const shadowed = shadowedClientServers(original, parsed, name);
-    if (
-      (removeNative &&
-        shadowed.servers.some(
-          (member) => clientRegistrationOwnership(member, client) !== "owned",
-        )) ||
-      (legacyPath !== undefined &&
-        shadowed.legacyServers.some(
-          (member) => clientRegistrationOwnership(member, client) !== "owned",
-        ))
-    )
-      return err({
-        kind: "shadowed_unowned_member",
-        detail: SHADOWED_UNOWNED_MEMBER_DETAIL,
-        owned: ownership,
-      });
-  }
-  if (
-    removeNative &&
-    legacyPath === undefined &&
-    legacyClientServerPath(parsed, name) !== undefined
-  )
-    return err({
-      kind: "foreign_legacy_fallback",
-      detail: UNOWNED_LEGACY_FALLBACK_DETAIL,
-      owned: ownership,
-    });
-  return ok(ownership);
-};
-
-const SHADOWED_UNOWNED_MEMBER_DETAIL = `Configuration repeats the "${PRODUCT_IDENTITY.mcpServerKey}" member, and an earlier duplicate is not REA-owned; removing the registration the client reads would activate an earlier duplicate, so no change was made. Remove the duplicate members manually, then rerun uninstall.`;
-
-const UNOWNED_LEGACY_FALLBACK_DETAIL = `OpenCode falls back to the V1 "mcp.${PRODUCT_IDENTITY.mcpServerKey}" entry, which is not REA-owned; removing REA's native registration would activate it, so no change was made. Remove or replace that V1 entry manually, then rerun uninstall.`;
-
-/** Apply the same exact row edits to both the projected and published document. */
-const registrationRemovalDocument = (
-  parsed: ClientConfigurationDocument,
-  removal: RegistrationRemoval,
-  platform: NodeJS.Platform,
-): ClientConfigurationDocument => {
-  const name = PRODUCT_IDENTITY.mcpServerKey;
-  const servers = { ...parsed.servers };
-  const legacyServers = { ...parsed.legacyServers };
-  if (removal.removeNative) delete servers[name];
-  if (removal.legacyPath !== undefined) delete legacyServers[name];
-  return {
-    ...parsed,
-    servers,
-    legacyServers,
-    document: withClientServers(
-      parsed,
-      servers,
-      platform,
-      removal.legacyPath === undefined ? undefined : name,
-    ),
-  };
-};
 
 type ProjectUninstallTarget =
   | { readonly kind: "planned"; readonly plan: ProjectUninstallPlan }
@@ -1264,20 +1114,22 @@ interface ProjectUninstallPlan {
   readonly pending: Map<string, ProjectRemovalFile>;
 }
 
-const requireProjectUninstallDirectory = async (
+const resolveProjectUninstallDirectory = async (
   path: string,
-): Promise<string> => {
+): Promise<Result<string, ConfigurationError>> => {
   try {
     const directory = await realpath(path);
-    if ((await lstat(directory)).isDirectory()) return directory;
+    if ((await lstat(directory)).isDirectory()) return ok(directory);
   } catch (cause: unknown) {
-    throw new ConfigurationError(
-      `Could not resolve the selected project directory ${path}. Select an existing directory before running uninstall.`,
-      { cause },
+    return err(
+      new ConfigurationError(
+        `Could not resolve the selected project directory ${path}. Select an existing directory before running uninstall.`,
+        { cause },
+      ),
     );
   }
-  throw new ConfigurationError(
-    `The selected project ${path} is not a directory.`,
+  return err(
+    new ConfigurationError(`The selected project ${path} is not a directory.`),
   );
 };
 
@@ -1685,31 +1537,26 @@ const removeClient = async (
     ...(removeNative ? [clientServerPath(parsed, name)] : []),
     ...(legacyPath === undefined ? [] : [legacyPath]),
   ];
-  let serialized: ReturnType<typeof serializeClientConfiguration>;
-  try {
-    serialized = serializeClientConfiguration(
-      candidate.document,
-      client.format,
-      original,
-      editedPaths,
-      // clientRegistrationRemoval admitted only names whose repeats REA owns.
-      { removeShadowedMembersAt: editedPaths },
-    );
-  } catch (cause: unknown) {
+  const serialized = serializeClientConfiguration(
+    candidate.document,
+    client.format,
+    original,
+    editedPaths,
+    // clientRegistrationRemoval admitted only names whose repeats REA owns.
+    { removeShadowedMembersAt: editedPaths },
+  );
+  if (!serialized.ok) {
+    const failure = serialized.error;
     return item(
       client.name,
       "failed",
-      cause instanceof ConfigurationError
-        ? `Configuration could not be updated, so no change was made. ${cause.message}.`
-        : "Configuration could not be updated, so no change was made. Repair the configuration, then rerun uninstall.",
+      failure.kind === "shadowed_member"
+        ? `Configuration repeats the member at ${JSON.stringify(failure.path)}; removing the registration the client reads would activate an earlier duplicate, so no change was made. Remove the duplicate members manually, then rerun uninstall.`
+        : failure.kind === "document"
+          ? `Configuration could not be updated, so no change was made. ${failure.detail}.`
+          : "Configuration could not be updated, so no change was made. Repair the configuration, then rerun uninstall.",
     );
   }
-  if (!serialized.ok)
-    return item(
-      client.name,
-      "failed",
-      `Configuration repeats the member at ${JSON.stringify(serialized.error.path)}; removing the registration the client reads would activate an earlier duplicate, so no change was made. Remove the duplicate members manually, then rerun uninstall.`,
-    );
   const backupPath = await backupClientConfiguration(
     client,
     transactionPath,
@@ -1744,33 +1591,37 @@ const removeClient = async (
     try {
       const text = await fileSystem.readText(publication.path);
       await publication.assertCurrent(text);
-      const readback = parseClientConfiguration(text, client.format);
-      if (
-        (removeNative && Object.hasOwn(readback.servers, name)) ||
-        (readback.dialect === "dsh" &&
-          dshDocument(readback.document).carriesEntry) ||
-        (removeLegacy && Object.hasOwn(readback.legacyServers, name))
-      )
-        throw new Error("registration readback mismatch");
-      return item(
-        client.name,
-        "removed",
-        `Removed registration from ${client.configPath}.`,
-      );
+      const parsed = parseClientConfiguration(text, client.format);
+      if (parsed.ok) {
+        const readback = parsed.value;
+        if (
+          !(removeNative && Object.hasOwn(readback.servers, name)) &&
+          !(
+            readback.dialect === "dsh" &&
+            dshDocument(readback.document).carriesEntry
+          ) &&
+          !(removeLegacy && Object.hasOwn(readback.legacyServers, name))
+        )
+          return item(
+            client.name,
+            "removed",
+            `Removed registration from ${client.configPath}.`,
+          );
+      }
     } catch (cause: unknown) {
       if (isClientConfigurationCleanupFailure(cause))
         await retryClientConfigurationCleanup(cause, resources);
-      try {
-        await publication.restore(original);
-      } catch {
-        return manualRecovery();
-      }
-      return item(
-        client.name,
-        "failed",
-        `Configuration could not be updated. The original was restored and its backup at ${backupPath} was retained. Repair the configuration or restore that backup, then rerun uninstall.`,
-      );
     }
+    try {
+      await publication.restore(original);
+    } catch {
+      return manualRecovery();
+    }
+    return item(
+      client.name,
+      "failed",
+      `Configuration could not be updated. The original was restored and its backup at ${backupPath} was retained. Repair the configuration or restore that backup, then rerun uninstall.`,
+    );
   };
   let completed: UninstallItem | undefined;
   try {
@@ -1791,82 +1642,5 @@ const removeClient = async (
         ? ""
         : ` The backup at ${backupPath} was retained. Check the configuration and rerun uninstall.`;
     return item(client.name, "failed", `${detail}${recovery}`);
-  }
-};
-
-const resolveUninstallConfigPath = async (
-  client: SetupClient,
-  fileSystem: UninstallFileSystem,
-): Promise<string | UninstallItem> => {
-  const path = await resolveClientConfigTransactionPath(
-    client.configPath,
-    fileSystem.realpath === undefined
-      ? { lstat: fileSystem.stat }
-      : { lstat: fileSystem.stat, realpath: fileSystem.realpath },
-  );
-  return (
-    path ??
-    item(
-      client.name,
-      "failed",
-      "Configuration path could not be safely verified. Check its permissions and, if it is a symbolic link, verify that the link resolves to a regular file owned by the current user, then rerun uninstall.",
-    )
-  );
-};
-
-/**
- * Layered clients are removed file by file, but callers look up one status by
- * client name. Aggregate status does not invalidate any constituent outcome.
- */
-const collapseUninstallItems = (
-  items: readonly UninstallItem[],
-): UninstallItem[] => {
-  const grouped = new Map<string, UninstallAction[]>();
-  for (const next of items) {
-    const { name, actions, ...action } = next;
-    const group = grouped.get(name) ?? [];
-    group.push(
-      ...(actions !== undefined && actions.length > 0 ? actions : [action]),
-    );
-    grouped.set(name, group);
-  }
-  return [...grouped].map(([name, actions]) => {
-    const first = actions[0];
-    if (first === undefined)
-      throw new Error("Uninstall outcome group has no actions.");
-    if (actions.length === 1) return { name, ...first };
-    const status = actions.reduce(
-      (selected, action) =>
-        uninstallStatusPriority(action.status) >
-        uninstallStatusPriority(selected)
-          ? action.status
-          : selected,
-      first.status,
-    );
-    return {
-      name,
-      status,
-      detail: [...new Set(actions.map(({ detail }) => detail))].join(" "),
-      actions,
-    };
-  });
-};
-
-const uninstallStatusPriority = (status: UninstallItem["status"]): number => {
-  switch (status) {
-    case "failed":
-      return 3;
-    case "removed":
-      return 2;
-    case "retained":
-      return 1;
-    case "skipped":
-      return 0;
-    default: {
-      const exhaustive: never = status;
-      throw new TypeError(
-        `Unhandled uninstall item status: ${String(exhaustive)}`,
-      );
-    }
   }
 };

@@ -2,12 +2,10 @@ import {
   RELEASE_EXPOSURE_AUDIT_OPERATION as OPERATION,
   releaseExposureFailure,
 } from "./releaseExposure/releaseExposureFailures.js";
-import { createHash } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { lstat, mkdtemp, opendir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import type { Readable } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type {
@@ -35,10 +33,20 @@ import {
   projectArtifactCloseFailure,
   readerIntegrityFailure,
   hashStableRootArtifactHandle,
-  openRootArtifact,
-  releaseRootArtifact,
   createAsarHeaderSignatureProbe,
 } from "../resources/index.js";
+import {
+  asReadFailure,
+  fitAllowance,
+  overAllowance,
+  readDiskMember,
+  readSpan,
+  readStreamBounded,
+  rethrowReadFailure,
+  withMemberDescriptor,
+  type ExpectedMemberDigest,
+  type MemberRead,
+} from "./releaseExposure/memberIo.js";
 import {
   decodeMemberText,
   declaresTextEncoding,
@@ -128,12 +136,6 @@ import {
 } from "../domain/releaseExposure.js";
 import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
-import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
-import {
-  RegularFileChangedError,
-  sameRegularFileState,
-  type StableRegularFileDescriptor,
-} from "../filesystem/RegularFile.js";
 import {
   hasScheme,
   htmlUrlText,
@@ -203,11 +205,6 @@ const SCRIPT_PAGE_NAME = /\.(?:html?|svg)$/iu;
 
 type NativeFormat = "elf" | "mach-o" | "mach-o-universal" | "pe";
 
-/** One read attempt. Allowance and read failure are different facts. */
-type MemberRead =
-  | { readonly kind: "bytes"; readonly bytes: Buffer }
-  | { readonly kind: "over_allowance"; readonly prefix: Buffer | null }
-  | { readonly kind: "unread" };
 type ReadMember = (budget: number) => Promise<MemberRead>;
 
 interface OpenContainer {
@@ -1059,14 +1056,6 @@ const shaOf = (
   occurrence.artifact_id === null
     ? undefined
     : nodeSha.get(occurrence.artifact_id);
-
-const overAllowance = (bytes: Buffer): MemberRead => ({
-  kind: "over_allowance",
-  prefix: bytes.subarray(0, MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES),
-});
-
-const fitAllowance = (bytes: Buffer, budget: number): MemberRead =>
-  bytes.length <= budget ? { kind: "bytes", bytes } : overAllowance(bytes);
 
 const examineSelectedFile = async (
   state: ScanState,
@@ -2472,6 +2461,7 @@ const readOccurrence = async (
         Math.min(located.length, budget),
         state,
         input,
+        (message) => pushLimitation(state, message),
       );
       if (bytes === null) return { kind: "unread" };
       return located.length > budget
@@ -2489,6 +2479,7 @@ const readOccurrence = async (
     shaOf(occurrence, nodeSha),
     state,
     input,
+    (message) => pushLimitation(state, message),
   );
 };
 
@@ -2496,35 +2487,6 @@ type EmbeddedPackageProbe =
   | { readonly kind: "package"; readonly format: PackageFormat }
   | { readonly kind: "absent" }
   | { readonly kind: "unreadable" };
-
-/**
- * Own one member descriptor. A failed close stays retained by the resource
- * scope, and the primary failure survives it.
- */
-const withMemberDescriptor = async <T>(
-  filePath: string,
-  { resources, signal }: ScanContext,
-  use: (source: StableRegularFileDescriptor) => Promise<T>,
-): Promise<T> => {
-  const source = await openRootArtifact(filePath, resources, signal);
-  let settled: Result<T, unknown>;
-  try {
-    settled = ok(await use(source));
-  } catch (cause) {
-    settled = err(asReadFailure(cause));
-  }
-  await releaseRootArtifact(
-    filePath,
-    source.owner,
-    resources,
-    settled.ok
-      ? { kind: "completed", digest: null }
-      : { kind: "failed", cause: settled.error },
-    signal,
-  );
-  if (!settled.ok) throw settled.error;
-  return settled.value;
-};
 
 const embeddedPackageFormat = async (
   filePath: string,
@@ -3007,203 +2969,6 @@ const readEntryBytes = async (
   return readStreamBounded(stream, budget, state, signal, expected);
 };
 
-/** An inventoried digest the member's complete bytes must still match. */
-interface ExpectedMemberDigest {
-  readonly sha256: string;
-  readonly changed: string;
-}
-
-const readStreamBounded = async (
-  stream: Readable,
-  budget: number,
-  state: ScanState,
-  signal: AbortSignal | undefined,
-  expected?: ExpectedMemberDigest,
-): Promise<MemberRead> => {
-  const chunks: Buffer[] = [];
-  const hash = expected === undefined ? undefined : createHash("sha256");
-  let total = 0;
-  let overBudget = false;
-  let failure: unknown;
-  try {
-    for await (const chunk of stream) {
-      if (signal?.aborted) throw cancelledBy(OPERATION, signal);
-      const piece = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      chunks.push(piece);
-      total += piece.length;
-      state.memberBytesRead += piece.length;
-      if (total > budget) {
-        overBudget = true;
-        break;
-      }
-      hash?.update(piece);
-    }
-    // The digest covers the whole member, so it is only checked when the
-    // member ended within the allowance. A member past the allowance is never
-    // read further to finish the hash: it stays over_allowance, unverified.
-    if (
-      !overBudget &&
-      expected !== undefined &&
-      hash !== undefined &&
-      hash.digest("hex") !== expected.sha256
-    )
-      throw new ArtifactReaderFailure("integrity", expected.changed, {
-        integrityCheck: "member-identity",
-      });
-  } catch (cause) {
-    failure = cause;
-  }
-  let closeFailure: unknown;
-  try {
-    stream.destroy();
-  } catch (cause) {
-    closeFailure = cause;
-  }
-  if (failure !== undefined && closeFailure !== undefined)
-    throw new AggregateError(
-      [failure, closeFailure],
-      "Member read and stream close both failed.",
-    );
-  if (closeFailure !== undefined) throw closeFailure;
-  if (failure !== undefined) throw failure;
-  const bytes = Buffer.concat(chunks);
-  return overBudget ? overAllowance(bytes) : { kind: "bytes", bytes };
-};
-
-const readSpan = async (
-  filePath: string,
-  offset: number,
-  length: number,
-  state: ScanState,
-  context: ScanContext,
-): Promise<Buffer | null> => {
-  const { signal } = context;
-  if (
-    !Number.isSafeInteger(offset) ||
-    offset < 0 ||
-    !Number.isSafeInteger(length) ||
-    length < 0 ||
-    !Number.isSafeInteger(offset + length)
-  )
-    return null;
-  try {
-    return await withMemberDescriptor(
-      filePath,
-      context,
-      async ({ handle, initial }) => {
-        const observed = await handle.stat();
-        if (!sameRegularFileState(initial, observed))
-          throw new ArtifactReaderFailure(
-            "integrity",
-            `Artifact changed before read: ${filePath}`,
-            { integrityCheck: "member-identity" },
-          );
-        if (offset + length > observed.size) return null;
-        // Charge bytes as they arrive, so a read that fails after partial
-        // progress still counts what it consumed against the allowance.
-        let charged = 0;
-        const bytes = await readFileHandleRange(
-          handle,
-          offset,
-          length,
-          (bytesRead) => {
-            state.memberBytesRead += bytesRead - charged;
-            charged = bytesRead;
-            if (signal?.aborted) throw cancelledBy(OPERATION, signal);
-          },
-        );
-        const after = await handle.stat();
-        if (!sameRegularFileState(initial, after))
-          throw new ArtifactReaderFailure(
-            "integrity",
-            `Artifact changed during read: ${filePath}`,
-            { integrityCheck: "member-identity" },
-          );
-        state.memberBytesRead += bytes.length - charged;
-        return bytes;
-      },
-    );
-  } catch (cause) {
-    rethrowReadFailure(cause);
-    pushLimitation(state, `Could not read ${filePath}.`);
-    return null;
-  }
-};
-
-const readDiskMember = async (
-  filePath: string,
-  maxBytes: number,
-  expectedSha256: string | undefined,
-  state: ScanState,
-  context: ScanContext,
-): Promise<MemberRead> => {
-  try {
-    const snapshot = await readStableArtifact(
-      filePath,
-      maxBytes,
-      context.signal,
-      undefined,
-      context.resources,
-    );
-    if (expectedSha256 !== undefined && snapshot.sha256 !== expectedSha256)
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `Member changed during acquisition: ${filePath}`,
-        { integrityCheck: "member-identity" },
-      );
-    return { kind: "bytes", bytes: snapshot.bytes };
-  } catch (cause) {
-    rethrowReadFailure(cause);
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
-      return {
-        kind: "over_allowance",
-        prefix: await readSpan(
-          filePath,
-          0,
-          Math.min(maxBytes, MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES),
-          state,
-          context,
-        ),
-      };
-    pushLimitation(state, `Could not read ${filePath}.`);
-    return { kind: "unread" };
-  }
-};
-
-/**
- * A file that changed while being read is a changed release member, unless the
- * caller is reading the selected artifact itself.
- */
-const asReadFailure = (
-  cause: unknown,
-  integrityCheck: ArtifactIntegrityCheck = "member-identity",
-): unknown =>
-  cause instanceof RegularFileChangedError
-    ? new ArtifactReaderFailure("integrity", cause.message, {
-        cause,
-        integrityCheck,
-      })
-    : cause;
-
-/**
- * A read that left cleanup unfinished is never a skipped member, whatever its
- * reason: only the error tells the caller a descriptor is still retained.
- */
-const rethrowReadFailure = (
-  cause: unknown,
-  integrityCheck?: ArtifactIntegrityCheck,
-): void => {
-  const failure = asReadFailure(cause, integrityCheck);
-  if (failure instanceof AnalysisError) throw failure;
-  if (
-    failure instanceof ArtifactReaderFailure &&
-    (failure.reason === "cancelled" ||
-      failure.reason === "integrity" ||
-      failure.cleanup !== undefined)
-  )
-    throw failure;
-};
-
 /**
  * List the parent directory up to the sibling allowance. The stream stops at
  * the allowance, so a very large directory costs no more than the limit.
@@ -3299,7 +3064,14 @@ const classifySiblingMap = async (
   input: ConsumeInput,
 ): Promise<void> => {
   const { hasSlot, bytes } = chargeMapRead(state);
-  const loaded = await readDiskMember(sibling, bytes, undefined, state, input);
+  const loaded = await readDiskMember(
+    sibling,
+    bytes,
+    undefined,
+    state,
+    input,
+    (message) => pushLimitation(state, message),
+  );
   if (loaded.kind === "unread") {
     state.skippedCompanions += 1;
     return;

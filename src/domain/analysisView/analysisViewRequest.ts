@@ -9,6 +9,7 @@ import {
 } from "./nativeObservationSchemas.js";
 import { nativeInstructionReferencesRequestSchema } from "./nativeInstructionReferencesView.js";
 import { devicetreeViewRequestSchema } from "./devicetreeView.js";
+import { uefiExtractionViewRequestSchema } from "./uefiExtractionView.js";
 import { uefiFirmwareViewRequestSchema } from "./uefiFirmwareView.js";
 import { apkSignatureViewRequestSchema } from "../apkSignature/apkSignatureQuery.js";
 import { erlangBeamViewRequestSchema } from "./erlangBeamView.js";
@@ -40,7 +41,10 @@ import { browserScenarioViewRequestSchema } from "./browserScenarioViewSchemas.j
 import { nativeLoadImageViewRequestSchema } from "./nativeLoadImageView.js";
 import { desktopViewRequestSchema } from "./desktopApplicationView.js";
 import { javascriptModuleReferencesRequestSchema } from "./javascriptModuleReferences.js";
-import { javascriptFactsViewRequestSchema } from "./javascriptFactsView.js";
+import {
+  javascriptFactGroupsViewRequestSchema,
+  javascriptFactsViewRequestSchema,
+} from "./javascriptFactsView.js";
 import { evidenceSchema } from "../evidence.js";
 import { declareEvidenceReferenceAlternative } from "../evidenceInputContract.js";
 import { apiSurfaceViewSchema } from "./apiSurfaceSchema.js";
@@ -87,6 +91,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   recordedArrayViewSchema,
   devicetreeViewRequestSchema,
   uefiFirmwareViewRequestSchema,
+  uefiExtractionViewRequestSchema,
   erlangBeamViewRequestSchema,
   pythonPycViewRequestSchema,
   nativeExportsViewRequestSchema,
@@ -113,6 +118,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   pageViewSchema,
   javascriptModuleReferencesRequestSchema,
   javascriptFactsViewRequestSchema,
+  javascriptFactGroupsViewRequestSchema,
   nativeViewSchema,
   nativeInventoryViewRequestSchema,
   nativeProcedureReferencesViewRequestSchema,

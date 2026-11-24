@@ -73,6 +73,6 @@ it("selects services but not the CLI layer or CLI-only files", () => {
     true,
   );
   expect(cliTextGuardSelects("src/cli/contractCommand.ts")).toBe(false);
-  expect(cliTextGuardSelects("src/cliOutput.ts")).toBe(false);
+  expect(cliTextGuardSelects("src/cli/cliOutput.ts")).toBe(false);
   expect(cliTextGuardSelects("src/application/Doctor.ts")).toBe(false);
 });

@@ -19,7 +19,7 @@ import {
 } from "../resources/index.js";
 import type { FileHandle } from "node:fs/promises";
 
-import type { PyInstallerMetadata } from "../domain/artifactFormatMetadata.js";
+import type { PyInstallerMetadata } from "../domain/formatMetadata/packageAndGameMetadata.js";
 import {
   cookieMetadata,
   scriptPythonMagic,
@@ -202,7 +202,7 @@ export class PyInstallerArtifactReader implements ArtifactReader {
       );
       if (entry.kind !== "file")
         throw new ArtifactReaderFailure(
-          "format",
+          "path",
           `PyInstaller entry is not a regular file: ${entry.path}`,
         );
       if (entry.encrypted)

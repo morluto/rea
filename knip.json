@@ -4,7 +4,7 @@
     "src/main.ts",
     "src/cli.ts",
     "src/cliOneShot.ts",
-    "src/cliOutput.ts",
+    "src/cli/cliOutput.ts",
     "src/cliBuiltinArguments.ts",
     "src/cli/cliResultOutput.ts",
     "src/mcpDoctor.ts",

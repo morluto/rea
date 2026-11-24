@@ -23,6 +23,7 @@ import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js
 import {
   ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
   ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
+  ELF_DEBUG_LINK_READ_BUDGETS,
   MAX_ELF_DEBUG_CANDIDATE_BYTES,
   MAX_INSPECT_ELF_DEBUG_LINK_ENTRIES,
   MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES,
@@ -46,6 +47,7 @@ import {
 } from "./ElfDebugLink.js";
 import { ELF_NOTE_TEXT_ALLOWANCE } from "./ElfNoteParser.js";
 import { elfSectionNameBudget } from "../../domain/native/elfSectionNameTable.js";
+import { elfReadBudgetLimit } from "../../domain/native/elfReadBudgets.js";
 
 const OPERATION = "inspect_elf_debug_link";
 const HEADER_PREFIX_BYTES = 4096;
@@ -74,13 +76,14 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
     let candidatePhase: CandidatePhase | undefined;
     let candidate: StableArtifactStream | undefined;
     let crc32 = 0;
+    let completedImage: ElfDebugLink | undefined;
     let observedImage:
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
     try {
       return await this.#resources.run(async () => {
         field = "path";
-        const image = await withStableArtifactHandle(
+        const image = await withStableArtifactHandle<ElfDebugLink>(
           input.path,
           input.max_file_bytes,
           {
@@ -89,6 +92,9 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
             retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
             onIdentity: (identity) => {
               observedImage = identity;
+            },
+            onVerifiedResult: (value) => {
+              completedImage = value;
             },
           },
           (handle) =>
@@ -142,23 +148,27 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
         );
       });
     } catch (cause) {
-      return err(
-        elfDebugLinkFailure(
+      let retained: AnalysisPartialObservation | undefined;
+      if (candidatePhase !== undefined)
+        retained = candidatePhaseObservation(
+          candidatePhase,
           cause,
+          crc32,
           input,
-          field,
-          candidatePhase === undefined
-            ? { imageSnapshot: observedImage }
-            : {
-                retained: candidatePhaseObservation(
-                  candidatePhase,
-                  cause,
-                  crc32,
-                  input,
-                  candidate,
-                ),
-              },
-        ),
+          candidate,
+        );
+      else if (completedImage !== undefined) {
+        retained =
+          input.candidate_path === undefined
+            ? completedImage
+            : incompleteCandidateObservation(completedImage);
+      }
+      return err(
+        elfDebugLinkFailure(cause, input, field, {
+          retained,
+          imageSnapshot:
+            candidatePhase === undefined ? observedImage : undefined,
+        }),
       );
     }
   }
@@ -191,6 +201,16 @@ const verifiedCandidate = (
     input,
     signal,
   );
+
+const incompleteCandidateObservation = (
+  report: ElfDebugLink,
+): ElfDebugLink => ({
+  ...report,
+  limitations: [
+    ...report.limitations,
+    ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
+  ],
+});
 
 const unverifiedCandidateObservation = (
   report: ElfDebugLink,
@@ -227,13 +247,7 @@ const candidatePhaseObservation = (
     );
   const completed = completedStableArtifactStream(cause);
   if (completed === undefined)
-    return {
-      ...phase.report,
-      limitations: [
-        ...phase.report.limitations,
-        ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
-      ],
-    };
+    return incompleteCandidateObservation(phase.report);
   const file = candidateFile(phase, completed, crc32);
   if (artifactFileCompletion(cause)?.cancellation !== undefined)
     return unverifiedCandidateObservation(phase.report, file);
@@ -316,8 +330,8 @@ const elfDebugLinkFailure = (
     retained,
     imageSnapshot,
   }: {
-    // The decoded report from a failed candidate phase.
-    readonly retained?: AnalysisPartialObservation;
+    // The completed report before image finalization or a candidate failure.
+    readonly retained: AnalysisPartialObservation | undefined;
     // A fully read image whose ELF decoding then failed keeps its identity.
     readonly imageSnapshot?:
       | { readonly sha256: string; readonly bytes: number }
@@ -341,6 +355,11 @@ const elfDebugLinkFailure = (
         if (isParseLimit(failure, "elf") && sectionNameBudget !== undefined)
           return parseLimitConstraint(OPERATION, "memory", failure, {
             retryable: false,
+            limit: elfReadBudgetLimit(
+              ELF_DEBUG_LINK_READ_BUDGETS,
+              "max_file_bytes",
+              input.max_file_bytes,
+            ),
             remediationAction: sectionNameBudgetRemediation(
               sectionNameBudget.required,
               field,
@@ -366,6 +385,11 @@ const elfDebugLinkFailure = (
             entryBudget
               ? {
                   retryable: false,
+                  limit: elfReadBudgetLimit(
+                    ELF_DEBUG_LINK_READ_BUDGETS,
+                    "max_entries",
+                    input.max_entries,
+                  ),
                   remediationAction: inputBudgetRemediation(
                     "capacity",
                     input,
@@ -407,6 +431,11 @@ const elfDebugLinkFailure = (
               )
             : {
                 retryable: false,
+                limit: elfReadBudgetLimit(
+                  ELF_DEBUG_LINK_READ_BUDGETS,
+                  "max_file_bytes",
+                  input.max_file_bytes,
+                ),
                 remediationAction: inputBudgetRemediation(
                   "file-size",
                   input,

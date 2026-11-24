@@ -19,7 +19,6 @@ import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js
 import {
   BINARY_HARDENING_LIMITATIONS,
   MAX_INSPECT_BINARY_HARDENING_FILE_BYTES,
-  type BinaryHardening,
   type InspectBinaryHardeningInput,
 } from "../../domain/native/binaryHardening.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -29,15 +28,9 @@ import {
   BinaryResourceFailure,
   binaryResourceCeiling,
 } from "../../domain/binaryContainer.js";
-import {
-  readElfHardening,
-  readElfHardeningFromHandle,
-} from "./ElfHardening.js";
-import {
-  readMachoHardening,
-  readMachoHardeningFromHandle,
-} from "./MachoHardening.js";
-import { readPeHardening, readPeHardeningFromHandle } from "./PeHardening.js";
+import { readElfHardeningFromHandle } from "./ElfHardening.js";
+import { readMachoHardeningFromHandle } from "./MachoHardening.js";
+import { readPeHardeningFromHandle } from "./PeHardening.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_binary_hardening";
@@ -140,41 +133,6 @@ export class BinaryHardeningProvider implements BinaryHardeningPort {
     }
   }
 }
-
-/** Dispatch one stable buffer to the ELF, PE, or Mach-O hardening reader. */
-export const readBinaryHardening = async (
-  bytes: Buffer,
-  artifact: BinaryHardening["artifact"],
-  signal?: AbortSignal,
-): Promise<BinaryHardening> => {
-  assertArtifactReadActive(signal);
-  if (
-    bytes.length >= 4 &&
-    bytes[0] === 0x7f &&
-    bytes[1] === 0x45 &&
-    bytes[2] === 0x4c &&
-    bytes[3] === 0x46
-  )
-    return {
-      artifact,
-      format: "elf",
-      images: [readElfHardening(bytes, signal)],
-      limitations: [...BINARY_HARDENING_LIMITATIONS],
-    };
-  if (hasDosMzMagic(bytes))
-    return {
-      artifact,
-      format: "pe",
-      images: [await readPeHardening(bytes, artifact, signal)],
-      limitations: [...BINARY_HARDENING_LIMITATIONS],
-    };
-  return {
-    artifact,
-    format: "mach-o",
-    images: await readMachoHardening(bytes, signal),
-    limitations: [...BINARY_HARDENING_LIMITATIONS],
-  };
-};
 
 const binaryHardeningFailure = (
   cause: unknown,

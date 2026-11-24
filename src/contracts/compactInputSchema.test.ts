@@ -9,9 +9,10 @@ import {
 } from "./advertisedDialect.js";
 import { compactAdvertisedInputSchema } from "./compactInputSchema.js";
 import {
+  pruneSchemaBeyondDepth,
+  schemaDepth,
   inlineWithinBudget,
   jsonValueSchema,
-  stripAnnotations,
 } from "./compactJsonSchema.js";
 import { JsonSchemaReferences } from "./jsonSchemaReferences.js";
 
@@ -122,19 +123,23 @@ describe("compact advertised input schema", () => {
       description: "saved data",
       default: { keep: "me" },
     };
-    const schema = stripAnnotations({
+    const schema = inlineWithinBudget(
+      {
+        type: "object",
+        properties: {
+          mode: { enum: [literalMode] },
+          pinned: { const: { description: "literal" } },
+        },
+      },
+      16_384,
+      { stripAnnotations: true },
+    );
+    expect(schema).toEqual({
       type: "object",
       properties: {
         mode: { enum: [literalMode] },
         pinned: { const: { description: "literal" } },
       },
-    });
-    const properties = schema.properties as Record<string, unknown>;
-    expect((properties.mode as Record<string, unknown>).enum).toEqual([
-      literalMode,
-    ]);
-    expect((properties.pinned as Record<string, unknown>).const).toEqual({
-      description: "literal",
     });
   });
 
@@ -175,7 +180,7 @@ describe("compact advertised input schema", () => {
       expect(compact(input)).toBe(canonical(input));
   });
 
-  it("does not reintroduce unsupported dialect keywords in reduced schemas", () => {
+  it("does not reintroduce unsupported dialect keywords in deep schemas", () => {
     let nested: Record<string, unknown> = { type: "string" };
     for (let level = 0; level < 12; level += 1)
       nested = { type: "object", properties: { child: nested } };
@@ -188,7 +193,10 @@ describe("compact advertised input schema", () => {
       },
       1_500,
     );
-    expect(presentation).toBe("reduced");
+    // Depth alone no longer forces a whole-schema reduction; only the
+    // branches past the limit are elided.
+    expect(presentation).toBe("inline");
+    expect(schemaDepth(schema)).toBeLessThanOrEqual(10);
     expect(schema).not.toHaveProperty("$schema");
     expect(schema).not.toHaveProperty("dependentRequired");
     expect(guidance).toContain("When detail is provided, also provide target.");
@@ -248,8 +256,59 @@ describe("compact advertised input schema", () => {
   });
 });
 
-it("keeps pattern-admitted property names open in reduced schemas", () => {
-  // Nesting past the dialect's depth limit forces the reduced form.
+it("prunes deep branches without breaking closed objects, not, oneOf, or fitting enums", () => {
+  const nest = (
+    leaf: Record<string, unknown>,
+    levels: number,
+  ): Record<string, unknown> =>
+    levels === 0
+      ? leaf
+      : {
+          type: "object",
+          properties: { child: nest(leaf, levels - 1) },
+          required: ["child"],
+          additionalProperties: false,
+        };
+  // Closed chain: a pruned node must not require a property it now forbids.
+  const closed = {
+    type: "object",
+    properties: { a: nest({ type: "string" }, 6) },
+    required: ["a"],
+    additionalProperties: false,
+  };
+  const prunedClosed = pruneSchemaBeyondDepth(closed);
+  expect(prunedClosed).not.toBeUndefined();
+  const validateClosed = new Ajv2020({ strict: false }).compile(prunedClosed!);
+  expect(
+    validateClosed({ a: { child: { child: { child: { child: "x" } } } } }),
+  ).toBe(true);
+  // Widening under `not` or `oneOf` can reject valid values: no pruning there.
+  expect(
+    pruneSchemaBeyondDepth({
+      type: "object",
+      properties: { deep: { not: nest({ type: "string" }, 8) } },
+    }),
+  ).toBeUndefined();
+  expect(
+    pruneSchemaBeyondDepth({
+      type: "object",
+      properties: { deep: { oneOf: [nest({ type: "string" }, 8)] } },
+    }),
+  ).toBeUndefined();
+  // A branch that already fits keeps its rules when a sibling is pruned.
+  const withEnum = {
+    type: "object",
+    properties: {
+      mode: nest({ type: "string", enum: ["a", "b"] }, 3),
+      deep: nest({ type: "string" }, 9),
+    },
+  };
+  const prunedEnum = pruneSchemaBeyondDepth(withEnum);
+  expect(JSON.stringify(prunedEnum)).toContain('"enum":["a","b"]');
+});
+
+it("keeps pattern-admitted property names open in deep schemas", () => {
+  // Nesting past the dialect's depth limit prunes only the deep branches.
   let deep: Record<string, unknown> = { type: "string" };
   for (let level = 0; level < 12; level++)
     deep = { type: "object", properties: { next: deep } };
@@ -263,7 +322,7 @@ it("keeps pattern-admitted property names open in reduced schemas", () => {
     canonical,
     10_000,
   );
-  expect(presentation).toBe("reduced");
+  expect(presentation).toBe("inline");
   const compact = new Ajv2020({ strict: false }).compile(schema);
   expect(new Ajv2020({ strict: false }).compile(canonical)({ b: "ok" })).toBe(
     true,
@@ -1127,50 +1186,77 @@ describe("reduced array item presentation", () => {
   });
 });
 
-describe("on-the-fly annotation stripping parity", () => {
-  it("matches pre-stripped inlining for map keys, empty schemas, ref siblings, and stripped pointers", () => {
-    const cases: readonly Record<string, unknown>[] = [
-      {
-        type: "object",
-        description: "Root doc stays.",
-        default: { x: 1 },
-        properties: {
-          default: { type: "boolean", default: true, title: "Default flag" },
-          any: { description: "Becomes json value schema." },
-          forbid: { not: { description: "Empty negation." } },
-          aliased: { $ref: "#/$defs/leaf", description: "Sibling doc drops." },
+describe("budgeted annotation stripping", () => {
+  it("preserves validation and refuses references to removed annotations", () => {
+    const cases: readonly [Record<string, unknown>, unknown][] = [
+      [
+        {
+          type: "object",
+          description: "Root doc stays.",
+          default: { x: 1 },
+          properties: {
+            default: { type: "boolean", default: true, title: "Default flag" },
+            any: { description: "Becomes json value schema." },
+            forbid: { not: { description: "Empty negation." } },
+            aliased: {
+              $ref: "#/$defs/leaf",
+              description: "Sibling doc drops.",
+            },
+          },
+          $defs: {
+            leaf: { type: "string", description: "Def doc drops.", title: "L" },
+          },
         },
-        $defs: {
-          leaf: { type: "string", description: "Def doc drops.", title: "L" },
+        {
+          type: "object",
+          description: "Root doc stays.",
+          properties: {
+            default: { type: "boolean" },
+            any: jsonValueSchema(),
+            forbid: { not: {} },
+            aliased: { type: "string" },
+          },
         },
-      },
-      {
-        $schema: "http://json-schema.org/draft-07/schema#",
-        type: "object",
-        definitions: { leaf: { type: "number", examples: [1] } },
-        properties: {
-          count: { $ref: "#/definitions/leaf", description: "Doc drops." },
+      ],
+      [
+        {
+          $schema: "http://json-schema.org/draft-07/schema#",
+          type: "object",
+          definitions: { leaf: { type: "number", examples: [1] } },
+          properties: {
+            count: { $ref: "#/definitions/leaf", description: "Doc drops." },
+          },
         },
-      },
-      {
-        type: "object",
-        $defs: {
-          node: { type: "string", default: "fallback" },
+        {
+          $schema: "http://json-schema.org/draft-07/schema#",
+          type: "object",
+          properties: { count: { type: "number" } },
         },
-        properties: {
-          bad: { $ref: "#/$defs/node/default" },
+      ],
+      [
+        {
+          type: "object",
+          $defs: {
+            node: { type: "string", default: "fallback" },
+          },
+          properties: {
+            bad: { $ref: "#/$defs/node/default" },
+          },
         },
-      },
-      {
-        type: "object",
-        properties: {
-          bad: { $ref: "#/properties/x/description" },
-          x: { type: "string", description: "Stripped doc" },
+        undefined,
+      ],
+      [
+        {
+          type: "object",
+          properties: {
+            bad: { $ref: "#/properties/x/description" },
+            x: { type: "string", description: "Stripped doc" },
+          },
         },
-      },
+        undefined,
+      ],
     ];
-    for (const schema of cases) {
-      const expected = inlineWithinBudget(stripAnnotations(schema), 16_384);
+    for (const [schema, expected] of cases) {
       const actual = inlineWithinBudget(schema, 16_384, {
         stripAnnotations: true,
         references: new JsonSchemaReferences(schema),

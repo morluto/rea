@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 
@@ -127,6 +128,8 @@ export const peResourcesSchema = z.strictObject({
     examined_entries: uint,
     resources: uint,
   }),
+  /** Evidence saved before this field existed omits it. */
+  header_anomalies: peHeaderAnomaliesSchema.optional(),
   limitations: z.array(z.string()),
 });
 

@@ -6,6 +6,7 @@ import {
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import type { ArtifactResourceScope } from "./ArtifactResourceScope.js";
@@ -195,8 +196,7 @@ export const streamStableArtifact = async (
 ): Promise<StableArtifactStream> => {
   const chunkBytes = options.chunkBytes ?? DEFAULT_STREAM_CHUNK_BYTES;
   if (!Number.isSafeInteger(chunkBytes) || chunkBytes <= 0)
-    throw new ArtifactReaderFailure(
-      "format",
+    throw invariantViolation(
       `Artifact read chunk size must be a positive integer: ${String(chunkBytes)}`,
     );
   return readStableArtifactChunks({
@@ -222,7 +222,7 @@ export interface StableArtifactHandle {
 }
 
 /** Options for {@link withStableArtifactHandle}. */
-export interface StableArtifactHandleOptions {
+export interface StableArtifactHandleOptions<Value = unknown> {
   /** Bytes to retain from the start of the file, given its admitted size. */
   readonly retainBytes: (size: number) => number;
   /** Maximum streaming hash chunk size in bytes; defaults to 65536. */
@@ -235,6 +235,8 @@ export interface StableArtifactHandleOptions {
     readonly sha256: string;
     readonly bytes: number;
   }) => void;
+  /** Called after the parsed result passes the final identity check, before closing. */
+  readonly onVerifiedResult?: (value: Value) => void;
 }
 
 /**
@@ -245,13 +247,12 @@ export interface StableArtifactHandleOptions {
 export const withStableArtifactHandle = async <Value>(
   path: string,
   maximumBytes: number,
-  options: StableArtifactHandleOptions,
+  options: StableArtifactHandleOptions<Value>,
   useFile: (handle: StableArtifactHandle) => Promise<Value>,
 ): Promise<Value> => {
   const chunkBytes = options.chunkBytes ?? DEFAULT_STREAM_CHUNK_BYTES;
   if (!Number.isSafeInteger(chunkBytes) || chunkBytes <= 0)
-    throw new ArtifactReaderFailure(
-      "format",
+    throw invariantViolation(
       `Artifact read chunk size must be a positive integer: ${String(chunkBytes)}`,
     );
   const fileSystem = options.fileSystem ?? FILE_SYSTEM;
@@ -287,6 +288,7 @@ export const withStableArtifactHandle = async <Value>(
         throw cause;
       });
       await verifyState();
+      options.onVerifiedResult?.(value);
       // The descriptor owner records this verified completion before checking
       // finalization cancellation, so cleanup errors can retain the value.
       return value;
@@ -413,7 +415,7 @@ const readStableArtifactChunks = async <Value>(options: {
           bytesRead > wanted
         )
           throw new ArtifactReaderFailure(
-            "format",
+            "io",
             `Artifact descriptor returned an invalid byte count: ${path}`,
           );
         count += bytesRead;

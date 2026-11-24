@@ -22,7 +22,10 @@ import {
   pageViewCoverage,
   unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { selectIndexedViewRows, selectViewRows } from "./selectViewRows.js";
 
@@ -181,15 +184,8 @@ export const projectGoBinaryView = (
     SummaryAnalysisView | z.output<typeof goBinaryViewRequestSchema>
   >(admitted, "summary", "go");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Go build Evidence supports summary, go and cyclonedx views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Go build Evidence supports summary, go and cyclonedx views.",
     );
   const parsed = parseReport(parent);
   if (!parsed.ok) return parsed;
@@ -301,11 +297,12 @@ export const projectGoBinaryView = (
       );
     const values = view.values === undefined ? undefined : new Set(view.values);
     const needle = view.contains;
-    const matchLiteral = (
-      row: (typeof stringLiterals.items)[number],
-    ): boolean =>
-      (values?.has(row.value) ?? true) &&
-      (needle === undefined || row.value.includes(needle));
+    const matchLiteral =
+      values === undefined && needle === undefined
+        ? undefined
+        : (row: (typeof stringLiterals.items)[number]) =>
+            (values?.has(row.value) ?? true) &&
+            (needle === undefined || row.value.includes(needle));
     const projectLiteral = (
       row: (typeof stringLiterals.items)[number],
       index: number,
@@ -357,9 +354,11 @@ export const projectGoBinaryView = (
     });
   if (view.collection === "dependencies") {
     const paths = view.paths === undefined ? undefined : new Set(view.paths);
-    const matchDep = (
-      row: (typeof info.module.dependencies)[number],
-    ): boolean => paths?.has(row.path) ?? true;
+    const matchDep =
+      paths === undefined
+        ? undefined
+        : (row: (typeof info.module.dependencies)[number]) =>
+            paths.has(row.path);
     const projectDep = (
       row: (typeof info.module.dependencies)[number],
       index: number,
@@ -395,8 +394,10 @@ export const projectGoBinaryView = (
     });
   }
   const keys = view.keys === undefined ? undefined : new Set(view.keys);
-  const matchSetting = (row: (typeof info.module.settings)[number]): boolean =>
-    keys?.has(row.key) ?? true;
+  const matchSetting =
+    keys === undefined
+      ? undefined
+      : (row: (typeof info.module.settings)[number]) => keys.has(row.key);
   const projectSetting = (
     row: (typeof info.module.settings)[number],
     index: number,

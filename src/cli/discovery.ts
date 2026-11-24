@@ -14,7 +14,7 @@ import {
   renderCliDocument,
   renderCliOutputArgumentError,
   type CliOutputFormat,
-} from "../cliOutput.js";
+} from "./cliOutput.js";
 import { formatCliOutput } from "./cliOutputFormatter.js";
 import { estimateTokenCount } from "tokenx";
 import { jsonLinesErrorRecord } from "./jsonLines.js";

@@ -17,6 +17,7 @@ import {
   MAX_INSPECT_KERNEL_MODULE_ENTRIES,
   MAX_INSPECT_KERNEL_MODULE_FILE_BYTES,
   type InspectKernelModuleInput,
+  type KernelModule,
 } from "../../domain/native/kernelModule.js";
 import { err, ok } from "../../domain/result.js";
 import { KERNEL_MODULE_PROVIDER } from "../../domain/investigationProviders.js";
@@ -47,12 +48,13 @@ export class KernelModuleProvider implements KernelModulePort {
   }
 
   async inspect(input: InspectKernelModuleInput, options?: ExecutionOptions) {
+    let completed: KernelModule | undefined;
     let observed:
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
     try {
       return await this.#resources.run(async () => {
-        const result = await withStableArtifactHandle(
+        const result = await withStableArtifactHandle<KernelModule>(
           input.path,
           input.max_file_bytes,
           {
@@ -61,6 +63,9 @@ export class KernelModuleProvider implements KernelModulePort {
             retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
             onIdentity: (identity) => {
               observed = identity;
+            },
+            onVerifiedResult: (report) => {
+              completed = report;
             },
           },
           (handle) =>
@@ -82,7 +87,7 @@ export class KernelModuleProvider implements KernelModulePort {
         return ok(result);
       });
     } catch (cause) {
-      return err(kernelModuleFailure(cause, input, observed));
+      return err(kernelModuleFailure(cause, input, observed, completed));
     }
   }
 }
@@ -102,7 +107,8 @@ const inputBudgetRemediation = (
 const kernelModuleFailure = (
   cause: unknown,
   input: InspectKernelModuleInput,
-  observed?: { readonly sha256: string; readonly bytes: number },
+  observed: { readonly sha256: string; readonly bytes: number } | undefined,
+  completed: KernelModule | undefined,
 ) => {
   const facts = artifactFilePrimaryFacts(cause);
   const primary = classifyProviderFailure(
@@ -166,6 +172,7 @@ const kernelModuleFailure = (
       },
     }),
   );
+  if (completed !== undefined) primary.retainPartialObservation(completed);
   return projectStableArtifactFailure(
     cause,
     primary,

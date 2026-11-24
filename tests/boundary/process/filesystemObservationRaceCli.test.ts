@@ -1,9 +1,9 @@
 import { lstat, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-
 import { expect } from "vitest";
-
+import { parseEvidence } from "../../../src/domain/evidence.js";
+import { parseProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { CAPTURE_SKIP_REASON } from "./processCaptureCapability.js";
@@ -20,18 +20,17 @@ import { syncBuiltinESMExports } from "node:module";
 
 const cliEntry = process.env.REA_TEST_CLI_ENTRY;
 if (cliEntry !== undefined && resolve(process.argv[1] ?? "") === cliEntry) {
-  const target = resolve(process.env.REA_TEST_SYMLINK ?? "");
-  const countPath = process.env.REA_TEST_READLINK_COUNT;
-  const removeOnSecondRead = process.env.REA_TEST_REMOVE_ON_SECOND_READ === "1";
-  let matchingReads = 0;
+  const stable = process.env.REA_TEST_STABLE_SYMLINK;
+  const vanishing = process.env.REA_TEST_VANISHING_SYMLINK;
+  const readLog = process.env.REA_TEST_READLINK_LOG;
+  let vanishingReads = 0;
   const originalReadlink = fs.promises.readlink;
   fs.promises.readlink = async function (path, ...options) {
-    if (resolve(String(path)) === target) {
-      matchingReads += 1;
-      if (countPath !== undefined) fs.appendFileSync(countPath, "read\\n");
-      if (removeOnSecondRead && matchingReads === 2) {
-        await fs.promises.unlink(path);
-      }
+    const candidate = resolve(String(path));
+    if (candidate === stable) fs.appendFileSync(readLog, "stable\\n");
+    if (candidate === vanishing) {
+      fs.appendFileSync(readLog, "vanishing\\n");
+      if (++vanishingReads === 2) await fs.promises.unlink(path);
     }
     return originalReadlink.call(this, path, ...options);
   };
@@ -39,138 +38,102 @@ if (cliEntry !== undefined && resolve(process.argv[1] ?? "") === cliEntry) {
 }
 `;
 
-const createScenario = async (removeOnSecondRead: boolean) => {
-  const root = await createTestTempDirectory("rea-snapshot-race-cli-");
-  const observed = join(root, "observed");
-  const link = join(observed, "vanishing-link");
-  const scenario = join(root, "scenario.json");
-  const preload = join(root, "readlink-race-preload.mjs");
-  const readlinkCount = join(root, "readlink-count.txt");
-  await mkdir(observed);
-  await writeFile(join(observed, "sibling.txt"), "sibling evidence\n");
-  await symlink("target-does-not-need-to-exist", link);
-  await writeFile(preload, racePreload);
-  await writeFile(
-    scenario,
-    JSON.stringify({
-      executable: process.execPath,
-      arguments: ["-e", "process.stdout.write('controlled capture\\n')"],
-      working_directory: root,
-      filesystem_observation_paths: [observed],
-    }),
-  );
-  return { root, link, scenario, preload, readlinkCount, removeOnSecondRead };
-};
-
 captureCliTest(
-  "retains a stable symlink while reporting its unfollowed scope through the public CLI",
+  "distinguishes stable and vanished symlinks in one public filesystem capture",
   async ({ cli }) => {
-    const fixture = await createScenario(false);
+    const root = await createTestTempDirectory("rea-snapshot-race-cli-");
+    const observed = join(root, "observed");
+    const stable = join(observed, "stable-link");
+    const vanishing = join(observed, "vanishing-link");
+    const scenario = join(root, "scenario.json");
+    const preload = join(root, "readlink-race-preload.mjs");
+    const readLog = join(root, "readlink-log.txt");
+    await mkdir(observed);
+    await writeFile(join(observed, "sibling.txt"), "sibling evidence\n");
+    const target = "target-does-not-need-to-exist";
+    await symlink(target, stable);
+    await symlink(target, vanishing);
+    await writeFile(preload, racePreload);
+    await writeFile(
+      scenario,
+      JSON.stringify({
+        executable: process.execPath,
+        arguments: ["-e", "process.stdout.write('controlled capture\\n')"],
+        working_directory: root,
+        filesystem_observation_paths: [observed],
+      }),
+    );
     const result = await cli.run({
-      arguments: ["capture-process", fixture.scenario, "--json"],
-      cwd: fixture.root,
+      arguments: ["capture-process", scenario, "--json"],
+      cwd: root,
       environment: {
-        NODE_OPTIONS: `--import=${pathToFileURL(fixture.preload).href}`,
+        NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`,
         REA_TEST_CLI_ENTRY: resolve("scripts/rea.mjs"),
-        REA_TEST_SYMLINK: fixture.link,
-        REA_TEST_READLINK_COUNT: fixture.readlinkCount,
-        REA_TEST_REMOVE_ON_SECOND_READ: fixture.removeOnSecondRead ? "1" : "0",
+        REA_TEST_STABLE_SYMLINK: stable,
+        REA_TEST_VANISHING_SYMLINK: vanishing,
+        REA_TEST_READLINK_LOG: readLog,
       },
     });
 
-    expect(result.exitCode, result.stderr || result.stdout).toBe(0);
-    expect(await readFile(fixture.readlinkCount, "utf8")).toBe("read\nread\n");
-    expect((await lstat(fixture.link)).isSymbolicLink()).toBe(true);
-    expect(result.json).toMatchObject({
-      normalized_result: {
-        truncated: true,
-        files_before: expect.arrayContaining([
-          expect.objectContaining({
-            path: "root_0:vanishing-link",
-            type: "symlink",
-            symlink_target: "target-does-not-need-to-exist",
-          }),
-        ]),
-        files_after: expect.arrayContaining([
-          expect.objectContaining({
-            path: "root_0:vanishing-link",
-            type: "symlink",
-            symlink_target: "target-does-not-need-to-exist",
-          }),
-        ]),
-        truncation_details: {
-          filesystem_after: {
-            enumeration_truncated: true,
-            enumeration_reasons: ["symlink_not_followed"],
-            enumeration_omissions: [
-              {
-                path: "root_0:vanishing-link",
-                reason: "symlink_not_followed",
-                system_code: null,
-              },
-            ],
-          },
-        },
+    expect(result.exitCode, result.stderr + result.stdout).toBe(0);
+    expect((await readFile(readLog, "utf8")).trim().split("\n").sort()).toEqual(
+      ["stable", "stable", "vanishing", "vanishing"],
+    );
+    expect((await lstat(stable)).isSymbolicLink()).toBe(true);
+    await expect(lstat(vanishing)).rejects.toMatchObject({ code: "ENOENT" });
+    const stableEntry = expect.objectContaining({
+      path: "root_0:stable-link",
+      type: "symlink",
+      symlink_target: target,
+    });
+    const siblingEntry = expect.objectContaining({
+      path: "root_0:sibling.txt",
+      type: "file",
+    });
+    const capture = parseProcessCapture(
+      parseEvidence(result.json).normalized_result,
+    );
+    expect(capture).toMatchObject({
+      truncated: true,
+      files_before: expect.arrayContaining([
+        stableEntry,
+        siblingEntry,
+        expect.objectContaining({
+          path: "root_0:vanishing-link",
+          type: "symlink",
+          symlink_target: target,
+        }),
+      ]),
+      files_after: expect.arrayContaining([stableEntry, siblingEntry]),
+      filesystem_effects: expect.arrayContaining([
+        expect.objectContaining({
+          path: "root_0:vanishing-link",
+          status: "unknown",
+          after: null,
+        }),
+      ]),
+    });
+    const coverage = capture.truncation_details.filesystem_after;
+    expect(coverage.enumeration_truncated).toBe(true);
+    expect(coverage.enumeration_reasons.toSorted()).toEqual([
+      "entry_unavailable",
+      "symlink_not_followed",
+    ]);
+    expect(
+      coverage.enumeration_omissions.toSorted((left, right) =>
+        left.path.localeCompare(right.path),
+      ),
+    ).toEqual([
+      {
+        path: "root_0:stable-link",
+        reason: "symlink_not_followed",
+        system_code: null,
       },
-    });
-  },
-);
-
-captureCliTest(
-  "retains sibling evidence and marks a vanished symlink unknown",
-  async ({ cli }) => {
-    const fixture = await createScenario(true);
-    const result = await cli.run({
-      arguments: ["capture-process", fixture.scenario, "--json"],
-      cwd: fixture.root,
-      environment: {
-        NODE_OPTIONS: `--import=${pathToFileURL(fixture.preload).href}`,
-        REA_TEST_CLI_ENTRY: resolve("scripts/rea.mjs"),
-        REA_TEST_SYMLINK: fixture.link,
-        REA_TEST_READLINK_COUNT: fixture.readlinkCount,
-        REA_TEST_REMOVE_ON_SECOND_READ: "1",
+      {
+        path: "root_0:vanishing-link",
+        reason: "entry_unavailable",
+        system_code: "ENOENT",
       },
-    });
-
-    expect(await readFile(fixture.readlinkCount, "utf8")).toBe("read\nread\n");
-    await expect(readFile(fixture.link)).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-    expect(result.exitCode, result.stderr || result.stdout).toBe(0);
-    expect(result.json).toMatchObject({
-      normalized_result: {
-        truncated: true,
-        files_before: expect.arrayContaining([
-          expect.objectContaining({
-            path: "root_0:vanishing-link",
-            type: "symlink",
-          }),
-          expect.objectContaining({ path: "root_0:sibling.txt", type: "file" }),
-        ]),
-        files_after: expect.arrayContaining([
-          expect.objectContaining({ path: "root_0:sibling.txt", type: "file" }),
-        ]),
-        filesystem_effects: expect.arrayContaining([
-          expect.objectContaining({
-            path: "root_0:vanishing-link",
-            status: "unknown",
-            after: null,
-          }),
-        ]),
-        truncation_details: {
-          filesystem_after: {
-            enumeration_truncated: true,
-            enumeration_reasons: expect.arrayContaining(["entry_unavailable"]),
-            enumeration_omissions: [
-              {
-                path: "root_0:vanishing-link",
-                reason: "entry_unavailable",
-                system_code: "ENOENT",
-              },
-            ],
-          },
-        },
-      },
-    });
+    ]);
   },
 );

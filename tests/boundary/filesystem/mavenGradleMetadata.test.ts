@@ -40,7 +40,7 @@ describe("Maven POM and Gradle module metadata stable filesystem boundary", () =
         const result = await inspect(invalid);
         expect(result).toMatchObject({
           ok: false,
-          error: { issues: [{ reason: "invalid_format" }] },
+          error: { _tag: "AnalysisMalformedTargetError" },
         });
       }
       const unfamiliar = await inspect(
@@ -108,23 +108,17 @@ describe("Maven POM and Gradle module metadata stable filesystem boundary", () =
       expect(await inspect(["runtime", "runtime"])).toMatchObject({
         ok: false,
         error: {
-          issues: [
-            {
-              reason: "invalid_format",
-              message: expect.stringContaining("duplicate variant name"),
-            },
-          ],
+          _tag: "AnalysisMalformedTargetError",
+          failure: {
+            detail: expect.stringContaining("duplicate variant name"),
+          },
         },
       });
       expect(await inspect([false])).toMatchObject({
         ok: false,
         error: {
-          issues: [
-            {
-              reason: "invalid_format",
-              message: expect.stringContaining("variant.name"),
-            },
-          ],
+          _tag: "AnalysisMalformedTargetError",
+          failure: { detail: expect.stringContaining("variant.name") },
         },
       });
     } finally {

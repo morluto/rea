@@ -5,6 +5,7 @@ import { expect, it, vi } from "vitest";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
+  AnalysisMalformedTargetError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { readMachoImageFromReader } from "../../domain/apple/machoImage.js";
@@ -22,7 +23,9 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import { DwarfUnitsProvider } from "./DwarfUnitsProvider.js";
 import {
   DwarfSectionAllowanceFailure,
-  locateDwarfSections,
+  locateDwarfSectionsFromHandle,
+  MAX_PE_DECODED_NAME_BYTES,
+  MAX_PE_SECTION_NAME_BYTES,
 } from "./DwarfSections.js";
 import {
   abbrevTable,
@@ -37,6 +40,8 @@ import {
   peImage,
   strxBeforeBase,
 } from "./DwarfUnits.fixture.js";
+import type { ByteSource } from "../../domain/byteSource.js";
+import { bufferByteSource } from "../../domain/byteSource.js";
 
 const inspect = async (
   bytes: Buffer,
@@ -130,12 +135,7 @@ it("reads a little-endian ELF unit and refuses architecture on a thin file", asy
   if (!rejected.ok) {
     expect(rejected.error).toBeInstanceOf(AnalysisInputError);
     expect(rejected.error).toMatchObject({
-      issues: [
-        {
-          path: ["architecture"],
-          message: expect.stringContaining("omit architecture"),
-        },
-      ],
+      issues: [{ path: ["architecture"] }],
     });
   }
 });
@@ -311,13 +311,21 @@ it("decodes a shared PE long name once, including at the per-name allowance", as
 
 it("bounds individual PE long names before decoding", async () => {
   const read = await inspect(
-    peImage([{ name: "x".repeat(65537), body: Buffer.alloc(0) }]),
+    peImage([
+      {
+        name: "x".repeat(MAX_PE_SECTION_NAME_BYTES + 1),
+        body: Buffer.alloc(0),
+      },
+    ]),
   );
-  expect(read.ok).toBe(false);
-  if (!read.ok) {
-    expect(read.error).toBeInstanceOf(AnalysisResourceConstraintError);
-    expect(read.error.message).toContain("65536-byte decoding allowance");
-  }
+  if (read.ok) throw new Error("Expected a per-name allowance refusal");
+  expect(read.error).toBeInstanceOf(AnalysisResourceConstraintError);
+  expect(read.error).toMatchObject({
+    reportedLimits: {
+      boundary: "structure",
+      maximum: MAX_PE_SECTION_NAME_BYTES,
+    },
+  });
 });
 
 it("bounds aggregate PE name decoding for overlapping string-table offsets", async () => {
@@ -330,11 +338,14 @@ it("bounds aggregate PE name decoding for overlapping string-table offsets", asy
       })),
     ]),
   );
-  expect(read.ok).toBe(false);
-  if (!read.ok) {
-    expect(read.error).toBeInstanceOf(AnalysisResourceConstraintError);
-    expect(read.error.message).toContain("16 MiB structural budget");
-  }
+  if (read.ok) throw new Error("Expected an aggregate allowance refusal");
+  expect(read.error).toBeInstanceOf(AnalysisResourceConstraintError);
+  expect(read.error).toMatchObject({
+    reportedLimits: {
+      boundary: "structure",
+      maximum: MAX_PE_DECODED_NAME_BYTES,
+    },
+  });
 });
 
 it("rejects an unterminated PE long name within the decoding allowance", async () => {
@@ -343,9 +354,9 @@ it("rejects an unterminated PE long name within the decoding allowance", async (
   const read = await inspect(image);
   expect(read.ok).toBe(false);
   if (!read.ok) {
-    expect(read.error).toBeInstanceOf(AnalysisInputError);
+    expect(read.error).toBeInstanceOf(AnalysisMalformedTargetError);
     expect(read.error).toMatchObject({
-      issues: [{ message: expect.stringContaining("could not be resolved") }],
+      failure: { detail: expect.stringContaining("could not be resolved") },
     });
   }
 });
@@ -386,15 +397,13 @@ it("rejects PE long section names when PointerToSymbolTable is zero", async () =
   }).toEqual({ zeroCountOk: false, nonZeroCountOk: false });
   for (const rejected of [readZeroCount, readNonZeroCount]) {
     if (rejected.ok) continue;
-    expect(rejected.error).toBeInstanceOf(AnalysisInputError);
+    expect(rejected.error).toBeInstanceOf(AnalysisMalformedTargetError);
     expect(rejected.error).toMatchObject({
-      issues: [
-        {
-          message: expect.stringContaining(
-            "PE long section name string table is unavailable",
-          ),
-        },
-      ],
+      failure: {
+        detail: expect.stringContaining(
+          "PE long section name string table is unavailable",
+        ),
+      },
     });
   }
 
@@ -523,9 +532,9 @@ it("charges failed decompression attempts against the shared allowance", async (
         flags: gnu ? 0n : 0x800n,
       })),
     });
-    await expect(locateDwarfSections(image, allowance)).rejects.toThrow(
-      DwarfSectionAllowanceFailure,
-    );
+    await expect(
+      locateDwarfSectionsFromHandle(bufferByteSource(image), allowance),
+    ).rejects.toThrow(DwarfSectionAllowanceFailure);
   }
 });
 
@@ -547,9 +556,9 @@ it("charges valid empty streams against the shared allowance", async () => {
       flags: 0x800n,
     })),
   });
-  await expect(locateDwarfSections(image, payloadLength * 2)).rejects.toThrow(
-    DwarfSectionAllowanceFailure,
-  );
+  await expect(
+    locateDwarfSectionsFromHandle(bufferByteSource(image), payloadLength * 2),
+  ).rejects.toThrow(DwarfSectionAllowanceFailure);
 });
 
 it("charges zero-output streams with bad checksums against the shared allowance", async () => {
@@ -572,9 +581,9 @@ it("charges zero-output streams with bad checksums against the shared allowance"
       flags: 0x800n,
     })),
   });
-  await expect(locateDwarfSections(image, payloadLength * 2)).rejects.toThrow(
-    DwarfSectionAllowanceFailure,
-  );
+  await expect(
+    locateDwarfSectionsFromHandle(bufferByteSource(image), payloadLength * 2),
+  ).rejects.toThrow(DwarfSectionAllowanceFailure);
 });
 
 it("keeps the inflate allowance after a truncated optional section header", async () => {

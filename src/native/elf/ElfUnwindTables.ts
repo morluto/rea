@@ -35,12 +35,12 @@ import {
 import { buildIntervalIndex } from "./ElfIntervalIndex.js";
 import {
   ELF_PT_GNU_EH_FRAME,
-  readElfDirectoryFromBuffer,
   readElfDirectoryFromReader,
   type ElfProgramDeclaration,
-  type NativeByteSource,
+  type ElfSectionDirectory,
   type NativeSection,
 } from "../../domain/native/nativeSectionDirectory.js";
+import type { ByteSource } from "../../domain/byteSource.js";
 
 const DW_EH_PE_OMIT = 0xff;
 /** CIE augmentation letters, compared as bytes. */
@@ -264,36 +264,9 @@ function* readSlice(
   return yield { offset, length };
 }
 
-/** Read .eh_frame/.eh_frame_hdr function ranges. Truncation stays incomplete. */
-export const parseElfUnwindRanges = (
-  bytes: Buffer,
-  artifact: ElfUnwindRanges["artifact"],
-  input: InspectElfUnwindRangesInput,
-  signal?: AbortSignal,
-): ElfUnwindRanges => {
-  assertArtifactReadActive(signal);
-  const directory = readElfDirectoryFromBuffer(bytes, OPERATION);
-  const steps = elfUnwindRangesSteps(
-    bytes.length,
-    artifact,
-    input,
-    directory,
-    signal,
-  );
-  let next = steps.next();
-  while (!next.done) {
-    const { offset, length } = next.value;
-    const end = Math.min(bytes.length, offset + length);
-    next = steps.next(
-      offset >= bytes.length ? Buffer.alloc(0) : bytes.subarray(offset, end),
-    );
-  }
-  return next.value;
-};
-
-/** Read the same unwind facts over a bounded FileHandle without buffering the full image. */
+/** Read unwind ranges over a bounded file handle. Truncation stays incomplete. */
 export const parseElfUnwindRangesFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   artifact: ElfUnwindRanges["artifact"],
   input: InspectElfUnwindRangesInput,
   signal?: AbortSignal,
@@ -321,8 +294,9 @@ export const parseElfUnwindRangesFromHandle = async (
         : await source.readRange(offset, length);
     if (slice.length !== length)
       throw new ArtifactReaderFailure(
-        "format",
+        "integrity",
         "ELF unwind range ended before its admitted file extent.",
+        { integrityCheck: "read-coverage" },
       );
     next = steps.next(slice);
   }
@@ -347,7 +321,7 @@ function* elfUnwindRangesSteps(
   fileBytes: number,
   artifact: ElfUnwindRanges["artifact"],
   input: InspectElfUnwindRangesInput,
-  directory: ReturnType<typeof readElfDirectoryFromBuffer>,
+  directory: ElfSectionDirectory,
   signal?: AbortSignal,
 ): Generator<ReadStep, ElfUnwindRanges, Buffer> {
   assertArtifactReadActive(signal);
@@ -1316,7 +1290,7 @@ const fileRange = (section: NativeSection): FileRange | null => {
  */
 function* resolveGotBase(
   fileBytes: number,
-  directory: ReturnType<typeof readElfDirectoryFromBuffer>,
+  directory: ElfSectionDirectory,
 ): Generator<
   ReadStep,
   { readonly address: bigint; readonly source: string } | null,
@@ -1994,12 +1968,10 @@ const decodeFde = (args: {
 };
 
 /** The source range of a validated NUL-terminated symbol name. */
-type SymbolName = Omit<
-  Extract<ElfStringTableObservation, { state: "terminated" }>,
-  "bytes"
-> & {
+interface SymbolName {
   readonly offset: number;
-};
+  readonly contentBytes: number;
+}
 
 interface MatchedSymbol {
   readonly name: SymbolName;
@@ -2013,7 +1985,7 @@ interface MatchedSymbol {
  * and each name retains only its location and length until page selection.
  */
 function* scanSymbols(
-  directory: ReturnType<typeof readElfDirectoryFromBuffer>,
+  directory: ElfSectionDirectory,
   wanted: ReadonlySet<bigint>,
   signal: AbortSignal | undefined,
   report: {
@@ -2081,6 +2053,7 @@ function* scanSymbols(
     const symtabBonus = table.type === SHT_SYMTAB ? 1 : 0;
     // Observation per string-table offset; null when the name is unreadable.
     const names = new Map<number, SymbolName | null>();
+    let recentName: SymbolName | undefined;
     const entriesPerChunk = Math.max(
       1,
       Math.floor(STREAM_WINDOW_BYTES / width),
@@ -2137,40 +2110,49 @@ function* scanSymbols(
       if (!wanted.has(address)) continue;
       let name = names.get(nameOffset);
       if (name === undefined) {
-        let observed: ElfStringTableObservation;
-        if (nameOffset < 0 || nameOffset >= strSize) {
-          observed = observeElfStringTableEntry(
-            Buffer.alloc(0),
-            nameOffset,
-            STREAM_WINDOW_BYTES,
-          );
-        } else {
-          const absPos = strStart + nameOffset;
-          const inWindow =
-            absPos >= strWinStart &&
-            absPos < strWinStart + strWinBuf.length &&
-            (strWinStart + strWinBuf.length >= strEnd ||
-              strWinBuf.indexOf(0, absPos - strWinStart) >= 0);
-          if (!inWindow) {
-            const readLen = Math.min(STREAM_WINDOW_BYTES, strEnd - absPos);
-            strWinBuf = yield* readSlice(absPos, readLen);
-            strWinStart = absPos;
+        name = null;
+        if (nameOffset >= 0 && nameOffset < strSize) {
+          const offset = strStart + nameOffset;
+          if (
+            recentName !== undefined &&
+            offset >= recentName.offset &&
+            offset <= recentName.offset + recentName.contentBytes
+          ) {
+            // A suffix through the admitted terminator has no earlier NUL.
+            const contentBytes =
+              recentName.offset + recentName.contentBytes - offset;
+            name = { contentBytes, offset };
+          } else {
+            const relative = offset - strWinStart;
+            let observed: ElfStringTableObservation | undefined;
+            if (relative >= 0 && relative < strWinBuf.length)
+              observed = observeElfStringTableEntry(
+                strWinBuf,
+                relative,
+                STREAM_WINDOW_BYTES,
+              );
+            if (
+              observed === undefined ||
+              (observed.state === "truncated" &&
+                strWinStart + strWinBuf.length < strEnd)
+            ) {
+              strWinBuf = yield* readSlice(
+                offset,
+                Math.min(STREAM_WINDOW_BYTES, strEnd - offset),
+              );
+              strWinStart = offset;
+              observed = observeElfStringTableEntry(
+                strWinBuf,
+                0,
+                STREAM_WINDOW_BYTES,
+              );
+            }
+            if (observed.state === "terminated") {
+              name = { contentBytes: observed.contentBytes, offset };
+              recentName = name;
+            }
           }
-          observed = observeElfStringTableEntry(
-            strWinBuf,
-            absPos - strWinStart,
-            STREAM_WINDOW_BYTES,
-          );
         }
-        name =
-          observed.state === "terminated"
-            ? {
-                state: observed.state,
-                contentBytes: observed.contentBytes,
-                examinedBytes: observed.examinedBytes,
-                offset: strStart + nameOffset,
-              }
-            : null;
         names.set(nameOffset, name);
       }
       if (name === null) {
@@ -2224,7 +2206,12 @@ const symbolNameDecoder = (): ((
         },
       );
     const bytes = yield* readSlice(name.offset, name.contentBytes);
-    const text = elfStringTableText({ ...name, bytes });
+    const text = elfStringTableText({
+      state: "terminated",
+      contentBytes: name.contentBytes,
+      examinedBytes: name.contentBytes + 1,
+      bytes,
+    });
     decoded.set(name, text);
     return text;
   };

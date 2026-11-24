@@ -27,9 +27,9 @@ import { readMachoImageFromReader } from "../../domain/apple/machoImage.js";
 import {
   readElfDirectoryFromReader,
   readPeSectionDirectory,
-  type NativeByteSource,
   type NativeSectionDirectory,
 } from "../../domain/native/nativeSectionDirectory.js";
+import type { ByteSource } from "../../domain/byteSource.js";
 
 const SHF_COMPRESSED = 0x800n;
 const ET_REL = 1;
@@ -40,8 +40,8 @@ const SHT_NOBITS = 8;
 const MACHO_DWARF_SEGMENT = "__DWARF,";
 const MACHO_ZERO_FILL_TYPES = new Set([0x1, 0xc, 0x12]);
 const SPLIT_DEBUG_INFO = ".debug_info.dwo";
-const MAX_PE_SECTION_NAME_BYTES = 65536;
-const MAX_PE_DECODED_NAME_BYTES = 16 * 1024 * 1024;
+export const MAX_PE_SECTION_NAME_BYTES = 65536;
+export const MAX_PE_DECODED_NAME_BYTES = 16 * 1024 * 1024;
 const DUPLICATE_SECTION =
   "Duplicate section; the first file-backed copy was read";
 
@@ -132,7 +132,7 @@ interface Candidate {
 }
 
 const readSourceSlice = (
-  source: NativeByteSource,
+  source: ByteSource,
   offset: number,
   length: number,
 ): Promise<Buffer> => {
@@ -146,7 +146,7 @@ const readSourceSlice = (
 
 // A positional source can allocate per read. Keep total retained raw bytes
 // within the original file extent and reuse previously retained backings.
-const storedDwarfSections = (source: NativeByteSource) => {
+const storedDwarfSections = (source: ByteSource) => {
   const admitted: { readonly offset: number; readonly bytes: Buffer }[] = [];
   let retained = 0;
   return async (offset: number, size: number): Promise<Buffer> => {
@@ -175,32 +175,9 @@ const storedDwarfSections = (source: NativeByteSource) => {
   };
 };
 
-const bufferByteSource = (bytes: Buffer): NativeByteSource => ({
-  size: bytes.length,
-  prefix: bytes,
-  readRange: (offset, length) =>
-    Promise.resolve(
-      offset < 0 || length <= 0 || offset >= bytes.length
-        ? Buffer.alloc(0)
-        : bytes.subarray(offset, Math.min(bytes.length, offset + length)),
-    ),
-});
-
-/** Select DWARF sections from one thin ELF, PE, or Mach-O image. */
-export const locateDwarfSections = async (
-  bytes: Buffer,
-  maximumDecodedBytes = MAX_DWARF_DECOMPRESSED_SECTION_BYTES,
-  pause?: ZstandardFramePause,
-): Promise<LocatedDwarfImage> =>
-  locateDwarfSectionsFromHandle(
-    bufferByteSource(bytes),
-    maximumDecodedBytes,
-    pause,
-  );
-
-/** Same DWARF section selection over a random-access handle without buffering the full image. */
+/** Select DWARF sections from one thin ELF, PE, or Mach-O image over a random-access handle without buffering the full image. */
 export const locateDwarfSectionsFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   maximumDecodedBytes = MAX_DWARF_DECOMPRESSED_SECTION_BYTES,
   pause?: ZstandardFramePause,
 ): Promise<LocatedDwarfImage> => {
@@ -500,7 +477,7 @@ const finish = (image: ImageIdentity): LocatedDwarfImage => {
 };
 
 const locateElf = async (
-  source: NativeByteSource,
+  source: ByteSource,
   budget: InflateBudget,
   pause?: ZstandardFramePause,
 ): Promise<ImageIdentity> => {
@@ -631,7 +608,7 @@ const adoptStored = async (
   role: DwarfSectionRole,
   offset: number,
   size: number,
-  source: NativeByteSource,
+  source: ByteSource,
   readStored: ReturnType<typeof storedDwarfSections>,
   budget: InflateBudget,
   satisfied: Set<DwarfSectionRole>,
@@ -657,7 +634,7 @@ const adoptStored = async (
 };
 
 const locatePe = async (
-  source: NativeByteSource,
+  source: ByteSource,
   budget: InflateBudget,
 ): Promise<ImageIdentity> => {
   const directory = await readPeDirectory(source);
@@ -706,7 +683,7 @@ const locatePe = async (
   };
 };
 
-const readPeDirectory = async (source: NativeByteSource) => {
+const readPeDirectory = async (source: ByteSource) => {
   const steps = readPeSectionDirectory(source.size);
   let next = steps.next();
   while (!next.done) {
@@ -718,7 +695,7 @@ const readPeDirectory = async (source: NativeByteSource) => {
 
 /** Resolve COFF `/decimal` and GNU `//base64` names. Unresolved names hide `.debug_info`. */
 const peSectionNames = async (
-  source: NativeByteSource,
+  source: ByteSource,
   directory: NativeSectionDirectory,
 ): Promise<ReadonlyMap<number, string>> => {
   const { sections } = directory;
@@ -820,7 +797,7 @@ const peSectionNames = async (
 };
 
 const locateMacho = async (
-  source: NativeByteSource,
+  source: ByteSource,
   budget: InflateBudget,
 ): Promise<ImageIdentity> => {
   const image = await readMachoImageFromReader(source);

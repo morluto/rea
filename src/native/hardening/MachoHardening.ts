@@ -40,7 +40,6 @@ import {
   BinaryReader,
 } from "../../domain/binaryContainer.js";
 import { readMachoEncryption } from "../../domain/apple/machoEncryptionReader.js";
-import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
 import {
   frameLoadCommands,
   readMachoContainer,
@@ -49,6 +48,7 @@ import {
   type MachoSliceHeader,
   type ReadAt,
 } from "../../domain/apple/machoLoadCommandReader.js";
+import type { ByteSource } from "../../domain/byteSource.js";
 
 const STREAM_WINDOW_BYTES = 65536;
 
@@ -112,7 +112,7 @@ export const readMachoHardening = async (
 
 /** Same Mach-O hardening read over a random-access handle without buffering the full image. */
 export const readMachoHardeningFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   signal?: AbortSignal,
 ): Promise<BinaryHardeningImage[]> => {
   assertArtifactReadActive(signal);
