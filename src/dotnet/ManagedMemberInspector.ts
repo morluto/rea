@@ -503,8 +503,14 @@ export const inspectManagedMembersBytes = (
       budget,
     );
     const withInterfaces = (
-      report: ManagedMemberInspection,
+      userStrings: ManagedMemberInspection["user_strings"] = null,
+      limitations = baseInspection.limitations,
     ): ManagedMemberInspection => {
+      const report = {
+        ...baseInspection,
+        user_strings: userStrings,
+        limitations,
+      };
       try {
         return managedMemberInspectionSchema.parse({
           ...report,
@@ -536,10 +542,7 @@ export const inspectManagedMembersBytes = (
         });
       }
     };
-    if (!readUserStrings)
-      return withInterfaces(
-        managedMemberInspectionSchema.parse(baseInspection),
-      );
+    if (!readUserStrings) return withInterfaces();
     let userStrings: ManagedMemberInspection["user_strings"];
     try {
       // #US literals sit beside the member inventory and carry their own
@@ -560,30 +563,20 @@ export const inspectManagedMembersBytes = (
             code === cause.issue.code && scope === cause.issue.scope,
         )
       )
-        return withInterfaces(
-          managedMemberInspectionSchema.parse(baseInspection),
-        );
+        return withInterfaces();
       return withInterfaces(
-        managedMemberInspectionSchema.parse({
-          ...baseInspection,
-          user_strings: {
-            state: "partial",
-            literals: [],
-            issues: [{ ...cause.issue, scope: "metadata.#US" }],
-          },
-          limitations: [
-            ...baseInspection.limitations,
-            "User string decoding exceeded max_metadata_representation_bytes after the member facts were decoded; the members are kept and the #US literals are not examined. Select fewer type_names or raise max_metadata_representation_bytes to read them.",
-          ],
-        }),
+        {
+          state: "partial",
+          literals: [],
+          issues: [{ ...cause.issue, scope: "metadata.#US" }],
+        },
+        [
+          ...baseInspection.limitations,
+          "User string decoding exceeded max_metadata_representation_bytes after the member facts were decoded; the members are kept and the #US literals are not examined. Select fewer type_names or raise max_metadata_representation_bytes to read them.",
+        ],
       );
     }
-    return withInterfaces(
-      managedMemberInspectionSchema.parse({
-        ...baseInspection,
-        user_strings: userStrings,
-      }),
-    );
+    return withInterfaces(userStrings);
   } catch (cause: unknown) {
     if (cause instanceof ManagedReaderFailure) {
       if (

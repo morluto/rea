@@ -53,19 +53,23 @@ export const parseManagedInterfaceImplementations = (
       // Names share the existing metadata owners, but their failures belong to
       // this inventory rather than previously admitted method/field coverage.
       const references = managedTypeReferences(bytes, layout, issues);
-      const signatures = managedSignatureTypeNames(
-        layout,
-        issues,
-        parsedTypes,
-        references,
-      );
+      let signatures: ReturnType<typeof managedSignatureTypeNames> | undefined;
       names = typeNameLookup(
         bytes,
         layout,
         ranges,
         issues,
         references,
-        signatures.operand,
+        (operand) => {
+          // Only a TypeSpec signature needs the assembly-wide name index.
+          signatures ??= managedSignatureTypeNames(
+            layout,
+            issues,
+            parsedTypes,
+            references,
+          );
+          return signatures.operand(operand);
+        },
       );
     }
     return names.name(reference);

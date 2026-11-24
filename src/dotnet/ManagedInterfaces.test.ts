@@ -1,6 +1,17 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
+import { parseManagedInterfaceImplementations } from "./ManagedInterfaces.js";
+import { managedMemberInspectionSchema } from "../domain/managed/managedArtifact.js";
+import {
+  attachManagedDecodeBudget,
+  ManagedDecodeBudget,
+} from "../domain/managed/managedDecodeBudget.js";
+import {
+  parseTypes,
+  readTypeDefinitions,
+} from "../domain/managed/managedMemberInspectorCore.js";
+import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
 import {
   buildManagedPeFixture,
   fixtureUserStringHeap,
@@ -403,4 +414,67 @@ it("preserves decoded methods and user strings when only the interface inventory
   expect(limited.user_strings?.literals.map(({ value }) => value)).toEqual([
     "retained literal",
   ]);
+});
+
+it.each([true, false])(
+  "validates the assembled member report once with userStrings=%s",
+  (userStrings) => {
+    const bytes = buildManagedPeFixture({
+      targetFramework: null,
+      interfaceImplementations: [[1, 5]],
+    });
+    const parse = vi.spyOn(managedMemberInspectionSchema, "parse");
+    try {
+      const report = inspectManagedMembersBytes(
+        bytes,
+        managedPeFixtureTarget(bytes),
+        { userStrings },
+      );
+      expect(report.interface_implementations?.state).toBe("complete");
+      expect(parse).toHaveBeenCalledTimes(1);
+    } finally {
+      parse.mockRestore();
+    }
+  },
+);
+
+it("names a direct interface without rebuilding an assembly-wide signature index", () => {
+  const bytes = buildManagedPeFixture({
+    targetFramework: null,
+    typeNamespace: "Demo",
+    typeName: "Worker",
+    additionalEmptyTypes: 128,
+    typeReferences: [{ namespace: "Contracts", name: "IWorker" }],
+    interfaceImplementations: [[129, 9]],
+  });
+  const layout = metadataLayout(bytes);
+  const ranges = readTypeDefinitions(
+    bytes,
+    layout,
+    [],
+    readTypeMemberListFacts(bytes, layout),
+  );
+  const parsedTypes = parseTypes(bytes, layout, ranges);
+  expect(parsedTypes.types).toHaveLength(129);
+  // Exercise the interface facet with the remaining capacity after member
+  // admission: 8 KiB fits the selected declaration, not 129 * 128 bytes.
+  attachManagedDecodeBudget(layout, new ManagedDecodeBudget(8 * 1024));
+  expect(
+    parseManagedInterfaceImplementations(
+      bytes,
+      layout,
+      ranges,
+      parsedTypes,
+      new Set(["0x02000081"]),
+    ),
+  ).toMatchObject({
+    state: "complete",
+    rows: [
+      {
+        class_token: "0x02000081",
+        interface_name: "Contracts.IWorker",
+      },
+    ],
+    issues: [],
+  });
 });
