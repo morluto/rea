@@ -289,7 +289,7 @@ it("writes informational JSON and Markdown from the supplied manifest using only
     api,
     outputDirectory: directory,
   });
-  expect(calls).toEqual(["run:10", "jobs:10", "artifact"]);
+  expect(calls).toEqual(["run:10", "jobs:10"]);
   expect(report).toMatchObject({
     informationalOnly: true,
     gateEffect: "none; this report never changes CI conclusions",
