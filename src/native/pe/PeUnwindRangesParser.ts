@@ -57,7 +57,9 @@ const ISSUES = [
   "overlaps_previous",
   "unwind_unmapped",
   "unwind_version_unknown",
+  "unwind_codes_unmapped",
   "chain_parent_missing",
+  "chain_parent_mismatch",
   "chain_cycle",
 ] as const satisfies readonly PeUnwindEntry["issues"][number][];
 const issueBit = (issue: (typeof ISSUES)[number]): number =>
@@ -111,7 +113,7 @@ interface Table {
   readonly parentUnwind: Uint32Array;
   readonly parentIndex: Int32Array;
   readonly primary: Int32Array;
-  readonly issues: Uint8Array;
+  readonly issues: Uint16Array;
 }
 
 const allocateTable = (count: number): Table => ({
@@ -129,7 +131,7 @@ const allocateTable = (count: number): Table => ({
   parentUnwind: new Uint32Array(count),
   parentIndex: new Int32Array(count).fill(-1),
   primary: new Int32Array(count).fill(-1),
-  issues: new Uint8Array(count),
+  issues: new Uint16Array(count),
 });
 
 /** Read one entry's UNWIND_INFO, or the RUNTIME_FUNCTION an indirect RVA names. */
@@ -184,12 +186,18 @@ const decodeUnwind = async (
     table.issues[index]! |= issueBit("unwind_version_unknown");
     return;
   }
+  // The declared code array must be file-backed too, though it is not evaluated.
+  const chained = UNWIND_HEADER_BYTES + 2 * ((codes + 1) & ~1);
+  if (fileOffset(rva, chained) === undefined) {
+    table.kind[index] = KIND_UNKNOWN;
+    table.issues[index]! |= issueBit("unwind_codes_unmapped");
+    return;
+  }
   if ((flags & UNW_FLAG_CHAININFO) === 0) {
     table.kind[index] = KIND_PRIMARY;
     return;
   }
   // The chained RUNTIME_FUNCTION follows the code array, padded to an even count.
-  const chained = UNWIND_HEADER_BYTES + 2 * ((codes + 1) & ~1);
   const parentOffset = fileOffset(rva + chained, ENTRY_BYTES);
   const parent =
     parentOffset === undefined ? null : await read(parentOffset, ENTRY_BYTES);
@@ -212,12 +220,17 @@ const beginOrder = (table: Table, sorted: boolean): Uint32Array => {
   return order;
 };
 
-/** Lowest index of an entry whose begin RVA equals `begin`, or -1. */
-const indexOfBegin = (
+/**
+ * Lowest index of the entry that is exactly the named RUNTIME_FUNCTION
+ * (begin, end and unwind RVAs). -2 when entries share its begin RVA but none
+ * matches the whole record; -1 when no entry begins there.
+ */
+const indexOfRecord = (
   table: Table,
   order: Uint32Array,
-  begin: number,
+  index: number,
 ): number => {
+  const begin = table.parentBegin[index]!;
   let low = 0;
   let high = table.count;
   while (low < high) {
@@ -225,9 +238,18 @@ const indexOfBegin = (
     if (table.begin[order[middle]!]! < begin) low = middle + 1;
     else high = middle;
   }
-  return low < table.count && table.begin[order[low]!] === begin
-    ? order[low]!
-    : -1;
+  let found = -1;
+  for (let at = low; at < table.count; at++) {
+    const candidate = order[at]!;
+    if (table.begin[candidate] !== begin) break;
+    if (
+      table.end[candidate] === table.parentEnd[index] &&
+      table.unwind[candidate] === table.parentUnwind[index]
+    )
+      return candidate;
+    found = -2;
+  }
+  return found;
 };
 
 /** Follow one chain to the primary entry it extends, within the depth bound. */
@@ -237,7 +259,12 @@ const resolveChain = (table: Table, index: number): void => {
   while (table.kind[current] === KIND_CHAINED) {
     const next = table.parentIndex[current]!;
     if (next < 0) {
-      table.issues[index]! |= issueBit("chain_parent_missing");
+      // A mismatched parent is already named; any other unresolved link is missing.
+      if (
+        current !== index ||
+        (table.issues[index]! & issueBit("chain_parent_mismatch")) === 0
+      )
+        table.issues[index]! |= issueBit("chain_parent_missing");
       return;
     }
     if (++depth > MAX_PE_UNWIND_CHAIN_DEPTH) {
@@ -261,12 +288,11 @@ const resolveChains = async (
       await setImmediate();
       assertArtifactReadActive(signal);
     }
-    if (table.hasParent[index] === 1)
-      table.parentIndex[index] = indexOfBegin(
-        table,
-        order,
-        table.parentBegin[index]!,
-      );
+    if (table.hasParent[index] !== 1) continue;
+    const parent = indexOfRecord(table, order, index);
+    if (parent === -2)
+      table.issues[index]! |= issueBit("chain_parent_mismatch");
+    table.parentIndex[index] = Math.max(parent, -1);
   }
   for (let index = 0; index < table.count; index++) {
     if (index % YIELD_EVERY === 0 && index > 0) {
@@ -393,13 +419,29 @@ const decodeEntries = async (
     table.unwind[index] = reader.u32(at + 8);
     if (end <= begin) table.issues[index]! |= issueBit("empty_range");
     if (index > 0) {
-      if (begin < table.begin[index - 1]!) {
+      const previousBegin = table.begin[index - 1]!;
+      if (begin < previousBegin) {
         sorted = false;
         table.issues[index]! |= issueBit("unsorted");
-      } else if (begin < table.end[index - 1]!)
+      }
+      // Order and intersection are separate facts: an unsorted entry can overlap too.
+      if (begin < table.end[index - 1]! && end > previousBegin)
         table.issues[index]! |= issueBit("overlaps_previous");
     }
-    await decodeUnwind(context, index);
+  }
+  // Visit unwind data in ascending RVA order, so the windowed reader moves
+  // forward and reads each file region about once, whatever the table order.
+  const order = new Uint32Array(table.count);
+  for (let index = 0; index < table.count; index++) order[index] = index;
+  const target = (index: number): number =>
+    (table.unwind[index]! & ~RUNTIME_FUNCTION_INDIRECT) >>> 0;
+  order.sort((left, right) => target(left) - target(right) || left - right);
+  for (let position = 0; position < table.count; position++) {
+    if (position % YIELD_EVERY === 0 && position > 0) {
+      await setImmediate();
+      assertArtifactReadActive(signal);
+    }
+    await decodeUnwind(context, order[position]!);
   }
   return sorted;
 };

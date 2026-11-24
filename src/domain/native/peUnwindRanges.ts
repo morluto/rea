@@ -82,8 +82,12 @@ export const peUnwindIssueSchema = z.enum([
   "unwind_unmapped",
   // UNWIND_INFO declares a version other than 1 or 2.
   "unwind_version_unknown",
+  // The declared unwind-code array leaves the file-backed bytes.
+  "unwind_codes_unmapped",
   // A chain names an entry that is not in this table.
   "chain_parent_missing",
+  // A table entry begins where the chain names, but its end or unwind RVA differs.
+  "chain_parent_mismatch",
   // A chain does not reach a primary entry within the depth bound.
   "chain_cycle",
 ]);

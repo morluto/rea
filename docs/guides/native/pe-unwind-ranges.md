@@ -37,8 +37,10 @@ relative to the current directory; MCP paths must be absolute.
   - `unknown` means that the unwind information is not file-backed or declares
     an unknown version.
 - `issues` flags `empty_range`, `unsorted`, `overlaps_previous`,
-  `unwind_unmapped`, `unwind_version_unknown`, `chain_parent_missing` and
-  `chain_cycle`. Flagged entries stay in the table and are not dropped.
+  `unwind_unmapped`, `unwind_version_unknown`, `unwind_codes_unmapped`
+  (the declared code array leaves the file-backed bytes), `chain_parent_missing`,
+  `chain_parent_mismatch` (an entry begins where the chain names but its end or
+  unwind RVA differs) and `chain_cycle`. Flagged entries stay in the table and are not dropped.
 
 Select entries with `kind` (`all`, `primary`, `chained`, `issues`) and page
 them with `offset` and `limit`. `limit: 0` returns counts only.

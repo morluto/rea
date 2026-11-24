@@ -218,7 +218,7 @@ equivalent is `inspect-pe-unwind-ranges PATH`. Primary entries start functions;
 chained entries are fragments of the entry named by `primary_index`, not
 separate functions. Leaf functions have no entry, so a missing entry is not
 absence. Compare provider addresses minus `image_base` with the RVAs. See
-[PE x64 exception-directory function ranges](https://github.com/morluto/rea/blob/main/docs/pe-unwind-ranges.md).
+[PE x64 exception-directory function ranges](https://github.com/morluto/rea/blob/main/docs/guides/native/pe-unwind-ranges.md).
 
 ## Binary hardening
 

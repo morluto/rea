@@ -180,7 +180,7 @@ export const documentationSections = [
       },
       {
         text: "PE x64 exception-directory function ranges",
-        source: "pe-unwind-ranges.md",
+        source: "guides/native/pe-unwind-ranges.md",
         route: "/pe-unwind-ranges",
       },
       {

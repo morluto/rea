@@ -210,6 +210,55 @@ describe("x64 PE exception directory refusals and absence", () => {
     expect(value.entries[1]!.issues).toEqual(["unsorted"]);
   });
 
+  it("keeps unreadable codes, mismatched parents and unsorted overlaps explicit", async () => {
+    const value = await report({
+      entries: [
+        primary,
+        // Its code array runs past the end of the last file-backed section.
+        { begin: 0x1200, end: 0x1280, unwind: 0x3ffc },
+        // Its embedded parent begins at the primary entry but ends elsewhere.
+        { begin: 0x1300, end: 0x1380, unwind: 0x2100 },
+        // Unsorted and overlapping the previous range.
+        { begin: 0x1340, end: 0x1390, unwind: 0x2200 },
+      ],
+      blobs: [
+        { rva: 0x2000, bytes: unwindInfo(0, 0) },
+        {
+          rva: 0x2100,
+          bytes: unwindInfo(0x4, 0, { ...primary, end: 0x1050 }),
+        },
+        { rva: 0x2200, bytes: unwindInfo(0, 0) },
+        { rva: 0x3ffc, bytes: unwindInfo(0, 10).subarray(0, 4) },
+      ],
+    });
+    const [, codes, mismatched, overlapping] = value.entries;
+    expect(codes).toMatchObject({
+      kind: "unknown",
+      unwind_version: 1,
+      unwind_code_count: 10,
+      issues: ["unwind_codes_unmapped"],
+    });
+    expect(mismatched).toMatchObject({
+      kind: "chained",
+      parent: { begin_rva: "0x1000", end_rva: "0x1050", index: null },
+      primary_index: null,
+      issues: ["chain_parent_mismatch"],
+    });
+    expect(overlapping!.issues).toEqual(["overlaps_previous"]);
+    expect(value.coverage.status).toBe("partial");
+  });
+
+  it("reports both order and overlap for an out-of-order range", async () => {
+    const value = await report({
+      entries: [
+        { begin: 0x1100, end: 0x1200, unwind: 0x2000 },
+        { begin: 0x1080, end: 0x1180, unwind: 0x2000 },
+      ],
+      blobs: [{ rva: 0x2000, bytes: unwindInfo(0, 0) }],
+    });
+    expect(value.entries[1]!.issues).toEqual(["unsorted", "overlaps_previous"]);
+  });
+
   it("reports an absent directory and an unsupported entry format", async () => {
     const absent = await report({ entries: [], directoryRva: 0 });
     expect(absent.exception_directory.status).toBe("absent");
