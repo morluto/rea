@@ -43,9 +43,13 @@ for (const mode of ["offline", "deferred", "eager"] as const)
         USERPROFILE: home,
         HOPPER_LAUNCHER_PATH: join(home, "absent-hopper"),
         ...(mode === "offline" ? {} : { REA_MCP_UPDATE_CHECK: "1" }),
-        // Only `compact` leaves the recorded catalog and composes eagerly.
+        // A scoped progressive catalog needs scoped identity before the first
+        // analysis, so it leaves the recorded catalog and composes eagerly.
         ...(mode === "eager"
-          ? { REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact" }
+          ? {
+              REA_MCP_TOOL_FAMILIES: "session",
+              REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
+            }
           : {}),
       },
       stderr: "pipe",
@@ -60,14 +64,19 @@ for (const mode of ["offline", "deferred", "eager"] as const)
     });
     try {
       await client.connect(transport);
+      // The hot/cold listing loads list_unknowns through discover_tools.
+      const listed = mode === "eager" ? "discover_tools" : "list_unknowns";
       expect(
-        (await client.listTools()).tools.some(
-          ({ name }) => name === "list_unknowns",
-        ),
+        (await client.listTools()).tools.some(({ name }) => name === listed),
       ).toBe(true);
       await expect(readFile(marker, "utf8")).rejects.toMatchObject({
         code: "ENOENT",
       });
+      if (mode === "eager")
+        await client.callTool({
+          name: "discover_tools",
+          arguments: { names: ["list_unknowns"] },
+        });
       const call = () =>
         client.callTool({ name: "list_unknowns", arguments: {} });
       const first = await call();
