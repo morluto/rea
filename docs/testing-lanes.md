@@ -788,8 +788,9 @@ allowed: Vitest's skip state does not establish whether a skipped module was
 required on that runner. Review the listed skips against platform and provider
 prerequisites; the inventory alone does not prove every required case ran.
 
-Scheduled qualification is admitted hourly at minute 23. A forced full run at
-03:23 UTC refreshes runner and dependency drift every day. Other hourly runs
+Scheduled qualification is admitted every six hours at minute 23 (03:23, 09:23,
+15:23, and 21:23 UTC). A forced full run at
+03:23 UTC refreshes runner and dependency drift every day. Other scheduled runs
 can reuse a successful full-qualification receipt for the exact source SHA
 from the same repository's trusted CI workflow on its default branch. Both the
 receipt and original workflow run must be less than 24 hours old, so retrying an
@@ -846,18 +847,18 @@ provider workflows and the Android smoke test retain their explicit triggers.
 
 CI exercises the pinned Node.js runtime on native hosted runners:
 
-| Host                  | Runner             | Baseline checks                                                                             |
-| --------------------- | ------------------ | ------------------------------------------------------------------------------------------- |
-| Linux x64             | `ubuntu-latest`    | Installed package and real Node Inspector CLI/MCP                                           |
-| Linux arm64 (aarch64) | `ubuntu-24.04-arm` | Installed package and real Node Inspector CLI/MCP                                           |
-| macOS 15 arm64        | `macos-15`         | Installed package and real Node Inspector CLI/MCP                                           |
-| macOS 15 x64          | `macos-15-intel`   | Installed package and real Node Inspector CLI/MCP (hourly, dispatch, release and `ci:full`) |
-| Windows x64           | `windows-latest`   | Curated capabilities, native controls, installed package and real Node Inspector CLI/MCP    |
+| Host                  | Runner             | Baseline checks                                                                                |
+| --------------------- | ------------------ | ---------------------------------------------------------------------------------------------- |
+| Linux x64             | `ubuntu-latest`    | Installed package and real Node Inspector CLI/MCP                                              |
+| Linux arm64 (aarch64) | `ubuntu-24.04-arm` | Installed package and real Node Inspector CLI/MCP                                              |
+| macOS 15 arm64        | `macos-15`         | Installed package and real Node Inspector CLI/MCP                                              |
+| macOS 15 x64          | `macos-15-intel`   | Installed package and real Node Inspector CLI/MCP (scheduled, dispatch, release and `ci:full`) |
+| Windows x64           | `windows-latest`   | Curated capabilities, native controls, installed package and real Node Inspector CLI/MCP       |
 
 macOS x64 is the slowest package host. Ordinary PRs and main pushes omit it,
 so darwin x64 installed-package and Inspector regressions surface in full
-qualification. Schedule admission can be delayed by GitHub; the hourly trigger
-does not guarantee an hourly completed result. Release publication waits for
+qualification. Schedule admission can be delayed by GitHub; the six-hour trigger
+does not guarantee a completed result on every interval. Release publication waits for
 its own complete result at the exact released revision.
 
 Package lanes assert the actual Node platform/architecture before verification
