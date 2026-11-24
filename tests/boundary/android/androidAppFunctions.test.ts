@@ -372,7 +372,7 @@ it.each([
         expect.stringContaining("ZIP central directory does not account for"),
       ]);
       expect(inventory.limitations).toEqual(
-        expect.arrayContaining(scan.limitations),
+        expect.arrayContaining([...scan.limitations]),
       );
     } else {
       expect(scan.limitations).toEqual([]);
