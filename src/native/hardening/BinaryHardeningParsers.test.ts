@@ -306,9 +306,10 @@ it("reports PE DllCharacteristics, GuardFlags and directory presence", async () 
   expect(findRow(unmappedImage.rows, "cfg_instrumented").state).toBe("unknown");
   expect(findRow(unmappedImage.rows, "dynamic_base").state).toBe("enabled");
   expect(findRow(unmappedImage.rows, "guard_cf").state).toBe("enabled");
+  // A zero TLS RVA declares no TLS directory, so GuardFlags stays readable.
   const halfTls = peHardeningImage({ malformed: "tls-half" });
   const halfTlsImage = await readPeHardening(halfTls, peArtifact(halfTls));
-  expect(findRow(halfTlsImage.rows, "cfg_instrumented").state).toBe("unknown");
+  expect(findRow(halfTlsImage.rows, "cfg_instrumented").state).toBe("enabled");
   expect(findRow(halfTlsImage.rows, "nx_compat").state).toBe("enabled");
   const narrow = peHardeningImage({ bits: 32, characteristics: 0x4160 });
   const narrowImage = await readPeHardening(narrow, peArtifact(narrow));

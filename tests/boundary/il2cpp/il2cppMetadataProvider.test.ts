@@ -16,7 +16,10 @@ import { Il2cppMetadataProvider } from "../../../src/il2cpp/Il2cppMetadataProvid
 import { inspectIl2cppMetadataV108 } from "../../../src/il2cpp/Il2cppMetadataV108.js";
 import { Il2cppGhidraSeedWriter } from "../../../src/il2cpp/Il2cppGhidraSeedWriter.js";
 import { Il2cppMetadataService } from "../../../src/application/il2cpp/Il2cppMetadataService.js";
-import { il2cppMetadataSchema } from "../../../src/domain/il2cpp/il2cppMetadata.js";
+import {
+  il2cppMetadataSchema,
+  inspectIl2cppMetadataInputSchema,
+} from "../../../src/domain/il2cpp/il2cppMetadata.js";
 import * as zstandard from "../../../src/domain/compression/zstandardExactFrame.js";
 import {
   createElfFixture,
@@ -1239,6 +1242,72 @@ it("refuses generic rows that exceed the report budget and keeps the requested p
   } finally {
     await provider.close();
   }
+});
+
+it("bounds the ELF pointer index by the caller's max_native_index_bytes", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-index-budget-");
+  const path = join(root, "global-metadata.dat");
+  const binaryPath = join(root, "libil2cpp.so");
+  await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
+  await writeFile(binaryPath, createElfFixture(createIl2cppBinaryFixture()));
+  const provider = new Il2cppMetadataProvider();
+  try {
+    // One 2 KiB reservation admits a single relocated address; the fixture
+    // relocates several, so the selected allowance stops linking.
+    const refused = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+      max_native_index_bytes: 2048,
+    });
+    if (refused.ok) throw new Error("Expected the pointer index refusal");
+    expect(refused.error).toBeInstanceOf(AnalysisResourceConstraintError);
+    expect(refused.error).toMatchObject({
+      resource: "memory",
+      retryable: false,
+      fixedAllowance: undefined,
+      reportedLimits: {
+        boundary: "virtual-pointer-index-bytes",
+        maximum: 2048,
+      },
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_native_index_bytes",
+        effective_value: 2048,
+        unit: "bytes",
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+        default_value: 1024 * 1024 * 1024,
+        applies_at: "next_call",
+      },
+    });
+    // The same complete pair links once the caller raises the allowance,
+    // and the default admits it without any selection.
+    expect(
+      (
+        await provider.inspect({
+          path,
+          binary_path: binaryPath,
+          max_native_index_bytes: 1024 * 1024,
+        })
+      ).ok,
+    ).toBe(true);
+    expect((await provider.inspect({ path, binary_path: binaryPath })).ok).toBe(
+      true,
+    );
+  } finally {
+    await provider.close();
+  }
+});
+
+it("refuses max_native_index_bytes without binary_path", () => {
+  const parsed = inspectIl2cppMetadataInputSchema.safeParse({
+    path: "/tmp/global-metadata.dat",
+    max_native_index_bytes: 4096,
+  });
+  expect(parsed.success).toBe(false);
+  expect(parsed.error?.issues).toEqual([
+    expect.objectContaining({ path: ["max_native_index_bytes"] }),
+  ]);
 });
 
 it("reports the exceeded native-link maximum in the public refusal", async () => {
