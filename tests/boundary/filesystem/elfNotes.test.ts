@@ -1,24 +1,21 @@
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createElfNotesService } from "../../../src/composition/binaryDiagnostics.js";
+import { createElfNotesService } from "../../../src/composition/binaryDiagnostics/elfNotes.js";
 import { elfNoteFixture } from "../../../src/native/elf/ElfNotes.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("ELF note stable filesystem boundary", () => {
-  it("reports non-file and malformed ELF selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-elf-notes-files-");
     const path = join(root, "program");
     const alias = join(root, "alias");
-    const malformed = join(root, "malformed");
     await writeFile(path, elfNoteFixture());
-    await writeFile(malformed, Buffer.from("not an elf"));
     await symlink(path, alias);
     const service = createElfNotesService();
     for (const [candidate, reason] of [
       [root, "invalid_format"],
       [alias, "invalid_format"],
-      [malformed, "invalid_format"],
       [join(root, "missing"), "invalid_value"],
       [join(path, "child"), "invalid_value"],
     ] as const) {

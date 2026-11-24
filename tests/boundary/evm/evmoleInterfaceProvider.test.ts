@@ -938,6 +938,9 @@ it
       expect(result.error.cause).toBe(reason);
     else expect(result.error.cleanupIncomplete).toBe(true);
     if (scenario === "cancelled-cleanup-failure") {
+      expect(result.error.diagnostics?.["reason"]).toBe(
+        "reported cleanup failure",
+      );
       expect(result.error.cleanupPrimary?.cause).toBe(reason);
       denyClose = false;
       await provider.close();

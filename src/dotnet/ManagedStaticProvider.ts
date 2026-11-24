@@ -41,7 +41,7 @@ import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import { managedInspectionInputFailure } from "../domain/managed/managedReaderFailure.js";
+import { managedInspectionTargetFailure } from "../domain/managed/managedReaderFailure.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { z } from "zod";
 import {
@@ -167,12 +167,12 @@ class ManagedStaticClient implements AnalysisClient {
       if (cause instanceof AnalysisError) return err(cause);
       if (options?.signal?.aborted === true)
         return err(cancelledBy(operation, options.signal));
-      const inputFailure = managedInspectionInputFailure(
+      const targetFailure = managedInspectionTargetFailure(
         operation,
         this.target.path,
         cause,
       );
-      if (inputFailure !== undefined) return err(inputFailure);
+      if (targetFailure !== undefined) return err(targetFailure);
       return err(
         new ProviderAdapterError(MANAGED_STATIC_PROVIDER.id, operation, {
           cause,

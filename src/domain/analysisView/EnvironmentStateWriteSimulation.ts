@@ -33,6 +33,11 @@ import {
 import { projectedRead } from "./environmentStateWriteObserve.js";
 import { OmittedFields } from "./environmentStateWriteOmitted.js";
 import { SortedArrays } from "./environmentStateWriteSorted.js";
+
+const sortRuleKey = (rule: {
+  readonly field: string;
+  readonly direction: "ascending" | "descending";
+}): string => `${rule.direction === "ascending" ? "a:" : "d:"}${rule.field}`;
 import { sameQuery } from "./environmentStateWriteStamps.js";
 import {
   checkDocumentRead,
@@ -1015,7 +1020,7 @@ export class EnvironmentStateWriteSimulation {
       const sorts = listedSorts(items);
       const unfollowed = this.#unfollowedSorts.get(name) ?? new Set<string>();
       for (const { rule, follows } of sorts)
-        if (!follows) unfollowed.add(JSON.stringify(rule));
+        if (!follows) unfollowed.add(sortRuleKey(rule));
       this.#unfollowedSorts.set(name, unfollowed);
       // A list shown in the order of the field that names its items says less than one in a field people read.
       const idField = this.#types.get(view.type)?.id_field;
@@ -1023,7 +1028,7 @@ export class EnvironmentStateWriteSimulation {
         .map(({ rule }) => rule)
         .filter(
           (rule) =>
-            !unfollowed.has(JSON.stringify(rule)) &&
+            !unfollowed.has(sortRuleKey(rule)) &&
             !followed.some((candidate) => same(candidate, rule)),
         )
         .sort(
@@ -1094,7 +1099,7 @@ export class EnvironmentStateWriteSimulation {
     for (const rule of rules.filter(
       (candidate) =>
         (current === undefined || !same(candidate, current)) &&
-        refuted?.has(JSON.stringify(candidate)) !== true &&
+        refuted?.has(sortRuleKey(candidate)) !== true &&
         keptInOrder(kept, candidate),
     )) {
       // A create placed by another sort shows the collection is not kept in this order.
@@ -1171,7 +1176,7 @@ export class EnvironmentStateWriteSimulation {
           writes,
         );
         if (replayed !== undefined && !same(replayed, order))
-          refuted.add(JSON.stringify(rule));
+          refuted.add(sortRuleKey(rule));
       }
     if (refuted.size > 0) this.#refutedSorts.set(view.type, refuted);
   }
@@ -1212,7 +1217,7 @@ export class EnvironmentStateWriteSimulation {
     for (const candidate of options) {
       if (
         candidate.rule === "sorted" &&
-        refuted?.has(JSON.stringify(candidate)) === true
+        refuted?.has(sortRuleKey(candidate)) === true
       )
         continue;
       this.#state.reinsert(view.type, line.collection, inserted, candidate);

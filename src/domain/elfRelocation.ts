@@ -4,7 +4,6 @@ import {
   readUint32At,
   readUint64At,
 } from "./binaryContainer.js";
-import { err, ok, type Result } from "./result.js";
 
 export const ELF_RELR_DYNAMIC_TAGS = {
   standard: { address: 36n, size: 35n, entry: 37n },
@@ -51,11 +50,6 @@ interface ElfRelocationEntry {
 interface ElfRelaEntry extends ElfRelocationEntry {
   readonly addend: bigint;
 }
-interface ElfRelocationFailure {
-  readonly kind: "malformed";
-  readonly message: string;
-}
-
 /** The class-specific r_info split, shared by fixed and Android packed records. */
 export const decodeElfRelocationInfo = (info: bigint, bits: 32 | 64) => ({
   type: Number(info & (bits === 64 ? 0xffffffffn : 0xffn)),
@@ -64,13 +58,6 @@ export const decodeElfRelocationInfo = (info: bigint, bits: 32 | 64) => ({
 
 export const ELF_RELOCATION_TRUNCATED_MESSAGE =
   "ELF relocation entry is truncated";
-const TRUNCATED_RELOCATION = Object.freeze(
-  err<ElfRelocationFailure>({
-    kind: "malformed",
-    message: ELF_RELOCATION_TRUNCATED_MESSAGE,
-  }),
-);
-
 export function readElfRelocationEntryAt(
   bytes: Uint8Array,
   offset: number,
@@ -151,39 +138,4 @@ export function readElfRelocationEntryAt(
         addend: BigInt(readInt32At(bytes, offset + 8, littleEndian)),
       }
     : { offset: relOffset, type, symbolIndex };
-}
-
-export function readElfRelocationEntry(
-  bytes: Uint8Array,
-  bits: 32 | 64,
-  littleEndian: boolean,
-  encoding: "rel",
-): Result<ElfRelocationEntry, ElfRelocationFailure>;
-export function readElfRelocationEntry(
-  bytes: Uint8Array,
-  bits: 32 | 64,
-  littleEndian: boolean,
-  encoding: "rela",
-): Result<ElfRelaEntry, ElfRelocationFailure>;
-export function readElfRelocationEntry(
-  bytes: Uint8Array,
-  bits: 32 | 64,
-  littleEndian: boolean,
-  encoding: "rel" | "rela",
-): Result<ElfRelocationEntry | ElfRelaEntry, ElfRelocationFailure>;
-/** Decode standard REL/RELA fields; architecture-specific application remains with consumers. */
-export function readElfRelocationEntry(
-  bytes: Uint8Array,
-  bits: 32 | 64,
-  littleEndian: boolean,
-  encoding: "rel" | "rela",
-): Result<ElfRelocationEntry | ElfRelaEntry, ElfRelocationFailure> {
-  const entry = readElfRelocationEntryAt(
-    bytes,
-    0,
-    bits,
-    littleEndian,
-    encoding,
-  );
-  return entry === null ? TRUNCATED_RELOCATION : ok(entry);
 }

@@ -1703,8 +1703,11 @@ const resolveFileCandidates = (
   return null;
 };
 
+const ASAR_SEGMENT_PATTERN = /\.asar\//iu;
+
 /** Classify the extension as inventory does; retain exact archive occurrence bytes. */
 const runtimeArchiveRoot = (path: string): string | undefined => {
+  if (!ASAR_SEGMENT_PATTERN.test(path)) return undefined;
   const components = path.split("/");
   const archive = components.findLastIndex(
     (component, index) =>
@@ -2072,16 +2075,39 @@ const selectExportTarget = (
  * built-in resolver that owns installed-package imports and requires. The
  * supported Node runtimes also activate "module-sync" for both loaders.
  */
+const EXPORT_CONDITIONS_DEFAULT: ReadonlySet<string> = new Set([
+  "node",
+  "node-addons",
+  "module-sync",
+  "default",
+]);
+const EXPORT_CONDITIONS_BY_KIND = new Map<string, ReadonlySet<string>>([
+  [
+    "import",
+    new Set(["node", "node-addons", "module-sync", "import", "default"]),
+  ],
+  [
+    "require",
+    new Set(["node", "node-addons", "module-sync", "require", "default"]),
+  ],
+  [
+    "compiler-dependent",
+    new Set([
+      "node",
+      "node-addons",
+      "module-sync",
+      "compiler-dependent",
+      "default",
+    ]),
+  ],
+]);
+
 const packageExportConditions = (
   moduleKind: ResolveArtifactPathInput["moduleKind"],
 ): ReadonlySet<string> =>
-  new Set([
-    "node",
-    "node-addons",
-    "module-sync",
-    ...(moduleKind === undefined ? [] : [moduleKind]),
-    "default",
-  ]);
+  moduleKind === undefined
+    ? EXPORT_CONDITIONS_DEFAULT
+    : (EXPORT_CONDITIONS_BY_KIND.get(moduleKind) ?? EXPORT_CONDITIONS_DEFAULT);
 
 const notFoundCandidate = (): Extract<
   CandidateResolution,

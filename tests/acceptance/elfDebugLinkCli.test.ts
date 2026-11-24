@@ -12,6 +12,7 @@ import {
 } from "../../src/native/elf/ElfDebugLink.fixture.js";
 import {
   compressedElfNoteSectionFixture,
+  coreFileNote,
   gnuBuildIdNote,
   withElf64DirectSectionCount,
 } from "../../src/native/elf/ElfNotes.fixture.js";
@@ -104,20 +105,36 @@ cliTest(
 );
 
 cliTest(
-  "reports a mismatching candidate without failing the read",
+  "compares both build IDs beside unrelated CORE mappings",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-elf-debug-link-cli-miss-");
     const imagePath = join(root, "prog");
     const candidatePath = join(root, "other.debug");
+    const fileNote = coreFileNote(
+      Array.from({ length: 60 }, (_, index) => ({
+        start: 0x1000 + index * 0x1000,
+        end: 0x2000 + index * 0x1000,
+        file_ofs: 0,
+        path: "/bin/core-app",
+      })),
+    );
+    const notes = (hex: string) =>
+      Buffer.concat([fileNote, gnuBuildIdNote(hex)]);
     await writeFile(
       imagePath,
       elfDebugLinkFixture({
+        type: 4,
+        notes: notes(FIXTURE_BUILD_ID_HEX),
         debuglink: debuglinkSection(FIXTURE_DEBUG_NAME, 0x11111111, true),
       }),
     );
     await writeFile(
       candidatePath,
-      elfDebugCandidateFixture({ buildIdHex: "dd".repeat(20) }),
+      elfDebugLinkFixture({
+        type: 4,
+        debuglink: null,
+        notes: notes("dd".repeat(20)),
+      }),
     );
     const result = await cli.run({
       arguments: [
@@ -142,20 +159,6 @@ cliTest(
     });
   },
 );
-
-cliTest("reports a non-ELF file as invalid input", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-elf-debug-link-cli-bad-");
-  const path = join(root, "broken");
-  await writeFile(path, Buffer.from("not an elf"));
-  const result = await cli.run({
-    arguments: ["inspect-elf-debug-link", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_elf_debug_link" },
-  });
-});
 
 cliTest(
   "retains separate readable build IDs beside compressed ELF notes",

@@ -17,6 +17,7 @@ import type { EvidenceWriter } from "../../../src/application/investigation/Inve
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import type { Evidence } from "../../../src/domain/evidence.js";
 import { err, ok } from "../../../src/domain/result.js";
+import { isDeepStrictEqual } from "node:util";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import * as toolResultEncoding from "../../../src/server/toolResultEncoding.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
@@ -46,17 +47,18 @@ const failureWithName = (
 it.each(SUPPORTED_PROTOCOL_VERSIONS)(
   "reuses a projected error through MCP %s and re-encodes budget or provenance mismatches",
   async (version) => {
+    const projectedDelivery = createToolResultDelivery(8192);
+    const smaller = createToolResultDelivery(4096);
     const server = new EvidenceMcpServer(
       { name: "projected-error-server", version: "1" },
       { capabilities: {} },
       undefined,
-      delivery,
+      projectedDelivery,
     );
-    const smaller = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE / 2);
     server.registerTool(
       "record_unknown",
       { inputSchema: z.object({}) },
-      async () => failureWithName(0),
+      async () => failureWithName(0, false, projectedDelivery),
     );
     server.registerTool(
       "export_evidence_bundle",
@@ -66,8 +68,16 @@ it.each(SUPPORTED_PROTOCOL_VERSIONS)(
     server.registerTool(
       "list_strings",
       { inputSchema: z.object({}) },
-      async () => failureWithName(0),
+      async () => failureWithName(0, false, projectedDelivery),
     );
+    for (const [name, selectedDelivery] of [
+      ["overflow_matching_budget", projectedDelivery],
+      ["overflow_mismatched_budget", smaller],
+    ] as const) {
+      server.registerTool(name, { inputSchema: z.object({}) }, async () =>
+        failureWithName(16 * 1024, true, selectedDelivery),
+      );
+    }
     const client = new Client(
       { name: "projected-error-client", version: "1" },
       { jsonSchemaValidator: createMcpSchemaValidation() },
@@ -106,6 +116,27 @@ it.each(SUPPORTED_PROTOCOL_VERSIONS)(
         expect(encode).toHaveBeenCalledTimes(encodings);
         if (name === "list_strings")
           expect(result._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
+      }
+      for (const [name, budgets] of [
+        ["overflow_matching_budget", [projectedDelivery.resultBudgetBytes]],
+        [
+          "overflow_mismatched_budget",
+          [smaller.resultBudgetBytes, projectedDelivery.resultBudgetBytes],
+        ],
+      ] as const) {
+        encode.mockClear();
+        const result = await client.callTool({ name, arguments: {} });
+        expect(parseMcpToolError(result)).toMatchObject({
+          error: { code: "resource_constraint" },
+        });
+        // Delivery can try a compact projection before transport sees the error.
+        // Count only encodings of the original diagnostic.
+        const initial = encode.mock.calls[0]![0];
+        expect(initial).toMatchObject({ error: { code: "invalid_request" } });
+        const original = encode.mock.calls.filter(([value]) =>
+          isDeepStrictEqual(value, initial),
+        );
+        expect(original.map(([, budget]) => budget)).toEqual(budgets);
       }
     } finally {
       initialize.mockRestore();

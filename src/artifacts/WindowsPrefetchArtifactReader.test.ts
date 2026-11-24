@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 
-import { prefetchMetadataSchema } from "../domain/artifactFormatMetadata.js";
+import { prefetchMetadataSchema } from "../domain/formatMetadata/androidAndSystemMetadata.js";
 import { WindowsPrefetchArtifactReader } from "./WindowsPrefetchArtifactReader.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { ArtifactFileSource } from "../resources/ArtifactFileSource.js";

@@ -2,7 +2,7 @@ import { Readable } from "node:stream";
 
 import { setImmediate } from "node:timers/promises";
 
-import type { PrefetchMetadataFacts } from "../domain/artifactFormatMetadata.js";
+import type { PrefetchMetadataFacts } from "../domain/formatMetadata/androidAndSystemMetadata.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {

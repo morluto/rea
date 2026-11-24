@@ -236,9 +236,9 @@ export const traceNativeInvestigationGraph = (
     else entries.push(edge);
   }
 
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (current === undefined) break;
+  let queueHead = 0;
+  while (queueHead < queue.length) {
+    const current = queue[queueHead++]!;
     const adjacent = adjacency.get(current.id) ?? [];
 
     for (const edge of adjacent) {

@@ -69,7 +69,7 @@ import {
   type HashResult,
 } from "../ArtifactHash.js";
 import type { ArtifactInventoryOptions } from "./types.js";
-import { readMachoHeaderPrefixFacts } from "../../domain/apple/machoContainer.js";
+import { readFatSliceHeaders } from "../../domain/apple/machoContainer.js";
 import { hasDiskImageSignature } from "../../domain/apple/diskImageFormat.js";
 import {
   DFUSE_SUFFIX_BYTES,
@@ -496,33 +496,18 @@ const readRootFatSliceHeaders = async (
 ): Promise<ArtifactClassificationEvidence> => {
   const existing = evidence.fatSliceHeaders;
   if (existing === undefined) return evidence;
-  const { header } = existing;
-  const sliceHeadersByOffset = new Map(existing.sliceHeadersByOffset);
-  for (let index = 0; index < header.slices.length; index += 1) {
-    const slice = header.slices[index];
-    const observed =
-      slice === undefined ? undefined : sliceHeadersByOffset.get(slice.offset);
-    if (
-      slice === undefined ||
-      header.rangeIssues[index] !== null ||
-      slice.size < 4 ||
-      (observed !== undefined && observed.magic !== null)
-    )
-      continue;
-    const headerLength = Math.min(12, slice.size);
-    const thinHeader = await readFileHandleRange(
-      handle,
-      slice.offset,
-      headerLength,
-      () => abortIfNeeded(signal),
-    );
-    abortIfNeeded(signal);
-    sliceHeadersByOffset.set(
-      slice.offset,
-      readMachoHeaderPrefixFacts(thinHeader),
-    );
-  }
-  return { ...evidence, fatSliceHeaders: { header, sliceHeadersByOffset } };
+  const fatSliceHeaders = await readFatSliceHeaders(
+    existing.header,
+    async (offset, length) => {
+      const thinHeader = await readFileHandleRange(handle, offset, length, () =>
+        abortIfNeeded(signal),
+      );
+      abortIfNeeded(signal);
+      return thinHeader;
+    },
+    { existing: existing.sliceHeadersByOffset, minSliceSize: 4 },
+  );
+  return { ...evidence, fatSliceHeaders };
 };
 
 /** Read the missing PE record bytes requested by bounded MZ classification. */
