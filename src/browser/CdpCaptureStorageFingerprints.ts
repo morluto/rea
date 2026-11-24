@@ -4,7 +4,10 @@ import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import { decodePaddedBase64 } from "../domain/paddedBase64.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { CdpConnection } from "./CdpConnection.js";
+import {
+  cacheStorageCommand,
+  type CacheStorageCommandContext,
+} from "./CdpCacheStorageCommand.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import {
   recordValue,
@@ -29,11 +32,8 @@ export interface CapturedCache {
   readonly id: string | undefined;
 }
 
-interface StorageFingerprintContext {
-  readonly connection: CdpConnection;
-  readonly sessionId: string | undefined;
+interface StorageFingerprintContext extends CacheStorageCommandContext {
   readonly input: InspectWebPageInput;
-  readonly signal?: AbortSignal;
 }
 
 interface FingerprintState {
@@ -338,7 +338,7 @@ const addCaches = async (
     let skipCount = 0;
     let returnCount: number | undefined;
     while (returnCount === undefined || skipCount < returnCount) {
-      const reply = await optionalCdpCommand(
+      const reply = await cacheStorageCommand(
         run.context,
         "CacheStorage.requestEntries",
         { cacheId, skipCount, pageSize: STORAGE_ENTRY_PAGE_SIZE },
@@ -346,6 +346,7 @@ const addCaches = async (
       );
       if (!reply.ok) {
         run.state.complete = false;
+        if (reply.error._tag === "CdpCommandUnavailable") return;
         break;
       }
       const result = reply.value;
@@ -403,7 +404,7 @@ const addCacheEntry = async (
     run.state.complete = false;
     return;
   }
-  const reply = await optionalCdpCommand(
+  const reply = await cacheStorageCommand(
     run.context,
     "CacheStorage.requestCachedResponse",
     { cacheId: cache.id, requestURL, requestHeaders },

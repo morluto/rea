@@ -4,12 +4,10 @@ import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import type { BrowserExclusionReason } from "../domain/browserCompleteness.js";
 import { mediaTypeEssence } from "../domain/analysisView/recordedMediaType.js";
-import type { CdpConnection } from "./CdpConnection.js";
 import {
-  optionalCdpCommand,
-  type CdpOptionalCommandGap,
-} from "./CdpOptionalCommand.js";
-import type { Result } from "../domain/result.js";
+  cacheStorageCommand,
+  type CacheStorageCommandContext,
+} from "./CdpCacheStorageCommand.js";
 import type { CapturedCache } from "./CdpCaptureStorageFingerprints.js";
 import {
   recordValue,
@@ -19,11 +17,7 @@ import {
 
 type CacheEntry = WebPageInspection["storage"]["cache_entries"][number];
 export const captureCacheStorageEntries = async (
-  context: {
-    readonly connection: CdpConnection;
-    readonly sessionId: string | undefined;
-    readonly signal?: AbortSignal;
-  },
+  context: CacheStorageCommandContext,
   caches: readonly CapturedCache[],
   limitations: string[],
 ): Promise<{
@@ -33,7 +27,7 @@ export const captureCacheStorageEntries = async (
   const entries: CacheEntry[] = [];
   const exclusions = new Set<BrowserExclusionReason>();
   let retainedBytes = 2;
-  for (const cache of caches) {
+  cacheWalk: for (const cache of caches) {
     const cacheId = cache.id;
     if (cacheId === undefined) {
       exclusions.add("invalid_protocol_value");
@@ -42,7 +36,7 @@ export const captureCacheStorageEntries = async (
     let skipCount = 0;
     let returnCount: number | undefined;
     while (returnCount === undefined || skipCount < returnCount) {
-      const reply = await optionalCdpCommand(
+      const reply = await cacheStorageCommand(
         context,
         "CacheStorage.requestEntries",
         { cacheId, skipCount, pageSize: CACHE_ENTRY_PAGE_SIZE },
@@ -50,10 +44,11 @@ export const captureCacheStorageEntries = async (
       );
       if (!reply.ok) {
         exclusions.add(
-          commandUnavailable(reply)
-            ? "provider_unavailable"
-            : "invalid_protocol_value",
+          reply.error._tag === "CdpMalformedReply"
+            ? "invalid_protocol_value"
+            : "provider_unavailable",
         );
+        if (reply.error._tag === "CdpCommandUnavailable") break cacheWalk;
         break;
       }
       const examinedCount = reply.value.cacheDataEntries.length;
@@ -119,12 +114,14 @@ const cacheEntry = (
   const statusText = optionalString(row.responseStatusText);
   const type = optionalString(row.responseType);
   const time = optionalNumber(row.responseTime);
+  const mediaType = contentType(row.responseHeaders);
   return {
     complete:
       status !== undefined &&
       statusText !== undefined &&
       type !== undefined &&
-      time !== undefined,
+      time !== undefined &&
+      mediaType !== undefined,
     entry: {
       cache,
       request_url: sanitizeBrowserUrl(requestUrl).url,
@@ -135,7 +132,7 @@ const cacheEntry = (
       response_time: time ?? null,
       request_header_names: requestHeaders,
       response_header_names: responseHeaders,
-      content_type: contentType(row.responseHeaders),
+      content_type: mediaType ?? null,
     },
   };
 };
@@ -152,14 +149,16 @@ const headerNames = (value: unknown): string[] | undefined => {
   return names;
 };
 
-const contentType = (value: unknown): string | null => {
-  if (!Array.isArray(value)) return null;
+const contentType = (value: unknown): string | null | undefined => {
+  if (!Array.isArray(value)) return undefined;
   for (const header of value) {
     const row = recordValue(header);
     const name = cdpStringValue(row?.name);
     if (name === undefined || name.toLowerCase() !== "content-type") continue;
     const reported = cdpStringValue(row?.value);
-    return reported === undefined ? null : mediaTypeEssence(reported);
+    return reported === undefined
+      ? undefined
+      : (mediaTypeEssence(reported) ?? undefined);
   }
   return null;
 };
@@ -177,9 +176,5 @@ const optionalStatus = (value: unknown): number | null | undefined => {
     ? status
     : undefined;
 };
-
-const commandUnavailable = (
-  reply: Result<unknown, CdpOptionalCommandGap>,
-): boolean => !reply.ok && reply.error._tag === "CdpCommandUnavailable";
 
 const CACHE_ENTRY_PAGE_SIZE = 1_000;

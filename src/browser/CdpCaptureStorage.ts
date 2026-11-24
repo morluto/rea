@@ -13,6 +13,7 @@ import {
   type CapturedStorageItems,
 } from "./CdpCaptureStorageFingerprints.js";
 import { captureCacheStorageEntries } from "./CdpCaptureStorageEntries.js";
+import type { CacheStorageReadCommand } from "./CdpCacheStorageCommand.js";
 import { recordsValue, cdpStringValue } from "./CdpCaptureValues.js";
 
 /** Capture redacted storage metadata for an authorized page and its origin. */
@@ -65,12 +66,16 @@ export const captureStorage = async (
     : undefined;
   const cacheValues = cacheReply?.ok ? cacheReply.value.caches : undefined;
   const caches = capturedCaches(recordsValue(cacheValues ?? []));
+  const cacheContext = {
+    ...context,
+    unavailableCacheCommands: new Set<CacheStorageReadCommand>(),
+  };
   const cacheEntries = context.input.include_cache_storage_entries
-    ? await captureCacheStorageEntries(context, caches, limitations)
+    ? await captureCacheStorageEntries(cacheContext, caches, limitations)
     : { entries: [], exclusions: [] };
   const fingerprints = context.input.include_storage_fingerprints
     ? await captureStorageFingerprints({
-        context,
+        context: cacheContext,
         origin,
         cookieUrl: pageUrl,
         local,

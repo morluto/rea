@@ -40,6 +40,7 @@ const captureCacheFingerprint = async (encodedBody: string) => {
       connection: { send } as unknown as CdpConnection,
       sessionId: "page-session",
       input,
+      unavailableCacheCommands: new Set(),
     },
     origin: ORIGIN,
     cookieUrl: `${ORIGIN}/`,
