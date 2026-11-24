@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { AnalysisTargetFailureError } from "./analysisErrorCore.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
+import { analysisErrorProjectionSchema } from "./analysisErrorProjectionSchema.js";
 import {
   TARGET_FAILURE_KINDS,
   targetFailureDetails,
@@ -58,6 +59,10 @@ describe("target failure projection", () => {
         },
       });
       expect(projected).not.toHaveProperty("recovery");
+      // Every kind's projection satisfies the schema CLI and MCP advertise.
+      expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
+        true,
+      );
     },
   );
 

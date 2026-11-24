@@ -654,6 +654,11 @@ export const documentationSections = [
         route: "/mcp-contracts",
       },
       {
+        text: "Target failures",
+        source: "reference/target-failures.md",
+        route: "/target-failures",
+      },
+      {
         text: "Reconstruction obligation ledgers",
         source: "reference/reconstruction-obligation-ledgers.md",
         route: "/reconstruction-obligation-ledgers",
