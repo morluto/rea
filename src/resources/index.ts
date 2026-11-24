@@ -122,6 +122,10 @@ export {
   streamStableArtifact,
   withStableArtifactHandle,
 } from "./readStableArtifact.js";
+export {
+  artifactFileCeilingConstraint,
+  artifactReadBudgetConstraint,
+} from "./artifactReadBudget.js";
 export type {
   StableArtifactFileSystem,
   StableArtifactHandle,

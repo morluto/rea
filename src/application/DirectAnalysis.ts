@@ -5,12 +5,9 @@ import {
 } from "./oneShotOperationInput.js";
 import { completedOperationEvidence } from "./binary/SessionEvidenceReuse.js";
 import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
-import type { TargetFormatHint } from "../domain/targetFormats.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
-import type {
-  BinaryArchitecture,
-  BinaryTarget,
-} from "../domain/binaryTargetTypes.js";
+import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import type { NativeLoadSelection } from "../domain/rawBinary.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { DirectAnalysisDependencies } from "./DirectAnalysisDependencies.js";
 import type { BinarySession } from "./binary/BinarySession.js";
@@ -77,12 +74,8 @@ import {
   recordWorkflowUnknowns,
 } from "./WorkflowEvidence.js";
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
-import { resolveXrefsAddress } from "./XrefsAddressResolution.js";
-import {
-  AnalysisInputError,
-  cancelledBy,
-  CallerAbort,
-} from "../domain/analysisErrorCore.js";
+import { executeWithNativeSymbolSelection } from "./NativeSymbolSelection.js";
+import { cancelledBy, CallerAbort } from "../domain/analysisErrorCore.js";
 import type { BinaryTargetError } from "../domain/configurationErrors.js";
 import {
   directAnalysisCleanupFailure,
@@ -126,9 +119,7 @@ export const runDirectAnalysis = async (
     readonly snapshotPath?: string | undefined;
     readonly signal?: AbortSignal;
     readonly providerId?: AnalysisProviderSelector;
-    readonly formatHint?: TargetFormatHint;
-    readonly architecture?: BinaryArchitecture;
-    readonly entryPoint?: string;
+    readonly loadSelection?: NativeLoadSelection;
     readonly espFlash?: EspFlashSelection;
     readonly includeEvidenceSources?: boolean;
   } = {},
@@ -160,26 +151,18 @@ export const runDirectAnalysis = async (
 
 /** How the caller asks an artifact target to be read. */
 export interface ArtifactTargetSelection {
-  readonly formatHint?: TargetFormatHint;
+  readonly loadSelection?: NativeLoadSelection;
   readonly espFlash?: EspFlashSelection;
 }
 
 /** The caller's target interpretation, forwarded unchanged to every open. */
 const targetSelection = (options: {
-  readonly formatHint?: TargetFormatHint;
-  readonly architecture?: BinaryArchitecture;
-  readonly entryPoint?: string;
+  readonly loadSelection?: NativeLoadSelection;
   readonly espFlash?: EspFlashSelection;
 }) => ({
-  ...(options.formatHint === undefined
+  ...(options.loadSelection === undefined
     ? {}
-    : { formatHint: options.formatHint }),
-  ...(options.architecture === undefined
-    ? {}
-    : { architecture: options.architecture }),
-  ...(options.entryPoint === undefined
-    ? {}
-    : { entryPoint: options.entryPoint }),
+    : { loadSelection: options.loadSelection }),
   ...(options.espFlash === undefined ? {} : { espFlash: options.espFlash }),
 });
 
@@ -371,9 +354,7 @@ const runAnalysis = async (
     readonly createSession?: () => BinarySession | Promise<BinarySession>;
     readonly includeEvidenceSources?: boolean;
     readonly providerId?: AnalysisProviderSelector;
-    readonly formatHint?: TargetFormatHint;
-    readonly architecture?: BinaryArchitecture;
-    readonly entryPoint?: string;
+    readonly loadSelection?: NativeLoadSelection;
     readonly espFlash?: EspFlashSelection;
   },
 ): Promise<AnalysisResultWithSources<Evidence, JsonValue>> => {
@@ -794,40 +775,19 @@ const executeAnalysisTool = async (input: {
       ? { snapshotContext: "one-shot-target" as const }
       : {}),
   };
-  let result = await session.executeForDirectObservation(
+  const result = await executeWithNativeSymbolSelection(
+    session,
     tool,
     input.arguments,
-    input.evidenceParameters,
-    executionOptions,
-  );
-  if (
-    tool === "xrefs" &&
-    typeof input.arguments.address === "string" &&
-    !result.ok &&
-    result.error instanceof AnalysisInputError &&
-    !result.error.cleanupIncomplete &&
-    result.error.issues.length > 0 &&
-    result.error.issues.every(
-      ({ path, reason }) =>
-        path.length === 1 &&
-        path[0] === "address" &&
-        reason === "invalid_format",
-    )
-  ) {
-    const address = await resolveXrefsAddress(
-      session,
-      input.arguments.address,
-      signal,
-    );
-    if (!address.ok) return address;
-    if (address.value !== input.arguments.address)
-      result = await session.executeForDirectObservation(
+    (arguments_) =>
+      session.executeForDirectObservation(
         tool,
-        { ...input.arguments, address: address.value },
+        arguments_,
         input.evidenceParameters,
         executionOptions,
-      );
-  }
+      ),
+    executionOptions,
+  );
   if (!result.ok) return result;
   const evidence = completedOperationEvidence(
     tool,
@@ -870,9 +830,7 @@ const prepareSnapshot = async (options: {
     "readAnalysisSnapshot" | "resolveTarget"
   >;
   readonly path: string;
-  readonly formatHint?: TargetFormatHint;
-  readonly architecture?: BinaryArchitecture;
-  readonly entryPoint?: string;
+  readonly loadSelection?: NativeLoadSelection;
   readonly espFlash?: EspFlashSelection;
   readonly snapshotPath: string | undefined;
   readonly signal: AbortSignal;

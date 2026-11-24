@@ -79,6 +79,7 @@ import {
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { pcapCaptureHostSupported } from "../domain/pcap/pcapAnalysis.js";
 import { createPeLoadConfigService } from "./binaryDiagnostics/peLoadConfig.js";
+import { createPeUnwindRangesService } from "./binaryDiagnostics/peUnwindRanges.js";
 import { createBinaryHardeningService } from "./binaryDiagnostics/binaryHardening.js";
 import { createPeCertificatesService } from "./binaryDiagnostics/peCertificates.js";
 import { createPeImportsService } from "./binaryDiagnostics/peImports.js";
@@ -406,6 +407,7 @@ const modules = {
   elfDependencies: service(() => createElfDependenciesService()),
   kernelBuildConfig: service(() => createKernelBuildConfigService()),
   peLoadConfig: service(() => createPeLoadConfigService()),
+  peUnwindRanges: service(() => createPeUnwindRangesService()),
   binaryHardening: service(() => createBinaryHardeningService()),
   peCertificates: service(() => createPeCertificatesService()),
   peImports: service(() => createPeImportsService()),

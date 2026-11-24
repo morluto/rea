@@ -209,6 +209,17 @@ mitigations carry `evidence_kind: "inferred"`; enforcement remains unobserved.
 See
 [PE TLS callbacks and load configuration](https://github.com/morluto/rea/blob/main/docs/pe-load-config.md).
 
+## PE x64 exception-directory function ranges
+
+Use `inspect_pe_unwind_ranges` for an explicit local x64 PE32+ image when the
+question is where functions start and end without a PDB, or whether a
+provider's procedure inventory agrees with the compiler's records. The CLI
+equivalent is `inspect-pe-unwind-ranges PATH`. Primary entries start functions;
+chained entries are fragments of the entry named by `primary_index`, not
+separate functions. Leaf functions have no entry, so a missing entry is not
+absence. Compare provider addresses minus `image_base` with the RVAs. See
+[PE x64 exception-directory function ranges](https://github.com/morluto/rea/blob/main/docs/guides/native/pe-unwind-ranges.md).
+
 ## Binary hardening
 
 Use `inspect_binary_hardening` for an explicit local ELF, PE, or Mach-O file
@@ -847,7 +858,15 @@ headers), open with `format: "raw-binary"`, `architecture` (`x86`, `x86_64`,
 `arm`, `arm64`, `6502`, or `m68k`), and `entry_point` (`0x` hex). File offset 0 is mapped at
 that address. Hopper and IDA refuse this interpretation; Ghidra uses
 `BinaryLoader` with a generic language: big-endian for `m68k`, little-endian
-otherwise. Big-endian ARM, Thumb-only, and Cortex-M variants are unsupported.
+otherwise. For a Cortex-M dump, add `architecture_variant` (`armv6-m`,
+`armv7-m`, `armv7e-m`, `armv8-m.base`, `armv8-m.main` or `armv8.1-m.main`)
+and `base_address`, which maps file offset 0 separately; each requires the
+other. Omit `entry_point` to take Reset from the vector table, adding
+`vector_table_address` when a header precedes it. An odd entry is refused.
+Results report canonical addresses (`0x08000000` as `0x8000000`) and treat an
+omitted `vector_table_address` as one at the base; when your exact spelling
+matters, save your request beside the Evidence, together with its
+`evidence_id`. Big-endian ARM is unsupported.
 `6502` selects NMOS 6502; the entry and complete file mapping must fit within
 `0x0000..0xffff`. 65C02, 65816, cartridge containers, bank switching, and mapper
 semantics are unsupported. `m68k` requires an even entry and decodes the 68040

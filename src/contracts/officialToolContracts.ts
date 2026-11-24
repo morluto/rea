@@ -240,7 +240,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "procedure_callers",
     providerNetworkEvidenceEffects,
-    "Return the provider's resolved direct callers for one procedure identified by symbol or address. Results reflect completed static analysis and may omit unresolved indirect references. Ghidra terminal-call assumptions that may cut the analyzed body are reported in Evidence limitations. Select detail summary for selected facts and a context digest; native-observation and native-context views retain complete source access.",
+    "Return the provider's resolved direct callers for one procedure identified by symbol or address. For a symbol or address outside every procedure, such as an import or its address-table slot, returns the procedures containing its recorded references. A name resolves the same way in find_xrefs_to_name, xrefs and these procedure tools: an exact observed name, or an import by its imported or library-qualified name where the provider reports the library. Results reflect completed static analysis and may omit unresolved indirect references. Ghidra terminal-call assumptions that may cut the analyzed body are reported in Evidence limitations. Select detail summary for selected facts and a context digest; native-observation and native-context views retain complete source access.",
     z.object({ procedure, document, detail: analysisDetailSchema }),
     { evidenceParameters: "omit-detail" },
   ),
@@ -263,7 +263,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "procedure_references",
     evidenceEffects,
-    "Return incoming or outgoing reference edges for one procedure. Ghidra preserves detailed reference flags; Hopper preserves native CallReference classifications and exact endpoints. Select detail summary to retain complete Evidence and page references or unresolved calls using inspect_analysis_view kind native-procedure-references. Page coverage describes retained observations, not complete discovery or proof the target ran.",
+    "Return incoming or outgoing reference edges for one procedure. Incoming references also answer a symbol or address outside every procedure, such as an import or its address-table slot: procedure then identifies that address without a body, and each edge keeps its containing source procedure. A name resolves the same way in find_xrefs_to_name, xrefs and these procedure tools: an exact observed name, or an import by its imported or library-qualified name where the provider reports the library. Ghidra preserves detailed reference flags; Hopper preserves native CallReference classifications and exact endpoints. Select detail summary to retain complete Evidence and page references or unresolved calls using inspect_analysis_view kind native-procedure-references. Page coverage describes retained observations, not complete discovery or proof the target ran.",
     z.object({
       procedure,
       direction: z.enum(["incoming", "outgoing"]).default("outgoing"),
@@ -368,7 +368,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "xrefs",
     providerNetworkEvidenceEffects,
-    "Return analyzed references to a code or data address. Hopper may default to its current cursor; headless providers such as Ghidra require an explicit address. Kuna also accepts names in its own inventory, including data names; an unlisted name may still exist in the target. Use to connect strings, globals, selectors, and functions; bare addresses are untyped and indirect references may be incomplete. Page a retained result with inspect_analysis_view and native-observation; use native-context for source caveats. Use inspect_native_instruction at the target address for typed incoming references where supported.",
+    "Return analyzed references to a code or data address. Hopper may default to its current cursor. A name the provider does not accept as an address resolves as in find_xrefs_to_name. Kuna also accepts names in its own inventory, including data names; an unlisted name may still exist in the target. Use to connect strings, globals, selectors, and functions; bare addresses are untyped and indirect references may be incomplete. Page a retained result with inspect_analysis_view and native-observation; use native-context for source caveats. Use inspect_native_instruction at the target address for typed incoming references where supported.",
     z.object({ document, address: optionalAddress }),
   ),
 ] as const satisfies readonly ToolContract[];

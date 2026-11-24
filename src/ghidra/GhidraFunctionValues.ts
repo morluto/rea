@@ -2,6 +2,8 @@ import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { nativeAddressObservationSchema } from "../domain/native/nativeAddress.js";
 import { addressDistance } from "../domain/native/addressCoordinate.js";
 import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
+import { nativeSymbolMetadataSchema } from "../domain/native/nativeSymbol.js";
+import { unavailableNativeFactSchema } from "../domain/native/nativeFactAvailability.js";
 import { z } from "zod";
 import {
   ghidraNativeApiBoundary,
@@ -22,6 +24,7 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import {
+  functionDossierLimitationCodeSchema,
   functionInstructionWindowSchema,
   functionDossierSchema,
 } from "../domain/native/functionDossier.js";
@@ -146,9 +149,21 @@ const referenceEdge = z
     kind: referenceKind,
   })
   .strict();
+/**
+ * The target of incoming references selected by an explicit address outside
+ * every function, such as an import address-table slot: its primary symbol
+ * when one exists, and no function classification or body.
+ */
+const nonFunctionTarget = z.strictObject({
+  address: nativeAddressObservationSchema,
+  name: z.string().min(1),
+  symbol: nativeSymbolMetadataSchema.nullable(),
+  classification: z.null(),
+  body: unavailableNativeFactSchema,
+});
 const procedureReferences = z
   .object({
-    procedure: procedureIdentity,
+    procedure: z.union([procedureIdentity, nonFunctionTarget]),
     direction: z.enum(["incoming", "outgoing"]),
     references: z.array(referenceEdge),
     reference_kinds_available: z.boolean(),
@@ -261,12 +276,15 @@ const ghidraFunctionDossier = functionDossierSchema
     ),
     native_api: ghidraNativeApiBoundary,
     native_value_flow: ghidraNativeValueFlow,
+    limitation_codes: z.array(functionDossierLimitationCodeSchema),
   })
   .strict()
   .superRefine((value, context) => {
+    const codes = new Set(value.limitation_codes);
     if (
-      !value.limitations.some((item) => /indirect|computed/u.test(item)) ||
-      !value.limitations.some((item) => /provider|Ghidra|Hopper/u.test(item))
+      value.limitations.length === 0 ||
+      !codes.has("unresolved_computed_or_indirect_flows") ||
+      !codes.has("provider_specific_representations")
     )
       context.addIssue({
         code: "custom",

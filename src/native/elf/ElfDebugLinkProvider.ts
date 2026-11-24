@@ -206,6 +206,7 @@ const incompleteCandidateObservation = (
   report: ElfDebugLink,
 ): ElfDebugLink => ({
   ...report,
+  limitation_codes: [...report.limitation_codes, "candidate_read_incomplete"],
   limitations: [
     ...report.limitations,
     ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
@@ -226,6 +227,10 @@ const unverifiedCandidateObservation = (
     debug_info: "unknown",
     symtab: "unknown",
   },
+  limitation_codes: [
+    ...report.limitation_codes,
+    "candidate_comparison_incomplete",
+  ],
   limitations: [
     ...report.limitations,
     ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,

@@ -62,6 +62,8 @@ import {
   reconcileHopperCallers,
   reconciliationChildOptions,
   type HopperCallerNativeReply,
+  hopperAddressReferencesReason,
+  projectHopperAddressReferences,
 } from "./HopperCallerReconciliation.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 
@@ -525,6 +527,22 @@ export class HopperProvider implements AnalysisProviderCandidate {
                     : await call("procedure_references");
               // A reply outside its contract keeps its raw reply as partial
               // reconciliation Evidence; other failures return directly.
+              // An address outside every procedure has no forward callers to
+              // reconcile: Hopper's recorded references are the observation.
+              if (
+                native.ok &&
+                "target_kind" in native.value &&
+                native.value.target_kind === "address"
+              )
+                return ok(
+                  projectExecution(
+                    operation,
+                    projectHopperAddressReferences(native.value),
+                    // Retain the target identity and completeness facts.
+                    hopperReplyJson(native.value),
+                    hopperAddressReferencesReason(native.value),
+                  ),
+                );
               let nativeReply: Result<
                 HopperCallerNativeReply,
                 HopperReplyContractError
