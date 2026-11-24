@@ -535,7 +535,8 @@ export class HopperProvider implements AnalysisProviderCandidate {
                   projectExecution(
                     operation,
                     projectHopperAddressReferences(native.value),
-                    null,
+                    // Retain the target identity and completeness facts.
+                    hopperReplyJson(native.value),
                     hopperAddressReferencesReason(native.value),
                   ),
                 );

@@ -1,5 +1,8 @@
 import { permitsCapabilityFallback } from "./CapabilityFallback.js";
-import { listNamesFact } from "../domain/native/nativeOperationFacts.js";
+import {
+  listNamesFact,
+  resolveContainingProcedureFact,
+} from "../domain/native/nativeOperationFacts.js";
 import {
   selectNativeSymbol,
   type NativeSymbolCandidate,
@@ -192,6 +195,25 @@ const refusesAddressFormatOnly = (error: AnalysisError): boolean =>
       path.length === 1 && path[0] === "address" && reason === "invalid_format",
   );
 
+/** True only when the provider observes the address outside every procedure. */
+const outsideEveryProcedure = async (
+  analysis: AnalysisOperationPort,
+  address: string,
+  signal: AbortSignal | undefined,
+): Promise<boolean> => {
+  const containing = await executeFact(
+    analysis,
+    resolveContainingProcedureFact,
+    { address },
+    signal === undefined ? {} : { signal },
+  );
+  return (
+    containing.ok &&
+    !containing.value.fact.found &&
+    containing.value.fact.reason === "not_in_procedure"
+  );
+};
+
 /** Whether a failed call may be answered by resolving its name selector. */
 const symbolRetry = (
   operation: AnalysisOperation,
@@ -266,12 +288,25 @@ export const executeWithNativeSymbolSelection = async (
         )
       : first;
   if (resolution.address === retry.selector) return first;
+  // A name inside a procedure, such as an interior label, was refused by the
+  // provider's procedure lookup on purpose; only a name outside every
+  // procedure is answered by its address.
+  if (
+    retry.operation !== "xrefs" &&
+    !(await outsideEveryProcedure(analysis, resolution.address, signal))
+  )
+    return first;
   const field = retry.operation === "xrefs" ? "address" : "procedure";
   const answered = await execute({
     ...parameters,
     [field]: resolution.address,
   });
-  if (!answered.ok) return retry.operation === "xrefs" ? answered : first;
+  // A retry that fails for another reason, such as a timeout or unreadable
+  // output, reports that failure; a second lookup miss keeps the first.
+  if (!answered.ok)
+    return retry.operation !== "xrefs" && isLookupMiss(answered.error)
+      ? first
+      : answered;
   return ok({
     ...answered.value,
     limitations: [

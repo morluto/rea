@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../../../src/domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { err, type Result } from "../../../src/domain/result.js";
@@ -64,6 +67,8 @@ const ghidraShaped = (calls: Call[]): AnalysisOperationPort => ({
         return selector === "VirtualAlloc" || selector === "0x18004a168"
           ? observed(CALLERS)
           : procedureMiss(operation, String(selector));
+      case "resolve_containing_procedure":
+        return containment(String(parameters.address));
       default:
         return procedureMiss(operation, String(selector));
     }
@@ -82,6 +87,8 @@ const hopperShaped = (calls: Call[]): AnalysisOperationPort => ({
       case "list_names":
         return observed([
           { address: "0x18004a168", value: "imp_VirtualAlloc" },
+          { address: "0x401004", value: "inner" },
+          { address: "0x18009a000", value: "timeout_label" },
           { address: "0x18007d2fc", value: "VirtualAlloc" },
         ]);
       case "xrefs":
@@ -89,9 +96,14 @@ const hopperShaped = (calls: Call[]): AnalysisOperationPort => ({
           ? observed(CALL_SITES)
           : hopperMiss(operation, String(selector));
       case "procedure_callers":
-        return selector === "0x18007d2fc"
+        if (selector === "0x18009a000")
+          return err(new AnalysisCancelledError("procedure_callers"));
+        // An address inside a procedure would select that whole procedure.
+        return selector === "0x18007d2fc" || selector === "0x401004"
           ? observed(CALLERS)
           : hopperMiss(operation, String(selector));
+      case "resolve_containing_procedure":
+        return containment(String(parameters.address));
       default:
         return hopperMiss(operation, String(selector));
     }
@@ -110,6 +122,28 @@ const procedureMiss = (
         message: `Unknown Ghidra procedure name or address: ${procedure}`,
       },
     ]),
+  );
+
+const containment = (address: string) =>
+  observed(
+    address === "0x401004"
+      ? {
+          query_address: address,
+          found: true,
+          procedure: {
+            address: "0x401000",
+            name: "entry",
+            symbol: null,
+            classification: null,
+            body: { available: false, reason: "unavailable" },
+          },
+        }
+      : {
+          query_address: address,
+          found: false,
+          procedure: null,
+          reason: "not_in_procedure",
+        },
   );
 
 const hopperMiss = (
@@ -241,5 +275,29 @@ describe("one name selector resolves the same way for every native operation", (
         },
       },
     });
+  });
+
+  it("keeps the provider's refusal of a name inside a procedure instead of selecting that procedure", async () => {
+    const calls: Call[] = [];
+    expect(
+      await call(hopperShaped(calls), "procedure_callers", {
+        procedure: "inner",
+      }),
+    ).toMatchObject({
+      error: { details: { selector: { value: "inner" } } },
+    });
+    expect(
+      calls
+        .filter(({ operation }) => operation === "procedure_callers")
+        .map(({ parameters }) => parameters.procedure),
+    ).toEqual(["inner"]);
+  });
+
+  it("reports a retry's own failure rather than the earlier name refusal", async () => {
+    expect(
+      await call(hopperShaped([]), "procedure_callers", {
+        procedure: "timeout_label",
+      }),
+    ).toMatchObject({ error: { code: "cancelled" } });
   });
 });
