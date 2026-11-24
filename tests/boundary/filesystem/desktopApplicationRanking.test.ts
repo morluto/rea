@@ -152,3 +152,28 @@ it.each([
     "wxWidgets",
   ]);
 });
+
+it("reads Unix mains without relying on host executable marking", async () => {
+  const root = await createTestTempDirectory("rea-desktop-unix-main-");
+  const elf = Buffer.alloc(64);
+  elf.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
+  const macho = Buffer.alloc(64);
+  macho.writeUInt32LE(0xfeedfacf);
+  // Written without the executable bit, as on a Windows host.
+  await put(root, "game", elf);
+  await put(root, "Game.app/Contents/MacOS/Game", macho);
+  const report = await inspect(root);
+  expect(report.candidates.map(({ family }) => family)).toEqual(["native"]);
+  expect(pathsOf(report, report.candidates[0]!.basis_file_ids)).toEqual([
+    "game",
+  ]);
+  const examined = report.files
+    .filter((file) => file.read_status === "examined")
+    .map((file) => file.path)
+    .sort();
+  expect(examined).toEqual(["Game.app/Contents/MacOS/Game", "game"]);
+  expect(report.next_probes.map(({ operation }) => operation)).toEqual([
+    "inspect_binary_hardening",
+    "open_binary",
+  ]);
+});

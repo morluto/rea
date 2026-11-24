@@ -136,8 +136,10 @@ release ships: Qt (`Qt5Core.dll`, `Qt6Core.dll`, `platforms/qwindows.dll`,
 the Microsoft Visual C++ runtime (`vcruntime140.dll`, `msvcp140.dll`;
 `runtime-library`). They are file-name conventions with
 `runtime_presence: "unknown"`. A native candidate's main executables get
-`inspect_pe_imports` and `inspect_pe_resources` probes (ELF and Mach-O get
-`inspect_binary_hardening` and `open_binary`). Each Godot pack carrier, including
+`inspect_pe_imports` and `inspect_pe_resources` (resource-tree inventory) probes
+(ELF and Mach-O get `inspect_binary_hardening` and `open_binary`). Headers are
+read for host-marked executables, for `Contents/MacOS/` entries and for
+extensionless files at the root, so Unix mains are found on a Windows host too. Each Godot pack carrier, including
 an executable with a trailer pack, gets an `open_binary` probe that selects it
 for `inspect_artifact`.
 

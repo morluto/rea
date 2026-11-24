@@ -453,7 +453,7 @@ export const projectDesktopApplication = (
         probe(
           "inspect_pe_resources",
           file,
-          "Read version information, manifests and other resources this executable declares.",
+          "Inventory the resource tree this executable declares (types, names, languages, ranges and hashes); payloads other than group icons stay opaque.",
           "application",
         );
       } else {
