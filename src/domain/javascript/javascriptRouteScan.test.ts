@@ -1,3 +1,4 @@
+import { metroContext } from "../../../tests/fixtures/javascriptMetroContext.js";
 import * as t from "@babel/types";
 import { expect, it } from "vitest";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
@@ -1533,18 +1534,6 @@ it("consumes finite getter chains and owns each returned query object", () => {
   expect(facts.unresolved).toEqual([]);
 });
 
-// Metro compiles `require.context` into this getter map. Expo Router web
-// exports keep each app-relative route filename as a literal key.
-const metroContext = (keys: readonly string[]): string =>
-  `__d(function(g,r,i,a,m,e,d){const t=Object.defineProperties({},{${keys
-    .map(
-      (key, at) =>
-        `${JSON.stringify(key)}:{enumerable:!0,get(){return r(d[${String(at)}])}}`,
-    )
-    .join(
-      ",",
-    )}});function n(e){return t[e]}n.keys=function(){return Object.keys(t)},m.exports=n},512,[]);`;
-
 it("interprets Expo Router require.context keys as low-confidence file-route candidates", () => {
   const source = metroContext([
     "./(app)/_layout.tsx",
@@ -1557,7 +1546,7 @@ it("interprets Expo Router require.context keys as low-confidence file-route can
     "./api/users+api.ts",
     "./docs/[...rest].tsx",
     "./settings/index.web.jsx",
-  ]);
+  ]).replace("enumerable:!0", '["__proto__"]:null,enumerable:!0');
   const facts = analyze(source);
   expect(facts.unresolved).toEqual([]);
   expect(
@@ -1603,6 +1592,9 @@ it.each([
   metroContext(["./_layout.tsx", "about.tsx"]),
   "Object.defineProperties(target,{'./_layout.tsx':{get(){}},'./about.tsx':{get(){}}});",
   "Object.defineProperties({},{default:{get(){}},'./_layout.tsx':{get(){}}});",
+  "Object.defineProperties({},{'./_layout.tsx':{get(){}},'./about.tsx':{get(){},value:1}});",
+  "Object.defineProperties({},{'./_layout.tsx':{get(){}},'./about.tsx':{__proto__:{value:1},get(){}}});",
+  "function build(Object){ return Object.defineProperties({},{'./_layout.tsx':{get(){}},'./about.tsx':{get(){}}}); }",
 ])("does not read other defineProperties maps as route files: %s", (source) => {
   const facts = analyze(source);
   expect(facts.candidates).toEqual([]);

@@ -1,3 +1,4 @@
+import { expectResultValue } from "../../support/expectResultValue.js";
 import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -256,7 +257,7 @@ describe("Pi strict JSON parsing", () => {
     async (_description, original) => {
       const { home, client } = await piClient();
       await writeFile(client.configPath, original);
-      expect(() => parseClientConfiguration(original, "pi")).toThrow();
+      expect(parseClientConfiguration(original, "pi").ok).toBe(false);
       expect(
         await inspectClientConfiguration(client, {}, command),
       ).toMatchObject({ status: "invalid" });
@@ -338,14 +339,21 @@ describe("Pi strict JSON parsing", () => {
 
   it("keeps JSONC tolerance for other dialects while Pi rejects the same text", () => {
     const jsonc = `\uFEFF{\n  // A comment Pi rejects but OpenCode keeps.\n  "mcp": { "other": { "type": "local" }, },\n}\n`;
-    expect(parseClientConfiguration(jsonc, "opencode").servers).toEqual({
+    expect(
+      expectResultValue(parseClientConfiguration(jsonc, "opencode")).servers,
+    ).toEqual({
       other: { type: "local" },
     });
-    expect(parseClientConfiguration("", "opencode").document).toEqual({});
-    expect(parseClientConfiguration("\uFEFF", "opencode").document).toEqual({});
-    expect(() => parseClientConfiguration(jsonc, "pi")).toThrow();
-    expect(() => parseClientConfiguration("", "pi")).toThrow();
-    expect(() => parseClientConfiguration("\uFEFF", "pi")).toThrow();
+    expect(
+      expectResultValue(parseClientConfiguration("", "opencode")).document,
+    ).toEqual({});
+    expect(
+      expectResultValue(parseClientConfiguration("\uFEFF", "opencode"))
+        .document,
+    ).toEqual({});
+    expect(parseClientConfiguration(jsonc, "pi").ok).toBe(false);
+    expect(parseClientConfiguration("", "pi").ok).toBe(false);
+    expect(parseClientConfiguration("\uFEFF", "pi").ok).toBe(false);
   });
 });
 

@@ -3,7 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics.js";
+import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics/nativeExports.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { nativeExportsSchema } from "../../../src/domain/native/nativeExports.js";
 import { elfDynamicExportsImage } from "../../fixtures/binaryDiagnostics/elfDynamicExports.js";
@@ -26,9 +26,9 @@ describe("sectionless ELF export filesystem boundary", () => {
       expect(rejected).toMatchObject({
         ok: false,
         error: {
-          _tag: "AnalysisInputError",
+          _tag: "AnalysisMalformedTargetError",
           operation: "inspect_native_exports",
-          issues: [{ path: ["path"], reason: "invalid_format" }],
+          path: malformedPath,
         },
       });
 

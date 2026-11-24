@@ -50,6 +50,7 @@ export const uefiFailureDialect = (
     file: {
       path,
       description: "UEFI artifact",
+      retainCompletedIdentity: true,
       fileSize: (cause, details) =>
         new AnalysisInputError(operation, { ...details, cause }, [
           { path: ["path"], reason: "out_of_range", message: cause.message },

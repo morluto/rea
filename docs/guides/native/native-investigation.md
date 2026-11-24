@@ -101,9 +101,12 @@ its address when selecting the containing function. `search_procedures` matches
 the same names, in leaf or qualified spelling: the function appears once with
 its primary name as `value`, and `matched_aliases` lists the qualified names of
 the secondary symbols that matched.
-For Ghidra case-insensitive literal searches of procedures or strings,
-`raw_result` contains bridge candidates before REA applies Unicode-aware
-matching. Use `normalized_result` for matches; a raw candidate need not match.
+For Ghidra case-insensitive literal searches of procedures or strings, use
+`normalized_result` for matches. REA applies Unicode-aware matching to the
+bridge's candidates. When that removes a candidate or a matched secondary
+name, `raw_result` contains the bridge candidates, which need not match, and
+`limitations` says so. When it removes nothing, the candidates are the matches
+and `raw_result` is `null`; that is not missing evidence.
 Overloads can share a fully qualified name; ambiguity errors return every
 matching entry address so the caller can select the intended function directly.
 
@@ -1238,7 +1241,8 @@ complete observation.
 
 `get_objc_classes` keeps names from the provider inventory. It coalesces rows
 only when their exact selected-image pointer slots decode to the same class
-import, including its binding stream, raw library ordinal, resolved library, weak status, and addend. A literal filter is
+import, including its binding stream, library ordinal, resolved library, weak status, and addend. Weak streams use
+the implicit weak-lookup ordinal `-3` until an opcode supplies another ordinal. A literal filter is
 applied to the original names before that join; if the filter selects only an
 alias, the output keeps that exact row. `identity_coverage` distinguishes a
 complete selected-inventory scan from partial, unsupported, and unknown cases.
@@ -1633,12 +1637,11 @@ projection; these estimates are not a hard process-memory bound. Keyed-archive
 object identities always come from their original `$objects` table indices.
 Authored `objectID`, `object-id`, `archiveUID` and `id` fields remain ordinary
 object data and do not change inventory, reference, connector or hierarchy
-identity. This changes keyed-archive graph IDs that previously used authored
-`objectID` or `object-id` values: `interface_builder_object_id` and linked node
-IDs now use the decimal table UID, while the authored values remain in attributes.
-For example, an authored `objectID: "2"` on table entry 1 now identifies object
-`"1"`; its graph node ends in `object:["1"]`. Nonkeyed ibtool dictionary IDs
-and native NIBArchive IDs keep their existing source-specific meaning.
+identity: `interface_builder_object_id` and linked node IDs use the decimal
+table UID, and the authored values remain in attributes. For example, an
+authored `objectID: "2"` on table entry 1 identifies object `"1"`; its graph
+node ends in `object:["1"]`. Nonkeyed ibtool dictionary IDs and native
+NIBArchive IDs keep their source-specific meaning.
 Connector endpoints require encoded UID references to archived objects; strings
 and dictionaries that merely resemble resolved reference stubs do not establish
 identity. Inline hierarchy dictionaries have no table identity and count as
@@ -1732,6 +1735,16 @@ semantics. This query never executes or modifies target bytes.
 Exact-name xref lookup reports distinct candidate addresses as an input ambiguity;
 inventory order cannot select one silently. Duplicate rows at one address remain
 a singular match, and a missing name remains an unresolved observation.
+
+On `find_xrefs_to_name`, `limit` and the zero-based `offset` slice the
+addresses in provider order after reference lookup. Omitting both returns
+the available provider list. A page reports `observed_xrefs` before slicing
+and `total_xrefs` only when the provider confirms it did not cap the read.
+`provider_truncated` is null when the provider did not report a cap status.
+`truncated` is true when the page or provider omitted rows, false when the
+provider confirms an uncapped read and the page includes every row, and null
+when completeness remains unknown. Advancing the offset can retrieve other
+observed rows, within the available provider list.
 
 Hopper procedure names must identify a procedure entry. A non-entry symbol returns
 an input diagnostic with its coordinate and containing procedure; an explicit

@@ -16,11 +16,68 @@ import {
 /** XML 1.0 literal line endings; Unicode separators remain source characters. */
 export const XML_LINE_ENDING = /\r\n?|\n/gu;
 
+/** Match an XML element node regardless of namespace. */
+export const isXmlElement = (node: Node | null): node is Element =>
+  node !== null && node.nodeType === 1;
+
 /** Match an element in no namespace, including under an explicit empty default. */
 export const isUnqualifiedXmlElement = (node: Node | null): node is Element =>
-  node !== null &&
-  node.nodeType === 1 &&
-  (node as Element).namespaceURI === null;
+  isXmlElement(node) && node.namespaceURI === null;
+
+/** Direct child elements of `element` in document order. */
+export const xmlChildElements = (element: Element): Element[] => {
+  const children: Element[] = [];
+  for (
+    let child = element.firstChild;
+    child !== null;
+    child = child.nextSibling
+  )
+    if (isXmlElement(child)) children.push(child);
+  return children;
+};
+
+/** Direct child elements matching `local` (and optionally `namespace`, where `""` matches no namespace). */
+export const xmlChildrenNamed = (
+  element: Element,
+  local: string,
+  namespace?: string,
+): Element[] => {
+  const matches: Element[] = [];
+  for (
+    let child = element.firstChild;
+    child !== null;
+    child = child.nextSibling
+  ) {
+    if (
+      isXmlElement(child) &&
+      child.localName === local &&
+      (namespace === undefined || (child.namespaceURI ?? "") === namespace)
+    )
+      matches.push(child);
+  }
+  return matches;
+};
+
+/** First direct child element matching `local` (and optionally `namespace`, where `""` matches no namespace). */
+export const xmlFirstChildNamed = (
+  element: Element,
+  local: string,
+  namespace?: string,
+): Element | undefined => {
+  for (
+    let child = element.firstChild;
+    child !== null;
+    child = child.nextSibling
+  ) {
+    if (
+      isXmlElement(child) &&
+      child.localName === local &&
+      (namespace === undefined || (child.namespaceURI ?? "") === namespace)
+    )
+      return child;
+  }
+  return undefined;
+};
 
 const XML_FORMAT = "xml";
 

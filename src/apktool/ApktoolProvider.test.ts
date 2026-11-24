@@ -19,7 +19,7 @@ import {
   systemProcessOwnershipHost,
 } from "../process/ProcessOwnershipObservation.js";
 import { ApktoolWorkspace } from "./ApktoolWorkspace.js";
-import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
+import { createApktoolResourceAnalysisService } from "../application/ProviderOperationServices.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   apktoolRequestSchema,
@@ -183,7 +183,7 @@ it("recovers later string pages and an exhausted XML admission on the same APK",
   const apk = await apkFixture(root);
   const provider = providerOver(command);
   onTestFinished(() => provider.close());
-  const service = new ApktoolResourceAnalysisService(provider);
+  const service = createApktoolResourceAnalysisService(provider);
   const inspect = async (input: Record<string, unknown>) => {
     const outcome = await service.execute("decode_android_resources", {
       path: apk.path,
@@ -240,7 +240,7 @@ it("returns table-only facts for a single selected primary table", async () => {
   const apk = await apkFixture(root);
   const provider = providerOver(command);
   onTestFinished(() => provider.close());
-  const outcome = await new ApktoolResourceAnalysisService(provider).execute(
+  const outcome = await createApktoolResourceAnalysisService(provider).execute(
     "decode_android_resources",
     { path: apk.path, string_tables_only: true },
   );
@@ -291,7 +291,7 @@ sdkInfo:
   const original = await readFile(apk.path);
   const provider = providerOver(command);
   onTestFinished(() => provider.close());
-  const outcome = await new ApktoolResourceAnalysisService(provider).execute(
+  const outcome = await createApktoolResourceAnalysisService(provider).execute(
     "decode_android_resources",
     { path: apk.path },
   );
@@ -594,7 +594,7 @@ it("preserves primary strings and reports markup omissions in default and locali
   const apk = await apkFixture(root);
   const provider = providerOver(command);
   onTestFinished(() => provider.close());
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     provider,
   ).execute("decode_android_resources", {
     path: apk.path,
@@ -838,7 +838,7 @@ it("uses an owned APK snapshot and framework cache and resolves regional locales
     ),
   );
   const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     providerOver(command),
   ).execute("decode_android_resources", {
     path: apk.path,
@@ -877,7 +877,7 @@ it("shares one decode across default and selected locale tables", async () => {
     ),
   );
   const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     providerOver(command),
   ).execute("decode_android_resources", {
     path: apk.path,
@@ -944,7 +944,7 @@ it("reuses normalized directory table for locale aliases without extra reads", a
     ),
   );
   const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     providerOver(command),
   ).execute("decode_android_resources", {
     path: apk.path,
@@ -1007,7 +1007,7 @@ it.each([2000, 2001])(
     const apk = await apkFixture(root);
     const provider = providerOver(command);
     try {
-      const observation = await new ApktoolResourceAnalysisService(
+      const observation = await createApktoolResourceAnalysisService(
         provider,
       ).execute("decode_android_resources", {
         path: apk.path,
@@ -1050,7 +1050,7 @@ it("skips all string tables when include_strings is false despite locales reques
     ),
   );
   const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     providerOver(command),
   ).execute("decode_android_resources", {
     path: apk.path,
@@ -1083,7 +1083,7 @@ it("skips remaining tables without reading or parsing once aggregate string budg
   const bigStrings = `<resources>${Array.from({ length: 2000 }, (_, i) => `<string name="s_${String(i)}">val</string>`).join("")}</resources>`;
   await writeFile(join(root, "big-strings.xml"), bigStrings);
   const apk = await apkFixture(root);
-  const observation = await new ApktoolResourceAnalysisService(
+  const observation = await createApktoolResourceAnalysisService(
     providerOver(command),
   ).execute("decode_android_resources", {
     path: apk.path,

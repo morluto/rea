@@ -3,7 +3,7 @@ import { readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { scheduler } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
-import { createNativeInitializersService } from "../../../src/composition/binaryDiagnostics.js";
+import { createNativeInitializersService } from "../../../src/composition/binaryDiagnostics/nativeInitializers.js";
 import {
   elf64PieInitializers,
   machoInitializerSymbolKinds,
@@ -44,19 +44,16 @@ describe("native initializer stable filesystem boundary", () => {
     },
   );
 
-  it("reports non-file and malformed selections as caller input errors", async () => {
+  it("reports non-file and missing selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-native-init-files-");
     const path = join(root, "program");
     const alias = join(root, "alias");
-    const malformed = join(root, "malformed");
     await writeFile(path, elf64PieInitializers());
-    await writeFile(malformed, Buffer.from("not an executable image"));
     await symlink(path, alias);
     const service = createNativeInitializersService();
     for (const [candidate, reason] of [
       [root, "invalid_format"],
       [alias, "invalid_format"],
-      [malformed, "invalid_format"],
       [join(root, "missing"), "invalid_value"],
       [join(path, "child"), "invalid_value"],
     ] as const) {

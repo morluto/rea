@@ -42,14 +42,11 @@ import {
   ElfPointerRelocationFailure,
   type ElfVirtualPointerWrites,
 } from "../domain/native/elfPointerRelocations.js";
-import {
-  Il2cppBinaryFormatFailure,
-  IL2CPP_BINARY_BYTES,
-} from "./Il2cppBinaryFormat.js";
+import { DEFAULT_IL2CPP_NATIVE_INDEX_BYTES } from "../domain/il2cpp/il2cppMetadata.js";
+import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
 
-/** Selection failures name the binary's inputs and IL2CPP's public spellings. */
+/** Selection failures name the binary's architecture input and IL2CPP's public spellings. */
 const IL2CPP_SLICE_SELECTION_INPUT: SliceSelectionInput = {
-  pathField: "binary_path",
   architectureField: "binary_architecture",
   spelling: Object.fromEntries(
     Object.entries(IL2CPP_SLICE_SELECTORS).map(([publicName, selector]) => [
@@ -80,8 +77,9 @@ export interface WasmFunctionTable {
 
 /**
  * Select the thin image of the caller's binary: IL2CPP's `binary_architecture`
- * maps onto the shared slice selector here, once, and a selection failure
- * names `binary_architecture` or `binary_path`.
+ * maps onto the shared slice selector here, once. A refused selection names
+ * `binary_architecture`; a universal container format failure is a target
+ * refusal at the binary's own path.
  */
 export const requireIl2cppBinaryImage = (
   operation: string,
@@ -270,10 +268,14 @@ export const readIl2cppBinaryContainerCooperative = async (
   }
 };
 
-/** Open one thin image; a universal Mach-O slice is selected before this. */
+/**
+ * Open one thin image; a universal Mach-O slice is selected before this.
+ * `maximumIndexBytes` is the caller's ELF pointer index allowance.
+ */
 export function* openImageSteps(
   image: Buffer,
   preparedContainer?: BinaryContainer,
+  maximumIndexBytes: number = DEFAULT_IL2CPP_NATIVE_INDEX_BYTES,
 ): Generator<void, NativeImage> {
   if (preparedContainer === undefined && isWasmLinkInput(image))
     return yield* openWasmImageSteps(image);
@@ -301,7 +303,7 @@ export function* openImageSteps(
           mappings: container.mappings,
           zeroFills: container.zero_fills,
         },
-        IL2CPP_BINARY_BYTES,
+        maximumIndexBytes,
         { symbolResolution: "image-definitions" },
       );
   } catch (cause) {
@@ -312,6 +314,7 @@ export function* openImageSteps(
           cause.message,
           cause.failure.limit.maximum,
           cause.unit,
+          cause.failure.limit.name,
         );
       if (cause.reason !== "native-index-capacity")
         throw new Il2cppBinaryFormatFailure(cause.reason, cause.message);
@@ -338,7 +341,8 @@ export function* openImageSteps(
     // container's architecture names no CPU family this reader decodes.
     if (!selected.ok)
       throw new Il2cppBinaryFormatFailure(
-        selected.error.kind === "malformed"
+        selected.error.kind === "format" &&
+          selected.error.failure.kind !== "unsupported"
           ? "malformed-container"
           : "unsupported-container",
         selected.error.message,

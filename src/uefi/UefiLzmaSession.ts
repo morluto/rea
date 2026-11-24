@@ -37,11 +37,11 @@ import {
 } from "../resources/index.js";
 import type { UefiDecodeFormat } from "./FfsSections.js";
 import { uefiFailureDialect } from "./UefiFailures.js";
-import type { UefiDecodeResult } from "./UefiImageScan.js";
-import { UefiLzmaByteQueue } from "./UefiLzmaByteQueue.js";
+import type { UefiDecodeResult } from "./UefiScanContext.js";
 import {
-  encodeLzmaFrame,
+  encodeLzmaFrameHeader,
   LZMA_FRAME_HEADER_BYTES,
+  LzmaFrameReader,
   lzmaReplySchema,
 } from "./UefiLzmaProtocol.js";
 import { UEFI_PROVIDER_IDENTITY } from "./UefiProviderIdentity.js";
@@ -72,89 +72,44 @@ const throwIfWorkerAborted = (
 };
 
 class ActiveWorkerReader {
-  readonly #queue = new UefiLzmaByteQueue();
-  #ended = false;
-  #error: Error | undefined;
-  #waiter: (() => void) | undefined;
+  readonly #reader: LzmaFrameReader;
 
   constructor(
-    private readonly stdout: Readable,
+    stdout: Readable,
     private readonly supervisor: ProviderProcessSupervisor,
   ) {
-    stdout.on("data", this.#onData);
-    stdout.once("end", this.#onEnd);
-    stdout.once("error", this.#onError);
-  }
-
-  readonly #onData = (chunk: Buffer): void => {
-    if (!this.#queue.append(chunk)) return;
-    this.#wake();
-  };
-
-  readonly #onEnd = (): void => {
-    this.#ended = true;
-    this.#wake();
-  };
-
-  readonly #onError = (cause: Error): void => {
-    this.#error = cause;
-    this.#wake();
-  };
-
-  #wake(): void {
-    const wake = this.#waiter;
-    this.#waiter = undefined;
-    wake?.();
+    this.#reader = new LzmaFrameReader(stdout);
   }
 
   dispose(): void {
-    this.stdout.off("data", this.#onData);
-    this.stdout.off("end", this.#onEnd);
-    this.stdout.off("error", this.#onError);
-    this.#wake();
+    this.#reader.dispose();
   }
 
-  async readExact(length: number, signal: AbortSignal): Promise<Buffer> {
-    if (length === 0) return Buffer.alloc(0);
-    while (this.#queue.available < length) {
-      throwIfWorkerAborted(signal, this.supervisor.snapshot());
-      if (this.#error !== undefined) {
-        throw new OwnedCommandFailure(
+  readExact(length: number, signal: AbortSignal): Promise<Buffer> {
+    return this.#reader.readExact(length, {
+      signal,
+      onAbort: () => workerAbortFailure(signal, this.supervisor.snapshot()),
+      isClosed: () => this.supervisor.observedExit() !== undefined,
+      onError: (cause) =>
+        new OwnedCommandFailure(
           "process",
-          `LZMA worker stdout failed: ${this.#error.message}`,
+          `LZMA worker stdout failed: ${errorMessage(cause)}`,
           this.supervisor.snapshot(),
           null,
-          { processError: this.#error },
-        );
-      }
-      if (this.#ended || this.supervisor.observedExit() !== undefined) {
+          { processError: cause instanceof Error ? cause : undefined },
+        ),
+      onEof: () => {
         const snap = this.supervisor.snapshot();
         const detail = snap.stderr.text.trim();
-        throw new OwnedCommandFailure(
+        return new OwnedCommandFailure(
           "process",
           detail.length > 0
             ? `LZMA worker exited before completing reply: ${detail}`
             : "LZMA worker exited before completing reply.",
           snap,
         );
-      }
-      await new Promise<void>((resolve, reject) => {
-        const onAbort = () => {
-          this.#waiter = undefined;
-          reject(workerAbortFailure(signal, this.supervisor.snapshot()));
-        };
-        if (signal.aborted) {
-          onAbort();
-          return;
-        }
-        signal.addEventListener("abort", onAbort, { once: true });
-        this.#waiter = () => {
-          signal.removeEventListener("abort", onAbort);
-          resolve();
-        };
-      });
-    }
-    return this.#queue.read(length);
+      },
+    });
   }
 }
 
@@ -299,9 +254,11 @@ export class UefiLzmaSession {
         max_output_bytes: maxOutputBytes,
       });
       await active.stdinWriter.writeFrame(
-        encodeLzmaFrame(requestHeader, payload),
+        encodeLzmaFrameHeader(requestHeader, payload.length),
         signal,
       );
+      if (payload.length > 0)
+        await active.stdinWriter.writeFrame(payload, signal);
       const header = await active.reader.readExact(
         LZMA_FRAME_HEADER_BYTES,
         signal,

@@ -248,7 +248,7 @@ const dumpUnits = async (commands, binary) => {
 
 const inspectUnits = async (binary) => {
   const { createDwarfUnitsService } = await importVerifierSource(
-    "../src/composition/binaryDiagnostics.ts",
+    "../src/composition/binaryDiagnostics/dwarfUnits.ts",
     import.meta.url,
   );
   const service = createDwarfUnitsService();

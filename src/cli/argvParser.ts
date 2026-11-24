@@ -10,8 +10,9 @@ import {
 /**
  * REA's argv parser for one command: binds tokens to the command's
  * positionals and options, then validates them with the command's schemas.
- * Option keys are camelCase; each is spelled `--kebab-case` on the command
- * line and also accepted as `--camelCase`. A boolean option is set by its
+ * Option keys are camelCase; each is spelled only `--kebab-case` on the
+ * command line. The schema key spelling (`--camelCase`) is refused with the
+ * documented flag as its suggestion. A boolean option is set by its
  * bare flag and cleared by `--no-<flag>`; `--flag=value` and `--flag value`
  * both bind a value; an array option collects every occurrence; a short
  * alias may be stacked (`-ab`) when all but the last are booleans or
@@ -38,6 +39,15 @@ export interface CliFieldError {
  */
 export type CliArgvFailure =
   | { readonly kind: "parse"; readonly message: string }
+  | {
+      /** An option's schema key spelling, which argv does not accept. */
+      readonly kind: "flag_spelling";
+      readonly message: string;
+      /** The refused token's flag, such as `--maxRows` or `--no-dryRun`. */
+      readonly flag: string;
+      /** The documented spelling of the same flag, such as `--max-rows`. */
+      readonly documented: string;
+    }
   | { readonly kind: "surplus"; readonly message: string }
   | { readonly kind: "dry_run"; readonly message: string }
   | {
@@ -139,6 +149,23 @@ export const validateCliInputs = (
 const stringField = (issue: object, key: string): string =>
   (Reflect.get(issue, key) as string | undefined) ?? "";
 
+/** Refuse an unknown flag, naming the documented one for a schema key. */
+const unknownFlagFailure = (
+  known: ReadonlySet<string>,
+  prefix: "--" | "--no-",
+  raw: string,
+): Result<never, CliArgvFailure> => {
+  const flag = `${prefix}${raw}`;
+  if (!known.has(raw)) return parseFailure(`Unknown flag: ${flag}`);
+  const documented = `${prefix}${optionFlagName(raw)}`;
+  return err({
+    kind: "flag_spelling",
+    message: `Unknown flag: ${flag}. Did you mean ${documented}?`,
+    flag,
+    documented,
+  });
+};
+
 /** Bind and validate one command's argv. */
 export const parseCliArgv = (
   argv: readonly string[],
@@ -148,17 +175,11 @@ export const parseCliArgv = (
   const known = new Set(
     optionsSchema === undefined ? [] : Object.keys(optionsSchema.shape),
   );
-  const camelOf = new Map(
-    [...known].flatMap((name) =>
-      optionFlagName(name) === name
-        ? []
-        : [[optionFlagName(name), name] as const],
-    ),
-  );
-  const optionName = (raw: string): string | undefined => {
-    const name = camelOf.get(raw) ?? raw;
-    return known.has(name) ? name : undefined;
-  };
+  /** The documented `--flag` name for each option key. */
+  const keyOf = new Map([...known].map((name) => [optionFlagName(name), name]));
+  const optionName = (raw: string): string | undefined => keyOf.get(raw);
+  const unknownFlag = (prefix: "--" | "--no-", raw: string) =>
+    unknownFlagFailure(known, prefix, raw);
   const aliasName = new Map(
     Object.entries(alias ?? {}).map(([name, short]) => [short, name] as const),
   );
@@ -179,20 +200,21 @@ export const parseCliArgv = (
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index]!;
     if (token.startsWith("--no-") && token.length > 5) {
-      const name = optionName(token.slice(5));
-      if (name === undefined) return parseFailure(`Unknown flag: ${token}`);
+      const raw = token.slice(5);
+      const name = optionName(raw);
+      if (name === undefined) return unknownFlag("--no-", raw);
       options[name] = false;
     } else if (token.startsWith("--")) {
       const equals = token.indexOf("=");
       if (equals !== -1) {
         const raw = token.slice(2, equals);
         const name = optionName(raw);
-        if (name === undefined) return parseFailure(`Unknown flag: --${raw}`);
+        if (name === undefined) return unknownFlag("--", raw);
         set(name, token.slice(equals + 1));
         continue;
       }
       const name = optionName(token.slice(2));
-      if (name === undefined) return parseFailure(`Unknown flag: ${token}`);
+      if (name === undefined) return unknownFlag("--", token.slice(2));
       if (isCount(optionsSchema, name)) {
         options[name] = ((options[name] as number | undefined) ?? 0) + 1;
         continue;

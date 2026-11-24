@@ -6,7 +6,7 @@ import { erlangBeamFixture } from "../../../src/erlang/Beam.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("Erlang BEAM stable filesystem boundary", () => {
-  it("reports non-file and malformed BEAM selections as caller input errors", async () => {
+  it("reports non-file selections as caller input errors and malformed bytes as the target's", async () => {
     const root = await createTestTempDirectory("rea-beam-files-");
     const path = join(root, "app.beam");
     const alias = join(root, "alias.beam");
@@ -18,7 +18,6 @@ describe("Erlang BEAM stable filesystem boundary", () => {
     for (const [candidate, reason] of [
       [root, "invalid_format"],
       [alias, "invalid_format"],
-      [malformed, "invalid_format"],
       [join(root, "missing.beam"), "invalid_value"],
       [join(path, "child.beam"), "invalid_value"],
     ] as const) {
@@ -36,6 +35,18 @@ describe("Erlang BEAM stable filesystem boundary", () => {
         ],
       });
     }
+    const refused = await service.inspect({ path: malformed });
+    if (refused.ok) throw new Error("Expected malformed target refusal");
+    expect(refused.error).toMatchObject({
+      _tag: "AnalysisMalformedTargetError",
+      operation: "inspect_erlang_beam",
+      path: malformed,
+      failure: {
+        kind: "malformed",
+        format: "beam",
+        detail: "Expected a FOR1 IFF container.",
+      },
+    });
   });
 
   it("returns typed resource and cancellation failures", async () => {

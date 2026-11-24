@@ -24,7 +24,7 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { PcapProvider } from "../../../src/pcap/PcapProvider.js";
-import { PcapAnalysisService } from "../../../src/application/pcap/PcapAnalysisService.js";
+import { createPcapAnalysisService } from "../../../src/application/ProviderOperationServices.js";
 import {
   CAPINFOS_COMMAND_ENV,
   TSHARK_COMMAND_ENV,
@@ -97,7 +97,7 @@ printf '%s|%s|%s\\n' "$PCAP_TEST_PROFILE" "$PCAP_TEST_EMPTY" "\${PCAP_TEST_ABSEN
     }
     const provider = new PcapProvider({ environment });
     onTestFinished(() => provider.close());
-    const service = new PcapAnalysisService(provider);
+    const service = createPcapAnalysisService(provider);
     const first = await service.execute("inspect_pcap_client", {});
     if (!first.ok) throw first.error;
     expect(first.value.normalized_result).toMatchObject({

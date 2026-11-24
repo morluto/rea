@@ -1,6 +1,8 @@
 import { lstat } from "node:fs/promises";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import type { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { err, ok, type Result } from "../domain/result.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type { ClientRootContext } from "./ClientConfigRoots.js";
 // Type-only: the client table imports project-location owners from here.
@@ -25,6 +27,11 @@ export interface McpRegistrationLocation {
   readonly inlineConfiguration?: ClientInlineConfiguration;
 }
 
+export type McpRegistrationLocationResult = Result<
+  McpRegistrationLocation,
+  ConfigurationError | AnalysisCancelledError
+>;
+
 export const selectedPath = (
   path: string,
   context: McpRegistrationLocationContext,
@@ -42,27 +49,22 @@ export const rootContext = ({
   env: environment,
 });
 
-export const present = async (path: string): Promise<boolean> => {
+export const present = async (
+  path: string,
+): Promise<Result<boolean, ConfigurationError>> => {
   try {
     await lstat(path);
-    return true;
+    return ok(true);
   } catch (cause: unknown) {
     if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
-      return false;
-    throw new ConfigurationError(
-      `Cannot determine the registration location at ${path}. Repair its access or path before registering.`,
-      { cause },
+      return ok(false);
+    return err(
+      new ConfigurationError(
+        `Cannot determine the registration location at ${path}. Repair its access or path before registering.`,
+        { cause },
+      ),
     );
   }
-};
-
-export const firstExisting = async (
-  candidates: readonly string[],
-  fallback: string,
-): Promise<string> => {
-  for (const candidate of candidates)
-    if (await present(candidate)) return candidate;
-  return fallback;
 };
 
 /** Fixed relative target precedence used by clients with a single project document. */
@@ -70,12 +72,12 @@ export const fixedProjectLocation =
   (candidates: readonly [string, ...string[]]) =>
   async (
     context: McpRegistrationLocationContext,
-  ): Promise<McpRegistrationLocation> => {
-    const paths = candidates.map((path) => selectedPath(path, context));
-    return {
-      configPath: await firstExisting(
-        paths,
-        selectedPath(candidates[0], context),
-      ),
-    };
+  ): Promise<McpRegistrationLocationResult> => {
+    for (const candidate of candidates) {
+      const configPath = selectedPath(candidate, context);
+      const exists = await present(configPath);
+      if (!exists.ok) return exists;
+      if (exists.value) return ok({ configPath });
+    }
+    return ok({ configPath: selectedPath(candidates[0], context) });
   };
