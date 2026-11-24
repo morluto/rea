@@ -5,7 +5,10 @@ import {
 } from "./JebMcpConnectionOwner.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
-import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  withDelegatedCleanupOwner,
+} from "../domain/analysisErrorCleanup.js";
 import { z } from "zod";
 import type {
   JebAnalysisPort,
@@ -668,9 +671,7 @@ export class JebProvider implements JebAnalysisPort {
               ...(failure.limit === undefined ? {} : { limit: failure.limit }),
             })
           : cancelledBy(operation, failure, options);
-      return attributed
-        .bindCleanupDependencies([failure])
-        .bindCleanupResourceOwner(failure);
+      return withDelegatedCleanupOwner(attributed, failure);
     }
     return failure.retainDiagnostics({ endpoint: this.#selectedEndpoint });
   }

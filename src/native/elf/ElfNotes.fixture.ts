@@ -1,12 +1,5 @@
+import { write16, write32, writeWord } from "../BinaryInteger.fixture.js";
 import { deflateSync, zstdCompressSync } from "node:zlib";
-
-import type { ElfNoteByteSource } from "./ElfNoteParser.js";
-
-export const elfNoteByteSource = (bytes: Buffer): ElfNoteByteSource => ({
-  size: bytes.length,
-  prefix: bytes.subarray(0, 4096),
-  readRange: async (offset, length) => bytes.subarray(offset, offset + length),
-});
 
 const concat = (...parts: Buffer[]): Buffer => Buffer.concat(parts);
 
@@ -15,42 +8,6 @@ const alignTo = (value: number, alignment: number): number =>
 
 /** Effective namesz/descsz padding: 8 stays 8; 0, 1, 4, and other values use 4. */
 const notePadding = (declared: number): number => (declared === 8 ? 8 : 4);
-
-const writeWord = (
-  bytes: Buffer,
-  offset: number,
-  value: bigint | number,
-  bits: 32 | 64,
-  little: boolean,
-): void => {
-  if (bits === 64) {
-    if (little) bytes.writeBigUInt64LE(BigInt(value), offset);
-    else bytes.writeBigUInt64BE(BigInt(value), offset);
-    return;
-  }
-  if (little) bytes.writeUInt32LE(Number(value), offset);
-  else bytes.writeUInt32BE(Number(value), offset);
-};
-
-const write16 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeUInt16LE(value, offset);
-  else bytes.writeUInt16BE(value, offset);
-};
-
-const write32 = (
-  bytes: Buffer,
-  offset: number,
-  value: number,
-  little: boolean,
-): void => {
-  if (little) bytes.writeUInt32LE(Number(value), offset);
-  else bytes.writeUInt32BE(Number(value), offset);
-};
 
 /** Encode one ELF note, padding name/descriptor to the table alignment. */
 export const elfNote = (

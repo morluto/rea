@@ -8,12 +8,12 @@ import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { readBinaryContainer } from "../../domain/native/readBinaryContainer.js";
 import {
-  goByteSource,
   readGoFixture,
   GO_MODULE_TEXT,
   createGoBinaryFixture,
   setGoPeVirtualSize,
 } from "../../../tests/fixtures/go/image.js";
+import { bufferByteSource } from "../../domain/byteSource.js";
 
 for (const bits of [32, 64] as const) {
   it.each([
@@ -90,7 +90,7 @@ it.each([32, 64] as const)(
       setGoPeVirtualSize(fixture.bytes, 0);
 
       const container = await readPeImageFromReader(
-        goByteSource(fixture.bytes),
+        bufferByteSource(fixture.bytes, 4096),
       );
       expect(container.sections[0]).toMatchObject({
         name: ".data",
@@ -281,3 +281,103 @@ it.each([0x014c, 0x8664])(
     expect(reads.every((length) => length > 0)).toBe(true);
   },
 );
+
+/** PE32 header-only image with SizeOfHeaders covering its headers. */
+const headerOnlyPe = (): Buffer => {
+  const bytes = pe(0x014c);
+  bytes.writeUInt32LE(512, 64 + 24 + 60);
+  return bytes;
+};
+const anomalyCodes = (bytes: Buffer) =>
+  readPeImage(bytes).pe_header_anomalies.map(({ code }) => code);
+
+it("reads consistent headers without header anomalies", () => {
+  expect(readPeImage(headerOnlyPe())).toMatchObject({
+    pe_size_of_headers: 512,
+    pe_header_anomalies: [],
+  });
+});
+
+it.each([0, 96, 144])(
+  "reads fixed fields and directories at their offsets when SizeOfOptionalHeader is %i",
+  async (optionalSize) => {
+    // corkami mini.exe (0) and ddsect.exe (144): the loader reads the
+    // optional header at fixed offsets; the size only locates sections.
+    const bytes = headerOnlyPe();
+    bytes.writeUInt32LE(0x3000, 64 + 24 + 96 + 8);
+    bytes.writeUInt32LE(0x28, 64 + 24 + 96 + 12);
+    bytes.writeUInt16LE(optionalSize, 64 + 20);
+    const image = readPeImage(bytes);
+    expect(image.pe_data_directories[1]).toEqual({
+      address: 0x3000,
+      size: 0x28,
+      offset: 104,
+    });
+    expect(image.pe_header_anomalies).toEqual([
+      {
+        code: "optional_header_size_below_fields",
+        message: expect.stringContaining(
+          `SizeOfOptionalHeader ${String(optionalSize)}`,
+        ),
+      },
+    ]);
+    await expect(
+      readPeImageFromReader({
+        size: bytes.length,
+        prefix: bytes.subarray(0, 64),
+        readRange: async (offset, length) =>
+          bytes.subarray(offset, offset + length),
+      }),
+    ).resolves.toEqual(image);
+  },
+);
+
+it("reads only the 16 directories the loader reads when NumberOfRvaAndSizes is larger", () => {
+  // corkami maxvals.exe declares 0xffffffff.
+  const bytes = headerOnlyPe();
+  bytes.writeUInt32LE(0xffffffff, 64 + 24 + 92);
+  const image = readPeImage(bytes);
+  expect(image.pe_data_directories).toHaveLength(16);
+  expect(anomalyCodes(bytes)).toEqual(["directory_count_above_maximum"]);
+});
+
+it.each([
+  ["before the section table end", 44],
+  ["past the file end", 0x10000],
+])("records SizeOfHeaders %s instead of refusing", (_, sizeOfHeaders) => {
+  // corkami foldedhdr.exe (44) and maxsec_lowaligW7.exe layouts.
+  const bytes = headerOnlyPe();
+  bytes.writeUInt32LE(sizeOfHeaders, 64 + 24 + 60);
+  expect(readPeImage(bytes)).toMatchObject({
+    pe_size_of_headers: sizeOfHeaders,
+    pe_header_mapping: { size: Math.min(sizeOfHeaders, bytes.length) },
+  });
+  expect(anomalyCodes(bytes)).toEqual(["size_of_headers_inconsistent"]);
+});
+
+it("refuses mapped section bytes past the file but admits them for header-only readers", () => {
+  const bytes = headerOnlyPe();
+  bytes.writeUInt16LE(1, 64 + 6);
+  const section = 64 + 24 + 224;
+  bytes.writeUInt32LE(0x1000, section + 8);
+  bytes.writeUInt32LE(0x1000, section + 12);
+  bytes.writeUInt32LE(0x1000, section + 16);
+  bytes.writeUInt32LE(bytes.length, section + 20);
+  expect(() => readPeImage(bytes)).toThrow(
+    expect.objectContaining({ kind: "truncated" }),
+  );
+  expect(readPeImage(bytes, "headers")).toMatchObject({
+    mappings: [],
+    sections: [{ raw_size: 0x1000, file_backed: false }],
+  });
+});
+
+it("keeps an unrecognized Windows signature malformed when the DOS module is invalid", () => {
+  // pe() declares no DOS pages, so the bytes are neither a DOS module nor a
+  // PE image once e_lfanew points at "PX".
+  const bytes = headerOnlyPe();
+  bytes.write("PX\0\0", 64, "latin1");
+  expect(() => readPeImage(bytes)).toThrow(
+    expect.objectContaining({ kind: "malformed" }),
+  );
+});

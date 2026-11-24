@@ -1,3 +1,4 @@
+import { collectEntries } from "../../tests/fixtures/artifactEntries.js";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { writeFileSync } from "node:fs";
@@ -18,7 +19,6 @@ import { expect, it, vi } from "vitest";
 import * as artifactPaths from "../resources/ArtifactPaths.js";
 
 import { NodeSeaArtifactReader } from "./NodeSeaArtifactReader.js";
-import type { ArtifactEntry } from "../resources/ArtifactReader.js";
 import { artifactFormatDescriptor } from "./artifactFormats.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
@@ -38,6 +38,7 @@ import {
 } from "../native/elf/ElfNotes.fixture.js";
 import { peResourceFixture } from "../domain/pe/peResources.fixture.js";
 import { locateNodeSea } from "./nodeSea/NodeSeaLocation.js";
+import * as nodeSeaLocation from "./nodeSea/NodeSeaLocation.js";
 import { observeNodeSeaFuseMatches } from "./nodeSea/NodeSeaBlob.js";
 import { MAX_INSPECT_PE_FILE_BYTES } from "../domain/native/peResources.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
@@ -49,21 +50,16 @@ import {
 } from "../../tests/fixtures/universalMacho.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 import { classifyAndHashRootForInventory } from "./inventory/classify.js";
-import { DEFAULT_NODE_SEA_READER_LIMITS } from "../domain/artifactReaderLimits.js";
+import {
+  DEFAULT_NODE_SEA_READER_LIMITS,
+  resolveArtifactReaderLimits,
+} from "../domain/artifactReaderLimits.js";
 
 const writeCarrier = async (name: string, bytes: Buffer): Promise<string> => {
   const directory = await createTestTempDirectory("rea-node-sea-");
   const path = join(directory, name);
   await writeFile(path, bytes);
   return path;
-};
-
-const seaEntries = async (
-  reader: NodeSeaArtifactReader,
-): Promise<ArtifactEntry[]> => {
-  const entries: ArtifactEntry[] = [];
-  for await (const entry of reader.entries()) entries.push(entry);
-  return entries;
 };
 
 const script = 'console.log("rea-node-sea")\n';
@@ -105,7 +101,7 @@ it("rechecks a lower SEA policy instead of reusing an earlier admitted decode", 
         argument_count: 1,
       });
       try {
-        await expect(seaEntries(refused)).rejects.toMatchObject({
+        await expect(collectEntries(refused)).rejects.toMatchObject({
           reason: "limit",
           readerLimit: {
             parameter: "artifact_limits.node_sea.argument_count",
@@ -121,7 +117,7 @@ it("rechecks a lower SEA policy instead of reusing an earlier admitted decode", 
         argument_count: 2,
       });
       try {
-        await seaEntries(recovered);
+        await collectEntries(recovered);
         expect(recovered.formatMetadata()?.exec_argv).toEqual(["one", "two"]);
       } finally {
         await recovered.close();
@@ -171,7 +167,7 @@ it("applies selected aggregate work before yielding SEA members", async () => {
     9,
   );
   try {
-    await expect(seaEntries(refused)).rejects.toMatchObject({
+    await expect(collectEntries(refused)).rejects.toMatchObject({
       reason: "limit",
       readerLimit: {
         parameter: "artifact_limits.expanded_bytes",
@@ -189,7 +185,7 @@ it("applies selected aggregate work before yielding SEA members", async () => {
     10,
   );
   try {
-    expect(await seaEntries(recovered)).toHaveLength(2);
+    expect(await collectEntries(recovered)).toHaveLength(2);
   } finally {
     await recovered.close();
   }
@@ -639,7 +635,7 @@ it("locates a SEA resource past a distant DOS stub", async () => {
   const path = await writeCarrier("distant-pe", image);
   const reader = new NodeSeaArtifactReader(path);
   try {
-    const entries = await seaEntries(reader);
+    const entries = await collectEntries(reader);
     expect(entries.map(({ path: member }) => member)).toContain("app/main.js");
   } finally {
     await reader.close();
@@ -777,38 +773,125 @@ it("leaves a non-SEA PE with a cyclic resource tree to native classification", a
   expect(inventory.manifest.root_format).not.toBe("node-sea");
 });
 
-it("fails closed when the located blob is truncated, has a bad magic, or unknown flags", async () => {
-  await expect(
-    scanCanonicalArtifactInventory(
-      await writeCarrier(
-        "truncated",
-        nodeSeaElf({ blob: Buffer.from([0x20, 0xda, 0x43]) }),
-      ),
-    ),
-  ).rejects.toMatchObject({
-    reason: "format",
-    message: expect.stringMatching(/Node SEA.*truncated/iu),
-  });
-  await expect(
-    scanCanonicalArtifactInventory(
-      await writeCarrier("bad-magic", nodeSeaMachO({ blob: Buffer.alloc(16) })),
-    ),
-  ).rejects.toMatchObject({
-    reason: "format",
-    message: expect.stringMatching(/magic.*not.*0x143da20/iu),
-  });
+it("isolates malformed located SEA blobs to outer native inventory while direct reader fails closed", async () => {
   const unknown = Buffer.alloc(9);
   unknown.writeUInt32LE(NODE_SEA_FIXTURE_MAGIC, 0);
   unknown.writeUInt32LE(1 << 5, 4);
   unknown[8] = 1;
-  await expect(
-    scanCanonicalArtifactInventory(
-      await writeCarrier("unknown-flags", nodeSeaPe({ blob: unknown })),
-    ),
-  ).rejects.toMatchObject({
-    reason: "format",
-    message: expect.stringMatching(/flags.*unknown bits/iu),
+  const trailing = Buffer.concat([buildNodeSeaBlob(), Buffer.from([1])]);
+  const cases = [
+    {
+      name: "truncated",
+      bytes: nodeSeaElf({ blob: Buffer.from([0x20, 0xda, 0x43]) }),
+      outerFormat: "elf" as const,
+      pattern: /Node SEA.*truncated/iu,
+    },
+    {
+      name: "bad-magic",
+      bytes: nodeSeaMachO({ blob: Buffer.alloc(16) }),
+      outerFormat: "mach-o" as const,
+      pattern: /magic.*not.*0x143da20/iu,
+    },
+    {
+      name: "unknown-flags",
+      bytes: nodeSeaPe({ blob: unknown }),
+      outerFormat: "pe" as const,
+      pattern: /flags.*unknown bits/iu,
+    },
+    {
+      name: "trailing-bytes",
+      bytes: nodeSeaElf({ blob: trailing }),
+      outerFormat: "elf" as const,
+      pattern: /trailing bytes/iu,
+    },
+  ];
+  for (const item of cases) {
+    const path = await writeCarrier(item.name, item.bytes);
+    const snapshot = await scanCanonicalArtifactInventory(path);
+    expect(snapshot.manifest.root_format).toBe(item.outerFormat);
+    expect(snapshot.manifest.root_sha256).toMatch(/^[0-9a-f]{64}$/u);
+    expect(snapshot.coverage.status).toBe("unknown");
+    expect(snapshot.limitations).toContainEqual(
+      expect.stringMatching(/Node SEA recognition remains unknown/iu),
+    );
+    expect(snapshot.limitations).toContainEqual(
+      expect.stringMatching(item.pattern),
+    );
+    const reader = new NodeSeaArtifactReader(path);
+    try {
+      await expect(collectEntries(reader)).rejects.toMatchObject({
+        reason: "format",
+        message: expect.stringMatching(item.pattern),
+      });
+    } finally {
+      await reader.close();
+    }
+  }
+});
+
+it.each([
+  ["elf", nodeSeaElf(populated)],
+  ["pe", nodeSeaPe(populated)],
+] as const)(
+  "falls back to outer %s inventory with recognition limitation when SEA blob exceeds blob_bytes",
+  async (outerFormat, bytes) => {
+    const path = await writeCarrier(`sea-blob-limit-${outerFormat}`, bytes);
+    const readerLimits = resolveArtifactReaderLimits({
+      node_sea: { blob_bytes: 1 },
+    });
+    const snapshot = await scanCanonicalArtifactInventory(path, {
+      readerLimits,
+    });
+    expect(snapshot.manifest.root_format).toBe(outerFormat);
+    expect(snapshot.manifest.root_sha256).toMatch(/^[0-9a-f]{64}$/u);
+    expect(snapshot.coverage.status).toBe("unknown");
+    expect(snapshot.limitations).toContainEqual(
+      expect.stringMatching(/Node SEA recognition remains unknown/iu),
+    );
+    const reader = new NodeSeaArtifactReader(
+      path,
+      undefined,
+      readerLimits.node_sea,
+    );
+    try {
+      await expect(collectEntries(reader)).rejects.toMatchObject({
+        reason: "limit",
+        readerLimit: {
+          parameter: "artifact_limits.node_sea.blob_bytes",
+          effective_value: 1,
+        },
+      });
+    } finally {
+      await reader.close();
+    }
+  },
+);
+
+it("propagates I/O and cancellation failures from readNodeSeaBlob during root classification", async () => {
+  const path = await writeCarrier("sea-read-failure", nodeSeaElf(populated));
+  const ioError = Object.assign(new Error("injected SEA blob EIO"), {
+    code: "EIO",
   });
+  const spy = vi
+    .spyOn(nodeSeaLocation, "readNodeSeaBlob")
+    .mockRejectedValueOnce(ioError);
+  try {
+    await expect(scanCanonicalArtifactInventory(path)).rejects.toBe(ioError);
+    const controller = new AbortController();
+    const cancelReason = new Error("cancel SEA blob read");
+    spy.mockImplementationOnce(async (source, location, signal, limits) => {
+      controller.abort(cancelReason);
+      return nodeSeaLocation.readNodeSeaBlob(source, location, signal, limits);
+    });
+    await expect(
+      scanCanonicalArtifactInventory(path, { signal: controller.signal }),
+    ).rejects.toMatchObject({
+      reason: "cancelled",
+      cause: cancelReason,
+    });
+  } finally {
+    spy.mockRestore();
+  }
 });
 
 it("fails closed when two different blobs are declared", async () => {

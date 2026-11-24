@@ -5,7 +5,6 @@ import type {
 import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
 import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
-import type { NativeByteSource } from "../domain/native/nativeSectionDirectory.js";
 import { readBinaryContainerFromReader } from "../domain/native/readBinaryContainer.js";
 import type {
   RustAuditableMetadata,
@@ -26,6 +25,7 @@ import {
   hasWasmPreamble,
   readRustWasmSectionsFromReader,
 } from "./RustWasmImage.js";
+import { readByteSourceSlice, type ByteSource } from "../domain/byteSource.js";
 
 const RUSTC_PREFIX = Buffer.from("/rustc/");
 const HASH_BYTES = 40;
@@ -66,22 +66,9 @@ interface RustImageLayout extends Pick<
   readonly compiler_strings: readonly FileSpan[];
 }
 
-const readSlice = (
-  source: NativeByteSource,
-  offset: number,
-  length: number,
-): Promise<Buffer> => {
-  if (length <= 0 || offset >= source.size)
-    return Promise.resolve(Buffer.alloc(0));
-  const clamped = Math.min(length, source.size - offset);
-  if (source.prefix !== undefined && offset + clamped <= source.prefix.length)
-    return Promise.resolve(source.prefix.subarray(offset, offset + clamped));
-  return source.readRange(offset, clamped);
-};
-
 /** Stream Rust dependency and compiler-path inspection over a range reader. */
 export const readRustBinaryImageFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   maxRustcHashes: number | undefined,
   maxOutputBytes: number | undefined,
   pause: ZstandardFramePause,
@@ -89,7 +76,11 @@ export const readRustBinaryImageFromHandle = async (
   const effectiveMaxHashes = maxRustcHashes ?? DEFAULT_RUSTC_HASH_LIMIT;
   const effectiveMaxOutputBytes =
     maxOutputBytes ?? RUST_PRODUCER_DEFAULTS.output_bytes;
-  const preamble = await readSlice(source, 0, Math.min(source.size, 8));
+  const preamble = await readByteSourceSlice(
+    source,
+    0,
+    Math.min(source.size, 8),
+  );
   const layout: RustImageLayout = hasWasmPreamble(preamble)
     ? await wasmLayoutFromReader(source, pause)
     : nativeLayoutFromContainer(
@@ -106,7 +97,7 @@ export const readRustBinaryImageFromHandle = async (
       : await readAuditableSectionFromReader(
           section_name,
           dependency,
-          (offset, length) => readSlice(source, offset, length),
+          (offset, length) => readByteSourceSlice(source, offset, length),
           pause,
           {
             maxOutputBytes: effectiveMaxOutputBytes,
@@ -128,7 +119,7 @@ export const readRustBinaryImageFromHandle = async (
 };
 
 const wasmLayoutFromReader = async (
-  source: NativeByteSource,
+  source: ByteSource,
   pause: ZstandardFramePause,
 ): Promise<RustImageLayout> => {
   const { dependency_sections, data_section } =
@@ -146,7 +137,7 @@ const wasmLayoutFromReader = async (
 };
 
 const rustcCommitFromReader = async (
-  source: NativeByteSource,
+  source: ByteSource,
   spans: readonly FileSpan[],
   maxHashes: number,
   maxOutputBytes: number,
@@ -165,7 +156,7 @@ const rustcCommitFromReader = async (
     while (cursor < range.end && retention.reason === undefined) {
       if (cursor > range.offset) await pause();
       const length = Math.min(RUSTC_SCAN_WINDOW_BYTES, range.end - cursor);
-      const chunk = await readSlice(source, cursor, length);
+      const chunk = await readByteSourceSlice(source, cursor, length);
       collectHashesInChunk(chunk, cursor, retention);
       if (cursor + length >= range.end) break;
       cursor += length - RUSTC_SCAN_OVERLAP_BYTES;
