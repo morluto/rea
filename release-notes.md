@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **errors:** inspect_managed_artifact, inspect_managed_members, inspect_managed_native_boundaries, compare_managed_members, inspect_il2cpp_metadata, inspect_go_binary, inspect_rust_binary, inspect_dwarf_units and inspect_native_initializers report corrupt or truncated target bytes as code unsupported_target with details.path, format, format_failure and reason instead of invalid_request with an invalid_format issue. IL2CPP link conflicts list both path and binary_path with reason invalid_value instead of one invalid_format binary_path issue.
 * **errors:** callers that parse `code` see unsupported_target instead of invalid_request for malformed or truncated bytes from inspect_erlang_beam and from the inspect_pe_certificates certificate table body. Truncated reads of a file that changed during inspect_kernel_module, inspect_kernel_build_config and inspect_elf_unwind_ranges now report artifact_changed. inspect_artifact malformed and truncated refusals gain details.format_failure and details.format. Existing fields are unchanged.
 * **cli:** camelCase option spellings such as `--maxRows` or `--dryRun` are refused; use the kebab-case flag that `--help` lists.
 * **pwntools:** for a request-sourced pwntools input ceiling, details.limit is now a control_kind "parameter" limit instead of a setting limit carrying setting, source, update_mode and scope fields.
@@ -183,6 +184,7 @@
 * **environment:** release terminal state response readers ([#13830](https://github.com/morluto/rea/issues/13830)) ([89ecf87](https://github.com/morluto/rea/commit/89ecf87810f2db473c0b3de443604cf350d56d75))
 * **erlang:** require complete positional BEAM reads ([#14045](https://github.com/morluto/rea/issues/14045)) ([2e47bc0](https://github.com/morluto/rea/commit/2e47bc09f357cf6e5bcc6c93f39e4972bd79192e))
 * **erlang:** retain verified BEAM reports through descriptor finalization ([#14062](https://github.com/morluto/rea/issues/14062)) ([2e98c70](https://github.com/morluto/rea/commit/2e98c70c911f5062bad2e3045e557f90cf886d54))
+* **errors:** refuse corrupt managed, IL2CPP and universal Mach-O bytes as a malformed target ([#14224](https://github.com/morluto/rea/issues/14224)) ([57f4e3c](https://github.com/morluto/rea/commit/57f4e3c4bd7577336f344f5ec5b14a5ea0c9ce6b))
 * **errors:** refuse malformed target bytes as a target, not invalid input ([#14195](https://github.com/morluto/rea/issues/14195)) ([89c1dd3](https://github.com/morluto/rea/commit/89c1dd3c327617275a0792a78a68a043f1a37533))
 * **errors:** split reader path refusals from malformed target bytes ([#14225](https://github.com/morluto/rea/issues/14225)) ([1a43f56](https://github.com/morluto/rea/commit/1a43f56354bcda71cc6a0e7ace27d48680073505))
 * **evidence:** bound omitted validation issue locations ([#13309](https://github.com/morluto/rea/issues/13309)) ([4485912](https://github.com/morluto/rea/commit/4485912fd83b64834cc88e5af9bcd7febe2baae8))
