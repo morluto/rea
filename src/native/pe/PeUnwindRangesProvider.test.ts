@@ -15,6 +15,7 @@ import {
   type PeUnwindFixtureOptions,
 } from "./PeUnwindRanges.fixture.js";
 import { PeUnwindRangesProvider } from "./PeUnwindRangesProvider.js";
+import { createPeUnwindRangesService } from "../../composition/binaryDiagnostics/peUnwindRanges.js";
 
 const inspect = async (
   options: PeUnwindFixtureOptions,
@@ -179,6 +180,30 @@ describe("x64 PE exception directory", () => {
       primary_index: null,
       issues: ["unsorted", "chain_parent_missing"],
     });
+  });
+});
+
+describe("x64 PE exception directory service failures", () => {
+  it("returns typed resource and cancellation failures", async () => {
+    const path = join(
+      await createTestTempDirectory("rea-pe-unwind-budget-"),
+      "app.exe",
+    );
+    await writeFile(path, peUnwindImage(CHAINED_IMAGE));
+    const service = createPeUnwindRangesService();
+    try {
+      const tooSmall = await service.inspect({ path, max_file_bytes: 64 });
+      if (tooSmall.ok) throw new Error("Expected resource budget failure");
+      expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
+      const cancelled = await service.inspect(
+        { path },
+        { signal: AbortSignal.abort() },
+      );
+      if (cancelled.ok) throw new Error("Expected cancellation");
+      expect(cancelled.error._tag).toBe("AnalysisCancelledError");
+    } finally {
+      await service.close();
+    }
   });
 });
 
