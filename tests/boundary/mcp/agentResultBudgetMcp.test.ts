@@ -429,11 +429,15 @@ it("delivers the same over-budget summary through CLI publication, with complete
   expect(parseEvidence(await publish("complete")).evidence_id).toBe(
     complete.evidence_id,
   );
-  // The invocation's captured seed, not the ambient process, raises it.
-  const seeded = await withCliEvidencePublication(() => publish(undefined), {
-    agentBudgetSeed: String(16 * 1024 * 1024),
+  // The invocation's captured seed, a valid value below the result size,
+  // decides the budget.
+  const seeded = (await withCliEvidencePublication(() => publish(undefined), {
+    agentBudgetSeed: "8192",
+  })) as { readonly delivery: Delivery & { readonly budget_source: string } };
+  expect(seeded.delivery).toMatchObject({
+    budget_bytes: 8192,
+    budget_source: "setting",
   });
-  expect(parseEvidence(seeded).evidence_id).toBe(complete.evidence_id);
 
   const bundle = join(
     await createTestTempDirectory("rea-agent-budget-bundle-"),

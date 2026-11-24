@@ -8,7 +8,13 @@ import { EvidenceLedger } from "../application/investigation/EvidenceLedger.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics/byteEntropy.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import { AGENT_RESULT_BUDGET_ENVIRONMENT } from "../domain/agentResultBudget.js";
-import { DEFAULT_AGENT_RESULT_BUDGET_BYTES } from "../domain/analysisResourceLimits.js";
+import {
+  DEFAULT_AGENT_RESULT_BUDGET_BYTES,
+  MAXIMUM_AGENT_RESULT_BUDGET_BYTES,
+} from "../domain/analysisResourceLimits.js";
+
+/** In range, and far below the complete entropy Evidence. */
+const VALID_SEED_BYTES = 8192;
 import type { Evidence } from "../domain/evidence.js";
 import { McpToolRequest, runMcpToolRequest } from "./McpToolRequest.js";
 import {
@@ -118,13 +124,29 @@ it("reads the budget seed from the environment the server captured, not the proc
         64 * 1024 * 1024,
         undefined,
         undefined,
-        String(16 * 1024 * 1024),
+        // A valid seed below the result size, so the seed itself decides.
+        String(VALID_SEED_BYTES),
       ),
       evidence,
       new EvidenceLedger(),
     );
-    expect(seeded._meta?.[AGENT_BUDGET_DELIVERY_META]).toBeUndefined();
-    expect((seeded.structuredContent as Evidence).operation).toBe(
+    expect(seeded._meta?.[AGENT_BUDGET_DELIVERY_META]).toMatchObject({
+      budget_bytes: VALID_SEED_BYTES,
+      budget_source: "setting",
+    });
+    // An out-of-range seed is rejected rather than defaulted: unbudgeted.
+    const invalid = deliver(
+      new ToolResultDelivery(
+        64 * 1024 * 1024,
+        undefined,
+        undefined,
+        String(MAXIMUM_AGENT_RESULT_BUDGET_BYTES + 1),
+      ),
+      evidence,
+      new EvidenceLedger(),
+    );
+    expect(invalid._meta?.[AGENT_BUDGET_DELIVERY_META]).toBeUndefined();
+    expect((invalid.structuredContent as Evidence).operation).toBe(
       "inspect_byte_entropy",
     );
   } finally {
