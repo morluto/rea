@@ -71,11 +71,14 @@ const diagnosticSummary = (
     if (kept.length < DIAGNOSTIC_PREVIEW_ROWS)
       kept.push({ json_pointer, severity, source_range });
   }
-  const preview = [...errors, ...others].slice(0, DIAGNOSTIC_PREVIEW_ROWS);
+  const { items: preview } = boundedList(
+    [...errors, ...others],
+    DIAGNOSTIC_PREVIEW_ROWS,
+  );
   return {
     total: diagnostics.length,
     error_count: errorCount,
-    preview,
+    preview: [...preview],
     preview_omitted: diagnostics.length - preview.length,
   };
 };
