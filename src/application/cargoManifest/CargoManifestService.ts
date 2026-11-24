@@ -12,6 +12,7 @@ import type {
   AnalysisError,
   AnalysisErrorOptions,
 } from "../../domain/analysisErrorBase.js";
+import type { AnalysisParameterLimit } from "../../domain/analysisSettings.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
@@ -93,6 +94,21 @@ const decodeManifest = (
 };
 
 /**
+ * The caller's `max_file_bytes` control, reported beside the refusal so the
+ * recovery names the value that admitted or refused this read.
+ */
+const inputAllowanceLimit = (maxFileBytes: number): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter: "max_file_bytes",
+  effective_value: maxFileBytes,
+  unit: "bytes",
+  minimum: 1,
+  maximum: CARGO_MANIFEST_MAX_FILE_BYTES,
+  default_value: CARGO_MANIFEST_MAX_FILE_BYTES,
+  applies_at: "next_call",
+});
+
+/**
  * A refusal names the value that admitted or refused this read. The 32 MiB
  * release maximum is not a ceiling the caller can raise, so it is only
  * reported when that is the value that refused the file; a smaller
@@ -112,7 +128,7 @@ const manifestFileSizeRefusal = (
           limit: CARGO_MANIFEST_MAX_FILE_BYTES,
           unit: "bytes",
         }).fixedAllowance,
-        details,
+        { ...details, limit: inputAllowanceLimit(maxFileBytes) },
       )
     : parseLimitConstraint(
         operation,
@@ -129,6 +145,7 @@ const manifestFileSizeRefusal = (
             maximum_file_bytes: CARGO_MANIFEST_MAX_FILE_BYTES,
           },
           retryable: false,
+          limit: inputAllowanceLimit(maxFileBytes),
           remediationAction: `Raise max_file_bytes above ${String(maxFileBytes)} bytes, up to the ${String(CARGO_MANIFEST_MAX_FILE_BYTES)}-byte release maximum, or select a smaller manifest.`,
         },
       );

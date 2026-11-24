@@ -615,5 +615,19 @@
       "issue": 14237,
       "reason": "SQLite worker diagnostic capture is a producer budget."
     }
+  },
+  "src/application/cargoManifest/CargoManifestService.ts": {
+    "\"The Cargo manifest input allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "The Cargo manifest input allowance bounds bytes read, a resource policy; max_file_bytes below the 32 MiB release maximum is the caller's control."
+    }
+  },
+  "src/domain/cargoManifest/parseCargoManifest.ts": {
+    "\"The Cargo manifest retained-facts allowance\"": {
+      "class": "pending",
+      "issue": 14236,
+      "reason": "The Cargo manifest retained-facts allowance bounds bytes retained by the offline parser, a resource policy without a per-call control."
+    }
   }
 }
