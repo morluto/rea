@@ -79,10 +79,8 @@ it("retains transitive provenance without treating dependencies as native observ
     nativeFunctionMatchingSchema.parse(result.value.evidence.normalized_result)
       .summary.matched,
   ).toBe(1);
-  const missing = await matchNativeFunctions(
-    { left, right },
-    undefined,
-    (id) => (id === dependency.evidence_id ? dependency : undefined),
+  const missing = await matchNativeFunctions({ left, right }, undefined, (id) =>
+    id === dependency.evidence_id ? dependency : undefined,
   );
   if (missing.ok) throw new Error("Missing ancestor accepted");
   expect(missing.error).toMatchObject({

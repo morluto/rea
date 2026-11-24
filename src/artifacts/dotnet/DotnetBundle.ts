@@ -68,9 +68,10 @@ export const findDotnetBundleHeader = async (
       ).word(index - 8, 64);
       // HostWriter.IsBundle uses the first apphost marker. Later markers may
       // belong to embedded native apphosts, whose coordinates are not this host's.
-      if (offset === 0n) return null;
-      if (offset > BigInt(size - 12))
-        fail(".NET bundle header is outside the host file");
+      // An offset outside the host file cannot name a bundle header here, so treat
+      // the carrier as not holding a .NET bundle rather than aborting outer native
+      // classification.
+      if (offset === 0n || size < 12 || offset > BigInt(size - 12)) return null;
       return Number(offset);
     }
     return undefined;

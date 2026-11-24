@@ -1,4 +1,5 @@
 import { displayedEvidenceSubject } from "../../tests/fixtures/evidenceSubject.js";
+import { rawLoadAtEntry } from "./rawBinary.fixture.js";
 import { unknownTarget } from "./targetIdentity.js";
 import { fc, it } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
@@ -49,8 +50,7 @@ describe("subject target identity", () => {
     format: "raw-binary",
     architecture: "arm",
     availableArchitectures: ["arm"],
-    entryPoint,
-    entryPointSource: "caller",
+    rawLoad: rawLoadAtEntry(entryPoint),
   });
   const observe = (target: BinaryTarget) =>
     createEvidence(target, PROVIDER, {

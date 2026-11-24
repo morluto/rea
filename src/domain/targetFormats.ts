@@ -23,6 +23,10 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   unityfs: "archive",
   wxapkg: "archive",
   axml: "archive",
+  dds: "archive",
+  glb: "archive",
+  ktx: "archive",
+  ktx2: "archive",
   uimage: "archive",
   "android-boot-image": "archive",
   "android-ota-payload": "archive",
@@ -39,6 +43,10 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   plist: "artifact",
   javascript: "artifact",
   uefi: "artifact",
+  sqlite: "artifact",
+  "windows-shortcut": "artifact",
+  "python-pyc": "artifact",
+  devicetree: "artifact",
   "source-map": "artifact",
 } as const;
 

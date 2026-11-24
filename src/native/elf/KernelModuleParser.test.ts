@@ -290,7 +290,10 @@ it("hashes the entire appended signature through bounded source reads", async ()
       artifact,
       input,
     ),
-  ).rejects.toMatchObject({ reason: "format" });
+  ).rejects.toMatchObject({
+    reason: "integrity",
+    integrityCheck: "read-coverage",
+  });
 });
 
 it("reports an inconsistent signature length without a PKCS#7 range", async () => {

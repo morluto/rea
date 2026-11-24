@@ -40,7 +40,7 @@ export const registerApiContractCommand = (
         },
         operations_path: {
           description:
-            "Local operation/fragment document, only with --contractFormat graphql-sdl",
+            "Local operation/fragment document, only with --contract-format graphql-sdl",
         },
         view: {
           description:

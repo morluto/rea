@@ -132,6 +132,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [iNES containers](ines-containers.md)
 - [WeChat mini-program wxapkg archives](wxapkg.md)
 - [Android binary XML (AXML)](axml.md)
+- [GPU asset headers: DDS, GLB, KTX and KTX2](gpu-asset-headers.md)
 
 ## WebAssembly
 

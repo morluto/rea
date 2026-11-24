@@ -19,7 +19,6 @@ import {
 import {
   readElfDirectoryFromBuffer,
   readElfDirectoryFromReader,
-  type NativeByteSource,
   type NativeSection,
 } from "./nativeSectionDirectory.js";
 import type { ZstandardFramePause } from "../compression/zstandardExactFrame.js";
@@ -48,6 +47,9 @@ import {
   type ElfExportTableSelection,
   type ElfExportTables,
 } from "./elfDynamicExportTables.js";
+import type { ByteSource } from "../byteSource.js";
+import { peDirectorySizeAnomaly } from "./peHeaderAnomalies.js";
+import { peImageBaseHex } from "./peAddressSpace.js";
 
 type Artifact = NativeExports["artifact"];
 
@@ -556,7 +558,7 @@ const finishExports = (
 
 const CSTRING_WINDOW_BYTES = 4096;
 
-const createSourceReaders = (source: NativeByteSource) => {
+const createSourceReaders = (source: ByteSource) => {
   const readRange = (offset: number, length: number): Promise<Buffer> => {
     if (offset < 0 || length <= 0 || offset >= source.size)
       return Promise.resolve(Buffer.alloc(0));
@@ -640,11 +642,14 @@ function* parsePeExportSteps(
 ): Generator<PeExportRead | undefined, NativeExports, Buffer | undefined> {
   const base = image.image_base ?? 0n;
   const directory = image.pe_data_directories?.[PE_EXPORT_DIRECTORY];
+  const headerAnomalies = [...image.pe_header_anomalies];
   const result = {
     artifact,
     format: "pe" as const,
     architecture: image.architecture,
     bits: image.bits,
+    image_base: peImageBaseHex(base),
+    header_anomalies: headerAnomalies,
   };
   if (directory === undefined || directory.address === 0)
     return {
@@ -658,10 +663,16 @@ function* parsePeExportSteps(
         ...PE_LIMITATIONS,
       ],
     };
+  // The loader reads the export directory at its RVA and uses Size only to
+  // bound forwarder strings, so a short Size leaves the table readable.
   if (directory.size < PE_EXPORT_DIRECTORY_BYTES)
-    throw new BinaryFormatFailure(
-      "malformed",
-      `PE export directory declares ${String(directory.size)} bytes, below the ${String(PE_EXPORT_DIRECTORY_BYTES)}-byte table`,
+    headerAnomalies.push(
+      peDirectorySizeAnomaly(
+        "export",
+        PE_EXPORT_DIRECTORY,
+        directory.size,
+        PE_EXPORT_DIRECTORY_BYTES,
+      ),
     );
   const mappingIndex = createFileMappingIndex(
     peDeclaredFileMappings(image),
@@ -810,11 +821,11 @@ function* parsePeExportSteps(
     if (exportNames !== undefined)
       for (const name of exportNames) {
         retain.row(target.forwarder);
-        exports.push({ name, ordinal, ...target });
+        exports.push({ name, ordinal, rva, ...target });
       }
     else if (!namedFunctions.has(index)) {
       retain.row(target.forwarder);
-      exports.push({ name: null, ordinal, ...target });
+      exports.push({ name: null, ordinal, rva, ...target });
     }
   }
   return {
@@ -862,7 +873,7 @@ function* parsePeExports(
 }
 
 const parsePeExportsFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   artifact: Artifact,
   pause: ZstandardFramePause,
 ): Promise<NativeExports> => {
@@ -1344,7 +1355,7 @@ function* readElfSectionExportTableSteps(
 }
 
 const parseElfExportsFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   artifact: Artifact,
   pause: ZstandardFramePause,
 ): Promise<Extract<NativeExports, { format: "elf" }>> => {
@@ -1405,7 +1416,7 @@ const parseElfExportsFromHandle = async (
 
 /** Same PE/ELF export inspection over a random-access handle without buffering the full image. */
 export const parseNativeExportsFromHandle = async (
-  source: NativeByteSource,
+  source: ByteSource,
   artifact: Artifact,
   pause: ZstandardFramePause,
 ): Promise<NativeExports> => {

@@ -28,9 +28,9 @@ import {
   RizinProcessExitError,
   waitForCommandFrames,
   waitForFrame,
-  waitForTurn,
   type RizinFrame,
 } from "./RizinDebugFrames.js";
+import { waitForCommandTurn } from "../process/AbortablePromise.js";
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { randomUUID } from "node:crypto";
 import { open, readlink, realpath, stat } from "node:fs/promises";
@@ -724,7 +724,7 @@ export class RizinDebugSessionManager {
       release = resolve;
     });
     try {
-      await waitForTurn(previous, signal);
+      await waitForCommandTurn(previous, signal, "rizin_debug_command");
       acquired = true;
       if (signal?.aborted)
         return err(cancelledBy("rizin_debug_command", signal));

@@ -1,9 +1,11 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { minVersion, subset } from "semver";
 import { parse } from "yaml";
 import { z } from "zod";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { executeWorkflowFixture } from "../../support/workflowGit.js";
 
 const workflow = async (filename = "ci.yml") =>
@@ -97,15 +99,65 @@ it("opts only the Noble binary-layout toolchain into the Ubuntu Azure archive fa
 });
 
 const recordedCrashRefresh = "refresh --kill-after=5s 150s";
+const recordedCrashNobleRefresh = "refresh --kill-after=5s 75s";
 const recordedCrashDownload = "download --kill-after=5s 180s";
 
 it.skipIf(process.platform === "win32").each([
-  ["ok", 0, [recordedCrashRefresh, recordedCrashDownload, "install untimed"]],
-  ["refresh", 100, [recordedCrashRefresh]],
-  ["download", 124, [recordedCrashRefresh, recordedCrashDownload]],
+  [
+    "ok",
+    "debian",
+    0,
+    [recordedCrashRefresh, recordedCrashDownload, "install untimed"],
+  ],
+  ["refresh", "debian", 100, [recordedCrashRefresh]],
+  ["download", "debian", 124, [recordedCrashRefresh, recordedCrashDownload]],
+  [
+    "noble-fallback",
+    "noble",
+    0,
+    [
+      recordedCrashNobleRefresh,
+      recordedCrashNobleRefresh,
+      recordedCrashDownload,
+      "install untimed",
+    ],
+  ],
+  [
+    "noble-refresh-fail",
+    "noble",
+    124,
+    [recordedCrashNobleRefresh, recordedCrashNobleRefresh],
+  ],
 ] as const)(
   "recorded-crash APT runs the expected stages and deadlines for the %s outcome",
-  async (mode, code, expected) => {
+  async (mode, distro, code, expected) => {
+    const root = await createTestTempDirectory("rea-recorded-crash-apt-");
+    const osRelease = join(root, "os-release");
+    const aptRoot = join(root, "apt");
+    const sourcesDir = join(aptRoot, "sources.list.d");
+    const ubuntuSources = join(sourcesDir, "ubuntu.sources");
+    await mkdir(sourcesDir, { recursive: true });
+    await writeFile(
+      osRelease,
+      distro === "noble"
+        ? "ID=ubuntu\nVERSION_CODENAME=noble\n"
+        : "ID=debian\nVERSION_CODENAME=trixie\n",
+    );
+    await writeFile(
+      ubuntuSources,
+      [
+        "Types: deb",
+        "URIs: http://archive.ubuntu.com/ubuntu/",
+        "Suites: noble noble-updates",
+        "Components: main universe",
+        "",
+        "Types: deb",
+        "URIs: http://security.ubuntu.com/ubuntu/",
+        "Suites: noble-security",
+        "Components: main universe",
+        "",
+      ].join("\n"),
+    );
     const steps = z
       .array(z.object({ run: z.string().optional() }))
       .parse(
@@ -118,6 +170,9 @@ it.skipIf(process.platform === "win32").each([
     if (!provision) throw new Error("Missing recorded-crash APT step");
     const mock = `
       mode=$1
+      REA_OS_RELEASE=$2
+      REA_APT_SOURCES_ROOT=$3
+      refresh_calls=0
       timeout() {
         local args="$1 $2"
         shift 2
@@ -127,11 +182,18 @@ it.skipIf(process.platform === "win32").each([
       apt-get() {
         case " $* " in
           *" update "*)
+            refresh_calls=$((refresh_calls + 1))
             record_stage refresh
             [[ " $* " == *" Acquire::Languages=none "* ]] || return 98
             [[ " $* " != *" -qq "* ]] || return 99
             if [[ $mode == refresh && " $* " == *" --error-on=any "* ]]; then
               return 100
+            fi
+            if [[ $mode == noble-fallback && $refresh_calls -eq 1 ]]; then
+              return 124
+            fi
+            if [[ $mode == noble-refresh-fail ]]; then
+              return 124
             fi
             ;;
           *" --download-only "*)
@@ -149,6 +211,8 @@ it.skipIf(process.platform === "win32").each([
       mock + provision,
       "fixture",
       mode,
+      osRelease,
+      aptRoot,
     ])
       .then(({ stdout }) => ({ code: 0, stdout }))
       .catch((cause: unknown) =>
@@ -159,9 +223,19 @@ it.skipIf(process.platform === "win32").each([
     expect(lines.filter((line) => !line.startsWith("::error::"))).toEqual(
       expected,
     );
+    if (mode === "noble-fallback" || mode === "noble-refresh-fail") {
+      const rewritten = await readFile(ubuntuSources, "utf8");
+      expect(rewritten).toContain(
+        "URIs: http://azure.archive.ubuntu.com/ubuntu/",
+      );
+      expect(rewritten).not.toContain("http://archive.ubuntu.com/ubuntu/");
+      expect(rewritten).not.toContain("http://security.ubuntu.com/ubuntu/");
+    }
     if (code !== 0)
       expect(lines.at(-1)).toContain(
-        mode === "refresh" ? "index refresh failed" : "package download failed",
+        mode === "refresh" || mode === "noble-refresh-fail"
+          ? "index refresh failed"
+          : "package download failed",
       );
   },
 );
@@ -382,7 +456,7 @@ it("runs architecture guards for fast code feedback before installing dependenci
   expect(steps[guard]?.["continue-on-error"]).toBeUndefined();
 });
 
-it("holds native and provider fan-out behind static validation while portable feedback stays independent", async () => {
+it("holds broad PR shards and native checks behind static validation", async () => {
   const { jobs } = await workflow();
   const earlyJobs = new Set([
     "changes",
@@ -539,10 +613,12 @@ it("binds provider build reuse to the current run while keeping standalone dispa
   expect(buildSteps[stage]?.run).toContain(
     "node scripts/ci/portable-build-cache.mjs snapshot .cache/ci-build-plan.json",
   );
-  expect(buildSteps[stage]?.if).toBeUndefined();
+  expect(buildSteps[stage]?.if).toBe(
+    "needs.changes.outputs.build_cache == 'true'",
+  );
   expect(buildSteps[stage]?.shell).toBe("bash");
   expect(buildSteps[stage]?.["continue-on-error"]).not.toBe(true);
-  expect(buildSteps[upload]?.if).toBeUndefined();
+  expect(buildSteps[upload]?.if).toBe(buildSteps[stage]?.if);
   expect(buildSteps[upload]?.with).toMatchObject({
     path: ".cache/ci-build-cache/",
     "if-no-files-found": "error",
@@ -563,21 +639,53 @@ it("binds provider build reuse to the current run while keeping standalone dispa
     "go_binary",
     "ghidra_bridge",
   ];
-  const buildTerms = z
-    .string()
-    .parse(jobs.build?.if)
-    .split("||")
-    .map((term) => term.trim());
-  // Provider workflow edits select their lane without code=true. The build
-  // producer must still run, without selecting the portable test shards.
-  expect(new Set(buildTerms)).toEqual(
-    new Set(
-      ["code", ...consumers].map(
-        (scope) => `needs.changes.outputs.${scope} == 'true'`,
-      ),
-    ),
+  const { build_cache: cacheOutput } = z
+    .object({ build_cache: z.string() })
+    .parse(jobs.changes?.outputs);
+  const downloadStep = z.object({
+    uses: z.string().optional(),
+    with: z.object({ name: z.string().optional() }).optional(),
+  });
+  const cacheConsumers = z
+    .array(
+      z.object({
+        if: z.string().optional(),
+        with: z
+          .object({ build_cache_artifact: z.string().optional() })
+          .optional(),
+        steps: z.array(downloadStep).optional(),
+      }),
+    )
+    .parse(Object.values(jobs))
+    .filter(
+      (job) =>
+        job.with?.build_cache_artifact === "rea-build-cache" ||
+        job.steps?.some(
+          (step) =>
+            step.uses?.startsWith("actions/download-artifact@") &&
+            step.with?.name === "rea-build-cache",
+        ),
+    );
+  const cacheConditions = cacheConsumers.map((job) =>
+    z.string().parse(job.if).replace("needs.changes.", "steps.plan."),
   );
-  expect(jobs["test-shard"]?.if).toBe("needs.changes.outputs.code == 'true'");
+  expect(cacheOutput.startsWith("${{ ") && cacheOutput.endsWith(" }}")).toBe(
+    true,
+  );
+  expect(new Set(cacheOutput.slice(4, -3).split(/\s*\|\|\s*/u))).toEqual(
+    new Set(cacheConditions),
+  );
+  expect(jobs.build?.if).toBe(
+    "needs.changes.outputs.code == 'true' || needs.changes.outputs.build_cache == 'true'",
+  );
+  for (const name of ["test-shard", "test-shard-broad"])
+    expect(jobs[name]?.if).toBe(
+      `needs.changes.outputs.code == 'true' && needs.changes.outputs.test_shard_job == '${name}'`,
+    );
+  expect(jobs["test-shard-broad"]?.steps).toEqual(jobs["test-shard"]?.steps);
+  expect(jobs["test-shard-broad"]?.strategy).toEqual(
+    jobs["test-shard"]?.strategy,
+  );
   await assertProviderCacheCallers(jobs, consumers);
   const action = z
     .object({
@@ -822,7 +930,7 @@ it("rejects incomplete or malformed classification even when available jobs succ
           CI_JOBS: JSON.stringify({
             changes: { result: "success", outputs },
             static: { result: "success" },
-            test: { result: "success" },
+            test: { result: "skipped" },
           }),
           CI_QUALIFICATION_DIRECTORY: "",
         },
@@ -905,6 +1013,9 @@ it("fails fast only for ordinary PR matrices and rejects partial portable feedba
 
 it("runs a selected PR subset in planner-owned groups and still gates it", async () => {
   const { jobs } = await workflow();
+  expect(jobs.test?.if).toBe(
+    "${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true') }}",
+  );
   // The planner owns every shard list, including one job per selected group.
   expect(jobs["test-shard"]?.strategy).toMatchObject({
     matrix: { shard: "${{ fromJSON(needs.changes.outputs.test_shards) }}" },
@@ -977,13 +1088,22 @@ it("runs a selected PR subset in planner-owned groups and still gates it", async
   const ran = { build: "success", "test-shard": "success" };
   // A selected subset skips the separate source job.
   await expect(gate({}, ran)).resolves.toMatchObject({ stderr: "" });
-  for (const name of ["test-shard", "build"])
+  for (const name of ["test-shard", "build", "test"])
     await expect(gate({}, { ...ran, [name]: "skipped" })).rejects.toMatchObject(
       {
         code: 1,
         stderr: expect.stringContaining(name),
       },
     );
+  const broad = { ...ran, "test-source": "success", "test-shard": "skipped" };
+  await expect(
+    gate({ test_mode: "full" }, { ...broad, "test-shard-broad": "success" }),
+  ).resolves.toMatchObject({ stderr: "" });
+  await expect(
+    gate({ test_mode: "full" }, { ...broad, "test-shard": "success" }),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining("test-shard-broad"),
+  });
   // The complete fast suite still requires its source job.
   await expect(gate({ test_mode: "full" }, ran)).rejects.toMatchObject({
     stderr: expect.stringContaining("test-source"),
@@ -1010,8 +1130,8 @@ it("binds each canonical lane to its explicit fast and full workflow jobs", asyn
   // gate decision, rather than silently assuming that its job has the same name.
   const expected: Record<string, { fast: string[]; full: string[] }> = {
     code: {
-      fast: ["build", "test-shard", "test-source"],
-      full: ["build", "test-shard"],
+      fast: ["build", "test-shard", "test-source", "test"],
+      full: ["build", "test-shard", "test"],
     },
     runtime: {
       fast: ["windows-native-build", "package-e2e"],
@@ -1083,6 +1203,7 @@ it("binds each canonical lane to its explicit fast and full workflow jobs", asyn
       {
         env: {
           ...process.env,
+          GITHUB_EVENT_NAME: "push",
           CI_JOBS: JSON.stringify(context),
           CI_QUALIFICATION_DIRECTORY: "",
         },
@@ -1103,7 +1224,6 @@ it("binds each canonical lane to its explicit fast and full workflow jobs", asyn
       },
     };
     context.static = { result: "success" };
-    context.test = { result: "success" };
     for (const name of required.fast) context[name] = { result: "success" };
     await expect(executeGate(context), scope).resolves.toMatchObject({
       stderr: "",
@@ -1227,3 +1347,39 @@ it.skipIf(process.platform === "win32").each([
     if (status !== "0") expect(result.stdout).toContain(`(exit ${status})`);
   },
 );
+
+it("wires changed-file typed lint into fast Static checks", async () => {
+  const ci = await workflow();
+  const changesOutputs = z
+    .object({ outputs: z.record(z.string(), z.string()) })
+    .parse(ci.jobs.changes).outputs;
+  expect(changesOutputs.typed_lint_files).toBe(
+    "${{ steps.plan.outputs.typed_lint_files }}",
+  );
+  const staticSteps = z
+    .array(
+      z
+        .object({
+          name: z.string().optional(),
+          if: z.string().optional(),
+          env: z.record(z.string(), z.string()).optional(),
+          run: z.string().optional(),
+        })
+        .passthrough(),
+    )
+    .parse(z.object({ steps: z.unknown() }).parse(ci.jobs.static).steps);
+  const typedLintStep = staticSteps.find(
+    (step) => step.name === "Run typed lint on changed files",
+  );
+  expect(typedLintStep).toMatchObject({
+    env: {
+      CI_TYPED_LINT_FILES: "${{ needs.changes.outputs.typed_lint_files }}",
+    },
+    run: "node scripts/ci/static-check-report.mjs typed-lint-changed",
+  });
+  expect(typedLintStep?.if).toContain("needs.changes.outputs.tier == 'fast'");
+  expect(typedLintStep?.if).toContain("needs.changes.outputs.code == 'true'");
+  expect(typedLintStep?.if).toContain(
+    "needs.changes.outputs.typed_lint_files != '[]'",
+  );
+});

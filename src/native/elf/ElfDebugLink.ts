@@ -1,14 +1,19 @@
 import { crc32 } from "node:zlib";
 
 import { isParseLimit } from "../../domain/parseFailureAnalysisError.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  ArtifactReaderFailure,
   assertArtifactReadActive,
   yieldArtifactRead,
 } from "../../resources/index.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
-import { hasElfMagic } from "../../domain/binaryContainer.js";
+import {
+  hasElfMagic,
+  BinaryReader,
+  type ImageSection,
+  BinaryResourceFailure,
+} from "../../domain/binaryContainer.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
   zstandardFrameAllowanceCause,
@@ -31,22 +36,14 @@ import {
   type InspectElfDebugLinkInput,
 } from "../../domain/native/elfDebugLink.js";
 import {
-  BinaryReader,
-  type ImageSection,
-  BinaryFormatFailure,
-  BinaryResourceFailure,
-} from "../../domain/binaryContainer.js";
-import {
   readElfImage,
   readElfImageCooperative,
   readElfImageFromReader,
 } from "../../domain/native/elfImage.js";
-import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
 import {
   readElfBuildIds,
   readElfBuildIdsCooperative,
   readElfBuildIdsFromHandle,
-  type ElfNoteByteSource,
 } from "./ElfNoteParser.js";
 import type { ZstandardFramePause } from "../../domain/compression/zstandardExactFrame.js";
 import {
@@ -56,6 +53,10 @@ import {
 } from "../../domain/native/elfSectionNameTable.js";
 
 import { err, ok, type Result } from "../../domain/result.js";
+import type {
+  ByteSource,
+  PrefixedByteSource,
+} from "../../domain/byteSource.js";
 
 type PreparedCandidateImage = Result<ReturnType<typeof readElfImage>, unknown>;
 type PreparedNotes = Result<ReturnType<typeof readElfBuildIds>, unknown>;
@@ -168,7 +169,7 @@ const locateSection = (
 };
 
 const readSourceSlice = async (
-  source: NativeByteSource,
+  source: ByteSource,
   offset: number,
   length: number,
 ): Promise<Buffer> =>
@@ -179,7 +180,7 @@ const readSourceSlice = async (
       : source.readRange(offset, length);
 
 const readLinkName = async (
-  source: NativeByteSource,
+  source: ByteSource,
   location: NonNullable<LocatedSection["location"]>,
   tailBytes: number,
 ): Promise<{ readonly prefix: Buffer; readonly nul: number }> => {
@@ -212,7 +213,7 @@ const readLinkName = async (
 };
 
 const readLinkTail = (
-  source: NativeByteSource,
+  source: ByteSource,
   prefix: Buffer,
   sectionOffset: number,
   offset: number,
@@ -235,7 +236,7 @@ const closedDebuglink = (
 });
 
 const parseDebuglink = async (
-  source: NativeByteSource,
+  source: ByteSource,
   located: LocatedSection,
   little: boolean,
 ): Promise<Report["debuglink"]> => {
@@ -303,7 +304,7 @@ const closedAlt = (
 });
 
 const parseDebugaltlink = async (
-  source: NativeByteSource,
+  source: ByteSource,
   located: LocatedSection,
 ): Promise<Report["debugaltlink"]> => {
   if (located.reason === "duplicate")
@@ -360,7 +361,7 @@ const parseDebugaltlink = async (
 };
 
 const parseDebugdata = async (
-  source: NativeByteSource,
+  source: ByteSource,
   located: LocatedSection,
 ): Promise<Report["debugdata"]> => {
   if (located.reason === "duplicate")
@@ -444,12 +445,7 @@ const observeBuildId = (
       zstandardFrameAllowanceCause(cause) !== undefined
     )
       throw cause;
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "format")
-      return unknownBuildId(
-        "note_tables_malformed",
-        `ELF note tables could not be decoded: ${cause.message}`,
-      );
-    if (cause instanceof BinaryFormatFailure)
+    if (cause instanceof ParseFailureError && cause.kind !== "limit")
       return unknownBuildId(
         cause.kind === "unsupported"
           ? "note_tables_unsupported"
@@ -937,7 +933,7 @@ const prepareBuildIdNotes = async (
 
 /** Decode separate-debug linkage positionally over a bounded file handle. */
 export const parseElfDebugLinkFromHandle = async (
-  source: ElfNoteByteSource,
+  source: PrefixedByteSource,
   artifact: Report["artifact"],
   input: InspectElfDebugLinkInput,
   signal?: AbortSignal,
@@ -957,7 +953,7 @@ export const parseElfDebugLinkFromHandle = async (
   );
   // Both readers borrow the same stable file. Reuse only the exact extent
   // admitted by the image reader so the decoder can share its result.
-  const noteSource: ElfNoteByteSource = {
+  const noteSource: PrefixedByteSource = {
     size: source.size,
     prefix: source.prefix,
     readRange: (offset, length) =>
