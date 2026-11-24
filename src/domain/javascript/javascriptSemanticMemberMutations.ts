@@ -44,6 +44,9 @@ import {
   bindingProjectedContentsMayChangeAt,
   semanticAmbientArrayIterationUnknown,
   semanticArrayPrototypeIterationMayChange,
+  semanticBindingStoresAtOrBelow,
+  semanticEscapedStorePaths,
+  semanticStoredSourcesReaching,
 } from "./javascriptSemanticEffectLog.js";
 import { semanticContainer } from "./javascriptSemanticSlots.js";
 import {
@@ -115,6 +118,7 @@ import {
   childNodes,
 } from "./javascriptSemanticTraversal.js";
 import {
+  primitiveOwnKeys,
   semanticStaticPropertyKey,
   semanticMemberChain,
   semanticWriteTargets,
@@ -1066,6 +1070,82 @@ export function* collectSemanticMemberMutationsSteps(
         joined: { key, value: joined },
       });
     };
+    // A destructuring site selects each receiver at its own pattern element,
+    // so a store in a later default may follow that read. The pattern's
+    // iterator and close owners select the stores an element can see.
+    const sitePattern =
+      t.isVariableDeclarator(mutation) && t.isPattern(mutation.id)
+        ? mutation.id
+        : t.isAssignmentExpression(mutation) && t.isPattern(mutation.left)
+          ? mutation.left
+          : undefined;
+    const storedBySitePattern = (node: t.Node): boolean => {
+      if (sitePattern === undefined) return false;
+      for (
+        let ancestor: t.Node | undefined = node;
+        ancestor !== undefined && ancestor !== mutation;
+        ancestor = parents.get(ancestor)
+      )
+        if (ancestor === sitePattern) return true;
+      return false;
+    };
+    // An escape exposes the values earlier writes stored at or below the
+    // escaped path; the receiver's initializers reach only their own slots.
+    // `followed` is a receiver path whose stored values are already queued.
+    const escapeStoredValues = (
+      binding: JavaScriptSemanticBindingState,
+      current: PendingValue,
+      nested: ReadonlySet<string>,
+      followed?: PropertyPath,
+    ): void => {
+      // A collapsed escape names no site, so it may follow any store. Each
+      // stored value escapes whole without a site, and later collapsed
+      // queries stop where an earlier one covered it.
+      if (queryCollapsed) {
+        for (const stored of storedSourceNodes([
+          ...semanticStoredSourcesReaching(binding, current.path),
+        ]))
+          if (!primitiveStore(stored))
+            enqueue({
+              node: stored,
+              path: [],
+              bindings: nested,
+              definiteReceiver: false,
+              originAt: stored,
+            });
+        return;
+      }
+      for (const storedPath of semanticEscapedStorePaths(binding, current.path))
+        if (storedPath !== followed)
+          for (const source of semanticProjectedSourceFactsAtRead(
+            binding,
+            current.node,
+            storedPath,
+            state,
+            false,
+            current.memberReadAt ?? current.originAt ?? current.node,
+            current.capturedSelections,
+          )?.storedSources ?? [])
+            if (
+              !primitiveStore(source.node) &&
+              !storedBySitePattern(source.node)
+            )
+              enqueue({
+                node: source.node,
+                path: source.path,
+                bindings: nested,
+                definiteReceiver: false,
+                originAt: source.node,
+                memberReadAt: current.memberReadAt,
+                capturedSelections: semanticNormalizeCapturedSelections([
+                  ...(semanticShiftCapturedSelections(
+                    current.capturedSelections,
+                    source.path.length - storedPath.length,
+                  ) ?? []),
+                  ...(source.capturedSelections ?? []),
+                ]),
+              });
+    };
     enqueue({
       node,
       path,
@@ -1192,7 +1272,22 @@ export function* collectSemanticMemberMutationsSteps(
           current.path,
           effect,
         );
-        if (path === null) continue;
+        if (path === null) {
+          // Initializers place no object at this escaped path, but a value a
+          // store put at or below it still escapes. A path only a store above
+          // it reaches stays pruned: through a self store such as
+          // `s.c = s.c.p`, it would grow on every visit.
+          if (
+            effect === "escape" &&
+            semanticBindingStoresAtOrBelow(binding, current.path)
+          )
+            escapeStoredValues(
+              binding,
+              current,
+              new Set([...current.bindings, lifetime, captureKey]),
+            );
+          continue;
+        }
         const selectorIndex = path.findIndex(
           (key) => key !== null && typeof key === "object",
         );
@@ -1530,6 +1625,8 @@ export function* collectSemanticMemberMutationsSteps(
                 ]),
               });
           }
+          if (effect === "escape")
+            escapeStoredValues(binding, current, nested, storedReceiverPath);
           // A directly invoked function's parameter starts as its argument,
           // which therefore did not escape at the call.
           const argument = semanticDirectInvocationArgument(
@@ -2674,6 +2771,10 @@ const storedSourceNodes = (
   }
   return nodes;
 };
+
+/** Whether a stored expression is an operator result, which is primitive. */
+const primitiveStore = (node: t.Node): boolean =>
+  primitiveOwnKeys(unwrapJavaScriptExpression(node).node) !== null;
 
 const observableMutationPaths = (
   state: JavaScriptSemanticAnalysisState,

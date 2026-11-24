@@ -7,6 +7,7 @@
 import * as t from "@babel/types";
 import { javaScriptProgramStrictness } from "./javascriptSourceParser.js";
 import {
+  primitiveOwnKeys,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -824,6 +825,69 @@ export function* semanticMemberWriteSources(
 ): Generator<NonNullable<AmbientEffect["assignedSources"]>[number]> {
   for (const effect of binding.memberWrites)
     yield* effect.assignedSources ?? [];
+}
+
+/** Whether a recorded member write may have stored an object reference. */
+const storesReference = (effect: MemberWrite): boolean =>
+  effect.assignedSources?.some(
+    (source) =>
+      primitiveOwnKeys(unwrapJavaScriptExpression(source.node).node) === null ||
+      source.iterationSources !== undefined ||
+      source.fallbackSources !== undefined ||
+      source.requiredSources !== undefined,
+  ) === true;
+
+/**
+ * The receiver paths whose stored values an escape of `binding`'s object at
+ * `path` exposes: `path` itself when a reference store targets it or a
+ * prefix, and each longer path a reference store targets below it.
+ */
+export const semanticEscapedStorePaths = (
+  binding: JavaScriptSemanticBindingState,
+  path: JavaScriptSemanticPropertyPath,
+): readonly JavaScriptSemanticPropertyPath[] => {
+  const paths = new Map<string, JavaScriptSemanticPropertyPath>();
+  for (const effect of binding.memberWrites)
+    if (!storesReference(effect)) continue;
+    else if (effect.path.length <= path.length) {
+      if (semanticEffectPathMatches(effect.path, path))
+        paths.set(JSON.stringify(path), path);
+    } else if (
+      path.length === 0 ||
+      semanticEffectPathMatches(path, effect.path)
+    )
+      paths.set(JSON.stringify(effect.path), effect.path);
+  return [...paths.values()];
+};
+
+/** Whether a reference store targets `path` of `binding`'s object or below it. */
+export const semanticBindingStoresAtOrBelow = (
+  binding: JavaScriptSemanticBindingState,
+  path: JavaScriptSemanticPropertyPath,
+): boolean =>
+  binding.memberWrites.some(
+    (effect) =>
+      storesReference(effect) &&
+      effect.path.length >= path.length &&
+      (path.length === 0 || semanticEffectPathMatches(path, effect.path)),
+  );
+
+/**
+ * The sources reference stores assigned at `path` of `binding`'s object, at a
+ * prefix of it or below it, whenever they ran.
+ */
+export function* semanticStoredSourcesReaching(
+  binding: JavaScriptSemanticBindingState,
+  path: JavaScriptSemanticPropertyPath,
+): Generator<NonNullable<AmbientEffect["assignedSources"]>[number]> {
+  for (const effect of binding.memberWrites)
+    if (
+      storesReference(effect) &&
+      (path.length === 0 ||
+        semanticEffectPathMatches(effect.path, path) ||
+        semanticEffectPathMatches(path, effect.path))
+    )
+      yield* effect.assignedSources ?? [];
 }
 
 const sameLiteralPrefix = (
