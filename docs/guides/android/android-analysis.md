@@ -578,6 +578,13 @@ or provide split APK/AAB handling,
 signature validation, full resource-table semantics, native-library analysis or
 Android runtime capture. An `.aab` suffix is a ZIP archive, not an APK, so
 Android tools and the application graph do not treat it as a standalone APK.
+JADX package, class, method, and reference operations also admit a ZIP root
+whose name does not already select another package family when the central
+directory lists a root `AndroidManifest.xml` or `classes*.dex` entry
+(`classes.dex`, `classes2.dex`, and further numbered members). The probe reads
+at most 8 MiB of that directory. A generic ZIP with neither entry, or whose
+matching entry lies past that prefix, stays `zip` and these operations refuse
+it. The caller's path is kept; renaming the file to `.apk` is not required.
 Existing artifact inventory/extraction tools can supply archive evidence.
 Inventory records an APK root only for ZIP bytes whose name ends in `.apk`.
 The projection adds a limitation when no root `AndroidManifest.xml` was

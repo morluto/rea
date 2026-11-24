@@ -364,6 +364,86 @@ describe("ZIP archives after leading bytes", () => {
   });
 });
 
+describe("DEX-bearing ZIP package admission", () => {
+  const dexZip = async (entries: readonly string[]): Promise<Uint8Array> => {
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    for (const name of entries)
+      await writer.add(name, new TextReader("fixture\n"));
+    return writer.close();
+  };
+
+  it.each([
+    { name: "scrcpy-server", entries: ["classes.dex"] },
+    { name: "server.zip", entries: ["classes2.dex", "readme.txt"] },
+    { name: "runtime.jar", entries: ["AndroidManifest.xml"] },
+    { name: "payload.apex", entries: ["classes.dex", "AndroidManifest.xml"] },
+  ])(
+    "admits $name as an APK from root central-directory entries",
+    async ({ name, entries }) => {
+      const root = await createTestTempDirectory("rea-dex-zip-admit-");
+      const path = join(root, name);
+      await writeFile(path, await dexZip(entries));
+      expect(await parseBinaryTarget(path)).toMatchObject({
+        ok: true,
+        value: { kind: "archive", format: "apk" },
+      });
+      // Inventory stays suffix-based; only target admission reads the directory.
+      expect(
+        (await classifyAndHashRoot(path, false, await lstat(path))).format,
+      ).toBe("zip");
+    },
+  );
+
+  it("admits an extensionless DEX ZIP after an unclaimed script stub", async () => {
+    const root = await createTestTempDirectory("rea-dex-zip-stub-");
+    const path = join(root, "scrcpy-server");
+    await writeFile(
+      path,
+      withLeadingBytes(
+        Buffer.from(await dexZip(["classes.dex"])),
+        SCRIPT_STUB,
+        false,
+      ),
+    );
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: { kind: "archive", format: "apk" },
+    });
+    expect(
+      (await classifyAndHashRoot(path, false, await lstat(path))).format,
+    ).toBe("zip");
+  });
+
+  it.each([
+    { name: "notes", entries: ["readme.txt"] },
+    {
+      name: "sources.zip",
+      entries: ["src/classes.dex", "lib/AndroidManifest.xml"],
+    },
+    { name: "bundle.aab", entries: ["classes.dex", "AndroidManifest.xml"] },
+    { name: "App.ipa", entries: ["classes.dex"] },
+  ])("keeps $name out of the APK family", async ({ name, entries }) => {
+    const root = await createTestTempDirectory("rea-dex-zip-reject-");
+    const path = join(root, name);
+    await writeFile(path, await dexZip(entries));
+    const expected = name.toLowerCase().endsWith(".ipa") ? "ipa" : "zip";
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: { kind: "archive", format: expected },
+    });
+  });
+
+  it("keeps a suffix-selected .apk when the archive has no Android entries", async () => {
+    const root = await createTestTempDirectory("rea-apk-suffix-");
+    const path = join(root, "empty.apk");
+    await writeFile(path, await dexZip(["readme.txt"]));
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: { kind: "archive", format: "apk" },
+    });
+  });
+});
+
 describe("package signature byte identity", () => {
   it.each([
     { extension: "pkg", signature: "xar!", offset: 0, size: 4 },
