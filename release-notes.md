@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **errors:** callers that parse `code` see unsupported_target instead of invalid_request for malformed or truncated bytes from inspect_erlang_beam and from the inspect_pe_certificates certificate table body. Truncated reads of a file that changed during inspect_kernel_module, inspect_kernel_build_config and inspect_elf_unwind_ranges now report artifact_changed. inspect_artifact malformed and truncated refusals gain details.format_failure and details.format. Existing fields are unchanged.
 * **cli:** camelCase option spellings such as `--maxRows` or `--dryRun` are refused; use the kebab-case flag that `--help` lists.
 * **pwntools:** for a request-sourced pwntools input ceiling, details.limit is now a control_kind "parameter" limit instead of a setting limit carrying setting, source, update_mode and scope fields.
 * **uefi:** MCP callers that need every published file inline must pass detail: "complete" to extract_uefi_firmware.
@@ -183,6 +184,7 @@
 * **erlang:** require complete positional BEAM reads ([#14045](https://github.com/morluto/rea/issues/14045)) ([2e47bc0](https://github.com/morluto/rea/commit/2e47bc09f357cf6e5bcc6c93f39e4972bd79192e))
 * **erlang:** retain verified BEAM reports through descriptor finalization ([#14062](https://github.com/morluto/rea/issues/14062)) ([2e98c70](https://github.com/morluto/rea/commit/2e98c70c911f5062bad2e3045e557f90cf886d54))
 * **errors:** refuse malformed target bytes as a target, not invalid input ([#14195](https://github.com/morluto/rea/issues/14195)) ([89c1dd3](https://github.com/morluto/rea/commit/89c1dd3c327617275a0792a78a68a043f1a37533))
+* **errors:** split reader path refusals from malformed target bytes ([#14225](https://github.com/morluto/rea/issues/14225)) ([1a43f56](https://github.com/morluto/rea/commit/1a43f56354bcda71cc6a0e7ace27d48680073505))
 * **evidence:** bound omitted validation issue locations ([#13309](https://github.com/morluto/rea/issues/13309)) ([4485912](https://github.com/morluto/rea/commit/4485912fd83b64834cc88e5af9bcd7febe2baae8))
 * **evidence:** evaluate unchanged artifact members in correlation ([460d771](https://github.com/morluto/rea/commit/460d77176e9634a6e052e4993ddd03be1489bec9)), closes [#13211](https://github.com/morluto/rea/issues/13211)
 * **evidence:** keep unobserved correlation paths unknown without complete coverage ([94232d0](https://github.com/morluto/rea/commit/94232d0d5f1addb2b0a45477bc67bd681e3d9282)), closes [#13211](https://github.com/morluto/rea/issues/13211)
@@ -804,6 +806,7 @@
 * **asar:** consolidate packed listing coverage ([#12945](https://github.com/morluto/rea/issues/12945)) ([c355fcb](https://github.com/morluto/rea/commit/c355fcb8f7ba8e45adc25a27a8af2eeb28af1452))
 * **asar:** streamline allocation and descriptor fixtures ([#12949](https://github.com/morluto/rea/issues/12949)) ([0b0b847](https://github.com/morluto/rea/commit/0b0b847afd3362c34b093f3bfbde7d6abc39cead))
 * **asar:** verify packed member close on cancellation ([#12947](https://github.com/morluto/rea/issues/12947)) ([2f87f93](https://github.com/morluto/rea/commit/2f87f938e0b986146599cc12327a8da39e4c2654))
+* assert structured facts instead of incidental wording ([#14222](https://github.com/morluto/rea/issues/14222)) ([c68ddbe](https://github.com/morluto/rea/commit/c68ddbec7cea929826e9d04fa7649bab6cf465af))
 * **audit:** consolidate release exposure document routing ([#13347](https://github.com/morluto/rea/issues/13347)) ([cdba576](https://github.com/morluto/rea/commit/cdba576469ea64b708cdc0d34612050b16b492bb))
 * **audit:** consolidate release exposure evidence checks ([#13341](https://github.com/morluto/rea/issues/13341)) ([23af000](https://github.com/morluto/rea/commit/23af000299a049350ac63cd41f94892e1c1c9089))
 * **binary:** throw the cause when restoration setup fails ([89fe8dc](https://github.com/morluto/rea/commit/89fe8dcf4e704e56187653b8c23fbd3eb5d00a92))
