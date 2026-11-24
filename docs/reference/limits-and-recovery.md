@@ -135,7 +135,11 @@ ceiling keeps that setting's limit instead. If the caller set the ceiling
 through `producer_limits.input_bytes`, the parameter limit is used, and its
 `default_value` is the ceiling that applies when the field is omitted. When
 omitting it would fail configuration, no default exists and the setting limit
-is reported.
+is reported. A pwntools memory allocation failure carries no
+`details.limit`, whether it comes as a structured reply or as the bridge's
+reserved exit: an allocation failure does not prove that
+`producer_limits.address_space_bytes` was exhausted. Its message states the
+selected allowance, and its remediation names the producer limits to review.
 
 The same accepted policy must reach acquisition, parsing, worker requests,
 serialization, cached-result admission and generated consumers where those
