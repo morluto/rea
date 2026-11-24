@@ -1,5 +1,5 @@
 import zlib from "node:zlib";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   extractPyInstallerEntries,
   findPyInstallerCookie,
@@ -591,16 +591,46 @@ describe("PyInstallerExtractor - CArchive bounds and declarations", () => {
       false,
     );
 
-    // A zero-byte caller allowance must also prevent pre-parsing/inflating the embedded PYZ
-    const zeroBudget = extractPyInstallerEntries(binary, {
-      maxExpandedBytes: 0,
-    });
-    expect(zeroBudget).toHaveLength(1);
-    expect(zeroBudget[0]?.decompressed).toBe(false);
-    expect(zeroBudget[0]?.data.length).toBe(0);
-    expect(zeroBudget[0]?.limitations[0]).toMatch(
-      /expansion budget of 0 bytes/,
+    // A zero-byte caller allowance must also skip pre-parse inflation of a compressed PYZ
+    const compressedPyz = zlib.deflateSync(pyzData);
+    const compressedTocEntry = Buffer.alloc(structLen);
+    compressedTocEntry.writeUInt32BE(structLen, 0);
+    compressedTocEntry.writeUInt32BE(0, 4);
+    compressedTocEntry.writeUInt32BE(compressedPyz.length, 8);
+    compressedTocEntry.writeUInt32BE(pyzData.length, 12);
+    compressedTocEntry.writeUInt8(1, 16); // zlib-compressed PYZ
+    compressedTocEntry.writeUInt8("z".charCodeAt(0), 17);
+    nameBytes.copy(compressedTocEntry, 18);
+    const compressedCookie = Buffer.alloc(88);
+    PYINSTALLER_MAGIC.copy(compressedCookie, 0);
+    compressedCookie.writeUInt32BE(
+      compressedPyz.length + compressedTocEntry.length + 88,
+      8,
     );
+    compressedCookie.writeUInt32BE(compressedPyz.length, 12);
+    compressedCookie.writeUInt32BE(compressedTocEntry.length, 16);
+    compressedCookie.writeInt32BE(310, 20);
+    const compressedPyzBinary = Buffer.concat([
+      compressedPyz,
+      compressedTocEntry,
+      compressedCookie,
+    ]);
+
+    const inflateSpy = vi.spyOn(zlib, "inflateSync");
+    try {
+      const zeroBudget = extractPyInstallerEntries(compressedPyzBinary, {
+        maxExpandedBytes: 0,
+      });
+      expect(inflateSpy).not.toHaveBeenCalled();
+      expect(zeroBudget).toHaveLength(1);
+      expect(zeroBudget[0]?.decompressed).toBe(false);
+      expect(zeroBudget[0]?.data.length).toBe(0);
+      expect(zeroBudget[0]?.limitations[0]).toMatch(
+        /expansion budget of 0 bytes/,
+      );
+    } finally {
+      inflateSpy.mockRestore();
+    }
   });
 });
 
