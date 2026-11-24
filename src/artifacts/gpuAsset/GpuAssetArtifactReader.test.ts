@@ -186,6 +186,76 @@ describe("GLB headers", () => {
       parseFailure: { kind: "malformed", format: "glb", offset: 12 },
     });
   });
+
+  it.each([[], null, 42, "text", true])(
+    "reports a non-object JSON root (%j) as invalid, not parsed",
+    async (root) => {
+      const result = await read("glb", glbFixture({ jsonRoot: root }));
+      expect(result.metadata).toMatchObject({ json_status: "invalid" });
+      expect(result.entries.map((entry) => entry.path)).toEqual([
+        "chunks/0.json",
+        "chunks/1.bin",
+      ]);
+      expect(result.coverage[0]?.status).toBe("unknown");
+      expect(result.coverage[0]?.limitations).toContain(
+        "The GLB JSON chunk is not a readable JSON object; collection counts were not read.",
+      );
+    },
+  );
+
+  it.each(["not-an-array", {}, null, 0, false])(
+    "reports a non-array images member (%j) with unknown coverage",
+    async (images) => {
+      const result = await read(
+        "glb",
+        glbFixture({
+          jsonRoot: {
+            asset: { version: "2.0" },
+            buffers: [{ byteLength: 16 }],
+            images,
+          },
+        }),
+      );
+      expect(result.metadata?.json_status).toBe("parsed");
+      expect(result.entries.map((entry) => entry.path)).toEqual([
+        "chunks/0.json",
+        "chunks/1.bin",
+      ]);
+      expect(result.coverage[0]?.status).toBe("unknown");
+      expect(result.coverage[0]?.limitations).toContain(
+        "The GLB declares an images member that is not an array; embedded images were not listed.",
+      );
+    },
+  );
+
+  it.each([
+    ["a non-object buffers[0]", null],
+    ["an explicit null byteOffset", { byteOffset: null }],
+  ])("does not list an image region for %s", async (_label, override) => {
+    const view =
+      override === null
+        ? { buffer: 0, byteOffset: 0, byteLength: 16 }
+        : { buffer: 0, byteOffset: null, byteLength: 16 };
+    const result = await read(
+      "glb",
+      glbFixture({
+        jsonRoot: {
+          asset: { version: "2.0" },
+          buffers: [override === null ? null : { byteLength: 16 }],
+          bufferViews: [view],
+          images: [{ bufferView: 0, mimeType: "image/png" }],
+        },
+      }),
+    );
+    expect(result.entries.map((entry) => entry.path)).toEqual([
+      "chunks/0.json",
+      "chunks/1.bin",
+    ]);
+    expect(result.coverage[0]?.status).toBe("unknown");
+    expect(result.coverage[0]?.limitations[0]).toMatch(
+      /GLB image\(s\) name no URI and no bufferView that resolves inside the BIN chunk/u,
+    );
+  });
 });
 
 describe("declared-extent edge cases", () => {

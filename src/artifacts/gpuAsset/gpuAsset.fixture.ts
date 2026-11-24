@@ -43,12 +43,15 @@ export const GLB_IMAGE = Buffer.concat([
  * GLB 2.0: one VEC3 accessor, one mesh and one PNG image in the BIN chunk.
  * `external` adds an image in a URI-backed second buffer and one named by URI.
  */
-export const glbFixture = ({ external = false } = {}): Buffer => {
+export const glbFixture = ({
+  external = false,
+  jsonRoot,
+}: { external?: boolean; jsonRoot?: unknown } = {}): Buffer => {
   const positions = Buffer.alloc(12);
   positions.writeFloatLE(1, 4);
   const bin = Buffer.concat([positions, GLB_IMAGE]);
   let json = Buffer.from(
-    JSON.stringify({
+    JSON.stringify(jsonRoot === undefined ? {
       asset: { version: "2.0", generator: "rea fixture" },
       buffers: [
         { byteLength: bin.length },
@@ -70,7 +73,7 @@ export const glbFixture = ({ external = false } = {}): Buffer => {
           : []),
       ],
       extensionsUsed: ["KHR_materials_unlit"],
-    }),
+    } : jsonRoot),
   );
   json = Buffer.concat([json, Buffer.alloc((4 - (json.length % 4)) % 4, 0x20)]);
   const body = Buffer.concat([

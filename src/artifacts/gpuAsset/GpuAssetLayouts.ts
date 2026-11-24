@@ -400,12 +400,23 @@ export const glbLayout = async (
         try {
           // glTF JSON is UTF-8; counts follow the last of duplicate members,
           // as JavaScript glTF loaders do.
-          json = recordOf(
-            parseLastWinsJson(
-              decodeStrictUtf8(await read(at + 8, length), "strip-signature"),
-            ),
+          const parsed: unknown = parseLastWinsJson(
+            decodeStrictUtf8(await read(at + 8, length), "strip-signature"),
           );
-          jsonStatus = "parsed";
+          // A valid JSON value is not necessarily a glTF JSON object. Keep
+          // the chunk regions, but never report collection counts from an
+          // array, primitive or null root.
+          if (
+            parsed === null ||
+            typeof parsed !== "object" ||
+            Array.isArray(parsed)
+          ) {
+            jsonStatus = "invalid";
+            json = {};
+          } else {
+            json = parsed as Record<string, unknown>;
+            jsonStatus = "parsed";
+          }
         } catch {
           jsonStatus = "invalid";
         }
@@ -433,7 +444,15 @@ export const glbLayout = async (
   for (const [key, value] of Object.entries(json))
     if (Array.isArray(value)) counts[key] = value.length;
   const bufferViews = arrayOf(json["bufferViews"]);
-  const images = boundedList(arrayOf(json["images"]), MAX_GLB_IMAGES);
+  const declaredImages = json["images"];
+  const imagesArray = Array.isArray(declaredImages);
+  if (declaredImages !== undefined && !imagesArray) {
+    regionsExamined = "unknown";
+    limitations.push(
+      "The GLB declares an images member that is not an array; embedded images were not listed.",
+    );
+  }
+  const images = boundedList(arrayOf(declaredImages), MAX_GLB_IMAGES);
   if (images.omitted > 0) regionsExamined = "unknown";
   let unresolvedImages = 0;
   let externalImages = 0;
@@ -457,11 +476,24 @@ export const glbLayout = async (
     const buffer = bufferIndex === undefined ? undefined : buffers[bufferIndex];
     // glTF 2.0 GLB: only buffers[0] without a uri is the BIN chunk. A buffer
     // with a uri is external, so its images are not GLB regions either.
-    if (buffer !== undefined && typeof recordOf(buffer)["uri"] === "string") {
+    if (
+      buffer === undefined ||
+      buffer === null ||
+      typeof buffer !== "object" ||
+      Array.isArray(buffer)
+    ) {
+      unresolvedImages++;
+      return;
+    }
+    if (typeof recordOf(buffer)["uri"] === "string") {
       externalImages++;
       return;
     }
-    const start = indexOf(view["byteOffset"] ?? 0);
+    // An explicit null byteOffset is not a missing one: treating it as 0
+    // would list an image region the manifest does not actually describe.
+    const start = indexOf(
+      view["byteOffset"] === undefined ? 0 : view["byteOffset"],
+    );
     const length = indexOf(view["byteLength"]);
     if (
       binOffset === undefined ||
