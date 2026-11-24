@@ -193,7 +193,7 @@ cliTest(
         details: {
           operation: "inspect_managed_members",
           path: side,
-          format_failure: "malformed",
+          failure_kind: "malformed",
           format: "pe-cli",
           reason: "PE section count must be positive",
         },
@@ -220,7 +220,7 @@ cliTest(
       category: "unsupported_target",
       details: {
         path: bad,
-        format_failure: "malformed",
+        failure_kind: "malformed",
         format: "pe-cli",
         reason: "PE section count must be positive",
       },

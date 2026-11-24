@@ -32,7 +32,7 @@ it("rejects advertised PE32 data directories outside the optional header", async
   expect(projectAnalysisError(result.error)).toMatchObject({
     code: "unsupported_target",
     category: "unsupported_target",
-    details: { path, format_failure: "malformed" },
+    details: { path, failure_kind: "malformed" },
   });
 });
 
@@ -86,7 +86,7 @@ it.each([false, true])(
         expect(projected).toMatchObject({
           code: "unsupported_target",
           details: {
-            format_failure: "truncated",
+            failure_kind: "truncated",
             format: "macho",
             field: "Mach-O load commands",
             offset: 32,

@@ -178,7 +178,7 @@ for (const reader of readers)
     });
     expect(refused.exitCode).toBe(1);
     expect(refused.json).toMatchObject({
-      code: "truncated",
+      code: "partial",
       retryable: true,
       details: {
         reader_limit: {
@@ -229,7 +229,7 @@ test("admits the same SEA carrier above the legacy 4096-argument ceiling", async
   const refused = await cli.run({ arguments: command });
   expect(refused.exitCode).toBe(1);
   expect(refused.json).toMatchObject({
-    code: "truncated",
+    code: "partial",
     details: {
       reader_limit: {
         parameter: "artifact_limits.node_sea.argument_count",
@@ -273,7 +273,7 @@ test("applies the selected reader budget before extraction and preserves its out
   });
   expect(refused.exitCode).toBe(1);
   expect(refused.json).toMatchObject({
-    code: "truncated",
+    code: "partial",
     details: {
       reader_limit: { parameter: "artifact_limits.dotnet_bundle.entry_count" },
     },

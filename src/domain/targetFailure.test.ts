@@ -28,24 +28,31 @@ const failureOf = (kind: TargetFailureKind): TargetFailure => {
           { field: "binary_path", path: "/tmp/b" },
         ],
       };
+    case "io":
+      return { ...facts, kind, transient: false };
     default:
       return { ...facts, kind };
   }
 };
 
+const project = (failure: TargetFailure) =>
+  projectAnalysisError(
+    new AnalysisTargetFailureError("inspect_elf_notes", "/tmp/t", failure),
+  );
+
 describe("target failure projection", () => {
   it.each(TARGET_FAILURE_KINDS)(
     "derives the public contract of %s from its kind",
     (kind) => {
-      const { code, category, retryable } = TARGET_FAILURE_CONTRACT[kind];
+      const { code, category, retry } = TARGET_FAILURE_CONTRACT[kind];
       const failure = failureOf(kind);
-      const projected = projectAnalysisError(
-        new AnalysisTargetFailureError("inspect_elf_notes", "/tmp/t", failure),
-      );
+      const projected = project(failure);
       expect(projected).toMatchObject({
         code,
         category,
-        retryable,
+        retry,
+        // `retryable` keeps its contract meaning: the unchanged request may succeed.
+        retryable: retry === "backoff",
         remediation: {
           action: targetFailureRecovery("inspect_elf_notes", failure),
         },
@@ -59,6 +66,7 @@ describe("target failure projection", () => {
         },
       });
       expect(projected).not.toHaveProperty("recovery");
+      expect(projected).not.toHaveProperty("details.format_failure");
       // Every kind's projection satisfies the schema CLI and MCP advertise.
       expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
         true,
@@ -66,16 +74,32 @@ describe("target failure projection", () => {
     },
   );
 
-  it("keeps format_failure only for the byte-structure kinds", () => {
-    const reported = TARGET_FAILURE_KINDS.filter(
-      (kind) => "format_failure" in targetFailureDetails(failureOf(kind)),
-    );
-    expect(reported).toEqual(["malformed", "truncated"]);
+  it("gives no two kinds with unrelated caller actions one code", () => {
+    const actions = new Map<string, Set<string>>();
+    for (const kind of TARGET_FAILURE_KINDS) {
+      const { code } = TARGET_FAILURE_CONTRACT[kind];
+      actions.set(code, (actions.get(code) ?? new Set()).add(kind));
+    }
+    // Only the four target refusals share a code; `failure_kind` says which.
+    expect(
+      [...actions.values()]
+        .filter((kinds) => kinds.size > 1)
+        .map((k) => [...k]),
+    ).toEqual([["unrecognized", "unsupported", "malformed", "truncated"]]);
+  });
+
+  it("refines an io failure's retry hint from its errno fact", () => {
+    expect(project(failureOf("io"))).toMatchObject({
+      retry: "none",
+      retryable: false,
+    });
+    expect(
+      project({ ...failureOf("io"), kind: "io", transient: true }),
+    ).toMatchObject({ retry: "backoff", retryable: true });
   });
 
   it("reports measured extents for a truncated structure", () => {
     expect(targetFailureDetails(failureOf("truncated"))).toEqual({
-      format_failure: "truncated",
       failure_kind: "truncated",
       format: "elf",
       offset: 4,

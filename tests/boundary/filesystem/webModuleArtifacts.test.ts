@@ -341,7 +341,6 @@ describe("selected captured script index", () => {
       details: {
         path: f.manifestPath,
         failure_kind: "malformed",
-        format_failure: "malformed",
       },
     });
   });
