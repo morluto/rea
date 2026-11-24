@@ -1138,8 +1138,10 @@ complete observation.
   Unresolved parents preserve the leaf name and a partial identity reason,
   while independently readable witness implementations remain available.
   Protocol instance properties use the same property-list reader as classes.
-  Unreadable instance properties and unimplemented class-property lists keep
-  the protocol's methods and record with partial protocol coverage.
+  Unreadable instance properties and undecoded class-property lists keep
+  the protocol's methods and record with partial protocol coverage; a
+  `_classProperties` slot bound to another image counts as present, and an
+  unreadable or unknown-fixup zero slot stays partial instead of absent.
   The `swift_class_vtable_descriptors` coverage counters count examined vtable
   slots and successfully decoded slots, rather than type-section entries.
   The `objc_class_method_ivar_metadata` counters count admitted class and

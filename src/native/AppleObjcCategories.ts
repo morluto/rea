@@ -1,10 +1,12 @@
 import { malformedInput } from "../domain/parseFailure.js";
 import { expectedAppleMetadataReadFailure } from "./AppleMetadataReadFailure.js";
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
-import type { PointerResolution } from "../domain/apple/appleMachoFixups.js";
 import type { Section } from "../domain/apple/appleMachoSelection.js";
 import type { ObjcDispatchReaders } from "./AppleObjcDispatchFacets.js";
-import { readObjcPropertiesOf } from "./AppleObjcProperties.js";
+import {
+  inspectUndecodedClassPropertyList,
+  readObjcPropertiesOf,
+} from "./AppleObjcProperties.js";
 import {
   issue,
   type DecodeIssue,
@@ -119,24 +121,15 @@ const categoryClassPropertyIssue = (
     );
   if (declaration.kind === "unknown")
     return unreadable(declaration.location, declaration.reason);
-  let list: PointerResolution;
-  try {
-    list = read.resolvePointer(field);
-  } catch (cause: unknown) {
-    if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
-    return unreadable(field, errorMessage(cause));
-  }
-  if (list.kind === "unsupported") return unreadable(field, list.reason);
-  if (list.kind === "unknown" && list.raw === 0n)
-    return unreadable(field, list.reason);
-  if ((list.kind === "raw" || list.kind === "rebase") && list.target === 0n)
-    return null;
+  const list = inspectUndecodedClassPropertyList(read, field);
+  if (list.kind === "absent") return null;
+  if (list.kind === "unreadable") return unreadable(field, list.reason);
   return issue(
     "objc_properties_categories",
     "category_class_properties_not_decoded",
-    list.kind === "bind"
-      ? `Category ${name} class property list is bound to ${list.symbol} and is not decoded`
-      : `Category ${name} class property list is not decoded`,
+    list.symbol === undefined
+      ? `Category ${name} class property list is not decoded`
+      : `Category ${name} class property list is bound to ${list.symbol} and is not decoded`,
     `0x${field.toString(16)}`,
   );
 };
