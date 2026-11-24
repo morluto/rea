@@ -274,8 +274,13 @@ document's text. Their sorted `path + NUL + sha256 + LF` table has SHA-256
 | `scripts/lib/http3-reset-assertions.mjs`      | `a4e9ea369e74c73d3f884f708c23cfb9b2351862c9f64bdae435e76fb43497a1` |
 | `scripts/verify-http3-network-captures.mjs`   | `c73c05f610a149b1f203e5c794fa5dd44d44377f8094efc657dfb1296ed99f38` |
 
-Fresh traffic ran through `node scripts/verify-http3-network-captures.mjs
-<new-evidence-root> --with-origin-reset --with-partial-reset`. Successful run
+Fresh traffic ran through this command:
+
+```sh
+node scripts/verify-http3-network-captures.mjs /absolute/new-evidence-root --with-origin-reset --with-partial-reset
+```
+
+Successful run
 `b8f0770e-f8ec-41bc-ae9d-1a15de0a9900` verified nine native records: four normal HTTP/3, two
 before-headers reset/recovery, two partial-reset/recovery and one fallback.
 CLI/MCP normalized results, advertised schemas, retained Evidence, input digests
