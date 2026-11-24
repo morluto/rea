@@ -14,7 +14,10 @@ import {
   assertClientJavaScriptFixtureEvidence,
 } from "./verify/clients/javascript-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
-import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import {
+  createOpenAiModelFixture,
+  toolCallMessage,
+} from "./verify/clients/model-fixture.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 assert(
@@ -99,17 +102,8 @@ await withVerifierCleanup(async () => {
         Object.values(value).some((item) => containsText(item, text))
       );
     };
-    const call = (index, name, args) => ({
-      role: "assistant",
-      content: null,
-      tool_calls: [
-        {
-          id: `call_omp_${index}`,
-          type: "function",
-          function: { name, arguments: JSON.stringify(args) },
-        },
-      ],
-    });
+    const call = (index, name, args) =>
+      toolCallMessage(`call_omp_${index}`, name, args);
     fixture = await createOpenAiModelFixture({
       directory: lab,
       prefix: "omp",

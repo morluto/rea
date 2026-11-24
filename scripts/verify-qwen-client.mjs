@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import {
+  createOpenAiModelFixture,
+  toolCallMessage,
+} from "./verify/clients/model-fixture.mjs";
 import {
   mkdir,
   writeFile,
@@ -295,17 +298,8 @@ await withVerifierCleanup(async () => {
         const persisted = toolResponseText(analysisCallId).match(
           /Full output saved to: ([^\r\n]+)/u,
         );
-        const call = (name, args) => ({
-          role: "assistant",
-          content: null,
-          tool_calls: [
-            {
-              id: `call_rea_fixture_${requestIndex}`,
-              type: "function",
-              function: { name, arguments: JSON.stringify(args) },
-            },
-          ],
-        });
+        const call = (name, args) =>
+          toolCallMessage(`call_rea_fixture_${requestIndex}`, name, args);
         let message;
         if (mode === "chat" || (evidenceSeen && selectedSkillLoaded)) {
           message = {
