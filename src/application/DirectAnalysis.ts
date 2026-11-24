@@ -755,16 +755,18 @@ const executeAnalysisTool = async (input: {
         : { cachePolicy: result.value.cachePolicy }),
     });
   }
+  // A saved one-shot snapshot binds every read to this call's own target.
+  const executionOptions = {
+    signal,
+    ...(input.saveSnapshot
+      ? { snapshotContext: "one-shot-target" as const }
+      : {}),
+  };
   let result = await session.executeForDirectObservation(
     tool,
     input.arguments,
     input.evidenceParameters,
-    {
-      signal,
-      ...(input.saveSnapshot && tool === "procedure_pseudo_code"
-        ? { snapshotContext: "one-shot-target" as const }
-        : {}),
-    },
+    executionOptions,
   );
   if (
     tool === "xrefs" &&
@@ -791,7 +793,7 @@ const executeAnalysisTool = async (input: {
         tool,
         { ...input.arguments, address: address.value },
         input.evidenceParameters,
-        { signal },
+        executionOptions,
       );
   }
   if (!result.ok) return result;

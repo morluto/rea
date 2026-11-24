@@ -66,7 +66,10 @@ import {
   currentRouteCapability,
 } from "./BinarySessionStatus.js";
 import { SessionRuntimeAvailability } from "./SessionRuntimeAvailability.js";
-import { isSourceEvidenceRetainable } from "./AnalysisSnapshotCache.js";
+import {
+  isSourceEvidenceRetainable,
+  oneShotSnapshotReplayRefusal,
+} from "./AnalysisSnapshotCache.js";
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
 import {
   resolveSessionOpen,
@@ -1527,7 +1530,7 @@ export class BinarySession
       name,
       active.target,
     );
-    const execution =
+    const observed =
       profiled.ok &&
       (name === "procedure_callers" || name === "procedure_callees") &&
       profiled.value.relationshipCoverage === undefined
@@ -1540,6 +1543,24 @@ export class BinarySession
             },
           })
         : profiled;
+    // A caller who asked for a one-shot snapshot learns when it cannot replay.
+    const refusal =
+      observed.ok && options?.snapshotContext === "one-shot-target"
+        ? oneShotSnapshotReplayRefusal({
+            operation: name,
+            descriptor: capability,
+            parameters: arguments_,
+            execution: observed.value,
+            profiled: profile !== undefined,
+          })
+        : undefined;
+    const execution =
+      refusal === undefined || !observed.ok
+        ? observed
+        : ok({
+            ...observed.value,
+            limitations: [...observed.value.limitations, refusal],
+          });
     // A successful Ghidra operation proves this client's native source snapshot
     // was admitted; a composite health response and parsed path do not.
     const currentBinding = this.#active;

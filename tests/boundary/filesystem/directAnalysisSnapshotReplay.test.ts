@@ -171,6 +171,7 @@ interface SnapshotProviderOptions {
   readonly limitations?: readonly string[];
   readonly sourceEvidence?: boolean;
   readonly sourceMissingLink?: boolean;
+  readonly cachePolicy?: CapabilityDescriptor["cachePolicy"];
 }
 
 const makeProvider = (
@@ -187,7 +188,7 @@ const makeProvider = (
       provider: identity,
       available: true,
       reason: null,
-      cachePolicy: "snapshot",
+      cachePolicy: options.cachePolicy ?? "snapshot",
       effects: {
         mutatesArtifact: false,
         launchesProcess: true,
@@ -330,7 +331,7 @@ const createSnapshotReplayFixture = async (
   };
 };
 
-describe("one-shot Ghidra pseudocode snapshots", () => {
+describe("one-shot Ghidra target snapshots", () => {
   it("keeps persistent documentless reads out of the provider cache", async () => {
     const fixture = await createSnapshotReplayFixture("rea-session-code-");
     const session = createTestBinarySession(
@@ -459,7 +460,95 @@ describe("one-shot Ghidra pseudocode snapshots", () => {
       expect(fixture.starts).toHaveLength(2);
     },
   );
+});
 
+describe("one-shot documentless read snapshots", () => {
+  it.skipIf(process.platform === "win32").each([
+    ["search_procedures", { pattern: "fixture" }],
+    ["xrefs", { address: "0x1000" }],
+  ] as const)(
+    "replays a documentless %s answer for the one-shot target",
+    async (operation, parameters) => {
+      const fixture = await createSnapshotReplayFixture("rea-one-shot-read-");
+      const profile = createAnalysisProfile(
+        { ...GHIDRA_PROVIDER_IDENTITY, version: "12.1.4" },
+        { fixture: true },
+      );
+      const dependencies = fixture.dependencies(
+        fixture.createProvider({ profile, supportedOperations: [operation] }),
+      );
+      const query = () =>
+        runDirectAnalysis(dependencies, fixture.path, operation, parameters, {
+          snapshotPath: fixture.snapshotPath,
+        });
+      const first = await query();
+      if (!first.ok) throw first.error;
+      expect(first.value.limitations).not.toContainEqual(
+        expect.stringContaining("Not saved for snapshot replay"),
+      );
+      // The replay is the committed record itself, so it keeps its identity.
+      expect(await query()).toEqual(first);
+      expect(fixture.starts).toHaveLength(1);
+      expect(fixture.calls.filter((name) => name === operation)).toHaveLength(
+        1,
+      );
+      const saved = await readAnalysisSnapshot(fixture.snapshotPath);
+      if (!saved.ok) throw saved.error;
+      expect(saved.value.entries).toMatchObject([{ operation, parameters }]);
+    },
+  );
+
+  it("says a live one-shot read is recorded but not replayable", async () => {
+    const fixture = await createSnapshotReplayFixture("rea-one-shot-live-");
+    const profile = createAnalysisProfile(
+      { ...GHIDRA_PROVIDER_IDENTITY, version: "12.1.4" },
+      { fixture: true },
+    );
+    const dependencies = fixture.dependencies(
+      fixture.createProvider({
+        profile,
+        supportedOperations: ["search_procedures"],
+        cachePolicy: "live",
+      }),
+    );
+    const parameters = { pattern: "fixture" };
+    for (let index = 0; index < 2; index++) {
+      const result = await runDirectAnalysis(
+        dependencies,
+        fixture.path,
+        "search_procedures",
+        parameters,
+        { snapshotPath: fixture.snapshotPath },
+      );
+      if (!result.ok) throw result.error;
+      expect(result.value.limitations).toContainEqual(
+        expect.stringContaining("ghidra declares this result live"),
+      );
+    }
+    expect(fixture.starts).toHaveLength(2);
+    const saved = await readAnalysisSnapshot(fixture.snapshotPath);
+    if (!saved.ok) throw saved.error;
+    expect(saved.value.entries).toEqual([]);
+    expect(
+      saved.value.evidence_bundle.records.map(({ operation }) => operation),
+    ).toContain("search_procedures");
+
+    // Without --snapshot nothing was asked, so nothing is reported.
+    const unsaved = await runDirectAnalysis(
+      dependencies,
+      fixture.path,
+      "search_procedures",
+      parameters,
+      { snapshotPath: undefined },
+    );
+    if (!unsaved.ok) throw unsaved.error;
+    expect(unsaved.value.limitations).not.toContainEqual(
+      expect.stringContaining("Not saved for snapshot replay"),
+    );
+  });
+});
+
+describe("one-shot implicit document snapshots", () => {
   it("does not make another provider's implicit document replayable", async () => {
     const fixture = await createSnapshotReplayFixture("rea-implicit-document-");
     const dependencies = fixture.dependencies(
@@ -481,6 +570,15 @@ describe("one-shot Ghidra pseudocode snapshots", () => {
     const saved = await readAnalysisSnapshot(fixture.snapshotPath);
     if (!saved.ok) throw saved.error;
     expect(saved.value.entries).toEqual([]);
+    expect(
+      saved.value.evidence_bundle.records.find(
+        ({ operation }) => operation === "procedure_pseudo_code",
+      )?.limitations,
+    ).toContainEqual(
+      expect.stringContaining(
+        "does not bind this read to the snapshot's target and profile",
+      ),
+    );
   });
 });
 

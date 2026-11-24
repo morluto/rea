@@ -112,15 +112,16 @@ const replayDocumentSelected = (
   !DOCUMENT_SCOPED_OPERATIONS.has(operation) ||
   typeof parameters.document === "string";
 
-/** Ghidra's private Program belongs to this one-shot target; GUI defaults do not. */
-const isOneShotPseudocode = (
-  operation: AnalysisOperation,
+/**
+ * Ghidra's private Program belongs to this one-shot target, so every read
+ * without a document selector still names it; GUI defaults do not. Whether
+ * the read may replay stays with the declared cache policy and effects.
+ */
+const isOneShotTargetRead = (
   descriptor: CapabilityDescriptor | undefined,
   context: ExecutionOptions["snapshotContext"],
 ): boolean =>
-  context === "one-shot-target" &&
-  operation === "procedure_pseudo_code" &&
-  descriptor?.provider.id === "ghidra";
+  context === "one-shot-target" && descriptor?.provider.id === "ghidra";
 
 /**
  * Caller and callee walks omit `document`. Their observations are still
@@ -151,7 +152,7 @@ export const isSourceEvidenceRetainable = (
     typeof parameters.document === "string" ||
     DOCUMENTLESS_SOURCE_EVIDENCE_OPERATIONS.has(operation) ||
     options.requiresSourceEvidence === true ||
-    isOneShotPseudocode(operation, descriptor, options.snapshotContext)) &&
+    isOneShotTargetRead(descriptor, options.snapshotContext)) &&
   (!CURSOR_DEFAULT_OPERATIONS.has(operation) ||
     typeof parameters.address === "string") &&
   descriptor?.effects.mutatesArtifact === false &&
@@ -181,17 +182,52 @@ export const isSnapshotCacheable = (
     snapshotContext: context,
   }) &&
   (replayDocumentSelected(operation, parameters) ||
-    isOneShotPseudocode(operation, descriptor, context)) &&
+    isOneShotTargetRead(descriptor, context)) &&
   descriptor.cachePolicy !== "live";
+
+/**
+ * Why a one-shot read the caller asked to snapshot cannot replay, or
+ * undefined when the snapshot can replay it. The same predicates decide
+ * whether the session records the replay entry.
+ */
+export const oneShotSnapshotReplayRefusal = ({
+  operation,
+  descriptor,
+  parameters,
+  execution,
+  profiled,
+}: {
+  readonly operation: AnalysisOperation;
+  readonly descriptor: CapabilityDescriptor;
+  readonly parameters: Readonly<Record<string, JsonValue>>;
+  readonly execution: Pick<AnalysisExecution, "cachePolicy">;
+  /** The selected profile belongs to the executing provider. */
+  readonly profiled: boolean;
+}): string | undefined => {
+  const context = "one-shot-target" as const;
+  if (
+    profiled &&
+    isSnapshotCacheable(operation, descriptor, parameters, context) &&
+    execution.cachePolicy !== "live"
+  )
+    return undefined;
+  const reason =
+    descriptor.cachePolicy === "live" || execution.cachePolicy === "live"
+      ? `${descriptor.provider.id} declares this result live, so it must be observed again`
+      : requestsStandaloneDecompile(operation, parameters)
+        ? "a standalone decompile always runs"
+        : `${descriptor.provider.id} does not bind this read to the snapshot's target and profile`;
+  return `Not saved for snapshot replay: ${reason}. The snapshot records this Evidence, and repeating the call runs the provider again.`;
+};
+
+/** Limitation that marks every observation replayed from a snapshot. */
+const SNAPSHOT_REPLAY_LIMITATION =
+  "Loaded from a local REA analysis snapshot; this call did not re-run the provider.";
 
 /** Windows Ghidra must admit the selected source through its native snapshot owner. */
 export const requiresNativeSourceAdmissionBeforeReplay = (
   providerId: string | undefined,
 ): boolean => HOST_PLATFORM.platform === "win32" && providerId === "ghidra";
-
-/** Limitation that marks every observation replayed from a snapshot. */
-const SNAPSHOT_REPLAY_LIMITATION =
-  "Loaded from a local REA analysis snapshot; this call did not re-run the provider.";
 
 /** Bounded in-memory cache for one immutable binary identity. */
 export class AnalysisSnapshotCache {
