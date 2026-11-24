@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **macho:** inspect_go_binary, inspect_rust_binary, inspect_dwarf_units, inspect_native_initializers, inspect_native_dispatch_metadata, the IL2CPP binary readers and the macOS provider's lipo-selected slice reads now report a FAT header or table cut off by the file's end with details.format_failure "truncated" (previously "malformed", or an unsupported or not-universal result for a table past the end), plus details.available_bytes and details.required_bytes.
 * **doctor:** audit-wide doctor reports omit scope_checks; read checks. Passing providerInspections checks report classification "healthy".
 * **release-exposure:** release-exposure checks no longer use the not_applicable status, and summary.by_status has no not_applicable count. A check that cannot apply is absent from checks and listed in coverage.inapplicable_checks.
 * **gpu:** amd_target_metadata gains required os_abi and abi fields, GPU objects gain a nullable amd_pal_metadata field, and PAL-ABI objects report complete, partial or unsupported instead of malformed.
@@ -257,6 +258,7 @@
 * **macho:** keep header reads inside declared slices ([#13913](https://github.com/morluto/rea/issues/13913)) ([1172d7e](https://github.com/morluto/rea/commit/1172d7ed7d3fc76e664d6ad79abc8e7fa44b2c97))
 * **macho:** preserve legacy bind stream bounds and target scope ([#13874](https://github.com/morluto/rea/issues/13874)) ([a8ccf8b](https://github.com/morluto/rea/commit/a8ccf8b5b883f5df3394c7753d7edc0caaffa524))
 * **macho:** preserve retained magic from valid FAT ranges ([#13910](https://github.com/morluto/rea/issues/13910)) ([9dba673](https://github.com/morluto/rea/commit/9dba67368d01092f723bc074416eefcbe7546293))
+* **macho:** report a FAT header or table cut off by the file's end as truncated ([#14233](https://github.com/morluto/rea/issues/14233)) ([187793b](https://github.com/morluto/rea/commit/187793ba6158b23efe81160ac8ae6334a700bf35))
 * **managed:** isolate invalid string loads from member coverage ([#13588](https://github.com/morluto/rea/issues/13588)) ([4d507e8](https://github.com/morluto/rea/commit/4d507e861282e8ffa5f0e2e09fc523e40a5dd6e7))
 * **maven:** preserve property value spelling ([#13442](https://github.com/morluto/rea/issues/13442)) ([b43084c](https://github.com/morluto/rea/commit/b43084c7fd892524bce20982719ef08df3310687))
 * **mcp:** accept discover_tools in exact-name discovery batches ([#13288](https://github.com/morluto/rea/issues/13288)) ([fd40fd9](https://github.com/morluto/rea/commit/fd40fd9ab2a0238529e2c2bc55264af778b439a3))
@@ -313,6 +315,7 @@
 * **setup:** use Windows launch settings for registration deadlines ([#13512](https://github.com/morluto/rea/issues/13512)) ([411f8a4](https://github.com/morluto/rea/commit/411f8a434275228a5ba735211773a7587f3dbcd1))
 * **setup:** verify restored files before reporting rollback ([#13491](https://github.com/morluto/rea/issues/13491)) ([a329ce6](https://github.com/morluto/rea/commit/a329ce621af3b4d25a8205c0d014aa17b706f746))
 * **setup:** verify the effective OpenCode project launcher ([#13538](https://github.com/morluto/rea/issues/13538)) ([d185754](https://github.com/morluto/rea/commit/d1857543f3caecbc3db6734b7c54adb814898aa4))
+* **snapshot:** replay every one-shot Ghidra read and say when a live result cannot replay ([#14249](https://github.com/morluto/rea/issues/14249)) ([95190b1](https://github.com/morluto/rea/commit/95190b1ebcfe1007e81f431ede5f74ac97c16c6c))
 * **source-maps:** cancel requests waiting for decoder admission ([#13844](https://github.com/morluto/rea/issues/13844)) ([72eede7](https://github.com/morluto/rea/commit/72eede75d1211e5ffa78de861ce9c5dae29ec387))
 * **sqlite:** state the runtime requirement in supported-runtime terms ([#14206](https://github.com/morluto/rea/issues/14206)) ([7b056d2](https://github.com/morluto/rea/commit/7b056d2ff86b742dd68ffab2bdad865cc359d943))
 * **state-view:** preserve partial list status when total count is invalid ([1d78e6a](https://github.com/morluto/rea/commit/1d78e6abe61ab9ed49669ee0a2ecf7c691acf81d))
@@ -1134,6 +1137,7 @@
 * **providers:** consolidate composite child ownership checks ([#12986](https://github.com/morluto/rea/issues/12986)) ([ddbfd07](https://github.com/morluto/rea/commit/ddbfd073694fdea0fc8028dedb19b3d5792538bc))
 * **providers:** consolidate refusal and finalization checks ([#12985](https://github.com/morluto/rea/issues/12985)) ([efe2da7](https://github.com/morluto/rea/commit/efe2da79a86e89f596c1741d73ea18b583b3ccac))
 * **providers:** consolidate selection diagnostics checks ([#12982](https://github.com/morluto/rea/issues/12982)) ([01022e9](https://github.com/morluto/rea/commit/01022e9afe83462c4d9e7dc6502785d8c0108cea))
+* prune redundant and superseded tests ([#14271](https://github.com/morluto/rea/issues/14271)) ([5c3ed5d](https://github.com/morluto/rea/commit/5c3ed5d028378eeed09f4b4c471882f9ee9b11f6))
 * **python:** consolidate pyc parser and CLI coverage ([#13566](https://github.com/morluto/rea/issues/13566)) ([917ab7f](https://github.com/morluto/rea/commit/917ab7f5fd8b25c3c9512ded08b3b7ebb903bf3b))
 * **python:** distinguish malformed marshal lengths from capacity failures ([#12801](https://github.com/morluto/rea/issues/12801)) ([db01712](https://github.com/morluto/rea/commit/db0171297d14c71127b39915f2063561ae1b8a84))
 * **python:** verify malformed signed marshal count defects ([db01712](https://github.com/morluto/rea/commit/db0171297d14c71127b39915f2063561ae1b8a84))
