@@ -359,6 +359,9 @@ const compareOccurrences = (
   const rightNodes = new Map(
     right.nodes.map((item) => [item.artifact_id, item]),
   );
+  const comparableRootDigest = hasComparableRootDigest(left, right);
+  const partialRootDigest =
+    hasPartialRootDigest(left) || hasPartialRootDigest(right);
   const leftRelationsFor = relationsForOccurrence(left);
   const rightRelationsFor = relationsForOccurrence(right);
   const paths = [
@@ -409,9 +412,10 @@ const compareOccurrences = (
         leftRelationsFor(leftOccurrence),
         rightRelationsFor(rightOccurrence),
       ),
+      compareRootContentDigest: path !== "." || comparableRootDigest,
       rootContentIdentityUnknown:
         path === "." &&
-        (hasPartialRootDigest(left) || hasPartialRootDigest(right)),
+        (partialRootDigest || (!comparableRootDigest && !coverage.entries)),
       rootCovered: coverage.root,
       entriesCovered: coverage.entries,
       evidenceLinks,
@@ -447,6 +451,7 @@ interface ClassifyPathInput {
   readonly leftNode: ArtifactNode | undefined;
   readonly rightNode: ArtifactNode | undefined;
   readonly relations: FactComparison;
+  readonly compareRootContentDigest: boolean;
   readonly rootContentIdentityUnknown: boolean;
   readonly rootCovered: boolean;
   readonly entriesCovered: boolean;
@@ -810,7 +815,7 @@ const changedDimensions = (input: {
   readonly leftOccurrence: ArtifactOccurrence | undefined;
   readonly rightOccurrence: ArtifactOccurrence | undefined;
   readonly relations: FactComparison;
-  readonly rootContentIdentityUnknown: boolean;
+  readonly compareRootContentDigest: boolean;
 }): z.infer<typeof comparisonDimensionSchema>[] => {
   const left = input.leftNode;
   const right = input.rightNode;
@@ -820,10 +825,7 @@ const changedDimensions = (input: {
     z.infer<typeof comparisonDimensionSchema>,
     boolean,
   ][] = [
-    [
-      "content",
-      !input.rootContentIdentityUnknown && left.sha256 !== right.sha256,
-    ],
+    ["content", input.compareRootContentDigest && left.sha256 !== right.sha256],
     ["kind", occurrence.kind],
     [
       "format",
@@ -965,12 +967,59 @@ const summarize = (
   };
 };
 
+type RootDigestScheme =
+  | { readonly kind: "file-bytes" }
+  | { readonly kind: "legacy-directory-listing" }
+  | {
+      readonly kind: "directory-tree";
+      readonly algorithm: string;
+      readonly version: number;
+    }
+  | { readonly kind: "partial" };
+
 /**
- * A partial directory root's node digest is only an addressable graph key,
- * not a content identity. Keep it out of content comparisons.
+ * Identify the scheme that produced `manifest.root_sha256` and the root node's
+ * `sha256`. A partial directory root's digest is only an addressable graph key,
+ * not a content identity; an older directory inventory without `root_digest`
+ * hashes a listing rather than a `rea-directory-tree` encoding.
  */
+const rootDigestScheme = (inventory: InventorySet): RootDigestScheme => {
+  if (inventory.rootDigest !== undefined)
+    return inventory.rootDigest.status === "partial"
+      ? { kind: "partial" }
+      : {
+          kind: "directory-tree",
+          algorithm: inventory.rootDigest.algorithm,
+          version: inventory.rootDigest.version,
+        };
+  return inventory.manifest.root_format === "directory"
+    ? { kind: "legacy-directory-listing" }
+    : { kind: "file-bytes" };
+};
+
 const hasPartialRootDigest = (inventory: InventorySet): boolean =>
   inventory.rootDigest?.status === "partial";
+
+/**
+ * Root digests establish a content difference only when both sides carry a
+ * complete digest from the same scheme.
+ */
+const hasComparableRootDigest = (
+  left: InventorySet,
+  right: InventorySet,
+): boolean => {
+  const leftScheme = rootDigestScheme(left);
+  const rightScheme = rootDigestScheme(right);
+  if (leftScheme.kind === "partial" || rightScheme.kind === "partial")
+    return false;
+  if (leftScheme.kind !== rightScheme.kind) return false;
+  return (
+    leftScheme.kind !== "directory-tree" ||
+    (rightScheme.kind === "directory-tree" &&
+      leftScheme.algorithm === rightScheme.algorithm &&
+      leftScheme.version === rightScheme.version)
+  );
+};
 
 // Differing manifest root digests prove a root content change even when node
 // details are unavailable. Fold that fact into an existing root row so one
@@ -982,8 +1031,7 @@ const applyRootHashChange = (
   evidenceLinks: readonly string[],
 ): void => {
   if (
-    hasPartialRootDigest(left) ||
-    hasPartialRootDigest(right) ||
+    !hasComparableRootDigest(left, right) ||
     left.manifest.root_sha256 === right.manifest.root_sha256
   )
     return;

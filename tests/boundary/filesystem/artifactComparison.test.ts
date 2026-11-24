@@ -20,6 +20,15 @@ import {
   parseArtifactInventoryEvidence,
 } from "../../../src/domain/artifactInventoryEvidence.js";
 import {
+  artifactEdgeId,
+  artifactGraphDigest,
+  artifactIdForContent,
+  artifactManifestId,
+  occurrenceIdForLocation,
+} from "../../../src/domain/artifactIdentity.js";
+import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
+import { compareUnicodeCodePoints } from "../../../src/domain/unicodeCodePointOrder.js";
+import {
   createEvidence,
   evidenceSubjectInput,
   type Evidence,
@@ -1025,6 +1034,249 @@ describe("ZIP non-entry coverage", () => {
       summary: { changed: 1, unchanged: 1, unknown: 0 },
       changes: [
         expect.objectContaining({ logical_path: ".", dimensions: ["content"] }),
+      ],
+    });
+  });
+});
+
+/**
+ * Re-encode a directory inventory in the pre-`rea-directory-tree` format:
+ * no `root_digest`, a listing commitment in `manifest.root_sha256`, and a
+ * legacy file-shaped directory subject.
+ */
+const toLegacyDirectoryInventoryEvidence = (
+  path: string,
+  fresh: Evidence,
+  coverageOverride?: {
+    readonly scope: "root" | "container-entries";
+    readonly status: "complete" | "unknown";
+  },
+): Evidence => {
+  const { root_digest: _treeDigest, ...parsed } =
+    artifactInventoryResultSchema.parse(fresh.normalized_result);
+  const oldRootId = parsed.manifest.root_artifact_id;
+  const legacyRootSha256 = digestCanonicalValue(
+    {
+      kind: "directory-root",
+      children: parsed.occurrences
+        .filter(({ logical_path }) => logical_path !== ".")
+        .map(({ logical_path, artifact_id }) => ({
+          logical_path,
+          artifact_id,
+        }))
+        .sort((left, right) =>
+          compareUnicodeCodePoints(left.logical_path, right.logical_path),
+        ),
+    },
+    "Artifact",
+  );
+  const legacyRootId = artifactIdForContent(legacyRootSha256);
+  const nodes = parsed.nodes
+    .map((node) =>
+      node.artifact_id === oldRootId
+        ? { ...node, artifact_id: legacyRootId, sha256: legacyRootSha256 }
+        : node,
+    )
+    .sort((left, right) =>
+      compareUnicodeCodePoints(left.artifact_id, right.artifact_id),
+    );
+  const occurrenceIdMap = new Map<string, string>();
+  for (const occurrence of parsed.occurrences) {
+    occurrenceIdMap.set(
+      occurrence.occurrence_id,
+      occurrenceIdForLocation({
+        rootArtifactId: legacyRootId,
+        logicalPath: occurrence.logical_path,
+        entryKind: occurrence.entry_kind,
+      }),
+    );
+  }
+  const occurrences = parsed.occurrences.map((occurrence) => ({
+    ...occurrence,
+    occurrence_id: occurrenceIdMap.get(occurrence.occurrence_id)!,
+    parent_occurrence_id:
+      occurrence.parent_occurrence_id === null
+        ? null
+        : occurrenceIdMap.get(occurrence.parent_occurrence_id)!,
+    artifact_id:
+      occurrence.artifact_id === oldRootId
+        ? legacyRootId
+        : occurrence.artifact_id,
+  }));
+  const occurrencesById = new Map(
+    occurrences.map((occurrence) => [occurrence.occurrence_id, occurrence]),
+  );
+  const edges = parsed.edges
+    .map((edge) => {
+      const parent_artifact_id =
+        edge.parent_artifact_id === oldRootId
+          ? legacyRootId
+          : edge.parent_artifact_id;
+      const occurrence_id = occurrenceIdMap.get(edge.occurrence_id)!;
+      const occurrence = occurrencesById.get(occurrence_id)!;
+      const updated = {
+        ...edge,
+        parent_artifact_id,
+        occurrence_id,
+      };
+      return {
+        ...updated,
+        edge_id: artifactEdgeId(updated, occurrence),
+      };
+    })
+    .sort((left, right) =>
+      compareUnicodeCodePoints(left.edge_id, right.edge_id),
+    );
+  const graphSha256 = artifactGraphDigest({
+    nodes,
+    occurrences,
+    edges,
+    contradictions: parsed.integrity_contradictions,
+  });
+  const manifest = {
+    ...parsed.manifest,
+    manifest_id: artifactManifestId(legacyRootId, graphSha256),
+    root_artifact_id: legacyRootId,
+    root_sha256: legacyRootSha256,
+    graph_sha256: graphSha256,
+  };
+  return createEvidence(
+    { path, sha256: legacyRootSha256, format: "directory" },
+    PROVIDER,
+    {
+      operation: "inventory_artifact",
+      parameters: {},
+      result: {
+        ...parsed,
+        manifest,
+        nodes,
+        occurrences,
+        edges,
+        ...(coverageOverride === undefined
+          ? {}
+          : { coverage: coverageOverride }),
+      },
+      confidence: "observed",
+      authority: "shipped-artifact",
+    },
+  );
+};
+
+describe("legacy directory root digest scheme compatibility", () => {
+  it("reports unchanged directories as unchanged when comparing a legacy listing-hash inventory against a fresh tree-digest scan", async () => {
+    const root = await createTestTempDirectory("rea-legacy-dir-compare-");
+    const emptyDir = join(root, "empty");
+    const populatedDir = join(root, "populated");
+    const changedDir = join(root, "changed");
+    await Promise.all([
+      mkdir(emptyDir),
+      mkdir(join(populatedDir, "sub"), { recursive: true }),
+      mkdir(join(changedDir, "sub"), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(join(populatedDir, "a.txt"), "same"),
+      writeFile(join(populatedDir, "sub", "b.txt"), "nested"),
+      writeFile(join(changedDir, "a.txt"), "modified"),
+      writeFile(join(changedDir, "sub", "b.txt"), "nested"),
+    ]);
+
+    const [freshEmpty, freshPopulated, freshChanged] = await Promise.all([
+      observe(emptyDir),
+      observe(populatedDir),
+      observe(changedDir),
+    ]);
+    const legacyEmpty = toLegacyDirectoryInventoryEvidence(
+      emptyDir,
+      freshEmpty,
+    );
+    const legacyPopulated = toLegacyDirectoryInventoryEvidence(
+      populatedDir,
+      freshPopulated,
+    );
+
+    // Sanity check: the legacy and fresh root hashes actually differ.
+    expect(
+      parseArtifactInventoryEvidence(legacyEmpty).inventory.manifest
+        .root_sha256,
+    ).not.toBe(
+      parseArtifactInventoryEvidence(freshEmpty).inventory.manifest.root_sha256,
+    );
+
+    // An unchanged empty directory reports unchanged in either direction.
+    for (const [left, right] of [
+      [legacyEmpty, freshEmpty],
+      [freshEmpty, legacyEmpty],
+    ] as const)
+      expect(compareArtifacts(left, right)).toMatchObject({
+        status: "unchanged",
+        summary: {
+          unchanged: 1,
+          added: 0,
+          removed: 0,
+          changed: 0,
+          unknown: 0,
+          contradiction: 0,
+        },
+        changes: [],
+      });
+
+    // An unchanged populated directory reports unchanged across all members.
+    expect(compareArtifacts(legacyPopulated, freshPopulated)).toMatchObject({
+      status: "unchanged",
+      summary: {
+        unchanged: 4,
+        added: 0,
+        removed: 0,
+        changed: 0,
+        unknown: 0,
+        contradiction: 0,
+      },
+      changes: [],
+    });
+
+    // A real member change is still reported without a spurious root diff.
+    const changed = compareArtifacts(legacyPopulated, freshChanged);
+    expect(changed).toMatchObject({
+      status: "changed",
+      summary: { changed: 1, unknown: 0 },
+      changes: [
+        expect.objectContaining({
+          logical_path: "a.txt",
+          classification: "changed",
+          dimensions: expect.arrayContaining(["content"]),
+        }),
+      ],
+    });
+
+    // Without container-entries coverage, incompatible root schemes stay unknown.
+    const freshRootOnly = createEvidence(
+      evidenceSubjectInput(freshEmpty.subject),
+      PROVIDER,
+      {
+        operation: "inventory_artifact",
+        parameters: {},
+        result: {
+          ...artifactInventoryResultSchema.parse(freshEmpty.normalized_result),
+          coverage: { scope: "root", status: "complete" },
+        },
+        confidence: "derived",
+        authority: "shipped-artifact",
+      },
+    );
+    const legacyRootOnly = toLegacyDirectoryInventoryEvidence(
+      emptyDir,
+      freshEmpty,
+      { scope: "root", status: "complete" },
+    );
+    expect(compareArtifacts(legacyRootOnly, freshRootOnly)).toMatchObject({
+      status: "unknown",
+      summary: { unchanged: 0, changed: 0, unknown: 1 },
+      changes: [
+        expect.objectContaining({
+          logical_path: ".",
+          classification: "unknown",
+          dimensions: ["availability"],
+        }),
       ],
     });
   });
