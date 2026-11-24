@@ -2229,6 +2229,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                       stopSignal: "SIGTERM",
                       timeout: disasmTimeout,
                       maxBuffer: maxAsmBuffer,
+                      env: { ...this.#environment, DEBUGINFOD_URLS: "" },
                     },
                   );
                   asmOutput = stdout;

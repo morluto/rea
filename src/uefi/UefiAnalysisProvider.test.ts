@@ -9690,11 +9690,13 @@ it("preserves caller-selected provider environment for tool configuration over a
     "application.version=11.0\n",
   );
 
+  let capturedCommand: string | undefined;
   let capturedEnv: NodeJS.ProcessEnv | undefined;
   const spy = vi
     .spyOn(ExecFileOutputModule, "execFileOutput")
     .mockImplementation(async (command, args, options) => {
       if (command.includes("analyzeHeadless")) {
+        capturedCommand = command;
         capturedEnv = options?.env;
         const outC = args[args.indexOf("-postScript") + 2];
         if (outC) {
@@ -9732,7 +9734,11 @@ it("preserves caller-selected provider environment for tool configuration over a
       );
       const result = executed.value.result as UefiDecompileResult;
       expect(result.coverage).toBe("complete");
+      expect(capturedCommand).toBe(
+        join(mockGhidraDir, "support", "analyzeHeadless"),
+      );
       expect(capturedEnv).toBeDefined();
+      expect(capturedEnv?.GHIDRA_INSTALL_DIR).toBe(mockGhidraDir);
       expect(result.producers?.ghidra).toBeDefined();
       expect(result.limitations).not.toEqual(
         expect.arrayContaining([
@@ -9752,11 +9758,70 @@ it("preserves caller-selected provider environment for tool configuration over a
   }
 });
 
-it("passes caller-selected environment to UefiAnalysisProvider via createUefiAnalysisProvider", async () => {
-  const customEnv: NodeJS.ProcessEnv = {
-    GHIDRA_INSTALL_DIR: "/custom/configured/ghidra",
-    REA_OBJDUMP_COMMAND: "custom-objdump",
-  };
-  const provider = createUefiAnalysisProvider(customEnv);
-  expect(provider).toBeInstanceOf(UefiAnalysisProvider);
+it("exercises factory-created provider to assert caller-selected environment is forwarded and honored", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-factory-env-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(
+    join(inDir, "Sample.efi"),
+    createMinimalPeBuffer(0x8664, 1, 256),
+  );
+
+  let capturedCommand: string | undefined;
+  let capturedEnv: NodeJS.ProcessEnv | undefined;
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, _args, options) => {
+      if (command === "llvm-objdump") {
+        throw new Error("llvm-objdump unavailable in test stub");
+      }
+      capturedCommand = command;
+      capturedEnv = options?.env;
+      return {
+        stdout: "0000000000000000 <main>:\n   0: 48 83 ec 08 sub $0x8,%rsp\n",
+        stderr: "",
+        stdoutBytes: 56,
+        stderrBytes: 0,
+      };
+    });
+
+  const origObjdump = process.env.REA_OBJDUMP_COMMAND;
+  try {
+    process.env.REA_OBJDUMP_COMMAND = "/ambient/wrong/objdump";
+
+    const customEnv: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+      REA_OBJDUMP_COMMAND: "custom-selected-objdump",
+    };
+
+    const provider = createUefiAnalysisProvider(customEnv);
+    try {
+      const executed = expectOk(
+        await provider.execute(
+          decompileRequest(inDir, outDir, {
+            include_disassembly: true,
+          }),
+        ),
+      );
+      const result = executed.value.result as UefiDecompileResult;
+      expect(capturedCommand).toBe("custom-selected-objdump");
+      expect(capturedEnv?.REA_OBJDUMP_COMMAND).toBe("custom-selected-objdump");
+      expect(result.producers?.disassembler).toBe("custom-selected-objdump");
+      expect(result.modules[0]?.disassembly_status).toBe("ok");
+      expect(result.modules[0]?.relative_asm_file).toBeDefined();
+      const asmPath = join(outDir, result.modules[0]!.relative_asm_file!);
+      expect(existsSync(asmPath)).toBe(true);
+      expect(await readFile(asmPath, "utf8")).toContain("<main>:");
+    } finally {
+      await provider.close();
+    }
+  } finally {
+    spy.mockRestore();
+    if (origObjdump !== undefined) {
+      process.env.REA_OBJDUMP_COMMAND = origObjdump;
+    } else {
+      delete process.env.REA_OBJDUMP_COMMAND;
+    }
+  }
 });
