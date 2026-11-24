@@ -222,6 +222,100 @@ it.each([
   },
 );
 
+it.each([
+  ["numeric prefix", "fetch((0, base));"],
+  ["undefined prefix", "fetch((undefined, base));"],
+])(
+  "resolves identifier alias and reaches default forward influence across %s sequence argument",
+  (_label, body) => {
+    const graph = graphForJavaScript(
+      `const base = "https://example.test"; ${body}`,
+    );
+    const argumentNode = graph.nodes.find(
+      (node) => node.label === "argument 0",
+    );
+    if (argumentNode === undefined) throw new Error("Expected argument 0 node");
+    const aliasEdges = graph.relations.filter(
+      (edge) =>
+        edge.relation === "aliases" &&
+        edge.target_node_id === argumentNode.node_id,
+    );
+    expect(aliasEdges).toHaveLength(1);
+    const sourceNode = graph.nodes.find(
+      (node) => node.node_id === aliasEdges[0]?.source_node_id,
+    );
+    expect(sourceNode?.label).toBe("base");
+    expect(aliasEdges[0]?.resolution).toBe("resolved");
+    const forward = trace(body);
+    expect(forward.nodes.map((node) => node.label)).toContain("argument 0");
+    expect(forward.unknowns).toEqual([]);
+  },
+);
+
+it("keeps impure sequence call arguments conservative without resolved alias shortcuts", () => {
+  const graph = graphForJavaScript(
+    'const base = "https://example.test"; fetch((sideEffect(), base));',
+  );
+  const argumentNode = graph.nodes.find((node) => node.label === "argument 0");
+  if (argumentNode === undefined) throw new Error("Expected argument 0 node");
+  expect(
+    graph.relations.some(
+      (edge) =>
+        edge.relation === "aliases" &&
+        edge.target_node_id === argumentNode.node_id &&
+        edge.resolution === "resolved",
+    ),
+  ).toBe(false);
+  const forward = trace("fetch((sideEffect(), base));");
+  expect(forward.status).toBe("partial");
+  expect(
+    forward.unknowns.some(
+      (unknown) =>
+        unknown.family === "data-flow" && unknown.reason === "unknown-value",
+    ),
+  ).toBe(true);
+});
+
+it("scopes return aliases to the unwrapped pure sequence value without spurious undefined edges", () => {
+  const graph = graphForJavaScript(
+    "function f(x) { return (undefined, x); } function g(y) { return (sideEffect(), y); }",
+  );
+  const returnNodes = graph.nodes.filter((node) => node.kind === "return-site");
+  expect(returnNodes).toHaveLength(2);
+  const fNode = graph.nodes.find(
+    (node) => node.kind === "function" && node.label === "f",
+  );
+  const gNode = graph.nodes.find(
+    (node) => node.kind === "function" && node.label === "g",
+  );
+  const pureReturn = returnNodes.find(
+    (node) => node.function_node_id === fNode?.node_id,
+  );
+  const impureReturn = returnNodes.find(
+    (node) => node.function_node_id === gNode?.node_id,
+  );
+  if (pureReturn === undefined || impureReturn === undefined)
+    throw new Error("Expected two return nodes");
+  const pureAliases = graph.relations.filter(
+    (edge) =>
+      edge.relation === "aliases" && edge.target_node_id === pureReturn.node_id,
+  );
+  expect(pureAliases).toHaveLength(1);
+  expect(pureAliases[0]?.resolution).toBe("resolved");
+  expect(
+    graph.nodes.find((node) => node.node_id === pureAliases[0]?.source_node_id)
+      ?.label,
+  ).toBe("x");
+  expect(
+    graph.relations.some(
+      (edge) =>
+        edge.relation === "aliases" &&
+        edge.target_node_id === impureReturn.node_id &&
+        edge.resolution === "resolved",
+    ),
+  ).toBe(false);
+});
+
 it("keeps older call-site literal evidence searchable when argument literals are absent", () => {
   const graph = graphForJavaScript('consume("only-direct");');
   const legacy = {
