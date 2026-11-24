@@ -4,6 +4,7 @@ import {
 } from "../../../../src/artifacts/apple/MachoImage.fixture.js";
 import { buildManagedPeFixture } from "../../../../src/dotnet/ManagedPe.fixture.js";
 import { peCertificateFixture } from "../../../../src/native/pe/PeCertificates.fixture.js";
+import { appleIpsBytes } from "../../../fixtures/binaryDiagnostics/appleIps.js";
 import { targetFailureReaders, type TargetFailureCase } from "../registry.js";
 
 /** An ELF magic with nothing after it: every ELF-reading owner refuses it. */
@@ -77,7 +78,6 @@ export default targetFailureReaders([
     "inspect_devicetree",
     "inspect_pe_imports",
     "inspect_kernel_module",
-    "inspect_apple_ips",
     "inspect_pe_load_config",
     "inspect_pe_resources",
     "inspect_native_exports",
@@ -92,6 +92,19 @@ export default targetFailureReaders([
     cases: [truncatedElfHeader, overlappingSlices],
   })),
   { operation: "inspect_dwarf_units", cases: [overlappingSlices] },
+  {
+    operation: "inspect_apple_ips",
+    cases: [
+      truncatedElfHeader,
+      {
+        // The JSON body ends inside its declared report object.
+        name: "ips-truncated-body",
+        kind: "malformed",
+        bytes: () => appleIpsBytes({ truncateBody: true }),
+        identity: true,
+      },
+    ],
+  },
   {
     operation: "inspect_erlang_beam",
     cases: [
