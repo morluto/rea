@@ -70,8 +70,7 @@ it.each([
 it.each(["stringValue", "boolValue", "bytesValue"])(
   "refuses a rounded JSON number %s retained as raw evidence",
   async (field) => {
-    const input =
-      `{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"11111111111111111111111111111111","spanId":"2222222222222222","attributes":[{"key":"count","value":{"${field}":9007199254740993}}]}]}]}]}`;
+    const input = `{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"11111111111111111111111111111111","spanId":"2222222222222222","attributes":[{"key":"count","value":{"${field}":9007199254740993}}]}]}]}]}`;
     const path = join(
       await createTestTempDirectory("rea-otlp-raw-number-"),
       "trace.json",

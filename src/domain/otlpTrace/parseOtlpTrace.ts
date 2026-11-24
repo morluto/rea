@@ -203,7 +203,8 @@ const readAttribute = (
   const value = kind === undefined ? undefined : rawValue[kind];
   switch (kind) {
     case "stringValue":
-      if (retainedNumber(rawValue, kind, capture)) return { ...empty, value_kind: "string" };
+      if (retainedNumber(rawValue, kind, capture))
+        return { ...empty, value_kind: "string" };
       return {
         ...empty,
         value_kind: "string",
@@ -216,7 +217,8 @@ const readAttribute = (
             : retainedRaw(value, capture, "attribute"),
       };
     case "boolValue":
-      if (retainedNumber(rawValue, kind, capture)) return { ...empty, value_kind: "bool" };
+      if (retainedNumber(rawValue, kind, capture))
+        return { ...empty, value_kind: "bool" };
       return {
         ...empty,
         value_kind: "bool",
@@ -256,7 +258,8 @@ const readAttribute = (
       };
     }
     case "bytesValue":
-      if (retainedNumber(rawValue, kind, capture)) return { ...empty, value_kind: "bytes" };
+      if (retainedNumber(rawValue, kind, capture))
+        return { ...empty, value_kind: "bytes" };
       return {
         ...empty,
         value_kind: "bytes",
