@@ -58,7 +58,6 @@ const fixture = async (kind: (typeof kinds)[number]) => {
       operation: "gdb_console",
       parameters: { session_id: sessionId, command: report.command },
       result: report,
-      rawResult: report,
     },
   );
   const start = vi
@@ -149,7 +148,7 @@ it.each(kinds)(
     expect(output.evidence_bundle.bytes).toBe(Buffer.byteLength(serialized));
     expect(bundle.records).toHaveLength(1);
     const parent = parseEvidence(bundle.records[0]);
-    expect(parent.raw_result).toEqual(parent.normalized_result);
+    expect(parent.raw_result).toBeNull();
     expect(selected.normalized_result).toMatchObject({
       parent_evidence_id: parent.evidence_id,
       source_parameters: parent.parameters,

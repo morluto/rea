@@ -1,3 +1,4 @@
+import { expectResultValue } from "../../support/expectResultValue.js";
 import {
   access,
   mkdir,
@@ -141,7 +142,7 @@ cliTest(
     expect(configured).not.toContain("do not copy");
     expect(
       effectiveClientServer(
-        parseClientConfiguration(configured, "json"),
+        expectResultValue(parseClientConfiguration(configured, "json")),
         "rea",
       ),
     ).toHaveProperty("env", selected);
@@ -168,7 +169,7 @@ cliTest(
     expect(updated.exitCode, updated.stdout).toBe(0);
     const saved = await readFile(config, "utf8");
     expect(saved).not.toContain("do not copy");
-    const parsed = parseClientConfiguration(saved, "json");
+    const parsed = expectResultValue(parseClientConfiguration(saved, "json"));
     expect(effectiveClientServer(parsed, "foreign")).toEqual(foreign);
     expect(effectiveClientServer(parsed, "rea")).toHaveProperty("env", {
       ...changed,
@@ -532,7 +533,9 @@ for (const scenario of scenarios)
       ]);
       expect(configured.exitCode, configured.stdout).toBe(0);
       const text = await readFile(config, "utf8");
-      const parsed = parseClientConfiguration(text, scenario.format);
+      const parsed = expectResultValue(
+        parseClientConfiguration(text, scenario.format),
+      );
       expect(effectiveClientServer(parsed, "rea")).toMatchObject({
         env: {
           CALLER_SETTING: "keep exactly",
@@ -729,7 +732,7 @@ cliTest(
       const text = await readFile(config, "utf8");
       expect(text).not.toContain("REA_UNRELATED_MARKER");
       const registration = effectiveClientServer(
-        parseClientConfiguration(text, format),
+        expectResultValue(parseClientConfiguration(text, format)),
         "rea",
       );
       expect(registration).toMatchObject(timeout);
@@ -927,7 +930,9 @@ XDG_CONFIG_HOME = ${JSON.stringify(clientRoot)}
       ],
     });
     const registration = effectiveClientServer(
-      parseClientConfiguration(await readFile(codex, "utf8"), "toml"),
+      expectResultValue(
+        parseClientConfiguration(await readFile(codex, "utf8"), "toml"),
+      ),
       "rea",
     );
     expect(registration).toMatchObject({
@@ -993,9 +998,11 @@ cliTest(
     const setup = await run(["setup", "--yes"], configHome);
     expect(setup.exitCode, setup.stdout).toBe(0);
     const registration = effectiveClientServer(
-      parseClientConfiguration(
-        await readFile(join(codexHome, "config.toml"), "utf8"),
-        "toml",
+      expectResultValue(
+        parseClientConfiguration(
+          await readFile(join(codexHome, "config.toml"), "utf8"),
+          "toml",
+        ),
       ),
       "rea",
     );
@@ -1127,7 +1134,12 @@ for (const [client, provider] of [
       const text = await readFile(config, "utf8");
       expect(
         effectiveClientServer(
-          parseClientConfiguration(text, client === "codex" ? "toml" : "kimi"),
+          expectResultValue(
+            parseClientConfiguration(
+              text,
+              client === "codex" ? "toml" : "kimi",
+            ),
+          ),
           "rea",
         ),
       ).toMatchObject({

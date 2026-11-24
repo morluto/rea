@@ -12,6 +12,7 @@ import {
 } from "../../fixtures/binaryDiagnostics/windowsShortcut.js";
 import { phaseGate } from "../../support/lifecycleHarness.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { expectFileSelectionErrors } from "../../support/expectFileSelectionErrors.js";
 
 const { realpathCalls, lstatCalls, lstatGate } = vi.hoisted(() => ({
   realpathCalls: vi.fn(),
@@ -62,27 +63,20 @@ describe("Windows shortcut stable filesystem boundary", () => {
     await writeFile(malformed, Buffer.from("not a shell link"));
     await symlink(path, alias);
     const service = createWindowsShortcutService();
-    for (const [candidate, reason] of [
-      [root, "invalid_format"],
-      [alias, "invalid_format"],
-      [malformed, "invalid_format"],
-      [join(root, "missing.lnk"), "invalid_value"],
-      [join(path, "child.lnk"), "invalid_value"],
-    ] as const) {
-      const result = await service.inspect({ path: candidate });
-      if (result.ok) throw new Error("Expected file acquisition failure");
-      expect(result.error).toMatchObject({
-        _tag: "AnalysisInputError",
-        operation: "inspect_windows_shortcut",
-        issues: [
-          {
-            path: ["path"],
-            reason,
-            message: expect.any(String),
-          },
-        ],
-      });
-    }
+    await expectFileSelectionErrors(
+      service,
+      "inspect_windows_shortcut",
+      { root, alias, path },
+      ".lnk",
+    );
+    // Malformed bytes are a target refusal, not a request-field error.
+    const malformedResult = await service.inspect({ path: malformed });
+    if (malformedResult.ok) throw new Error("Expected a malformed target");
+    expect(malformedResult.error).toMatchObject({
+      _tag: "AnalysisMalformedTargetError",
+      operation: "inspect_windows_shortcut",
+      path: malformed,
+    });
   });
 
   it.skipIf(process.platform === "win32")(

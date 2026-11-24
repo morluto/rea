@@ -72,14 +72,20 @@ export const ghidraAsciiLiteralSubstring = (pattern: string): string | null => {
  * spellings but reports qualified ones; a leaf ends its qualified spelling, so
  * a literal is found in one only if it is found in the other. Leave invalid
  * rows present so the inventory owner retains its output error.
+ *
+ * `narrowed` reports whether folding removed any row or secondary name. The
+ * bridge folds ASCII exactly, so for an ASCII-foldable pattern its candidates
+ * are normally already the matches; an unnarrowed reply is returned unchanged
+ * and is not a provider representation distinct from the result.
  */
 export const filterGhidraLiteralCandidates = (
   value: JsonValue,
   pattern: string,
-): JsonValue => {
-  if (!Array.isArray(value)) return value;
+): { readonly value: JsonValue; readonly narrowed: boolean } => {
+  if (!Array.isArray(value)) return { value, narrowed: false };
   const matches = literalSubstringPredicate(pattern, false);
-  return value.flatMap((item) => {
+  let narrowed = false;
+  const filtered = value.flatMap((item) => {
     if (
       item === null ||
       typeof item !== "object" ||
@@ -98,6 +104,13 @@ export const filterGhidraLiteralCandidates = (
       candidates,
       matches,
     );
-    return matched === undefined ? [] : [matched];
+    if (matched === undefined) {
+      narrowed = true;
+      return [];
+    }
+    if ((matched.matched_aliases?.length ?? 0) !== candidates.length)
+      narrowed = true;
+    return [matched];
   });
+  return narrowed ? { value: filtered, narrowed } : { value, narrowed };
 };

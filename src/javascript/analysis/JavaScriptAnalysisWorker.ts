@@ -5,6 +5,7 @@ import {
 import {
   DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
   javaScriptMemberMutationAllowanceField,
+  isJavaScriptMemberMutationRefusal,
   javaScriptMemberMutationRefusal,
   reportsJavaScriptMemberMutationRefusal,
 } from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
@@ -140,6 +141,20 @@ type WorkerPrimaryFailure =
     };
 
 /** One sequential owned worker, retained between source files and closed after analysis. */
+/**
+ * Preload discovery skips a source whose member-mutation allowance the worker
+ * refused and reported; the normal pass recomputes and reports it. That
+ * refusal leaves the process healthy, so it does not block reuse and the
+ * static checkpoints discovery retained survive.
+ */
+export const isRecoverableJavaScriptWorkerFailure = (
+  purpose: "analysis" | "preload-discovery" | "structure-only",
+  result: Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>,
+): boolean =>
+  purpose === "preload-discovery" &&
+  !result.ok &&
+  isJavaScriptMemberMutationRefusal(result.error.error);
+
 export class JavaScriptAnalysisWorker {
   readonly #runId = `rea-javascript-analysis-${randomUUID()}`;
   readonly #runtime: OwnedWorkerRuntime;
@@ -333,7 +348,7 @@ export class JavaScriptAnalysisWorker {
     signal?: AbortSignal,
     onPhase?: (phase: string) => Promise<void>,
     packageType: JavaScriptPackageType = "unknown",
-    purpose: "analysis" | "preload-discovery" = "analysis",
+    purpose: "analysis" | "preload-discovery" | "structure-only" = "analysis",
   ): Promise<
     Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>
   > {
@@ -623,7 +638,8 @@ export class JavaScriptAnalysisWorker {
       if (this.#deadline === deadline) this.#deadline = undefined;
       if (this.#activeJobId === id) this.#activeJobId = undefined;
     }
-    if (result.ok) this.#lastFailure = undefined;
+    if (result.ok || isRecoverableJavaScriptWorkerFailure(purpose, result))
+      this.#lastFailure = undefined;
     else if (!(result.error.error instanceof ProviderCleanupError))
       this.#lastFailure = result.error.error;
     // Child stop must be verified before temporary files are released. On

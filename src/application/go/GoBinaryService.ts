@@ -12,7 +12,7 @@ import {
   inspectGoBinaryInputSchema,
 } from "../../domain/go/goBinary.js";
 import type { Result } from "../../domain/result.js";
-import type { AnalysisViewRetention } from "../analysisView/AnalysisViewService.js";
+import type { AnalysisViewRetention } from "../analysisView/AnalysisViewRetention.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_go_binary";
@@ -37,6 +37,7 @@ export class GoBinaryService {
         inputSchema: inspectGoBinaryInputSchema,
         outputSchema: goBinarySchema,
         provider: this.provider,
+        retainCompletedReport: true,
         invalidOutputMessage:
           "Go build-information reader returned malformed metadata or changed the selected artifact or slice identity.",
         toParameters: ({ detail: _detail, ...providerInput }) => providerInput,

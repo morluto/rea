@@ -51,6 +51,7 @@ export class ElfUnwindRangesService {
         inputSchema: inspectElfUnwindRangesInputSchema,
         outputSchema: elfUnwindRangesSchema,
         provider: this.provider,
+        retainCompletedReport: true,
         invalidOutputMessage:
           "ELF unwind provider returned malformed output or changed artifact identity.",
         toParameters: (input) => input,

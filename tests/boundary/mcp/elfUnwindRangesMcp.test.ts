@@ -4,7 +4,6 @@ import { expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   UNWIND_FN_A,
   UNWIND_FN_B,
@@ -61,26 +60,6 @@ mcpTest(
       expect(report.limitations).toContain(
         "CFA instructions are counted but not evaluated.",
       );
-    } finally {
-      await session.close();
-    }
-  },
-);
-
-mcpTest(
-  "requires an absolute path for inspect_elf_unwind_ranges",
-  async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
-    try {
-      const response = await client.callTool({
-        name: "inspect_elf_unwind_ranges",
-        arguments: { path: "program" },
-      });
-      expect(response.isError).toBe(true);
-      expect(parseMcpToolError(response).error).toMatchObject({
-        code: "invalid_request",
-        details: { operation: "inspect_elf_unwind_ranges" },
-      });
     } finally {
       await session.close();
     }

@@ -86,6 +86,35 @@ export type HeaderArchitecture = Exclude<
   (typeof HEADER_ARCHITECTURE_EXCLUSIONS)[number]
 >;
 
+/**
+ * Prefix of the limitation recorded when an optional ELF32 MIPS section header
+ * table extends past the captured file, leaving unread headers unknown.
+ */
+export const MIPS_SECTION_TABLE_TRUNCATION_PREFIX =
+  "MIPS section header table at file offset ";
+
+/**
+ * True when an ELF32 MIPS header has the recordless legacy ET_EXEC shape
+ * (unspecified ABI, MIPS-I/MIPS32/MIPS32r2, no ASE/machine/FP64/NAN2008/n32/32bitmode flags).
+ */
+export const isRecordlessLegacyMips32Header = (
+  mips: Pick<MipsElfMetadata, "elfClass" | "type" | "flags">,
+): boolean => {
+  const arch = mips.flags & 0xf0000000;
+  return (
+    mips.elfClass === 32 &&
+    mips.type === 2 &&
+    (arch === 0x00000000 || arch === 0x50000000 || arch === 0x70000000) &&
+    (mips.flags & 0x0f000000) === 0 &&
+    (mips.flags & 0x00ff0000) === 0 &&
+    (mips.flags & 0x0000f000) === 0 &&
+    (mips.flags & 0x20) === 0 &&
+    (mips.flags & 0x40) === 0 &&
+    (mips.flags & 0x100) === 0 &&
+    (mips.flags & 0x600) === 0
+  );
+};
+
 /** Raw ELF facts; family recognition does not establish ISA or ABI support. */
 export interface MipsElfMetadata extends ElfFamilyMetadata {
   /** Undefined until inspected; null means no ABI record was observed. */

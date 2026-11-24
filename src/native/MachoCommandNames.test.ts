@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { readMachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import { projectMachoBinary } from "./MachoBinaryProjection.js";
 import {
+  dylibCommand,
   dylibUseCommand,
   machoImage,
   readerOf,
@@ -193,27 +194,44 @@ it("retains alternate dylib flags and legacy platform versions", async () => {
   });
 });
 
-it.each([LC.REEXPORT_DYLIB, LC.LOAD_UPWARD_DYLIB])(
-  "preserves marker-bearing encoding for dependency command %i",
-  async (command) => {
-    const image = machoImage({
-      commands: [dylibUseCommand(command, "@rpath/libMarked.dylib", 0x0a)],
-    });
-    const result = await readMachoCommandNames(
-      readerOf(image),
-      image.length,
-      128,
-      1,
-    );
-    expect(result.commands[0]?.dylib).toMatchObject({
-      nameOffset: 28,
-      encoding: { kind: "use", flags: 0x0a },
-    });
-    expect(projectMachoBinary(result).commands[0]?.fields).toMatchObject({
-      options: 0x0a,
-    });
-  },
-);
+it("projects options only for admitted modern dylib command layouts", async () => {
+  const marker = 0x1a741800;
+  const early = dylibCommand(LC.LOAD_DYLIB, "classic");
+  new DataView(early.buffer).setUint32(12, marker, true);
+  const late = dylibUseCommand(LC.LOAD_DYLIB, "pad!classic", 9);
+  new DataView(late.buffer).setUint32(8, 32, true);
+  const nearMarker = dylibUseCommand(LC.LOAD_DYLIB, "classic", 9);
+  new DataView(nearMarker.buffer).setUint32(12, marker + 1, true);
+  const image = machoImage({
+    commands: [
+      dylibUseCommand(LC.REEXPORT_DYLIB, "marked", 0x0a),
+      dylibUseCommand(LC.LOAD_UPWARD_DYLIB, "marked", 0x05),
+      early,
+      late,
+      nearMarker,
+    ],
+  });
+  const binary = await readMachoCommandNames(
+    readerOf(image),
+    image.length,
+    128,
+    5,
+  );
+  expect(
+    projectMachoBinary(binary).commands.map(({ kind, fields }) => [
+      kind,
+      fields.name,
+      fields.options,
+      fields["time stamp"],
+    ]),
+  ).toEqual([
+    ["LC_REEXPORT_DYLIB", "marked (offset 28)", 0x0a, undefined],
+    ["LC_LOAD_UPWARD_DYLIB", "marked (offset 28)", 0x05, undefined],
+    ["LC_LOAD_DYLIB", "classic (offset 24)", undefined, marker],
+    ["LC_LOAD_DYLIB", "classic (offset 32)", undefined, marker],
+    ["LC_LOAD_DYLIB", "classic (offset 28)", undefined, marker + 1],
+  ]);
+});
 
 it("retains bounded linker options and dylinker strings with embedded framing", async () => {
   const strings = Buffer.from("-lone\0\nLoad command 1\0");

@@ -23,9 +23,8 @@ import type { Stats } from "node:fs";
 
 import {
   requireAnalysisViewRetention,
-  summarizeRetainedAnalysis,
   type AnalysisViewRetention,
-} from "../analysisView/AnalysisViewService.js";
+} from "../analysisView/AnalysisViewRetention.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisCancelledError,
@@ -456,9 +455,15 @@ export class ReverseEngineeringService {
       timeoutMs: commandTimeoutMs ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
       outputBudgetBytes: maxOutputBytes ?? DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES,
     });
-    return observed.ok && detail === "summary"
-      ? summarizeRetainedAnalysis(observed.value, retention)
-      : observed;
+    if (!observed.ok || detail !== "summary") return observed;
+    const service = await import("../analysisView/AnalysisViewService.js");
+    if (options.signal?.aborted)
+      return err(
+        cancelledBy("inspect_with_objdump", options.signal, {
+          partialObservation: observed.value,
+        }),
+      );
+    return service.summarizeRetainedAnalysis(observed.value, retention);
   }
 
   executeRizinCommand(
@@ -1256,7 +1261,6 @@ export class ReverseEngineeringService {
           provider_executable: command,
           command_arguments: [...args],
         },
-        rawResult: result,
         result,
         limitations,
         ...(absolutePath === undefined

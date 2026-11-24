@@ -145,6 +145,33 @@ shared content remain separate rows with the same canonical node identity.
 These rows select application-graph observations. Semantic relationships and
 semantic unknown records remain in complete parent Evidence and trace tools.
 
+`where.properties` additionally selects exact retained property values, such as
+`[{"key": "operation", "values": ["send"]}]`. Every listed key must be retained
+with one of its JSON scalar values; a missing key or non-scalar value never
+matches, and `values: []` matches none.
+
+To count distinct values instead of paging observations, use
+`javascript-fact-groups` with the same `where` and the property names to group
+by:
+
+```json
+{
+  "kind": "javascript-fact-groups",
+  "where": { "paths": ["preload.js"], "kinds": ["ipc-channel"] },
+  "group_by": ["operation", "channel"]
+}
+```
+
+Each row reports one distinct combination with its `observation_count` and
+`node_count`. A missing key is omitted from the combination, distinct from a
+retained null such as an unresolved dynamic channel. Rows are ordered by the
+canonical JSON of their values; the default offset/limit is 0/256 and the page
+total counts distinct combinations. When every grouped value is a present JSON
+scalar, read that group's observations, with provenance, through
+`javascript-facts` and the same `where` plus matching `where.properties`.
+`where.properties` cannot select array, object or missing values, so read
+such groups by paging `javascript-facts` with the same `where`.
+
 Rows follow retained node/observation order. The default offset/limit is 0/64;
 follow `coverage.next_offset`. Page totals count matching retained observations,
 while `source_coverage` preserves caller selection and application/semantic
@@ -269,8 +296,8 @@ searchable. The offered per-file node capacity also bounds the producer's
 expression and operand collections before graph projection.
 Expression nodes and unknowns share the existing per-file graph admission
 budgets; omitted facts make graph coverage truncated and the trace partial.
-Consumers that previously treated `found` as compatible with a relevant
-unknown should handle `partial` and inspect the returned unknowns. Retained
+A relevant unknown makes the trace `partial`; inspect the returned unknowns.
+Retained
 graphs without `influences` edges remain readable but do not gain edges until
 the application is analyzed again.
 Global timer, `fetch`, `WebSocket`, `JSON.parse`, and coercion calls receive
@@ -353,8 +380,7 @@ shorter; smaller values keep their existing JSON key. This keeps large values
 out of identity and display metadata without expanding short values or
 truncating their Evidence.
 
-New analyses therefore produce different IDs for hashed literals from the
-earlier payload-bearing role keys. Use IDs returned by the selected parent
+Use IDs returned by the selected parent
 graph and read literal values from `properties.value`, rather than decoding
 role keys or labels. Previously stored graphs and their original IDs remain
 valid inputs.
@@ -373,7 +399,6 @@ shorter of the exact value and `<kind> endpoint`; semantic request/response
 labels use the shorter of the endpoint and operation method. These labels are
 display metadata, not endpoint lookup values.
 
-New analyses therefore change hashed endpoint IDs and longer endpoint labels.
 Use IDs from the selected graph and read the complete endpoint properties;
 previously stored graphs still support their original IDs. Literal endpoint
 search, semantic tracing, and version comparison use the preserved values.
@@ -383,9 +408,8 @@ Event and listener nodes likewise preserve the complete event name in
 digest rule, scoped to the emitter; repeated registrations, removals, and
 dispatches keep one event per exact emitter/name pair. Long event labels use
 `event`, and listener labels use the shorter of `<method>:<name>` and
-`<method>:listener`. Dynamic names remain `null` with explicit uncertainty. New analyses
-change hashed event IDs and longer event/listener labels; query the preserved
-name or select IDs from the parent graph. Previously stored graphs keep their
+`<method>:listener`. Dynamic names remain `null` with explicit uncertainty. Query
+the preserved name or select IDs from the parent graph. Previously stored graphs keep their
 original IDs and remain valid trace inputs.
 
 Empty string event names remain exact identities and can be selected with an
@@ -653,10 +677,8 @@ A partial comparison still records an unknown in the MCP session when matching
 uncertain projections produce no changes and `summary.unknown` is zero.
 
 The output includes exact selector candidates, omissions, Evidence links,
-coverage, and limitations; it does not execute JavaScript. When runtime
-semantics matter, run behavioral probes directly against the relevant
-application versions and capture them through the available browser, Electron,
-or process workflows.
+coverage, and limitations; it does not execute JavaScript. See
+[runtime evidence](#runtime-evidence) when runtime semantics matter.
 
 ## CLI and verification
 

@@ -29,6 +29,7 @@ import {
   createGoBinaryByteStringFixture,
   createGoBinaryDiagnosticFixtures,
   createGoBinaryFixture,
+  createGoBinaryOneDirectoryFixture,
   createGoBinaryPathFailureFixture,
 } from "../../fixtures/go/image.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -288,6 +289,20 @@ goMcpTest(
         },
       });
     }
+    // A declared directory count below 16 is admitted, as the loader admits it.
+    const path = join(root, "one-directory.exe");
+    await writeFile(path, createGoBinaryOneDirectoryFixture().bytes);
+    const admitted = await client.callTool({
+      name: "inspect_go_binary",
+      arguments: { path },
+    });
+    expect(admitted.isError, JSON.stringify(admitted.content)).not.toBe(true);
+    expect(
+      goBinarySchema.parse(
+        (admitted.structuredContent as { normalized_result: unknown })
+          .normalized_result,
+      ).build_info,
+    ).toMatchObject({ go_version: "go1.26.0" });
   },
 );
 

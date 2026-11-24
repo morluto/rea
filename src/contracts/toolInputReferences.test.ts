@@ -21,10 +21,7 @@ import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "./javascript/javascript
 
 const drafts = ["draft-2020-12", "draft-07"] as const;
 type Draft = (typeof drafts)[number];
-const validatorFor = (
-  target: Draft = "draft-2020-12",
-  options: Options = {},
-) =>
+const validatorFor = (target: Draft = "draft-2020-12", options: Options = {}) =>
   target === "draft-2020-12"
     ? new Ajv2020({ strict: false, ...options })
     : new Ajv({ strict: false, ...options });

@@ -7,16 +7,23 @@ import type { z } from "zod";
 
 import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
+import {
+  deliversRetainedSummary,
+  RETAINED_SUMMARY_VIEW_TOOL,
+} from "./retainedSummaryDelivery.js";
+import { declaresSizeAwareDetail } from "../contracts/analysisDetail.js";
 import type {
   AnalysisOperationPort,
   ExecutionOptions,
 } from "../ports/AnalysisProvider.js";
 import {
   projectRetainedAnalysis,
-  requireAnalysisViewRetention,
   summarizeRetainedAnalysis,
-  type AnalysisViewRetention,
 } from "../application/analysisView/AnalysisViewService.js";
+import {
+  requireAnalysisViewRetention,
+  type AnalysisViewRetention,
+} from "../application/analysisView/AnalysisViewRetention.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
@@ -560,7 +567,12 @@ export const createAnalysisToolHandler =
           analyze(input, analysis, { signal, progress }),
         );
         const response =
-          !analyzed.ok || detail === "summary"
+          !analyzed.ok ||
+          deliversRetainedSummary(detail, analyzed.value.evidence, {
+            sizeAware: declaresSizeAwareDetail(contract.inputSchema),
+            retained: requireAnalysisViewRetention(contract.name, retention).ok,
+            pageable: server.advertisesTool(RETAINED_SUMMARY_VIEW_TOOL),
+          })
             ? deliverEvidenceResult(
                 server,
                 analyzed.ok

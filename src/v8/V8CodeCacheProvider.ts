@@ -1,6 +1,5 @@
 import {
   isParseLimit,
-  parseFailureAnalysisError,
   parseLimitConstraint,
 } from "../domain/parseFailureAnalysisError.js";
 import {
@@ -8,28 +7,22 @@ import {
   ArtifactReaderFailure,
   withStableArtifactHandle,
   artifactFilePrimaryFacts,
-  artifactSelectedPathErrno,
-  type ArtifactFilePrimaryFacts,
   projectArtifactCloseFailure,
-  projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
-  stableArtifactInputFailure,
 } from "../resources/index.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { V8CodeCachePort } from "../ports/v8CodeCache/V8CodeCachePort.js";
-import {
-  AnalysisAccessDeniedError,
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-} from "../domain/analysisErrorCore.js";
-import { ArtifactOperationError } from "../domain/artifactOperationError.js";
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   MAX_INSPECT_V8_CODE_CACHE_FILE_BYTES,
   MAX_INSPECT_V8_CODE_CACHE_MIN_STRING_BYTES,
   MAX_INSPECT_V8_CODE_CACHE_STRINGS,
   type InspectV8CodeCacheInput,
+  type V8CodeCache,
 } from "../domain/v8/v8CodeCache.js";
 import { err, ok } from "../domain/result.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../providers/offlineArtifactFailure.js";
 import { V8_CODE_CACHE_FORMAT } from "./V8CodeCache.errors.js";
 import { V8_CODE_CACHE_PROVIDER_IDENTITY } from "./V8CodeCacheProviderIdentity.js";
 import { parseV8CodeCacheFromHandle } from "./V8CodeCacheParser.js";
@@ -55,12 +48,13 @@ export class V8CodeCacheProvider implements V8CodeCachePort {
   }
 
   async inspect(input: InspectV8CodeCacheInput, options?: ExecutionOptions) {
+    let completed: V8CodeCache | undefined;
     let observed:
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
     try {
       return await this.#resources.run(async () => {
-        const result = await withStableArtifactHandle(
+        const result = await withStableArtifactHandle<V8CodeCache>(
           input.path,
           input.max_file_bytes,
           {
@@ -70,14 +64,13 @@ export class V8CodeCacheProvider implements V8CodeCachePort {
             onIdentity: (identity) => {
               observed = identity;
             },
+            onVerifiedResult: (report) => {
+              completed = report;
+            },
           },
           (handle) =>
             parseV8CodeCacheFromHandle(
-              {
-                size: handle.size,
-                prefix: handle.prefix,
-                readRange: (offset, length) => handle.readRange(offset, length),
-              },
+              handle,
               {
                 path: input.path,
                 sha256: handle.sha256,
@@ -89,7 +82,7 @@ export class V8CodeCacheProvider implements V8CodeCachePort {
         return ok(result);
       });
     } catch (cause) {
-      return err(v8CodeCacheFailure(cause, input, observed));
+      return err(v8CodeCacheFailure(cause, input, observed, completed));
     }
   }
 }
@@ -123,90 +116,61 @@ const observationBudgetRemediation = (
   return `Raise max_strings above ${String(limit)} or raise min_string_bytes above ${String(input.min_string_bytes)}; both are caller-selected observation budgets.`;
 };
 
-const v8CodeCacheFailurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
-  input: InspectV8CodeCacheInput,
-) => {
-  const { cause, origin } = facts;
-  if (
-    isParseLimit(cause, V8_CODE_CACHE_FORMAT) &&
-    cause.failure.limit.name === "max_strings"
-  )
-    return parseLimitConstraint(OPERATION, "capacity", cause, {
-      retryable: false,
-      remediationAction: observationBudgetRemediation(
-        cause.failure.limit.maximum,
-        input,
-      ),
-    });
-  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
-  if (formatFailure !== undefined) return formatFailure;
-  const identityFailure = projectOwnedArtifactIdentityFailure(
-    facts,
-    OPERATION,
-    input.path,
-  );
-  if (identityFailure !== undefined) return identityFailure;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit") {
-      const remediationAction = inputBudgetRemediation(cause, input);
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        cause.boundary ?? "memory",
-        cause.message,
-        {
-          max_file_bytes: input.max_file_bytes,
-          max_strings: input.max_strings,
-        },
-        {
-          cause,
-          ...(remediationAction === undefined
-            ? {}
-            : { retryable: false, remediationAction }),
-        },
-      );
-    }
-    if (cause.reason === "path" || cause.reason === "format")
-      return stableArtifactInputFailure(cause, OPERATION);
-  }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    const pathErrno = artifactSelectedPathErrno(cause);
-    if (pathErrno !== undefined)
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected V8 code cache could not be read (${pathErrno}): ${input.path}.`,
-        },
-      ]);
-  }
-  return new ArtifactOperationError(
-    OPERATION,
-    origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure
-      ? cause.reason
-      : "io",
-    undefined,
-    cause instanceof Error ? cause.message : "V8 code cache inspection failed.",
-    { cause },
-  );
-};
-
 const v8CodeCacheFailure = (
   cause: unknown,
   input: InspectV8CodeCacheInput,
-  observed?: { readonly sha256: string; readonly bytes: number },
+  observed: { readonly sha256: string; readonly bytes: number } | undefined,
+  completed: V8CodeCache | undefined,
 ) => {
-  const primary = v8CodeCacheFailurePrimary(
-    artifactFilePrimaryFacts(cause),
-    input,
+  const facts = artifactFilePrimaryFacts(cause);
+  const reportedLimits = {
+    max_file_bytes: input.max_file_bytes,
+    max_strings: input.max_strings,
+  };
+  const primary = classifyProviderFailure(
+    facts.cause,
+    offlineArtifactFailureDialect(facts, {
+      providerId: V8_CODE_CACHE_PROVIDER_IDENTITY.id,
+      operation: OPERATION,
+      path: input.path,
+      description: "V8 code cache",
+      fallbackMessage: "V8 code cache inspection failed.",
+      recognise: (failure, origin) => {
+        if (
+          isParseLimit(failure, V8_CODE_CACHE_FORMAT) &&
+          failure.failure.limit.name === "max_strings"
+        )
+          return parseLimitConstraint(OPERATION, "capacity", failure, {
+            retryable: false,
+            remediationAction: observationBudgetRemediation(
+              failure.failure.limit.maximum,
+              input,
+            ),
+          });
+        if (
+          origin === "owned-or-classified" &&
+          failure instanceof ArtifactReaderFailure &&
+          failure.reason === "limit"
+        ) {
+          const remediationAction = inputBudgetRemediation(failure, input);
+          return new AnalysisResourceConstraintError(
+            OPERATION,
+            failure.boundary ?? "memory",
+            failure.message,
+            reportedLimits,
+            {
+              cause: failure,
+              ...(remediationAction === undefined
+                ? {}
+                : { retryable: false, remediationAction }),
+            },
+          );
+        }
+        return undefined;
+      },
+    }),
   );
+  if (completed !== undefined) primary.retainPartialObservation(completed);
   return projectStableArtifactFailure(
     cause,
     primary,

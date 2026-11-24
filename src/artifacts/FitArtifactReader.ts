@@ -1,6 +1,6 @@
 import { setImmediate } from "node:timers/promises";
 
-import type { FitMetadata } from "../domain/artifactFormatMetadata.js";
+import type { FitMetadata } from "../domain/formatMetadata/firmwareMetadata.js";
 import { BinaryFormatFailure } from "../domain/binaryContainer.js";
 import {
   FDT_MAX_HEADER_BYTES,
