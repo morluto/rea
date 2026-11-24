@@ -1,0 +1,498 @@
+import { setImmediate } from "node:timers/promises";
+
+import {
+  assertArtifactReadActive,
+  type StableArtifactHandle,
+} from "../../resources/index.js";
+import {
+  BinaryFormatFailure,
+  BinaryReader,
+  BinaryResourceFailure,
+  createFileMappingIndex,
+  type FileMappingIndex,
+} from "../../domain/binaryContainer.js";
+import {
+  peDeclaredFileMappings,
+  readPeImageFromReader,
+  type PeImage,
+} from "../../domain/native/peImage.js";
+import { peSectionVirtualExtent } from "../../domain/peSectionHeader.js";
+import {
+  MAX_PE_UNWIND_CHAIN_DEPTH,
+  PE_UNWIND_LIMITATIONS,
+  PE_X64_RUNTIME_FUNCTION_BYTES as ENTRY_BYTES,
+  type InspectPeUnwindRangesInput,
+  type PeUnwindEntry,
+  type PeUnwindRanges,
+} from "../../domain/native/peUnwindRanges.js";
+
+/** IMAGE_DIRECTORY_ENTRY_EXCEPTION. */
+const EXCEPTION_DIRECTORY = 3;
+const IMAGE_FILE_MACHINE_AMD64 = 0x8664;
+/** UNW_FLAG_EHANDLER, UNW_FLAG_UHANDLER and UNW_FLAG_CHAININFO (x64 UNWIND_INFO). */
+const UNW_FLAG_EHANDLER = 0x1;
+const UNW_FLAG_UHANDLER = 0x2;
+const UNW_FLAG_CHAININFO = 0x4;
+/** winnt.h RUNTIME_FUNCTION_INDIRECT: the unwind RVA names another RUNTIME_FUNCTION. */
+const RUNTIME_FUNCTION_INDIRECT = 0x1;
+/** UNWIND_INFO header: version/flags, prolog size, code count, frame register. */
+const UNWIND_HEADER_BYTES = 4;
+/**
+ * Fixed structural allowance on decoded entries. Each entry keeps about 30
+ * bytes of typed-array state; the largest shipped x64 images hold a few
+ * hundred thousand functions.
+ */
+export const MAX_PE_UNWIND_ENTRIES = 2_097_152;
+const READ_WINDOW_BYTES = 65536;
+const YIELD_EVERY = 4096;
+
+const KIND_PRIMARY = 0;
+const KIND_CHAINED = 1;
+const KIND_UNKNOWN = 2;
+const KINDS = ["primary", "chained", "unknown"] as const;
+
+const ISSUES = [
+  "empty_range",
+  "unsorted",
+  "overlaps_previous",
+  "unwind_unmapped",
+  "unwind_version_unknown",
+  "chain_parent_missing",
+  "chain_cycle",
+] as const satisfies readonly PeUnwindEntry["issues"][number][];
+const issueBit = (issue: (typeof ISSUES)[number]): number =>
+  1 << ISSUES.indexOf(issue);
+
+const hex = (value: number | bigint): string => `0x${value.toString(16)}`;
+
+/** Bounded windowed reads, so per-entry unwind headers do not issue one read each. */
+const windowedReader = (handle: StableArtifactHandle) => {
+  let windowStart = -1;
+  let window: Buffer = Buffer.alloc(0);
+  return async (offset: number, length: number): Promise<Buffer | null> => {
+    if (offset < 0 || offset + length > handle.size) return null;
+    if (
+      windowStart < 0 ||
+      offset < windowStart ||
+      offset + length > windowStart + window.length
+    ) {
+      windowStart = offset;
+      window = await handle.readRange(
+        offset,
+        Math.min(Math.max(READ_WINDOW_BYTES, length), handle.size - offset),
+      );
+    }
+    return window.subarray(offset - windowStart, offset - windowStart + length);
+  };
+};
+
+const sectionNameAt = (image: PeImage, rva: number): string | null => {
+  for (const section of image.sections) {
+    const span = peSectionVirtualExtent(section.virtual_size, section.raw_size);
+    if (rva >= section.virtual_address && rva < section.virtual_address + span)
+      return section.name;
+  }
+  return null;
+};
+
+/** Decoded table state, kept in typed arrays sized by the declared entry count. */
+interface Table {
+  readonly count: number;
+  readonly begin: Uint32Array;
+  readonly end: Uint32Array;
+  readonly unwind: Uint32Array;
+  readonly kind: Uint8Array;
+  readonly version: Int8Array;
+  readonly flags: Int8Array;
+  readonly codes: Int16Array;
+  readonly hasParent: Uint8Array;
+  readonly parentBegin: Uint32Array;
+  readonly parentEnd: Uint32Array;
+  readonly parentUnwind: Uint32Array;
+  readonly parentIndex: Int32Array;
+  readonly primary: Int32Array;
+  readonly issues: Uint8Array;
+}
+
+const allocateTable = (count: number): Table => ({
+  count,
+  begin: new Uint32Array(count),
+  end: new Uint32Array(count),
+  unwind: new Uint32Array(count),
+  kind: new Uint8Array(count),
+  version: new Int8Array(count).fill(-1),
+  flags: new Int8Array(count).fill(-1),
+  codes: new Int16Array(count).fill(-1),
+  hasParent: new Uint8Array(count),
+  parentBegin: new Uint32Array(count),
+  parentEnd: new Uint32Array(count),
+  parentUnwind: new Uint32Array(count),
+  parentIndex: new Int32Array(count).fill(-1),
+  primary: new Int32Array(count).fill(-1),
+  issues: new Uint8Array(count),
+});
+
+/** Read one entry's UNWIND_INFO, or the RUNTIME_FUNCTION an indirect RVA names. */
+interface UnwindContext {
+  readonly table: Table;
+  readonly base: bigint;
+  readonly lookup: FileMappingIndex;
+  readonly read: ReturnType<typeof windowedReader>;
+}
+
+const decodeUnwind = async (
+  { table, base, lookup, read }: UnwindContext,
+  index: number,
+): Promise<void> => {
+  const rva = table.unwind[index]!;
+  const fileOffset = (target: number, bytes: number): number | undefined =>
+    lookup.tryOffset(base + BigInt(target), bytes);
+  const setParent = (bytes: Buffer): void => {
+    const record = new BinaryReader(bytes, true, "pe");
+    table.hasParent[index] = 1;
+    table.parentBegin[index] = record.u32(0);
+    table.parentEnd[index] = record.u32(4);
+    table.parentUnwind[index] = record.u32(8);
+  };
+  const unmapped = (): void => {
+    table.kind[index] = KIND_UNKNOWN;
+    table.issues[index]! |= issueBit("unwind_unmapped");
+  };
+  if ((rva & RUNTIME_FUNCTION_INDIRECT) !== 0) {
+    const target = rva & ~RUNTIME_FUNCTION_INDIRECT;
+    const offset = fileOffset(target, ENTRY_BYTES);
+    const bytes = offset === undefined ? null : await read(offset, ENTRY_BYTES);
+    if (bytes === null) return unmapped();
+    table.kind[index] = KIND_CHAINED;
+    setParent(bytes);
+    return;
+  }
+  const offset = fileOffset(rva, UNWIND_HEADER_BYTES);
+  const header =
+    offset === undefined ? null : await read(offset, UNWIND_HEADER_BYTES);
+  if (offset === undefined || header === null) return unmapped();
+  const fields = new BinaryReader(header, true, "pe");
+  const version = fields.u8(0) & 0x7;
+  const flags = fields.u8(0) >> 3;
+  const codes = fields.u8(2);
+  table.version[index] = version;
+  table.flags[index] = flags;
+  table.codes[index] = codes;
+  if (version !== 1 && version !== 2) {
+    table.kind[index] = KIND_UNKNOWN;
+    table.issues[index]! |= issueBit("unwind_version_unknown");
+    return;
+  }
+  if ((flags & UNW_FLAG_CHAININFO) === 0) {
+    table.kind[index] = KIND_PRIMARY;
+    return;
+  }
+  // The chained RUNTIME_FUNCTION follows the code array, padded to an even count.
+  const chained = UNWIND_HEADER_BYTES + 2 * ((codes + 1) & ~1);
+  const parentOffset = fileOffset(rva + chained, ENTRY_BYTES);
+  const parent =
+    parentOffset === undefined ? null : await read(parentOffset, ENTRY_BYTES);
+  if (parent === null) return unmapped();
+  table.kind[index] = KIND_CHAINED;
+  setParent(parent);
+};
+
+/** Index of the entry whose begin RVA equals `begin` in a sorted table, or -1. */
+const indexOfBegin = (table: Table, begin: number): number => {
+  let low = 0;
+  let high = table.count - 1;
+  while (low <= high) {
+    const middle = (low + high) >>> 1;
+    const value = table.begin[middle]!;
+    if (value === begin) return middle;
+    if (value < begin) low = middle + 1;
+    else high = middle - 1;
+  }
+  return -1;
+};
+
+/** Follow each chain to the primary entry it extends, within the depth bound. */
+const resolveChains = (table: Table, sorted: boolean): void => {
+  for (let index = 0; index < table.count; index++) {
+    if (table.hasParent[index] === 1)
+      table.parentIndex[index] = sorted
+        ? indexOfBegin(table, table.parentBegin[index]!)
+        : linearIndexOfBegin(table, table.parentBegin[index]!);
+  }
+  for (let index = 0; index < table.count; index++) {
+    const kind = table.kind[index]!;
+    if (kind === KIND_PRIMARY) {
+      table.primary[index] = index;
+      continue;
+    }
+    if (kind !== KIND_CHAINED) continue;
+    let current = index;
+    let depth = 0;
+    while (table.kind[current] === KIND_CHAINED) {
+      const next = table.parentIndex[current]!;
+      if (next < 0) {
+        table.issues[index]! |= issueBit("chain_parent_missing");
+        current = -1;
+        break;
+      }
+      if (++depth > MAX_PE_UNWIND_CHAIN_DEPTH) {
+        table.issues[index]! |= issueBit("chain_cycle");
+        current = -1;
+        break;
+      }
+      current = next;
+    }
+    if (current >= 0 && table.kind[current] === KIND_PRIMARY)
+      table.primary[index] = current;
+  }
+};
+
+const linearIndexOfBegin = (table: Table, begin: number): number =>
+  table.begin.indexOf(begin);
+
+const flagNames = (flags: number): PeUnwindEntry["unwind_flags"] =>
+  flags < 0
+    ? null
+    : [
+        ...((flags & UNW_FLAG_EHANDLER) !== 0 ? (["ehandler"] as const) : []),
+        ...((flags & UNW_FLAG_UHANDLER) !== 0 ? (["uhandler"] as const) : []),
+        ...((flags & UNW_FLAG_CHAININFO) !== 0 ? (["chaininfo"] as const) : []),
+      ];
+
+const entryAt = (table: Table, index: number): PeUnwindEntry => {
+  const parentIndex = table.parentIndex[index]!;
+  const primary = table.primary[index]!;
+  const version = table.version[index]!;
+  const codes = table.codes[index]!;
+  return {
+    index,
+    begin_rva: hex(table.begin[index]!),
+    end_rva: hex(table.end[index]!),
+    unwind_rva: hex(table.unwind[index]!),
+    kind: KINDS[table.kind[index]!]!,
+    unwind_version: version < 0 ? null : version,
+    unwind_flags: flagNames(table.flags[index]!),
+    unwind_code_count: codes < 0 ? null : codes,
+    parent:
+      table.hasParent[index] === 1
+        ? {
+            begin_rva: hex(table.parentBegin[index]!),
+            end_rva: hex(table.parentEnd[index]!),
+            unwind_rva: hex(table.parentUnwind[index]!),
+            index: parentIndex < 0 ? null : parentIndex,
+          }
+        : null,
+    primary_index: primary < 0 ? null : primary,
+    issues: ISSUES.filter(
+      (issue) => (table.issues[index]! & issueBit(issue)) !== 0,
+    ),
+  };
+};
+
+const selected = (
+  table: Table,
+  index: number,
+  kind: InspectPeUnwindRangesInput["kind"],
+): boolean =>
+  kind === "all" ||
+  (kind === "issues"
+    ? table.issues[index] !== 0
+    : table.kind[index] === (kind === "primary" ? KIND_PRIMARY : KIND_CHAINED));
+
+const emptyReport = (
+  image: PeImage,
+  artifact: PeUnwindRanges["artifact"],
+  input: InspectPeUnwindRangesInput,
+  status: "absent" | "unsupported_machine",
+): PeUnwindRanges => ({
+  artifact,
+  format: image.bits === 64 ? "pe32-plus" : "pe32",
+  machine: image.pe_machine,
+  image_base: hex(image.image_base),
+  address_space: "rva",
+  exception_directory: {
+    status,
+    rva: null,
+    size: null,
+    file_offset: null,
+    section: null,
+  },
+  coverage: {
+    status: status === "absent" ? "complete" : "partial",
+    total_entries: 0,
+    primary_entries: 0,
+    chained_entries: 0,
+    unknown_entries: 0,
+    entries_with_issues: 0,
+    trailing_bytes: 0,
+  },
+  page: {
+    kind: input.kind,
+    offset: input.offset,
+    limit: input.limit,
+    returned: 0,
+    total: 0,
+    next_offset: null,
+  },
+  entries: [],
+  limitations: [
+    status === "absent"
+      ? PE_UNWIND_LIMITATIONS.absent
+      : PE_UNWIND_LIMITATIONS.machine,
+  ],
+});
+
+/** Read every entry's bounds and unwind data; returns whether the table is sorted. */
+const decodeEntries = async (
+  context: UnwindContext,
+  bytes: Buffer,
+  signal: AbortSignal | undefined,
+): Promise<boolean> => {
+  const { table } = context;
+  const reader = new BinaryReader(bytes, true, "pe");
+  let sorted = true;
+  for (let index = 0; index < table.count; index++) {
+    if (index % YIELD_EVERY === 0 && index > 0) {
+      await setImmediate();
+      assertArtifactReadActive(signal);
+    }
+    const at = index * ENTRY_BYTES;
+    const begin = reader.u32(at);
+    const end = reader.u32(at + 4);
+    table.begin[index] = begin;
+    table.end[index] = end;
+    table.unwind[index] = reader.u32(at + 8);
+    if (end <= begin) table.issues[index]! |= issueBit("empty_range");
+    if (index > 0) {
+      if (begin < table.begin[index - 1]!) {
+        sorted = false;
+        table.issues[index]! |= issueBit("unsorted");
+      } else if (begin < table.end[index - 1]!)
+        table.issues[index]! |= issueBit("overlaps_previous");
+    }
+    await decodeUnwind(context, index);
+  }
+  return sorted;
+};
+
+/** Counts over every entry, and the selected page. */
+const countAndPage = (table: Table, input: InspectPeUnwindRangesInput) => {
+  let primary = 0;
+  let chained = 0;
+  let unknown = 0;
+  let withIssues = 0;
+  let total = 0;
+  const entries: PeUnwindEntry[] = [];
+  for (let index = 0; index < table.count; index++) {
+    const kind = table.kind[index]!;
+    if (kind === KIND_PRIMARY) primary++;
+    else if (kind === KIND_CHAINED) chained++;
+    else unknown++;
+    if (table.issues[index] !== 0) withIssues++;
+    if (!selected(table, index, input.kind)) continue;
+    if (total >= input.offset && entries.length < input.limit)
+      entries.push(entryAt(table, index));
+    total++;
+  }
+  return { primary, chained, unknown, withIssues, total, entries };
+};
+
+/** Decode the x64 exception directory of one identity-checked PE image. */
+export const parsePeUnwindRangesFromHandle = async (
+  handle: StableArtifactHandle,
+  artifact: PeUnwindRanges["artifact"],
+  input: InspectPeUnwindRangesInput,
+  signal?: AbortSignal,
+): Promise<PeUnwindRanges> => {
+  assertArtifactReadActive(signal);
+  const image = await readPeImageFromReader(handle);
+  const directory = image.pe_data_directories[EXCEPTION_DIRECTORY];
+  if (
+    directory === undefined ||
+    (directory.address === 0 && directory.size === 0)
+  )
+    return emptyReport(image, artifact, input, "absent");
+  if (image.pe_machine !== IMAGE_FILE_MACHINE_AMD64)
+    return emptyReport(image, artifact, input, "unsupported_machine");
+  if (directory.address === 0 || directory.size === 0)
+    throw new BinaryFormatFailure(
+      "malformed",
+      "PE exception directory declares a zero RVA or size while the other field is nonzero",
+      { format: "pe" },
+    );
+  const count = Math.floor(directory.size / ENTRY_BYTES);
+  if (count > MAX_PE_UNWIND_ENTRIES)
+    throw new BinaryResourceFailure(
+      "structure",
+      MAX_PE_UNWIND_ENTRIES,
+      `PE exception directory declares ${String(count)} entries; at most ${String(MAX_PE_UNWIND_ENTRIES)} are decoded`,
+      "structure",
+      "entries",
+    );
+  const base = image.image_base;
+  const lookup = createFileMappingIndex(
+    peDeclaredFileMappings(image),
+    image.zero_fills,
+  );
+  const tableBytes = count * ENTRY_BYTES;
+  const directoryOffset = lookup.tryOffset(
+    base + BigInt(directory.address),
+    Math.max(tableBytes, 1),
+  );
+  if (directoryOffset === undefined)
+    throw new BinaryFormatFailure(
+      "malformed",
+      `PE exception directory at RVA ${hex(directory.address)} (${String(directory.size)} bytes) is not backed by file bytes`,
+      { format: "pe" },
+    );
+  const bytes =
+    tableBytes === 0
+      ? Buffer.alloc(0)
+      : await handle.readRange(directoryOffset, tableBytes);
+  const table = allocateTable(count);
+  const context: UnwindContext = {
+    table,
+    base,
+    lookup,
+    read: windowedReader(handle),
+  };
+  const sorted = await decodeEntries(context, bytes, signal);
+  assertArtifactReadActive(signal);
+  resolveChains(table, sorted);
+  const { primary, chained, unknown, withIssues, total, entries } =
+    countAndPage(table, input);
+  const end = input.offset + entries.length;
+  return {
+    artifact,
+    format: image.bits === 64 ? "pe32-plus" : "pe32",
+    machine: image.pe_machine,
+    image_base: hex(base),
+    address_space: "rva",
+    exception_directory: {
+      status: "present",
+      rva: hex(directory.address),
+      size: directory.size,
+      file_offset: directoryOffset,
+      section: sectionNameAt(image, directory.address),
+    },
+    coverage: {
+      status: unknown === 0 ? "complete" : "partial",
+      total_entries: count,
+      primary_entries: primary,
+      chained_entries: chained,
+      unknown_entries: unknown,
+      entries_with_issues: withIssues,
+      trailing_bytes: directory.size % ENTRY_BYTES,
+    },
+    page: {
+      kind: input.kind,
+      offset: input.offset,
+      limit: input.limit,
+      returned: entries.length,
+      total,
+      next_offset: end < total ? end : null,
+    },
+    entries,
+    limitations: [PE_UNWIND_LIMITATIONS.codes, PE_UNWIND_LIMITATIONS.leaf],
+  };
+};
