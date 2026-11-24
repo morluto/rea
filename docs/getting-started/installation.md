@@ -1213,7 +1213,7 @@ zero can lose jump-table flow references and yield incorrect decompiler output.
 closed by `c93917a622211349998f641de54cfdbe0e0e5bee` and milestoned for 12.2.1,
 which is not yet released. The limitation clears on parsed `12.2.1` and is
 absent from later patches and later minors. REA's switch verifier compiles with `-O2`, so it does not
-detect this shape. Every admitted session also records `ghidra-10154`.
+detect this shape. Every admitted build also carries `ghidra-10154`.
 [Ghidra #10154](https://github.com/NationalSecurityAgency/ghidra/issues/10154)
 is open: an AArch64 byte-offset switch bounded only by `and #0xff` loses its
 jump table and the function body stops at the indirect branch. The report's
@@ -1222,6 +1222,25 @@ shape on 12.2 with an AArch64 ELF object whose table has 256 readable bytes.
 A compare-bounded byte switch in that same object still recovers. The issue has no fix commit and no
 milestone, so the record stays on `12.2.1` and every other admitted build
 until a release is known to clear it.
+
+Each record is attached only where its declared scope can apply. `ghidra-9996`
+applies to x86-64 targets and `ghidra-10154` to arm64 and arm64_32 targets; a
+target whose architecture is unknown keeps both. The compiler is rarely
+observable, so it never excludes a record. Operations whose output cannot
+depend on jump-table or function-body recovery (`read_bytes`,
+`search_strings`, `list_strings`, `list_names`, `list_segments`,
+`inspect_native_load_image`, `inspect_native_data_type`, address lookups,
+renames and `health`) carry neither.
+
+In an MCP session, the limitations a Ghidra session shares across calls are
+stated once. These are the analysis and checkpoint caveats, the address
+convention, the PDB state, the build and defect records, and similar session
+facts. Each result replaces them with one limitation naming a retained
+session-context Evidence and links that record in `evidence_links`. Read it
+with `get_evidence_bundle` (`detail: "records"`, `filters.evidence_id`); an
+exported bundle includes it. Results with the same session facts link the same
+record. One-shot CLI calls are one-call sessions and keep these limitations
+inline.
 
 Each installation must include the native decompiler for the host
 architecture in `Ghidra/Features/Decompiler/os/<platform>/` or the corresponding

@@ -89,6 +89,13 @@ export interface AnalysisExecution extends AnalysisObservation {
   readonly sourceDescriptor?: AnalysisSourceDescriptor;
   /** Session-issued identity of the committed record consumed by this execution. */
   readonly evidenceId?: string;
+  /**
+   * The entries of `limitations` that describe the provider session rather
+   * than this call. `limitations` still holds them, so a consumer that
+   * ignores this field keeps the full text. A session owner may state them
+   * once and reference a retained session-context record afterwards.
+   */
+  readonly sessionLimitations?: readonly string[];
   /** Result-specific veto of snapshot replay; Evidence remains retainable. */
   readonly cachePolicy?: "live";
   /**
@@ -128,6 +135,8 @@ export interface CreateAnalysisExecutionOptions {
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly cachePolicy?: "live";
   readonly limitations?: readonly string[];
+  /** Entries of `limitations` that describe the session, not this call. */
+  readonly sessionLimitations?: readonly string[];
   readonly relationshipCoverage?: RelationshipCoverage;
   readonly referencesTruncated?: boolean;
   readonly requiresSourceEvidence?: true;
@@ -190,6 +199,9 @@ export function createAnalysisExecution(
       ? {}
       : { analysisProfile: structuredClone(options.analysisProfile) }),
     limitations: [...(options.limitations ?? [])],
+    ...(options.sessionLimitations === undefined
+      ? {}
+      : { sessionLimitations: [...options.sessionLimitations] }),
     ...(options.relationshipCoverage === undefined
       ? {}
       : {

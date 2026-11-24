@@ -1565,8 +1565,24 @@ describe("Ghidra client projection", () => {
     expect(result.value.limitations).not.toContainEqual(
       expect.stringContaining("The bridge is verified against"),
     );
+    // An x86-64 target keeps the x86-64 record and drops the AArch64 one.
     expect(result.value.limitations).toEqual(
-      expect.arrayContaining([...ghidraKnownProviderDefectLimitations("12.2")]),
+      expect.arrayContaining([
+        ...ghidraKnownProviderDefectLimitations("12.2", {
+          architecture: "x86_64",
+          operation: "list_procedures",
+        }),
+      ]),
+    );
+    expect(result.value.limitations.join("\n")).toContain("ghidra-9996");
+    expect(result.value.limitations.join("\n")).not.toContain("ghidra-10154");
+    expect(result.value.sessionLimitations).toEqual(
+      expect.arrayContaining([
+        ...ghidraKnownProviderDefectLimitations("12.2", {
+          architecture: "x86_64",
+          operation: "list_procedures",
+        }),
+      ]),
     );
     expect(startCount).toBe(1);
   });
@@ -4718,7 +4734,7 @@ describe("compatible Ghidra builds", () => {
     if (!resolved.ok || resolved.value.profile === null)
       throw new Error("expected a compatible Ghidra profile");
     const client = ghidra.createClient(
-      executableTarget("elf", "x86_64"),
+      executableTarget("elf", "arm64"),
       resolved.value.profile,
     );
     const health = await client.execute("health", {});
@@ -4732,11 +4748,12 @@ describe("compatible Ghidra builds", () => {
     const openDefects = ghidraKnownProviderDefectLimitations("12.3");
     expect(unverified).toBeTypeOf("string");
     expect(openDefects).toHaveLength(1);
+    // Health does not depend on flow recovery, so no switch defect applies.
     expect(health.ok && health.value.limitations).toEqual(
-      expect.arrayContaining([unverified, ...openDefects]),
+      expect.arrayContaining([unverified]),
     );
     expect(health.ok && health.value.limitations?.join("\n")).not.toContain(
-      "ghidra-9996",
+      "Known provider defect",
     );
     expect(procedures.ok && procedures.value.limitations).toEqual(
       expect.arrayContaining([unverified, ...openDefects]),
