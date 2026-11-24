@@ -70,6 +70,37 @@ it("keeps the caller-selected pwntools input-limit source", () => {
   expect(projected.remediation.action).not.toContain("launch default of");
 });
 
+it("keeps the setting limit when omitting the per-call ceiling would fail configuration", () => {
+  const projected = projectAnalysisError(
+    pwntoolsDecoderFailure(
+      new ArtifactReaderFailure(
+        "limit",
+        "artifact exceeds the input allowance",
+        { boundary: "file-size" },
+      ),
+      "artifact-read",
+      "/selected",
+      "/python",
+      {},
+      {
+        operation: "inspect_binary_layout",
+        providerId: "pwntools",
+        producerLimits: resolvePwntoolsLimits(undefined, 4096),
+        inputBytesSource: "request",
+        omittedInputBytes: undefined,
+      },
+    ),
+  );
+  // No usable default exists, so no parameter limit with an invented
+  // default_value is reported.
+  expect(projected.details?.limit).not.toHaveProperty("control_kind");
+  expect(projected.details?.limit).toMatchObject({
+    setting: "pwntools.max_input_bytes",
+    effective_value: 4096,
+    source: "request",
+  });
+});
+
 it("names a runtime pwntools ceiling instead of the built-in default", () => {
   const projected = projectAnalysisError(
     pwntoolsDecoderFailure(

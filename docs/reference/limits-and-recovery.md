@@ -129,7 +129,13 @@ inherited OS ceiling can appear as `0`. When pwntools or Rust work exhausts a
 budget, `details.limit` carries `control_kind: "parameter"`,
 `parameter: "producer_limits.<field>"`, `minimum: 1` and
 `applies_at: "next_call"`, as described under [failure and retry](#failure-and-retry);
-the other producers name the field to raise in their remediation.
+the other producers name the field to raise in their remediation. A pwntools
+input refused by the runtime, launch or built-in `pwntools.max_input_bytes`
+ceiling keeps that setting's limit instead. If the caller set the ceiling
+through `producer_limits.input_bytes`, the parameter limit is used, and its
+`default_value` is the ceiling that applies when the field is omitted. When
+omitting it would fail configuration, no default exists and the setting limit
+is reported.
 
 The same accepted policy must reach acquisition, parsing, worker requests,
 serialization, cached-result admission and generated consumers where those
