@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **native:** procedure_references.procedure may now identify an address outside every procedure, with classification null and an unavailable body. find_xrefs_to_name adds resolved_name and candidates, and resolves bare import names on Ghidra.
 * **ghidra:** in MCP sessions, Ghidra result Evidence no longer lists session-scoped limitations inline. It carries one reference limitation and links a retained session-limitations Evidence (operation health, parameters.facet session-limitations) in evidence_links. Read it with get_evidence_bundle. Defect records no longer appear on operations or architectures outside their declared scope.
 * **pe:** import and delay-import walks continue to the null descriptor past a short directory Size instead of stopping with a malformed_entry issue, and inspect-pe-resources reports an unsupported optional-header magic as unsupported_target.
 * **limits:** an inspect_pcap_capture refusal at the snapshot or TShark JSON budget reports details.limit for producer_limits.input_bytes or producer_limits.output_bytes and no longer carries details.refusal fixed_ceiling.
@@ -312,6 +313,7 @@
 * **native:** preserve bundle provenance in partial reports ([9ffaca5](https://github.com/morluto/rea/commit/9ffaca54477d33c0f41f7042688b8e11f08d25b0))
 * **native:** refresh bundle provenance on reopen ([e35780d](https://github.com/morluto/rea/commit/e35780d042a9428c0a619ec42cf11794f5d7525c))
 * **native:** require dyld's __restrict section before reporting a restricted Mach-O ([#13024](https://github.com/morluto/rea/issues/13024)) ([7a11884](https://github.com/morluto/rea/commit/7a11884c0897062867e62c0c6d1079342ef8d861))
+* **native:** resolve name and import selectors through one owner ([#14250](https://github.com/morluto/rea/issues/14250)) ([cab39c6](https://github.com/morluto/rea/commit/cab39c640a50726d7766f202046a403ba8e72fff))
 * **native:** validate SHT_GNU_HASH bounds and fall back to DT_GNU_HASH ([#13713](https://github.com/morluto/rea/issues/13713)) ([e6b30f9](https://github.com/morluto/rea/commit/e6b30f945ec214e05ca13c36874e155737a6d4cb))
 * **objc:** preserve class import reader failures ([#13892](https://github.com/morluto/rea/issues/13892)) ([99c2104](https://github.com/morluto/rea/commit/99c2104da9b3e4d179436cbed477c98668a935a3))
 * **pe:** bound static readers by the bytes they read, not file size ([#14262](https://github.com/morluto/rea/issues/14262)) ([789ca04](https://github.com/morluto/rea/commit/789ca0412579d2a1ae84ad1683dfe8808937908a))
