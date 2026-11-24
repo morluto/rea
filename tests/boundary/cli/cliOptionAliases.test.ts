@@ -1,6 +1,5 @@
 import { cliCommand, cliCommands } from "../../../src/cli/commandRegistry.js";
 import { describe, expect, it } from "vitest";
-import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
 import { z } from "zod";
 
 import { createCli } from "../../../src/cli.js";
@@ -10,6 +9,24 @@ import {
 } from "../../../scripts/lib/catalog-cli.mjs";
 
 type CliInstance = ReturnType<typeof createCli>;
+
+const serve = async (
+  cli: CliInstance,
+  argv: readonly string[],
+): Promise<{ readonly stdout: string; readonly exitCode: number }> => {
+  let stdout = "";
+  let exitCode = 0;
+  await cli.serve([...argv], {
+    env: {},
+    exit: (code) => {
+      exitCode = code;
+    },
+    stdout: (text) => {
+      stdout += text;
+    },
+  });
+  return { stdout, exitCode };
+};
 
 const registeredAliases = (
   cli: CliInstance,
@@ -40,7 +57,7 @@ describe("CLI option aliases", () => {
           invalid.push(`${command} ${option}: ${String(short)}`);
       // Incur parses `-abc` as stacked one-letter flags, so help must never
       // advertise a multi-letter single-dash spelling.
-      const help = await serveInProcessCli(cli, [command, "--help"]);
+      const help = await serve(cli, [command, "--help"]);
       expect(help.exitCode, `${command} --help`).toBe(0);
       expect(help.stdout, `${command} --help`).not.toBe("");
       for (const match of help.stdout.matchAll(/(?:^|[\s,])-([a-z][\w-]+)/gmu))
@@ -65,7 +82,7 @@ describe("CLI option aliases", () => {
 
   it("accepts kebab-case long options without registered aliases", async () => {
     const cli = createCli({});
-    const result = await serveInProcessCli(cli, [
+    const result = await serve(cli, [
       "inspect-plist",
       "/nonexistent/REA.app",
       "--relative-path",
@@ -80,7 +97,7 @@ describe("CLI option aliases", () => {
     // argvParser.test.ts covers each token shape (bare, inline value,
     // negation) against the structured flag_spelling failure; this case
     // checks the public CLI projection documented in getting-started/cli.md.
-    const result = await serveInProcessCli(createCli({}), [
+    const result = await serve(createCli({}), [
       "inspect-plist",
       "/nonexistent/REA.app",
       "--relativePath",

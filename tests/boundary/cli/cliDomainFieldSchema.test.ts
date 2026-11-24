@@ -3,14 +3,23 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
 import { z } from "zod";
 import { expect, it } from "vitest";
-import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
 
 import { createCli } from "../../../src/cli.js";
 
 type CliInstance = ReturnType<typeof createCli>;
 
 const serve = async (cli: CliInstance, argv: readonly string[]) => {
-  const { stdout, exitCode } = await serveInProcessCli(cli, argv);
+  let stdout = "";
+  let exitCode = 0;
+  await cli.serve([...argv], {
+    env: {},
+    exit: (code) => {
+      exitCode = code;
+    },
+    stdout: (text) => {
+      stdout += text;
+    },
+  });
   expect(exitCode, argv.join(" ")).toBe(0);
   return z
     .object({

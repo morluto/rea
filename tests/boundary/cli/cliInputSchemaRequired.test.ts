@@ -8,7 +8,6 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
 
 import { createCli } from "../../../src/cli.js";
 import { createCliInventory } from "../../../scripts/lib/catalog-cli.mjs";
@@ -39,8 +38,26 @@ const advertisedInputSchema = z.object({
   options: advertisedGroupSchema.optional(),
 });
 
+const serve = async (
+  cli: CliInstance,
+  argv: readonly string[],
+): Promise<{ readonly stdout: string; readonly exitCode: number }> => {
+  let stdout = "";
+  let exitCode = 0;
+  await cli.serve([...argv], {
+    env: {},
+    exit: (code) => {
+      exitCode = code;
+    },
+    stdout: (text) => {
+      stdout += text;
+    },
+  });
+  return { stdout, exitCode };
+};
+
 const advertisedSchema = async (cli: CliInstance, command: string) => {
-  const result = await serveInProcessCli(cli, [command, "--schema", "--json"]);
+  const result = await serve(cli, [command, "--schema", "--json"]);
   expect(result.exitCode, command).toBe(0);
   return advertisedInputSchema.parse(JSON.parse(result.stdout));
 };
@@ -232,10 +249,7 @@ describe("CLI advertised input schemas", () => {
       }),
     ).toEqual({ path: "x", archive: "." });
 
-    const help = await serveInProcessCli(cli, [
-      "inspect-keyed-archive",
-      "--help",
-    ]);
+    const help = await serve(cli, ["inspect-keyed-archive", "--help"]);
     expect(help.stdout).toContain(
       "Usage: rea inspect-keyed-archive <path> [archive] [options]",
     );
@@ -598,7 +612,7 @@ describe("ADB selector input schemas: dispatch", () => {
       ["start-adb-activity", "S", "x", "--data-uri", "a".repeat(2049)],
     ];
     for (const request of requests) {
-      const result = await serveInProcessCli(cli, [...request, "--json"]);
+      const result = await serve(cli, [...request, "--json"]);
       expect(result.exitCode, request[0]).not.toBe(0);
       expect(JSON.parse(result.stdout), request[0]).toMatchObject({
         code: "VALIDATION_ERROR",
@@ -610,7 +624,7 @@ describe("ADB selector input schemas: dispatch", () => {
       "a".repeat(512),
     ];
     for (const component of incompleteComponents) {
-      const result = await serveInProcessCli(cli, [
+      const result = await serve(cli, [
         "start-adb-activity",
         "S",
         "x",
@@ -630,7 +644,7 @@ describe("ADB selector input schemas: dispatch", () => {
       });
     }
     const overlongComponent = `${"a".repeat(256)}/${"b".repeat(256)}`;
-    const overlong = await serveInProcessCli(cli, [
+    const overlong = await serve(cli, [
       "start-adb-activity",
       "S",
       "x",
@@ -664,7 +678,7 @@ describe("ADB selector input schemas: dispatch", () => {
       close: vi.fn(async () => undefined),
     };
     registerAdbCommands(cli, silentLogger, {}, provider);
-    await serveInProcessCli(cli, [
+    await serve(cli, [
       "start-adb-activity",
       "S",
       "x",
@@ -1195,11 +1209,8 @@ describe("required CLI selector discovery", () => {
         );
       }
 
-      const help = await serveInProcessCli(cli, [entry.command, "--help"]);
-      const manifest = await serveInProcessCli(cli, [
-        entry.command,
-        "--llms-full",
-      ]);
+      const help = await serve(cli, [entry.command, "--help"]);
+      const manifest = await serve(cli, [entry.command, "--llms-full"]);
       expect(help.exitCode, entry.command).toBe(0);
       expect(manifest.exitCode, entry.command).toBe(0);
       for (const surface of [help.stdout, manifest.stdout]) {
@@ -1241,7 +1252,7 @@ it("advertises and rejects an empty native-value procedure before opening a targ
   const cli = createCli({});
   const schema = await advertisedSchema(cli, "trace-native-values");
   expect(schema.args?.properties.procedure).toMatchObject({ minLength: 1 });
-  const result = await serveInProcessCli(cli, [
+  const result = await serve(cli, [
     "trace-native-values",
     "/missing",
     "",

@@ -1,7 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
 
 import { createCli } from "../../../src/cli.js";
+
+type CliInstance = ReturnType<typeof createCli>;
+
+const serve = async (
+  cli: CliInstance,
+  argv: readonly string[],
+): Promise<{ readonly stdout: string; readonly exitCode: number }> => {
+  let stdout = "";
+  let exitCode = 0;
+  await cli.serve([...argv], {
+    env: {},
+    exit: (code) => {
+      exitCode = code;
+    },
+    stdout: (text) => {
+      stdout += text;
+    },
+  });
+  return { stdout, exitCode };
+};
 
 /**
  * Options whose owning field already declares a schema default. The help
@@ -44,7 +63,7 @@ const optionLine = (help: string, option: string): string | undefined => {
 };
 
 it("explains standalone Evidence import in command help", async () => {
-  const { stdout, exitCode } = await serveInProcessCli(createCli({}), [
+  const { stdout, exitCode } = await serve(createCli({}), [
     "evidence-import",
     "--help",
   ]);
@@ -60,10 +79,7 @@ describe("CLI help default annotations", () => {
     const cli = createCli({});
     const repeated: string[] = [];
     for (const { command, options } of singleDefaultOptions) {
-      const { stdout, exitCode } = await serveInProcessCli(cli, [
-        command,
-        "--help",
-      ]);
+      const { stdout, exitCode } = await serve(cli, [command, "--help"]);
       expect(exitCode, command).toBe(0);
       for (const option of options) {
         const line = optionLine(stdout, option);
