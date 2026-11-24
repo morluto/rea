@@ -1600,7 +1600,11 @@ it("forgets an elapsed startup that a close interrupted during its cleanup", asy
         ...launched.value,
         cleanup: async () => {
           if (held) await elapsedCleanup.hold();
-          return { cleaned: true as const, signaled: false };
+          const child = launched.value.process;
+          if (child.exitCode === null && child.signalCode === null)
+            child.kill("SIGKILL");
+          await waitForChildExit(child, 5_000);
+          return { cleaned: true as const, signaled: true };
         },
       });
     },
@@ -1613,13 +1617,15 @@ it("forgets an elapsed startup that a close interrupted during its cleanup", asy
   elapsedCleanup.release();
   const elapsed = await pending;
   expect(elapsed).toMatchObject({ ok: false, error: { kind: "timeout" } });
-  await closing;
+  await expect(closing).resolves.toEqual({ ok: true, value: null });
 
-  // The close is the caller's retry: the next start must not return the
-  // failure the interrupted cleanup would otherwise have recorded.
+  // The close is the caller's retry: the next start launches again instead
+  // of returning the failure the interrupted cleanup could have recorded.
   const retry = await client.start();
   if (elapsed.ok || retry.ok) throw new Error("Expected startup failures");
   expect(retry.error).not.toBe(elapsed.error);
+  expect(retry.error.kind).toBe("timeout");
+  expect(fixture.runtimeRoots).toHaveLength(2);
 });
 
 it("cancels startup promptly and leaves no project or process", async () => {
