@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **browser:** an MCP inspect_web_page call that omits detail on a capture above 32 KiB now returns the retained summary. Pass detail: "complete" for the previous shape, for example before compare_web_captures.
 * **rizin:** record which tool and version answered execute_rizin_command ([#7487](https://github.com/morluto/rea/issues/7487))
 * **ghidra:** RISC-V images with this layout, such as ESP-IDF ESP32-C6, H2 and H21 builds, report flash code at its ELF address (0x42...) instead of .flash.text:0x42..., and their analysis profiles change. RISC-V images with any other section overlap that involves executable code are now refused with the overlapping sections named. These include ESP-IDF v5.5.2 ESP32-C5 and C61 builds, whose second reservation, .ext_ram.dummy, also covers .flash.text. See docs/ghidra-riscv.md.
 * **delivery:** for these seven tools, an omitted detail on a result above 32 KiB now returns the retained summary instead of complete Evidence. Pass detail: "complete" to keep the previous shape.
@@ -48,6 +49,7 @@
 * **artifacts:** report declared DDS, GLB, KTX and KTX2 headers and regions ([#14248](https://github.com/morluto/rea/issues/14248)) ([78d2593](https://github.com/morluto/rea/commit/78d2593a4543592636a49c0cead0ca64dcef78ea))
 * **browser:** accept mitmproxy 12.3.1 for native capture decode ([#8088](https://github.com/morluto/rea/issues/8088)) ([4f43d74](https://github.com/morluto/rea/commit/4f43d7422f5b4666a12570105ff5e25a6df7ec6c))
 * **browser:** count credential-named members in HAR capture inspection ([#8708](https://github.com/morluto/rea/issues/8708)) ([3c7ea1c](https://github.com/morluto/rea/commit/3c7ea1ce850c20c067add363ffcddbc1d48f2aac))
+* **browser:** size inspect_web_page delivery and page captures by section ([#14368](https://github.com/morluto/rea/issues/14368)) ([67a1e2c](https://github.com/morluto/rea/commit/67a1e2c9371131a93fb1eecb00d74bb160c6d215))
 * **cli:** add human-TTY failure rendering with CLI-only issue hint ([#14355](https://github.com/morluto/rea/issues/14355)) ([64279ef](https://github.com/morluto/rea/commit/64279efb5a01fc768d66033bd69a41a647c3e175))
 * **cli:** add list-procedures to produce function-matching inventories ([#14241](https://github.com/morluto/rea/issues/14241)) ([e2c0071](https://github.com/morluto/rea/commit/e2c00712fd421fc77f335d7b9f87ce162808a437))
 * **config:** persist provider settings in a user config file ([#3023](https://github.com/morluto/rea/issues/3023)) ([8d6552e](https://github.com/morluto/rea/commit/8d6552e928704a6477edec3674a17c3ba2f4f4af))
