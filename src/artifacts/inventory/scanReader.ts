@@ -35,7 +35,7 @@ import {
 import type { ArtifactNode } from "../../domain/artifactGraph.js";
 import {
   classifyArtifactContent,
-  classifyArtifactBytes,
+  classifyArtifactHeader,
   createArtifactNode,
   createOccurrence,
   noteUnreadContainerSuffix,
@@ -472,12 +472,17 @@ const digestArtifactEntry = async (
       unpacked: entry.unpacked,
     });
   }
-  const classified =
+  const sliceHeader =
     entry.kind === "slice"
+      ? classifyArtifactHeader(digest, digest.bytes)
+      : undefined;
+  const classified =
+    sliceHeader !== undefined
       ? {
           kind: "universal-slice" as const,
           format: "mach-o" as const,
-          contentFormat: classifyArtifactBytes(digest, digest.bytes),
+          contentFormat: sliceHeader.format,
+          contentArchitecture: sliceHeader.architecture,
         }
       : classifyArtifactContent(logicalPath, digest, digest.bytes);
   return {
@@ -485,6 +490,7 @@ const digestArtifactEntry = async (
       sha256: digest.sha256,
       size: digest.bytes,
       format: classified.contentFormat,
+      architecture: classified.contentArchitecture,
       contentState: "embedded",
     }),
     mismatched,

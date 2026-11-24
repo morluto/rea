@@ -60,6 +60,7 @@ import { freezeJsonSnapshot } from "../domain/immutableJson.js";
 import {
   artifactInspectionSources,
   createArtifactInspection,
+  type ArtifactInspectionRootImage,
 } from "../domain/artifactInspection.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type {
@@ -536,7 +537,10 @@ class ArtifactClient implements AnalysisClient {
     });
     // The returned execution and its Evidence then reuse this owned report.
     const result = freezeJsonSnapshot(
-      createArtifactInspection(inventoryEvidence),
+      createArtifactInspection(
+        inventoryEvidence,
+        rootImage(this.target, inventory.manifest),
+      ),
     );
     await options?.progress?.report({
       phase: "inspect_artifact.inventory",
@@ -604,10 +608,25 @@ const isArtifactOperation = (
     operation as (typeof ARTIFACT_ANALYSIS_OPERATIONS)[number],
   );
 
+/** The native image target admission parsed from the inventory root's bytes. */
+const rootImage = (
+  target: BinaryTarget,
+  manifest: { readonly root_sha256: string },
+): ArtifactInspectionRootImage | undefined => {
+  if (manifest.root_sha256 !== target.sha256) return undefined;
+  if (target.format === "pe") return { format: "pe", managed: target.managed };
+  return target.format === "elf" ||
+    target.format === "mach-o" ||
+    target.format === "mach-o-universal"
+    ? { format: target.format }
+    : undefined;
+};
+
 /**
  * The inventory root as an Evidence subject. When the root is the open
- * target's own bytes, it carries the target's selection (ESP flash offsets),
- * so observations of different selections name different subjects.
+ * target's own bytes, it carries the target's selection (ESP flash offsets)
+ * and the architecture target admission parsed from its header, so
+ * observations of different selections name different subjects.
  */
 const subjectFor = (
   target: BinaryTarget,
@@ -616,15 +635,17 @@ const subjectFor = (
     readonly root_format: import("../domain/artifactGraph.js").ArtifactInventoryResult["manifest"]["root_format"];
   },
 ) => {
-  const selection =
+  const sameTarget =
     manifest.root_sha256 === target.sha256 &&
-    manifest.root_format === target.format
-      ? binaryTargetSelection(target)
-      : null;
+    manifest.root_format === target.format;
+  const selection = sameTarget ? binaryTargetSelection(target) : null;
   return {
     path: artifactTargetSelectedPath(target),
     sha256: manifest.root_sha256,
     format: manifest.root_format,
+    ...(sameTarget && target.architecture !== undefined
+      ? { architecture: target.architecture }
+      : {}),
     ...(selection === null ? {} : { selection }),
   };
 };
