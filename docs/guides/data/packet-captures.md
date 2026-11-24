@@ -117,8 +117,8 @@ are never passed to TShark.
 Installed libraries, global configuration and plugins remain trusted, are not
 fully fingerprinted, and can influence dissection. This is not an OS sandbox.
 
-Input is limited to 32 MiB before reading, each command to 30 seconds, and
-combined stdout/stderr to 4 MiB during collection. Output overflow fails instead
+Default limits are 32 MiB input before reading, 30 seconds per command, and
+4 MiB combined stdout/stderr during collection. Output overflow fails instead
 of returning truncated success. Before execution, `prlimit` enforces **1 GiB
 address space per process**, **64 MiB per file**, **30 CPU seconds** and no core
 dumps. Stricter inherited soft/hard limits are preserved; Evidence records the effective
@@ -127,6 +127,33 @@ compressed-capture expansion cannot exceed the per-process address-space cap.
 These are not aggregate process-memory or filesystem quotas. The selected
 limiter is trusted; its path, digest and arguments are retained in Evidence.
 No arbitrary process flags are accepted.
+
+Before parsing TShark's JSON, REA charges a conservative estimate of the
+decoded object graph against `capture.packet_json_expansion_bytes`
+(`REA_CAPTURE_PACKET_JSON_EXPANSION_BYTES`): default and maximum 137438953472
+bytes (128 GiB), floor 1048576. The estimate is at most 130 bytes per
+character of output, so the default cannot refuse any output a Node string
+can hold (at most 69793215440 bytes estimated); it refuses only when lowered.
+Representative selected-field output is charged about 17 to 28 bytes per
+character. A refusal is a typed `adjustable_budget` naming the setting, keeps
+the producer output, and can be retried after `update_analysis_settings`.
+
+Each capture/recording operation accepts `producer_limits` with positive safe
+integer overrides: `input_bytes`, `output_bytes`, `command_timeout_ms`,
+`address_space_bytes`, `file_bytes`, and `cpu_seconds`. The wall-clock timeout
+is at most 2,147,483,647 milliseconds, matching Node timers. Omitted fields keep
+the defaults above. Discovery accepts the same controls except `input_bytes`,
+since it does not read a capture or recording. Packet field discovery defaults
+to 32 MiB output rather than 4 MiB.
+
+CLI supplies this object as JSON with `--producer-limits`, for example
+`--producer-limits '{"input_bytes":67108864,"output_bytes":8388608,"cpu_seconds":60}'`.
+Values apply to the next call without restarting REA. Effective native ceilings
+still preserve any tighter inherited soft and hard limit. Errors identify the
+exhausted producer control and retain partial output and cleanup status; follow
+that repair after cleanup settles. Raising producer budgets does not raise
+separate parser representations, transport buffers or external client deadlines.
+Never truncate the selected artifact to fit an input budget.
 
 ## Verification
 
@@ -145,8 +172,7 @@ The real-tool lane requires Linux and TShark 4.x. A separate kernel-limit
 regression checks the inherited soft/hard limits and verifies an oversized
 allocation is refused before it can consume memory. The Ubuntu workflow uses
 its distribution package; check its outcome before claiming that build verified.
-The earlier macOS check does not establish the current bounded integration,
-which deliberately refuses unsupported hosts. Other formats (including PCAPNG),
+Other formats (including PCAPNG),
 USB, BLE ATT and actual physical capture are not established by these fixtures.
 
 Each provider admits one inspection at a time, including acquisition and cleanup.
@@ -182,8 +208,9 @@ proof that the field appears in a selected recording.
 
 The adapter uses the documented `tshark -G fields` grammar under its existing
 private empty profile and Linux process limits. TShark 4.6.9's full glossary was
-measured at 22,303,197 bytes; discovery admits at most **32 MiB** combined command
-output (capture inspection remains at **4 MiB**). Parsing walks lines once and
+measured at 22,303,197 bytes; discovery defaults to **32 MiB** combined command
+output (capture inspection defaults to **4 MiB**); `producer_limits.output_bytes`
+can change either request budget. Parsing walks lines once and
 constructs objects only for the selected page. Returned strings are copied so
 retained pages do not retain the complete glossary string. Before constructing a selected
 record it charges six times the source UTF-8 bytes plus 512 bytes against an

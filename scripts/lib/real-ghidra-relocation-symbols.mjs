@@ -60,7 +60,7 @@ export async function verifyGhidraRelocationSymbols({ clang, lld, env }) {
       "--json",
     ]);
     const evidence = parseEvidence(JSON.parse(stdout));
-    assert.equal(evidence.subject?.digest.sha256, before);
+    assert.equal(evidence.subject?.identity.sha256, before);
     assert.equal(evidence.provider.id, "ghidra");
     const report = evidence.normalized_result;
     assert.equal(report.status, "unsupported");

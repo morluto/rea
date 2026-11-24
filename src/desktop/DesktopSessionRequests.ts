@@ -1,6 +1,6 @@
 import type { Interface } from "node:readline";
 
-import type { SessionRequest } from "./DesktopApplicationSession.js";
+import type { SessionRequest } from "../ports/DesktopApplicationSession.js";
 
 const QUEUE_PAUSE = 16;
 const QUEUE_RESUME = 4;
@@ -9,7 +9,7 @@ const QUEUE_RESUME = 4;
  * `stop` ends the session. An empty line, `checkpoint` or `checkpoint <name>`
  * requests a checkpoint; any other line names one.
  */
-export const parseSessionRequest = (line: string): SessionRequest => {
+const parseSessionRequest = (line: string): SessionRequest => {
   const text = line.trim();
   if (text === "stop") return { kind: "stop" };
   const name = text.replace(/^checkpoint(?:\s+|$)/u, "");

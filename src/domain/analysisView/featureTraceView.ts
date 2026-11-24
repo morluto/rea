@@ -11,13 +11,13 @@ import {
   applicationFeatureTraceResultSchema,
   type ApplicationFeatureTraceResult,
 } from "../javascript/javascriptFeatureTraceSchemas.js";
-import { err, ok } from "../result.js";
+import { ok } from "../result.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import { invalidAnalysisView } from "./analysisViewErrors.js";
 import {
   createAnalysisViewResultReader,
   type AnalysisViewParent,
@@ -224,16 +224,15 @@ const tracePage = <Shared extends object>(
     items: rows,
     coverage: pageViewCoverage(selection.offset, rows.length, total),
   });
-  const all = () => true;
   if (view.collection === "seed_matches")
     return pageOf(
       view,
-      selectViewRows(result.seed_matches, view, all, (row) => row),
+      selectViewRows(result.seed_matches, view, undefined, (row) => row),
     );
   if (view.collection === "native_handoffs")
     return pageOf(
       view,
-      selectViewRows(result.native_handoffs, view, all, (row) => row),
+      selectViewRows(result.native_handoffs, view, undefined, (row) => row),
     );
   if (view.collection === "paths") {
     const nodes = selected(view.where.node_ids);
@@ -295,15 +294,8 @@ export const projectFeatureTraceView = (
     "feature-trace",
   );
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "Application feature traces support summary and feature-trace pages of paths, nodes, edges, seed_matches or native_handoffs.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "Application feature traces support summary and feature-trace pages of paths, nodes, edges, seed_matches or native_handoffs.",
     );
   const parsed = checkedTrace(parent);
   if (!parsed.ok) return parsed;
@@ -317,7 +309,7 @@ export const projectFeatureTraceView = (
     parent_evidence_id: parent.evidenceId,
     parent_operation: OPERATION,
     parent_digest: parent.evidenceId.slice(3),
-    artifact: null,
+    artifact: parent.artifact ?? null,
     limitations: boundedViewMessages(
       limitations,
       parent.evidenceId,
@@ -343,7 +335,7 @@ export const projectFeatureTraceView = (
           : { semantic_discovery: result.semantic_discovery }),
         limitation_count: new Set(limitations).size,
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   return ok(tracePage(result, view, { ...shared, ...context }));
 };

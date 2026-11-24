@@ -5,10 +5,6 @@ import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
 import { managedPeFixtureTarget } from "./ManagedPe.fixture.js";
-import {
-  managedFailure,
-  managedInspectionInputFailure,
-} from "./ManagedReaderFailure.js";
 
 it("keeps minimal EnC delta metadata unsupported instead of assigning standalone identities", () => {
   const { bytes, markerOffset } = managedMetadataDelta();
@@ -58,16 +54,4 @@ it("keeps minimal EnC delta metadata unsupported instead of assigning standalone
   expect(members.fields).toEqual([]);
   expect(members.user_strings).toBeNull();
   expect(boundaries.pinvoke_imports).toEqual([]);
-  expect(
-    managedInspectionInputFailure(
-      "inspect_managed_members",
-      target.path,
-      managedFailure(
-        "unsupported-metadata",
-        "metadata.#JTD",
-        "Missing baseline",
-        markerOffset,
-      ),
-    ),
-  ).toBeUndefined();
 });

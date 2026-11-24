@@ -83,6 +83,31 @@ describe("captured script path projection", () => {
     },
   );
 
+  it("groups every descendant and duplicate without isolating a lexical neighbor", () => {
+    const planned = planWebScriptExport(
+      [
+        "main.js/one/child.js",
+        "main.js-neighbor.js",
+        "main.js/two/child.js",
+        "main.js",
+        "main.js",
+        "main.jsx/child.js",
+      ].map((part, index) => source(`https://a.test/app/${part}`, index + 1)),
+    );
+    expect(
+      planned.map(({ record }) =>
+        record.content.state === "exported" ? record.content.layout : null,
+      ),
+    ).toEqual([
+      "isolated",
+      "url-path",
+      "isolated",
+      "isolated",
+      "isolated",
+      "url-path",
+    ]);
+  });
+
   it.each([
     "",
     "https://a.test/main.js?v=2",

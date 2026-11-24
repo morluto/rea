@@ -1,21 +1,25 @@
+import { ok, type Result } from "../domain/result.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { constants, type Stats } from "node:fs";
 import { link, lstat, mkdtemp, open, realpath, rename } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
 import { fileHandleMatchesBytes } from "../filesystem/fileHandleMatchesBytes.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
 import {
+  assertStableRegularFileIdentity,
   RegularFileChangedError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 import type { RegularFileOperationOutcome } from "../filesystem/OwnedRegularFile.js";
-import { readRegularFileTextSnapshot } from "./RegularFileRead.js";
+import { readRegularFileTextSnapshot } from "../process/RegularFileRead.js";
 import { ClientConfigurationPublicationFailure } from "./ClientConfigurationCleanup.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Facts captured where a configuration write operation failed. */
 export interface ClientConfigurationWriteProblem {
@@ -32,6 +36,9 @@ export interface ClientConfigurationWriteProblem {
   readonly requestedOwnership?: { readonly uid: number; readonly gid: number };
 }
 
+/** The selected path lost its admission before publication. */
+export class ClientConfigurationPathError extends ConfigurationError {}
+
 /** Preserve the operation and original cause before publication cleanup runs. */
 export class ClientConfigurationWriteError extends Error {
   readonly _tag = "ClientConfigurationWriteError";
@@ -42,7 +49,7 @@ export class ClientConfigurationWriteError extends Error {
     cause: unknown,
     requestedOwnership?: { readonly uid: number; readonly gid: number },
   ) {
-    const detail = cause instanceof Error ? cause.message : String(cause);
+    const detail = errorMessage(cause);
     super(`Configuration ${operation} failed at ${path}: ${detail}`, { cause });
     const code: unknown =
       cause instanceof Error ? Reflect.get(cause, "code") : undefined;
@@ -64,6 +71,8 @@ export class ClientConfigurationWriteError extends Error {
 export interface ClientConfigurationSelection {
   readonly requestedPath: string;
   readonly state: Stats | undefined;
+  /** Required by fx's trusted private profile. */
+  readonly requiredMode?: 0o600;
 }
 
 /** The exact staged file retained through publication, verification and recovery. */
@@ -119,6 +128,20 @@ export class ClientConfigurationPublication {
       staging.setFile(owner);
       await owner.handle.writeFile(contents, { encoding: "utf8" });
       await preserveConfigurationAttributes(owner, input, destination);
+      if (selection?.requiredMode !== undefined) {
+        await owner.handle.chmod(selection.requiredMode);
+        if (
+          HOST_PLATFORM.platform !== "win32" &&
+          ((await owner.handle.stat()).mode & 0o777) !== selection.requiredMode
+        )
+          throw new ClientConfigurationWriteError(
+            destination,
+            "preserve_mode",
+            new Error(
+              "The required private profile mode could not be verified",
+            ),
+          );
+      }
       await owner.handle.sync();
       if ((await owner.handle.stat()).ino === 0)
         throw new RegularFileChangedError(stagedPath);
@@ -160,15 +183,29 @@ export class ClientConfigurationPublication {
 
   /** Keep all publication resources owned through the complete operation. */
   async verify<Value>(operation: () => Promise<Value>): Promise<Value> {
-    let outcome: RegularFileOperationOutcome<Value>;
+    const result = await this.verifyResult(async () => ok(await operation()));
+    if (!result.ok) throw result.error;
+    return result.value;
+  }
+
+  async verifyResult<Value, Failure>(
+    operation: () => Promise<Result<Value, Failure>>,
+  ): Promise<Result<Value, Failure>> {
+    let result: Result<Value, Failure>;
     try {
-      outcome = { kind: "completed", value: await operation() };
+      result = await operation();
     } catch (cause: unknown) {
-      outcome = { kind: "failed", cause };
+      await releaseStaging(this.path, this.staging, this.cleanup, {
+        kind: "failed",
+        cause,
+      });
+      throw cause;
     }
+    const outcome: RegularFileOperationOutcome<Value> = result.ok
+      ? { kind: "completed", value: result.value }
+      : { kind: "failed", cause: result.error };
     await releaseStaging(this.path, this.staging, this.cleanup, outcome);
-    if (outcome.kind === "failed") throw outcome.cause;
-    return outcome.value;
+    return result;
   }
 
   async assertCurrent(readback: string): Promise<void> {
@@ -218,8 +255,12 @@ export class ClientConfigurationPublication {
       position += bytesWritten;
     }
     await handle.truncate(bytes.length);
-    if (!sameRegularFileState(await handle.stat(), await lstat(this.path)))
+    const restored = await handle.stat();
+    if (!(await fileHandleMatchesBytes(handle, bytes)))
       throw new RegularFileChangedError(this.path);
+    await assertStableRegularFileIdentity(handle, this.path, restored, {
+      symlinks: "reject",
+    });
   }
 }
 
@@ -264,7 +305,7 @@ const assertRequestedConfigurationPath = async (
 ): Promise<void> => {
   const current = await resolveClientConfigTransactionPath(requestedPath);
   if (current === undefined)
-    throw new ConfigurationError(
+    throw new ClientConfigurationPathError(
       `Client configuration path could not be safely verified: ${requestedPath}`,
     );
   if (resolve(current) === resolve(path)) return;
@@ -287,7 +328,7 @@ const isParentAliasRetarget = async (
     requestedStats = await lstat(requestedPath);
   } catch (cause: unknown) {
     if (isNodeErrorCode(cause, "ENOENT")) return false;
-    throw new ConfigurationError(
+    throw new ClientConfigurationPathError(
       `Client configuration path could not be safely verified: ${requestedPath}`,
     );
   }

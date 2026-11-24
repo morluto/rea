@@ -54,60 +54,97 @@ satisfy. A plan without execution does not establish runtime behavior.
 ## Exercise the analyst workflow
 
 Before defining a new provider-backed tool, state the analyst's question, what
-they already have, the intended result and authority, and what must remain
-unknown. Try the nearest existing REA workflow and the relevant native provider
-or ordinary script path when available. Identify the specific gap and what a
-new or extended contract would add; upstream capability alone does not require
-a new tool or equal support from every provider.
+they already have, the intended result and authority, and what must stay
+unknown. Try the nearest REA workflow, then the native provider or a plain
+script. Name the gap and what a new or extended contract adds. An upstream
+capability alone does not justify a new tool or equal support on every
+provider.
 
-Exercise the task through REA as a whole and compare relevant provider behavior
-with an independent artifact or format observation where possible. Use the
-caller's selected target and authority. Record the provider version, target and
-observed coverage, and distinguish an unsupported operation from an empty
-result or an untested path.
-
-Include the boundary cases that could change the answer: provider labels versus
-source facts, addresses versus file locations, partial results, and a useful
-recovery after failure or session close when those apply to the task. Check that
-composed results keep each observation's identity, limitations and source
-association. Existing real-provider lanes and focused tests establish their
-selected scenarios; they do not by themselves establish a different workflow or
-provider equivalence. If a provider cannot be exercised, report that limitation
-and continue with the available evidence. Measure agent tool selection only with
-an actual agent evaluation; a scripted tool sequence does not establish it. Use
-[testing guidance](testing.md#provider-backed-workflow-verification) to select
-the cases that establish the proposed contract.
+Use the caller's selected target and authority. Follow
+[provider-backed workflow verification](testing.md#provider-backed-workflow-verification)
+for independent observations, boundary controls and reporting unavailable
+provider coverage. A scripted tool sequence does not establish agent selection;
+that claim requires an actual agent evaluation.
 
 ## Audit existing tools
 
-Scope an audit by analyst tasks and the caller's target, providers and authority.
-Record the source revision and, when used, the running server, catalog and
-provider versions; a connected server can differ from the current checkout.
-Inspect the live CLI help or MCP descriptions and schemas alongside the owning
-contracts and documentation. Choose representative tasks and their nearest REA
-and native alternatives rather than counting upstream commands.
+Scope an audit by analyst tasks, not by counting upstream commands.
 
-For those tasks, inspect relevant rendered MCP prompts, guided workflows and
-packaged skill advice in the versions actually in use. Follow the suggested
-producer-to-consumer handoff against the live contracts, including source
-identity, session lifetime and available alternatives. Matching text between
-two renderers does not establish that their shared advice is correct or that an
-agent selected the workflow.
-
-Exercise the selected public workflows, including the steps before and after a
-tool call. Check task selection, input choices, returned facts and their source,
-partial or unsupported outcomes, and applicable session and recovery behavior.
-Compare native provider output and an independent artifact observation where
-available. Inspect existing tests and real-provider lanes for the scenario they
-actually cover; a passing test does not establish a different task or host.
-Use [workflow verification](testing.md#provider-backed-workflow-verification)
-for counterexamples and lifecycle controls relevant to the audit.
+- **Record what you ran.** Note the source revision and, when used, the running
+  server, catalog and provider versions; a connected server can differ from the
+  checkout.
+- **Check the live surface.** Read the CLI help or MCP descriptions and schemas,
+  rendered prompts, guided workflows and skill advice in the versions in use.
+  Compare them with the owning contracts and docs.
+- **Follow the handoffs.** Check source identity, session lifetime and
+  alternatives between producer and consumer against the live contracts.
+  Matching text in two renderers does not prove the advice is correct.
+- **Start from first contact.** Begin each task with the call an agent makes on
+  an unfamiliar target, and check routing as well as the final answer.
+- **Use real public artifacts as well as synthetic ones.** See
+  [public-corpus checks](testing.md#public-corpus-checks).
+- **Verify before and after.** Use
+  [workflow verification](testing.md#provider-backed-workflow-verification) for
+  returned facts, partial outcomes, recovery and provider scope.
 
 Report working routes as well as findings. Separate a reproduced contract bug,
-an intentional limitation, a design opportunity and an unverified hypothesis;
-include the smallest useful reproduction, impact and coverage limits. Do not
-claim autonomous-agent selection from a scripted trace. Check related reports
-before proposing another issue, and avoid treating lack of API parity as a bug.
+an intentional limitation, a design opportunity and an unverified hypothesis,
+with the smallest useful reproduction, impact and coverage limits. A scripted
+trace does not show which tool an agent would choose. Check related reports
+first, and don't treat a lack of API parity as a bug.
+
+### Write descriptions for selection and a valid first call
+
+Start with the analyst task, selected source and useful result. Put material
+effects and the deciding boundary between neighboring tools early. Progressive
+discovery previews the first 240 characters, so those characters should identify
+the operation without requiring the rest of its reference documentation.
+
+Keep exact call syntax where the advertised schema cannot convey it. The compact
+input profile strips most annotation prose and can reduce nested controls to
+`{type: "object"}`. Moving selectors into parameter descriptions alone does not
+make them available to those clients. For example, retained pseudocode needs
+both `source.kind: "retained-evidence"` and `view: {kind: "native", facet:
+"pseudocode"}`; a short exact example can be more useful than many paragraphs.
+Use the producer's handoff for other supported views rather than maintaining
+another supposedly exhaustive list in the shared consumer description.
+
+Keep configuration tutorials and detailed matching algorithms with their owning
+parameter contracts, product guides and actionable failures. Retain applicability,
+source identity, uncertainty, authority and cleanup facts needed to choose or
+safely continue the operation. An unresolved symbol lookup is not a completed
+reference search; an exhausted page does not establish absence in unexamined
+source. Shorter copy must preserve these distinctions.
+
+For wording changes, use a small set of representative agent tasks at the affected
+boundaries. Hold schemas, tool order, fixtures and host configuration fixed when
+comparing copy; add repetitions only for failures or ambiguous outcomes. Score
+actual arguments, corrective calls and supported final claims separately. A
+correct eventual answer can conceal malformed-call loops, while a valid call
+can still produce an overstated answer. Report whole-task usage, including
+retries and cached input, rather than treating fewer description bytes as proof
+of lower token cost.
+
+## Route first contact by parsed facts
+
+The first call on an unfamiliar target decides whether an agent finds the right
+tool. Treat a dead end there as a defect.
+
+- **Return facts, not a bare refusal.** For an unrecognised input, return what
+  is known: size, digest, leading bytes and any bounded signature candidates.
+  Keep `unrecognised`, `malformed` and `unsupported` distinct.
+- **Recognise every format a dedicated tool parses.** If REA can read a format,
+  first-contact inspection names that tool instead of rejecting the file.
+- **Derive next probes from the owner's parsed facts.** Rank them and list only
+  operations that apply. A file can be several things at once, such as an
+  executable that carries a package; report each reading in a useful order
+  rather than hiding one.
+- **Never fall back silently to another lane.** A workflow that finds none of
+  its inputs says so and names what it did find, as counts, instead of
+  returning an empty success.
+- **Skip checks that cannot apply.** A format-gated check that cannot apply to
+  the detected format is omitted, not reported as `not_applicable` with a
+  next probe for another format.
 
 ## Design recovery around the failure
 
@@ -118,6 +155,12 @@ only when the input contract is the problem; for a valid lookup, preserve the
 caller's exact selector, the observed reason and any candidates, and give a
 next step that addresses that outcome. An inventory miss does not prove that
 the artifact lacks the requested item.
+
+Malformed or unsupported target bytes are a target problem, not a request
+problem. Report them in the target category, with recovery that names another
+target or operation. A selector that resolves to the wrong kind of object, such
+as an import slot passed where a procedure is expected, reports what it
+resolved to and names the operations that answer it on that provider.
 
 For prerequisite failures, identify what the requested operation actually needs.
 A missing executable, a wrong path, an incompatible host or version, denied
@@ -141,6 +184,9 @@ another context could help, describe it as an explicit choice and state any
 relevant loss of state; do not switch or select a candidate automatically.
 Preserve uncertainty, partial observations, and session or cleanup state. A
 suggested retry must be safe and explain any required change or wait.
+`retryable` claims only an idempotent retry. If a timed-out or cancelled
+operation may already have taken effect, say so instead of offering a blind
+retry.
 
 Verify recovery through the public workflow: reproduce the failure, follow
 the suggested next step when feasible, and check the result and session state.
@@ -168,6 +214,18 @@ does not establish another instance.
   the question; preserve access to complete source Evidence and honor existing
   contracts and requested detail. Missing coverage is unknown, not absence.
   Avoid extra lookups solely to understand the answer or its provenance.
+- Keep result semantics provider-neutral. If an operation means the same
+  thing on several providers, it resolves the same selector the same way on
+  each. Otherwise the contract declares the difference.
+- Page cursors over mutable state, such as a live provider session that accepts
+  annotations, carry the source revision. A cursor from an older revision fails
+  instead of returning shifted rows.
+- Name the address space of every location: RVA, virtual address or file
+  offset, in one documented spelling. Report the image base wherever results
+  mix those spaces.
+- State session-scoped facts, such as provider defect notes and analysis-profile
+  caveats, once per session and reference them afterwards. Attach a scoped
+  caveat only to the architectures, formats or operations it applies to.
 - Keep observed, derived, and inferred relationships distinct. Preserve
   unresolved edges and partial provider facts instead of requiring every
   provider to supply the same metadata.
@@ -182,14 +240,42 @@ does not establish another instance.
   whether applicable static relationships could have been missed by discovery;
   missing discovery is unknown. Preserve paths supported by observed edges,
   and qualify negative and shortest-path claims by discovery scope. Missing
-  relationship coverage remains `unknown`.
+  relationship coverage remains `unknown`. Computed candidates and unestablished incoming targets qualify directional discovery; they do not by themselves mean that recorded edges were omitted.
 - Declare process, filesystem, network, UI, and mutation effects truthfully;
-  enforce the requested target and lifecycle.
-- Add limits only for real format, protocol, authority, or measured resource
-  constraints. Report pagination, truncation, cancellation, and partial failure.
-  An assumed agent budget is insufficient justification for a limit. Name the
-  ceiling and its recovery as described in
-  [admission limits and recovery](../design/limits-and-recovery.md).
+  enforce the requested target and lifecycle. A private temporary copy is a
+  filesystem write even when the selected artifact remains untouched. Derive
+  overlapping tool and provider effect declarations from the same fact.
+- Separate **admission limits** from **delivery budgets**:
+  - An admission limit refuses or stops work. Add one only for a real format,
+    protocol, authority or measured resource constraint, and measure what the
+    operation actually reads. A header reader is bounded by the bytes it reads,
+    not by file size. Name the ceiling and its recovery as described in
+    [admission limits and recovery](../reference/limits-and-recovery.md).
+  - A delivery budget never refuses. It sizes the inline answer for the
+    agent's context, retains the complete result as Evidence, and returns a
+    summary, the Evidence ID and a cursor. The agent's context is a valid
+    reason for a delivery budget, not for an admission limit.
+  - Report pagination, truncation, cancellation and partial failure either way.
+- Give high-cardinality discovery (`list_*`, `search_*`, `find_xrefs_*`),
+  inventory and graph-traversal (`get_call_graph`, `trace_call_path`) tools
+  per-call bounds (`limit`/`offset` or `max_depth`/`max_nodes`). With no bounds
+  supplied, return a bounded summary within the delivery budget and keep the
+  complete result available through retained Evidence; return everything
+  inline only when the caller asks for complete detail. Supplied bounds should
+  stop producer work early where possible, mark truncated coverage or discovery
+  `partial`, and report continuation facts (`total_*`, `truncated`,
+  `limitations` or `residual_unknowns`). Selectors narrow every collection they
+  touch, not only the primary one.
+- Keep input schemas flat for compact advertisement: avoid redundant root
+  unions (`z.discriminatedUnion` whose branches share identical properties
+  differing only by a boolean), which double schema size and introduce root
+  `anyOf` violations that force compact-profile reduction.
+- Keep application ownership flat: reuse shared runners
+  (`executeArtifactInspection`, `executeProviderOperation`,
+  `executeRetainedSummaryOperation`) instead of
+  duplicating per-operation wrappers. When moving or extracting symbols, migrate
+  all callers directly rather than leaving re-export shims or pure barrel files
+  outside enforced module-boundary entrypoints (`src/resources/index.ts`).
 
 ### Compose declared Evidence inputs
 
@@ -246,6 +332,110 @@ activation independently of readiness. An owned registration may be disabled
 or stale; unresolved ownership remains unknown. Consumers use those facts
 instead of reclassifying the raw command.
 
+During review, name the fact or resource whose ownership must agree across
+entry points. Trace where it is established, which consumers rely on it,
+and where fallback, retry, or cleanup can change the outcome. Search for
+other code that derives the same fact or claims the same responsibility.
+Different implementations can still make the same decision independently.
+Sibling readers of one format share its header parser and the structural checks
+for the fields they read. Each operation keeps its own required fields and
+admission policy; don't duplicate parsing to enforce those differences.
+
+Have the owner carry the result, its source and scope, and any uncertainty.
+Each consumer applies its own policy to those shared facts. Keep proof of
+identity and ownership separate from validity, readiness, and authority to
+act. For an operation that needs fresh evidence, ask the same owner to
+revalidate. For a proposed change, use the owner's rules to evaluate what
+would remain before applying it.
+
+Keep the reader's observation independent of the operation that needs it.
+For example, the Evidence file reader can recognize the shape of an
+analysis snapshot before authenticating it. Import and comparison can
+recommend different next steps while reporting the same observed kind.
+The reader also retains disagreements in the input. If two observed header
+fields conflict, carry that uncertainty forward before projecting the fields
+into a single value. A command launcher likewise needs the parser's token
+boundaries so an option value cannot select a transport mode.
+
+When one operation can show partial results and another requires a complete
+document, share the grammar and give each operation an explicit policy for
+handling diagnostics. Preserve source spelling and offset units alongside any
+normalized lookup value. Use the stored name when a package format requires
+an exact member path. Verify both operations with the same authored inputs and
+independently specified expectations. See [boundary regressions](testing.md#boundary-regressions).
+
+For example, APT one-line sources can spell a suite as `"stable"` and a
+component as `main%2Cextra`. With APT 2.8.4, those words select suite
+`stable` and component `main,extra`. The source reader owns the word
+decoding. Capture retains the authored spelling and uses the effective
+identity to match the observed index. Replay uses that same identity
+when deciding what it can write to a deb822 declaration.
+
+Test an accepted pair and a refusal. The quoted suite and escaped
+component should select the same index as their deb822 equivalents.
+A one-line component written as `"main extra"` should be withheld from
+replay because deb822 would read it as two components. Check the captured
+facts and the emitted or withheld declaration. Pin the reference reader
+version and record which steps ran. The [offline APT reproduction](https://github.com/morluto/rea/issues/12694)
+checked source and index identity without installing or deploying the app.
+
+Keep format recognition, validation, and the operation's decision separate.
+A recognizable PTX header can identify a candidate even when its text is
+invalid or only a prefix was examined. Derive effective fields and completeness
+from the validated extent. Likewise, retain fields for tolerant Desktop Entry
+inspection while carrying group diagnostics to application-ID lookup, where
+an invalid entry cannot establish that the application is hidden.
+
+When Evidence includes a source digest, bind it to the admitted bytes used
+by the parser and any converter. A pathname identifies a selection whose
+contents can change between reads. If a native command needs a file, give it
+the same owned byte snapshot used for the digest. Keep the Evidence subject
+and selected source distinct when they identify different artifacts.
+
+Give each nested parser the admitted extent of its containing record.
+Check a child's declared encoded range against that extent before applying
+its decoding allowance. If the format declares more fields or rows after the
+child, leave room for their minimum required framing. When the range cannot
+fit, report the format failure even if the decoded size would also exceed a
+budget. Keep encoded ranges separate from declared decoded lengths so an
+expansion limit can preserve the source range and any independently readable
+siblings.
+Retain the source offset and the reason when a field is malformed or its
+encoding is unsupported. A stream may need more bytes to complete a frame.
+A completed artifact with the same missing bytes has truncated data. Carry
+that distinction into coverage and preserve any independently observed facts.
+
+When consumers in different runtimes receive raw input independently, reuse
+the same reader where the runtime is available. If separate implementations
+are needed, prefer generating them from one authored set of parsing rules.
+For example, desktop capture and an offline AppImage installer need the same
+rules to locate the executable after an `env` prefix. The installer also needs
+the executable's source span so it can replace that token while preserving the
+rest of the entry. Use shared fixtures with explicit expected results to check
+the common interpretation through both entry points.
+
+Owned provider commands follow the same rule. `providerOutcomeOf` in
+`src/process/ProviderOutcome.ts` reads what the supervisor observed (launch
+refusal, cancellation, deadline, output or memory limit, resource signal, exit
+status with the owner's stop state, or stream failure) together with the
+retained output and whether it was truncated. `classifyProviderOutcome` maps
+that outcome to a typed error once; a provider supplies only its settings,
+recovery text and a dialect for what an exit or launch refusal means.
+`classifyProviderFailure` in `src/providers/classifyProviderFailure.ts` is the
+one entry for a raw failure: typed analysis errors pass through, command
+outcomes go to `classifyProviderOutcome`, selected-file failures go to the
+shared stable-artifact projections, and only what none of them recognises
+reaches the provider's `unclassified` report. A provider supplies a dialect,
+not a classifier. A phase that armed its own deadline throws that deadline's
+timeout where it observes the abort; for a read its signal cancelled, it
+supplies the timeout as the dialect's `interruption`, so classification never
+rereads a cancellation's reason as a timeout. A provider whose cleanup report
+has its own shape supplies `readCleanup` or `commandCleanup`; otherwise the
+unresolved cleanup is attached to the reported failure. The
+`rea/provider-failure-classifier` lint rule keeps new
+`(cause: unknown) => AnalysisError` functions out of `src/` except in that
+owner; existing ones are counted in a baseline that may only shrink.
+
 A completed read can establish byte identity even when decoding or format
 validation fails. State which representation a digest identifies, such as file
 bytes, Fetch response-body bytes, or UTF-8 text. Preserve admitted source values
@@ -270,6 +460,35 @@ corresponding objects.
 Complete traversal or inventory does not make unavailable values equal. A
 partial aggregate fingerprint difference cannot establish modification when
 omissions alone explain it; independently proven differences still survive.
+
+A byte-format parser reports failure with `ParseFailureError` from
+`src/domain/parseFailure.ts`: `malformed`, `truncated`, `unsupported`, or
+`limit`, with the format and, when known, the offset and field. Read bounded
+fields through `BinaryReader` (`src/domain/binaryContainer.ts`), which
+raises that failure instead of a bare `RangeError`. Providers project the
+failure with `parseFailureAnalysisError` rather than their own `instanceof`
+ladder. The producing reader identifies the named limit and effective maximum.
+Use those facts for the public refusal and recovery. When decoding stops before
+the reader can measure the final allowance, report the bound that actually
+stopped it.
+
+For retained managed metadata rows, use `metadataRowCursor` in
+`src/domain/managed/managedMetadataHeaps.ts`. Its column reads use
+`BinaryReader` within the admitted row and preserve managed issue offsets and
+per-row budget accounting.
+
+Do not use `RangeError` as a failure channel: a stack overflow, a host string
+or buffer limit, and an unchecked read past the end of a buffer are all
+`RangeError`s. `hostRangeErrorKind` is the one interpreter of a host
+`RangeError`, and `parseFailureFromCause` admits only a reported parse failure
+as evidence about the input. Readers report bounds failures at the read site;
+host error codes alone cannot distinguish a read from a write or allocation.
+`scripts/verify/architecture-guards.mjs` counts the remaining raw `Buffer` and
+`DataView` reads, plain `Error` throws in parser folders, plain `JSON.parse`
+of parser input, and direct `instanceof RangeError` checks against their
+per-guard baselines in `scripts/verify/baselines/`. A
+file may not exceed its count; after removing copies, run
+`node scripts/verify/architecture-guards.mjs --shrink-baselines`.
 
 Keep format recognition separate from provider admission. A recognizable header
 can supply useful observations while later structure remains unresolved or a
@@ -342,19 +561,23 @@ In multi-stage work, retain each completed, admitted observation before awaiting
 the next stage. Later reads, validation, cancellation, or finalization can fail
 without erasing those facts. Carry them through typed failure outcomes with
 explicit coverage of unperformed work; do not construct a successful result for
-stages that never ran.
+stages that never ran. For concurrent reads, the batch owner settles every
+admitted peer before reporting a failure. Retain completed observations together with each
+failed request's physical, cancellation and cleanup facts.
 
 - Keep target admission, provider readiness, active work, observed process exit,
   and resource release separate. A valid process handle, successful launcher,
   or selected target establishes only its own fact. Publish available identity
   and exit observations even when launch fails; retain unknown ownership.
-- Process exit does not establish output closure. The shared process supervisor
-  retains at most 64 KiB of additional diagnostics from owned stop entry,
-  including pending cleanup and retries, and drains for up to one second after
-  verified stop. It marks output incomplete when closure cannot be
-  observed and releases owned event-loop references without changing the proven
-  process-cleanup outcome. Failed process cleanup retains capture for retry;
-  borrowed processes and streams retain their own lifetime and reference state.
+- Process exit does not establish output closure. The
+  [shared supervisor](https://github.com/morluto/rea/blob/main/src/process/ProviderProcess.ts)
+  owns diagnostic retention and bounded draining through cleanup and retries.
+  Report incomplete output separately from process cleanup. After verified stop
+  and bounded draining, release owned event-loop references even if output closure
+  stays unconfirmed. Keep the output capture owned for retry while process cleanup
+  is unresolved. Borrowed processes and streams retain their own lifetime and
+  reference state; select the matching
+  [supervision controls](testing.md#lifecycle-regressions) when changing this code.
 - Authenticate and capture identity through the same boundary on initial and
   recovery handshakes. Bound abandoned unauthenticated listeners where the
   protocol permits it; that deadline must not expire authenticated idle sessions
@@ -373,18 +596,20 @@ stages that never ran.
   analysis snapshot is part of `open_binary`; cancellation keeps that operation
   and the caller's reason through the shared JSON reader.
 - For cancellable observations, carry cancellation through result consumption
-  and awaited cleanup. Before returning success, check the signal after the
-  last awaited finalization step.
+  and awaited cleanup. Check the signal after the last awaited finalization step
+  unless the operation has passed its documented commit cutoff. Preserve the
+  owning operation's committed outcome and receipt after that cutoff.
   Retain collected observations under typed cancellation. Preserve an existing
   primary failure and let incomplete cleanup retain its own classification.
   Preserve the caller's abort reason as the typed cancellation error's cause,
   including when cancellation is observed only after provider completion.
-  Shared command owners must retain the observed cancellation reason separately
-  from physical failures and cleanup ownership. Carry that fact through failure
-  wrapping so adapters can preserve the exact reason without interpreting it.
-  ZIP member streams retain the exact signal reason; hdiutil wrappers consume
-  the command owner's typed cancellation record and keep physical command
-  failures separate, even if a host error is named `AbortError`.
+  The producing boundary records cancellation separately from physical failures
+  and cleanup ownership. A caller's abort reason is opaque: its value, error
+  type, name or cause chain cannot establish failure origin or cleanup authority.
+  Consumers use the owner's parsed facts. An established command timeout keeps
+  its timeout or refusal policy when preparation records a cancellation.
+  Failure wrapping and operation rebinding preserve these facts and already
+  classified secondary failures.
   Client cancellation alone does not prove native work stopped.
   For atomic publication, document the cancellation cutoff and preserve any
   committed output's publication receipt.
@@ -402,7 +627,9 @@ stages that never ran.
   original failure and completed observations. Later failure composition must
   report only resources whose cleanup remains unresolved. Carry cleanup
   capabilities explicitly in typed outcomes so consumers can bind returned errors
-  to exact owners without reparsing diagnostic cause chains.
+  to exact owners without reparsing diagnostic cause chains. A cleanup-status
+  observer does not replace a callable close capability retained by the caller's
+  scope.
   Bind every caller-visible retry error and aggregate, including an error already
   produced by the provider. An aggregate remains incomplete until all owners it
   reports are released; releasing one child cannot clear another child's status.
@@ -415,7 +642,16 @@ stages that never ran.
   remain attached to their owning envelope while cleanup is pending and after
   confirmed release. CLI adapters should reuse
   [`finishAnalysisCommand`](https://github.com/morluto/rea/blob/main/src/cli/finishAnalysisCommand.ts) where its contract
-  applies rather than duplicate close/finally handling.
+  applies rather than duplicate close/finally handling. It projects
+  [`runOwned`](https://github.com/morluto/rea/blob/main/src/providers/runOwned.ts),
+  which owns this precedence for owned work: a recorded failure stays primary,
+  cancellation before commit keeps the completed value as a partial
+  observation, cancellation after commit keeps the value, and unconfirmed
+  cleanup reports `cleanup_incomplete` while keeping the completed value.
+  SQLite keeps a failed close primary when cancellation arrives during that
+  close, and retains the caller's cancellation as a secondary failure.
+  Startup deadlines own the readiness cutoff for sessions that remain open
+  after a successful handshake.
 - Give descriptor-backed reads an owner before opening the file. A rejected
   close must retain the exact handle and preserve any earlier failure.
   Carry [`openRegularFile`](https://github.com/morluto/rea/blob/main/src/filesystem/RegularFile.ts)'s
@@ -455,7 +691,22 @@ through the producing owner and affected CLI/MCP consumers.
 ## Implement and evaluate
 
 Put provider wire-protocol parsing in adapters and shared CLI/MCP workflows in
-the application layer. Reusable format declarations may live in pure domain
+the application layer.
+
+CLI commands register through
+[`cliCommandRegistrations.ts`](https://github.com/morluto/rea/blob/main/src/cli/cliCommandRegistrations.ts):
+add the registrar to its family there and its module to `src/cli.ts`. The build
+records which registrar defines each top-level command, and running a known
+non-built-in command (including single-command discovery with `--help`, `-h`,
+`--schema`, `--llms`, or `--llms-full`) loads only that registrar's module
+graph. Root discovery, unknown command names, built-in requests (`completions`,
+`mcp` CLI subcommands, shell completion, and other built-in flags outside
+standalone `--version` and retired per-command `--mcp`), and a missing or
+unusable recording load the complete CLI. A registrar's command definitions must not depend
+on other registrars, and `tests/boundary/cli/cliLazyRegistration.test.ts` checks
+that each one registers alone with the definitions the complete CLI gives it.
+Modules that every registrar imports set the startup cost of every command; load
+optional heavy services where a command needs them. Reusable format declarations may live in pure domain
 owners: [`peOptionalHeader.ts`](https://github.com/morluto/rea/blob/main/src/domain/peOptionalHeader.ts)
 decodes PE structure, while consumers retain machine admission, directory-address
 interpretation, and file/mapping bounds. Share Evidence provenance, unknown
@@ -486,6 +737,71 @@ retained reference only after recording succeeds. An absent writer or a writer
 returning a failure `Result` leaves the partial inline, as does a partial that
 is not valid Evidence. Unexpected recorder exceptions propagate. An `evidence_id`
 member alone does not establish Evidence validity or retention.
+
+### Design hot paths for single-pass work and zero redundant copies
+
+Apply these general patterns when implementing providers, bridges, adapters,
+and shared application workflows so performance is built into the owning
+boundary rather than patched downstream:
+
+- **Validate once at the trust boundary; avoid full-tree deep-clones on owned
+  payloads.** Use `ownedJsonValueSchema` / `ownedJsonObjectSchema` (in-place
+  validation without cloning) for freshly constructed, exclusively owned
+  objects instead of `jsonValueSchema.parse` / `jsonObjectSchema.parse`. Keep
+  cloning only when a downstream consumer mutates or freezes shared input
+  (such as `freezeJsonSnapshot`). When an upstream decoder has already
+  validated a large payload schema (for example `binaryLayoutPayloadSchema` or
+  `recordedCrashPayloadSchema`), validate only the added envelope fields and
+  cross-field invariants rather than re-parsing the full payload tree. Hoist
+  Zod schemas, regular expressions, and constant lookup `Set`s to module scope;
+  never construct `z.object(...)` inside per-record or per-field loops.
+- **Derive classifications, counts, and pruning summaries in a single pass.**
+  Fuse independent `.filter()`, `.some()`, and `.flatMap()` passes over the
+  same inventory or stream into one loop, and count matches with a loop rather
+  than allocating `.filter(...).length` intermediate arrays. Compute tiny
+  derived existence summaries during pass 1 (such as whether any packet uses a
+  protocol or whether any managed directory exists) to short-circuit expensive
+  secondary subprocesses or scans when no matching records exist.
+- **Use hash joins and reuse existing indexes instead of nested-loop scans.**
+  Before calling `.find()`, `.includes()`, or `.indexOf()` inside a loop over
+  another collection, reuse an existing `Map`/`Set` index on the context or
+  build one once outside the loop. In bridges (Java/Python), index tables,
+  procedures, and tokens by address or type path during analysis/loading (using
+  `putIfAbsent` when first-match precedence matters) and gate expensive engine
+  queries (such as SLEIGH p-code or flow resolution) behind cheap control-flow
+  checks.
+- **Bound I/O and cache freshness without breaking cancellation or cleanup
+  contracts.** Prefer single-pass streaming reads/hashes (such as
+  `ArtifactAnalysisResources.hash()` via `streamStableArtifact` with
+  `retainBytes: () => 0` when only identity and byte length are needed) and pass
+  `expectedSize` to `readBoundedFileBytes` for regular files so reads avoid
+  double-allocation copies. Bound concurrent filesystem and process fan-out
+  rather than issuing unbounded `Promise.all` over variable-length path or PID
+  lists, and prefer event-driven wakeups (`AbortSignal` or `WorkerFrameSignal`)
+  over fixed polling intervals. When caching external tool digests or PATH
+  probes with `(dev, ino, size, mtimeNs, ctimeNs)` stat verification, bypass the
+  fast path when a caller or test injects a custom `artifactReader`, and never
+  skip a read whose contract requires observing mid-read cancellation or access
+  errors on every call.
+- **Reuse binary/stream primitives and avoid full-chunk or per-record copies.**
+  Hold or `WeakMap`-cache `BinaryReader` per `Buffer` instead of allocating one
+  per symbol, note, GUID, or header field; reuse `strictUtf8Decoder`
+  (`src/domain/strictUtf8.ts`) for stateless UTF-8 decoding (never cache
+  `{ stream: true }` decoders); use `FifoQueue` (`src/kernel/FifoQueue.ts`)
+  rather than `Array.shift()` for message/frame queues; scan streaming binary
+  payloads with `Buffer.prototype.indexOf` and tiny fixed seam buffers instead
+  of copying full chunks or concatenating strings per byte; and write framed IPC
+  headers separately from large body buffers rather than copying multi-megabyte
+  payloads into one combined frame.
+- **Keep analysis views and MCP wire delivery O(limit) and lazy.** Reuse
+  validated immutable parent snapshots through `createAnalysisViewResultReader`
+  and `WeakMap` lookup indexes; route explicit `indices` queries through
+  `selectIndexedViewRows`, fast-path unfiltered pages through `selectViewRows`
+  with an omitted predicate, and pick projected columns with `pickFields` rather
+  than `Object.entries(...).filter(...)`. On the MCP delivery path, skip
+  duplicate Zod validation when the SDK already admitted `inputSchema`, evaluate
+  overflow recovery metadata lazily only when a response exceeds its budget, and
+  measure wire sizes without joining discarded JSON strings.
 
 Measure the resource before choosing a budget and enforce it before the costly
 step. Account for value alternatives, trace-frame products, retained records,
@@ -529,6 +845,25 @@ Zod's tuple projection omits implicit length bounds and Draft 2020-12 `items`,
 which some clients require even alongside `prefixItems`. Tuples with a rest
 schema also need explicit minimum lengths. Check parser/schema parity for empty,
 short, overlong, and malformed values in both input and output projections.
+
+A CLI command for a tool contract is described by `describeContractCommand` in
+[`contractCliDescription.ts`](https://github.com/morluto/rea/blob/main/src/cli/contractCliDescription.ts)
+and rendered for the CLI framework by `registerContractCommand` in
+[`contractCommand.ts`](https://github.com/morluto/rea/blob/main/src/cli/contractCommand.ts).
+A contract with `cli: true` names its own command, the kebab-case spelling of
+its name; the CLI command inventory in `catalogIdentity.ts` is derived from
+those declarations, and the projection omits `command` for it. `CLI_COMMANDS`
+holds only the commands no contract names.
+The projection names only what the CLI spells differently: positionals,
+caller-relative path fields, option renames and short flags, CLI help wording,
+omitted optional fields with a reason, Evidence delivery options, and whether the contract's cross-field
+rules refuse at argv parsing or at the service's contract parse. A delivery
+`view` is JSON text decoded when the command runs; the contract input then
+admits the view with its `detail` before any target is opened, including a
+`detail`-discriminated union input. Field schemas and decimal argv tokens are
+derived, and
+`tests/boundary/cli/cliContractCommandParity.test.ts` checks that each projected
+command admits what its contract admits.
 
 CLI translations must reuse the canonical semantic fields, enum membership and
 list bounds. Document transport differences such as relative path spelling and

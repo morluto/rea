@@ -1,9 +1,11 @@
+import { expectResultValue } from "../../support/expectResultValue.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
 import { parseClientConfiguration } from "../../../src/application/ClientConfigurationDocument.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 
 it.each([90, 120])(
   "preserves caller-selected Grok startup timeout %s when refreshing its launcher",
@@ -12,13 +14,19 @@ it.each([90, 120])(
     const configPath = join(directory, "config.toml");
     const source = `[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "rea-agents@6.1.0", "mcp"]\nstartup_timeout_sec = ${timeout}\ncustom_policy = "caller"\n\n[mcp_servers.rea.env]\nPATH = "/caller/bin:/usr/bin"\nCUSTOM = "preserved"\n`;
     await writeFile(configPath, source);
-    const client = { name: "grok_build", configPath, format: "grok" } as const;
+    const client = {
+      name: "grok_build",
+      registrationProfile: supportedClientRegistrationProfile("grok_build"),
+      configPath,
+      format: "grok",
+    } as const;
     expect(
       await configureClientConfiguration(client, {}, ["rea", "mcp"]),
     ).toMatchObject({ status: "configured" });
     const refreshed = await readFile(configPath, "utf8");
     expect(
-      parseClientConfiguration(refreshed, "grok").servers.rea,
+      expectResultValue(parseClientConfiguration(refreshed, "grok")).servers
+        .rea,
     ).toMatchObject({
       command: "rea",
       args: ["mcp"],

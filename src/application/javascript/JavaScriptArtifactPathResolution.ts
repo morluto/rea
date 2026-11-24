@@ -36,6 +36,7 @@ import { selectPackageSubpathPattern } from "../../domain/javascript/javascriptP
 import type { JavaScriptModuleResolutionMode } from "../../domain/javascript/javascriptModuleResolutionMode.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 type ArtifactPathResolutionContext =
   | "package-entrypoint"
@@ -128,17 +129,15 @@ const EXTENSIONS = [
 // A private URL namespace for logical artifact paths, including root packages.
 // Encode inventory segments so filename punctuation remains literal in the base.
 const PACKAGE_ARTIFACT_ROOT_URL = new URL("file:///rea-artifact/");
-const encodePackageMetadataUrl = (path: string): URL =>
-  new URL(
-    path.split("/").map(encodeURIComponent).join("/"),
-    PACKAGE_ARTIFACT_ROOT_URL,
-  );
+const encodeArtifactPathUrl = (path: string, root: URL): URL =>
+  new URL(path.split("/").map(encodeURIComponent).join("/"), root);
 // URL identity cannot represent lone UTF-16 surrogates. Use request-local
 // opaque segments only for structural admission, never inventory lookup. A
 // target cannot spell these identities after URL's tab/newline preprocessing.
-const packageMetadataUrl = (
+const artifactPathUrl = (
   path: string,
   relativeTarget: string,
+  root: URL = PACKAGE_ARTIFACT_ROOT_URL,
 ): Result<
   URL,
   {
@@ -148,7 +147,7 @@ const packageMetadataUrl = (
   }
 > => {
   try {
-    return ok(encodePackageMetadataUrl(path));
+    return ok(encodeArtifactPathUrl(path, root));
   } catch (cause: unknown) {
     if (!(cause instanceof URIError)) throw cause;
     const reserved = new Set(
@@ -175,9 +174,9 @@ const packageMetadataUrl = (
       })
       .join("/");
     return err({
-      structuralUrl: new URL(structuralPath, PACKAGE_ARTIFACT_ROOT_URL),
+      structuralUrl: new URL(structuralPath, root),
       structuralSegments,
-      limitation: `Package metadata path ${JSON.stringify(path)} contains an unpaired UTF-16 surrogate and cannot be represented as a URL.`,
+      limitation: `Artifact path ${JSON.stringify(path)} contains an unpaired UTF-16 surrogate and cannot be represented as a URL.`,
     });
   }
 };
@@ -680,7 +679,7 @@ const contextualCandidate = (
           return unresolvedCandidate("rejected", [
             "The module URL escapes the selected logical artifact root.",
           ]);
-        const sourceUrl = packageMetadataUrl(input.sourcePath, declared);
+        const sourceUrl = artifactPathUrl(input.sourcePath, declared);
         const base = sourceUrl.ok
           ? sourceUrl.value
           : sourceUrl.error.structuralUrl;
@@ -728,11 +727,15 @@ const contextualCandidate = (
     // after dot segments reach the root. Parse before percent decoding so an
     // encoded drive-like filename stays literal. The synthetic base establishes
     // only this ambiguity; it does not establish the source's runtime scheme.
-    const sourceUrlPath = input.sourcePath
-      .split("/")
-      .map(encodeURIComponent)
-      .join("/");
-    const fileReference = URL.parse(declared, `file:///${sourceUrlPath}`);
+    const sourceUrl = artifactPathUrl(
+      input.sourcePath,
+      declared,
+      new URL("file:///"),
+    );
+    const fileReference = URL.parse(
+      declared,
+      sourceUrl.ok ? sourceUrl.value : sourceUrl.error.structuralUrl,
+    );
     if (fileReference === null)
       return unresolvedCandidate("rejected", [
         "The URL reference cannot be parsed as a URL.",
@@ -746,6 +749,13 @@ const contextualCandidate = (
       return unresolvedCandidate("rejected", [
         "The URL reference path percent-decodes to NUL or to bytes that are not UTF-8.",
       ]);
+    if (
+      !sourceUrl.ok &&
+      fileReference.pathname
+        .split("/")
+        .some((segment) => sourceUrl.error.structuralSegments.has(segment))
+    )
+      return unresolvedCandidate("unavailable", [sourceUrl.error.limitation]);
     const candidate = urlRelativeCandidate(
       posix.dirname(input.sourcePath),
       decoded,
@@ -1125,7 +1135,7 @@ const resolveLegacyEsmSubpath = (
       depth--;
     } else if (segment !== ".") depth++;
   }
-  const metadataUrl = packageMetadataUrl(
+  const metadataUrl = artifactPathUrl(
     posix.join(directory, "package.json"),
     subpath,
   );
@@ -1295,15 +1305,20 @@ const hasContainerDirectory = (
     )
   )
     return true;
-  // Inventory has files rather than directory entries. An admitted descendant
-  // establishes a package directory even without package.json.
+  // An admitted file can establish a directory without an explicit entry.
+  // Use the inventory's prefix range when available to avoid walking every
+  // analyzed file for each package searched along the ancestor chain.
   const prefix = `${candidate}/`;
-  for (const [path, file] of input.files)
+  const indexedPaths = input.unanalyzedFiles?.filePathsBelow?.(candidate);
+  for (const path of indexedPaths ?? input.files.keys()) {
+    if (indexedPaths === undefined && !path.startsWith(prefix)) continue;
+    const file = input.files.get(path);
     if (
-      path.startsWith(prefix) &&
+      file !== undefined &&
       admitsRuntimeContainer(input, path, file.container_sha256)
     )
       return true;
+  }
   const container = crossesRuntimeArchiveBoundary(input, `${candidate}/`)
     ? undefined
     : input.files.get(input.sourcePath)?.container_sha256;
@@ -1493,10 +1508,7 @@ const readPackageMetadata = (
         ? exports
         : undefined,
     // Import maps must be non-array objects; other shapes are not a map.
-    imports:
-      typeof imports === "object" && imports !== null && !Array.isArray(imports)
-        ? imports
-        : undefined,
+    imports: isRecord(imports) ? imports : undefined,
     main:
       input.moduleKind !== undefined && typeof main !== "string"
         ? undefined
@@ -1691,8 +1703,11 @@ const resolveFileCandidates = (
   return null;
 };
 
+const ASAR_SEGMENT_PATTERN = /\.asar\//iu;
+
 /** Classify the extension as inventory does; retain exact archive occurrence bytes. */
 const runtimeArchiveRoot = (path: string): string | undefined => {
+  if (!ASAR_SEGMENT_PATTERN.test(path)) return undefined;
   const components = path.split("/");
   const archive = components.findLastIndex(
     (component, index) =>
@@ -1842,7 +1857,7 @@ const selectPackageExport = (
   let target = value;
   let pattern: string | undefined;
   let declared: string[] = [];
-  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+  if (isRecord(value)) {
     const keys = Object.keys(value);
     const hasSubpaths = keys.some((key) => key.startsWith("."));
     if (hasSubpaths && keys.some((key) => !key.startsWith(".")))
@@ -1853,8 +1868,12 @@ const selectPackageExport = (
       };
     declared = keys;
     if (hasSubpaths) {
-      if (subpath.endsWith("/")) return { status: "unmatched", declared };
-      if (!subpath.includes("*") && Object.hasOwn(value, subpath))
+      // A trailing slash excludes exact keys, but can still match a wildcard.
+      if (
+        !subpath.endsWith("/") &&
+        !subpath.includes("*") &&
+        Object.hasOwn(value, subpath)
+      )
         target = Reflect.get(value, subpath);
       else {
         pattern = selectPackageSubpathPattern(keys, subpath);
@@ -1952,7 +1971,7 @@ const selectStringPackageTarget = (
       `contains forbidden path segment ${JSON.stringify(forbidden)} before URL normalization`,
       mapKind,
     );
-  const metadataUrl = packageMetadataUrl(packagePath, value);
+  const metadataUrl = artifactPathUrl(packagePath, value);
   const packageUrl = metadataUrl.ok
     ? metadataUrl.value
     : metadataUrl.error.structuralUrl;
@@ -2056,16 +2075,39 @@ const selectExportTarget = (
  * built-in resolver that owns installed-package imports and requires. The
  * supported Node runtimes also activate "module-sync" for both loaders.
  */
+const EXPORT_CONDITIONS_DEFAULT: ReadonlySet<string> = new Set([
+  "node",
+  "node-addons",
+  "module-sync",
+  "default",
+]);
+const EXPORT_CONDITIONS_BY_KIND = new Map<string, ReadonlySet<string>>([
+  [
+    "import",
+    new Set(["node", "node-addons", "module-sync", "import", "default"]),
+  ],
+  [
+    "require",
+    new Set(["node", "node-addons", "module-sync", "require", "default"]),
+  ],
+  [
+    "compiler-dependent",
+    new Set([
+      "node",
+      "node-addons",
+      "module-sync",
+      "compiler-dependent",
+      "default",
+    ]),
+  ],
+]);
+
 const packageExportConditions = (
   moduleKind: ResolveArtifactPathInput["moduleKind"],
 ): ReadonlySet<string> =>
-  new Set([
-    "node",
-    "node-addons",
-    "module-sync",
-    ...(moduleKind === undefined ? [] : [moduleKind]),
-    "default",
-  ]);
+  moduleKind === undefined
+    ? EXPORT_CONDITIONS_DEFAULT
+    : (EXPORT_CONDITIONS_BY_KIND.get(moduleKind) ?? EXPORT_CONDITIONS_DEFAULT);
 
 const notFoundCandidate = (): Extract<
   CandidateResolution,

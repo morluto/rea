@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { JsonObject, StateEntity } from "./environmentStateRules.js";
 import {
@@ -85,24 +85,42 @@ describe("members a created field derives from", () => {
   });
 });
 
-it(
-  "finds the echoed members a wide body's constants hold without searching each text for each",
-  { timeout: 5_000 },
-  () => {
-    const n = 8_000;
-    const body = Object.fromEntries(
-      Array.from({ length: n }, (_, index) => [
-        `e${String(index)}`,
-        `echoed value ${String(index).padStart(6, "0")}`,
-      ]),
-    );
-    const constants = Object.fromEntries(
-      Array.from({ length: n }, (_, index) => [
-        `k${String(index)}`,
-        `constant text ${String(index)}`,
-      ]),
-    );
-    const result = create(
+it("finds the echoed members a wide body's constants hold without searching each text for each", () => {
+  const n = 8_000;
+  const body = Object.fromEntries(
+    Array.from({ length: n }, (_, index) => [
+      `e${String(index)}`,
+      `echoed value ${String(index).padStart(6, "0")}`,
+    ]),
+  );
+  const constants = Object.fromEntries(
+    Array.from({ length: n }, (_, index) => [
+      `k${String(index)}`,
+      `constant text ${String(index)}`,
+    ]),
+  );
+  // Each text is read once for the members it holds, with a few searches per
+  // field besides. Searching every text for every echoed member makes n^2
+  // searches; the spies stop such a search at the bound instead of letting it
+  // run on.
+  const allowed = 16 * n;
+  let searches = 0;
+  const searched = (method: "includes" | "indexOf") => {
+    const original = String.prototype[method] as (
+      ...args: unknown[]
+    ) => unknown;
+    return vi.spyOn(String.prototype, method).mockImplementation(function (
+      this: string,
+      ...args: unknown[]
+    ) {
+      if (++searches > allowed) throw new Error("texts searched per member");
+      return original.apply(this, args);
+    } as never);
+  };
+  const spies = [searched("includes"), searched("indexOf")];
+  let result: ReturnType<typeof create>;
+  try {
+    result = create(
       {
         id: 1,
         ...body,
@@ -112,13 +130,32 @@ it(
       body,
       () => [],
     );
-    expect(result.fixed).toEqual([
-      { member: `e${String(n - 1)}`, sent: body[`e${String(n - 1)}`] },
-    ]);
-  },
-);
+  } finally {
+    for (const spy of spies) spy.mockRestore();
+  }
+  expect(searches).toBeLessThanOrEqual(allowed);
+  expect(result.fixed).toEqual([
+    { member: `e${String(n - 1)}`, sent: body[`e${String(n - 1)}`] },
+  ]);
+});
 
 describe("coincidences no member derives a created field from", () => {
+  it.each([
+    ["before", (value: string) => `𐐀${value}`],
+    ["after", (value: string) => `${value}𐐀`],
+  ])(
+    "keeps a member accepted when an astral letter joins its text %s",
+    (_, label) => {
+      const value = "harbour-notes";
+      const body = create(
+        { id: 9, name: value, label: label(value) },
+        { name: value },
+      );
+      expect(body.accepted).toEqual(["name"]);
+      expect(body.fixed).toEqual([]);
+    },
+  );
+
   it("keeps a reference accepted when a constant repeats another reference of the named entity", () => {
     const channel = "1bdxw3qoyj8zjyyhdjbdobdf4r";
     const user = "c10c054bc2a4478bb78e0210549376b1";

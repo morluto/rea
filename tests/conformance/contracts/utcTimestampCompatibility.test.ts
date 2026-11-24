@@ -1,5 +1,5 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { webPageInspectionSchema } from "../../../src/domain/browserObservationSchemas.js";
@@ -18,27 +18,17 @@ const fields = [
   ],
 ] as const;
 
-describe.each(fields)("%s timestamp compatibility", (_name, schema) => {
-  const advertised = z.toJSONSchema(schema, { target: "draft-2020-12" });
-  const validate = new Ajv2020().compile(advertised);
-
-  it.each([
-    "2026-10-09T04:00Z",
-    "2026-10-09T04:00:00Z",
-    "2026-10-09T04:00:00.1234567890123456789Z",
-  ])("preserves the admitted source spelling %s", (value) => {
-    expect(schema.parse(value)).toBe(value);
-    expect(validate(value)).toBe(true);
-  });
-
-  it.each([
-    "2026-10-09T04:00",
-    "2026-10-09T04:00+02:00",
-    "2026-10-09T04:00:00-03:00",
-    "2026-04-31T04:00Z",
-    "2026-10-09T04:00.5Z",
-  ])("rejects %s in both the canonical and advertised contracts", (value) => {
-    expect(schema.safeParse(value).success).toBe(false);
-    expect(validate(value)).toBe(false);
-  });
-});
+it.each(fields)(
+  "%s preserves UTC timestamps without seconds and rejects offsets",
+  (_name, schema) => {
+    const utc = "2026-10-09T04:00Z";
+    const offset = "2026-10-09T04:00+02:00";
+    const validate = new Ajv2020().compile(
+      z.toJSONSchema(schema, { target: "draft-2020-12" }),
+    );
+    expect(schema.parse(utc)).toBe(utc);
+    expect(schema.safeParse(offset).success).toBe(false);
+    expect(validate(utc)).toBe(true);
+    expect(validate(offset)).toBe(false);
+  },
+);

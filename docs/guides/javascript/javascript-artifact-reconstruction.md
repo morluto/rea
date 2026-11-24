@@ -22,7 +22,9 @@ rea analyze-javascript-application /absolute/path/to/apps/app.asar \
 
 Generic `rea analyze` selects this static provider for directories and `.asar`
 paths when neither `--provider` nor `--snapshot` is supplied. The dedicated
-command and the generic route return their complete results inline. Native
+command and the generic route return complete results inline by default.
+Summary and route-view delivery export the full Evidence to `--evidence_output`
+and return a projection; see [route delivery](../../javascript-route-inventory.md). Native
 targets, single JavaScript files, `.app` bundles, and explicit deep-provider or
 snapshot requests retain the native deep-analysis route.
 
@@ -79,12 +81,16 @@ were present; `null` means package metadata was invalid or unavailable. Renderer
 role mechanisms and package load edges name the field that supplied the candidate,
 selected as the first nonempty string from `renderer`, `browser`, then `module`.
 The package load edge retains `declared_path`, `source_field`, and resolution
-facts for that selection. New analyses no longer emit the derived package
-`renderer` alias; consumers must read declarations for source metadata and load
-edges for the selected candidate. Previously retained Evidence keeps its original
-properties and remains readable without migration.
+facts for that selection. Read declarations for source metadata and load edges
+for the selected candidate; there is no derived package `renderer` alias.
+Previously retained Evidence keeps its original properties.
 
 ## Select sources before analysis
+
+Explicit `source_paths` retain the acquisition owner's requested order, including
+selected dependency files. First-party priority applies only to unscoped analysis.
+Recovered syntax or incomplete semantic examination keeps Electron coverage
+partial even when useful windows or IPC facts were retained.
 
 For a question about known entry sources, supply exact artifact-relative file
 paths in `source_paths`, or repeat `--source-path` on either CLI route:
@@ -160,7 +166,7 @@ must also satisfy the new admission. For CLI or future MCP processes, set
 `REA_ASAR_MAX_HEADER_BYTES` in the launch environment. Changing that environment
 requires a new REA process. Invalid launch values are configuration errors,
 never a silent fallback. See the
-[settings design](../../design/limits-and-recovery.md#failure-and-retry) for recovery
+[analysis settings and recovery](../../reference/limits-and-recovery.md#failure-and-retry) for recovery
 metadata, precedence, and reset behavior.
 
 The archive index is read before any member can be selected, so
@@ -181,7 +187,9 @@ coverage, limitations, and `normalized_result.parent_evidence_id`. Pass that ID
 to `inspect_analysis_view` for module pages or items, or to the application
 workflows as a retained reference. The summary does not repeat or truncate the
 analysis; a server without session retention refuses summary detail with
-`capability_unavailable`. CLI output is unchanged and always complete.
+`capability_unavailable`. On the CLI, `--detail summary --evidence_output PATH`
+exports the full Evidence and returns its summary; the default remains complete
+inline delivery.
 
 With a connected MCP `client` and the caller-selected absolute `inputPath`, this
 recipe analyzes once and pages module identities using the returned ID:
@@ -218,7 +226,14 @@ Each newly analyzed JavaScript file retains `analysis_coverage` in its graph
 observation. `syntax` distinguishes complete parsing, recovered syntax errors,
 failed parsing and unexamined source. `semantics` records the number of observed
 unknown findings and typed uncertainty, including returned-reference widening
-and unavailable type-only compiler options. `examination` reports static semantic
+and unavailable type-only compiler options. `conditional-loader` records a
+BOM/hashbang source recovered with an uncertain package mode or loader
+invocation. Its overall `parse_status` stays partial without inventing a syntax
+error. `commonjs-wrapper-redeclaration` records a top-level lexical declaration
+that redeclares a CommonJS wrapper parameter. Node cannot evaluate that module,
+and the recovered syntax stays complete because the diagnostic does not drop
+statements. Dependency and worker Evidence retains the loader limitation.
+`examination` reports static semantic
 resource limits and Electron wrapper expansion limits independently. A completed
 pass does not establish complete runtime semantics. Route examination and result
 capacity remain in the separate route inventory.
@@ -308,6 +323,9 @@ MCP returns a `partial_observation` retained reference after recording succeeds;
 open it with `inspect_analysis_view` on the same connection. If the SDK stopped
 waiting before receiving the reply, follow [MCP cancellation recovery](../../reference/mcp-contracts.md#progress-and-cancellation)
 to find the record. CLI failure output contains the complete partial Evidence.
+With `--evidence_output`, the CLI also publishes it to that file and, with
+`--detail summary`, prints only its summary view; see
+[evidence publication](../../getting-started/cli.md#output-and-exit-status).
 Owned analyzer cleanup is verified before private files are released; uncertain
 cleanup retains ownership for retry and is reported separately.
 Typed cancellation or another primary interruption remains attached while
@@ -323,6 +341,12 @@ failure does not authorize expanding relationships that parent admission decline
 
 ## What is reconstructed
 
+Electron `BrowserView` and `WebContentsView` expose `webContents` and accept
+`webPreferences`, including declared preloads. `BaseWindow` has neither surface
+of its own. Preload associations retain the parsed constructor's mechanism rather
+than labeling every view as a BrowserWindow. These are static associations, not
+proof that a renderer or preload executed.
+
 The projector reuses the content-addressed artifact inventory and safe artifact
 readers. It retains canonical artifact-relative paths, exact byte counts,
 SHA-256 digests, inventory IDs, ASAR container identity, and `.asar.unpacked`
@@ -335,9 +359,27 @@ execute them.
 
 JavaScript and HTML source ranges retain an initial UTF-8 BOM as one UTF-16
 code unit, matching the original bytes identified by the artifact digest.
+A BOM before a hashbang is accepted for TypeScript and JSX compiler inputs,
+explicit ES modules, and JavaScript in an observed module package.
+For this prefix, suffix-only source names, including `.cjs` and case variants such as `.MJS`,
+retain a conditional interpretation: direct entrypoint and module import can
+select different loaders. A known CommonJS package can load these files
+through an ES module import using CommonJS grammar.
+An unknown package scope or a package without a `type` field retains a
+conditional interpretation for ordinary `.js` and suffix-only JavaScript files. Application analysis and
+reference import can recover either script or ES module syntax without
+establishing the runtime loader.
+Source indexes and later-line columns still refer to the original text.
+CommonJS sources with this prefix retain a conditional interpretation through
+ES module import. Direct execution and require can reject the same source.
+A plain hashbang stays valid.
 
 Plain `.ts` artifact sources use TypeScript syntax without JSX, including
-angle-bracket type assertions. `.tsx` and `.jsx` retain JSX parsing.
+angle-bracket type assertions. Application analysis and reference imports share
+the syntax rules for `.cts` and `.mts`. Ambiguous generic arrows such as
+`<T>(value: T) => value` produce a diagnostic while recovered declarations
+remain available. Angle-bracket assertions are accepted in both suffixes.
+`.tsx` and `.jsx` retain JSX parsing.
 JavaScript sources use JavaScript grammar with JSX, never TypeScript syntax,
 so valid JavaScript that TypeScript reads differently keeps its JavaScript
 meaning.
@@ -349,6 +391,21 @@ utility-process runtime paths retain the runtime filename selected by the caller
 
 Application `.js` and `.ts` sources use the nearest readable, same-container
 `package.json` type; explicit module/CommonJS suffixes keep their own meaning.
+The parser applies this context to grammar as well as dependency identity.
+CommonJS JavaScript retains wrapper-only `return` and `new.target` syntax and
+sloppy-mode diagnostics; a detected script in an untyped `.js` package follows
+the same rule. Module sources retain their module-only errors, including an
+illegal top-level `return`, through analysis and reference import. TypeScript's
+syntax phase does not inherit JavaScript wrapper-only permissions. Recovered
+imports remain available with partial parse status when syntax errors exist.
+For untyped `.js` packages, Node's syntax detection also includes top-level
+lexical declarations of its wrapper parameters (`require`, `module`, `exports`,
+`__filename`, `__dirname`). These select module context; `var`, function
+declarations and bindings confined to a block do not. In a proven CommonJS
+JavaScript script, conflicting lexical declarations retain a syntax diagnostic
+instead of establishing clean wrapper syntax.
+Reference import identifies these parser-owned wrapper diagnostics as
+`rea-node-loader`; Babel's syntax diagnostics retain their `babel` source.
 An unavailable nearer manifest leaves the package type unknown. When a module
 package contains `.js` sources, a preliminary pass through the bounded worker
 collects BrowserWindow preload declarations. Exact same-container `.js`
@@ -408,6 +465,12 @@ while locally shadowed receivers can still contribute network endpoint
 candidates. A template recovered with a parser error and no cooked value stays
 dynamic; its raw spelling is not treated as a valid JavaScript string.
 
+Method-first `request` calls, as in superagent, needle, and Angular
+`HttpClient`, pass a standard HTTP method, in any letter case, before the
+target. In both `analyze_javascript_application` and `analyze_web_bundle`,
+`request("get", "/api/users")` contributes `/api/users` as the network endpoint
+candidate. When the target is computed, the method token remains the candidate.
+
 RPC client syntax also contributes network endpoint candidates, in both
 `analyze_javascript_application` and `analyze_web_bundle`, distinguished by
 `mechanism`:
@@ -438,9 +501,13 @@ RPC client syntax also contributes network endpoint candidates, in both
 - `graphql:query`, `graphql:mutation`, and `graphql:subscription` record a
   named operation found at the start of a string or cooked template literal —
   the name must be followed by variable definitions (`($`), a directive, or a
-  selection set starting with a field name — or in a precompiled
-  `OperationDefinition` document object. A standalone Source object's `body`
-  remains an operation candidate even when it has `locationOffset` metadata.
+  selection set starting with a field, named fragment spread, or inline fragment
+  — or in a precompiled `OperationDefinition` document object. A precompiled
+  operation name must be one complete GraphQL Name token (ASCII letters,
+  digits, and underscores, with no leading digit). Recognition is limited to
+  static operation headers; it does not validate a complete GraphQL document or
+  prove that the application sends the operation. A standalone Source object's
+  `body` remains an operation candidate even when it has `locationOffset` metadata.
   A graphql-tag `loc.source.body` copy is suppressed only when that source
   belongs to a recovered document with the same operation and its containing
   document, location and source have proven private metadata ownership. Writes,
@@ -515,6 +582,22 @@ If fingerprint construction reaches its structural
 bound, the fingerprint is unavailable and its status is `truncated`; a bounded
 prefix is never presented as a complete stable fingerprint.
 
+## Cached-data compilation boundaries
+
+A `node:vm` compilation reports whether `cachedData` is declared, absent or
+unknown. Explicitly supplied undefined bytes are treated as absent; shadowed
+identifiers remain declarations. Source syntax alone does not establish valid cache bytes, V8 acceptance
+or execution. The summary counts declared compilations, not executions.
+
+A proven synchronous filesystem read or awaited promise-based read supplies a
+cache path. The producer retains its path base: source-directory expressions
+can name inventoried artifacts, while relative literal paths depend on the
+target working directory and remain unresolved. Other supplied values retain
+their bounded source expression. Declared paths, exact-file lookup
+status, candidate paths and resolution limitations remain separate; an unresolved
+path never becomes a resolved file. Opaque inventoried cache bytes can remain
+unavailable to the JavaScript resolver even when their occurrence is known.
+
 ## Authority and unknowns
 
 API identity is a derivation: a familiar method or property name does not
@@ -526,7 +609,11 @@ unmodified global or proven Node `url.URL` constructor and `import.meta.url`.
 Native constructor aliases retain that identity; their local spelling does not
 determine URL semantics, and replaced exports or local constructors remain unknown.
 Relative results of native path operations retain filesystem-expression context;
-their spelling does not turn them into module specifiers. Other calls preserve
+their spelling does not turn them into module specifiers. A source-directory
+substitution also needs a proven base after composition. For example,
+`path.join("prefix", __dirname, "preload.cjs")` and repeated directory anchors
+retain their expressions as unknown instead of associating a preload or utility
+process with a file whose path dropped the directory text. Other calls preserve
 their expressions. A property named `preload` outside a proven BrowserWindow
 configuration does not establish a script entrypoint. Renderer recovery currently
 covers direct BrowserWindow instances, stable local aliases, and their
@@ -729,7 +816,7 @@ These safeguards are not caller-selectable output budgets. Source-map parsing
 reports truncation when its format or parser safety boundary is reached. The
 application graph has no aggregate node, edge, root, or observation prefix cap.
 
-Semantic evaluation retains at most 256 distinct primitive candidates per
+By default, semantic evaluation retains at most 256 distinct primitive candidates per
 expression and at most 1 MiB of worst-case JSON string bytes across a normalized
 primitive value's string candidates. The byte budget estimates six JSON bytes
 per UTF-16 code unit, the expansion bound for escaped strings, and bounds both
@@ -749,12 +836,95 @@ available for endpoint queries, tracing and comparison. Each analysis records en
 later projections: a selected healthy sibling can remain exact while whole-file
 coverage reports the encountered bound. Projection preserves limiting values
 from the shared property-slot owner. Expression
-evaluation and provenance walks stop after 256 nested levels. Union products
+evaluation and provenance walks default to 256 nested levels. Union products
 and string lengths are checked before allocating combinations or concatenated
 strings. When a boundary is reached, the value stays unknown, semantic coverage
 becomes partial, and graph evidence retains the expression location and typed
 limiting reason. The number of unresolved alternatives is unknown; it is not
 reported as an exact omission count.
+
+`semantic_precision` selects per-source evaluator budgets independently of
+retained graph capacity, worker memory and deadlines. Both
+`analyze_javascript_application` and `analyze_web_bundle` accept a partial object:
+
+| Field                  | Default | Unit                                        |
+| ---------------------- | ------: | ------------------------------------------- |
+| `primitive_candidates` |     256 | alternatives per normalized primitive value |
+| `primitive_bytes`      | 1048576 | estimated JSON bytes per primitive value    |
+| `expression_depth`     |     256 | nested expression/provenance levels         |
+| `getter_expansions`    |     512 | scheduled states per precise getter query   |
+| `alias_selections`     |     512 | additional precise selector states          |
+| `wrapper_visits`       | 1000000 | wrapper visits/substitutions per source     |
+| `wrapper_depth`        |     128 | active symbolic wrapper levels              |
+
+`primitive_bytes` charges six estimated JSON bytes per UTF-16 code unit plus
+quotes before creating concatenated strings. Ordinary ASCII can exhaust that
+conservative estimate before its actual JSON encoding reaches the selected
+byte count. Candidate, getter and alias budgets can be adjusted for larger
+applications.
+
+All fields accept positive safe integers; worker memory, execution and JSON
+representation bounds remain independently enforced. Omission keeps the defaults;
+invalid values fail validation. For example, retry a finite candidate-limit
+observation with `semantic_precision: {"primitive_candidates": 512}`. The CLI
+accepts `--semantic-precision '{"primitive_candidates":512}'` or a JSON file.
+For `analyze_web_bundle`, evaluator budgets actually reached by a captured script
+are recorded in `unknowns[]` with that script's key, the effective parameter
+limit and next-call recovery guidance. These results are partial and retain
+the findings already established. With `--full-output`, the CLI also names
+`--semantic-precision` in `meta.cli_controls`; selecting a low budget that was
+not reached does not add a limitation.
+An override applies to that next analysis without restarting REA, remains in
+Evidence parameters and effective coverage, and cannot change already retained
+facts. Increasing these budgets does not raise graph retention, worker heap,
+transfer admission, or parent result memory. Cyclic or unsupported evaluations
+remain unknown. Wrapper limitations name visits and depth separately so a
+caller can change the resource actually exhausted. Finite inline literal object
+spreads use iterative syntax traversal.
+
+`semantic_analysis` selects how much of each source is examined. The default,
+`complete`, parses, static-analyzes and semantic-analyzes every selected
+source. `structure-only` returns the static and application-graph facts —
+package and Electron roles, preload and renderer structure, IPC and route
+structure — without building semantic IR, semantic graph content, semantic
+traces, or the application-graph source-module and export-binding nodes those
+facts feed. Each file's semantic coverage is recorded as not examined with
+that reason. The application graph's `coverage` is `partial`, with
+`truncated: false`, `omitted_count: null` and no extra limits: the number of
+omitted module and export nodes is not known, so a comparison reports those
+nodes as unknown rather than removed or added. The result states the omission
+once in `limitations`.
+Use it for a first pass over a large application when the structural surface
+is the question; request `complete` analysis afterwards, narrowed with
+`source_paths`, for semantic detail. The selection stays in Evidence
+parameters. The CLI accepts `--semantic-analysis structure-only`.
+
+Member-mutation analysis also has a work allowance of 524,288 alias states
+per source, selected by the `javascript.member_mutation_alias_states` setting
+(1 to 8,388,608). Change it with `update_analysis_settings` on MCP, or with
+`REA_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES` for CLI or future REA processes;
+it applies to the next `analyze_javascript_application`, `analyze_web_bundle`
+or `import-reference-source` operation. It is not a `semantic_precision` field.
+A source whose alias histories exceed it is refused with a
+`resource_constraint` that names the setting, its effective value and source,
+instead of exhausting the worker heap. Each scheduled state retains about
+1–2 KiB of worker heap until its query finishes, so a raised allowance usually
+needs a larger `max_heap_mb` too. In `analyze_javascript_application`, a
+source refused during the semantic phase keeps its completed static facts. One
+refused during the static phase still counts as parsed and keeps its
+syntax-level facts: parse status `partial`, syntax coverage,
+source map directives and vendor markers. Its `analysis_coverage.examination`
+is `not-examined` with `refused_phase: "member-mutations"` and an
+`unexamined_reason`, and findings that read mutation facts are not reported,
+because a partial mutation index would let later reads keep stale values; their
+absence is not evidence of absence. In `analyze_web_bundle`, a refused script
+still counts as parsed and keeps its parse status and text-level inferences
+such as vendor and bundle-runtime markers; its routes, endpoints and edges are
+not reported, and its `javascript_analysis` unknown carries the setting,
+remediation and `refused_phase: "member-mutations"`. `import-reference-source` keeps a refused
+file's declaration-level imports and records that its CommonJS require calls
+were not examined. Raising `max_heap_mb`, `analysis_timeout_ms` or
+`semantic_precision` alone does not admit the same source.
 
 Byte, entry, path, and graph-shape bounds are hard limits. The parse deadline is
 checked before and between bounded parsing and traversal phases; the synchronous
@@ -810,7 +980,7 @@ analyzer; the caller's `NODE_OPTIONS` still controls the CLI/MCP process heap.
 For defaults across new MCP operations, use `update_analysis_settings` with
 `javascript.max_heap_mb` or `javascript.analysis_timeout_ms`. Explicit per-call
 arguments take precedence, and accepted work keeps its original settings. See
-the [settings design](../../design/limits-and-recovery.md#precedence-and-lifetime).
+the [analysis settings and recovery](../../reference/limits-and-recovery.md#precedence-and-lifetime).
 V8 old-space limits do not impose a process RSS limit. When REA runs on Bun,
 the analyzer ignores the V8 heap flags; resource failures then report
 `worker_heap_limit_bytes` as null instead of a requested or V8-reported limit.

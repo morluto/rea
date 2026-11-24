@@ -1,10 +1,11 @@
-import { createHash } from "node:crypto";
 import { crc32 } from "node:zlib";
 
 import type {
   EspImageMetadata,
   EspImageSignatureBlockMetadata,
-} from "../artifactFormatMetadata.js";
+} from "../formatMetadata/firmwareMetadata.js";
+import { strictUtf8Decoder } from "../strictUtf8.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /*
  * Fixed-layout structures inside an ESP image, from ESP-IDF v6.1
@@ -54,7 +55,7 @@ export const firstUnerased = (
 const allZero = (bytes: Uint8Array): boolean =>
   bytes.every((byte) => byte === 0);
 
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const UTF8 = strictUtf8Decoder("preserve");
 
 /** The bytes of a NUL-terminated C string in a fixed array. */
 export const cStringBytes = (bytes: Uint8Array): Uint8Array => {
@@ -233,9 +234,9 @@ export const decodeEspSignatureBlock = (
     image_digest: imageDigest,
     image_digest_matches:
       expected === undefined ? null : expected === imageDigest,
-    public_key_sha256: createHash("sha256")
-      .update(block.subarray(layout.keyStart, layout.keyEnd))
-      .digest("hex"),
+    public_key_sha256: sha256Hex(
+      block.subarray(layout.keyStart, layout.keyEnd),
+    ),
     signature_status: "unverified",
   };
 };

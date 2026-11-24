@@ -1,0 +1,8 @@
+$ rea no-such-command --token-limit 6
+exit: 1
+--- stdout
+code: COMMAND_NOT_
+[truncated: showing tokens 0–6 of 76]
+<end>
+--- stderr
+<end>

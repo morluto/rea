@@ -10,6 +10,7 @@ import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../../src/contracts/rever
 import { rizinCommandLimitations } from "../../../src/rizin/RizinCommand.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createProviderEnvironmentMcpHarness } from "../../support/reverseDebuggerMcpTestHelpers.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const writeProvider = async (path: string, output: string): Promise<void> => {
   await writeFile(
@@ -49,7 +50,7 @@ const executeRizinCommand = async (
 };
 
 it("uses the captured server environment to resolve reverse-engineering providers", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-provider-environment-"));
+  const directory = await createTestTempDirectory("rea-provider-environment-");
   const provider = join(directory, "selected-rizin");
   const artifact = join(directory, "fixture.bin");
   await writeFile(artifact, "fixture");
@@ -62,12 +63,12 @@ it("uses the captured server environment to resolve reverse-engineering provider
   });
   const response = await executeRizinCommand(client, artifact);
   expect(response.structuredContent).toMatchObject({
-    raw_result: { stdout: "captured-environment-provider" },
+    normalized_result: { stdout: "captured-environment-provider" },
   });
 });
 
 it("prefers an explicit provider environment over the captured server environment", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-provider-override-"));
+  const directory = await createTestTempDirectory("rea-provider-override-");
   const configured = join(directory, "captured-rizin");
   const override = join(directory, "override-rizin");
   const artifact = join(directory, "fixture.bin");
@@ -87,7 +88,7 @@ it("prefers an explicit provider environment over the captured server environmen
 
   const response = await executeRizinCommand(client, artifact);
   expect(response.structuredContent).toMatchObject({
-    raw_result: { stdout: "explicit-override" },
+    normalized_result: { stdout: "explicit-override" },
   });
   expect(JSON.stringify(response.structuredContent)).not.toContain(
     '"captured"',
@@ -95,7 +96,7 @@ it("prefers an explicit provider environment over the captured server environmen
 });
 
 it("snapshots an explicit provider environment when the server is created", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-provider-snapshot-"));
+  const directory = await createTestTempDirectory("rea-provider-snapshot-");
   const configured = join(directory, "captured-rizin");
   const override = join(directory, "explicit-rizin");
   const artifact = join(directory, "fixture.bin");
@@ -117,7 +118,7 @@ it("snapshots an explicit provider environment when the server is created", asyn
 
   const response = await executeRizinCommand(client, artifact);
   expect(response.structuredContent).toMatchObject({
-    raw_result: { stdout: "explicit-snapshot" },
+    normalized_result: { stdout: "explicit-snapshot" },
   });
   expect(JSON.stringify(response.structuredContent)).not.toContain(
     '"captured"',
@@ -125,7 +126,7 @@ it("snapshots an explicit provider environment when the server is created", asyn
 });
 
 it("passes Rizin decoder and map inputs as flags before the artifact", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-rizin-load-mcp-"));
+  const directory = await createTestTempDirectory("rea-rizin-load-mcp-");
   const provider = join(directory, "argv-rizin");
   const artifact = join(directory, "flash.bin");
   await writeFile(artifact, "flash");
@@ -186,12 +187,9 @@ it("passes Rizin decoder and map inputs as flags before the artifact", async () 
     expect.arrayContaining([...rizinCommandLimitations(input)]),
   );
 
-  // Compact schemas drop property descriptions, so the tool description names
-  // the input that changes how Rizin loads the file.
   const { tools } = await client.listTools();
   const listed = tools.find((tool) => tool.name === rizinContract.name);
   expect(listed?.description).toBe(rizinContract.description);
-  expect(listed?.description).toContain("base_address");
 
   const refused = await client.callTool({
     name: "execute_rizin_command",

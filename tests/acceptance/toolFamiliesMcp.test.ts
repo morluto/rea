@@ -1,20 +1,40 @@
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import {
+  TOOL_CONTRACT_GROUPS,
+  toolContract,
+} from "../../src/contracts/toolContracts.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 
-it.each(["full", "compact", "off"] as const)(
-  "keeps real stdio discovery, status identity and disabled calls in the same family scope (%s)",
-  async (outputProfile) => {
+it.each([
+  { outputProfile: "off", scope: "session", runtimeTools: [] },
+  {
+    outputProfile: "compact",
+    scope: "session,javascript-runtime",
+    runtimeTools:
+      TOOL_CONTRACT_GROUPS.JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS,
+  },
+] as const)(
+  "keeps stdio discovery, status and calls in the same $scope scope with $outputProfile schemas",
+  async ({ outputProfile, scope, runtimeTools }) => {
     const { client, call } = await connectLocalToolsMcp({
-      REA_MCP_TOOL_FAMILIES: "session",
-      REA_MCP_OUTPUT_SCHEMA_PROFILE: outputProfile,
+      REA_MCP_TOOL_FAMILIES: scope,
+      ...(outputProfile === "compact"
+        ? { REA_MCP_OUTPUT_SCHEMA_PROFILE: outputProfile }
+        : {}),
     });
     const tools = (await client.listTools()).tools;
     const names = tools.map(({ name }) => name).sort();
-    expect(names).toContain("binary_session");
-    expect(names).toContain("export_evidence_bundle");
-    expect(names).not.toContain("inspect_native_exports");
+    expect(names).toEqual(
+      [...TOOL_CONTRACT_GROUPS.SESSION_TOOL_CONTRACTS, ...runtimeTools]
+        .map(({ name }) => name)
+        .sort(),
+    );
+    for (const tool of tools) {
+      if (outputProfile === "off")
+        expect(tool.outputSchema, tool.name).toBeUndefined();
+      else expect(tool.outputSchema, tool.name).toBeDefined();
+    }
     const reply = await call("binary_session", {});
     expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
     const status = toolContract("binary_session").outputSchema.parse(

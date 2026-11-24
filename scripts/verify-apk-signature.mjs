@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -6,14 +7,12 @@ import { constants } from "node:fs";
 import {
   access,
   copyFile,
-  mkdtemp,
   open,
   readFile,
   readdir,
-  rm,
   writeFile,
 } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -23,9 +22,10 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { computeApkContentDigest } from "../dist/domain/apkSignature/apkContentDigest.js";
 import {
-  locateApkSigningBlock,
-  parseZipTail,
+  locateApkSigningBlockFromReader,
+  parseZipTailFromReader,
 } from "../dist/domain/apkSignature/apkSigningBlock.js";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { mcpTextValue, requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
@@ -117,9 +117,16 @@ const nodeHash = (algorithm) => {
 /** Change one entry byte and replace every declared content digest in the block. */
 const forgeDeclaredDigests = async (original) => {
   const bytes = Buffer.from(original);
-  const tail = parseZipTail(bytes);
-  assert.ok(tail.ok);
-  const block = locateApkSigningBlock(bytes, tail.value);
+  const source = {
+    size: bytes.length,
+    prefix: bytes.subarray(0, 4),
+    readRange: async (offset, length) =>
+      bytes.subarray(offset, offset + length),
+  };
+  const tailRead = await parseZipTailFromReader(source);
+  assert.ok(tailRead.ok);
+  const { tail } = tailRead.value;
+  const block = await locateApkSigningBlockFromReader(source, tail);
   assert.ok(block.ok && block.value !== null);
   const { blockStart } = block.value;
   const digests = () =>
@@ -127,7 +134,7 @@ const forgeDeclaredDigests = async (original) => {
       Buffer.from(
         computeApkContentDigest(
           bytes,
-          { tail: tail.value, blockStart, algorithm },
+          { tail, blockStart, algorithm },
           nodeHash,
         ),
       ),
@@ -139,7 +146,7 @@ const forgeDeclaredDigests = async (original) => {
   for (const [index, old] of before.entries())
     for (
       let at = bytes.indexOf(old, blockStart);
-      at >= 0 && at < tail.value.centralDirectoryOffset;
+      at >= 0 && at < tail.centralDirectoryOffset;
       at = bytes.indexOf(old, at + old.length)
     ) {
       after[index].copy(bytes, at);
@@ -216,7 +223,10 @@ const inspectCli = async (path) => {
 };
 
 const verifierRun = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-apk-signature-verifier-"));
+const fixture = await VerifierFixture.open({
+  prefix: "rea-apk-signature-verifier-",
+});
+const workspace = fixture.path;
 const client = new Client({ name: "apk-signature-verifier", version: "1" });
 const transport = new StdioClientTransport({
   command: process.execPath,
@@ -224,6 +234,9 @@ const transport = new StdioClientTransport({
   env: environment,
   stderr: "pipe",
 });
+// The MCP server child reads files under the workspace until it has exited.
+fixture.releaseAfter(() => client.close());
+fixture.releaseAfter(() => transport.close());
 let cases = 0;
 const failures = [];
 
@@ -232,11 +245,11 @@ try {
   const advertised = (await client.listTools()).tools.find(
     ({ name }) => name === "inspect_apk_signature",
   );
-  assert.ok(advertised?.outputSchema, "tool must advertise an output schema");
+  assert.ok(advertised, "tool must advertise an output schema");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   assert.ok(ajv.validateSchema(advertised.inputSchema), "input schema invalid");
   assert.ok(
-    ajv.validateSchema(advertised.outputSchema),
+    ajv.validateSchema(canonicalOutputSchema(advertised.name)),
     "output schema invalid",
   );
 
@@ -258,7 +271,10 @@ try {
     );
     assert.notEqual(reply.isError, true, mcpTextValue(reply));
     assert.ok(
-      ajv.validate(advertised.outputSchema, reply.structuredContent),
+      ajv.validate(
+        canonicalOutputSchema(advertised.name),
+        reply.structuredContent,
+      ),
       JSON.stringify(ajv.errors),
     );
     const mcp = parseEvidence(requireMcpOutput(reply, "inspect_apk_signature"));
@@ -666,16 +682,10 @@ try {
   failures.push(cause);
 }
 
-for (const close of [
-  () => client.close(),
-  () => transport.close(),
-  () => rm(workspace, { recursive: true, force: true }),
-]) {
-  try {
-    await close();
-  } catch (cause) {
-    failures.push(cause);
-  }
+try {
+  await fixture.release();
+} catch (cause) {
+  failures.push(cause);
 }
 
 if (failures.length > 0)

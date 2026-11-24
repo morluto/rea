@@ -11,6 +11,7 @@ import type {
 } from "playwright-core";
 
 import type { SanitizedBrowserUrl } from "../domain/browserObservation.js";
+import { Budget } from "../domain/budget.js";
 import {
   browserScenarioEventSchema,
   type BrowserScenarioEvent,
@@ -25,8 +26,13 @@ import type {
 } from "../domain/browserNetworkEvidence.js";
 import type { BrowserScenarioCaptureLimits } from "../domain/browserScenarioCaptureLimits.js";
 import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "../domain/browserScenarioCaptureLimits.js";
-import { captureNetworkBody } from "./network/PlaywrightNetworkContent.js";
+import {
+  captureNetworkBody,
+  type NetworkBodyRedaction,
+  type NetworkReadOptions,
+} from "./network/PlaywrightNetworkContent.js";
 import { PlaywrightScenarioNetwork } from "./network/PlaywrightScenarioNetwork.js";
+import { CONTENT_TYPE_HEADER } from "../domain/browserNetworkMediaType.js";
 
 type EventName =
   | "console"
@@ -100,7 +106,12 @@ type EventKind = BrowserScenarioEvent["kind"];
 /** Arrival-ordered Playwright event capture with current-step attribution. */
 export class PlaywrightScenarioEvents {
   private readonly items: BrowserScenarioEvent[] = [];
-  private retainedCost = 0;
+  /** Keep only the observed redaction mode for retained bodies, outside Evidence. */
+  private readonly networkBodyRedaction = new WeakMap<
+    BrowserScenarioEvent,
+    NetworkBodyRedaction
+  >();
+  private readonly retained: Budget;
   private dropped = 0;
   private readonly omittedKinds = new Map<
     EventKind,
@@ -140,6 +151,7 @@ export class PlaywrightScenarioEvents {
       this.enabled = new Set([...this.enabled, "network"]);
     this.secrets = options.secrets;
     this.limits = options.limits ?? DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS;
+    this.retained = new Budget(this.limits.max_total_event_allocation_bytes);
     this.ownsContext = options.ownsContext === true;
     this.pages.add(options.page);
     if (this.ownsContext && this.enabled.size > 0) {
@@ -154,7 +166,7 @@ export class PlaywrightScenarioEvents {
         selection: network,
         limits: this.limits,
         secrets: options.secrets,
-        emit: (event) => this.push(event),
+        emit: (event, bodyRedaction) => this.push(event, bodyRedaction),
         admitText: (kind, values) => this.admitProducerText(kind, values, true),
         admitContentBody: (input) => this.admitContentBody(input),
         omitNetwork: (id, kind, reason) => this.omitNetwork(id, kind, reason),
@@ -323,10 +335,10 @@ export class PlaywrightScenarioEvents {
         original,
         this.limits.max_event_allocation_bytes,
       );
-      this.retainedCost -= oldCost;
+      this.retained.refund(oldCost);
       const available = Math.min(
         this.limits.max_event_allocation_bytes,
-        this.limits.max_total_event_allocation_bytes - this.retainedCost,
+        this.retained.remaining,
       );
       const extra = eventTextUnits(
         original.kind === "network-content"
@@ -384,11 +396,10 @@ export class PlaywrightScenarioEvents {
         reason =
           cost > this.limits.max_event_allocation_bytes
             ? "max-event-allocation-bytes"
-            : cost > available
-              ? "max-total-event-allocation-bytes"
-              : undefined;
+            : this.retained.tryCharge(cost)
+              ? undefined
+              : "max-total-event-allocation-bytes";
         if (reason === undefined) {
-          this.retainedCost += cost;
           this.items[retained++] = event;
           continue;
         }
@@ -514,31 +525,29 @@ export class PlaywrightScenarioEvents {
         };
       if (body.state === "captured") {
         const prior = body;
-        const source = {
-          headers: (): Record<string, string> =>
-            prior.media_type === null
-              ? {}
-              : { "content-type": prior.media_type },
-          headersArray: async () => [],
+        const readOptions: NetworkReadOptions = {
+          redactionScope: "response",
+          timeoutMs: 5000,
+          maxBodyBytes: this.limits.max_network_body_bytes,
+          maxBodyAllocationBytes: Math.min(
+            this.limits.max_network_body_allocation_bytes,
+            available,
+          ),
+          maxHeaderAllocationBytes:
+            this.limits.max_network_header_allocation_bytes,
+          maxMetadataAllocationBytes:
+            this.limits.max_network_metadata_allocation_bytes,
         };
         const protectedBody = await captureNetworkBody(
           async () => Buffer.from(prior.content, "base64"),
           event.phase,
-          source,
+          () => ({
+            value: prior.media_type,
+            redaction: this.networkBodyRedaction.get(event) ?? "unknown",
+            declarationNames: [CONTENT_TYPE_HEADER],
+          }),
           this.secrets,
-          {
-            redactionScope: "response",
-            timeoutMs: 5000,
-            maxBodyBytes: this.limits.max_network_body_bytes,
-            maxBodyAllocationBytes: Math.min(
-              this.limits.max_network_body_allocation_bytes,
-              available,
-            ),
-            maxHeaderAllocationBytes:
-              this.limits.max_network_header_allocation_bytes,
-            maxMetadataAllocationBytes:
-              this.limits.max_network_metadata_allocation_bytes,
-          },
+          readOptions,
         );
         body =
           protectedBody.state === "omitted"
@@ -574,26 +583,29 @@ export class PlaywrightScenarioEvents {
       : { ...event, ...metadata };
   }
 
-  private push(event: UnindexedEvent): BrowserScenarioEventAdmission {
+  private push(
+    event: UnindexedEvent,
+    bodyRedaction?: NetworkBodyRedaction,
+  ): BrowserScenarioEventAdmission {
     this.sequence += 1;
     const cost =
       allocationCost(event, this.limits.max_event_allocation_bytes) + 128;
-    const reason = this.admissionReason(cost);
-    if (this.sealed || reason !== undefined) {
-      const finalReason = reason ?? "max-events";
-      this.omitEvent(event.kind, finalReason);
-      return {
-        status: "omitted",
-        sequence: this.sequence,
-        reason: finalReason,
-      };
+    const reason =
+      this.admissionReason(cost) ??
+      (this.retained.tryCharge(cost)
+        ? undefined
+        : "max-total-event-allocation-bytes");
+    if (reason !== undefined) {
+      this.omitEvent(event.kind, reason);
+      return { status: "omitted", sequence: this.sequence, reason };
     }
-    this.retainedCost += cost;
     const parsed = browserScenarioEventSchema.parse({
       ...event,
       sequence: this.sequence,
       step_index: this.stepIndex,
     });
+    if (bodyRedaction !== undefined)
+      this.networkBodyRedaction.set(parsed, bodyRedaction);
     this.items.push(parsed);
     return { status: "retained", sequence: this.sequence };
   }
@@ -632,7 +644,7 @@ export class PlaywrightScenarioEvents {
       return "max-events";
     if (cost > this.limits.max_event_allocation_bytes)
       return "max-event-allocation-bytes";
-    if (cost > this.limits.max_total_event_allocation_bytes - this.retainedCost)
+    if (cost > this.retained.remaining)
       return "max-total-event-allocation-bytes";
     return undefined;
   }
@@ -668,6 +680,7 @@ export class PlaywrightScenarioEvents {
             bytes: input.observedBytes,
             sha256: "0".repeat(64),
             media_type: null,
+            media_type_source: "content-type-header",
             redacted: false,
           },
         },
@@ -906,11 +919,7 @@ export class PlaywrightScenarioEvents {
 
   private popup(page: Page): void {
     if (this.pages.has(page)) return;
-    if (
-      !this.admitOwner("popup-opened") ||
-      !this.admitText("popup-opened", page.url())
-    )
-      return;
+    if (!this.admitOwner("popup-opened")) return;
     this.pages.add(page);
     for (const family of [
       "frames",
@@ -919,12 +928,14 @@ export class PlaywrightScenarioEvents {
       "downloads",
     ] as const)
       if (this.enabled.has(family)) this.incompleteFamilies.add(family);
-    const opened = {
-      url: page.url() === "" ? null : this.safeUrl(page.url()),
-      name: null,
-    };
     if (this.enabled.has("popups")) {
-      this.push({ kind: "popup-opened", ...opened });
+      const url = page.url();
+      if (this.admitText("popup-opened", url))
+        this.push({
+          kind: "popup-opened",
+          url: url === "" ? null : this.safeUrl(url),
+          name: null,
+        });
       const onClose = () => {
         if (!this.admitText("popup-closed", page.url())) return;
         this.push({

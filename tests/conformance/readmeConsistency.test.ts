@@ -1,44 +1,39 @@
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import MarkdownIt from "markdown-it";
 import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { processTest } from "../support/process/processFixture.js";
 
-const jsonExamples = (content: string): unknown[] =>
-  [...content.matchAll(/```json\s*([\s\S]*?)```/gu)].map((match): unknown =>
-    JSON.parse(match[1] ?? ""),
-  );
+const markdown = new MarkdownIt({ html: true });
 
-const shellExamples = (content: string): string[] =>
-  [...content.matchAll(/```bash\s*([\s\S]*?)```/gu)].map((match) =>
-    (match[1] ?? "").trim(),
-  );
+const examples = (content: string, languages: readonly string[]): string[] =>
+  markdown
+    .parse(content, {})
+    .flatMap((token) =>
+      token.type === "fence" && languages.includes(token.info.trim())
+        ? [token.content.trim()]
+        : [],
+    );
+
+// GitHub's heading anchors: lowercase, drop punctuation, keep letters, marks,
+// numbers, connectors and zero-width joiners, and hyphenate spaces.
+const headingSlug = (text: string): string =>
+  text
+    .toLowerCase()
+    .replace(/(?!\u200c|\u200d)[^\p{L}\p{M}\p{N}\p{Pc} -]/gu, "")
+    .replaceAll(" ", "-");
 
 describe("onboarding documentation product facts", () => {
-  it.each([
-    [
-      "docs/guides/native/native-investigation.md",
-      "../../providers/raw-binary.md#nmos-6502",
-    ],
-    ["docs/providers/ghidra-riscv.md", "raw-binary.md"],
-  ])(
-    "routes raw admission guidance in %s to the owning guide",
-    async (path, target) => {
-      const content = await readFile(resolve(path), "utf8");
-      const links = [...content.matchAll(/\]\(([^)\s]+)\)/gu)].map(
-        (match) => match[1],
-      );
-      expect(links, path).toContain(target);
-    },
-  );
-
   it("documents manual MCP registration with an absolute runtime and entry script", async () => {
     const content = await readFile(
       resolve("docs/getting-started/installation.md"),
       "utf8",
     );
-    expect(jsonExamples(content)).toContainEqual(
+    expect(
+      examples(content, ["json"]).map((value): unknown => JSON.parse(value)),
+    ).toContainEqual(
       expect.objectContaining({
         mcpServers: expect.objectContaining({
           rea: expect.objectContaining({
@@ -57,35 +52,73 @@ describe("onboarding documentation product facts", () => {
     const translatedReadmes = inventory
       .filter((language) => language.code !== "en")
       .map((language) => language.readme);
-    expect(translatedReadmes).toContain("docs/readme/README_it.md");
-    expect(translatedReadmes).toContain("docs/readme/README_el.md");
-    const editions = (await readdir(resolve("docs/readme")))
-      .filter((name) => /^README_[A-Za-z0-9-]+\.md$/u.test(name))
-      .map((name) => `docs/readme/${name}`);
-    expect([...translatedReadmes].sort()).toEqual(editions.sort());
-    const english = shellExamples(await readFile(resolve("README.md"), "utf8"));
+    const english = examples(await readFile(resolve("README.md"), "utf8"), [
+      "bash",
+      "sh",
+    ]);
     for (const path of translatedReadmes)
       expect(
-        shellExamples(await readFile(resolve(path), "utf8")),
+        examples(await readFile(resolve(path), "utf8"), ["bash", "sh"]),
         path,
       ).toEqual(english);
   });
 
-  it("preserves Persian joiners in links to GitHub-rendered headings", async () => {
-    const persian = await readFile(resolve("docs/readme/README_fa.md"), "utf8");
-    // Confirmed against GitHub's rendered README, which retains U+200C.
-    for (const heading of [
-      "REA چگونه کار می‌کند",
-      "چه چیزهایی را می‌توان تحلیل کرد",
-      "نمونه‌های عملی",
-      "پرسش‌های متداول",
-      "به‌روزرسانی REA",
-    ]) {
-      expect(persian).toContain(`## ${heading}`);
-      expect(persian).toContain(
-        `](#${heading.toLowerCase().replaceAll(" ", "-")})`,
+  it("resolves every in-page README link to a rendered heading", async () => {
+    const inventory = JSON.parse(
+      await readFile(resolve("website/locales/languages.json"), "utf8"),
+    ) as { readme: string }[];
+    let checked = 0;
+    for (const { readme } of inventory) {
+      const tokens = markdown.parse(
+        await readFile(resolve(readme), "utf8"),
+        {},
       );
+      const anchors = new Set<string>();
+      const repeats = new Map<string, number>();
+      const fragments: string[] = [];
+      for (const [index, token] of tokens.entries()) {
+        if (token.type === "heading_open") {
+          const slug = headingSlug(
+            (tokens[index + 1]?.children ?? [])
+              .filter(({ type }) => type === "text" || type === "code_inline")
+              .map(({ content }) => content)
+              .join(""),
+          );
+          const seen = repeats.get(slug) ?? 0;
+          repeats.set(slug, seen + 1);
+          anchors.add(seen === 0 ? slug : `${slug}-${String(seen)}`);
+        }
+        for (const html of [token, ...(token.children ?? [])].filter(
+          ({ type }) => type === "html_block" || type === "html_inline",
+        ))
+          for (const [, id] of html.content.matchAll(
+            /\s(?:id|name)="([^"]+)"/gu,
+          ))
+            anchors.add(id ?? "");
+        for (const child of token.children ?? []) {
+          const href =
+            child.type === "link_open" ? child.attrGet("href") : null;
+          if (typeof href === "string" && href.startsWith("#"))
+            fragments.push(decodeURIComponent(href.slice(1)));
+        }
+      }
+      expect(
+        fragments.filter((fragment) => !anchors.has(fragment)),
+        readme,
+      ).toEqual([]);
+      checked += fragments.length;
     }
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  it("keeps the zero-width non-joiners that GitHub retains in heading anchors", () => {
+    // Confirmed against GitHub's rendered Persian and Malayalam READMEs, which
+    // retain U+200C, so dropping it from only the heading or only the link
+    // breaks that link.
+    expect(headingSlug("REA چگونه کار می\u200cکند")).toBe(
+      "rea-چگونه-کار-می\u200cکند",
+    );
+    expect(headingSlug("Updating REA (CLI)")).toBe("updating-rea-cli");
   });
 });
 

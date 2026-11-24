@@ -1,4 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
+import { constants as bufferConstants } from "node:buffer";
+import { readFileHandleRange } from "../../filesystem/readFileHandleRange.js";
+import { Utf8NdjsonLineBuffer } from "../../process/Utf8NdjsonLineBuffer.js";
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
   chmod,
@@ -13,9 +16,9 @@ import { basename, dirname, join } from "node:path";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 
 import {
   DECOMPILE_DIRECTORY_FUNCTIONS_DIRECTORY,
@@ -34,7 +37,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { isPathWithinRoot } from "../../domain/localPath.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
@@ -43,10 +46,11 @@ import {
   type LeaseFailure,
   type OwnedLease,
 } from "../../process/OwnedLease.js";
-import type { RetainedResourceScope } from "../AnalysisProvider.js";
+import type { RetainedResourceScope } from "../../ports/AnalysisProvider.js";
 import { ExportResources } from "./exportResources.js";
 import { decompileInputError } from "./inputError.js";
-import { compareProcedureAddresses } from "./selection.js";
+import { sortByProcedureAddress } from "./selection.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 export interface ExportIdentity {
   readonly targetSha256: string | null;
@@ -105,6 +109,13 @@ export const classifyOutputPath = async (
       );
 };
 
+/** Retained records whose body ranges are unknown. */
+export interface UnknownBodies {
+  readonly count: number;
+  /** The reason every such record gives, or undefined when they differ. */
+  readonly sharedReason: string | undefined;
+}
+
 /** Owns one export directory and its append-only journal. */
 export class DecompileExport {
   private constructor(
@@ -146,6 +157,27 @@ export class DecompileExport {
    */
   lastWritten(address: string): DecompileDirectoryFunctionRecord | undefined {
     return this.written.get(address);
+  }
+
+  /**
+   * Retained non-external records whose body ranges are unknown, with their
+   * reason when every such record shares one. The index lists every retained
+   * record, so its summary must come from these records rather than from the
+   * functions the latest call attempted. External records have no file for a
+   * body caveat to qualify.
+   */
+  unknownBodies(): UnknownBodies {
+    let count = 0;
+    let sharedReason: string | undefined;
+    for (const record of this.records.values()) {
+      if (record.status === "external" || record.body.available) continue;
+      sharedReason =
+        count === 0 || sharedReason === record.body.reason
+          ? record.body.reason
+          : undefined;
+      count += 1;
+    }
+    return { count, sharedReason };
   }
 
   /**
@@ -236,9 +268,7 @@ export class DecompileExport {
         inventory_limitations: [...input.latestRun.inventoryLimitations],
       },
       limitations: [...input.limitations],
-      functions: [...this.records.values()].sort((left, right) =>
-        compareProcedureAddresses(left.address, right.address),
-      ),
+      functions: sortByProcedureAddress([...this.records.values()]),
     });
     if (!index.success)
       return err(
@@ -327,11 +357,11 @@ export class DecompileExport {
       return closed.ok
         ? opened
         : err(
-            analysisErrorWithCleanupFailure(
+            analysisErrorWithCleanupDependencies(
               opened.error,
               closed.error,
               "decompile_all",
-            ).bindCleanupDependencies([closed.error]),
+            ),
           );
     }
     return ok(
@@ -362,20 +392,10 @@ const openResumedJournal = async (
   if (!opened.ok) return opened;
   const functions = await prepareFunctionsDirectory(root, resources);
   if (!functions.ok) return functions;
-  const handle = await openJournal(root, "a");
-  if (!handle.ok) return handle;
-  resources.ownFile(
-    handle.value,
-    join(root, DECOMPILE_DIRECTORY_JOURNAL_NAME),
-    true,
-  );
   // Drop a torn final line left by a crash so the next append starts a line.
   const repaired =
     opened.value.committedBytes === opened.value.journalBytes ||
-    (await handle.value.truncate(opened.value.committedBytes).then(
-      () => true,
-      () => false,
-    ));
+    (await truncateJournal(root, opened.value.committedBytes, resources));
   if (!repaired) {
     return err(
       decompileInputError(
@@ -384,7 +404,36 @@ const openResumedJournal = async (
       ),
     );
   }
+  const handle = await openJournal(root, "a");
+  if (!handle.ok) return handle;
+  resources.ownFile(
+    handle.value,
+    join(root, DECOMPILE_DIRECTORY_JOURNAL_NAME),
+    true,
+  );
   return ok({ handle: handle.value, journal: opened.value });
+};
+
+/**
+ * Truncate through a write handle opened without O_APPEND. Windows opens an
+ * append handle with FILE_APPEND_DATA only, and SetEndOfFile refuses it.
+ */
+const truncateJournal = async (
+  root: string,
+  bytes: number,
+  resources: ExportResources,
+): Promise<boolean> => {
+  const path = join(root, DECOMPILE_DIRECTORY_JOURNAL_NAME);
+  const handle = await open(path, constants.O_WRONLY | NO_FOLLOW).catch(
+    (cause: unknown) => cause,
+  );
+  if (!isFileHandle(handle)) return false;
+  const close = resources.ownFile(handle, path);
+  const truncated = await handle.truncate(bytes).then(
+    () => true,
+    () => false,
+  );
+  return (await close()) && truncated;
 };
 
 export type FileCommit =
@@ -407,7 +456,7 @@ const commitFunctionFile = async (
   if (!isDecompileFunctionRelativePath(relativePath)) return { status: "io" };
   const finalPath = join(root, relativePath);
   if (!isPathWithinRoot(root, finalPath)) return { status: "io" };
-  const digest = sha256(bytes);
+  const digest = sha256Hex(bytes);
   const linked = await resources.publish(bytes, finalPath, "link").then(
     () => true,
     (cause: unknown) => cause,
@@ -611,7 +660,7 @@ const JOURNAL_FLAGS = {
   a: constants.O_WRONLY | constants.O_APPEND | NO_FOLLOW,
 } as const;
 
-/** The journal is never opened through a symlink: repair truncates it. */
+/** The journal is never opened through a symlink: resume appends to it. */
 const openJournal = async (
   root: string,
   flag: "wx" | "a",
@@ -641,76 +690,86 @@ interface OpenedJournal {
   readonly journalBytes: number;
 }
 
-/** Read the journal only when it is a regular file, not a symlink. */
-const readJournalBytes = async (
-  root: string,
-  resources: ExportResources,
-): Promise<unknown> => {
-  const path = join(root, DECOMPILE_DIRECTORY_JOURNAL_NAME);
-  const stat = await lstat(path).catch((cause: unknown) => cause);
-  if (!isStat(stat)) return stat;
-  if (!stat.isFile()) return new Error("journal is not a regular file");
-  const handle = await open(path, constants.O_RDONLY | NO_FOLLOW).catch(
-    (cause: unknown) => cause,
-  );
-  if (!isFileHandle(handle)) return handle;
-  const close = resources.ownFile(handle, path);
-  const bytes = await handle.readFile().catch((cause: unknown) => cause);
-  return (await close())
-    ? bytes
-    : new Error("decompile journal read handle could not be closed");
-};
+const JOURNAL_READ_CHUNK_BYTES = 64 * 1024;
+
+const journalReadError = (cause: unknown): AnalysisInputError =>
+  nodeCode(cause) === "ENOENT"
+    ? decompileInputError(
+        "output_directory",
+        "Resume requires decompile-journal.jsonl in the output directory. An export stopped before its journal was written has no functions to keep; choose a new output directory, or remove this one if it is yours.",
+      )
+    : decompileInputError(
+        "output_directory",
+        "The decompile journal could not be read.",
+      );
 
 const readJournal = async (
   root: string,
   identity: ExportIdentity,
   resources: ExportResources,
 ): Promise<Result<OpenedJournal, AnalysisError>> => {
-  const bytes = await readJournalBytes(root, resources);
-  if (!(bytes instanceof Buffer))
-    return err(
-      nodeCode(bytes) === "ENOENT"
-        ? decompileInputError(
-            "output_directory",
-            "Resume requires decompile-journal.jsonl in the output directory. An export stopped before its journal was written has no functions to keep; choose a new output directory, or remove this one if it is yours.",
-          )
-        : decompileInputError(
-            "output_directory",
-            "The decompile journal could not be read.",
-          ),
-    );
-  const parsed = parseJournal(bytes);
+  const path = join(root, DECOMPILE_DIRECTORY_JOURNAL_NAME);
+  const listed = await lstat(path).catch((cause: unknown) => cause);
+  if (!isStat(listed) || !listed.isFile()) return err(journalReadError(listed));
+  const handle = await open(path, constants.O_RDONLY | NO_FOLLOW).catch(
+    (cause: unknown) => cause,
+  );
+  if (!isFileHandle(handle)) return err(journalReadError(handle));
+  const close = resources.ownFile(handle, path);
+  const parsed = await readOpenedJournal(handle).catch((cause: unknown) =>
+    err(journalReadError(cause)),
+  );
+  if (!(await close())) return err(journalReadError(undefined));
   if (!parsed.ok) return parsed;
-  const unknown = unknownIdentity(parsed.value.header, identity);
+
+  const { header, ...journal } = parsed.value;
+  const unknown = unknownIdentity(header, identity);
   if (unknown !== undefined) return err(unknown);
-  const mismatches = identityMismatches(parsed.value.header, identity);
+  const mismatches = identityMismatches(header, identity);
   if (mismatches.length > 0)
-    return err(
-      journalIdentityMismatch(parsed.value.header, identity, mismatches),
-    );
-  return ok({
-    records: parsed.value.records,
-    written: parsed.value.written,
-    paths: parsed.value.paths,
-    committedBytes: parsed.value.committedBytes,
-    journalBytes: parsed.value.journalBytes,
-  });
+    return err(journalIdentityMismatch(header, identity, mismatches));
+  return ok(journal);
 };
 
-const parseJournal = (
-  bytes: Buffer,
-): Result<
-  OpenedJournal & { readonly header: DecompileJournalHeader },
-  AnalysisError
+const readJournalChunk = async (
+  handle: FileHandle,
+  position: number,
+  length: number,
+): Promise<Buffer> => {
+  const bytes = await readFileHandleRange(handle, position, length);
+  if (bytes.length !== length)
+    throw new Error("decompile journal shortened during read");
+  return bytes;
+};
+
+/** Bytes after the last newline belong to an interrupted append. */
+const findCommittedJournalBytes = async (
+  handle: FileHandle,
+  size: number,
+): Promise<number> => {
+  let end = size;
+  while (end > 0) {
+    const start = Math.max(0, end - JOURNAL_READ_CHUNK_BYTES);
+    const bytes = await readJournalChunk(handle, start, end - start);
+    const newline = bytes.lastIndexOf(0x0a);
+    if (newline >= 0) return start + newline + 1;
+    end = start;
+  }
+  return 0;
+};
+
+const readOpenedJournal = async (
+  handle: FileHandle,
+): Promise<
+  Result<
+    OpenedJournal & { readonly header: DecompileJournalHeader },
+    AnalysisError
+  >
 > => {
-  // Every committed line ends with a newline. Bytes after the last newline are
-  // an interrupted append and are not part of the journal. Offsets are bytes,
-  // so damaged UTF-8 cannot move the truncation point.
-  const committedBytes = bytes.lastIndexOf(0x0a) + 1;
-  const lines = bytes.subarray(0, committedBytes).toString("utf8").split("\n");
-  lines.pop();
-  const header = decompileJournalHeaderSchema.safeParse(parseJson(lines[0]));
-  if (!header.success) return err(incompatibleJournal());
+  const opened = await handle.stat();
+  if (!opened.isFile()) return err(journalReadError(undefined));
+  const journalBytes = opened.size;
+  const committedBytes = await findCommittedJournalBytes(handle, journalBytes);
   const records = new Map<string, DecompileDirectoryFunctionRecord>();
   const written = new Map<string, DecompileDirectoryFunctionRecord>();
   // A path stays reserved by the first address that used it, even when that
@@ -719,29 +778,46 @@ const parseJournal = (
     byPortablePath: new Map(),
     byAddress: new Map(),
   };
-  for (const line of lines.slice(1)) {
-    const parsed = decompileJournalLineSchema.safeParse(parseJson(line));
-    if (!parsed.success || parsed.data.kind !== "function")
-      return err(incompatibleJournal());
-    const { kind: _kind, ...record } = parsed.data;
-    const path = record.relative_path;
-    if (path !== undefined) {
-      const owner = paths.byPortablePath.get(portablePathKey(path));
-      if (owner !== undefined && owner !== record.address)
-        return err(incompatibleJournal());
-      reservePath(paths, path, record.address);
+  // Keep at most the committed record in progress and a read window. The
+  // writer has no journal-wide size bound; the framer uses Node's buffer limit.
+  const lines = new Utf8NdjsonLineBuffer(() => bufferConstants.MAX_LENGTH);
+  let header: DecompileJournalHeader | undefined;
+  for (
+    let start = 0;
+    start < committedBytes;
+    start += JOURNAL_READ_CHUNK_BYTES
+  ) {
+    const bytes = await readJournalChunk(
+      handle,
+      start,
+      Math.min(JOURNAL_READ_CHUNK_BYTES, committedBytes - start),
+    );
+    for (const line of lines.pushRaw(bytes)) {
+      if (!line.ok) return err(incompatibleJournal());
+      const parsed = decompileJournalLineSchema.safeParse(
+        parseJson(line.value),
+      );
+      if (!parsed.success) return err(incompatibleJournal());
+      if (header === undefined) {
+        if (parsed.data.kind !== "header") return err(incompatibleJournal());
+        header = parsed.data;
+        continue;
+      }
+      if (parsed.data.kind !== "function") return err(incompatibleJournal());
+      const { kind: _kind, ...record } = parsed.data;
+      const path = record.relative_path;
+      if (path !== undefined) {
+        const owner = paths.byPortablePath.get(portablePathKey(path));
+        if (owner !== undefined && owner !== record.address)
+          return err(incompatibleJournal());
+        reservePath(paths, path, record.address);
+      }
+      records.set(record.address, record);
+      if (record.status === "written") written.set(record.address, record);
     }
-    records.set(record.address, record);
-    if (record.status === "written") written.set(record.address, record);
   }
-  return ok({
-    header: header.data,
-    records,
-    written,
-    paths,
-    committedBytes,
-    journalBytes: bytes.length,
-  });
+  if (header === undefined) return err(incompatibleJournal());
+  return ok({ header, records, written, paths, committedBytes, journalBytes });
 };
 
 /** Resume needs both identities known. Two unknown digests are not a match. */
@@ -836,8 +912,7 @@ const incompatibleJournal = (): AnalysisInputError => {
   );
 };
 
-const parseJson = (line: string | undefined): unknown => {
-  if (line === undefined) return undefined;
+const parseJson = (line: string): unknown => {
   try {
     return JSON.parse(line) as unknown;
   } catch {
@@ -872,7 +947,7 @@ const allocateFunctionPath = (
   const directory = DECOMPILE_DIRECTORY_FUNCTIONS_DIRECTORY;
   const plain = `${directory}/${base}.c`;
   if (!used.has(portablePathKey(plain))) return plain;
-  const suffix = createHash("sha256").update(address).digest("hex").slice(0, 8);
+  const suffix = sha256Hex(address).slice(0, 8);
   let candidate = `${directory}/${base}-${suffix}.c`;
   let discriminator = 0;
   // Terminates: `used` is finite.
@@ -1079,9 +1154,6 @@ export const exportOutputFailure = (
   bindArtifactFileCleanup(cause, error);
   return error;
 };
-
-export const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const isFileHandle = (value: unknown): value is FileHandle =>
   typeof value === "object" &&
