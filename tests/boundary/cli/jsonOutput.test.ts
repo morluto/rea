@@ -382,7 +382,7 @@ it.each([
   {
     flags: ["--json", "--filter-output", "checks[0].name", "--token-count"],
     // The estimate for the selected `"provider"`, not the whole report.
-    expected: "5",
+    expected: String(estimateTokenCount('"provider"\n')),
   },
   {
     flags: ["--json", "--full-output", "--filter-output", "healthy"],

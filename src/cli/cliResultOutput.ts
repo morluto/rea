@@ -620,7 +620,7 @@ export const createCliResultOutput = (
             isTerminalOutput(destination),
           ))
             formatted += part;
-        } else formatted = formatCliOutput(tokenValue, format);
+        } else formatted = `${formatCliOutput(tokenValue, format)}\n`;
         const count = estimateTokenCount(formatted);
         handled = true;
         try {
