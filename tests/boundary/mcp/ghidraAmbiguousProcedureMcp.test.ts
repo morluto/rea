@@ -124,3 +124,74 @@ it.each(["compact"] as const)(
     }
   },
 );
+
+it("answers a leaf name Ghidra finds ambiguous by its unique exact name", async () => {
+  const message =
+    "Ghidra procedure name is ambiguous: work; select an exact entry address from [0x401000, 0x402000]";
+  const asked: unknown[] = [];
+  const harness = await connectGhidraMcp(
+    "exact-name-over-leaf-ambiguity",
+    (operation, input) => {
+      if (operation === "list_names")
+        return Promise.resolve(
+          ok([
+            {
+              address: "0x401000",
+              value: "work",
+              symbol: {
+                primary: true,
+                dynamic: false,
+                external: false,
+                type: "function",
+                source: "analysis",
+              },
+            },
+            {
+              address: "0x402000",
+              value: "ns::work",
+              symbol: {
+                primary: true,
+                dynamic: false,
+                external: false,
+                type: "function",
+                source: "analysis",
+              },
+            },
+          ]),
+        );
+      if (operation === "resolve_containing_procedure")
+        return Promise.resolve(ok(ghidraFixtureResult(operation, input)));
+      if (operation === "procedure_callers") {
+        asked.push(input.procedure);
+        if (input.procedure === "0x401000")
+          return Promise.resolve(ok(ghidraFixtureResult(operation, input)));
+      }
+      return Promise.resolve(
+        err(
+          new GhidraSessionError(
+            "remote",
+            message,
+            {},
+            {
+              remoteCode: "procedure_ambiguous",
+              cause: new GhidraRemoteError("procedure_ambiguous", message, [
+                "0x401000",
+                "0x402000",
+              ]),
+            },
+          ),
+        ),
+      );
+    },
+  );
+  try {
+    const response = await harness.mcp.callTool({
+      name: "procedure_callers",
+      arguments: { procedure: "work" },
+    });
+    expect(response.isError).not.toBe(true);
+    expect(asked).toEqual(["work", "0x401000"]);
+  } finally {
+    await harness.close();
+  }
+});

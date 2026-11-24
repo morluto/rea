@@ -54,6 +54,11 @@ const selectorField = (operation: NativeSymbolOperation) =>
       : "procedure";
 
 /** A lookup the provider refused as a valid request it could not satisfy. */
+const isAmbiguousRefusal = (error: AnalysisError): boolean =>
+  !error.cleanupIncomplete &&
+  error instanceof AnalysisInputError &&
+  error.ambiguousSelector !== undefined;
+
 const isLookupMiss = (error: AnalysisError): boolean =>
   !error.cleanupIncomplete &&
   // A selector that matched several candidates was found, not missed.
@@ -237,12 +242,22 @@ const symbolRetry = (
   operation: AnalysisOperation,
   parameters: Readonly<Record<string, JsonValue>>,
   error: AnalysisError,
-): { operation: NativeSymbolOperation; selector: string } | undefined => {
-  if (!isLookupMiss(error)) return undefined;
+):
+  | {
+      operation: NativeSymbolOperation;
+      selector: string;
+      /** The provider matched several procedures for the name. */
+      ambiguous: boolean;
+    }
+  | undefined => {
+  const ambiguous = isAmbiguousRefusal(error);
+  if (!ambiguous && !isLookupMiss(error)) return undefined;
   if (operation === "xrefs") {
     const selector = parameters.address;
-    return typeof selector === "string" && !ADDRESS_SELECTOR.test(selector)
-      ? { operation, selector }
+    return !ambiguous &&
+      typeof selector === "string" &&
+      !ADDRESS_SELECTOR.test(selector)
+      ? { operation, selector, ambiguous }
       : undefined;
   }
   // Outgoing references have no meaning for a symbol outside a procedure.
@@ -256,7 +271,7 @@ const symbolRetry = (
     return undefined;
   const selector = parameters.procedure;
   return typeof selector === "string" && !ADDRESS_SELECTOR.test(selector)
-    ? { operation, selector }
+    ? { operation, selector, ambiguous }
     : undefined;
 };
 
@@ -290,8 +305,19 @@ export const executeWithNativeSymbolSelection = async (
   );
   // Without a name inventory, the provider's own refusal remains the answer.
   if (!resolved.ok)
-    return permitsCapabilityFallback(resolved.error) ? first : resolved;
+    return permitsCapabilityFallback(resolved.error) ||
+      (retry.ambiguous && resolved.error instanceof AnalysisInputError)
+      ? first
+      : resolved;
   const resolution = resolved.value;
+  // A provider that matched several procedures, such as Ghidra matching the
+  // leaf names of `work` and `ns::work`, is answered only by a unique exact
+  // name; otherwise its ambiguity and candidates stand.
+  if (
+    retry.ambiguous &&
+    (resolution.status !== "resolved" || resolution.match !== "exact_name")
+  )
+    return first;
   // A provider that refused only the address format never looked the name up,
   // so its refusal says nothing about the name; any other refusal stands.
   if (resolution.status === "unresolved")
