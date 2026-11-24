@@ -12,6 +12,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { gzipSync } from "node:zlib";
 
 import { buildBinary } from "plist";
 import { describe, expect, it, vi } from "vitest";
@@ -67,6 +68,11 @@ import {
   FIT_EXTERNAL,
 } from "../../../src/artifacts/fit/FitImage.fixture.js";
 import { devicetreeFixture } from "../../../src/domain/firmware/devicetree.fixture.js";
+import {
+  gzipTarFixture,
+  RELEASE_TAR_MEMBERS,
+  tarFixture,
+} from "../../../src/artifacts/tar/tar.fixture.js";
 import {
   ddsBc7Fixture,
   glbFixture,
@@ -941,6 +947,39 @@ it("classifies a FIT by its /images node and a plain DTB as a devicetree artifac
   expect(await parseBinaryTarget(dtb)).toMatchObject({
     ok: true,
     value: { kind: "artifact", format: "devicetree" },
+  });
+});
+
+it("classifies stored and gzip-compressed tar archives as tar whatever their name", async () => {
+  const directory = await createTestTempDirectory("rea-tar-target-");
+  const stored = join(directory, "release.tar");
+  const gzip = join(directory, "package.unitypackage");
+  const plainGzip = join(directory, "notes.gz");
+  await Promise.all([
+    writeFile(stored, tarFixture(RELEASE_TAR_MEMBERS)),
+    writeFile(gzip, gzipTarFixture(RELEASE_TAR_MEMBERS)),
+    writeFile(plainGzip, gzipSync(Buffer.alloc(4096, 0x41))),
+  ]);
+  for (const path of [stored, gzip])
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: { kind: "archive", format: "tar" },
+    });
+  // A gzip stream that does not hold tar stays unrecognized.
+  expect(await parseBinaryTarget(plainGzip)).toMatchObject({
+    ok: false,
+    error: { reason: "unsupported binary format" },
+  });
+  // A ustar magic whose header fails its checksum is refused with that reason.
+  const corrupt = tarFixture(RELEASE_TAR_MEMBERS);
+  corrupt[148] = 0x39;
+  await writeFile(stored, corrupt);
+  expect(await parseBinaryTarget(stored)).toMatchObject({
+    ok: false,
+    error: {
+      constraint: "file_format_rejected",
+      reason: "tar first header checksum does not match",
+    },
   });
 });
 
