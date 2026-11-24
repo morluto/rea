@@ -1,26 +1,27 @@
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { OciImageLayoutPort } from "../../ports/oci/OciImageLayoutPort.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import type {
+  AnalysisError,
+  AnalysisPartialObservation,
+} from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { recognizeEvidence } from "../../domain/evidenceValidation.js";
 import {
   inspectOciImageLayoutInputSchema,
   ociImageLayoutSchema,
+  type InspectOciImageLayoutInput,
   type OciImageLayout,
 } from "../../domain/oci/imageLayout.js";
 import {
   createOciImageLayoutEvidence,
   INSPECT_OCI_IMAGE_LAYOUT_OPERATION,
 } from "../../domain/oci/imageLayoutEvidence.js";
-import { err, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import type { Result } from "../../domain/result.js";
+import { callerAnalysisParameters } from "../AnalysisInput.js";
 import {
-  callerAnalysisParameters,
-  parseAnalysisInput,
-} from "../AnalysisInput.js";
-
-const OPERATION = INSPECT_OCI_IMAGE_LAYOUT_OPERATION;
+  executeArtifactInspection,
+  type ArtifactInspectionPort,
+} from "../ArtifactInspectionExecution.js";
 
 /** Shared caller validation, output parsing and Evidence provenance for CLI/MCP. */
 export class OciImageLayoutService {
@@ -30,70 +31,83 @@ export class OciImageLayoutService {
     return this.provider.close();
   }
 
-  async inspect(
+  inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    const selectedParameters = callerAnalysisParameters(rawInput);
-    const input = parseAnalysisInput(
-      OPERATION,
-      rawInput,
-      inspectOciImageLayoutInputSchema,
-      options?.signal,
-    );
-    if (!input.ok) return input;
-    const evidenceFor = (report: OciImageLayout) =>
-      createOciImageLayoutEvidence(
-        this.provider.identity,
-        selectedParameters(input.value),
-        report,
-      );
-    const result = await this.provider.inspect(input.value, options);
-    if (!result.ok)
-      return err(
-        withCallerEvidence(result.error, input.value.path, evidenceFor),
-      );
-    const report = ociImageLayoutSchema.safeParse(result.value);
-    if (
-      !report.success ||
-      report.data.artifact.path !== input.value.path ||
-      !validReport(report.data, input.value)
-    )
-      return err(
-        new AnalysisOutputError(
-          OPERATION,
+    const provider: ArtifactInspectionPort<
+      InspectOciImageLayoutInput,
+      OciImageLayout
+    > = {
+      identity: this.provider.identity,
+      inspect: async (input, executionOptions) => {
+        const result = await this.provider.inspect(input, executionOptions);
+        if (!result.ok) unwrapProviderReport(result.error, input);
+        return result;
+      },
+    };
+    return executeArtifactInspection(
+      {
+        operation: INSPECT_OCI_IMAGE_LAYOUT_OPERATION,
+        inputSchema: inspectOciImageLayoutInputSchema,
+        outputSchema: ociImageLayoutSchema,
+        provider,
+        retainCompletedReport: true,
+        invalidOutputMessage:
           "OCI image layout provider returned malformed output or changed artifact identity.",
-        ),
-      );
-    return completeProviderEvidence(evidenceFor(report.data), options?.signal);
+        toParameters: (input) => input,
+        validateReport: (report, input) =>
+          report.artifact.path === input.path && validReport(report, input),
+        buildEvidence: (report, identity, parameters) =>
+          createOciImageLayoutEvidence(
+            identity,
+            callerAnalysisParameters(rawInput)(parameters),
+            report,
+          ),
+      },
+      rawInput,
+      options,
+    );
   }
 }
 
 /**
- * The provider sees resolved defaults, so a completed inventory it keeps on a
- * cleanup failure names them as parameters. Rebuild that Evidence from the
- * caller's own selections, matching the success path.
+ * The provider stores a completed inventory on a cleanup failure as Evidence
+ * naming resolved defaults. Unwrap a valid report on the error and every
+ * cleanupPrimary holding the same partialObservation so the shared
+ * retainCompletedReport path rebuilds Evidence from the caller's selections.
  */
-const withCallerEvidence = (
+const unwrapProviderReport = (
   error: AnalysisError,
-  path: string,
-  evidenceFor: (report: OciImageLayout) => Evidence,
-): AnalysisError => {
+  input: InspectOciImageLayoutInput,
+): void => {
+  const source = error.partialObservation;
+  const recognized = recognizeEvidence(source);
+  if (
+    !recognized.ok ||
+    recognized.value?.operation !== INSPECT_OCI_IMAGE_LAYOUT_OPERATION
+  )
+    return;
+  const report = ociImageLayoutSchema.safeParse(
+    recognized.value.normalized_result,
+  );
+  if (
+    !report.success ||
+    report.data.artifact.path !== input.path ||
+    !validReport(report.data, input)
+  )
+    return;
+  const raw = recognized.value
+    .normalized_result as unknown as AnalysisPartialObservation;
   const seen = new Set<AnalysisError>();
-  let current: AnalysisError | undefined = error;
-  while (current !== undefined && !seen.has(current)) {
-    seen.add(current);
-    const recognized = recognizeEvidence(current.partialObservation);
-    if (recognized.ok && recognized.value?.operation === OPERATION) {
-      const report = ociImageLayoutSchema.safeParse(
-        recognized.value.normalized_result,
-      );
-      if (report.success && report.data.artifact.path === path)
-        current.partialObservation = evidenceFor(report.data);
-    }
-    current = current.cleanupPrimary;
+  for (
+    let owner: AnalysisError | undefined = error;
+    owner !== undefined && !seen.has(owner);
+    owner = owner.cleanupPrimary
+  ) {
+    seen.add(owner);
+    if (owner.partialObservation === source) owner.partialObservation = raw;
   }
-  return error;
 };
 
 const validReport = (

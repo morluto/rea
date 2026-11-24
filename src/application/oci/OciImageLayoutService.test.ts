@@ -248,3 +248,84 @@ it("rejects JSON reads beyond what the descriptor budget allows", async () => {
   });
   expect(result.ok).toBe(false);
 });
+
+it("rejects malformed provider output and artifact identity changes", async () => {
+  const malformed = await new OciImageLayoutService({
+    close: async () => {},
+    identity,
+    inspect: async () =>
+      ok({ ...report, limitations: [] } as unknown as OciImageLayout),
+  }).inspect({ path: report.artifact.path });
+  const changed = await new OciImageLayoutService({
+    close: async () => {},
+    identity,
+    inspect: async () =>
+      ok({
+        ...report,
+        artifact: { ...report.artifact, path: "/artifacts/other.oci" },
+      }),
+  }).inspect({ path: report.artifact.path });
+  for (const result of [malformed, changed]) {
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(AnalysisOutputError);
+      expect(result.error.message).toContain(
+        "OCI image layout provider returned malformed output or changed artifact identity.",
+      );
+    }
+  }
+});
+
+it("rebuilds caller selections on cleanupPrimary sharing the retained Evidence and leaves foreign Evidence untouched", async () => {
+  const resolved = inspectOciImageLayoutInputSchema.parse({
+    path: report.artifact.path,
+  });
+  const retained = createOciImageLayoutEvidence(identity, resolved, report);
+  const primary = new AnalysisOutputError(
+    "inspect_oci_image_layout",
+    "primary",
+    { partialObservation: retained },
+  );
+  const wrapped = new AnalysisOutputError(
+    "inspect_oci_image_layout",
+    "cleanup",
+    { cleanupPrimary: primary, partialObservation: retained },
+  );
+  const rebuilt = await new OciImageLayoutService({
+    close: async () => {},
+    identity,
+    inspect: async () => err(wrapped),
+  }).inspect({ path: report.artifact.path });
+  expect(rebuilt.ok).toBe(false);
+  if (!rebuilt.ok) {
+    expect(rebuilt.error.partialObservation).toMatchObject({
+      operation: "inspect_oci_image_layout",
+      parameters: { path: report.artifact.path },
+      normalized_result: report,
+    });
+    expect(primary.partialObservation).toBe(rebuilt.error.partialObservation);
+  }
+
+  const foreignReport: OciImageLayout = {
+    ...report,
+    artifact: { ...report.artifact, path: "/artifacts/other.oci" },
+  };
+  const foreignEvidence = createOciImageLayoutEvidence(
+    identity,
+    resolved,
+    foreignReport,
+  );
+  const foreignFailure = new AnalysisOutputError(
+    "inspect_oci_image_layout",
+    "cleanup",
+    { partialObservation: foreignEvidence },
+  );
+  const foreignResult = await new OciImageLayoutService({
+    close: async () => {},
+    identity,
+    inspect: async () => err(foreignFailure),
+  }).inspect({ path: report.artifact.path });
+  expect(foreignResult.ok).toBe(false);
+  if (!foreignResult.ok)
+    expect(foreignResult.error.partialObservation).toBe(foreignEvidence);
+});
