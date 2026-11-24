@@ -159,7 +159,8 @@ its reader finishes, is `unknown` with a limitation naming the reader format;
 a complete traversal of one container never covers another.
 ZIP members are listed from the central directory. Coverage is `complete` only
 when its records account for every byte before the directory (a well-formed
-APK signing block is accounted for); otherwise coverage is `unknown` and a
+APK signing block is accounted for, as is all-zero padding under 4 KiB that
+aligns that block to a 4 KiB boundary); otherwise coverage is `unknown` and a
 limitation gives the unaccounted bytes, which may hold local entries the
 directory does not list.
 An extent must fit before the directory and agree with the local header's
