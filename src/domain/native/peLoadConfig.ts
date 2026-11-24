@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
+import { peImageBaseSchema } from "./peAddressSpace.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -406,6 +407,7 @@ export const peLoadConfigSchema = z.strictObject({
   machine: uint,
   bits: z.union([z.literal(32), z.literal(64)]),
   architecture: z.string().min(1),
+  image_base: peImageBaseSchema,
   tls: tlsSchema,
   load_config: loadConfigSchema,
   examined_callbacks: uint,

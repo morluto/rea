@@ -23,7 +23,10 @@ preserve that exact selection:
 
 ## Observations
 
-The inline Evidence result contains the artifact path, SHA-256, and byte length.
+The inline Evidence result contains the artifact path, SHA-256, byte length and
+the optional-header `image_base`. Each function row gives its import address
+table slot as `iat_rva` and as `iat_va` (`image_base` plus `iat_rva`); pass the
+VA to `xrefs` and other provider tools.
 `import_directory` and `delay_import_directory` report the data directory RVA
 and size, or `null` when a directory is absent or zero. Their `locations` are
 the file spans actually read for the descriptor array and its terminator. When

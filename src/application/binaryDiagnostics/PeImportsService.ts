@@ -6,8 +6,10 @@ import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectPeImportsInputSchema,
   peImportsSchema,
+  type PeImportFunction,
   type PeImports,
 } from "../../domain/native/peImports.js";
+import { peVa } from "../../domain/native/peAddressSpace.js";
 import { peSubjectArchitecture } from "../../domain/peMachine.js";
 import type { Result } from "../../domain/result.js";
 import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
@@ -131,5 +133,23 @@ const validReport = (
   const descriptorsFit = (
     rows: readonly { location: { offset: number; bytes: number } }[],
   ) => rows.every((row) => inside(row.location));
-  return descriptorsFit(report.imports) && descriptorsFit(report.delay_imports);
+  // A slot VA is the image base plus its RVA; a report that disagrees
+  // cannot be cited as a provider address.
+  const base = report.image_base;
+  const vasAgree = (
+    rows: readonly { functions: readonly PeImportFunction[] }[],
+  ) =>
+    rows.every(({ functions }) =>
+      functions.every(
+        ({ iat_rva, iat_va }) =>
+          iat_va === undefined ||
+          (base !== undefined && iat_va === peVa(BigInt(base), iat_rva)),
+      ),
+    );
+  return (
+    descriptorsFit(report.imports) &&
+    descriptorsFit(report.delay_imports) &&
+    vasAgree(report.imports) &&
+    vasAgree(report.delay_imports)
+  );
 };

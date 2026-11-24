@@ -267,6 +267,13 @@ end, and section ranges that overflow the address width remain refused by
 every reader. Static inspection does not establish that Windows would load the
 image.
 
+Every static PE result reports the optional-header `image_base` once, as a hex
+VA. Location fields name their space: `rva` is relative to the image base,
+`va` (or a `_va` suffix) is the image base plus that RVA and is what provider
+tools such as `xrefs` accept, and `file_offset` or a `location` range is bytes
+in the file. Import rows carry `iat_va` beside `iat_rva`. Export rows keep
+`address` as the VA name they have always used.
+
 ## Portable PE resources
 
 `inspect_pe_resources` / `inspect-pe-resources` inspects an explicit PE32 or
