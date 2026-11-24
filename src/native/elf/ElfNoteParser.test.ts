@@ -79,6 +79,31 @@ it.each([
   },
 );
 
+it.each([
+  { namesz: 4, name: "GNU", admitted: true },
+  { namesz: 3, name: "GNU", admitted: false },
+  { namesz: 6, name: "GNU\0X", admitted: false },
+])(
+  "admits build IDs only from canonical GNU owner ($namesz bytes)",
+  async ({ namesz, name, admitted }) => {
+    const descriptor = Buffer.from("0123456789abcdef", "hex");
+    const note = elfNote(name, 3, descriptor);
+    note.writeUInt32LE(namesz, 0);
+    const bytes = elfNoteFixture({ notes: note, ownership: "program" });
+    const expected = admitted ? [descriptor.toString("hex")] : [];
+    expect(
+      readElfBuildIds(bytes, defaults, 64).sources.map(({ hex }) => hex),
+    ).toEqual(expected);
+    const positional = await readElfBuildIdsFromHandle(
+      elfNoteByteSource(bytes),
+      defaults,
+      64,
+      async (request) => decodeElfSectionNameRequest(request),
+    );
+    expect(positional.sources.map(({ hex }) => hex)).toEqual(expected);
+  },
+);
+
 const noteTextLimit = (maximum: number) => ({
   failure: {
     kind: "limit",

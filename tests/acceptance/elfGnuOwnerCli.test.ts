@@ -6,8 +6,14 @@ import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   elfNote,
   elfNoteFixture,
+  gnuBuildIdNote,
   gnuPropertyNote,
 } from "../../src/native/elf/ElfNotes.fixture.js";
+import {
+  elfDebugCandidateFixture,
+  elfDebugLinkFixture,
+  FIXTURE_BUILD_ID_HEX,
+} from "../../src/native/elf/ElfDebugLink.fixture.js";
 import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -104,6 +110,88 @@ cliTest(
       });
       expect(reports[0]).toEqual(reports[1]);
       expect((await readFile(path)).equals(bytes)).toBe(true);
+    }
+  },
+);
+
+cliTest(
+  "does not use noncanonical GNU owner bytes to verify debug candidates",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-gnu-owner-debug-link-");
+    const call = await cli.sharedMcpCall!();
+    const note = (kind: "canonical" | "unterminated" | "extra") => {
+      if (kind === "extra")
+        return elfNote("GNU\0X", 3, Buffer.from(FIXTURE_BUILD_ID_HEX, "hex"));
+      const bytes = gnuBuildIdNote(FIXTURE_BUILD_ID_HEX);
+      if (kind === "unterminated") bytes.writeUInt32LE(3, 0);
+      return bytes;
+    };
+    for (const [binaryKind, candidateKind, reason] of [
+      ["canonical", "canonical", null],
+      ["unterminated", "canonical", "binary_build_id_absent"],
+      ["extra", "canonical", "binary_build_id_absent"],
+      ["canonical", "unterminated", "candidate_build_id_absent"],
+      ["canonical", "extra", "candidate_build_id_absent"],
+    ] as const) {
+      const image = elfDebugLinkFixture({
+        notes: note(binaryKind),
+        debuglink: null,
+      });
+      const candidate =
+        candidateKind === "canonical"
+          ? elfDebugCandidateFixture({ buildIdHex: FIXTURE_BUILD_ID_HEX })
+          : elfDebugLinkFixture({
+              notes: note(candidateKind),
+              debuglink: null,
+            });
+      const path = join(root, `${binaryKind}-${candidateKind}.elf`);
+      const candidatePath = join(root, `${binaryKind}-${candidateKind}.debug`);
+      await writeFile(path, image);
+      await writeFile(candidatePath, candidate);
+      const output = await cli.run({
+        arguments: [
+          "inspect-elf-debug-link",
+          path,
+          "--candidate-path",
+          candidatePath,
+          "--json",
+        ],
+      });
+      const response = await call("inspect_elf_debug_link", {
+        path,
+        candidate_path: candidatePath,
+      });
+      expect(output.exitCode, output.stderr).toBe(0);
+      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+      const reports = [output.json, response.structuredContent].map((raw) => {
+        const evidence = toolContract(
+          "inspect_elf_debug_link",
+        ).outputSchema.parse(raw);
+        expect(fileIdentity(evidence.subject).sha256).toBe(hash(image));
+        expect(evidence.subject).toMatchObject({ local_path: path });
+        expect(evidence.parameters).toMatchObject({
+          path,
+          candidate_path: candidatePath,
+        });
+        const report = evidence.normalized_result;
+        expect
+          .soft(report.build_id.status)
+          .toBe(binaryKind === "canonical" ? "observed" : "absent");
+        expect
+          .soft(report.verification?.status)
+          .toBe(reason === null ? "matches" : "cannot_verify");
+        expect.soft(report.verification?.build_id).toMatchObject({
+          status: reason === null ? "match" : "unavailable",
+          reason,
+        });
+        expect
+          .soft(report.lookup_paths.some(({ kind }) => kind === "build_id"))
+          .toBe(binaryKind === "canonical");
+        return report;
+      });
+      expect(reports[0]).toEqual(reports[1]);
+      expect((await readFile(path)).equals(image)).toBe(true);
+      expect((await readFile(candidatePath)).equals(candidate)).toBe(true);
     }
   },
 );

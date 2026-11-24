@@ -1242,7 +1242,7 @@ const readElfBuildIdSteps = function* (
     input,
     { retainReadableNotes: true },
     (note, table, _header, text) => {
-      if (note.owner !== "GNU" || note.type !== 3 || note.descsz === 0) return;
+      if (!note.gnuOwner || note.type !== 3 || note.descsz === 0) return;
       if (note.descsz > maximumBuildIdBytes) {
         oversized = true;
         return;
