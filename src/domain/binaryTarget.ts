@@ -6,6 +6,7 @@ import {
 } from "./virtualFileMapping.js";
 import {
   PE_CODEVIEW_PREFIX_BYTES,
+  type BinaryArchitecture,
   type ElfFamilyMetadata,
   type HeaderArchitecture,
   type MipsElfMetadata,
@@ -167,22 +168,37 @@ export const parseExecutableHeader = (
  * walks within the retained bytes. `null` when the bytes claim neither; an
  * error when they claim one whose header target admission would also refuse.
  * Inventory classification uses this so a magic-only stub is not reported as
- * an executable the resolver then rejects.
+ * an executable the resolver then rejects. `architecture` is the CPU family
+ * the header names, or null when REA does not decode that machine.
  */
 export const readNativeHeaderFormat = (
   bytes: Buffer,
   fileSize = bytes.length,
-): Result<"elf" | "mach-o" | null, string> => {
+): Result<
+  {
+    readonly format: "elf" | "mach-o";
+    readonly architecture: BinaryArchitecture | null;
+  } | null,
+  string
+> => {
   if (hasElfMagic(bytes)) {
     const header = readElfFixedHeader(bytes, fileSize);
-    return header.ok ? ok("elf") : header;
+    return header.ok
+      ? ok({ format: "elf", architecture: header.value.architecture })
+      : header;
   }
   if (readMachoHeaderPrefixFacts(bytes).format === null) return ok(null);
   const table = readMachoLoadCommandTableHeader(bytes, fileSize);
   if (!table.ok) return table;
   if (table.value === null) return err("unsupported Mach-O header");
   const framing = walkMachoCommandFraming(bytes, table.value);
-  return framing.ok ? ok("mach-o") : framing;
+  return framing.ok
+    ? ok({
+        format: "mach-o",
+        architecture:
+          machoBinaryArchitecture(table.value.identity.cpuType) ?? null,
+      })
+    : framing;
 };
 
 /**
@@ -256,7 +272,8 @@ const validatedFatDeclarations = (
 ): Result<readonly FatDeclaration[], string> => {
   if (header.state === "needs-data")
     return err("truncated or invalid FAT architecture table");
-  if (header.state === "malformed") return err(header.reason);
+  if (header.state === "malformed" || header.state === "truncated")
+    return err(header.reason);
   const identityError = fatIdentityError(
     bytes,
     header,

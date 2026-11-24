@@ -28,6 +28,7 @@ import {
   type ExecutableMetadata,
 } from "../domain/binaryTarget.js";
 import {
+  isRecordlessLegacyMips32Header,
   PE_CODEVIEW_PREFIX_BYTES,
   type PeCodeViewRecord,
   type UniversalMachOSlice,
@@ -240,7 +241,11 @@ const readElfMetadata = async (
   const ranges = await readElfDeclarations(
     handle,
     bytes,
-    validateElfDeclaredRanges(bytes, fileSize),
+    validateElfDeclaredRanges(bytes, fileSize, {
+      allowTruncatedSectionTable:
+        parsed.value.architecture === "mips" &&
+        isRecordlessLegacyMips32Header(parsed.value.mips),
+    }),
     signal,
   );
   if (!ranges.ok) return ranges;

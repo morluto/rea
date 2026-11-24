@@ -232,7 +232,8 @@ it.each([
           .map((row) => [row.logical_path, row.artifact_format])
           .sort(),
       ).toEqual([
-        ["images/fdt-1.bin", "file"],
+        // The stored flat_dt image is a devicetree in its own right.
+        ["images/fdt-1.bin", "devicetree"],
         ["images/kernel.bin", "file"],
       ]);
     } finally {
@@ -292,7 +293,7 @@ it("fails a devicetree totalsize past the end of the file", async () => {
   });
 });
 
-it("fails /images followed by a malformed structure, and leaves a plain DTB a file", async () => {
+it("fails /images followed by a malformed structure, and reads a plain DTB as a devicetree", async () => {
   const bytes = Buffer.from(FIT_EMBEDDED);
   const end = bytes.readUInt32BE(8) + bytes.readUInt32BE(36) - 4;
   expect(bytes.readUInt32BE(end)).toBe(9);
@@ -306,7 +307,7 @@ it("fails /images followed by a malformed structure, and leaves a plain DTB a fi
   const plain = await scanCanonicalArtifactInventory(
     await writeFit("board.dtb", devicetreeFixture()),
   );
-  expect(plain.manifest.root_format).toBe("file");
+  expect(plain.manifest.root_format).toBe("devicetree");
 });
 
 it("rejects a changed carrier during extraction preparation", async () => {

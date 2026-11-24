@@ -38,6 +38,8 @@ export type ChangePlan = Readonly<Record<string, unknown>> & {
   readonly reasons: readonly string[];
   readonly testSelection: TestSelectionPlan;
   readonly testShards: readonly string[];
+  /** null requests full typed lint when the file list exceeds the output bound. */
+  readonly typedLintFiles: readonly string[] | null;
 };
 
 export function planChanges(

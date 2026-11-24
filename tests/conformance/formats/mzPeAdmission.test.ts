@@ -14,9 +14,10 @@ import type { DesktopFile } from "../../../src/domain/desktopApplication.js";
 import { readManagedPeLayout } from "../../../src/domain/managed/managedPeReader.js";
 import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
 import {
-  readPeImageHeaders,
-  readPeImageHeadersAt,
-} from "../../../src/domain/pe/peImageHeaders.js";
+  readPeImage,
+  readPeImageFromReader,
+} from "../../../src/domain/native/peImage.js";
+import { readPeResourceLayoutAt } from "../../../src/domain/pe/peResourceLayout.js";
 import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js";
 import { ElectronFuseService } from "../../../src/application/electron/ElectronFuseService.js";
 import { ElectronFuseProvider } from "../../../src/electron/ElectronFuseProvider.js";
@@ -48,7 +49,7 @@ it("keeps relocation-owned DOS bytes out of managed PE layout", () => {
 
 it("keeps relocation-owned DOS bytes out of PE resource/certificate header admission", () => {
   const bytes = relocationOwnedPointer(peResourceFixture().bytes);
-  expect(() => readPeImageHeaders(bytes)).toThrow(/PE/u);
+  expect(() => readPeImage(bytes)).toThrow(/PE/u);
 });
 
 it("keeps relocation-owned DOS bytes out of NativeAOT metadata recovery", () => {
@@ -142,7 +143,7 @@ it("preserves recognized PE records after short DOS headers in complete-byte rea
     readManagedPeLayout(shortDosHeader(buildManagedPeFixture())),
   ).not.toThrow();
   expect(() =>
-    readPeImageHeaders(shortDosHeader(peResourceFixture().bytes)),
+    readPeImage(shortDosHeader(peResourceFixture().bytes)),
   ).not.toThrow();
   const bytes = shortDosHeader(nativeAotPeFixture());
   expect(
@@ -217,7 +218,7 @@ it("keeps a PE signature outside an inspected prefix unresolved until its requir
     offset: 128,
   });
   await expect(
-    readPeImageHeadersAt(prefix, bytes.length, async (offset, length) =>
+    readPeResourceLayoutAt(prefix, bytes.length, async (offset, length) =>
       offset + length <= prefix.length
         ? prefix.subarray(offset, offset + length)
         : undefined,
@@ -225,14 +226,19 @@ it("keeps a PE signature outside an inspected prefix unresolved until its requir
   ).rejects.toThrow("Truncated PE header range at 128.");
   const reads: { offset: number; length: number }[] = [];
   await expect(
-    readPeImageHeadersAt(prefix, bytes.length, async (offset, length) => {
-      reads.push({ offset, length });
-      return bytes.subarray(offset, offset + length);
+    readPeImageFromReader({
+      size: bytes.length,
+      prefix,
+      readRange: async (offset, length) => {
+        reads.push({ offset, length });
+        return bytes.subarray(offset, offset + length);
+      },
     }),
-  ).resolves.toEqual(readPeImageHeaders(bytes));
-  // The borrowed source supplies the signature and fixed COFF record once.
+  ).resolves.toEqual(readPeImage(bytes));
+  // The shared PE owner reads the signature, then the fixed COFF record, once each.
   expect(reads.filter(({ offset }) => offset >= 128 && offset < 152)).toEqual([
-    { offset: 128, length: 24 },
+    { offset: 128, length: 4 },
+    { offset: 132, length: 20 },
   ]);
 });
 
@@ -241,17 +247,15 @@ it("recognizes a bounded non-PE Windows signature without requiring a COFF recor
   bytes.write("NE", 128, "ascii");
   const reads: { offset: number; length: number }[] = [];
   await expect(
-    readPeImageHeadersAt(
-      bytes.subarray(0, 64),
-      bytes.length,
-      async (offset, length) => {
+    readPeImageFromReader({
+      size: bytes.length,
+      prefix: bytes.subarray(0, 64),
+      readRange: async (offset, length) => {
         reads.push({ offset, length });
         return bytes.subarray(offset, offset + length);
       },
-    ),
-  ).rejects.toThrow(
-    "NE images do not contain PE resource or certificate tables",
-  );
+    }),
+  ).rejects.toMatchObject({ kind: "unsupported" });
   expect(reads).toEqual([{ offset: 128, length: 2 }]);
 });
 

@@ -33,6 +33,15 @@ import {
   resolveBuildComputerEnvironment,
 } from "./BuildComputerEnvironment.js";
 
+/** The explicit scope's checks; an audit-wide report has none. */
+const scopeChecksOf = <Check>(report: {
+  readonly scope_checks?: readonly Check[];
+}): readonly Check[] => {
+  if (report.scope_checks === undefined)
+    throw new Error("Expected an explicit-scope doctor report");
+  return report.scope_checks;
+};
+
 const execute = promisify(execFile);
 
 const program = (path: string, body: string) =>
@@ -508,7 +517,7 @@ it.skipIf(process.platform === "win32")(
         clients: ["claude_code"],
       });
       expect(
-        report.scope_checks.find(
+        scopeChecksOf(report).find(
           ({ name }) => name === "desktop_build-agent-env",
         ),
       ).toMatchObject({ ok: true });

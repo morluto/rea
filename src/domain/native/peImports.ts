@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { peHeaderAnomaliesSchema } from "./peHeaderAnomalies.js";
 import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
@@ -145,6 +146,8 @@ export const peImportsSchema = z.strictObject({
   imphash: imphashSchema,
   coverage: coverageSchema,
   issues: z.array(peImportIssueSchema),
+  /** Evidence saved before this field existed omits it. */
+  header_anomalies: peHeaderAnomaliesSchema.optional(),
   limitations: z.array(z.string().min(1)),
 });
 export type PeImports = z.infer<typeof peImportsSchema>;

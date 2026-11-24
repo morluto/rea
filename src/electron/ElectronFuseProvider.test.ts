@@ -310,14 +310,12 @@ describe("Electron fuse reader resource boundaries", () => {
     expect(result.ok).toBe(false);
     if (!result.ok)
       expect(result.error).toMatchObject({
-        _tag: "AnalysisInputError",
-        issues: [
-          expect.objectContaining({
-            path: ["path"],
-            reason: "invalid_format",
-            message: expect.stringContaining("slices 0 and 1 overlap"),
-          }),
-        ],
+        _tag: "AnalysisMalformedTargetError",
+        path,
+        failure: {
+          kind: "malformed",
+          detail: expect.stringContaining("slices 0 and 1 overlap"),
+        },
       });
   });
 });

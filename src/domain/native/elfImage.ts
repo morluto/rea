@@ -13,11 +13,10 @@ import type { ZstandardFramePause } from "../compression/zstandardExactFrame.js"
 import type { CooperativeElfSectionNameDecoder } from "./elfSectionNameTable.js";
 import {
   readElfDirectoryFromBuffer,
-  readElfDirectoryFromBufferCooperative,
   readElfDirectoryFromReader,
   type ElfSectionDirectory,
-  type NativeByteSource,
 } from "./nativeSectionDirectory.js";
+import { bufferByteSource, type ByteSource } from "../byteSource.js";
 
 const requireElfFileRange = (
   fileSize: number,
@@ -25,27 +24,26 @@ const requireElfFileRange = (
   size: bigint,
   label: string,
 ): void => {
-  if (
-    offset < 0n ||
-    size < 0n ||
-    offset > BigInt(Number.MAX_SAFE_INTEGER) ||
-    size > BigInt(Number.MAX_SAFE_INTEGER) ||
-    Number(offset) > fileSize
-  )
-    throw new BinaryFormatFailure(
-      "malformed",
-      `${label} range is truncated or outside the file`,
-      { format: "elf", field: label },
-    );
-  if (Number(size) > fileSize - Number(offset))
-    throw new BinaryFormatFailure(
-      "truncated",
-      `${label} range is truncated or outside the file`,
-      { format: "elf", offset: Number(offset), field: label },
-    );
+  const end = BigInt(fileSize);
+  const message = `${label} range is outside the file`;
+  if (offset < 0n || offset > end)
+    throw new BinaryFormatFailure("malformed", message, {
+      format: "elf",
+      field: label,
+      ...(offset >= BigInt(Number.MIN_SAFE_INTEGER) &&
+      offset <= BigInt(Number.MAX_SAFE_INTEGER)
+        ? { offset: Number(offset) }
+        : {}),
+    });
+  if (size > end - offset)
+    throw new BinaryFormatFailure("truncated", message, {
+      format: "elf",
+      field: label,
+      offset: Number(offset),
+    });
 };
 
-const readElfImageFromDirectorySize = (
+export const readElfImageFromDirectorySize = (
   fileSize: number,
   directory: ElfSectionDirectory,
 ): Extract<BinaryContainer, { format: "elf" }> => {
@@ -196,20 +194,17 @@ export const readElfImageCooperative = async (
   maximumSourceAndDecodedNamesBytes?: number,
   decode?: CooperativeElfSectionNameDecoder,
 ): Promise<Extract<BinaryContainer, { format: "elf" }>> =>
-  readElfImageFromDirectorySize(
-    bytes.length,
-    await readElfDirectoryFromBufferCooperative(
-      bytes,
-      pause,
-      operation,
-      maximumSourceAndDecodedNamesBytes,
-      decode,
-    ),
+  readElfImageFromReader(
+    bufferByteSource(bytes),
+    operation,
+    pause,
+    maximumSourceAndDecodedNamesBytes,
+    decode,
   );
 
 /** Read ELF sections and program mappings positionally without buffering the whole file. */
 export const readElfImageFromReader = async (
-  source: NativeByteSource,
+  source: ByteSource,
   operation: string,
   pause: ZstandardFramePause,
   maximumSourceAndDecodedNamesBytes?: number,

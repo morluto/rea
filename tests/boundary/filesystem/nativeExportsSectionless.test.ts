@@ -26,9 +26,9 @@ describe("sectionless ELF export filesystem boundary", () => {
       expect(rejected).toMatchObject({
         ok: false,
         error: {
-          _tag: "AnalysisInputError",
+          _tag: "AnalysisMalformedTargetError",
           operation: "inspect_native_exports",
-          issues: [{ path: ["path"], reason: "invalid_format" }],
+          path: malformedPath,
         },
       });
 

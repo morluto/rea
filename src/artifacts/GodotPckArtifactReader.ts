@@ -22,7 +22,7 @@ import {
   type GodotPckAdmission,
   type GodotPckLocation,
 } from "./GodotPckLocation.js";
-import type { GodotPckMetadata } from "../domain/artifactFormatMetadata.js";
+import type { GodotPckMetadata } from "../domain/formatMetadata/packageAndGameMetadata.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {

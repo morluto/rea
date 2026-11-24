@@ -6,7 +6,7 @@ import {
 import { setImmediate } from "node:timers/promises";
 
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
-import type { NodeSeaMetadata } from "../domain/artifactFormatMetadata.js";
+import type { NodeSeaMetadata } from "../domain/formatMetadata/packageAndGameMetadata.js";
 import {
   ArtifactPathRegistry,
   normalizeArtifactPath,

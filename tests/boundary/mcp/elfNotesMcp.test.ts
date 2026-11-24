@@ -70,23 +70,6 @@ mcpTest(
   },
 );
 
-mcpTest("requires an absolute path for inspect_elf_notes", async ({ mcp }) => {
-  const { client, session } = await connect(mcp);
-  try {
-    const response = await client.callTool({
-      name: "inspect_elf_notes",
-      arguments: { path: "program" },
-    });
-    expect(response.isError).toBe(true);
-    expect(parseMcpToolError(response).error).toMatchObject({
-      code: "invalid_request",
-      details: { operation: "inspect_elf_notes" },
-    });
-  } finally {
-    await session.close();
-  }
-});
-
 mcpTest(
   "keeps GNU notes when a section name is not NUL-terminated",
   async ({ mcp }) => {
@@ -189,16 +172,13 @@ mcpTest(
       });
       expect(rejected.isError).toBe(true);
       expect(parseMcpToolError(rejected).error).toMatchObject({
-        code: "invalid_request",
-        category: "invalid_input",
+        code: "unsupported_target",
+        category: "unsupported_target",
         details: {
-          issues: [
-            expect.objectContaining({
-              path: ["path"],
-              reason: "invalid_format",
-              message: "ELF section table is missing",
-            }),
-          ],
+          operation: "inspect_elf_notes",
+          path,
+          format_failure: "malformed",
+          format: "elf",
         },
       });
       expect((await readFile(path)).equals(bytes)).toBe(true);

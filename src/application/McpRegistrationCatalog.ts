@@ -29,7 +29,7 @@ import {
   present,
   fixedProjectLocation,
   type McpRegistrationLocationContext,
-  type McpRegistrationLocation,
+  type McpRegistrationLocationResult,
 } from "./McpRegistrationLocations.js";
 
 /** The facts registration needs, from the client's single owner. */
@@ -39,7 +39,7 @@ interface ClientDescriptor {
   readonly aliases: readonly string[];
   readonly projectLocation?: (
     context: McpRegistrationLocationContext,
-  ) => Promise<McpRegistrationLocation>;
+  ) => Promise<McpRegistrationLocationResult>;
   readonly projectFormat?: ClientConfigurationFormat;
   readonly registrationProfile: ClientRegistrationProfile;
   readonly setupName: SupportedClientName;
@@ -159,17 +159,21 @@ const checkCancellation = (signal: AbortSignal | undefined): void => {
   if (signal?.aborted) throw cancelledBy("MCP registration selection", signal);
 };
 
-const selectedIds = (agents: readonly string[]): McpRegistrationClientId[] => {
+const selectedIds = (
+  agents: readonly string[],
+): Result<McpRegistrationClientId[], ConfigurationError> => {
   const ids: McpRegistrationClientId[] = [];
   for (const agent of agents) {
     const id = resolveMcpRegistrationClientId(agent);
     if (id === undefined)
-      throw new ConfigurationError(
-        `Unknown MCP client ${agent}. Select a supported --agent value.`,
+      return err(
+        new ConfigurationError(
+          `Unknown MCP client ${agent}. Select a supported --agent value.`,
+        ),
       );
     if (!ids.includes(id)) ids.push(id);
   }
-  return ids;
+  return ok(ids);
 };
 
 /** Each agent registers with its table row's exact profile. */
@@ -180,13 +184,16 @@ export const mcpClientRegistrationProfile = (
 const projectTarget = async (
   id: McpRegistrationClientId,
   context: McpRegistrationLocationContext,
-): Promise<McpRegistrationClient> => {
+): Promise<Result<McpRegistrationClient, CatalogFailure>> => {
   const descriptor = clientDescriptor(id);
   if (descriptor.projectLocation === undefined)
-    throw new ConfigurationError(
-      `${descriptor.displayName} has no project-scoped registration. Remove --no-global or select a project-capable client; no settings were written.`,
+    return err(
+      new ConfigurationError(
+        `${descriptor.displayName} has no project-scoped registration. Remove --no-global or select a project-capable client; no settings were written.`,
+      ),
     );
   const resolved = await descriptor.projectLocation(context);
+  if (!resolved.ok) return resolved;
   const [userClient] =
     id === "opencode"
       ? supportedClients(
@@ -198,41 +205,48 @@ const projectTarget = async (
         )
       : [];
   if (id === "opencode" && userClient === undefined)
-    throw new ConfigurationError(
-      "OpenCode's user configuration could not be located for project registration.",
+    return err(
+      new ConfigurationError(
+        "OpenCode's user configuration could not be located for project registration.",
+      ),
     );
-  return {
+  return ok({
     id,
     displayName: descriptor.displayName,
     registrationProfile: mcpClientRegistrationProfile(id),
-    ...resolved,
+    ...resolved.value,
     scope: "project",
     ...(userClient === undefined
       ? {}
       : { projectConfiguration: { directory: context.cwd, userClient } }),
     format: descriptor.projectFormat ?? descriptor.format,
-  };
+  });
 };
 
 /** The user-scope target is the client's resolved table row. */
 const globalTarget = (
   id: McpRegistrationClientId,
   context: McpRegistrationLocationContext,
-): { client: McpRegistrationClient; markers: readonly string[] } => {
+): Result<
+  { client: McpRegistrationClient; markers: readonly string[] },
+  ConfigurationError
+> => {
   const descriptor = clientDescriptor(id);
   const setupClient = context.setup.find(
     ({ name }) => name === descriptor.setupName,
   );
   if (setupClient === undefined)
-    throw new ConfigurationError(
-      `The registration catalog has no path owner for ${descriptor.setupName}.`,
+    return err(
+      new ConfigurationError(
+        `The registration catalog has no path owner for ${descriptor.setupName}.`,
+      ),
     );
   if (setupClient.configPathError !== undefined)
-    throw (
+    return err(
       setupClient.configPathFailure ??
-      new ConfigurationError(setupClient.configPathError)
+        new ConfigurationError(setupClient.configPathError),
     );
-  return {
+  return ok({
     client: {
       id,
       displayName: descriptor.displayName,
@@ -259,7 +273,7 @@ const globalTarget = (
     markers: clientEvidencePaths(setupClient).map((path) =>
       selectedPath(path, context),
     ),
-  };
+  });
 };
 
 /**
@@ -284,14 +298,81 @@ const msixWriteBlocker = (
   );
 };
 
-/** User-scope read-scope rules that must hold before any target is written. */
-const admitGlobalTargets = async (
-  clients: readonly McpRegistrationClient[],
-  context: McpRegistrationLocationContext,
-): Promise<void> => {
+const selectRegistrationClients = async (
+  selection: McpRegistrationSelection,
+  resources: ArtifactResourceScope,
+): Promise<Result<readonly McpRegistrationClient[], CatalogFailure>> => {
+  checkCancellation(selection.signal);
+  const selectedIdsResult = selectedIds(selection.agents);
+  if (!selectedIdsResult.ok) return selectedIdsResult;
+  const ids = selectedIdsResult.value;
+  const context: McpRegistrationLocationContext = {
+    ...selection,
+    resources,
+    setup: selection.global
+      ? await resolveSupportedClients(
+          selection.home,
+          selection.platform,
+          selection.environment,
+          selection.systemPaths,
+        )
+      : [],
+  };
+  const clients: McpRegistrationClient[] = [];
+  if (!selection.global) {
+    // Default selection includes global-only Amp and cannot become project writes.
+    if (ids.length === 0)
+      return err(
+        new ConfigurationError(
+          "Default MCP registration includes global-only Amp. Select project-capable --agent values or remove --no-global; no settings were written.",
+        ),
+      );
+    for (const id of ids) {
+      checkCancellation(selection.signal);
+      const target = await projectTarget(id, context);
+      if (!target.ok) return target;
+      clients.push(target.value);
+    }
+    checkCancellation(selection.signal);
+    return ok(clients);
+  }
+  if (ids.length > 0) {
+    for (const id of ids) {
+      // The table already resolved this target before the signal was read.
+      const target = globalTarget(id, context);
+      if (!target.ok) return target;
+      checkCancellation(selection.signal);
+      clients.push(target.value.client);
+    }
+  } else {
+    const all: McpRegistrationClient[] = [];
+    for (const id of Object.keys(MCP_REGISTRATION_CLIENTS).filter(isClientId)) {
+      checkCancellation(selection.signal);
+      if (id === "amp") continue;
+      const target = globalTarget(id, context);
+      if (!target.ok) return target;
+      const { client, markers } = target.value;
+      all.push(client);
+      // Examine every marker: unreadability cannot turn a partial observation into absence.
+      let detected = false;
+      for (const marker of markers) {
+        const exists = await present(marker);
+        if (!exists.ok) return exists;
+        detected ||= exists.value;
+      }
+      if (detected) clients.push(client);
+    }
+    const amp = globalTarget("amp", context);
+    if (!amp.ok) return amp;
+    checkCancellation(selection.signal);
+    if (clients.length === 0) clients.push(...all);
+    clients.push(amp.value.client);
+  }
   const blocker = msixWriteBlocker(clients, context);
   if (blocker !== undefined)
-    throw new ConfigurationError(`${blocker} No settings were written.`);
+    return err(new ConfigurationError(`${blocker} No settings were written.`));
+  checkCancellation(selection.signal);
+  return ok(clients);
 };
 
 /** Resolve all selected paths before any registration writer receives authority. */
@@ -299,72 +380,21 @@ export const resolveMcpRegistrationClients = async (
   selection: McpRegistrationSelection,
   resources: ArtifactResourceScope,
 ): Promise<Result<readonly McpRegistrationClient[], CatalogFailure>> => {
-  try {
-    checkCancellation(selection.signal);
-    const ids = selectedIds(selection.agents);
-    const context: McpRegistrationLocationContext = {
-      ...selection,
-      resources,
-      setup: selection.global
-        ? await resolveSupportedClients(
-            selection.home,
-            selection.platform,
-            selection.environment,
-            selection.systemPaths,
-          )
-        : [],
-    };
-    // Default selection includes global-only Amp and cannot become project writes.
-    if (!selection.global && ids.length === 0)
-      throw new ConfigurationError(
-        "Default MCP registration includes global-only Amp. Select project-capable --agent values or remove --no-global; no settings were written.",
-      );
-    if (ids.length > 0) {
-      const clients: McpRegistrationClient[] = [];
-      for (const id of ids) {
-        // A user-scope target is already resolved with the table, so its
-        // failure is reported before a cancellation that followed it.
-        if (selection.global) clients.push(globalTarget(id, context).client);
-        checkCancellation(selection.signal);
-        if (!selection.global) clients.push(await projectTarget(id, context));
-      }
-      if (selection.global) await admitGlobalTargets(clients, context);
-      checkCancellation(selection.signal);
-      return ok(clients);
-    }
-    const all: McpRegistrationClient[] = [];
-    const detected: McpRegistrationClient[] = [];
-    for (const id of Object.keys(MCP_REGISTRATION_CLIENTS).filter(isClientId)) {
-      checkCancellation(selection.signal);
-      if (id === "amp") continue;
-      const { client, markers } = globalTarget(id, context);
-      all.push(client);
-      // Examine every marker: unreadability cannot turn a partial observation into absence.
-      const statuses: boolean[] = [];
-      for (const marker of markers) statuses.push(await present(marker));
-      if (statuses.some(Boolean)) detected.push(client);
-    }
-    const amp = globalTarget("amp", context).client;
-    checkCancellation(selection.signal);
-    const selected = [...(detected.length === 0 ? all : detected), amp];
-    await admitGlobalTargets(selected, context);
-    return ok(selected);
-  } catch (cause: unknown) {
-    const failure =
-      cause instanceof ConfigurationError ||
-      cause instanceof AnalysisCancelledError
-        ? cause
-        : new ConfigurationError(
-            "Could not resolve MCP registration locations.",
-            {
-              cause,
-            },
-          );
-    if (selection.signal?.aborted === true)
-      analysisErrorWithCancellation(
-        failure,
-        cancelledBy("MCP registration selection", selection.signal),
-      );
-    return err(failure);
-  }
+  const result = await selectRegistrationClients(selection, resources).catch(
+    (cause: unknown) =>
+      err(
+        cause instanceof AnalysisCancelledError
+          ? cause
+          : new ConfigurationError(
+              "Could not resolve MCP registration locations.",
+              { cause },
+            ),
+      ),
+  );
+  if (!result.ok && selection.signal?.aborted === true)
+    analysisErrorWithCancellation(
+      result.error,
+      cancelledBy("MCP registration selection", selection.signal),
+    );
+  return result;
 };

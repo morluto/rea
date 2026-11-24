@@ -1,6 +1,5 @@
 import { isParseLimit } from "../parseFailureAnalysisError.js";
 import { describe, expect, it } from "vitest";
-import { apkFixtureReader } from "../../../tests/fixtures/apkSignature/randomAccess.js";
 import { zip64Tail } from "../../../tests/fixtures/apkSignature/zip64Tail.js";
 
 import {
@@ -9,14 +8,15 @@ import {
   parseZipTailFromReader,
   type ZipTail,
 } from "./apkSigningBlock.js";
+import { bufferByteSource } from "../byteSource.js";
 
 const parseZipTail = async (bytes: Uint8Array) => {
-  const result = await parseZipTailFromReader(apkFixtureReader(bytes));
+  const result = await parseZipTailFromReader(bufferByteSource(bytes, 4));
   return result.ok ? { ok: true as const, value: result.value.tail } : result;
 };
 
 const locateApkSigningBlock = (bytes: Uint8Array, tail: ZipTail) =>
-  locateApkSigningBlockFromReader(apkFixtureReader(bytes), tail);
+  locateApkSigningBlockFromReader(bufferByteSource(bytes, 4), tail);
 
 /** Little-endian byte builder for a minimal APK-like tail. */
 class Bytes {

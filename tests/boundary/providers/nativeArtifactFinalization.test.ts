@@ -8,6 +8,9 @@ import { inspectPeResourcesInputSchema } from "../../../src/domain/native/peReso
 import { inspectPeCertificatesInputSchema } from "../../../src/domain/native/peCertificates.js";
 import { inspectPeImportsInputSchema } from "../../../src/domain/native/peImports.js";
 import { inspectElfNotesInputSchema } from "../../../src/domain/native/elfNotes.js";
+import { inspectKernelBuildConfigInputSchema } from "../../../src/domain/native/kernelBuildConfig.js";
+import { KernelBuildConfigProvider } from "../../../src/native/elf/KernelBuildConfigProvider.js";
+import { kernelBuildConfigFixture } from "../../../src/native/elf/KernelBuildConfig.fixture.js";
 import { inspectKernelModuleInputSchema } from "../../../src/domain/native/kernelModule.js";
 import { inspectElfDependenciesInputSchema } from "../../../src/domain/native/elfDependencies.js";
 import { inspectNativeExportsInputSchema } from "../../../src/domain/native/nativeExports.js";
@@ -73,6 +76,11 @@ const cases = [
   {
     name: "ELF notes",
     fixture: elfNoteFixture,
+    report: {
+      entries: expect.arrayContaining([
+        expect.objectContaining({ type_name: "gnu_build_id" }),
+      ]),
+    },
     make: () => {
       const provider = new ElfNotesProvider();
       return {
@@ -85,8 +93,25 @@ const cases = [
     },
   },
   {
+    name: "kernel build config",
+    fixture: kernelBuildConfigFixture,
+    report: { config: { status: "present", option_count: 9 } },
+    make: () => {
+      const provider = new KernelBuildConfigProvider();
+      return {
+        inspect: (path: string, signal: AbortSignal) =>
+          provider.inspect(
+            inspectKernelBuildConfigInputSchema.parse({ path }),
+            { signal },
+          ),
+        close: () => provider.close(),
+      };
+    },
+  },
+  {
     name: "kernel modules",
     fixture: kernelModuleFixture,
+    report: { applicability: "applicable", signature: { status: "present" } },
     make: () => {
       const provider = new KernelModuleProvider();
       return {
@@ -101,6 +126,11 @@ const cases = [
   {
     name: "ELF dependencies",
     fixture: elfDependencyFixture,
+    report: {
+      needed: expect.arrayContaining([
+        expect.objectContaining({ name: "libc.so.6" }),
+      ]),
+    },
     make: () => {
       const provider = new ElfDependenciesProvider();
       return {
@@ -203,16 +233,22 @@ it.each(cases.flatMap((entry) => modes.map((mode) => ({ ...entry, mode }))))(
     try {
       const result = await provider.inspect(path, controller.signal);
       if (result.ok) throw new Error("Expected finalization failure");
-      const acquired = {
-        kind: "file-snapshot-hash",
+      const artifact = {
         path,
         sha256: createHash("sha256").update(bytes).digest("hex"),
         bytes: bytes.length,
       };
-      expect(result.error.partialObservation).toEqual(acquired);
+      const observation = result.error.partialObservation;
+      if ("report" in entry)
+        expect(observation).toMatchObject({ artifact, ...entry.report });
+      else
+        expect(observation).toEqual({
+          kind: "file-snapshot-hash",
+          ...artifact,
+        });
       expect(
         projectAnalysisError(result.error).details?.partial_observation,
-      ).toEqual(acquired);
+      ).toEqual(observation);
       const failedClose = mode === "close-failure" || mode === "close-both";
       expect(result.error.cleanupIncomplete).toBe(failedClose);
       if (failedClose) expect(owner?.handle.fd).toBeGreaterThanOrEqual(0);
