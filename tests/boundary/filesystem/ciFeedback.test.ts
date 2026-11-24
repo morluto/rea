@@ -216,9 +216,16 @@ it("starts source feedback before build and requires both groups without waiving
     env: { CI_STATIC_CONTEXT_SCRIPT: "check:ci:deep:tasks" },
   });
   const deepUpload = jobs["static-deep"]?.steps?.find(
-    (step) => step.with?.name === "static-deep-check-reports",
+    (step) => step.name === "Upload complete deep static diagnostics",
   );
   expect(deepUpload?.if).toBe("always()");
+  expect(deepUpload?.with?.name).toContain(
+    "static-deep-check-reports-attempt-{0}",
+  );
+  const fastUpload = jobs.static?.steps?.find(
+    (step) => step.name === "Upload complete static diagnostics",
+  );
+  expect(fastUpload?.with?.name).toContain("static-check-reports-attempt-{0}");
   expect(deepUpload?.with).toMatchObject({
     path: ".cache/static-checks/",
     "if-no-files-found": "ignore",
@@ -232,7 +239,7 @@ it("starts source feedback before build and requires both groups without waiving
     (step) => step.run === "npm run check:ci:deep",
   );
   const uploadIndex = deepSteps.findIndex(
-    (step) => step.with?.name === "static-deep-check-reports",
+    (step) => step.name === "Upload complete deep static diagnostics",
   );
   expect(contextIndex).toBeGreaterThanOrEqual(0);
   expect(checkIndex).toBeGreaterThan(contextIndex);

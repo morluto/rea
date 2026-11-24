@@ -166,7 +166,8 @@ no compiled-runtime prerequisite, not a fixed time budget.
 duplication statistics. Complete reports remain in `.cache/static-checks/`.
 The fast gate uploads them as `static-check-reports`. Full qualification
 uploads duplication diagnostics from the deep job as
-`static-deep-check-reports`, including after that gate fails.
+`static-deep-check-reports`, including after that gate fails. On reruns, both
+artifact names end in `-attempt-N`, where `N` is the workflow run attempt.
 Task-graph recording runs `check:ci:fast:tasks` and `check:ci:deep:tasks`
 without the artifacts lock, so it can record hashes while `check:pr` or
 `check:test` already holds that lock. The CI jobs still run the locked
