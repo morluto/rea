@@ -814,7 +814,7 @@ it("reads POM values written as CDATA and as mixed text and CDATA", () => {
   <modelVersion>4.0.0</modelVersion>
   <groupId><![CDATA[com.example]]></groupId>
   <artifactId>demo</artifactId>
-  <version>1.<![CDATA[2.]]>3</version>
+  <version>1.<!-- comment --><![CDATA[2.]]>3</version>
   <properties><revision><![CDATA[1.2.3]]></revision></properties>
 </project>`);
   expect(report.coordinates).toMatchObject({

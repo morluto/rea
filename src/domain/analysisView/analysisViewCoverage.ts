@@ -1,21 +1,27 @@
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { z } from "zod";
 
-export const analysisViewCoverageSchema = z.union([
-  z.strictObject({
-    status: z.enum(["complete-within-view", "page", "empty"]),
-    examined: z.int().nonnegative(),
-    total: z.int().nonnegative(),
-    next_offset: z.int().nonnegative().nullable(),
-    exhausted: z.boolean(),
-  }),
-  z.strictObject({
-    status: z.literal("unknown"),
-    examined: z.literal(0),
-    total: z.null(),
-    next_offset: z.null(),
-    exhausted: z.null(),
-  }),
+export const analysisViewCoverageSchema = z.strictObject({
+  status: z.enum(["complete-within-view", "page", "empty"]),
+  examined: z.int().nonnegative(),
+  total: z.int().nonnegative(),
+  next_offset: z.int().nonnegative().nullable(),
+  exhausted: z.boolean(),
+});
+
+/** No selected inference was examined; neither total nor exhaustion is established. */
+const unknownViewCoverageSchema = z.strictObject({
+  status: z.literal("unknown"),
+  examined: z.literal(0),
+  total: z.null(),
+  next_offset: z.null(),
+  exhausted: z.null(),
+});
+
+/** Views whose producer may report no examined inference accept unknown coverage. */
+export const unknownableViewCoverageSchema = z.union([
+  analysisViewCoverageSchema,
+  unknownViewCoverageSchema,
 ]);
 
 const unavailableViewCoverageSchema = z.strictObject({
@@ -27,15 +33,16 @@ const unavailableViewCoverageSchema = z.strictObject({
 });
 
 /** Only views with nullable collections can report unavailable page coverage. */
-export const nullableCollectionViewCoverageSchema = z.union([
-  analysisViewCoverageSchema,
-  unavailableViewCoverageSchema,
-]);
+export const nullableCollectionViewCoverageSchema = z.discriminatedUnion(
+  "status",
+  [analysisViewCoverageSchema, unavailableViewCoverageSchema],
+);
 
 export type AnalysisViewCoverage = z.output<typeof analysisViewCoverageSchema>;
 
-/** No selected inference was examined; neither total nor exhaustion is established. */
-export const unknownViewCoverage = (): AnalysisViewCoverage => ({
+export const unknownViewCoverage = (): z.output<
+  typeof unknownViewCoverageSchema
+> => ({
   status: "unknown",
   examined: 0,
   total: null,

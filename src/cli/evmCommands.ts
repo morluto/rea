@@ -3,10 +3,8 @@ import { z } from "zod";
 import { evmInterfaceModule } from "../composition/evm.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import {
-  inspectWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { inspectWithService } from "./contractCommandRunners.js";
 import { PRODUCER_LIMITS_HELP } from "./producerLimitsOption.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
@@ -23,7 +21,6 @@ export const registerEvmCommands = (
     logger,
     evmInterfaceModule.contract,
     {
-      command: evmInterfaceModule.cliCommand,
       description:
         "Infer interface candidates from explicit local EVM bytecode. solc-json requires --source-unit, --contract-name, and --bytecode-kind together.",
       positionals: ["path"],

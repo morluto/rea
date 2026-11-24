@@ -122,7 +122,7 @@ cliTest.skipIf(process.platform === "win32")(
       expect(report.graph.truncated).toBe(true);
       for (const limitations of [report.limitations, evidence.limitations])
         expect(limitations).toContain(
-          "Contents/Resources/Panel.nib: Symlink target was not followed or disclosed.",
+          "Contents/Resources/Panel.nib: Symlink target was recorded, not followed.",
         );
     }
     expect(Buffer.compare(await readFile(link), fixture.nib)).toBe(0);

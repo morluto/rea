@@ -18,8 +18,9 @@ rea inspect-evm-interface ./compiler-output.json solc-json --source-unit contrac
 }
 ```
 
-Initial real verification covers flat legacy bytecode on Linux x64 and unchanged
-bundled EVMole 0.9.3. EOF-style EF00 containers return `unsupported_target`,
+The provider runs on Linux x64 only; other hosts report `capability_unavailable`
+with category `unsupported_provider`. Real verification covers flat legacy
+bytecode on Linux x64 and unchanged bundled EVMole 0.9.4. EOF-style EF00 containers return `unsupported_target`,
 with the selected path and format reason. Selected-path resolution errors
 `ENOENT`, `ENOTDIR`, `ELOOP`, and `ENAMETOOLONG` are `invalid_request` path
 issues. Permission, resource, cancellation, provider, and cleanup failures retain
@@ -146,7 +147,10 @@ remains `inferred`. It preserves stderr/truncation and records stdout text lengt
 Complete-within-view coverage covers returned candidates; discovery completeness
 remains unknown even for an empty or exhausted collection. Analysis still runs;
 delivery selection does not save interpreter work or change source parameters.
-Compiler-artifact summaries retain exact selection and reference facts.
+Compiler-artifact summaries retain exact selection facts. Link references,
+immutable references and placeholders report `total` and a preview of at most 16
+rows, with `preview_omitted` counting the rest (null links or immutables mean
+not retained).
 Diagnostics report `total` and `error_count` plus an errors-first preview of at
 most 16 rows (JSON pointer, severity and source range), with
 `preview_omitted` counting the rows left out. They omit the object

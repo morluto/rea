@@ -1,4 +1,7 @@
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { z } from "zod";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { err, ok } from "../result.js";
@@ -83,14 +86,8 @@ export const projectWasmArtifactView = (
     SummaryAnalysisView | z.output<typeof wasmViewRequestSchema>
   >(admitted, "summary", "wasm");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "WASM Evidence supports summary and wasm views.",
-        },
-      ]),
+    return invalidAnalysisView(
+      "WASM Evidence supports summary and wasm views.",
     );
   const parsed = readWasmArtifact(parent);
   if (!parsed.ok) return parsed;

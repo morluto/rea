@@ -922,7 +922,7 @@ console.log(
       status: failures.length === 0 ? "passed" : "failed",
       public_cases: cases,
       compiler: compilerVersion,
-      engine: "evmole@0.9.3",
+      engine: "evmole@0.9.4",
       fixture_target_execution: "not-performed",
       network_observation: "not-measured",
       verifier,

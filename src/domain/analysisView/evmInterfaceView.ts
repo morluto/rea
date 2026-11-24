@@ -1,4 +1,7 @@
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import { z } from "zod";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { boundedList } from "../boundedList.js";
@@ -46,6 +49,7 @@ export const evmViewItemSchema = z.union([
 
 // A carrier within the node cap can hold tens of thousands of diagnostic rows.
 const DIAGNOSTIC_PREVIEW_ROWS = 16;
+const REFERENCE_PREVIEW_ROWS = 16;
 
 const diagnosticSummary = (
   diagnostics: NonNullable<SolcArtifact["diagnostics"]>,
@@ -68,6 +72,19 @@ const diagnosticSummary = (
   };
 };
 
+/** Counted preview; the exact rows stay in the parent Evidence. */
+const boundedRowsSchema = <T extends z.ZodType>(row: T) =>
+  z.strictObject({
+    total: z.number().int().nonnegative(),
+    preview: z.array(row).max(REFERENCE_PREVIEW_ROWS),
+    preview_omitted: z.number().int().nonnegative(),
+  });
+
+const boundedRows = <T>(rows: readonly T[]) => {
+  const { items, omitted } = boundedList(rows, REFERENCE_PREVIEW_ROWS);
+  return { total: rows.length, preview: [...items], preview_omitted: omitted };
+};
+
 /** Selected compiler facts without duplicate bytecode, raw metadata, settings or diagnostic JSON. */
 const {
   object: _objectSchema,
@@ -76,6 +93,15 @@ const {
 } = solcArtifactSchema.shape;
 const compilerArtifactSummarySchema = z.strictObject({
   ...compilerFactsShape,
+  link_references: boundedRowsSchema(
+    solcArtifactSchema.shape.link_references.unwrap().element,
+  ).nullable(),
+  immutable_references: boundedRowsSchema(
+    solcArtifactSchema.shape.immutable_references.unwrap().element,
+  ).nullable(),
+  placeholders: boundedRowsSchema(
+    solcArtifactSchema.shape.placeholders.element,
+  ),
   // Counts plus a bounded, errors-first preview; every exact row stays in the parent Evidence.
   diagnostics: z
     .strictObject({
@@ -103,10 +129,23 @@ const compilerArtifactSummarySchema = z.strictObject({
 });
 
 const compilerArtifactSummary = (artifact: SolcArtifact) => {
-  const { object, metadata, diagnostics, ...facts } = artifact;
+  const {
+    object,
+    metadata,
+    diagnostics,
+    link_references,
+    immutable_references,
+    placeholders,
+    ...facts
+  } = artifact;
   const { raw, settings_json: settings, ...metadataFacts } = metadata;
   return {
     ...facts,
+    link_references:
+      link_references === null ? null : boundedRows(link_references),
+    immutable_references:
+      immutable_references === null ? null : boundedRows(immutable_references),
+    placeholders: boundedRows(placeholders),
     diagnostics: diagnostics === null ? null : diagnosticSummary(diagnostics),
     object_code_units: object?.length ?? null,
     metadata: {
@@ -146,15 +185,7 @@ export const projectEvmInterfaceView = (
     SummaryAnalysisView | z.output<typeof evmViewRequestSchema>
   >(admitted, "summary", "evm");
   if (view === undefined)
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message: "EVM Evidence supports summary and evm views.",
-        },
-      ]),
-    );
+    return invalidAnalysisView("EVM Evidence supports summary and evm views.");
   const parsed = readEvmInterface(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;

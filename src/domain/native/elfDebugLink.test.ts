@@ -65,6 +65,10 @@ it("uses the directory of a POSIX image path", () => {
 });
 
 it("uses the directory of a Windows image path with a drive letter", () => {
+  expect(directoryStrings("C:/dir/sub/prog")).toEqual([
+    "C:/dir/sub/.debug/prog.debug",
+    "/usr/lib/debug/C/dir/sub/prog.debug",
+  ]);
   expect(directoryStrings("C:\\dir\\sub\\prog")).toEqual([
     "C:\\dir\\sub\\.debug\\prog.debug",
     "/usr/lib/debug/C/dir/sub/prog.debug",
@@ -144,7 +148,9 @@ it("accepts an explicit absence report", () => {
     candidate: null,
     verification: null,
     coverage: { status: "complete", examined_sections: 0 },
+    limitation_codes: ["standing_caveats"],
     limitations: [...ELF_DEBUG_LINK_LIMITATIONS],
   });
   expect(parsed.coverage.status).toBe("complete");
+  expect(parsed.limitation_codes).toEqual(["standing_caveats"]);
 });

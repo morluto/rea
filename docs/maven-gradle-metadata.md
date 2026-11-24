@@ -40,8 +40,10 @@ spelled. Missing project coordinates stay `null`. A `${property}` spelling is
 kept as written and listed in `unresolved`; this reader does not interpolate
 properties or inherit parent or BOM values. POM text goes through XML
 end-of-line handling, as Maven's reader applies it: CRLF and lone CR read as LF.
-POM coordinates, parent fields, and dependency fields use Maven's trimming
-rules, retaining non-ASCII characters at the edges of a declared version.
+POM coordinates, parent fields, dependency fields, and property values use
+Maven's trimming rules, retaining non-ASCII characters at their edges.
+Coordinate, parent, dependency and property values can contain text and CDATA.
+REA reports nested elements inside those values as malformed input.
 When a parent is declared, omitted project group/version fields point to the
 parent as possible sources. An omitted project `artifactId` is a missing child
 coordinate: [only group/version coordinates may be inherited](https://maven.apache.org/pom.html#Maven_Coordinates).
@@ -71,7 +73,7 @@ For Gradle module metadata, `gradle` records `format_version`,
 `org.gradle.usage`, `available-at` coordinates as spelled, and declared
 dependency and constraint counts. Nonempty variant names retain their exact
 spelling and identify their dependency and constraint rows. Duplicate names
-fail with `invalid_format`. Variant dependencies are `origin`
+fail as malformed metadata (see below). Variant dependencies are `origin`
 `variant-dependencies`; `dependencyConstraints` are `origin`
 `variant-constraints`. Rich versions keep `requires`, `prefers`, `strictly`,
 and `rejects`. A variant whose category is `platform` or `enforced-platform`
@@ -93,9 +95,10 @@ unknowns, not guesses.
 ## Limits and failures
 
 The selected file is limited to 1 MiB by default (16 MiB maximum). Exceeding
-the budget fails without partial success. Malformed XML or JSON is
-`invalid_format`. A well-formed document that is not a Maven project or Gradle
-module metadata file is `unsupported_target`. Document type declarations are
+the budget fails without partial success. Malformed XML or JSON is also
+`unsupported_target`, with `details.format_failure` set to `malformed`. A
+well-formed document that is not a Maven project or Gradle module metadata file
+is `unsupported_target` without that field. Document type declarations are
 unsupported. External entities are not resolved.
 
 A POM is counted as a stream before its document tree is built, and one with

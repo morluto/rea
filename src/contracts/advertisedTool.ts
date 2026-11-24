@@ -8,6 +8,16 @@ import {
   type CompactOutputSchemaPresentation,
 } from "./compactOutputSchema.js";
 
+/**
+ * Output advertisements recorded for named tools. Every other listed tool,
+ * including one registered live after the catalog was recorded, is compacted
+ * with `live`.
+ */
+export interface RecordedOutputAdvertisement {
+  readonly recordedTools: ReadonlySet<string>;
+  readonly live: CompactOutputSchemaPresentation;
+}
+
 // The one owner of what a client receives for a tool: its description, input
 // schema and output schema. The server's registration and `tools/list`
 // listing, catalog identities, served environment catalogs and client
@@ -22,8 +32,14 @@ export interface AdvertisedToolPresentation {
    * catalog that bounds its own size.
    */
   readonly input: CompactInputSchemaPresentation | "annotated";
-  /** Output schemas are bounded by this presentation, or omitted without one. */
-  readonly output: CompactOutputSchemaPresentation | undefined;
+  /**
+   * Output schemas are bounded by this presentation, already bounded for the
+   * named recorded tools, or omitted without one.
+   */
+  readonly output:
+    | CompactOutputSchemaPresentation
+    | RecordedOutputAdvertisement
+    | undefined;
 }
 
 /** The client-facing fields of one tool, canonical or advertised. */
@@ -91,20 +107,48 @@ const compactedOutput = new WeakMap<
   Map<number, Record<string, unknown>>
 >();
 
+const isRecordedOutputAdvertisement = (
+  presentation: AdvertisedToolPresentation["output"],
+): presentation is RecordedOutputAdvertisement =>
+  typeof presentation === "object" &&
+  presentation !== null &&
+  "recordedTools" in presentation;
+
+/**
+ * The budget for one listed tool, or undefined when that tool's schema is
+ * already the recorded advertisement.
+ */
+const outputBudget = (
+  presentation: Exclude<AdvertisedToolPresentation["output"], undefined>,
+  toolName: string | undefined,
+): number | undefined => {
+  if (!isRecordedOutputAdvertisement(presentation))
+    return presentation.budgetBytes;
+  if (toolName !== undefined && presentation.recordedTools.has(toolName))
+    return undefined;
+  return presentation.live.budgetBytes;
+};
+
 /** The advertised output schema, or undefined when the presentation omits it. */
 export const advertiseToolOutput = (
   outputSchema: Record<string, unknown>,
   presentation: AdvertisedToolPresentation["output"],
+  toolName?: string,
 ): Record<string, unknown> | undefined => {
   if (presentation === undefined) return undefined;
+  const budgetBytes = outputBudget(presentation, toolName);
+  // This named tool's schema was bounded when the catalog was recorded.
+  if (budgetBytes === undefined) return outputSchema;
   let byBudget = compactedOutput.get(outputSchema);
   if (byBudget === undefined)
     compactedOutput.set(outputSchema, (byBudget = new Map()));
-  let advertised = byBudget.get(presentation.budgetBytes);
+  let advertised = byBudget.get(budgetBytes);
   if (advertised === undefined)
     byBudget.set(
-      presentation.budgetBytes,
-      (advertised = presentAdvertisedOutputSchema(outputSchema, presentation)),
+      budgetBytes,
+      (advertised = presentAdvertisedOutputSchema(outputSchema, {
+        budgetBytes,
+      })),
     );
   return advertised;
 };

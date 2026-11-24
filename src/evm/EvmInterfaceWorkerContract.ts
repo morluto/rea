@@ -1,3 +1,4 @@
+import { EVMOLE_VERSION } from "./EvmoleProviderIdentity.js";
 import { z } from "zod";
 import { solidityMetadataSchema } from "../domain/evm/solidityMetadata.js";
 import { inspectEvmInterfaceInputSchema } from "../domain/evm/evmInterface.js";
@@ -26,7 +27,7 @@ export const evmWorkerRequestSchema = inspectEvmInterfaceInputSchema
 export const evmWorkerReplySchema = z.discriminatedUnion("ok", [
   z.strictObject({
     ok: z.literal(true),
-    version: z.literal("0.9.3"),
+    version: z.literal(EVMOLE_VERSION),
     bytecode: z.strictObject({
       metadata: solidityMetadataSchema.nullable().optional(),
       sha256: z

@@ -1,3 +1,4 @@
+import { EVMOLE_VERSION } from "./EvmoleProviderIdentity.js";
 import { EvmAdmissionError } from "./EvmAdmissionError.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { z } from "zod";
@@ -133,7 +134,7 @@ const main = async (): Promise<void> => {
       if (bytes === null) {
         reply = {
           ok: true,
-          version: "0.9.3",
+          version: EVMOLE_VERSION,
           bytecode: {
             sha256: null,
             bytes: selected?.ok ? selected.value.byteLength : null,
@@ -155,7 +156,7 @@ const main = async (): Promise<void> => {
         );
         if (!packageJson.ok) throw packageJson.cause;
         const metadata = z
-          .object({ version: z.literal("0.9.3") })
+          .object({ version: z.literal(EVMOLE_VERSION) })
           .parse(packageJson.value);
         const engine = await import("evmole/no_tla");
         engine.initSync({

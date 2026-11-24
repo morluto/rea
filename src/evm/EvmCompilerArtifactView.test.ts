@@ -130,6 +130,29 @@ it("bounds summary diagnostics to an errors-first preview with exact totals", ()
   expect(diagnostics.preview[0]?.json_pointer).toBe("/errors/40");
 });
 
+it("bounds summary placeholder rows to a counted preview", () => {
+  const placeholder = "__$" + "a".repeat(34) + "$__";
+  const result = projectAnalysisView(compilerParent(placeholder.repeat(20)), {
+    kind: "summary",
+  });
+  if (!result.ok) throw result.error;
+  const { placeholders } = (
+    result.value as {
+      summary: {
+        compiler_artifact: {
+          placeholders: {
+            total: number;
+            preview: unknown[];
+            preview_omitted: number;
+          };
+        };
+      };
+    }
+  ).summary.compiler_artifact;
+  expect(placeholders).toMatchObject({ total: 20, preview_omitted: 4 });
+  expect(placeholders.preview).toHaveLength(16);
+});
+
 it.each([
   undefined,
   "__$" + "a".repeat(34) + "$__",

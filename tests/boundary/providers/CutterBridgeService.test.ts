@@ -214,11 +214,10 @@ it("clears a poisoned command only after its exact UI-dispatcher receipt", async
   let receipt: string | undefined;
   let uiPending = true;
   let dispatches = 0;
-  const confirmCommandCompletion = vi.fn(
-    async (_session: string, id: string) =>
-      receipt === id && !uiPending
-        ? { ok: true as const, value: true }
-        : { ok: true as const, value: false },
+  const confirmCommandCompletion = vi.fn(async (_session: string, id: string) =>
+    receipt === id && !uiPending
+      ? { ok: true as const, value: true }
+      : { ok: true as const, value: false },
   );
   const service = new CutterBridgeService({
     listSessions: async () => ({
@@ -291,11 +290,10 @@ it("recovers canceled command A after B and does not retain poisoned B", async (
   const requestB = "8ca93d11-107d-41ed-8b40-31dd53cd26a6";
   const receipts = new Set<string>();
   let dispatches = 0;
-  const confirmCommandCompletion = vi.fn(
-    async (_session: string, id: string) =>
-      receipts.delete(id)
-        ? { ok: true as const, value: true }
-        : { ok: true as const, value: false },
+  const confirmCommandCompletion = vi.fn(async (_session: string, id: string) =>
+    receipts.delete(id)
+      ? { ok: true as const, value: true }
+      : { ok: true as const, value: false },
   );
   const execute = async () => {
     dispatches += 1;

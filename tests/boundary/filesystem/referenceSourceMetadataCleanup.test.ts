@@ -208,11 +208,13 @@ it("preserves Git metadata cleanup failure and the completed source read", async
 });
 
 it.each([
-  { read: "loose", close: "packed" },
-  { read: "packed", close: "loose" },
+  { read: "loose", close: "loose", code: "EIO" },
+  { read: "packed", close: "packed", code: "EIO" },
+  // A directory-shaped candidate is skipped, so the next probe can also fail.
+  { read: "packed", close: "loose", code: "EISDIR" },
 ] as const)(
-  "keeps the $read ref read failure primary and retains $close ref cleanup",
-  async ({ read, close }) => {
+  "keeps the $read ref $code primary and retains $close ref cleanup",
+  async ({ read, close, code }) => {
     const root = await createTestTempDirectory("rea-reference-packed-owner-");
     const gitdir = join(root, ".git");
     const loose = join(gitdir, "refs", "heads", "main");
@@ -226,9 +228,12 @@ it.each([
     ]);
 
     const paths = { loose, packed };
-    const readFailure = Object.assign(new Error(`injected ${read} ref EIO`), {
-      code: "EIO",
-    });
+    const readFailure = Object.assign(
+      new Error(`injected ${read} ref ${code}`),
+      {
+        code,
+      },
+    );
     const closeFailure = new Error(`injected ${close} ref close failure`);
     const closeCalls = new Map<FileHandle, number>();
     let readAttempted = false;
@@ -270,6 +275,7 @@ it.each([
         throw new Error("Expected the Git metadata failure aggregate");
       expect(failure.cause.cause).toBe(readFailure);
       expect(result.error.message).toContain(readFailure.message);
+      expect(closeCalls.size).toBe(1);
       expect(new Set(closeCalls.values())).toEqual(new Set([2]));
       expect(resources.cleanupResources).toEqual([paths[close]]);
     } finally {
