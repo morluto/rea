@@ -930,7 +930,7 @@ it("rejects incomplete or malformed classification even when available jobs succ
           CI_JOBS: JSON.stringify({
             changes: { result: "success", outputs },
             static: { result: "success" },
-            test: { result: "success" },
+            test: { result: "skipped" },
           }),
           CI_QUALIFICATION_DIRECTORY: "",
         },
@@ -1013,6 +1013,9 @@ it("fails fast only for ordinary PR matrices and rejects partial portable feedba
 
 it("runs a selected PR subset in planner-owned groups and still gates it", async () => {
   const { jobs } = await workflow();
+  expect(jobs.test?.if).toBe(
+    "${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.code == 'true') }}",
+  );
   // The planner owns every shard list, including one job per selected group.
   expect(jobs["test-shard"]?.strategy).toMatchObject({
     matrix: { shard: "${{ fromJSON(needs.changes.outputs.test_shards) }}" },
@@ -1085,7 +1088,7 @@ it("runs a selected PR subset in planner-owned groups and still gates it", async
   const ran = { build: "success", "test-shard": "success" };
   // A selected subset skips the separate source job.
   await expect(gate({}, ran)).resolves.toMatchObject({ stderr: "" });
-  for (const name of ["test-shard", "build"])
+  for (const name of ["test-shard", "build", "test"])
     await expect(gate({}, { ...ran, [name]: "skipped" })).rejects.toMatchObject(
       {
         code: 1,
@@ -1127,8 +1130,8 @@ it("binds each canonical lane to its explicit fast and full workflow jobs", asyn
   // gate decision, rather than silently assuming that its job has the same name.
   const expected: Record<string, { fast: string[]; full: string[] }> = {
     code: {
-      fast: ["build", "test-shard", "test-source"],
-      full: ["build", "test-shard"],
+      fast: ["build", "test-shard", "test-source", "test"],
+      full: ["build", "test-shard", "test"],
     },
     runtime: {
       fast: ["windows-native-build", "package-e2e"],
@@ -1221,7 +1224,6 @@ it("binds each canonical lane to its explicit fast and full workflow jobs", asyn
       },
     };
     context.static = { result: "success" };
-    context.test = { result: "success" };
     for (const name of required.fast) context[name] = { result: "success" };
     await expect(executeGate(context), scope).resolves.toMatchObject({
       stderr: "",
