@@ -188,6 +188,11 @@ const decompileRequest = (
       | "sec"
       | "app"
       | "misc";
+    readonly producer_limits?: {
+      readonly input_bytes?: number;
+      readonly output_bytes?: number;
+      readonly file_bytes?: number;
+    };
   },
 ) =>
   uefiRequestSchema.parse({
@@ -10285,4 +10290,179 @@ it("strictly verifies malformed and out-of-bounds PE headers are safely handled"
   nonPeSig.writeInt32LE(64, 0x3c);
   nonPeSig.write("NOTP", 64);
   expect(detectPeTeMachineWidth(nonPeSig)).toBe("unknown");
+});
+
+it("strictly verifies manifest order invariance and resolves conflicting metadata to unresolved null", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-manifest-conflict-",
+  );
+  const inDir = join(directory, "in");
+  const outDir1 = join(directory, "out1");
+  const outDir2 = join(directory, "out2");
+  await mkdir(inDir, { recursive: true });
+
+  const peBytes = createMinimalPeBuffer(0x8664, 1, 256);
+  await writeFile(join(inDir, "SampleDriver.efi"), peBytes);
+
+  const rowA = {
+    payload_file: "SampleDriver.efi",
+    phase: "pei",
+    name: "PeiSample",
+    guid: "11111111-1111-1111-1111-111111111111",
+  };
+  const rowB = {
+    payload_file: "./SampleDriver.efi",
+    phase: "dxe",
+    name: "DxeSample",
+    guid: "22222222-2222-2222-2222-222222222222",
+  };
+
+  // Order 1: [rowA, rowB]
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({ modules: [rowA, rowB] }),
+  );
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+
+  try {
+    // Under filter_phase: "dxe", neither conflicting phase should be adopted
+    const executedFiltered = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, join(directory, "out_dxe"), {
+          filter_phase: "dxe",
+          include_disassembly: false,
+        }),
+      ),
+    );
+    const resultFiltered = executedFiltered.value.result as UefiDecompileResult;
+    // Because phase conflicted, it was left unresolved (null), falling back to MISC, so it does not match "dxe"
+    expect(resultFiltered.modules).toHaveLength(0);
+
+    // Run Order 1 with filter_phase: "all"
+    const executed1 = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir1, {
+          filter_phase: "all",
+          include_disassembly: false,
+        }),
+      ),
+    );
+    const result1 = executed1.value.result as UefiDecompileResult;
+    expect(result1.modules).toHaveLength(1);
+    const mod1 = result1.modules[0]!;
+    // Conflicting GUID and name are left unresolved (null)
+    expect(mod1.guid).toBeNull();
+    expect(result1.coverage).toBe("partial");
+    expect(result1.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("conflicting metadata for payload"),
+      ]),
+    );
+
+    // Order 2: [rowB, rowA] - reversed order must produce the exact same outcome
+    await writeFile(
+      join(inDir, "firmware_manifest.json"),
+      JSON.stringify({ modules: [rowB, rowA] }),
+    );
+
+    const executed2 = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir2, {
+          filter_phase: "all",
+          include_disassembly: false,
+        }),
+      ),
+    );
+    const result2 = executed2.value.result as UefiDecompileResult;
+    expect(result2.modules).toHaveLength(1);
+    const mod2 = result2.modules[0]!;
+    expect(mod2.guid).toBeNull();
+    expect(mod2.name).toBe(mod1.name);
+    expect(mod2.phase).toBe(mod1.phase);
+    expect(result2.coverage).toBe("partial");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("strictly verifies caller-configured producer_limits are forwarded to Ghidra args and staging bounds", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-producer-limits-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(
+    join(inDir, "Module.efi"),
+    createMinimalPeBuffer(0x8664, 1, 256),
+  );
+
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+
+  let capturedArgs: readonly string[] = [];
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args) => {
+      if (command.includes("analyzeHeadless")) {
+        capturedArgs = args;
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(outC, "void func() {}");
+        }
+        return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  try {
+    const provider = new UefiAnalysisProvider({
+      environment: {
+        PATH: process.env.PATH,
+        GHIDRA_INSTALL_DIR: mockGhidraDir,
+      },
+      ghidraInstallationHost: ghidraProfileInstallationHost,
+    });
+    try {
+      // 1. With custom producer_limits
+      const customOutputBytes = 16 * 1024 * 1024;
+      const customFileBytes = 128 * 1024 * 1024;
+      const customInputBytes = 256 * 1024 * 1024;
+
+      const executed = expectOk(
+        await provider.execute(
+          decompileRequest(inDir, outDir, {
+            include_disassembly: false,
+            producer_limits: {
+              output_bytes: customOutputBytes,
+              file_bytes: customFileBytes,
+              input_bytes: customInputBytes,
+            },
+          }),
+        ),
+      );
+      const result = executed.value.result as UefiDecompileResult;
+      expect(result.coverage).toBe("complete");
+
+      const scriptIdx = capturedArgs.indexOf("-postScript");
+      expect(scriptIdx).toBeGreaterThanOrEqual(0);
+      const perModuleArg = capturedArgs[scriptIdx + 3];
+      const totalArg = capturedArgs[scriptIdx + 4];
+      expect(perModuleArg).toBe(String(customOutputBytes));
+      expect(totalArg).toBe(String(customFileBytes));
+    } finally {
+      await provider.close();
+    }
+  } finally {
+    spy.mockRestore();
+  }
 });

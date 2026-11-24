@@ -4,7 +4,7 @@ import { isAbsolute } from "node:path";
 import type { JsonValue } from "../jsonValue.js";
 import { digestSchema } from "../digests.js";
 import { localPathStringSchema } from "../localPath.js";
-import { UEFI_FIRMWARE_LIMITS } from "./uefiLimits.js";
+import { UEFI_FIRMWARE_LIMITS, uefiProducerLimitsField } from "./uefiLimits.js";
 
 const bytes = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const range = z.strictObject({ offset: bytes, length: bytes.positive() });
@@ -294,6 +294,7 @@ export const uefiInputSchemas = {
       .enum(["all", "pei", "dxe", "smm", "sec", "app", "misc"])
       .default("all")
       .describe("Filter by UEFI initialization phase"),
+    producer_limits: uefiProducerLimitsField,
   }),
 } as const;
 

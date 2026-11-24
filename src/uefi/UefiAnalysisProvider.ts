@@ -91,7 +91,10 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema, ownedJsonValueSchema } from "../domain/jsonValue.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Result } from "../domain/result.js";
-import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
+import {
+  UEFI_FIRMWARE_LIMITS,
+  resolveUefiProducerLimits,
+} from "../domain/uefi/uefiLimits.js";
 import {
   uefiResultSchemas,
   type UefiDecompileResult,
@@ -1504,15 +1507,16 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       prefix: "rea-uefi-decompile-",
     });
 
-    const MAX_DISASSEMBLY_MODULE_BYTES = 2 * 1024 * 1024;
-    const MAX_DISASSEMBLY_TOTAL_BYTES = 64 * 1024 * 1024;
+    const limits = resolveUefiProducerLimits(request.input.producer_limits);
+    const MAX_DISASSEMBLY_MODULE_BYTES = limits.output_bytes;
+    const MAX_DISASSEMBLY_TOTAL_BYTES = limits.file_bytes;
     const MAX_DISASSEMBLY_FAILURE_DIAGNOSTICS = 20;
     let recordedDisassemblyFailures = 0;
     let totalStagedAsmBytes = 0;
     const usedDisassemblers = new Set<string>();
 
-    const MAX_DECOMPILE_MODULE_BYTES = 4 * 1024 * 1024;
-    const MAX_DECOMPILE_TOTAL_BYTES = 64 * 1024 * 1024;
+    const MAX_DECOMPILE_MODULE_BYTES = limits.output_bytes;
+    const MAX_DECOMPILE_TOTAL_BYTES = limits.file_bytes;
     const MAX_GHIDRA_FAILURE_DIAGNOSTICS = 20;
     let recordedGhidraFailures = 0;
     let totalStagedCBytes = 0;
@@ -1530,14 +1534,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     ): string => {
       const limitLabel =
         limitBytes < MAX_DECOMPILE_MODULE_BYTES
-          ? "64 MiB aggregate staging budget"
-          : "4 MiB per-module limit";
+          ? `${Math.round(MAX_DECOMPILE_TOTAL_BYTES / (1024 * 1024))} MiB aggregate staging budget`
+          : `${Math.round(MAX_DECOMPILE_MODULE_BYTES / (1024 * 1024))} MiB per-module limit`;
       return retainedRecoveredCode
         ? `Decompiled C output for ${moduleName} stopped after reaching ${limitLabel}; retained recovered functions.`
         : `Decompiled C output for ${moduleName} stopped after reaching ${limitLabel}; recovered with reconstructed entry scaffolding.`;
     };
 
-    const MAX_RAW_PAYLOAD_TOTAL_BYTES = 128 * 1024 * 1024;
+    const MAX_RAW_PAYLOAD_TOTAL_BYTES = limits.input_bytes;
     let totalStagedRawBytes = 0;
 
     let publishedResult: UefiDecompileResult | undefined;
@@ -1801,13 +1805,16 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   MAX_RAW_PAYLOAD_TOTAL_BYTES
                 ) {
                   isCoveragePartial = true;
+                  const rawBudgetMiB = Math.round(
+                    MAX_RAW_PAYLOAD_TOTAL_BYTES / (1024 * 1024),
+                  );
                   if (
                     !effectiveLimitations.includes(
-                      "Batch decompilation input staging truncated after reaching 128 MiB aggregate staging budget.",
+                      `Batch decompilation input staging truncated after reaching ${rawBudgetMiB} MiB aggregate staging budget.`,
                     )
                   ) {
                     effectiveLimitations.push(
-                      "Batch decompilation input staging truncated after reaching 128 MiB aggregate staging budget.",
+                      `Batch decompilation input staging truncated after reaching ${rawBudgetMiB} MiB aggregate staging budget.`,
                     );
                   }
                   continue;
@@ -2097,15 +2104,20 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           totalStagedRawBytes += modBytes.length;
           relativePayloadFile = efiRelPath;
           payloadSha256 = sha256Hex(modBytes);
-        } else if (
-          !effectiveLimitations.includes(
-            "Raw executable payload staging truncated after reaching 128 MiB aggregate staging budget.",
-          )
-        ) {
+        } else {
           isCoveragePartial = true;
-          effectiveLimitations.push(
-            "Raw executable payload staging truncated after reaching 128 MiB aggregate staging budget.",
+          const rawBudgetMiB = Math.round(
+            MAX_RAW_PAYLOAD_TOTAL_BYTES / (1024 * 1024),
           );
+          if (
+            !effectiveLimitations.includes(
+              `Raw executable payload staging truncated after reaching ${rawBudgetMiB} MiB aggregate staging budget.`,
+            )
+          ) {
+            effectiveLimitations.push(
+              `Raw executable payload staging truncated after reaching ${rawBudgetMiB} MiB aggregate staging budget.`,
+            );
+          }
         }
 
         const machineWidth = detectPeTeMachineWidth(modBytes);
@@ -2193,13 +2205,16 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             if (remainingAsmBytes <= 0) {
               disassemblyStatus = "omitted";
               isCoveragePartial = true;
+              const asmBudgetMiB = Math.round(
+                MAX_DISASSEMBLY_TOTAL_BYTES / (1024 * 1024),
+              );
               if (
                 !effectiveLimitations.includes(
-                  "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
+                  `Disassembly output truncated after reaching ${asmBudgetMiB} MiB aggregate staging budget.`,
                 )
               ) {
                 effectiveLimitations.push(
-                  "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
+                  `Disassembly output truncated after reaching ${asmBudgetMiB} MiB aggregate staging budget.`,
                 );
               }
             } else {
@@ -2490,13 +2505,16 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 reservedScaffoldBytes;
               if (cStat.size > remainingCBytes) {
                 isCoveragePartial = true;
+                const decompileBudgetMiB = Math.round(
+                  MAX_DECOMPILE_TOTAL_BYTES / (1024 * 1024),
+                );
                 if (
                   !effectiveLimitations.includes(
-                    "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                    `Decompiled C output truncated after reaching ${decompileBudgetMiB} MiB aggregate staging budget.`,
                   )
                 ) {
                   effectiveLimitations.push(
-                    "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                    `Decompiled C output truncated after reaching ${decompileBudgetMiB} MiB aggregate staging budget.`,
                   );
                 }
               } else if (cStat.size > MAX_DECOMPILE_MODULE_BYTES) {
@@ -3313,10 +3331,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
 
       type ManifestModuleEntry = {
         guid?: string | null | undefined;
-        name?: string | undefined;
-        phase?: string | undefined;
-        type?: string | undefined;
-        payloadSha256?: string | undefined;
+        name?: string | null | undefined;
+        phase?: string | null | undefined;
+        type?: string | null | undefined;
+        payloadSha256?: string | null | undefined;
       };
       const isWindows = HOST_PLATFORM.platform === "win32";
       const isRootedPath = (
@@ -3768,28 +3786,167 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   }
                 }
 
-                const manifestEntryRecord: ManifestModuleEntry = {
-                  guid: validGuid,
-                  name: validName,
-                  phase: validPhase,
-                  type: validType,
-                  payloadSha256: validPayloadSha256,
-                };
-                manifestModulesByExactRelPath.set(
-                  exactNorm,
-                  manifestEntryRecord,
-                );
+                const existingExact =
+                  manifestModulesByExactRelPath.get(exactNorm);
+                let effectiveRecord: ManifestModuleEntry;
+                if (existingExact !== undefined) {
+                  effectiveRecord = existingExact;
+                  let hasConflict = false;
+                  if (
+                    existingExact.guid !== undefined &&
+                    validGuid !== undefined &&
+                    existingExact.guid !== validGuid
+                  ) {
+                    existingExact.guid = null;
+                    hasConflict = true;
+                  } else if (existingExact.guid === undefined) {
+                    existingExact.guid = validGuid;
+                  }
+
+                  if (
+                    existingExact.name !== undefined &&
+                    validName !== undefined &&
+                    existingExact.name !== validName
+                  ) {
+                    existingExact.name = null;
+                    hasConflict = true;
+                  } else if (existingExact.name === undefined) {
+                    existingExact.name = validName;
+                  }
+
+                  if (
+                    existingExact.phase !== undefined &&
+                    validPhase !== undefined &&
+                    existingExact.phase !== validPhase
+                  ) {
+                    existingExact.phase = null;
+                    hasConflict = true;
+                  } else if (existingExact.phase === undefined) {
+                    existingExact.phase = validPhase;
+                  }
+
+                  if (
+                    existingExact.type !== undefined &&
+                    validType !== undefined &&
+                    existingExact.type !== validType
+                  ) {
+                    existingExact.type = null;
+                    hasConflict = true;
+                  } else if (existingExact.type === undefined) {
+                    existingExact.type = validType;
+                  }
+
+                  if (
+                    existingExact.payloadSha256 !== undefined &&
+                    validPayloadSha256 !== undefined &&
+                    existingExact.payloadSha256 !== validPayloadSha256
+                  ) {
+                    existingExact.payloadSha256 = null;
+                    hasConflict = true;
+                  } else if (existingExact.payloadSha256 === undefined) {
+                    existingExact.payloadSha256 = validPayloadSha256;
+                  }
+
+                  if (hasConflict) {
+                    isCoveragePartial = true;
+                    const safePayload = formatMarkdownCodeSpan(
+                      ellipsisExcerpt(
+                        String(m.payload_file ?? exactNorm).replace(
+                          /[\r\n]+/g,
+                          " ",
+                        ),
+                        128,
+                      ),
+                    );
+                    if (limitations.length < 50) {
+                      limitations.push(
+                        `Manifest firmware_manifest.json contains conflicting metadata for payload ${safePayload}; conflicting fields left unresolved.`,
+                      );
+                    }
+                  }
+                } else {
+                  effectiveRecord = {
+                    guid: validGuid,
+                    name: validName,
+                    phase: validPhase,
+                    type: validType,
+                    payloadSha256: validPayloadSha256,
+                  };
+                  manifestModulesByExactRelPath.set(exactNorm, effectiveRecord);
+                }
+
                 declaredManifestPayloads.push({
                   payloadFile: m.payload_file,
                   exactNorm,
-                  record: manifestEntryRecord,
+                  record: effectiveRecord,
                 });
-                if (!manifestModulesByFoldedRelPath.has(foldedNorm)) {
+
+                if (isWindows) {
+                  const existingFolded =
+                    manifestModulesByFoldedRelPath.get(foldedNorm);
+                  if (existingFolded !== undefined) {
+                    if (
+                      existingFolded.guid !== undefined &&
+                      validGuid !== undefined &&
+                      existingFolded.guid !== validGuid
+                    ) {
+                      existingFolded.guid = null;
+                    } else if (existingFolded.guid === undefined) {
+                      existingFolded.guid = validGuid;
+                    }
+
+                    if (
+                      existingFolded.name !== undefined &&
+                      validName !== undefined &&
+                      existingFolded.name !== validName
+                    ) {
+                      existingFolded.name = null;
+                    } else if (existingFolded.name === undefined) {
+                      existingFolded.name = validName;
+                    }
+
+                    if (
+                      existingFolded.phase !== undefined &&
+                      validPhase !== undefined &&
+                      existingFolded.phase !== validPhase
+                    ) {
+                      existingFolded.phase = null;
+                    } else if (existingFolded.phase === undefined) {
+                      existingFolded.phase = validPhase;
+                    }
+
+                    if (
+                      existingFolded.type !== undefined &&
+                      validType !== undefined &&
+                      existingFolded.type !== validType
+                    ) {
+                      existingFolded.type = null;
+                    } else if (existingFolded.type === undefined) {
+                      existingFolded.type = validType;
+                    }
+
+                    if (
+                      existingFolded.payloadSha256 !== undefined &&
+                      validPayloadSha256 !== undefined &&
+                      existingFolded.payloadSha256 !== validPayloadSha256
+                    ) {
+                      existingFolded.payloadSha256 = null;
+                    } else if (existingFolded.payloadSha256 === undefined) {
+                      existingFolded.payloadSha256 = validPayloadSha256;
+                    }
+                  } else {
+                    manifestModulesByFoldedRelPath.set(
+                      foldedNorm,
+                      effectiveRecord,
+                    );
+                  }
+                } else if (!manifestModulesByFoldedRelPath.has(foldedNorm)) {
                   manifestModulesByFoldedRelPath.set(
                     foldedNorm,
-                    manifestEntryRecord,
+                    effectiveRecord,
                   );
                 }
+
                 if (!isWindows) {
                   const isCrossPlatformRooted = isRootedPath(
                     m.payload_file,
@@ -3808,13 +3965,13 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                         manifestModulesByFallbackRelPath.get(key);
                       if (
                         existing !== undefined &&
-                        existing !== manifestEntryRecord
+                        existing !== effectiveRecord
                       ) {
                         ambiguousCrossPlatformKeys.add(key);
                       } else {
                         manifestModulesByFallbackRelPath.set(
                           key,
-                          manifestEntryRecord,
+                          effectiveRecord,
                         );
                       }
                     };
@@ -4152,14 +4309,22 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             | "SMM"
             | "APP"
             | "MISC";
+        } else if (fromManifest?.phase === null) {
+          // Phase was explicitly left unresolved due to conflicting manifest rows
         } else {
-          const typePhase = phaseFromFfsTypeName(fromManifest?.type);
+          const typePhase =
+            typeof fromManifest?.type === "string"
+              ? phaseFromFfsTypeName(fromManifest.type)
+              : undefined;
           if (typePhase !== undefined) {
             phase = typePhase;
           }
         }
 
-        let typeName = fromManifest?.type;
+        let typeName: string | undefined =
+          typeof fromManifest?.type === "string"
+            ? fromManifest.type
+            : undefined;
         if (
           manifestPhase &&
           typeName &&
