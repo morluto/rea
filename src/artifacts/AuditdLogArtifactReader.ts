@@ -1,9 +1,7 @@
 import type { Readable } from "node:stream";
 
-import {
-  auditdLogMetadataSchema,
-  type ArtifactFormatMetadata,
-} from "../domain/artifactFormatMetadata.js";
+import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
+import { auditdLogMetadataSchema } from "../domain/formatMetadata/androidAndSystemMetadata.js";
 import type { RegionDecodeFailure } from "../domain/firmware/regionDecoder.js";
 import {
   createAuditdLogDecoder,

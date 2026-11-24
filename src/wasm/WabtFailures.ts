@@ -28,12 +28,13 @@ import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import type { AnalysisControlLimit } from "../domain/analysisSettings.js";
 import {
   DEFAULT_WASM_COMMAND_TIMEOUT_MS,
+  WABT_ACCEPTED_RANGE,
   WABT_VERSION,
   WASM_RESOURCE_DEFAULTS,
   WASM_RESOURCE_MAXIMUMS,
   type WasmResourceLimits,
 } from "../domain/wasm/wasmArtifact.js";
-import { WABT_ACCEPTED_RANGE, WABT_PROVIDER_IDENTITY } from "./WabtRelease.js";
+import { WABT_PROVIDER_IDENTITY } from "./WabtRelease.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 const OUTPUT_LIMIT_EXCERPT_BYTES = 4096;
 const OPERATION = "inspect_wasm_artifact";

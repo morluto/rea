@@ -49,9 +49,6 @@ export const isSidecar = (path: string): boolean => {
   );
 };
 
-export const isWithin = (path: string, root: string): boolean =>
-  root === "." || path === root || path.startsWith(`${root}/`);
-
 /** Check whether `path` lies at or beneath any root in `rootSet` in O(path depth). */
 export const isWithinAnyRoot = (
   path: string,
@@ -67,7 +64,7 @@ export const isWithinAnyRoot = (
   return false;
 };
 
-/** Find the matching root in a disjoint `rootSet` (or `"."` when present) in O(path depth). */
+/** Find the path or its closest exact ancestor, with `"."` as the selected-root fallback. */
 export const findWithinRoot = (
   path: string,
   rootSet: ReadonlySet<string>,
@@ -169,11 +166,8 @@ const applicationRoots = (
     );
     if (index >= 0) found.add(segments.slice(0, index + 1).join("/"));
   }
-  const roots = [...found];
-  return roots
-    .filter(
-      (root) => !roots.some((other) => other !== root && isWithin(root, other)),
-    )
+  return [...found]
+    .filter((root) => !isWithinAnyRoot(parentDirectory(root), found))
     .sort(compare);
 };
 
@@ -251,12 +245,7 @@ const enclosingBundle = (
   bundles: ReadonlySet<string>,
 ): string | null => {
   if (path === ".") return null;
-  const segments = path.split("/");
-  for (let length = segments.length - 1; length > 0; length--) {
-    const candidate = segments.slice(0, length).join("/");
-    if (bundles.has(candidate)) return candidate;
-  }
-  return bundles.has(".") ? "." : null;
+  return findWithinRoot(parentDirectory(path), bundles);
 };
 
 const bundleLayout = (bundle: string, tree: Tree): Bundle["layout"] => {

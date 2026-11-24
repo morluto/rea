@@ -1,3 +1,4 @@
+import { registerContractDocumentCommand } from "./contractDocumentCommand.js";
 import { z } from "zod";
 import type { Logger } from "pino";
 import { matchNativeFunctionsFromBundles } from "../application/native/NativeFunctionMatchingService.js";
@@ -9,10 +10,7 @@ import type { Evidence } from "../domain/evidence.js";
 import { cliEvidenceDeliveryInputError } from "./analysisEvidenceDeliveryOptions.js";
 import { publishCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  admittedContractInput,
-  registerContractDocumentCommand,
-} from "./contractCommand.js";
+import { admittedContractInput } from "./contractCommand.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { CliInstance } from "./types.js";
 import { parseNativeMatchingAllowance } from "../config/nativeMatchingAllowance.js";

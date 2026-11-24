@@ -732,6 +732,43 @@ it.each(["$ref", "$dynamicRef"])(
 );
 
 describe("root union default presentation", () => {
+  it("preserves a required prototype-named field in a group-only object", () => {
+    const canonical = {
+      anyOf: [
+        {
+          type: "object",
+          properties: { text: { type: "string" } },
+          required: ["text"],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: {
+            config: {
+              type: "object",
+              properties: { ["__proto__"]: { type: "string", default: "" } },
+              required: ["__proto__"],
+              additionalProperties: false,
+            },
+          },
+          required: ["config"],
+          additionalProperties: false,
+        },
+      ],
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+
+    expect(advertised).not.toHaveProperty("anyOf");
+    const config = (advertised.properties as Record<string, unknown>)["config"];
+    // Client-facing JSON must carry the field as an own property.
+    expect(JSON.parse(JSON.stringify(config))).toEqual({
+      type: "object",
+      properties: { ["__proto__"]: { type: "string" } },
+      required: ["__proto__"],
+      additionalProperties: false,
+    });
+  });
+
   it.each(drafts)(
     "keeps shared defaults while omitting conflicting and group-only defaults in %s",
     (target) => {

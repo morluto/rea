@@ -205,6 +205,10 @@ export const javaScriptApplicationCliProjection = (target: string) =>
         description:
           "Inline JSON or JSON file with per-source semantic_precision evaluator budgets; independent of graph retention and worker memory.",
       },
+      semantic_analysis: {
+        description:
+          "complete (default) builds semantic analysis for every selected source; structure-only returns static and application-graph facts without semantic analysis.",
+      },
     },
     jsonInputs: {
       semantic_precision:

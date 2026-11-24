@@ -4,7 +4,7 @@ import type { Writable } from "node:stream";
 import { estimateTokenCount } from "tokenx";
 
 import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
-import type { ParsedCliOutputArguments } from "../cliOutput.js";
+import type { ParsedCliOutputArguments } from "./cliOutput.js";
 import {
   cliOperationFailureIdentity,
   cliOperationFailurePayload,

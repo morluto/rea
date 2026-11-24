@@ -3,10 +3,8 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import pino from "pino";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import {
-  registerServiceTools,
-  type GdbToolOptions,
-} from "../../../src/server/serviceToolBindings.js";
+import type { GdbToolOptions } from "../../../src/server/debuggerToolBindings.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import {
   createEvidence,

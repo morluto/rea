@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import { jsonLinesErrorRecord } from "../../../src/cli/jsonLines.js";
-import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
 import { silentLogger } from "../../../src/logger.js";
 

@@ -6,10 +6,8 @@ import { FIRMWARE_TOOL_CONTRACTS } from "../contracts/firmware/firmwareToolContr
 import { FIRMWARE_OPERATION_ENGINES } from "../contracts/firmware/firmwareToolRequirements.js";
 import type { FirmwareOperation } from "../domain/firmware/firmwareAnalysis.js";
 import { contractNamed } from "./contractCliDescription.js";
-import {
-  inspectWithService,
-  registerContractCommand,
-} from "./contractCommand.js";
+import { registerContractCommand } from "./contractCommand.js";
+import { inspectWithService } from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 const FIRMWARE_PATH_HELP = "Local firmware path; never executed";

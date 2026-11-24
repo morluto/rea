@@ -3,9 +3,11 @@ import {
   Il2cppBinaryFormatFailure,
   IL2CPP_BINARY_BYTES,
   IL2CPP_BINARY_FORMAT,
+  isIl2cppLinkConflict,
 } from "./Il2cppBinaryFormat.js";
 import {
   isParseLimit,
+  parseFailureAnalysisError,
   parseLimitConstraint,
 } from "../domain/parseFailureAnalysisError.js";
 import { Il2cppMetadataFormatFailure } from "./Il2cppMetadataFormat.js";
@@ -75,6 +77,39 @@ const inferredReferenceForm = (architecture: string) =>
   architecture === "arm64"
     ? "an adjacent ADRP+ADD pair"
     : "RIP-relative LEA/MOV";
+/**
+ * Both files parsed, but the binary does not link to the metadata. They are
+ * two well-formed records that disagree, and nothing establishes which one
+ * is wrong, so neither is called malformed: the refusal lists both selecting
+ * fields, and the caller's partial observation keeps both files' identities.
+ */
+const linkConflict = (
+  binaryPath: string,
+  metadataPath: string,
+  cause: Il2cppBinaryFormatFailure,
+): AnalysisInputError =>
+  new AnalysisInputError(
+    OPERATION,
+    {
+      cause,
+      conformsToInputContract: true,
+      remediationAction:
+        "Select the native binary and global-metadata.dat from the same build. If they are from the same build, either file may be damaged or the binary's registration layout may be outside coverage. Without the binary, the metadata alone can still be read.",
+    },
+    [
+      {
+        path: ["path"],
+        reason: "invalid_value",
+        message: `Selected metadata ${metadataPath} does not link to the selected binary: ${cause.message}`,
+      },
+      {
+        path: ["binary_path"],
+        reason: "invalid_value",
+        message: `Selected binary ${binaryPath} does not link to the metadata: ${cause.message}`,
+      },
+    ],
+  );
+
 const failureForPrimary = (
   facts: ArtifactFilePrimaryFacts,
   path: string,
@@ -103,27 +138,20 @@ const failureForPrimary = (
       ),
     );
   if (
-    cause instanceof Il2cppBinaryFormatFailure ||
-    cause instanceof Il2cppMetadataFormatFailure
-  ) {
-    const binary = cause instanceof Il2cppBinaryFormatFailure;
-    // Metadata names are read on demand while linking, so a metadata failure
-    // can surface while path still names the binary.
-    const target = binary ? path : metadataPath;
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(OPERATION, target, cause.message, {
-          cause,
-        })
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: [binary ? field : "path"],
-            reason: "invalid_format",
-            message: binary
-              ? `Selected binary ${target} does not link to the metadata: ${cause.message}`
-              : `Selected artifact ${target} is corrupt: ${cause.message}`,
-          },
-        ]);
-  }
+    cause instanceof Il2cppBinaryFormatFailure &&
+    isIl2cppLinkConflict(cause.reason)
+  )
+    return linkConflict(path, metadataPath, cause);
+  // Each file's own format failure names that file. Metadata names are read
+  // on demand while linking, so a metadata failure can surface while `path`
+  // here still names the binary.
+  const ownFormatFailure =
+    cause instanceof Il2cppBinaryFormatFailure
+      ? parseFailureAnalysisError(OPERATION, path, cause)
+      : cause instanceof Il2cppMetadataFormatFailure
+        ? parseFailureAnalysisError(OPERATION, metadataPath, cause)
+        : undefined;
+  if (ownFormatFailure !== undefined) return ownFormatFailure;
   const identityFailure = projectOwnedArtifactIdentityFailure(
     facts,
     OPERATION,

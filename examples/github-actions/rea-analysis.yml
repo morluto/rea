@@ -28,7 +28,7 @@ jobs:
           node-version: "24.22.1"
       - name: Install pinned REA
         run: |
-          npm install --prefix "${RUNNER_TEMP}/rea-tool" --no-audit --no-fund --ignore-scripts --save-exact rea-agents@6.7.0
+          npm install --prefix "${RUNNER_TEMP}/rea-tool" --no-audit --no-fund --ignore-scripts --save-exact rea-agents@6.10.1
           echo "${RUNNER_TEMP}/rea-tool/node_modules/.bin" >> "${GITHUB_PATH}"
       - name: Build a known artifact
         id: build

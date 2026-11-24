@@ -3,6 +3,13 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { Tool, ServerContext } from "@modelcontextprotocol/server";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { DISCOVER_TOOLS } from "../contracts/catalog/catalogDiscovery.js";
+import {
+  listedOutputJsonSchema,
+  presentAdvertisedOutputSchema,
+} from "../contracts/compactOutputSchema.js";
+import { COMPACT_OUTPUT_SCHEMA_PRESENTATION } from "../contracts/mcpSchemaPresentation.js";
+import { isRecord } from "../kernel/isRecord.js";
 import type { RecordedMcpCatalog } from "../recordedMcpCatalog.js";
 import { DeferredEvidenceMcpServer } from "./DeferredEvidenceMcpServer.js";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
@@ -83,6 +90,8 @@ const fixture = async (
     readonly progressive?: boolean;
     readonly unionOutput?: boolean;
     readonly mode?: "legacy" | "auto";
+    readonly outputProfile?: "compact";
+    readonly compactOutputSchema?: Record<string, unknown>;
   } = {},
 ) => {
   const calls = vi.fn<(n: number, context: ServerContext) => void>();
@@ -97,6 +106,9 @@ const fixture = async (
       ...tool,
       outputSchema: z.toJSONSchema(canonicalOutput),
     })),
+    ...(options.compactOutputSchema === undefined
+      ? {}
+      : { compactOutputSchemas: { fixture: options.compactOutputSchema } }),
   };
   const server = new DeferredEvidenceMcpServer(
     options.evidenceReferenceAlternative
@@ -108,7 +120,7 @@ const fixture = async (
       target.ownRuntimeCleanup(async () => {
         closed();
         if (options.failClose?.()) throw new Error("cleanup denied");
-        await target.closePartialRuntime();
+        await target.closeRuntimeHooks();
       });
       await options.startup?.hold();
       if (options.failLoad) throw new Error("PRIVATE startup cause");
@@ -154,7 +166,12 @@ const fixture = async (
         );
       });
     },
-    { maximumInputElements: options.maximumInputElements },
+    {
+      maximumInputElements: options.maximumInputElements,
+      ...(options.outputProfile === undefined
+        ? {}
+        : { outputProfile: options.outputProfile }),
+    },
   );
   const client = new Client(
     { name: "deferred-fixture-client", version: "1" },
@@ -180,6 +197,46 @@ const fixture = async (
     loads: () => loads,
   };
 };
+
+it("compacts live discovery output and serves the recorded compact schema", async () => {
+  const recordedOutput = {
+    type: "object",
+    properties: {
+      n: { type: "integer", description: "recorded nested guidance" },
+    },
+    required: ["n"],
+    additionalProperties: false,
+  };
+  const canonical = DISCOVER_TOOLS.outputSchema["~standard"].jsonSchema.output({
+    target: "draft-2020-12",
+  });
+  if (!isRecord(canonical)) throw new Error("discover_tools output schema");
+  const f = await fixture({
+    progressive: true,
+    outputProfile: "compact",
+    compactOutputSchema: recordedOutput,
+  });
+  const discovery = (await f.client.listTools()).tools.find(
+    (tool) => tool.name === "discover_tools",
+  );
+  expect(discovery?.outputSchema).toEqual(
+    presentAdvertisedOutputSchema(
+      listedOutputJsonSchema(canonical),
+      COMPACT_OUTPUT_SCHEMA_PRESENTATION,
+    ),
+  );
+  expect(discovery?.outputSchema).not.toEqual(canonical);
+  const loaded = await f.client.callTool({
+    name: "discover_tools",
+    arguments: { names: ["fixture"] },
+  });
+  expect(loaded.isError).not.toBe(true);
+  expect(f.loads()).toBe(0);
+  expect(
+    (await f.client.listTools()).tools.find((tool) => tool.name === "fixture")
+      ?.outputSchema,
+  ).toEqual(recordedOutput);
+});
 
 it("loads cold definitions without initializing analysis and preserves canonical validation and identity", async () => {
   const f = await fixture({ progressive: true });

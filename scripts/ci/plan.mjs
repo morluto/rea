@@ -14,7 +14,8 @@ const plan = planChanges(
   },
   gitRepository(),
 );
-const { tier, matrix, reasons, testSelection, testShards } = plan;
+const { tier, matrix, reasons, testSelection, testShards, typedLintFiles } =
+  plan;
 const selected = Object.fromEntries(flags.map((flag) => [flag, plan[flag]]));
 if (process.env.GITHUB_OUTPUT)
   appendFileSync(
@@ -26,6 +27,7 @@ if (process.env.GITHUB_OUTPUT)
       test_selection: JSON.stringify(testSelection),
       test_mode: testSelection.mode,
       test_shards: JSON.stringify(testShards),
+      typed_lint_files: JSON.stringify(typedLintFiles),
     })
       .map(([key, value]) => `${key}=${value}\n`)
       .join(""),

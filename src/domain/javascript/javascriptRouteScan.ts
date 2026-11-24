@@ -44,6 +44,7 @@ import {
   classifyNextAppRoutePath,
   routePath,
 } from "./javascriptRoutePaths.js";
+import { globalReferenceNamespace } from "./javascriptSemanticGlobalReference.js";
 import type {
   JavaScriptRouteCandidate,
   JavaScriptRouteSegment,
@@ -166,6 +167,28 @@ const navigationRecognition = (
     ? (name !== "push" && name !== "replace") ||
       navigationReceivers.has(receiver)
     : undefined;
+/** Metro context entries are property descriptors with a statically visible getter. */
+function* hasContextGetter(value: t.Node): Generator<void, boolean> {
+  const descriptor = unwrapJavaScriptExpression(value).node;
+  if (!t.isObjectExpression(descriptor)) return false;
+  let getter = false;
+  for (const field of descriptor.properties) {
+    yield;
+    if (
+      t.isSpreadElement(field) ||
+      (t.isObjectProperty(field) && isObjectPrototypeSetter(field))
+    )
+      return false;
+    const name = semanticStaticPropertyKey(field.key, field.computed);
+    if (name === null || name === "value" || name === "writable") return false;
+    if (name !== "get") continue;
+    getter = t.isObjectMethod(field)
+      ? field.kind === "method"
+      : t.isFunction(unwrapJavaScriptExpression(field.value).node);
+  }
+  return getter;
+}
+
 const localNavigationFields = new Set(["pathname", "query", "search", "hash"]);
 const nextNames = new Set(["TURBOPACK", "webpackChunk_N_E", "__NEXT_DATA__"]);
 const isRouteChildKey = (key: string, typed: boolean): boolean =>
@@ -667,6 +690,10 @@ export class JavaScriptRouteScan {
         target.properties.length === 0 &&
         t.isObjectExpression(map) &&
         map.properties.length > 0 &&
+        globalReferenceNamespace(node.callee, this.index.bindings, [
+          "Object",
+          "defineProperties",
+        ]) === null &&
         this.#queue(map)
       )
         this.#contextMaps.push(map);
@@ -909,7 +936,8 @@ export class JavaScriptRouteScan {
         !this.#queue(property) ||
         !t.isObjectProperty(property) ||
         property.computed ||
-        !t.isStringLiteral(property.key)
+        !t.isStringLiteral(property.key) ||
+        !(yield* hasContextGetter(property.value))
       )
         return;
       const file = classifyExpoRouterContextKey(property.key.value);

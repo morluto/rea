@@ -31,10 +31,10 @@ cliTest(
     const root = await createTestTempDirectory("rea-rust-macho-alignment-");
     const { client, call } = await connectLocalToolsMcp();
     const expectedFailure = {
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
         operation: "inspect_rust_binary",
-        issues: [{ path: ["path"], reason: "invalid_format" }],
+        format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
       },
     };
 
@@ -264,6 +264,7 @@ cliTest(
       architecture: "arm64_32",
       bits: 64,
       auditable_metadata: null,
+      rustc_commit: null,
     });
   },
 );
@@ -318,12 +319,12 @@ cliTest(
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: { operation: "inspect_rust_binary" },
     });
     const response = await call("inspect_rust_binary", { path });
     expect(parseMcpToolError(response).error).toMatchObject({
-      code: "invalid_request",
+      code: "unsupported_target",
       details: { operation: "inspect_rust_binary" },
     });
     await client.ping();
@@ -543,18 +544,13 @@ cliTest(
     });
     expect(go.exitCode).toBe(1);
     const goFailure = {
-      code: "invalid_request",
+      code: "unsupported_target",
       details: {
         operation: "inspect_go_binary",
-        issues: [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: expect.stringContaining(
-              "Virtual address or string range is not file mapped",
-            ),
-          },
-        ],
+        format_failure: expect.stringMatching(/^(?:malformed|truncated)$/u),
+        reason: expect.stringContaining(
+          "Virtual address or string range is not file mapped",
+        ),
       },
     };
     expect(go.json).toMatchObject(goFailure);

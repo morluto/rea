@@ -42,11 +42,6 @@ import {
   ntfsMftMetadataSchema,
 } from "./formatMetadata/androidAndSystemMetadata.js";
 
-export { uint8, uint32 } from "./formatMetadata/primitives.js";
-export * from "./formatMetadata/packageAndGameMetadata.js";
-export * from "./formatMetadata/firmwareMetadata.js";
-export * from "./formatMetadata/androidAndSystemMetadata.js";
-
 export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   godotPckMetadataSchema,
   godotPckEntryMetadataSchema,

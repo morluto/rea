@@ -1,16 +1,14 @@
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { ElectronFusePort } from "../../ports/electron/ElectronFusePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import {
   electronFuseReportSchema,
   inspectElectronFusesInputSchema,
 } from "../../domain/electron/electronFuses.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { createElectronFuseEvidence } from "../../domain/electron/electronFuseEvidence.js";
-import { err, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import type { Result } from "../../domain/result.js";
+import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
 
 const OPERATION = "inspect_electron_fuses";
 
@@ -24,37 +22,26 @@ export class ElectronFuseService {
   }
 
   /** Read fuse wires for one explicitly selected path without launching it. */
-  async inspect(
+  inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    const input = parseAnalysisInput(
-      OPERATION,
-      rawInput,
-      inspectElectronFusesInputSchema,
-      options?.signal,
-    );
-    if (!input.ok) return input;
-    const inspected = await this.provider.inspect(input.value, options);
-    if (!inspected.ok) return inspected;
-    const report = electronFuseReportSchema.safeParse(inspected.value);
-    if (
-      !report.success ||
-      report.data.artifact.selected_path !== input.value.path
-    )
-      return err(
-        new AnalysisOutputError(
-          OPERATION,
+    return executeArtifactInspection(
+      {
+        operation: OPERATION,
+        inputSchema: inspectElectronFusesInputSchema,
+        outputSchema: electronFuseReportSchema,
+        provider: this.provider,
+        invalidOutputMessage:
           "Electron fuse reader returned a malformed report or changed the selected artifact identity.",
-        ),
-      );
-    return completeProviderEvidence(
-      createElectronFuseEvidence(
-        input.value,
-        report.data,
-        this.provider.identity,
-      ),
-      options?.signal,
+        toParameters: (input) => input,
+        validateReport: (report, parameters) =>
+          report.artifact.selected_path === parameters.path,
+        buildEvidence: (report, identity, parameters) =>
+          createElectronFuseEvidence(parameters, report, identity),
+      },
+      rawInput,
+      options,
     );
   }
 }

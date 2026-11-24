@@ -1,4 +1,5 @@
-import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
+import type { RequestAnalysisPort } from "../ports/AnalysisProvider.js";
+import type { AdbRequest } from "../domain/adb/adbDeviceAnalysis.js";
 import { AdbProvider } from "../adb/AdbProvider.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
@@ -6,4 +7,5 @@ import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 export const createAdbDeviceAnalysisProvider = (
   environment: Readonly<Record<string, string | undefined>> = process.env,
   platform: NodeJS.Platform = HOST_PLATFORM.platform,
-): AdbDeviceAnalysisPort => new AdbProvider({ environment, platform });
+): RequestAnalysisPort<AdbRequest> =>
+  new AdbProvider({ environment, platform });

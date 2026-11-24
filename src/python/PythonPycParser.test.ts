@@ -10,11 +10,11 @@ import {
   pythonPycFixture,
   pythonPycHeader,
 } from "./PythonPyc.fixture.js";
+import { parsePythonPyc } from "./PythonPycParser.js";
 import {
   emptyPythonPycWork,
-  parsePythonPyc,
   type PythonPycWork,
-} from "./PythonPycParser.js";
+} from "./PycReportProjection.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
 
 const parserLimit = (name: string) =>
@@ -108,9 +108,16 @@ it.each([
   { magic: 3571, opcode: 82, cacheUnits: 9 },
   { magic: 3627, opcode: 80, cacheUnits: 9 },
   { magic: 3666, opcode: 128, cacheUnits: 1 },
+  {
+    magic: 3394,
+    layout: "py37" as const,
+    opcode: 80,
+    cacheUnits: 9,
+    distinct: 5,
+  },
 ])(
-  "uses the $magic cache width for code equality and retains raw bytecode",
-  ({ magic, opcode, cacheUnits }) => {
+  "uses the $magic bytecode equality rules and retains raw bytecode",
+  ({ magic, layout = "py311" as const, opcode, cacheUnits, distinct = 4 }) => {
     const cache = Buffer.alloc(cacheUnits * 2);
     const bytecode = (arg: number, cachePayload: Buffer, nextArg = 0) =>
       Buffer.concat([
@@ -129,15 +136,17 @@ it.each([
         bytecode(1, cache),
         bytecode(0, cache, 1),
         Buffer.concat([original, Buffer.from([0, 0])]),
-      ].map((code) => marshalCode("py311", { bytecode: code })),
+      ].map((code) => marshalCode(layout, { bytecode: code })),
     ]);
     const report = parse(
       Buffer.concat([
         pythonPycHeader(magic),
-        marshalCode("py311", { consts: [frozenSet] }),
+        marshalCode(layout, { consts: [frozenSet] }),
       ]),
     );
-    expect(root(report).consts).toEqual([{ kind: "frozenset", length: 4 }]);
+    expect(root(report).consts).toEqual([
+      { kind: "frozenset", length: distinct },
+    ]);
     expect(report.code_objects[1]?.bytecode).toEqual({
       bytes: original.length,
       sha256: createHash("sha256").update(original).digest("hex"),

@@ -1176,19 +1176,14 @@ cliTest(
     const refused = await cli.run({ arguments: args });
     expect(refused.exitCode).toBe(1);
     expect(refused.json).toMatchObject({
-      code: "invalid_request",
-      category: "invalid_input",
+      code: "unsupported_target",
+      category: "unsupported_target",
       details: {
         operation: "inspect_gpu_code_objects",
-        issues: [
-          expect.objectContaining({
-            path: ["path"],
-            reason: "invalid_format",
-            message: expect.stringContaining(
-              "MZ header does not declare a PE image",
-            ),
-          }),
-        ],
+        format_failure: "malformed",
+        reason: expect.stringContaining(
+          "MZ header does not declare a PE image",
+        ),
       },
     });
   },
@@ -1310,3 +1305,125 @@ it("does not interpret non-AMD ELF flags as AMD processor declarations through M
   expect(report.kernels).toEqual([]);
   expect(report.coverage.payloads).toBe("partial");
 });
+
+cliTest(
+  "reports partial coverage and clears provenance for conflicting CUDA shared-memory and register declarations",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-cuda-resource-conflict-");
+    const name = "add_one";
+    const symbols = Buffer.alloc(48);
+    symbols.writeUInt32LE(1, 24);
+    symbols[28] = 0x12;
+    symbols[29] = 0x10;
+    symbols.writeUInt16LE(4, 30);
+    symbols.writeBigUInt64LE(16n, 40);
+    const info = Buffer.from(
+      "03190c0004170c00000000000100080000f0110004170c00000000000000000000f02100",
+      "hex",
+    );
+    const regRecord = (value: number): Buffer => {
+      const record = Buffer.from("042f08000100000000000000", "hex");
+      record.writeUInt32LE(value, 8);
+      return record;
+    };
+    const dupSharedCubin = elfFixture(
+      190,
+      [
+        { name: ".strtab", type: 3, bytes: Buffer.from(`\0${name}\0`) },
+        { name: ".symtab", type: 2, link: 2, entrySize: 24, bytes: symbols },
+        {
+          name: `.text.${name}`,
+          flags: 0x100006n,
+          info: 1,
+          bytes: Buffer.alloc(16),
+        },
+        { name: ".nv.info", type: 0x70000000, link: 3, bytes: regRecord(10) },
+        {
+          name: `.nv.info.${name}`,
+          type: 0x70000000,
+          link: 3,
+          info: 4,
+          bytes: info,
+        },
+        { name: `.nv.shared.${name}`, type: 8, info: 4, size: 64 },
+        { name: `.nv.shared.${name}.extra`, type: 8, info: 4, size: 128 },
+      ],
+      0x81,
+    );
+    const regConflictCubin = cubinFixture({
+      globalRegisters: 10,
+      textRegisters: 16,
+      shared: 64,
+    });
+
+    const dupSharedPath = join(root, "dup-shared.cubin");
+    await writeFile(dupSharedPath, dupSharedCubin);
+    const dupSharedResult = await cli.run({
+      arguments: [
+        "inspect-gpu-code-objects",
+        dupSharedPath,
+        "--analysis",
+        "kernels",
+        "--detail",
+        "complete",
+        "--json",
+      ],
+    });
+    expect(dupSharedResult.exitCode, dupSharedResult.stderr).toBe(0);
+    const dupSharedReport = gpuCodeObjectsSchema.parse(
+      parseEvidence(
+        toolContract("inspect_gpu_code_objects").outputSchema.parse(
+          dupSharedResult.json,
+        ),
+      ).normalized_result,
+    );
+    expect(dupSharedReport.objects[0]).toMatchObject({ inspection: "partial" });
+    expect(dupSharedReport.coverage.payloads).toBe("partial");
+    expect(dupSharedReport.kernels[0]).toMatchObject({
+      name: "add_one",
+      registers: { physical: 10 },
+      shared_bytes: null,
+      sources: { shared: null },
+      limitations: expect.arrayContaining([
+        "Conflicting CUDA shared memory declarations; shared byte count remains unknown",
+      ]),
+    });
+    expect(dupSharedReport.kernels[0]?.sources.registers).not.toBeNull();
+
+    const regConflictPath = join(root, "reg-conflict.cubin");
+    await writeFile(regConflictPath, regConflictCubin);
+    const regConflictResult = await cli.run({
+      arguments: [
+        "inspect-gpu-code-objects",
+        regConflictPath,
+        "--analysis",
+        "kernels",
+        "--detail",
+        "complete",
+        "--json",
+      ],
+    });
+    expect(regConflictResult.exitCode, regConflictResult.stderr).toBe(0);
+    const regConflictReport = gpuCodeObjectsSchema.parse(
+      parseEvidence(
+        toolContract("inspect_gpu_code_objects").outputSchema.parse(
+          regConflictResult.json,
+        ),
+      ).normalized_result,
+    );
+    expect(regConflictReport.objects[0]).toMatchObject({
+      inspection: "partial",
+    });
+    expect(regConflictReport.coverage.payloads).toBe("partial");
+    expect(regConflictReport.kernels[0]).toMatchObject({
+      name: "add_one",
+      registers: { physical: null },
+      shared_bytes: 64,
+      sources: { registers: null },
+      limitations: expect.arrayContaining([
+        "Conflicting CUDA register declarations; physical count remains unknown",
+      ]),
+    });
+    expect(regConflictReport.kernels[0]?.sources.shared).not.toBeNull();
+  },
+);

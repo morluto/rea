@@ -144,19 +144,15 @@ export const projectAppleInventory = (
     ),
     roots,
   );
-  const uninventoriedImage =
-    rootFormat === "dmg" && inventory.occurrences.length === 1;
   const inventoryComplete = hasCompleteInventoryCoverage(
     inventory,
     "container-entries",
   );
-  const complete = inventoryComplete && !uninventoriedImage;
   const limitations = [
     ...unresolved,
     ...inventory.limitations,
     ...projectionLimitations({
       complete: inventoryComplete,
-      uninventoriedImage,
       roots,
       bundles,
       sidecars: entries.some(({ path }) => isSidecar(path)),
@@ -186,7 +182,7 @@ export const projectAppleInventory = (
     bridge_candidate_coverage: bridgeProjection.coverage,
     coverage: {
       status:
-        complete &&
+        inventoryComplete &&
         unavailable.all.length === 0 &&
         bridgeProjection.coverage.status === "complete"
           ? ("complete-within-inventory" as const)
@@ -402,7 +398,6 @@ const bridgeBasis = (
 
 const projectionLimitations = (facts: {
   readonly complete: boolean;
-  readonly uninventoriedImage: boolean;
   readonly roots: readonly string[];
   readonly bundles: readonly z.infer<typeof appleBundleSchema>[];
   readonly sidecars: boolean;
@@ -413,11 +408,6 @@ const projectionLimitations = (facts: {
 }): string[] => [
   ...(!facts.complete
     ? ["Source inventory coverage is partial; absence is unknown."]
-    : []),
-  ...(facts.uninventoriedImage
-    ? [
-        "The DMG's contents were not inventoried on this host; bundle absence is unknown.",
-      ]
     : []),
   ...(facts.roots.length === 0
     ? [

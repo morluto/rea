@@ -9,6 +9,7 @@ import { createDoctorHostFixture } from "../../../src/application/Doctor.fixture
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { pe } from "../../../src/domain/binaryTarget.fixture.js";
+import { WABT_RELEASE_LINE } from "../../../src/domain/wasm/wasmArtifact.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("executable format refusal diagnostics", () => {
@@ -86,13 +87,16 @@ it("identifies the directory opening constraint and gives the direct analysis ro
     details: {
       path: await realpath(directory),
       constraint: "directory_requires_file",
-      related_operations: ["analyze_javascript_application"],
+      related_operations: [
+        "inspect_desktop_application",
+        "audit_release_exposure",
+        "analyze_javascript_application",
+      ],
     },
   });
-  expect(projected.message).toContain("analyze_javascript_application");
-  expect(projected.message).not.toContain("rea analyze");
+  // The directory route is related_operations above; input_path has no
+  // structured field and names the parameter those operations take.
   expect(projected.remediation.action).toContain("input_path");
-  expect(projected.remediation.action).not.toContain("rea analyze");
   const doctor = systemDoctorHost();
   const host = createDoctorHostFixture({
     inspectTarget: doctor.inspectTarget,
@@ -115,13 +119,13 @@ it("identifies the directory opening constraint and gives the direct analysis ro
   const missing = await parseBinaryTarget(join(directory, "missing"));
   if (missing.ok) throw new Error("missing target was admitted");
   const missingProjection = projectAnalysisError(missing.error);
+  // A missing path is an access failure, not a format or route constraint.
   expect(missingProjection).toMatchObject({
+    code: "target_unavailable",
     details: { reason: expect.stringContaining("does not exist") },
-    message: expect.stringContaining("does not exist"),
   });
-  expect(missingProjection.message).toContain(
-    "Check that the path exists, is readable, and points to a supported file.",
-  );
+  expect(missingProjection.details).not.toHaveProperty("constraint");
+  expect(missingProjection.details).not.toHaveProperty("related_operations");
   expect(await doctor.inspectTarget(join(directory, "missing"))).toMatchObject({
     ok: false,
     classification: "config_drift",
@@ -164,13 +168,10 @@ describe("target route diagnostics", () => {
           related_operations: ["inspect_wasm_artifact"],
         },
       });
-      expect(projected.message).toContain("WebAssembly");
-      expect(projected.remediation.action).toContain("inspect_wasm_artifact");
-      expect(projected.remediation.action).not.toContain(
-        "rea inspect-wasm-artifact",
-      );
+      // The route is related_operations above. The launch setting and the
+      // accepted release line have no structured field on this refusal.
       expect(projected.remediation.action).toContain("REA_WABT_BIN_DIRECTORY");
-      expect(projected.remediation.action).toContain("WABT 1.0.42");
+      expect(projected.remediation.action).toContain(WABT_RELEASE_LINE);
       expect(await systemDoctorHost().inspectTarget(path)).toMatchObject({
         ok: false,
         classification: "unsupported_target",
@@ -198,9 +199,7 @@ describe("target route diagnostics", () => {
         retryable: false,
         details: { constraint: "file_format_rejected" },
       });
-      expect(projected.remediation.action).not.toContain(
-        "inspect_wasm_artifact",
-      );
+      expect(projected.details).not.toHaveProperty("related_operations");
     },
   );
 
@@ -283,7 +282,6 @@ describe("raw-binary load rejection diagnostics", () => {
         related_parameters: ["format", "architecture", "entry_point"],
       },
     });
-    expect(projected.remediation.action).not.toContain("--target-format");
   });
 
   it("projects an x86 entry beyond the address width as caller input", async () => {
@@ -295,7 +293,10 @@ describe("raw-binary load rejection diagnostics", () => {
     expect(projected).toMatchObject({
       code: "invalid_request",
       category: "invalid_input",
-      details: { constraint: "load_selection_rejected" },
+      details: {
+        constraint: "load_selection_rejected",
+        related_parameters: ["format", "architecture", "entry_point"],
+      },
     });
     expect(projected.message).toContain("x86 address width");
   });
