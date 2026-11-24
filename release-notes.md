@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **release-exposure:** release-exposure checks no longer use the not_applicable status, and summary.by_status has no not_applicable count. A check that cannot apply is absent from checks and listed in coverage.inapplicable_checks.
 * **gpu:** amd_target_metadata gains required os_abi and abi fields, GPU objects gain a nullable amd_pal_metadata field, and PAL-ABI objects report complete, partial or unsupported instead of malformed.
 * **errors:** when a managed reader stops on `unsupported-signature`, `metadata.status` is `partial` (was `malformed`) in managed artifact, member and native-boundary inspection, and the artifact `classification.status` is `managed` (was `malformed`). The field names and enum members are unchanged.
 * **errors:** inspect_managed_artifact, inspect_managed_members, inspect_managed_native_boundaries, compare_managed_members, inspect_il2cpp_metadata, inspect_go_binary, inspect_rust_binary, inspect_dwarf_units and inspect_native_initializers report corrupt or truncated target bytes as code unsupported_target with details.path, format, format_failure and reason instead of invalid_request with an invalid_format issue. IL2CPP link conflicts list both path and binary_path with reason invalid_value instead of one invalid_format binary_path issue.
@@ -288,6 +289,7 @@
 * **reference:** preserve host spelling for Git metadata paths ([ae8cd50](https://github.com/morluto/rea/commit/ae8cd50ff755e810643ee7f6918121796becbc31))
 * **reference:** render invalid Git config path with native separators ([0d71123](https://github.com/morluto/rea/commit/0d7112321d52013fb2be5a593b5bfbe7006a8888))
 * **reference:** retain physical Git read failure after cleanup refusal ([#12848](https://github.com/morluto/rea/issues/12848)) ([f4937a0](https://github.com/morluto/rea/commit/f4937a04be3148a7f9a191f1114a8210b7264108))
+* **release-exposure:** omit checks that cannot apply to the detected formats ([#14240](https://github.com/morluto/rea/issues/14240)) ([5f63d24](https://github.com/morluto/rea/commit/5f63d244e95caafc6ac0a7d4a89534ca7d29c355))
 * **release-exposure:** settle cancellation and package cleanup together ([#13383](https://github.com/morluto/rea/issues/13383)) ([3daf6aa](https://github.com/morluto/rea/commit/3daf6aacdd327b3cf5a23c9b92c2567a3dfe001f))
 * **release:** bind checkpoint references to frozen history ([#13392](https://github.com/morluto/rea/issues/13392)) ([16732c6](https://github.com/morluto/rea/commit/16732c6b721d5570df20d7399ce535630ce69c4a))
 * **rizin:** report the required inferior terminal field ([#13019](https://github.com/morluto/rea/issues/13019)) ([d84652e](https://github.com/morluto/rea/commit/d84652e55b43ad7c494efe67d8324b35d4a05695))
