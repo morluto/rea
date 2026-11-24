@@ -541,15 +541,7 @@ export const systemMacHopperInstallHost = (
         );
       return declared.data.LSMinimumSystemVersion;
     },
-    async destinationExists(path) {
-      try {
-        await access(path);
-        return true;
-      } catch (cause: unknown) {
-        if (isMissingPath(cause)) return false;
-        throw cause;
-      }
-    },
+    destinationExists: pathExists,
     installBundle: (source, destination, replaceExisting) =>
       installMacHopperBundle(
         source,

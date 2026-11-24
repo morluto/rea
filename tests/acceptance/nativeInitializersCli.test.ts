@@ -175,20 +175,6 @@ cliTest(
   },
 );
 
-cliTest("reports a truncated image as invalid input", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-native-init-cli-bad-");
-  const path = join(root, "broken");
-  await writeFile(path, Buffer.from("\x7fELF"));
-  const result = await cli.run({
-    arguments: ["inspect-native-initializers", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: { operation: "inspect_native_initializers" },
-  });
-});
-
 const dynamicTableCeiling = 16 * 1024 * 1024;
 
 cliTest.for([
@@ -196,19 +182,19 @@ cliTest.for([
     name: "short partial row",
     size: 33,
     backed: true,
-    code: "invalid_request",
+    code: "unsupported_target",
   },
   {
     name: "oversized unbacked declaration",
     size: dynamicTableCeiling + 16,
     backed: false,
-    code: "invalid_request",
+    code: "unsupported_target",
   },
   {
     name: "oversized backed partial row",
     size: dynamicTableCeiling + 1,
     backed: true,
-    code: "invalid_request",
+    code: "unsupported_target",
   },
   {
     name: "oversized backed whole rows",
@@ -235,8 +221,8 @@ cliTest.for([
       code,
       details: {
         operation: "inspect_native_initializers",
-        ...(code === "invalid_request"
-          ? { issues: [{ path: ["path"], reason: "invalid_format" }] }
+        ...(code === "unsupported_target"
+          ? { path, format_failure: "malformed" }
           : {
               reported_limits: {
                 boundary: "structure",

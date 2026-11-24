@@ -48,6 +48,7 @@ import {
   type ElfExportTables,
 } from "./elfDynamicExportTables.js";
 import type { ByteSource } from "../byteSource.js";
+import { peDirectorySizeAnomaly } from "./peHeaderAnomalies.js";
 
 type Artifact = NativeExports["artifact"];
 
@@ -640,11 +641,13 @@ function* parsePeExportSteps(
 ): Generator<PeExportRead | undefined, NativeExports, Buffer | undefined> {
   const base = image.image_base ?? 0n;
   const directory = image.pe_data_directories?.[PE_EXPORT_DIRECTORY];
+  const headerAnomalies = [...image.pe_header_anomalies];
   const result = {
     artifact,
     format: "pe" as const,
     architecture: image.architecture,
     bits: image.bits,
+    header_anomalies: headerAnomalies,
   };
   if (directory === undefined || directory.address === 0)
     return {
@@ -658,10 +661,16 @@ function* parsePeExportSteps(
         ...PE_LIMITATIONS,
       ],
     };
+  // The loader reads the export directory at its RVA and uses Size only to
+  // bound forwarder strings, so a short Size leaves the table readable.
   if (directory.size < PE_EXPORT_DIRECTORY_BYTES)
-    throw new BinaryFormatFailure(
-      "malformed",
-      `PE export directory declares ${String(directory.size)} bytes, below the ${String(PE_EXPORT_DIRECTORY_BYTES)}-byte table`,
+    headerAnomalies.push(
+      peDirectorySizeAnomaly(
+        "export",
+        PE_EXPORT_DIRECTORY,
+        directory.size,
+        PE_EXPORT_DIRECTORY_BYTES,
+      ),
     );
   const mappingIndex = createFileMappingIndex(
     peDeclaredFileMappings(image),

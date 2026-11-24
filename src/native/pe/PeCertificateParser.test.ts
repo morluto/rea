@@ -45,6 +45,20 @@ const parse = (bytes: Buffer) =>
     defaults,
   );
 
+/** The certificate table parser's own refusal, with its parsed facts. */
+const tableFailure = (
+  kind: "malformed" | "truncated" | "unsupported",
+  detail: RegExp,
+) =>
+  expect.objectContaining({
+    name: "ParseFailureError",
+    failure: expect.objectContaining({
+      kind,
+      format: "pe-certificate-table",
+      detail: expect.stringMatching(detail),
+    }),
+  });
+
 it("reads PE32 and PE32+ PKCS#7 certificate tables", () => {
   for (const plus of [false, true]) {
     const bytes = peCertificateFixture(plus);
@@ -246,7 +260,7 @@ it.each([false, true])(
           // alignment range extends beyond the declared table.
           expect(length).toBeLessThanOrEqual(tableSize - missing);
           expect(() => parse(truncated)).toThrow(
-            expect.objectContaining({ reason: "format" }),
+            tableFailure("truncated", /alignment padding is truncated/u),
           );
         }
       }
@@ -420,7 +434,9 @@ it("fails truncated WIN_CERTIFICATE payloads without partial success", () => {
   const bytes = peCertificateFixture();
   const tableOffset = bytes.readUInt32LE(0x80 + 24 + 96 + 32);
   bytes.writeUInt32LE(4, tableOffset);
-  expect(() => parse(bytes)).toThrow(ArtifactReaderFailure);
+  expect(() => parse(bytes)).toThrow(
+    tableFailure("malformed", /dwLength is shorter than its header/u),
+  );
 
   const overlong = peCertificateFixture();
   const overlongTableOffset = overlong.readUInt32LE(securityDirectoryAt);
@@ -450,7 +466,9 @@ it("rejects a short security table instead of reporting it complete", () => {
 
 it("fails PKCS#7 payloads that are not signedData", () => {
   const bytes = peCertificateFixture(false, Buffer.from("not-pkcs7"), 0x0002);
-  expect(() => parse(bytes)).toThrow(ArtifactReaderFailure);
+  expect(() => parse(bytes)).toThrow(
+    tableFailure("malformed", /PKCS#7 signedData is malformed/u),
+  );
 });
 
 it("keeps unknown certificate types as payload hashes without PKCS#7 projection", () => {
@@ -1220,10 +1238,24 @@ it.each([
     expect(() => parseCertificate(certificate)).toThrow(
       new PeCertificateAsn1Failure(
         `Unsupported certificate name encoding (DER tag 0x${tag.toString(16).padStart(2, "0")}).`,
+        null,
+        true,
       ),
     );
   },
 );
+
+// A DER form outside the decoder's coverage is not evidence of corrupt bytes:
+// the table reports it as unsupported, so a valid future file is never
+// blamed as malformed.
+it("refuses an unimplemented certificate name form as unsupported", () => {
+  const payload = pkcs7SignedDataFixture(undefined, undefined, undefined, [], {
+    subject: directoryName(der(0x1b, Buffer.from("name"))),
+  });
+  expect(() => parse(peCertificateFixture(false, payload))).toThrow(
+    tableFailure("unsupported", /Unsupported certificate name encoding/u),
+  );
+});
 
 it("decodes BMPString names once and shares the decoded-byte budget", () => {
   const bmp = (text: string) => {

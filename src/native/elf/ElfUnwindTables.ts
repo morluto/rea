@@ -294,8 +294,9 @@ export const parseElfUnwindRangesFromHandle = async (
         : await source.readRange(offset, length);
     if (slice.length !== length)
       throw new ArtifactReaderFailure(
-        "format",
+        "integrity",
         "ELF unwind range ended before its admitted file extent.",
+        { integrityCheck: "read-coverage" },
       );
     next = steps.next(slice);
   }

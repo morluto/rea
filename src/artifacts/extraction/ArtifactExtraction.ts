@@ -272,7 +272,7 @@ export const materializeArtifactInventoryInScope = async (
       occurrence.logical_path === "."
     )
       throw new ArtifactReaderFailure(
-        "format",
+        "path",
         `Selected occurrence is not an extractable regular child file: ${occurrence.logical_path} (${occurrence.occurrence_id})`,
       );
     const node = nodes.get(occurrence.artifact_id);
@@ -740,7 +740,7 @@ const createReader = async (
       abortIfNeeded(signal);
       if (
         inventorySourceChanged(cause) ||
-        (cause instanceof ArtifactReaderFailure && cause.reason === "format")
+        (cause instanceof ArtifactReaderFailure && cause.reason === "path")
       )
         throw new ArtifactReaderFailure(
           "integrity",

@@ -314,8 +314,7 @@ it("preserves call-edge column omission and the sealed view digest", () => {
     expect(row).toBeDefined();
     if (fields?.length === 0)
       expect(row).not.toHaveProperty("generic_method_token");
-    else
-      expect(row).toHaveProperty("generic_method_token", "0x06000002");
+    else expect(row).toHaveProperty("generic_method_token", "0x06000002");
     const { view_digest, ...content } = result.value;
     expect(view_digest).toBe(digestCanonicalValue(content, "Analysis view"));
   }
@@ -325,8 +324,9 @@ it("preserves call-edge column omission and the sealed view digest", () => {
       ({ generic_method_token: _token, ...edge }) => edge,
     ),
   };
-  expect(managedMemberInspectionSchema.parse(historical).call_edges[0])
-    .toHaveProperty("generic_method_token", null);
+  expect(
+    managedMemberInspectionSchema.parse(historical).call_edges[0],
+  ).toHaveProperty("generic_method_token", null);
 });
 
 it("filters relationship endpoints from recorded facts rather than caller display text", () => {

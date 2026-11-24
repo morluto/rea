@@ -303,13 +303,14 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     private recordEvidence: EvidenceWriter["recordEvidence"] | undefined,
     public delivery: ToolResultDelivery,
     compactPresentation: CompactInputSchemaPresentation = COMPACT_INPUT_SCHEMA_PRESENTATION,
-    outputSchemaProfile: McpOutputSchemaProfile = resolveMcpOutputSchemaProfile(
-      undefined,
-    ),
+    outputSchemaProfile:
+      | McpOutputSchemaProfile
+      | "recorded" = resolveMcpOutputSchemaProfile(undefined),
     identity?: ReturnType<typeof createCatalogIdentity>,
     readonly advertisedToolFamilies:
       | ReadonlySet<string>
       | undefined = undefined,
+    recordedTools?: ReadonlySet<string>,
   ) {
     const maximumInputElements =
       options.maxToolInputElements ?? DEFAULT_MCP_MAX_INPUT_ELEMENTS;
@@ -318,6 +319,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     this.presentation = advertisedToolPresentation(
       outputSchemaProfile,
       compactPresentation,
+      recordedTools,
     );
     this.identity = identity;
   }

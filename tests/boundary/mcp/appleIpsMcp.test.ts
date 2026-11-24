@@ -100,7 +100,7 @@ it("advertises and validates IPS facts and failures through production stdio MCP
   );
   const whitespace = await call("inspect_apple_ips", { path: whitespacePath });
   expect(whitespace.isError).toBe(true);
-  expect(parseMcpToolError(whitespace).error.code).toBe("invalid_request");
+  expect(parseMcpToolError(whitespace).error.code).toBe("unsupported_target");
 
   const malformedPath = join(root, "malformed-uuid.ips");
   await writeFile(malformedPath, appleIpsBytes({ uuid: "malformed/report" }));
