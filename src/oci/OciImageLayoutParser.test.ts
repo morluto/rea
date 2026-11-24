@@ -453,6 +453,114 @@ it("keeps readable index entry annotations and platform without findings", async
   });
 });
 
+it.each([
+  ["omitted", undefined, "lacks schemaVersion"],
+  ["a string", "2", "schemaVersion is a string, not the number 2"],
+  ["version 1", 1, "schemaVersion 1 is not 2"],
+  ["version 3", 3, "schemaVersion 3 is not 2"],
+])(
+  "diagnoses an index whose schemaVersion is %s and keeps its entries",
+  async (_label, version, defect) => {
+    const root = await createTestTempDirectory("rea-oci-index-version-");
+    await writeOciImageLayoutFixture(root);
+    const indexPath = join(root, "index.json");
+    const index = JSON.parse(await readFile(indexPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    index.schemaVersion = version;
+    await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+    const report = await inspectLayout(root);
+    expect(report.coverage.status).toBe("partial");
+    expect(report.findings).toEqual([
+      expect.objectContaining({
+        kind: "malformed_blob_json",
+        message: expect.stringContaining(defect) as unknown,
+      }),
+    ]);
+    expect(report.indexes[0]?.entries).toHaveLength(1);
+    expect(report.images).toHaveLength(1);
+  },
+);
+
+it("diagnoses a manifest whose schemaVersion is not the number 2 and keeps its facts", async () => {
+  const root = await createTestTempDirectory("rea-oci-manifest-version-");
+  const written = await writeOciImageLayoutFixture(root);
+  const hex = written.manifestDigest.slice("sha256:".length);
+  const manifest = JSON.parse(
+    await readFile(join(root, "blobs", "sha256", hex), "utf8"),
+  ) as Record<string, unknown>;
+  manifest.schemaVersion = "2";
+  const body = `${JSON.stringify(manifest)}\n`;
+  const digest = await putOciBlob(root, body);
+  await unlink(join(root, "blobs", "sha256", hex));
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: Record<string, unknown>[];
+  };
+  const entry = index.manifests[0];
+  if (entry === undefined) throw new Error("fixture has no manifest");
+  entry.digest = digest;
+  entry.size = Buffer.byteLength(body);
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  const report = await inspectLayout(root);
+  expect(report.coverage.status).toBe("partial");
+  expect(report.findings).toEqual([
+    expect.objectContaining({
+      kind: "malformed_blob_json",
+      message: expect.stringContaining(
+        `Manifest ${digest} schemaVersion is a string, not the number 2`,
+      ) as unknown,
+    }),
+  ]);
+  expect(report.images[0]).toMatchObject({
+    config_digest: written.configDigest,
+    layers: [expect.objectContaining({ digest: written.layerDigest })],
+  });
+});
+
+it("charges each retained annotation record against max_descriptor_bytes", async () => {
+  const root = await createTestTempDirectory("rea-oci-annotation-records-");
+  await writeOciImageLayoutFixture(root);
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: Record<string, unknown>[];
+  };
+  const entry = index.manifests[0];
+  if (entry === undefined) throw new Error("fixture has no manifest");
+  // 400 two-character names with empty values are 800 bytes of text but
+  // over 8 KiB of retained {name, value} records.
+  const annotations: Record<string, string> = {};
+  for (let position = 0; position < 400; position += 1)
+    annotations[position.toString(36).padStart(2, "0")] = "";
+  entry.annotations = annotations;
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  const reader = new DirectoryArtifactReader(root);
+  try {
+    await expect(
+      parseOciImageLayout(
+        reader,
+        inspectOciImageLayoutInputSchema.parse({
+          path: root,
+          max_descriptor_bytes: 1024,
+        }),
+      ),
+    ).rejects.toSatisfy((cause: unknown) => {
+      expect(cause).toBeInstanceOf(ParseFailureError);
+      if (!(cause instanceof ParseFailureError)) return false;
+      expect(cause.failure).toMatchObject({
+        kind: "limit",
+        limit: { name: "max_descriptor_bytes", maximum: 1024 },
+      });
+      return true;
+    });
+  } finally {
+    await reader.close();
+  }
+  const report = await inspectLayout(root);
+  expect(report.indexes[0]?.entries[0]?.annotations).toHaveLength(400);
+});
+
 it("refuses an oversize index.json and preserves the oci-layout snapshot", async () => {
   const root = await createTestTempDirectory("rea-oci-oversize-");
   await writeOciImageLayoutFixture(root);

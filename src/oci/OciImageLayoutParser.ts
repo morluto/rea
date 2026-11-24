@@ -81,11 +81,20 @@ const isStringArray = (value: unknown): value is readonly string[] => {
   return true;
 };
 
-const annotationsOf = (value: unknown): { name: string; value: string }[] => {
+// Each retained annotation is charged as its serialized {name, value} record
+// before it is allocated, so many short pairs cannot outgrow their text.
+const annotationsOf = (
+  value: unknown,
+  charge?: (bytes: number) => void,
+): { name: string; value: string }[] => {
   if (!isRecord(value)) return [];
   const annotations: { name: string; value: string }[] = [];
   for (const [name, entry] of Object.entries(value)) {
-    if (typeof entry === "string") annotations.push({ name, value: entry });
+    if (typeof entry !== "string") continue;
+    charge?.(
+      annotationRecordBytes(name, entry) + (annotations.length > 0 ? 1 : 0),
+    );
+    annotations.push({ name, value: entry });
   }
   return annotations;
 };
@@ -102,8 +111,26 @@ const platformOf = (
   };
 };
 
+// OCI and Docker v2 indexes and manifests both require the number 2.
+const schemaVersionDefect = (value: unknown): string | undefined => {
+  if (value === 2) return undefined;
+  if (value === undefined) return "lacks schemaVersion";
+  if (typeof value === "number")
+    return `schemaVersion ${String(value)} is not 2`;
+  const kind =
+    value === null
+      ? "null"
+      : Array.isArray(value)
+        ? "an array"
+        : typeof value === "object"
+          ? "an object"
+          : `a ${typeof value}`;
+  return `schemaVersion is ${kind}, not the number 2`;
+};
+
 const descriptorOf = (
   value: unknown,
+  chargeAnnotation?: (bytes: number) => void,
 ): OciImageLayoutIndex["entries"][number] | undefined => {
   if (!isRecord(value)) return undefined;
   const mediaType = nonempty(value.mediaType) ?? nonempty(value.media_type);
@@ -120,7 +147,7 @@ const descriptorOf = (
     digest,
     size,
     platform: platformOf(value.platform),
-    annotations: annotationsOf(value.annotations),
+    annotations: annotationsOf(value.annotations, chargeAnnotation),
   };
 };
 
@@ -453,6 +480,9 @@ const labelBytes = (name: string, value: string): number =>
   EMPTY_LABEL_BYTES +
   (jsonStringBytes(name) - EMPTY_STRING_JSON_BYTES) +
   (jsonStringBytes(value) - EMPTY_STRING_JSON_BYTES);
+
+// Annotations serialize as the same {name, value} record as labels.
+const annotationRecordBytes = labelBytes;
 
 const envBindings = (
   value: unknown,
@@ -1320,10 +1350,6 @@ const inventoryOciImageLayout = async (
       Buffer.byteLength(descriptor.media_type);
     for (const text of Object.values(descriptor.platform ?? {}))
       if (text !== null) bytes += Buffer.byteLength(text);
-    for (const annotation of descriptor.annotations)
-      bytes +=
-        Buffer.byteLength(annotation.name) +
-        Buffer.byteLength(annotation.value);
     spendDescriptorBytes(bytes);
   };
   const chargeAcceptedDescriptorText = (descriptor: {
@@ -1735,6 +1761,16 @@ const inventoryOciImageLayout = async (
       Number.isSafeInteger(document.value.schemaVersion)
         ? document.value.schemaVersion
         : null;
+    const indexVersionDefect = schemaVersionDefect(
+      document.value.schemaVersion,
+    );
+    if (indexVersionDefect !== undefined)
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        `Index ${digest} ${indexVersionDefect}; its entries are read as a version 2 index.`,
+        digest,
+      );
     let manifests: unknown[] = [];
     if (Array.isArray(document.value.manifests))
       manifests = document.value.manifests;
@@ -1750,7 +1786,8 @@ const inventoryOciImageLayout = async (
     const indexEntries: OciImageLayoutIndex["entries"] = [];
     for (const [position, item] of manifests.entries()) {
       chargeDescriptor();
-      const descriptor = descriptorOf(item);
+      // Annotations spend max_descriptor_bytes as each record is built.
+      const descriptor = descriptorOf(item, spendDescriptorBytes);
       if (descriptor === undefined) {
         referenceGraphTruncated = true;
         chargeRejectedDescriptorText(item);
@@ -1847,6 +1884,16 @@ const inventoryOciImageLayout = async (
       document: document.value,
     });
     await rememberSubject("Manifest", digest, document.value.subject, depth);
+    const manifestVersionDefect = schemaVersionDefect(
+      document.value.schemaVersion,
+    );
+    if (manifestVersionDefect !== undefined)
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        `Manifest ${digest} ${manifestVersionDefect}; its config and layers are read as a version 2 manifest.`,
+        digest,
+      );
     // config is required; a manifest without one is as damaged as one whose
     // config descriptor cannot be modeled.
     const configDescriptor = descriptorOf(document.value.config);
