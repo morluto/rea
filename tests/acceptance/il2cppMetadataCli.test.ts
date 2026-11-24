@@ -1089,6 +1089,41 @@ cliTest(
     ]);
     // The lone slice keeps its Mach-O magic but declares only 8 bytes.
     truncatedSlice.writeUInt32BE(8, 8 + 12);
+    // Methods 0 and 1 share an image; a version 31 token is at offset 24.
+    const tokenPair = createLinkedIl2cppMetadataFixture({ version: 31 });
+    const tokenAt = (method: number) =>
+      tokenPair.record("methods", method) + 24;
+    const duplicateToken = Buffer.from(tokenPair.bytes);
+    duplicateToken.writeUInt32LE(
+      duplicateToken.readUInt32LE(tokenAt(0)),
+      tokenAt(1),
+    );
+    // A valid MethodDef row past the binary module's 3 method pointers.
+    const tokenBeyondModule = Buffer.from(tokenPair.bytes);
+    tokenBeyondModule.writeUInt32LE(0x06000004, tokenAt(0));
+    const pairConflict =
+      (reason: string) =>
+      (path: string, binaryPath: string, binaryField: string) => ({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["path"],
+              reason: "invalid_value",
+              message: expect.stringContaining(
+                `Selected metadata ${path} does not link to the selected binary: ${reason}:`,
+              ),
+            },
+            {
+              path: [binaryField],
+              reason: "invalid_value",
+              message: expect.stringContaining(
+                `Selected binary ${binaryPath} does not link to the metadata: ${reason}:`,
+              ),
+            },
+          ],
+        },
+      });
     for (const [name, metadata, binary, expected] of [
       [
         "metadata",
@@ -1123,25 +1158,29 @@ cliTest(
         createIl2cppBinaryFixture({ codeRegistration: false }),
         // Both files parse but do not agree: neither is blamed, both
         // selecting fields are listed in each adapter's spelling.
-        (path: string, binaryPath: string, binaryField: string) => ({
-          code: "invalid_request",
+        pairConflict("code-registration-not-found"),
+      ],
+      [
+        // The reused row is the metadata's own fault, whatever the binary.
+        "duplicate-token",
+        duplicateToken,
+        createIl2cppBinaryFixture(),
+        (path: string) => ({
+          code: "unsupported_target",
           details: {
-            issues: [
-              {
-                path: ["path"],
-                reason: "invalid_value",
-                message: expect.stringContaining(`Selected metadata ${path}`),
-              },
-              {
-                path: [binaryField],
-                reason: "invalid_value",
-                message: expect.stringContaining(
-                  `Selected binary ${binaryPath}`,
-                ),
-              },
-            ],
+            path,
+            format_failure: "malformed",
+            format: "il2cpp-metadata",
+            reason: expect.stringMatching(/^invalid-method-definition-token:/u),
           },
         }),
+      ],
+      [
+        // A well-formed row only this binary's module cannot hold.
+        "token-beyond-module",
+        tokenBeyondModule,
+        createIl2cppBinaryFixture(),
+        pairConflict("invalid-method-token"),
       ],
     ] as const) {
       const path = join(root, `${name}-global-metadata.dat`);
