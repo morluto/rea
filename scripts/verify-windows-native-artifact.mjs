@@ -50,7 +50,7 @@ if (await exists(new URL("native/windows/src/addon.cc", root))) {
   if (!expectedSource.ok) throw expectedSource.error;
   if (manifest.sourceSha256 !== expectedSource.value)
     throw new Error(
-      "Windows native artifact sourceSha256 does not match native/windows/src; rerun the Windows native build lane.",
+      "Windows native artifact sourceSha256 does not match native/windows/src or scripts/build-windows-native.mjs; rerun the Windows native build lane.",
     );
 }
 const declaredArchitectures =

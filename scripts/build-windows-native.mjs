@@ -7,6 +7,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rename,
   rm,
   writeFile,
@@ -47,8 +48,9 @@ const allowed = new Set(
 );
 if (arguments_.some((argument) => !allowed.has(argument)))
   throw new Error("Unknown Windows native build argument");
-const compilerPrefix =
-  architecture === "arm64" ? "aarch64-w64-mingw32" : "x86_64-w64-mingw32";
+const compilerPrefixFor = (arch) =>
+  arch === "arm64" ? "aarch64-w64-mingw32" : "x86_64-w64-mingw32";
+const compilerPrefix = compilerPrefixFor(architecture);
 const compiler = `${compilerPrefix}-g++`;
 const output = inspectionFixture
   ? join(root, ".cache", "windows-native-inspection-fixture")
@@ -77,6 +79,32 @@ if (process.platform !== "linux")
 run(compiler, ["--version"]);
 await mkdir(cache, { recursive: true });
 await mkdir(output, { recursive: true });
+const canonicalOutput = await realpath(output);
+const provenancePath = join(cache, "build-provenance.json");
+const provenanceKeyFor = (arch) => `${canonicalOutput}::${arch}`;
+const probeToolchainSha256 = (arch) => {
+  const prefix = compilerPrefixFor(arch);
+  const gpp = spawnSync(`${prefix}-g++`, ["-v"], {
+    cwd: root,
+    encoding: "utf8",
+    maxBuffer: 4 * 1_024 * 1_024,
+    timeout: 30_000,
+  });
+  if (gpp.error !== undefined || gpp.status !== 0) return undefined;
+  const dlltool = spawnSync(`${prefix}-dlltool`, ["--version"], {
+    cwd: root,
+    encoding: "utf8",
+    maxBuffer: 4 * 1_024 * 1_024,
+    timeout: 30_000,
+  });
+  if (dlltool.error !== undefined) return undefined;
+  // llvm-dlltool does not support --version; GNU dlltool prints its banner.
+  const dlltoolBanner = dlltool.status === 0 ? dlltool.stdout.trim() : "";
+  return createHash("sha256")
+    .update(`compiler:${prefix}-g++\n${`${gpp.stdout}${gpp.stderr}`.trim()}\n`)
+    .update(`dlltool:${prefix}-dlltool\n${dlltoolBanner}\n`)
+    .digest("hex");
+};
 const exists = async (path) =>
   access(path).then(
     () => true,
@@ -220,6 +248,33 @@ const packageJson = JSON.parse(
   await readFile(join(root, "package.json"), "utf8"),
 );
 const bytes = await readFile(join(output, artifact));
+const currentToolchainSha256 = probeToolchainSha256(architecture);
+const readBuildProvenance = async () => {
+  if (!(await exists(provenancePath))) return {};
+  try {
+    const parsed = JSON.parse(await readFile(provenancePath, "utf8"));
+    return parsed !== null &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed)
+      ? parsed
+      : {};
+  } catch {
+    return {};
+  }
+};
+const hasMatchingProvenance = (
+  entry,
+  expectedArtifactSha256,
+  expectedSourceSha256,
+  expectedToolchainSha256,
+) =>
+  entry !== null &&
+  typeof entry === "object" &&
+  !Array.isArray(entry) &&
+  entry.artifactSha256 === expectedArtifactSha256 &&
+  entry.sourceSha256 === expectedSourceSha256 &&
+  entry.toolchainSha256 === expectedToolchainSha256;
+const provenance = await readBuildProvenance();
 const manifestPath = join(output, "manifest.json");
 const preservedArtifacts = {};
 if (await exists(manifestPath)) {
@@ -247,6 +302,21 @@ if (await exists(manifestPath)) {
         if (!resolved.ok) continue;
         const candidatePath = join(output, resolved.value.artifact);
         if (!(await exists(candidatePath))) continue;
+        const candidateToolchainSha256 = probeToolchainSha256(candidateArch);
+        if (candidateToolchainSha256 === undefined) continue;
+        const key = provenanceKeyFor(candidateArch);
+        const recorded = Object.hasOwn(provenance, key)
+          ? provenance[key]
+          : undefined;
+        if (
+          !hasMatchingProvenance(
+            recorded,
+            resolved.value.artifactSha256,
+            sourceSha256,
+            candidateToolchainSha256,
+          )
+        )
+          continue;
         const candidateBytes = await readFile(candidatePath);
         if (validateWindowsNativeArtifact(resolved.value, candidateBytes).ok)
           preservedArtifacts[candidateArch] = {
@@ -267,11 +337,22 @@ const created = createWindowsNativeManifest(packageJson.version, bytes, {
 });
 if (!created.ok) throw created.error;
 const metadata = created.value;
+const nextProvenance = { ...provenance };
 for (const [arch, target] of Object.entries(WINDOWS_NATIVE_TARGETS)) {
-  if (metadata.artifacts?.[arch] === undefined)
+  if (metadata.artifacts?.[arch] === undefined) {
     await rm(join(output, target.artifact), { force: true });
+    delete nextProvenance[provenanceKeyFor(arch)];
+  }
 }
+if (currentToolchainSha256 !== undefined)
+  nextProvenance[provenanceKeyFor(architecture)] = {
+    artifactSha256: metadata.artifactSha256,
+    sourceSha256,
+    toolchainSha256: currentToolchainSha256,
+  };
+else delete nextProvenance[provenanceKeyFor(architecture)];
 await writeFile(manifestPath, `${JSON.stringify(metadata, null, 2)}\n`);
+await writeFile(provenancePath, `${JSON.stringify(nextProvenance, null, 2)}\n`);
 process.stdout.write(
   `${JSON.stringify({ ...metadata, artifactBytes: bytes.length })}\n`,
 );

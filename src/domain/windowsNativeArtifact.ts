@@ -18,22 +18,24 @@ export const WINDOWS_NATIVE_ARTIFACT = {
 /** Node header release pinned by the Windows native build and source verifier. */
 export const WINDOWS_NATIVE_NODE_VERSION = "22.19.0";
 
-/** Native C++ inputs whose digest binds built artifacts to current sources. */
+/** Native C++ and build-recipe inputs whose digest binds built artifacts to current sources. */
 export const WINDOWS_NATIVE_SOURCE_FILES = [
   "native/windows/src/addon.cc",
   "native/windows/src/authority.hpp",
   "native/windows/src/filesystem.cc",
   "native/windows/src/handle_close.hpp",
   "native/windows/src/process.cc",
+  "scripts/build-windows-native.mjs",
 ] as const;
 
-/** Native C++ inputs used when building the controlled inspection-failure fixture. */
+/** Native C++ and build-recipe inputs used when building the controlled inspection-failure fixture. */
 export const WINDOWS_NATIVE_INSPECTION_FIXTURE_SOURCE_FILES = [
   "native/windows/src/addon.cc",
   "native/windows/src/authority.hpp",
   "tests/fixtures/windows-native-inspection-failure.cc",
   "native/windows/src/handle_close.hpp",
   "native/windows/src/process.cc",
+  "scripts/build-windows-native.mjs",
 ] as const;
 
 /** Packaged artifact and PE machine for each admitted Windows architecture. */
@@ -82,7 +84,7 @@ const isWindowsNativeArchitecture = (
 ): value is WindowsNativeArchitecture =>
   typeof value === "string" && Object.hasOwn(WINDOWS_NATIVE_TARGETS, value);
 
-/** Compute the source digest over pinned Node headers and native C++ inputs. */
+/** Compute the source digest over pinned Node headers, native C++ inputs, and the build script. */
 export const computeWindowsNativeSourceSha256 = (
   sources: Readonly<Record<string, Uint8Array>>,
   options: {

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import { windowsNativeArtifactFixture } from "../../tests/fixtures/windowsNativeArtifact.js";
 import {
+  WINDOWS_NATIVE_INSPECTION_FIXTURE_SOURCE_FILES,
   WINDOWS_NATIVE_SOURCE_FILES,
   computeWindowsNativeSourceSha256,
   createWindowsNativeManifest,
@@ -197,4 +198,34 @@ it("supports ARM64 manifests, sourceSha256 binding, and multi-architecture artif
     ok: false,
     error: { message: expect.stringContaining("artifacts table") },
   });
+});
+
+it("binds sourceSha256 to scripts/build-windows-native.mjs for normal and fixture builds", () => {
+  expect(WINDOWS_NATIVE_SOURCE_FILES).toContain(
+    "scripts/build-windows-native.mjs",
+  );
+  expect(WINDOWS_NATIVE_INSPECTION_FIXTURE_SOURCE_FILES).toContain(
+    "scripts/build-windows-native.mjs",
+  );
+  for (const [inspectionFixture, files] of [
+    [false, WINDOWS_NATIVE_SOURCE_FILES],
+    [true, WINDOWS_NATIVE_INSPECTION_FIXTURE_SOURCE_FILES],
+  ] as const) {
+    const baseSources = Object.fromEntries(
+      files.map((path) => [path, Buffer.from(`original:${path}`)]),
+    );
+    const updatedSources = {
+      ...baseSources,
+      "scripts/build-windows-native.mjs": Buffer.from("updated-recipe"),
+    };
+    const baseDigest = computeWindowsNativeSourceSha256(baseSources, {
+      inspectionFixture,
+    });
+    const updatedDigest = computeWindowsNativeSourceSha256(updatedSources, {
+      inspectionFixture,
+    });
+    expect(baseDigest.ok && updatedDigest.ok).toBe(true);
+    if (!baseDigest.ok || !updatedDigest.ok) continue;
+    expect(updatedDigest.value).not.toBe(baseDigest.value);
+  }
 });

@@ -15,9 +15,10 @@ The artifact lane requires Linux, a matching MinGW-w64 compiler
 (`x86_64-w64-mingw32-g++` or `aarch64-w64-mingw32-g++`), the matching
 `dlltool`, and `tar`. It never installs these commands. The default target is
 x64. Pass `--arch=arm64` to build `rea-windows-arm64.node`. `manifest.json`
-records the latest built target, binds `sourceSha256` to the native C++ sources,
-and preserves same-version entries under `artifacts` so `x64` and `arm64` builds
-can coexist in one package directory.
+records the latest built target, binds `sourceSha256` to the native C++ sources
+and `scripts/build-windows-native.mjs`, and preserves same-version entries under
+`artifacts` when `sourceSha256` and the local MinGW toolchain provenance match
+so `x64` and `arm64` builds can coexist in one package directory.
 Node-API headers are reused from the build cache or downloaded from the
 pinned official Node release with its published SHA-256 checked.
 
