@@ -62,11 +62,6 @@ const workspaceFixture = await VerifierFixture.open({
   parent: join(root, "build"),
 });
 const workspace = workspaceFixture.path;
-// A failed run keeps its workspace for diagnosis; the fixture records why.
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const path = join(workspace, "image.bin");
@@ -317,7 +312,7 @@ if (primaryFailure === undefined) {
   try {
     const survivors = await readdir(runtime);
     if (survivors.length > 0)
-      primaryFailure = retainWorkspace(
+      primaryFailure = workspaceFixture.retainedError(
         `Runtime resources survived server shutdown (${survivors.join(", ")}); retained workspace: ${workspace}`,
       );
   } catch (cause) {
@@ -328,13 +323,13 @@ const verifierRun = await completeVerifierRun(run);
 try {
   assertVerifierCleanupComplete(verifierRun.process_lineage);
 } catch (cause) {
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
     { cause: primaryFailure ?? cause },
   );
 }
 if (primaryFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `m68k verification failed; retained workspace: ${workspace}`,
     { cause: primaryFailure },
   );

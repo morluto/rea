@@ -124,7 +124,7 @@ try {
     const evidence = parseEvidence(value);
     const report = evidence.normalized_result;
     assert.equal(report.diagnostics.truncated, false);
-    assert.equal(evidence.provider.version, "evmole@0.9.3");
+    assert.equal(evidence.provider.version, "evmole@0.9.4");
     assert.equal(evidence.confidence, "inferred");
     assert.equal(report.artifact.path, path);
     assert.equal(report.artifact.encoding, encoding);
@@ -319,7 +319,10 @@ try {
     const path = join(root.path, name);
     await writeFile(path, data);
     for (const mode of ["cli", "mcp"]) {
-      await inspect(mode, path, "hex", "unsupported_target");
+      // An undecodable hex carrier is the target's bytes, not the request.
+      const failure = await inspect(mode, path, "hex", "unsupported_target");
+      assert.equal(failure.details.failure_kind, "malformed");
+      assert.equal(failure.details.format, "evm-bytecode");
       cases++;
     }
   }
@@ -560,7 +563,7 @@ console.log(
       status: failures.length === 0 ? "passed" : "failed",
       public_cases: cases,
       compiler: solc.version(),
-      engine: "evmole@0.9.3",
+      engine: "evmole@0.9.4",
       ...(failures.length === 0
         ? {
             target_execution: "exec-syscalls-verified-absent",

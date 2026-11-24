@@ -230,7 +230,7 @@ const inspectWebPageInputFacts = {
   include_storage_fingerprints: z.boolean().default(false),
 } as const;
 
-const inspectWebPageShapeSchema = z.strictObject({
+export const inspectWebPageShapeSchema = z.strictObject({
   ...inspectWebPageInputFacts,
   include_script_sources: z.boolean().default(false),
 });
@@ -242,7 +242,7 @@ const inspectWebPageWithSourceShapeSchema = z.strictObject({
 
 type InspectWebPageShape = z.output<typeof inspectWebPageShapeSchema>;
 
-const refineInspectWebPageInput = (
+export const refineInspectWebPageInput = (
   input: InspectWebPageShape,
   context: z.RefinementCtx,
 ): void => {

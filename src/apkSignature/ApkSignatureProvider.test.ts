@@ -408,7 +408,7 @@ const registerSignatureInputAdmissionCases = () => {
     expect(
       tagOf(new ArtifactReaderFailure("path", "Expected a regular file")),
     ).toBe("AnalysisInputError");
-    for (const reason of ["io", "unavailable", "malformed"] as const)
+    for (const reason of ["io", "unavailable"] as const)
       expect(tagOf(new ArtifactReaderFailure(reason, "reader failed"))).toBe(
         "ProviderAdapterError",
       );

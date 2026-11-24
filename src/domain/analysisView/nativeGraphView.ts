@@ -34,10 +34,7 @@ const referenceCoverage = (
     source.discovery === undefined ? {} : { discovery: source.discovery };
   if (source.status === "complete")
     return { status: "complete", ...diagnostic, ...discovery };
-  const directions =
-    source.limited_directions === undefined
-      ? {}
-      : { limited_directions: source.limited_directions };
+  const directions = { limited_directions: source.limited_directions };
   return source.status === "partial"
     ? {
         status: "partial",

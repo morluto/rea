@@ -172,6 +172,11 @@ async function resolveMergeability({ candidates, requestGet, identity }) {
       continue;
     }
     const { detail } = result;
+    if (detail.closed || detail.draft) {
+      pull.eligibilityChangedDuringScan = true;
+      errors.add("pull_request_eligibility_changed_during_scan");
+      continue;
+    }
     const identityChanged =
       detail.headSha !== pull.head.sha ||
       detail.headRef !== pull.head.ref ||
@@ -225,6 +230,12 @@ export function classifyPrCi({
   if (!pull.identityValid)
     return result("unknown", "pull_request_head_identity_invalid", []);
   const evidence = [...runs, ...ambiguousRuns];
+  if (pull.eligibilityChangedDuringScan)
+    return result(
+      "unknown",
+      "pull_request_eligibility_changed_during_scan",
+      evidence,
+    );
   if (pull.mergeable === false)
     return result("merge_conflict", "github_reports_merge_conflict", evidence);
   // The newest collected run is not proven current until pagination completes:
@@ -560,6 +571,8 @@ async function getPullRequestDetails({ requestGet, identity, pull }) {
       return { detail: null, error: "pull_request_detail_malformed" };
     return {
       detail: {
+        closed: response.state === "closed",
+        draft: response.draft === true,
         mergeable:
           typeof response.mergeable === "boolean"
             ? response.mergeable

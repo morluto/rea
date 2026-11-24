@@ -22,7 +22,10 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  analysisViewInputError,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
@@ -266,15 +269,8 @@ export const projectApkSignatureView = (
   view: AdmittedView,
 ) => {
   if (view.kind !== "summary" && view.kind !== "apk-signature")
-    return err(
-      analysisViewInputError([
-        {
-          path: ["view"],
-          reason: "invalid_value",
-          message:
-            "APK Evidence supports summary and apk-signature signer/digest/lineage pages",
-        },
-      ]),
+    return invalidAnalysisView(
+      "APK Evidence supports summary and apk-signature signer/digest/lineage pages",
     );
   assertOwnedView<
     SummaryAnalysisView | z.output<typeof apkSignatureViewRequestSchema>

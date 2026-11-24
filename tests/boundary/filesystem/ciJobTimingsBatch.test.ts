@@ -127,6 +127,56 @@ it("collects the latest attempt for recent completed CI and Release runs into a 
   expect(failedReport.jobs[0].execution.seconds).toBe(55);
 });
 
+it("counts only confirmed prediction attempts and assigned portable runner time", async () => {
+  const at = new Date().toISOString();
+  const run = {
+    id: 72,
+    run_attempt: 1,
+    event: "pull_request",
+    status: "completed",
+    conclusion: "failure",
+    created_at: at,
+  };
+  const job = (name: string, seconds: number) =>
+    completedJobs(72, 1, name, "success", at, seconds)[0]!.jobs[0]!;
+  const classifier = job("Classify changes", 8);
+  const jobs = [
+    {
+      ...classifier,
+      steps: [
+        {
+          name: "Record affected-test prediction before the full suite",
+          conclusion: "success",
+        },
+      ],
+    },
+    { ...job("Test shard (1/12)", 50), runner_id: 1 },
+    { ...job("Source tests", 40), runner_id: 2 },
+    { ...job("Test shard (2/12)", 10), runner_id: 0, conclusion: "cancelled" },
+    { ...job("Test shard (3/12)", 10), runner_id: 3, completed_at: null },
+    { ...job("Static checks", 100), runner_id: 4 },
+  ];
+  const fixture = await createFixture([
+    { workflow_runs: [run] },
+    { workflow_runs: [] },
+    [{ jobs }],
+  ]);
+  await runBatch(fixture);
+  const manifest = JSON.parse(
+    await readFile(
+      join(fixture.outputDirectory, "batch-manifest.json"),
+      "utf8",
+    ),
+  );
+  expect(manifest.runs[0].selectionShadow).toEqual({
+    measuredSeconds: 90,
+    unknownJobs: 1,
+  });
+  expect(
+    await readFile(join(fixture.directory, "summary.md"), "utf8"),
+  ).toContain("1.5 observed source and shard runner-minutes");
+});
+
 it("records listing and per-run errors without claiming complete coverage", async () => {
   const recent = new Date().toISOString();
   const fixture = await createFixture([
