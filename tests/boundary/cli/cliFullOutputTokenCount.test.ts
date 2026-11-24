@@ -3,7 +3,6 @@ import { Writable } from "node:stream";
 import { estimateTokenCount } from "tokenx";
 import { describe, expect, it } from "vitest";
 
-import { formatCliOutput } from "../../../src/cli/cliOutputFormatter.js";
 import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 
@@ -11,6 +10,7 @@ const countFor = async (
   value: unknown,
   format: "toon" | "yaml",
   notice = false,
+  tokenCount = true,
 ): Promise<{ readonly handled: boolean; readonly text: string }> => {
   const chunks: Buffer[] = [];
   const destination = new Writable({
@@ -25,7 +25,7 @@ const countFor = async (
       "--format",
       format,
       "--full-output",
-      "--token-count",
+      ...(tokenCount ? ["--token-count"] : []),
     ]),
     destination,
   );
@@ -56,17 +56,9 @@ describe("full-output token counts", () => {
       const value = { imported: 0, unknowns_added: 0, total: 0 };
       const counted = await countFor(value, format, notice);
       expect(counted.handled).toBe(true);
+      const emitted = await countFor(value, format, false, false);
       expect(counted.text).toBe(
-        `${estimateTokenCount(
-          formatCliOutput(
-            {
-              ok: true,
-              data: value,
-              meta: { command: "fixture", duration: "0ms" },
-            },
-            format,
-          ),
-        )}\n`,
+        String(estimateTokenCount(emitted.text)) + "\n",
       );
     },
   );

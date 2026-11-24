@@ -1728,8 +1728,7 @@ rea inspect-artifact ./app.asar --json | jq . > inspection.json
 `--token-count` reports a tokenx estimate for the selected emitted document,
 including a requested full-output envelope and metadata. JSON uses the same
 terminal indentation or compact piped representation as normal output; JSONL
-uses its emitted line representation. The final newline is included (tokenx
-assigns whitespace no tokens). This is an estimate, not a model tokenizer count.
+uses its emitted line representation. The estimate includes the final newline. Its token cost depends on the preceding text.
 Counting retains the existing bounded formatted-string allocation after capacity
 admission; omit the flag to stream large JSON documents without materializing
 the complete formatted text. Exhausted token windows display an empty range at
