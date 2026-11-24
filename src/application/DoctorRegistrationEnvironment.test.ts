@@ -6,6 +6,15 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
 import { runDoctor, systemDoctorHost, type DoctorHost } from "./Doctor.js";
 
+/** The explicit scope's checks; an audit-wide report has none. */
+const scopeChecksOf = <Check>(report: {
+  readonly scope_checks?: readonly Check[];
+}): readonly Check[] => {
+  if (report.scope_checks === undefined)
+    throw new Error("Expected an explicit-scope doctor report");
+  return report.scope_checks;
+};
+
 const inspection = (
   id: string,
   registrationEnvironment: Readonly<Record<string, string>>,
@@ -78,7 +87,7 @@ it.each([
     recordingHost(selectedProviders).host,
     scope,
   );
-  const inScope = report.scope_checks.some(({ name }) => name === CHECK);
+  const inScope = scopeChecksOf(report).some(({ name }) => name === CHECK);
   expect(inScope).toBe(selected);
   expect(report.informational_checks.some(({ name }) => name === CHECK)).toBe(
     !selected,
