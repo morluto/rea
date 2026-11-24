@@ -229,9 +229,10 @@ const expandAddress = async (
   const { execution, related } = read;
   for (const limitation of execution.limitations)
     state.limitations.add(limitation);
-  const coverage = execution.relationshipCoverage ?? {
+  const coverage: RelationshipCoverage = execution.relationshipCoverage ?? {
     status: "unknown",
     reason: "Provider did not report relationship coverage.",
+    limited_directions: relation === "callers" ? ["callers"] : ["callees"],
   };
   state.relationshipCoverage.set(address, coverage);
   state.discovery = combineRelationshipDiscovery(

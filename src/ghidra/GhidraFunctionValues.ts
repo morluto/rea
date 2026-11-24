@@ -22,6 +22,7 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import {
+  functionDossierLimitationCodeSchema,
   functionInstructionWindowSchema,
   functionDossierSchema,
 } from "../domain/native/functionDossier.js";
@@ -261,12 +262,15 @@ const ghidraFunctionDossier = functionDossierSchema
     ),
     native_api: ghidraNativeApiBoundary,
     native_value_flow: ghidraNativeValueFlow,
+    limitation_codes: z.array(functionDossierLimitationCodeSchema),
   })
   .strict()
   .superRefine((value, context) => {
+    const codes = new Set(value.limitation_codes);
     if (
-      !value.limitations.some((item) => /indirect|computed/u.test(item)) ||
-      !value.limitations.some((item) => /provider|Ghidra|Hopper/u.test(item))
+      value.limitations.length === 0 ||
+      !codes.has("unresolved_computed_or_indirect_flows") ||
+      !codes.has("provider_specific_representations")
     )
       context.addIssue({
         code: "custom",

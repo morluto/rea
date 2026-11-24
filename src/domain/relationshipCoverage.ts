@@ -27,14 +27,14 @@ const limitedDirections = z.union([
 export const partialRelationshipCoverageSchema = z.strictObject({
   status: z.literal("partial"),
   limitations: z.array(z.string().min(1)).min(1),
-  limited_directions: limitedDirections.exactOptional(),
+  limited_directions: limitedDirections,
   diagnostics,
   discovery,
 });
 export const unknownRelationshipCoverageSchema = z.strictObject({
   status: z.literal("unknown"),
   reason: z.string().min(1),
-  limited_directions: limitedDirections.exactOptional(),
+  limited_directions: limitedDirections,
   diagnostics,
   discovery,
 });

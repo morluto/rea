@@ -73,21 +73,14 @@ export const combineFunctionRelationshipCoverage = (
 };
 
 /**
- * Forward searches depend on callee coverage. Preserve the historical
- * unknown-reason encoding when reading observations without explicit directions.
+ * Forward searches depend on callee coverage.
  */
 export const isCallerOnlyIncompleteCoverage = (
   coverage: RelationshipCoverage,
 ): boolean => {
   if (coverage.status === "complete") return false;
-  if (coverage.limited_directions !== undefined)
-    return !coverage.limited_directions.some(
-      (direction) => direction === "callees",
-    );
-  return (
-    coverage.status === "unknown" &&
-    coverage.reason.startsWith(callerCoveragePrefix) &&
-    !coverage.reason.includes(calleeCoveragePrefix)
+  return !coverage.limited_directions.some(
+    (direction) => direction === "callees",
   );
 };
 

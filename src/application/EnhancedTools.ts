@@ -599,6 +599,10 @@ export class EnhancedTools {
       const coverage = reportedCoverage ?? {
         status: "unknown" as const,
         reason: "Provider did not report relationship coverage.",
+        limited_directions:
+          input.direction === "backward"
+            ? (["callers"] as ["callers"])
+            : (["callees"] as ["callees"]),
       };
       const relationshipLimitations =
         reportedCoverage === undefined
