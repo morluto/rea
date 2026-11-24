@@ -28,7 +28,10 @@ import {
   type ElfDebugLinkRange,
 } from "../../domain/native/elfDebugLinkEvidence.js";
 import { err, type Result } from "../../domain/result.js";
-import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import {
+  completeProviderEvidence,
+  retainCompletedArtifactEvidence,
+} from "../ProviderOperationExecution.js";
 import {
   callerAnalysisParameters,
   parseAnalysisInput,
@@ -70,14 +73,7 @@ export class ElfDebugLinkService {
           this.provider.identity,
           parameters,
         );
-        // Cleanup completion can reveal any primary that shares this exact report.
-        for (
-          let owner: AnalysisError | undefined = result.error;
-          owner !== undefined;
-          owner = owner.cleanupPrimary
-        )
-          if (owner.partialObservation === source)
-            owner.partialObservation = evidence;
+        retainCompletedArtifactEvidence(result.error, evidence);
       }
       return result;
     }

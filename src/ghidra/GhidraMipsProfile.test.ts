@@ -311,7 +311,17 @@ describe("recordless legacy MIPS admission", () => {
       {
         flags: 0x50000001,
         limitations: [
+          "MIPS program header table at file offset 52 extends beyond the captured file: examined 0 of 3 complete headers. ABI declarations in unavailable headers remain unknown.",
+        ],
+      },
+      "complete ABI-record inspection",
+    ],
+    [
+      {
+        flags: 0x50000001,
+        limitations: [
           "MIPS section header table at file offset 96 extends beyond the captured file: examined 2 of 5 complete headers. ABI declarations in unavailable headers remain unknown.",
+          "MIPS ABI record at file offset 4096 extends beyond the captured file",
         ],
       },
       "complete ABI-record inspection",
@@ -390,6 +400,51 @@ describe("caller-selected MIPS-I language", () => {
     expect(limitations).not.toContain(
       "REA pins the generic 32-bit MIPS language",
     );
+  });
+});
+
+describe("recordless legacy MIPS32 carve admission", () => {
+  it("admits a recordless legacy carve whose only limitation is its section table", async () => {
+    const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+    const carved = target({
+      flags: 0x50000001,
+      abiFlags: null,
+      limitations: [
+        "MIPS section header table at file offset 2952 extends beyond the captured file: examined 0 of 24 complete headers. ABI declarations in unavailable headers remain unknown.",
+      ],
+    }) as BinaryTarget & { mips: MipsElfMetadata };
+    expect(ghidra.inspectTargetSupport(carved).status).toBe("supported");
+    const resolved = await ghidra.resolveAnalysisProfile(carved);
+    if (!resolved.ok) throw resolved.error;
+    expect(resolved.value.profile?.parameters).toMatchObject({
+      mips_support_lane: "elf32-exec-arch32-legacy-pinned",
+      mips_abi_basis: "inferred-o32-assumption",
+      language_id: "MIPS:LE:32:default",
+      language_selection: "provider-pinned",
+      mips_elf: {
+        abi_flags: null,
+        abi_flags_limitations: [
+          "MIPS section header table at file offset 2952 extends beyond the captured file: examined 0 of 24 complete headers. ABI declarations in unavailable headers remain unknown.",
+        ],
+      },
+    });
+  });
+
+  it("admits a carve with partial section headers and preserves the o32 assumption", () => {
+    expect(
+      ghidraMipsProfileParameters(
+        target({
+          flags: 0x50000001,
+          abiFlags: null,
+          limitations: [
+            "MIPS section header table at file offset 96 extends beyond the captured file: examined 2 of 5 complete headers. ABI declarations in unavailable headers remain unknown.",
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      mips_support_lane: "elf32-exec-arch32-legacy-pinned",
+      mips_abi_basis: "inferred-o32-assumption",
+    });
   });
 });
 

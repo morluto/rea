@@ -1,7 +1,7 @@
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { COMPARE_SOURCE_TO_BUNDLE_TOOL_CONTRACT } from "../contracts/sourceToBundleToolContract.js";
-import { registerContractDocumentCommand } from "./contractCommand.js";
+import { registerContractDocumentCommand } from "./contractDocumentCommand.js";
 import {
   evidenceBundleOption,
   runEvidenceInputCommand,

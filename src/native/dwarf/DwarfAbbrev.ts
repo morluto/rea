@@ -53,7 +53,7 @@ export type DwarfAbbrevTable =
 export class DwarfAbbrevCache {
   readonly #cache = new Map<number, DwarfAbbrevTable>();
   readonly #work: AbbrevWorkBudget = { remaining: MAX_ABBREV_PARSE_STEPS };
-  #retained = new Budget(MAX_DWARF_ABBREV_ENTRIES);
+  readonly #retained = new Budget(MAX_DWARF_ABBREV_ENTRIES);
 
   constructor(
     readonly bytes: Buffer,
@@ -62,7 +62,12 @@ export class DwarfAbbrevCache {
 
   get(offset: number): DwarfAbbrevTable {
     const cached = this.#cache.get(offset);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) {
+      // Refresh LRU recency so hot shared abbreviation tables stay resident.
+      this.#cache.delete(offset);
+      this.#cache.set(offset, cached);
+      return cached;
+    }
     const parsed = parseAbbrevTable(
       this.bytes,
       this.little,
@@ -70,11 +75,16 @@ export class DwarfAbbrevCache {
       this.#work,
     );
     const entries = parsed.kind === "ok" ? parsed.entries.size : 0;
-    if (!this.#retained.tryCharge(entries)) {
-      this.#cache.clear();
-      this.#retained = new Budget(MAX_DWARF_ABBREV_ENTRIES);
-      if (!this.#retained.tryCharge(entries)) return parsed;
-    }
+    if (
+      !this.#retained.chargeEvicting(entries, () => {
+        const oldestOffset = this.#cache.keys().next().value;
+        if (oldestOffset === undefined) return undefined;
+        const oldest = this.#cache.get(oldestOffset)!;
+        this.#cache.delete(oldestOffset);
+        return oldest.kind === "ok" ? oldest.entries.size : 0;
+      })
+    )
+      return parsed;
     this.#cache.set(offset, parsed);
     return parsed;
   }

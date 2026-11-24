@@ -1,7 +1,6 @@
 import { isParseLimit } from "../../domain/parseFailureAnalysisError.js";
 import {
   assertArtifactReadActive,
-  ArtifactReaderFailure,
   yieldArtifactRead,
 } from "../../resources/index.js";
 import {
@@ -56,12 +55,12 @@ import { MAX_INSPECT_ELF_NOTE_ENTRIES } from "../../domain/native/elfNotes.js";
 import {
   elfStringTableText,
   observeElfStringTableEntry,
+  observeElfStringTableWindow,
 } from "../../domain/elfStringTable.js";
 import {
   type ElfNoteTableWalk,
   type GnuPropertyWord,
-  readGnuPropertyWords,
-  walkElfNoteTables,
+  readGnuPropertyWordsSteps,
 } from "../elf/ElfNoteParser.js";
 import {
   BinaryFormatFailure,
@@ -75,11 +74,13 @@ import {
   ELF_PT_INTERP,
   ELF_PT_NOTE,
   assertElfDeclaredRangesFromBuffer,
+  assertElfDeclaredRangesFromReader,
   readElfDirectoryFromBuffer,
-  readElfDirectoryFromBufferCooperative,
+  readElfDirectoryFromReader,
   type ElfProgramDeclaration,
   type NativeSection,
 } from "../../domain/native/nativeSectionDirectory.js";
+import type { ByteSource } from "../../domain/byteSource.js";
 
 const ET_EXEC = 2;
 const ET_DYN = 3;
@@ -188,42 +189,74 @@ type MapVa = (va: bigint, size: bigint) => FileMapping;
 const isSpan = (program: ElfProgramDeclaration): program is SpanProgram =>
   program.type !== 2;
 
+const STREAM_WINDOW_BYTES = 65536;
+
+type HardeningStep = {
+  readonly kind: "read";
+  readonly offset: number;
+  readonly length: number;
+};
+type HardeningStepResult = Buffer;
+
+function* readSlice(
+  offset: number,
+  length: number,
+): Generator<HardeningStep, Buffer, HardeningStepResult> {
+  if (length <= 0) return Buffer.alloc(0);
+  return yield { kind: "read", offset, length };
+}
+
 /** Read ELF hardening from headers, program headers, notes, and dynamic symbols. */
 export const readElfHardening = (
   bytes: Buffer,
   signal?: AbortSignal,
 ): BinaryHardeningImage => {
   assertArtifactReadActive(signal);
-  return hardeningFromDirectory(
-    bytes,
-    readElfDirectoryFromBuffer(bytes, OPERATION),
-    signal,
-  );
+  const directory = readElfDirectoryFromBuffer(bytes, OPERATION);
+  assertElfDeclaredRangesFromBuffer(bytes);
+  const steps = elfHardeningSteps(bytes.length, directory, signal);
+  let next = steps.next();
+  while (!next.done) {
+    const step = next.value;
+    const end = Math.min(bytes.length, step.offset + step.length);
+    next = steps.next(bytes.subarray(step.offset, end));
+  }
+  return next.value;
 };
 
-/** A signal-owning inspection can pause while decoding ELF section names. */
-export const readElfHardeningCooperative = async (
-  bytes: Buffer,
+/** Same ELF hardening read over a random-access handle without buffering the full image. */
+export const readElfHardeningFromHandle = async (
+  source: ByteSource,
   signal?: AbortSignal,
 ): Promise<BinaryHardeningImage> => {
-  if (signal === undefined) return readElfHardening(bytes);
   assertArtifactReadActive(signal);
-  const directory = await readElfDirectoryFromBufferCooperative(
-    bytes,
+  const directory = await readElfDirectoryFromReader(
+    source,
     () => yieldArtifactRead(signal),
     OPERATION,
   );
   assertArtifactReadActive(signal);
-  return hardeningFromDirectory(bytes, directory, signal);
+  await assertElfDeclaredRangesFromReader(source);
+  assertArtifactReadActive(signal);
+  const readRange = (offset: number, length: number): Promise<Buffer> =>
+    source.prefix !== undefined && offset + length <= source.prefix.length
+      ? Promise.resolve(source.prefix.subarray(offset, offset + length))
+      : source.readRange(offset, length);
+  const steps = elfHardeningSteps(source.size, directory, signal);
+  let next = steps.next();
+  while (!next.done) {
+    assertArtifactReadActive(signal);
+    const step = next.value;
+    next = steps.next(await readRange(step.offset, step.length));
+  }
+  return next.value;
 };
 
-const hardeningFromDirectory = (
-  bytes: Buffer,
+function* elfHardeningSteps(
+  fileSize: number,
   directory: ReturnType<typeof readElfDirectoryFromBuffer>,
   signal?: AbortSignal,
-): BinaryHardeningImage => {
-  // A report needs every declared payload, not only the tables that name them.
-  assertElfDeclaredRangesFromBuffer(bytes);
+): Generator<HardeningStep, BinaryHardeningImage, HardeningStepResult> {
   const { bits, little, machine, programs, sections } = directory;
   const headerWidth = bits === 64 ? 56 : 32;
   const propertyAlign = bits === 64 ? 8 : 4;
@@ -254,18 +287,18 @@ const hardeningFromDirectory = (
   if (dynamicPrograms.length > 1)
     malformed("ELF image has more than one PT_DYNAMIC");
   const interp = one(ELF_PT_INTERP, "PT_INTERP");
-  if (interp !== null) admitInterp(bytes, interp);
+  if (interp !== null) yield* admitInterp(interp);
   const stack = one(ELF_PT_GNU_STACK, "PT_GNU_STACK");
   const relro = one(ELF_PT_GNU_RELRO, "PT_GNU_RELRO");
   const propertyProgram = one(ELF_PT_GNU_PROPERTY, "PT_GNU_PROPERTY");
   const dynamic =
     dynamicPrograms[0] === undefined
       ? null
-      : readDynamic(bytes, dynamicPrograms[0], bits, little, mapVa);
+      : yield* readDynamic(fileSize, dynamicPrograms[0], bits, little, mapVa);
   let symbols: SymbolScan;
   try {
-    symbols = readSymbols(
-      bytes,
+    symbols = yield* readSymbols(
+      fileSize,
       sections,
       dynamic,
       little,
@@ -283,8 +316,8 @@ const hardeningFromDirectory = (
       ...EMPTY_SYMBOL_MATCHES,
     };
   }
-  const features = readFeatureNotes(
-    bytes,
+  const features = yield* readFeatureNotes(
+    fileSize,
     sections,
     propertyProgram,
     programs.filter(
@@ -294,6 +327,30 @@ const hardeningFromDirectory = (
     propertyAlign,
     signal,
   );
+  const rpathRow =
+    directory.elf_type !== ET_EXEC && directory.elf_type !== ET_DYN
+      ? row({
+          property: "rpath",
+          state: "not_applicable",
+          confidence: "observed",
+          basis: `e_type ${String(directory.elf_type)} is neither ET_EXEC nor ET_DYN, so this linked-image property does not apply.`,
+          location: { offset: 16, bytes: 2 },
+        })
+      : programs.length === 0
+        ? unreadProgramsRow("rpath")
+        : yield* pathRow("rpath", "DT_RPATH", dynamic);
+  const runpathRow =
+    directory.elf_type !== ET_EXEC && directory.elf_type !== ET_DYN
+      ? row({
+          property: "runpath",
+          state: "not_applicable",
+          confidence: "observed",
+          basis: `e_type ${String(directory.elf_type)} is neither ET_EXEC nor ET_DYN, so this linked-image property does not apply.`,
+          location: { offset: 16, bytes: 2 },
+        })
+      : programs.length === 0
+        ? unreadProgramsRow("runpath")
+        : yield* pathRow("runpath", "DT_RUNPATH", dynamic);
   const linkedRow = (
     property: LinkedProperty,
     build: () => BinaryHardeningRow,
@@ -341,8 +398,8 @@ const hardeningFromDirectory = (
       "AArch64 BTI and PAC",
       features,
     ),
-    linkedRow("rpath", () => pathRow("rpath", "DT_RPATH", dynamic)),
-    linkedRow("runpath", () => pathRow("runpath", "DT_RUNPATH", dynamic)),
+    rpathRow,
+    runpathRow,
     strippedRow(sections, bits),
   ];
   if (
@@ -361,15 +418,21 @@ const hardeningFromDirectory = (
     slice: null,
     rows,
   };
-};
+}
 
 /** PIE reads this header's presence, so it must name a loadable path. */
-const admitInterp = (bytes: Buffer, interp: SpanProgram): void => {
+function* admitInterp(
+  interp: SpanProgram,
+): Generator<HardeningStep, void, HardeningStepResult> {
   const end = exact(interp.file_offset + interp.file_size, "PT_INTERP range");
   const start = exact(interp.file_offset, "PT_INTERP range");
-  if (interp.file_size < 2n || bytes[start] === 0 || bytes[end - 1] !== 0)
+  if (interp.file_size < 2n)
     malformed("ELF PT_INTERP is not a nonempty NUL-terminated path");
-};
+  const first = yield* readSlice(start, 1);
+  const last = yield* readSlice(end - 1, 1);
+  if (first[0] === 0 || last[0] !== 0)
+    malformed("ELF PT_INTERP is not a nonempty NUL-terminated path");
+}
 
 const mapVirtualAddress = (
   loads: readonly SpanProgram[],
@@ -435,18 +498,18 @@ type DynamicTable = {
   readonly flags: bigint;
   readonly flags1: bigint;
   readonly entries: ReadonlyMap<bigint, DynamicEntry>;
-  readonly strings: Buffer | null;
+  readonly stringSize: number | null;
   readonly stringFileOffset: number | null;
 };
 
 /** Read a PT_DYNAMIC span already admitted by the shared declared-range pass. */
-const readDynamic = (
-  bytes: Buffer,
+function* readDynamic(
+  fileSize: number,
   program: Extract<ElfProgramDeclaration, { type: 2 }>,
   bits: 32 | 64,
   little: boolean,
   mapVa: MapVa,
-): DynamicTable => {
+): Generator<HardeningStep, DynamicTable, HardeningStepResult> {
   const offset = exact(program.offset, "PT_DYNAMIC offset");
   const size = exact(program.size, "PT_DYNAMIC size");
   const { width, trailingBytes } = elfDynamicTableGeometry(size, bits);
@@ -455,8 +518,9 @@ const readDynamic = (
   const count = size / width;
   budget(count, "ELF dynamic table");
   const entries = new Map<bigint, DynamicEntry>();
+  const dynamicSlice = yield* readSlice(offset, size);
   const walked = walkElfDynamicTable<never>(
-    bytes.subarray(offset, offset + size),
+    dynamicSlice,
     { bits, littleEndian: little },
     SINGULAR_DYNAMIC_TAGS,
     ({ tag, value, offset: entryOffset, singleton }) => {
@@ -476,23 +540,22 @@ const readDynamic = (
   const strsz = entries.get(DT_STRSZ);
   if ((strtab === undefined) !== (strsz === undefined))
     malformed("ELF dynamic string table is missing DT_STRTAB or DT_STRSZ");
-  let strings: Buffer | null = null;
+  let stringSize: number | null = null;
   let stringFileOffset: number | null = null;
   if (strtab !== undefined && strsz !== undefined) {
-    const stringSize = exact(strsz.value, "DT_STRSZ");
+    stringSize = exact(strsz.value, "DT_STRSZ");
     stringFileOffset = mapVa(strtab.value, strsz.value).offset;
-    if (stringSize > bytes.length - stringFileOffset)
+    if (stringSize > fileSize - stringFileOffset)
       malformed("ELF dynamic string table extends outside the file");
-    strings = bytes.subarray(stringFileOffset, stringFileOffset + stringSize);
   }
   return {
     flags: entries.get(DT_FLAGS)?.value ?? 0n,
     flags1: entries.get(DT_FLAGS_1)?.value ?? 0n,
     entries,
-    strings,
+    stringSize,
     stringFileOffset,
   };
-};
+}
 
 type SymbolName = {
   readonly name: string;
@@ -531,15 +594,15 @@ const isFortifySymbol = (name: string): boolean =>
  * imports. An SHT_DYNSYM section only supplies a count DT_HASH and DT_GNU_HASH
  * leave open, and only while it names the same tables.
  */
-const readSymbols = (
-  bytes: Buffer,
+function* readSymbols(
+  fileSize: number,
   sections: readonly NativeSection[],
   dynamic: DynamicTable | null,
   little: boolean,
   mapVa: MapVa,
   bits: 32 | 64,
   signal?: AbortSignal,
-): SymbolScan => {
+): Generator<HardeningStep, SymbolScan, HardeningStepResult> {
   const dynsym = uniqueKeyed(
     keyedBy(sections, ({ type }) => type),
     SHT_DYNSYM,
@@ -560,10 +623,10 @@ const readSymbols = (
   const syment = dynamic.entries.get(DT_SYMENT);
   if (syment !== undefined && syment.value !== BigInt(width))
     malformed("ELF DT_SYMENT does not match the ELF class symbol width");
-  if (dynamic.strings === null || dynamic.stringFileOffset === null)
+  if (dynamic.stringSize === null || dynamic.stringFileOffset === null)
     malformed("ELF DT_SYMTAB is present without a dynamic string table");
   const count =
-    symbolCount(bytes, dynamic, bits, little, mapVa, signal) ??
+    (yield* symbolCount(fileSize, dynamic, bits, little, mapVa, signal)) ??
     agreeingSectionCount(sections, section, dynamic, symtab, width, mapVa);
   if (count === null)
     return {
@@ -575,18 +638,17 @@ const readSymbols = (
     };
   budget(count, "ELF dynamic symbol table");
   const base = mapVa(symtab.value, BigInt(count * width)).offset;
-  if (count * width > bytes.length - base)
+  if (count * width > fileSize - base)
     malformed("ELF dynamic symbol table extends outside the file");
-  return readSymbolNames(
-    bytes,
+  return yield* readSymbolNames(
     base,
     count,
     bits,
     little,
-    dynamic.strings,
     dynamic.stringFileOffset,
+    dynamic.stringSize,
   );
-};
+}
 
 /** The SHT_DYNSYM count, or null unless it names the dynamic tables' bytes. */
 const agreeingSectionCount = (
@@ -626,24 +688,36 @@ const agreeingSectionCount = (
 
 const STB_LOCAL = 0;
 
-const readSymbolNames = (
-  bytes: Buffer,
+function* readSymbolNames(
   offset: number,
   count: number,
   bits: 32 | 64,
   little: boolean,
-  strings: Buffer,
   stringFileOffset: number,
-): SymbolScan => {
+  stringSize: number,
+): Generator<HardeningStep, SymbolScan, HardeningStepResult> {
   const width = elfSymbolSize(bits);
+  const entriesPerChunk = Math.max(1, Math.floor(STREAM_WINDOW_BYTES / width));
+  let symChunk: Buffer = Buffer.alloc(0);
+  let symChunkFirst = 0;
+  let symChunkCount = 0;
+  const stringEnd = stringFileOffset + stringSize;
+  let strWinBuf: Buffer = Buffer.alloc(0);
+  let strWinStart = 0;
   let stackProtector: SymbolName | undefined;
   let fortify: SymbolName | undefined;
   let scanned = 0;
   let unterminated = false;
   for (let index = 0; index < count; index += 1) {
+    if (index < symChunkFirst || index >= symChunkFirst + symChunkCount) {
+      const batch = Math.min(entriesPerChunk, count - index);
+      symChunk = yield* readSlice(offset + index * width, batch * width);
+      symChunkFirst = index;
+      symChunkCount = batch;
+    }
     const symbol = readElfSymbolFieldsAt(
-      bytes,
-      offset + index * width,
+      symChunk,
+      (index - symChunkFirst) * width,
       bits,
       little,
     );
@@ -655,11 +729,40 @@ const readSymbolNames = (
     )
       continue;
     const nameOffset = symbol.name_offset;
-    const observed = observeElfStringTableEntry(
-      strings,
-      nameOffset,
-      MAX_BINARY_HARDENING_SYMBOL_NAME_BYTES,
-    );
+    if (nameOffset < 0 || nameOffset >= stringSize)
+      malformed("ELF dynamic symbol name offset is outside the string table");
+    const absPos = stringFileOffset + nameOffset;
+    const remaining = stringEnd - absPos;
+    const maximum = MAX_BINARY_HARDENING_SYMBOL_NAME_BYTES;
+    const observe = () =>
+      observeElfStringTableWindow(
+        strWinBuf.subarray(
+          absPos - strWinStart,
+          absPos - strWinStart + maximum,
+        ),
+        remaining,
+      );
+    const cached =
+      absPos >= strWinStart && absPos < strWinStart + strWinBuf.length
+        ? observe()
+        : null;
+    let observed = cached;
+    if (
+      cached === null ||
+      (cached.state === "truncated" &&
+        cached.scanLimited &&
+        cached.examinedBytes < maximum)
+    ) {
+      const readLen = Math.min(
+        Math.max(STREAM_WINDOW_BYTES, maximum),
+        remaining,
+      );
+      strWinBuf = yield* readSlice(absPos, readLen);
+      strWinStart = absPos;
+      observed = observe();
+    }
+    if (observed === null || observed.state === "outside")
+      malformed("ELF dynamic symbol name offset is outside the string table");
     scanned += observed.examinedBytes;
     if (scanned > MAX_BINARY_HARDENING_SYMBOL_SCAN_BYTES)
       return {
@@ -668,8 +771,6 @@ const readSymbolNames = (
         stackProtector,
         fortify,
       };
-    if (observed.state === "outside")
-      malformed("ELF dynamic symbol name offset is outside the string table");
     // A name past the window is unresolved. Later symbols can still carry the sign.
     if (observed.state === "truncated") {
       unterminated = true;
@@ -679,8 +780,8 @@ const readSymbolNames = (
     if (
       (stackProtector === undefined || fortify === undefined) &&
       observed.contentBytes >= 5 &&
-      strings[nameOffset] === 0x5f &&
-      strings[nameOffset + 1] === 0x5f
+      observed.bytes[0] === 0x5f &&
+      observed.bytes[1] === 0x5f
     ) {
       const name = elfStringTableText(observed) ?? "";
       if (stackProtector === undefined && isStackProtectorSymbol(name))
@@ -705,25 +806,7 @@ const readSymbolNames = (
         fortify,
       }
     : { state: "scanned", stackProtector, fortify };
-};
-
-const hashWords = (
-  reader: BinaryReader,
-  va: bigint,
-  mapVa: MapVa,
-): ElfHashWordReader => {
-  const mapping = mapVa(va, 4n);
-  return (relative) => {
-    // Hash readers may jump over bloom filters or chains. Validate the whole
-    // prefix, including skipped bytes, in the same file-backed mapping.
-    const end = BigInt(relative + 4);
-    if (end > mapping.backed) return err("is not file-backed in its PT_LOAD");
-    if (end > mapping.available) return err("crosses another PT_LOAD mapping");
-    const at = mapping.offset + relative;
-    if (at > reader.bytes.length - 4) return err("extends outside the file");
-    return ok(reader.u32(at));
-  };
-};
+}
 
 const finishGnuHashCount = (
   walk: ElfGnuHashCountWalk,
@@ -744,43 +827,129 @@ const admitHashCount = (
   return malformed(`ELF ${counted.error.message}`);
 };
 
-const symbolCount = (
-  bytes: Buffer,
+function* readHashCount(
+  fileSize: number,
+  va: bigint,
+  little: boolean,
+  mapVa: MapVa,
+): Generator<HardeningStep, number | null, HardeningStepResult> {
+  const mapping = mapVa(va, 4n);
+  const headerLen = Math.min(
+    8,
+    Math.max(0, fileSize - mapping.offset),
+    Number(mapping.available < 8n ? mapping.available : 8n),
+  );
+  const headerBuf = yield* readSlice(mapping.offset, headerLen);
+  const headerReader = new BinaryReader(headerBuf, little, "elf");
+  const readWord: ElfHashWordReader = (relative) => {
+    const end = BigInt(relative + 4);
+    if (end > mapping.backed) return err("is not file-backed in its PT_LOAD");
+    if (end > mapping.available) return err("crosses another PT_LOAD mapping");
+    const at = mapping.offset + relative;
+    if (at > fileSize - 4) return err("extends outside the file");
+    // Only offsets 0 and 4 are used as values; the end-of-table probe checks bounds.
+    if (relative + 4 <= headerBuf.length) return ok(headerReader.u32(relative));
+    return ok(0);
+  };
+  return admitHashCount(
+    readElfHashSymbolCount(readWord, MAX_BINARY_HARDENING_TABLE_ENTRIES),
+  );
+}
+
+function* readGnuHashCount(
+  fileSize: number,
+  va: bigint,
+  bits: 32 | 64,
+  little: boolean,
+  mapVa: MapVa,
+  signal?: AbortSignal,
+): Generator<HardeningStep, number | null, HardeningStepResult> {
+  const mapping = mapVa(va, 4n);
+  const wordBytes = bits === 64 ? 8 : 4;
+  const maxAvail = Math.min(
+    fileSize - mapping.offset,
+    mapping.available > BigInt(Number.MAX_SAFE_INTEGER)
+      ? Number.MAX_SAFE_INTEGER
+      : Number(mapping.available),
+  );
+  const headerLen = Math.min(16, Math.max(0, maxAvail));
+  const headerBuf = yield* readSlice(mapping.offset, headerLen);
+  const headerReader = new BinaryReader(headerBuf, little, "elf");
+  let tailStart = 0;
+  let tailBuf: Buffer = Buffer.alloc(0);
+  let tailReader = new BinaryReader(tailBuf, little, "elf");
+  if (headerBuf.length >= 16) {
+    const buckets = headerReader.u32(0);
+    const bloomWords = headerReader.u32(8);
+    if (
+      buckets > 0 &&
+      buckets <= MAX_BINARY_HARDENING_TABLE_ENTRIES &&
+      bloomWords > 0 &&
+      bloomWords <= MAX_BINARY_HARDENING_TABLE_ENTRIES
+    ) {
+      tailStart = 16 + bloomWords * wordBytes;
+      const tailLimit = (buckets + MAX_BINARY_HARDENING_TABLE_ENTRIES) * 4;
+      if (tailStart < maxAvail) {
+        const readLen = Math.min(tailLimit, maxAvail - tailStart);
+        tailBuf = yield* readSlice(mapping.offset + tailStart, readLen);
+        tailReader = new BinaryReader(tailBuf, little, "elf");
+      }
+    }
+  }
+  const readWord: ElfHashWordReader = (relative) => {
+    const end = BigInt(relative + 4);
+    if (end > mapping.backed) return err("is not file-backed in its PT_LOAD");
+    if (end > mapping.available) return err("crosses another PT_LOAD mapping");
+    const at = mapping.offset + relative;
+    if (at > fileSize - 4) return err("extends outside the file");
+    if (relative >= 0 && relative + 4 <= headerBuf.length)
+      return ok(headerReader.u32(relative));
+    const local = relative - tailStart;
+    if (local >= 0 && local + 4 <= tailBuf.length)
+      return ok(tailReader.u32(local));
+    return err("extends outside the file");
+  };
+  return admitHashCount(
+    finishGnuHashCount(
+      readElfGnuHashSymbolCount(
+        readWord,
+        wordBytes,
+        MAX_BINARY_HARDENING_TABLE_ENTRIES,
+      ),
+      signal,
+    ),
+  );
+}
+
+function* symbolCount(
+  fileSize: number,
   dynamic: DynamicTable,
   bits: 32 | 64,
   little: boolean,
   mapVa: MapVa,
   signal?: AbortSignal,
-): number | null => {
+): Generator<HardeningStep, number | null, HardeningStepResult> {
   const hash = dynamic.entries.get(DT_HASH);
   const gnu = dynamic.entries.get(DT_GNU_HASH);
-  const reader = new BinaryReader(bytes, little, "elf");
   const classic =
     hash === undefined
       ? null
-      : admitHashCount(
-          readElfHashSymbolCount(
-            hashWords(reader, hash.value, mapVa),
-            MAX_BINARY_HARDENING_TABLE_ENTRIES,
-          ),
-        );
+      : yield* readHashCount(fileSize, hash.value, little, mapVa);
   const gnuCount =
     gnu === undefined
       ? null
-      : admitHashCount(
-          finishGnuHashCount(
-            readElfGnuHashSymbolCount(
-              hashWords(reader, gnu.value, mapVa),
-              bits === 64 ? 8 : 4,
-              MAX_BINARY_HARDENING_TABLE_ENTRIES,
-            ),
-            signal,
-          ),
+      : yield* readGnuHashCount(
+          fileSize,
+          gnu.value,
+          bits,
+          little,
+          mapVa,
+          signal,
         );
   if (classic !== null && gnuCount !== null && classic !== gnuCount)
     malformed("ELF DT_HASH and DT_GNU_HASH report different symbol counts");
   return classic ?? gnuCount;
-};
+}
 
 interface FeatureNotes {
   readonly words: Map<number, GnuPropertyWord>;
@@ -791,13 +960,13 @@ interface FeatureNotes {
 }
 
 const noteTable = (
-  bytes: Buffer,
+  fileSize: number,
   offset: number,
   size: number,
   alignment: number | bigint,
   label: string,
 ): ElfNoteTableWalk => {
-  if (size > bytes.length - offset)
+  if (size > fileSize - offset)
     malformed(`ELF ${label} extends outside the file`);
   return { offset, size, alignment };
 };
@@ -904,15 +1073,15 @@ const admitDisjointTables = (
   return admitted;
 };
 
-const readFeatureNotes = (
-  bytes: Buffer,
+function* readFeatureNotes(
+  fileSize: number,
   sections: readonly NativeSection[],
   program: SpanProgram | null,
   notePrograms: readonly SpanProgram[],
   little: boolean,
   propertyAlign: number,
   signal?: AbortSignal,
-): FeatureNotes => {
+): Generator<HardeningStep, FeatureNotes, HardeningStepResult> {
   assertArtifactReadActive(signal);
   const searched = sections.length > 0 || program !== null;
   const propertyProgram =
@@ -920,7 +1089,7 @@ const readFeatureNotes = (
       ? []
       : [
           noteTable(
-            bytes,
+            fileSize,
             exact(program.file_offset, "PT_GNU_PROPERTY offset"),
             exact(program.file_size, "PT_GNU_PROPERTY size"),
             program.alignment,
@@ -928,7 +1097,7 @@ const readFeatureNotes = (
           ),
         ];
   const propertySections: ElfNoteTableWalk[] = [];
-  const otherSpans: NoteSpan[] = [];
+  const compressedSpans: NoteSpan[] = [];
   let incomplete: string | null = null;
   for (const section of sections) {
     const storage = elfNoteSectionStorage(section);
@@ -939,7 +1108,7 @@ const readFeatureNotes = (
       incomplete ??=
         "A compressed SHT_NOTE section may hold GNU property notes, and its descriptors were not read.";
       if (!section.file_backed) continue;
-      otherSpans.push({
+      compressedSpans.push({
         offset: exact(section.offset, "SHT_NOTE offset"),
         size: exact(section.size, "SHT_NOTE size"),
       });
@@ -948,7 +1117,7 @@ const readFeatureNotes = (
     if (!section.file_backed) malformed("ELF SHT_NOTE is not file-backed");
     propertySections.push(
       noteTable(
-        bytes,
+        fileSize,
         exact(section.offset, "SHT_NOTE offset"),
         exact(section.size, "SHT_NOTE size"),
         section.alignment,
@@ -956,29 +1125,20 @@ const readFeatureNotes = (
       ),
     );
   }
-  const overlapsProperty = overlapIndex([
-    ...propertyProgram,
-    ...propertySections,
-  ]);
-  const overlapsOther = overlapIndex(otherSpans);
+  const compressedOverlap = overlapIndex(compressedSpans);
+  // Aliased declarations cannot reinterpret compressed bytes as raw notes.
+  const independentlyFramed = (table: NoteSpan) =>
+    compressedOverlap(table) === "none";
   const programTables: ElfNoteTableWalk[] = [];
   for (const noteProgram of notePrograms) {
-    const span = {
-      offset: exact(noteProgram.file_offset, "PT_NOTE offset"),
-      size: exact(noteProgram.file_size, "PT_NOTE size"),
-    };
-    const property = overlapsProperty(span) !== "none";
-    // Do not reinterpret compressed section bytes through a program alias.
-    if (overlapsOther(span) !== "none" && !property) continue;
-    programTables.push(
-      noteTable(
-        bytes,
-        span.offset,
-        span.size,
-        noteProgram.alignment,
-        "PT_NOTE",
-      ),
+    const table = noteTable(
+      fileSize,
+      exact(noteProgram.file_offset, "PT_NOTE offset"),
+      exact(noteProgram.file_size, "PT_NOTE size"),
+      noteProgram.alignment,
+      "PT_NOTE",
     );
+    if (independentlyFramed(table)) programTables.push(table);
   }
   const unresolvedOverlap = (overlap: NoteOverlap): void => {
     incomplete ??= {
@@ -991,38 +1151,36 @@ const readFeatureNotes = (
   };
   const tables = admitDisjointTables(
     admitDisjointTables(
-      byOffset(propertyProgram),
-      propertySections,
+      byOffset(propertyProgram).filter(independentlyFramed),
+      propertySections.filter(independentlyFramed),
       unresolvedOverlap,
     ),
     programTables,
     unresolvedOverlap,
   );
   try {
+    const words = yield* readGnuPropertyWordsSteps(
+      fileSize,
+      little,
+      tables,
+      MAX_INSPECT_ELF_NOTE_ENTRIES,
+      propertyAlign,
+      signal,
+    );
     return {
-      words: readGnuPropertyWords(
-        walkElfNoteTables(
-          bytes,
-          little,
-          tables,
-          MAX_INSPECT_ELF_NOTE_ENTRIES,
-          signal,
-        ),
-        little,
-        propertyAlign,
-      ),
+      words,
       searched,
       incomplete,
     };
   } catch (cause) {
     // A parser budget keeps confirmed PIE/NX/RELRO while note features stay unknown.
+    // Malformed note framing is already the note parser's malformed-target
+    // failure, and cancellation stays a cancellation.
     if (isParseLimit(cause, "elf-notes"))
       return { words: new Map(), searched, incomplete: cause.message };
-    if (!(cause instanceof ArtifactReaderFailure)) throw cause;
-    if (cause.reason === "cancelled") throw cause;
-    throw new BinaryFormatFailure("malformed", cause.message);
+    throw cause;
   }
-};
+}
 
 const unreadProgramsRow = (
   property: LinkedProperty | "pie",
@@ -1237,11 +1395,11 @@ const featureRow = (
   });
 };
 
-const pathRow = (
+function* pathRow(
   property: "rpath" | "runpath",
   tag: "DT_RPATH" | "DT_RUNPATH",
   dynamic: DynamicTable | null,
-): BinaryHardeningRow => {
+): Generator<HardeningStep, BinaryHardeningRow, HardeningStepResult> {
   const entry = dynamic?.entries.get(
     tag === "DT_RPATH" ? DT_RPATH : DT_RUNPATH,
   );
@@ -1252,12 +1410,22 @@ const pathRow = (
       confidence: "observed",
       basis: `${tag} is absent.`,
     });
-  if (dynamic.strings === null)
+  if (dynamic.stringSize === null || dynamic.stringFileOffset === null)
     malformed(`${tag} is present without a dynamic string table`);
   const stringOffset = exact(entry.value, tag);
+  if (stringOffset >= dynamic.stringSize)
+    malformed(`${tag} string offset is outside the dynamic string table`);
+  const readLen = Math.min(
+    MAX_BINARY_HARDENING_SYMBOL_NAME_BYTES,
+    dynamic.stringSize - stringOffset,
+  );
+  const slice = yield* readSlice(
+    dynamic.stringFileOffset + stringOffset,
+    readLen,
+  );
   const observed = observeElfStringTableEntry(
-    dynamic.strings,
-    stringOffset,
+    slice,
+    0,
     MAX_BINARY_HARDENING_SYMBOL_NAME_BYTES,
   );
   if (observed.state === "outside")
@@ -1279,7 +1447,7 @@ const pathRow = (
     location: { offset: entry.offset, bytes: entry.bytes },
     note: text.length === 0 ? `${tag} value is an empty string.` : text,
   });
-};
+}
 
 const strippedRow = (
   sections: readonly NativeSection[],

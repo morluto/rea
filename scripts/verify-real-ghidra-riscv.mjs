@@ -74,11 +74,6 @@ const workspaceFixture = await VerifierFixture.open({
   private: false,
 });
 const workspace = workspaceFixture.path;
-// A failed run keeps its workspace for diagnosis; the fixture records why.
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -152,12 +147,6 @@ const OUTCOME =
   /RISC-V calling-convention outcome: [1-9]\d* functions and (\d+) function definitions use (__rea_ilp32f?)\./u;
 
 /**
- * A single-float build whose signatures __rea_ilp32f cannot express: its
- * headers are admitted and it opens, then the bridge refuses the policy after
- * analysis, and the first analysis call over MCP and the CLI fail with the
- * bridge's reason. The source bytes stay unchanged.
- */
-/**
  * The same C build with its C compile units labelled Rust: both policies model
  * the C psABI, so each refuses the image and names the language. The unlabelled
  * builds above are the controls.
@@ -207,6 +196,12 @@ const verifyForeignLanguageRefusal = async (variant) => {
   };
 };
 
+/**
+ * A single-float build whose signatures __rea_ilp32f cannot express: its
+ * headers are admitted and it opens, then the bridge refuses the policy after
+ * analysis, and the first analysis call over MCP and the CLI fail with the
+ * bridge's reason. The source bytes stay unchanged.
+ */
 const verifyUnmodelledRefusal = async () => {
   const fixture = await buildRiscvFixture(workspace, 32, {
     variant: "unmodelled",
@@ -888,7 +883,7 @@ try {
   cleanupFailure = cause;
 }
 if (cleanupFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `RISC-V command cleanup failed; retained diagnostic workspace: ${workspace}`,
     {
       cause:
@@ -908,7 +903,7 @@ try {
   lineageFailure = cause;
 }
 if (lineageFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `Cleanup unverified; retained workspace: ${workspace}`,
     {
       cause:
@@ -921,18 +916,18 @@ if (lineageFailure !== undefined)
     },
   );
 if (failure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `RISC-V verification failed; retained workspace: ${workspace}; MCP stderr: ${stderr}`,
     { cause: failure },
   );
 const survivors = await readdir(runtime);
 if (survivors.length > 0)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `Runtime resources survived server shutdown (${survivors.join(", ")}); retained workspace: ${workspace}`,
   );
 const interrupted = commandInterruption.reason();
 if (interrupted !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `RISC-V verification interrupted; retained diagnostic workspace: ${workspace}`,
     { cause: interrupted },
   );

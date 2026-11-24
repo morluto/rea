@@ -81,10 +81,9 @@ were present; `null` means package metadata was invalid or unavailable. Renderer
 role mechanisms and package load edges name the field that supplied the candidate,
 selected as the first nonempty string from `renderer`, `browser`, then `module`.
 The package load edge retains `declared_path`, `source_field`, and resolution
-facts for that selection. New analyses no longer emit the derived package
-`renderer` alias; consumers must read declarations for source metadata and load
-edges for the selected candidate. Previously retained Evidence keeps its original
-properties and remains readable without migration.
+facts for that selection. Read declarations for source metadata and load edges
+for the selected candidate; there is no derived package `renderer` alias.
+Previously retained Evidence keeps its original properties.
 
 ## Select sources before analysis
 
@@ -881,8 +880,24 @@ facts. Increasing these budgets does not raise graph retention, worker heap,
 transfer admission, or parent result memory. Cyclic or unsupported evaluations
 remain unknown. Wrapper limitations name visits and depth separately so a
 caller can change the resource actually exhausted. Finite inline literal object
-spreads use iterative syntax traversal and no longer inherit a duplicate
-semantic-depth cut.
+spreads use iterative syntax traversal.
+
+`semantic_analysis` selects how much of each source is examined. The default,
+`complete`, parses, static-analyzes and semantic-analyzes every selected
+source. `structure-only` returns the static and application-graph facts —
+package and Electron roles, preload and renderer structure, IPC and route
+structure — without building semantic IR, semantic graph content, semantic
+traces, or the application-graph source-module and export-binding nodes those
+facts feed. Each file's semantic coverage is recorded as not examined with
+that reason. The application graph's `coverage` is `partial`, with
+`truncated: false`, `omitted_count: null` and no extra limits: the number of
+omitted module and export nodes is not known, so a comparison reports those
+nodes as unknown rather than removed or added. The result states the omission
+once in `limitations`.
+Use it for a first pass over a large application when the structural surface
+is the question; request `complete` analysis afterwards, narrowed with
+`source_paths`, for semantic detail. The selection stays in Evidence
+parameters. The CLI accepts `--semantic-analysis structure-only`.
 
 Member-mutation analysis also has a work allowance of 524,288 alias states
 per source, selected by the `javascript.member_mutation_alias_states` setting

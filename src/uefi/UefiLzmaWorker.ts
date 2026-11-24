@@ -1,9 +1,9 @@
 import { Buffer } from "node:buffer";
 import { once } from "node:events";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
-import type { Readable, Writable } from "node:stream";
+import type { Writable } from "node:stream";
 import { z } from "zod";
 import { BinaryReader } from "../domain/binaryContainer.js";
 import {
@@ -16,9 +16,9 @@ import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import {
-  encodeLzmaFrame,
+  encodeLzmaFrameHeader,
   LZMA_FRAME_HEADER_BYTES,
-  lzmaRequestSchema,
+  LzmaFrameReader,
   lzmaStreamRequestSchema,
   type UefiLzmaReply,
 } from "./UefiLzmaProtocol.js";
@@ -216,69 +216,6 @@ const serializeReply = (
   return { text: JSON.stringify(bounded), ok: false };
 };
 
-class FramedByteReader {
-  #chunks: Buffer[] = [];
-  #buffered = 0;
-  #ended = false;
-  #error: unknown;
-  #waiter: (() => void) | undefined;
-
-  constructor(stream: Readable) {
-    stream.on("data", (chunk: Buffer) => {
-      if (chunk.length === 0) return;
-      this.#chunks.push(chunk);
-      this.#buffered += chunk.length;
-      const wake = this.#waiter;
-      this.#waiter = undefined;
-      wake?.();
-    });
-    stream.once("end", () => {
-      this.#ended = true;
-      const wake = this.#waiter;
-      this.#waiter = undefined;
-      wake?.();
-    });
-    stream.once("error", (cause: unknown) => {
-      this.#error = cause;
-      const wake = this.#waiter;
-      this.#waiter = undefined;
-      wake?.();
-    });
-  }
-
-  async readExact(
-    length: number,
-    allowCleanEof = false,
-  ): Promise<Buffer | null> {
-    if (length === 0) return Buffer.alloc(0);
-    while (this.#buffered < length) {
-      if (this.#error !== undefined) throw this.#error;
-      if (this.#ended) {
-        if (allowCleanEof && this.#buffered === 0) return null;
-        throw new Error("Truncated LZMA worker frame.");
-      }
-      await new Promise<void>((resolve) => {
-        this.#waiter = resolve;
-      });
-    }
-    const result = Buffer.allocUnsafe(length);
-    let copied = 0;
-    while (copied < length) {
-      const head = this.#chunks[0]!;
-      const take = Math.min(head.length, length - copied);
-      head.copy(result, copied, 0, take);
-      copied += take;
-      this.#buffered -= take;
-      if (take === head.length) {
-        this.#chunks.shift();
-      } else {
-        this.#chunks[0] = head.subarray(take);
-      }
-    }
-    return result;
-  }
-}
-
 const writeFramed = async (stream: Writable, frame: Buffer): Promise<void> => {
   if (!stream.write(frame)) {
     await once(stream, "drain");
@@ -287,9 +224,11 @@ const writeFramed = async (stream: Writable, frame: Buffer): Promise<void> => {
 
 const runStdioWorker = async (): Promise<void> => {
   const codec = await loadLzmaCodec();
-  const reader = new FramedByteReader(process.stdin);
+  const reader = new LzmaFrameReader(process.stdin);
   for (;;) {
-    const header = await reader.readExact(LZMA_FRAME_HEADER_BYTES, true);
+    const header = await reader.readExact(LZMA_FRAME_HEADER_BYTES, {
+      allowCleanEof: true,
+    });
     if (header === null) break;
     const headerReader = new BinaryReader(header, false, "LZMA-Frame");
     const jsonBytes = headerReader.u32(0);
@@ -318,60 +257,15 @@ const runStdioWorker = async (): Promise<void> => {
     const serialized = serializeReply(reply);
     const body =
       serialized.ok && decoded !== undefined ? decoded : Buffer.alloc(0);
-    await writeFramed(process.stdout, encodeLzmaFrame(serialized.text, body));
-  }
-};
-
-const runSingleFileWorker = async (requestPath: string): Promise<void> => {
-  const request = lzmaRequestSchema.parse(
-    JSON.parse(await readFile(requestPath, "utf8")),
-  );
-  let reply: UefiLzmaReply;
-  try {
-    const codec = await loadLzmaCodec();
-    const payload = await readFile(request.payload_path);
-    const outcome = decodeStreamPayload(
-      codec,
-      payload,
-      request.format,
-      request.max_output_bytes,
+    await writeFramed(
+      process.stdout,
+      encodeLzmaFrameHeader(serialized.text, body.length),
     );
-    reply = outcome.reply;
-    if (reply.ok && outcome.decoded !== undefined) {
-      await writeFile(request.output_path, outcome.decoded, {
-        flag: "wx",
-        mode: 0o600,
-      });
-    }
-  } catch (cause: unknown) {
-    const failure = parseFailureFromCause(cause);
-    reply = {
-      ok: false,
-      reason:
-        failure === undefined
-          ? "decoder"
-          : failure.kind === "limit"
-            ? "output-limit"
-            : "format",
-      message: errorMessage(cause),
-    };
+    if (body.length > 0) await writeFramed(process.stdout, body);
   }
-  await writeFile(request.reply_path, serializeReply(reply).text, {
-    flag: "wx",
-    mode: 0o600,
-  });
 };
 
-const main = async (): Promise<void> => {
-  const arg = process.argv[2];
-  if (arg === "--stdio") {
-    await runStdioWorker();
-    return;
-  }
-  if (arg === undefined) {
-    throw new Error("Owned worker request path missing.");
-  }
-  await runSingleFileWorker(arg);
-};
+if (process.argv[2] !== "--stdio")
+  throw new Error("Owned LZMA worker requires framed stdio.");
 
-await main();
+await runStdioWorker();

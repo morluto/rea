@@ -1,6 +1,6 @@
 import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { userInfo, type UserInfo } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import {
   absoluteCallerPath,
   appendCallerPath,
@@ -126,15 +126,6 @@ const physicalPath = (path: string): string => {
     );
   }
 };
-const within = (root: string, path: string): boolean => {
-  const difference = relative(physicalPath(root), physicalPath(path));
-  return (
-    difference === "" ||
-    (!isAbsolute(difference) &&
-      difference !== ".." &&
-      !difference.startsWith(`..${sep}`))
-  );
-};
 const PROFILE_MARKERS = [
   "config.yaml",
   ".env",
@@ -176,7 +167,7 @@ const liveProfile = (path: string): boolean => {
   });
 };
 
-/** Match Hermes CLI sticky-profile selection while retaining the configured path spelling. */
+/** Resolve the Hermes home from the configured override root, retaining the configured path spelling. */
 export const resolveHermesClientHome = (
   home: string,
   platform: NodeJS.Platform,
@@ -186,12 +177,18 @@ export const resolveHermesClientHome = (
   const root = expandedDirectory(home, platform, env) ?? native;
   // An explicit named profile bypasses the root's sticky selection in Hermes CLI.
   if (basename(dirname(root)) === "profiles") return root;
-  const stickyRoot = within(native, root) ? native : root;
+  // The override root owns its sticky selection: read active_profile and
+  // resolve the named profile beneath that same root, even when the override
+  // sits inside the native home (issue #3939, model C). The native home's
+  // selection never determines an override's destinations. Validate the root
+  // first so an unreadable path or dangling alias stays unresolved instead
+  // of silently planning into the root.
+  physicalPath(root);
   let name: string;
   try {
     // Python uses utf-8-sig and ignores unreadable / invalid-UTF8 active_profile files.
     name = decodeStrictUtf8(
-      readFileSync(appendCallerPath(stickyRoot, "active_profile")),
+      readFileSync(appendCallerPath(root, "active_profile")),
       "strip-signature",
     ).trim();
   } catch {
@@ -205,12 +202,10 @@ export const resolveHermesClientHome = (
     RESERVED_PROFILES.has(canonical)
   )
     throw new HermesClientPathError(
-      appendCallerPath(stickyRoot, "active_profile"),
+      appendCallerPath(root, "active_profile"),
       `Invalid saved Hermes profile ${JSON.stringify(name)}. Run 'hermes profile use default' or repair active_profile.`,
     );
-  // Hermes resolves both sticky selection and named profiles from its default
-  // root (including overrides beneath the native home), never mixed roots.
-  const selected = appendCallerPath(stickyRoot, `profiles/${canonical}`);
+  const selected = appendCallerPath(root, `profiles/${canonical}`);
   if (!liveProfile(selected))
     throw new HermesClientPathError(
       selected,

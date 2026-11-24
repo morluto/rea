@@ -215,25 +215,23 @@ export class ReleaseExposureService {
       ),
     );
     const fuseImages: CollectedFuseImage[] = [];
+    const seenFusePaths = new Set<string>();
     for (const candidate of prepared.scan.fuse_candidates) {
-      if (
-        fuseImages.some(
-          (image) => image.inventoriedBundleFile === candidate.path,
-        )
-      )
-        continue;
-      fuseImages.push(
-        await settle(
-          () => this.#fuseImage(candidate, digests, options),
-          {
-            kind: "failed",
-            role: candidate.role,
-            path: candidate.path,
-            reason: OWNER_NOT_RUN,
-          },
-          (value) => fuseImageFact(candidate, digests, value),
-        ),
+      if (seenFusePaths.has(candidate.path)) continue;
+      seenFusePaths.add(candidate.path);
+      const image = await settle(
+        () => this.#fuseImage(candidate, digests, options),
+        {
+          kind: "failed",
+          role: candidate.role,
+          path: candidate.path,
+          reason: OWNER_NOT_RUN,
+        },
+        (value) => fuseImageFact(candidate, digests, value),
       );
+      fuseImages.push(image);
+      if (image.inventoriedBundleFile !== undefined)
+        seenFusePaths.add(image.inventoriedBundleFile);
     }
     const family = fuseImagesRuleOutElectron(
       desktop.family,

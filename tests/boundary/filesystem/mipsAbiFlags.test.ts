@@ -309,6 +309,44 @@ it("refuses uncaptured section declarations while retaining unknown ABI evidence
   assert.equal(resolved.mips.abiFlags, null);
   assert.equal(resolved.mips.limitations, undefined);
   assert.equal(ghidraMipsUnsupportedReason(resolved), null);
+  const carvedRecordless = Buffer.from(bytes);
+  carvedRecordless.writeUInt32LE(0, 28);
+  carvedRecordless.writeUInt16LE(0, 44);
+  carvedRecordless.writeUInt32LE(0x50000001, 36); // Recordless legacy carve keeping truncated e_shoff.
+  const resolvedCarve = await resolveFixture(carvedRecordless);
+  assert.equal(resolvedCarve.mips.abiFlags, null);
+  assert.match(
+    (resolvedCarve.mips.limitations ?? []).join(" "),
+    /MIPS section header table at file offset .* extends beyond the captured file/u,
+  );
+  assert.equal(ghidraMipsUnsupportedReason(resolvedCarve), null);
+});
+it("refuses a partly captured recordless MIPS32 section table when a captured header points past EOF", async () => {
+  const base = withoutSectionTable(fixture());
+  base.writeUInt32LE(0, 28);
+  base.writeUInt16LE(0, 44);
+  base.writeUInt32LE(0x50000001, 36); // Recordless legacy MIPS32 header.
+  // Place a 2-entry section table at EOF with 1 complete header and 7 trailing bytes.
+  const sectionOffset = base.length;
+  const bytes = Buffer.concat([base, Buffer.alloc(47)]);
+  bytes.writeUInt32LE(sectionOffset, 32);
+  bytes.writeUInt16LE(2, 48);
+  // Captured section 0: SHT_PROGBITS with valid in-file payload is admitted with limitation.
+  bytes.writeUInt32LE(1, sectionOffset + 4);
+  bytes.writeUInt32LE(52, sectionOffset + 16);
+  bytes.writeUInt32LE(16, sectionOffset + 20);
+  const admitted = await resolveFixture(bytes);
+  assert.match(
+    (admitted.mips.limitations ?? []).join(" "),
+    /MIPS section header table at file offset .* examined 1 of 2 complete headers/u,
+  );
+  // Captured section 0: SHT_PROGBITS pointing past EOF must be refused.
+  const badPayloadOffset = bytes.length + 1;
+  bytes.writeUInt32LE(badPayloadOffset, sectionOffset + 16);
+  await refuseFixture(
+    bytes,
+    `truncated ELF section 0: declared file range ${badPayloadOffset}..${badPayloadOffset + 16} exceeds the ${bytes.length}-byte file`,
+  );
 });
 for (const little of [true, false]) {
   it(`matches the real MIPS lane's carved-copy refusal (${little ? "LE" : "BE"})`, async () => {

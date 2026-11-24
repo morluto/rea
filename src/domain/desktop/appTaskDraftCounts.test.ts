@@ -33,8 +33,12 @@ const box = (id: string) =>
   `${LAYER}/children/[name=dia:object][@id=${id}]/children/[name=dia:attribute]`;
 
 describe("draftTaskFiles for a box renamed in a diagram the app resizes", () => {
-  it("checks the new text, names the layer by a box's text so a reopened file's empty layer leaves it named, and notes the box's new geometry as layout", () => {
-    const file = xmlDraft(flowchart(SEED), flowchart(END));
+  it("checks the renamed box, keeps sibling text and the box count, and treats new geometry as layout", () => {
+    const doc = "Documents/doc.xml";
+    const seed = flowchart(SEED);
+    const edited = flowchart(END);
+    const reopened = flowchart(END, { reopened: true });
+    const file = xmlDraft(seed, edited);
 
     expect(file.suggested).toEqual([
       {
@@ -58,19 +62,6 @@ describe("draftTaskFiles for a box renamed in a diagram the app resizes", () => 
       ["[@name=obj_bb]/children/[name=dia:rectangle]/attributes/val", "layout"],
       ["[@name=elem_width]/children/[name=dia:real]/attributes/val", "layout"],
     ]);
-    const checks = [...file.suggested, ...file.guards];
-    expect(
-      passing("Documents/doc.xml", xml(flowchart(SEED)), file.suggested),
-    ).toEqual([false]);
-    for (const end of [flowchart(END), flowchart(END, { reopened: true })])
-      expect(
-        passing("Documents/doc.xml", xml(end), checks).every(Boolean),
-      ).toBe(true);
-  });
-
-  it("guards the other boxes' text before any geometry, and that no box of the kind was added or removed", () => {
-    const file = xmlDraft(flowchart(SEED), flowchart(END));
-
     expect(file.guards.map(pointerOf)).toEqual([
       `${box("O0")}[@name=text]`,
       `${box("O2")}[@name=text]`,
@@ -83,6 +74,32 @@ describe("draftTaskFiles for a box renamed in a diagram the app resizes", () => 
       matching: "[name=dia:object][@type=Flowchart - Box]",
       equals: 3,
     });
+    const extra = (type: string) =>
+      reopened.replace(
+        "</dia:layer>",
+        `<dia:object id="O4" type="${type}"/></dia:layer>`,
+      );
+    const checks = [...file.suggested, ...file.guards];
+    expect(passing(doc, xml(seed), checks)).toEqual([false, true, true, true]);
+    for (const saved of [edited, reopened])
+      expect(passing(doc, xml(saved), checks)).toEqual([
+        true,
+        true,
+        true,
+        true,
+      ]);
+    expect(passing(doc, xml(extra("Standard - Line")), checks)).toEqual([
+      true,
+      true,
+      true,
+      true,
+    ]);
+    expect(passing(doc, xml(extra("Flowchart - Box")), checks)).toEqual([
+      true,
+      true,
+      true,
+      false,
+    ]);
   });
 
   it("keeps geometry that changed with no text beside it as the suggestion, since moving a box may be the task", () => {
@@ -103,10 +120,9 @@ describe("draftTaskFiles counts of a list's members", () => {
     `<library>${titles.map((title) => `<book><title>${title}</title></book>`).join("")}</library>`;
 
   it("counts the members of a list an edit added to, at the end's number, which fails at the seed", () => {
-    const file = xmlDraft(
-      library("Salt Roads"),
-      library("Salt Roads", "Quiet Rivers"),
-    );
+    const seed = library("Salt Roads");
+    const edited = library("Salt Roads", "Quiet Rivers");
+    const file = xmlDraft(seed, edited);
 
     const count = file.suggested.filter(({ kind }) => kind === "member_count");
     expect(count).toEqual([
@@ -118,9 +134,8 @@ describe("draftTaskFiles counts of a list's members", () => {
         equals: 2,
       },
     ]);
-    expect(
-      passing("Documents/doc.xml", xml(library("Salt Roads")), count),
-    ).toEqual([false]);
+    expect(passing("Documents/doc.xml", xml(seed), count)).toEqual([false]);
+    expect(passing("Documents/doc.xml", xml(edited), count)).toEqual([true]);
   });
 
   it("counts no lone member an edit added, as a style an app adds for a run", () => {
@@ -144,8 +159,10 @@ describe("draftTaskFiles count guards", () => {
 
     expect(file.suggested.map(({ kind }) => kind)).toEqual(["text_equals"]);
     expect(file.guards.map(({ kind }) => kind)).not.toContain("member_count");
-    expect(
-      passing("Documents/doc.xml", xml(after), file.guards).every(Boolean),
-    ).toBe(true);
+    const checks = [...file.suggested, ...file.guards];
+    for (const saved of [after, "<doc><p><c>ChangedSecondThird</c></p></doc>"])
+      expect(passing("Documents/doc.xml", xml(saved), checks)).not.toContain(
+        false,
+      );
   });
 });

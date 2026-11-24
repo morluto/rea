@@ -541,8 +541,8 @@ CLI/stdio MCP load-image parity, exact source bytes, both functions, the
 `bsr.b` call reference, decompilation through address and file offset, rejection
 of a misaligned entry and of a mapping past `0xffffffff` without replacing the
 active session, and runtime cleanup. Windows Ghidra P0 does not admit m68k, so
-this is not a Windows lane. Recorded on Ghidra 12.1.4 (no longer accepted); not
-yet re-run on 12.2. The recorded run was on macOS; Linux has not been exercised.
+this is not a Windows lane. It passed on Ghidra 12.2 with JDK 25 on macOS
+arm64; Linux has not been exercised.
 The lane uses the [supported Ghidra and JDK installation](getting-started/installation.md#ghidra).
 
 `npm run verify:ghidra:raw` uses a generated ARM little-endian headerless image
@@ -788,6 +788,8 @@ rejecting failed, cancelled, or unexpectedly skipped work. It rejects missing or
 unknown tiers and requires every canonical scope to be explicitly `true` or
 `false`; incomplete classification cannot silently omit verification lanes.
 The aggregate remains cancellable so superseded runs release their slots.
+After successful classification, `Portable tests` starts a runner only when
+the code scope is selected. Every code tier requires its merged report to pass.
 Branch protection
 should require this aggregate, `Static checks`, `Portable tests`, and
 `Conventional PR title`. Title validation runs separately on PR opening,

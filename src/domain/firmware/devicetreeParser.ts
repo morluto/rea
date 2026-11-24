@@ -1,4 +1,8 @@
-import type { Devicetree, InspectDevicetreeInput } from "./devicetree.js";
+import {
+  DEVICETREE_PROPERTY_PREVIEW_BYTES,
+  type Devicetree,
+  type InspectDevicetreeInput,
+} from "./devicetree.js";
 import { BinaryFormatFailure, BinaryReader } from "../binaryContainer.js";
 import { readDevicetreeHeader } from "./devicetreeHeader.js";
 import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
@@ -202,7 +206,11 @@ export const parseDevicetree = (
       const propertyMap = propertiesByPath.get(owner.node.path);
       if (!name || propertyMap?.has(name))
         malformed("Empty or duplicate FDT property name");
-      admit(name.length * 2 + Math.min(length, 256) * 2 + 256);
+      admit(
+        name.length * 2 +
+          Math.min(length, DEVICETREE_PROPERTY_PREVIEW_BYTES) * 2 +
+          256,
+      );
       const raw = bytes.subarray(cursor, cursor + length);
       // Only binding-independent standard strings and single-cell declarations are decoded.
       const stringProperty =
@@ -238,8 +246,8 @@ export const parseDevicetree = (
         name,
         offset: cursor,
         bytes: length,
-        hex: raw.subarray(0, 256).toString("hex"),
-        truncated: length > 256,
+        hex: raw.subarray(0, DEVICETREE_PROPERTY_PREVIEW_BYTES).toString("hex"),
+        truncated: length > DEVICETREE_PROPERTY_PREVIEW_BYTES,
         derived: { confidence: "derived" as const, strings, cells, reg: null },
       };
       owner.node.properties.push(property);
@@ -271,22 +279,26 @@ export const parseDevicetree = (
         ];
   const limitations = [
     ...structureLimitations,
-    "Raw property previews are limited to 256 bytes; offsets and lengths identify complete values in the hashed artifact.",
+    `Raw property previews are limited to ${String(DEVICETREE_PROPERTY_PREVIEW_BYTES)} bytes; offsets and lengths identify complete values in the hashed artifact.`,
     "Phandle references cover only single-cell interrupt-parent, remote-endpoint and msi-parent; binding-specific arrays and overlays are not resolved.",
   ];
   for (const node of nodes) {
-    const canonical = prop(node.path, "phandle");
-    const legacy = prop(node.path, "linux,phandle");
-    const malformedCanonical =
-      canonical !== undefined && canonical.derived.cells === null;
-    const declared = [canonical, legacy].flatMap((property) => {
+    const phandleProperties = [
+      prop(node.path, "phandle"),
+      prop(node.path, "linux,phandle"),
+    ];
+    const malformedPhandles = phandleProperties.filter(
+      (property): property is NonNullable<typeof property> =>
+        property !== undefined && property.derived.cells === null,
+    );
+    const declared = phandleProperties.flatMap((property) => {
       const handle = property?.derived.cells?.[0];
       return handle === undefined ? [] : [handle];
     });
-    if (malformedCanonical) {
+    for (const property of malformedPhandles) {
       admit(node.path.length * 2 + 256);
       limitations.push(
-        `phandle at ${node.path} is not a single cell; this node's reference identity remains unresolved.`,
+        `${property.name} at ${node.path} is not a single cell; this node's reference identity remains unresolved.`,
       );
     }
     // Disagreeing declarations leave both values ambiguous rather than choosing one.
@@ -297,7 +309,7 @@ export const parseDevicetree = (
         `phandle at ${node.path} conflicts with linux,phandle (0x${declared[0]?.toString(16)} vs 0x${declared[1]?.toString(16)}); references to either value are unresolved.`,
       );
     }
-    const unambiguous = !malformedCanonical && !conflict;
+    const unambiguous = malformedPhandles.length === 0 && !conflict;
     for (const handle of declared)
       if (handle !== 0 && handle !== 0xffffffff) {
         const existing = handles.get(handle);

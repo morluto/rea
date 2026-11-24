@@ -1,6 +1,6 @@
 import type { FileHandle } from "node:fs/promises";
 
-import type { EspFlashImageMetadata } from "../domain/artifactFormatMetadata.js";
+import type { EspFlashImageMetadata } from "../domain/formatMetadata/firmwareMetadata.js";
 import { ESP_CHIP_TABLE_SOURCE } from "../domain/firmware/espChips.js";
 import {
   espErasedSlotLimitation,
