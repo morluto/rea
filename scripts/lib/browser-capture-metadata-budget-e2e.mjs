@@ -121,6 +121,8 @@ export async function verifyBrowserCaptureMetadataBudget(endpoint) {
           allowed_origins: [fixtureOrigin],
           target_id: targetId,
           observation_ms: 0,
+          // The assertions read the complete capture, whatever its size.
+          detail: "complete",
         }),
       );
       assertBundleMetadataOmissions(

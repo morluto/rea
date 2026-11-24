@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 import {
+  compareDocumentedNumericLimits,
   discoverNumericLimitUses,
+  documentedLimitCell,
+  parseDocumentedNumericLimits,
   parseNumericLimitRegistry,
   parseRuntimeSettingEnvironments,
   requiredRuntimeLimitFailure,
@@ -537,4 +540,100 @@ it("reports a required limit absent from src as a typed missing result", () => {
       inRegistry: false,
     }),
   ).toBeUndefined();
+});
+
+const documentedLimits = `
+## Runtime analysis settings
+
+| Setting | Default | Floor | Maximum |
+| --- | --- | --- | --- |
+| \`sample.bytes\` | 10 | 1 | 20 |
+
+## Per-call limits in the runtime system
+
+| Environment | Default | Floor | Maximum |
+| --- | --- | --- | --- |
+| \`REA_SAMPLE_BYTES\` | unset (\`null\`, none) | 1 | \`Number.MAX_SAFE_INTEGER\` |
+
+## Restart-only numeric limits
+
+| Environment | Default | Floor | Maximum |
+| --- | --- | --- | --- |
+| \`REA_FIXED\` | 30 | 30 | 30 |
+`;
+
+it("rejects a fractional documented cell instead of keeping its leading digits", () => {
+  expect(documentedLimitCell("5000.5", {}).ok).toBe(false);
+  expect(documentedLimitCell("5000.", {}).ok).toBe(false);
+  expect(documentedLimitCell("60000 (MCP SDK default)", {})).toEqual({
+    ok: true,
+    value: 60_000,
+  });
+  expect(documentedLimitCell("10485760 when unset", {})).toEqual({
+    ok: true,
+    value: 10_485_760,
+  });
+  const rows = parseDocumentedNumericLimits(
+    documentedLimits.replace(
+      "| `sample.bytes` | 10 |",
+      "| `sample.bytes` | 5000.5 |",
+    ),
+  );
+  const failures = compareDocumentedNumericLimits(
+    rows,
+    [
+      { name: "sample.bytes", defaultValue: 5000, minimum: 1, maximum: 20 },
+      {
+        name: "sample.launch",
+        aliases: ["REA_SAMPLE_BYTES"],
+        defaultValue: null,
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+      },
+      { name: "REA_FIXED", defaultValue: 30, minimum: 30, maximum: 30 },
+    ],
+    { "Number.MAX_SAFE_INTEGER": Number.MAX_SAFE_INTEGER },
+  );
+  expect(failures).toEqual([
+    'sample.bytes default: documented "5000.5" (unreadable cell "5000.5"), code 5000',
+  ]);
+});
+
+it("names the limit and both values when a documented default drifts", () => {
+  const failures = compareDocumentedNumericLimits(
+    parseDocumentedNumericLimits(documentedLimits),
+    [
+      { name: "sample.bytes", defaultValue: 11, minimum: 1, maximum: 20 },
+      {
+        name: "sample.launch",
+        aliases: ["REA_SAMPLE_BYTES"],
+        defaultValue: null,
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+      },
+      { name: "REA_FIXED", defaultValue: 30, minimum: 30, maximum: 30 },
+    ],
+    { "Number.MAX_SAFE_INTEGER": Number.MAX_SAFE_INTEGER },
+  );
+  expect(failures).toEqual(["sample.bytes default: documented 10, code 11"]);
+});
+
+it("names a documented limit the code does not export", () => {
+  const failures = compareDocumentedNumericLimits(
+    parseDocumentedNumericLimits(documentedLimits),
+    [
+      { name: "sample.bytes", defaultValue: 10, minimum: 1, maximum: 20 },
+      {
+        name: "sample.launch",
+        aliases: ["REA_SAMPLE_BYTES"],
+        defaultValue: null,
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+      },
+    ],
+    { "Number.MAX_SAFE_INTEGER": Number.MAX_SAFE_INTEGER },
+  );
+  expect(failures).toEqual([
+    'REA_FIXED: documented Restart-only numeric limits default "30", floor "30", maximum "30", but code exports no bound',
+  ]);
 });

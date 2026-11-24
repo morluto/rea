@@ -22,6 +22,7 @@ import { zipEntryRefusal } from "../../../src/domain/desktop/zipView.js";
 import {
   desktopViewPolicy,
   pythonDesktopViewPolicy,
+  type DesktopViewPolicy,
 } from "../../../src/domain/desktop/desktopViewPolicy.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
@@ -29,6 +30,7 @@ import {
   expectSameFileViews,
   exportedPython,
   pythonFileViews,
+  typescriptFileView,
   writeFiles,
 } from "../../support/desktopExportPython.js";
 import {
@@ -44,15 +46,16 @@ const FIXTURES = join(import.meta.dirname, "../../fixtures/freecad");
 const saved = (archives: readonly Buffer[]) =>
   archives.map((bytes) => ({ name: "plate.FCStd", bytes }));
 
-const expectSameViews = (archives: readonly Buffer[]) =>
-  expectSameFileViews(saved(archives));
+const expectSameViews = (
+  archives: readonly Buffer[],
+  policy?: DesktopViewPolicy,
+) => expectSameFileViews(saved(archives), policy);
 
 /** REA's view of an archive, once the exported module's is shown to be the same. */
-const sameView = async (archive: Buffer) => {
-  await expectSameViews([archive]);
-  const read = await readZipView(archive);
-  if (!read.ok) throw new Error(read.error);
-  return read.value;
+const sameView = async (archive: Buffer, policy?: DesktopViewPolicy) => {
+  const [file] = await expectSameViews([archive], policy);
+  if (file?.view == null) throw new Error(file?.error ?? "No ZIP view");
+  return file.view;
 };
 
 /** The exported module's zip view of an archive file, and the most memory reading it traced. */
@@ -61,16 +64,36 @@ const pythonPeak = async (archive: Buffer) =>
     exportedPython(
       `import tracemalloc
 tracemalloc.start()
-view = _view(Path(json.load(sys.stdin)[0]))["view"]
+file = _view(Path(json.load(sys.stdin)[0]))
 peak = tracemalloc.get_traced_memory()[1]
 tracemalloc.stop()
-print(json.dumps({"view": view, "peak": peak}))`,
+print(json.dumps({"file": file, "peak": peak}))`,
       await writeFiles(saved([archive])),
     ),
   ) as {
-    view: { entries: Record<string, JsonValue>[]; entry_count: number };
+    file: {
+      format: "zip";
+      truncated: boolean;
+      view: {
+        entries: Record<string, JsonValue>[];
+        entry_count: number;
+        truncated: boolean;
+      };
+    };
     peak: number;
   };
+
+const expectSameTrackedView = async (archive: Buffer) => {
+  const {
+    file: { truncated, ...file },
+    peak,
+  } = await pythonPeak(archive);
+  expect(file).toEqual(
+    await typescriptFileView({ name: "plate.FCStd", bytes: archive }),
+  );
+  expect(truncated).toBe(file.view.truncated);
+  return { file, peak };
+};
 
 const sqliteHeader = Buffer.concat([
   Buffer.from("SQLite format 3\0"),
@@ -228,11 +251,13 @@ it("excludes a final Unicode directory without consuming a retained file slot", 
       ]),
     },
     { name: "control.json", data: '{"kept":true}' },
+    { name: "later.txt", data: "after the selected limit" },
   ]);
-  expect(await sameView(archive)).toMatchObject({
+  const policy = desktopViewPolicy({ zip_entries: 1 });
+  expect(await sameView(archive, policy)).toMatchObject({
     entries: [{ name: "control.json", view: { kept: true } }],
-    entry_count: 1,
-    truncated: false,
+    entry_count: 2,
+    truncated: true,
   });
 });
 
@@ -251,14 +276,9 @@ describe("zip views in the exported module", () => {
       { name: "big.json", data: '{"id": 9007199254740993}' },
     ];
 
-    await expectSameViews([zipArchive(members)]);
-    const read = await readZipView(zipArchive(members));
-    expect(read).toMatchObject({
-      ok: true,
-      value: { entry_count: 9, truncated: false },
-    });
-    if (!read.ok) return;
-    expect(read.value).toMatchObject({
+    expect(await sameView(zipArchive(members))).toMatchObject({
+      entry_count: 9,
+      truncated: false,
       entries: [
         { name: "settings.json", format: "json", view: { zoom: 1.5 } },
         { name: "app.ini", format: "keyfile" },
@@ -311,9 +331,8 @@ describe("zip views in the exported module", () => {
       Buffer.alloc(60, 7),
     ]);
 
-    await expectSameViews([archive, damaged]);
-    const read = await readZipView(archive);
-    expect(read.ok && read.value).toMatchObject({
+    const [read, refusal] = await expectSameViews([archive, damaged]);
+    expect(read?.view).toMatchObject({
       entries: [
         { view_error: "encrypted, so it is not read", sha256: null },
         {
@@ -331,30 +350,11 @@ describe("zip views in the exported module", () => {
         { format: "text", view_error: null },
       ],
     });
-    expect(await readZipView(damaged)).toEqual({
-      ok: false,
+    expect(refusal).toEqual({
+      format: "zip",
+      view: null,
       error: "not a readable zip archive",
     });
-  });
-
-  it("lists at most 1,000 entries and counts the rest", async () => {
-    const archive = zipArchive(
-      Array.from({ length: 1002 }, (_, index) => ({
-        name: `n/${String(index)}.txt`,
-        data: String(index),
-        method: 0,
-      })),
-    );
-
-    await expectSameViews([archive]);
-    const read = await readZipView(archive);
-    expect(read.ok && read.value).toMatchObject({
-      entry_count: 1002,
-      truncated: true,
-    });
-    expect(
-      read.ok && (read.value as { entries: unknown[] }).entries,
-    ).toHaveLength(1000);
   });
 
   it("stops reading an archive at 64 MiB of entries, as the exported reader does", () => {
@@ -392,6 +392,36 @@ print(json.dumps([_zip_refusal(SimpleNamespace(flag_bits=0, compress_type=8, fil
       null,
     ]);
     expect(theirs).toEqual(ours);
+  });
+});
+
+it("charges admitted bytes across the archive and still reads empty entries", async () => {
+  const archive = zipArchive([
+    { name: "over-entry.txt", data: "abc", method: 0 },
+    { name: "first.txt", data: "ab", method: 0 },
+    { name: "fills-budget.txt", data: "cd", method: 0 },
+    { name: "over-budget.txt", data: "e", method: 0 },
+    { name: "empty.txt", data: "", method: 0 },
+  ]);
+  const policy = desktopViewPolicy({ zip_bytes: 4, zip_entry_bytes: 2 });
+  expect(await sameView(archive, policy)).toMatchObject({
+    entry_count: 5,
+    truncated: false,
+    entries: [
+      {
+        name: "over-entry.txt",
+        sha256: null,
+        view_error: "larger than the 2 bytes an entry's view reads",
+      },
+      { name: "first.txt", view: { lines: ["ab"] }, view_error: null },
+      { name: "fills-budget.txt", view: { lines: ["cd"] }, view_error: null },
+      {
+        name: "over-budget.txt",
+        sha256: null,
+        view_error: "past the 4 bytes read from one archive",
+      },
+      { name: "empty.txt", size: 0, view_error: null },
+    ],
   });
 });
 
@@ -633,13 +663,14 @@ print(json.dumps(None if view is None else {
   });
 
   it("lists the first 1,000 of 50,000 entries holding no more of the directory than those", async () => {
-    const archive = emptyEntriesArchive(50_000);
-    await expectSameViews([archive]);
+    const { file, peak } = await expectSameTrackedView(
+      emptyEntriesArchive(50_000),
+    );
 
-    const { view, peak } = await pythonPeak(archive);
-
-    expect(view.entries).toHaveLength(1000);
-    expect(view.entry_count).toBe(50_000);
+    expect(file.view).toMatchObject({ entry_count: 50_000, truncated: true });
+    expect(file.view.entries).toHaveLength(1000);
+    expect(file.view.entries[0]?.name).toBe("e/0");
+    expect(file.view.entries.at(-1)?.name).toBe("e/999");
     // Parsing every record before the listing limit applied traced about 25 MiB here.
     expect(peak).toBeLessThan(4 * MIB);
   });
@@ -656,11 +687,11 @@ describe("zip entries the exported module cannot fully read", () => {
         crc: 0,
       },
     ]);
-    await expectSameViews([archive]);
+    const { file, peak } = await expectSameTrackedView(archive);
 
-    const { view, peak } = await pythonPeak(archive);
-
-    expect(view.entries[0]?.view_error).toBe("its compressed data is damaged");
+    expect(file.view.entries[0]?.view_error).toBe(
+      "its compressed data is damaged",
+    );
     // Reading the stream whole before clipping it traced about 77 MiB here.
     expect(peak).toBeLessThan(4 * MIB);
   });

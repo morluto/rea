@@ -178,7 +178,7 @@ it.each([false, true])(
 );
 
 it.each([null, 0, 1])(
-  "checks every admitted FAT slice's framing (corrupt slice %s)",
+  "validates only the selected FAT slice's command framing (corrupt slice %s)",
   async (corruptIndex) => {
     const slices = [
       commandImage(true, true, [16]),
@@ -201,7 +201,8 @@ it.each([null, 0, 1])(
     const resolved = await parseBinaryTarget(path, {
       hostArchitecture: "arm64",
     });
-    expect(resolved.ok).toBe(corruptIndex === null);
+    // Slice 1 (arm64) is selected; corrupting unselected slice 0 is isolated.
+    expect(resolved.ok).toBe(corruptIndex !== 1);
     if (!resolved.ok) {
       if (!(resolved.error instanceof BinaryTargetError)) throw resolved.error;
       expect(resolved.error.reason).toContain("invalid cmdsize");

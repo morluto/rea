@@ -259,9 +259,9 @@ export abstract class BinarySessionRecords {
       target,
       profile,
       target === undefined
-        ? this.#records.exportEvidenceBundle()
+        ? this.#records.immutableEvidenceBundle()
         : evidenceBundleForTarget(
-            this.#records.exportEvidenceBundle(),
+            this.#records.immutableEvidenceBundle(),
             target.sha256,
           ),
     );
@@ -344,6 +344,15 @@ export abstract class BinarySessionRecords {
     return this.#snapshot.lookup(target, profile, operation, parameters, (id) =>
       this.evidenceForAnalysis(id),
     );
+  }
+
+  /** Why recording this execution would keep no replay entry, if anything. */
+  protected snapshotRecordingRefusal(
+    input: Parameters<AnalysisSnapshotCache["recordingRefusal"]>[0],
+  ): string | undefined {
+    return this.#snapshotInvalidated
+      ? "a metadata write in this session invalidated its snapshot"
+      : this.#snapshot.recordingRefusal(input);
   }
 
   protected recordSnapshot(

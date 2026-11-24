@@ -50,6 +50,7 @@ import {
   PE_CERTIFICATES_PROVIDER,
   PE_IMPORTS_PROVIDER,
   PE_LOAD_CONFIG_PROVIDER,
+  PE_UNWIND_RANGES_PROVIDER,
   PE_RESOURCES_PROVIDER,
   RELEASE_EXPOSURE_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
@@ -482,6 +483,11 @@ export const CAPABILITY_DECLARATIONS = {
   peLoadConfig: {
     providers: [
       providerBinding(PE_LOAD_CONFIG_PROVIDER, ["inspect_pe_load_config"]),
+    ],
+  },
+  peUnwindRanges: {
+    providers: [
+      providerBinding(PE_UNWIND_RANGES_PROVIDER, ["inspect_pe_unwind_ranges"]),
     ],
   },
   binaryHardening: {

@@ -1,4 +1,4 @@
-import canonicalize from "canonicalize";
+import { serializeCanonicalValue } from "./canonicalDigest.js";
 import { z } from "zod";
 
 import {
@@ -25,6 +25,7 @@ import {
   type BinaryTarget,
 } from "./binaryTargetTypes.js";
 import {
+  detachedEvidenceBundleSchema,
   evidenceBundleForTarget,
   evidenceBundleSchema,
   parseEvidenceBundle,
@@ -39,16 +40,19 @@ import {
   type EvidenceLocation,
 } from "./evidence.js";
 import {
+  detachedJsonObjectSchema,
+  detachedJsonValueSchema,
   jsonObjectSchema,
   jsonValueSchema,
+  ownedJsonObjectSchema,
   type JsonValue,
 } from "./jsonValue.js";
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { canonicalJsonDigestSteps } from "./canonicalJsonDigestSteps.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
 import {
-  relationshipCoverageSchema,
-  type RelationshipCoverage,
+  evidenceRelationshipCoverageSchema,
+  type EvidenceRelationshipCoverage,
 } from "./relationshipCoverage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import {
@@ -139,25 +143,36 @@ const bindingSchema = z
         message: "Snapshot binding provider does not match analysis profile",
       });
   });
-const entrySchema = z.object({
-  query_id: prefixedDigestSchema("query"),
-  operation: z.string().min(1),
-  parameters: jsonObjectSchema,
-  execution: z.object({
-    result: jsonValueSchema,
-    raw_result: jsonValueSchema.nullable(),
-    provider: committedProviderSchema,
-    limitations: z.array(z.string()),
-    relationship_coverage: relationshipCoverageSchema.nullable(),
-    locations: z.array(evidenceLocationSchema),
-    subject: evidenceSubjectSchema,
-  }),
-});
-const workflowEntrySchema = entrySchema.extend({
-  execution: entrySchema.shape.execution.extend({
-    analysis_profile: analysisProfileSchema,
-  }),
-});
+const createEntrySchema = (
+  valueSchema: typeof jsonValueSchema,
+  objectSchema: typeof jsonObjectSchema,
+) =>
+  z.object({
+    query_id: prefixedDigestSchema("query"),
+    operation: z.string().min(1),
+    parameters: objectSchema,
+    execution: z.object({
+      result: valueSchema,
+      raw_result: valueSchema.nullable(),
+      provider: committedProviderSchema,
+      limitations: z.array(z.string()),
+      relationship_coverage: evidenceRelationshipCoverageSchema.nullable(),
+      locations: z.array(evidenceLocationSchema),
+      subject: evidenceSubjectSchema,
+    }),
+  });
+
+const createWorkflowEntrySchema = (
+  baseEntrySchema: ReturnType<typeof createEntrySchema>,
+) =>
+  baseEntrySchema.extend({
+    execution: baseEntrySchema.shape.execution.extend({
+      analysis_profile: analysisProfileSchema,
+    }),
+  });
+
+const entrySchema = createEntrySchema(jsonValueSchema, jsonObjectSchema);
+const workflowEntrySchema = createWorkflowEntrySchema(entrySchema);
 
 /** Provider- and profile-exact cache of successful immutable analysis calls. */
 export const analysisSnapshotSchema = z.object({
@@ -166,6 +181,18 @@ export const analysisSnapshotSchema = z.object({
   entries: z.array(entrySchema),
   workflow_entries: z.array(workflowEntrySchema),
   evidence_bundle: evidenceBundleSchema,
+});
+
+const detachedEntrySchema = createEntrySchema(
+  detachedJsonValueSchema,
+  detachedJsonObjectSchema,
+);
+const detachedWorkflowEntrySchema =
+  createWorkflowEntrySchema(detachedEntrySchema);
+const detachedAnalysisSnapshotSchema = analysisSnapshotSchema.extend({
+  entries: z.array(detachedEntrySchema),
+  workflow_entries: z.array(detachedWorkflowEntrySchema),
+  evidence_bundle: detachedEvidenceBundleSchema,
 });
 
 export type AnalysisSnapshot = z.infer<typeof analysisSnapshotSchema>;
@@ -331,7 +358,7 @@ const snapshotContentDigest = (
     "limitations" | "locations" | "subject" | "relationship_coverage"
   >,
 ): string => {
-  const metadata = jsonObjectSchema.parse({
+  const metadata = ownedJsonObjectSchema.parse({
     limitations: execution.limitations,
     locations: execution.locations,
     subject: subjectContent(execution.subject),
@@ -352,7 +379,7 @@ const subjectContent = (subject: Evidence["subject"]) => ({
 
 const evidenceContentDigest = (evidence: Evidence): string => {
   return contentDigest({
-    ...jsonObjectSchema.parse(evidenceContentMetadata(evidence)),
+    ...ownedJsonObjectSchema.parse(evidenceContentMetadata(evidence)),
     normalized_result: evidence.normalized_result,
     raw_result: evidence.raw_result,
   });
@@ -368,7 +395,10 @@ interface SnapshotExecution {
   };
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly limitations: readonly string[];
-  readonly relationshipCoverage?: RelationshipCoverage | null | undefined;
+  readonly relationshipCoverage?:
+    | EvidenceRelationshipCoverage
+    | null
+    | undefined;
   readonly locations: readonly EvidenceLocation[];
   readonly subject: Evidence["subject"];
 }
@@ -399,13 +429,15 @@ const snapshotExecutionProjection = (
     subject: execution.subject,
   });
 
-const canonicalJson = (value: unknown): string => {
-  const json = jsonValueSchema.parse(value);
-  const encoded = canonicalize(json);
+const canonicalJsonValidated = (value: unknown): string => {
+  const encoded = serializeCanonicalValue(value);
   if (encoded === undefined)
     throw new TypeError("RFC 8785 canonicalization rejected snapshot data");
   return encoded;
 };
+
+const canonicalJson = (value: unknown): string =>
+  canonicalJsonValidated(jsonValueSchema.parse(value));
 
 /** The persisted snapshot target of an open binary: its target identity and kind. */
 export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
@@ -541,6 +573,8 @@ export const snapshotEvidenceForQuery = (
     (candidate) => candidate.query_id === queryId,
   );
   if (entry === undefined && workflowEntry === undefined) return undefined;
+  let expectedEntryKey: string | undefined;
+  let expectedWorkflowKey: string | undefined;
   let evidence: Evidence | undefined;
   for (const record of snapshot.evidence_bundle.records) {
     if (
@@ -550,14 +584,31 @@ export const snapshotEvidenceForQuery = (
         committedProvidersEqual(record.provider, provider) &&
         record.analysis_profile !== null &&
         analysisProfilesEqual(record.analysis_profile, evidenceProfile) &&
-        canonicalJson(record.parameters) === encodedParameters &&
-        ((entry !== undefined &&
-          evidenceMatchesEntry(record, entry, snapshot)) ||
-          (workflowEntry !== undefined &&
-            evidenceMatchesWorkflowEntry(record, workflowEntry, snapshot)))
+        canonicalJson(record.parameters) === encodedParameters
       )
     )
       continue;
+    let recordKey: string | undefined;
+    const getRecordKey = (): string => (recordKey ??= evidenceMatchKey(record));
+    const matchesEntry =
+      entry !== undefined &&
+      matchesProviderEvidence(
+        record,
+        snapshot,
+        getRecordKey,
+        () => (expectedEntryKey ??= entryEvidenceKey(entry, snapshot.binding)),
+      );
+    const matchesWorkflow =
+      !matchesEntry &&
+      workflowEntry !== undefined &&
+      matchesWorkflowEvidence(
+        record,
+        snapshot,
+        workflowEntry,
+        getRecordKey,
+        () => (expectedWorkflowKey ??= workflowEntryEvidenceKey(workflowEntry)),
+      );
+    if (!matchesEntry && !matchesWorkflow) continue;
     // Entries bind the result, not every part of the Evidence commitment
     // (for example, upstream links). Do not choose provenance by ID sort order.
     if (evidence !== undefined && evidence.evidence_id !== record.evidence_id)
@@ -609,11 +660,12 @@ export const evidenceMatchesEntry = (
   entry: AnalysisSnapshotEntry,
   snapshot: Pick<AnalysisSnapshot, "target" | "binding">,
 ): boolean =>
-  isCorrespondingEvidence(evidence, snapshot) &&
-  compositeKey([
-    evidenceQueryKey(evidence),
-    evidenceContentDigest(evidence),
-  ]) === entryEvidenceKey(entry, snapshot.binding);
+  matchesProviderEvidence(
+    evidence,
+    snapshot,
+    () => evidenceMatchKey(evidence),
+    () => entryEvidenceKey(entry, snapshot.binding),
+  );
 
 /** Compute the stable lookup key for one provider/profile-specific query. */
 export const analysisQueryId = (
@@ -653,10 +705,11 @@ const validatedSnapshots = new WeakMap<object, AnalysisSnapshot>();
 
 /** Parse a provider/profile-exact snapshot and verify its entries and evidence. */
 export const parseAnalysisSnapshot = (input: unknown): AnalysisSnapshot =>
-  authenticateSnapshot(input).parsed;
+  authenticateSnapshot(input, true).parsed;
 
 const authenticateSnapshot = (
   input: unknown,
+  detach: boolean,
 ): {
   readonly parsed: AnalysisSnapshot;
   readonly restored: AnalysisSnapshot;
@@ -665,7 +718,9 @@ const authenticateSnapshot = (
     const owned = validatedSnapshots.get(input);
     if (owned !== undefined) return { parsed: owned, restored: owned };
   }
-  const parsed = analysisSnapshotSchema.parse(input);
+  const parsed = (
+    detach ? detachedAnalysisSnapshotSchema : analysisSnapshotSchema
+  ).parse(input);
   const restored = restoreSnapshot(
     parsed,
     parseSnapshotBundle(parsed.evidence_bundle, parseEvidenceBundle),
@@ -693,7 +748,7 @@ const authenticateSnapshot = (
 
 /** Own an authenticated immutable cache while preserving mutable caller exports. */
 export const immutableAnalysisSnapshot = (input: unknown): AnalysisSnapshot =>
-  sealSnapshot(authenticateSnapshot(input).restored);
+  sealSnapshot(authenticateSnapshot(input, false).restored);
 
 const sealSnapshot = (snapshot: AnalysisSnapshot): AnalysisSnapshot => {
   for (const entry of [...snapshot.entries, ...snapshot.workflow_entries]) {
@@ -969,11 +1024,34 @@ export const evidenceMatchesWorkflowEntry = (
   entry: AnalysisSnapshotWorkflowEntry,
   snapshot: Pick<AnalysisSnapshot, "target">,
 ): boolean =>
+  matchesWorkflowEvidence(
+    evidence,
+    snapshot,
+    entry,
+    () => evidenceMatchKey(evidence),
+    () => workflowEntryEvidenceKey(entry),
+  );
+
+const evidenceMatchKey = (evidence: Evidence): string =>
+  compositeKey([evidenceQueryKey(evidence), evidenceContentDigest(evidence)]);
+
+const matchesProviderEvidence = (
+  evidence: Evidence,
+  snapshot: Pick<AnalysisSnapshot, "target" | "binding">,
+  recordKey: () => string,
+  expectedKey: () => string,
+): boolean =>
+  isCorrespondingEvidence(evidence, snapshot) && recordKey() === expectedKey();
+
+const matchesWorkflowEvidence = (
+  evidence: Evidence,
+  snapshot: Pick<AnalysisSnapshot, "target">,
+  entry: AnalysisSnapshotWorkflowEntry,
+  recordKey: () => string,
+  expectedKey: () => string,
+): boolean =>
   isWorkflowEvidence(evidence, snapshot, entry) &&
-  compositeKey([
-    evidenceQueryKey(evidence),
-    evidenceContentDigest(evidence),
-  ]) === workflowEntryEvidenceKey(entry);
+  recordKey() === expectedKey();
 
 const evidenceContentMetadata = (evidence: Evidence) => {
   return {
@@ -986,4 +1064,4 @@ const evidenceContentMetadata = (evidence: Evidence) => {
 
 /** Serialize a validated snapshot with byte-stable canonical entry ordering. */
 export const serializeAnalysisSnapshot = (snapshot: AnalysisSnapshot): string =>
-  `${canonicalJson(parseAnalysisSnapshot(snapshot))}\n`;
+  `${canonicalJsonValidated(authenticateSnapshot(snapshot, false).parsed)}\n`;

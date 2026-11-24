@@ -31,6 +31,8 @@ import {
 } from "./analysisProfile.js";
 import type { BinaryArchitecture, BinaryTarget } from "./binaryTargetTypes.js";
 import {
+  detachedJsonObjectSchema,
+  detachedJsonValueSchema,
   jsonObjectSchema,
   jsonValueSchema,
   jsonValueValidationIssue,
@@ -46,8 +48,8 @@ import {
 } from "./immutableJson.js";
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import {
-  relationshipCoverageSchema,
-  type RelationshipCoverage,
+  evidenceRelationshipCoverageSchema,
+  type EvidenceRelationshipCoverage,
 } from "./relationshipCoverage.js";
 
 /** Predicate shared by ordinary provider analysis observations. */
@@ -93,11 +95,14 @@ const fileSubjectSchema = z.strictObject({
 });
 /** A debugger session whose launch file is validated like a file subject. */
 const sessionSubjectIdentitySchema = sessionTargetIdentitySchema.extend({
-  target: z.union([subjectIdentitySchema, unknownTargetIdentitySchema]),
+  target: z.discriminatedUnion("kind", [
+    subjectIdentitySchema,
+    unknownTargetIdentitySchema,
+  ]),
 });
 /** A subject that names no file (a URL, process, session, or unknown target) has no file display facts. */
 const nonFileSubjectSchema = z.strictObject({
-  identity: z.union([
+  identity: z.discriminatedUnion("kind", [
     nonFileTargetIdentitySchema,
     sessionSubjectIdentitySchema,
   ]),
@@ -178,7 +183,7 @@ const evidenceBaseSchema = z
     authority: evidenceAuthoritySchema,
     environment: executionEnvironmentSchema.nullable(),
     limitations: z.array(z.string()),
-    relationship_coverage: relationshipCoverageSchema.nullable(),
+    relationship_coverage: evidenceRelationshipCoverageSchema.nullable(),
     locations: z.array(evidenceLocationSchema),
     evidence_links: z.array(prefixedDigestSchema("ev")),
   })
@@ -211,6 +216,15 @@ export const evidenceSchema = evidenceBaseSchema.superRefine(
   validateAnalysisProfileProvider,
 );
 
+/** Strict Evidence parser that detaches sealed JSON payloads for mutable caller exports. */
+export const detachedEvidenceSchema = evidenceBaseSchema
+  .safeExtend({
+    parameters: detachedJsonObjectSchema,
+    raw_result: detachedJsonValueSchema.nullable(),
+    normalized_result: detachedJsonValueSchema,
+  })
+  .superRefine(validateAnalysisProfileProvider);
+
 const authenticatedEvidenceSchema = evidenceSchema.superRefine(
   (evidence, context) => {
     const { evidence_id: evidenceId, ...withoutId } = evidence;
@@ -237,6 +251,9 @@ const immutableResultSchema = z
     if (issue !== undefined)
       context.addIssue({ code: "custom", message: issue });
   });
+const immutableResultEvidenceSchema = evidenceSchema.safeExtend({
+  normalized_result: immutableResultSchema,
+});
 export type EvidenceLocation = z.infer<typeof evidenceLocationSchema>;
 
 /** Candidate local artifact identity validated by the Evidence subject schema. */
@@ -378,7 +395,7 @@ export interface EvidenceObservationInput {
   readonly authority?: EvidenceAuthority;
   readonly environment?: ExecutionEnvironment | null;
   readonly limitations?: readonly string[];
-  readonly relationshipCoverage?: RelationshipCoverage;
+  readonly relationshipCoverage?: EvidenceRelationshipCoverage;
   readonly locations?: readonly EvidenceLocation[];
   readonly evidenceLinks?: readonly string[];
 }
@@ -444,6 +461,30 @@ export const immutableEvidence = (input: unknown): Evidence => {
   return rememberImmutableEvidence(
     canBorrowParsedJsonSnapshot(input, parsed) ? input : parsed,
   );
+};
+
+/**
+ * Authenticate a record already validated and exclusively owned by
+ * `evidenceSchema`, avoiding a second schema parse and deep clone.
+ */
+export const authenticateParsedEvidence = (
+  record: Evidence,
+  seal: boolean,
+): Evidence => {
+  const immutable = immutableEvidenceSnapshots.get(record);
+  if (immutable !== undefined) return immutable;
+  admitEvidenceRecordFormat(record);
+  const { evidence_id: evidenceId, ...withoutId } = record;
+  if (computeEvidenceId(withoutId) !== evidenceId)
+    throw new z.ZodError([
+      {
+        code: "custom",
+        path: ["evidence_id"],
+        message: "Evidence semantic identifier does not match its record",
+      },
+    ]);
+  if (!seal) return record;
+  return rememberImmutableEvidence(freezeOwnedJsonTreeSnapshot(record));
 };
 
 /** Rebind display path metadata when an authenticated record names this target. */
@@ -661,7 +702,7 @@ const normalizeEvidenceObservation = (
     observation.result !== null &&
     isImmutableJsonSnapshot(observation.result);
   const selectedSchema = sharedResult
-    ? evidenceSchema.safeExtend({ normalized_result: immutableResultSchema })
+    ? immutableResultEvidenceSchema
     : evidenceSchema;
   const normalized = selectedSchema.parse(envelope);
   // The envelope has already been parsed into an independent snapshot. Only

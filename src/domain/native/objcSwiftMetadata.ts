@@ -622,25 +622,21 @@ export const inspectNativeDispatchMetadata = (
     ivar_count: null,
     instance_size: null,
   }));
-  const decodedImplementations = [...implementations.values()].sort(
-    (left, right) =>
-      compareUnicodeCodePoints(
-        compositeKey([
-          left.class_name,
-          left.selector,
-          left.method_type,
-          left.implementation_address ?? "",
-          left.category ?? null,
-        ]),
-        compositeKey([
-          right.class_name,
-          right.selector,
-          right.method_type,
-          right.implementation_address ?? "",
-          right.category ?? null,
-        ]),
-      ),
-  );
+  const decodedImplementations = [...implementations.values()]
+    .map((implementation) => ({
+      implementation,
+      sortKey: compositeKey([
+        implementation.class_name,
+        implementation.selector,
+        implementation.method_type,
+        implementation.implementation_address ?? "",
+        implementation.category ?? null,
+      ]),
+    }))
+    .sort((left, right) =>
+      compareUnicodeCodePoints(left.sortKey, right.sortKey),
+    )
+    .map(({ implementation }) => implementation);
   const swift = swiftSymbols.length > 0;
 
   return objcSwiftMetadataSchema.parse({

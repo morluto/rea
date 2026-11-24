@@ -5,7 +5,10 @@ import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { dumpDconfDatabase } from "../../desktop/DconfDatabaseReader.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { desktopApplicationStateSchema } from "../../domain/desktop/desktopState.js";
+import {
+  desktopApplicationStateSchema,
+  type DconfViewFailure,
+} from "../../domain/desktop/desktopState.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { inspectDesktopApplicationState } from "./DesktopApplicationState.js";
 import {
@@ -37,9 +40,10 @@ const dconfCapture = async () => {
   );
 };
 
-const expectLaunchRefusal = (
+const expectReadRefusal = (
   evidence: Evidence | AnalysisError,
-  command: string,
+  failure: DconfViewFailure,
+  error: string | ReturnType<typeof expect.stringMatching>,
 ) => {
   if (!("normalized_result" in evidence)) throw evidence;
   const state = desktopApplicationStateSchema.parse(evidence.normalized_result);
@@ -50,35 +54,39 @@ const expectLaunchRefusal = (
         expect.objectContaining({
           format: "dconf",
           view: null,
-          view_failure: {
-            kind: "launch-failed",
-            code: "EACCES",
-            exit_code: null,
-            command,
-            stderr: null,
-          },
+          view_error: error,
+          view_failure: failure,
         }),
       ],
     }),
   ]);
 };
 
-it("carries a classified dconf failure into state Evidence", async () => {
-  const command = "/selected/dconf";
+it("carries an unavailable descriptor into state Evidence with no empty view", async () => {
   const folder = await dconfCapture();
   const evidence = await inspectDesktopApplicationState(folder, {
     ...readers,
     dconf: async () => ({
       ok: false,
-      error: "execution denied",
-      kind: "launch-failed",
-      code: "EACCES",
+      error: "descriptor path unavailable",
+      kind: "descriptor-unavailable",
+      code: "ENOENT",
       exitCode: null,
-      command,
+      command: null,
       stderr: null,
     }),
   });
-  expectLaunchRefusal(evidence, command);
+  expectReadRefusal(
+    evidence,
+    {
+      kind: "descriptor-unavailable",
+      code: "ENOENT",
+      exit_code: null,
+      command: null,
+      stderr: null,
+    },
+    "descriptor path unavailable",
+  );
 });
 
 it.skipIf(process.platform !== "linux")(
@@ -93,6 +101,16 @@ it.skipIf(process.platform !== "linux")(
       dconf: (database, signal) =>
         dumpDconfDatabase(database, { REA_DCONF_COMMAND: command }, signal),
     });
-    expectLaunchRefusal(evidence, command);
+    expectReadRefusal(
+      evidence,
+      {
+        kind: "launch-failed",
+        code: "EACCES",
+        exit_code: null,
+        command,
+        stderr: null,
+      },
+      expect.stringMatching(/\S/u),
+    );
   },
 );

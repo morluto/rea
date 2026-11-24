@@ -1,5 +1,6 @@
 import { ZIP_EOCD_BYTES } from "../zipEndOfCentralDirectory.js";
 import { ZIP_SIGNATURES } from "../zipPackageFormat.js";
+import { SQLITE_HEADER } from "../sqliteFormat.js";
 import { XML_ELEMENT_OPENING } from "../xmlDocument.js";
 import {
   DESKTOP_VIEW_DEFAULTS,
@@ -29,6 +30,7 @@ export const PYTHON_READY_CHECK = `
 export const PYTHON_IMPORTS = `from __future__ import annotations
 
 from array import array
+from itertools import islice
 import binascii
 import contextlib
 import copy
@@ -91,7 +93,7 @@ KEYFILE_CONTROL_LINE = re.compile(${JSON.stringify(KEYFILE_CONTROL_LINE)})
 KEYFILE_ENTRY_LINE = re.compile(${JSON.stringify(KEYFILE_ENTRY_LINE)})
 LINE_BREAK = re.compile(${JSON.stringify(DESKTOP_LINE_BREAK)})
 ECMASCRIPT_TRIM_CHARACTERS = ${PYTHON_ECMASCRIPT_TRIM_CHARACTERS}
-SQLITE_HEADER = b"SQLite format 3\x00"
+SQLITE_HEADER = bytes(${JSON.stringify([...SQLITE_HEADER].map((character) => character.charCodeAt(0)))})
 GVDB_HEADER = b"GVariant"
 ZIP_SIGNATURES = (${ZIP_SIGNATURES.map((signature) => `bytes(${JSON.stringify(signature)})`).join(", ")})
 ZIP_HEADER = ZIP_SIGNATURES[0]
@@ -381,10 +383,9 @@ def _sqlite(path: Path) -> dict:
 
 
 def _text(text: str) -> dict:
-    lines = LINE_BREAK.split(text)
-    if lines[-1] == "":
-        lines.pop()
-    view = {"lines": lines[:MAX_LINES], "line_count": len(lines), "truncated": len(lines) > MAX_LINES}
+    count = text.count("\n") + int(bool(text) and not text.endswith("\n"))
+    lines = list(islice(_each_line(text), min(MAX_LINES, count)))
+    view = {"lines": lines, "line_count": count, "truncated": count > MAX_LINES}
     return {"format": "text", "view": view, "truncated": view["truncated"]}
 
 

@@ -18,11 +18,16 @@ import { ParseFailureError, unsupportedInput } from "./parseFailure.js";
  * summary identities are no longer rebuilt.
  *
  * Revision 2: the Evidence subject names its target identity
- * (`subject.identity`, docs/adr/evidence/target-identity.md). The Evidence ID
+ * (`subject.identity`). The Evidence ID
  * commits to that identity, including its kind and selection, instead of the
  * subject's digest, format and architecture, so every Evidence ID changes.
  * Each record also declares `evidence_format`, so a standalone record names
  * its format too.
+ * Format-2 records produced before `limited_directions` became required on
+ * live provider replies may omit `relationship_coverage.limited_directions` on
+ * `partial` and `unknown` coverage; `evidenceRelationshipCoverageSchema`
+ * continues to read them with their original Evidence IDs until the revision
+ * advances.
  */
 export const EVIDENCE_FORMAT_REVISION = 2;
 

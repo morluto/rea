@@ -32,6 +32,8 @@ import type {
 export interface JavaScriptSemanticInitializer {
   readonly node: t.Node;
   readonly projection: readonly (string | number | null)[];
+  /** Binding occurrence that must be reached before this source is used. */
+  readonly patternTarget?: t.Identifier;
   readonly entryBody?: t.BlockStatement;
   readonly iterationSources?: readonly {
     readonly node: t.Node;
@@ -153,6 +155,16 @@ export const semanticPrototypeOwners = [
 ] as const;
 export type SemanticPrototypeOwner = (typeof semanticPrototypeOwners)[number];
 
+/** Uncertainty one derivation encountered; it qualifies that derivation's results. */
+export interface JavaScriptSemanticObservations {
+  /** Bounds encountered during this analysis, independent of later projections. */
+  readonly valueResourceLimits: Set<JavaScriptSemanticResourceLimit>;
+  /** Getter query bounds encountered while resolving object and class properties. */
+  readonly getterResourceLimits: Set<JavaScriptSemanticResourceLimit>;
+  /** Callee sites whose possible local returns needed a broader projection. */
+  readonly returnedReferenceWidenings: Set<t.Node>;
+}
+
 /** Shared state for semantic collection and evaluation. */
 export interface JavaScriptSemanticAnalysisState {
   readonly precision: JavaScriptSemanticPrecision;
@@ -165,12 +177,14 @@ export interface JavaScriptSemanticAnalysisState {
   readonly opaqueEffects: JavaScriptOpaqueScopeEffects;
   /** Effective loader for static imports in this source artifact. */
   readonly staticImportResolutionMode: JavaScriptModuleResolutionMode;
-  /** Bounds encountered during this analysis, independent of later projections. */
-  readonly valueResourceLimits: Set<JavaScriptSemanticResourceLimit>;
-  /** Getter query bounds encountered while resolving object and class properties. */
-  readonly getterResourceLimits: Set<JavaScriptSemanticResourceLimit>;
-  /** Callee sites whose possible local returns needed a broader projection. */
-  readonly returnedReferenceWidenings: Set<t.Node>;
+  /**
+   * The log the current derivation records into: an index step's own log
+   * while it runs, otherwise the active consumer's. See
+   * `javascriptSemanticConsumer.ts`.
+   */
+  observations: JavaScriptSemanticObservations;
+  /** What the index steps themselves encountered; every consumer starts from it. */
+  readonly indexObservations: JavaScriptSemanticObservations;
   readonly parentsByNode: WeakMap<t.Node, t.Node>;
   /** TypeScript syntax omitted from JavaScript value evaluation. */
   readonly erasedSyntaxNodes: WeakSet<t.Node>;
@@ -250,7 +264,7 @@ export const recordSemanticValueLimit = (
   value: JavaScriptSemanticValue,
 ): void => {
   if (value.status === "unknown" && value.resourceLimit !== undefined)
-    state.valueResourceLimits.add(value.resourceLimit);
+    state.observations.valueResourceLimits.add(value.resourceLimit);
 };
 
 /** One parsed source owns its optional indexes and their per-source lifetime. */

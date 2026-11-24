@@ -96,8 +96,16 @@ it("does not recommend a timer above the supported maximum", () => {
       sqliteDatabaseDialect("/selected.db", "worker", undefined, 2_147_483_647),
     ),
   );
-  expect(failure.details).toMatchObject({ timeout_ms: 2_147_483_647 });
-  expect(failure.remediation.action).toContain("no higher worker deadline");
+  expect(failure.details).toMatchObject({
+    timeout_ms: 2_147_483_647,
+    limit: {
+      control_kind: "parameter",
+      parameter: "worker_timeout_ms",
+      effective_value: 2_147_483_647,
+      maximum: 2_147_483_647,
+      applies_at: "next_call",
+    },
+  });
   expect(failure.remediation.action).not.toContain("Increase");
 });
 
@@ -116,12 +124,17 @@ it("reports exceeded diagnostic capture as a fixed resource constraint", () => {
       reported_limits: {
         diagnostic_capture_bytes: SQLITE_DATABASE_LIMITS.diagnosticBytes,
       },
+      refusal: {
+        kind: "fixed_ceiling",
+        allowance_kind: "capture",
+        limit: SQLITE_DATABASE_LIMITS.diagnosticBytes,
+        unit: "bytes",
+      },
     },
   });
   expect(projected.remediation.action).toContain(
     String(SQLITE_DATABASE_LIMITS.diagnosticBytes),
   );
-  expect(projected.remediation.action).toContain("no runtime override");
   expect(projected.remediation.action).toContain(
     "worker_timeout_ms does not raise it",
   );

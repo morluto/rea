@@ -62,6 +62,7 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
 import { EvmInterfaceService } from "../../../src/application/evm/EvmInterfaceService.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 let limitsWorkspace = "";
 beforeAll(async () => {
@@ -132,7 +133,7 @@ it.each(["completed", "invalid", "cancelled"] as const)(
 it.each(["pre-aborted", "admission", "close"] as const)(
   "preserves opaque caller reasons through service cancellation at %s",
   async (stage) => {
-    const workspace = await mkdtemp(join(tmpdir(), "rea-evm-artifact-cancel-"));
+    const workspace = await createTestTempDirectory("rea-evm-artifact-cancel-");
     const input = join(workspace, "selected.hex");
     await writeFile(input, "0x60006000f3\n");
     const createRuntime = vi.fn(async () => {
@@ -181,7 +182,6 @@ it.each(["pre-aborted", "admission", "close"] as const)(
       closeState.onClosed = undefined;
       closeState.onLimits = undefined;
       await provider.close();
-      await rm(workspace, { recursive: true, force: true });
     }
   },
 );
@@ -194,7 +194,7 @@ it.each([
 ] as const)(
   "updates a returned cleanup error after later root release: %s",
   async (scenario) => {
-    const workspace = await mkdtemp(join(tmpdir(), "rea-evm-cleanup-retry-"));
+    const workspace = await createTestTempDirectory("rea-evm-cleanup-retry-");
     const input = join(workspace, "selected.hex");
     await writeFile(input, "0x60006000f3\n");
     let rootPath = "";
@@ -220,7 +220,7 @@ it.each([
             request.reply_path,
             JSON.stringify({
               ok: true,
-              version: "0.9.3",
+              version: "0.9.4",
               bytecode: {
                 sha256: createHash("sha256").update(bytes).digest("hex"),
                 bytes: bytes.length,
@@ -318,13 +318,12 @@ it.each([
       } catch {
         // Preserve the assertion's original failure; the workspace cleanup follows.
       }
-      await rm(workspace, { recursive: true, force: true });
     }
   },
 );
 
 it("keeps descriptor cleanup in close aggregates until the exact file lease releases", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "rea-evm-descriptor-retry-"));
+  const workspace = await createTestTempDirectory("rea-evm-descriptor-retry-");
   const input = join(workspace, "selected.hex");
   await writeFile(input, "0x60006000f3\n");
   closeState.path = input;
@@ -372,12 +371,11 @@ it("keeps descriptor cleanup in close aggregates until the exact file lease rele
     } catch {
       // Preserve the assertion's original failure while releasing test files.
     }
-    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 it("keeps a mixed root and reply-descriptor aggregate pending until both owners release", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "rea-evm-mixed-owners-"));
+  const workspace = await createTestTempDirectory("rea-evm-mixed-owners-");
   const input = join(workspace, "selected.hex");
   await writeFile(input, "0x60006000f3\n");
   closeState.path = "";
@@ -462,13 +460,12 @@ it("keeps a mixed root and reply-descriptor aggregate pending until both owners 
     } catch {
       // Preserve the assertion's original failure while releasing test files.
     }
-    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 it("releases a retained process independently while a root cleanup retry remains pending", async () => {
-  const workspace = await mkdtemp(
-    join(tmpdir(), "rea-evm-process-root-retry-"),
+  const workspace = await createTestTempDirectory(
+    "rea-evm-process-root-retry-",
   );
   const input = join(workspace, "selected.hex");
   await writeFile(input, "0x60006000f3\n");
@@ -489,7 +486,7 @@ it("releases a retained process independently while a root cleanup retry remains
         request.reply_path,
         JSON.stringify({
           ok: true,
-          version: "0.9.3",
+          version: "0.9.4",
           bytecode: {
             sha256: createHash("sha256").update(bytes).digest("hex"),
             bytes: bytes.length,
@@ -575,12 +572,11 @@ it("releases a retained process independently while a root cleanup retry remains
     } catch {
       // Preserve the assertion's original failure while releasing test files.
     }
-    await rm(workspace, { recursive: true, force: true });
   }
 });
 
 it("preserves an active cancellation through denied owned-group cleanup and later retry", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "rea-evm-cancel-process-"));
+  const workspace = await createTestTempDirectory("rea-evm-cancel-process-");
   const input = join(workspace, "selected.hex");
   await writeFile(input, "0x60006000f3\n");
   const controller = new AbortController();
@@ -675,7 +671,6 @@ it("preserves an active cancellation through denied owned-group cleanup and late
     } catch {
       // Preserve the assertion's original failure while releasing test files.
     }
-    await rm(workspace, { recursive: true, force: true });
   }
 });
 
@@ -691,8 +686,8 @@ it.each([
 ] as const)(
   "retains validated reply ownership through finalization: %s",
   async (scenario) => {
-    const workspace = await mkdtemp(
-      join(tmpdir(), "rea-evm-reply-finalization-"),
+    const workspace = await createTestTempDirectory(
+      "rea-evm-reply-finalization-",
     );
     const input = join(workspace, "selected.hex");
     await writeFile(input, "0x60006000f3\n");
@@ -729,7 +724,7 @@ it.each([
             ? { ok: false, reason: "format", message: "invalid carrier" }
             : {
                 ok: true,
-                version: scenario === "wrong-version" ? "0.0.0" : "0.9.3",
+                version: scenario === "wrong-version" ? "0.0.0" : "0.9.4",
                 bytecode: {
                   sha256: createHash("sha256").update(bytes).digest("hex"),
                   bytes: bytes.length,
@@ -825,7 +820,6 @@ it.each([
       closeState.onClosing = undefined;
       closeState.readFailure = undefined;
       await provider.close();
-      await rm(workspace, { recursive: true, force: true });
     }
   },
 );
@@ -833,8 +827,8 @@ it.each([
 it.each(["physical-read", "completed-late-cancel"] as const)(
   "retains only completed caller carrier identity: %s",
   async (scenario) => {
-    const workspace = await mkdtemp(
-      join(tmpdir(), "rea-evm-carrier-finalization-"),
+    const workspace = await createTestTempDirectory(
+      "rea-evm-carrier-finalization-",
     );
     const input = join(workspace, "selected.hex");
     await writeFile(input, "0x60006000f3\n");
@@ -894,7 +888,6 @@ it.each(["physical-read", "completed-late-cancel"] as const)(
       closeState.onClosing = undefined;
       closeState.readFailure = undefined;
       await provider.close();
-      await rm(workspace, { recursive: true, force: true });
     }
   },
 );
@@ -910,7 +903,7 @@ it.each([
 ] as const)(
   "preserves exact reserved-exit marker receipt and cleanup: %s",
   async (scenario) => {
-    const workspace = await mkdtemp(join(tmpdir(), "rea-evm-marker-receipt-"));
+    const workspace = await createTestTempDirectory("rea-evm-marker-receipt-");
     const input = join(workspace, "selected.hex");
     await writeFile(input, "0x60006000f3\n");
     let markerPath = "";
@@ -1009,13 +1002,12 @@ it.each([
       closeState.onClosing = undefined;
       closeState.readFailure = undefined;
       await provider.close();
-      await rm(workspace, { recursive: true, force: true });
     }
   },
 );
 
 it("keeps the selected limiter and child environment together while later inspections reconfigure", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "rea-evm-environment-"));
+  const workspace = await createTestTempDirectory("rea-evm-environment-");
   const input = join(workspace, "selected.hex");
   const limiter = join(workspace, "selected-limiter");
   const { symlink } = await import("node:fs/promises");
@@ -1060,7 +1052,6 @@ it("keeps the selected limiter and child environment together while later inspec
   } finally {
     closeState.onLimits = undefined;
     await provider.close();
-    await rm(workspace, { recursive: true, force: true });
   }
 });
 
@@ -1071,7 +1062,7 @@ it.each([
 ] as const)(
   "counts %s from the worker launch as cancellation: %s",
   async (_label, thrown, cancelled) => {
-    const workspace = await mkdtemp(join(tmpdir(), "rea-evm-abort-owner-"));
+    const workspace = await createTestTempDirectory("rea-evm-abort-owner-");
     const input = join(workspace, "selected.hex");
     await writeFile(input, "0x60006000f3\n");
     const controller = new AbortController();
@@ -1107,7 +1098,6 @@ it.each([
       } else expect(result.error).not.toBeInstanceOf(AnalysisCancelledError);
     } finally {
       await provider.close();
-      await rm(workspace, { recursive: true, force: true });
     }
   },
 );

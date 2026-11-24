@@ -4,6 +4,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { z } from "zod";
 
+import { compareSelectionShadow } from "./selection-shadow.mjs";
 import { parseTestSelection } from "./test-selection.mjs";
 
 const root = process.cwd();
@@ -114,6 +115,40 @@ const failureDetails =
           : [`Unhandled Vitest errors reported: ${report.unhandledErrors}.`]),
       ]
     : [];
+const shadowNotes = [];
+if (
+  process.env.CI_COMPARE_TEST_SHADOW === "true" &&
+  verifyInventory &&
+  !selected
+) {
+  try {
+    const resultPath = "test-selection-comparison.json";
+    await rm(resultPath, { force: true });
+    const prediction = JSON.parse(
+      await readFile(
+        ".cache/ci-test-shadow/test-selection-shadow.json",
+        "utf8",
+      ),
+    );
+    const comparison = compareSelectionShadow(
+      prediction,
+      process.env.GITHUB_SHA,
+      expected,
+      files,
+    );
+    await writeFile(resultPath, JSON.stringify(comparison), { flag: "wx" });
+    shadowNotes.push(
+      "### Affected-test prediction",
+      "",
+      `Reported ${comparison.observedCandidates} of ${comparison.candidates} predicted files. Full-suite inventory: ${comparison.completeInventory ? "complete" : "partial"}.`,
+      `Observed failing files inside the prediction: ${comparison.capturedFailures.length}. Outside: ${comparison.missedFailures.length}.`,
+      "",
+    );
+  } catch (error) {
+    console.warn("Test selection shadow unavailable:", error);
+    shadowNotes.push("Affected-test prediction unavailable.", "");
+  }
+}
 const summary = [
   groupsCompleted
     ? "## Merged test diagnostics"
@@ -132,6 +167,7 @@ const summary = [
   ...(failureDetails.length > 0
     ? ["", "```text", ...failureDetails, "```", ""]
     : []),
+  ...shadowNotes,
   `Skipped test modules: ${skippedFiles.length}. Their skip reasons and required coverage are not established by this report.`,
   ...(skippedFiles.length ? [""] : []),
   ...skippedFiles.map(({ name }) => `- ${name.replaceAll("|", "\\|")}`),

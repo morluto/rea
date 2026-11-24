@@ -717,3 +717,86 @@ describe("ZIP listing coverage from the central directory", () => {
     }
   });
 });
+
+describe("ZIP listing coverage of APK signing block alignment padding", () => {
+  it.each([
+    ["all-zero padding to a 4 KiB boundary", 0, "complete"],
+    ["a non-zero byte in the padding", 1, "unknown"],
+  ] as const)(
+    "accounts for %s before an APK signing block only when it is zero",
+    async (_case, marker, status) => {
+      const pad = Buffer.alloc(4096 - A_ENTRY_BYTES);
+      pad[pad.length - 1] = marker;
+      const { coverage } = await list(
+        zip([member("a.txt")], {
+          gap: Buffer.concat([pad, apkSigningBlock()]),
+        }),
+      );
+      expect(coverage).toEqual([
+        status === "complete"
+          ? complete
+          : unaccounted(pad.length, 1, A_ENTRY_BYTES),
+      ]);
+    },
+  );
+
+  it.each([
+    ["a signing block off the 4 KiB boundary", 4095 - A_ENTRY_BYTES, ""],
+    ["a zero run with no signing block after it", 4096 - A_ENTRY_BYTES, "none"],
+  ] as const)(
+    "keeps zero bytes before %s unaccounted",
+    async (_case, padding, block) => {
+      const pad = Buffer.alloc(padding);
+      const { coverage } = await list(
+        zip([member("a.txt")], {
+          gap: Buffer.concat([
+            pad,
+            block === "none" ? Buffer.alloc(0) : apkSigningBlock(),
+          ]),
+        }),
+      );
+      expect(coverage).toEqual([unaccounted(pad.length, 1, A_ENTRY_BYTES)]);
+    },
+  );
+
+  it("accounts for padding after an empty member's 64-bit data descriptor", async () => {
+    // Zero sizes also match the descriptor's first 16 bytes as a 32-bit
+    // layout. The descriptor ends at 4102, so only the 24-byte layout leaves
+    // a pad shorter than 4 KiB before the block at 8192.
+    const first = { ...member("a.txt"), data: Buffer.alloc(4004, 0x61) };
+    const firstLocal = localEntry(first);
+    const empty = { ...member("empty.txt"), data: Buffer.alloc(0) };
+    const local = localEntry(empty, 0x0008);
+    local.fill(0, 14, 26);
+    const descriptor = Buffer.alloc(24);
+    descriptor.writeUInt32LE(0x08074b50, 0);
+    const record = centralRecord(empty, firstLocal.length);
+    record.writeUInt16LE(0x0008, 8);
+    const records = Buffer.concat([centralRecord(first, 0), record]);
+    const used = firstLocal.length + local.length + descriptor.length;
+    expect(used).toBe(4102);
+    const pad = Buffer.alloc(8192 - used);
+    const block = apkSigningBlock();
+    const end = Buffer.alloc(22);
+    end.writeUInt32LE(0x06054b50, 0);
+    end.writeUInt16LE(2, 8);
+    end.writeUInt16LE(2, 10);
+    end.writeUInt32LE(records.length, 12);
+    end.writeUInt32LE(8192 + block.length, 16);
+    expect(
+      (
+        await list(
+          Buffer.concat([
+            firstLocal,
+            local,
+            descriptor,
+            pad,
+            block,
+            records,
+            end,
+          ]),
+        )
+      ).coverage,
+    ).toEqual([complete]);
+  });
+});

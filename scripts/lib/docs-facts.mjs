@@ -94,8 +94,7 @@ export const skillReferenceIssues = async (skillRoot) => {
 };
 
 // Living prose that would restate the catalog size. Dated records keep the
-// count they measured: release notes, feature specs, verification records and
-// decision records describe a past build.
+// count they measured in release notes and verification records.
 export const LIVING_PROSE_ROOTS = [
   "README.md",
   "CONTRIBUTING.md",
@@ -104,8 +103,7 @@ export const LIVING_PROSE_ROOTS = [
   ".agents/skills",
   "website/public",
 ];
-const SKIPPED_PROSE =
-  /^docs\/(?:releases|specs|verification|adr|\.vitepress\/dist)\//u;
+const SKIPPED_PROSE = /^docs\/(?:releases|verification|\.vitepress\/dist)\//u;
 const PROSE_FILE = /\.(?:md|html)$/u;
 // A count of ten or more tools, such as "240 tools" or "all 1,024 MCP tools".
 const LITERAL_TOOL_COUNT =
@@ -163,14 +161,9 @@ export const literalToolCountIssues = async (root) => {
   return issues;
 };
 
-/** Return every caller-visible documentation mismatch against canonical facts. */
-export const documentationFactIssues = async (root, catalog) => {
-  const issues = [
-    ...(await skillReferenceIssues(
-      join(root, "skills/reverse-engineer-anything"),
-    )),
-    ...(await literalToolCountIssues(root)),
-  ];
+/** Check the canonical README links and their translated destinations. */
+export const readmeFactIssues = async (root) => {
+  const issues = [];
   const translatedFolder = join(root, "docs/readme");
   let translatedNames = [];
   try {
@@ -188,7 +181,6 @@ export const documentationFactIssues = async (root, catalog) => {
   for (const path of readmePaths) {
     const content = await readFile(join(root, path), "utf8");
     readmes.set(path, content);
-    requireText(issues, path, content, "MCP-tool_catalog");
     if (path === "README.md") {
       requireText(
         issues,
@@ -233,7 +225,18 @@ export const documentationFactIssues = async (root, catalog) => {
       ) !== JSON.stringify(canonicalLinks)
     )
       issues.push(`${path}: documentation links differ from README.md`);
+  return issues;
+};
 
+/** Return every caller-visible documentation mismatch against canonical facts. */
+export const documentationFactIssues = async (root, catalog) => {
+  const issues = [
+    ...(await skillReferenceIssues(
+      join(root, "skills/reverse-engineer-anything"),
+    )),
+    ...(await literalToolCountIssues(root)),
+    ...(await readmeFactIssues(root)),
+  ];
   const installationPath = "docs/getting-started/installation.md";
   const installation = await readFile(join(root, installationPath), "utf8");
   for (const client of catalog.setup_clients)

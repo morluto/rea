@@ -159,8 +159,9 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
 
 A checkpoint name is lowercase letters, digits, dot, dash and underscore; the
 capture's own `baseline`, `stop`, `time-limit` and `exit` are refused, and so
-is a name already taken. The acknowledgement comes from the capture after it
-has walked the home and retained what changed: `entries` walked, `changes`
+is a name already reported. If cancellation interrupts the optional screenshot,
+retry the same name to recover the original acknowledgement. The capture
+acknowledges once it has walked the home and retained what changed: `entries` walked, `changes`
 since the checkpoint before, `retained_files` and `retained_bytes`, and up to
 ten `changed_files`, home-relative, with `more_changed_files` counting the
 rest. Folders are left out. Files an app window's title has named so far
@@ -231,9 +232,9 @@ Then, with the task exactly as exported:
 beside the files and evaluates each check with REA's evaluator, the one the
 export validates tasks with and the exported verifier mirrors, one result per
 check. Once the files settle it runs the task's
-[readers](specs/desktop-app-environments/file-readers/spec.md) in the computer through
+[readers](desktop-application-tasks.md#readers) in the computer through
 `computer-exec/v1`, as the verifier does, and a check through a reader reads
-that reader's view. A task of [screen judges](specs/desktop-app-environments/screen-judge/spec.md)
+that reader's view. A task of [screen judges](desktop-application-tasks.md#screen-judges)
 reads no files: REA takes a screenshot and runs the bundle's own judge on it
 with the agentenv runner's Python and model endpoint. Like the verifier, it grades only once the app's files settle, since an
 app such as Gnote saves a few seconds after the last key. It reads `data/get`
@@ -369,6 +370,3 @@ keeps the others. A `difficulty.json` or README REA cannot read or parse is refu
 before any solve and left as it is, and measures of one bundle write one at a
 time, so neither loses the other's record. The README gets a Measured difficulty section with one
 line per task, which agentenv ignores like the file.
-
-See the [specification](specs/desktop-app-environments/build-witness/spec.md)
-for scope and verification.

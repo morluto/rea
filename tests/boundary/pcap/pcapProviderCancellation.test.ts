@@ -14,11 +14,15 @@ import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.j
 import { resolvedAnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
-import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
+import {
+  spawnOwnedProviderProcess,
+  type ProviderProcessHandle,
+} from "../../../src/process/ProviderProcess.js";
 import { PcapProvider } from "../../../src/pcap/PcapProvider.js";
 import type { PcapCommandLauncher } from "../../../src/pcap/PcapCommand.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { stopTestChild } from "../../support/process/stopTestChild.js";
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -76,8 +80,10 @@ const fixture = async (
   const capture = join(root, "capture.pcap");
   await writeFile(capture, "controlled capture bytes");
   let cleanupAttempts = 0;
+  const spawnedProcesses: ProviderProcessHandle[] = [];
   const launcher: PcapCommandLauncher = async (spawn) => {
     const launched = await spawnOwnedProviderProcess(spawn);
+    spawnedProcesses.push(launched.process);
     const captureCommand = spawn.arguments.includes("-M");
     const activeVersionCommand =
       activeVersion && spawn.arguments.includes("--version");
@@ -110,7 +116,13 @@ const fixture = async (
     launcher,
     artifactReader,
   });
-  onTestFinished(async () => provider.close());
+  onTestFinished(async () => {
+    try {
+      await provider.close();
+    } finally {
+      await Promise.all(spawnedProcesses.map(stopTestChild));
+    }
+  });
   return { provider, root, capture, cleanupAttempts: () => cleanupAttempts };
 };
 
@@ -122,8 +134,10 @@ const probeCleanupFixture = async (rereadCloseFailure = false) => {
   const tshark = await realpath(tools.tshark);
   let tsharkReads = 0;
   let probeCleanupAttempts = 0;
+  const spawnedProcesses: ProviderProcessHandle[] = [];
   const launcher: PcapCommandLauncher = async (spawn) => {
     const launched = await spawnOwnedProviderProcess(spawn);
+    spawnedProcesses.push(launched.process);
     if (!spawn.arguments.includes("--version")) return launched;
     const cleanup =
       launched.cleanup ?? (() => cleanupOwnedProcessGroup(launched.ownership));
@@ -160,7 +174,13 @@ const probeCleanupFixture = async (rereadCloseFailure = false) => {
     launcher,
     artifactReader,
   });
-  onTestFinished(async () => provider.close());
+  onTestFinished(async () => {
+    try {
+      await provider.close();
+    } finally {
+      await Promise.all(spawnedProcesses.map(stopTestChild));
+    }
+  });
   return provider;
 };
 

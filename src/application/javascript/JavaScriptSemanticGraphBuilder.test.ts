@@ -1100,11 +1100,14 @@ it("attributes an adopted file to the ceiling that bounded its offer", () => {
   let step = steps.next();
   while (!step.done) step = steps.next();
   projection.adoptFileProjection(step.value);
-  const limitation = projection
-    .finish(SHA256, semanticApplication)
-    .limitations.join("\n");
-  expect(limitation).toContain("max_semantic_nodes_per_file is 3");
-  expect(limitation).not.toContain("max_semantic_nodes is 10");
+  const finished = projection.finish(SHA256, semanticApplication);
+  expect(finished.coverage.controls).toEqual([
+    expect.objectContaining({
+      parameter: "max_semantic_nodes_per_file",
+      effective_value: 3,
+      applies_at: "next_call",
+    }),
+  ]);
 });
 
 it("reports truncation only when a file exceeds its exact node budget", () => {

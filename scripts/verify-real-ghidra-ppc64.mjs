@@ -19,7 +19,10 @@ import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildPowerPc64Fixture } from "../tests/conformance/ghidra/ppc-fixture.mjs";
-import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpOperationResult,
+  requireMcpToolError,
+} from "./lib/mcp-verifier-results.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
@@ -59,11 +62,6 @@ const workspaceFixture = await VerifierFixture.open({
   private: false,
 });
 const workspace = workspaceFixture.path;
-// A failed run keeps its workspace for diagnosis; the fixture records why.
-const retainWorkspace = (message, options) => {
-  workspaceFixture.retain(message);
-  return new Error(message, options);
-};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -143,8 +141,17 @@ try {
       name: "open_binary",
       arguments: { path: shared, provider_id: "ghidra" },
     });
-    assert.equal(rejected.isError, true);
-    assert.match(JSON.stringify(rejected.content), /ET_EXEC only/u);
+    // powerPc64UnsupportedReason refuses ET_DYN before Ghidra starts.
+    const rejectedError = requireMcpToolError(rejected);
+    assert.partialDeepStrictEqual(rejectedError, {
+      code: "unsupported_target",
+      details: {
+        operation: "resolve_analysis_profile",
+        path: shared,
+        reason:
+          "This Ghidra PPC64 lane supports ET_EXEC only; relocatable objects, shared objects and position-independent executables need separate load verification.",
+      },
+    });
 
     for (const byteOrder of ["little", "big"]) {
       const fixture = await buildPowerPc64Fixture(
@@ -361,7 +368,7 @@ try {
   cleanupFailure = cause;
 }
 if (cleanupFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `PPC64 command cleanup failed; retained diagnostic workspace: ${workspace}`,
     {
       cause:
@@ -378,12 +385,12 @@ if (
   completed.process_lineage.status !== "verified" ||
   completed.process_lineage.descendants.length !== 0
 )
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
     { cause: primaryFailure },
   );
 if (primaryFailure !== undefined)
-  throw retainWorkspace(
+  throw workspaceFixture.retainedError(
     `PPC64 verification failed; retained workspace: ${workspace}`,
     {
       cause: primaryFailure,

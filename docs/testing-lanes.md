@@ -202,7 +202,7 @@ handler and can leave temporary workspace files. `verify:windows-native`
 separately checks binary input, backpressure, EOF and pending-write job closure.
 
 `npm run verify:android` requires an existing Java 17+ and an explicit
-`REA_JADX_MCP_JAR` for jadx-headless-mcp 0.7.1. Set `REA_ANDROID_TEST_APK` to the
+`REA_JADX_MCP_JAR` for jadx-headless-mcp 0.8.0. Set `REA_ANDROID_TEST_APK` to the
 fixed public ApiDemos v6.0.18 fixture. Obtain both with the explicit
 `npm run fixtures:android` command; files are SHA-256 verified and
 kept under ignored `_reference/`. No Gradle build, Android SDK, emulator or
@@ -541,8 +541,8 @@ CLI/stdio MCP load-image parity, exact source bytes, both functions, the
 `bsr.b` call reference, decompilation through address and file offset, rejection
 of a misaligned entry and of a mapping past `0xffffffff` without replacing the
 active session, and runtime cleanup. Windows Ghidra P0 does not admit m68k, so
-this is not a Windows lane. Recorded on Ghidra 12.1.4 (no longer accepted); not
-yet re-run on 12.2. The recorded run was on macOS; Linux has not been exercised.
+this is not a Windows lane. It passed on Ghidra 12.2 with JDK 25 on macOS
+arm64; Linux has not been exercised.
 The lane uses the [supported Ghidra and JDK installation](getting-started/installation.md#ghidra).
 
 `npm run verify:ghidra:raw` uses a generated ARM little-endian headerless image
@@ -561,6 +561,39 @@ overlay space find the pattern. This lane does not build an overlapping-load ELF
 does not call CLI `search-bytes`, and does not page an overlay search across a
 snapshot reopen. AArch64 remains covered by deterministic tests rather than this
 real-provider lane. See [raw binary analysis](providers/raw-binary.md).
+
+`npm run verify:ghidra:cortex-m` checks ARM M-profile raw images through the
+compiled CLI and stdio MCP server. It needs the supported Ghidra and JDK
+installation and LLVM with Thumb targets and the Cortex-M55 CPU (`clang` and `llvm-objdump`, or
+`REA_CLANG` and `REA_LLVM_OBJDUMP`). Its source-owned fixtures are:
+
+- a Cortex-M0 (`armv6-m`) image at bases `0x0` and `0x08000000`;
+- the same image after a 256-byte boot2-style header, opened with
+  `vector_table_address`;
+- a Thumb-2 image (`movw`, `movt`, `ldr.w`, `it`, `cbz`) opened as `armv7-m` at
+  `0x0` and as `armv7e-m` at `0x08000000`;
+- an `armv8-m.base` image with `movw`, `movt`, `cbz` and `udiv`;
+- an `armv8-m.main` image that sets `MSPLIM`;
+- an `armv8.1-m.main` (Cortex-M55) image at `0x0` with a `wls`/`le`
+  low-overhead loop around the MVE instructions `vldrw`, `vctp` and `vstrw`.
+  Ghidra 12.1.4 does not follow the loop's exits, so for this image the lane
+  requires the code after the loop to stay undisassembled, records both loop
+  branches' flow, and checks that the results report the limitation.
+
+LLVM assembles each fixture's annotated source to the same bytes and names each
+instruction, with `-mcpu=cortex-m55 -mfloat-abi=hard` for the MVE fixture;
+Ghidra must decode the same mnemonics in Thumb state. The lane
+also checks:
+
+- the Reset-derived entry, and that it is the only entry Ghidra reports;
+- the `segments` load image and its `TMode` check;
+- decompilation of the Cortex-M0 image;
+- refusal of an odd entry with its code address, while the session is kept;
+- CLI/MCP parity and unchanged legacy identity;
+- snapshot reuse across base spellings, and refusal across variants;
+- unchanged source bytes and owned cleanup.
+
+It does not execute target code, model peripherals, or qualify Windows.
 
 `npm run verify:ghidra:loader-relocation` runs
 `tests/conformance/ghidra/ReaLoaderRelocationProbe.java` inside a real Linux
@@ -788,6 +821,8 @@ rejecting failed, cancelled, or unexpectedly skipped work. It rejects missing or
 unknown tiers and requires every canonical scope to be explicitly `true` or
 `false`; incomplete classification cannot silently omit verification lanes.
 The aggregate remains cancellable so superseded runs release their slots.
+After successful classification, `Portable tests` starts a runner only when
+the code scope is selected. Every code tier requires its merged report to pass.
 Branch protection
 should require this aggregate, `Static checks`, `Portable tests`, and
 `Conventional PR title`. Title validation runs separately on PR opening,

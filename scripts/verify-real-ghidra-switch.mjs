@@ -5,7 +5,6 @@ import {
   requireMcpOperationResult,
   requireMcpOutput,
 } from "./lib/mcp-verifier-results.mjs";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   copyFile,
@@ -16,7 +15,7 @@ import {
 } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseArgs, promisify } from "node:util";
+import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import {
@@ -28,7 +27,13 @@ import {
   assertSwitchBoundary,
   assertSwitchOracleControls,
 } from "./verify-real-ghidra-switch-assertions.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
 import { verifySwitchEvidenceControls } from "./verify-real-ghidra-switch-controls.mjs";
 import {
   VerifierFixture,
@@ -51,8 +56,14 @@ assert.ok(
   process.platform === "linux" && process.arch === "x64",
   "Ghidra switch compiler lane requires Linux x64; macOS/Windows and cross targets use their separate provider lanes.",
 );
-const exec = promisify(execFile);
-const commands = {
+// Compiler, reader and CLI launches share one command owner, including the
+// pre-workspace version probes. A timeout stops that process group.
+const commands = await createVerifierCommands();
+const commandInterruption = bindVerifierCommandInterruption(commands);
+const execOwned = commandInterruption.exec;
+const { untilInterrupted, throwIfInterrupted } = commandInterruption;
+const finishCommandInterruption = () => commandInterruption.finish();
+const toolchain = {
   gcc: process.env.REA_GCC ?? "gcc",
   clang: process.env.REA_CLANG ?? "clang",
   nm: process.env.REA_NM ?? "nm",
@@ -60,33 +71,62 @@ const commands = {
   strip: process.env.REA_STRIP ?? "strip",
 };
 const versions = {};
-for (const [role, command] of Object.entries(commands)) {
+try {
+  for (const [role, command] of Object.entries(toolchain)) {
+    try {
+      const { stdout } = await execOwned(command, ["--version"]);
+      versions[role] = stdout.split("\n")[0];
+    } catch (cause) {
+      if (commandInterruption.signal.aborted) throw cause;
+      throw new Error(
+        `Ghidra switch compiler lane prerequisite missing: ${role} '${command}'`,
+        { cause },
+      );
+    }
+  }
+} catch (cause) {
   try {
-    const { stdout } = await exec(command, ["--version"]);
-    versions[role] = stdout.split("\n")[0];
-  } catch (cause) {
-    throw new Error(
-      `Ghidra switch compiler lane prerequisite missing: ${role} '${command}'`,
-      { cause },
+    await commands.close();
+  } catch (closeCause) {
+    throw new AggregateError(
+      [cause, closeCause],
+      "Switch toolchain probe failed and command cleanup failed",
     );
   }
+  throw cause;
 }
 let installation;
-if (!compilerOnly) {
-  const { inspectVerifierGhidraInstallation } =
-    await import("./lib/ghidra-installation-inspection.mjs");
-  assert.ok(
-    process.env.GHIDRA_INSTALL_DIR,
-    "Ghidra switch lane prerequisite missing: GHIDRA_INSTALL_DIR (bring your own)",
-  );
-  installation = await inspectVerifierGhidraInstallation({
-    environment: process.env,
-    installDir: process.env.GHIDRA_INSTALL_DIR,
-    ...(process.env.JAVA_HOME === undefined
-      ? {}
-      : { javaHome: process.env.JAVA_HOME }),
-  });
-  assert.equal(installation.status, "available", JSON.stringify(installation));
+try {
+  if (!compilerOnly) {
+    const { inspectVerifierGhidraInstallation } =
+      await import("./lib/ghidra-installation-inspection.mjs");
+    assert.ok(
+      process.env.GHIDRA_INSTALL_DIR,
+      "Ghidra switch lane prerequisite missing: GHIDRA_INSTALL_DIR (bring your own)",
+    );
+    installation = await inspectVerifierGhidraInstallation({
+      environment: process.env,
+      installDir: process.env.GHIDRA_INSTALL_DIR,
+      ...(process.env.JAVA_HOME === undefined
+        ? {}
+        : { javaHome: process.env.JAVA_HOME }),
+    });
+    assert.equal(
+      installation.status,
+      "available",
+      JSON.stringify(installation),
+    );
+  }
+} catch (cause) {
+  try {
+    await commands.close();
+  } catch (closeCause) {
+    throw new AggregateError(
+      [cause, closeCause],
+      "Switch prerequisite check failed and command cleanup failed",
+    );
+  }
+  throw cause;
 }
 const run = createVerifierRun();
 // Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
@@ -103,94 +143,136 @@ const flags = ["-O2", "-g", "-fno-pie", "-no-pie"];
 const results = [];
 let productionControls = null;
 // The workspace is removed only once no owned runtime or process survives.
+let lifecycle;
 workspaceFixture.releaseAfter(async () => {
   assert.deepEqual(
     (await readdir(runtime)).filter((name) => name.startsWith("rea-ghidra-")),
     [],
     "Owned Ghidra runtime survived close",
   );
-  const cleanup = await completeVerifierRun(run);
-  assert.equal(cleanup.process_lineage.status, "verified");
-  assert.deepEqual(cleanup.process_lineage.descendants, []);
+  lifecycle = await completeVerifierRun(run);
+  assertVerifierCleanupComplete(lifecycle.process_lineage);
 });
+commandInterruption.retainWorkspaceIfInterrupted(workspaceFixture);
 await withVerifierFixture(workspaceFixture, async () => {
-  for (const compiler of ["gcc", "clang"]) {
-    const original = join(workspace, `${compiler}-optimized`);
-    await exec(commands[compiler], [...flags, source, "-o", original]);
-    const bytes = await readFile(original);
-    const { stdout: symbols } = await exec(commands.nm, ["-n", original]);
-    const { stdout: disassembly } = await exec(commands.objdump, [
-      "-d",
-      original,
-    ]);
-    const fixtures = assertCompiledSwitchOracle(
-      bytes,
-      switchSymbolOracle(symbols),
-      disassembly,
-    );
-    const oracleFaultControls = assertSwitchOracleControls(fixtures);
-    if (!compilerOnly && productionControls === null) {
-      productionControls = await verifySwitchEvidenceControls({
-        installation,
-        entrypoint,
-        target: original,
-        workspace,
-        runId: run.run_id,
-      });
-      assert.equal(
-        digest(await readFile(original)),
-        digest(bytes),
-        "Guard changed compiler-oracled input",
+  let primaryFailure;
+  try {
+    for (const compiler of ["gcc", "clang"]) {
+      const original = join(workspace, `${compiler}-optimized`);
+      await execOwned(toolchain[compiler], [...flags, source, "-o", original]);
+      const bytes = await readFile(original);
+      const { stdout: symbols } = await execOwned(toolchain.nm, [
+        "-n",
+        original,
+      ]);
+      const { stdout: disassembly } = await execOwned(toolchain.objdump, [
+        "-d",
+        original,
+      ]);
+      const fixtures = assertCompiledSwitchOracle(
+        bytes,
+        switchSymbolOracle(symbols),
+        disassembly,
       );
-    }
-    const stripped = join(workspace, `${compiler}-stripped`);
-    await copyFile(original, stripped);
-    await exec(commands.strip, ["--strip-all", stripped]);
-    // Byte/physical target oracle survives removal of the names that REA could use.
-    assertCompiledSwitchOracle(await readFile(stripped), fixtures, disassembly);
-    for (const [variant, path] of [
-      ["optimized", original],
-      ["stripped", stripped],
-    ]) {
-      const sha256 = digest(await readFile(path));
-      const observation = compilerOnly
-        ? null
-        : await verifyTarget(path, sha256, fixtures, variant);
-      assert.equal(
-        digest(await readFile(path)),
-        sha256,
-        "REA analysis changed original compiled fixture",
+      const oracleFaultControls = assertSwitchOracleControls(fixtures);
+      if (!compilerOnly && productionControls === null) {
+        throwIfInterrupted();
+        productionControls = await verifySwitchEvidenceControls({
+          installation,
+          entrypoint,
+          target: original,
+          workspace,
+          runId: run.run_id,
+          signal: commandInterruption.signal,
+        });
+        assert.equal(
+          digest(await readFile(original)),
+          digest(bytes),
+          "Guard changed compiler-oracled input",
+        );
+      }
+      const stripped = join(workspace, `${compiler}-stripped`);
+      await copyFile(original, stripped);
+      await execOwned(toolchain.strip, ["--strip-all", stripped]);
+      // Byte/physical target oracle survives removal of the names that REA could use.
+      assertCompiledSwitchOracle(
+        await readFile(stripped),
+        fixtures,
+        disassembly,
       );
-      results.push({
-        compiler,
-        variant,
-        oracle_fault_controls: oracleFaultControls,
-        sha256,
-        compiler_oracle: fixtures.map(
-          ({
-            name,
-            address,
-            dispatch_address,
-            table_address,
-            slots,
-            default_address,
-          }) => ({
-            name,
-            address,
-            dispatch_address,
-            table_address,
-            slots,
-            default_address,
-          }),
-        ),
-        observation,
-      });
+      for (const [variant, path] of [
+        ["optimized", original],
+        ["stripped", stripped],
+      ]) {
+        const sha256 = digest(await readFile(path));
+        const observation = compilerOnly
+          ? null
+          : await verifyTarget(path, sha256, fixtures, variant);
+        assert.equal(
+          digest(await readFile(path)),
+          sha256,
+          "REA analysis changed original compiled fixture",
+        );
+        results.push({
+          compiler,
+          variant,
+          oracle_fault_controls: oracleFaultControls,
+          sha256,
+          compiler_oracle: fixtures.map(
+            ({
+              name,
+              address,
+              dispatch_address,
+              table_address,
+              slots,
+              default_address,
+            }) => ({
+              name,
+              address,
+              dispatch_address,
+              table_address,
+              slots,
+              default_address,
+            }),
+          ),
+          observation,
+        });
+      }
     }
+  } catch (cause) {
+    primaryFailure = cause;
   }
+  // Close the command owner before release observes the parent tree.
+  let cleanupFailure;
+  try {
+    await workspaceFixture.closeEarly([() => commands.close()]);
+  } catch (cause) {
+    cleanupFailure = cause;
+  }
+  if (cleanupFailure !== undefined || primaryFailure !== undefined)
+    throw workspaceFixture.retainedError(
+      `Switch verification failed; retained diagnostic workspace: ${workspace}`,
+      {
+        cause:
+          cleanupFailure === undefined
+            ? primaryFailure
+            : primaryFailure === undefined
+              ? cleanupFailure
+              : new AggregateError(
+                  [primaryFailure, cleanupFailure],
+                  "Switch verification and command cleanup both failed",
+                ),
+      },
+    );
+  const interrupted = commandInterruption.reason();
+  if (interrupted !== undefined)
+    throw workspaceFixture.retainedError(
+      `Switch verification interrupted; retained diagnostic workspace: ${workspace}`,
+      { cause: interrupted },
+    );
 });
-const lifecycle = await completeVerifierRun(run);
-if (lifecycle.process_lineage.status === "verified")
-  assert.deepEqual(lifecycle.process_lineage.descendants, []);
+const releaseInterrupted = finishCommandInterruption();
+if (releaseInterrupted !== undefined) throw releaseInterrupted;
 process.stdout.write(
   `${JSON.stringify({ lane: "linux-x64-compiler-switch", compiler_only: compilerOnly, entrypoint, versions, compiler_flags: flags, verifier_run: lifecycle, production_controls: productionControls, results, limitations: ["Exact compiler oracle admits absolute 8-byte native x86-64 ELF tables and fails explicitly when a compiler changes lowering.", "Compiled binaries are analyzed read-only; target programs are never executed.", "Comparison-only control proves absence of a fabricated table and preservation of provider limitations, not recovery of C source.", "Detached Ghidra object controls exercise actual bridge methods through reflection; they do not claim naturally compiled ambiguous dispatches.", "CLI/MCP comparison covers switch observations, excluding process-specific Evidence IDs."], cleanup: "complete" })}\n`,
 );
@@ -221,7 +303,9 @@ async function verifyTarget(path, sha256, fixtures, variant) {
   let stderr = "";
   const observations = [];
   return withVerifierCleanup(async () => {
-    await client.connect(transport);
+    await untilInterrupted(
+      client.connect(transport, { signal: commandInterruption.signal }),
+    );
     transport.stderr?.on("data", (chunk) => {
       stderr = (stderr + chunk.toString()).slice(-65536);
     });
@@ -329,23 +413,25 @@ function expectedResidualUnknowns(boundary, fixture) {
   return [...new Set(unknowns)];
 }
 async function toolResult(client, name, arguments_ = {}) {
+  throwIfInterrupted();
   const result = await client.callTool(
     { name, arguments: arguments_ },
-    { timeout: 240000 },
+    { timeout: 240000, signal: commandInterruption.signal },
   );
   assert.ok(result.structuredContent, `${name} omitted structured result`);
   return requireMcpOutput(result, name);
 }
 async function call(client, name, arguments_ = {}) {
+  throwIfInterrupted();
   const result = await client.callTool(
     { name, arguments: arguments_ },
-    { timeout: 240000 },
+    { timeout: 240000, signal: commandInterruption.signal },
   );
   return requireMcpOperationResult(result, name);
 }
 
 async function cliSwitchEvidence(entrypoint, path, procedure, env) {
-  const { stdout } = await exec(
+  const { stdout } = await execOwned(
     process.execPath,
     [
       entrypoint,

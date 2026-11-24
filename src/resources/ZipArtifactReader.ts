@@ -1,6 +1,7 @@
 import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import {
+  ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   copyArtifactEntry,
   sameArtifactEntry,
@@ -352,7 +353,7 @@ export class ZipArtifactReader implements ArtifactReader {
     const source = stored.source;
     if (source.directory || source.symlink)
       return Promise.reject(
-        new ArtifactReaderFailure("format", "ZIP entry is not a regular file"),
+        new ArtifactReaderFailure("path", "ZIP entry is not a regular file"),
       );
     if (source.encrypted)
       return Promise.reject(
@@ -573,6 +574,7 @@ const extractStream = (
   const writable = new WritableStream<Uint8Array>({
     write: async (chunk) => {
       assertArtifactReadActive(signal);
+      // The stream owns this copy for as long as downstream retains it.
       if (!output.write(Buffer.from(chunk)))
         await once(output, "drain", { signal: controller.signal });
     },
@@ -635,27 +637,46 @@ export const typedZipFailure = (
 ): unknown => {
   if (!(cause instanceof Error) || cause instanceof ArtifactReaderFailure)
     return cause;
+  // zip.js refuses a member's method before reading its data, so only that
+  // member's content is unreadable. The central directory still lists every
+  // entry, so entry coverage is unchanged, as for an encrypted member; the
+  // occurrence limitation carries the content gap.
+  if (
+    compressionMethod !== undefined &&
+    cause.message === ERR_UNSUPPORTED_COMPRESSION
+  )
+    return new ArtifactEntryContentUnavailable(
+      `ZIP archive uses an unsupported feature: ${cause.message} (method ${String(compressionMethod)})`,
+      `ZIP member compression method ${String(compressionMethod)} is unsupported; no content hash or child artifact was produced.`,
+      { cause },
+    );
   // Only method 93 uses Node's native Zstandard decoder. Do not classify
   // cancellation or an unrelated codec/runtime error as malformed ZIP data.
-  const code = "code" in cause ? cause.code : undefined;
+  const codecCause =
+    compressionMethod === 93 &&
+    cause.message === ERR_INVALID_COMPRESSED_DATA &&
+    cause.cause instanceof Error
+      ? cause.cause
+      : cause;
+  const code = "code" in codecCause ? codecCause.code : undefined;
   if (compressionMethod === 93 && code === "ZSTD_error_dictionary_wrong")
     return new ArtifactReaderFailure(
       "unavailable",
       "ZIP archive uses an unsupported Zstandard dictionary",
-      { cause },
+      { cause: codecCause },
     );
   if (
     compressionMethod === 93 &&
     code === "ZSTD_error_frameParameter_windowTooLarge"
   )
     return new ArtifactReaderFailure("limit", ZIP_ZSTANDARD_WINDOW_LIMIT, {
-      cause,
+      cause: codecCause,
       boundary: "memory",
       fixedAllowance: ZIP_ZSTANDARD_WINDOW_CEILING,
     });
   const invalidZstandard =
     compressionMethod === 93 &&
-    (cause instanceof ZstandardFramingError ||
+    (codecCause instanceof ZstandardFramingError ||
       code === "ZSTD_error_prefix_unknown" ||
       code === "ZSTD_error_checksum_wrong" ||
       code === "ZSTD_error_corruption_detected" ||
@@ -671,7 +692,7 @@ export const typedZipFailure = (
     reason === "format"
       ? `ZIP archive is malformed: ${invalidZstandard ? ERR_INVALID_COMPRESSED_DATA : cause.message}`
       : `ZIP archive uses an unsupported feature: ${cause.message}`,
-    { cause },
+    { cause: invalidZstandard ? codecCause : cause },
   );
 };
 

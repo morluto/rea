@@ -14,12 +14,14 @@ import { err, ok, type Result } from "../domain/result.js";
 
 import { callerAnalysisParameters } from "../application/AnalysisInput.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { ProjectedErrorEncoding } from "./ToolResultDelivery.js";
 
 const currentRequest = new AsyncLocalStorage<McpToolRequest>();
 
 /** One SDK request owns validation, cancellation and its publication boundary. */
 export class McpToolRequest {
   readonly cancellation = new AbortController();
+  projectedErrorEncoding?: ProjectedErrorEncoding | undefined;
   readonly #parameterSelections = new WeakMap<
     object,
     {

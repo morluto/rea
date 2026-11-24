@@ -1,3 +1,4 @@
+import type { SessionLimitationDelivery } from "../application/binary/SessionLimitationContext.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { runtimeAnalysisConfig } from "../config/runtimeAnalysisSettings.js";
 import { isAppleDispatchMetadataTarget } from "../domain/native/objcSwiftMetadata.js";
@@ -28,13 +29,17 @@ import {
 /**
  * Compose the target-switching runtime shared directly by CLI and MCP adapters.
  * This is the sole production wiring point, so both adapters share identical
- * provider selection, profile, lifecycle, and Evidence semantics.
+ * provider selection, profile, lifecycle, and Evidence semantics. Only the
+ * session's lifetime differs: a persistent session states shared provider
+ * limitations once and references them (`sessionLimitations: "reference"`),
+ * while a one-call session keeps them inline.
  */
 export const createBinarySession = (
   config: AppConfig,
   logger: Logger,
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
   settings?: AnalysisSettingsReader,
+  sessionLimitations?: SessionLimitationDelivery,
 ): BinarySession =>
   composeDeepBinarySession(
     runtimeAnalysisConfig(config, settings),
@@ -42,6 +47,7 @@ export const createBinarySession = (
     selectedEnvironment,
     undefined,
     settings,
+    sessionLimitations,
   );
 
 /** Prefer byte-backed dispatch inspection while retaining deep symbol fallback. */
@@ -63,6 +69,7 @@ const composeDeepBinarySession = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
   inspection?: "inspect_native_dispatch_metadata",
   settings?: AnalysisSettingsReader,
+  sessionLimitations?: SessionLimitationDelivery,
 ): BinarySession => {
   const platform = HOST_PLATFORM.platform;
   const environment = snapshotEnvironment(selectedEnvironment, platform);
@@ -103,6 +110,7 @@ const composeDeepBinarySession = (
       (declaration) => new LazyAnalysisProvider(declaration),
     ),
     createBundleResourceFactory(environment, platform, settings),
+    sessionLimitations,
   );
 };
 

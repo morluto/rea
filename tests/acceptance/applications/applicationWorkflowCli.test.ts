@@ -471,76 +471,7 @@ describe("Electron unavailable identity through stdio MCP", () => {
   );
 });
 
-it("preserves complete line-comment source-map URLs through CLI and MCP", async () => {
-  const root = await createTestTempDirectory("rea-source-map-url-cli-");
-  const directives = [
-    "//# sourceMappingURL=app.js.map?variant=a*modern",
-    "//@ sourceMappingURL=app.js.map?variant=a*legacy",
-    "//# sourceMappingURL=app.js.map#first*section",
-  ];
-  await writeFile(
-    join(root, "app.js"),
-    ["export const value = 1;", ...directives, ""].join("\n"),
-  );
-  await writeFile(
-    join(root, "app.js.map"),
-    JSON.stringify({ version: 3, sources: [], names: [], mappings: "" }),
-  );
-  const { graph } = z
-    .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
-    .parse(
-      await runCli(["analyze-javascript-application", root, "--json"]),
-    ).normalized_result;
-  const map = graph.nodes.find(
-    ({ kind, observations }) =>
-      kind === "source-map" &&
-      observations.some(({ properties }) => properties.path === "app.js.map"),
-  );
-  const references = map?.observations.filter(
-    ({ label }) => label === "source map reference",
-  );
-  expect(references).toHaveLength(directives.length);
-  for (const [index, directive] of directives.entries()) {
-    const declaredUrl = directive.slice(directive.indexOf("=") + 1);
-    const digest = createHash("sha256").update(declaredUrl).digest("hex");
-    expect(references).toContainEqual(
-      expect.objectContaining({
-        properties: {
-          declared_url: declaredUrl,
-          declared_url_sha256: digest,
-          resolved_path: "app.js.map",
-          resolution_status: "resolved",
-          available: true,
-        },
-        evidence: expect.objectContaining({
-          location: {
-            available: true,
-            value: {
-              kind: "source-range",
-              source: "app.js",
-              start: { line: index + 2, column: 0 },
-              end: { line: index + 2, column: directive.length },
-            },
-          },
-        }),
-      }),
-    );
-    expect(graph.edges).toContainEqual(
-      expect.objectContaining({
-        relation: "maps_to",
-        target_node_id: map?.node_id,
-        properties: {
-          declared_url_sha256: digest,
-          resolved_path: "app.js.map",
-          resolution_status: "resolved",
-        },
-      }),
-    );
-  }
-  expect((await analyzeThroughStdioMcp(root)).graph).toEqual(graph);
-});
-
-it("resolves source-map URL paths once without changing their declarations", async () => {
+it("preserves source-map declarations while decoding each path once through CLI and MCP", async () => {
   const root = await createTestTempDirectory("rea-source-map-encoding-cli-");
   const cases = [
     ["space%20part.js.map", "space part.js.map"],
@@ -549,6 +480,9 @@ it("resolves source-map URL paths once without changing their declarations", asy
     ["space%20part.js.map?v=1#section", "space part.js.map"],
     ["caf%C3%A9.js.map", "café.js.map"],
     ["literal%ZZ.js.map", "literal%ZZ.js.map"],
+    ["app.js.map?variant=a*modern", "app.js.map"],
+    ["app.js.map?variant=a*legacy", "app.js.map", "//@"],
+    ["app.js.map#first*section", "app.js.map"],
   ] as const;
   for (const path of new Set(cases.map(([, path]) => path))) {
     await writeFile(
@@ -562,12 +496,17 @@ it("resolves source-map URL paths once without changing their declarations", asy
       }),
     );
   }
-  await writeFile(
-    join(root, "app.js"),
-    cases.map(([url]) => `//# sourceMappingURL=${url}\n`).join("") +
-      'new Worker(new URL("./worker%20file.js", import.meta.url));\n' +
-      'navigator.serviceWorker.register("./service%20worker.js");\n',
+  const directives = cases.map(
+    ([url, , marker = "//#"]) => `${marker} sourceMappingURL=${url}`,
   );
+  const lines = [
+    ...directives.slice(0, 6),
+    'new Worker(new URL("./worker%20file.js", import.meta.url));',
+    'navigator.serviceWorker.register("./service%20worker.js");',
+    ...directives.slice(6),
+    "",
+  ];
+  await writeFile(join(root, "app.js"), lines.join("\n"));
   await writeFile(join(root, "worker file.js"), "export const worker = 1;\n");
   await writeFile(
     join(root, "service worker.js"),
@@ -578,11 +517,17 @@ it("resolves source-map URL paths once without changing their declarations", asy
     .parse(
       await runCli(["analyze-javascript-application", root, "--json"]),
     ).normalized_result;
+  const maps = graph.nodes.filter(({ kind }) => kind === "source-map");
+  expect(
+    maps.flatMap(({ observations }) =>
+      observations.filter(({ label }) => label === "source map reference"),
+    ),
+  ).toHaveLength(cases.length);
   for (const [index, [declaredUrl, path]] of cases.entries()) {
-    const map = graph.nodes.find(
-      ({ kind, observations }) =>
-        kind === "source-map" &&
-        observations.some(({ properties }) => properties.path === path),
+    const directive = directives[index]!;
+    const line = lines.indexOf(directive) + 1;
+    const map = maps.find(({ observations }) =>
+      observations.some(({ properties }) => properties.path === path),
     );
     const digest = createHash("sha256").update(declaredUrl).digest("hex");
     expect(map?.observations).toContainEqual(
@@ -600,11 +545,8 @@ it("resolves source-map URL paths once without changing their declarations", asy
             value: {
               kind: "source-range",
               source: "app.js",
-              start: { line: index + 1, column: 0 },
-              end: {
-                line: index + 1,
-                column: "//# sourceMappingURL=".length + declaredUrl.length,
-              },
+              start: { line, column: 0 },
+              end: { line, column: directive.length },
             },
           },
         }),

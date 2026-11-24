@@ -7,6 +7,7 @@ import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mj
 import { z } from "zod";
 import { access } from "node:fs/promises";
 import { ANDROID_TOOL_CONTRACTS } from "../../../src/contracts/android/androidToolContracts.js";
+import { JADX_RELEASE } from "../../../src/android/JadxRelease.js";
 import { packagedJadxBridgeIdentity } from "../../support/packagedJadxBridge.js";
 import { androidPartialObservationSchema } from "../../../src/domain/android/androidPartialObservation.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -188,7 +189,7 @@ test.each([
     errorCode: "execution_failure",
     serverName: "rea-jadx-bridge",
     serverVersion: packagedJadxBridgeIdentity().version,
-    engineVersion: "0.7.1",
+    engineVersion: JADX_RELEASE.version,
     calls: [
       { operation: "rea_jvm_status" },
       { operation: "load_apk" },
@@ -206,7 +207,7 @@ test.each([
     errorCode: "execution_failure",
     serverName: "rea-jadx-bridge",
     serverVersion: packagedJadxBridgeIdentity().version,
-    engineVersion: "0.7.1",
+    engineVersion: JADX_RELEASE.version,
     calls: [{ operation: "rea_jvm_status" }, { operation: "load_apk" }],
     containsAmbientEnvironment: true,
   },

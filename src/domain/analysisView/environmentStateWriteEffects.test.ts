@@ -9,6 +9,71 @@ import {
   environmentStateViewOf,
 } from "../../../tests/fixtures/environmentStateWrites.js";
 
+import { Budget } from "../budget.js";
+import {
+  retainCreateExemplar,
+  retainFixed,
+} from "./environmentStateWriteEffects.js";
+
+const representationRefused = new Error(
+  "Test representation allowance exhausted",
+);
+const retention = (budget: Budget) => ({
+  retain: (bytes: number) => budget.charge(bytes, () => representationRefused),
+});
+
+it("reserves the fixed sent members a write plan keeps", () => {
+  const sent = [{ sent: "x".repeat(10_000) }];
+  const enough = new Budget(24_000);
+  const empty = new Budget(0);
+  retainFixed(retention(enough), sent);
+  expect(enough.used).toBeGreaterThan(20_000);
+  expect(() => retainFixed(retention(empty), sent)).toThrow(
+    representationRefused,
+  );
+  retainFixed(retention(empty), []);
+  expect(empty.used).toBe(0);
+});
+
+const createFacts = (
+  body: { payload?: string } = {},
+  held: readonly { id: string; payload: string }[] = [],
+) => ({
+  entity: { id: "new", url: "/new" },
+  call: { path: "/items", pathValues: new Map<string, string>(), body },
+  idField: "id",
+  startMs: undefined,
+  collection: held,
+  type: held,
+});
+
+it("retains exemplars only after charging request facts and shared snapshot references", () => {
+  const snapshot = { id: "held", payload: "p".repeat(65_536) };
+  const input = createFacts(
+    { payload: "x".repeat(10_000) },
+    Array.from({ length: 1_000 }, () => snapshot),
+  );
+  const enough = new Budget(32_000);
+  const short = new Budget(27_000);
+  expect(retainCreateExemplar(retention(enough), input, [])).toBe(input);
+  expect(enough.used).toBeGreaterThan(28_000);
+  expect(() => retainCreateExemplar(retention(short), input, [])).toThrow(
+    representationRefused,
+  );
+  expect(short.used).toBe(0);
+});
+
+it("reserves no exemplar when the rules already explain every string field", () => {
+  const empty = new Budget(0);
+  expect(
+    retainCreateExemplar(retention(empty), createFacts(), [
+      { field: "id", rule: "echo" },
+      { field: "url", rule: "echo" },
+    ]),
+  ).toBeUndefined();
+  expect(empty.used).toBe(0);
+});
+
 it.each([
   { fraction: "123456790", served: true, label: "one nanosecond later" },
   { fraction: "123456788", served: false, label: "one nanosecond earlier" },

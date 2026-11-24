@@ -1,3 +1,4 @@
+import { isSuccessfulHttpStatus } from "../../domain/httpResponseStatus.js";
 import { boundedList } from "../../domain/boundedList.js";
 import {
   ownMember,
@@ -139,9 +140,6 @@ const emptyNormalised = (): Normalised => ({
   unobserved_bodies: 0,
 });
 
-const isSuccess = (status: number | null): boolean =>
-  status !== null && status >= 200 && status < 300;
-
 /** Where a call's answer holds its own entities, and the collection they belong to: a read view's entity or list pointer, a write's response pointer, else the root. A write that answers with only the new id learns that scalar. */
 const entityOf = (
   run: ProbeRun,
@@ -279,12 +277,11 @@ interface ProbeRun {
   readonly normalised: Normalised;
 }
 
+const EMPTY_HELD_IDS: ReadonlySet<string> = new Set();
+
 const heldIds = (
   store: EnvironmentStateStore | undefined,
-): ReadonlySet<string> =>
-  new Set(
-    store?.snapshot().rea_state.entities.map((entity) => entity.id) ?? [],
-  );
+): ReadonlySet<string> => store?.entityIds() ?? EMPTY_HELD_IDS;
 
 const stepOf = (
   base: Pick<CompareStep, "ordinal" | "method" | "path" | "live_status">,
@@ -407,7 +404,11 @@ const compareStep = (
   for (const key of NORMALISED_KEYS)
     run.normalised[key] += compared.normalised[key];
   const differences = [...compared.differences];
-  if (unknownPath && isSuccess(live.status) && !isSuccess(env.status))
+  if (
+    unknownPath &&
+    isSuccessfulHttpStatus(live.status) &&
+    !isSuccessfulHttpStatus(env.status)
+  )
     differences.unshift({ category: "unmapped-id", pointer: "" });
   return ok(stepOf(base, call, { env_status: env.status, differences }));
 };

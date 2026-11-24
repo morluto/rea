@@ -164,17 +164,6 @@ const contractShape = (
   return undefined;
 };
 
-/** One CLI token as incur passes it: a single argv string or the value. */
-const cliAdmittedValue = (
-  field: z.ZodType,
-  value: unknown,
-): { readonly admitted: boolean; readonly value?: unknown } => {
-  const parsed = field.safeParse(value);
-  return parsed.success
-    ? { admitted: true, value: parsed.data }
-    : { admitted: false };
-};
-
 const collectParity = () => {
   const cli = createCli();
   const commands = cliCommands(cli);
@@ -185,7 +174,6 @@ const collectParity = () => {
   const uncomparable: string[] = [];
   let compared = 0;
   let commandsCompared = 0;
-  let unmatchedFields = 0;
   for (const command of commands) {
     const { name, definition: entry } = command;
     const ownOperations = commandOwnOperations(command);
@@ -213,17 +201,14 @@ const collectParity = () => {
             : {};
         for (const [fieldName, cliField] of Object.entries(fields)) {
           const contractField = shape[snake(fieldName)];
-          if (contractField === undefined) {
-            unmatchedFields += 1;
-            continue;
-          }
+          if (contractField === undefined) continue;
           for (const probe of probesFor(contractField)) {
             compared += 1;
-            const cliValue = cliAdmittedValue(cliField, probe.value);
+            const cliValue = cliField.safeParse(probe.value);
             const mismatch =
               probe.expect === "resolved"
-                ? !cliValue.admitted
-                : cliValue.admitted && !admits(contractField, cliValue.value);
+                ? !cliValue.success
+                : cliValue.success && !admits(contractField, cliValue.data);
             if (mismatch)
               mismatches.push(`${name} ${group}.${fieldName} ${probe.id}`);
           }
@@ -235,7 +220,6 @@ const collectParity = () => {
     mismatches: [...new Set(mismatches)].sort(),
     compared,
     commandsCompared,
-    unmatchedFields,
     uncomparable,
   };
 };

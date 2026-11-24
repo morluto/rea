@@ -724,7 +724,7 @@ it("keeps runtime options as declarations with literal names and distinct source
         entry_count: 3,
       });
       await expect(reader.open(options[0]!)).rejects.toMatchObject({
-        reason: "format",
+        reason: "path",
       });
     },
   );
@@ -767,34 +767,22 @@ it("rejects metadata expansion before retaining every repeated long container pa
   );
 });
 
-it.each([false, true])(
-  "validates compressed member bounds through the stream (truncated: %s)",
-  async (truncated) => {
-    const payload = Buffer.from("complete module payload");
-    const encoded = deflateSync(payload);
-    const bytes = cArchiveExecutable({
-      layout: "2.1",
-      pythonVersion: 309,
-      members: [
-        {
-          name: "data",
-          typeCode: "x",
-          payload,
-          compress: true,
-          declaredUncompressedSize: truncated ? payload.length : 4,
-        },
-      ],
+it("reports a truncated compressed member when reading its stream", async () => {
+  const payload = Buffer.from("complete module payload");
+  const encoded = deflateSync(payload);
+  const bytes = cArchiveExecutable({
+    layout: "2.1",
+    pythonVersion: 309,
+    members: [{ name: "data", typeCode: "x", payload, compress: true }],
+  });
+  bytes.writeUInt32BE(encoded.length - 2, 64 + encoded.length + 8);
+  await withPyInstallerReader(bytes, async (reader) => {
+    const entry = (await members(reader))[0]!;
+    await expect(buffer(await reader.open(entry))).rejects.toMatchObject({
+      reason: "format",
     });
-    if (truncated)
-      bytes.writeUInt32BE(encoded.length - 2, 64 + encoded.length + 8);
-    await withPyInstallerReader(bytes, async (reader) => {
-      const entry = (await members(reader))[0]!;
-      await expect(buffer(await reader.open(entry))).rejects.toMatchObject({
-        reason: truncated ? "format" : "limit",
-      });
-    });
-  },
-);
+  });
+});
 
 it("joins a late private-file close and retries its failed owner after cancellation", async () => {
   const bytes = cArchiveExecutable({

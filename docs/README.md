@@ -6,6 +6,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 ## Getting started
 
 - [Installation and setup](getting-started/installation.md)
+- [Supported targets and requirements](reference/supported-targets.md)
 - [Client configuration and troubleshooting](getting-started/client-configuration.md)
 - [CLI and Evidence](getting-started/cli.md)
 - [Guided MCP prompts and completion](getting-started/mcp-prompts.md)
@@ -45,6 +46,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [PE Authenticode certificate tables](pe-certificates.md)
 - [PE import and delay-load tables](pe-imports.md)
 - [PE TLS callbacks and load configuration](pe-load-config.md)
+- [PE x64 exception-directory function ranges](guides/native/pe-unwind-ranges.md)
 - [Match native functions across builds](native-function-matching.md)
 - [Rust binary dependency metadata](rust-binaries.md)
 - [Static CUDA and HIP code objects](gpu-code-objects.md)
@@ -130,6 +132,8 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [UnityFS AssetBundle archives](unityfs.md)
 - [iNES containers](ines-containers.md)
 - [WeChat mini-program wxapkg archives](wxapkg.md)
+- [tar and gzip-compressed tar archives](tar-archives.md)
+- [GPU asset headers: DDS, GLB, KTX and KTX2](gpu-asset-headers.md)
 
 ## WebAssembly
 
@@ -176,15 +180,13 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 ## Development and verification
 
 - [Documentation ownership and authoring](development/documentation.md)
-- [Settings and recovery](design/limits-and-recovery.md)
-- [REA limit inventory](design/rea-limit-inventory.md)
+- [Settings and recovery](reference/limits-and-recovery.md)
+- [REA limit inventory](reference/rea-limit-inventory.md)
 - [MCP tool design](development/tool-design.md)
 - [Testing REA](development/testing.md)
 - [Client and agent verification](development/client-verification.md)
 - [Reconstruction readiness conformance](development/reconstruction-readiness.md)
 - [Releasing REA](development/releasing.md)
-- [REA roadmap](development/roadmap.md)
-- [Capability composition and ownership](capability-composition.md)
 - [Testing lanes and provider verification](testing-lanes.md)
 - [Measure MCP catalog costs in Codex](mcp-catalog-evaluation.md)
 - [Static analysis in GitHub Actions](ci-analysis.md)
@@ -196,12 +198,6 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 ## Signal recordings
 
 - [Recorded signal inspection](guides/signals/signal-recordings.md)
-
-## Architecture and authoring
-
-- [Architecture map](https://github.com/morluto/rea/blob/main/docs/architecture/architecture.mermaid)
-- [Feature specifications](specs/README.md)
-- [Architectural decision records](adr/README.md)
 
 <a id="machine-owned-documentation"></a>
 
