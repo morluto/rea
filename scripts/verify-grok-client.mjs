@@ -15,7 +15,10 @@ import {
   assertClientJavaScriptFixtureEvidence,
 } from "./verify/clients/javascript-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
-import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import {
+  createOpenAiModelFixture,
+  toolCallMessage,
+} from "./verify/clients/model-fixture.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 assert(
@@ -129,17 +132,7 @@ await withVerifierCleanup(async () => {
     };
     const call = (name, args) => {
       lastTool = name;
-      return {
-        role: "assistant",
-        content: null,
-        tool_calls: [
-          {
-            id: `call_grok_${turn}`,
-            type: "function",
-            function: { name, arguments: JSON.stringify(args) },
-          },
-        ],
-      };
+      return toolCallMessage(`call_grok_${turn}`, name, args);
     };
     const verifyEvidence = async (bytes) => {
       const { evidence, shapes } = await assertClientJavaScriptFixtureEvidence(
